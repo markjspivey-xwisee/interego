@@ -502,7 +502,7 @@ const BASELINE = {};
 // same code but through that vertical's client, so it cannot tell "the substrate owns this" from
 // "the imports merely moved"; this one can, and a claim about layering with no probe behind it is
 // the kind that rots quietly.
-export const MIN_FILES = 383;
+export const MIN_FILES = 385;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.

@@ -362,10 +362,14 @@ a nonce published, and whoever reads that pod first can bind *their* Discord acc
 The label is the claim itself, and the bot recomputes it from the id of the account actually
 running the confirm. **Do not add a code field to that card.**
 
-`challengeLabel` and `SNOWFLAKE_RX` **moved into `@interego/workspace-client`** for this. The
-comment on `challengeLabel` warned that "two format sites is how a link flow comes to reject every
-honest user" while the bot was still the only site; a copy here would have made that come true. The
-bot now re-exports them from the module.
+`challengeLabel` and `SNOWFLAKE_RX` are **one definition, in `@interego/workspace-discord`**, and
+this shell depends on that package for the link plan. The comment on `challengeLabel` warned that
+"two format sites is how a link flow comes to reject every honest user" while the bot was still the
+only site; a copy here would have made that come true. They spent a round inside
+`@interego/workspace-client`, which fixed the duplication and created a worse problem — a Discord
+snowflake regex in the package that the published artifact, this shell and the bot all bundle,
+including an artifact with no Discord feature at all. Every other conduit would have arrived the
+same way, one regex at a time. They now live in the conduit that owns them; still one site.
 
 The card **shows the exact call before it makes it**, along with what is actually being granted —
 including that `PublishOnly` is **pod-wide**, because the substrate has no per-graph delegation

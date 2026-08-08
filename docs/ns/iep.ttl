@@ -478,7 +478,15 @@ iep:assertingAgent a owl:ObjectProperty ;
 
 iep:onBehalfOf a owl:ObjectProperty ;
     rdfs:label "on behalf of" ;
-    rdfs:comment "The principal (human/org) the agent acts on behalf of." ;
+    rdfs:comment "STANDING, and a statement about the AGENT: the principal (human/org) this facet's asserting agent is authorised to act for. It is the descriptor-facet spelling of the same fact the delegator's own pod publishes as iep:delegatedBy on the agent's iep:Delegate row, and it is true for as long as that row stands, whichever footing any particular act was on. It is deliberately NOT prov:actedOnBehalfOf and MUST NOT be read as one: PROV scopes that relation to 'an actual activity' and makes the principal retain responsibility for its outcome, so asserting it on every publish would say of every act what is only true of some. Whether one PARTICULAR act was carried out on the principal's behalf is stated per-activity — prov:qualifiedDelegation to a prov:Delegation whose prov:hadActivity is that activity, or iep:actedOnOwnAccount for the other footing." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:actedOnOwnAccount a owl:ObjectProperty ;
+    rdfs:label "acted on own account" ;
+    rdfs:comment "PER-ACT, and the explicit negative of a prov:Delegation over the same activity: in this one activity the agent acted on its own account, so no other agent retains responsibility for its outcome and the agent alone is accountable for it. The subject is the agent — the same position prov:actedOnBehalfOf takes — and the object is the single activity the statement is scoped to. It exists because PROV-O has no negative form: prov:Delegation is defined as assigning authority 'to carry out a specific activity as a delegate or representative, while the agent it acts on behalf of retains some responsibility for the outcome of the delegated work', and the ABSENCE of one states nothing at all. A reader that took absence for own-account would be defaulting; a reader that took it for on-behalf-of would launder an agent's own words into its delegator's. Absence is therefore a third answer — not stated — and neither of the two. An activity MUST NOT be both the prov:hadActivity of a prov:Delegation and the object of this property; a reader that finds both reports the disagreement rather than choosing. Standing delegate status is untouched by this: that is a fact about the AGENT, published and revocable on its delegator's pod, and it stays true whichever footing any act was on." ;
+    rdfs:domain prov:Agent ;
+    rdfs:range prov:Activity ;
+    rdfs:seeAlso prov:actedOnBehalfOf ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
 
 iep:agentRole a owl:ObjectProperty ;

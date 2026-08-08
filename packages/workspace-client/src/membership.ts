@@ -22,6 +22,7 @@
  */
 
 import { acceptanceTurtle, grantTurtle, rolesTurtle, shapesTurtle, workspaceTurtle } from './documents.js';
+import type { Check } from '@interego/core/delegate';
 import {
   nsIri, parseAcceptanceIri, podOfDescriptorUrl, podOfNsIri, podOfWebid, POD_RX, qualifiedName,
   slugProblem, type Naming,
@@ -31,18 +32,14 @@ import { fail, refusal } from './transport.js';
 import { assertPod, errorCopy, type HeadResult, type WorkspaceClient } from './substrate.js';
 
 /**
- * One line of evidence behind a verdict.
+ * One line of evidence behind a verdict — THE SUBSTRATE'S, re-exported, not declared here.
  *
- * `y` / `n` are findings. `q` is "this was not established" — and it is a THIRD value on
- * purpose: a check that could not run is not a check that failed, and collapsing the two is how
- * absence gets rendered as a negative fact.
+ * It was declared in this file, which meant `@interego/core`'s own `DelegationVerdict` had to type
+ * its findings with a workspace module's interface — the layer below depending on the layer above
+ * to describe its own answers. The definition, and the reason `q` is a third value rather than a
+ * failure, are in `@interego/core/delegate`.
  */
-export interface Check {
-  readonly mark: 'y' | 'n' | 'q';
-  readonly text: string;
-  /** Detail a shell may show on hover — typically an address a reader cannot fetch. */
-  readonly detail?: string;
-}
+export type { Check };
 
 /** Everything a client knows about the viewer, read from `get_pod_status`. */
 export interface Viewer {

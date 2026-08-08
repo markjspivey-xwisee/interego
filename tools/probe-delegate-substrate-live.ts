@@ -15,11 +15,13 @@
  *
  *   · `mintBearer` — the headless SIWE sign-in. Duplicating it here is what
  *     `tests/workspace-live-identity-parity.test.ts` exists to prevent.
- *   · `RelayMcpTransport` — a JSON-RPC client for `/mcp`. Generic infrastructure sitting in a
- *     vertical; a candidate for the same treatment as the delegate, and noted as such.
- *
  * The point stands regardless: the affordance is reached through a PORT, so anything that can
  * call a relay tool can drive it. Here that port is three lines.
+ *
+ * ★ AND THE SECOND IMPORT IS NO LONGER A VERTICAL'S. `RelayMcpTransport` was the other thing this
+ * header called out — "generic infrastructure sitting in a vertical; a candidate for the same
+ * treatment as the delegate". It got it: `@interego/core/relay`. This file now reaches nothing in
+ * `@interego/workspace-client` at all.
  *
  *   npx tsx tools/probe-delegate-substrate-live.ts
  *
@@ -28,11 +30,11 @@
 
 import { Wallet } from 'ethers';
 import {
-  DELEGATE_SURFACE, delegateAgentId, delegateLabel, delegatePlan, judgeAuthorship,
+  DELEGATE_SURFACE, authorshipLine, delegateAgentId, delegateLabel, delegatePlan, judgeAuthorship,
   publishDelegation, readDelegates, revokeDelegation, scopeCeiling,
-  type DelegateRegistryPort,
+  type AuthorshipStatements, type DelegateRegistryPort,
 } from '@interego/core/delegate';
-import { RelayMcpTransport } from '@interego/workspace-client';
+import { RelayMcpTransport } from '@interego/core/relay';
 import { mintBearer } from '../applications/shared-workspace/tools/live-identity.js';
 
 const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
@@ -110,16 +112,54 @@ async function main(): Promise<void> {
   check('a second, independent read finds it by name', seated?.name === 'Substrate probe', String(seated?.name));
   check('and the substrate ceiling permits a write', scopeCeiling({ scope: seated?.scope ?? null, delegateName: seated?.name ?? null }).ok);
 
-  head('4 - a reader tells the delegate from the person, from PROV alone');
-  const asDelegate = judgeAuthorship({ attributedTo: [agentId], actedOnBehalfOf: [webId] },
-    { logOwnerWebId: webId, delegates: roster });
-  check('an agent acting for the pod owner reads as a delegate', asDelegate.kind === 'delegate', asDelegate.kind);
+  head('4 - a reader tells the delegate from the person, and the two footings apart, from PROV alone');
+  /** One entry's statements. The act keys the per-act footing; see `footingTurtle`. */
+  const ACT = 'https://relay.interego.xwisee.com/ns/probe/e/0#act';
+  const st = (o: Partial<AuthorshipStatements>): AuthorshipStatements => ({
+    attributedTo: [], generatedBy: [], qualifiedDelegation: [],
+    delegationAgent: [], delegationActivity: [], actedOnOwnAccount: [], ...o,
+  });
+  const forHuman = st({
+    attributedTo: [agentId], generatedBy: [ACT],
+    qualifiedDelegation: ['https://relay.interego.xwisee.com/ns/probe/e/0#delegation'],
+    delegationAgent: [webId], delegationActivity: [ACT],
+  });
+  const asDelegate = judgeAuthorship(forHuman, { logOwnerWebId: webId, delegates: roster });
+  check('a delegate speaking FOR the pod owner reads as on-behalf-of', asDelegate.kind === 'delegate'
+    && asDelegate.footing.kind === 'on-behalf-of', asDelegate.kind);
   check('and the owner\'s own registry is what authorises it',
     asDelegate.kind === 'delegate' && asDelegate.authorised === true);
-  const asPerson = judgeAuthorship({ attributedTo: [webId], actedOnBehalfOf: [] },
+
+  // ★ THE SAME AGENT, THE SAME REGISTRY ROW, THE OTHER FOOTING. Standing is unchanged and the
+  // reading of this record is entirely different — which is the whole point of the split.
+  const ownAccount = judgeAuthorship(
+    st({ attributedTo: [agentId], generatedBy: [ACT], actedOnOwnAccount: [ACT] }),
     { logOwnerWebId: webId, delegates: roster });
+  check('the SAME delegate speaking for ITSELF reads as own-account',
+    ownAccount.kind === 'delegate' && ownAccount.footing.kind === 'own-account',
+    ownAccount.kind === 'delegate' ? ownAccount.footing.kind : ownAccount.kind);
+  check('and its standing is untouched by that - still an authorised delegate',
+    ownAccount.kind === 'delegate' && ownAccount.authorised === true);
+  check('the two lines a reader sees are not the same string',
+    authorshipLine(asDelegate, { displayName: 'Mark' }) !== authorshipLine(ownAccount, { displayName: 'Mark' }),
+    authorshipLine(asDelegate, { displayName: 'Mark' }) + ' | ' + authorshipLine(ownAccount, { displayName: 'Mark' }));
+
+  const unfooted = judgeAuthorship(st({ attributedTo: [agentId], generatedBy: [ACT] }),
+    { logOwnerWebId: webId, delegates: roster });
+  check('an entry that declares NEITHER reads as not-stated, not as either of them',
+    unfooted.kind === 'delegate' && unfooted.footing.kind === 'not-stated');
+  const both = judgeAuthorship(
+    st({ attributedTo: [agentId], generatedBy: [ACT], actedOnOwnAccount: [ACT], delegationAgent: [webId], delegationActivity: [ACT], qualifiedDelegation: ['urn:x'] }),
+    { logOwnerWebId: webId, delegates: roster });
+  check('an entry that declares BOTH is disputed rather than resolved', both.kind === 'disputed', both.kind);
+
+  const asPerson = judgeAuthorship(st({ attributedTo: [webId] }), { logOwnerWebId: webId, delegates: roster });
   check('the person\'s own record reads as the principal', asPerson.kind === 'principal', asPerson.kind);
-  const stranger = judgeAuthorship({ attributedTo: ['did:web:example.org:agents:nobody'], actedOnBehalfOf: [webId] },
+  const stranger = judgeAuthorship(
+    st({
+      attributedTo: ['did:web:example.org:agents:nobody'], generatedBy: [ACT],
+      qualifiedDelegation: ['urn:x'], delegationAgent: [webId], delegationActivity: [ACT],
+    }),
     { logOwnerWebId: webId, delegates: roster });
   check('an agent the registry does NOT list reads as unauthorised, not as absent',
     stranger.kind === 'delegate' && stranger.authorised === false);
@@ -131,10 +171,14 @@ async function main(): Promise<void> {
 
   const after = await readDelegates(port, podName);
   check('the pod no longer lists it', !after.rows.some((r) => r.agentId === agentId));
-  const nowUnauthorised = judgeAuthorship({ attributedTo: [agentId], actedOnBehalfOf: [webId] },
-    { logOwnerWebId: webId, delegates: after });
+  const nowUnauthorised = judgeAuthorship(forHuman, { logOwnerWebId: webId, delegates: after });
   check('and a record it already wrote still names it, now reading as NOT authorised',
     nowUnauthorised.kind === 'delegate' && nowUnauthorised.authorised === false);
+  // ★ THE RECORD'S OWN FOOTING IS UNCHANGED BY THE REVOCATION, and must be. What that entry said
+  // it was doing when it was written is a historical fact; whether the agent is still a delegate
+  // today is a different question, and revoking cannot retroactively rewrite the first.
+  check('while what that record SAID it was doing is unchanged - a revoke is not a rewrite',
+    nowUnauthorised.kind === 'delegate' && nowUnauthorised.footing.kind === 'on-behalf-of');
 
   head('result');
   log('  relay:    ' + RELAY);

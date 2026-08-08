@@ -21,7 +21,7 @@
 import {
   ConnectorTransport, WorkspaceClient, acceptGrant, assignPodMarks, authorshipLine, briefPrompt,
   checkDraft, checkOwnHandle, checkRoleForWorkspace, checkWriteEligibility, createWorkspace,
-  decideTurn, delegatePlan, discordLinkPlan, entryShapeAnswer, errorCopy,
+  decideTurn, delegatePlan, entryShapeAnswer, errorCopy, footingLine,
   readDelegates, readEntryAuthorship, REQUIRED_TOOLS,
   foldRoster, graphRegion, grantPodFor, hasType, listWorkspaces, mergeForward, nsIri, orderChain,
   parseRoleProfile, parseWorkspaceIri, podClaimVsServed, podOfDescriptorUrl, pollingWatch, postEntry,
@@ -32,8 +32,20 @@ import {
   delegatePort,
   type CanvasRead, type ChainRow, type Check, type ConnectorMcp, type DelegateRoster, type DelegateRow,
   type EntryAuthorship, type GrantVerdict, type Invitation, type RoleTable, type Seat,
+  type EntryFooting, type StatedFooting,
   type SeenEntry, type SpeakingDelegate, type Viewer, type WorkspaceEntry, type WorkspaceRecord,
 } from '@interego/workspace-client';
+/**
+ * ★ THE DISCORD LINK FORM COMES FROM THE DISCORD CONDUIT, NOT FROM THE SHARED CLIENT.
+ *
+ * `discordLinkPlan` and its snowflake check used to be exported by `@interego/workspace-client` —
+ * a Discord regex inside the package that every surface of this vertical bundles, including a
+ * published artifact that has no Discord feature at all. This shell is the only thing that draws
+ * the link form, so it takes the dependency itself, on the package that owns the conduit. The bot
+ * and this form still compute `challengeLabel` from ONE definition, which is the property that
+ * matters: two spellings of that string would refuse every honest link.
+ */
+import { discordLinkPlan } from '@interego/workspace-discord/src/link-plan.js';
 import type { BridgeFailure, HostedDelegateInfo, ProviderInfo, SessionInfo, WorkspaceBridge } from './preload.js';
 
 declare global {
@@ -1452,7 +1464,14 @@ function delegateRows(box: HTMLElement, pod: string): void {
     const r = el('div', 'member');
     // A distinct badge, because a delegate is a distinct identity and the eye has to catch it.
     const b = el('div', 'badge', '⚙');
-    b.title = 'A delegate of pod ' + pod + '. Its authority is its own row on that pod, not this member\'s.';
+    // ★ WHAT THIS ROSTER SETTLES AND WHAT IT DOES NOT. Standing delegate status is exactly what a
+    // roster is: a row on that person's pod, revocable by them, true until they withdraw it. It
+    // decides nothing at all about whether any PARTICULAR thing this agent wrote was said on their
+    // behalf — that is per-entry and is read off the entry, in the stream. Saying so here is what
+    // stops the roster from being read as a blanket endorsement of everything the agent says.
+    b.title = 'A delegate of pod ' + pod + '. Its authority is its own row on that pod, not this member\'s. '
+      + 'That standing does NOT mean everything it writes is said on their behalf: each entry declares its own '
+      + 'footing, and the stream shows which.';
     r.appendChild(b);
     const right = el('div');
     const nm = el('div', 'mname');
@@ -1685,9 +1704,16 @@ function renderStream(): void {
     // A delegate's entry sits in its delegator's log, so a badge keyed on the pod put "YOU" on
     // something the person did not write — the exact confusion this whole change removes.
     const delegateHere = a?.kind === 'delegate';
-    const badge = el('div', 'badge', delegateHere ? '⚙' : item.st.isYou ? 'YOU' : (S.podMarks.get(item.st.pod) ?? '??'));
+    // ★ THE BADGE SPLITS THE TWO DELEGATE CASES, because a single glyph over both would leave the
+    // whole distinction in the tooltip. "⚙" is a delegate speaking for the person whose log this
+    // is; "⚙!" is one speaking for ITSELF — its own position, which that person is not answerable
+    // for; "⚙?" is one whose record does not say which.
+    const badge = el('div', 'badge', delegateHere
+      ? (a.footing.kind === 'on-behalf-of' ? '⚙' : a.footing.kind === 'own-account' ? '⚙!' : '⚙?')
+      : item.st.isYou ? 'YOU' : (S.podMarks.get(item.st.pod) ?? '??'));
     badge.title = delegateHere
-      ? 'Written by a delegate acting for pod ' + item.st.pod + ', not by that person.'
+      ? 'Written by a delegate of pod ' + item.st.pod + ', not by that person. '
+        + footingLine(a.footing, { who: 'that person', agentName: a.name })
       : 'pod ' + item.st.pod;
     msg.appendChild(badge);
     const right = el('div');
@@ -1709,12 +1735,21 @@ function renderStream(): void {
       author.style.color = a.kind === 'disputed' ? 'var(--refused)' : 'var(--pending)';
       author.title = a.why;
     } else if (a?.kind === 'delegate') {
-      author.title = 'prov:wasAttributedTo ' + a.agentId + ', which the entry declares acted on behalf of '
-        + a.onBehalfOf + '. '
-        + (a.authorised === true ? 'That pod\'s own delegation registry lists this agent' + (a.scope ? ' with scope ' + a.scope : '') + '.'
-          : a.authorised === false ? 'That pod\'s own delegation registry does NOT list this agent, so the entry claims a delegation the pod does not record.'
-            : 'That pod\'s delegation registry has not been read here, so whether the delegation is recorded is not established.');
+      // ★ TWO SENTENCES FOR TWO FACTS, AND THEY ARE ALLOWED TO DISAGREE. The first is STANDING —
+      // is this agent listed on that person's own pod as their delegate — and the second is
+      // PER-ACT: was this particular entry made on their behalf. An agent can be a properly
+      // authorised delegate and still be speaking entirely for itself here, which is the state the
+      // old single sentence could not express at all.
+      author.title = 'prov:wasAttributedTo ' + a.agentId + '. '
+        + footingLine(a.footing, { who: 'that person', agentName: a.name }) + ' '
+        + (a.authorised === true ? 'Separately, and unchanged by any of that: that pod\'s own delegation registry lists this agent'
+              + (a.scope ? ' with scope ' + a.scope : '') + ', so it is their delegate.'
+          : a.authorised === false ? 'And that pod\'s own delegation registry does NOT list this agent at all, so it is not a delegate of theirs by any record they have published.'
+            : 'That pod\'s delegation registry has not been read here, so whether it is their delegate at all is not established.');
       if (a.authorised === false) author.style.color = 'var(--refused)';
+      // Not an error and not a pass. A record that will not say what it was speaking on is a
+      // finding, and the pending colour is what this shell uses for "not established".
+      else if (a.footing.kind === 'not-stated') author.style.color = 'var(--pending)';
     } else if (a?.kind === 'principal') {
       author.title = 'prov:wasAttributedTo ' + a.webId + ' — the owner of the pod this log is on, so this is the person\'s own writing.';
     }
@@ -1838,7 +1873,7 @@ async function delegateClient(address: string): Promise<WorkspaceClient> {
  * DELEGATE'S. Same button, same writer, same readback. Omitted, the person is the author; given,
  * the delegate is the author and the person is who it acted for.
  */
-async function post(as?: { readonly address: string; readonly agentId: string }): Promise<void> {
+async function post(as?: { readonly address: string; readonly agentId: string; readonly footing: StatedFooting }): Promise<void> {
   if (!S.client || !S.viewer || !S.workspace) return;
   const ta = area('composer');
   const body = ta.value.trim();
@@ -1878,8 +1913,11 @@ async function post(as?: { readonly address: string; readonly agentId: string })
   }
   const out = await postEntry(writer, {
     podName: S.viewer.podName, streamIri, workspace: S.workspace, body,
+    // ★ THE FOOTING IS CARRIED FROM THE DRAFT, NOT DECIDED HERE. It is the delegate's own answer,
+    // taken from what its model declared and shown on its Send button before this ran — so the
+    // record states what the agent said it was doing, and the person saw it first.
     author: as
-      ? { kind: 'delegate', agentId: as.agentId, onBehalfOf: S.viewer.webId }
+      ? { kind: 'delegate', agentId: as.agentId, footing: as.footing }
       : { kind: 'principal', webId: S.viewer.webId },
     entryShape: S.record?.entryShape ?? null,
     onAttempt: (n) => {
@@ -2491,8 +2529,16 @@ function renderDelegates(): void {
       + 'authorised is not established — which is not the same as none. ' + (roster.why ?? '')));
   } else if (!roster.delegates.length) {
     list.appendChild(el('div', 'note', 'Your pod authorises no delegates. Nothing will write as you until you authorise one, '
-      + 'and a delegate never writes AS you — it writes as itself, acting for you.'));
+      + 'and a delegate never writes AS you — it writes as itself.'));
   } else {
+    // ★ THE ONE SENTENCE THAT KEEPS THIS CARD FROM BEING READ AS A BLANKET ENDORSEMENT. Everything
+    // below is STANDING: these agents are your delegates until you revoke them. None of it says
+    // that what any of them writes is said on your behalf — a delegate declares that per entry,
+    // and half of the point of authorising one is that it can hold a position you have not taken.
+    list.appendChild(el('div', 'note', 'These are STANDING delegations: each of these agents is your delegate until you '
+      + 'revoke it, and that is a fact about the agent. It is not a statement about anything they say. Every entry a '
+      + 'delegate writes separately declares whether it was speaking FOR you — you share responsibility for those — or on '
+      + 'its OWN account, where it alone is answerable. The stream shows which, per entry.'));
     for (const d of roster.delegates) {
       const item = el('div', 'item');
       const head = el('div');
@@ -2763,8 +2809,24 @@ const A = {
    * moment they change a character the words are theirs again, the delegate's claim on them is
    * dropped, and Post comes back.
    */
-  drafted: null as { address: string; agentId: string; name: string | null; text: string } | null,
+  drafted: null as {
+    address: string; agentId: string; name: string | null; text: string;
+    /**
+     * ★ WHICH FOOTING THE DELEGATE CHOSE, HELD BESIDE THE TEXT SO THE PERSON SEES IT BEFORE IT
+     * SPEAKS. The agent declares this itself — see `briefPrompt` and `checkDraft` — and the Send
+     * button below spells it out, because the difference between "speaking for you" and "speaking
+     * for itself" is the difference between a record you share responsibility for and one you do
+     * not. Discovering that after it is on the chain is too late; the record cannot be edited.
+     */
+    footing: StatedFooting;
+  } | null,
 };
+
+/** The clause the Send button and its notice both use, so the two cannot say different things. */
+const footingPhrase = (f: EntryFooting): string =>
+  f.kind === 'on-behalf-of' ? 'speaking for you'
+    : f.kind === 'own-account' ? 'speaking for itself'
+      : 'footing not stated';
 
 /**
  * The delegate currently selected to speak, resolved against BOTH sides.
@@ -2866,7 +2928,18 @@ function renderAgent(): void {
   // still lands on this pod, so a pod that will not take writes will not take its writes either.
   send.disabled = !!S.writeBlocked;
   if (S.writeBlocked) send.title = S.writeBlocked;
-  send.textContent = A.drafted ? 'Send as ' + (A.drafted.name ?? 'this delegate') : 'Send';
+  // ★ THE BUTTON NAMES THE FOOTING, NOT JUST THE AUTHOR. "Send as Claude side" is the same button
+  // whether the entry will say the person shares responsibility for it or that they do not, and a
+  // person cannot consent to a distinction the control does not show them. The record is permanent.
+  send.textContent = A.drafted
+    ? 'Send as ' + (A.drafted.name ?? 'this delegate') + ', ' + footingPhrase(A.drafted.footing)
+    : 'Send';
+  if (A.drafted) {
+    send.title = footingLine(A.drafted.footing, {
+      who: S.viewer?.displayName ?? 'you', agentName: A.drafted.name,
+    }) + ' Your delegate chose this itself; sending writes it into the record as a permanent, '
+      + 'publicly readable statement that cannot be edited afterwards.';
+  }
   /**
    * ★ AND THE PERSON'S OWN Post IS WITHHELD WHILE THE BOX HOLDS A DELEGATE'S WORDS VERBATIM.
    *
@@ -3031,7 +3104,10 @@ async function agentConsider(): Promise<void> {
     renderAgent();
     return;
   }
-  const draft = checkDraft(turn.text);
+  // The principal a for-you footing would name is supplied HERE and never by the model: it chooses
+  // WHICH footing, this chooses WHO — a model that could name the party would be a model that could
+  // write a delegation for somebody who never granted one.
+  const draft = checkDraft(turn.text, { principal: S.viewer.webId });
   if (!draft.ok) {
     A.phase = 'watching';
     say('agentresult', 'pending', 'Nothing was drafted', draft.why);
@@ -3049,7 +3125,10 @@ async function agentConsider(): Promise<void> {
   // delegate may send, and the two produce different records. Without this the person's own Post
   // button would attribute the delegate's words to them — the very defect being corrected, moved
   // one button along.
-  A.drafted = { address: speaker.address, agentId: speaker.agentId, name: speaker.name, text: draft.body };
+  A.drafted = {
+    address: speaker.address, agentId: speaker.agentId, name: speaker.name, text: draft.body,
+    footing: draft.footing,
+  };
   // Recorded the moment the draft exists, not when it posts: a draft the user discards was still
   // an answer this run produced, and re-producing it on the next poll is the loop, not a feature.
   A.answered.add(decision.answering.descriptorUrl);
@@ -3060,17 +3139,25 @@ async function agentConsider(): Promise<void> {
       : (speaker.name ?? 'Your delegate') + ' drafted this — read it before you send it',
     'Answering ' + shortRef(decision.answering.descriptorUrl) + '. It is in the box below and NOTHING has been written yet. '
     + 'Sending appends a permanent, public record to your pod that cannot be edited or deleted, naming '
-    + speaker.agentId + ' as its author and you as the person it acted for.');
+    + speaker.agentId + ' as its author. ' + footingLine(draft.footing, {
+      who: S.viewer.displayName ?? 'you', agentName: speaker.name,
+    }));
   p.appendChild(kvPair([
     ['author it will carry', speaker.agentId],
-    ['acting for', S.viewer.webId || 'not reported'],
+    // ★ THE FOOTING IS ITS OWN ROW AND NOT FOLDED INTO THE ONE ABOVE IT. "Acting for <you>" used to
+    // be printed under every draft regardless of what the draft said, which is the panel asserting
+    // the thing the record was wrongly asserting. Now it reports the delegate's own answer, and
+    // when that answer is "its own account" this row says so instead of naming a party.
+    ['footing it declared', draft.footing.kind === 'on-behalf-of'
+      ? 'speaking for you — ' + (S.viewer.webId || 'WebID not reported') + ' shares responsibility for it'
+      : 'on its OWN account — you are not answerable for what it says'],
     // Named as the engine, in its own row, so it cannot be mistaken for the identity above it.
     ['model it ran on', provider.label + ' · ' + (provider.account ?? 'account not reported')],
     ['took', (turn.ms / 1000).toFixed(1) + 's'],
   ]));
   p.appendChild(el('div', 'note', 'The Post button below sends as YOU. To send this as ' + (speaker.name ?? 'your delegate')
     + ', use its own button in this panel — the same text sent by the two makes two different records, and only one of them is true.'));
-  if (A.auto) await post({ address: speaker.address, agentId: speaker.agentId });
+  if (A.auto) await post({ address: speaker.address, agentId: speaker.agentId, footing: draft.footing });
 }
 
 function setAgent(on: boolean): void {
@@ -3141,7 +3228,7 @@ inp('agentauto').addEventListener('change', () => {
 });
 // ★ THE DELEGATE'S OWN SEND. `post(as)` — same writer, same readback, different author.
 btn('agentsend').addEventListener('click', () => {
-  if (A.drafted) void post({ address: A.drafted.address, agentId: A.drafted.agentId });
+  if (A.drafted) void post({ address: A.drafted.address, agentId: A.drafted.agentId, footing: A.drafted.footing });
 });
 inp('delegatename').addEventListener('input', renderDelegatePlan);
 inp('delegateagent').addEventListener('input', renderDelegatePlan);

@@ -46,17 +46,27 @@ const iri = (u: string): string => '<' + u + '>';
  * ★ AND THE AUTHORISATION IS A THIRD STATE, NOT A BOOLEAN. A delegate whose delegator's pod could
  * not be read is not an unauthorised delegate; saying so would accuse somebody's agent on the
  * strength of a failed HTTP call.
+ *
+ * ★ AND THE FOOTING IS A SECOND, INDEPENDENT CLAUSE — not a shade of the first. "Is this agent
+ * their delegate" is standing and comes off their pod; "was THIS message said on their behalf"
+ * comes off the entry and is different for every entry. Reading this channel is the main way a
+ * person other than the pod owner encounters these records, so a rendering that ran the two
+ * together would be the place the distinction actually gets lost. Bolded when the answer is "for
+ * itself", because that is the one a skimming reader would otherwise assume the other way.
  */
-function authorOf(a: EntryAuthorship | null): string {
+export function authorOf(a: EntryAuthorship | null): string {
   if (a === null) return '[author not read]';
   switch (a.kind) {
     case 'principal': return '[written by the pod owner]';
     case 'unstated': return '[**author not stated** — this entry names nobody, which is not the same as the pod owner having written it]';
     case 'disputed': return '[**authorship disputed** — ' + a.why + ']';
-    case 'delegate': return '[written by **' + (a.name ?? 'an unnamed delegate') + '**, a delegate acting for the pod owner'
-      + (a.authorised === true ? '; that pod\'s own registry authorises it' + (a.scope ? ' with scope ' + a.scope : '')
-        : a.authorised === false ? '; **that pod\'s registry does NOT list this agent**, so the entry claims a delegation the pod does not record'
-          : '; that pod\'s registry was not read here, so whether the delegation is recorded is not established')
+    case 'delegate': return '[written by **' + (a.name ?? 'an unnamed delegate') + '**, a delegate of the pod owner, '
+      + (a.footing.kind === 'on-behalf-of' ? 'speaking **for them** here — they share responsibility for it'
+        : a.footing.kind === 'own-account' ? 'speaking **for itself** here — its own position, which the pod owner is NOT answerable for'
+          : '**footing not stated** — this entry does not say whether it was written for them or on its own account, and neither reading is being assumed')
+      + (a.authorised === true ? '; separately, that pod\'s own registry authorises it' + (a.scope ? ' with scope ' + a.scope : '')
+        : a.authorised === false ? '; and **that pod\'s registry does NOT list this agent**, so it is not a delegate of theirs by any record they have published'
+          : '; that pod\'s registry was not read here, so whether it is their delegate at all is not established')
       + ']';
   }
 }
@@ -223,7 +233,8 @@ export function renderShow(out: ShowOut): Message {
       lines.push('',
         'Order inside one pod\'s log is the supersession chain those entries declare, which nothing outside that pod can rewrite. Order **between** pods is each entry\'s own `dct:created` — a clock its author\'s client set. The substrate establishes no happens-before across pods, so the interleaving above is a presentation, not a finding.',
         '',
-        '★ The pod is whose LOG an entry is in. **Who wrote it** is the name beside it, read from the entry\'s own `prov:wasAttributedTo`. Where that names a delegate, the entry also declares whom it acted for, and that person\'s own pod is asked whether it authorises the agent — a document only they can write.');
+        '★ The pod is whose LOG an entry is in. **Who wrote it** is the name beside it, read from the entry\'s own `prov:wasAttributedTo`.',
+        '★ Where that names a delegate, THREE separate things are reported and they can disagree. (1) Is it that person\'s delegate at all — asked of their own pod\'s delegation registry, a document only they can write, and standing until they revoke it. (2) What footing THIS entry was on — read from the entry itself, as a `prov:Delegation` over the act that produced it or an `iep:actedOnOwnAccount` declaring the opposite. An agent can be a properly authorised delegate and still be speaking entirely for itself in any given message. (3) Neither, when the entry does not say — which is reported as not saying, and is not read as either.');
       return body(lines, false);
     }
   }

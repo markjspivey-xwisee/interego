@@ -79,13 +79,8 @@ export {
 
 export {
   readMember, checkDelegation, readAuthorship,
-  type DelegationRow, type DelegationVerdict, type AuthorshipReading,
+  type DelegationVerdict, type AuthorshipReading,
 } from './delegation.js';
-
-export {
-  SNOWFLAKE_RX, challengeLabel, discordLinkPlan,
-  type LinkProblem, type LinkPlan,
-} from './agentlink.js';
 
 /**
  * The delegate surface. ★ EVERY NAME HERE EXCEPT THE TWO WORKSPACE ONES IS DEFINED IN
@@ -103,11 +98,13 @@ export {
   DELEGATION_SCOPES, WRITE_ELIGIBLE_SCOPES, isDelegationScope, scopeWriteEligible, AGENT_ID_RX,
   delegateLabel, parseDelegateLabel, delegateNameProblem, delegateAgentId, isDelegateRow,
   readDelegates, delegatePlan, publishDelegation, revokeDelegation,
-  scopeCeiling, judgeAuthorship, authorshipLine,
+  scopeCeiling, judgeAuthorship, authorshipLine, footingLine,
+  footingTurtle, footingActivityIri, footingDelegationIri,
   delegateCeiling, readEntryAuthorship, delegatePort,
   type DelegateRow, type DelegateRoster, type DelegateRegistryPort,
   type DelegateField, type DelegateProblem, type DelegatePlan, type DelegateOutcome,
   type DelegationScope, type CeilingVerdict, type EntryAuthorship,
+  type EntryFooting, type StatedFooting, type AuthorshipStatements,
 } from './delegates.js';
 
 export {

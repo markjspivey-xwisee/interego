@@ -7094,10 +7094,21 @@ async function handlePgslIngest(args: ToolArgs): Promise<string> {
           type: 'Temporal',
           validFrom: now,
         }, {
+          // ★ THE AUTHOR IS THE AGENT THAT ASSERTED IT, matching `ContextDescriptor.delegatedBy`,
+          // which is what every other publish path on this relay goes through. This site builds
+          // the facet by hand and named the OWNER here — so the one endpoint that bypasses the
+          // builder was also the one endpoint that kept the convention the builder just dropped.
+          // Two conventions on one predicate, from one relay, is the whole thing being fixed.
           type: 'Provenance',
-          wasAttributedTo: ownerWebId as IRI,
+          wasAttributedTo: agentId as IRI,
           generatedAtTime: now,
           wasGeneratedBy: { agent: agentId as IRI, endedAt: now },
+        }, {
+          // The owner is not dropped: it is the standing delegation, on the facet that means it.
+          type: 'Agent',
+          assertingAgent: { identity: agentId as IRI, isSoftwareAgent: true },
+          agentRole: 'Author',
+          onBehalfOf: ownerWebId as IRI,
         }],
       );
       const turtle = pgslToTurtle(pgsl);

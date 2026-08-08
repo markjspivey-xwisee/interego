@@ -92,11 +92,25 @@ export function delegateCeiling(args: {
  * Read the authorship of one entry out of its signed Turtle region.
  *
  * ★ A PARSER ADAPTER, AND ONLY THAT. Everything that DECIDES anything — that `unstated` is not
- * "the owner wrote it", that two authors is `disputed` rather than a pick, that the entry must
- * name the pod's own owner as principal and that owner's registry must list the agent — is
- * `judgeAuthorship` at the substrate, where a vertical reading JSON-LD or a parsed store gets
- * the same eight answers from the same code. What is local here is that this vertical's entries
- * are Turtle and `readIriAll` is how its signed regions are read.
+ * "the owner wrote it", that two authors is `disputed` rather than a pick, that a footing the
+ * record does not state is `not-stated` and never a default in somebody's favour, that a
+ * Delegation must name the pod's own owner, and that the owner's registry must list the agent —
+ * is `judgeAuthorship` at the substrate, where a vertical reading JSON-LD or a parsed store gets
+ * the same answers from the same code. What is local here is that this vertical's entries are
+ * Turtle and `readIriAll` is how its signed regions are read.
+ *
+ * ★ SIX LISTS, NOT TWO, AND EVERY ONE OF THEM IS `readIriAll` FOR THE SAME REASON. These readers
+ * are REGION-scoped: they find a predicate anywhere in the block and return its objects, and the
+ * author of the block controls its bytes. So the only safe way to read a field that decides who is
+ * answerable for a sentence is to take EVERY object and let the judge refuse anything but one. A
+ * `readIri` here would silently return whichever the author put first.
+ *
+ * ★ AND THIS IS WHY THE FOOTING NODES ARE NAMED RATHER THAN BLANK. A region-scoped regex cannot
+ * follow `[ a prov:Delegation ; … ]` back to the subject it hangs off, so a blank node would leave
+ * `prov:agent` and `prov:hadActivity` floating with nothing to tie them to this record's own act.
+ * With fragment IRIs the judge can demand that the Delegation's `prov:hadActivity` BE the
+ * `prov:wasGeneratedBy` of this entry — which is the check that makes the footing per-act rather
+ * than merely present.
  */
 export function readEntryAuthorship(
   region: string | null,
@@ -105,7 +119,11 @@ export function readEntryAuthorship(
   return judgeAuthorship(
     region === null ? null : {
       attributedTo: readIriAll(region, 'prov:wasAttributedTo'),
-      actedOnBehalfOf: readIriAll(region, 'prov:actedOnBehalfOf'),
+      generatedBy: readIriAll(region, 'prov:wasGeneratedBy'),
+      qualifiedDelegation: readIriAll(region, 'prov:qualifiedDelegation'),
+      delegationAgent: readIriAll(region, 'prov:agent'),
+      delegationActivity: readIriAll(region, 'prov:hadActivity'),
+      actedOnOwnAccount: readIriAll(region, 'iep:actedOnOwnAccount'),
     },
     args,
   );
@@ -120,9 +138,11 @@ export {
   DELEGATION_SCOPES, WRITE_ELIGIBLE_SCOPES, isDelegationScope, scopeWriteEligible, AGENT_ID_RX,
   delegateLabel, parseDelegateLabel, delegateNameProblem, delegateAgentId,
   isDelegateRow, readDelegates, delegatePlan, publishDelegation, revokeDelegation,
-  scopeCeiling, judgeAuthorship, authorshipLine,
+  scopeCeiling, judgeAuthorship, authorshipLine, footingLine,
+  footingTurtle, footingActivityIri, footingDelegationIri,
 } from '@interego/core/delegate';
 export type {
   DelegateRow, DelegateRoster, DelegateRegistryPort, DelegateField, DelegateProblem,
   DelegatePlan, DelegateOutcome, CeilingVerdict, EntryAuthorship, DelegationScope,
+  EntryFooting, StatedFooting, AuthorshipStatements,
 } from '@interego/core/delegate';

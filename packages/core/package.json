@@ -21,6 +21,10 @@
       "import": "./dist/model/delegate.js",
       "types": "./dist/model/delegate.d.ts"
     },
+    "./relay": {
+      "import": "./dist/relay/index.js",
+      "types": "./dist/relay/index.d.ts"
+    },
     "./rdf": {
       "import": "./dist/rdf/index.js",
       "types": "./dist/rdf/index.d.ts"

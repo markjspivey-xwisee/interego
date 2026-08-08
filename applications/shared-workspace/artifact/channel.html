@@ -857,7 +857,6 @@ var WSPC = (() => {
     SEAT_READ_CAP: () => SEAT_READ_CAP,
     SEAT_SCAN_LIMIT: () => SEAT_SCAN_LIMIT,
     SLUG_RX: () => SLUG_RX,
-    SNOWFLAKE_RX: () => SNOWFLAKE_RX,
     ToolCallError: () => ToolCallError,
     WRITE_ELIGIBLE_SCOPES: () => WRITE_ELIGIBLE_SCOPES,
     WSP: () => WSP,
@@ -871,8 +870,7 @@ var WSPC = (() => {
     awaitHead: () => awaitHead,
     briefPrompt: () => briefPrompt,
     canvasTurtle: () => canvasTurtle,
-    challengeLabel: () => challengeLabel,
-    checkDelegation: () => checkDelegation,
+    checkDelegation: () => checkDelegation2,
     checkDraft: () => checkDraft,
     checkOwnHandle: () => checkOwnHandle,
     checkRoleForWorkspace: () => checkRoleForWorkspace,
@@ -886,7 +884,6 @@ var WSPC = (() => {
     delegateNameProblem: () => delegateNameProblem,
     delegatePlan: () => delegatePlan,
     delegatePort: () => delegatePort,
-    discordLinkPlan: () => discordLinkPlan,
     entryShapeAnswer: () => entryShapeAnswer,
     entryTurtle: () => entryTurtle,
     errorCopy: () => errorCopy,
@@ -894,6 +891,10 @@ var WSPC = (() => {
     fail: () => fail,
     findSeat: () => findSeat,
     foldRoster: () => foldRoster,
+    footingActivityIri: () => footingActivityIri,
+    footingDelegationIri: () => footingDelegationIri,
+    footingLine: () => footingLine,
+    footingTurtle: () => footingTurtle,
     forms: () => forms,
     grantPodFor: () => grantPodFor,
     grantTurtle: () => grantTurtle,
@@ -1509,7 +1510,12 @@ var WSPC = (() => {
       call: problems.length ? null : { tool: "register_agent", args: { agent_id: agentId, scope, label } },
       limits: [
         "This publishes one row on YOUR pod naming one agent. It is a delegate acting for you \u2014 not you, and not any of your other delegates.",
-        "Records it writes land on your pod and in your log, and they name IT as the author and YOU as the person it acted for. A reader can tell them apart from something you wrote, and so can you.",
+        "Records it writes land on your pod and in your log, and they name IT as the author. A reader can tell them apart from something you wrote, and so can you.",
+        // ★ SAID AT THE MOMENT OF CONSENT, because this is the thing a person is most likely to
+        // assume the other way round. Authorising a delegate is not agreeing in advance to
+        // everything it will say: what it says on your behalf and what it says on its own account
+        // are different records, and the second kind is the reason to have one at all.
+        "This delegation is STANDING and it is not an endorsement of anything it will say. Each entry separately declares whether the delegate was speaking FOR you \u2014 those you share responsibility for \u2014 or on its OWN account, where it alone is answerable. It decides that per entry, you can see which before it sends, and every reader can see it afterwards.",
         scope === "PublishOnly" ? "PublishOnly is POD-WIDE. The substrate has no per-graph delegation scope, so this delegate could publish any graph to your pod, not only the records you had in mind. What bounds it is that it is one named agent, every write is attributed to it, and you can withdraw it alone." : "Scope " + scope + " is POD-WIDE and wider than PublishOnly. Whatever it permits, this delegate may do on your whole pod.",
         'The label "' + label + '" is public, and is meant to be. Delegation rows are world-readable; the name is how you and everybody reading tell this delegate from your others. There is nothing in it to steal.',
         "Revoking it is your unilateral act from your own client, and it does not need the delegate to cooperate or even to be running.",
@@ -1572,6 +1578,107 @@ var WSPC = (() => {
       why: "Revoked, and read back from pod " + args.podName + ": the registry no longer lists " + args.agentId + ". The relay may still accept a write it had already cached permission for, for up to 60 seconds."
     };
   }
+  async function checkDelegation(port, args) {
+    const checks = [];
+    const no = (why, extra) => {
+      checks.push({ mark: "n", text: why });
+      return { agentId: args.agentId, podName: args.podName, checks, ok: false, why, row: null, scope: null, basis: null, examinedPod: null, ...extra };
+    };
+    let status;
+    try {
+      status = await port.tool("get_pod_status", { pod_name: args.podName }, { cache: false });
+    } catch (e) {
+      return no("the delegation registry on " + args.podName + " could not be read (" + describe(port, e).toLowerCase() + "), so whether it names this agent is not established");
+    }
+    const bad = relayRefusal(status);
+    if (bad)
+      return no("the read of " + args.podName + " was refused: " + String(bad["message"] ?? bad["error"]));
+    const served = args.podOfUrl(status?.["pod"]);
+    if (served && served !== args.podName) {
+      return no("get_pod_status was asked about pod " + args.podName + " and answered for pod " + served + ". These disagree, so no delegation is being read out of it.");
+    }
+    const reg = status?.["delegationRegistry"];
+    if (!reg) {
+      return no("pod " + args.podName + " reports no delegation registry at all, so whether it delegates anything to this agent is not established \u2014 that is different from it delegating nothing");
+    }
+    const raw = Array.isArray(reg.rows) ? reg.rows : [];
+    const hit = raw.find((r) => r && r["agentId"] === args.agentId);
+    if (!hit) {
+      return no("pod " + args.podName + "'s own delegation registry lists " + raw.length + " live agent" + (raw.length === 1 ? "" : "s") + " and this one is not among them. Nothing was written.");
+    }
+    const row = rowOf(hit, typeof reg.owner === "string" ? reg.owner : null);
+    checks.push({ mark: "y", text: "Pod " + args.podName + "'s own delegation registry \u2014 a document only its owner can write \u2014 lists this agent with scope " + (row.scope || "none reported") });
+    if (args.expectLabel !== void 0) {
+      if (row.label === void 0) {
+        return no("that row carries no label, so this pod's owner has not said who the delegation is for. A row with no label is not evidence against the claimant \u2014 it is no evidence either way, and a binding is not made on no evidence.", { row, scope: row.scope });
+      }
+      if (row.label !== args.expectLabel) {
+        return no(`that row's label is "` + row.label + '", and the delegation would have to be labelled "' + args.expectLabel + '" to be a delegation for the party asking. It must be that exactly, with nothing before or after it.', { row, scope: row.scope });
+      }
+      checks.push({ mark: "y", text: 'Its label is "' + args.expectLabel + `" \u2014 this pod's owner naming, in a document only they can write, who the delegation is for` });
+    }
+    let v;
+    try {
+      v = await port.tool("verify_agent", { agent_id: args.agentId, pod_name: args.podName }, { cache: false });
+    } catch (e) {
+      return no("verify_agent did not answer (" + describe(port, e).toLowerCase() + "), so what the relay would enforce here is not established", { row, scope: row.scope });
+    }
+    const vbad = relayRefusal(v);
+    if (vbad)
+      return no("verify_agent was refused: " + String(vbad["message"] ?? vbad["error"]), { row, scope: row.scope });
+    const examinedPod = typeof v?.["subject_pod_name"] === "string" ? v["subject_pod_name"] : null;
+    if (examinedPod !== null && examinedPod !== args.podName) {
+      return no("verify_agent was asked about pod " + args.podName + " and its answer says it examined pod " + examinedPod + ". These disagree, so it is not being read as a verdict about either.", { row, scope: row.scope, examinedPod });
+    }
+    const enf = v?.["enforcement"];
+    if (!enf) {
+      return no("verify_agent answered without an enforcement block, so what the relay grants this agent on " + args.podName + " is not established here", { row, scope: row.scope, examinedPod });
+    }
+    const basis = typeof enf["basis"] === "string" ? enf["basis"] : null;
+    const scope = typeof enf["scope"] === "string" ? enf["scope"] : row.scope || null;
+    if (enf["writeEligible"] !== true) {
+      return no("the relay reports this agent is not write-eligible on " + args.podName + " (basis " + (basis ?? "not reported") + ", scope " + (scope ?? "not reported") + "). " + String(enf["note"] ?? "") + " A write would be refused, so it is not attempted.", { row, scope, basis, examinedPod });
+    }
+    checks.push({ mark: "y", text: "The relay reports this agent write-eligible on " + args.podName + " with scope " + (scope ?? "not reported") + ', on basis "' + (basis ?? "not reported") + '"' });
+    if (basis === "registry-only") {
+      checks.push({ mark: "q", text: "The signed delegation credential did not anchor; the relay is enforcing this from the pod's own registry alone. That registry is still a document only the pod owner can write, so it is authorisation \u2014 it is just not a cryptographic chain." });
+    }
+    return { agentId: args.agentId, podName: args.podName, checks, ok: true, why: null, row, scope, basis, examinedPod };
+  }
+  function readAuthorship(a) {
+    if (!a || typeof a !== "object") {
+      return {
+        present: false,
+        signerAgent: null,
+        verificationMethod: null,
+        contentBinding: null,
+        proves: [],
+        doesNotProve: ["No authorship block came back with this descriptor, so nothing is established about who wrote it. That is not the same as it being unsigned."]
+      };
+    }
+    const p = a;
+    const signer = typeof p["signer"] === "string" ? p["signer"] : typeof p["signedBy"] === "string" ? p["signedBy"] : null;
+    const vm = typeof p["verificationMethod"] === "string" ? p["verificationMethod"] : null;
+    const binding = typeof p["contentBinding"] === "string" ? p["contentBinding"] : null;
+    const signed = p["signed"] === true || p["authorshipVerified"] === true;
+    const proves = [];
+    const doesNot = [];
+    if (signed) {
+      proves.push(signer ? "The relay signed a statement that the caller it had authenticated as " + signer + " published this descriptor." : "The relay signed a statement about this descriptor, and the response named no agent in it.");
+      if (binding === "bound-at-signing") {
+        proves.push("The signed payload commits to a digest of the entry's canonical triples, so the text cannot be changed afterwards without the proof failing.");
+      } else if (binding === "unbound") {
+        doesNot.push("The proof carries no content digest, so it covers WHICH descriptor was written and not WHAT it says. The text could be replaced and the proof would still verify.");
+      } else if (binding !== null) {
+        doesNot.push('The content binding is reported as "' + binding + '", which is neither a check that passed nor one that failed \u2014 nothing was verified about the text here.');
+      }
+    } else {
+      doesNot.push("The block reports no successful signature, so who asked for this write is not established by it.");
+    }
+    doesNot.push(vm ? "The signature verifies against " + vm + " \u2014 the relay's own delegation key, the same one for every pod and every agent on this deployment. It is NOT the author's wallet, and it is not evidence that any human key signed anything." : "The block names no verification method, so what key this would verify against is not established.");
+    doesNot.push("It says nothing about whether the pod owner authorised the agent named above. That is a separate document \u2014 the pod's own delegation registry \u2014 and it is what checkDelegation reads.");
+    return { present: true, signerAgent: signer, verificationMethod: vm, contentBinding: binding, proves, doesNotProve: doesNot };
+  }
   function scopeCeiling(args) {
     const who = args.delegateName ? '"' + args.delegateName + '"' : "this delegate";
     if (args.scope === null) {
@@ -1591,12 +1698,89 @@ var WSPC = (() => {
       why: "You delegated " + who + " scope " + args.scope + ", which may publish."
     };
   }
+  var footingActivityIri = (entryIri) => entryIri + "#act";
+  var footingDelegationIri = (entryIri) => entryIri + "#delegation";
+  function footingTurtle(args) {
+    const { iri } = args;
+    iri(args.entryIri, "the record IRI a footing is being written for");
+    const act = iri(footingActivityIri(args.entryIri), "the activity IRI for this record");
+    const agent = iri(args.agentId, "the agent id this record is attributed to");
+    const activityBlock = act + "\n  a prov:Activity ;\n  prov:wasAssociatedWith " + agent + ' ;\n  prov:endedAtTime "' + args.endedIso + '"^^xsd:dateTime .\n';
+    if (args.footing.kind === "own-account") {
+      return {
+        generatedBy: "  prov:wasGeneratedBy " + act + " ;\n",
+        // No Delegation names this act, AND that is said rather than left to be inferred from the
+        // absence of one — see `iep:actedOnOwnAccount`.
+        blocks: "\n" + activityBlock + "\n" + agent + " iep:actedOnOwnAccount " + act + " .\n"
+      };
+    }
+    const del = iri(footingDelegationIri(args.entryIri), "the delegation IRI for this record");
+    const principal = iri(args.footing.principal, "the WebID this delegate spoke for in this record");
+    return {
+      generatedBy: "  prov:wasGeneratedBy " + act + " ;\n",
+      blocks: "\n" + activityBlock + "\n" + agent + " prov:qualifiedDelegation " + del + " .\n\n" + del + "\n  a prov:Delegation ;\n  prov:agent " + principal + " ;\n  prov:hadActivity " + act + " .\n"
+    };
+  }
+  function footingOf(st) {
+    const bad = (why) => ({ ok: false, why });
+    const stated = st.qualifiedDelegation.length + st.delegationAgent.length + st.delegationActivity.length + st.actedOnOwnAccount.length;
+    if (st.generatedBy.length > 1) {
+      return bad("this record names " + st.generatedBy.length + " different prov:wasGeneratedBy activities (" + st.generatedBy.join(", ") + "), so which act its footing statements are about is not decided");
+    }
+    if (st.generatedBy.length === 0) {
+      if (stated === 0) {
+        return {
+          ok: true,
+          footing: {
+            kind: "not-stated",
+            why: "this record names no prov:wasGeneratedBy activity and carries neither a prov:Delegation over one nor an iep:actedOnOwnAccount statement, so whether it was written for the person whose log it is in or on its author's own account is not stated \u2014 which is not the same as either of them"
+          }
+        };
+      }
+      return bad("this record carries per-act footing statements and names no prov:wasGeneratedBy activity for them to be about, so what act they are scoped to is not established");
+    }
+    const act = st.generatedBy[0];
+    if (st.actedOnOwnAccount.length > 1) {
+      return bad("this record carries " + st.actedOnOwnAccount.length + " iep:actedOnOwnAccount statements (" + st.actedOnOwnAccount.join(", ") + "), so what its author is claiming sole accountability for is not decided");
+    }
+    const ownFor = st.actedOnOwnAccount.length === 1 ? st.actedOnOwnAccount[0] : null;
+    if (ownFor !== null && ownFor !== act) {
+      return bad("this record states iep:actedOnOwnAccount about " + ownFor + ", which is not the activity that generated it (" + act + "), so it says nothing about the footing of this record");
+    }
+    const anyDelegation = st.qualifiedDelegation.length > 0 || st.delegationAgent.length > 0 || st.delegationActivity.length > 0;
+    if (ownFor !== null && anyDelegation) {
+      return bad("this record states BOTH that a prov:Delegation covers the act that generated it and that its author iep:actedOnOwnAccount for that same act. Those are opposite claims about who is accountable, and this reader will not choose between them.");
+    }
+    if (ownFor !== null)
+      return { ok: true, footing: { kind: "own-account" } };
+    if (!anyDelegation) {
+      return {
+        ok: true,
+        footing: {
+          kind: "not-stated",
+          why: "this record names the act that generated it and says nothing about the footing of that act \u2014 no prov:Delegation covers it and it does not declare iep:actedOnOwnAccount either, so whether its author spoke for the person whose log this is or on its own account is not stated"
+        }
+      };
+    }
+    if (st.qualifiedDelegation.length !== 1) {
+      return bad("this record carries " + st.qualifiedDelegation.length + " prov:qualifiedDelegation statements, so which delegation is being claimed over this act is not decided");
+    }
+    if (st.delegationAgent.length !== 1) {
+      return bad("the prov:Delegation in this record names " + st.delegationAgent.length + " prov:agent values (" + st.delegationAgent.join(", ") + "), so who retains responsibility for this act is not decided");
+    }
+    if (st.delegationActivity.length !== 1) {
+      return bad("the prov:Delegation in this record names " + st.delegationActivity.length + " prov:hadActivity values, so which act it is scoped to is not decided \u2014 and an unscoped delegation is the standing relation, not a statement about this record");
+    }
+    if (st.delegationActivity[0] !== act) {
+      return bad("the prov:Delegation in this record is scoped to activity " + st.delegationActivity[0] + ", and the act that generated this record is " + act + ". A delegation over a different act says nothing about this one.");
+    }
+    return { ok: true, footing: { kind: "on-behalf-of", principal: st.delegationAgent[0] } };
+  }
   function judgeAuthorship(statements, args) {
     if (statements === null) {
       return { kind: "unstated", why: "the signed region of this record could not be located, so nothing about its author was read from bytes anybody signed" };
     }
     const attributed = statements.attributedTo;
-    const behalf = statements.actedOnBehalfOf;
     if (attributed.length === 0) {
       return { kind: "unstated", why: "this record names no prov:wasAttributedTo, so who composed it is not stated in the record \u2014 which is not the same as the pod owner having written it" };
     }
@@ -1607,39 +1791,60 @@ var WSPC = (() => {
     if (!args.logOwnerWebId) {
       return { kind: "disputed", why: "this record is attributed to " + author + " and this reader could not establish whose log it is in, so whether that is the owner or somebody acting for them is not decided" };
     }
+    const read = footingOf(statements);
     if (author === args.logOwnerWebId) {
-      if (behalf.length) {
-        return { kind: "disputed", why: "this record is attributed to the pod owner and ALSO carries a prov:actedOnBehalfOf statement naming " + behalf.join(", ") + ". A person does not act on their own behalf through themselves, so what this record is saying is not established." };
+      if (read.ok && read.footing.kind !== "not-stated") {
+        return {
+          kind: "disputed",
+          why: "this record is attributed to the pod owner and ALSO carries a per-act footing statement (" + (read.footing.kind === "own-account" ? "iep:actedOnOwnAccount" : "a prov:Delegation naming " + read.footing.principal) + "). A person does not act as a delegate of themselves, so what this record is saying is not established."
+        };
       }
+      if (!read.ok)
+        return { kind: "disputed", why: read.why };
       return { kind: "principal", webId: author };
     }
-    if (behalf.length === 0) {
-      return { kind: "disputed", why: "this record is attributed to " + author + ", which is not the owner of the pod it is on (" + args.logOwnerWebId + "), and it states no prov:actedOnBehalfOf. So it claims an author who is neither the log's owner nor declared to be acting for them." };
-    }
-    if (behalf.length > 1) {
-      return { kind: "disputed", why: "this record carries " + behalf.length + " prov:actedOnBehalfOf statements (" + behalf.join(", ") + "), so who " + author + " was acting for is not decided" };
-    }
-    const principal = behalf[0];
-    if (principal !== args.logOwnerWebId) {
-      return { kind: "disputed", why: "this record says " + author + " acted on behalf of " + principal + ", and the pod this log is on belongs to " + args.logOwnerWebId + ". A record in somebody's log declaring it was written for a third party is not something this reader will render as either of them speaking." };
+    if (!read.ok)
+      return { kind: "disputed", why: read.why };
+    if (read.footing.kind === "on-behalf-of" && read.footing.principal !== args.logOwnerWebId) {
+      return {
+        kind: "disputed",
+        why: "this record says " + author + " acted as a delegate of " + read.footing.principal + " when it wrote this, and the pod this log is on belongs to " + args.logOwnerWebId + ". A record in somebody's log declaring it was written for a third party is not something this reader will render as either of them speaking."
+      };
     }
     const row = args.delegates?.read ? args.delegates.rows.find((r) => r.agentId === author) ?? null : null;
     return {
       kind: "delegate",
       agentId: author,
-      onBehalfOf: principal,
+      footing: read.footing,
       name: row?.name ?? null,
       authorised: args.delegates?.read ? row !== null : null,
       scope: row?.scope ?? null
     };
+  }
+  function footingLine(f, args = { who: "the person whose pod this is" }) {
+    const me = args.agentName ? args.agentName : "this delegate";
+    switch (f.kind) {
+      case "on-behalf-of":
+        return "A prov:Delegation in this record covers the act that produced it and names " + f.principal + " as the party that retains responsibility for it \u2014 so " + me + " was speaking FOR them here, and they share in what it says.";
+      case "own-account":
+        return "This record declares iep:actedOnOwnAccount over the act that produced it: no delegation covers it, so " + me + " was speaking for ITSELF here \u2014 its own reasoning and its own position \u2014 and " + args.who + " is not answerable for it. " + me + " is still " + args.who + "'s delegate; that is a standing fact about the agent and is unaffected by the footing of any one thing it says.";
+      case "not-stated":
+        return "This record does not say which footing it was made on \u2014 " + f.why + '. That is not "on their behalf" and it is not "on its own account"; it is a record that does not say, and this reader will not fill it in for either of them.';
+    }
   }
   function authorshipLine(a, args = {}) {
     const who = args.displayName ? args.displayName : "the person whose pod this is";
     switch (a.kind) {
       case "principal":
         return who;
-      case "delegate":
-        return (a.name ? a.name : "an unnamed delegate") + ", acting for " + who;
+      case "delegate": {
+        const name = a.name ? a.name : "an unnamed delegate";
+        if (a.footing.kind === "on-behalf-of")
+          return name + ", speaking for " + who;
+        if (a.footing.kind === "own-account")
+          return name + ", a delegate of " + who + ", speaking for itself";
+        return name + ", a delegate of " + who + " \u2014 footing not stated";
+      }
       case "unstated":
         return "author not stated";
       case "disputed":
@@ -1647,7 +1852,7 @@ var WSPC = (() => {
     }
   }
 
-  // packages/workspace-client/src/transport.ts
+  // packages/core/dist/relay/transport.js
   var ToolCallError = class extends Error {
     constructor(code, message, opts) {
       super(message ?? code);
@@ -1666,11 +1871,14 @@ var WSPC = (() => {
   var fail = (code, message) => new ToolCallError(code, message);
   var refusal = relayRefusal;
   function asRefusal(e) {
-    if (!e || typeof e !== "object") return null;
+    if (!e || typeof e !== "object")
+      return null;
     const err = e;
-    if (err.code !== "tool_error") return null;
+    if (err.code !== "tool_error")
+      return null;
     const env = err.result;
-    if (!env || typeof env !== "object") return null;
+    if (!env || typeof env !== "object")
+      return null;
     return refusal(env.payload);
   }
   var CACHE_KEY_SEP = "\0";
@@ -1679,16 +1887,20 @@ var WSPC = (() => {
     let stopped = false;
     let last = null;
     const tick = async () => {
-      if (stopped) return;
+      if (stopped)
+        return;
       try {
         const payload = await read(name, input);
-        if (stopped) return;
+        if (stopped)
+          return;
         const now = JSON.stringify(payload) ?? "undefined";
-        if (now === last) return;
+        if (now === last)
+          return;
         last = now;
         onEvent({ type: "data", result: { payload } });
       } catch (e) {
-        if (stopped) return;
+        if (stopped)
+          return;
         const err = e;
         last = null;
         onEvent({ type: "error", error: { code: err.code ?? "upstream_error", message: err.message ?? String(e) } });
@@ -1710,7 +1922,8 @@ var WSPC = (() => {
     } catch {
     }
     const data = raw.split("\n").filter((l) => l.startsWith("data:")).map((l) => l.slice(5).trim()).join("");
-    if (!data) return null;
+    if (!data)
+      return null;
     try {
       return JSON.parse(data);
     } catch {
@@ -1771,10 +1984,7 @@ var WSPC = (() => {
       const granted = (result?.tools ?? []).map((t) => t.name).filter((n) => typeof n === "string");
       if (granted.indexOf(probeTool) < 0) {
         const missing = requiredTools.filter((t) => granted.indexOf(t) < 0);
-        throw new ToolCallError(
-          "manifest_incomplete",
-          "The relay answered tools/list and does not expose " + probeTool + ". Reachable: " + (granted.length ? granted.join(", ") : "no tools at all") + ". Missing: " + missing.join(", ") + "."
-        );
+        throw new ToolCallError("manifest_incomplete", "The relay answered tools/list and does not expose " + probeTool + ". Reachable: " + (granted.length ? granted.join(", ") : "no tools at all") + ". Missing: " + missing.join(", ") + ".");
       }
       return { granted };
     }
@@ -1783,7 +1993,8 @@ var WSPC = (() => {
       const stale = opts?.cache ? opts.cache.staleTime : void 0;
       if (stale) {
         const hit = this.cache.get(key);
-        if (hit && Date.now() - hit.at < stale) return hit.payload;
+        if (hit && Date.now() - hit.at < stale)
+          return hit.payload;
       }
       const j = await this.rpc("tools/call", { name, arguments: input }, opts?.signal);
       const rpcErr = j["error"];
@@ -1802,10 +2013,12 @@ var WSPC = (() => {
       }
       if (result.isError) {
         const bad = refusal(payload);
-        if (bad) return payload;
+        if (bad)
+          return payload;
         throw new ToolCallError("tool_error", typeof payload === "string" ? payload : JSON.stringify(payload).slice(0, 400), { result: { payload } });
       }
-      if (stale) this.cache.set(key, { at: Date.now(), payload });
+      if (stale)
+        this.cache.set(key, { at: Date.now(), payload });
       return payload;
     }
     /**
@@ -1860,7 +2073,9 @@ var WSPC = (() => {
       return pollingWatch((n, i) => this.callTool(n, i), name, input, onEvent, opts);
     }
     async invalidate(name) {
-      for (const k of [...this.cache.keys()]) if (k.startsWith(name + CACHE_KEY_SEP)) this.cache.delete(k);
+      for (const k of [...this.cache.keys()])
+        if (k.startsWith(name + CACHE_KEY_SEP))
+          this.cache.delete(k);
     }
   };
   var ConnectorTransport = class {
@@ -1882,18 +2097,15 @@ var WSPC = (() => {
       const hit = servers.find((s) => (s.tools ?? []).some((t) => t?.name === probeTool));
       if (!hit) {
         if (!servers.length) {
-          throw new ToolCallError(
-            "server_not_connected",
-            "No connector answered this page at all. Add the Interego connector in claude.ai under Settings \u2192 Connectors, then reload."
-          );
+          throw new ToolCallError("server_not_connected", "No connector answered this page at all. Add the Interego connector in claude.ai under Settings \u2192 Connectors, then reload.");
         }
         const seen = [];
-        for (const s of servers) for (const t of s.tools ?? []) if (t?.name) seen.push(t.name);
+        for (const s of servers)
+          for (const t of s.tools ?? [])
+            if (t?.name)
+              seen.push(t.name);
         const missing = requiredTools.filter((t) => seen.indexOf(t) < 0);
-        throw new ToolCallError(
-          "manifest_incomplete",
-          "A connector answered \u2014 " + servers.map((s) => s.server).join(", ") + " \u2014 and this page's grant does not include " + probeTool + ". Granted to this page: " + (seen.length ? seen.join(", ") : "no tools at all") + ". Missing: " + missing.join(", ") + ". That list is the `capabilities` argument passed when this page was published, not something the page can ask for at runtime \u2014 so re-publishing this file with all " + requiredTools.length + " names is the fix, and reloading is not."
-        );
+        throw new ToolCallError("manifest_incomplete", "A connector answered \u2014 " + servers.map((s) => s.server).join(", ") + " \u2014 and this page's grant does not include " + probeTool + ". Granted to this page: " + (seen.length ? seen.join(", ") : "no tools at all") + ". Missing: " + missing.join(", ") + ". That list is the `capabilities` argument passed when this page was published, not something the page can ask for at runtime \u2014 so re-publishing this file with all " + requiredTools.length + " names is the fix, and reloading is not.");
       }
       this.server = hit.server;
       this.label = hit.server;
@@ -1901,18 +2113,21 @@ var WSPC = (() => {
       return { granted };
     }
     async callTool(name, input, opts) {
-      if (this.server === null) throw new ToolCallError("server_not_connected", "connect() has not resolved a connector yet.");
+      if (this.server === null)
+        throw new ToolCallError("server_not_connected", "connect() has not resolved a connector yet.");
       try {
         const r = await this.mcp.callTool(this.server, name, input, opts);
         return r?.payload;
       } catch (e) {
         const body = asRefusal(e);
-        if (body) return body;
+        if (body)
+          return body;
         throw e;
       }
     }
     watchTool(name, input, onEvent, opts) {
-      if (this.server === null || !this.mcp.watchTool) return null;
+      if (this.server === null || !this.mcp.watchTool)
+        return null;
       try {
         return this.mcp.watchTool(this.server, name, input, onEvent, opts);
       } catch {
@@ -1920,7 +2135,8 @@ var WSPC = (() => {
       }
     }
     async invalidate(name) {
-      if (this.server === null || !this.mcp.invalidate) return;
+      if (this.server === null || !this.mcp.invalidate)
+        return;
       try {
         await this.mcp.invalidate(this.server, name);
       } catch {
@@ -1928,21 +2144,7 @@ var WSPC = (() => {
     }
   };
 
-  // packages/workspace-client/src/substrate.ts
-  var REQUIRED_TOOLS = [
-    "dereference",
-    "discover_context",
-    "get_current_head",
-    "get_descriptor",
-    "get_pod_status",
-    "invoke_affordance",
-    "notify_agent",
-    "publish_context",
-    "read_inbox",
-    "resolve_webfinger",
-    "verify_agent"
-  ];
-  var PROBE_TOOL = "get_pod_status";
+  // packages/core/dist/relay/client.js
   function errorCopy(err) {
     const e = err;
     const c = e?.code ?? "upstream_error";
@@ -1975,14 +2177,16 @@ var WSPC = (() => {
     }
   }
   function assertPod(asked, gotUrl, where) {
-    if (!asked) return;
+    if (!asked)
+      return;
     const got = typeof gotUrl === "string" ? gotUrl.replace(/\/$/, "").split("/").pop() : null;
-    if (!got) return;
+    if (!got)
+      return;
     if (got !== asked) {
       throw fail("tool_error", where + " was asked for pod " + asked + " and the response says it answered for pod " + got + ". These disagree, so nothing is being read out of it.");
     }
   }
-  var WorkspaceClient = class {
+  var RelayClient = class {
     constructor(relay, transport) {
       __publicField(this, "relay");
       __publicField(this, "transport");
@@ -1996,14 +2200,16 @@ var WSPC = (() => {
     tool(name, input, opts) {
       return this.transport.callTool(name, input, opts);
     }
-    connect() {
-      return this.transport.connect(REQUIRED_TOOLS, PROBE_TOOL);
+    /** Resolve the surface and confirm the tools a caller needs are reachable. */
+    connect(requiredTools, probeTool) {
+      return this.transport.connect(requiredTools, probeTool);
     }
     /** `get_pod_status` — who the viewer is, and the only pod they can write to. */
     async podStatus() {
       const p = await this.tool("get_pod_status", {});
       const bad = refusal(p);
-      if (bad) throw fail("tool_error", String(bad["message"] ?? bad["error"]));
+      if (bad)
+        throw fail("tool_error", String(bad["message"] ?? bad["error"]));
       return p ?? {};
     }
     /**
@@ -2022,7 +2228,8 @@ var WSPC = (() => {
     async currentHead(urn, podName) {
       const p = await this.tool("get_current_head", { urn, pod_name: podName });
       const bad = refusal(p);
-      if (bad) throw fail("tool_error", String(bad["message"] ?? bad["error"]));
+      if (bad)
+        throw fail("tool_error", String(bad["message"] ?? bad["error"]));
       assertPod(podName, p?.["podUrl"], "get_current_head");
       if (p?.["forked"]) {
         return { forked: true, heads: p["heads"] ?? [], message: String(p["message"] ?? "") };
@@ -2053,7 +2260,8 @@ var WSPC = (() => {
     /** `get_descriptor` — the only way to turn an in-fleet descriptor URL into bytes. */
     async descriptor(url) {
       const p = await this.tool("get_descriptor", { url }, { cache: { staleTime: 12e4 } });
-      if (refusal(p)) throw fail("tool_error", String(p?.["message"] ?? p?.["error"]));
+      if (refusal(p))
+        throw fail("tool_error", String(p?.["message"] ?? p?.["error"]));
       return p ?? {};
     }
     /**
@@ -2064,7 +2272,8 @@ var WSPC = (() => {
      */
     async manifest(podName, graphIri) {
       const p = await this.tool("discover_context", { pod_name: podName, graph_iri: graphIri, sort: "oldest-first" });
-      if (refusal(p)) throw fail("tool_error", String(p?.["message"] ?? p?.["error"]));
+      if (refusal(p))
+        throw fail("tool_error", String(p?.["message"] ?? p?.["error"]));
       assertPod(podName, p?.["pod"], "discover_context");
       const entries = p?.["entries"];
       if (!Array.isArray(entries)) {
@@ -2074,6 +2283,133 @@ var WSPC = (() => {
         const d = e["describes"];
         return Array.isArray(d) && d.indexOf(graphIri) >= 0;
       });
+    }
+    /**
+     * One hop from a page that advertises Turtle to the Turtle it advertises.
+     *
+     * A published vocabulary is often an HTML page carrying
+     * `<link rel="alternate" type="text/turtle">`. Following the href the PAGE names is the only
+     * correct way to get from the name to the document — guessing a filename is how a client
+     * ends up reporting a document nobody published.
+     */
+    async fetchProfileTurtle(iri) {
+      const first = await this.tool("dereference", { iri }, { cache: { staleTime: 3e5 } });
+      const rep = String(first?.["representation"] ?? "");
+      const ct = String(first?.["contentType"] ?? "");
+      if (first && first["status"] !== "ok") {
+        throw fail("tool_error", "the role profile at " + iri + " did not resolve (" + String(first["httpStatus"] ?? first["status"]) + ")");
+      }
+      const looksHtml = /html/i.test(ct) || /^\s*<(!doctype|html)/i.test(rep);
+      if (!looksHtml)
+        return { turtle: rep, from: iri, hops: 1 };
+      const m = /<link[^>]+rel=["']?alternate["']?[^>]*>/gi;
+      let href = null;
+      let tag;
+      while (tag = m.exec(rep)) {
+        if (!/type=["']?text\/turtle/i.test(tag[0]))
+          continue;
+        const h = /href=["']([^"']+)["']/i.exec(tag[0]);
+        if (h?.[1]) {
+          href = h[1];
+          break;
+        }
+      }
+      if (!href)
+        throw fail("tool_error", "the role profile page advertises no Turtle alternate, and this reader will not guess a filename for it");
+      const abs = new URL(href, iri).toString();
+      if (new URL(abs).origin !== new URL(iri).origin) {
+        throw fail("tool_error", "the profile page points its Turtle at a different origin, which would hand the governance to a different party");
+      }
+      const second = await this.tool("dereference", { iri: abs }, { cache: { staleTime: 3e5 } });
+      if (!second || second["status"] !== "ok")
+        throw fail("tool_error", "the Turtle the profile page names did not resolve: " + abs);
+      return { turtle: String(second["representation"] ?? ""), from: abs, hops: 2 };
+    }
+    /**
+     * ONE WRITE, THREE STATES, AND THE THIRD ONE IS CHECKED.
+     *
+     * Sending → the relay took it → it is READABLE. The middle state is the relay's own
+     * `status`, and it is not the last one: a write is called readable only when
+     * `get_current_head` returns a head whose descriptorUrl is the descriptorUrl this publish
+     * returned. Backoff 400 ms → 5 s, about 30 s in total, then "accepted and not yet reported
+     * readable" — which is neither saved nor failed, and says so.
+     */
+    async publishAndConfirm(args, podName, graphIri, onState, sleep = (ms) => new Promise((r) => setTimeout(r, ms))) {
+      const tell = (s, d) => {
+        try {
+          onState?.(s, d);
+        } catch {
+        }
+      };
+      tell("sending", "Publishing " + graphIri.replace(/^https:\/\//, ""));
+      const sent = typeof args["pod_name"] === "string" ? args : { ...args, pod_name: podName };
+      let res;
+      try {
+        res = await this.tool("publish_context", sent);
+      } catch (e) {
+        tell("failed", errorCopy(e).t);
+        return { error: e };
+      }
+      const bad = refusal(res);
+      if (bad) {
+        tell("refused", String(bad["error"] ?? "refused"));
+        return { refusal: bad };
+      }
+      const url = res["descriptorUrl"] ?? null;
+      tell("accepted", "The relay reported status " + String(res["status"] ?? "none") + (url ? "" : " and named no descriptor URL"));
+      if (!url)
+        return { res, readable: false, why: "the response named no descriptor URL, so there is nothing to read back and match" };
+      let wait = 400;
+      const until = Date.now() + 3e4;
+      let lastWhy = null;
+      while (Date.now() < until) {
+        await sleep(wait);
+        wait = Math.min(Math.round(wait * 1.6), 5e3);
+        try {
+          const h = await this.currentHead(graphIri, podName);
+          if (h.forked) {
+            lastWhy = "the chain for this IRI has " + h.heads.length + " unresolved heads";
+            continue;
+          }
+          if (h.url === url) {
+            tell("readable", "Read back from " + podName);
+            return { res, readable: true, head: h };
+          }
+          if (h.url)
+            lastWhy = "the head is a different descriptor (" + h.url + ")";
+          else
+            lastWhy = h.message || "the relay reports no head for this IRI yet";
+        } catch (e) {
+          lastWhy = errorCopy(e).t;
+        }
+      }
+      tell("pending", "accepted, not yet reported readable");
+      return { res, readable: false, why: lastWhy ?? "the wait ran out before the head matched" };
+    }
+  };
+
+  // packages/workspace-client/src/substrate.ts
+  var REQUIRED_TOOLS = [
+    "dereference",
+    "discover_context",
+    "get_current_head",
+    "get_descriptor",
+    "get_pod_status",
+    "invoke_affordance",
+    "notify_agent",
+    "publish_context",
+    "read_inbox",
+    "resolve_webfinger",
+    "verify_agent"
+  ];
+  var PROBE_TOOL = "get_pod_status";
+  var WorkspaceClient = class extends RelayClient {
+    /**
+     * The eleven tools, bound. The base takes the list because it has no opinion about which tools
+     * a particular client needs; this one does, and it is `REQUIRED_TOOLS`.
+     */
+    connect() {
+      return super.connect(REQUIRED_TOOLS, PROBE_TOOL);
     }
     /**
      * A member document under either naming form, qualified first.
@@ -2136,101 +2472,6 @@ var WSPC = (() => {
         }
       };
     }
-    /**
-     * One hop from a role-profile page to the Turtle it advertises.
-     *
-     * Our published profile is an HTML page on GitHub Pages carrying
-     * `<link rel="alternate" type="text/turtle">`. Following the href the PAGE names is the only
-     * correct way to get from the name to the document — guessing a filename is how a client
-     * ends up reporting a role table nobody published.
-     */
-    async fetchProfileTurtle(iri) {
-      const first = await this.tool("dereference", { iri }, { cache: { staleTime: 3e5 } });
-      const rep = String(first?.["representation"] ?? "");
-      const ct = String(first?.["contentType"] ?? "");
-      if (first && first["status"] !== "ok") {
-        throw fail("tool_error", "the role profile at " + iri + " did not resolve (" + String(first["httpStatus"] ?? first["status"]) + ")");
-      }
-      const looksHtml = /html/i.test(ct) || /^\s*<(!doctype|html)/i.test(rep);
-      if (!looksHtml) return { turtle: rep, from: iri, hops: 1 };
-      const m = /<link[^>]+rel=["']?alternate["']?[^>]*>/gi;
-      let href = null;
-      let tag;
-      while (tag = m.exec(rep)) {
-        if (!/type=["']?text\/turtle/i.test(tag[0])) continue;
-        const h = /href=["']([^"']+)["']/i.exec(tag[0]);
-        if (h?.[1]) {
-          href = h[1];
-          break;
-        }
-      }
-      if (!href) throw fail("tool_error", "the role profile page advertises no Turtle alternate, and this reader will not guess a filename for it");
-      const abs = new URL(href, iri).toString();
-      if (new URL(abs).origin !== new URL(iri).origin) {
-        throw fail("tool_error", "the profile page points its Turtle at a different origin, which would hand the governance to a different party");
-      }
-      const second = await this.tool("dereference", { iri: abs }, { cache: { staleTime: 3e5 } });
-      if (!second || second["status"] !== "ok") throw fail("tool_error", "the Turtle the profile page names did not resolve: " + abs);
-      return { turtle: String(second["representation"] ?? ""), from: abs, hops: 2 };
-    }
-    /**
-     * ONE WRITE, THREE STATES, AND THE THIRD ONE IS CHECKED.
-     *
-     * Sending → the relay took it → it is READABLE. The middle state is the relay's own
-     * `status`, and it is not the last one: a write is called readable only when
-     * `get_current_head` returns a head whose descriptorUrl is the descriptorUrl this publish
-     * returned. Backoff 400 ms → 5 s, about 30 s in total, then "accepted and not yet reported
-     * readable" — which is neither saved nor failed, and says so.
-     */
-    async publishAndConfirm(args, podName, graphIri, onState, sleep = (ms) => new Promise((r) => setTimeout(r, ms))) {
-      const tell = (s, d) => {
-        try {
-          onState?.(s, d);
-        } catch {
-        }
-      };
-      tell("sending", "Publishing " + graphIri.replace(/^https:\/\//, ""));
-      const sent = typeof args["pod_name"] === "string" ? args : { ...args, pod_name: podName };
-      let res;
-      try {
-        res = await this.tool("publish_context", sent);
-      } catch (e) {
-        tell("failed", errorCopy(e).t);
-        return { error: e };
-      }
-      const bad = refusal(res);
-      if (bad) {
-        tell("refused", String(bad["error"] ?? "refused"));
-        return { refusal: bad };
-      }
-      const url = res["descriptorUrl"] ?? null;
-      tell("accepted", "The relay reported status " + String(res["status"] ?? "none") + (url ? "" : " and named no descriptor URL"));
-      if (!url) return { res, readable: false, why: "the response named no descriptor URL, so there is nothing to read back and match" };
-      let wait = 400;
-      const until = Date.now() + 3e4;
-      let lastWhy = null;
-      while (Date.now() < until) {
-        await sleep(wait);
-        wait = Math.min(Math.round(wait * 1.6), 5e3);
-        try {
-          const h = await this.currentHead(graphIri, podName);
-          if (h.forked) {
-            lastWhy = "the chain for this IRI has " + h.heads.length + " unresolved heads";
-            continue;
-          }
-          if (h.url === url) {
-            tell("readable", "Read back from " + podName);
-            return { res, readable: true, head: h };
-          }
-          if (h.url) lastWhy = "the head is a different descriptor (" + h.url + ")";
-          else lastWhy = h.message || "the relay reports no head for this IRI yet";
-        } catch (e) {
-          lastWhy = errorCopy(e).t;
-        }
-      }
-      tell("pending", "accepted, not yet reported readable");
-      return { res, readable: false, why: lastWhy ?? "the wait ran out before the head matched" };
-    }
   };
 
   // packages/workspace-client/src/chain.ts
@@ -2286,13 +2527,15 @@ var WSPC = (() => {
       return "<" + u + ">";
     };
     if (!Number.isInteger(args.seq) || args.seq < 0) throw new Error("entryTurtle: seq must be a non-negative integer, got " + String(args.seq));
-    const subject = iri(args.streamIri + "/e/" + args.seq, "the entry IRI");
+    const entryIri = args.streamIri + "/e/" + args.seq;
+    const subject = iri(entryIri, "the entry IRI");
     const workspace = iri(args.workspace, "the workspace IRI");
     const prior = args.prior === null ? null : iri(args.prior, "the prior head");
     const a = args.author;
     const author = a.kind === "delegate" ? iri(a.agentId, "the delegate agent id this entry is attributed to") : iri(a.webId, "the WebID this entry is attributed to");
-    const behalf = a.kind === "delegate" ? iri(a.onBehalfOf, "the WebID this delegate acted on behalf of") : null;
-    return "@prefix wsp: <" + WSP + "> .\n@prefix iep: <" + IEP + "> .\n@prefix prov: <" + PROV + "> .\n@prefix dct: <http://purl.org/dc/terms/> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n" + subject + "\n  a wsp:Entry ;\n  wsp:workspace " + workspace + ' ;\n  wsp:seq "' + args.seq + '"^^xsd:nonNegativeInteger ;\n' + (prior ? "  iep:supersedes " + prior + " ;\n" : "") + "  prov:wasAttributedTo " + author + ' ;\n  dct:created "' + (args.createdIso ?? (/* @__PURE__ */ new Date()).toISOString()) + '"^^xsd:dateTime ;\n  dct:description "' + escapeTurtleLiteral(args.body) + '" .\n' + (behalf ? "\n" + author + " prov:actedOnBehalfOf " + behalf + " .\n" : "");
+    const created2 = args.createdIso ?? (/* @__PURE__ */ new Date()).toISOString();
+    const footing = a.kind === "delegate" ? footingTurtle({ entryIri, agentId: a.agentId, footing: a.footing, iri, endedIso: created2 }) : null;
+    return "@prefix wsp: <" + WSP + "> .\n@prefix iep: <" + IEP + "> .\n@prefix prov: <" + PROV + "> .\n@prefix dct: <http://purl.org/dc/terms/> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n" + subject + "\n  a wsp:Entry ;\n  wsp:workspace " + workspace + ' ;\n  wsp:seq "' + args.seq + '"^^xsd:nonNegativeInteger ;\n' + (prior ? "  iep:supersedes " + prior + " ;\n" : "") + "  prov:wasAttributedTo " + author + " ;\n" + (footing ? footing.generatedBy : "") + '  dct:created "' + created2 + '"^^xsd:dateTime ;\n  dct:description "' + escapeTurtleLiteral(args.body) + '" .\n' + (footing ? footing.blocks : "");
   }
   function preconditionLine(pc, sent, sentKind) {
     if (pc && typeof pc === "object") {
@@ -3243,6 +3486,41 @@ var WSPC = (() => {
     return { kind: "resent", onto: h.cid, save };
   }
 
+  // packages/workspace-client/src/delegates.ts
+  var delegatePort = (client) => ({
+    tool: (name, args, opts) => client.tool(name, args, opts),
+    describeError: (e) => errorCopy(e).d
+  });
+  function delegateCeiling(args) {
+    const who = args.delegateName ? '"' + args.delegateName + '"' : "this delegate";
+    const role = checkRoleForWorkspace(args.roles, args.role ?? "");
+    if (!role.ok) {
+      return {
+        ok: false,
+        why: "The role ceiling on the seat " + who + " would write under refuses this. " + role.why + " A delegate inherits its delegator's role and cannot exceed it, so nothing is written."
+      };
+    }
+    const scope = scopeCeiling({ scope: args.scope, delegateName: args.delegateName });
+    if (!scope.ok) return scope;
+    return {
+      ok: true,
+      why: "The seat's role permits this, and " + scope.why.charAt(0).toLowerCase() + scope.why.slice(1) + " Both ceilings hold; neither of them granted anything on its own."
+    };
+  }
+  function readEntryAuthorship(region, args) {
+    return judgeAuthorship(
+      region === null ? null : {
+        attributedTo: readIriAll(region, "prov:wasAttributedTo"),
+        generatedBy: readIriAll(region, "prov:wasGeneratedBy"),
+        qualifiedDelegation: readIriAll(region, "prov:qualifiedDelegation"),
+        delegationAgent: readIriAll(region, "prov:agent"),
+        delegationActivity: readIriAll(region, "prov:hadActivity"),
+        actedOnOwnAccount: readIriAll(region, "iep:actedOnOwnAccount")
+      },
+      args
+    );
+  }
+
   // packages/workspace-client/src/delegation.ts
   async function readMember(client, podName) {
     const status = await client.tool("get_pod_status", { pod_name: podName }, { cache: false });
@@ -3270,176 +3548,8 @@ var WSPC = (() => {
       agentScope: null
     };
   }
-  async function checkDelegation(client, args) {
-    const checks = [];
-    const no = (why, extra) => {
-      checks.push({ mark: "n", text: why });
-      return { agentId: args.agentId, podName: args.podName, checks, ok: false, why, row: null, scope: null, basis: null, examinedPod: null, ...extra };
-    };
-    let status;
-    try {
-      status = await client.tool("get_pod_status", { pod_name: args.podName }, { cache: false });
-    } catch (e) {
-      return no("the delegation registry on " + args.podName + " could not be read (" + errorCopy(e).t.toLowerCase() + "), so whether it names this agent is not established");
-    }
-    const bad = refusal(status);
-    if (bad) return no("the read of " + args.podName + " was refused: " + String(bad["message"] ?? bad["error"]));
-    const served = podOfDescriptorUrl(String(status?.["pod"] ?? "")) ?? null;
-    if (served && served !== args.podName) {
-      return no("get_pod_status was asked about pod " + args.podName + " and answered for pod " + served + ". These disagree, so no delegation is being read out of it.");
-    }
-    const reg = status?.["delegationRegistry"];
-    if (!reg) {
-      return no("pod " + args.podName + " reports no delegation registry at all, so whether it delegates anything to this agent is not established \u2014 that is different from it delegating nothing");
-    }
-    const raw = Array.isArray(reg.rows) ? reg.rows : [];
-    const hit = raw.find((r) => r && r["agentId"] === args.agentId);
-    if (!hit) {
-      return no("pod " + args.podName + "'s own delegation registry lists " + raw.length + " live agent" + (raw.length === 1 ? "" : "s") + " and this one is not among them. Nothing was written.");
-    }
-    const row = {
-      agentId: String(hit["agentId"]),
-      scope: typeof hit["scope"] === "string" ? hit["scope"] : null,
-      label: typeof hit["label"] === "string" ? hit["label"] : null,
-      validFrom: typeof hit["validFrom"] === "string" ? hit["validFrom"] : null
-    };
-    checks.push({ mark: "y", text: "Pod " + args.podName + "'s own delegation registry \u2014 a document only its owner can write \u2014 lists this agent with scope " + (row.scope ?? "none reported") });
-    if (args.expectLabel !== void 0) {
-      if (row.label === null) {
-        return no("that row carries no label, so this pod's owner has not said who the delegation is for. A row with no label is not evidence against the claimant \u2014 it is no evidence either way, and a binding is not made on no evidence.", { row, scope: row.scope });
-      }
-      if (row.label !== args.expectLabel) {
-        return no(`that row's label is "` + row.label + '", and the delegation would have to be labelled "' + args.expectLabel + '" to be a delegation for the party asking. It must be that exactly, with nothing before or after it.', { row, scope: row.scope });
-      }
-      checks.push({ mark: "y", text: 'Its label is "' + args.expectLabel + `" \u2014 this pod's owner naming, in a document only they can write, who the delegation is for` });
-    }
-    let v;
-    try {
-      v = await client.tool("verify_agent", { agent_id: args.agentId, pod_name: args.podName }, { cache: false });
-    } catch (e) {
-      return no("verify_agent did not answer (" + errorCopy(e).t.toLowerCase() + "), so what the relay would enforce here is not established", { row, scope: row.scope });
-    }
-    const vbad = refusal(v);
-    if (vbad) return no("verify_agent was refused: " + String(vbad["message"] ?? vbad["error"]), { row, scope: row.scope });
-    const examinedPod = typeof v?.["subject_pod_name"] === "string" ? v["subject_pod_name"] : null;
-    if (examinedPod !== null && examinedPod !== args.podName) {
-      return no("verify_agent was asked about pod " + args.podName + " and its answer says it examined pod " + examinedPod + ". These disagree, so it is not being read as a verdict about either.", { row, scope: row.scope, examinedPod });
-    }
-    const enf = v?.["enforcement"];
-    if (!enf) {
-      return no("verify_agent answered without an enforcement block, so what the relay grants this agent on " + args.podName + " is not established here", { row, scope: row.scope, examinedPod });
-    }
-    const basis = typeof enf["basis"] === "string" ? enf["basis"] : null;
-    const scope = typeof enf["scope"] === "string" ? enf["scope"] : row.scope;
-    if (enf["writeEligible"] !== true) {
-      return no("the relay reports this agent is not write-eligible on " + args.podName + " (basis " + (basis ?? "not reported") + ", scope " + (scope ?? "not reported") + "). " + String(enf["note"] ?? "") + " A write would be refused, so it is not attempted.", { row, scope, basis, examinedPod });
-    }
-    checks.push({ mark: "y", text: "The relay reports this agent write-eligible on " + args.podName + " with scope " + (scope ?? "not reported") + ', on basis "' + (basis ?? "not reported") + '"' });
-    if (basis === "registry-only") {
-      checks.push({ mark: "q", text: "The signed delegation credential did not anchor; the relay is enforcing this from the pod's own registry alone. That registry is still a document only the pod owner can write, so it is authorisation \u2014 it is just not a cryptographic chain." });
-    }
-    return { agentId: args.agentId, podName: args.podName, checks, ok: true, why: null, row, scope, basis, examinedPod };
-  }
-  function readAuthorship(a) {
-    if (!a || typeof a !== "object") {
-      return {
-        present: false,
-        signerAgent: null,
-        verificationMethod: null,
-        contentBinding: null,
-        proves: [],
-        doesNotProve: ["No authorship block came back with this descriptor, so nothing is established about who wrote it. That is not the same as it being unsigned."]
-      };
-    }
-    const p = a;
-    const signer = typeof p["signer"] === "string" ? p["signer"] : typeof p["signedBy"] === "string" ? p["signedBy"] : null;
-    const vm = typeof p["verificationMethod"] === "string" ? p["verificationMethod"] : null;
-    const binding = typeof p["contentBinding"] === "string" ? p["contentBinding"] : null;
-    const signed = p["signed"] === true || p["authorshipVerified"] === true;
-    const proves = [];
-    const doesNot = [];
-    if (signed) {
-      proves.push(signer ? "The relay signed a statement that the caller it had authenticated as " + signer + " published this descriptor." : "The relay signed a statement about this descriptor, and the response named no agent in it.");
-      if (binding === "bound-at-signing") {
-        proves.push("The signed payload commits to a digest of the entry's canonical triples, so the text cannot be changed afterwards without the proof failing.");
-      } else if (binding === "unbound") {
-        doesNot.push("The proof carries no content digest, so it covers WHICH descriptor was written and not WHAT it says. The text could be replaced and the proof would still verify.");
-      } else if (binding !== null) {
-        doesNot.push('The content binding is reported as "' + binding + '", which is neither a check that passed nor one that failed \u2014 nothing was verified about the text here.');
-      }
-    } else {
-      doesNot.push("The block reports no successful signature, so who asked for this write is not established by it.");
-    }
-    doesNot.push(vm ? "The signature verifies against " + vm + " \u2014 the relay's own delegation key, the same one for every pod and every agent on this deployment. It is NOT the author's wallet, and it is not evidence that any human key signed anything." : "The block names no verification method, so what key this would verify against is not established.");
-    doesNot.push("It says nothing about whether the pod owner authorised the agent named above. That is a separate document \u2014 the pod's own delegation registry \u2014 and it is what checkDelegation reads.");
-    return { present: true, signerAgent: signer, verificationMethod: vm, contentBinding: binding, proves, doesNotProve: doesNot };
-  }
-
-  // packages/workspace-client/src/agentlink.ts
-  var SNOWFLAKE_RX = /^[0-9]{1,20}$/;
-  var challengeLabel = (discordUserId) => "discord-link " + discordUserId;
-  function discordLinkPlan(args) {
-    const problems = [];
-    const agentId = args.botAgentId.trim();
-    const discordUserId = args.discordUserId.trim();
-    if (!agentId) problems.push({ field: "agentId", why: "The bot's agent id is empty. `/workspace link` prints it \u2014 it is the line beginning `did:`." });
-    else if (!AGENT_ID_RX.test(agentId)) {
-      problems.push({ field: "agentId", why: "That is not the shape of an agent id. It should look like `did:ethr:0x\u2026` \u2014 one scheme, a colon, then no spaces or quotes." });
-    }
-    if (!discordUserId) problems.push({ field: "discordUserId", why: "Your Discord user id is empty. `/workspace link` prints it back to you; it is the run of digits." });
-    else if (!SNOWFLAKE_RX.test(discordUserId)) {
-      problems.push({ field: "discordUserId", why: "A Discord user id is digits only, at most 20 of them. This has something else in it, so it is not sent anywhere." });
-    }
-    const label = challengeLabel(discordUserId);
-    return {
-      problems,
-      call: problems.length ? null : {
-        tool: "register_agent",
-        args: { agent_id: agentId, scope: "PublishOnly", label }
-      },
-      limits: [
-        "This publishes one row on YOUR pod naming that one agent. It is not a password and it grants nothing to anybody else.",
-        // The bot's README calls this one of its two honest limits. Repeating it at the moment of
-        // consent rather than in a document nobody opens is the whole point of showing a plan.
-        "PublishOnly is POD-WIDE. The substrate has no per-graph delegation scope, so the bot could publish any graph to your pod \u2014 not only workspace entries. What bounds it is that it is one named agent, every write is content-bound and attributed to it, and you can withdraw it alone.",
-        'The label "' + label + '" is public, and is meant to be. It is you naming which Discord account this is for, in a document only you can write. It is not a code and there is nothing in it to steal.',
-        "You can revoke this at any time from your own client. Revocation is your unilateral act and does not need the bot to cooperate.",
-        // Measured, in delegation.ts's header. A user told "revoked" who then sees a message land
-        // would reasonably conclude the revoke did not work.
-        "For up to 60 seconds after a revoke the relay may still accept a write it had already cached permission for. The bot re-asks before every write and stops itself, but the relay alone is not the boundary."
-      ]
-    };
-  }
-
-  // packages/workspace-client/src/delegates.ts
-  var delegatePort = (client) => ({
-    tool: (name, args, opts) => client.tool(name, args, opts),
-    describeError: (e) => errorCopy(e).d
-  });
-  function delegateCeiling(args) {
-    const who = args.delegateName ? '"' + args.delegateName + '"' : "this delegate";
-    const role = checkRoleForWorkspace(args.roles, args.role ?? "");
-    if (!role.ok) {
-      return {
-        ok: false,
-        why: "The role ceiling on the seat " + who + " would write under refuses this. " + role.why + " A delegate inherits its delegator's role and cannot exceed it, so nothing is written."
-      };
-    }
-    const scope = scopeCeiling({ scope: args.scope, delegateName: args.delegateName });
-    if (!scope.ok) return scope;
-    return {
-      ok: true,
-      why: "The seat's role permits this, and " + scope.why.charAt(0).toLowerCase() + scope.why.slice(1) + " Both ceilings hold; neither of them granted anything on its own."
-    };
-  }
-  function readEntryAuthorship(region, args) {
-    return judgeAuthorship(
-      region === null ? null : {
-        attributedTo: readIriAll(region, "prov:wasAttributedTo"),
-        actedOnBehalfOf: readIriAll(region, "prov:actedOnBehalfOf")
-      },
-      args
-    );
+  function checkDelegation2(client, args) {
+    return checkDelegation(delegatePort(client), { ...args, podOfUrl: podOfDescriptorUrl });
   }
 
   // packages/workspace-client/src/localagent.ts
@@ -3450,12 +3560,15 @@ var WSPC = (() => {
     if (e.pod !== input.mePod) return e.pod + " \xB7 " + authorshipLine(e.author) + ": " + body;
     const a = e.author;
     if (a.kind === "delegate" && input.delegate && a.agentId === input.delegate.agentId) {
-      return "you (" + (a.name ?? "this delegate") + "): " + body;
+      return "you (" + (a.name ?? "this delegate") + ", " + footingWord(a) + "): " + body;
     }
-    if (a.kind === "delegate") return (a.name ?? "an unnamed delegate") + ", another delegate of the person you act for: " + body;
+    if (a.kind === "delegate") {
+      return (a.name ?? "an unnamed delegate") + ", another delegate of the person you act for (" + footingWord(a) + "): " + body;
+    }
     if (a.kind === "principal") return "the person you act for: " + body;
     return "an entry in your delegator's log whose " + (a.kind === "unstated" ? "author is not stated" : "authorship is disputed") + ": " + body;
   };
+  var footingWord = (a) => a.footing.kind === "on-behalf-of" ? "speaking for them" : a.footing.kind === "own-account" ? "speaking for itself" : "footing not stated";
   function decideTurn(input) {
     const seat = input.seats.find((s) => s.pod === input.mePod && s.seated) ?? null;
     if (!seat) {
@@ -3549,16 +3662,36 @@ var WSPC = (() => {
     const who = args.displayName ? args.displayName : "the person you act for";
     const me = args.delegateName ? args.delegateName : "an unnamed delegate";
     return [
-      // ★ THE FIRST THREE LINES ARE THE CORRECTION. They used to say "as their own agent … appended
+      // ★ THE FIRST LINES ARE THE CORRECTION. They used to say "as their own agent … appended
       // to THEIR log as THEIR entry", which told the model it was writing in the person's voice —
       // and it wrote accordingly. It is a delegate: it signs nothing as them, and the record will
       // not read as them either.
-      "You are " + me + ", a delegate acting for " + who + " in a shared workspace conversation.",
+      "You are " + me + ", a delegate of " + who + " in a shared workspace conversation.",
       "You are NOT " + who + ". What you write is appended to their log and recorded as authored by",
-      "YOU, acting on their behalf \u2014 a permanent, signed, publicly readable record that cannot be",
-      "edited or deleted, and that every reader can tell apart from something they typed themselves.",
+      "YOU \u2014 a permanent, signed, publicly readable record that cannot be edited or deleted, and that",
+      "every reader can tell apart from something they typed themselves.",
       "Write as yourself. Do not impersonate them, and do not write in the first person as if you",
       "were them.",
+      "",
+      // ★ THE FOOTING IS THE MODEL'S CALL, AND IT IS ASKED FOR EXPLICITLY RATHER THAN ASSUMED.
+      // Every entry a delegate wrote used to declare it was written on its delegator's behalf,
+      // whatever it said — which quietly put the delegate's own opinions in the delegator's mouth and
+      // left nobody able to say "the agent said that, not me". Being a delegate is standing and is
+      // not in question here; what IS in question is this one sentence. The instruction is deliberate
+      // about which way to lean: relaying a decision or a position that is THEIRS is speaking for
+      // them; reasoning, judging or disagreeing is the agent's own, and claiming their backing for it
+      // is the failure this exists to prevent.
+      "BEFORE your reply, on a line of its own, declare which footing you are speaking on. Exactly",
+      "one of these two lines, verbatim:",
+      "",
+      "  FOOTING: ON THEIR BEHALF   \u2014 you are relaying or representing " + who + ": conveying a",
+      "                               decision, preference or commitment that is THEIRS, which they",
+      "                               would recognise as their own. They share responsibility for it.",
+      "  FOOTING: MY OWN ACCOUNT    \u2014 this is your reasoning, your reading, your position or your",
+      "                               question. YOU are answerable for it and " + who + " is not.",
+      "",
+      "If you are weighing a trade-off, offering an opinion, or asking something they have not asked,",
+      "that is MY OWN ACCOUNT. Do not claim their backing for a view they have not expressed.",
       "",
       "Channel: " + brief.workspace,
       brief.omitted > 0 ? "(" + brief.omitted + " earlier entries are not shown.)" : "(This is the whole channel so far.)",
@@ -3590,21 +3723,40 @@ var WSPC = (() => {
     ].join("\n");
   }
   var NOTHING_TO_ADD = "NOTHING TO ADD";
-  function checkDraft(raw) {
-    const body = raw.trim();
-    if (!body) {
+  var FOOTING_LINE = /^FOOTING:[ \t]*(ON THEIR BEHALF|MY OWN ACCOUNT)[ \t]*$/i;
+  function checkDraft(raw, args) {
+    const whole = raw.trim();
+    if (!whole) {
       return { ok: false, why: "The model returned nothing. An empty entry is still a permanent record, so none is written." };
     }
-    if (body === NOTHING_TO_ADD || body.toUpperCase() === NOTHING_TO_ADD) {
-      return { ok: false, why: "Your agent read the channel and judged there was nothing worth adding. Nothing was written." };
+    const abstain = "Your agent read the channel and judged there was nothing worth adding. Nothing was written.";
+    if (whole.toUpperCase() === NOTHING_TO_ADD) return { ok: false, why: abstain };
+    const nl = whole.indexOf("\n");
+    const first = (nl < 0 ? whole : whole.slice(0, nl)).trim();
+    const m = FOOTING_LINE.exec(first);
+    if (!m) {
+      return {
+        ok: false,
+        why: "Your agent did not declare which footing it was speaking on, so nothing was written. Every entry a delegate writes has to say whether it is speaking FOR you \u2014 in which case you share responsibility for it \u2014 or on its OWN account, in which case it alone does. An entry that states neither would be a permanent record nobody can read that off, and defaulting to either one is exactly what this refuses to do."
+      };
     }
+    const kind = m[1].toUpperCase();
+    const body = (nl < 0 ? "" : whole.slice(nl + 1)).trim();
+    if (!body) {
+      return { ok: false, why: "Your agent declared a footing and then wrote nothing under it. An empty entry is still a permanent record, so none is written." };
+    }
+    if (body.toUpperCase() === NOTHING_TO_ADD) return { ok: false, why: abstain };
     if (body.length > DRAFT_MAX) {
       return {
         ok: false,
         why: "The draft is " + body.length + " characters, over the " + DRAFT_MAX + "-character limit for one entry. It is refused rather than truncated, because half a sentence recorded permanently is worse than none."
       };
     }
-    return { ok: true, body };
+    return {
+      ok: true,
+      body,
+      footing: kind === "MY OWN ACCOUNT" ? { kind: "own-account" } : { kind: "on-behalf-of", principal: args.principal }
+    };
   }
   return __toCommonJS(index_exports);
 })();
@@ -3638,12 +3790,13 @@ const nsIri = (pod, name) => WSPC.nsIri(RELAY, pod, name);
 const qualifiedName = WSPC.qualifiedName, legacyName = WSPC.legacyName;
 const memberDocIris = (memberPod, convenerPod, slug, kind) => WSPC.memberDocIris(RELAY, memberPod, convenerPod, slug, kind);
 const parseAcceptanceIri = (iri, memberPod) => WSPC.parseAcceptanceIri(RELAY, iri, memberPod);
-/* `entryTurtle` keeps its four positional arguments here because every call site below
-   passes them that way; the module takes an object, and the mapping is generated so the
-   two orderings cannot come apart. WORKSPACE is read at call time, not bound here: it
-   changes when the viewer opens a different workspace. */
-const entryTurtle = (streamIri, seq, body, prior) =>
-  WSPC.entryTurtle({ streamIri: streamIri, workspace: WORKSPACE, seq: seq, body: body, prior: prior || null });
+/* ★ NO `entryTurtle` ADAPTER IS BOUND, AND THE ONE THAT USED TO BE HERE WAS A LIE.
+   It took four positional arguments — streamIri, seq, body, prior — and the comment above
+   it said "every call site below passes them that way". No call site below passed them at
+   all: the page appends through `postEntry`, which composes the entry itself. Worse, the
+   adapter omitted `author`, which `entryTurtle` refuses — so the one thing it could have
+   done was throw. Dead code whose comment asserts a fact about the file is worse than dead
+   code, because the next reader believes it. */
 
 /* ══ THE PAGE'S ONE SUBSTRATE CLIENT ═══════════════════════════════════════
    Every read and every write below goes through ONE WSPC.WorkspaceClient over ONE
@@ -3725,7 +3878,13 @@ const awaitHead = WSPC.awaitHead, staleDetail = WSPC.staleDetail;
    with its pod's owner would assert the one thing the distinction exists to stop
    asserting. Bound rather than reimplemented for the reason this whole block exists: the
    page had its own copies of these readers once, and every one of them drifted. */
+/* ★ AND SEPARATELY, WHAT ONE ENTRY WAS SPOKEN ON. Being somebody's delegate is standing;
+   whether a particular sentence was said FOR them is per-entry, and `footingLine` is the
+   one sentence every surface shows for it. Bound, not restated: the desktop shell and the
+   Discord conduit render the same value, and a page with its own wording for it would be
+   the place the distinction quietly softened. */
 const readEntryAuthorship = WSPC.readEntryAuthorship, authorshipLine = WSPC.authorshipLine;
+const footingLine = WSPC.footingLine;
 /* `S.viewer` is read at CALL time and never captured here. It is null until boot resolves
    it, and boot is RE-ENTRANT: the retry control on a startup failure calls it again and
    replaces the object, so a viewer captured now would keep handing the module the previous
@@ -6189,8 +6348,20 @@ function renderMsg(item, same) {
   const { r, p } = item;
   const body = S.bodies.get(r.url);
   const row = el("div", "msg" + (same ? " sameauthor" : ""));
-  const b = el("div", "badge", p.isYou ? "YOU" : podMark(p.pod));
-  b.title = p.pod ? "pod " + p.pod : "no pod resolved for this participant";
+  /* ★ THE BADGE MARKS A DELEGATE'S FOOTING, because the pod alone cannot.
+     "⚙" is a delegate speaking FOR the person whose log this is; "⚙!" is one
+     speaking for ITSELF — its own position, which that person is not
+     answerable for; "⚙?" is one whose record does not say which. A single
+     glyph over all three would leave the whole distinction in a tooltip. */
+  const ba = (S.bodies.get(r.url) || {}).author || null;
+  const dlg = ba && ba.kind === "delegate";
+  const b = el("div", "badge", dlg
+    ? (ba.footing.kind === "on-behalf-of" ? "⚙" : ba.footing.kind === "own-account" ? "⚙!" : "⚙?")
+    : p.isYou ? "YOU" : podMark(p.pod));
+  b.title = dlg
+    ? "Written by a delegate of pod " + p.pod + ", not by that person. "
+      + footingLine(ba.footing, { who: "that person", agentName: ba.name })
+    : p.pod ? "pod " + p.pod : "no pod resolved for this participant";
   b.style.background = p.hue;
   if (p.isYou) { b.style.color = "var(--paper)"; b.style.fontSize = "8px"; }
   row.appendChild(b);
@@ -6213,9 +6384,16 @@ function renderMsg(item, same) {
       au.style.color = a.kind === "disputed" ? "var(--refused)" : "var(--pending)";
       au.title = a.why;
     } else if (a && a.kind === "delegate") {
-      au.title = "prov:wasAttributedTo " + a.agentId + ", which the entry declares acted on behalf of "
-        + a.onBehalfOf + ". This page does not read that pod's delegation registry, so whether the "
-        + "delegation is recorded there is not established here.";
+      /* ★ TWO FACTS, AND ONLY ONE OF THEM IS IN THIS RECORD. The footing is
+         per-entry and is read from the entry's own signed triples. Whether the
+         agent is that person's delegate AT ALL is their pod's registry, which
+         this page deliberately does not read — so it says "not established
+         here" rather than reporting a verdict it did not reach. */
+      au.title = "prov:wasAttributedTo " + a.agentId + ". "
+        + footingLine(a.footing, { who: "that person", agentName: a.name })
+        + " Separately: this page does not read that pod's delegation registry, so whether the "
+        + "agent is listed there as their delegate is not established here.";
+      if (a.footing.kind === "not-stated") au.style.color = "var(--pending)";
     } else if (a && a.kind === "principal") {
       au.title = "prov:wasAttributedTo " + a.webId + " — the owner of the pod this log is on, so this is the person's own writing.";
     }

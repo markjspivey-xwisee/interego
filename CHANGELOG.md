@@ -28,6 +28,46 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
 
 ---
 
+## 2026-08-07 — being somebody's delegate, and speaking for them, are two facts
+
+### Changed
+- **A delegate's standing and the footing of one utterance are no longer the same statement.**
+  Every delegate-authored entry carried `<agent> prov:actedOnBehalfOf <human>` unconditionally, so
+  an agent's own reasoning was recorded as its delegator's and nobody could say "the agent said
+  that, not me." Two facts now, written separately. STANDING lives where it always did — a row on
+  the delegator's own pod, revocable by them, restated on a descriptor's Agent facet as
+  `iep:onBehalfOf`. PER-ACT lives on the record, in PROV's own shape: `prov:qualifiedDelegation`
+  to a named `prov:Delegation` whose `prov:hadActivity` is that entry's own act. PROV-O defines
+  Delegation as authority to carry out "a specific activity … while the agent it acts on behalf of
+  retains some responsibility for the outcome", which is exactly the for-the-human footing and
+  exactly not the other one.
+- **One term minted, because PROV has no negative form.** `iep:actedOnOwnAccount` (domain
+  `prov:Agent`, range `prov:Activity` — the subject position `prov:actedOnBehalfOf` takes) states
+  the other footing POSITIVELY. Absence therefore stays a third answer: an entry that declares
+  neither reads as `not-stated` on every surface, and is never defaulted toward either party.
+- **`ContextDescriptor.delegatedBy()` attributes to whoever authored it.** It pointed
+  `prov:wasAttributedTo` at the pod OWNER while the shared-workspace vertical pointed it at the
+  AGENT; a reader crossing the two got different answers to "who wrote this". Measured before
+  changing it: twelve call sites, six with owner ≠ agent; no SHACL shape constrains that predicate
+  on an `iep:ProvenanceFacet`; no test asserted the value. `generatedBy()` and the relay's
+  hand-built `pgsl_ingest` facet were moved with it so the three cannot disagree again.
+- **A delegate declares its own footing, and the person sees it before it speaks.** `briefPrompt`
+  asks for it, `checkDraft` REFUSES a draft that declares neither rather than defaulting, and the
+  desktop Send button reads "Send as <name>, speaking for you" or "… speaking for itself".
+
+### Fixed
+- **Three layer leaks.** The relay transport and client (`RelayMcpTransport`, `ConnectorTransport`,
+  `pollingWatch`, and the generic half of `WorkspaceClient`) moved from a vertical's package to
+  `@interego/core/relay`, where every client in every vertical reaches them; `WorkspaceClient` is
+  now a `RelayClient` plus the two methods that read workspace documents. `checkDelegation` and
+  `readAuthorship` — the `verify_agent` reading half, entangled with a workspace document reader —
+  moved to `@interego/core/delegate`, dropping the four-field `DelegationRow` in favour of the real
+  `DelegateRow` and taking `Check` down with them. And the Discord snowflake regex and link-plan
+  builder left `@interego/workspace-client` for the conduit that owns them: shared-workspace no
+  longer knows Discord exists.
+
+---
+
 ## 2026-08-07 — a notification fan-out that knows who may see an entry
 
 ### Security
