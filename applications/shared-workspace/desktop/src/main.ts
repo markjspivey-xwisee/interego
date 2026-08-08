@@ -38,6 +38,14 @@ import { CODEX_UNSUPPORTED, probeClaude, runClaude, type ProviderStatus } from '
 const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
 const IDENTITY = process.env['INTEREGO_IDENTITY'] ?? 'https://identity.interego.xwisee.com';
 
+// ★ SMOKE-ONLY: no GPU. Under a virtual display (xvfb) and on a headless CI runner, hardware
+// acceleration cannot initialise; Electron then spins up a GPU child that retries, fails to
+// create its disk cache, and OUTLIVES `app.exit()` — holding the launcher's stdout open so the
+// job never returns and burns its whole 40-minute timeout. This must be called before the app is
+// ready, so it is gated on the env var here, at module load. It changes nothing for a real user
+// (the var is set only by `desktop-package.yml`); the shell still ships with the GPU enabled.
+if (process.env['INTEREGO_DESKTOP_SMOKE'] === '1') app.disableHardwareAcceleration();
+
 /**
  * How long before a bearer expires the renewal is attempted.
  *
@@ -552,8 +560,52 @@ app.whenReady().then(() => {
     return { flagged, killed };
   });
 
-  createWindow();
+  const bootWindow = createWindow();
+  // ★ CI LAUNCH SMOKE TEST — only when the workflow sets INTEREGO_DESKTOP_SMOKE=1. See runLaunchSmoke.
+  if (process.env['INTEREGO_DESKTOP_SMOKE'] === '1') runLaunchSmoke(bootWindow);
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
+
+/**
+ * ★ THE LAUNCH SMOKE TEST, AND WHY IT IS NOT selftest.js.
+ *
+ * `desktop-package.yml` proves the three platforms BUILD. It did not prove they LAUNCH, and two
+ * of them had never been started by anyone. This closes that: gated on INTEREGO_DESKTOP_SMOKE=1
+ * (set only by CI), it boots the REAL main process — every handler above, the real
+ * `createWindow`, the real `index.html` and preload — and asserts the window reaches
+ * `did-finish-load` without the renderer crashing, then exits with a code CI reads.
+ *
+ * ★ IT IS DELIBERATELY NOT selftest.js. That entry signs in to the live relay, requires an OS
+ * secret store — absent on a bare Linux runner, where it exits 2 before touching the network —
+ * and, by its own header, "does NOT cover the renderer … a window nobody looked at is not
+ * evidence a window works." So it cannot answer the question the release actually needs answered:
+ * does the packaged app open a window at all. This can, needs no network and no secret store, and
+ * runs headless under xvfb. selftest.js stays the substrate check; this is the launch check.
+ *
+ * A window that never finishes loading is a FAILURE, reported as one, rather than a hang left to
+ * exhaust the job's 40-minute timeout — a timed-out job says nothing about why.
+ */
+function runLaunchSmoke(win: BrowserWindow): void {
+  const done = (code: number, why: string): void => {
+    process.stdout.write((code === 0 ? 'SMOKE OK: ' : 'SMOKE FAILED: ') + why + '\n');
+    app.exit(code);
+    // ★ FORCE the exit if `app.exit` does not take. A lingering helper process that keeps the
+    // launcher's stdout open is the difference between a 1-second check and a 40-minute timeout,
+    // and this runs on a throwaway runner where an un-reaped child costs nothing.
+    setTimeout(() => process.exit(code), 3000).unref();
+  };
+  const timer = setTimeout(() => done(1, 'the window did not finish loading within 45s'), 45_000);
+  const pass = (): void => {
+    clearTimeout(timer);
+    if (win.isDestroyed()) { done(1, 'the window was destroyed before it finished loading'); return; }
+    done(0, 'window reached did-finish-load; ' + BrowserWindow.getAllWindows().length + ' window(s) open');
+  };
+  win.webContents.on('did-finish-load', pass);
+  win.webContents.on('did-fail-load', (_e, code, desc) => { clearTimeout(timer); done(1, 'did-fail-load ' + code + ' ' + desc); });
+  win.webContents.on('render-process-gone', (_e, d) => { clearTimeout(timer); done(1, 'render-process-gone: ' + d.reason); });
+  // If the page already finished loading before these listeners attached, did-finish-load will
+  // not fire again — cover that so the test cannot hang on a race.
+  if (!win.webContents.isLoading()) pass();
+}
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
