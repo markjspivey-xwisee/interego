@@ -315,10 +315,20 @@ const S = {
 
 // ── the boot checklist ───────────────────────────────────────────────────────
 /**
- * ★ COLD START IS 12–16 s ON A FRESH IDENTITY, because the first pod-aware call PROVISIONS A
- * POD. Measured on this fleet again while building this shell: 16.7 s for a brand-new wallet,
- * 1.8 s for one whose pod already existed. A spinner for sixteen seconds reads as broken, so
- * this counts up and says which step it is on.
+ * ★ COLD START ON A FRESH IDENTITY IS A FEW SECONDS TO ABOUT HALF A MINUTE, because the first
+ * pod-aware call PROVISIONS A POD. A spinner for thirty seconds reads as broken, so this counts
+ * up and says which step it is on.
+ *
+ * ★ AND THE RANGE IS WIDE, WHICH IS THE PART THE COPY HAS TO CARRY. This said "12–16 s" and the
+ * on-screen string said "12 to 17 seconds", both from a handful of measurements taken on one
+ * afternoon. Two brand-new wallets signed in minutes apart on 2026-08-08 took **2.5 s** and
+ * **30.7 s** — an order of magnitude apart, same fleet, same code path. Earlier recorded runs:
+ * 16.7 s for a brand-new wallet and 1.8 s for one whose pod already existed; 12.3 s and 16.2 s
+ * from the published artifact against the same fleet; 30.0 s for the packaged app's first run.
+ *
+ * A narrow range is worse than no range here. Somebody told "12 to 17 seconds" who then waits
+ * thirty concludes it has hung and kills it — during pod provisioning, which is the one moment
+ * where that costs them something. So the number quoted to the user is the SLOW end.
  */
 const T0 = Date.now();
 interface Step { key: string; text: string; state: 'wait' | 'done' | 'err'; at: number | null }
@@ -426,7 +436,7 @@ async function boot(): Promise<void> {
   teardownWorkspace();
   S.handleCheck = null; S.invites = null; S.inviteError = null;
   S.spaces = null; S.spacesError = null; S.writeBlocked = null;
-  step('connect', 'Resolving the tool surface — the first pod-aware call provisions a pod, measured at 12 to 17 seconds', 'wait');
+  step('connect', 'Resolving the tool surface — the first pod-aware call provisions a pod. Measured between 2 and 31 seconds on this fleet, so half a minute here is normal and not a hang', 'wait');
   const client = new WorkspaceClient(S.relay, new ConnectorTransport(bridgeAsMcp()));
   try {
     await client.connect();

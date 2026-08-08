@@ -53,9 +53,11 @@ ceiling, and `readEntryAuthorship`, a Turtle adapter over the substrate's `judge
    the account and signs in; there is no password and no sign-up form. The ceremony happens in the
    system browser rather than in this window, because `clientDataJSON.origin` has to be the
    identity server's and a page loaded from disk cannot produce one — that also means a real
-   platform authenticator instead of a soft key this program made up. First run takes **12–17 s**
-   while the relay provisions a pod; the boot checklist counts up and names the step rather than
-   spinning. Wallet sign-in stays on the same card for people who already have a `u-eth-…` pod.
+   platform authenticator instead of a soft key this program made up. First run takes **anywhere
+   from about 2 s to about 31 s** while the relay provisions a pod — measured at both ends, so
+   half a minute is normal and is not a hang; the boot checklist counts up and names the step
+   rather than spinning. Wallet sign-in stays on the same card for people who already have a
+   `u-eth-…` pod.
 2. **Read *Getting set up*.** Four steps with their real state — account, model, workspace,
    Discord — each marked as established for, established against, or **not established**. Step 2
    is a finding against when the CLI was asked and said no; step 4 is an *unknown*, because
@@ -505,7 +507,15 @@ bytes other people wrote, so it is the half that must not hold a token.
 `http://css.railway.internal:3456/...`, an address inside the fleet — unreachable from a
 laptop. `get_descriptor` is the only way to turn one into bytes, and it is what the client uses.
 
-**Cold start is 12-16 s on a fresh identity**, because the first pod-aware call provisions a
+**Cold start on a fresh identity is 2–31 s** — re-measured 2026-08-08, two brand-new wallets
+signed in minutes apart through `npm run selftest`, one taking **2.5 s** and the other **30.7 s**
+against the same fleet on the same code path. That order-of-magnitude spread is the finding: the
+range quoted below (and previously in the boot copy) was drawn from a handful of runs on one
+afternoon and was too narrow to be safe, because a user told "12 to 17 seconds" who waits thirty
+concludes it has hung and kills the app mid-provision. The user-facing copy now quotes the slow
+end. The older figures, all still valid observations, follow.
+
+Historically: **12-16 s on a fresh identity**, because the first pod-aware call provisions a
 pod. Measured again while this shell was built: **16.7 s** for a brand-new wallet, **1.8 s** for
 one whose pod already existed, and **30.0 s** for the packaged app's first run. The boot
 checklist counts up and names the step rather than showing a spinner.
