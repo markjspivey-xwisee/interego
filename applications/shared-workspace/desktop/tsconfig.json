@@ -3,11 +3,25 @@
   "compilerOptions": {
     "outDir": "./dist",
     "rootDir": "./src",
-    // CommonJS, not ESM: Electron's main process loads `main.js` with `require`, and the
-    // preload script MUST be CommonJS — a preload that is an ES module is rejected by the
-    // sandbox with an error that reads like a missing file.
-    "module": "CommonJS",
-    "moduleResolution": "node",
+    // ★ THIS PROGRAM IS TYPECHECKED, NEVER EMITTED, AND THE RESOLVER HAS TO MATCH THE BUNDLER.
+    //
+    // `npm run build` is `tsc --noEmit` followed by four `esbuild` invocations, and it is
+    // ESBUILD that decides the output format: `--format=cjs` for main/preload/selftest (the
+    // Electron main process loads `main.js` with `require`, and a preload that is an ES module
+    // is rejected by the sandbox with an error that reads like a missing file) and
+    // `--format=iife` for the renderer. `module`/`outDir`/`rootDir` below therefore describe an
+    // emit that never happens; only the RESOLVER is load-bearing.
+    //
+    // It used to say `"moduleResolution": "node"`, and that broke the whole package. node10
+    // resolution predates `exports`, so it cannot see a subpath export: `@interego/core/relay`
+    // — where `RelayClient` moved — did not resolve, `WorkspaceClient extends RelayClient`
+    // collapsed to an error type, and every inherited member (`podStatus`, `tool`, `manifest`,
+    // `descriptor`, `tx`, `fetchProfileTurtle`) reported as missing. 48 errors, so
+    // `npm run build` exited non-zero and `npm run package` could not reach electron-builder at
+    // all. `bundler` is what esbuild itself does, and what every other tsconfig in this repo
+    // uses; it is inherited from tsconfig.base.json along with `module: ESNext`, so both keys
+    // are simply gone from here rather than restated wrongly.
+    "moduleResolution": "bundler",
     // The renderer is a browser document, the main process is Node. Both libs, one program:
     // the type errors that matter here are the ones that cross the IPC boundary.
     "lib": ["ES2022", "DOM"],

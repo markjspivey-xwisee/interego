@@ -108,10 +108,12 @@ const MANIFEST_PATH = '.well-known/context-graphs';
 // 28% of the TTL, and five times below the 500-entry point that was the largest measured
 // success. This is a measurement with a stated budget, not a round number.
 //
-// It is deliberately NOT an env var. The append-only attempt that this replaces put reader
-// behaviour behind `MANIFEST_APPEND_ONLY_ENABLED`, and eleven readers that never consulted it
-// is what disqualified it. Re-tuning is a code change with the measurement above updated in
-// the same edit.
+// It is deliberately NOT an env var. The append-only shard attempt that this replaces put
+// reader behaviour behind an environment flag, and eleven raw-manifest readers that never
+// consulted it is what disqualified it. That flag and both halves of its code path have since
+// been DELETED outright — not left switched off — so there is nothing here for a later reader
+// to find and turn on. Re-tuning the bound is a code change with the measurement above updated
+// in the same edit.
 const MANIFEST_HOT_LIMIT = 100;
 // How many entries stay hot after a roll-over. Half the limit, so one roll-over is amortized
 // over the next 50 publishes rather than firing on every write once the hot doc sits at the
@@ -805,143 +807,30 @@ function manifestEntryTurtle(
   return lines.join('\n');
 }
 
-// ── Append-only manifest shards (bounded-write; feature-flagged) ──
-//
-// The monolithic manifest at <pod>/.well-known/context-graphs is one Turtle
-// resource rewritten in full on every publish (GET → concat one entry → PUT
-// → verify-GET, under If-Match CAS). On a single-replica AzureFile (SMB) pod
-// that whole-resource write is O(entries): once a manifest grows large
-// (observed on a 143KB/224-entry pod) the PUT drives CSS to re-serialize the
-// whole document + dozens of fsync'd SMB round-trips behind an exclusive lock,
-// exceeding the ingress timeout → 504, which blocks all further publishes.
-//
-// With MANIFEST_APPEND_ONLY_ENABLED=true, publish() instead writes each entry
-// as its OWN small resource under <pod>cg-entries/ — one O(1) PUT, no
-// GET/CAS/verify — and discover() UNIONS the monolith with the shard container
-// (dedupe by descriptorUrl, monolith wins). The monolith stays the untouched
-// back-compat read authority; a legacy pod with no cg-entries/ container
-// contributes an empty shard set, so its discover() output is byte-identical.
-// cg-entries/ sits at the pod ROOT (NOT under .well-known/): CSS serializes
-// .well-known/* writes through a shared lock that would collide with the
-// monolith CAS.
-const APPEND_ONLY_ENABLED = String(process.env['MANIFEST_APPEND_ONLY_ENABLED'] ?? '').toLowerCase() === 'true';
-const APPEND_ONLY_CONTAINER_SLUG = 'cg-entries';
-// Listing the shard container is the cost the union adds to every discover(),
-// and container listings on the single-replica AzureFile (SMB) backend are
-// seconds-slow (and can stall). Cache the parsed listing per-pod with a short
-// TTL so bursts of reads amortize it, bound a slow listing with a soft timeout
-// so it can't dominate discover() latency, and invalidate on publish so a
-// same-process shard write is visible at once. Env-tunable.
-const SHARD_CACHE_TTL_MS = Number(process.env['MANIFEST_SHARD_CACHE_TTL_MS'] ?? 10_000);
-const SHARD_PROBE_TIMEOUT_MS = Number(process.env['MANIFEST_SHARD_PROBE_TIMEOUT_MS'] ?? 6_000);
-const shardEntriesCache = new Map<string, { entries: ManifestEntry[]; expiresAt: number }>();
-
-function appendOnlyContainerUrl(pod: string): string {
-  return `${pod}${APPEND_ONLY_CONTAINER_SLUG}/`;
-}
-function appendOnlyEntryUrl(pod: string, descriptorUrl: string): string {
-  // Stable filename from the descriptor URL's last segment (matches the relay's
-  // scheme, so a republish overwrites the SAME shard — still O(1) — and never
-  // orphans the prior one). Deterministic fallback keeps republish idempotent.
-  const tail = descriptorUrl.replace(/\.ttl$/, '').split('/').filter(Boolean).pop() ?? `entry-${descriptorUrl.length}`;
-  return `${appendOnlyContainerUrl(pod)}${tail}.entry.ttl`;
-}
-
-/**
- * Write ONE manifest entry as its own resource — O(1), no whole-manifest RMW.
- * AWAITED + error-surfacing: as the primary write it must not silently drop the
- * index entry. `entryBody` is the already-rendered entry stanza (the same
- * `newEntry` publish() splices into the monolith); we self-prefix it so the
- * shard is a valid standalone Turtle document CSS accepts and parseManifest
- * reads in isolation.
- */
-async function writeShardEntry(pod: string, descriptorUrl: string, entryBody: string, fetchFn: FetchFn): Promise<void> {
-  const url = appendOnlyEntryUrl(pod, descriptorUrl);
-  const shardTurtle = `${turtlePrefixes(['iep', 'xsd', 'dct'])}\n\n${entryBody.trimEnd()}\n`;
-  // Best-effort container bootstrap (CSS auto-creates intermediate containers on
-  // child PUT, but an explicit BasicContainer PUT makes the listing reliable).
-  try {
-    await fetchFn(appendOnlyContainerUrl(pod), {
-      method: 'PUT',
-      headers: { 'Content-Type': TURTLE_CONTENT_TYPE, 'Link': '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"' },
-      body: '',
-    });
-  } catch { /* container may already exist / be auto-created by the entry PUT */ }
-  const res = await withTransientRetry(async () => {
-    const r = await fetchFn(url, { method: 'PUT', headers: { 'Content-Type': TURTLE_CONTENT_TYPE }, body: shardTurtle });
-    if (r.status >= 500) throw new Error(`shard PUT <${url}> failed: ${r.status} ${r.statusText}`);
-    return r;
-  });
-  if (!res.ok && res.status !== 201 && res.status !== 204) {
-    throw new Error(`Failed to write manifest shard ${url}: ${res.status} ${res.statusText}`);
-  }
-  // Invalidate the read cache so a same-process publish is immediately visible.
-  shardEntriesCache.delete(pod);
-}
-
-/**
- * List + parse the append-only shard container. Format-agnostic: GETs the
- * container as Turtle and extracts every member URL ending in `.entry.ttl`
- * (absolutized against the container), then GETs + parseManifest()s them.
- * NEVER throws and returns [] when the container is absent (a legacy pod, or a
- * pod that has never shard-published) — a shard-read failure must not break
- * discover()'s monolith result.
- */
-async function readShardEntries(pod: string, fetchFn: FetchFn): Promise<ManifestEntry[]> {
-  const containerUrl = appendOnlyContainerUrl(pod);
-  try {
-    const listResp = await fetchFn(containerUrl, { method: 'GET', headers: { 'Accept': TURTLE_CONTENT_TYPE } });
-    if (!listResp.ok) return [];
-    const listBody = await listResp.text();
-    const memberUrls = new Set<string>();
-    for (const m of listBody.matchAll(/<([^>]*\.entry\.ttl)>/g)) {
-      try { memberUrls.add(new URL(m[1]!, containerUrl).href); } catch { /* skip unparseable member */ }
-    }
-    if (memberUrls.size === 0) return [];
-    const turtles = await Promise.all([...memberUrls].map(async u => {
-      try {
-        const r = await fetchFn(u, { method: 'GET', headers: { 'Accept': TURTLE_CONTENT_TYPE } });
-        return r.ok ? await r.text() : null;
-      } catch { return null; }
-    }));
-    const combined = turtles.filter((t): t is string => typeof t === 'string').join('\n\n');
-    return combined ? parseManifest(combined) : [];
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Cached + soft-timeout-bounded wrapper over readShardEntries(). Amortizes the
- * SMB-slow container listing across rapid discover() calls; on a slow/failed
- * listing reuses the last-known set (or [] on a cold miss) and refreshes soon,
- * so a transient stall self-heals without either hanging discover() or hiding
- * shards for a full TTL.
- */
-async function readShardEntriesCached(pod: string, fetchFn: FetchFn): Promise<ManifestEntry[]> {
-  const hit = shardEntriesCache.get(pod);
-  if (hit && hit.expiresAt > Date.now()) return hit.entries;
-  let entries: ManifestEntry[];
-  let ttl = SHARD_CACHE_TTL_MS;
-  try {
-    entries = await Promise.race([
-      readShardEntries(pod, fetchFn),
-      new Promise<ManifestEntry[]>((_, reject) =>
-        setTimeout(() => reject(new Error('shard-listing-timeout')), SHARD_PROBE_TIMEOUT_MS)),
-    ]);
-  } catch {
-    entries = hit?.entries ?? [];
-    ttl = 2_000; // slow listing: retry soon rather than caching the fallback for the full TTL
-  }
-  if (shardEntriesCache.size > 512) {
-    const oldest = shardEntriesCache.keys().next().value;
-    if (oldest !== undefined) shardEntriesCache.delete(oldest);
-  }
-  shardEntriesCache.set(pod, { entries, expiresAt: Date.now() + ttl });
-  return entries;
-}
-
 // ── Bounded manifest: document surgery, archive segments, chain reads ──
+//
+// ★ WHAT USED TO BE HERE, AND WHY NOTHING IS. An append-only shard scheme once sat at this
+// point in the file: each manifest entry written as its own resource under `<pod>cg-entries/`
+// (an O(1) PUT instead of the O(entries) whole-manifest CAS rewrite), with `discover()`
+// unioning the shard container back over the monolithic manifest, all behind an environment
+// flag. It composed, and it was still wrong in two ways that no amount of care at the write
+// fixes:
+//
+//   (a) ELEVEN RAW-MANIFEST READERS NEVER CONSULTED THE FLAG. Only `discover()` knew about the
+//       union; everything else that GETs `.well-known/context-graphs` directly — the relay's
+//       CID backfill, `get_current_head`, the status paths — kept reading the monolith alone
+//       and would have gone blind to every shard-written entry. "The monolith is still the
+//       authoritative store" was true only while the flag was OFF; with it on, the sentence
+//       described a pod that did not exist.
+//   (b) RECOVERY EMITTED A PHANTOM ENTRY PER RECORD. `cg-entries/` sat at the pod ROOT, which
+//       `listDescriptorUrls` enumerates, so `rebuild_manifest` re-derived one manifest row per
+//       shard on top of the real descriptor row and roughly doubled the index. That made the
+//       scheme a ONE-WAY DOOR: once a pod had shard-published, the recovery path could not
+//       return it to a correct monolith.
+//
+// The bounded-manifest design below replaces it and is immune to (b) structurally rather than
+// carefully: archive segments live INSIDE `.well-known/`, which `NON_DESCRIPTOR_CONTAINERS`
+// already excludes from the descriptor scan. It has no flag, so (a) cannot recur.
 
 /**
  * Take a manifest document apart into the three pieces a roll-over has to move independently:
@@ -2743,13 +2632,6 @@ export async function publish(
   // Archive segments this publish created, surfaced on the result so a caller (and the live
   // drivers) can see that a roll-over happened rather than infer it from latency.
   const rolledSegments: string[] = [];
-  if (APPEND_ONLY_ENABLED) {
-    // Bounded-write path: append the entry as its own O(1) shard resource under
-    // <pod>cg-entries/ instead of the whole-manifest read-modify-write PUT
-    // (which is O(entries) and 504s on large single-replica AzureFile pods).
-    // discover() unions the shard container with the monolith on read.
-    await writeShardEntry(pod, descriptorUrl, newEntry, fetchFn);
-  } else {
   const maxAttempts = 8;
   let lastError: string | null = null;
   // Per-pod in-process serialization (see manifestWriteQueues above):
@@ -3023,7 +2905,6 @@ export async function publish(
     );
   }
   }); // end withManifestLock
-  } // end else (monolithic manifest write)
 
   // 4. Optional: ingest into PGSL lattice for structural indexing
   let pgslUri: string | undefined;
@@ -3416,22 +3297,7 @@ export async function discover(
   // fetchAllManifestEntries. CSS may serialize same-origin descriptor URLs as RELATIVE (e.g.
   // `../context-graphs/X.ttl`) after a PATCH triggers a re-serialize; downstream consumers
   // call fetch()/new URL() on `descriptorUrl`/`describes`, which throws on a relative string.
-  let entries: ManifestEntry[] = all.entries;
-
-  // Bounded-write path: union the append-only shard container with the monolith,
-  // dedupe by descriptorUrl with the monolith winning on collision (it's the
-  // CAS-verified copy). A legacy pod has no cg-entries/ container, so
-  // readShardEntries yields [] and this is a no-op — discover() returns exactly
-  // the monolith entries it always has (byte-identical back-compat).
-  if (APPEND_ONLY_ENABLED) {
-    const shardEntries = await readShardEntriesCached(pod, fetchFn);
-    if (shardEntries.length) {
-      const byUrl = new Map<string, ManifestEntry>();
-      for (const e of shardEntries) byUrl.set(String(e.descriptorUrl), e);
-      for (const e of entries) byUrl.set(String(e.descriptorUrl), e);
-      entries = [...byUrl.values()];
-    }
-  }
+  const entries: ManifestEntry[] = all.entries;
 
   // Apply filter, then sort, then limit. Order matters: filter first
   // so the sort+limit operate over the relevant slice; sort before
