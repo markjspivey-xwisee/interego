@@ -82,6 +82,13 @@ export const SERVICES = {
   'foxxi-microsite': { repo: 'interego-foxxi-microsite', health: '/health' },
   'foxxi-scorm-player': { repo: 'interego-foxxi-scorm-player', health: '/health' },
 
+  // The shared-workspace Discord bot. `health: null`, DELIBERATELY and for the same class of
+  // reason as css: it is a WORKER, not a server. It dials out to the Discord gateway and the
+  // relay and binds no inbound port, so Railway gives it no public domain and there is nothing to
+  // probe. Its liveness is read from the logs, where it prints its agent DID on boot. See
+  // deploy/Dockerfile.discord and applications/shared-workspace/discord/DEPLOY.md.
+  discord: { repo: 'interego-discord', health: null },
+
   // The one that is not. `interego-css` has never existed at any tag; build-ghcr.yml
   // builds this service under `interego-css-pgsl` (matrix leg with a `prebuild` step for
   // packages/pgsl-store/dist).
