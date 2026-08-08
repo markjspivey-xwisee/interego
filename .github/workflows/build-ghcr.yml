@@ -93,6 +93,10 @@ jobs:
           - { image: interego-foxxi-dashboard,    dockerfile: deploy/Dockerfile.foxxi-dashboard, build_args: "VITE_FOXXI_BRIDGE_URL=https://foxxi-bridge.interego.xwisee.com" }
           - { image: interego-foxxi-microsite,    dockerfile: deploy/Dockerfile.foxxi-microsite, build_args: "VITE_FOXXI_BRIDGE_URL=https://foxxi-bridge.interego.xwisee.com" }
           - { image: interego-foxxi-scorm-player, dockerfile: deploy/Dockerfile.foxxi-scorm-player }
+          # The shared-workspace Discord bot. A worker, not a server — it dials out to the
+          # Discord gateway and the relay and holds no inbound port, so its Railway service has
+          # no public domain and `tools/railway-services.mjs` records `health: null` for it.
+          - { image: interego-discord,            dockerfile: deploy/Dockerfile.discord }
           # ★ THE ONE SERVICE THAT HAD NO BUILD PATH AT ALL.
           #
           # CSS ran `interego-css-pgsl:redis6` — a genuinely mutable tag. It was

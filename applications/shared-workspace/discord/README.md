@@ -189,6 +189,14 @@ To register the commands and exit:
 npm run register-commands --workspace @interego/workspace-discord
 ```
 
+### Deploying it on the fleet, and the full two-person setup
+
+Running it locally is above. To deploy it as a service on Railway — the same GHCR-image path every
+other service uses — and for the complete start-to-finish setup (creating the Discord application,
+the MESSAGE CONTENT intent and what its absence looks like, the invite URL's exact scopes and
+permissions, generating `INTEREGO_BOT_KEY` and what losing it means, and the ordered flow two
+people follow to link their pods and record a thread), see **[`DEPLOY.md`](DEPLOY.md)**.
+
 ---
 
 ## What was driven live, and what was not

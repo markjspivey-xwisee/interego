@@ -1,0 +1,129 @@
+# ────────────────────────────────────────────────────────────
+#  shared-workspace Discord bot — turns a Discord thread into a
+#  substrate-backed, per-author, signed record.
+#
+#  ★ IT IS A WORKER, NOT A SERVER. It holds no inbound HTTP surface: it dials
+#  OUT to the Discord gateway (a WebSocket) and to the relay, and answers slash
+#  commands over that gateway. So there is no port to EXPOSE and no `/health`
+#  to poll — its liveness is read from the logs, where it prints its pod, its
+#  wallet address and, load-bearingly, its agent DID (the string participants
+#  delegate). `tools/railway-services.mjs` records `health: null` for it for the
+#  same reason it does for `css`: a probe would have nothing to hit.
+#
+#  ★ SEPARATE SERVICE, AND IT HOLDS TWO SECRETS. `DISCORD_BOT_TOKEN` is the bot
+#  token; `INTEREGO_BOT_KEY` is the secp256k1 key that IS the bot's identity —
+#  it decides the bot's pod and its agent DID. Both are UNSET in the image on
+#  purpose: baking either into an image publishes it to everyone who can pull.
+#  Unlike the wsp-bridge, this process cannot boot to "nobody" — `src/main.ts`
+#  throws without both — so a container with neither set exits at once and stays
+#  down until they are set on the SERVICE, which is the correct fail-closed
+#  shape for a bot that must never run as a placeholder.
+#
+#  Layout is preserved under /app so the bot's relative import of the vertical's
+#  own sign-in helper (`../../tools/live-identity.ts`) resolves unchanged. Runs
+#  via tsx — the package is `noEmit` by design, there is no build output for it.
+# ────────────────────────────────────────────────────────────
+
+ARG NODE_BASE=node:22-slim
+FROM ${NODE_BASE} AS build
+
+ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip
+
+WORKDIR /app
+
+# Workspace manifests — npm ci resolves the tree from the package.json files
+# present at this point. This mirrors the wsp-bridge image's list (which is
+# deployed and builds) and ADDS the two the bot actually needs and it does not:
+# `packages/workspace-client` (the bot's client), and the bot's own package
+# (`applications/shared-workspace/discord`) so its `ethers`/`ws` deps install.
+COPY package.json package-lock.json tsconfig.base.json tsconfig.json ./
+COPY packages/abac/package.json ./packages/abac/
+COPY packages/compliance/package.json ./packages/compliance/
+COPY packages/connectors/package.json ./packages/connectors/
+COPY packages/constitutional/package.json ./packages/constitutional/
+COPY packages/core/package.json ./packages/core/
+COPY packages/extractors/package.json ./packages/extractors/
+COPY packages/ops/package.json ./packages/ops/
+COPY packages/p2p/package.json ./packages/p2p/
+COPY packages/passport/package.json ./packages/passport/
+COPY packages/pgsl/package.json ./packages/pgsl/
+COPY packages/privacy/package.json ./packages/privacy/
+COPY packages/registry/package.json ./packages/registry/
+COPY packages/security-txt/package.json ./packages/security-txt/
+COPY packages/skills/package.json ./packages/skills/
+COPY packages/solid/package.json ./packages/solid/
+COPY packages/transactions/package.json ./packages/transactions/
+COPY packages/workspace-client/package.json ./packages/workspace-client/
+COPY mcp-server/package.json ./mcp-server/
+COPY deploy/mcp-relay/package.json ./deploy/mcp-relay/
+COPY deploy/identity/package.json ./deploy/identity/
+COPY deploy/validator/package.json ./deploy/validator/
+COPY applications/foxxi-content-intelligence/bridge/package.json ./applications/foxxi-content-intelligence/bridge/
+COPY applications/agentic-performance-practice/bridge/package.json ./applications/agentic-performance-practice/bridge/
+COPY applications/learner-performer-companion/bridge/package.json ./applications/learner-performer-companion/bridge/
+COPY applications/agent-collective/bridge/package.json ./applications/agent-collective/bridge/
+COPY applications/agent-development-practice/bridge/package.json ./applications/agent-development-practice/bridge/
+COPY applications/organizational-working-memory/bridge/package.json ./applications/organizational-working-memory/bridge/
+COPY applications/lrs-adapter/bridge/package.json ./applications/lrs-adapter/bridge/
+COPY applications/shared-workspace/discord/package.json ./applications/shared-workspace/discord/
+RUN npm ci
+
+# tsx for the runtime — the bot ships as TS and is never compiled.
+RUN npm install --no-save tsx@4.22.0
+
+# Only what the bot transitively needs:
+#   packages/                     the @interego/* substrate it imports
+#   applications/shared-workspace the vertical (the bot AND tools/live-identity.ts)
+COPY packages/ ./packages/
+COPY applications/shared-workspace/ ./applications/shared-workspace/
+
+# Compile the @interego/* packages to their dist/ — `@interego/workspace-client`
+# and the core it extends resolve there, so this is load-bearing at runtime.
+RUN npm run build
+
+# Make the packages resolvable by name from anywhere under /app. npm ci already
+# creates these; explicit and idempotent, mirroring the other images — and the
+# bot's own client is added because it is what `src/main.ts` imports.
+RUN mkdir -p node_modules/@interego \
+  && ln -sfn /app/packages/core node_modules/@interego/core \
+  && ln -sfn /app/packages/solid node_modules/@interego/solid \
+  && ln -sfn /app/packages/pgsl node_modules/@interego/pgsl \
+  && ln -sfn /app/packages/workspace-client node_modules/@interego/workspace-client
+
+# ────────────────────────────────────────────────────────────
+#  Runtime stage
+# ────────────────────────────────────────────────────────────
+FROM ${NODE_BASE}
+
+WORKDIR /app
+
+COPY --from=build /app /app
+
+ENV NODE_NO_WARNINGS=1
+
+# The relay the bot signs in to and the identity server that issues its SIWE
+# nonce. Both public hosts — the bot is an ordinary OAuth public client.
+ENV INTEREGO_RELAY=https://relay.interego.xwisee.com
+ENV INTEREGO_IDENTITY=https://identity.interego.xwisee.com
+
+# Where the bot persists which Discord account is linked to which pod, and which
+# thread convenes which workspace. Pointed at /data so a Railway VOLUME mounted
+# there keeps the links across redeploys; with no volume it is ordinary
+# container storage and the links are disposable — re-established with
+# `/workspace link`, which is the documented recovery, not a failure.
+ENV INTEREGO_DISCORD_STATE=/data/discord-workspace.json
+
+# ★ THE TWO SECRETS ARE NOT HERE. Set both on the SERVICE at deploy time:
+#   DISCORD_BOT_TOKEN  — the bot token (Discord Developer Portal → Bot → Reset Token)
+#   INTEREGO_BOT_KEY   — `0x` + `openssl rand -hex 32`; the bot's OWN identity, so
+#                        a new one is a new agent and every participant re-delegates.
+# The process exits until both are present. See discord/DEPLOY.md.
+
+# The commit this image was built from, for parity with every other image even
+# though the bot has no /health to surface it — the alternative is an exemption
+# list, and an exemption list is how a surface goes uncovered. Runtime stage on
+# purpose: ARG does not cross a FROM, and earlier would bust the cache.
+ARG GIT_SHA=unset
+ENV INTEREGO_BUILD_SHA=$GIT_SHA
+
+CMD ["npx", "tsx", "applications/shared-workspace/discord/src/main.ts"]

@@ -221,6 +221,10 @@ const HSTS_SOURCE: Record<string, string | typeof NOT_PUBLIC> = {
   // css-gate, which sends HSTS. It also 500s on any Host other than css.railway.internal,
   // so it has no public surface to protect.
   'interego-css-pgsl': NOT_PUBLIC,
+  // The Discord bot is a WORKER: it dials out to the Discord gateway and the relay and binds
+  // no inbound port, so it has no public HTTPS surface to send HSTS from. See
+  // deploy/Dockerfile.discord and tools/railway-services.mjs (health: null).
+  'interego-discord': NOT_PUBLIC,
 };
 
 describe('HSTS is served by every public surface', () => {

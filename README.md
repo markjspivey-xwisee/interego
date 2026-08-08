@@ -484,6 +484,7 @@ rather than skipping every leg and reporting success:
 - `interego-relay`, `interego-identity`, `interego-css-gate`, `interego-css-pgsl`
 - `interego-dashboard`, `interego-pgsl-browser`, `interego-main`, `interego-microsite`, `interego-bridge`, `interego-acme-id`
 - `interego-foxxi-bridge`, `interego-foxxi-dashboard`, `interego-foxxi-microsite`, `interego-foxxi-scorm-player`
+- `interego-wsp-bridge`, `interego-discord`
 
 > The `az acr build` / `az containerapp update` recipe that stood here is not a fallback —
 > `contextgraphsacr` was deleted with the rest of the Azure footprint, so both commands
