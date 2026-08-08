@@ -464,6 +464,61 @@ describe('bounded manifest — every reader still gets the whole pod', () => {
     expect(read.entries).toHaveLength(301);
   });
 
+  it('follows archive links whose IRI names a host the reader cannot reach', async () => {
+    // ★ THIS IS THE LIVE DEFECT, AND IT SURVIVED EVERY OTHER TEST IN THIS FILE.
+    //
+    // The maintainer pod's manifest is written by the relay against the pod's CANONICAL
+    // internal URL, so after it rolled over every archive link read
+    // `http://css.railway.internal:3456/u-eth-.../.well-known/context-graphs-archive-0000`.
+    // The relay resolved that and reported all 654 rows. A reader reached through the public
+    // gate could not resolve the host at all: all seven segments came back unreachable and
+    // `discover()` refused. Nothing in the in-memory suite noticed, because its fixture writes
+    // links on the same origin it serves them from.
+    //
+    // The IRI is right and must not be rewritten — it matches the 653 descriptor URLs beside
+    // it, and the rule here is that the internal host in stored bytes is canonical and only
+    // the FETCH TARGET is rebased. A segment is always a sibling of its manifest, so that is
+    // where the request goes.
+    const pod0 = makePod({ [MANIFEST]: manifestOf(150) });
+    const d = ContextDescriptor.create('urn:iep:foreign-host' as IRI)
+      .describes('urn:graph:foreign-host' as IRI)
+      .temporal({ validFrom: '2026-12-01T00:00:00Z' })
+      .build();
+    await publish(d, '<urn:s> <urn:p> "v" .', POD, { fetch: pod0.fetch });
+
+    // Rewrite the links to a host that does not exist in the fixture at all — exactly the
+    // shape the live pod has.
+    const rewritten = Object.fromEntries(
+      [...pod0.store].map(([k, v]) => [k, v.replace(/https:\/\/pod\.example\/u\/\.well-known\/context-graphs-archive-/g,
+        'http://css.railway.internal:3456/u/.well-known/context-graphs-archive-')]),
+    );
+    const pod = makePod(rewritten);
+
+    const chain = await fetchManifestChain(MANIFEST, pod.fetch);
+    expect(chain.unreachable).toEqual([]);
+    expect(chain.complete).toBe(true);
+    const read = await fetchAllManifestEntries(MANIFEST, pod.fetch);
+    expect(read.entries).toHaveLength(151);
+    // And the published IRI was left exactly as it was — only the request moved.
+    expect(pod.store.get(MANIFEST)!).toContain('http://css.railway.internal:3456/u/.well-known/context-graphs-archive-0000');
+  });
+
+  it('counts a link it will not follow as UNREADABLE rather than ignoring it', async () => {
+    // The sibling rule refuses names this writer does not produce, which is what stops a
+    // manifest sending a reader to an arbitrary host. Silently dropping such a link would
+    // turn a redirected index into a short one with nothing to show for it.
+    const bogus = `${POD}.well-known/context-graphs-archive-0000`;
+    const pod = makePod({
+      [MANIFEST]: `${PREFIXES}\n\n<${MANIFEST}> a hydra:Collection ;\n`
+        + `    iep:manifestArchive <https://evil.example/exfiltrate> .\n\n${entryBlock(1)}\n`,
+      [bogus]: `${PREFIXES}\n\n${entryBlock(2)}\n`,
+    });
+    const chain = await fetchManifestChain(MANIFEST, pod.fetch);
+    expect(chain.complete).toBe(false);
+    expect(chain.unreachable).toEqual(['https://evil.example/exfiltrate']);
+    expect(pod.requests.some(r => r.includes('evil.example'))).toBe(false);
+  });
+
   it('reports complete:false — and discover() REFUSES — when an advertised segment cannot be read', async () => {
     // ★ THE ABSENCE-AS-EVIDENCE GUARD. A pod whose archive is momentarily unreadable must not
     // read as a smaller pod. Returning the hot slice would be indistinguishable, to the

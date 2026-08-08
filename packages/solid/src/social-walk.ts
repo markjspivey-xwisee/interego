@@ -106,6 +106,25 @@ function absolutize(iri: string, baseUrl: string): string {
  * emits them. `hydra:previous` is read as well because a segment links BACKWARD under that
  * predicate: the chain stays walkable when this walk reaches a segment first.
  */
+/**
+ * A link turned into a request.
+ *
+ * ★ THE IRI IN THE DATA IS CANONICAL AND OFTEN UNFETCHABLE FROM HERE. Measured live: the
+ * maintainer pod's manifest is written by the relay against the pod's internal CSS URL, so
+ * every archive link names `http://css.railway.internal:3456/...`. The relay resolves it; a
+ * walk running anywhere else does not. A segment is always a SIBLING of its manifest, so the
+ * request goes to the manifest's own origin and the stored IRI is left alone — this project's
+ * rule is that the internal host in stored bytes is canonical and only the fetch target moves.
+ * It is also the safer read: a stranger's manifest cannot send this walk to an arbitrary host.
+ */
+function archiveFetchTarget(linkIri: string, manifestUrl: string): string | null {
+  let basename: string;
+  try { basename = new URL(linkIri, manifestUrl).pathname.split('/').filter(Boolean).pop() ?? ''; }
+  catch { return null; }
+  if (!/^context-graphs-archive-\d+$/.test(basename)) return null;
+  try { return new URL(basename, manifestUrl).href; } catch { return null; }
+}
+
 function parseArchiveLinks(turtle: string, baseUrl: string): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
@@ -160,7 +179,13 @@ async function fetchManifestEntries(
   const archiveUrls: string[] = [];
   const archiveBodies: string[] = [];
   const visited = new Set<string>([manifestUrl]);
-  let frontier = parseArchiveLinks(hot, manifestUrl).filter(u => !visited.has(u));
+  // Links become sibling fetch TARGETS before anything else, so `visited` keys on what will
+  // actually be requested rather than on a canonical IRI whose host may differ.
+  const targets = (turtle: string, base: string): string[] =>
+    parseArchiveLinks(turtle, base)
+      .map(l => archiveFetchTarget(l, manifestUrl))
+      .filter((u): u is string => u !== null);
+  let frontier = targets(hot, manifestUrl).filter(u => !visited.has(u));
   while (frontier.length > 0 && visited.size < MANIFEST_ARCHIVE_MAX_SEGMENTS) {
     frontier = frontier.slice(0, MANIFEST_ARCHIVE_MAX_SEGMENTS - visited.size);
     for (const u of frontier) visited.add(u);
@@ -172,7 +197,7 @@ async function fetchManifestEntries(
       if (f.body === null) continue;
       archiveUrls.push(f.url);
       archiveBodies.push(f.body);
-      for (const link of parseArchiveLinks(f.body, f.url)) {
+      for (const link of targets(f.body, f.url)) {
         if (!visited.has(link) && !next.includes(link)) next.push(link);
       }
     }

@@ -259,6 +259,7 @@ import {
   // made of. Only the CID backfill needs it directly — every other relay read goes through
   // `getCachedManifest` → `discover()`, which follows the chain itself.
   parseManifestArchiveUrls,
+  archiveFetchTarget,
   rebuildManifestFromPod,
   subscribe,
   writeAgentRegistry,
@@ -13553,14 +13554,31 @@ app.post('/admin/backfill-manifest-cid', async (req, res) => {
   ];
   const unreadableSegments: Array<{ url: string; error: string }> = [];
   const seenSegments = new Set<string>([manifestUrl]);
-  let pending = parseManifestArchiveUrls(hot.body, manifestUrl).filter(u => !seenSegments.has(u));
+  // ★ A LINK IS CANONICAL; THE REQUEST IS A SIBLING OF THE MANIFEST. The relay happens to be
+  // able to resolve the internal host these links carry, so verbatim would work HERE — but
+  // this endpoint also rewrites what it reads, and resolving the same way every other reader
+  // does is what keeps them from disagreeing about which document a link names. It is also
+  // the safer read: `podUrl` is caller-supplied, and a manifest cannot send this fetch to an
+  // arbitrary host.
+  const segmentTargets = (turtle: string, base: string): { ok: string[]; bad: string[] } => {
+    const ok: string[] = []; const bad: string[] = [];
+    for (const l of parseManifestArchiveUrls(turtle, base)) {
+      const t = archiveFetchTarget(l, manifestUrl); if (t === null) bad.push(l); else ok.push(t);
+    }
+    return { ok, bad };
+  };
+  const firstTargets = segmentTargets(hot.body, manifestUrl);
+  for (const b of firstTargets.bad) unreadableSegments.push({ url: b, error: 'not a recognisable archive segment name' });
+  let pending = firstTargets.ok.filter(u => !seenSegments.has(u));
   while (pending.length > 0 && seenSegments.size < 512) {
     const url = pending.shift()!;
     seenSegments.add(url);
     const seg = await fetchDoc(url);
     if ('error' in seg) { unreadableSegments.push({ url, error: seg.error }); continue; }
     documents.push({ url, body: seg.body, etag: seg.etag });
-    for (const next of parseManifestArchiveUrls(seg.body, url)) {
+    const onward = segmentTargets(seg.body, url);
+    for (const b of onward.bad) unreadableSegments.push({ url: b, error: 'not a recognisable archive segment name' });
+    for (const next of onward.ok) {
       if (!seenSegments.has(next) && !pending.includes(next)) pending.push(next);
     }
   }
