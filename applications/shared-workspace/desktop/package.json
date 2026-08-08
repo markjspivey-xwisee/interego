@@ -16,9 +16,9 @@
     "start": "npm run build && electron dist/main.js",
     "clean": "rm -rf dist/ release/",
     "selftest": "npm run build && electron dist/selftest.js",
-    "package": "npm run build && electron-builder --win --config electron-builder.yml",
-    "package:linux": "npm run build && electron-builder --linux --config electron-builder.yml",
-    "package:mac": "npm run build && electron-builder --mac --config electron-builder.yml"
+    "package": "npm run build && electron-builder --win --publish never --config electron-builder.yml",
+    "package:linux": "npm run build && electron-builder --linux --publish never --config electron-builder.yml",
+    "package:mac": "npm run build && electron-builder --mac --publish never --config electron-builder.yml"
   },
   "engines": {
     "node": ">=20.0.0"
