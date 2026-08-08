@@ -42,6 +42,7 @@ import {
   discover,
   fetchGraphContent,
   publish,
+  parseManifestArchiveUrls,
 } from '@interego/solid';
 import type {
   ContextDescriptorData,
@@ -870,11 +871,30 @@ export async function backupTenantPod(args: {
   // Guard the pod host BEFORE any fetch (manifest included) — parity with the
   // sibling readers (round-26 defense-in-depth; podUrl is admin-pinned here).
   await assertSafeFetchTarget(args.podUrl); // SSRF: caller pod fetched via discover()
-  // Pull manifest first for record-keeping.
+  // Pull the index for record-keeping — ALL of it.
+  //
+  // ★ A BACKUP IS THE LAST PLACE A PARTIAL VIEW MAY GO UNLABELLED. A pod's manifest is
+  // bounded: past a threshold its older rows live in write-once archive segments that the
+  // hot document links, and reading only the hot document would put a plausible, valid,
+  // SHORT manifest in a field called `manifest`. The restored data itself would be fine —
+  // `entries` below comes from `discover()`, which unions the chain — but a future restore
+  // tool that rebuilt an index from this field would truncate the pod it was recovering, and
+  // would look right while doing it. Concatenating the chain keeps the field's name true.
+  const manifestUrl = `${args.podUrl.replace(/\/$/, '')}/.well-known/context-graphs`;
   let manifestText = '';
   try {
-    const mr = await safeFetch(`${args.podUrl.replace(/\/$/, '')}/.well-known/context-graphs`, {}, fetchFn as never);
-    if (mr.ok) manifestText = await mr.text();
+    const mr = await safeFetch(manifestUrl, {}, fetchFn as never);
+    if (mr.ok) {
+      const hot = await mr.text();
+      const parts = [hot];
+      for (const seg of parseManifestArchiveUrls(hot, manifestUrl)) {
+        try {
+          const sr = await safeFetch(seg, {}, fetchFn as never);
+          if (sr.ok) parts.push(await sr.text());
+        } catch { /* an unreachable segment is reported by discover()'s own refusal below */ }
+      }
+      manifestText = parts.join('\n\n');
+    }
   } catch { /* */ }
 
   const entries = await discover(args.podUrl, undefined, { fetch: guardedFetchFn(args.fetch) as never }); // re-guard manifest hop + redirects
