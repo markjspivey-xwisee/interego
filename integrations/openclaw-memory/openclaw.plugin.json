@@ -19,7 +19,7 @@
       },
       "onBehalfOf": {
         "type": "string",
-        "description": "Optional DID of the human / org owner the agent is acting on behalf of. If set, descriptors are wasAttributedTo this owner; the agent appears as wasAssociatedWith."
+        "description": "Optional DID of the human / org owner the agent is acting on behalf of. Recorded as the STANDING delegation (iep:onBehalfOf on the Agent facet); memories stay prov:wasAttributedTo the agent that composed them. Leave unset and no delegation is recorded."
       },
       "shareWith": {
         "type": "array",

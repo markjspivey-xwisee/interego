@@ -256,27 +256,24 @@ async function run(): Promise<number> {
     ['for A', { kind: 'delegate', agentId: dAgentId, footing: { kind: 'on-behalf-of', principal: A.viewer.webId } }],
     ['for itself', { kind: 'delegate', agentId: dAgentId, footing: { kind: 'own-account' } }],
   ] as const) {
-    // ★ RETRIED, AND MEASURED RATHER THAN ASSUMED. `register_agent` writes a signed delegation
-    // credential onto A's pod, so the pod's `.well-known/context-graphs` manifest is mid-CAS when
-    // the delegate's first write arrives — and the relay gives up after 8 attempts and answers
-    // `tool_error: Failed to update manifest`. That is contention on a shared document, not a
-    // refusal of the delegation: `postEntry` already retries a 412 once, and this is the layer
-    // above it. Observed live, 2026-08-07: both writes failed immediately after seating and both
-    // succeeded on a second attempt seconds later.
-    let out = await postEntry(dClient, {
+    // ★ ASKED ONCE. This used to retry five times, under a comment blaming `register_agent`
+    // for leaving A's manifest "mid-CAS". That diagnosis was wrong: `register_agent` awaits
+    // both of its writes and neither one touches the manifest. The real cause was inside
+    // `publish()` — a compare-and-swap PUT was being re-sent by `withTransientRetry` after CSS
+    // expired its 6-second write lock over bytes it had already stored, so the 412 the relay
+    // reported as "concurrent manifest update" was the request's own first PUT, and the next
+    // attempt then found its own entry and broke out WITHOUT clearing that error. The write
+    // had committed every time. See packages/solid/src/client.ts.
+    //
+    // The loop is gone because a person being onboarded does not run one: they authorise a
+    // delegate, it writes, and either that works or the substrate is lying to them. Leaving a
+    // retry here would have kept this driver green over the defect indefinitely.
+    const out = await postEntry(dClient, {
       podName: A.viewer.podName, streamIri: aStream, workspace, entryShape,
       body: 'Delegate speaking ' + what + ', ' + stamp,
       author,
     });
-    for (let i = 0; i < 5 && out.kind !== 'accepted'; i++) {
-      await new Promise((r) => { setTimeout(r, 3000); });
-      out = await postEntry(dClient, {
-        podName: A.viewer.podName, streamIri: aStream, workspace, entryShape,
-        body: 'Delegate speaking ' + what + ', ' + stamp,
-        author,
-      });
-    }
-    must('the delegate\'s "' + what + '" entry landed on A\'s pod', out.kind === 'accepted',
+    must('the delegate\'s "' + what + '" entry landed on A\'s pod, first try', out.kind === 'accepted',
       out.kind === 'accepted' ? String(out.descriptorUrl) : JSON.stringify(out).slice(0, 200));
     if (out.kind === 'accepted' && out.descriptorUrl) posts.push({ what, url: out.descriptorUrl });
   }

@@ -447,12 +447,28 @@ export async function recordCrossAgentAudit(args: RecordCrossAgentAuditArgs, con
   const auditIri = `urn:iep:ac-audit:${auditId}` as IRI;
   const graphIri = `urn:graph:ac:audit:${auditId}` as IRI;
 
+  // ★ THE HUMAN OWNS THE POD; THE AGENT WROTE THE RECORD. A cross-agent audit entry is produced
+  // by the runtime as one agent's exchange with another completes — no person composes one, and
+  // `RecordCrossAgentAuditArgs` has no field through which one could. `config.authoringAgentDid`
+  // is that runtime, and every other writer in this file already names it (`authorTool`,
+  // `attestTool`); this function was the only one attributing to the human, which stated that
+  // the pod's owner had personally asserted an audit finding they had never seen.
+  //
+  // `humanOwnerDid` is not dropped — it is `iep:onBehalfOf` on the Agent facet, which is the
+  // STANDING fact that this agent is authorised to act for them and is independently revocable
+  // on their own pod. No per-act footing is written: `prov:qualifiedDelegation` is a statement
+  // about ONE act, these args carry no per-act footing, and stamping one on every audit entry
+  // is the unconditional assertion the substrate stopped making. Absence reads as "not stated".
+  //
+  // `auditedAgentDid` stays where it belongs — `ac:auditedAgent`, the SUBJECT of the audit. It
+  // was also filling the asserting-agent slot, which is wrong on an Inbound audit: there the
+  // agent being audited is the counterparty, not the one writing the record.
   const desc = ContextDescriptor.create(auditIri)
     .describes(graphIri)
     .temporal({ validFrom: nowIso() })
     .asserted(0.99)
-    .agent(args.auditedAgentDid, 'AssertingAgent', args.humanOwnerDid)
-    .selfAsserted(args.humanOwnerDid)
+    .agent(config.authoringAgentDid, 'AssertingAgent', args.humanOwnerDid)
+    .selfAsserted(config.authoringAgentDid)
     .build();
 
   const graphContent = `@prefix ac:   <${AC_NS}> .
@@ -463,7 +479,7 @@ export async function recordCrossAgentAudit(args: RecordCrossAgentAuditArgs, con
     ac:exchange <${args.exchangeIri}> ;
     ac:auditedAgent <${args.auditedAgentDid}> ;
     ac:auditDirection ac:${args.direction} ;
-    prov:wasAttributedTo <${args.humanOwnerDid}> ;
+    prov:wasAttributedTo <${config.authoringAgentDid}> ;
     iep:modalStatus iep:Asserted .
 `;
 

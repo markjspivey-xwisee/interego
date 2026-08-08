@@ -189,4 +189,22 @@ describe('registry — descriptor serialization', () => {
     const facetTypes = desc.facets.map(f => f.type).sort();
     expect(facetTypes).toEqual(['Agent', 'Federation', 'Provenance', 'Semiotic', 'Temporal', 'Trust']);
   });
+
+  it('attributes the registry to the identity that published it, and to nobody else', () => {
+    // ★ THE DECISION, NOT JUST THE SHAPE. Four sibling writers were found naming a pod owner as
+    // the author of records an agent had composed, and this one was audited alongside them and
+    // judged correct: `Registry` carries no operator and no agent, and the single identity this
+    // function takes IS whoever is publishing the document. Nothing was asserting that value, so
+    // a later sweep could have repointed it at an agent no caller supplies and no test would
+    // have noticed. It is asserted now.
+    const publisher = 'https://alice.example/profile#me' as IRI;
+    const r = createRegistry({ id: 'urn:registry:r' as IRI, description: 'r' });
+    const desc = registryToDescriptor(r, publisher);
+    const prov = desc.facets.find(f => f.type === 'Provenance') as { wasAttributedTo?: IRI };
+    const agent = desc.facets.find(f => f.type === 'Agent') as { assertingAgent?: { identity?: IRI }; onBehalfOf?: IRI };
+    expect(prov.wasAttributedTo).toBe(publisher);
+    expect(agent.assertingAgent?.identity).toBe(publisher);
+    // And no standing delegation is invented for a document that declares none.
+    expect(agent.onBehalfOf).toBeUndefined();
+  });
 });

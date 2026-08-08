@@ -16,8 +16,14 @@ declares:
 * `dct:conformsTo` triples citing the regulatory controls
   (`eu-ai-act:Article15`, `soc2:CC8.1`, etc.) already declared in the
   substrate's compliance ontologies — no new IRIs are minted
-* `prov:wasAttributedTo` (owner) and `prov:wasAssociatedWith` (agent)
-  separated cleanly, per the existing PROV facet semantics
+* `prov:wasAttributedTo` and `prov:wasAssociatedWith` both name the
+  AGENT — a tool call is an act the agent performed, and the author of
+  the record of it is the agent. When the runtime states a principal for
+  that action, it is carried as PROV's per-act qualified form
+  (`prov:qualifiedDelegation` → a `prov:Delegation` whose `prov:agent`
+  is the principal and whose `prov:hadActivity` is that action), plus
+  `iep:onBehalfOf` on the Agent facet for the standing authority. When
+  it states none, neither is written — absence is not a default
 * Modal-status mapping: `success → Asserted`, `partial → Hypothetical`,
   `failure → Counterfactual` — auditors can filter "show me only the
   actions that didn't achieve their stated goal" without runtime

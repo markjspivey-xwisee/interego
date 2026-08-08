@@ -165,7 +165,13 @@ const UNLINTED_FRONTIER = {
   // measures what was COMMITTED, and the only run that can be trusted is one taken after the
   // last edit. The error count is unchanged at 1309: these five are `no-console` CLI drivers,
   // and `lintTrackedUnder` counts errors, not files, for that number.
-  applications: { errors: 1309, files: 337 },
+  // ★ 337 -> 355, and CI caught it again for exactly the reason written above: the local run
+  // measured 354, one inside the 17 of slack, and passed. The commit measured 355 and failed.
+  // The drift is eighteen files accumulated across rounds, of which this round contributed one
+  // (`applications/agent-collective/tests/pod-publisher-attribution.test.ts`, the coverage
+  // `recordCrossAgentAudit` never had). Re-pinned to what is committed rather than to what a
+  // pre-commit local run happened to see.
+  applications: { errors: 1310, files: 355 },
   benchmarks: { errors: 193, files: 31 },
   demos: { errors: 48, files: 37 },
   // A declared npm workspace (see package.json `workspaces`), never linted.
@@ -502,7 +508,14 @@ const BASELINE = {};
 // same code but through that vertical's client, so it cannot tell "the substrate owns this" from
 // "the imports merely moved"; this one can, and a claim about layering with no probe behind it is
 // the kind that rots quietly.
-export const MIN_FILES = 385;
+// 385 -> 388: the round that fixed the manifest CAS reporting a committed write as a failure and
+// judged five writers naming a pod OWNER in the author position. Three new files, each because a
+// claim in this round had no way to be checked without one: `tools/railway-logs.ts` (the CSS lock
+// -expiry line that proved the mechanism could not be read at all before it),
+// `tools/probe-first-write-after-seating-live.ts` (the reproduction, deliberately with no retry),
+// and `tools/drive-attribution-writers-live.ts` (the four writers run for real, asserted against
+// the bytes the pod serves rather than the bytes the driver composed).
+export const MIN_FILES = 388;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.

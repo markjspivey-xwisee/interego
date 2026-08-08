@@ -2158,25 +2158,62 @@ export async function publish(
       continue;
     }
 
-    if (alreadyPublished) break;
+    // ★ FINDING OUR OWN ENTRY IS SUCCESS, AND IT HAS TO CLEAR THE EARLIER ERROR.
+    //
+    // This `break` used to leave `lastError` set, and the `if (lastError) throw` after the
+    // loop then reported `Failed to update manifest ... after 8 attempts` over a manifest
+    // that CONTAINS the entry — a committed write announced as a failure. Measured live on
+    // 2026-08-08 against the production fleet: every single occurrence of that error, in the
+    // relay's own log and in the tool responses, said `attempt 1/8` — never 2/8..8/8 — which
+    // is only reachable if attempt 1 recorded an error and attempt 2 exited HERE. And after
+    // each one, `get_current_head` named the supposedly-failed descriptor as the pod's head.
+    //
+    // A newly seated delegate's first write is where a person meets this: the write lands,
+    // the tool says it did not, and the caller writes a retry loop around a substrate that
+    // was already correct. See the PUT below for what manufactures the attempt-1 error.
+    if (alreadyPublished) { lastError = null; break; }
 
     const headers: Record<string, string> = { 'Content-Type': TURTLE_CONTENT_TYPE };
     if (etag) headers['If-Match'] = etag;
     else headers['If-None-Match'] = '*';   // cold-start: only PUT if no manifest exists
 
-    // 5xx-as-throw promotion: same rationale as the GET above. 412
-    // (CAS conflict) stays as a normal response — the loop below
-    // checks `manifestResp.ok` and falls through to retry with a
-    // freshly-read etag on 412, which is the deliberate behavior.
-    const manifestResp = await withTransientRetry(async () => {
-      const r = await fetchFn(manifestUrl, {
+    // ★ A CONDITIONAL WRITE MUST NOT BE BLIND-RETRIED, AND THIS ONE WAS.
+    //
+    // This PUT used to be wrapped in `withTransientRetry` with the same 5xx-as-throw
+    // promotion the GETs above use. On a GET that is right; on a compare-and-swap PUT it
+    // manufactures the conflict it then reports. Measured live, from CSS's own log, for one
+    // failing publish onto a pod whose manifest holds ~220 entries:
+    //
+    //   01:21:53.061  Received PUT request for /u-eth-…/.well-known/context-graphs
+    //   01:21:59.887  [WrappedExpiringReadWriteLocker] error: Lock expired after 6000ms on
+    //                 …/.well-known/context-graphs
+    //   01:22:00.916  Received PUT request for /u-eth-…/.well-known/context-graphs   ← re-sent
+    //   01:22:01.526  Received GET  request for /u-eth-…/.well-known/context-graphs
+    //
+    // Rewriting a whole 220-entry manifest on a single-replica file-backed CSS takes longer
+    // than CSS's 6-second write-lock TTL. CSS expires the lock and answers 5xx — but lock
+    // expiry is a watchdog, not a rollback, so the bytes are already stored. `withTransientRetry`
+    // then re-sent the PUT one second later carrying the SAME, now-stale `If-Match`, and CSS
+    // answered 412. The "concurrent manifest update" the loop went on to report was this
+    // request's own first PUT.
+    //
+    // The outer CAS loop IS the retry, and it is the correct one: it re-GETs a fresh etag and
+    // rebuilds the body before trying again, which is the only sound way to repeat a
+    // conditional write. So a transient failure here becomes one more CAS attempt — the 5xx
+    // branch below already backs off and re-reads — instead of a self-inflicted conflict. A
+    // thrown network error is treated the same way rather than escaping the loop, because a
+    // PUT that threw may still have landed, and the next attempt's GET is what finds out.
+    let manifestResp: Awaited<ReturnType<typeof fetchFn>>;
+    try {
+      manifestResp = await fetchFn(manifestUrl, {
         method: 'PUT', headers, body: manifestBody,
       });
-      if (r.status >= 500) {
-        throw new Error(`manifest PUT <${manifestUrl}> failed: ${r.status} ${r.statusText}`);
-      }
-      return r;
-    });
+    } catch (err) {
+      lastError = `manifest PUT threw (attempt ${attempt}/${maxAttempts}): ${(err as Error).message}`;
+      const backoff = Math.min(50 * Math.pow(2, attempt - 1) + Math.floor(Math.random() * 200), 1500);
+      await new Promise(r => setTimeout(r, backoff));
+      continue;
+    }
 
     if (manifestResp.ok) {
       // Belt-and-suspenders: under N-way contention (e.g. 4+ concurrent

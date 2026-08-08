@@ -53,8 +53,13 @@ Every memory write is a typed `iep:ContextDescriptor` with:
 
 * **Agent + Trust facets** — wallet-rooted DID, self-asserted at publish
   time. Peer attestations land via the existing AC vertical's flow.
-* **Provenance facet** — PROV-O `wasAttributedTo` (owner) +
-  `wasAssociatedWith` (agent). Audit-walkable.
+* **Provenance facet** — PROV-O `wasAttributedTo` names the AGENT that
+  composed the memory, because that is who authored it; `wasGeneratedBy`
+  names the same agent's act. Audit-walkable. A human owner, when
+  `onBehalfOf` is configured, is the STANDING delegation
+  (`iep:onBehalfOf` on the Agent facet) — a fact about the agent's
+  authority, not about any one memory, and revocable on the owner's own
+  pod. Unset means unset: no delegation is recorded.
 * **Temporal facet** — `validFrom = now`. Backdating / scheduling
   available via the bridge's optional args.
 * **Semiotic facet** — `Asserted` (committed facts, the default) /

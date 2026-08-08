@@ -32,6 +32,10 @@ import {
   type IRI,
   sha256,
 } from '@interego/core';
+// The substrate owns which triples say "this act was for my principal" — see the delegation
+// block in buildAgentActionDescriptor for why the IRI derivation is borrowed and the Delegation
+// itself is scoped to this record's own activity rather than to a minted one.
+import { footingDelegationIri } from '@interego/core/delegate';
 import {
   type ComplianceFramework,
   FRAMEWORK_CONTROLS,
@@ -245,7 +249,6 @@ export function buildAgentActionDescriptor(
 
   const eventIri = `urn:iep:agent-action:${slug(event.toolName)}:${id}` as IRI;
   const graphIri = `urn:graph:iep:agent-action:${id}` as IRI;
-  const owner = event.onBehalfOf ?? event.agentDid;
   const startedAt = event.startedAt ?? nowIso();
   const endedAt = event.endedAt ?? startedAt;
 
@@ -262,12 +265,18 @@ export function buildAgentActionDescriptor(
   // conformsTo: undefined, the relay maps that to evidenceForControls: [], and
   // GET /audit/compliance/<framework> reports EVERY control 'missing' with
   // overallScore 0 for a pod whose descriptors do cite those controls.
+  // ★ `onBehalfOf` ONLY WHEN THERE IS SOMEBODY ELSE. This used to pass `event.onBehalfOf ??
+  // event.agentDid`, so an undelegated action published an Agent facet saying the agent acted
+  // on behalf of ITSELF — a standing delegation invented to fill a field the caller left empty.
   const builder = ContextDescriptor.create(eventIri)
     .describes(graphIri)
     .conformsTo(...cited)
     .agent(event.agentDid)
     .selfAsserted(event.agentDid)
-    .generatedBy(event.agentDid, { onBehalfOf: owner, endedAt, startedAt })
+    .generatedBy(event.agentDid, {
+      ...(event.onBehalfOf ? { onBehalfOf: event.onBehalfOf } : {}),
+      endedAt, startedAt,
+    })
     .temporal({ validFrom: startedAt });
 
   switch (event.outcome) {
@@ -303,15 +312,50 @@ export function buildAgentActionDescriptor(
     ? `    <${CGH_NS}toolArgs> """${escapeMulti(canonicalJson(event.args))}""" ;\n`
     : '';
 
+  // ── who authored this action record, and on whose footing ────────────────────────────────
+  //
+  // ★ THE AGENT AUTHORED IT. An `AgentActionEvent` IS an agent's own act — the runtime invoked
+  // a tool — and `agentDid` is required while `onBehalfOf` is not. This used to attribute the
+  // record to `onBehalfOf ?? agentDid`, so a delegated agent's tool call was signed over to the
+  // human as if they had made it, and the descriptor built four lines above disagreed: since
+  // the substrate's `generatedBy` was corrected, the FACET already says `wasAttributedTo` the
+  // agent. One record, two answers to "who did this", in an artifact whose whole purpose is to
+  // be read by an auditor.
+  //
+  // ★ AND THE PRINCIPAL IS STATED PER-ACT, BECAUSE HERE IT HONESTLY IS ONE. `onBehalfOf` is a
+  // field on the EVENT, supplied for this single action, which is exactly what PROV's qualified
+  // form is for: authority to carry out "a specific activity ... while the agent it acts on
+  // behalf of retains some responsibility for the outcome". Downgrading it to the standing
+  // `iep:onBehalfOf` alone would lose the per-act scoping the caller took the trouble to state.
+  //
+  // The Delegation is scoped to `<eventIri>` itself rather than to a minted `#act`, because
+  // this record IS the `prov:Activity` — it is typed as one on the line below. `footingTurtle`
+  // mints an entry's separate act for records that are Entities (a workspace post); calling it
+  // here would assert that an Activity was `prov:wasGeneratedBy` another Activity. The IRI
+  // derivation is still the substrate's, so the fragment convention stays one convention.
+  //
+  // When the caller states no principal, NOTHING is written — not `iep:actedOnOwnAccount`
+  // either. "The runtime did not say" and "the agent answered for this alone" are different
+  // findings, and only the caller can tell them apart.
+  const delegationBlock = event.onBehalfOf
+    ? `
+<${event.agentDid}> <${PROV_NS}qualifiedDelegation> <${footingDelegationIri(eventIri)}> .
+
+<${footingDelegationIri(eventIri)}> a <${PROV_NS}Delegation> ;
+    <${PROV_NS}agent> <${event.onBehalfOf}> ;
+    <${PROV_NS}hadActivity> <${eventIri}> .
+`
+    : '';
+
   const graphContent = `<${eventIri}> a <${ACTION_TYPE}> , <${PROV_NS}Activity> ;
     <${RDFS_NS}label> "${escapeLit(event.toolName)}" ;
     <${CGH_NS}outcome> "${escapeLit(event.outcome)}" ;
 ${argsBlock}${descriptionTriple}${durationTriple}${sessionTriple}${conformsTail}    <${CG_NS}contentHash> "${contentHash}" ;
     <${PROV_NS}startedAtTime> "${startedAt}"^^<${XSD_NS}dateTime> ;
     <${PROV_NS}endedAtTime> "${endedAt}"^^<${XSD_NS}dateTime> ;
-    <${PROV_NS}wasAttributedTo> <${owner}> ;
+    <${PROV_NS}wasAttributedTo> <${event.agentDid}> ;
     <${PROV_NS}wasAssociatedWith> <${event.agentDid}> .
-`;
+${delegationBlock}`;
 
   return {
     descriptor,

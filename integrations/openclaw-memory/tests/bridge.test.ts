@@ -53,16 +53,41 @@ describe('buildMemoryDescriptor — substrate-pure', () => {
     expect(s.groundTruth).toBe(false);
   });
 
-  it('attributes to the owner when onBehalfOf is set, not the agent', () => {
+  it('attributes the memory to the AGENT even when onBehalfOf names a human', () => {
+    // ★ THIS TEST PINNED THE DEFECT. It read "attributes to the owner when onBehalfOf is set,
+    // not the agent" and asserted `wasAttributedTo <did:web:owner.example>` — a delegated
+    // agent's own observation signed over to a person who never saw it, contradicting the
+    // descriptor facet built two lines away.
     const owner = 'did:web:owner.example' as IRI;
     const built = buildMemoryDescriptor(
       { text: 'an org-level fact' },
       { ...CONFIG, onBehalfOf: owner },
     );
-    expect(built.graphContent).toContain(`<${owner}>`);
-    // PROV: wasAttributedTo points at the owner; the agent is wasGeneratedBy.
-    expect(built.graphContent).toMatch(/wasAttributedTo>\s*<did:web:owner\.example>/);
+    expect(built.graphContent).toMatch(/wasAttributedTo>\s*<did:web:pod\.example>/);
     expect(built.graphContent).toMatch(/wasGeneratedBy>\s*<did:web:pod\.example>/);
+    expect(built.graphContent).not.toContain(`<${owner}>`);
+    // The human is not lost — they are the STANDING delegation on an Agent facet, which is what
+    // a config-level `onBehalfOf` is a statement about. Asked of ALL Agent facets: `.agent()`
+    // and `.generatedBy()` each push one, and only the second carries the delegation.
+    const onBehalf = built.descriptor.facets
+      .filter(f => f.type === 'Agent').map(f => (f as { onBehalfOf?: IRI }).onBehalfOf);
+    expect(onBehalf).toContain(owner);
+    const prov = built.descriptor.facets.find(f => f.type === 'Provenance') as { wasAttributedTo?: IRI };
+    expect(prov.wasAttributedTo).toBe(CONFIG.authoringAgentDid);
+    // ★ AND NO PER-ACT FOOTING IS DERIVED FROM A CONSTRUCTOR ARGUMENT. `onBehalfOf` here is
+    // standing; asserting a Delegation over every memory the agent ever writes is the
+    // unconditional claim the qualified form exists to replace.
+    expect(built.graphContent).not.toContain('qualifiedDelegation');
+    expect(built.graphContent).not.toContain('actedOnOwnAccount');
+  });
+
+  it('records no delegation at all when onBehalfOf is unset', () => {
+    // It used to default to the agent, publishing "this agent acts on behalf of itself".
+    const built = buildMemoryDescriptor({ text: 'a self-observed fact' }, CONFIG);
+    const onBehalf = built.descriptor.facets
+      .filter(f => f.type === 'Agent').map(f => (f as { onBehalfOf?: IRI }).onBehalfOf);
+    expect(onBehalf.every(v => v === undefined)).toBe(true);
+    expect(built.graphContent).toMatch(/wasAttributedTo>\s*<did:web:pod\.example>/);
   });
 
   it('content-addresses by SKILL-style hash — same text → same IRI', () => {

@@ -1047,7 +1047,7 @@ to stay true.
 | Suite | Tests | Coverage |
 |---|---|---|
 | `context-graphs.test.ts` | 46 | Builder, composition, validation, serialization |
-| `solid.test.ts` | 44 | Publish, discover, subscribe, agent registry |
+| `solid.test.ts` | 49 | Publish, discover, subscribe, agent registry |
 | `federation.test.ts` | 24 | Pod directory, multi-pod, WebFinger, Hydra |
 | `causality.test.ts` | 38 | SCM, do-calculus, d-separation, counterfactual |
 | `pgsl.test.ts` | 34 | Lattice, category, geometric morphism |
