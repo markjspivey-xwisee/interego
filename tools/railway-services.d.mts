@@ -20,6 +20,8 @@ export interface ServiceEntry {
   repo: string | null;
   upstream?: string;
   health?: string | null;
+  /** The last line a PORTLESS service prints on a successful boot. See bootProofFor. */
+  bootProof?: string;
   singleton?: boolean;
   maxOverlapSeconds?: number;
   drainingMustBeUnset?: boolean;
@@ -62,6 +64,9 @@ export declare function singletonViolations(rows: LiveRow[]): SingletonViolation
 export declare function healthPathFor(
   service: string,
 ): { ok: true; path: string } | { ok: false; reason: string };
+export declare function bootProofFor(
+  service: string,
+): { ok: true; needle: string } | { ok: false; reason: string };
 export declare function verifyUrlFor(
   service: string,
   domains: readonly string[] | null | undefined,

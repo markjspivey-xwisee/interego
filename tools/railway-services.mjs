@@ -87,7 +87,14 @@ export const SERVICES = {
   // relay and binds no inbound port, so Railway gives it no public domain and there is nothing to
   // probe. Its liveness is read from the logs, where it prints its agent DID on boot. See
   // deploy/Dockerfile.discord and applications/shared-workspace/discord/DEPLOY.md.
-  discord: { repo: 'interego-discord', health: null },
+  //
+  // `bootProof` is what replaces the HTTP probe — see bootProofFor() for why a log line is a
+  // real assertion here and not a weaker stand-in for one.
+  discord: {
+    repo: 'interego-discord',
+    health: null,
+    bootProof: 'discord: commands registered',
+  },
 
   // The one that is not. `interego-css` has never existed at any tag; build-ghcr.yml
   // builds this service under `interego-css-pgsl` (matrix leg with a `prebuild` step for
@@ -284,6 +291,65 @@ export function healthPathFor(service) {
     };
   }
   return { ok: true, path };
+}
+
+/**
+ * The line a PORTLESS service prints once it has finished booting, or a refusal that says
+ * why that service cannot be verified this way.
+ *
+ * ── WHY THIS EXISTS ──────────────────────────────────────────────────────────
+ *
+ * healthPathFor() refuses every service with `health: null`, and tools/railway-redeploy.mjs
+ * treats that refusal as fatal — so a worker could not be deployed through the sanctioned
+ * path AT ALL. That was not a considered exclusion, it was the HTTP assumption showing
+ * through: the only verification the tool knew was "poll a URL until it reports the sha",
+ * and a process that binds no port has no URL. `discord` was added to this table with
+ * `health: null` and a comment saying its liveness is read from the logs, and
+ * `applications/shared-workspace/discord/DEPLOY.md` told operators the deploy would
+ * "deploy without an HTTP probe — the same path css takes". Neither was true of the code:
+ * the tool died at the derivation, before it mutated anything, on the first dispatch.
+ *
+ * ── WHY A LOG LINE IS EVIDENCE AND NOT A WEAKER STAND-IN ─────────────────────
+ *
+ * The thing /health proves is not "an HTTP request succeeded" — it is "the code I just
+ * deployed is the code now running", because the OLD container keeps serving when a pull
+ * fails and its /health keeps answering 200. Railway's `deploymentLogs` are scoped to a
+ * DEPLOYMENT ID, and railway-redeploy polls the id `serviceInstanceDeployV2` handed back,
+ * so a line found there was necessarily written by the container that deploy started. With
+ * §6's two assertions already in place (the pin is the image we asked for, and the live
+ * deployment is the one we triggered) a boot line from that deployment is the same claim
+ * the /health poll makes, obtained from the only surface a portless process has.
+ *
+ * ── WHY THE NEEDLE IS THE *LAST* BOOT LINE ───────────────────────────────────
+ *
+ * For discord it is `discord: commands registered`, which src/main.ts prints only after
+ * BOTH credentials have been exercised: `rest.me()` (the Discord token authenticated) and
+ * `session.open()` (the bot key signed in to the relay). "The process started" would have
+ * been satisfied by a container that then refused both. A test asserts this string is still
+ * present in main.ts, so renaming the log line fails the suite rather than the deploy.
+ *
+ * ── WHY css IS STILL REFUSED ─────────────────────────────────────────────────
+ *
+ * It is portless too, but nothing in this repository decides what it prints — it runs the
+ * community Solid server under integrations/pgsl-css-accessor — and it is the one service
+ * whose correctness depends on exactly one container existing. Inventing a plausible needle
+ * for it is the transcription-rot the header of this file is about. Absent, not zero.
+ */
+export function bootProofFor(service) {
+  if (!Object.hasOwn(SERVICES, service)) {
+    return { ok: false, reason: `unknown Railway service "${service}". Valid: ${serviceNames().join(', ')}` };
+  }
+  const needle = SERVICES[service].bootProof;
+  if (typeof needle !== 'string' || needle.length === 0) {
+    return {
+      ok: false,
+      reason: `"${service}" declares no bootProof, so there is nothing to look for in its logs. ` +
+        'Add the line it prints when it has finished booting to tools/railway-services.mjs — ' +
+        'and pick the LAST one, not the first: "the process started" is satisfied by a container ' +
+        'that then failed every credential it holds.',
+    };
+  }
+  return { ok: true, needle };
 }
 
 /**

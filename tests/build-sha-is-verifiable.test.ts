@@ -26,7 +26,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { healthPathFor, SERVICES, serviceNames, verifyUrlFor } from '../tools/railway-services.mjs';
+import { bootProofFor, healthPathFor, SERVICES, serviceNames, verifyUrlFor } from '../tools/railway-services.mjs';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p: string) => readFileSync(join(REPO, p), 'utf8');
@@ -108,6 +108,75 @@ describe('the verify URL is derived from the service being deployed', () => {
       if (h.ok) expect(h.path).toMatch(/^\//);
       else expect(h.reason.length, `${name}: refusal must carry a reason`).toBeGreaterThan(20);
     }
+  });
+});
+
+describe('a portless service is verified from its own deployment logs', () => {
+  it('★ discord has NO health path and is still deployable — the pair that used to be impossible', () => {
+    // THE BLOCKER, stated as a test. `health: null` made healthPathFor refuse, and
+    // railway-redeploy treated that refusal as fatal, so the one service in this table that
+    // binds no port could not be deployed through the sanctioned path at all — while its
+    // runbook said it would "deploy without an HTTP probe". Both halves are asserted here:
+    // there is no URL to derive, AND there is something to verify against.
+    expect(healthPathFor('discord').ok).toBe(false);
+    expect(verifyUrlFor('discord', [], undefined).ok).toBe(false);
+    expect(bootProofFor('discord')).toEqual({ ok: true, needle: 'discord: commands registered' });
+  });
+
+  it('★ the declared needle is a line the bot really prints', () => {
+    // The failure this catches is a rename: the needle is a string in one file and the log
+    // call is a string in another, and nothing but this couples them. Get it wrong and every
+    // deploy of the bot times out four minutes after a container that booted perfectly.
+    const proof = bootProofFor('discord');
+    expect(proof.ok).toBe(true);
+    const needle = (proof as { needle: string }).needle;
+    expect(read('applications/shared-workspace/discord/src/main.ts')).toContain(needle);
+  });
+
+  it('the needle is the LAST boot line, so both credentials have been exercised', () => {
+    // "The process started" would be satisfied by a container that then failed to
+    // authenticate to Discord and failed to sign in to the relay. main.ts prints this only
+    // after `rest.me()` (the bot token worked) and `session.open()` (the bot key worked).
+    const src = read('applications/shared-workspace/discord/src/main.ts');
+    const needle = (bootProofFor('discord') as { needle: string }).needle;
+    expect(src.indexOf(needle)).toBeGreaterThan(src.indexOf('await session.open()'));
+    expect(src.indexOf(needle)).toBeGreaterThan(src.indexOf('await rest.me()'));
+  });
+
+  it('refuses css by name rather than inventing a boot line for it', () => {
+    // Portless too, but nothing here decides what it prints (it runs the community Solid
+    // server) and it is the one service whose correctness needs exactly one container.
+    // Absent, not zero.
+    const r = bootProofFor('css');
+    expect(r.ok).toBe(false);
+    expect((r as { reason: string }).reason).toMatch(/bootProof/);
+  });
+
+  it('refuses an unknown service name and a prototype-reachable one', () => {
+    expect(bootProofFor('nope').ok).toBe(false);
+    expect(bootProofFor('constructor').ok).toBe(false);
+  });
+
+  it('a service with a health path does not also get a log needle', () => {
+    // Two verifications would mean a choice, and a choice means a branch that can pick the
+    // weaker one. Exactly one applies per service.
+    for (const name of serviceNames()) {
+      const entry = SERVICES[name]!;
+      if (entry.repo === null) continue;
+      const both = healthPathFor(name).ok && bootProofFor(name).ok;
+      expect(both, `${name}: declares BOTH a health path and a bootProof`).toBe(false);
+    }
+  });
+
+  it('railway-redeploy still verifies portless services instead of skipping them', () => {
+    // ★ The tempting "fix" for the blocker was `if (!verify.ok) { warn; skip }` — which is the
+    // "Railway reports success, but nothing has confirmed the new code is serving" branch this
+    // file's own history deleted. Assert the deploy path calls the derivation AND polls logs.
+    const src = read('tools/railway-redeploy.mjs');
+    expect(src).toMatch(/bootProofFor\(/);
+    expect(src, 'the proof must come from the deployment this run triggered').toMatch(/deploymentLogs\(deploymentId:\$id/);
+    // Every exit from the log poll is a decision; none of them is "carry on regardless".
+    expect(src).toMatch(/verifyFromLogs/);
   });
 });
 
