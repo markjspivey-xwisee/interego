@@ -183,11 +183,26 @@ async function main(): Promise<void> {
     .validFrom('2026-12-02T00:00:00.000Z')
     .temporal({ validFrom: '2026-12-02T00:00:00Z' })
     .build();
+  const steadyMark = trace.length;
   const tSteady = Date.now();
   const r2 = await publish(d2, '<urn:s> <urn:p> "b" .', pod, { fetch: authed });
   const msSteady = Date.now() - tSteady;
-  log(`   ${msSteady}ms; archives written: ${(r2.manifestArchivesWritten ?? []).length}`);
-  check(msSteady < 6000, 'the steady-state publish is inside the 6000ms lock', `${msSteady}ms`);
+  const steadyTrace = traceSince(steadyMark);
+  log(`   ${msSteady}ms total; archives written: ${(r2.manifestArchivesWritten ?? []).length}`);
+  for (const t of steadyTrace) log(`     ${t.method} ${t.url.replace(pod, '')} -> ${t.status} (${t.ms}ms)`);
+  // ★ THE LOCK BOUNDS ONE WRITE, NOT ONE PUBLISH, AND THIS CHECK USED TO CONFUSE THEM.
+  //
+  // It asserted the whole publish finished in under 6000 ms. A publish is five requests — the
+  // graph, the descriptor, a manifest GET, the manifest PUT and a verify GET — and CSS's lock
+  // is taken and released per CSS operation. Under load (three image builds running against
+  // the same fleet) the publish measured 7284 ms while its slowest single write was 1987 ms:
+  // the check failed on a run where nothing was near the wall. A threshold measured per-write
+  // has to be asserted per-write, or it reports the fleet's weather as a defect in the design.
+  const slowestSteady = Math.max(...steadyTrace.map(t => t.ms));
+  check(slowestSteady < 6000, 'no single write in the steady-state publish came near the lock',
+    `slowest ${slowestSteady}ms of ${msSteady}ms total`);
+  const steadyManifestPut = steadyTrace.filter(t => t.method === 'PUT' && t.url.endsWith('.well-known/context-graphs'));
+  for (const t of steadyManifestPut) log(`   the manifest PUT itself: ${t.ms}ms`);
 
   head('read back — every consumer that does a raw manifest GET');
   const manifestUrl = `${pod}.well-known/context-graphs`;
@@ -242,9 +257,9 @@ async function main(): Promise<void> {
     'the social walk counts the whole pod, not the hot slice', `${seedNode?.descriptorCount}`);
 
   head('before / after');
-  log(`   unbounded PUT of ${SEED} entries : ${Date.now() - t0 >= 0 ? '' : ''}(seed, above)`);
-  log(`   publish that ROLLED OVER        : ${msRoll}ms`);
-  log(`   publish in steady state         : ${msSteady}ms`);
+  log(`   unbounded PUT of ${String(SEED)} entries : (seed, above)`);
+  log(`   publish that ROLLED OVER        : ${msRoll}ms wall, slowest single write ${slowest}ms`);
+  log(`   publish in steady state         : ${msSteady}ms wall, slowest single write ${slowestSteady}ms`);
 
   log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}`);
   process.exit(failures === 0 ? 0 : 1);
