@@ -30,6 +30,28 @@ import { mintBearer, type Signer } from '../../tools/live-identity.js';
 /** Re-mint this long before the grant expires. Enough slack for a cold relay. */
 export const REMINT_MARGIN_MS = 5 * 60 * 1000;
 
+/**
+ * THE OAUTH CLIENT NAME THIS BOT SIGNS IN UNDER, AND IT IS NOT A LABEL.
+ *
+ * ★ MEASURED: THE RELAY PUTS THIS STRING INSIDE THE AGENT DID. `surfaceAgentFromClient` in
+ * `deploy/mcp-relay/server.ts` slugifies `client_name` into a surface slug, and the identity
+ * server mints `did:web:<identity host>:agents:<slug>-<pod>` from it. So this constant is not
+ * cosmetic and it is not a display name: it IS the first half of the identifier every
+ * participant pastes into `register_agent` and stores, world-readably, in their own pod's
+ * delegation registry.
+ *
+ * ★ WHICH IS WHY IT IS NAMED HERE RATHER THAN DEFAULTED. `mintBearer`'s default is
+ * `interego-workspace-live-driver` — the name of the throwaway DRIVERS in the sibling `tools/`
+ * directory. This bot shipped under that default, so the deployed conduit's permanent identity
+ * read as somebody's test harness. Changing it later is not a rename: every delegation already
+ * published would name an agent the bot no longer signs in as, `checkDelegation` would refuse
+ * every write, and every participant would have to re-publish. Change this string only with
+ * that cost accepted.
+ *
+ * The pod is derived from the KEY, not from this, so it does not move.
+ */
+export const DISCORD_CLIENT_NAME = 'interego-discord';
+
 export interface BotIdentity {
   readonly client: WorkspaceClient;
   /** The agent DID the relay authenticates this process as — what participants delegate. */
@@ -53,20 +75,31 @@ export class BotSession {
   private transport: RelayMcpTransport | null = null;
   private bearer: RelayOAuthBearer | null = null;
   private identity: BotIdentity | null = null;
+  /**
+   * The HTTP the SIWE ceremony runs over. Defaults to the global one, so the program is
+   * unchanged; it is a parameter so a test can observe WHICH OAuth client name this session
+   * registers under without patching `globalThis.fetch`, which in a shared vitest realm leaks
+   * into every other file in the run.
+   */
+  private readonly fetchImpl: typeof fetch;
 
-  constructor(relay: string, identityServer: string, privateKey: string) {
+  constructor(relay: string, identityServer: string, privateKey: string, fetchImpl?: typeof fetch) {
     this.relay = relay.replace(/\/$/, '');
     this.identityServer = identityServer.replace(/\/$/, '');
     this.wallet = new Wallet(privateKey);
+    this.fetchImpl = fetchImpl ?? ((...a) => fetch(...a));
   }
 
   get address(): string { return this.wallet.address; }
 
   /** Mint, connect, and resolve who the relay says this process is. */
   async open(): Promise<BotIdentity> {
-    const bearer = await mintBearer(this.relay, this.identityServer, this.wallet);
+    // ★ THE CLIENT NAME IS PASSED, NOT DEFAULTED. See `DISCORD_CLIENT_NAME`: the relay bakes it
+    // into the agent DID, so omitting it here is what made this bot's permanent identity read
+    // `interego-workspace-live-driver-…`.
+    const bearer = await mintBearer(this.relay, this.identityServer, this.wallet, DISCORD_CLIENT_NAME, this.fetchImpl);
     this.bearer = bearer;
-    this.transport = new RelayMcpTransport(this.relay, bearer);
+    this.transport = new RelayMcpTransport(this.relay, bearer, this.fetchImpl);
     const client = new WorkspaceClient(this.relay, this.transport);
     await client.connect();
     const status = await client.podStatus();

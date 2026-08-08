@@ -155,7 +155,17 @@ prints, and it is the one service whose correctness needs exactly one container.
 
 **4. Confirm it is alive.** Open the service's **Deploy Logs** on Railway. A healthy boot prints,
 in order: the bot's pod, its wallet address, and **its agent DID** — copy that DID, it is what
-participants delegate — followed by the count of slash commands registered. If instead you see the
+participants delegate — followed by the count of slash commands registered. The DID has the shape
+
+```
+did:web:identity.interego.xwisee.com:agents:interego-discord-<the bot's pod>
+```
+
+because the relay bakes the OAuth **client name** into the agent identifier it issues, and this
+bot signs in under `DISCORD_CLIENT_NAME` (`src/identity.ts`). The pod half comes from
+`INTEREGO_BOT_KEY`, so the two halves move for two different reasons: a new key is a new pod AND a
+new DID; a changed client name is a new DID on the SAME pod. Either invalidates every delegation
+already published, because a delegation names one exact agent string. If instead you see the
 `INTEREGO_BOT_KEY is not set` / `DISCORD_BOT_TOKEN is not set` refusal, a variable did not take; if
 you see close code `4014`, the MESSAGE CONTENT intent (Part A step 3) is off.
 

@@ -52,12 +52,19 @@ export function siweMessage(relay: string, address: string, nonce: string, issue
 export async function mintBearer(
   relay: string, identityServer: string, wallet: Signer,
   clientName = 'interego-workspace-live-driver',
+  // ★ THE HTTP IS A PARAMETER SO THE CLIENT NAME CAN BE OBSERVED WITHOUT A GLOBAL PATCH. The
+  // Discord bot is a LONG-LIVED identity whose DID contains `clientName` (see
+  // `discord/src/identity.ts`), so "did this caller pass its own name?" is worth a test — and
+  // the only place that question is answerable is the `/register` body below. Patching
+  // `globalThis.fetch` to read it would leak across the shared vitest realm. Every existing
+  // caller omits this and gets the global `fetch`, unchanged.
+  fetchImpl: typeof fetch = fetch,
 ): Promise<RelayOAuthBearer> {
   const verifier = b64u(randomBytes(32));
   const challenge = b64u(createHash('sha256').update(verifier).digest());
   const redirectUri = 'http://127.0.0.1:1/callback';
 
-  const reg = await fetch(relay + '/register', {
+  const reg = await fetchImpl(relay + '/register', {
     method: 'POST', headers: json,
     body: JSON.stringify({
       client_name: clientName,
@@ -77,11 +84,11 @@ export async function mintBearer(
     + '&code_challenge=' + challenge
     + '&code_challenge_method=S256&scope=mcp&state=' + b64u(randomBytes(9))
     + '&resource=' + encodeURIComponent(relay + '/');
-  const page = await (await fetch(authorizeUrl)).text();
+  const page = await (await fetchImpl(authorizeUrl)).text();
   const pendingId = /const PENDING_ID\s*=\s*['"]([^'"]+)/.exec(page)?.[1];
   if (!pendingId) throw new Error('the relay\'s authorize page carried no PENDING_ID');
 
-  const { nonce } = await (await fetch(identityServer + '/challenges', {
+  const { nonce } = await (await fetchImpl(identityServer + '/challenges', {
     method: 'POST', headers: json, body: JSON.stringify({ purpose: 'siwe' }),
   })).json() as { nonce?: string };
   if (!nonce) throw new Error('the identity server issued no SIWE nonce');
@@ -89,7 +96,7 @@ export async function mintBearer(
   const message = siweMessage(relay, wallet.address, nonce, new Date().toISOString());
   const signature = await wallet.signMessage(message);
 
-  const vres = await fetch(relay + '/oauth/verify', {
+  const vres = await fetchImpl(relay + '/oauth/verify', {
     method: 'POST', headers: json,
     body: JSON.stringify({ pending_id: pendingId, method: 'siwe', message, signature, nonce }),
   });
@@ -97,7 +104,7 @@ export async function mintBearer(
   const code = /[?&]code=([^&]+)/.exec(vj.redirect ?? '')?.[1];
   if (!code) throw new Error('the relay did not accept this wallet proof: ' + (vj.message ?? vj.error ?? JSON.stringify(vj).slice(0, 200)));
 
-  const tres = await fetch(relay + '/token', {
+  const tres = await fetchImpl(relay + '/token', {
     method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
       grant_type: 'authorization_code', code, redirect_uri: redirectUri,
