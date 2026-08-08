@@ -21,6 +21,7 @@ import {
   fetchGraphContent,
   parseManifest,
   parseDistributionFromDescriptorTurtle,
+  fetchAllManifestEntries,
 } from '@interego/solid';
 
 // Mock helper — same shape as solid.test.ts so the fetch surface
@@ -91,6 +92,11 @@ describe('kernel.dereference(urn:graph:*)', () => {
       fetchGraphContent: fetchGraphContent as never,
       parseManifest: parseManifest as never,
       parseDistributionFromDescriptorTurtle: parseDistributionFromDescriptorTurtle as never,
+      // The REAL union, not a stub returning the hot document's rows. The URN path is the
+      // one reader for which a truncated manifest produces a wrong answer rather than a
+      // short list, so a test double that skipped the archive walk would be testing the
+      // defect away.
+      fetchAllManifestEntries: fetchAllManifestEntries as never,
     });
   });
 

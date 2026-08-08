@@ -41,6 +41,14 @@ export interface PublishResult {
   /** IRI of the updated manifest. */
   readonly manifestUrl: string;
   /**
+   * Archive segments this publish created, when appending would have pushed the hot manifest
+   * past its entry bound and older rows rolled over into linked write-once documents.
+   *
+   * Present only on the publish that actually rolled — absent (not empty) otherwise, so a
+   * caller can distinguish "no roll-over happened" from "this build does not report it".
+   */
+  readonly manifestArchivesWritten?: readonly string[];
+  /**
    * PGSL structural URI of the published content (if PGSL ingestion was enabled).
    * This is the canonical content-addressed URI in the lattice — same content
    * always produces the same URI regardless of when or where it's published.

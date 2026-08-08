@@ -142,7 +142,14 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // value it wrote: its only caller in the suite is a live-pod test that skips when the pod is
 // unreachable and asserts nothing about attribution, so the defect was invisible.
 // The tree reached 234.
-export const MIN_TEST_MODULES = 224;
+// 224 -> 225: bounding the pod manifest with a linked archive chain.
+// `tests/bounded-manifest.test.ts` is the one new suite. It exists because the property the
+// design turns on — every existing reader still works, and a reader that sees a short view can
+// TELL — is not observable from any single function's unit test: it is a claim about the write
+// staying bounded, the roll-over itself staying bounded, the chain reading back whole, and
+// recovery producing the same count twice. Those are four different call paths agreeing.
+// The tree reached 235.
+export const MIN_TEST_MODULES = 225;
 export const FLOOR_ALLOWANCE = 10;
 
 /**

@@ -204,54 +204,140 @@ async function fetchRegistry(podUrl: string): Promise<PodState['owner'] & { agen
   }
 }
 
+// A cap on chain-following, so a malformed or cyclic `iep:manifestArchive` link set cannot
+// make one poll of one pod fetch forever and wedge the poller for every other pod.
+const MANIFEST_ARCHIVE_MAX_SEGMENTS = 512;
+
+function absolutizeIri(iri: string, baseUrl: string): string {
+  try { return new URL(iri, baseUrl).href; } catch { return iri; }
+}
+
 /**
- * Fetch the context-graphs manifest from a pod.
+ * The archive segments a manifest — or a segment — says the rest of its index lives in.
+ *
+ * The objects arrive as a comma-separated list on one line, which is how the manifest header
+ * emits them. `hydra:previous` is read too, since a segment links BACKWARD under that
+ * predicate; the chain is then walkable from either end.
+ */
+function parseManifestArchiveLinks(turtle: string, baseUrl: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const predicate = /(?:iep:manifestArchive|hydra:previous)\s*((?:<[^>]*>\s*,\s*)*<[^>]*>)/g;
+  let m: RegExpExecArray | null;
+  while ((m = predicate.exec(turtle)) !== null) {
+    for (const iri of m[1]!.matchAll(/<([^>]*)>/g)) {
+      const abs = absolutizeIri(iri[1]!, baseUrl);
+      if (!seen.has(abs)) { seen.add(abs); out.push(abs); }
+    }
+  }
+  return out;
+}
+
+/**
+ * Parse manifest entry blocks out of one Turtle document. Archive segments repeat the
+ * manifest's own entry format verbatim, so the same line scanner reads either kind.
+ */
+function parseManifestEntries(turtle: string, baseUrl: string): PodState['descriptors'] {
+  const descriptors: PodState['descriptors'] = [];
+
+  let current: PodState['descriptors'][0] | null = null;
+  for (const rawLine of turtle.split('\n')) {
+    const line = rawLine.trim();
+
+    const entryMatch = line.match(/^<([^>]+)>\s+a\s+iep:ManifestEntry/);
+    if (entryMatch) {
+      if (current) descriptors.push(current);
+      current = { url: absolutizeIri(entryMatch[1]!, baseUrl), describes: [], facetTypes: [] };
+      continue;
+    }
+    if (!current) continue;
+
+    const descMatch = line.match(/iep:describes\s+<([^>]+)>/);
+    if (descMatch) current.describes.push(descMatch[1]!);
+
+    const facetMatch = line.match(/iep:hasFacetType\s+iep:(\w+)/);
+    if (facetMatch) current.facetTypes.push(facetMatch[1]!);
+
+    const fromMatch = line.match(/iep:validFrom\s+"([^"]+)"/);
+    if (fromMatch) current.validFrom = fromMatch[1]!;
+
+    const untilMatch = line.match(/iep:validUntil\s+"([^"]+)"/);
+    if (untilMatch) current.validUntil = untilMatch[1]!;
+
+    if (line.endsWith('.') && current) {
+      descriptors.push(current);
+      current = null;
+    }
+  }
+  if (current) descriptors.push(current);
+
+  return descriptors;
+}
+
+/**
+ * Fetch the context-graphs manifest from a pod — hot document plus every archive segment it
+ * advertises.
+ *
+ * ★ THIS DASHBOARD IS OBSERVATIONAL, SO A PARTIAL READ IS A FALSE OBSERVATION. The list this
+ * returns is diffed against `knownDescriptorUrls` to decide what to broadcast. Read only the
+ * hot manifest of a pod that has rolled over and every archived descriptor looks like it was
+ * REMOVED — the dashboard would emit `descriptor_removed` for entries that are still on the
+ * pod, and the pod's descriptor count would collapse to the hot limit. The whole point of a
+ * purely observational surface is that what it shows happened, actually happened.
+ *
+ * ★ WHAT MAKES IT FOLLOW IS THE DOCUMENT, NOT THIS PROCESS'S CONFIGURATION: the
+ * `iep:manifestArchive` links present in the body just fetched. Poll a pod that has never
+ * rolled over and this is the same single request it always was — no env var decides it, so
+ * the dashboard cannot be configured into disagreeing with the pod.
  */
 async function fetchManifest(podUrl: string): Promise<PodState['descriptors']> {
-  try {
-    const resp = await fetch(`${podUrl}.well-known/context-graphs`, {
-      headers: { 'Accept': 'text/turtle' },
-    });
-    if (!resp.ok) return [];
+  const manifestUrl = `${podUrl}.well-known/context-graphs`;
+  const getTurtle = async (url: string): Promise<string | null> => {
+    try {
+      const resp = await fetch(url, { headers: { 'Accept': 'text/turtle' } });
+      if (!resp.ok) return null;
+      return await resp.text();
+    } catch {
+      return null;
+    }
+  };
 
-    const turtle = await resp.text();
-    const descriptors: PodState['descriptors'] = [];
+  const hot = await getTurtle(manifestUrl);
+  if (hot === null) return [];
 
-    let current: PodState['descriptors'][0] | null = null;
-    for (const rawLine of turtle.split('\n')) {
-      const line = rawLine.trim();
-
-      const entryMatch = line.match(/^<([^>]+)>\s+a\s+iep:ManifestEntry/);
-      if (entryMatch) {
-        if (current) descriptors.push(current);
-        current = { url: entryMatch[1]!, describes: [], facetTypes: [] };
-        continue;
-      }
-      if (!current) continue;
-
-      const descMatch = line.match(/iep:describes\s+<([^>]+)>/);
-      if (descMatch) current.describes.push(descMatch[1]!);
-
-      const facetMatch = line.match(/iep:hasFacetType\s+iep:(\w+)/);
-      if (facetMatch) current.facetTypes.push(facetMatch[1]!);
-
-      const fromMatch = line.match(/iep:validFrom\s+"([^"]+)"/);
-      if (fromMatch) current.validFrom = fromMatch[1]!;
-
-      const untilMatch = line.match(/iep:validUntil\s+"([^"]+)"/);
-      if (untilMatch) current.validUntil = untilMatch[1]!;
-
-      if (line.endsWith('.') && current) {
-        descriptors.push(current);
-        current = null;
+  // Segments are fetched in PARALLEL — the hot document names them all at once, so the whole
+  // chain costs one extra round-trip rather than one per segment. That matters against CSS's
+  // read-write locker, which POLL_CONCURRENCY exists to keep headroom in.
+  const segments: Array<{ url: string; body: string }> = [];
+  const visited = new Set<string>([manifestUrl]);
+  let frontier = parseManifestArchiveLinks(hot, manifestUrl).filter(u => !visited.has(u));
+  while (frontier.length > 0 && visited.size < MANIFEST_ARCHIVE_MAX_SEGMENTS) {
+    frontier = frontier.slice(0, MANIFEST_ARCHIVE_MAX_SEGMENTS - visited.size);
+    for (const u of frontier) visited.add(u);
+    const fetched = await Promise.all(
+      frontier.map(async (url) => ({ url, body: await getTurtle(url) })),
+    );
+    const next: string[] = [];
+    for (const f of fetched) {
+      if (f.body === null) continue;
+      segments.push({ url: f.url, body: f.body });
+      for (const link of parseManifestArchiveLinks(f.body, f.url)) {
+        if (!visited.has(link) && !next.includes(link)) next.push(link);
       }
     }
-    if (current) descriptors.push(current);
-
-    return descriptors;
-  } catch {
-    return [];
+    frontier = next;
   }
+
+  // Roll-over PUTs the archive segment before it shortens the hot document, so an
+  // interruption between the two leaves one entry in both. Dedupe by descriptor URL with the
+  // HOT copy winning — it is the one the publish path has been maintaining. Archives are
+  // merged first so the oldest entries stay first, as they were when the index was one file.
+  const byUrl = new Map<string, PodState['descriptors'][0]>();
+  for (const s of segments) {
+    for (const e of parseManifestEntries(s.body, s.url)) byUrl.set(e.url, e);
+  }
+  for (const e of parseManifestEntries(hot, manifestUrl)) byUrl.set(e.url, e);
+  return [...byUrl.values()];
 }
 
 // Rediscovery cadence: the CSS root listing is O(total files across all

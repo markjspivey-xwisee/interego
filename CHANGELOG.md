@@ -28,6 +28,63 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
 
 ---
 
+## 2026-08-08 — a manifest that stays small, and says where the rest of it is
+
+### Fixed
+- **A pod's manifest no longer grows until it cannot be written.** Every publish rewrote the
+  whole `.well-known/context-graphs` document, and the maintainer's pod had reached 495,492
+  bytes across 653 entries. Measured against the live fleet: that write costs
+  `1010 ms + 9.73 ms × entries`, CSS's write lock expires at 6000 ms, and at 653 entries the
+  PUT loses the lock and CSS answers `500 Lock expired after 6000ms` — reproduced on a
+  disposable pod nobody else was touching, so it is not contention. Lock expiry is a watchdog
+  and not a rollback, so the bytes land and the caller is told the write failed. Entries past
+  a bound now roll into linked, write-once archive segments and the hot document stays at
+  around fifty rows, which makes the write O(1) in the pod's size.
+- **The cost was per-STATEMENT, not per-byte, and that is what made bounding the entry count
+  the right lever.** The same bytes written as `application/octet-stream` instead of
+  `text/turtle` take a flat ~1.8 s at 67 KB, 438 KB and 604 KB alike, and SUCCEED at the size
+  where Turtle fails: the storage backend mints one content-addressed atom per Turtle
+  statement and does a serial round-trip per atom, and a manifest entry is exactly one
+  statement. Compressing the document would have bought nothing.
+
+### Changed
+- **The manifest self-describes as partial, on the pod, in the data.** `iep:manifestArchive`
+  (and `hydra:view`, the same fact in Hydra's own vocabulary) on the collection subject links
+  the segments; each segment is an `iep:ManifestArchive` / `hydra:PartialCollectionView`
+  linking backward with `hydra:previous`, so the chain is walkable from either end. A reader's
+  behaviour follows the document it fetched — never a build flag or an environment variable,
+  which is what disqualified the earlier append-only-shard attempt: eleven consumers did raw
+  manifest GETs and none of them consulted its env var.
+- **Nothing mints an `archivedEntryCount`.** A mirrored total is a second home for a fact the
+  links already carry, and the two can disagree. Same refusal `manifestEntryTurtle` makes
+  about `wsp:seq`, for the same reason.
+- **Every reader that cannot tolerate a short view was made to follow the links, and the rest
+  were checked rather than assumed.** `discover()`, the kernel's `urn:graph` resolver and its
+  `dereferenceManifest` (so the `dereference` verb on both MCP servers), the social walk, the
+  relay's CID backfill, the dashboard and both microsite SPAs all read the whole chain. T0 pod
+  detection and the published conformance runner's L2.1/L2.2 are genuinely fine on a truncated
+  view and are untouched — they test reachability and shape, not completeness.
+- **A short view is never presented as a whole one.** `fetchAllManifestEntries` reports
+  `complete`; `discover()` REFUSES rather than return a partial pod; the kernel answers
+  `error` instead of `not-found` when a URN miss came from an index it could not fully read;
+  `dereference` sets `manifestPartial`; the CID backfill refuses to report a `scanned` count
+  over documents it never saw; the pod browser says so on screen.
+- **Roll-over cannot hit the wall it exists to avoid.** Segments hold at most one hot
+  document's worth of entries each, so a pod far over the bound gets several bounded PUTs
+  rather than one enormous one, and archive-before-shorten ordering means an interruption
+  duplicates rather than loses. Measured live on a 250-entry pod: three segment PUTs, slowest
+  2007 ms. Compaction is also its own committed step ahead of the append's CAS loop — with it
+  inside, one contended publish on a 400-entry pod rewrote all four segments twice and took
+  25.7 seconds.
+- **`rebuild_manifest` is correct for the new shape, and is the way back.** It derives the
+  shape from the count it finds: at or under the bound it writes one plain unbounded manifest
+  and retires every segment. Segments live inside `.well-known/`, which the descriptor scan
+  already excludes, so recovery cannot re-index them as descriptors — the phantom-entry defect
+  that made the append-only shards a one-way door. Its own writes are bounded too; before this
+  it could not complete on the maintainer's pod at all.
+
+---
+
 ## 2026-08-07 — being somebody's delegate, and speaking for them, are two facts
 
 ### Changed

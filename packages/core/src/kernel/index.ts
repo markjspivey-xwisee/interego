@@ -80,6 +80,23 @@ interface SolidModule {
     encrypted?: boolean;
   }>;
   parseManifest: (turtle: string) => readonly import('../manifest/types.js').ManifestEntry[];
+  /**
+   * ★ REQUIRED, NOT OPTIONAL, AND THE DIFFERENCE MATTERS.
+   *
+   * This is the union of a pod's hot manifest with the archive segments that manifest links —
+   * the only correct way to ask "what is on this pod" once a pod is past the manifest write
+   * bound. Declared as a required member so a caller (or a test double) cannot silently fall
+   * back to `parseManifest` over one document and get a plausible, short, wrong answer. An
+   * optional member with a raw-GET fallback would reintroduce exactly the defect this exists
+   * to close, and would do it invisibly, which is worse than not having the function.
+   */
+  fetchAllManifestEntries: (manifestUrl: string, fetchFn: FetchFn, options?: { maxSegments?: number }) => Promise<{
+    entries: readonly import('../manifest/types.js').ManifestEntry[];
+    complete: boolean;
+    archivesFollowed: number;
+    archivesUnreachable: readonly string[];
+    hotStatus: number;
+  }>;
   parseDistributionFromDescriptorTurtle?: (turtle: string) => {
     readonly accessURL: string;
     readonly mediaType: string;
@@ -549,26 +566,34 @@ async function dereferenceUrnGraph(
   // concurrently so cold lookups don't pay sequential round-trips per
   // candidate pod; selection still walks candidates in podHint-first
   // order to preserve preference on ties.
-  const manifestFetches = candidates.map(async (pod): Promise<string | null> => {
+  //
+  // ★ THIS READER IS THE ONE THAT ABSOLUTELY CANNOT TOLERATE A TRUNCATED MANIFEST, so it
+  // reads the WHOLE index — hot document plus every archive segment the document links.
+  // A pod past the write bound keeps only its most recent rows in
+  // `.well-known/context-graphs`; a raw GET of that one document still parses as a perfectly
+  // valid manifest, which is exactly what makes the failure invisible here. The URN of an
+  // older graph would simply not be found, and this function's "not found" is indistinguishable
+  // from "no such graph anywhere" — an unresolvable URN reported as a nonexistent one. Every
+  // other consequence of bounding is a smaller listing; this one is a wrong answer.
+  //
+  // `fetchAllManifestEntries` is the substrate's own union (parallel segment fetches, dedupe
+  // by descriptor URL, hot copy wins) rather than a private loop here, so this reader and
+  // `discover()` cannot drift about what "the pod's index" means.
+  const manifestReads = candidates.map(async (pod) => {
     const manifestUrl = `${pod}.well-known/context-graphs`;
     try {
-      const resp = await withTransientRetry(() => fetchImpl(manifestUrl, {
-        method: 'GET',
-        headers: { 'Accept': 'text/turtle' },
-      }));
-      if (!resp.ok) return null;
-      return await resp.text();
+      return await solid.fetchAllManifestEntries(manifestUrl, fetchImpl);
     } catch {
       return null;
     }
   });
-  const manifestTurtles = await Promise.all(manifestFetches);
+  const manifestResults = await Promise.all(manifestReads);
 
   for (let i = 0; i < candidates.length; i++) {
-    const manifestTurtle = manifestTurtles[i];
-    if (manifestTurtle === null || manifestTurtle === undefined) continue;
+    const read = manifestResults[i];
+    if (!read) continue;
 
-    const entries = solid.parseManifest(manifestTurtle);
+    const entries = read.entries;
     const match = entries.find(e => e.describes.includes(iri));
     if (!match) continue;
 
@@ -624,6 +649,23 @@ async function dereferenceUrnGraph(
   // No candidate pod's manifest carried the URN. Surface a clear
   // not-found so callers can distinguish "no pod context" from "pod
   // present but URN not registered".
+  //
+  // ★ EXCEPT WHEN A MISS IS NOT A MISS. If any candidate's manifest ADVERTISED archive
+  // segments and one of them would not load, this function never read that pod's whole index,
+  // so "the URN is not there" is a claim it did not establish. Reporting `not-found` would
+  // convert a transient read failure into a statement about the world — the exact
+  // absence-as-evidence shape this whole change exists to prevent, and the one place in the
+  // substrate where it produces a wrong answer rather than a short list. `error` says the
+  // question was not settled, which is true.
+  const incomplete = manifestResults.filter(r => r !== null && !r.complete);
+  if (incomplete.length > 0) {
+    return {
+      iri,
+      status: 'error',
+      contentType: '',
+      affordances: [],
+    };
+  }
   return {
     iri,
     status: 'not-found',
@@ -835,9 +877,23 @@ async function dereferenceManifest(
   }
 
   const body = await response.text();
-  const { parseManifest, fetchGraphContent } = await loadSolidLazy();
-  const entries = parseManifest(body);
+  const { fetchAllManifestEntries, fetchGraphContent } = await loadSolidLazy();
+  // ★ THE `dereference` VERB'S ANSWER FOR A MANIFEST IS "WHAT IS ON THIS POD", so it reads the
+  // whole index rather than the one document. On a bounded pod the hot manifest parses
+  // perfectly and holds only the recent rows; returning those as `manifestEntries` would be a
+  // subset presented as the set, to a caller that asked the substrate's most general read
+  // question. `representation` deliberately stays the HOT BYTES — that field is "what this
+  // IRI serves", and it does — while `manifestEntries` is the resolved index the archive
+  // links point at.
+  const read = await fetchAllManifestEntries(manifestUrl, fetchImpl);
+  const entries = read.entries;
   const contentType = response.headers?.get('content-type') ?? 'text/turtle';
+  // Surfaced, not just used: a caller that must not act on a partial index (a compliance
+  // sweep, a supersession walk) needs to SEE that a segment was unreadable. Absent when the
+  // read was whole, so the flag's presence is itself the signal.
+  const completeness = read.complete
+    ? {}
+    : { manifestPartial: true as const, manifestArchivesUnreachable: read.archivesUnreachable };
 
   if (!decorate) {
     return {
@@ -847,6 +903,7 @@ async function dereferenceManifest(
       contentType,
       affordances: [],
       manifestEntries: entries.map(e => ({ ...e })),
+      ...completeness,
     };
   }
 
@@ -879,6 +936,7 @@ async function dereferenceManifest(
     contentType,
     affordances: [],
     manifestEntries: decorated,
+    ...completeness,
   };
 }
 

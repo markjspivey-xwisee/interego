@@ -17,6 +17,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
+import { readManifestIndex } from '../manifest-chain.js';
 
 // ── styles (matching the rest of the microsite) ────────────────────
 const mono = "'JetBrains Mono', monospace";
@@ -256,15 +257,32 @@ export function PodBrowser({ onHome }: { onHome: () => void }) {
   const [detailLoading, setDetailLoading] = useState(false);
   const [filter, setFilter] = useState<string | null>(null);
   const [view, setView] = useState<'turtle' | 'json' | 'graph' | 'facets'>('turtle');
+  // ★ SET WHEN THE LIST IS SHORT OF THE POD AND WE KNOW IT. Following the archive links is
+  // most of the job; saying so when a link would not load is the rest. Without this the page
+  // renders a shorter pod with exactly the same confidence as a complete one, which is the
+  // failure this whole mechanism exists to prevent — just moved from the substrate to the
+  // screen.
+  const [partial, setPartial] = useState<boolean>(false);
 
+  // ★ THE LIST ON THE LEFT CLAIMS TO BE THE POD, SO IT HAS TO BE THE POD. This page's whole
+  // proposition is that you are looking at the substrate as it really lives, and the type
+  // filter chips underneath count what it found. Against a pod whose manifest has rolled
+  // over, reading only the hot document would render a confident, well-formed, wrong browser
+  // — descriptors that exist on the pod simply absent, chip counts short, and nothing on
+  // screen indicating anything was left out. `readManifestIndex` follows the
+  // `iep:manifestArchive` links the fetched manifest advertises; a pod that has never rolled
+  // over advertises none and costs exactly the one request it always did.
   async function loadManifest(url: string) {
-    setLoading(true); setError(null); setEntries([]); setSelected(null); setDetail(null);
+    setLoading(true); setError(null); setEntries([]); setSelected(null); setDetail(null); setPartial(false);
     try {
       const norm = url.endsWith('/') ? url : `${url}/`;
-      const r = await fetch(`${norm}.well-known/context-graphs`, { headers: { Accept: 'text/turtle' } });
-      if (!r.ok) throw new Error(`manifest HTTP ${r.status}`);
-      const ttl = await r.text();
-      setEntries(parseManifest(ttl));
+      const index = await readManifestIndex(
+        `${norm}.well-known/context-graphs`,
+        parseManifest,
+        e => e.descriptorUrl,
+      );
+      setEntries(index.items);
+      setPartial(!index.complete);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -342,6 +360,11 @@ export function PodBrowser({ onHome }: { onHome: () => void }) {
 
       {error && <div style={{ ...card, borderLeft: '3px solid var(--bad)', marginBottom: 18, fontFamily: mono, fontSize: 12 }}>
         {error}
+      </div>}
+
+      {partial && !error && <div style={{ ...card, borderLeft: '3px solid var(--warn, #c98a00)', marginBottom: 18, fontFamily: mono, fontSize: 12 }}>
+        This pod&rsquo;s manifest links to archive segments that would not load, so the list below is
+        SHORT of the pod&rsquo;s index and the type counts are understated. Reload to try the segments again.
       </div>}
 
       {/* Filter chips */}
@@ -470,8 +493,13 @@ export function PodBrowser({ onHome }: { onHome: () => void }) {
         </div>
         <p style={{ fontSize: 14, lineHeight: 1.62, margin: 0 }}>
           This is the substrate as it really lives — not a dashboard reading the bridge's API. Every entry on
-          the left came from a single <code>GET .well-known/context-graphs</code> on the pod; every click on the
-          right dereferences the descriptor's Turtle URL. The bridge isn't in the loop; this page talks to the pod
+          the left came from a <code>GET .well-known/context-graphs</code> on the pod, plus the archive segments
+          that manifest links to. A pod's manifest is bounded: once it fills up, the oldest rows move into
+          write-once <code>context-graphs-archive-NNNN</code> documents and the manifest records where they went,
+          as <code>iep:manifestArchive</code> links on the collection itself. This page follows the links it finds
+          in the document it fetched, so it shows the pod's whole index rather than its most recent slice — and a
+          pod that has never rolled over advertises no links, so it stays one request. Every click on the right
+          dereferences the descriptor's Turtle URL. The bridge isn't in the loop; this page talks to the pod
           directly, and would work the same against any Interego pod anywhere on the federation.
         </p>
       </div>

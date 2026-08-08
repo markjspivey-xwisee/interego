@@ -1,6 +1,14 @@
 export {
   publish, discover, subscribe, parseManifest,
   rebuildManifestFromPod,
+  // ★ THE BOUNDED-MANIFEST READ PRIMITIVE, EXPORTED BECAUSE ELEVEN CONSUMERS DO RAW MANIFEST
+  // GETS. A pod past the write bound keeps only its most recent rows in
+  // `.well-known/context-graphs` and links the rest; a reader that GETs that one document
+  // still parses a valid manifest, but it holds a PARTIAL index. These two are how a reader
+  // gets the whole thing — and, via `complete`, how it finds out when it did not. Left
+  // unexported, every consumer would have reinvented the union, and the ones that did not
+  // would have gone on reporting a slice as the pod.
+  fetchManifestChain, fetchAllManifestEntries, parseManifestArchiveUrls,
   fetchGraphContent,
   // The TriG wrap `publish()` writes, and its inverse — how a reader recovers the graph an
   // authorship proof's contentHash was computed over. The emitter is exported so a test can
