@@ -212,6 +212,15 @@ function absolutizeIri(iri: string, baseUrl: string): string {
   try { return new URL(iri, baseUrl).href; } catch { return iri; }
 }
 
+/** An archive link turned into a request against the manifest's own origin (see `fetchManifest`). */
+function archiveFetchTarget(linkIri: string, manifestUrl: string): string | null {
+  let basename: string;
+  try { basename = new URL(linkIri, manifestUrl).pathname.split('/').filter(Boolean).pop() ?? ''; }
+  catch { return null; }
+  if (!/^context-graphs-archive-\d+$/.test(basename)) return null;
+  try { return new URL(basename, manifestUrl).href; } catch { return null; }
+}
+
 /**
  * The archive segments a manifest — or a segment — says the rest of its index lives in.
  *
@@ -310,7 +319,17 @@ async function fetchManifest(podUrl: string): Promise<PodState['descriptors']> {
   // read-write locker, which POLL_CONCURRENCY exists to keep headroom in.
   const segments: Array<{ url: string; body: string }> = [];
   const visited = new Set<string>([manifestUrl]);
-  let frontier = parseManifestArchiveLinks(hot, manifestUrl).filter(u => !visited.has(u));
+  // ★ THE LINK IS CANONICAL; THE REQUEST IS A SIBLING. Measured live: the maintainer pod's
+  // manifest is written by the relay against the pod's internal CSS URL, so every archive link
+  // names `http://css.railway.internal:3456/...`. Fetched verbatim from a process that cannot
+  // resolve that host, every segment fails and the pod reads as its hot slice. A segment is
+  // always a sibling of its manifest, so the request is built from the manifest's own origin
+  // and the stored IRI is left exactly as published.
+  const targets = (turtle: string, base: string): string[] =>
+    parseManifestArchiveLinks(turtle, base)
+      .map(l => archiveFetchTarget(l, manifestUrl))
+      .filter((u): u is string => u !== null);
+  let frontier = targets(hot, manifestUrl).filter(u => !visited.has(u));
   while (frontier.length > 0 && visited.size < MANIFEST_ARCHIVE_MAX_SEGMENTS) {
     frontier = frontier.slice(0, MANIFEST_ARCHIVE_MAX_SEGMENTS - visited.size);
     for (const u of frontier) visited.add(u);
@@ -321,7 +340,7 @@ async function fetchManifest(podUrl: string): Promise<PodState['descriptors']> {
     for (const f of fetched) {
       if (f.body === null) continue;
       segments.push({ url: f.url, body: f.body });
-      for (const link of parseManifestArchiveLinks(f.body, f.url)) {
+      for (const link of targets(f.body, f.url)) {
         if (!visited.has(link) && !next.includes(link)) next.push(link);
       }
     }

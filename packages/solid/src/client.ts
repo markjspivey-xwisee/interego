@@ -1064,6 +1064,39 @@ function manifestArchiveHeaderTurtle(archiveUrl: string, manifestUrl: string, pr
  * is how the header emits them. Deliberately tolerant of `hydra:previous` too, so a reader
  * that lands on a segment written by an older build still walks backward.
  */
+/**
+ * Where to actually FETCH an archive segment a manifest names.
+ *
+ * ★ MEASURED ON THE LIVE MAINTAINER POD, MINUTES AFTER IT ROLLED OVER. Its manifest is
+ * written by the relay against the pod's canonical internal URL, so every archive link reads
+ * `http://css.railway.internal:3456/u-eth-.../.well-known/context-graphs-archive-0000`. The
+ * relay resolves that fine and reported all 654 rows. An external reader — the same
+ * `discover()`, reached through the public gate — cannot resolve that host at all, so all
+ * seven segments came back unreachable and `discover()` refused. The refusal is what surfaced
+ * it, which is the whole reason it is there; had the union degraded quietly, the pod would
+ * have read as 51 entries and nothing would have said otherwise.
+ *
+ * The canonical IRI in the data is CORRECT and must not be rewritten — it matches the 653
+ * descriptor URLs beside it, and this project's rule is that the internal host in stored bytes
+ * is canonical and only the fetch target is rebased. So: take the link's LAST PATH SEGMENT and
+ * resolve it against the manifest URL. An archive segment is always a sibling of its manifest
+ * by construction (`manifestArchiveUrl`), so this reaches the right document from whatever
+ * origin the reader used, and it is strictly safer besides — a manifest cannot point a reader
+ * at an arbitrary host.
+ *
+ * Returns null when the name is not one this writer produces. The caller must then treat the
+ * link as UNREADABLE rather than ignore it: a link we decline to follow is still a part of the
+ * index we did not read, and saying so is the difference between a short answer and a lie.
+ */
+export function archiveFetchTarget(linkIri: string, manifestUrl: string): string | null {
+  let basename: string;
+  try {
+    basename = new URL(linkIri, manifestUrl).pathname.split('/').filter(Boolean).pop() ?? '';
+  } catch { return null; }
+  if (!/^context-graphs-archive-\d+$/.test(basename)) return null;
+  try { return new URL(basename, manifestUrl).href; } catch { return null; }
+}
+
 export function parseManifestArchiveUrls(turtle: string, baseUrl: string): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
@@ -1135,7 +1168,20 @@ export async function fetchManifestChain(
   const archives: Array<{ url: string; body: string }> = [];
   const unreachable: string[] = [];
   const visited = new Set<string>([manifestUrl]);
-  let frontier = parseManifestArchiveUrls(hotBody, manifestUrl).filter(u => !visited.has(u));
+  // Links are turned into SIBLING fetch targets before anything else, so `visited` keys on
+  // what will actually be requested. Keying on the canonical IRI instead would let the same
+  // segment be fetched twice under two spellings of its host.
+  const targets = (turtle: string, base: string): { ok: string[]; bad: string[] } => {
+    const ok: string[] = []; const bad: string[] = [];
+    for (const link of parseManifestArchiveUrls(turtle, base)) {
+      const t = archiveFetchTarget(link, manifestUrl);
+      if (t === null) bad.push(link); else ok.push(t);
+    }
+    return { ok, bad };
+  };
+  const first = targets(hotBody, manifestUrl);
+  unreachable.push(...first.bad);
+  let frontier = first.ok.filter(u => !visited.has(u));
   let truncated = false;
   while (frontier.length > 0) {
     if (visited.size + frontier.length > maxSegments) {
@@ -1163,7 +1209,9 @@ export async function fetchManifestChain(
     for (const f of fetched) {
       if (f.body === null) { unreachable.push(f.url); continue; }
       archives.push({ url: f.url, body: f.body });
-      for (const link of parseManifestArchiveUrls(f.body, f.url)) {
+      const onward = targets(f.body, f.url);
+      unreachable.push(...onward.bad);
+      for (const link of onward.ok) {
         if (!visited.has(link) && !next.includes(link)) next.push(link);
       }
     }

@@ -9,6 +9,12 @@ export {
   // unexported, every consumer would have reinvented the union, and the ones that did not
   // would have gone on reporting a slice as the pod.
   fetchManifestChain, fetchAllManifestEntries, parseManifestArchiveUrls,
+  // ★ AND THE ONE EVERY READER MUST GO THROUGH TO TURN A LINK INTO A REQUEST. The IRI in the
+  // data is the pod's CANONICAL one, which on this deployment names an internal host no
+  // external client can resolve. Measured live: the relay read all 654 rows and a reader
+  // reached through the public gate found all seven segments unreachable. A segment is always
+  // a sibling of its manifest, so the fetch target comes from the manifest's own origin.
+  archiveFetchTarget,
   fetchGraphContent,
   // The TriG wrap `publish()` writes, and its inverse — how a reader recovers the graph an
   // authorship proof's contentHash was computed over. The emitter is exported so a test can

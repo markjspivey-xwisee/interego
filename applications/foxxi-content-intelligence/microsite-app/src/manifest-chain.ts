@@ -52,6 +52,26 @@ export function parseManifestArchiveLinks(turtle: string, baseUrl: string): stri
   return out;
 }
 
+/**
+ * An archive link turned into a request.
+ *
+ * ★ THE LINK IS CANONICAL AND OFTEN UNFETCHABLE FROM A BROWSER. Measured live: the maintainer
+ * pod's manifest is written by the relay against the pod's internal CSS URL, so every archive
+ * link names `http://css.railway.internal:3456/...`. A tab cannot resolve that host, so
+ * following the links verbatim would have failed every segment and shown the hot slice as the
+ * pod. A segment is always a SIBLING of its manifest, so the request is built from the
+ * manifest's own origin and the published IRI is left alone. It is also what keeps a
+ * stranger's pod — this page lets a viewer type any URL — from pointing the tab at an
+ * arbitrary host.
+ */
+export function archiveFetchTarget(linkIri: string, manifestUrl: string): string | null {
+  let basename: string;
+  try { basename = new URL(linkIri, manifestUrl).pathname.split('/').filter(Boolean).pop() ?? ''; }
+  catch { return null; }
+  if (!/^context-graphs-archive-\d+$/.test(basename)) return null;
+  try { return new URL(basename, manifestUrl).href; } catch { return null; }
+}
+
 /** Bare entry subject IRIs, for a caller that only needs to count what the index holds. */
 export function parseManifestEntryUrls(turtle: string): string[] {
   const out: string[] = [];
@@ -94,7 +114,20 @@ export async function readManifestIndex<T>(
   const visited = new Set<string>([manifestUrl]);
   let unreachable = 0;
   let truncated = false;
-  let frontier = parseManifestArchiveLinks(hot, manifestUrl).filter(u => !visited.has(u));
+  // Links become sibling fetch targets before anything else, so `visited` keys on the request
+  // that will be made. A link whose name is not one the writer produces counts as UNREADABLE
+  // rather than being dropped: it is still part of the index this page did not read.
+  const targets = (turtle: string, base: string): { ok: string[]; bad: number } => {
+    const ok: string[] = []; let bad = 0;
+    for (const l of parseManifestArchiveLinks(turtle, base)) {
+      const t = archiveFetchTarget(l, manifestUrl);
+      if (t === null) bad++; else ok.push(t);
+    }
+    return { ok, bad };
+  };
+  const firstTargets = targets(hot, manifestUrl);
+  unreachable += firstTargets.bad;
+  let frontier = firstTargets.ok.filter(u => !visited.has(u));
   while (frontier.length > 0) {
     if (visited.size + frontier.length > MAX_SEGMENTS) {
       truncated = true;
@@ -112,7 +145,9 @@ export async function readManifestIndex<T>(
       const body = fetched[i];
       if (body === null || body === undefined) { unreachable++; continue; }
       bodies.push(body);
-      for (const link of parseManifestArchiveLinks(body, frontier[i]!)) {
+      const onward = targets(body, frontier[i]!);
+      unreachable += onward.bad;
+      for (const link of onward.ok) {
         if (!visited.has(link) && !next.includes(link)) next.push(link);
       }
     }
