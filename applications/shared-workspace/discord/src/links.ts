@@ -46,14 +46,18 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
-import { POD_RX, SLUG_RX, SNOWFLAKE_RX, challengeLabel } from '@interego/workspace-client';
+import { POD_RX, SLUG_RX } from '@interego/workspace-client';
+import { SNOWFLAKE_RX, challengeLabel } from './link-plan.js';
 
 /**
- * ★ RE-EXPORTED, NOT DEFINED. Both moved into `@interego/workspace-client` when the desktop app
- * became a second publisher of this row. The comment on {@link challengeLabel} below said "two
- * format sites is how a link flow comes to reject every honest user" while this file WAS the only
- * site; a copy in the desktop shell would have made that prediction come true. The module is now
- * the one site and this bot reads it from there.
+ * ★ RE-EXPORTED, NOT DEFINED, AND NOW FROM THE RIGHT SIDE OF THE LAYERING. Both lived in
+ * `@interego/workspace-client` because the desktop app became a second publisher of this row and a
+ * copy of {@link challengeLabel} in the shell would make its own warning come true — "two format
+ * sites is how a link flow comes to reject every honest user". That was the right instinct and the
+ * wrong destination: it put a Discord snowflake regex inside the shared-workspace client, which
+ * every surface of that vertical bundles and none of which should have to know Discord exists.
+ * They are in `./link-plan.ts` now, in the conduit that IS the Discord one, and the desktop shell
+ * depends on THIS package for them. Still one site.
  */
 export { SNOWFLAKE_RX, challengeLabel };
 

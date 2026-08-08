@@ -42,6 +42,11 @@ import {
   delegatePort,
 } from '@interego/workspace-client';
 import { probeClaude, runClaude } from '../desktop/src/modelprovider.js';
+// ★ A SECOND CONSUMER OF THE SAME AUTHORSHIP VALUE, DRIVEN IN THE SAME RUN. The desktop shell is
+// not the only surface a reader meets these records on, and a distinction that survives in one
+// renderer and quietly dies in another is not a distinction the system has. This is the Discord
+// conduit's own author clause, with its own longer copy, over the identical substrate value.
+import { authorOf as discordAuthorOf } from '../discord/src/render.js';
 import { mintBearer, type Signer } from './live-identity.js';
 
 const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
@@ -318,15 +323,21 @@ async function main(): Promise<void> {
 
   const prompt = briefPrompt(decision.brief, { displayName: A.viewer.displayName, delegateName: 'Claude side' });
   check('the prompt tells the model it is the delegate and NOT the person',
-    prompt.includes('You are Claude side, a delegate acting for') && prompt.includes('You are NOT'));
+    prompt.includes('You are Claude side, a delegate of') && prompt.includes('You are NOT'));
   check('and it carries the channel and no caller-supplied text', prompt.includes(question) && prompt.includes(workspace));
+  // ★ THE FOOTING IS ASKED FOR, NOT ASSUMED — this is the whole correction, in the prompt.
+  check('and it asks the model which footing it is speaking on',
+    prompt.includes('FOOTING: ON THEIR BEHALF') && prompt.includes('FOOTING: MY OWN ACCOUNT'));
   const turn = await runClaude({ binary: provider.path, prompt });
   check('the model answered', turn.ok && !!turn.text, turn.why);
   if (!turn.ok || !turn.text) { process.exit(1); }
-  const draft = checkDraft(turn.text);
+  const draft = checkDraft(turn.text, { principal: A.viewer.webId });
   check('the draft passes the pre-post check', draft.ok, draft.ok ? '' : draft.why);
   if (!draft.ok) { process.exit(1); }
+  check('and it came back with a footing the delegate chose for itself',
+    draft.footing.kind === 'on-behalf-of' || draft.footing.kind === 'own-account', draft.footing.kind);
   log('\n  ── what A\'s delegate "Claude side" wrote, on the operator\'s own subscription ──');
+  log('  │ [footing it declared: ' + draft.footing.kind + ']');
   for (const l of draft.body.split('\n')) log('  │ ' + l);
   log('  ── (' + (turn.ms / 1000).toFixed(1) + 's) ──\n');
 
@@ -334,7 +345,7 @@ async function main(): Promise<void> {
   // the relay authenticates the delegate too — so `revoke_agent` below actually stops it.
   const wrote = await postEntry(D1.client, {
     podName: A.viewer.podName, streamIri: aStream, workspace, body: draft.body, entryShape,
-    author: { kind: 'delegate', agentId: d1Id, onBehalfOf: A.viewer.webId },
+    author: { kind: 'delegate', agentId: d1Id, footing: draft.footing },
   });
   check('the delegate\'s reply landed on A\'s pod, written by the DELEGATE\'s session',
     wrote.kind === 'accepted', JSON.stringify(wrote).slice(0, 200));
@@ -360,12 +371,53 @@ async function main(): Promise<void> {
     log('    ' + e.pod + ' · ' + authorshipLine(e.author) + ' · ' + (e.body ?? '(no body)').slice(0, 70));
   }
   const one = asDelegate[0];
-  check('the delegate entry names the delegate as author and A as who it acted for',
-    !!one && one.author.kind === 'delegate' && one.author.agentId === d1Id && one.author.onBehalfOf === A.viewer.webId,
-    one && one.author.kind === 'delegate' ? one.author.agentId + ' for ' + one.author.onBehalfOf : 'none');
+  check('the delegate entry names the delegate as its author',
+    !!one && one.author.kind === 'delegate' && one.author.agentId === d1Id,
+    one && one.author.kind === 'delegate' ? one.author.agentId : 'none');
+  check('and the footing it declared survives the round trip through the relay',
+    !!one && one.author.kind === 'delegate' && one.author.footing.kind === draft.footing.kind,
+    one && one.author.kind === 'delegate' ? 'read back as ' + one.author.footing.kind + ', wrote ' + draft.footing.kind : 'none');
   check('and A\'s own pod\'s registry is what says the delegation is real',
     !!one && one.author.kind === 'delegate' && one.author.authorised === true && one.author.name === 'Claude side',
     one && one.author.kind === 'delegate' ? 'authorised=' + one.author.authorised + ' name=' + one.author.name : 'none');
+
+  // ── ★ THE SAME DELEGATE, THE OTHER FOOTING, WRITTEN AND READ BACK ─────────────────────────
+  //
+  // This is the pair the whole change exists for. Nothing about the delegation changes between
+  // these two entries: same agent, same key, same row on A's pod, same standing. What differs is
+  // one statement inside one record, and a reader has to come back with two different answers.
+  head('10b · the same delegate, speaking for ITSELF, told apart from the one above');
+  const ownBody = 'Speaking for myself here rather than for ' + (A.viewer.displayName ?? 'the person I act for')
+    + ': I think the second option is the weaker one, and that is my read, not theirs.';
+  const wroteOwn = await postEntry(D1.client, {
+    podName: A.viewer.podName, streamIri: aStream, workspace, body: ownBody, entryShape,
+    author: { kind: 'delegate', agentId: d1Id, footing: { kind: 'own-account' } },
+  });
+  check('an own-account entry from the same delegate landed', wroteOwn.kind === 'accepted',
+    JSON.stringify(wroteOwn).slice(0, 200));
+  read = await awaitEntry(A, fold.seats, byPod, (e) => (e.body ?? '') === ownBody);
+  const own = read.entries.find((e) => (e.body ?? '') === ownBody) ?? null;
+  check('it reads back as own-account',
+    !!own && own.author.kind === 'delegate' && own.author.footing.kind === 'own-account',
+    own && own.author.kind === 'delegate' ? own.author.footing.kind : 'not read');
+  check('by the SAME agent id as the entry above it',
+    !!own && own.author.kind === 'delegate' && own.author.agentId === d1Id);
+  check('with its standing delegation UNCHANGED — still authorised, still named',
+    !!own && own.author.kind === 'delegate' && own.author.authorised === true && own.author.name === 'Claude side');
+  check('★ and the two entries do NOT render the same',
+    !!one && !!own && authorshipLine(one.author, { displayName: 'Mark' }) !== authorshipLine(own.author, { displayName: 'Mark' }),
+    !!one && !!own ? authorshipLine(one.author, { displayName: 'Mark' }) + '  ≠  ' + authorshipLine(own.author, { displayName: 'Mark' }) : 'one of them was not read');
+  // ★ A SECOND CONSUMER, NOT THE DESKTOP APP. The Discord conduit renders authorship with its own
+  // longer copy, from the same substrate value. If a surface could quietly drop the distinction,
+  // this is where it would show.
+  if (one && own) {
+    const shownFor = discordAuthorOf(one.author);
+    const shownOwn = discordAuthorOf(own.author);
+    log('    discord · ' + shownFor);
+    log('    discord · ' + shownOwn);
+    check('the Discord conduit distinguishes them too', shownFor !== shownOwn);
+    check('and says "for itself" in the one that is', shownOwn.includes('for itself'), shownOwn.slice(0, 120));
+  }
 
   head('11 · the SECOND delegate: a sibling, and the loop guard between them');
   // ★ ONE DUPLICATE REPLY IS THE FAILURE THIS PREVENTS. Two delegates of one person both
@@ -390,12 +442,12 @@ async function main(): Promise<void> {
       turn2.brief.transcript.some((t) => t.includes('another delegate of the person you act for')),
       turn2.brief.transcript.join(' | ').slice(0, 300));
     const t2 = await runClaude({ binary: provider.path, prompt: briefPrompt(turn2.brief, { displayName: A.viewer.displayName, delegateName: 'Codex side' }) });
-    const d2 = t2.ok && t2.text ? checkDraft(t2.text) : { ok: false as const, why: t2.why };
+    const d2 = t2.ok && t2.text ? checkDraft(t2.text, { principal: A.viewer.webId }) : { ok: false as const, why: t2.why };
     check('delegate #2\'s model answered and its draft passes', d2.ok, d2.ok ? '' : d2.why);
     if (d2.ok) {
       const wrote2 = await postEntry(D2.client, {
         podName: A.viewer.podName, streamIri: aStream, workspace, body: d2.body, entryShape,
-        author: { kind: 'delegate', agentId: d2Id, onBehalfOf: A.viewer.webId },
+        author: { kind: 'delegate', agentId: d2Id, footing: d2.footing },
       });
       check('delegate #2\'s reply landed, under ITS own session', wrote2.kind === 'accepted', JSON.stringify(wrote2).slice(0, 200));
     }

@@ -6,8 +6,13 @@
  *
  * Identity model:
  *   Pod belongs to the OWNER (human/org, identified by WebID).
- *   Agent is a DELEGATE acting on the owner's behalf.
- *   Descriptors carry: wasAttributedTo → owner, wasAssociatedWith → agent.
+ *   Agent is a DELEGATE the owner authorised.
+ *   Descriptors carry: wasAttributedTo → the AGENT, because it is what asserted
+ *   them; iep:onBehalfOf → the owner, which is the STANDING delegation and a
+ *   different fact. This line used to say `wasAttributedTo → owner`, which said
+ *   the human had asserted descriptors they never saw. Whether one PARTICULAR
+ *   act was carried out on the owner's behalf is stated per-activity, on the
+ *   payload graph, as prov:qualifiedDelegation / iep:actedOnOwnAccount.
  *
  * Federation:
  *   Supports multiple pods across multiple CSS instances.
@@ -1992,10 +1997,22 @@ async function toolPgslIngest(args: {
         type: 'Temporal',
         validFrom: new Date().toISOString(),
       }, {
+        // The author is the agent that asserted it, matching
+        // `ContextDescriptor.delegatedBy` — which this same file calls on the
+        // ordinary publish path. This site builds the facet by hand and named
+        // the OWNER, so the one endpoint that bypassed the builder was also the
+        // one that kept the convention the builder dropped.
         type: 'Provenance',
-        wasAttributedTo: MY_OWNER_WEBID,
+        wasAttributedTo: MY_AGENT_ID,
         generatedAtTime: new Date().toISOString(),
         wasGeneratedBy: { agent: MY_AGENT_ID, endedAt: new Date().toISOString() },
+      }, {
+        // The owner is not dropped: it is the standing delegation, on the facet
+        // that means it.
+        type: 'Agent',
+        assertingAgent: { identity: MY_AGENT_ID, isSoftwareAgent: true },
+        agentRole: 'Author',
+        onBehalfOf: MY_OWNER_WEBID,
       }],
     );
     const turtle = pgslToTurtle(pgslInstance);

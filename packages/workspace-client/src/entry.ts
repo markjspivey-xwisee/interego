@@ -5,6 +5,7 @@
  * the same assertions and report the same outcomes. What is left to a shell is drawing them.
  */
 
+import { footingTurtle, type StatedFooting } from '@interego/core/delegate';
 import { escapeTurtleLiteral, IEP, PROV, WSP } from './turtle.js';
 import { shortRef } from './format.js';
 import { type ChainRow, orderChain, toChainRow } from './chain.js';
@@ -12,25 +13,35 @@ import type { WorkspaceClient, WorkspaceRecord } from './substrate.js';
 import { refusal } from './transport.js';
 
 /**
- * WHO COMPOSED THIS ENTRY. Required, on every entry, from every surface.
+ * WHO COMPOSED THIS ENTRY, AND — SEPARATELY — WHAT FOOTING THEY WERE ON.
  *
- * ★ THE TWO CASES ARE NOT THE SAME AND THE RECORD MUST NOT COLLAPSE THEM.
+ * ★ TWO CASES FOR THE AUTHOR, AND THE RECORD MUST NOT COLLAPSE THEM.
  *
  *  · `principal` — the person wrote these words. That covers the composer in the desktop shell
  *    AND the Discord bot relaying a message somebody typed: the bot is a conduit carrying their
  *    own speech, so the entry is theirs and is attributed to them. Nothing about the conduit
  *    belongs in the author position.
  *  · `delegate` — an agent the person authorised composed these words, and the person did not
- *    write them. The agent is the author; the person is who it acted for.
+ *    write them. The agent is the author.
  *
- * ★ AND IT IS NOT OPTIONAL, WHICH IS THE POINT. If a delegate-authored entry said so and a
- * human-authored one said nothing, then "nothing" would have to be read as "the human" — and
- * absence is not evidence. Every entry states its author, so the absence of the statement is a
- * finding about the entry rather than a default in favour of anybody.
+ * ★ AND A THIRD FACT THAT IS NOT THE AUTHOR AND WAS BEING WRITTEN AS IF IT FOLLOWED FROM THEM.
+ * A delegate is ALWAYS the delegate of a specific human — that is standing, it lives on that
+ * human's pod, and they revoke it. Whether a PARTICULAR sentence was said FOR them is a different
+ * question with a different answer each time, and this type now makes a caller answer it: an agent
+ * may speak for its human, in which case the human shares responsibility for what was said, or on
+ * its own account, in which case the agent alone is answerable. Every entry used to declare the
+ * first regardless, which laundered an agent's own positions into its delegator's.
+ *
+ * ★ NEITHER FIELD IS OPTIONAL, AND THAT IS THE POINT. If a delegate-authored entry declared its
+ * footing and a human-authored one said nothing, then "nothing" would have to be read as one of
+ * them — and absence is not evidence. Every entry this client writes states both, so a record that
+ * states neither is a finding about that record rather than a default in anybody's favour. A READER
+ * still has three answers (see `EntryFooting`); a WRITER has two, because a client that could write
+ * an unfooted delegate entry would be a client that creates the ambiguity on purpose.
  */
 export type EntryAuthor =
   | { readonly kind: 'principal'; readonly webId: string }
-  | { readonly kind: 'delegate'; readonly agentId: string; readonly onBehalfOf: string };
+  | { readonly kind: 'delegate'; readonly agentId: string; readonly footing: StatedFooting };
 
 /**
  * The Turtle for one entry.
@@ -42,10 +53,13 @@ export type EntryAuthor =
  * is one of these: for a delegate it is a DID this client did not mint, and for a principal it
  * is a WebID read off a pod.
  *
- * ★ THE DELEGATION IS A TRIPLE ABOUT THE AGENT, NOT ABOUT THE ENTRY. `prov:actedOnBehalfOf`
- * relates two agents; hanging it off the entry would be malformed PROV that happened to read
- * plausibly. So a delegate-authored entry carries a second subject — the agent — and one
- * statement about it, in the same signed region.
+ * ★ THE FOOTING BLOCK IS THE SUBSTRATE'S TRIPLES, NOT THIS FILE'S. `footingTurtle` composes them:
+ * `prov:qualifiedDelegation` to a named `prov:Delegation` whose `prov:hadActivity` is this entry's
+ * own act, or `iep:actedOnOwnAccount` over that same act. Which triples say "on this person's
+ * behalf" is an Interego answer — the conduit, the shell and any later vertical must write the same
+ * ones or a reader crossing two of them gets two answers to one question. What stays here is the
+ * `wsp:Entry` itself. The guard above is handed down rather than copied, so there is one spelling
+ * of the IRIREF rule in this path and it is the one that can name which argument was bad.
  */
 export function entryTurtle(args: {
   readonly streamIri: string;
@@ -62,14 +76,20 @@ export function entryTurtle(args: {
     return '<' + u + '>';
   };
   if (!Number.isInteger(args.seq) || args.seq < 0) throw new Error('entryTurtle: seq must be a non-negative integer, got ' + String(args.seq));
-  const subject = iri(args.streamIri + '/e/' + args.seq, 'the entry IRI');
+  const entryIri = args.streamIri + '/e/' + args.seq;
+  const subject = iri(entryIri, 'the entry IRI');
   const workspace = iri(args.workspace, 'the workspace IRI');
   const prior = args.prior === null ? null : iri(args.prior, 'the prior head');
   const a = args.author;
   const author = a.kind === 'delegate'
     ? iri(a.agentId, 'the delegate agent id this entry is attributed to')
     : iri(a.webId, 'the WebID this entry is attributed to');
-  const behalf = a.kind === 'delegate' ? iri(a.onBehalfOf, 'the WebID this delegate acted on behalf of') : null;
+  const created = args.createdIso ?? new Date().toISOString();
+  // A person composing their own words has no footing question to answer — there is no second
+  // agent for a delegation to be between — so nothing is written for them, and nothing is implied.
+  const footing = a.kind === 'delegate'
+    ? footingTurtle({ entryIri, agentId: a.agentId, footing: a.footing, iri, endedIso: created })
+    : null;
   return '@prefix wsp: <' + WSP + '> .\n'
     + '@prefix iep: <' + IEP + '> .\n'
     + '@prefix prov: <' + PROV + '> .\n'
@@ -81,9 +101,10 @@ export function entryTurtle(args: {
     + '  wsp:seq "' + args.seq + '"^^xsd:nonNegativeInteger ;\n'
     + (prior ? '  iep:supersedes ' + prior + ' ;\n' : '')
     + '  prov:wasAttributedTo ' + author + ' ;\n'
-    + '  dct:created "' + (args.createdIso ?? new Date().toISOString()) + '"^^xsd:dateTime ;\n'
+    + (footing ? footing.generatedBy : '')
+    + '  dct:created "' + created + '"^^xsd:dateTime ;\n'
     + '  dct:description "' + escapeTurtleLiteral(args.body) + '" .\n'
-    + (behalf ? '\n' + author + ' prov:actedOnBehalfOf ' + behalf + ' .\n' : '');
+    + (footing ? footing.blocks : '');
 }
 
 /**

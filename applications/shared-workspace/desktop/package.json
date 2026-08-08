@@ -25,6 +25,7 @@
   },
   "dependencies": {
     "@interego/workspace-client": "*",
+    "@interego/workspace-discord": "*",
     "ethers": "^6.16.0"
   },
   "devDependencies": {

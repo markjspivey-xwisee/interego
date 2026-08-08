@@ -131,7 +131,12 @@ describe('the plan is shown before the call is made', () => {
 
   it('★ states that entries name the delegate as author and the person as who it acted for', () => {
     const p = delegatePlan({ agentId: D1, name: 'Research assistant' });
-    expect(p.limits.join(' ')).toMatch(/name IT as the author and YOU as the person it acted for/);
+    expect(p.limits.join(' ')).toMatch(/name IT as the author/);
+    // ★ AND THE CONSENT SURFACE SAYS WHAT AUTHORISING ONE DOES *NOT* MEAN. A person agreeing to a
+    // delegation is not agreeing in advance to everything it will ever say, and the limit that
+    // used to read "YOU as the person it acted for" said exactly that it was.
+    expect(p.limits.join(' ')).toMatch(/STANDING and it is not an endorsement of anything it will say/);
+    expect(p.limits.join(' ')).toMatch(/on its OWN account, where it alone is answerable/);
     expect(p.limits.join(' ')).toMatch(/POD-WIDE/);
     expect(p.limits.join(' ')).toMatch(/60 seconds/);
   });
@@ -215,29 +220,64 @@ describe('a delegate cannot do what its delegator withheld from it', () => {
 describe('the entry says who wrote it, and a human-authored one says so too', () => {
   const args = { streamIri: STREAM, workspace: WS, seq: 3, body: 'hello', prior: null, createdIso: '2026-08-07T00:00:00.000Z' };
 
-  it('★ a person\'s entry carries prov:wasAttributedTo <their WebID> and NO delegation statement', () => {
+  const FOR_HUMAN = { kind: 'delegate', agentId: D1, footing: { kind: 'on-behalf-of', principal: WEBID } } as const;
+  const OWN = { kind: 'delegate', agentId: D1, footing: { kind: 'own-account' } } as const;
+  const ENTRY = STREAM + '/e/3';
+
+  it('★ a person\'s entry carries prov:wasAttributedTo <their WebID> and NO footing statement', () => {
     const t = entryTurtle({ ...args, author: { kind: 'principal', webId: WEBID } });
     expect(t).toContain('prov:wasAttributedTo <' + WEBID + '>');
-    expect(t).not.toContain('prov:actedOnBehalfOf');
+    // A person composing their own words has no footing question: there is no second agent for a
+    // delegation to be between, so nothing is written and nothing is implied.
+    expect(t).not.toContain('prov:Delegation');
+    expect(t).not.toContain('actedOnOwnAccount');
+    expect(t).not.toContain('prov:wasGeneratedBy');
   });
 
-  it('★ a delegate\'s entry attributes to the AGENT and states, about the agent, whom it acted for', () => {
-    const t = entryTurtle({ ...args, author: { kind: 'delegate', agentId: D1, onBehalfOf: WEBID } });
+  it('★ a delegate speaking FOR its human: attributed to the AGENT, with a prov:Delegation over THIS act', () => {
+    const t = entryTurtle({ ...args, author: FOR_HUMAN });
     expect(t).toContain('prov:wasAttributedTo <' + D1 + '>');
-    // PROV relates two AGENTS. Hanging it off the entry would be malformed PROV that read plausibly.
-    expect(t).toContain('<' + D1 + '> prov:actedOnBehalfOf <' + WEBID + '> .');
     expect(t).not.toContain('prov:wasAttributedTo <' + WEBID + '>');
+    // PROV relates two AGENTS and scopes the delegation to one activity. Hanging a bare
+    // `actedOnBehalfOf` off the entry would be malformed PROV that read plausibly — and asserting
+    // it unconditionally is what put an agent's own opinions in its delegator's mouth.
+    expect(t).toContain('prov:wasGeneratedBy <' + ENTRY + '#act>');
+    expect(t).toContain('<' + D1 + '> prov:qualifiedDelegation <' + ENTRY + '#delegation> .');
+    expect(t).toContain('a prov:Delegation ;');
+    expect(t).toContain('prov:agent <' + WEBID + '> ;');
+    expect(t).toContain('prov:hadActivity <' + ENTRY + '#act> .');
   });
 
-  it('★ neither form is silent about its author — absence would have to be read as the person', () => {
-    for (const a of [{ kind: 'principal', webId: WEBID } as const, { kind: 'delegate', agentId: D1, onBehalfOf: WEBID } as const]) {
+  it('★ the SAME delegate speaking for ITSELF: same author, no delegation, an explicit negative', () => {
+    const t = entryTurtle({ ...args, author: OWN });
+    expect(t).toContain('prov:wasAttributedTo <' + D1 + '>');
+    expect(t).toContain('prov:wasGeneratedBy <' + ENTRY + '#act>');
+    expect(t).toContain('<' + D1 + '> iep:actedOnOwnAccount <' + ENTRY + '#act> .');
+    // ★ AND NO DELEGATION AT ALL. This is the assertion the whole change turns on: the human is
+    // named nowhere in this record, because they are not answerable for it.
+    expect(t).not.toContain('prov:Delegation');
+    expect(t).not.toContain('prov:qualifiedDelegation');
+    expect(t).not.toContain(WEBID);
+  });
+
+  it('★ the two delegate forms are not the same bytes', () => {
+    expect(entryTurtle({ ...args, author: FOR_HUMAN })).not.toBe(entryTurtle({ ...args, author: OWN }));
+  });
+
+  it('★ no form is silent about its author — absence would have to be read as the person', () => {
+    for (const a of [{ kind: 'principal', webId: WEBID } as const, FOR_HUMAN, OWN]) {
       expect(readIriAll(entryTurtle({ ...args, author: a }), 'prov:wasAttributedTo')).toHaveLength(1);
     }
   });
 
   it('refuses an unserialisable author rather than closing the IRI reference somewhere else', () => {
-    expect(() => entryTurtle({ ...args, author: { kind: 'principal', webId: 'https://x/> . <s> <p> <o' } })).toThrow(/not serializable/);
-    expect(() => entryTurtle({ ...args, author: { kind: 'delegate', agentId: D1, onBehalfOf: '' } })).toThrow(/missing/);
+    const bad = 'https://x/> . <s> <p> <o';
+    expect(() => entryTurtle({ ...args, author: { kind: 'principal', webId: bad } })).toThrow(/not serializable/);
+    expect(() => entryTurtle({ ...args, author: { kind: 'delegate', agentId: '', footing: { kind: 'own-account' } } })).toThrow(/missing/);
+    // The principal reaches Turtle through the footing block, which is the substrate's — so it has
+    // to be guarded there too, by the same rule, or the move opened a hole the move did not have.
+    expect(() => entryTurtle({ ...args, author: { kind: 'delegate', agentId: D1, footing: { kind: 'on-behalf-of', principal: bad } } }))
+      .toThrow(/not serializable/);
   });
 });
 
@@ -253,17 +293,55 @@ describe('readEntryAuthorship: the entry claims, and two other documents hold it
     expect(a.kind).toBe('principal');
   });
 
+  const forHuman = { kind: 'delegate', agentId: D1, footing: { kind: 'on-behalf-of', principal: WEBID } } as const;
+  const ownAccount = { kind: 'delegate', agentId: D1, footing: { kind: 'own-account' } } as const;
+
   it('★ a delegate\'s entry reads as the delegate, named from the delegator\'s own registry', () => {
-    const a = readEntryAuthorship(written({ kind: 'delegate', agentId: D1, onBehalfOf: WEBID }), {
+    const a = readEntryAuthorship(written(forHuman), {
       logOwnerWebId: WEBID, delegates: roster([row(D1, 'Claude side', 'PublishOnly')]),
     });
-    expect(a).toMatchObject({ kind: 'delegate', agentId: D1, onBehalfOf: WEBID, name: 'Claude side', authorised: true, scope: 'PublishOnly' });
+    expect(a).toMatchObject({
+      kind: 'delegate', agentId: D1, name: 'Claude side', authorised: true, scope: 'PublishOnly',
+      footing: { kind: 'on-behalf-of', principal: WEBID },
+    });
+  });
+
+  /**
+   * ★ THE ROUND TRIP THAT IS THE POINT OF THE WHOLE CHANGE.
+   *
+   * Two entries, written by one delegate under one delegation, read back through the real Turtle
+   * readers. Everything about the AGENT is identical — same id, same registry row, same
+   * `authorised: true`, same name. Everything about the UTTERANCE differs. If the writer and the
+   * reader ever stop agreeing about how a footing is stated, or a change collapses the two again,
+   * this goes red.
+   */
+  it('★ for-the-human and for-itself survive the write→read round trip as different answers', () => {
+    const r = roster([row(D1, 'Claude side', 'PublishOnly')]);
+    const a = readEntryAuthorship(written(forHuman), { logOwnerWebId: WEBID, delegates: r });
+    const b = readEntryAuthorship(written(ownAccount), { logOwnerWebId: WEBID, delegates: r });
+    expect(a.kind === 'delegate' && a.footing.kind).toBe('on-behalf-of');
+    expect(b.kind === 'delegate' && b.footing.kind).toBe('own-account');
+    expect(a.kind === 'delegate' && a.agentId).toBe(D1);
+    expect(b.kind === 'delegate' && b.agentId).toBe(D1);
+    expect(a.kind === 'delegate' && a.authorised).toBe(true);
+    expect(b.kind === 'delegate' && b.authorised).toBe(true);
+    expect(authorshipLine(a, { displayName: 'Mark' })).not.toBe(authorshipLine(b, { displayName: 'Mark' }));
+  });
+
+  it('★ an own-account entry names its delegator NOWHERE, so nothing can read it as theirs', () => {
+    const t = written(ownAccount);
+    expect(t).not.toContain(WEBID);
+    const a = readEntryAuthorship(t, { logOwnerWebId: WEBID, delegates: roster([row(D1, 'Claude side', 'PublishOnly')]) });
+    // And the reader still places it correctly, from the pod it is on plus the registry — not from
+    // a triple in the record claiming the human's involvement.
+    expect(a.kind).toBe('delegate');
+    expect(a.kind === 'delegate' && a.authorised).toBe(true);
   });
 
   it('★ two delegates of one person are two distinct authors in one log', () => {
     const r = roster([row(D1, 'Claude side', 'PublishOnly'), row(D2, 'Codex side', 'PublishOnly')]);
-    const a = readEntryAuthorship(written({ kind: 'delegate', agentId: D1, onBehalfOf: WEBID }), { logOwnerWebId: WEBID, delegates: r });
-    const b = readEntryAuthorship(written({ kind: 'delegate', agentId: D2, onBehalfOf: WEBID }), { logOwnerWebId: WEBID, delegates: r });
+    const a = readEntryAuthorship(written(forHuman), { logOwnerWebId: WEBID, delegates: r });
+    const b = readEntryAuthorship(written({ kind: 'delegate', agentId: D2, footing: { kind: 'on-behalf-of', principal: WEBID } }), { logOwnerWebId: WEBID, delegates: r });
     expect(a.kind === 'delegate' && a.name).toBe('Claude side');
     expect(b.kind === 'delegate' && b.name).toBe('Codex side');
     expect(a).not.toEqual(b);
@@ -284,7 +362,7 @@ describe('readEntryAuthorship: the entry claims, and two other documents hold it
   });
 
   it('★ an unauthorised delegation is a finding; an unread registry is NOT', () => {
-    const t = written({ kind: 'delegate', agentId: D1, onBehalfOf: WEBID });
+    const t = written(forHuman);
     const notListed = readEntryAuthorship(t, { logOwnerWebId: WEBID, delegates: roster([row(D2, 'Codex side', 'PublishOnly')]) });
     expect(notListed.kind === 'delegate' && notListed.authorised).toBe(false);
     const notRead = readEntryAuthorship(t, { logOwnerWebId: WEBID, delegates: null });
@@ -293,33 +371,96 @@ describe('readEntryAuthorship: the entry claims, and two other documents hold it
     expect(failedRead.kind === 'delegate' && failedRead.authorised).toBeNull();
   });
 
-  it('★ an agent claiming to act for somebody who is not the log\'s owner is DISPUTED', () => {
-    const a = readEntryAuthorship(written({ kind: 'delegate', agentId: D1, onBehalfOf: OTHER }), { logOwnerWebId: WEBID, delegates: null });
+  it('★ an agent whose Delegation names somebody who is not the log\'s owner is DISPUTED', () => {
+    const a = readEntryAuthorship(written({ kind: 'delegate', agentId: D1, footing: { kind: 'on-behalf-of', principal: OTHER } }), { logOwnerWebId: WEBID, delegates: null });
     expect(a.kind).toBe('disputed');
     expect(a.kind === 'disputed' && a.why).toMatch(/third party/);
   });
 
-  it('★ an entry attributed to a stranger with no delegation statement is DISPUTED, not a delegate', () => {
-    const a = readEntryAuthorship(written({ kind: 'principal', webId: OTHER }), { logOwnerWebId: WEBID, delegates: null });
-    expect(a.kind).toBe('disputed');
-    expect(a.kind === 'disputed' && a.why).toMatch(/neither the log's owner nor declared to be acting for them/);
+  /**
+   * ★ THE CASE THAT CHANGED MEANING, AND WHY THE NEW ANSWER IS THE RIGHT ONE.
+   *
+   * This used to be `disputed`, on the reasoning that a non-owner author with no
+   * `prov:actedOnBehalfOf` "claims an author who is neither the log's owner nor declared to be
+   * acting for them". That was absence read as a contradiction — and now that an agent CAN
+   * legitimately write on its own account, "no delegation" is an ordinary, valid state. What
+   * actually establishes whether this author has any business writing here is the delegator's own
+   * registry, a document the record's author cannot write, and that check is `authorised` — which
+   * says `false` here, in a document nobody could forge.
+   */
+  it('★ an entry by a stranger with no footing is a delegate whose footing and authority BOTH fail to check out', () => {
+    const t = written({ kind: 'principal', webId: OTHER });
+    const a = readEntryAuthorship(t, { logOwnerWebId: WEBID, delegates: roster([row(D1, 'Claude side', 'PublishOnly')]) });
+    expect(a.kind).toBe('delegate');
+    expect(a.kind === 'delegate' && a.footing.kind).toBe('not-stated');
+    expect(a.kind === 'delegate' && a.footing.kind === 'not-stated' && a.footing.why).toMatch(/not stated/);
+    // The load-bearing half: the owner's own pod does not list this author at all.
+    expect(a.kind === 'delegate' && a.authorised).toBe(false);
   });
 
-  it('★ two attributions, or two delegation statements, are refused rather than resolved by taking the first', () => {
+  it('★ two attributions, or two footing statements, are refused rather than resolved by taking the first', () => {
     // The bytes are the log owner's, so a hostile writer can state a predicate twice. `readIri`
     // would silently take whichever came first — a choice this reader is not entitled to make.
     const two = region('<' + STREAM + '/e/0> <http://www.w3.org/ns/prov#wasAttributedTo> <' + WEBID + '> ;\n'
       + '  <http://www.w3.org/ns/prov#wasAttributedTo> <' + D1 + '> .');
     expect(readEntryAuthorship(two, { logOwnerWebId: WEBID, delegates: null }).kind).toBe('disputed');
-    const twoBehalf = region('<' + STREAM + '/e/0> <http://www.w3.org/ns/prov#wasAttributedTo> <' + D1 + '> .\n'
-      + '<' + D1 + '> <http://www.w3.org/ns/prov#actedOnBehalfOf> <' + WEBID + '> , <' + OTHER + '> .');
-    expect(readEntryAuthorship(twoBehalf, { logOwnerWebId: WEBID, delegates: null }).kind).toBe('disputed');
+    const twoPrincipals = region('<' + STREAM + '/e/0> <http://www.w3.org/ns/prov#wasAttributedTo> <' + D1 + '> ;\n'
+      + '  <http://www.w3.org/ns/prov#wasGeneratedBy> <' + STREAM + '/e/0#act> .\n'
+      + '<' + D1 + '> <http://www.w3.org/ns/prov#qualifiedDelegation> <' + STREAM + '/e/0#delegation> .\n'
+      + '<' + STREAM + '/e/0#delegation> <http://www.w3.org/ns/prov#agent> <' + WEBID + '> , <' + OTHER + '> ;\n'
+      + '  <http://www.w3.org/ns/prov#hadActivity> <' + STREAM + '/e/0#act> .');
+    expect(readEntryAuthorship(twoPrincipals, { logOwnerWebId: WEBID, delegates: null }).kind).toBe('disputed');
   });
 
-  it('★ a person cannot act on their own behalf through themselves', () => {
-    const odd = region('<' + STREAM + '/e/0> <http://www.w3.org/ns/prov#wasAttributedTo> <' + WEBID + '> .\n'
-      + '<' + WEBID + '> <http://www.w3.org/ns/prov#actedOnBehalfOf> <' + OTHER + '> .');
+  /**
+   * ★ THE ONE COMBINATION THE ONTOLOGY FORBIDS. Both statements are POSITIVE, so a record carrying
+   * both is contradicting itself about who is answerable — not merely being quiet. A reader that
+   * preferred one would be choosing, in the one place choosing is the whole failure mode.
+   */
+  it('★ a record claiming BOTH footings over one act is disputed, not resolved', () => {
+    const both = region('<' + STREAM + '/e/0> <http://www.w3.org/ns/prov#wasAttributedTo> <' + D1 + '> ;\n'
+      + '  <http://www.w3.org/ns/prov#wasGeneratedBy> <' + STREAM + '/e/0#act> .\n'
+      + '<' + D1 + '> <http://www.w3.org/ns/prov#qualifiedDelegation> <' + STREAM + '/e/0#delegation> ;\n'
+      + '  <https://markjspivey-xwisee.github.io/interego/ns/iep#actedOnOwnAccount> <' + STREAM + '/e/0#act> .\n'
+      + '<' + STREAM + '/e/0#delegation> <http://www.w3.org/ns/prov#agent> <' + WEBID + '> ;\n'
+      + '  <http://www.w3.org/ns/prov#hadActivity> <' + STREAM + '/e/0#act> .');
+    const a = readEntryAuthorship(both, { logOwnerWebId: WEBID, delegates: null });
+    expect(a.kind).toBe('disputed');
+    expect(a.kind === 'disputed' && a.why).toMatch(/opposite claims about who is accountable/);
+  });
+
+  /**
+   * ★ A DELEGATION OVER A DIFFERENT ACT SAYS NOTHING ABOUT THIS ONE, and that is what makes the
+   * footing PER-ACT rather than merely present. Without the `prov:hadActivity` check a writer could
+   * carry one Delegation forward and have every subsequent entry read as spoken for the human.
+   */
+  it('★ a prov:Delegation scoped to somebody else\'s activity does not cover this record', () => {
+    const elsewhere = region('<' + STREAM + '/e/0> <http://www.w3.org/ns/prov#wasAttributedTo> <' + D1 + '> ;\n'
+      + '  <http://www.w3.org/ns/prov#wasGeneratedBy> <' + STREAM + '/e/0#act> .\n'
+      + '<' + D1 + '> <http://www.w3.org/ns/prov#qualifiedDelegation> <' + STREAM + '/e/9#delegation> .\n'
+      + '<' + STREAM + '/e/9#delegation> <http://www.w3.org/ns/prov#agent> <' + WEBID + '> ;\n'
+      + '  <http://www.w3.org/ns/prov#hadActivity> <' + STREAM + '/e/9#act> .');
+    const a = readEntryAuthorship(elsewhere, { logOwnerWebId: WEBID, delegates: null });
+    expect(a.kind).toBe('disputed');
+    expect(a.kind === 'disputed' && a.why).toMatch(/says nothing about this one/);
+  });
+
+  it('★ a person cannot be a delegate of themselves', () => {
+    const odd = region('<' + STREAM + '/e/0> <http://www.w3.org/ns/prov#wasAttributedTo> <' + WEBID + '> ;\n'
+      + '  <http://www.w3.org/ns/prov#wasGeneratedBy> <' + STREAM + '/e/0#act> .\n'
+      + '<' + WEBID + '> <https://markjspivey-xwisee.github.io/interego/ns/iep#actedOnOwnAccount> <' + STREAM + '/e/0#act> .');
     expect(readEntryAuthorship(odd, { logOwnerWebId: WEBID, delegates: null }).kind).toBe('disputed');
+  });
+
+  it('★ a comment cannot introduce a footing, because the readers mask comments', () => {
+    // Same class as the author spoof below it: the whole footing block is a comment, so nothing in
+    // it is a triple, and an entry that really states nothing must not read as stating something.
+    const spoof = region('<' + STREAM + '/e/0> <http://www.w3.org/ns/prov#wasAttributedTo> <' + D1 + '> ;\n'
+      + '  <http://www.w3.org/ns/prov#wasGeneratedBy> <' + STREAM + '/e/0#act> .\n'
+      + '# <' + D1 + '> <http://www.w3.org/ns/prov#qualifiedDelegation> <' + STREAM + '/e/0#delegation> .\n'
+      + '# <' + STREAM + '/e/0#delegation> <http://www.w3.org/ns/prov#agent> <' + WEBID + '> ; <http://www.w3.org/ns/prov#hadActivity> <' + STREAM + '/e/0#act> .');
+    const a = readEntryAuthorship(spoof, { logOwnerWebId: WEBID, delegates: null });
+    expect(a.kind === 'delegate' && a.footing.kind).toBe('not-stated');
   });
 
   it('★ a comment cannot introduce an author, because the readers mask comments', () => {
@@ -350,11 +491,20 @@ describe('the workspace\'s own published shape requires an author', () => {
 });
 
 describe('authorshipLine says the same thing on every surface', () => {
-  it('names the delegate and who it acts for, and never reduces the two odd cases to a name', () => {
+  const d = (footing: Parameters<typeof authorshipLine>[0] extends never ? never : { kind: 'on-behalf-of'; principal: string } | { kind: 'own-account' } | { kind: 'not-stated'; why: string }): string =>
+    authorshipLine({ kind: 'delegate', agentId: D1, footing, name: 'Claude side', authorised: true, scope: 'PublishOnly' }, { displayName: 'Mark' });
+
+  it('names the delegate and its footing, and never reduces the two odd cases to a name', () => {
     expect(authorshipLine({ kind: 'principal', webId: WEBID }, { displayName: 'Mark' })).toBe('Mark');
-    expect(authorshipLine({ kind: 'delegate', agentId: D1, onBehalfOf: WEBID, name: 'Claude side', authorised: true, scope: 'PublishOnly' }, { displayName: 'Mark' }))
-      .toBe('Claude side, acting for Mark');
+    expect(d({ kind: 'on-behalf-of', principal: WEBID })).toBe('Claude side, speaking for Mark');
     expect(authorshipLine({ kind: 'unstated', why: 'x' })).toBe('author not stated');
     expect(authorshipLine({ kind: 'disputed', why: 'x' })).toBe('authorship disputed');
+  });
+
+  it('★ "Mark\'s delegate speaking for Mark" and "speaking for itself" do not look the same', () => {
+    expect(d({ kind: 'own-account' })).toBe('Claude side, a delegate of Mark, speaking for itself');
+    expect(d({ kind: 'on-behalf-of', principal: WEBID })).not.toBe(d({ kind: 'own-account' }));
+    expect(d({ kind: 'not-stated', why: 'x' })).not.toBe(d({ kind: 'own-account' }));
+    expect(d({ kind: 'not-stated', why: 'x' })).not.toBe(d({ kind: 'on-behalf-of', principal: WEBID }));
   });
 });

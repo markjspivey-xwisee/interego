@@ -34,7 +34,9 @@
  */
 
 import { shortRef } from './format.js';
-import { authorshipLine, delegateCeiling, type EntryAuthorship } from './delegates.js';
+import {
+  authorshipLine, delegateCeiling, type EntryAuthorship, type StatedFooting,
+} from './delegates.js';
 import type { RoleTable } from './membership.js';
 import type { Seat } from './seats.js';
 
@@ -170,14 +172,27 @@ const line = (e: SeenEntry, input: { readonly mePod: string; readonly delegate: 
   const body = e.body ?? '(this entry carried no readable body)';
   if (e.pod !== input.mePod) return e.pod + ' · ' + authorshipLine(e.author) + ': ' + body;
   const a = e.author;
+  // ★ THE FOOTING GOES IN THE TRANSCRIPT TOO, and not as decoration. A delegate deciding which
+  // footing to answer on needs to see which footing the rest of the conversation was on — its own
+  // previous turns most of all. Without it the model has no way to notice that it has been offering
+  // its own opinions all morning under its delegator's name, or the reverse.
   if (a.kind === 'delegate' && input.delegate && a.agentId === input.delegate.agentId) {
-    return 'you (' + (a.name ?? 'this delegate') + '): ' + body;
+    return 'you (' + (a.name ?? 'this delegate') + ', ' + footingWord(a) + '): ' + body;
   }
-  if (a.kind === 'delegate') return (a.name ?? 'an unnamed delegate') + ', another delegate of the person you act for: ' + body;
+  if (a.kind === 'delegate') {
+    return (a.name ?? 'an unnamed delegate') + ', another delegate of the person you act for ('
+      + footingWord(a) + '): ' + body;
+  }
   if (a.kind === 'principal') return 'the person you act for: ' + body;
   return 'an entry in your delegator\'s log whose '
     + (a.kind === 'unstated' ? 'author is not stated' : 'authorship is disputed') + ': ' + body;
 };
+
+/** The three-word form of a footing, for a transcript line where a whole sentence would not fit. */
+const footingWord = (a: Extract<EntryAuthorship, { kind: 'delegate' }>): string =>
+  a.footing.kind === 'on-behalf-of' ? 'speaking for them'
+    : a.footing.kind === 'own-account' ? 'speaking for itself'
+      : 'footing not stated';
 
 /**
  * Should this delegate say something, and about what?
@@ -386,16 +401,36 @@ export function briefPrompt(
   const who = args.displayName ? args.displayName : 'the person you act for';
   const me = args.delegateName ? args.delegateName : 'an unnamed delegate';
   return [
-    // ★ THE FIRST THREE LINES ARE THE CORRECTION. They used to say "as their own agent … appended
+    // ★ THE FIRST LINES ARE THE CORRECTION. They used to say "as their own agent … appended
     // to THEIR log as THEIR entry", which told the model it was writing in the person's voice —
     // and it wrote accordingly. It is a delegate: it signs nothing as them, and the record will
     // not read as them either.
-    'You are ' + me + ', a delegate acting for ' + who + ' in a shared workspace conversation.',
+    'You are ' + me + ', a delegate of ' + who + ' in a shared workspace conversation.',
     'You are NOT ' + who + '. What you write is appended to their log and recorded as authored by',
-    'YOU, acting on their behalf — a permanent, signed, publicly readable record that cannot be',
-    'edited or deleted, and that every reader can tell apart from something they typed themselves.',
+    'YOU — a permanent, signed, publicly readable record that cannot be edited or deleted, and that',
+    'every reader can tell apart from something they typed themselves.',
     'Write as yourself. Do not impersonate them, and do not write in the first person as if you',
     'were them.',
+    '',
+    // ★ THE FOOTING IS THE MODEL'S CALL, AND IT IS ASKED FOR EXPLICITLY RATHER THAN ASSUMED.
+    // Every entry a delegate wrote used to declare it was written on its delegator's behalf,
+    // whatever it said — which quietly put the delegate's own opinions in the delegator's mouth and
+    // left nobody able to say "the agent said that, not me". Being a delegate is standing and is
+    // not in question here; what IS in question is this one sentence. The instruction is deliberate
+    // about which way to lean: relaying a decision or a position that is THEIRS is speaking for
+    // them; reasoning, judging or disagreeing is the agent's own, and claiming their backing for it
+    // is the failure this exists to prevent.
+    'BEFORE your reply, on a line of its own, declare which footing you are speaking on. Exactly',
+    'one of these two lines, verbatim:',
+    '',
+    '  FOOTING: ON THEIR BEHALF   — you are relaying or representing ' + who + ': conveying a',
+    '                               decision, preference or commitment that is THEIRS, which they',
+    '                               would recognise as their own. They share responsibility for it.',
+    '  FOOTING: MY OWN ACCOUNT    — this is your reasoning, your reading, your position or your',
+    '                               question. YOU are answerable for it and ' + who + ' is not.',
+    '',
+    'If you are weighing a trade-off, offering an opinion, or asking something they have not asked,',
+    'that is MY OWN ACCOUNT. Do not claim their backing for a view they have not expressed.',
     '',
     'Channel: ' + brief.workspace,
     brief.omitted > 0 ? '(' + brief.omitted + ' earlier entries are not shown.)' : '(This is the whole channel so far.)',
@@ -430,9 +465,20 @@ export function briefPrompt(
 /** The sentinel a model returns when it judges there is nothing worth appending. */
 export const NOTHING_TO_ADD = 'NOTHING TO ADD';
 
+/**
+ * The two footing declarations {@link briefPrompt} asks for, and {@link checkDraft} accepts.
+ *
+ * ★ MATCHED EXACTLY, ANCHORED, AND CASE-FOLDED — AND NOTHING ELSE IS ACCEPTED. A loose match
+ * ("does the reply mention 'own account' anywhere") would let another member decide a delegate's
+ * footing by typing the phrase into the channel: the transcript goes into the prompt, the model
+ * echoes it, and the entry lands claiming a footing the agent never chose. The declaration has to
+ * be the whole of the first line or it is not a declaration.
+ */
+const FOOTING_LINE = /^FOOTING:[ \t]*(ON THEIR BEHALF|MY OWN ACCOUNT)[ \t]*$/i;
+
 export type DraftVerdict =
   | { readonly ok: false; readonly why: string }
-  | { readonly ok: true; readonly body: string };
+  | { readonly ok: true; readonly body: string; readonly footing: StatedFooting };
 
 /**
  * Is what came back from the model something that may be appended to somebody's permanent log?
@@ -442,15 +488,47 @@ export type DraftVerdict =
  * body is a Turtle literal and `entryTurtle` escapes it — but it does mean a blank, an enormous
  * wall, or a refusal message must not be appended as if the user had said it. Each of those has a
  * distinct answer here rather than a shared "invalid".
+ *
+ * ★ AND A DRAFT WITH NO FOOTING DECLARATION IS REFUSED RATHER THAN DEFAULTED. This is the one place
+ * in the system where "not stated" is not an acceptable answer, and the asymmetry is deliberate: a
+ * READER of somebody else's record has to be able to say "it does not say", but a WRITER that
+ * shipped an unfooted entry would be manufacturing that ambiguity on purpose, in a permanent
+ * record, on its delegator's pod. Defaulting to "on their behalf" is the original defect;
+ * defaulting to "own account" would let a delegate disown anything by forgetting a line. So it
+ * asks again instead.
+ *
+ * `principal` is the delegator's WebID — the party a `prov:Delegation` would name. The model is
+ * never shown it and never chooses it; it chooses only WHICH footing, and the caller supplies who.
  */
-export function checkDraft(raw: string): DraftVerdict {
-  const body = raw.trim();
-  if (!body) {
+export function checkDraft(raw: string, args: { readonly principal: string }): DraftVerdict {
+  const whole = raw.trim();
+  if (!whole) {
     return { ok: false, why: 'The model returned nothing. An empty entry is still a permanent record, so none is written.' };
   }
-  if (body === NOTHING_TO_ADD || body.toUpperCase() === NOTHING_TO_ADD) {
-    return { ok: false, why: 'Your agent read the channel and judged there was nothing worth adding. Nothing was written.' };
+  // An abstention needs no footing: there is nothing being said, so there is nothing to be
+  // answerable for. Checked before the declaration so a model that abstains cleanly is not nagged
+  // about a line it had no reason to write.
+  const abstain = 'Your agent read the channel and judged there was nothing worth adding. Nothing was written.';
+  if (whole.toUpperCase() === NOTHING_TO_ADD) return { ok: false, why: abstain };
+
+  const nl = whole.indexOf('\n');
+  const first = (nl < 0 ? whole : whole.slice(0, nl)).trim();
+  const m = FOOTING_LINE.exec(first);
+  if (!m) {
+    return {
+      ok: false,
+      why: 'Your agent did not declare which footing it was speaking on, so nothing was written. Every entry a '
+        + 'delegate writes has to say whether it is speaking FOR you — in which case you share responsibility for it '
+        + '— or on its OWN account, in which case it alone does. An entry that states neither would be a permanent '
+        + 'record nobody can read that off, and defaulting to either one is exactly what this refuses to do.',
+    };
   }
+  const kind = (m[1] as string).toUpperCase();
+  const body = (nl < 0 ? '' : whole.slice(nl + 1)).trim();
+  if (!body) {
+    return { ok: false, why: 'Your agent declared a footing and then wrote nothing under it. An empty entry is still a permanent record, so none is written.' };
+  }
+  if (body.toUpperCase() === NOTHING_TO_ADD) return { ok: false, why: abstain };
   if (body.length > DRAFT_MAX) {
     // Refused rather than truncated: a truncated entry is a permanent record of half a sentence,
     // and the reader cannot tell it was cut.
@@ -460,5 +538,11 @@ export function checkDraft(raw: string): DraftVerdict {
         + 'It is refused rather than truncated, because half a sentence recorded permanently is worse than none.',
     };
   }
-  return { ok: true, body };
+  return {
+    ok: true,
+    body,
+    footing: kind === 'MY OWN ACCOUNT'
+      ? { kind: 'own-account' }
+      : { kind: 'on-behalf-of', principal: args.principal },
+  };
 }

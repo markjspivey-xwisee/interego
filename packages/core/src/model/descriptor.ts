@@ -138,6 +138,12 @@ export class ContextDescriptor {
 
   /**
    * Convenience: provenance with inline activity construction.
+   *
+   * ★ `wasAttributedTo` IS THE AGENT, ALWAYS — see {@link delegatedBy} for the whole argument.
+   * This used to be `opts.onBehalfOf ?? agent`, so naming a principal silently moved the author
+   * position off the party that actually asserted the descriptor. The principal is still recorded,
+   * and now as the separate fact it is: an Agent facet carrying `iep:onBehalfOf`, which is the same
+   * pair `delegatedBy` emits. Nothing is dropped and the two builders no longer disagree.
    */
   generatedBy(
     agent: IRI,
@@ -147,7 +153,7 @@ export class ContextDescriptor {
       endedAt?: string;
       used?: IRI[];
       derivedFrom?: IRI[];
-      /** The human/org owner — if set, wasAttributedTo points to the owner, not the agent. */
+      /** The human/org this agent is authorised to act for. Recorded on an Agent facet. */
       onBehalfOf?: IRI;
     }
   ): this {
@@ -162,18 +168,47 @@ export class ContextDescriptor {
       type: 'Provenance',
       wasGeneratedBy: activity,
       wasDerivedFrom: opts?.derivedFrom,
-      wasAttributedTo: opts?.onBehalfOf ?? agent,
+      wasAttributedTo: agent,
       generatedAtTime: opts?.endedAt,
     });
+    if (opts?.onBehalfOf) {
+      this._facets.push({
+        type: 'Agent',
+        assertingAgent: { identity: agent, isSoftwareAgent: true },
+        agentRole: 'Author',
+        onBehalfOf: opts.onBehalfOf,
+      });
+    }
     return this;
   }
 
   /**
-   * Convenience: set both owner attribution and agent identity in one call.
+   * Convenience: set the author and, separately, who that author is authorised to act for.
    *
-   * Creates a Provenance facet with wasAttributedTo → owner,
-   * wasAssociatedWith → agent, plus an Agent facet with
-   * role=Author and onBehalfOf → owner.
+   * ★ THE AUTHOR IS WHOEVER AUTHORED IT, AND THIS BUILDER USED TO SAY OTHERWISE. It set
+   * `prov:wasAttributedTo` to the OWNER and put the agent in the activity — so the relay, which
+   * calls this on EVERY publish, wrote "the human asserted this" over descriptors the human had
+   * never seen. Meanwhile the shared-workspace vertical's own entries attribute to the AGENT. Two
+   * conventions, one predicate: a reader crossing them got different answers to "who wrote this",
+   * and the one that was wrong is the one with the wider blast radius.
+   *
+   * MEASURED before changing it: twelve `delegatedBy` call sites, of which six pass owner ≠ agent
+   * and six pass the same IRI twice and are byte-identical either way; NO SHACL shape in this repo
+   * constrains `prov:wasAttributedTo` on an `iep:ProvenanceFacet`, so `validate()` is unaffected;
+   * and NO test asserts the value this builder puts there. What visibly changes is that
+   * `TrustEvaluation.source`, the PGSL router's `Why` answer, two `whats-on-my-pod` prompts and a
+   * pod-browser field now name the agent that made the assertion instead of the person who owns the
+   * pod it landed on — each of which is the more honest of the two.
+   *
+   * ★ AND IT DOES *NOT* EMIT `prov:actedOnBehalfOf`, WHICH WOULD LOOK LIKE THE OBVIOUS COMPANION
+   * FIX AND IS THE SAME DEFECT ONE LAYER UP. PROV defines that relation over "an actual activity",
+   * with the principal retaining responsibility for the outcome; asserting it on every publish
+   * would say of every act what is only true of some, which is exactly what
+   * `model/delegate.ts` has just stopped doing for entries. `iep:onBehalfOf` on the Agent facet is
+   * the STANDING fact — "the principal this agent is authorised to act for" — which the delegator's
+   * own pod independently states and can revoke. Per-act footing, where a caller has one, is
+   * `prov:qualifiedDelegation` / `iep:actedOnOwnAccount` on the payload graph, written by whoever
+   * composed the record.
    */
   delegatedBy(
     ownerWebId: IRI,
@@ -194,7 +229,9 @@ export class ContextDescriptor {
     this._facets.push({
       type: 'Provenance',
       wasGeneratedBy: { agent: agentId, endedAt: now },
-      wasAttributedTo: ownerWebId,
+      // The party that actually asserted this. `ownerWebId` is not dropped — it is the Agent
+      // facet's `iep:onBehalfOf` below, which is the standing delegation and a different fact.
+      wasAttributedTo: agentId,
       generatedAtTime: now,
       wasDerivedFrom: opts?.derivedFrom && opts.derivedFrom.length > 0
         ? [...opts.derivedFrom]

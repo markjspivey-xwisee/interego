@@ -506,8 +506,14 @@ const descriptor = ContextDescriptor.create('urn:iep:my-analysis:1' as IRI)
 .describes('urn:graph:project:arch-v1' as IRI)
 .temporal({ validFrom: '2026-03-20T00:00:00Z' })
 .delegatedBy(
-    'https://id.example.com/alice/profile#me' as IRI,  // owner (human)
-    'urn:agent:anthropic:claude-code:vscode' as IRI,    // agent (AI)
+    // The principal this agent is AUTHORISED to act for — standing, and written
+    // as the Agent facet's iep:onBehalfOf.
+    'https://id.example.com/alice/profile#me' as IRI,
+    // The author. prov:wasAttributedTo names THIS, because it is what asserted
+    // the descriptor. Whether any particular act was carried out on the
+    // principal's behalf is a separate, per-activity statement — see
+    // prov:qualifiedDelegation / iep:actedOnOwnAccount.
+    'urn:agent:anthropic:claude-code:vscode' as IRI,
   )
 .asserted(0.92)
 .selfAsserted('did:web:alice.example' as IRI)

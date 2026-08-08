@@ -37,6 +37,10 @@ import { build } from 'esbuild';
 // The label prefix comes from the substrate, never a literal: a fixture that spells it out is
 // exactly the drift the constant exists to prevent, and it hid a real change once already.
 import { delegateLabel } from '@interego/core/delegate';
+// ★ THE REAL WRITER COMPOSES THE FIXTURES. A harness that spelled out the authorship triples
+// itself could not notice the writer changing underneath it — and the writer is what decides
+// whether an entry says it was spoken for its delegator or on the agent's own account.
+import { entryTurtle, type EntryAuthor } from '@interego/workspace-client';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DESKTOP = join(ROOT, 'applications/shared-workspace/desktop');
@@ -58,9 +62,26 @@ const CANVAS = (pod: string): string => RELAY + '/ns/' + pod + '/' + POD_A + '--
 const DESC = (pod: string, n: number): string => 'http://css.railway.internal:3456/' + pod + '/context-graphs/' + n + '.ttl';
 
 /** A TriG document shaped like the relay's: descriptor-level triples, then the signed block. */
+/**
+ * The footing declaration a model is asked for, prefixed onto every scripted reply below.
+ *
+ * ★ IT IS NOT DECORATION ON THE FIXTURES. `checkDraft` REFUSES a draft that does not declare one —
+ * a client that shipped an unfooted entry would be manufacturing, permanently and on somebody
+ * else's pod, exactly the ambiguity this change removes. So a scripted model that omits it is a
+ * model whose answer is correctly thrown away, and the case below that omits it on purpose asserts
+ * precisely that.
+ */
+const BEHALF = 'FOOTING: ON THEIR BEHALF\n';
+const OWN = 'FOOTING: MY OWN ACCOUNT\n';
+
 const trig = (iri: string, body: string): string =>
   '@prefix wsp: <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#> .\n'
   + '@prefix dct: <http://purl.org/dc/terms/> .\n'
+  // The three `entryTurtle` also declares. A TriG graph block cannot carry its own `@prefix`, so
+  // the entries spliced in below borrow these — see `entry`.
+  + '@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .\n'
+  + '@prefix prov: <http://www.w3.org/ns/prov#> .\n'
+  + '@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n'
   + '<urn:iep:descriptor> dct:title "DESCRIPTOR LEVEL — outside the signed block" .\n'
   + '<' + iri + '> {\n' + body + '\n}\n';
 
@@ -432,7 +453,7 @@ async function open(opts: { viewer?: string; setup?: (s: Scripted) => void; cold
     },
     agentThink: async (prompt: string) => {
       agent.prompts.push(prompt);
-      return agent.think ? agent.think(prompt) : { ok: true, text: 'A drafted reply.', why: 'ok', ms: 1200 };
+      return agent.think ? agent.think(prompt) : { ok: true, text: BEHALF + 'A drafted reply.', why: 'ok', ms: 1200 };
     },
     agentCancel: async () => { agent.cancels++; return { stopped: 0 }; },
     /**
@@ -1021,17 +1042,30 @@ describe('nothing in the renderer dereferences a fleet-internal address', () => 
  * that agent acted for. Pass `null` for the case that must never render as the owner — an entry
  * that names nobody at all.
  */
-const entry = (pod: string, n: number, body: string, at: string, by?: string | null): Doc => {
-  const attribution = by === null ? ''
-    : by === undefined ? ' ;\n  <http://www.w3.org/ns/prov#wasAttributedTo> <' + WEBID(pod) + '>'
-      : ' ;\n  <http://www.w3.org/ns/prov#wasAttributedTo> <' + by + '>';
-  const behalf = typeof by === 'string'
-    ? '\n<' + by + '> <http://www.w3.org/ns/prov#actedOnBehalfOf> <' + WEBID(pod) + '> .' : '';
+/**
+ * One entry in a pod's log.
+ *
+ * ★ THE VALID CASES ARE COMPOSED BY THE REAL WRITER, NOT BY THIS FILE. `entryTurtle` is the one
+ * thing in the system that decides which triples say "this was written for that person", and a
+ * fixture that spelled them out here would let the writer and the reader drift apart while this
+ * harness stayed green — which is exactly the class of defect it exists to catch. The prefix block
+ * is stripped because a TriG graph block cannot contain `@prefix`; `trig` declares the same five.
+ *
+ * `by === null` is the deliberately malformed case — an entry naming no author at all — and is the
+ * only one written by hand, because no writer will produce it.
+ */
+const entry = (pod: string, n: number, body: string, at: string, by?: string | null, footing?: 'own-account'): Doc => {
+  const author: EntryAuthor = by === undefined || by === null
+    ? { kind: 'principal', webId: WEBID(pod) }
+    : { kind: 'delegate', agentId: by, footing: footing === 'own-account' ? { kind: 'own-account' } : { kind: 'on-behalf-of', principal: WEBID(pod) } };
+  const written = by === null
+    ? '<' + STREAM(pod) + '/e/' + n + '> a wsp:Entry ; wsp:workspace <' + WS + '> ;\n'
+      + '  wsp:seq "' + n + '"^^xsd:nonNegativeInteger ; dct:description "' + body + '" .'
+    : entryTurtle({ streamIri: STREAM(pod), workspace: WS, seq: n, body, prior: null, author, createdIso: at })
+      .replace(/^@prefix[^\n]*\n/gm, '').trim();
   return {
     graph: STREAM(pod), cid: 'cid-ag-' + pod + '-' + n, url: DESC(pod, 200 + n), validFrom: at,
-    content: trig(STREAM(pod), '<' + STREAM(pod) + '/e/' + n + '> a wsp:Entry ; wsp:workspace <' + WS + '> ;\n'
-      + '  wsp:seq "' + n + '"^^<http://www.w3.org/2001/XMLSchema#nonNegativeInteger>' + attribution
-      + ' ; dct:description "' + body + '" .' + behalf),
+    content: trig(STREAM(pod), written),
   };
 };
 
@@ -1215,13 +1249,61 @@ describe('the local agent is off, visible, and stoppable', () => {
     // it is not a feature, so the draft lands where their own typing would and stops there.
     const o = await open({
       setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'What did we decide about the roof?', '2026-08-07T10:00:00.000Z')); },
-      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: 'We agreed to re-tile in spring.', why: 'ok', ms: 900 }) },
+      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: BEHALF + 'We agreed to re-tile in spring.', why: 'ok', ms: 900 }) },
     });
     await signInAndSpeak(o);
     click(o.doc, 'agenttoggle');
     await o.settle();
     expect((o.doc.getElementById('composer') as HTMLTextAreaElement).value).toBe('We agreed to re-tile in spring.');
     expect(text(o.doc, '#agentresult')).toContain('NOTHING has been written yet');
+    expect(o.s.calls.some((c) => c.name === 'publish_context')).toBe(false);
+    // ★ AND THE FOOTING IS ON THE BUTTON, BEFORE IT SPEAKS. Consenting to send is consenting to
+    // one of two different records, and a control that named only the author would be asking for
+    // consent to a distinction it did not show.
+    expect(text(o.doc, '#agentsend')).toBe('Send as Claude side, speaking for you');
+    expect(text(o.doc, '#agentresult')).toContain('shares responsibility for it');
+  });
+
+  /**
+   * ★ THE OTHER HALF OF THE SAME CONTROL. Same delegate, same button, a different record — and the
+   * person can see which one before it exists. If this and the case above ever render the same, a
+   * person is being asked to approve two different things with one label.
+   */
+  it('★ a delegate speaking on its OWN account says so on the button, before it is sent', async () => {
+    const o = await open({
+      setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'What did we decide about the roof?', '2026-08-07T10:00:00.000Z')); },
+      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: OWN + 'My own read: patching is the weaker option.', why: 'ok', ms: 900 }) },
+    });
+    await signInAndSpeak(o);
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    expect(text(o.doc, '#agentsend')).toBe('Send as Claude side, speaking for itself');
+    expect(text(o.doc, '#agentresult')).toContain('on its OWN account — you are not answerable for what it says');
+    // And what lands says it too. The button and the triples are one decision, made once.
+    click(o.doc, 'agentsend');
+    await o.settle();
+    const ttl = String(o.s.calls.filter((c) => c.name === 'publish_context').slice(-1)[0]?.input['graph_content']);
+    expect(ttl).toContain('iep:actedOnOwnAccount');
+    expect(ttl).not.toContain('prov:Delegation');
+    expect(ttl).not.toContain(WEBID(POD_A));
+  });
+
+  /**
+   * ★ AND A MODEL THAT DECLARES NOTHING GETS NOTHING WRITTEN. The refusal is the guard: defaulting
+   * to "on their behalf" is the original defect, and defaulting to "own account" would let a
+   * delegate disown anything by dropping a line.
+   */
+  it('★ a draft with no footing declaration is refused, and nothing is published', async () => {
+    const o = await open({
+      setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'What did we decide about the roof?', '2026-08-07T10:00:00.000Z')); },
+      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: 'We agreed to re-tile in spring.', why: 'ok', ms: 900 }) },
+    });
+    await signInAndSpeak(o);
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    expect(text(o.doc, '#agentresult')).toContain('did not declare which footing');
+    expect((o.doc.getElementById('composer') as HTMLTextAreaElement).value).toBe('');
+    expect((o.doc.getElementById('agentsend') as HTMLButtonElement).hasAttribute('hidden')).toBe(true);
     expect(o.s.calls.some((c) => c.name === 'publish_context')).toBe(false);
   });
 
@@ -1311,7 +1393,7 @@ describe('the local agent is off, visible, and stoppable', () => {
   it('★ an over-long draft is refused rather than truncated', async () => {
     const o = await open({
       setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'hello', '2026-08-07T10:00:00.000Z')); },
-      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: 'x'.repeat(5000), why: 'ok', ms: 900 }) },
+      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: BEHALF + 'x'.repeat(5000), why: 'ok', ms: 900 }) },
     });
     await signInAndSpeak(o);
     click(o.doc, 'agenttoggle');
@@ -1466,7 +1548,7 @@ describe('delegates: separate identities, plural, and visible as such', () => {
   it('★ the delegate\'s entry names the DELEGATE, and the person\'s names the person', async () => {
     const o = await open({
       setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'What about the roof?', '2026-08-07T10:00:00.000Z')); },
-      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: 'Patching buys a year.', why: 'ok', ms: 900 }) },
+      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: BEHALF + 'Patching buys a year.', why: 'ok', ms: 900 }) },
     });
     await signInAndSpeak(o);
     click(o.doc, 'agenttoggle');
@@ -1481,9 +1563,13 @@ describe('delegates: separate identities, plural, and visible as such', () => {
     const published = o.s.calls.filter((c) => c.name === 'publish_context');
     expect(published).toHaveLength(1);
     const ttl = String(published[0]?.input['graph_content']);
-    // ★ THE TRIPLES. The agent is the author; the person is who it acted for.
+    // ★ THE TRIPLES. The agent is the author; the delegation is a prov:Delegation over THIS act,
+    // which is what makes it a statement about this sentence rather than about the agent.
     expect(ttl).toContain('prov:wasAttributedTo <' + D1 + '>');
-    expect(ttl).toContain('<' + D1 + '> prov:actedOnBehalfOf <' + WEBID(POD_A) + '>');
+    expect(ttl).toContain('<' + D1 + '> prov:qualifiedDelegation <');
+    expect(ttl).toContain('a prov:Delegation ;');
+    expect(ttl).toContain('prov:agent <' + WEBID(POD_A) + '> ;');
+    expect(ttl).toMatch(/prov:hadActivity <[^>]+#act>/);
     expect(ttl).not.toContain('prov:wasAttributedTo <' + WEBID(POD_A) + '>');
   });
 
@@ -1503,7 +1589,7 @@ describe('delegates: separate identities, plural, and visible as such', () => {
     // one-click way to publish an agent's prose under a person's name.
     const o = await open({
       setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'A question', '2026-08-07T10:00:00.000Z')); },
-      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: 'A drafted reply.', why: 'ok', ms: 900 }) },
+      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: BEHALF + 'A drafted reply.', why: 'ok', ms: 900 }) },
     });
     await signInAndSpeak(o);
     click(o.doc, 'agenttoggle');
@@ -1533,10 +1619,66 @@ describe('delegates: separate identities, plural, and visible as such', () => {
     await signInAndSettle(o);
     const authors = [...o.doc.querySelectorAll('#stream .mauthor')].map((n) => n.textContent ?? '');
     expect(authors).toContain('You');
-    expect(authors).toContain('Claude side, acting for the person whose pod this is');
-    expect(authors).toContain('Codex side, acting for the person whose pod this is');
+    expect(authors).toContain('Claude side, speaking for the person whose pod this is');
+    expect(authors).toContain('Codex side, speaking for the person whose pod this is');
     // And the ROLE is still shown, separately — a capacity, not an author.
     expect(text(o.doc, '#stream')).toContain('Convener');
+  });
+
+  /**
+   * ★ THE SENTENCE THE MAINTAINER ASKED FOR, ON SCREEN: "Mark's delegate, speaking for Mark" and
+   * "Mark's delegate, speaking for itself" must not look the same.
+   *
+   * Same delegate, same registry row, same standing — two entries in one log, and the shell has to
+   * draw them differently in the label, in the badge, and in the tooltip. Reverting any one of the
+   * three fails this.
+   */
+  it('★ the same delegate speaking FOR the person and FOR ITSELF are drawn differently', async () => {
+    const o = await open({ setup: (s) => {
+      const a = s.pods.get(POD_A) as Pod;
+      a.put(entry(POD_A, 0, 'They have decided to patch it.', '2026-08-07T10:00:00.000Z', D1));
+      a.put(entry(POD_A, 1, 'For my part I think that is the weaker option.', '2026-08-07T10:01:00.000Z', D1, 'own-account'));
+    } });
+    await signInAndSettle(o);
+    const authors = [...o.doc.querySelectorAll('#stream .mauthor')] as HTMLElement[];
+    const labels = authors.map((n) => n.textContent ?? '');
+    expect(labels).toContain('Claude side, speaking for the person whose pod this is');
+    expect(labels).toContain('Claude side, a delegate of the person whose pod this is, speaking for itself');
+    // The badge, so a reader skimming the column sees it without hovering anything.
+    const badges = [...o.doc.querySelectorAll('#stream .badge')].map((n) => n.textContent ?? '');
+    expect(badges).toContain('⚙');
+    expect(badges).toContain('⚙!');
+    // And the tooltip states who is answerable, in words, both ways round.
+    const forThem = authors.find((n) => (n.textContent ?? '').endsWith('speaking for the person whose pod this is')) as HTMLElement;
+    const forSelf = authors.find((n) => (n.textContent ?? '').includes('speaking for itself')) as HTMLElement;
+    expect(forThem.title).toContain('retains responsibility');
+    expect(forSelf.title).toContain('is not answerable');
+    // ★ AND THE STANDING DELEGATION IS REPORTED AS UNCHANGED IN BOTH. A reader told "speaking for
+    // itself" must not conclude the agent was never authorised.
+    expect(forThem.title).toContain('registry lists this agent');
+    expect(forSelf.title).toContain('registry lists this agent');
+  });
+
+  /**
+   * ★ ABSENCE IS NOT EVIDENCE, AT THE SURFACE. An entry by a delegate that declares no footing is
+   * neither reading, and the shell has to draw a third thing rather than picking the flattering
+   * one. This entry is written by hand precisely because no writer in this repo will emit it.
+   */
+  it('★ a delegate entry that states no footing renders as "not stated", not as either', async () => {
+    const o = await open({ setup: (s) => {
+      (s.pods.get(POD_A) as Pod).put({
+        graph: STREAM(POD_A), cid: 'cid-nf', url: DESC(POD_A, 260), validFrom: '2026-08-07T10:00:00.000Z',
+        content: trig(STREAM(POD_A), '<' + STREAM(POD_A) + '/e/0> a wsp:Entry ; wsp:workspace <' + WS + '> ;\n'
+          + '  wsp:seq "0"^^xsd:nonNegativeInteger ; prov:wasAttributedTo <' + D1 + '> ;\n'
+          + '  prov:wasGeneratedBy <' + STREAM(POD_A) + '/e/0#act> ; dct:description "No footing here." .'),
+      });
+    } });
+    await signInAndSettle(o);
+    const el = [...o.doc.querySelectorAll('#stream .mauthor')]
+      .find((n) => (n.textContent ?? '').includes('Claude side')) as HTMLElement;
+    expect(el.textContent).toBe('Claude side, a delegate of the person whose pod this is — footing not stated');
+    expect(el.title).toContain('does not say');
+    expect([...o.doc.querySelectorAll('#stream .badge')].map((n) => n.textContent)).toContain('⚙?');
   });
 
   it('★ an entry that names no author renders as that, never as the pod owner', async () => {
@@ -1573,6 +1715,20 @@ describe('delegates: separate identities, plural, and visible as such', () => {
     // Each delegate's own scope, on its own row — not the member's.
     expect(roster).toContain('ReadOnly');
     expect(roster).toContain('PublishOnly');
+    // ★ AND THE ROSTER SAYS WHAT IT DOES NOT SETTLE. A list of somebody's delegates read as a
+    // blanket endorsement of everything those delegates say is the exact misreading this whole
+    // change removes, and a roster row is where a reader is most likely to make it.
+    const badge = [...o.doc.querySelectorAll('#roster .badge')]
+      .find((n) => (n as HTMLElement).title.includes('delegate of pod')) as HTMLElement;
+    expect(badge.title).toContain('does NOT mean everything it writes is said on their behalf');
+  });
+
+  it('★ your own delegates card calls the delegation standing, and not an endorsement', async () => {
+    const o = await open();
+    await signInAndSettle(o);
+    const card = text(o.doc, '#delegatelist');
+    expect(card).toContain('STANDING delegations');
+    expect(card).toContain('on its OWN account, where it alone is answerable');
   });
 
   it('★ the lobby card shows the exact register_agent call before it is made, and then makes it', async () => {
@@ -1593,7 +1749,8 @@ describe('delegates: separate identities, plural, and visible as such', () => {
     expect(plan).toContain('has not been made');
     expect(plan).toContain(delegateLabel('Research assistant'));
     expect(plan).toContain('PublishOnly');
-    expect(plan).toContain('name IT as the author and YOU as the person it acted for');
+    expect(plan).toContain('name IT as the author');
+    expect(plan).toContain('STANDING and it is not an endorsement of anything it will say');
     click(o.doc, 'delegateauthorise');
     await o.settle();
     expect(o.s.calls.some((c) => c.name === 'register_agent')).toBe(true);
@@ -1646,7 +1803,7 @@ describe('delegates: separate identities, plural, and visible as such', () => {
     // every pod and every agent. Only the issuer distinguishes them.
     const o = await open({
       setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'A question', '2026-08-07T10:00:00.000Z')); },
-      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: 'A drafted reply.', why: 'ok', ms: 900 }) },
+      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: BEHALF + 'A drafted reply.', why: 'ok', ms: 900 }) },
     });
     await signInAndSpeak(o);
     click(o.doc, 'agenttoggle');
@@ -1663,7 +1820,7 @@ describe('delegates: separate identities, plural, and visible as such', () => {
   it('★ the model provider is named as the engine, never as the identity', async () => {
     const o = await open({
       setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'A question', '2026-08-07T10:00:00.000Z')); },
-      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: 'A drafted reply.', why: 'ok', ms: 900 }) },
+      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: BEHALF + 'A drafted reply.', why: 'ok', ms: 900 }) },
     });
     await signInAndSpeak(o);
     click(o.doc, 'agenttoggle');
@@ -1684,8 +1841,12 @@ describe('delegates: separate identities, plural, and visible as such', () => {
     click(o.doc, 'agenttoggle');
     await o.settle();
     const prompt = o.agent.prompts[0] as string;
-    expect(prompt).toContain('You are Claude side, a delegate acting for');
+    expect(prompt).toContain('You are Claude side, a delegate of');
     expect(prompt).toContain('Do not impersonate them');
     expect(prompt).not.toContain('as THEIR entry');
+    // ★ AND IT IS ASKED WHICH FOOTING IT IS ON, rather than told. The shell reaches the real
+    // `briefPrompt`, so this is the same contract `checkDraft` parses on the way back.
+    expect(prompt).toContain('FOOTING: ON THEIR BEHALF');
+    expect(prompt).toContain('FOOTING: MY OWN ACCOUNT');
   });
 });

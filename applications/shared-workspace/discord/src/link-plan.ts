@@ -1,12 +1,27 @@
 /**
- * BINDING A CHAT ACCOUNT TO A POD — the one thing about a conduit link that is not substrate.
+ * BINDING A DISCORD ACCOUNT TO A POD — the one thing about a conduit link that is not substrate.
  *
- * ★ WHAT USED TO BE HERE AND IS NOW A LAYER DOWN. This file declared its own `DelegationScope`
- * union of the same four strings `@interego/core` has always exported, its own `AGENT_ID_RX`, and
- * its own publish/revoke pair. All three are Interego concepts and all three now come from
- * `@interego/core/delegate`. Keeping a second spelling of the scope enum in a vertical was the
- * defect: the substrate's is what `verifyDelegation` and the relay's scope gate actually test
- * against, so a vertical's copy could only ever agree with it by luck.
+ * ★ THIS FILE WAS IN `@interego/workspace-client` AND THAT WAS A PEER-VERTICAL LEAK. That package
+ * is the shared-workspace CLIENT: the Turtle readers, the seat fold, the chain walk — the half that
+ * the published artifact, the desktop shell and this bot all bundle. It had a Discord snowflake
+ * regex in it, and a plan builder whose problem union names a Discord user id as one of its fields.
+ * Shared-workspace should not know Discord exists: Discord is one conduit among the several a
+ * workspace could have, and every other one would have arrived the same way, one regex at a time,
+ * until the shared package carried a little of each platform. So it is here, in the conduit that IS
+ * the Discord one, and the desktop shell — which offers the link form — depends on this package for
+ * it rather than on a copy.
+ *
+ * ★ AND IT IS STILL ONE FUNCTION WITH TWO CALLERS, WHICH IS WHY IT IS NOT SPLIT IN HALF. The bot
+ * computes {@link challengeLabel} from the id of the account running `link-confirm`; the desktop
+ * writes it from the id the user pasted. If those two ever formatted the string differently, every
+ * honest link would be refused with a message about a label mismatch naming two strings a user
+ * could not tell apart. One definition, in the package the conduit owns.
+ *
+ * ★ WHAT WENT DOWN TO THE SUBSTRATE RATHER THAN COMING HERE. This file also declared its own
+ * `DelegationScope` union of the same four strings `@interego/core` has always exported, its own
+ * `AGENT_ID_RX`, and its own publish/revoke pair. All three are Interego concepts and all three
+ * come from `@interego/core/delegate`: the substrate's is what `verifyDelegation` and the relay's
+ * scope gate actually test against, so a copy could only ever agree with it by luck.
  *
  * What is genuinely local is the CLAIM a conduit's delegation row carries.
  *
@@ -30,12 +45,8 @@ export const SNOWFLAKE_RX = /^[0-9]{1,20}$/;
 /**
  * The label a pod owner must put on a delegation row to say which Discord account it is for.
  *
- * ★ ONE FUNCTION, TWO CALLERS, AND THAT IS THE ENTIRE REASON IT IS HERE. The bot computes it from
- * the id of the account running `link-confirm`; the desktop app writes it from the id the user
- * pasted. If those two ever formatted the string differently, every honest link would be refused
- * with a message about a label mismatch that named two strings a user could not tell apart.
- *
- * Not a secret. See the file header before changing anything about it.
+ * Not a secret. See the file header before changing anything about it, and before moving it: one
+ * definition, two callers, and a second spelling refuses every honest link.
  */
 export const challengeLabel = (discordUserId: string): string => 'discord-link ' + discordUserId;
 

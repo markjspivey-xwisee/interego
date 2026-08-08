@@ -23,12 +23,17 @@
 import { readFileSync } from 'node:fs';
 import { Wallet } from 'ethers';
 import {
-  RelayMcpTransport, WorkspaceClient, acceptGrant, checkOwnHandle, checkWriteEligibility,
-  composedHandle, createWorkspace, findSeat, foldRoster, listWorkspaces, mergeForward,
-  parseRoleProfile, postEntry, readCanvas, readInbox, readViewer, revokeGrant, saveCanvas,
+  DELEGATE_SURFACE, RelayMcpTransport, WorkspaceClient, acceptGrant, authorshipLine, checkOwnHandle,
+  checkWriteEligibility, composedHandle, createWorkspace, delegateAgentId, delegatePlan,
+  delegatePort, findSeat, foldRoster, graphRegion, listWorkspaces, mergeForward,
+  parseRoleProfile, postEntry, publishDelegation, readCanvas, readDelegates, readEntryAuthorship,
+  readInbox, readViewer, revokeDelegation, revokeGrant, saveCanvas,
   sendInvite, verifyInvitation, verifyWorkspaceEntry, nsIri, qualifiedName, shortRef,
-  type Viewer,
+  type EntryAuthorship, type Viewer,
 } from '@interego/workspace-client';
+// The Discord conduit's own author clause — a SECOND consumer of the same substrate value, so this
+// run measures whether the distinction survives more than one renderer.
+import { authorOf as discordAuthorOf } from '../discord/src/render.js';
 import { mintBearer, type Signer } from './live-identity.js';
 
 const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
@@ -215,6 +220,111 @@ async function run(): Promise<number> {
     }
     must(n + '\'s entry reads back off ' + n + '\'s own pod', landed, out.descriptorUrl ?? '');
   }
+
+  /**
+   * ★ ONE DELEGATE, TWO FOOTINGS, ON A REAL POD — the pair the attribution model exists for.
+   *
+   * A is a person; they authorise ONE agent, once. That agent then writes two entries into A's log.
+   * Nothing about the delegation differs between them: same key, same DID, same registry row, same
+   * standing, and A can revoke it with the same single act. What differs is one statement inside
+   * one record, and every reader has to come back with two different answers — otherwise a
+   * delegate's own opinions are laundered into its delegator's and nobody can ever say "the agent
+   * said that, not me."
+   *
+   * The delegate is a SEPARATE RELAY SESSION, minted from its own key under the shared
+   * `DELEGATE_SURFACE` client name. It is not A's session with a different label: `revoke_agent`
+   * has to actually stop it, and it only does if the relay authenticated the delegate.
+   */
+  head('A authorises ONE delegate, which then speaks BOTH ways into A\'s log');
+  const dKey = Wallet.createRandom();
+  const dBearer = await mintBearer(RELAY, IDENTITY, dKey, DELEGATE_SURFACE);
+  const dTx = new RelayMcpTransport(RELAY, dBearer);
+  const dClient = new WorkspaceClient(RELAY, dTx);
+  const dStatus = await dTx.callTool('get_pod_status', {}, { cache: false }) as Record<string, unknown>;
+  const dAgentId = delegateAgentId(new URL(IDENTITY).host, String(dStatus['displayName'] ?? ''));
+  const seated = await publishDelegation(delegatePort(A.client), {
+    plan: delegatePlan({ agentId: dAgentId, name: 'Live probe' }), verifyOnPod: A.viewer.podName,
+  });
+  log('   delegate', dAgentId);
+  must('A\'s own pod authorises it, read back from the pod', seated.kind === 'published', seated.why);
+
+  const aSeat = fold.seats.find((s) => s.seated && s.pod === A.viewer.podName && s.stream);
+  const aStream = aSeat?.stream ?? nsIri(RELAY, A.viewer.podName, qualifiedName(A.viewer.podName, slug, 'stream'));
+  const stamp = new Date().toISOString();
+  const posts: { readonly what: string; readonly url: string }[] = [];
+  for (const [what, author] of [
+    ['for A', { kind: 'delegate', agentId: dAgentId, footing: { kind: 'on-behalf-of', principal: A.viewer.webId } }],
+    ['for itself', { kind: 'delegate', agentId: dAgentId, footing: { kind: 'own-account' } }],
+  ] as const) {
+    // ★ RETRIED, AND MEASURED RATHER THAN ASSUMED. `register_agent` writes a signed delegation
+    // credential onto A's pod, so the pod's `.well-known/context-graphs` manifest is mid-CAS when
+    // the delegate's first write arrives — and the relay gives up after 8 attempts and answers
+    // `tool_error: Failed to update manifest`. That is contention on a shared document, not a
+    // refusal of the delegation: `postEntry` already retries a 412 once, and this is the layer
+    // above it. Observed live, 2026-08-07: both writes failed immediately after seating and both
+    // succeeded on a second attempt seconds later.
+    let out = await postEntry(dClient, {
+      podName: A.viewer.podName, streamIri: aStream, workspace, entryShape,
+      body: 'Delegate speaking ' + what + ', ' + stamp,
+      author,
+    });
+    for (let i = 0; i < 5 && out.kind !== 'accepted'; i++) {
+      await new Promise((r) => { setTimeout(r, 3000); });
+      out = await postEntry(dClient, {
+        podName: A.viewer.podName, streamIri: aStream, workspace, entryShape,
+        body: 'Delegate speaking ' + what + ', ' + stamp,
+        author,
+      });
+    }
+    must('the delegate\'s "' + what + '" entry landed on A\'s pod', out.kind === 'accepted',
+      out.kind === 'accepted' ? String(out.descriptorUrl) : JSON.stringify(out).slice(0, 200));
+    if (out.kind === 'accepted' && out.descriptorUrl) posts.push({ what, url: out.descriptorUrl });
+  }
+
+  // ── read back, from the bytes, through the real readers ────────────────────
+  const roster = await readDelegates(delegatePort(A.client), A.viewer.podName);
+  const readAuthorships: EntryAuthorship[] = [];
+  for (const p of posts) {
+    const d = await A.client.descriptor(p.url);
+    const region = graphRegion((d['graph'] as { content?: string } | undefined)?.content ?? '', aStream);
+    const a = readEntryAuthorship(region, { logOwnerWebId: A.viewer.webId, delegates: roster });
+    readAuthorships.push(a);
+    log('   ' + p.what.padEnd(11) + ' desktop  · ' + authorshipLine(a, { displayName: 'A' }));
+    // ★ A SECOND CONSUMER, NOT THE DESKTOP APP. The Discord conduit renders authorship with its own
+    // copy from the same substrate value. A distinction that survives in one renderer and quietly
+    // dies in another is not a distinction the system has.
+    log('   ' + ''.padEnd(11) + ' discord  · ' + discordAuthorOf(a));
+  }
+  const forA = readAuthorships[0] ?? null;
+  const forSelf = readAuthorships[1] ?? null;
+  must('the "for A" entry reads back as on-behalf-of',
+    forA?.kind === 'delegate' && forA.footing.kind === 'on-behalf-of',
+    forA?.kind === 'delegate' ? forA.footing.kind : String(forA?.kind));
+  must('the "for itself" entry reads back as own-account',
+    forSelf?.kind === 'delegate' && forSelf.footing.kind === 'own-account',
+    forSelf?.kind === 'delegate' ? forSelf.footing.kind : String(forSelf?.kind));
+  must('both are the SAME agent, and A\'s registry authorises it in both',
+    forA?.kind === 'delegate' && forSelf?.kind === 'delegate'
+    && forA.agentId === forSelf.agentId && forA.authorised === true && forSelf.authorised === true, '');
+  if (forA && forSelf) {
+    must('★ the desktop line differs',
+      authorshipLine(forA, { displayName: 'A' }) !== authorshipLine(forSelf, { displayName: 'A' }), '');
+    must('★ the Discord clause differs too', discordAuthorOf(forA) !== discordAuthorOf(forSelf), '');
+  } else {
+    must('★ both entries were read back so the two renderings could be compared', false, '');
+  }
+  // ★ AND THE OWN-ACCOUNT ENTRY NAMES A NOWHERE IN ITS OWN SIGNED BYTES. Checked against the bytes
+  // the relay served rather than against what this driver composed: the claim is about what a
+  // reader of that pod can find, not about what was sent.
+  if (posts[1]) {
+    const d = await A.client.descriptor(posts[1].url);
+    const region = graphRegion((d['graph'] as { content?: string } | undefined)?.content ?? '', aStream) ?? '';
+    must('★ the own-account entry names A nowhere in the region the relay served',
+      region.length > 0 && !region.includes(A.viewer.webId), region.slice(0, 120));
+    must('★ and it states iep:actedOnOwnAccount over its own act',
+      region.includes('actedOnOwnAccount'), '');
+  }
+  await revokeDelegation(delegatePort(A.client), { agentId: dAgentId, podName: A.viewer.podName });
 
   head('B: the canvas — create, save, then a deliberately stale save');
   const canvasIri = nsIri(RELAY, B.viewer.podName, qualifiedName(A.viewer.podName, slug, 'canvas'));

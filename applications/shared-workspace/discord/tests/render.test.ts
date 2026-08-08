@@ -177,19 +177,58 @@ describe('the composed view', () => {
   const entry = (author: unknown, body = 'hello'): unknown =>
     ({ pod: POD, seq: 0, created: '2026-08-07T00:00:00.000Z', body, descriptorUrl: 'u', author, why: null });
 
+  /** The per-act footing of a delegate speaking FOR the pod owner. */
+  const FOR_THEM = { kind: 'on-behalf-of', principal: WEBID } as const;
+  const FOR_ITSELF = { kind: 'own-account' } as const;
+
   it('★ names a delegate as the author, and says whose pod authorises it', () => {
-    const m = renderShow(view({ entries: [entry({ kind: 'delegate', agentId: DELEGATE, onBehalfOf: WEBID, name: 'Research assistant', authorised: true, scope: 'PublishOnly' })] }));
+    const m = renderShow(view({ entries: [entry({ kind: 'delegate', agentId: DELEGATE, footing: FOR_THEM, name: 'Research assistant', authorised: true, scope: 'PublishOnly' })] }));
     expect(m.content).toContain('written by **Research assistant**');
-    expect(m.content).toContain('a delegate acting for the pod owner');
+    expect(m.content).toContain('a delegate of the pod owner');
     expect(m.content).toContain('own registry authorises it with scope PublishOnly');
+  });
+
+  /**
+   * ★ THE SECOND CONSUMER. This conduit renders authorship with its own copy, from the same
+   * substrate value, and it is where most readers other than the pod owner meet these records. A
+   * distinction that survives in the desktop shell and quietly dies here is not a distinction the
+   * system has — so the two footings are asserted to produce different text, and the one a skimming
+   * reader would get backwards is asserted to say so in words.
+   */
+  it('★ speaking FOR the owner and speaking FOR ITSELF are two different clauses here too', () => {
+    const d = (footing: unknown): string => renderShow(view({
+      entries: [entry({ kind: 'delegate', agentId: DELEGATE, footing, name: 'Claude side', authorised: true, scope: 'PublishOnly' })],
+    })).content;
+    const forThem = d(FOR_THEM);
+    const forItself = d(FOR_ITSELF);
+    expect(forThem).toContain('speaking **for them** here — they share responsibility for it');
+    expect(forItself).toContain('speaking **for itself** here');
+    expect(forItself).toContain('the pod owner is NOT answerable for');
+    expect(forThem).not.toBe(forItself);
+    // Standing is reported SEPARATELY and identically in both: an agent speaking for itself is
+    // still that person's delegate, and a reader must not conclude otherwise.
+    expect(forThem).toContain('separately, that pod\'s own registry authorises it');
+    expect(forItself).toContain('separately, that pod\'s own registry authorises it');
+  });
+
+  it('★ a delegate entry stating no footing says so, and is not read as either', () => {
+    const m = renderShow(view({
+      entries: [entry({ kind: 'delegate', agentId: DELEGATE, footing: { kind: 'not-stated', why: 'x' }, name: 'Claude side', authorised: true, scope: 'PublishOnly' })],
+    }));
+    expect(m.content).toContain('**footing not stated**');
+    expect(m.content).toContain('neither reading is being assumed');
+    // Neither of the two positive clauses may appear. (The closing explainer legitimately uses the
+    // words in describing what the three answers ARE, so this checks the author clause's wording.)
+    expect(m.content).not.toContain('speaking **for them**');
+    expect(m.content).not.toContain('speaking **for itself**');
   });
 
   it('★ two delegates of one person are two authors in one log, not one', () => {
     const m = renderShow(view({
       entries: [
         entry({ kind: 'principal', webId: WEBID }, 'the human speaking'),
-        entry({ kind: 'delegate', agentId: DELEGATE, onBehalfOf: WEBID, name: 'Claude side', authorised: true, scope: 'PublishOnly' }, 'first delegate'),
-        entry({ kind: 'delegate', agentId: DELEGATE + '-2', onBehalfOf: WEBID, name: 'Codex side', authorised: true, scope: 'PublishOnly' }, 'second delegate'),
+        entry({ kind: 'delegate', agentId: DELEGATE, footing: FOR_THEM, name: 'Claude side', authorised: true, scope: 'PublishOnly' }, 'first delegate'),
+        entry({ kind: 'delegate', agentId: DELEGATE + '-2', footing: FOR_THEM, name: 'Codex side', authorised: true, scope: 'PublishOnly' }, 'second delegate'),
       ],
     }));
     expect(m.content).toContain('written by the pod owner');
@@ -205,9 +244,9 @@ describe('the composed view', () => {
   });
 
   it('★ a delegation the pod does not record is a finding; one that was not checked is not', () => {
-    const notListed = renderShow(view({ entries: [entry({ kind: 'delegate', agentId: DELEGATE, onBehalfOf: WEBID, name: null, authorised: false, scope: null })] }));
+    const notListed = renderShow(view({ entries: [entry({ kind: 'delegate', agentId: DELEGATE, footing: FOR_THEM, name: null, authorised: false, scope: null })] }));
     expect(notListed.content).toContain('does NOT list this agent');
-    const notRead = renderShow(view({ entries: [entry({ kind: 'delegate', agentId: DELEGATE, onBehalfOf: WEBID, name: null, authorised: null, scope: null })] }));
+    const notRead = renderShow(view({ entries: [entry({ kind: 'delegate', agentId: DELEGATE, footing: FOR_THEM, name: null, authorised: null, scope: null })] }));
     expect(notRead.content).toContain('was not read here');
     expect(notRead.content).not.toContain('does NOT list this agent');
   });
