@@ -23,11 +23,20 @@ name: Desktop Packaging
 # built. A hosted runner per platform is the only honest way to turn "configured" into "builds",
 # so that is what this does.
 #
-# ★ WHAT THIS STILL DOES NOT PROVE. It proves the artifacts BUILD. It does not prove they LAUNCH
-# on macOS or Linux, and it says nothing about signing: every artifact here is unsigned, so
-# SmartScreen warns on Windows and Gatekeeper refuses on macOS, both correctly. See the desktop
-# README and electron-builder.yml — signing and notarisation need certificates nobody on this
-# project holds and are deliberately out of scope.
+# ★ AND IT NOW PROVES THEY LAUNCH. Building was never evidence of launching, and two of the three
+# platforms had never been started by anyone — a binary nobody has run must not be handed to
+# anyone. After packaging, each leg starts its OWN packaged artifact headlessly (Linux under a
+# virtual display via `xvfb-run`, macOS and Windows directly) through `tools/ci-launch-smoke.ts`,
+# which sets INTEREGO_DESKTOP_SMOKE=1 so `src/main.ts` boots the real window, waits for
+# `did-finish-load`, and prints a marker the launcher reads. A build that does not open a window
+# now fails here instead of shipping.
+#
+# ★ WHAT THIS STILL DOES NOT PROVE. It says nothing about signing: every artifact here is
+# unsigned, so SmartScreen warns on Windows and Gatekeeper refuses on macOS, both correctly. See
+# the desktop README and electron-builder.yml — signing and notarisation need certificates nobody
+# on this project holds and are deliberately out of scope. The launch check also does not sign in:
+# it never touches the relay or the OS secret store (`selftest.js` is the substrate check and
+# needs both), so it proves the shell opens, not that a round trip to the fleet works.
 #
 # No job-level `if:` reads `matrix.` anywhere below. That is the defect
 # `tests/workflow-header-matches-triggers.test.ts` exists to catch, and the per-platform
@@ -96,6 +105,46 @@ jobs:
         # that succeeded at nothing.
         run: ls -l applications/shared-workspace/desktop/release
         shell: bash
+      - name: Prepare a headless display and Electron's runtime libraries (Linux)
+        # Step-level `if:` reads `runner.os`, not `matrix.` — a job-level `if:` reading the matrix
+        # is the defect `tests/workflow-header-matches-triggers.test.ts` catches; this is neither.
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libgbm1
+          # Electron links libasound even headless; the package name changed at 24.04 (t64), so try
+          # both and do not fail the leg if neither is missing.
+          sudo apt-get install -y libasound2t64 || sudo apt-get install -y libasound2 || true
+          # Electron's sandbox needs a SUID helper OR unprivileged user namespaces. ubuntu-24.04
+          # restricts the latter by default (AppArmor), which makes the SHIPPING sandbox refuse to
+          # start. Relax the RUNNER, not the app, so the smoke test exercises the artifact exactly
+          # as it ships — sandbox and all — rather than launching it in a weaker configuration.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - name: Launch the packaged app headlessly and assert it reaches a window
+        # ONE launcher for all three platforms — the per-OS binary path and the xvfb wrapper are
+        # the only differences, carried here in bash rather than by a matrix condition. The
+        # launcher decides pass/fail on the app's printed marker, never on the exit code, because
+        # an Electron helper can outlive `app.exit()` and hold the pipe open; see the launcher.
+        shell: bash
+        run: |
+          set -euo pipefail
+          rel=applications/shared-workspace/desktop/release
+          launcher=applications/shared-workspace/desktop/tools/ci-launch-smoke.ts
+          case "$RUNNER_OS" in
+            Linux)
+              bin=$(ls "$rel"/*.AppImage | head -n1)
+              chmod +x "$bin"
+              xvfb-run --auto-servernum npx tsx "$launcher" "$bin" --appimage-extract-and-run
+              ;;
+            macOS)
+              app=$(ls -d "$rel"/mac*/*.app | head -n1)
+              npx tsx "$launcher" "$app/Contents/MacOS/$(basename "$app" .app)"
+              ;;
+            Windows)
+              bin=$(ls "$rel"/win-unpacked/*.exe | head -n1)
+              npx tsx "$launcher" "$bin"
+              ;;
+          esac
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.os }}
