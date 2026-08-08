@@ -32,6 +32,12 @@ import type { IRI } from '@interego/core';
 setSolidModuleForTests({
   fetchGraphContent: async () => ({ content: null, mediaType: '' }),
   parseManifest: () => [],
+  // Reports an EMPTY-but-COMPLETE index. `complete: false` would be the wrong stub: this
+  // test's IRIs never reach the manifest path at all, and claiming an unreadable archive
+  // would make the kernel answer `error` where it should answer `not-found`.
+  fetchAllManifestEntries: async () => ({
+    entries: [], complete: true, archivesFollowed: 0, archivesUnreachable: [], hotStatus: 404,
+  }),
 });
 
 const G1 = 'urn:graph:reduce-test:g1' as IRI;

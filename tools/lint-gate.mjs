@@ -515,7 +515,15 @@ const BASELINE = {};
 // `tools/probe-first-write-after-seating-live.ts` (the reproduction, deliberately with no retry),
 // and `tools/drive-attribution-writers-live.ts` (the four writers run for real, asserted against
 // the bytes the pod serves rather than the bytes the driver composed).
-export const MIN_FILES = 388;
+// 388 -> 391: bounding the pod manifest with a linked archive chain. Three new files, each
+// because a claim in this round could not be checked without it:
+// `tools/measure-manifest-write-cost-live.ts` (the write-cost curve and the turtle-vs-opaque
+// comparison that establish the cost is per-STATEMENT, which is what makes bounding the entry
+// count the right lever rather than a guess), `tools/verify-bounded-manifest-live.ts` (the
+// roll-over driven against the live CSS and read back through every consumer, with a full
+// request trace — it is what found the relay's own concurrent bootstrap write 412-ing a
+// roll-over mid-flight), and `tests/bounded-manifest.test.ts`.
+export const MIN_FILES = 391;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.

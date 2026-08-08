@@ -254,6 +254,11 @@ import {
   publish,
   discover,
   parseManifest,
+  // The archive links a bounded manifest advertises. Imported from the substrate rather than
+  // re-derived here so the relay and `discover()` cannot disagree about what an index is
+  // made of. Only the CID backfill needs it directly — every other relay read goes through
+  // `getCachedManifest` → `discover()`, which follows the chain itself.
+  parseManifestArchiveUrls,
   rebuildManifestFromPod,
   subscribe,
   writeAgentRegistry,
@@ -3910,6 +3915,12 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     selfIncluded,
     sharedWith: shareResolved.length > 0 ? shareResolved : undefined,
     manifestUrl: result.manifestUrl,
+    // ★ REPORTED BECAUSE IT EXPLAINS AN OUTLIER LATENCY, AND BECAUSE THE POD JUST CHANGED
+    // SHAPE. Present only on the publish that actually rolled the manifest over: the pod
+    // passed the write bound, older index rows moved into these write-once archive segments,
+    // and `.well-known/context-graphs` now links them. A caller that sees this and then reads
+    // a shorter manifest has the explanation in hand rather than a mystery.
+    manifestArchivesWritten: result.manifestArchivesWritten,
     ipfs,
     // The priors as decided ON THE REQUEST THREAD. On the deferred path this is the same
     // snapshot the `ipfs.provisional` note is about: if a version of this graph lands while
@@ -6623,7 +6634,16 @@ async function handleRebuildManifest(args: ToolArgs): Promise<string> {
     const r = await rebuildManifestFromPod(internal, { fetch: solidFetch, log: (m) => log(m) });
     manifestCache.delete(internal);
     manifestCache.delete(podUrl);
-    return JSON.stringify({ ok: true, pod: podUrl, manifestUrl: r.manifestUrl, scanned: r.scanned, written: r.written });
+    // ★ THE SHAPE IS REPORTED, NOT JUST THE COUNTS. A rebuild now DECIDES the manifest's
+    // shape from the number of descriptors it found — bounded with linked archive segments
+    // above the limit, one plain unbounded document at or below it, retiring any segments the
+    // new index no longer references. That is also the way a pod goes BACK to unbounded, so an
+    // operator running this needs to see which it got rather than infer it from a row count.
+    return JSON.stringify({
+      ok: true, pod: podUrl, manifestUrl: r.manifestUrl, scanned: r.scanned, written: r.written,
+      archives: r.archives, archivesRetired: r.archivesDeleted,
+      shape: r.archives.length > 0 ? 'bounded' : 'unbounded',
+    });
   } catch (err) {
     return JSON.stringify({ ok: false, pod: podUrl, error: (err as Error).message });
   }
@@ -13489,40 +13509,85 @@ app.post('/admin/backfill-manifest-cid', async (req, res) => {
 
   const manifestUrl = `${podUrl}.well-known/context-graphs`;
 
-  // 1. GET manifest with ETag. We need the etag for the rewrite CAS.
-  //    Wrap in withTransientRetry + 5xx-as-throw promotion so a single
-  //    Azure-Files cold-cache 503 doesn't surface as a backfill
-  //    failure when the substrate is otherwise healthy.
-  let getResp;
-  try {
-    getResp = await withTransientRetry(async () => {
-      const r = await solidFetch(manifestUrl, {
-        method: 'GET',
-        headers: { 'Accept': 'text/turtle', 'Cache-Control': 'no-cache' },
-      });
-      if (r.status >= 500) {
-        throw new Error(`manifest GET <${manifestUrl}> failed: ${r.status} ${r.statusText}`);
-      }
-      return r;
-    }, { maxAttempts: 6, baseMs: 500 });
-  } catch (err) {
-    res.status(502).json({ ok: false, reason: `manifest GET failed after retries: ${(err as Error).message}` });
-    return;
-  }
-  if (!getResp.ok) {
-    res.status(getResp.status).json({ ok: false, reason: `manifest GET failed: ${getResp.status} ${getResp.statusText}` });
-    return;
-  }
-  const manifestTurtle = await getResp.text();
-  const etag = getResp.headers?.get('etag') ?? null;
+  // ── 1. Read EVERY document the index is made of, not just the hot one ──────────
+  //
+  // ★ THIS ENDPOINT BOTH READS AND REWRITES, WHICH MAKES TRUNCATION EXPENSIVE TWICE OVER.
+  // A pod past the manifest write bound keeps only its most recent rows in
+  // `.well-known/context-graphs` and links the rest into archive segments. Reading only the
+  // hot document would (a) skip every archived row, leaving them without the `iep:contentCid`
+  // mirror the CAS gate uses, and (b) report `scanned: <hot count>` as if that were the pod —
+  // a completeness claim about an index it never saw. The first is merely a slow fallback
+  // (`fetchDescriptorTurtleForCas` re-hashes the body); the second is a lie, and this is a
+  // one-shot admin endpoint whose entire purpose is completeness.
+  //
+  // Rewriting each segment is safe and bounded: segments hold at most as many entries as the
+  // hot document does, so each PUT costs what a hot-manifest PUT costs — the quantity the
+  // bound was measured to keep under CSS's 6-second write lock.
+  const fetchDoc = async (url: string): Promise<{ body: string; etag: string | null } | { error: string }> => {
+    try {
+      const r = await withTransientRetry(async () => {
+        const resp = await solidFetch(url, {
+          method: 'GET',
+          headers: { 'Accept': 'text/turtle', 'Cache-Control': 'no-cache' },
+        });
+        if (resp.status >= 500) throw new Error(`GET <${url}> failed: ${resp.status} ${resp.statusText}`);
+        return resp;
+      }, { maxAttempts: 6, baseMs: 500 });
+      if (!r.ok) return { error: `GET ${r.status} ${r.statusText}` };
+      return { body: await r.text(), etag: r.headers?.get('etag') ?? null };
+    } catch (err) { return { error: (err as Error).message }; }
+  };
 
-  // 2. Parse + compute backfill targets.
-  const entries = parseManifest(manifestTurtle);
-  const targets: { descriptorUrl: string; existingCid?: string }[] = [];
-  for (const e of entries) {
-    if (whitelist && !whitelist.has(e.descriptorUrl)) continue;
-    if (e.cid) continue; // already mirrored
-    targets.push({ descriptorUrl: e.descriptorUrl });
+  const hot = await fetchDoc(manifestUrl);
+  if ('error' in hot) {
+    res.status(502).json({ ok: false, reason: `manifest GET failed: ${hot.error}` });
+    return;
+  }
+
+  // Documents to process, hot first. Segment discovery follows the manifest's own
+  // `iep:manifestArchive` links (and, transitively, each segment's link to its predecessor),
+  // so the set comes from the DATA rather than from a naming convention this endpoint would
+  // have to keep in step with the writer.
+  const documents: Array<{ url: string; body: string; etag: string | null }> = [
+    { url: manifestUrl, body: hot.body, etag: hot.etag },
+  ];
+  const unreadableSegments: Array<{ url: string; error: string }> = [];
+  const seenSegments = new Set<string>([manifestUrl]);
+  let pending = parseManifestArchiveUrls(hot.body, manifestUrl).filter(u => !seenSegments.has(u));
+  while (pending.length > 0 && seenSegments.size < 512) {
+    const url = pending.shift()!;
+    seenSegments.add(url);
+    const seg = await fetchDoc(url);
+    if ('error' in seg) { unreadableSegments.push({ url, error: seg.error }); continue; }
+    documents.push({ url, body: seg.body, etag: seg.etag });
+    for (const next of parseManifestArchiveUrls(seg.body, url)) {
+      if (!seenSegments.has(next) && !pending.includes(next)) pending.push(next);
+    }
+  }
+
+  // ★ REFUSE RATHER THAN BACKFILL A POD WE COULD NOT FULLY READ. A partial pass would report
+  // a `scanned` count and an "all entries already carry a CID" note that are both false of the
+  // pod, and the operator running a one-shot repair has no other way to find out.
+  if (unreadableSegments.length > 0) {
+    res.status(502).json({
+      ok: false,
+      reason: 'the manifest advertises archive segments that could not be read; refusing to '
+        + 'backfill a partial index (a `scanned` count over an index we did not see would be wrong)',
+      unreadableSegments,
+    });
+    return;
+  }
+
+  // ── 2. Parse + compute backfill targets across every document ──────────────────
+  const perDoc = documents.map(d => ({ ...d, entries: parseManifest(d.body) }));
+  const scanned = perDoc.reduce((n, d) => n + d.entries.length, 0);
+  const targets: { descriptorUrl: string }[] = [];
+  for (const d of perDoc) {
+    for (const e of d.entries) {
+      if (whitelist && !whitelist.has(e.descriptorUrl)) continue;
+      if (e.cid) continue; // already mirrored
+      targets.push({ descriptorUrl: e.descriptorUrl });
+    }
   }
 
   if (targets.length === 0) {
@@ -13530,9 +13595,10 @@ app.post('/admin/backfill-manifest-cid', async (req, res) => {
       ok: true,
       podUrl,
       manifestUrl,
-      scanned: entries.length,
+      documents: documents.map(d => d.url),
+      scanned,
       backfilled: 0,
-      skipped: entries.length,
+      skipped: scanned,
       entries: [],
       note: whitelist
         ? 'All whitelisted entries already carry iep:contentCid (or were not present in the manifest); nothing to backfill.'
@@ -13541,7 +13607,7 @@ app.post('/admin/backfill-manifest-cid', async (req, res) => {
     return;
   }
 
-  // 3. For each target: GET descriptor body, computeCid, build edit set.
+  // ── 3. For each target: GET descriptor body, computeCid, build edit set ────────
   const edits: { descriptorUrl: string; cid: string }[] = [];
   const failures: { descriptorUrl: string; error: string }[] = [];
   for (const t of targets) {
@@ -13571,45 +13637,44 @@ app.post('/admin/backfill-manifest-cid', async (req, res) => {
     return;
   }
 
-  // 4. Inject `iep:contentCid "<cid>" ;` into each target entry.
-  // The manifest format is line-oriented (parseManifest is too): each
-  // entry begins with `<URL> a iep:ManifestEntry ;` and runs until a
-  // line ending in `.`. Insert the new triple right after the entry
-  // header so it sits in the same field-order publish() now emits.
+  // ── 4/5. Inject `iep:contentCid "<cid>" ;` and CAS the document back ───────────
+  //
+  // The manifest format is line-oriented (parseManifest is too): each entry begins with
+  // `<URL> a iep:ManifestEntry ;` and runs until a line ending in `.`. Insert the new triple
+  // right after the entry header so it sits in the same field-order publish() emits. The
+  // rewrite is LINE-PRESERVING, which is why the collection header — including the
+  // `iep:manifestArchive` links that make the pod's index navigable — survives untouched.
   const editByUrl = new Map(edits.map(e => [e.descriptorUrl, e.cid]));
-  const lines = manifestTurtle.split(/\r?\n/);
-  const out: string[] = [];
-  for (const ln of lines) {
-    out.push(ln);
-    const m = ln.match(/^<([^>]+)>\s+a\s+iep:ManifestEntry\s*;/);
-    if (m) {
-      const url = m[1]!;
-      const cid = editByUrl.get(url);
-      if (cid) {
-        // Match the indentation of the existing entry triples (4 spaces
-        // is the manifestEntryTurtle convention; fall back to leading
-        // whitespace of the next non-blank if present).
-        const indent = '    ';
-        out.push(`${indent}iep:contentCid "${cid}" ;`);
+  const written: string[] = [];
+  const putFailures: Array<{ url: string; status: number; statusText: string }> = [];
+  for (const d of perDoc) {
+    if (!d.entries.some(e => editByUrl.has(e.descriptorUrl))) continue; // nothing to change here
+    const out: string[] = [];
+    for (const ln of d.body.split(/\r?\n/)) {
+      out.push(ln);
+      const m = ln.match(/^<([^>]+)>\s+a\s+iep:ManifestEntry\s*;/);
+      if (m) {
+        const cid = editByUrl.get(m[1]!);
+        // 4 spaces is the manifestEntryTurtle convention.
+        if (cid) out.push(`    iep:contentCid "${cid}" ;`);
       }
     }
+    const putHeaders: Record<string, string> = { 'Content-Type': 'text/turtle' };
+    // If-Match guards against a concurrent publisher having moved the document between our
+    // GET and this PUT. It matters most on the hot manifest — segments are write-once — but
+    // a roll-over can rewrite the hot document while this loop runs, so both get the guard.
+    if (d.etag) putHeaders['If-Match'] = d.etag;
+    const putResp = await solidFetch(d.url, { method: 'PUT', headers: putHeaders, body: out.join('\n') });
+    if (!putResp.ok) { putFailures.push({ url: d.url, status: putResp.status, statusText: putResp.statusText }); continue; }
+    written.push(d.url);
   }
-  const rewritten = out.join('\n');
 
-  // 5. CAS PUT back. If-Match guards against a concurrent publisher
-  // having moved the manifest between our GET and this PUT.
-  const putHeaders: Record<string, string> = { 'Content-Type': 'text/turtle' };
-  if (etag) putHeaders['If-Match'] = etag;
-  const putResp = await solidFetch(manifestUrl, {
-    method: 'PUT',
-    headers: putHeaders,
-    body: rewritten,
-  });
-  if (!putResp.ok) {
-    res.status(putResp.status === 412 ? 412 : 502).json({
+  if (written.length === 0) {
+    const first = putFailures[0];
+    res.status(first && first.status === 412 ? 412 : 502).json({
       ok: false,
-      reason: `manifest PUT failed: ${putResp.status} ${putResp.statusText}`,
-      retryable: putResp.status === 412,
+      reason: `no manifest document could be written: ${putFailures.map(f => `${f.url} -> ${f.status} ${f.statusText}`).join('; ')}`,
+      retryable: putFailures.some(f => f.status === 412),
       edits,
       failures,
     });
@@ -13624,12 +13689,16 @@ app.post('/admin/backfill-manifest-cid', async (req, res) => {
     ok: true,
     podUrl,
     manifestUrl,
-    scanned: entries.length,
+    documents: documents.map(d => d.url),
+    documentsWritten: written,
+    scanned,
     backfilled: edits.length,
-    skipped: entries.length - targets.length,
+    skipped: scanned - targets.length,
     failed: failures.length,
     entries: edits.map(e => ({ descriptorUrl: e.descriptorUrl, cid: e.cid, action: 'mirror-added' })),
     ...(failures.length > 0 ? { failures } : {}),
+    // A partial write is reported, not swallowed: some rows still lack their mirror.
+    ...(putFailures.length > 0 ? { putFailures } : {}),
   });
 });
 

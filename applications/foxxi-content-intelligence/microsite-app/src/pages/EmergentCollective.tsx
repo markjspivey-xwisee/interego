@@ -14,6 +14,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Wallet, verifyMessage } from 'ethers';
 import { BRIDGE_URL } from '../bridge-client.js';
+import { readManifestIndex, parseManifestEntryUrls } from '../manifest-chain.js';
 
 // Inlined here (rather than imported from the vertical's src) so the
 // microsite bundle stays free of the bridge-only @interego/core
@@ -206,10 +207,28 @@ export function EmergentCollective({ onHome, onDemos }: { onHome: () => void; on
       await sleep(delay);
 
       log({ kind: 'info', text: 'reading the peer organization\'s pod over the federation…' });
-      const peerR = await fetch(`${PEER_POD}.well-known/context-graphs`, { headers: { Accept: 'text/turtle' } })
-        .then(r => r.ok).catch(() => false);
-      setPeerOk(peerR);
-      log({ kind: 'http', text: `peer pod (Peer Academy): ${peerR ? 'reachable' : 'unreachable'}` });
+      // ★ THE CLAIM THIS ACT MAKES IS "WE READ THE PEER'S INDEX", SO IT HAS TO READ THE
+      // PEER'S INDEX. The peer pod's manifest is bounded — past a threshold its oldest rows
+      // live in write-once archive segments the manifest links to — and a page whose entire
+      // premise is that nothing on it is faked cannot report a stopped-at-the-first-document
+      // read as having read the pod. `readManifestIndex` follows the `iep:manifestArchive`
+      // links the fetched manifest carries and nothing else; against a peer that has never
+      // rolled over there are none, and this stays the single GET it always was.
+      const peer = await readManifestIndex(
+        `${PEER_POD}.well-known/context-graphs`,
+        parseManifestEntryUrls,
+        u => u,
+      ).catch(() => null);
+      setPeerOk(peer !== null);
+      log({
+        kind: 'http',
+        text: peer === null
+          ? 'peer pod (Peer Academy): unreachable'
+          : `peer pod (Peer Academy): reachable — ${peer.items.length} descriptor(s) indexed`
+            + (peer.archivesFollowed > 0
+              ? `, following ${peer.archivesFollowed} archive segment(s) the manifest links to`
+              : ''),
+      });
       if (cancelRef.current) return;
       await sleep(delay);
 

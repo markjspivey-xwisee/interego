@@ -180,6 +180,20 @@ export interface DereferenceResult {
    */
   readonly manifestEntries?: readonly DereferencedManifestEntry[];
   /**
+   * ★ SET ONLY WHEN `manifestEntries` IS KNOWN TO BE SHORT OF THE POD'S ACTUAL INDEX.
+   *
+   * A pod past the manifest write bound keeps its recent rows in
+   * `.well-known/context-graphs` and links the rest into archive segments. `dereference`
+   * follows those links, so `manifestEntries` is normally the whole index and this field is
+   * ABSENT. It appears when a segment the manifest advertised could not be read — the one
+   * situation in which the list is a subset. A caller acting on completeness (a compliance
+   * sweep, a supersession walk, anything that reads absence as evidence) must check it;
+   * absence of the field is the affirmative "this is everything".
+   */
+  readonly manifestPartial?: true;
+  /** The archive segment IRIs that would not load, when `manifestPartial` is set. */
+  readonly manifestArchivesUnreachable?: readonly string[];
+  /**
    * Structured provenance read from the representation. Parsed via the
    * substrate's `parseTrig` so every prov:* / iep:supersedes / dct:* triple
    * is recovered, including multi-value lists and across all subjects in

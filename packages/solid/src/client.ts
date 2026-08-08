@@ -78,6 +78,83 @@ function iescPn(value: string): string {
 
 const MANIFEST_PATH = '.well-known/context-graphs';
 
+// ── Bounded manifest: a hot document that LINKS to a chain of archives ──
+//
+// ★ WHAT A MANIFEST WRITE COSTS, MEASURED (2026-08-08, live fleet, gate-measured, see
+// `tools/measure-manifest-write-cost-live.ts`). The maintainer's pod manifest is 495,492
+// bytes / 653 entries / 654 Turtle statements. Overwrite latency against a disposable pod:
+//
+//     entries      1    10    50   100   200   300   400   450   500   550   653
+//     ms         1300  1297  1354  1691  2650  4057  5119  5212  5991  6346  FAIL
+//
+// Least squares over those ten successes: cost(n) ≈ 1010 ms + 9.73 ms × entries. At 653 the
+// PUT returns `500 InternalServerError: Lock expired after 6000ms on …/.well-known/
+// context-graphs` — the production symptom, reproduced on a pod nobody else was touching, so
+// it is not contention.
+//
+// ★ AND THE COST IS STATEMENTS, NOT BYTES — the measurement that decides the design. The
+// SAME bytes written as `application/octet-stream` instead of `text/turtle` take 1629 ms at
+// 67 KB, 1800 ms at 438 KB and 1828 ms at 604 KB: flat across a 9× byte range, and it
+// SUCCEEDS at the size where Turtle fails. The live storage backend (`PgslDataAccessor` →
+// `LdpStore.writeResource` → `rdfCodec.ingest` → `PgslStore.compose`) mints one
+// content-addressed atom per Turtle statement and does a serial `await txn.get` per atom, so
+// an RDF document costs a Postgres round-trip per statement while an opaque blob costs one.
+// A manifest entry is exactly one statement. Bounding the ENTRY COUNT is therefore the lever;
+// compressing bytes would buy nothing.
+//
+// THE THRESHOLD. Budget the hot write at one third of CSS's 6000 ms lock TTL, so a 3×
+// slowdown from contention or a cold connection pool still lands inside the lock:
+// (2000 − 1010) / 9.73 = 101.7 entries. Floored to 100. Measured directly at n=100: 1691 ms,
+// 28% of the TTL, and five times below the 500-entry point that was the largest measured
+// success. This is a measurement with a stated budget, not a round number.
+//
+// It is deliberately NOT an env var. The append-only attempt that this replaces put reader
+// behaviour behind `MANIFEST_APPEND_ONLY_ENABLED`, and eleven readers that never consulted it
+// is what disqualified it. Re-tuning is a code change with the measurement above updated in
+// the same edit.
+const MANIFEST_HOT_LIMIT = 100;
+// How many entries stay hot after a roll-over. Half the limit, so one roll-over is amortized
+// over the next 50 publishes rather than firing on every write once the hot doc sits at the
+// boundary.
+const MANIFEST_HOT_KEEP = Math.floor(MANIFEST_HOT_LIMIT / 2);
+// Archive segments are siblings of the manifest INSIDE `.well-known/`, and that placement is
+// load-bearing twice over. (a) `listDescriptorUrls` — the scan behind `rebuild_manifest` —
+// already excludes `.well-known/` via NON_DESCRIPTOR_CONTAINERS, so recovery cannot mistake an
+// archived index row for a descriptor. That is precisely the "recovery roughly doubles the
+// manifest" defect that sank the append-only shards, which sat at the pod ROOT. (b) an archive
+// is index data; it belongs where the index lives.
+const MANIFEST_ARCHIVE_PREFIX = '.well-known/context-graphs-archive-';
+// A cap on chain-following, so a malformed or adversarial `iep:manifestArchive` cycle cannot
+// make a reader fetch forever. 512 segments × 100 entries is 51,200 entries — far past any
+// real pod, and the reader reports `complete: false` if it trips.
+const MANIFEST_ARCHIVE_MAX_SEGMENTS = 512;
+
+function manifestArchiveUrl(pod: string, index: number): string {
+  return `${pod}${MANIFEST_ARCHIVE_PREFIX}${String(index).padStart(4, '0')}`;
+}
+
+/**
+ * The lines that make a manifest self-describing as bounded, and the pattern that removes
+ * them again.
+ *
+ * ★ ONE DEFINITION FOR BOTH DIRECTIONS, ON PURPOSE. The insert and the strip run on every
+ * roll-over — insert on the new head, strip on the old one so links do not accumulate. The
+ * moment those two disagree about what an archive line looks like, a stale link survives the
+ * strip and the manifest advertises a segment that has been superseded, or the comment
+ * duplicates on every roll-over until the head is mostly comment.
+ */
+const ARCHIVE_HEAD_LINE = /^\s*(?:iep:manifestArchive\s|hydra:view\s|# ★ BOUNDED:)/;
+
+function archiveHeadLines(archiveUrls: readonly string[]): string[] {
+  if (archiveUrls.length === 0) return [];
+  const list = archiveUrls.map(u => `<${iescIri(u)}>`).join(', ');
+  return [
+    `    # ★ BOUNDED: the entries below are the most recent ones. The rest of this index is in the write-once archive segments linked here (newest last); a reader that does not follow them holds a PARTIAL view and can tell, because these links are.`,
+    `    iep:manifestArchive ${list} ;`,
+    `    hydra:view ${list} ;`,
+  ];
+}
+
 // ── Per-pod in-process manifest mutex ───────────────────────
 //
 // publish() does a read-modify-write cycle against
@@ -559,13 +636,31 @@ export function digestedGraphRegion(args: {
  * DPROD alignment:
  *   Each manifest is also a dprod:DataProduct with an outputPort
  *   (the manifest itself as a DCAT distribution).
+ *
+ * ★ AND — WHEN THE POD IS BOUNDED — WHERE THE REST OF THE INDEX IS.
+ *
+ * `archiveUrls` adds `iep:manifestArchive <a>, <b>, …` (plus `hydra:view`, the same fact in
+ * the vocabulary Hydra already has for a partial view of a collection). A reader learns that
+ * this document is a PARTIAL view, and learns where the remainder lives, FROM THE DOCUMENT.
+ * Nothing about it is implied by a writer's environment, which is the property the rejected
+ * append-only flag did not have.
+ *
+ * ★ AND THERE IS DELIBERATELY NO `archivedEntryCount`. A mirrored total is a second place
+ * for the same fact to live, and the moment a segment is rewritten by one code path and the
+ * total by another they disagree — with the count, not the segments, being the thing readers
+ * would trust. The links are the truth; a caller that needs a total reads the segments. This
+ * is the same refusal `manifestEntryTurtle` makes about `wsp:seq`, for the same reason.
+ *
+ * Emitting zero archive links (the default) produces a byte-identical header to the one this
+ * function has always produced, so an unbounded pod's manifest does not change at all.
  */
-function manifestHeaderTurtle(podUrl: string): string {
+function manifestHeaderTurtle(podUrl: string, archiveUrls: readonly string[] = []): string {
   const manifestUrl = `${podUrl}${MANIFEST_PATH}`;
   return [
     `# Interego Manifest — Hydra-aware, DPROD-aligned`,
     ``,
     `<${iescIri(manifestUrl)}> a hydra:Collection, iep:DataProduct ;`,
+    ...archiveHeadLines(archiveUrls),
     `    hydra:manages [`,
     `        hydra:property iep:describes ;`,
     `        hydra:object iep:ManifestEntry`,
@@ -844,6 +939,487 @@ async function readShardEntriesCached(pod: string, fetchFn: FetchFn): Promise<Ma
   }
   shardEntriesCache.set(pod, { entries, expiresAt: Date.now() + ttl });
   return entries;
+}
+
+// ── Bounded manifest: document surgery, archive segments, chain reads ──
+
+/**
+ * Take a manifest document apart into the three pieces a roll-over has to move independently:
+ * its prefix directives, its collection header, and one RAW TEXT BLOCK per entry.
+ *
+ * ★ THE BLOCKS STAY AS TEXT, AND THAT IS THE WHOLE POINT. Re-serializing an entry from
+ * `parseManifest` output would silently drop every predicate the parser does not model — and
+ * it models a fixed list. Moving an entry from the hot document into an archive must move the
+ * BYTES, or archiving is lossy in a way nobody would notice until the field that vanished was
+ * the one somebody needed.
+ *
+ * The block boundary is the same one `parseManifest` and the relay's CID backfill already
+ * rely on: an entry starts at `<url> a iep:ManifestEntry` and ends at the first line whose
+ * trimmed text ends in `.`. Anything before the first entry is header; anything after the
+ * last entry's terminator is dropped only if blank.
+ */
+function splitManifestDocument(turtle: string): { head: string; entries: string[] } {
+  const lines = turtle.split('\n');
+  const headLines: string[] = [];
+  const entries: string[] = [];
+  let current: string[] | null = null;
+  for (const raw of lines) {
+    const trimmed = raw.trim();
+    if (/^<[^>]+>\s+a\s+iep:ManifestEntry/.test(trimmed)) {
+      if (current) entries.push(current.join('\n'));
+      current = [raw];
+      // A single-line entry (`<u> a iep:ManifestEntry .`) opens and closes here.
+      if (trimmed.endsWith('.')) { entries.push(current.join('\n')); current = null; }
+      continue;
+    }
+    if (current) {
+      current.push(raw);
+      if (trimmed.endsWith('.')) { entries.push(current.join('\n')); current = null; }
+      continue;
+    }
+    headLines.push(raw);
+  }
+  if (current) entries.push(current.join('\n'));
+  return { head: headLines.join('\n').trimEnd(), entries };
+}
+
+/** The `iep:validFrom` an entry block declares, for ordering a roll-over split. '' when absent. */
+function entryBlockValidFrom(block: string): string {
+  return block.match(/iep:validFrom\s+"([^"]+)"/)?.[1] ?? '';
+}
+
+/**
+ * Put the archive links into a manifest's EXISTING head, rather than regenerating one.
+ *
+ * ★ REGENERATING THE HEAD WOULD DELETE TRIPLES THIS FILE DOES NOT KNOW ABOUT, and at least
+ * one consumer depends on some of them: the relay's `resolveContainerShapes` reads
+ * container-level `iep:conformsTo` / `dct:conformsTo` off the collection subject and treats
+ * their absence as "this pod declares no shape" — a fail-open on a validation gate. Calling
+ * `manifestHeaderTurtle` here would have quietly discharged that gate for every pod that
+ * rolled over. So the head is edited in place: existing `iep:manifestArchive` / `hydra:view`
+ * lines are dropped and the current set is inserted after the collection subject line.
+ *
+ * Returns null when the collection subject cannot be located. A head this function does not
+ * understand is one it must not rewrite — refusing leaves the caller on the unbounded path,
+ * which is a known-slow state rather than a corrupted document.
+ */
+function headWithArchiveLinks(head: string, manifestUrl: string, archiveUrls: readonly string[]): string | null {
+  const lines = head.split('\n');
+  const escaped = iescIri(manifestUrl).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const subjectRe = new RegExp(`^<${escaped}>\\s+a\\s+`);
+  if (!lines.some(l => subjectRe.test(l.trim()))) return null;
+  const kept = lines.filter(l => !ARCHIVE_HEAD_LINE.test(l));
+  const at = kept.findIndex(l => subjectRe.test(l.trim()));
+  if (at < 0) return null;
+  const inserted = archiveHeadLines(archiveUrls);
+  if (inserted.length === 0) return kept.join('\n');
+
+  // ★ THE SUBJECT LINE MAY BE THE WHOLE STATEMENT, AND THEN IT ENDS IN A FULL STOP.
+  //
+  // `manifestHeaderTurtle` always emits a multi-predicate stanza whose first line ends in
+  // `;`, so inserting after it is valid. But this function edits whatever head the POD is
+  // actually serving, and a manifest written by an older build, a hand-repair, or another
+  // implementation can perfectly well carry `<url> a hydra:Collection .` on one line.
+  // Splicing predicate lines after a terminated statement produces a document CSS will
+  // reject — and it would be rejected at the exact moment a pod first grows past the bound,
+  // which is the worst possible time to discover it. Re-terminate instead: the anchor gets a
+  // `;`, the last inserted line gets the `.`.
+  const anchor = kept[at]!;
+  const anchorTerminates = anchor.trimEnd().endsWith('.');
+  const rewrittenAnchor = anchorTerminates ? anchor.replace(/\.(\s*)$/, ';$1') : anchor;
+  const tail = anchorTerminates
+    ? [...inserted.slice(0, -1), inserted[inserted.length - 1]!.replace(/;(\s*)$/, '.$1')]
+    : inserted;
+  return [...kept.slice(0, at), rewrittenAnchor, ...tail, ...kept.slice(at + 1)].join('\n');
+}
+
+/**
+ * The header of a write-once archive segment.
+ *
+ * Types it as `hydra:PartialCollectionView` as well as `iep:ManifestArchive` so a client that
+ * speaks only Hydra recognises what it is holding, and links BACKWARD via `hydra:previous` /
+ * `iep:manifestArchive` to the segment before it. The backward link matters for a reader that
+ * arrived at a segment directly rather than through the hot manifest: the chain is walkable
+ * from either end, so no segment is reachable only via a document a reader might not have.
+ */
+function manifestArchiveHeaderTurtle(archiveUrl: string, manifestUrl: string, previousUrl: string | null): string {
+  const lines = [
+    `# Interego Manifest Archive — a write-once segment of ${manifestUrl}`,
+    ``,
+    `<${iescIri(archiveUrl)}> a iep:ManifestArchive, hydra:PartialCollectionView ;`,
+    `    iep:archiveOf <${iescIri(manifestUrl)}> ;`,
+  ];
+  if (previousUrl) {
+    lines.push(`    iep:manifestArchive <${iescIri(previousUrl)}> ;`);
+    lines.push(`    hydra:previous <${iescIri(previousUrl)}> ;`);
+  }
+  lines.push(`    hydra:view <${iescIri(manifestUrl)}> .`);
+  return lines.join('\n');
+}
+
+/**
+ * Every archive segment a manifest (or archive) document points at, absolutized.
+ *
+ * Reads `iep:manifestArchive` — the objects may be a comma-separated list on one line, which
+ * is how the header emits them. Deliberately tolerant of `hydra:previous` too, so a reader
+ * that lands on a segment written by an older build still walks backward.
+ */
+export function parseManifestArchiveUrls(turtle: string, baseUrl: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const predicate = /(?:iep:manifestArchive|hydra:previous)\s*((?:<[^>]*>\s*,\s*)*<[^>]*>)/g;
+  let m: RegExpExecArray | null;
+  while ((m = predicate.exec(turtle)) !== null) {
+    for (const iri of m[1]!.matchAll(/<([^>]*)>/g)) {
+      let abs: string;
+      try { abs = new URL(iri[1]!, baseUrl).href; } catch { continue; }
+      if (!seen.has(abs)) { seen.add(abs); out.push(abs); }
+    }
+  }
+  return out;
+}
+
+/**
+ * The whole index behind a manifest URL: the hot document plus every archive segment it (or
+ * they, transitively) link to.
+ *
+ * ★ `complete` IS THE HONEST-DEGRADATION CONTRACT, AND IT IS THE REASON THIS FUNCTION EXISTS
+ * RATHER THAN A LOOP AT EACH CALL SITE. A bounded manifest makes "I read the manifest" and "I
+ * have the pod's index" two different statements. Any caller that presents its result as the
+ * pod must check `complete`; a caller for which a recent slice is genuinely enough may ignore
+ * it. What no caller may do is believe a partial answer is a total one, which is exactly what
+ * every reader would do if the union lived inside one consumer's private helper.
+ *
+ * Segments are fetched in PARALLEL — the hot document lists all of them, so following the
+ * chain costs one extra round-trip of latency, not one per segment. The backward
+ * `hydra:previous` links are followed too (bounded, cycle-safe), so a segment reachable only
+ * from another segment is still found.
+ *
+ * A pod with no archive links yields exactly `{ bodies: [hot], complete: true }` — the
+ * unbounded case is untouched and costs nothing.
+ */
+export async function fetchManifestChain(
+  manifestUrl: string,
+  fetchFn: FetchFn,
+  options: { maxSegments?: number } = {},
+): Promise<{
+  hotBody: string | null;
+  hotStatus: number;
+  archives: Array<{ url: string; body: string }>;
+  unreachable: string[];
+  complete: boolean;
+}> {
+  const maxSegments = options.maxSegments ?? MANIFEST_ARCHIVE_MAX_SEGMENTS;
+  // 5xx RESPONSES are promoted to throws inside the lambda so `withTransientRetry` actually
+  // retries them — a cold-cache 503 arrives as a returned response, not a thrown error, and
+  // would otherwise escape the retry loop.
+  //
+  // ★ THE MESSAGE IS `Failed to fetch manifest from …` ON PURPOSE, NOT AS PHRASING. It is the
+  // string `discover()` has always thrown on an unreadable manifest, and callers (and the
+  // suite) match on it. Moving the GET into this helper is not supposed to be observable to
+  // anyone who was not looking for archives, and an error message is part of what is
+  // observable — the whole-suite run caught exactly this when the wording drifted.
+  const hotResp = await withTransientRetry(async () => {
+    const r = await fetchFn(manifestUrl, { method: 'GET', headers: { 'Accept': TURTLE_CONTENT_TYPE } });
+    if (r.status >= 500) {
+      throw new Error(`Failed to fetch manifest from ${manifestUrl}: ${r.status} ${r.statusText}`);
+    }
+    return r;
+  }, { maxAttempts: 6, baseMs: 500 });
+
+  if (!hotResp.ok) {
+    return { hotBody: null, hotStatus: hotResp.status, archives: [], unreachable: [], complete: hotResp.status === 404 };
+  }
+  const hotBody = await hotResp.text();
+
+  const archives: Array<{ url: string; body: string }> = [];
+  const unreachable: string[] = [];
+  const visited = new Set<string>([manifestUrl]);
+  let frontier = parseManifestArchiveUrls(hotBody, manifestUrl).filter(u => !visited.has(u));
+  let truncated = false;
+  while (frontier.length > 0) {
+    if (visited.size + frontier.length > maxSegments) {
+      // Refuse to keep walking, and SAY the view is partial rather than return a silently
+      // clipped union — a cap that lies is worse than a cap.
+      truncated = true;
+      frontier = frontier.slice(0, Math.max(0, maxSegments - visited.size));
+    }
+    for (const u of frontier) visited.add(u);
+    const fetched = await Promise.all(frontier.map(async (url) => {
+      try {
+        // Same 5xx-as-throw promotion the hot GET uses: a cold-cache 503 on a segment must
+        // be retried, not counted as "this segment is unreachable" — that verdict makes
+        // `complete` false and (in discover) turns a blip into a refusal.
+        const r = await withTransientRetry(async () => {
+          const resp = await fetchFn(url, { method: 'GET', headers: { 'Accept': TURTLE_CONTENT_TYPE } });
+          if (resp.status >= 500) throw new Error(`archive GET <${url}> failed: ${resp.status} ${resp.statusText}`);
+          return resp;
+        }, { maxAttempts: 4, baseMs: 300 });
+        if (!r.ok) return { url, body: null };
+        return { url, body: await r.text() };
+      } catch { return { url, body: null }; }
+    }));
+    const next: string[] = [];
+    for (const f of fetched) {
+      if (f.body === null) { unreachable.push(f.url); continue; }
+      archives.push({ url: f.url, body: f.body });
+      for (const link of parseManifestArchiveUrls(f.body, f.url)) {
+        if (!visited.has(link) && !next.includes(link)) next.push(link);
+      }
+    }
+    if (truncated) break;
+    frontier = next;
+  }
+
+  return {
+    hotBody,
+    hotStatus: hotResp.status,
+    archives,
+    unreachable,
+    complete: unreachable.length === 0 && !truncated,
+  };
+}
+
+/**
+ * Every manifest entry a pod's index holds, hot and archived, deduplicated.
+ *
+ * The hot copy WINS a collision. Roll-over writes the archive segment first and the shortened
+ * hot document second (see `rollOverManifest`), so a crash between the two leaves an entry in
+ * both — and the hot copy is the one a CAS cycle has been maintaining.
+ */
+export async function fetchAllManifestEntries(
+  manifestUrl: string,
+  fetchFn: FetchFn,
+  options: { maxSegments?: number } = {},
+): Promise<{
+  entries: ManifestEntry[];
+  complete: boolean;
+  archivesFollowed: number;
+  archivesUnreachable: string[];
+  hotStatus: number;
+}> {
+  const chain = await fetchManifestChain(manifestUrl, fetchFn, options);
+  const absolutize = (u: string): string => {
+    try { return new URL(u, manifestUrl).href; } catch { return u; }
+  };
+  const byUrl = new Map<string, ManifestEntry>();
+  // Archives first, hot last, so the hot copy overwrites on collision.
+  for (const a of chain.archives) {
+    for (const e of parseManifest(a.body)) {
+      byUrl.set(absolutize(e.descriptorUrl), {
+        ...e,
+        descriptorUrl: absolutize(e.descriptorUrl),
+        ...(Array.isArray(e.describes) ? { describes: e.describes.map(absolutize) } : {}),
+      });
+    }
+  }
+  if (chain.hotBody !== null) {
+    for (const e of parseManifest(chain.hotBody)) {
+      byUrl.set(absolutize(e.descriptorUrl), {
+        ...e,
+        descriptorUrl: absolutize(e.descriptorUrl),
+        ...(Array.isArray(e.describes) ? { describes: e.describes.map(absolutize) } : {}),
+      });
+    }
+  }
+  return {
+    entries: [...byUrl.values()],
+    complete: chain.complete,
+    archivesFollowed: chain.archives.length,
+    archivesUnreachable: chain.unreachable,
+    hotStatus: chain.hotStatus,
+  };
+}
+
+/**
+ * Move the oldest entries out of a hot manifest body into fresh write-once archive segments,
+ * and return the shortened body the caller should PUT.
+ *
+ * ★ ROLL-OVER IS ITSELF A WRITE, AND IT IS BOUNDED BY THE SAME NUMBER THE STEADY STATE IS.
+ * Every segment this writes holds at most `MANIFEST_HOT_LIMIT` entries, so its PUT costs what
+ * a full hot manifest costs — the very quantity the threshold was measured to keep safe. A
+ * pod that is far over the limit (the maintainer's, at 653) does NOT get one enormous archive
+ * PUT that fails the same way the manifest did; it gets ⌈evicted / limit⌉ bounded PUTs. That
+ * is the difference between fixing the failure and relocating it.
+ *
+ * ★ AND THE ORDER IS ARCHIVE-FIRST, DELIBERATELY. Each segment is PUT and its success checked
+ * BEFORE the shortened hot body is returned for its own PUT. Interrupted between the two, the
+ * pod holds an archive whose entries are still in the hot manifest — duplication, which the
+ * reader's dedupe absorbs. The opposite order would shorten the hot document while the
+ * archive did not exist, which is entry loss, which is the one outcome that is unacceptable.
+ *
+ * Newest entries stay hot (ordered by the `iep:validFrom` each block declares), so the
+ * degraded view an unaware reader gets is the RECENT slice — the slice for which "recent is
+ * enough" is a defensible verdict.
+ */
+async function rollOverManifest(
+  pod: string,
+  hotBody: string,
+  fetchFn: FetchFn,
+  /**
+   * ★ THE ENTRY THIS PUBLISH IS ADDING, WHICH MUST NOT BE THE ONE THAT GETS ARCHIVED.
+   *
+   * The split orders by `iep:validFrom`, and `manifestEntryTurtle` emits that predicate only
+   * when the descriptor declares one. A descriptor without it sorts to the OLDEST end — so a
+   * publish of such a descriptor would archive its own brand-new entry, the post-PUT
+   * verify-GET would not find it in the hot document, the CAS loop would read that as a
+   * concurrent clobber, and eight attempts later the caller would be told the write failed
+   * over a write that was fine. Pinning the row being added is what keeps the verify honest.
+   */
+  pinnedDescriptorUrl?: string,
+): Promise<{ body: string; archiveUrls: string[]; segmentsWritten: string[] } | null> {
+  const { head, entries } = splitManifestDocument(hotBody);
+  if (entries.length <= MANIFEST_HOT_LIMIT) return null;
+  const manifestUrlForHead = `${pod}${MANIFEST_PATH}`;
+  // Segments the document already links, in document order — the last is the newest, which is
+  // what a fresh segment's `hydra:previous` must point at.
+  const existingArchiveUrls = parseManifestArchiveUrls(head, manifestUrlForHead);
+  // Refuse before writing anything if the head cannot carry the links: a segment written for
+  // a manifest that will never reference it is pure garbage.
+  if (headWithArchiveLinks(head, manifestUrlForHead, existingArchiveUrls) === null) return null;
+
+  // Newest-first by declared validFrom; blocks with none sink to the oldest end (they are
+  // pre-validFrom rows, and "no declared start" is the same tiebreak discover() uses).
+  const ordered = [...entries].sort((a, b) => {
+    const av = entryBlockValidFrom(a);
+    const bv = entryBlockValidFrom(b);
+    if (av === bv) return 0;
+    if (!av) return 1;
+    if (!bv) return -1;
+    return av < bv ? 1 : -1;
+  });
+  const isPinned = (block: string): boolean =>
+    pinnedDescriptorUrl !== undefined
+    && block.trimStart().startsWith(`<${pinnedDescriptorUrl}>`);
+  const pinned = ordered.filter(isPinned);
+  const rest = ordered.filter(b => !isPinned(b));
+  const keep = [...pinned, ...rest.slice(0, Math.max(0, MANIFEST_HOT_KEEP - pinned.length))];
+  const evict = rest.slice(Math.max(0, MANIFEST_HOT_KEEP - pinned.length)).reverse(); // oldest first, so segments read chronologically
+
+  const manifestUrl = manifestUrlForHead;
+  const prefixes = turtlePrefixes(['iep', 'xsd', 'hydra', 'dcat', 'dprod', 'dct']);
+  // Next free index: one past the highest already in use. Derived from the URLs the manifest
+  // already links rather than from a listing, so it cannot race a container that has not
+  // caught up.
+  let nextIndex = 0;
+  for (const u of existingArchiveUrls) {
+    const n = Number(u.match(/-(\d+)$/)?.[1] ?? NaN);
+    if (Number.isFinite(n) && n >= nextIndex) nextIndex = n + 1;
+  }
+  let previous = existingArchiveUrls.length > 0 ? existingArchiveUrls[existingArchiveUrls.length - 1]! : null;
+  const written: string[] = [];
+  for (let i = 0; i < evict.length; i += MANIFEST_HOT_LIMIT) {
+    const chunk = evict.slice(i, i + MANIFEST_HOT_LIMIT);
+    const url = manifestArchiveUrl(pod, nextIndex++);
+    const body = `${prefixes}\n\n${manifestArchiveHeaderTurtle(url, manifestUrl, previous)}\n\n${chunk.join('\n\n')}\n`;
+    const resp = await withTransientRetry(async () => {
+      const r = await fetchFn(url, { method: 'PUT', headers: { 'Content-Type': TURTLE_CONTENT_TYPE }, body });
+      if (r.status >= 500) throw new Error(`archive PUT <${url}> failed: ${r.status} ${r.statusText}`);
+      return r;
+    });
+    if (!resp.ok && resp.status !== 201 && resp.status !== 204) {
+      // Abandon the roll-over and leave the hot manifest untouched. Segments already written
+      // are orphans the reader dedupes away, and the next publish retries from a consistent
+      // hot document. Throwing here would fail a publish whose descriptor already landed.
+      throw new Error(`Failed to write manifest archive ${url}: ${resp.status} ${resp.statusText}`);
+    }
+    written.push(url);
+    previous = url;
+  }
+
+  const archiveUrls = [...existingArchiveUrls, ...written];
+  const newHead = headWithArchiveLinks(head, manifestUrl, archiveUrls);
+  // Re-checked rather than asserted: the same input passed the pre-flight above, so a null
+  // here would mean the head changed underneath us. Leaving the caller unbounded beats
+  // emitting a manifest whose head we could not compose.
+  if (newHead === null) return null;
+  return { body: `${newHead.trimEnd()}\n\n${keep.join('\n\n')}\n`, archiveUrls, segmentsWritten: written };
+}
+
+/**
+ * Bring a pod's hot manifest back under the bound, as its OWN committed step, before any
+ * append is attempted.
+ *
+ * ★ WHY THIS IS NOT INSIDE THE APPEND'S CAS LOOP, WHICH IS WHERE IT STARTED.
+ *
+ * Measured live on a 400-entry disposable pod: the roll-over ran INSIDE the retry loop, the
+ * append's conditional PUT did not take on the first attempt, and attempt two re-derived the
+ * same split and rewrote all four archive segments — 8 segment PUTs for 4 segments, and a
+ * single publish that took 25.7 SECONDS. Nothing was lost (the indices are derived from the
+ * manifest's own links, so a retry overwrites rather than orphans) and no individual write
+ * came near the lock, but a retry that costs sixteen seconds of duplicated work is a retry
+ * that will eventually not finish.
+ *
+ * Hoisting it fixes the cause rather than the symptom: compaction owns its own small CAS, and
+ * once it commits, the append loop is operating on a ~50-entry document where a 412 costs one
+ * cheap PUT. The two operations retry independently at their own price.
+ *
+ * Idempotent by construction: segment indices come from the links the manifest already
+ * carries, so a compaction that wrote segments and then lost its CAS re-derives the SAME
+ * indices next time and overwrites them. There is no index counter to get out of step.
+ *
+ * ★ AND IT HANDS ITS READ BACK, SO THE COMMON CASE COSTS NOTHING.
+ *
+ * Compaction has to GET the manifest to know whether the pod is over the bound, and the
+ * append below GETs it too. On the overwhelmingly common path — a pod inside the bound,
+ * nothing to do — that would be a second manifest GET added to every publish in the system,
+ * for a feature that does not fire. So when it declines, it returns the body and ETag it just
+ * read and the append's first attempt uses them instead of fetching again: the request count
+ * is exactly what it was before this existed.
+ *
+ * When it DOES compact it returns no priming, deliberately. The ETag it holds is the one from
+ * before its own PUT, and CSS does not reliably return a fresh one on PUT, so priming with it
+ * would hand the append a stale precondition and manufacture a 412 — the same self-inflicted
+ * conflict `withTransientRetry` around the conditional PUT used to cause.
+ */
+interface CompactionOutcome {
+  /** Archive segments written, if any. */
+  readonly segments: string[];
+  /** The manifest as read, when it is still current and the append may reuse it. */
+  readonly primed: { body: string; etag: string | null } | null;
+}
+
+async function compactManifestIfNeeded(
+  pod: string,
+  manifestUrl: string,
+  fetchFn: FetchFn,
+): Promise<CompactionOutcome> {
+  const maxAttempts = 4;
+  const segments: string[] = [];
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let resp: Awaited<ReturnType<FetchFn>>;
+    try {
+      resp = await withTransientRetry(async () => {
+        const r = await fetchFn(manifestUrl, { method: 'GET', headers: { 'Accept': TURTLE_CONTENT_TYPE } });
+        if (r.status >= 500) {
+          throw new Error(`Failed to fetch manifest from ${manifestUrl}: ${r.status} ${r.statusText}`);
+        }
+        return r;
+      });
+    } catch {
+      return { segments, primed: null }; // The append loop reports an unreadable manifest, not us.
+    }
+    if (!resp.ok) return { segments, primed: null }; // 404 cold start, or a 4xx the append surfaces.
+    const body = await resp.text();
+    const etag = resp.headers?.get('etag') ?? null;
+    const rolled = await rollOverManifest(pod, body, fetchFn);
+    // Already inside the bound — the common path. Hand the read forward.
+    if (!rolled) return { segments, primed: { body, etag } };
+    for (const s of rolled.segmentsWritten) if (!segments.includes(s)) segments.push(s);
+
+    const headers: Record<string, string> = { 'Content-Type': TURTLE_CONTENT_TYPE };
+    if (etag) headers['If-Match'] = etag;
+    const put = await fetchFn(manifestUrl, { method: 'PUT', headers, body: rolled.body });
+    if (put.ok) return { segments, primed: null };
+    // Lost the CAS, or the server was unhappy. Back off and re-read: another writer may have
+    // compacted already, in which case the next iteration finds the pod inside the bound and
+    // returns without writing anything.
+    await new Promise(r => setTimeout(r, Math.min(200 * attempt, 1000) + Math.floor(Math.random() * 200)));
+  }
+  // ★ NOT AN ERROR. Compaction is an optimisation on the write path, and the append below is
+  // correct either way — it will just be the slow, whole-document write this exists to avoid.
+  // Failing the publish here would turn a performance measure into an availability risk.
+  return { segments, primed: null };
 }
 
 // ── Manifest parsing ────────────────────────────────────────
@@ -1238,20 +1814,76 @@ async function buildManifestFromPGSL(
  * Reconstruct + write a pod's manifest from its on-pod descriptors.
  * One-shot heal for a collapsed/lost index. Overwrites the manifest
  * (no CAS — this is an operator restore). Returns counts.
+ *
+ * ── WHY RECOVERY IS THE PART THAT DECIDES WHETHER A BOUNDING SCHEME IS SOUND ──
+ *
+ * ★ THE APPEND-ONLY SHARD ATTEMPT DIED HERE, NOT AT THE WRITE. Its shards sat at the pod ROOT
+ * in `cg-entries/`, which `listDescriptorUrls` happily enumerated, so a rebuild emitted a
+ * phantom manifest row per shard and roughly doubled the index — making the scheme a one-way
+ * door. The archive is immune for a structural reason, not a careful one: segments live
+ * inside `.well-known/`, which `NON_DESCRIPTOR_CONTAINERS` already excludes from the scan. A
+ * rebuild therefore sees exactly the descriptors and nothing the index wrote about them.
+ *
+ * ★ AND RECOVERY IS THE REVERSIBILITY PATH. This function derives the shape from the COUNT it
+ * found, never from what the pod previously was: at or under the bound it writes one plain
+ * unbounded manifest with no archive links, and DELETES every segment it can see. So a pod
+ * that has been bounded goes back to unbounded by shrinking below the bound and rebuilding —
+ * the code path is the ordinary one, not a special migration. Above the bound there is no way
+ * back, because an unbounded manifest at that size is the write that cannot land; that is the
+ * defect, not a property of this design.
+ *
+ * The rebuild's own writes are bounded the same way a publish's are: segments of at most
+ * MANIFEST_HOT_LIMIT entries each, so healing a 653-descriptor pod is a sequence of ~2-second
+ * PUTs rather than the single 6-second-lock-losing PUT it used to be. Before this change
+ * `rebuild_manifest` could not complete on the maintainer's pod at all.
  */
 export async function rebuildManifestFromPod(
   podUrl: string,
   opts: { fetch?: FetchFn; log?: (m: string) => void } = {},
-): Promise<{ scanned: number; written: number; manifestUrl: string }> {
+): Promise<{ scanned: number; written: number; manifestUrl: string; archives: string[]; archivesDeleted: string[] }> {
   const fetchFn = opts.fetch ?? _fetchFallback;
   const log = opts.log ?? (() => {});
   const pod = podUrl.endsWith('/') ? podUrl : `${podUrl}/`;
-  const { body, scanned, written } = await buildManifestBodyFromPod(pod, fetchFn);
   const manifestUrl = `${pod}${MANIFEST_PATH}`;
-  const put = await fetchFn(manifestUrl, { method: 'PUT', headers: { 'Content-Type': TURTLE_CONTENT_TYPE }, body });
+  const { body, scanned, written } = await buildManifestBodyFromPod(pod, fetchFn);
+
+  // Every segment the CURRENT index links, so the rebuild can retire the ones it no longer
+  // needs. Read before anything is written; a failure to read them is not fatal (they are
+  // then simply overwritten or left, and the entries they hold are re-derived from the
+  // descriptors either way).
+  const priorArchives = await (async (): Promise<string[]> => {
+    try {
+      const r = await fetchFn(manifestUrl, { method: 'GET', headers: { Accept: TURTLE_CONTENT_TYPE } });
+      if (!r.ok) return [];
+      return parseManifestArchiveUrls(await r.text(), manifestUrl);
+    } catch { return []; }
+  })();
+
+  // Split by the same rule publish() uses. `rollOverManifest` needs a document to split, and
+  // `body` is exactly that — it writes the segments and hands back the shortened hot body.
+  const rolled = await rollOverManifest(pod, body, fetchFn);
+  const finalBody = rolled?.body ?? body;
+  const archives = rolled?.archiveUrls ?? [];
+
+  const put = await fetchFn(manifestUrl, { method: 'PUT', headers: { 'Content-Type': TURTLE_CONTENT_TYPE }, body: finalBody });
   if (!put.ok) throw new Error(`manifest PUT <${manifestUrl}> -> ${put.status} ${put.statusText}`);
-  log(`[rebuildManifestFromPod] ${manifestUrl}: scanned ${scanned}, wrote ${written}`);
-  return { scanned, written, manifestUrl };
+
+  // Retire segments the rebuilt index does not reference. Done AFTER the manifest lands, so
+  // an interruption leaves stale-but-unreferenced documents rather than referenced-but-gone
+  // ones. Best-effort: a segment that will not delete is unreachable from the new manifest
+  // and therefore invisible to every reader.
+  const archivesDeleted: string[] = [];
+  for (const stale of priorArchives) {
+    if (archives.includes(stale)) continue;
+    try {
+      const del = await fetchFn(stale, { method: 'DELETE' });
+      if (del.ok || del.status === 404 || del.status === 205) archivesDeleted.push(stale);
+    } catch { /* unreferenced either way */ }
+  }
+
+  log(`[rebuildManifestFromPod] ${manifestUrl}: scanned ${scanned}, wrote ${written}, `
+    + `archives ${archives.length} (${archivesDeleted.length} retired)`);
+  return { scanned, written, manifestUrl, archives, archivesDeleted };
 }
 
 // ── Filter logic ────────────────────────────────────────────
@@ -2060,6 +2692,9 @@ export async function publish(
   // 8 attempts gives 50/100/200/400/800/1500/1500/1500ms (each + 0-200ms
   // jitter) ≈ up to ~7s of scatter, which keeps every writer in the
   // queue under realistic governance / cartographer-fanout contention.
+  // Archive segments this publish created, surfaced on the result so a caller (and the live
+  // drivers) can see that a roll-over happened rather than infer it from latency.
+  const rolledSegments: string[] = [];
   if (APPEND_ONLY_ENABLED) {
     // Bounded-write path: append the entry as its own O(1) shard resource under
     // <pod>cg-entries/ instead of the whole-manifest read-modify-write PUT
@@ -2070,25 +2705,50 @@ export async function publish(
   const maxAttempts = 8;
   let lastError: string | null = null;
   // Per-pod in-process serialization (see manifestWriteQueues above):
-  // collapses concurrent same-process writers into a serial queue so
-  // the HTTP CAS dance only has to defend against cross-process races,
-  // not against same-process writers fighting each other.
+  //
+  // ★ COMPACTION RUNS INSIDE THE SAME LOCK AS THE APPEND, DELIBERATELY. Two same-process
+  // publishes onto one pod would otherwise both find the manifest over the bound, both write
+  // the same segment indices, and both try to CAS the shortened document — one wins and the
+  // other's segment writes were wasted work at ~2 seconds each. Serializing them means the
+  // second publish finds the pod already inside the bound and pays one GET.
   await withManifestLock(manifestUrl, async () => {
+  // Bring the hot document under the bound BEFORE the append's CAS loop, as its own committed
+  // step with its own cheap retry. Everything about why is in `compactManifestIfNeeded`.
+  const compaction = await compactManifestIfNeeded(pod, manifestUrl, fetchFn);
+  for (const s of compaction.segments) if (!rolledSegments.includes(s)) rolledSegments.push(s);
+  // Consumed by attempt 1 only, then dropped: every later attempt exists BECAUSE something
+  // changed under us, so re-reading is the whole point of retrying.
+  let primed = compaction.primed;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     let manifestBody: string;
     let etag: string | null = null;
+    // Was this attempt's body RECONSTRUCTED from the pod rather than read from the server?
+    // Only that body can be over the bound at this point, and only that body may be rolled
+    // here — see the last-resort roll below for why the distinction is load-bearing.
+    let bodyWasReconstructed = false;
+
+    // Reuse the read compaction already paid for, on attempt 1 only. It hands one back ONLY
+    // when it decided the pod was inside the bound and wrote nothing, so the body and ETag
+    // are still the server's current state.
+    const reuse = attempt === 1 ? primed : null;
+    primed = null;
 
     // 5xx-as-throw promotion (see discover() / fetchDescriptorTurtleForCas
     // for the same pattern): Azure-Files cold-cache 503s arrive as
     // returned responses, so `withTransientRetry` only sees them retry-
     // eligible when we throw inside the lambda.
-    const existingResp = await withTransientRetry(async () => {
+    const existingResp = reuse !== null ? {
+      ok: true, status: 200, statusText: 'OK',
+      headers: { get: (n: string) => (n.toLowerCase() === 'etag' ? reuse.etag : null) },
+      text: async () => reuse.body,
+      json: async () => ({}),
+    } as unknown as Awaited<ReturnType<FetchFn>> : await withTransientRetry(async () => {
       const r = await fetchFn(manifestUrl, {
         method: 'GET',
         headers: { 'Accept': TURTLE_CONTENT_TYPE },
       });
       if (r.status >= 500) {
-        throw new Error(`manifest GET <${manifestUrl}> failed: ${r.status} ${r.statusText}`);
+        throw new Error(`Failed to fetch manifest from ${manifestUrl}: ${r.status} ${r.statusText}`);
       }
       return r;
     });
@@ -2113,6 +2773,7 @@ export async function publish(
       // is normally picked up by the scan; append it defensively if the
       // container listing hasn't caught up yet.
       let rebuiltBody: string | null = null;
+      bodyWasReconstructed = true;
       // Foundation-first: when the caller supplied a PGSL instance, PREFER
       // rebuilding the recovery manifest from a render of the lattice slice
       // over scanning the pod's descriptor files. The PGSL render is the
@@ -2172,6 +2833,32 @@ export async function publish(
     // the tool says it did not, and the caller writes a retry loop around a substrate that
     // was already correct. See the PUT below for what manufactures the attempt-1 error.
     if (alreadyPublished) { lastError = null; break; }
+
+    // ── The last-resort bound, for the ONE body compaction cannot have seen ───────
+    //
+    // ★ THIS IS GATED ON `bodyWasReconstructed`, AND THE GATE IS THE POINT.
+    //
+    // Compaction (above, once, with its own small retry budget) has already brought any body
+    // READ from the server under the bound. The 404-heal branch is different: it builds a
+    // manifest out of the pod's descriptors, so its body never existed on the server for
+    // compaction to have shortened, and on a large pod it lands far past the bound in one
+    // step. That body has to be rolled here or the heal writes the very document that cannot
+    // be written.
+    //
+    // Rolling UNCONDITIONALLY here — which is where this started — makes the roll-over
+    // repeatable up to `maxAttempts` times. Measured live on a 400-entry pod: the append's
+    // conditional PUT lost a 412 to a concurrent writer, attempt two re-derived the same
+    // split, and one publish took 25.7 SECONDS across eight segment PUTs for four segments.
+    // Nothing was lost — indices are derived from the manifest's own links, so a repeat
+    // overwrites rather than orphans — but eight rolls is a worst case that will eventually
+    // not finish. With the gate, a contended append retries at the price of an append.
+    if (bodyWasReconstructed) {
+      const rolled = await rollOverManifest(pod, manifestBody, fetchFn, descriptorUrl);
+      if (rolled) {
+        manifestBody = rolled.body;
+        for (const s of rolled.segmentsWritten) if (!rolledSegments.includes(s)) rolledSegments.push(s);
+      }
+    }
 
     const headers: Record<string, string> = { 'Content-Type': TURTLE_CONTENT_TYPE };
     if (etag) headers['If-Match'] = etag;
@@ -2318,6 +3005,9 @@ export async function publish(
   }
 
   const result: PublishResult = { descriptorUrl, graphUrl, manifestUrl };
+  if (rolledSegments.length > 0) {
+    (result as { manifestArchivesWritten?: readonly string[] }).manifestArchivesWritten = rolledSegments;
+  }
   if (encryptedFlag) (result as { encrypted?: boolean }).encrypted = true;
   if (pgslUri !== undefined) (result as { pgslUri?: string }).pgslUri = pgslUri;
   if (pgslLevel !== undefined) (result as { pgslLevel?: number }).pgslLevel = pgslLevel;
@@ -2644,54 +3334,41 @@ export async function discover(
   const pod = ensureTrailingSlash(podUrl);
   const manifestUrl = `${pod}${MANIFEST_PATH}`;
 
-  // Promote 5xx RESPONSES to throws inside the lambda so
-  // `withTransientRetry` actually retries them. Without this, a single
-  // Azure-Files cold-cache 503 (a returned response, not a thrown
-  // network error) escapes the retry loop unhandled and surfaces as
-  // `precondition_unavailable` to every caller that relies on the
-  // manifest read — including the Phase A CAS pre-flight in the
-  // MCP relay's publish_context handler. The thrown message embeds the
-  // status digits so the helper's TRANSIENT_PATTERN (/5\d\d/) matches.
-  let attempts = 0;
-  const response = await withTransientRetry(async () => {
-    attempts++;
-    const r = await fetchFn(manifestUrl, {
-      method: 'GET',
-      headers: { 'Accept': TURTLE_CONTENT_TYPE },
-    });
-    if (r.status >= 500) {
-      throw new Error(
-        `Failed to fetch manifest from ${manifestUrl}: ${r.status} ${r.statusText} (attempt ${attempts})`,
-      );
-    }
-    return r;
-  }, { maxAttempts: 6, baseMs: 500 });
+  // ★ FOLLOWS THE ARCHIVE CHAIN. On an unbounded pod this is exactly the single GET it always
+  // was; on a bounded one it unions the hot document with the segments the document itself
+  // links, absolutizing and deduplicating (hot wins). `discover()` is the substrate's answer
+  // to "what is on this pod", so a partial answer here is the absence-as-evidence defect: it
+  // REFUSES below rather than return a short list, in the one case where it cannot be sure.
+  //
+  // The 5xx-as-throw promotion the manifest GET has always needed now lives inside
+  // `fetchManifestChain` — a cold-cache 503 arrives as a RETURNED response, not a thrown
+  // network error, so `withTransientRetry` only retries it if the lambda throws. Without it a
+  // single 503 escaped the retry loop and surfaced as `precondition_unavailable` to every
+  // caller relying on the manifest read, including the Phase A CAS pre-flight in the relay's
+  // publish_context handler. The thrown message keeps its exact wording — callers and the
+  // suite match on `Failed to fetch manifest from` — and embeds the status digits so the
+  // helper's TRANSIENT_PATTERN (/5\d\d/) matches.
+  const all = await fetchAllManifestEntries(manifestUrl, fetchFn);
 
-  if (!response.ok && response.status !== 404) {
+  if (all.hotStatus !== 200 && all.hotStatus !== 404) {
     throw new Error(
-      `Failed to fetch manifest from ${manifestUrl}: ${response.status} ${response.statusText} (after ${attempts} attempts)`,
+      `Failed to fetch manifest from ${manifestUrl}: ${all.hotStatus} (after transient retries)`,
     );
   }
-
-  // Resolve relative entry URLs against the manifest base. CSS may serialize
-  // same-origin descriptor URLs as RELATIVE (e.g. `../context-graphs/X.ttl`)
-  // after a PATCH triggers a re-serialize; downstream consumers call
-  // fetch()/new URL() on `descriptorUrl`/`describes`, which throws on a relative
-  // string. Absolutize here so every consumer gets a resolvable URL. Absolute
-  // http(s)/urn values pass through unchanged.
-  const absolutize = (u: string): string => {
-    try { return new URL(u, manifestUrl).href; } catch { return u; }
-  };
-  // Monolithic manifest — the authoritative back-compat read base ([] on 404,
-  // so a shard-only pod that never wrote a monolith still resolves via the
-  // union below rather than short-circuiting to empty).
-  let entries: ManifestEntry[] = response.ok
-    ? parseManifest(await response.text()).map(e => ({
-        ...e,
-        ...(e.descriptorUrl ? { descriptorUrl: absolutize(e.descriptorUrl) } : {}),
-        ...(Array.isArray(e.describes) ? { describes: e.describes.map(absolutize) } : {}),
-      }))
-    : [];
+  if (!all.complete) {
+    // A manifest that SAYS it has archives, and archives we could not read, is a pod whose
+    // size we do not know. Returning the hot slice would be a smaller pod reported as the
+    // pod — silently, with no way for the caller to notice. Throwing is the honest failure.
+    throw new Error(
+      `Manifest at ${manifestUrl} is bounded and ${all.archivesUnreachable.length} archive segment(s) could not be read `
+      + `(${all.archivesUnreachable.join(', ')}); refusing to report a partial pod as complete`,
+    );
+  }
+  // Relative entry URLs were already resolved against the manifest base by
+  // fetchAllManifestEntries. CSS may serialize same-origin descriptor URLs as RELATIVE (e.g.
+  // `../context-graphs/X.ttl`) after a PATCH triggers a re-serialize; downstream consumers
+  // call fetch()/new URL() on `descriptorUrl`/`describes`, which throws on a relative string.
+  let entries: ManifestEntry[] = all.entries;
 
   // Bounded-write path: union the append-only shard container with the monolith,
   // dedupe by descriptorUrl with the monolith winning on collision (it's the

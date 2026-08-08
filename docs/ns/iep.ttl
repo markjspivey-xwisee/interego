@@ -177,6 +177,25 @@ iep:ManifestEntry a owl:Class ;
     rdfs:comment "An entry in a pod's.well-known/context-graphs manifest. Lightweight summary of a published context descriptor for discovery." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
 
+iep:ManifestArchive a owl:Class ;
+    rdfs:label "Manifest Archive" ;
+    rdfs:comment "A write-once segment of a pod's manifest holding entries that have rolled out of the hot .well-known/context-graphs document. Its body is an ordinary manifest body: iep:ManifestEntry rows in the same shape, so any manifest parser reads it unchanged. It exists because a whole-manifest rewrite costs one storage round-trip per Turtle statement, so an unbounded manifest eventually cannot be written at all; bounding the hot document makes the write O(1) in the pod's size. Also typed hydra:PartialCollectionView, which is the standard vocabulary for the same fact." ;
+    rdfs:subClassOf <http://www.w3.org/ns/hydra/core#PartialCollectionView> ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:manifestArchive a owl:ObjectProperty ;
+    rdfs:label "manifest archive" ;
+    rdfs:comment "Links a manifest to an archive segment holding entries it no longer carries, or an archive segment to the segment before it. Its PRESENCE is how a reader learns that the document in hand is a partial view of the pod's index and where the remainder is — the fact is in the data, never in a reader's configuration, so a client that unions the linked segments has the whole index and a client that does not can tell that it has not. Deliberately carries NO rdfs:domain: the subject is a hydra:Collection when a manifest points forward and an iep:ManifestArchive when a segment points back at its predecessor, and hydra:PartialCollectionView is not a subclass of hydra:Collection, so declaring either class as the domain would have a reasoner infer the wrong type for half the statements." ;
+    rdfs:range iep:ManifestArchive ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:archiveOf a owl:ObjectProperty ;
+    rdfs:label "archive of" ;
+    rdfs:comment "The manifest an archive segment belongs to. Lets a reader that arrived at a segment directly find the hot document, so the chain is navigable from either end." ;
+    rdfs:domain iep:ManifestArchive ;
+    rdfs:range <http://www.w3.org/ns/hydra/core#Collection> ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
 iep:PodDirectory a owl:Class ;
     rdfs:label "Pod Directory" ;
     rdfs:comment "A decentralized directory graph listing known Solid pods participating in a federation. Itself published as an RDF resource on a pod." ;
