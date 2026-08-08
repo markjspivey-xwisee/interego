@@ -144,9 +144,14 @@ gh run watch
 ```
 
 On later deploys drop `set_registry_credentials` (harmless to repeat) and just pass `service` and
-`tag`. There is no `verify_url` to pass: the deploy tool derives verification from the service's
-health path, and because `discord` has none (it is a worker) it deploys without an HTTP probe — the
-same path `css` takes.
+`tag`. There is no `verify_url` to pass, and the deploy is still verified — just not over HTTP.
+Because the bot binds no port there is no URL to derive, so `tools/railway-redeploy.mjs` polls the
+**logs of the deployment it just triggered** until they report `discord: commands registered`, the
+line `src/main.ts` prints only after both credentials have worked (`rest.me()` authenticated the
+bot token, `session.open()` signed the bot key in to the relay). If that line appears **twice** in
+one deployment the container restarted — a crash loop wearing a SUCCESS — and the deploy fails with
+the log tail. `css` is portless too and is still refused by name: nothing here decides what it
+prints, and it is the one service whose correctness needs exactly one container.
 
 **4. Confirm it is alive.** Open the service's **Deploy Logs** on Railway. A healthy boot prints,
 in order: the bot's pod, its wallet address, and **its agent DID** — copy that DID, it is what

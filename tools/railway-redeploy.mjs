@@ -15,6 +15,8 @@
  * answer plus that service's health path from tools/railway-services.mjs. `--verify-url`
  * is an OVERRIDE for the unusual case (a *.up.railway.app host, a custom domain not yet in
  * DNS) and is refused unless its host is one Railway reports for this service. See §1b.
+ * A PORTLESS service (`discord`) has no URL to derive and takes the log-based proof at
+ * §1c/§7b instead; `--verify-url` is refused for it outright.
  *
  * Valid service names, and the image each one runs: `node tools/railway-services.mjs list`.
  * What every service is pinned to RIGHT NOW: `node tools/railway-pins.mjs`.
@@ -71,9 +73,17 @@
  *   "verified" without ever contacting identity. The URL is now derived from the
  *   service being deployed and an override is refused unless Railway reports its host
  *   for that service. See §1b.
+ *
+ *   NOT EVERY SERVICE ANSWERS HTTP, AND THIS USED TO REFUSE THE ONES THAT DON'T.
+ *   `discord` is a worker: it dials out to the Discord gateway and binds no port, so
+ *   Railway reports no domain and there is nothing to poll. The URL derivation refused
+ *   it — which meant the sanctioned deploy path could not deploy it AT ALL, while its
+ *   runbook said it would deploy without an HTTP probe. Portless services now declare
+ *   the line they print when they finish booting, and are verified against the logs of
+ *   the deployment THIS run triggered. See §1c and §7b.
  */
 
-import { resolveImageRepo, verifyUrlFor } from './railway-services.mjs';
+import { bootProofFor, healthPathFor, resolveImageRepo, verifyUrlFor } from './railway-services.mjs';
 
 const EP = 'https://backboard.railway.com/graphql/v2';
 
@@ -170,10 +180,52 @@ const hosts = [
   ...(dom?.domains?.serviceDomains ?? []),
 ].map((d) => d.domain).filter(Boolean);
 
-const verify = verifyUrlFor(service, hosts, verifyUrlOverride);
-if (!verify.ok) die(verify.reason);
-const verifyUrl = verify.url;
-console.log(`verify target: ${verifyUrl}${verifyUrlOverride ? ' (override accepted — host belongs to this service)' : ' (derived)'}`);
+/**
+ * ── 1c. A PORTLESS SERVICE IS VERIFIED FROM ITS OWN DEPLOYMENT'S LOGS ─────────
+ *
+ * ★ THE BLOCKER THIS REMOVES, measured 2026-08-08 on the first ever dispatch for `discord`.
+ * Everything above assumed the deployed thing answers HTTP. It does not always: `discord` is
+ * a WORKER — it dials OUT to the Discord gateway and the relay and binds no inbound port, so
+ * Railway gives it no domain and there is nothing to poll. tools/railway-services.mjs records
+ * `health: null` for it and healthPathFor() therefore refuses it, and the line below used to
+ * treat that refusal as fatal — so the service could not be deployed through the sanctioned
+ * path AT ALL, while DEPLOY.md told operators it "deploys without an HTTP probe". The
+ * exclusion was never a decision; it was the HTTP assumption showing through.
+ *
+ * The answer is not to skip verification for workers — that is the "Railway reports success,
+ * but nothing has confirmed the new code is actually serving" branch this file already
+ * deleted once. It is to verify on the surface a portless process HAS. `deploymentLogs` are
+ * scoped to a DEPLOYMENT ID and we poll the id deployV2 handed back, so a line found there
+ * was written by the container THIS deploy started — the same claim /health makes.
+ */
+const health = healthPathFor(service);
+/** Exactly one of these is set. `verifyUrl` polls HTTP at §7a; `bootNeedle` polls logs at §7b. */
+let verifyUrl = null;
+let bootNeedle = null;
+if (health.ok) {
+  const verify = verifyUrlFor(service, hosts, verifyUrlOverride);
+  if (!verify.ok) die(verify.reason);
+  verifyUrl = verify.url;
+  console.log(`verify target: ${verifyUrl}${verifyUrlOverride ? ' (override accepted — host belongs to this service)' : ' (derived)'}`);
+} else {
+  const proof = bootProofFor(service);
+  // BOTH reasons, because they are different facts: why there is no URL, and why there is no
+  // log needle either. Printing only the second reads like the service is merely unconfigured.
+  if (!proof.ok) die(`${health.reason}\n       ${proof.reason}`);
+  // Refused rather than ignored. An override here cannot be checked against anything — §1b's
+  // guard is "the host must be one Railway reports for THIS service", and Railway reports
+  // none — so accepting it would reinstate exactly the free-text verify target that let a
+  // deploy of one service report "verified" from another.
+  if (verifyUrlOverride) {
+    die(`"${service}" binds no port, so --verify-url has nothing to point at and no host of ` +
+        'this service to be checked against. It is verified from its own deployment logs.');
+  }
+  bootNeedle = proof.needle;
+  console.log(`verify target: deployment logs must report ${JSON.stringify(bootNeedle)} (portless worker — no port to probe)`);
+  // A worker with a public domain is a misconfiguration, not a fact to swallow: it means
+  // somebody generated a domain for a service that will never answer it.
+  if (hosts.length) console.log(`  note: Railway reports domain(s) for this portless service: ${hosts.join(', ')}`);
+}
 
 const image = `${resolved.repo}:${tag}`;
 
@@ -354,12 +406,19 @@ if (!okImage || !okDeploy) die('post-deploy state does not match what we asked f
 // ── 7. Prove the NEW code is answering. Everything above is Railway's opinion;
 //       this is the application's.
 //
-// NOT optional any more, and not skippable: §1b either derived a URL or died. The old
+// NOT optional any more, and not skippable: §1b/§1c either derived a probe or died. The old
 // shape was `if (verifyUrl) { … }` followed by a printed caveat — "Railway reports
 // success, but nothing has confirmed the new code is actually serving" — and exit 0. A
 // deploy step that can report success without a single request to the deployed thing is
 // how a stale image goes unnoticed, and the caveat was the branch people took, because
 // most services had no `build` field to poll and the loop could only ever time out.
+//
+// A portless service takes §7b instead. It is the SAME assertion — "the container this
+// deploy started is the one that got through its own boot" — read off the only surface it
+// has. It is not a relaxation: a worker that never boots fails here just as loudly.
+if (bootNeedle !== null) await verifyFromLogs(bootNeedle);
+
+// ── 7a. Services that answer HTTP.
 console.log(`\nverifying ${verifyUrl} reports build ${tag.slice(0, 12)}…`);
 const until = Date.now() + 3 * 60_000;
 let seen = '(none)';
@@ -384,3 +443,68 @@ console.error('the GIT_SHA build-arg: rebuild it before deploying, do not blank 
 process.exit(1);
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+/**
+ * ── 7b. Prove a PORTLESS service booted, from the logs of THIS deployment.
+ *
+ * Always exits; it never returns to the HTTP path above.
+ *
+ * ★ IT COUNTS THE LINE, IT DOES NOT JUST FIND IT. A container that prints its boot line
+ * TWICE inside one deployment did not boot twice — it RESTARTED, which is what a crash loop
+ * looks like from here, and Railway will still be calling the deployment SUCCESS while it
+ * happens. "SUCCESS then crash-loop" is the specific false-green a worker has instead of
+ * "SUCCESS but 502": there is no request to fail, so nothing else would ever notice.
+ *
+ * ★ ON FAILURE IT PRINTS THE LOG TAIL. The reasons a worker does not boot are all IN the
+ * logs it did write — a refused credential, a gateway close code, an unhandled throw — and
+ * an operator told only "the needle never appeared" would go and fetch exactly this.
+ */
+async function verifyFromLogs(needle) {
+  console.log(`\nverifying deployment ${deployId} logs report ${JSON.stringify(needle)}…`);
+  const LOGS = 'query($id:String!,$limit:Int!){ deploymentLogs(deploymentId:$id,limit:$limit){ timestamp message } }';
+  const until = Date.now() + 4 * 60_000;
+  let lines = [];
+  while (Date.now() < until) {
+    const d = await gql(LOGS, { id: deployId, limit: 500 }, { tolerant: true });
+    if (d?._transient) {
+      console.log(`  … transient: ${d._transient}`);
+    } else {
+      lines = (d.deploymentLogs ?? []).map(l => String(l.message ?? ''));
+      const hits = lines.filter(m => m.includes(needle));
+      if (hits.length === 1) {
+        console.log(`  booted — ${JSON.stringify(needle)} once in ${lines.length} log line(s)`);
+        // Railway's own opinion, read AFTER the app's: a container that has already died
+        // again by now is not a successful rollout however green the deploy looked.
+        const st = await gql('query($id:String!){ deployment(id:$id){ status } }', { id: deployId }, { tolerant: true });
+        const now = st?._transient ? '(unreadable)' : st.deployment.status;
+        if (now !== 'SUCCESS') {
+          console.error(`\nIt booted, and the deployment is now ${now}. The container did not stay up.`);
+          process.exit(1);
+        }
+        console.log('  deployment still SUCCESS — verified');
+        process.exit(0);
+      }
+      if (hits.length > 1) {
+        console.error(`\n${JSON.stringify(needle)} appears ${hits.length} times in ONE deployment's logs.`);
+        console.error('The container RESTARTED — it boots, exits, and Railway starts it again.');
+        console.error('Railway calls that deployment SUCCESS; it is a crash loop. The cause is in');
+        console.error('the tail below, at the end of the first boot.');
+        printTail(lines);
+        process.exit(1);
+      }
+      console.log(`  … ${lines.length} log line(s), no boot line yet`);
+    }
+    await sleep(6000);
+  }
+  console.error(`\nDeployment ${deployId} never printed ${JSON.stringify(needle)} within 4 minutes.`);
+  console.error('Railway called the deploy SUCCESS, which for a portless service means only');
+  console.error('that the container started — not that it got through its own boot.');
+  printTail(lines);
+  process.exit(1);
+}
+
+function printTail(lines) {
+  const tail = lines.slice(-30);
+  console.error(`\n── last ${tail.length} log line(s) ──`);
+  for (const l of tail) console.error('  ' + l);
+}
