@@ -1,0 +1,70 @@
+name: Shared Workspace Tests
+
+# Runs the tests for the shared-workspace Discord bot.
+#
+# ★ WHY THIS EXISTS, AND IT IS NOT A FLATTERING REASON — the same one that produced
+# deploy-surface-tests.yml, one directory over. The bot has 145 tests across nine files and
+# NOT ONE OF THEM RAN ANYWHERE. `desktop-package.yml` is the only workflow whose path filter
+# mentions `applications/shared-workspace/discord/**`, and all it does is package the Electron
+# shell; it never invokes vitest. So every pull request touching the bot showed a wall of green
+# checks, none of which had executed a single line of the bot's own coverage.
+#
+# That was found the day a production outage was fixed. The gateway's reconnect timer was
+# `unref()`d, the process exited zero on every disconnect, and Railway left the deployment green
+# with no container behind it for 75 minutes. The regression test written for it — a child process
+# that proves the bot is still alive one second after a close — would itself never have run again.
+# A test that cannot fail is not coverage, and this is the second half of writing one.
+#
+# `tests/build-sha-is-verifiable.test.ts` is here rather than with the other root tests because
+# what it asserts is a property OF THIS BOT: that the boot-proof needle
+# `tools/railway-services.mjs` polls for is a line `src/main.ts` really prints, and that it is
+# gated on the gateway reporting READY rather than on two HTTPS calls having succeeded. Those two
+# files can only drift apart from each other, so they are checked together and on either's change.
+#
+# Pure in-process — no network, no secrets, no live service. Safe on every pull request.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'applications/shared-workspace/discord/**'
+      - 'packages/workspace-client/**'
+      - 'tools/railway-services.mjs'
+      - 'tests/build-sha-is-verifiable.test.ts'
+      - '.github/workflows/shared-workspace-tests.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'applications/shared-workspace/discord/**'
+      - 'packages/workspace-client/**'
+      - 'tools/railway-services.mjs'
+      - 'tests/build-sha-is-verifiable.test.ts'
+      - '.github/workflows/shared-workspace-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  discord:
+    name: "Discord bot: gateway liveness, wiring, and the boot proof it is coupled to"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+      - name: Install workspace deps
+        run: npm ci --no-audit --no-fund
+      - name: Build the substrate packages the bot imports
+        # ★ REQUIRED, NOT HYGIENE. The bot imports `@interego/workspace-client` by package name,
+        # which resolves to its `dist/`. Without this step the suite either fails to resolve or —
+        # worse — tests a stale build, which is how a `src` change becomes an invisible false pass.
+        run: npm run build
+      - name: The bot's own suite
+        # Narrowed on purpose: the repo-root run-integrity floor applies to whole-tree runs, and
+        # this job is deliberately a fast, targeted gate on one vertical.
+        run: npx vitest run applications/shared-workspace/discord/tests/ --no-cache
+      - name: The boot proof the deploy tooling polls for
+        run: npx vitest run tests/build-sha-is-verifiable.test.ts --no-cache
