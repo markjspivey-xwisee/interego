@@ -143,13 +143,72 @@ describe('a portless service is verified from its own deployment logs', () => {
     expect(src.indexOf(needle)).toBeGreaterThan(src.indexOf('await rest.me()'));
   });
 
-  it('refuses css by name rather than inventing a boot line for it', () => {
-    // Portless too, but nothing here decides what it prints (it runs the community Solid
-    // server) and it is the one service whose correctness needs exactly one container.
-    // Absent, not zero.
-    const r = bootProofFor('css');
-    expect(r.ok).toBe(false);
-    expect((r as { reason: string }).reason).toMatch(/bootProof/);
+  it('★ css declares the line MEASURED off its own live logs, so it has a deploy path at all', () => {
+    // css used to be refused here, on the reasoning that nothing in this repository decides
+    // what it prints so any needle would be invented. Right about the method, wrong about
+    // the conclusion: the answer to "we cannot make one up" is to measure one. Leaving it
+    // refused left the fleet's one stateful singleton — the service holding every pod's
+    // data — with NO sanctioned way to ship an urgent fix, so the first attempt would have
+    // been improvised under pressure against the thing that must not be improvised against.
+    expect(healthPathFor('css').ok).toBe(false);
+    expect(bootProofFor('css')).toEqual({ ok: true, needle: 'Listening to server at' });
+  });
+
+  it("css's needle is the LAST boot line, emitted only after the store has answered", () => {
+    // ★ The coupling that keeps this honest is NOT in this file — it is in
+    // integrations/pgsl-css-accessor/test/server.it.ts, which boots a real CSS over a real
+    // Postgres and asserts the string is printed and that a read succeeds after it. What is
+    // checkable from tracked files here is the VERSION the measurement was taken against:
+    // the needle comes from @solid/community-server's ServerInitializer, the image installs
+    // it with `npm ci` from the lockfile below, and a major bump could rename or reorder it.
+    // Getting that wrong does not fail loudly — it makes every css deploy time out four
+    // minutes after a container that booted perfectly, and the reflex then is to re-run the
+    // deploy, which SIGTERMs the healthy container.
+    const lock = JSON.parse(read('integrations/pgsl-css-accessor/package-lock.json')) as {
+      packages: Record<string, { version?: string }>;
+    };
+    expect(lock.packages['node_modules/@solid/community-server']?.version).toBe('7.1.9');
+  });
+
+  it('the live-boot test asserts the SAME string the deploy tool looks for', () => {
+    // ★ TWO COPIES OF ONE STRING, AND THIS IS WHAT STOPS THEM DRIFTING. server.it.ts runs in
+    // an isolated deployment-shaped tree that contains the accessor and pgsl-store and
+    // nothing else — `tools/` is not copied there — so it CANNOT import the needle and has
+    // to restate it. A drifted copy is worse than no coupling: the boot test would keep
+    // passing against a string the deploy tool no longer uses, so the one assertion that a
+    // css rollout landed would be unbacked while looking covered.
+    const needle = (bootProofFor('css') as { needle: string }).needle;
+    expect(read('integrations/pgsl-css-accessor/test/server.it.ts'))
+      .toContain(`const BOOT_PROOF = '${needle}';`);
+  });
+
+  it('the portless verification asks Railway to FILTER, because css out-logs a plain tail', () => {
+    // ★ MEASURED 2026-08-09: a 500-line unfiltered tail of css's deployment logs spans 12.7
+    // seconds, because css logs a line per HTTP request and the fleet polls it continuously.
+    // The previous implementation fetched that tail and searched it in JS — fine for the
+    // silent discord bot, structurally impossible for css, whose boot line is thousands of
+    // lines in the past by the time §5 has waited for SUCCESS. Assert the query carries the
+    // needle to the server, and that the count that decides crash-loop-or-not is still this
+    // repository's own case-sensitive comparison rather than Railway's looser match.
+    const src = read('tools/railway-redeploy.mjs');
+    expect(src).toMatch(/deploymentLogs\(deploymentId:\$id,limit:\$limit,filter:\$filter\)/);
+    expect(src).toMatch(/filter: needle/);
+    expect(src).toMatch(/\.filter\(m => m\.includes\(needle\)\)/);
+  });
+
+  it('a declared singleton cannot be deployed while its live settings allow two containers', () => {
+    // A rollout is the one moment Railway deliberately runs the old container and the new
+    // one, so the replica settings are a PRECONDITION of deploying css — not background
+    // tidiness. They were enforced nowhere on this path: the fleet audit reports them on a
+    // schedule and the settings tool writes them, but a deploy dispatched in between would
+    // have proceeded and the audit that catches it runs after the damage.
+    const src = read('tools/railway-redeploy.mjs');
+    expect(src).toMatch(/singletonViolations\(/);
+    // Before §3 repoints anything — a guard that runs after the mutation is a report.
+    // Anchored on the line §3 prints AFTER mutating, not on `serviceInstanceUpdate`: that
+    // name also appears in this file's header and in a refusal message, both above §3, so
+    // the ordering assertion would have passed without testing anything.
+    expect(src.indexOf('singletonViolations([{')).toBeLessThan(src.indexOf("console.log('image repointed')"));
   });
 
   it('refuses an unknown service name and a prototype-reachable one', () => {

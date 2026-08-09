@@ -537,7 +537,14 @@ const BASELINE = {};
 // from the service's own Dockerfile via the build matrix, never a hand-kept list, and failing
 // closed on every uncertainty), `tools/railway-fleet-audit.ts` (the scheduled audit built on
 // it, calling the same unmodified `hasDisagreement`), and `tests/deploy-bundle-scope.test.ts`.
-export const MIN_FILES = 406;
+// 406 -> 407: giving `css` a deploy path at all. One new file,
+// `tools/railway-current-image.ts` — the image a service is running RIGHT NOW, so
+// `deploy-railway.yml` can check the OUTGOING pin against the registry and refuse to replace
+// a running image nobody could restore. "Roll it back" was a sentence, not a plan: the deploy
+// tool un-pins a terminal FAILURE by itself, but the case that matters on the fleet's stateful
+// singleton is a deploy Railway calls SUCCESS whose new code is wrong anyway, and undoing that
+// means naming the previous sha — held by Railway alone, in a field nobody printed first.
+export const MIN_FILES = 407;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.

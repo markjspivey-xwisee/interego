@@ -108,6 +108,12 @@ export const SERVICES = {
     // sitting on a shared store. Anyone "completing the sweep" by giving css a path is
     // reintroducing a known outage.
     health: null,
+    // ★ MEASURED off css's own live deployment logs on 2026-08-09, not chosen because it
+    // reads like a ready line. See bootProofFor() for the full derivation: it is the LAST
+    // line of CSS's boot, it is emitted only after three storage round-trips against the
+    // live Postgres lattice have already succeeded, and it appeared exactly ONCE in each
+    // of the two deployments checked — including one that had been up for 23 days.
+    bootProof: 'Listening to server at',
     // ★ SINGLETON — the only service in the fleet whose CORRECTNESS depends on exactly
     // one container existing. Its store is the shared Postgres-backed PGSL lattice, and
     // integrations/pgsl-css-accessor/docker-entrypoint.sh selects the PROCESS-LOCAL
@@ -123,12 +129,44 @@ export const SERVICES = {
     singleton: true,
     // Railway's deploy sequence is: start new -> new active -> hold overlapSeconds ->
     // SIGTERM old -> hold drainingSeconds -> SIGKILL old. So overlapSeconds can only
-    // SHRINK the two-container window (Railway's default is 20s) and drainingSeconds can
-    // only LENGTHEN it. NEITHER closes it — the only mechanism Railway documents for
-    // preventing two active deployments is an attached volume. drainingSeconds is
-    // REFUSED rather than merely unset because it is the plausible-looking hardening
-    // that makes this specific hazard worse, and leaving that to judgement is how it
-    // gets set.
+    // SHRINK the two-container window and drainingSeconds can only LENGTHEN it. NEITHER
+    // closes it — the only mechanism Railway documents for preventing two active
+    // deployments is an attached volume. drainingSeconds is REFUSED rather than merely
+    // unset because it is the plausible-looking hardening that makes this specific
+    // hazard worse, and leaving that to judgement is how it gets set.
+    //
+    // ★ TWO CONTAINERS IS NOT TWO SERVERS, AND FOR css THAT IS THE WHOLE MARGIN.
+    // MEASURED on css's last real redeploy (2026-08-03, from each deployment's own logs,
+    // windowed with deploymentLogs startDate/endDate):
+    //
+    //   11:47:56.417  NEW  "Starting Container"
+    //   11:47:58.825  OLD  last request served
+    //   11:47:58.879  OLD  "npm error signal SIGTERM"   <- old CSS process dies
+    //   11:47:59.614  OLD  "Stopping Container"
+    //   11:48:03.680  NEW  "Listening to server at ..." <- new CSS binds its socket
+    //
+    // The containers overlapped for 3.20s. The SERVERS overlapped by MINUS 4.86s: the old
+    // one had stopped answering nearly five seconds before the new one opened a socket.
+    // The lost-update hazard needs two SERVERS, and there was never an instant with two.
+    //
+    // It holds for a structural reason, not by luck: CSS spends ~7.3s between container
+    // start and `listen()` — Components.js discovers 169 component packages within 686 and
+    // registers 900 components, and the PGSL accessor completes BaseUrlVerifier,
+    // RootInitializer and ModuleVersionVerifier against Postgres — while Railway SIGTERMs
+    // the old container 2.5s after the new one starts. Boot time exceeds stop delay by
+    // seconds, in the safe direction, on every deploy.
+    //
+    // ★ WHAT overlapSeconds: 0 IS ACTUALLY BUYING, then. It cannot close a window that
+    // css's own boot time already closes. What it removes is the possibility of the
+    // platform DELAYING the SIGTERM past 7.3s, at which point the new server would already
+    // be serving while the old one still was. It is the setting that keeps the margin from
+    // being spent, and that is why it is declared rather than left to the default.
+    //
+    // ★ THE PRICE, stated because it is real: ~4.9s in which NEITHER server answers. css
+    // has no public domain, so this is an internal connect-refused for the relay and every
+    // verifier for about five seconds per deploy. That is the trade — a brief refusal
+    // instead of a silent lost update — and it is the same trade the 2026-08-03 deploy
+    // already made.
     maxOverlapSeconds: 0,
     drainingMustBeUnset: true,
   },
@@ -328,12 +366,48 @@ export function healthPathFor(service) {
  * been satisfied by a container that then refused both. A test asserts this string is still
  * present in main.ts, so renaming the log line fails the suite rather than the deploy.
  *
- * ── WHY css IS STILL REFUSED ─────────────────────────────────────────────────
+ * ── css: WHY IT WAS REFUSED, AND WHAT REPLACED THE REFUSAL ───────────────────
  *
- * It is portless too, but nothing in this repository decides what it prints — it runs the
- * community Solid server under integrations/pgsl-css-accessor — and it is the one service
- * whose correctness depends on exactly one container existing. Inventing a plausible needle
- * for it is the transcription-rot the header of this file is about. Absent, not zero.
+ * css was refused here because nothing in this repository decides what it prints — it runs
+ * the community Solid server — so any needle would have been INVENTED, which is the
+ * transcription-rot the header of this file is about. That reasoning was right about the
+ * method and wrong about the conclusion: the answer to "we cannot make one up" is to go and
+ * MEASURE one, not to leave the fleet's one stateful singleton with no sanctioned way to
+ * ship an urgent fix. An absent deploy path is worse than a wrong one, because the first
+ * attempt then gets improvised under pressure against every pod's data.
+ *
+ * ★ `Listening to server at` — READ OFF THE LIVE LOGS on 2026-08-09, and here is why it
+ * means "ready" rather than "started":
+ *
+ *  · It is the LAST line of the boot. @solid/community-server 7.1.9 composes
+ *    `urn:solid-server:default:Initializer` as LoggerInitializer -> PrimaryInitializer ->
+ *    WorkerInitializer, and ServerInitializer — the only thing that logs this string — is
+ *    the last handler of the last one (config/app/init/base/init.json). Everything that can
+ *    fail has already run.
+ *
+ *  · Everything before it TOUCHES POSTGRES. PrimaryInitializer runs BaseUrlVerifier,
+ *    RootInitializer and ModuleVersionVerifier, all against `SetupStorage`, which for this
+ *    deployment resolves through PgslDataAccessor to the live lattice. A container with a
+ *    wrong PGSL_PG_CONNSTR, or an unreachable database, throws in that sequence and never
+ *    reaches ServerInitializer — so the line cannot be printed by a server that cannot
+ *    read. The observed boot shows it: a node-postgres warning lands 2.2s BEFORE the line.
+ *
+ *  · It was emitted exactly ONCE in each deployment inspected, including one that had been
+ *    up for 23 days under continuous traffic. That is what makes the caller's occurrence
+ *    COUNT meaningful: a second copy is a restart, not a second boot.
+ *
+ * ★ ITS ONE IMPRECISION, stated rather than glossed: ServerInitializer logs the line and
+ * THEN calls `server.listen()`, so the socket binds microseconds after. The poll that reads
+ * this runs on a 6-second interval, so the gap is unobservable there — but the deploy is
+ * still finished by reading real pod bytes back, never by this line alone.
+ *
+ * ★ THE NEEDLE MUST BE PASSED TO THE LOG QUERY AS A FILTER, not searched for in a plain
+ * tail. MEASURED on 2026-08-09: a 500-line unfiltered tail of css's logs spans 12.7 SECONDS,
+ * because css logs a line per HTTP request and the fleet polls it continuously. The boot
+ * line scrolls out of that window before the deploy tool's first poll can run, so an
+ * unfiltered search reports "never printed" for a container that booted perfectly — and the
+ * reflex that follows a red css deploy is to re-run it, which SIGTERMs the healthy
+ * container. See tools/railway-redeploy.mjs §7b.
  */
 export function bootProofFor(service) {
   if (!Object.hasOwn(SERVICES, service)) {
