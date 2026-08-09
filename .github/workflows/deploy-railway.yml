@@ -174,17 +174,32 @@ jobs:
           node tools/railway-redeploy.mjs "$SERVICE" "$TAG"
 
       # The resource floors live in tools/railway-services.mjs, but a floor nothing reads
-      # is a comment. This is the only workflow holding a Railway credential, so it is the
-      # only place the live check can run at all.
+      # is a comment. This job holds a Railway credential, so it is one of only two places
+      # the live check can run at all — the other is railway-fleet-audit.yml.
       #
-      # It runs AFTER the deploy and does not gate it: a cap set below a floor, a pin
-      # behind master, or an unshipped pin is not CAUSED by this deploy, and blocking a
-      # rollout on one would be the wrong lever. What it does is make those conditions
-      # impossible to hold silently. ★ Expect it to be red whenever master has moved past
-      # the tag just deployed — `--check` asks "is production running master", and one
-      # commit after a merge the honest answer is no. That is the tool working.
-      - name: Check Railway pins, floors and the singleton invariant against the live API
+      # ── WHY THIS IS SCOPED TO ONE SERVICE ────────────────────────────────────
+      #
+      # This step used to be `node tools/railway-pins.mjs --check`: a FLEET-WIDE audit as
+      # the last step of a SINGLE-SERVICE deploy. Its own comment conceded the shape was
+      # wrong — "★ Expect it to be red whenever master has moved past the tag just
+      # deployed … That is the tool working" — and both consequences arrived.
+      #
+      # A rollout of `discord` went red because `css` was 46 commits behind. And ★ a step
+      # expected to be red is not read: measured on 2026-08-09 it had failed every deploy
+      # for at least two runs and was twice dismissed in one session as "the documented
+      # always-red step", while underneath it the relay was three commits of its own
+      # bundled code behind and FIFTEEN services were pinned to images that had never been
+      # built at master — precisely what the check exists to surface, hidden by a redness
+      # everyone had already agreed to ignore.
+      #
+      # Scoping is not softening. tools/railway-deploy-check.ts calls the fleet's own
+      # `hasDisagreement` and `singletonViolations` on a one-row array: same predicate,
+      # same axes, freshness included, no threshold — applied to the service this run
+      # actually changed. The fleet-wide question moved to railway-fleet-audit.yml, where
+      # it runs on a schedule and is allowed to be red without blocking a rollout.
+      - name: Check the deployed service's pin, floor and invariants against the live API
         if: always()
         env:
           RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
-        run: node tools/railway-pins.mjs --check
+          SERVICE: ${{ inputs.service }}
+        run: npx tsx tools/railway-deploy-check.ts "$SERVICE"

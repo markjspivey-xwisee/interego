@@ -1,0 +1,86 @@
+name: Railway fleet audit
+
+# Is production running master — across the WHOLE fleet, on every axis?
+#
+# ── WHY THIS IS ITS OWN WORKFLOW ─────────────────────────────────────────────
+#
+# `node tools/railway-pins.mjs --check` used to be the last step of
+# `deploy-railway.yml`, which deploys ONE service. A fleet-wide audit attached to a
+# single-service rollout has two failure modes and both were observed:
+#
+#   1. It failed deploys for other people's drift. A `discord` rollout went red because
+#      `css` was 46 commits behind. The lever and the fault had nothing to do with
+#      each other.
+#   2. ★ It was red by design, so it stopped being read. `--check` asks "is production
+#      running master", and one commit after any merge the honest answer is no — so the
+#      step was red on a schedule set by unrelated merges. Measured on 2026-08-09 it was
+#      dismissed twice in one session as "the documented always-red step", and underneath
+#      that dismissal the relay was genuinely behind on its own bundled code and fifteen
+#      services were pinned to images never built at master.
+#
+# The audit itself was never the problem — the honest fleet-wide answer is worth having.
+# What it needed was a place where being red is a finding rather than a blocked rollout.
+# This is that place. Nothing here gates a deploy, and the deploy path keeps a STRICTER,
+# service-scoped version of the same predicate (tools/railway-deploy-check.ts).
+#
+# ── WHAT A RED RUN MEANS ─────────────────────────────────────────────────────
+#
+# That some service's live state contradicts something this repository asserts: a pin
+# behind master, a mutable tag, a pin written but never shipped, a cap below a measured
+# floor, or a singleton whose one-container invariant rests on a platform default rather
+# than a setting. Every one of those is a real condition with a real remedy — read the
+# report, which names the service and the axis, and fix the FLEET. ★ Do not reach for a
+# threshold or an exemption: the defect class this whole toolchain exists to kill is a
+# report that answered a weaker question than it appeared to.
+#
+# REQUIRES ONE SECRET: RAILWAY_PROJECT_TOKEN — a Railway PROJECT token, not an account
+# token. The two use different HTTP headers, and the wrong one answers 200 with "Project
+# Token not found", which is indistinguishable from sending no credential at all.
+
+on:
+  schedule:
+    # 07:00 UTC daily. A fleet drifts on the timescale of merges, not minutes, and a
+    # check that runs more often than it can be acted on is another way to train people
+    # to ignore it.
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+
+# Talks only to Railway.
+permissions: {}
+
+# One audit at a time. Two concurrent runs would report the same drift twice and, on a
+# schedule plus a manual dispatch, race to open the same conclusion.
+concurrency:
+  group: railway-fleet-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    name: Fleet pins, floors and singleton invariants
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # ★ FULL HISTORY. railway-pins.mjs dates each pinned sha with
+          # `git show -s --format=%cI` and counts the commits between it and HEAD.
+          # actions/checkout's default `fetch-depth: 1` has neither, so every sha-pinned
+          # service would report UNKNOWN-COMMIT and the run would go red for a reason that
+          # has nothing to do with production — the exact "red for the wrong reason" this
+          # workflow was split out to stop.
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with: { node-version: '20' }
+
+      # Printed before the check so a red run shows the whole table, not just the verdict.
+      # The table is the artifact an operator acts on; an exit code alone sends them to a
+      # dashboard, which is what the tool replaced.
+      - name: Report every service's live pin
+        env:
+          RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
+        run: node tools/railway-pins.mjs
+
+      - name: Fail if any service contradicts what this repository asserts
+        env:
+          RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
+        run: node tools/railway-pins.mjs --check
