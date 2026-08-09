@@ -55,6 +55,14 @@ const iri = (u: string): string => '<' + u + '>';
  * person other than the pod owner encounters these records, so a rendering that ran the two
  * together would be the place the distinction actually gets lost. Bolded when the answer is "for
  * itself", because that is the one a skimming reader would otherwise assume the other way.
+ *
+ * ★ AND "A DELEGATE WROTE THIS" IS NOW A CONJUNCTION OF TWO DOCUMENTS. The entry names its author;
+ * the relay's authorship block names the key it verified over those bytes. Every PROV triple here
+ * is written by whoever can publish to that pod — which includes THIS BOT, on the maintainer's —
+ * so an entry naming an agent it was not signed by comes through as `disputed` and is never drawn
+ * as that agent speaking. What that costs is that `principal` now says which key carried the
+ * words, because "the pod owner said this" and "a key they authorised put words attributed to
+ * them on their pod" are the same bytes to a reader who is not shown the difference.
  */
 export function authorOf(a: EntryAuthorship | null): string {
   if (a === null) return '[author not read]';
