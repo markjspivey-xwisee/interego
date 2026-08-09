@@ -54,6 +54,12 @@ directories:
 # Built by `npm run build` before this runs — see the `package` script.
 files:
   - dist/**/*
+  # ★ THE LIVE DRIVERS ARE DEV TOOLS AND ARE NOT SHIPPED. `tools/drive-*.ts` bundles into `dist/`
+  # so that `__dirname/../index.html` resolves to the real shipping page — that is the whole point
+  # of them, they drive the app as it is built. But a tool whose job is to read a private key out
+  # of a named file has no business inside an installer handed to somebody, so it is excluded here
+  # rather than built somewhere the app it drives cannot be found.
+  - '!dist/drive-*.js'
   - index.html
   - package.json
   - node_modules/ethers/**/*

@@ -167,6 +167,9 @@
   <span class="sub" id="relayline"></span>
   <span class="sub" id="whoami"></span>
   <button class="sm" id="lobbybtn" hidden><span id="lobbylabel">Workspaces</span><span id="lobbycnt" hidden></span></button>
+  <!-- ★ Signing out is what makes switching identity possible without relaunching. It drops the
+       session and keeps every key: signing out is not forgetting. -->
+  <button class="sm" id="signoutbtn" hidden>Sign out</button>
 </header>
 
 <!-- Painted over the window, never over nothing: a lapsed session must not render as an empty
@@ -197,6 +200,30 @@
       is not a shortcut: the proof has to be made at the identity server's own origin, and a page
       loaded from disk cannot produce one. Your browser also means a real platform authenticator
       rather than a key this program made up.</p>
+
+    <!--
+      ★ SIGNING IN WITH A KEY YOU ALREADY HAVE.
+
+      Without this the app could only reach pods it had minted keys for ITSELF. Somebody whose pod
+      already holds everything they have written — from the Discord conduit, from another machine —
+      signed in here and got a third, empty identity, with no way back to the one that is theirs.
+      One person is meant to be one identity across every surface, and this is the affordance that
+      makes that reachable.
+    -->
+    <div class="field" style="margin-top:16px">
+      <label for="signin-importkey">…or sign in with a wallet key you already have</label>
+      <input id="signin-importkey" type="password" spellcheck="false" autocomplete="off" placeholder="0x… (64 hex characters)">
+      <div class="hint">The key IS the account: whatever pod it reaches elsewhere is the pod it reaches here,
+        with everything already on it. It is stored encrypted by your operating system on this machine, exactly
+        as a key this app minted would be, and it is never sent anywhere — the relay only ever sees a signature.</div>
+      <div id="signin-importhint" class="hint"></div>
+    </div>
+    <div class="row">
+      <button id="signin-import">Sign in with this key</button>
+    </div>
+    <!-- Every account key this machine holds. Nothing here is ever replaced by an import. -->
+    <div id="signin-accounts"></div>
+
     <div id="steps" style="margin-top:12px"></div>
     <div id="signinnote"></div>
   </div>

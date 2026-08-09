@@ -76,12 +76,31 @@ export interface HostedDelegateInfo {
   readonly why: string | null;
 }
 
+/**
+ * One account key this machine holds — one identity it can sign in as.
+ *
+ * ★ `pod` IS A REMEMBERED ANSWER, NOT A DERIVATION. It is what the relay said the last time this
+ * key signed in HERE. Null means "not established on this machine", which is the honest state for
+ * a key just pasted in: `u-eth-<first 12 hex of the address>` is what the relay does today, and a
+ * client that computed it would address a pod that does not exist the day that changes — read back
+ * as an empty log rather than as an error.
+ */
+export interface AccountKeyInfo {
+  readonly address: string;
+  readonly pod: string | null;
+  /** Whether the plain wallet sign-in uses this one. */
+  readonly active: boolean;
+  /** Set when the stored ciphertext will not decrypt. Not the same as the key being absent. */
+  readonly unreadable: string | null;
+}
+
 export interface WorkspaceBridge {
   describe(): Promise<{
     relay: string;
     identityServer: string;
     secretStore: boolean;
     hasStoredWallet: boolean;
+    accounts: readonly AccountKeyInfo[];
     signedInAs: { method: string; pod: string | null } | null;
     session: SessionInfo;
     /** How this shell's transport watches, in the transport's own words. Never a literal here. */
@@ -89,6 +108,34 @@ export interface WorkspaceBridge {
   }>;
   signInWithWallet(): Promise<{ pod: string; displayName: string | null; method: string; address: string; mintedNewKey: boolean }>;
   signInWithBrowser(): Promise<{ pod: string; displayName: string | null; method: string }>;
+
+  /** Which account keys this machine holds. See {@link AccountKeyInfo}. */
+  accountList(): Promise<{ accounts: readonly AccountKeyInfo[]; secretStore: boolean }>;
+  /**
+   * Adopt an account key the person already has, and sign in as it.
+   *
+   * ★ NOTHING IS OVERWRITTEN. Keys are stored under the address they belong to, so this ADDS one;
+   * `kept` names the others, which stay exactly where they were. A private key is the whole of an
+   * identity and its loss is permanent, so there is no path here that discards one.
+   */
+  accountImport(privateKey: string): Promise<{
+    pod: string; displayName: string | null; method: string; address: string;
+    /** True when this machine already held this exact key — a re-paste, not a new identity. */
+    alreadyHeld: boolean;
+    kept: readonly string[];
+  }>;
+  /** Sign in as a stored key that is not the active one. This is what switching identity means. */
+  accountSignInAs(address: string): Promise<{ pod: string; displayName: string | null; method: string; address: string }>;
+  /**
+   * Delete an account key from this machine.
+   *
+   * ★ NOT THE SAME ACT AS FORGETTING A DELEGATE KEY. A delegate's authority is a row on a pod and
+   * survives; an account key IS the identity, and nothing anywhere can reconstitute it. Refused
+   * outright while that key is the live session.
+   */
+  accountForget(address: string): Promise<{ forgotten: string; accounts: readonly AccountKeyInfo[] }>;
+  /** Drop the session and keep every key. Signing out is not forgetting. */
+  signOut(): Promise<{ accounts: readonly AccountKeyInfo[] }>;
   call(name: string, input: Record<string, unknown>): Promise<{ ok: true; payload: unknown } | { ok: false; error: BridgeFailure }>;
   sessionStatus(): Promise<SessionInfo>;
   renewSession(): Promise<{ ok: boolean; session: SessionInfo }>;
@@ -142,6 +189,11 @@ const bridge: WorkspaceBridge = {
   describe: () => ipcRenderer.invoke('identity:describe'),
   signInWithWallet: () => ipcRenderer.invoke('auth:wallet'),
   signInWithBrowser: () => ipcRenderer.invoke('auth:browser'),
+  accountList: () => ipcRenderer.invoke('account:list'),
+  accountImport: (privateKey) => ipcRenderer.invoke('account:import', privateKey),
+  accountSignInAs: (address) => ipcRenderer.invoke('account:signInAs', address),
+  accountForget: (address) => ipcRenderer.invoke('account:forget', address),
+  signOut: () => ipcRenderer.invoke('auth:signout'),
   call: (name, input) => ipcRenderer.invoke('substrate:call', name, input),
   sessionStatus: () => ipcRenderer.invoke('session:status'),
   renewSession: () => ipcRenderer.invoke('session:renew'),

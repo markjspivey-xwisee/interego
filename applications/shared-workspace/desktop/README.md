@@ -447,9 +447,9 @@ env -u ELECTRON_RUN_AS_NODE \
 
 ---
 
-## The two ways to sign in
+## The three ways to sign in
 
-Both end at the **same** credential — an OAuth bearer minted by the relay's own authorization
+All end at the **same** credential — an OAuth bearer minted by the relay's own authorization
 server at `POST /token`. SIWE and WebAuthn are two ways of satisfying `POST /oauth/verify` for
 one pending authorization, not two token types. What differs is the pod the relay provisions,
 and that is permanent:
@@ -457,7 +457,49 @@ and that is permanent:
 | Sign-in | Where the secret is | Pod prefix | Browser needed |
 |---|---|---|---|
 | Wallet key on this machine | OS secret store (`safeStorage`) | `u-eth-...` | no |
+| **A wallet key you already have** | OS secret store, after you paste it | whatever pod that key owns | no |
 | Sign in in my browser (passkey / Windows Hello) | the platform authenticator | `u-pk-...` | yes |
+
+### Signing in as an identity you already have, and why the app was broken without it
+
+"Use a wallet key on this machine" **mints** a key when it does not find one, and until this
+change there was no way to hand it a key you already had. Somebody whose pod already holds
+everything they have written — from the Discord conduit, from another machine, from the
+published artifact — signed in here and got a **third, empty identity**, with no path back to
+the one that is actually theirs. That is not cosmetic: two identities belonging to one human
+split the roster into two members, split attribution between them, and make "whose delegate is
+that agent" unanswerable.
+
+So the sign-in card takes a `0x`-prefixed secp256k1 key, derives the address, signs in by SIWE
+as whatever pod that key owns, and stores it exactly as a minted key is stored.
+
+**No key is ever replaced.** Account keys are stored under the address of the key inside them
+(`account-0x…`), the same scheme delegate keys already used, so importing a second identity
+**adds** one. There is no code path that discards a private key, because a private key is the
+whole of an identity: no registry, no recovery, nobody to ask. The sign-in screen lists every
+key this machine holds, says which one the plain wallet button uses, and lets you sign in as any
+of them. **Sign out** (in the header) drops the session and keeps every key — that is what makes
+switching possible without relaunching. Deleting a key is a separate, confirmed act whose dialog
+names the pod that becomes unreachable.
+
+An install from before this change has its only key in the single legacy `wallet-privkey` slot.
+It is **copied** into an address-named one at startup and the legacy file is left exactly where
+it was — removing it after a successful copy would be tidier, and would also mean that a bug in
+the copy costs somebody their pod.
+
+**A pasted key that is not a key is refused by name, not as "invalid".** `src/privatekey.ts` is
+one parser used by both the account import and the delegate import (which previously had its own
+regex and its own single sentence). A pasted **address** is told it is the public half; a copy
+that wrapped is told it has a space in it and is *not* silently spliced back together; a short
+copy is told it is short; and 64 valid hex digits that are zero or at/above the secp256k1 group
+order — the case a length-and-hex regex waves straight through — are refused for that reason.
+The renderer runs it before anything crosses IPC and the main process runs it again as the guard.
+
+Measured against the live fleet on 2026-08-09, driving the shipping app with the maintainer's own
+key (`tools/drive-account-import-live.ts`): sign-in reached `u-eth-8f3b8e939600` in 2.2 s, the
+key appeared nowhere in the rendered document, and the lobby listed the workspace created from
+**Discord** — `…/ns/u-eth-8f3b8e939600/d-1535759551247417436`, titled "workspace" — whose stream
+rendered its `hello workspace!` entry. Neither client owns that workspace; the pod does.
 
 ### Why the passkey path opens your browser instead of doing it in-app
 
@@ -491,7 +533,11 @@ Nothing is written to the repo, and nothing is written in plaintext anywhere.
 ```
 src/auth.ts       the two flows: SIWE against /oauth/verify, RFC 8252 loopback + PKCE,
                   and refreshBearer — renewal with no user present
-src/secrets.ts    safeStorage, and an explicit refusal when it is not available
+src/privatekey.ts what a pasted key is, and — when it is not one — exactly what is wrong
+                  with it; one parser for the account import and the delegate import
+src/secrets.ts    safeStorage, and an explicit refusal when it is not available;
+                  account and delegate keys both named after the address inside them,
+                  so nothing an import does can overwrite an identity
 src/main.ts       the privileged half — holds the bearer, renews it, exposes the IPC channels
 src/preload.ts    the whole surface the renderer gets: describe, sign in, call a tool,
                   read the session and be told when it changes

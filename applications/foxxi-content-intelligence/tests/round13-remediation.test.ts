@@ -39,7 +39,8 @@ describe('round-13 — BBS+ verifier ignores a tampered displayValue (selective-
     expect(disclosed?.value).not.toContain('Expert');
     // And NO disclosed value anywhere reflects the tampered 'Expert' string.
     expect(result.disclosed.some(x => x.value.includes('Expert'))).toBe(false);
-  });
+    // Real BBS+ pairing arithmetic, not a unit-sized amount of work. See the note below.
+  }, 30_000);
   it('a failed proof discloses nothing', async () => {
     const issued = await issueBbsCompletionCredential({
       subject: {
@@ -59,7 +60,18 @@ describe('round-13 — BBS+ verifier ignores a tampered displayValue (selective-
     const result = await verifyCompletionPresentation({ presentation: { ...presentation, proof: badProof } });
     expect(result.verified).toBe(false);
     expect(result.disclosed).toEqual([]);
-  });
+    /**
+     * ★ AN EXPLICIT TIMEOUT, BECAUSE THE DEFAULT ONE WAS MEASURING THE MACHINE AND NOT THIS TEST.
+     *
+     * Both cases in this block issue, derive and verify a real BBS+ proof — pairing arithmetic, and
+     * about 1.4 s of it on the maintainer's machine when nothing else is running. Under vitest's
+     * default 5 s they had ~3.5x of headroom against whatever else the run happened to schedule
+     * alongside them, and that is not headroom, it is a coin toss: adding 19 jsdom cases elsewhere
+     * in the suite was enough to push BOTH over and turn a green run red with a timeout that says
+     * nothing about BBS+. The work is genuinely slow, so the limit is set to what the work costs
+     * rather than to what a fast unit test costs. Same discipline as `round45-remediation.test.ts`.
+     */
+  }, 30_000);
 });
 
 // ── B2 (BLOCKER): SSRF guard blocks loopback/link-local/private targets. ──

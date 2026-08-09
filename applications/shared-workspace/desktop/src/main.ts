@@ -31,8 +31,10 @@ import {
   type AuthMethod,
 } from './auth.js';
 import {
-  DELEGATE_KEY, forgetSecret, getSecret, listDelegateKeys, putSecret, secretStoreAvailable, WALLET_KEY,
+  ACCOUNT_KEY, ACCOUNT_POD, ACTIVE_ACCOUNT, DELEGATE_KEY, forgetSecret, getSecret, listAccountKeys,
+  listDelegateKeys, putSecret, secretStoreAvailable, WALLET_KEY,
 } from './secrets.js';
+import { checkPrivateKey } from './privatekey.js';
 import { CODEX_UNSUPPORTED, probeClaude, runClaude, type ProviderStatus } from './modelprovider.js';
 
 const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
@@ -165,6 +167,109 @@ async function delegateSession(address: string): Promise<HostedDelegate> {
   return next;
 }
 
+// ── the account keyring ──────────────────────────────────────────────────────
+
+/**
+ * ONE PERSON, ONE IDENTITY — AND THIS IS THE PART OF THE APP THAT DECIDES WHICH.
+ *
+ * ★ THE GAP THIS EXISTS TO CLOSE, FOUND BY USING THE APP FOR REAL. "Use a wallet key on this
+ * machine" MINTED a key when it did not find one, and there was no way to give it a key you
+ * already had. Somebody whose pod already holds everything they have written — from the Discord
+ * conduit, from another machine, from the artifact — signed in here and got a THIRD, empty
+ * identity, with no path back to the one that is actually theirs. Two identities belonging to one
+ * human corrupt everything downstream: the roster shows two members, attribution splits between
+ * them, and which agent is whose delegate stops being answerable.
+ *
+ * ★ AND NO KEY IS EVER REPLACED. Slots are named after the address of the key inside them (see
+ * `secrets.ts`), so importing a second account ADDS one. There is no state in which pasting a key
+ * discards the previous one, because a private key is the entire identity and its loss is
+ * permanent. Which key the app signs in with is a separate, reversible choice, recorded in
+ * {@link ACTIVE_ACCOUNT}.
+ */
+interface AccountSlot {
+  readonly address: string;
+  /** The pod the RELAY answered for this key here, or null for "not established" — never derived. */
+  readonly pod: string | null;
+  /** Whether the wallet button uses this one. Exactly one is true once anything has signed in. */
+  readonly active: boolean;
+  /** Present when the stored ciphertext will not decrypt — a real state, and not the same as absent. */
+  readonly unreadable: string | null;
+}
+
+/** Read a secret without letting an undecryptable one masquerade as an absent one. */
+function readableSecret(name: string): { value: string | null; why: string | null } {
+  try { return { value: getSecret(name), why: null }; }
+  catch (e) { return { value: null, why: (e as Error)?.message ?? String(e) }; }
+}
+
+/**
+ * Copy the pre-keyring single slot into an address-named one, once.
+ *
+ * ★ COPY, NOT MOVE, AND IT NEVER THROWS. This runs before the first window is drawn, on a file
+ * written by an older build, and the one outcome that must not happen is an app that will not
+ * start because of a key it could not read — the person would then have no way to reach the store
+ * that key is in. A failure here leaves the legacy slot exactly as it was and is reported through
+ * the ordinary "this stored secret will not decrypt" path when something asks for it.
+ */
+function migrateLegacyWallet(): void {
+  const legacy = readableSecret(WALLET_KEY);
+  if (!legacy.value) return;
+  try {
+    const address = new Wallet(legacy.value).address;
+    // Already carried across on an earlier run. Writing again would be harmless and pointless.
+    if (getSecret(ACCOUNT_KEY(address)) !== null) return;
+    putSecret(ACCOUNT_KEY(address), legacy.value);
+    // The key that WAS the app's single account becomes the one it signs in with, so an upgrade
+    // returns to the same pod without the person choosing anything.
+    if (getSecret(ACTIVE_ACCOUNT) === null) putSecret(ACTIVE_ACCOUNT, address.toLowerCase());
+  } catch { /* see the header: an unreadable legacy slot must not stop the app booting */ }
+}
+
+/** Every account key this machine holds, with the pod each was last seen to reach. */
+function accountSlots(): readonly AccountSlot[] {
+  const active = readableSecret(ACTIVE_ACCOUNT).value?.toLowerCase() ?? null;
+  const addresses = listAccountKeys();
+  // With exactly one key and no recorded choice, that key IS the choice. Reporting "none active"
+  // when there is only one would make the sign-in screen ask a question with one answer.
+  const effective = active ?? (addresses.length === 1 ? addresses[0] ?? null : null);
+  return addresses.map((address) => {
+    const held = readableSecret(ACCOUNT_KEY(address));
+    return {
+      address,
+      pod: readableSecret(ACCOUNT_POD(address)).value,
+      active: address === effective,
+      unreadable: held.value === null ? (held.why ?? 'this key is listed on disk and could not be read back') : null,
+    };
+  });
+}
+
+/**
+ * Sign in as one account key: the whole ceremony, from the key to a live session.
+ *
+ * ★ ONE PATH, USED BY ALL THREE ENTRY POINTS — the wallet button, an import, and switching to a
+ * stored key. They differ only in WHICH key, and a second copy of the ceremony is how "import"
+ * ends up subtly unlike "sign in" in a way nobody notices until somebody's pod is wrong.
+ */
+async function signInWithAccountKey(privateKey: string): Promise<{ pod: string; displayName: string | null; method: AuthMethod; address: string }> {
+  const wallet = new Wallet(privateKey);
+  const recv = await startLoopbackReceiver();
+  let who;
+  try {
+    const got = await signInWithWallet(RELAY, IDENTITY, wallet.address, (m) => wallet.signMessage(m), recv.redirectUri);
+    who = await adopt(got, 'wallet');
+  } finally {
+    // The wallet path never uses the listener — it posts the proof itself — but the relay requires
+    // a registered redirect_uri, and leaving a socket open because it went unused is how a desktop
+    // app ends up holding a port for its whole lifetime.
+    recv.close();
+  }
+  // Both written only now, on the strength of an answer: the pod is what the RELAY said, and the
+  // active account is the one that demonstrably worked.
+  putSecret(ACCOUNT_POD(wallet.address), who.pod);
+  putSecret(ACTIVE_ACCOUNT, wallet.address.toLowerCase());
+  return { ...who, address: wallet.address };
+}
+
 const listeners = new Set<WebContents>();
 function setSession(next: Session): void {
   session = next;
@@ -272,11 +377,19 @@ async function renew(because: string): Promise<boolean> {
 }
 
 app.whenReady().then(() => {
+  // Before anything is drawn or asked: an install from before account keys were address-keyed has
+  // its only key in the legacy slot, and every read below works in the new namespace.
+  try { migrateLegacyWallet(); } catch { /* see migrateLegacyWallet: never fatal */ }
+
   ipcMain.handle('identity:describe', () => ({
     relay: RELAY,
     identityServer: IDENTITY,
     secretStore: secretStoreAvailable(),
-    hasStoredWallet: (() => { try { return getSecret(WALLET_KEY) !== null; } catch { return true; } })(),
+    // ★ ANY account key, not "the" one. This drives the sentence "signing in with it returns to the
+    // same pod", which was true of a single slot and would be a half-truth now: which pod it
+    // returns to is whichever key is active, and the sign-in screen lists them.
+    hasStoredWallet: accountSlots().length > 0,
+    accounts: accountSlots(),
     signedInAs,
     session,
     // Read off the transport rather than written here: the two transports watch differently and
@@ -295,29 +408,136 @@ app.whenReady().then(() => {
   });
 
   /**
-   * PATH 1 — a wallet this app holds. First run mints one; later runs reuse it, because the
-   * key IS the identity and a new key is a new pod with none of your words on it.
+   * PATH 1 — a wallet this app holds. First run mints one; later runs reuse the ACTIVE one,
+   * because the key IS the identity and a new key is a new pod with none of your words on it.
    */
   ipcMain.handle('auth:wallet', async () => {
-    let pk = getSecret(WALLET_KEY);
+    const slots = accountSlots();
+    const chosen = slots.find((a) => a.active) ?? null;
+    let pk = chosen ? readableSecret(ACCOUNT_KEY(chosen.address)).value : null;
     let minted = false;
     if (!pk) {
+      // ★ MINTING IS THE LAST RESORT AND ONLY WHEN THIS MACHINE HOLDS NOTHING. It used to be what
+      // happened whenever the one fixed slot was empty, which is how somebody who already had a pod
+      // got a brand new one instead. A machine that holds a key it could not READ is a different
+      // case again and is refused rather than minted over: the key is still there, the pod behind it
+      // still exists, and answering that with a fresh identity abandons both silently.
+      const unreadable = slots.find((a) => a.unreadable);
+      if (unreadable) throw new Error('This machine holds an account key for ' + unreadable.address
+        + ' and could not read it back: ' + unreadable.unreadable
+        + ' No new identity was minted, because that would leave the pod behind that key stranded.');
       pk = Wallet.createRandom().privateKey;
-      putSecret(WALLET_KEY, pk);
+      putSecret(ACCOUNT_KEY(new Wallet(pk).address), pk);
       minted = true;
     }
-    const wallet = new Wallet(pk);
-    const recv = await startLoopbackReceiver();
-    try {
-      const got = await signInWithWallet(RELAY, IDENTITY, wallet.address, (m) => wallet.signMessage(m), recv.redirectUri);
-      const who = await adopt(got, 'wallet');
-      return { ...who, address: wallet.address, mintedNewKey: minted };
-    } finally {
-      // The wallet path never uses the listener — it posts the proof itself — but the relay
-      // requires a registered redirect_uri, and leaving a socket open because it went unused
-      // is how a desktop app ends up holding a port for its whole lifetime.
-      recv.close();
+    const who = await signInWithAccountKey(pk);
+    return { ...who, mintedNewKey: minted };
+  });
+
+  /**
+   * WHICH ACCOUNT KEYS THIS MACHINE HOLDS.
+   *
+   * The `pod` on each is what the relay ANSWERED for that key here, not a name derived from the
+   * address — see {@link ACCOUNT_POD}. A key that has never signed in on this machine reports
+   * null, which the sign-in screen draws as "not established here" rather than guessing.
+   */
+  ipcMain.handle('account:list', () => ({ accounts: accountSlots(), secretStore: secretStoreAvailable() }));
+
+  /**
+   * ADOPT AN ACCOUNT KEY THE PERSON ALREADY HAS, AND SIGN IN AS IT.
+   *
+   * ★ THE POINT OF THE WHOLE CHANGE. A pod is reached by holding its key; before this the app
+   * could only reach pods it had minted keys for itself, so the person's real identity — the one
+   * their Discord messages land on, the one their history is on — was unreachable from here.
+   *
+   * ★ THE KEY IS STORED BEFORE THE SIGN-IN IS ATTEMPTED, AND THE RENDERER SAYS SO. Storing after
+   * would mean a relay outage loses a key somebody has already pasted and closed the source of;
+   * storing before means a failed sign-in leaves a key on this machine that has not been shown to
+   * work. The second is recoverable and the first is not, so the second is what happens — and the
+   * copy on screen states it rather than claiming "nothing was stored", which is what the DELEGATE
+   * import's error text claimed while doing exactly this.
+   *
+   * ★ AND A POD THAT DOES NOT EXIST YET IS NOT AN ERROR. The first pod-aware call PROVISIONS one;
+   * measured between 2 and 31 seconds on this fleet. Importing a key for a pod nobody has used is
+   * a legitimate, ordinary act and it simply takes that long.
+   */
+  ipcMain.handle('account:import', async (_e, privateKey: string) => {
+    // Checked here even though the renderer checks too: the renderer is the half that renders
+    // bytes other people wrote, and a guard that only exists there is a guard.
+    const parsed = checkPrivateKey(String(privateKey ?? ''));
+    if (!parsed.ok) throw new Error(parsed.why + ' Nothing was stored.');
+    // ★ REFUSED BEFORE ANYTHING IS ATTEMPTED WHEN THERE IS NOWHERE SAFE TO PUT IT. `putSecret`
+    // already refuses rather than writing plaintext, but it would refuse three lines further down —
+    // after this handler had begun an import it cannot finish, and with the renderer about to say
+    // the key was stored. Saying it here means the sentence the person reads is true.
+    if (!secretStoreAvailable()) {
+      throw new Error('The OS secret store is not available on this machine, so there is nowhere to put a private key that '
+        + 'is not a plaintext file. NOTHING WAS STORED and nothing was signed in. Browser sign-in holds no key at all.');
     }
+    const address = new Wallet(parsed.key).address;
+    const before = accountSlots();
+    const alreadyHeld = before.some((a) => a.address === address.toLowerCase());
+    putSecret(ACCOUNT_KEY(address), parsed.key);
+    const who = await signInWithAccountKey(parsed.key);
+    return {
+      ...who,
+      alreadyHeld,
+      // What did NOT happen to the other keys, reported as a fact the renderer can state rather
+      // than as reassurance it composes.
+      kept: before.filter((a) => a.address !== address.toLowerCase()).map((a) => a.address),
+    };
+  });
+
+  /** Sign in as a stored account key that is not the active one. This is what "switch" means. */
+  ipcMain.handle('account:signInAs', async (_e, address: string) => {
+    const want = String(address ?? '').toLowerCase();
+    const slot = accountSlots().find((a) => a.address === want);
+    if (!slot) throw new Error('This machine holds no account key for ' + (want || '(no address given)') + ', so there is nothing to sign in as.');
+    const pk = getSecret(ACCOUNT_KEY(want));
+    if (!pk) throw new Error('The account key for ' + want + ' is listed on this machine and could not be read back, so it was not used.');
+    return signInWithAccountKey(pk);
+  });
+
+  /**
+   * Delete an account key from this machine.
+   *
+   * ★ THIS IS NOT THE SAME KIND OF ACT AS FORGETTING A DELEGATE KEY, AND THE RENDERER SAYS SO.
+   * A delegate's authority lives on its delegator's pod and survives; forgetting the key only
+   * stops this machine driving it. An ACCOUNT key is the whole of an identity — there is no row
+   * anywhere that can reconstitute it — so unless the person has the key written down elsewhere,
+   * this is the pod becoming permanently unreachable. The handler refuses to touch the key that is
+   * signed in right now, because "forget" while live would leave a session running on an identity
+   * the machine can no longer reach.
+   */
+  ipcMain.handle('account:forget', (_e, address: string) => {
+    const want = String(address ?? '').toLowerCase();
+    if (signedInAs && session.state !== 'signed-out' && readableSecret(ACTIVE_ACCOUNT).value?.toLowerCase() === want) {
+      throw new Error('That is the key this session is signed in with. Sign out first — forgetting it while it is live would '
+        + 'leave a session running on an identity this machine can no longer reach.');
+    }
+    forgetSecret(ACCOUNT_KEY(want));
+    forgetSecret(ACCOUNT_POD(want));
+    if (readableSecret(ACTIVE_ACCOUNT).value?.toLowerCase() === want) forgetSecret(ACTIVE_ACCOUNT);
+    return { forgotten: want, accounts: accountSlots() };
+  });
+
+  /**
+   * END THE SESSION WITHOUT TOUCHING A KEY.
+   *
+   * ★ WHAT MAKES SWITCHING POSSIBLE AT ALL. Without this, the only way to sign in as a different
+   * identity was to restart the app, and a person who has just realised they are on the wrong pod
+   * is exactly the person who should not be told to relaunch. The credential is dropped and the
+   * renew timer disarmed; the keys stay, because signing out is not forgetting.
+   */
+  ipcMain.handle('auth:signout', () => {
+    if (renewTimer) { clearTimeout(renewTimer); renewTimer = null; }
+    bearer = null; transport = null; client = null; signedInAs = null;
+    // Delegate sessions were minted under THEIR OWN keys and are nothing to do with this person's
+    // bearer — but they were opened during this person's run, and leaving them live would let the
+    // next identity's window drive delegates the previous one switched on.
+    hosted.clear();
+    setSession({ state: 'signed-out', pod: null, method: null, expiresAt: null, renewable: false, why: null });
+    return { accounts: accountSlots() };
   });
 
   /**
@@ -417,13 +637,18 @@ app.whenReady().then(() => {
     return { address: d.address, agentId: d.agentId, pod: d.pod, privateKey: wallet.privateKey };
   });
 
-  /** Adopt a delegate whose key was minted elsewhere. The other half of "identity is not the host". */
+  /**
+   * Adopt a delegate whose key was minted elsewhere. The other half of "identity is not the host".
+   *
+   * ★ THE SAME PARSER AS AN ACCOUNT IMPORT. It used to be a local regex whose whole vocabulary was
+   * "that is not a secp256k1 private key", which is the one thing the person already knows. See
+   * `privatekey.ts` — a pasted ADDRESS, a copy that wrapped, and 64 hex digits that are not a valid
+   * scalar are three different mistakes with three different fixes.
+   */
   ipcMain.handle('delegate:import', async (_e, privateKey: string) => {
-    const pk = String(privateKey ?? '').trim();
-    if (!/^0x[0-9a-fA-F]{64}$/.test(pk)) {
-      throw new Error('That is not a secp256k1 private key. It should be 0x followed by 64 hex characters. Nothing was stored.');
-    }
-    const wallet = new Wallet(pk);
+    const parsed = checkPrivateKey(String(privateKey ?? ''));
+    if (!parsed.ok) throw new Error(parsed.why + ' Nothing was stored.');
+    const wallet = new Wallet(parsed.key);
     putSecret(DELEGATE_KEY(wallet.address), wallet.privateKey);
     const d = await delegateSession(wallet.address);
     return { address: d.address, agentId: d.agentId, pod: d.pod };

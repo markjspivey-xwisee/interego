@@ -49,7 +49,16 @@ import {
  * matters: two spellings of that string would refuse every honest link.
  */
 import { discordLinkPlan } from '@interego/workspace-discord/src/link-plan.js';
-import type { BridgeFailure, HostedDelegateInfo, ProviderInfo, SessionInfo, WorkspaceBridge } from './preload.js';
+/**
+ * ★ THE SAME PARSER THE MAIN PROCESS RUNS, AND FOR A DIFFERENT REASON IN EACH PLACE.
+ *
+ * Here it means a mistyped key is named for what is wrong with it — a pasted ADDRESS, a copy that
+ * wrapped, 64 hex digits that are not a valid scalar — without the key leaving this window at all.
+ * There it is the guard, because the renderer is the half that renders bytes other people wrote.
+ * One function so the two answers cannot differ.
+ */
+import { checkPrivateKey } from './privatekey.js';
+import type { AccountKeyInfo, BridgeFailure, HostedDelegateInfo, ProviderInfo, SessionInfo, WorkspaceBridge } from './preload.js';
 
 declare global {
   interface Window { interego: WorkspaceBridge }
@@ -264,6 +273,14 @@ interface Body {
 const S = {
   relay: RELAY_FALLBACK,
   watchDescription: '',
+  /**
+   * Every account key this machine holds — the identities it can sign in as.
+   *
+   * ★ ALWAYS THE MAIN PROCESS'S ANSWER, NEVER THIS SIDE'S BOOKKEEPING. The keyring is on disk in
+   * the privileged half; a renderer that maintained its own copy would eventually draw a key that
+   * had been deleted, or hide one that had not.
+   */
+  accounts: [] as readonly AccountKeyInfo[],
   client: null as WorkspaceClient | null,
   viewer: null as Viewer | null,
   writeBlocked: null as string | null,
@@ -415,13 +432,89 @@ async function describe(): Promise<void> {
     ? 'The OS secret store is available, so a wallet key is encrypted by the operating system before it touches disk. That protects it from being copied off this machine; it does not protect it from software already running as you.'
     : 'The OS secret store is NOT available on this machine. The wallet option is offered anyway and will REFUSE rather than write a plaintext key — use browser sign-in, which holds no key at all.'));
   if (d.hasStoredWallet) s.appendChild(el('div', 'note', 'A wallet key is already stored here, so signing in with it returns to the same pod.'));
+  S.accounts = d.accounts ?? [];
+  renderAccounts();
   renderSession(d.session);
   window.interego.onSessionChanged(renderSession);
 }
 
+/**
+ * EVERY ACCOUNT KEY THIS MACHINE HOLDS, DRAWN BEFORE ANY SIGN-IN.
+ *
+ * ★ THE LIST IS THE ANSWER TO "WHAT HAPPENED TO MY OTHER KEY". Because slots are named after the
+ * address of the key inside them, importing never replaces anything — so the honest way to say
+ * that is to show the keys that are still there, rather than to promise it in a sentence.
+ *
+ * ★ AND A POD IS ONLY NAMED WHERE THE RELAY NAMED IT. `u-eth-<first 12 hex of the address>` is what
+ * the relay does today; a client that computed it would address a pod that does not exist the day
+ * that changes, and a wrong pod name reads back as an EMPTY LOG rather than as an error.
+ */
+function renderAccounts(): void {
+  const box = clear($('signin-accounts'));
+  if (!S.accounts.length) return;
+  box.appendChild(el('h4', undefined, S.accounts.length === 1
+    ? 'This machine holds one account key'
+    : 'This machine holds ' + S.accounts.length + ' account keys'));
+  box.appendChild(el('div', 'note', 'Signing in with a key you paste does not replace these. Each key is stored under its own '
+    + 'address, so the only way one leaves this machine is if you delete it below — and a private key is the whole of an '
+    + 'identity, with nothing anywhere that can bring it back.'));
+  for (const a of S.accounts) {
+    const row = el('div', 'panel' + (a.unreadable ? ' refused' : a.active ? ' ok' : ''));
+    row.appendChild(el('div', 'iri', a.address));
+    row.appendChild(el('div', 'note', a.unreadable
+      ? 'This key is on disk here and could not be read back: ' + a.unreadable
+      : a.pod
+        ? 'The relay answered ' + a.pod + ' for this key the last time it signed in on this machine.'
+        : 'Which pod this key reaches is not established here — it is whatever the relay answers when it signs in, and '
+          + 'this app does not work pod names out from addresses.'));
+    if (a.active) row.appendChild(el('div', 'note', 'This is the key the plain wallet button above uses.'));
+    const controls = el('div', 'row');
+    if (!a.unreadable) {
+      const use = el('button', 'sm', a.active ? 'Sign in with this key' : 'Sign in with this one instead') as HTMLButtonElement;
+      use.addEventListener('click', () => { void signInAs(a.address); });
+      controls.appendChild(use);
+    }
+    const forget = el('button', 'danger sm', 'Delete this key from this machine') as HTMLButtonElement;
+    forget.addEventListener('click', () => { void forgetAccount(a.address); });
+    controls.appendChild(forget);
+    row.appendChild(controls);
+    box.appendChild(row);
+  }
+}
+
+/** Refresh the keyring from the main process. The renderer never keeps its own idea of it. */
+async function loadAccounts(): Promise<void> {
+  try {
+    S.accounts = (await window.interego.accountList()).accounts;
+  } catch (e) {
+    S.accounts = [];
+    clear($('signinnote')).appendChild(errBox(e, 'Which keys this machine holds could not be read, so none are listed — that is a failed read, not an empty keyring.'));
+    return;
+  }
+  renderAccounts();
+}
+
+/** Everything on the sign-in card that starts a ceremony, so one cannot be started twice. */
+const signInButtons = (): readonly HTMLButtonElement[] => [btn('signin-wallet'), btn('signin-browser'), btn('signin-import')];
+
+/** The one place a completed sign-in changes the window, whichever of the four paths got there. */
+async function signedIn(pod: string): Promise<void> {
+  $('signin').hidden = true;
+  $('whoami').textContent = pod;
+  btn('lobbybtn').hidden = false;
+  btn('signoutbtn').hidden = false;
+  await boot();
+}
+
+/** The one place a failed sign-in reports, so no path can fail silently or lock the buttons. */
+function signInFailed(e: unknown, where: string): void {
+  step('auth', 'Sign-in did not complete', 'err');
+  clear($('signinnote')).appendChild(errBox(e, where));
+  signInButtons().forEach((b) => { b.disabled = false; });
+}
+
 async function signIn(kind: 'wallet' | 'browser'): Promise<void> {
-  const buttons = [btn('signin-wallet'), btn('signin-browser')];
-  buttons.forEach((b) => { b.disabled = true; });
+  signInButtons().forEach((b) => { b.disabled = true; });
   step('auth', kind === 'wallet'
     ? 'Signing a SIWE message with the key in your OS secret store'
     : 'Waiting for you to finish signing in, in your browser', 'wait');
@@ -429,18 +522,162 @@ async function signIn(kind: 'wallet' | 'browser'): Promise<void> {
     const who = kind === 'wallet' ? await window.interego.signInWithWallet() : await window.interego.signInWithBrowser();
     step('auth', 'Signed in — you are pod ' + who.pod + (kind === 'wallet' ? '' : ' (browser sign-in)'), 'done');
     if (kind === 'wallet' && 'mintedNewKey' in who && who.mintedNewKey) {
-      $('signinnote').textContent = 'A new wallet key was minted and stored, so this is a brand new pod with nothing on it yet.';
+      $('signinnote').textContent = 'A new wallet key was minted and stored, so this is a brand new pod with nothing on it yet. '
+        + 'If you already have a pod, sign out and paste its key instead — this one is a different account, not another door to it.';
     }
-    $('signin').hidden = true;
-    $('whoami').textContent = who.pod;
-    btn('lobbybtn').hidden = false;
-    await boot();
+    await signedIn(who.pod);
   } catch (e) {
-    step('auth', 'Sign-in did not complete', 'err');
-    clear($('signinnote')).appendChild(errBox(e,
-      'Nothing is read until a session exists — this client holds no fixtures, so with no session there is nothing to show.'));
-    buttons.forEach((b) => { b.disabled = false; });
+    signInFailed(e, 'Nothing is read until a session exists — this client holds no fixtures, so with no session there is nothing to show.');
   }
+}
+
+/**
+ * SIGN IN WITH A KEY THE PERSON ALREADY HAS.
+ *
+ * ★ THE KEY IS CHECKED HERE BEFORE IT CROSSES ANYWHERE. `checkPrivateKey` is the same function the
+ * main process runs — the renderer's call is a courtesy that answers instantly and by name, and
+ * the main process's is the guard. Refusing here also means a mistyped key never leaves this
+ * window at all.
+ *
+ * ★ AND THE FIELD IS EMPTIED THE INSTANT IT IS READ. A private key sitting in an input is a
+ * private key on screen, recoverable by anything that can reach the DOM and by anyone who walks
+ * past. It is cleared before the sign-in is even attempted, including on the failing paths, and
+ * it is never written into a message.
+ */
+async function importAccount(): Promise<void> {
+  const field = inp('signin-importkey');
+  const parsed = checkPrivateKey(field.value);
+  const hint = clear($('signin-importhint'));
+  if (!parsed.ok) {
+    // ★ THE FIELD IS LEFT ALONE ON A REFUSAL, AND ONLY ON A REFUSAL. Nothing left this window, so
+    // there is nothing on screen that was not already; and a paste that lost its last character is
+    // fixed by typing the character, not by pasting the whole thing again.
+    hint.className = 'hint bad';
+    hint.textContent = parsed.why;
+    return;
+  }
+  field.value = '';
+  hint.className = 'hint';
+  hint.textContent = '';
+  signInButtons().forEach((b) => { b.disabled = true; });
+  step('auth', 'Signing in as the key you pasted. If its pod does not exist yet the relay provisions one on this first call, '
+    + 'which has been measured at anything from 2 to 31 seconds on this fleet — a wait here is normal and is not a hang', 'wait');
+  try {
+    const who = await window.interego.accountImport(parsed.key);
+    step('auth', 'Signed in — you are pod ' + who.pod, 'done');
+    const note = clear($('signinnote'));
+    note.appendChild(el('div', undefined, who.alreadyHeld
+      ? 'This machine already held that key, so nothing changed about what it holds — it is now the one being used.'
+      : 'That key is now stored on this machine, encrypted by your operating system, exactly as a key this app minted would be.'));
+    if (who.kept.length) {
+      note.appendChild(el('div', 'note', who.kept.length === 1
+        ? 'The key this machine already held (' + who.kept[0] + ') was KEPT. Nothing was overwritten: you can sign out and go '
+          + 'back to it at any time.'
+        : 'The ' + who.kept.length + ' keys this machine already held were KEPT. Nothing was overwritten: you can sign out and '
+          + 'go back to any of them.'));
+    }
+    await signedIn(who.pod);
+  } catch (e) {
+    /**
+     * ★ WHAT THE KEYRING SAYS, NOT WHAT THIS FUNCTION ASSUMES.
+     *
+     * The import stores before it signs in, so "the key was stored" is the usual truth — but it is
+     * not always true: with no OS secret store there is nowhere to put it and the handler refuses
+     * before storing anything. A fixed sentence would then tell somebody their key is safe on this
+     * machine when it is nowhere. So the keyring is RE-READ and the answer comes from whether it
+     * grew, which needs no address derivation and cannot be wrong.
+     */
+    const before = S.accounts.length;
+    await loadAccounts();
+    signInFailed(e, S.accounts.length > before
+      ? 'The key WAS stored on this machine — it is listed on the sign-in screen and you can try it again from there. What '
+        + 'did not happen is the sign-in, so nothing was read and nothing below is a statement about any pod.'
+      : 'This machine\'s keyring did not change: either it already held that key, or storing it was refused for the reason '
+        + 'above. What did not happen is the sign-in, so nothing was read and nothing below is a statement about any pod.');
+  }
+}
+
+/** Switch to another key this machine holds. Same ceremony, different identity. */
+async function signInAs(address: string): Promise<void> {
+  signInButtons().forEach((b) => { b.disabled = true; });
+  step('auth', 'Signing a SIWE message with the key for ' + address, 'wait');
+  try {
+    const who = await window.interego.accountSignInAs(address);
+    step('auth', 'Signed in — you are pod ' + who.pod, 'done');
+    await signedIn(who.pod);
+  } catch (e) {
+    signInFailed(e, 'The key is untouched and still on this machine. What failed is the sign-in.');
+    await loadAccounts();
+  }
+}
+
+/**
+ * Delete an account key.
+ *
+ * ★ THE CONFIRMATION IS NOT A FORMALITY AND THE COPY DOES NOT SOFTEN IT. Forgetting a DELEGATE key
+ * loses a host; the delegation row on the pod survives and another machine holding the same key is
+ * still that delegate. An ACCOUNT key is the identity itself — there is no registry, no recovery
+ * and no one to ask — so unless it is written down somewhere else this is a pod becoming
+ * permanently unreachable.
+ */
+async function forgetAccount(address: string): Promise<void> {
+  const a = S.accounts.find((x) => x.address === address);
+  const ok = window.confirm('Delete the account key for ' + address + ' from this machine?\n\n'
+    + 'This is the whole of that identity. If you do not have this key written down somewhere else, '
+    + (a?.pod ? 'the pod ' + a.pod + ' becomes permanently unreachable' : 'whatever pod it reaches becomes permanently unreachable')
+    + ' — by you and by anyone. There is no recovery and nobody to ask.');
+  if (!ok) return;
+  try {
+    S.accounts = (await window.interego.accountForget(address)).accounts;
+    renderAccounts();
+  } catch (e) {
+    clear($('signinnote')).appendChild(errBox(e, 'The key was not deleted and is still on this machine.'));
+  }
+}
+
+/**
+ * END THE SESSION AND COME BACK TO THE SIGN-IN CARD.
+ *
+ * ★ WITHOUT THIS THERE IS NO SWITCHING. Everything below the header belongs to one identity — the
+ * roster, the streams, the delegate keyring in use, the watches — so signing out tears the
+ * workspace down rather than leaving another person's reads on screen under a new name. The keys
+ * are untouched: signing out is not forgetting.
+ */
+async function signOut(): Promise<void> {
+  btn('signoutbtn').disabled = true;
+  try {
+    S.accounts = (await window.interego.signOut()).accounts;
+  } catch (e) {
+    btn('signoutbtn').disabled = false;
+    clear($('bootnote')).appendChild(errBox(e, 'The session was not ended, so it is still live.'));
+    return;
+  }
+  teardownWorkspace();
+  S.client = null; S.viewer = null; S.spaces = null; S.spacesError = null;
+  S.invites = null; S.inviteError = null; S.handleCheck = null;
+  S.myDelegates = null; S.hosted = []; S.hostedRead = false; S.speaking = null;
+  S.writeBlocked = null; S.enforcement = null; S.enforcementWhy = null;
+  // ★ AND WHICH WORKSPACE WAS OPEN. `teardownWorkspace` deliberately leaves `S.workspace` alone —
+  // it runs on every SWITCH, where the next IRI overwrites it a line later. Here there is no next
+  // one, and a stale value would keep the header's title and make the lobby dismissible back to a
+  // channel belonging to an identity that is no longer signed in.
+  S.workspace = null; S.iriOwner = null; S.slug = null;
+  steps.length = 0;
+  renderSteps();
+  // Not `showLobby`: with no workspace it forces the lobby OPEN, which is right after a sign-in
+  // and wrong here. Signing out leaves the sign-in card and nothing else.
+  $('lobby').hidden = true;
+  $('shell').hidden = true;
+  S.lobbyOpen = false;
+  $('wstitle').textContent = '';
+  $('whoami').textContent = '';
+  btn('lobbybtn').hidden = true;
+  btn('signoutbtn').hidden = true;
+  btn('signoutbtn').disabled = false;
+  clear($('signinnote'));
+  $('signin').hidden = false;
+  signInButtons().forEach((b) => { b.disabled = false; });
+  renderAccounts();
 }
 
 // ── boot ─────────────────────────────────────────────────────────────────────
@@ -3518,6 +3755,15 @@ function setAgent(on: boolean): void {
 
 btn('signin-wallet').addEventListener('click', () => { void signIn('wallet'); });
 btn('signin-browser').addEventListener('click', () => { void signIn('browser'); });
+btn('signin-import').addEventListener('click', () => { void importAccount(); });
+// Enter in the key field does what the button does. Somebody pasting a key and pressing return is
+// the ordinary gesture, and a field that swallows it reads as broken.
+inp('signin-importkey').addEventListener('keydown', (e) => {
+  if ((e as KeyboardEvent).key === 'Enter' && !btn('signin-import').disabled) void importAccount();
+});
+// A refusal shown against the old text is a refusal about a key that is no longer there.
+inp('signin-importkey').addEventListener('input', () => { clear($('signin-importhint')).className = 'hint'; });
+btn('signoutbtn').addEventListener('click', () => { void signOut(); });
 btn('lobbybtn').addEventListener('click', () => { showLobby(!S.lobbyOpen); });
 btn('renewbtn').addEventListener('click', () => {
   btn('renewbtn').disabled = true;

@@ -16,6 +16,7 @@
     "start": "npm run build && electron dist/main.js",
     "clean": "rm -rf dist/ release/",
     "selftest": "npm run build && electron dist/selftest.js",
+    "drive:account": "npm run build && esbuild tools/drive-account-import-live.ts --bundle --format=cjs --platform=node --target=es2020 --external:electron --outfile=dist/drive-account-import-live.js && electron dist/drive-account-import-live.js",
     "package": "npm run build && electron-builder --win --publish never --config electron-builder.yml",
     "package:linux": "npm run build && electron-builder --linux --publish never --config electron-builder.yml",
     "package:mac": "npm run build && electron-builder --mac --publish never --config electron-builder.yml"
