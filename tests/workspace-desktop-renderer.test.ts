@@ -166,7 +166,19 @@ function scripted(): Scripted {
   a.put(acceptance(POD_A, GRANT_A, 'cid-grant-a', 6));
   b.put(acceptance(POD_B, GRANT_B, 'cid-grant-b', 20));
   return {
-    pods: new Map([[POD_A, a], [POD_B, b]]),
+    /**
+     * ★ EVERY DELEGATE HAS ITS OWN POD, BECAUSE ON THE LIVE RELAY IT DOES. A delegate is a keypair
+     * that signs into the relay in its own right, so the relay issues it a pod exactly as it issues
+     * one to a person — and its DID CARRIES that pod, which is what makes its presence and
+     * capability documents addressable from the DID alone. The fixture had only the two humans'
+     * pods, so every write a delegate made to its OWN pod came back `scope_violation` — a 403 that
+     * would have looked, in any test that did not read the response, exactly like the shell
+     * declining to write. That is the failure this line removes.
+     */
+    pods: new Map([
+      [POD_A, a], [POD_B, b],
+      [podOfDelegate(D1), new Pod(podOfDelegate(D1))], [podOfDelegate(D2), new Pod(podOfDelegate(D2))],
+    ]),
     inbox: [], fail: new Map(), calls: [], writeEligible: true,
     // One delegate authorised on A's pod, with its key here — the ordinary state a person is in
     // once they have set one up. Cases about having none, or having one hosted elsewhere, say so.
@@ -177,6 +189,14 @@ function scripted(): Scripted {
 
 /** A delegate DID in the shape the live relay issues: the surface constant, then a pod. */
 const DELEGATE = (n: string): string => 'did:web:identity.interego.xwisee.com:agents:interego-delegate-u-eth-' + n;
+/**
+ * The delegate's OWN pod, read back out of its DID.
+ *
+ * Spelled here rather than imported so the fixture and the code under test derive it independently
+ * — if they ever disagree about where a lease lives, that disagreement should fail a test rather
+ * than be shared by both sides of it.
+ */
+const podOfDelegate = (did: string): string => did.slice(did.lastIndexOf('u-eth-'));
 const D1 = DELEGATE('111111111111');
 const D2 = DELEGATE('222222222222');
 const KEY = (n: string): string => '0x' + n.padEnd(40, '0');
@@ -304,7 +324,15 @@ function tool(s: Scripted, viewerPod: string, name: string, input: Record<string
       const target = input['pod_name'] ? String(input['pod_name']) : viewerPod;
       const pod = s.pods.get(target);
       if (!pod) return { error: 'scope_violation', code: 403, message: 'agent is not registered on this pod' };
-      if (caller !== 'did:ethr:0xsession') {
+      // ★ AN AGENT NEEDS NO DELEGATION TO WRITE ITS OWN POD, and modelling that is not a loosening
+      // — it is the reason a presence lease is worth anything. A lease is the agent's statement
+      // ABOUT ITSELF, so it goes where its own key owns the pod; measured on the live relay, the
+      // same document written cross-pod under a delegation reads back authorshipVerified:false,
+      // because the descriptor binding holds the proof's owner against the pod it landed on. A
+      // harness that demanded a delegation row here would have made the only address where a
+      // self-claim is CHECKABLE the one address it refused.
+      const ownPod = caller !== 'did:ethr:0xsession' && podOfDelegate(caller) === target;
+      if (caller !== 'did:ethr:0xsession' && !ownPod) {
         const row = (s.delegations.get(target) ?? []).find((r) => r['agentId'] === caller);
         if (!row || !['ReadWrite', 'PublishOnly'].includes(String(row['scope']))) {
           return { error: 'scope_violation', code: 403, message: 'agent is not registered on this pod' };
@@ -518,6 +546,28 @@ async function open(opts: { viewer?: string; setup?: (s: Scripted) => void; cold
 
 const text = (doc: Document, sel: string): string => (doc.querySelector(sel)?.textContent ?? '');
 const click = (doc: Document, id: string): void => { (doc.getElementById(id) as HTMLElement).click(); };
+
+/**
+ * The publishes that put something in somebody's LOG, as against the ones that say a host is up.
+ *
+ * ★ THIS DISTINCTION IS THE POINT AND NOT A TEST CONVENIENCE. Switching a delegate on now writes a
+ * presence lease — a short, signed, self-superseding document on the AGENT's own pod saying its
+ * host is running — and every one of these cases asserts that a DRAFT was not published. Those two
+ * facts are both true at once, and a `some(c => c.name === 'publish_context')` cannot express it:
+ * it would either fail on the lease or, if the lease were removed to satisfy it, stop the agent
+ * being visible to anybody else. Filtering on the graph is what keeps the assertion saying what it
+ * meant, and {@link presencePublishes} pins the other half rather than leaving it unasserted.
+ */
+const entryPublishes = (o: Opened): { name: string; input: Record<string, unknown> }[] =>
+  o.s.calls.filter((c) => c.name === 'publish_context' && !/\/agent-[^/]*-(presence|capabilities)$/.test(String(c.input['graph_iri'] ?? '')));
+
+/** The presence leases. A lease is not an entry and must never be counted as one. */
+const presencePublishes = (o: Opened): { name: string; input: Record<string, unknown> }[] =>
+  o.s.calls.filter((c) => c.name === 'publish_context' && String(c.input['graph_iri'] ?? '').endsWith('-presence'));
+
+/** The capability documents — what an agent says it can be asked, at its own DID-derived address. */
+const capabilityPublishes = (o: Opened): { name: string; input: Record<string, unknown> }[] =>
+  o.s.calls.filter((c) => c.name === 'publish_context' && String(c.input['graph_iri'] ?? '').endsWith('-capabilities'));
 async function signInAndSettle(o: Opened): Promise<void> {
   click(o.doc, 'signin-wallet');
   await o.settle();
@@ -1256,7 +1306,7 @@ describe('the local agent is off, visible, and stoppable', () => {
     await o.settle();
     expect((o.doc.getElementById('composer') as HTMLTextAreaElement).value).toBe('We agreed to re-tile in spring.');
     expect(text(o.doc, '#agentresult')).toContain('NOTHING has been written yet');
-    expect(o.s.calls.some((c) => c.name === 'publish_context')).toBe(false);
+    expect(entryPublishes(o)).toHaveLength(0);
     // ★ AND THE FOOTING IS ON THE BUTTON, BEFORE IT SPEAKS. Consenting to send is consenting to
     // one of two different records, and a control that named only the author would be asking for
     // consent to a distinction it did not show.
@@ -1282,7 +1332,7 @@ describe('the local agent is off, visible, and stoppable', () => {
     // And what lands says it too. The button and the triples are one decision, made once.
     click(o.doc, 'agentsend');
     await o.settle();
-    const ttl = String(o.s.calls.filter((c) => c.name === 'publish_context').slice(-1)[0]?.input['graph_content']);
+    const ttl = String(entryPublishes(o).slice(-1)[0]?.input['graph_content']);
     expect(ttl).toContain('iep:actedOnOwnAccount');
     expect(ttl).not.toContain('prov:Delegation');
     expect(ttl).not.toContain(WEBID(POD_A));
@@ -1304,7 +1354,141 @@ describe('the local agent is off, visible, and stoppable', () => {
     expect(text(o.doc, '#agentresult')).toContain('did not declare which footing');
     expect((o.doc.getElementById('composer') as HTMLTextAreaElement).value).toBe('');
     expect((o.doc.getElementById('agentsend') as HTMLButtonElement).hasAttribute('hidden')).toBe(true);
-    expect(o.s.calls.some((c) => c.name === 'publish_context')).toBe(false);
+    expect(entryPublishes(o)).toHaveLength(0);
+  });
+
+  /**
+   * ★ THE AGENT IS NOW A PARTICIPANT OTHER PEOPLE CAN SEE, AND THIS PINS BOTH HALVES OF THAT.
+   *
+   * Before this, an agent could read the channel, think on its human's own subscription and append
+   * a signed answer — and there was no way for anybody anywhere to find out it existed, was
+   * available, or had just gone away. A Discord picker offering it would have been guessing.
+   */
+  it('★ switching a delegate on publishes a SHORT lease, on the AGENT\'s own pod, with its own key', async () => {
+    const o = await open({
+      setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'What did we decide about the roof?', '2026-08-07T10:00:00.000Z')); },
+      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: OWN + 'A reply.', why: 'ok', ms: 900 }) },
+    });
+    await signInAndSpeak(o);
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    const leases = presencePublishes(o);
+    expect(leases).toHaveLength(1);
+    const lease = leases[0]?.input as Record<string, unknown>;
+    // ★ THE AGENT'S OWN POD, DERIVED FROM ITS DID — not the delegator's. Measured on the live
+    // relay: a cross-pod write under a delegation reads back authorshipVerified:false, because the
+    // descriptor binding holds the proof's owner against the pod the bytes landed on. A lease
+    // nobody can verify is not evidence.
+    const ownPod = D1.slice(D1.lastIndexOf('u-'));
+    expect(String(lease['graph_iri'])).toBe(RELAY + '/ns/' + ownPod + '/agent-' + ownPod + '-presence');
+    expect(lease['pod_name']).toBe(ownPod);
+    expect(lease['sign_authorship']).toBe(true);
+    // One head, because a forked lease leaves a reader choosing between two claims about one
+    // running process with no honest basis for choosing.
+    expect(lease['auto_supersede_prior']).toBe(true);
+    // ★ SHORT, AND THAT IS THE WHOLE MECHANISM. Past `valid_until` the relay's own temporal filter
+    // stops answering for the document, so nothing anywhere runs a timer or notices an outage.
+    const span = Date.parse(String(lease['valid_until'])) - Date.parse(String(lease['valid_from']));
+    expect(span).toBeGreaterThan(0);
+    expect(span).toBeLessThanOrEqual(3 * 90_000);
+    // It names itself INSIDE the signed region, so the filename is not the only thing claiming it.
+    expect(String(lease['graph_content'])).toContain('iep:presenceOf <' + D1 + '>');
+    // And the person is told, in their own panel, that this went out on their behalf.
+    expect(text(o.doc, '#agentwhy')).toContain('said its host was running');
+  });
+
+  /**
+   * ★ PRESENCE WITHOUT THIS IS HALF AN ANSWER. A peer that reads "its host is running" still has no
+   * idea what it can be asked or by what route, and would have to guess.
+   */
+  it('★ also publishes what it can be asked, with iep:askVia and NO endpoint to call', async () => {
+    const o = await open({
+      setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'What did we decide?', '2026-08-07T10:00:00.000Z')); },
+      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: OWN + 'A reply.', why: 'ok', ms: 900 }) },
+    });
+    await signInAndSpeak(o);
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    const caps = capabilityPublishes(o);
+    expect(caps).toHaveLength(1);
+    const ownPod = D1.slice(D1.lastIndexOf('u-'));
+    expect(String(caps[0]?.input['graph_iri'])).toBe(RELAY + '/ns/' + ownPod + '/agent-' + ownPod + '-capabilities');
+    const ttl = String(caps[0]?.input['graph_content']);
+    // ★ THIS AGENT RUNS ON SOMEBODY'S LAPTOP AND HAS NO ENDPOINT THAT WILL EVER ANSWER, so
+    // advertising a `hydra:target` would advertise a call that cannot connect.
+    expect(ttl).toContain('iep:askVia');
+    expect(ttl).not.toContain('hydra:target');
+    expect(ttl).toContain('iep:capabilityOf <' + D1 + '>');
+  });
+
+  it('does not republish the capability on every heartbeat — it does not change every 90s', async () => {
+    const o = await open({
+      setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'What did we decide?', '2026-08-07T10:00:00.000Z')); },
+      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: OWN + 'A reply.', why: 'ok', ms: 900 }) },
+    });
+    await signInAndSpeak(o);
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    expect(capabilityPublishes(o)).toHaveLength(1);
+  });
+
+  /**
+   * ★ THE DURABLE HALF OF "HAVE I ALREADY ANSWERED THIS", AND WITHOUT IT IT IS A COMMENT.
+   *
+   * `A.answered` dies with the process. A host restarted after answering reads the same ask, judges
+   * it unanswered, and appends a SECOND permanent record saying the same thing to somebody's public
+   * log — which cannot be edited or deleted. The link on the pod is what the next run, and the
+   * substrate's own request verifier, walk to find out the answer already exists.
+   */
+  it('★ a delegate\'s answer DECLARES the ask it answers, so a restart cannot answer it twice', async () => {
+    const o = await open({
+      setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'What did we decide about the roof?', '2026-08-07T10:00:00.000Z')); },
+      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: OWN + 'Patching buys a year.', why: 'ok', ms: 900 }) },
+    });
+    await signInAndSpeak(o);
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    click(o.doc, 'agentsend');
+    await o.settle();
+    const ttl = String(entryPublishes(o).slice(-1)[0]?.input['graph_content']);
+    // The ask it answered is the entry already in POD_B's log, by its descriptor URL.
+    expect(ttl).toMatch(/prov:wasDerivedFrom <[^>]+>/);
+    // `prov:` and not a minted term: "this was derived from that" is what PROV-O already says.
+    expect(ttl).not.toContain('wsp:answers');
+  });
+
+  it('a PERSON\'s post declares no such link, because a person is not looping', async () => {
+    const o = await open({
+      setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'What did we decide?', '2026-08-07T10:00:00.000Z')); },
+    });
+    await signInAndSettle(o);
+    (o.doc.getElementById('composer') as HTMLTextAreaElement).value = 'I think we re-tile.';
+    click(o.doc, 'send');
+    await o.settle();
+    expect(String(entryPublishes(o).slice(-1)[0]?.input['graph_content'])).not.toContain('wasDerivedFrom');
+  });
+
+  it('★ switching it off RETRACTS NOTHING — the lease lapses on its own', async () => {
+    // ★ A RETRACTION WOULD BE A LIE OF OMISSION IN THE OTHER DIRECTION. A host that CRASHES cannot
+    // publish one either, so a design that depended on a retraction would report a crashed agent as
+    // available indefinitely. Lapsing is the behaviour that is the same for a clean stop and a
+    // power cut, which is why it is the one that can be trusted.
+    const o = await open({
+      setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'What did we decide?', '2026-08-07T10:00:00.000Z')); },
+      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: OWN + 'A reply.', why: 'ok', ms: 900 }) },
+    });
+    await signInAndSpeak(o);
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    const afterOn = presencePublishes(o).length;
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    expect(presencePublishes(o)).toHaveLength(afterOn);
+    expect(text(o.doc, '#agentwhy')).toContain('lapses on its own');
   });
 
   it('★ the prompt it is given carries the channel and never a caller\'s text', async () => {
@@ -1375,7 +1559,7 @@ describe('the local agent is off, visible, and stoppable', () => {
     await o.settle();
     expect((o.doc.getElementById('composer') as HTMLTextAreaElement).value).toBe('');
     expect(text(o.doc, '#agentresult')).toContain('nothing worth adding');
-    expect(o.s.calls.some((c) => c.name === 'publish_context')).toBe(false);
+    expect(entryPublishes(o)).toHaveLength(0);
   });
 
   it('★ a model that refuses is reported, and nothing is drafted from it', async () => {
@@ -1517,7 +1701,7 @@ describe('delegates: separate identities, plural, and visible as such', () => {
     expect(text(o.doc, '#agentwhy')).toContain('You have not authorised a delegate');
     expect(text(o.doc, '#agentwhy')).toContain('Nothing here will write as you');
     expect(o.agent.prompts).toHaveLength(0);
-    expect(o.s.calls.some((c) => c.name === 'publish_context')).toBe(false);
+    expect(entryPublishes(o)).toHaveLength(0);
   });
 
   it('★ the picker lists the POD\'s delegates, and one hosted elsewhere is shown and not selectable', async () => {
@@ -1560,7 +1744,7 @@ describe('delegates: separate identities, plural, and visible as such', () => {
     expect(own.textContent).toContain('Send as Claude side');
     own.click();
     await o.settle();
-    const published = o.s.calls.filter((c) => c.name === 'publish_context');
+    const published = entryPublishes(o);
     expect(published).toHaveLength(1);
     const ttl = String(published[0]?.input['graph_content']);
     // ★ THE TRIPLES. The agent is the author; the delegation is a prov:Delegation over THIS act,
@@ -1579,7 +1763,7 @@ describe('delegates: separate identities, plural, and visible as such', () => {
     (o.doc.getElementById('composer') as HTMLTextAreaElement).value = 'I typed this myself.';
     click(o.doc, 'send');
     await o.settle();
-    const ttl = String(o.s.calls.filter((c) => c.name === 'publish_context')[0]?.input['graph_content']);
+    const ttl = String(entryPublishes(o)[0]?.input['graph_content']);
     expect(ttl).toContain('prov:wasAttributedTo <' + WEBID(POD_A) + '>');
     expect(ttl).not.toContain('prov:actedOnBehalfOf');
   });
@@ -1603,7 +1787,7 @@ describe('delegates: separate identities, plural, and visible as such', () => {
     expect((o.doc.getElementById('agentsend') as HTMLButtonElement).hasAttribute('hidden')).toBe(true);
     click(o.doc, 'send');
     await o.settle();
-    const ttl = String(o.s.calls.filter((c) => c.name === 'publish_context')[0]?.input['graph_content']);
+    const ttl = String(entryPublishes(o)[0]?.input['graph_content']);
     expect(ttl).toContain('prov:wasAttributedTo <' + WEBID(POD_A) + '>');
     expect(ttl).not.toContain(D1);
   });

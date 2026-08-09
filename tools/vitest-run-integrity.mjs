@@ -168,7 +168,7 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // ceremony over an injected `fetch` and reads the name off the `/register` body, because that is
 // the only copy of it the relay ever sees.
 // The tree reached 237.
-export const MIN_TEST_MODULES = 227;
+export const MIN_TEST_MODULES = 232;
 export const FLOOR_ALLOWANCE = 10;
 
 /**

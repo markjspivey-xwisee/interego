@@ -10,7 +10,10 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { DiscordGateway, DiscordRest, COMMANDS, INTENTS, type GatewayInteraction, type GatewayMessage } from '../src/discord.js';
+import {
+  DiscordGateway, DiscordRest, COMMANDS, INTENTS,
+  type GatewayAutocomplete, type GatewayInteraction, type GatewayMessage,
+} from '../src/discord.js';
 
 /** A socket that records what was sent and lets a test deliver frames and closes. */
 class FakeSocket {
@@ -33,6 +36,7 @@ interface Harness {
   readonly sockets: FakeSocket[];
   readonly messages: GatewayMessage[];
   readonly interactions: GatewayInteraction[];
+  readonly autocompletes: GatewayAutocomplete[];
   readonly notices: string[];
   readonly fatals: string[];
   socket(): FakeSocket;
@@ -43,16 +47,18 @@ function harness(): Harness {
   const sockets: FakeSocket[] = [];
   const messages: GatewayMessage[] = [];
   const interactions: GatewayInteraction[] = [];
+  const autocompletes: GatewayAutocomplete[] = [];
   const notices: string[] = [];
   const fatals: string[] = [];
   const gw = new DiscordGateway('tok', {
     onMessage: (m) => messages.push(m),
     onInteraction: (i) => interactions.push(i),
+    onAutocomplete: (a) => autocompletes.push(a),
     onNotice: (l) => notices.push(l),
     onFatal: (w) => fatals.push(w),
   }, () => { const s = new FakeSocket(); sockets.push(s); return s as unknown as never; });
   const socket = (): FakeSocket => sockets[sockets.length - 1] as FakeSocket;
-  return { gw, sockets, messages, interactions, notices, fatals, socket, frame: (f) => { gw.onFrame(JSON.stringify(f)); } };
+  return { gw, sockets, messages, interactions, autocompletes, notices, fatals, socket, frame: (f) => { gw.onFrame(JSON.stringify(f)); } };
 }
 
 const HELLO = { op: 10, d: { heartbeat_interval: 41250 } };
@@ -172,6 +178,69 @@ describe('dispatch', () => {
     h.gw.stop();
   });
 
+  it('delivers an autocomplete, flattened, with the FOCUSED option and not the subcommand', () => {
+    // ★ TYPE 4 WAS DROPPED ON THE FLOOR AND `ask` IS BUILT AROUND IT. The flattening matters twice
+    // here: without it `data.options[0]` is the SUBCOMMAND, so the focused option would never be
+    // found and the picker would answer every keystroke with nothing.
+    const h = harness();
+    h.gw.connect(); h.frame(HELLO);
+    h.frame({
+      op: 0, t: 'INTERACTION_CREATE', s: 1,
+      d: {
+        id: 'a1', token: 'tk', type: 4, channel_id: 'c1', member: { user: { id: 'u1' } },
+        data: {
+          name: 'workspace',
+          options: [{
+            type: 1, name: 'ask',
+            options: [
+              { type: 3, name: 'agent', value: 'sched', focused: true },
+              { type: 3, name: 'task', value: 'review Q3' },
+            ],
+          }],
+        },
+      },
+    });
+    expect(h.interactions).toHaveLength(0);
+    expect(h.autocompletes).toHaveLength(1);
+    const a = h.autocompletes[0] as GatewayAutocomplete;
+    expect(a.name).toBe('workspace ask');
+    expect(a.focused).toBe('agent');
+    expect(a.query).toBe('sched');
+    // The other option is carried too: a picker that wanted to narrow on what has been typed
+    // elsewhere can, and one that does not is unaffected.
+    expect(a.options['task']).toBe('review Q3');
+    h.gw.stop();
+  });
+
+  it('names NO focused option rather than guessing one, when Discord marks none', () => {
+    // A command with two autocompleting options would otherwise have both answered out of one
+    // box's text. A handler told which box it is in can refuse; one that guessed would silently
+    // answer the wrong one.
+    const h = harness();
+    h.gw.connect(); h.frame(HELLO);
+    h.frame({
+      op: 0, t: 'INTERACTION_CREATE', s: 1,
+      d: {
+        id: 'a2', token: 'tk', type: 4, channel_id: 'c1', user: { id: 'u9' },
+        data: { name: 'workspace', options: [{ type: 1, name: 'ask', options: [{ type: 3, name: 'agent', value: 'x' }] }] },
+      },
+    });
+    expect(h.autocompletes[0]?.focused).toBe('');
+    expect(h.autocompletes[0]?.query).toBe('');
+    h.gw.stop();
+  });
+
+  it('still ignores components and modals, which are genuinely unused', () => {
+    const h = harness();
+    h.gw.connect(); h.frame(HELLO);
+    for (const type of [3, 5]) {
+      h.frame({ op: 0, t: 'INTERACTION_CREATE', s: 1, d: { id: 'i', token: 't', type, channel_id: 'c', data: { name: 'workspace' } } });
+    }
+    expect(h.interactions).toHaveLength(0);
+    expect(h.autocompletes).toHaveLength(0);
+    h.gw.stop();
+  });
+
   it('flattens a subcommand so the router sees "workspace link-confirm" with its option', () => {
     const h = harness();
     h.gw.connect(); h.frame(HELLO);
@@ -224,10 +293,23 @@ describe('the command tree', () => {
     const tree = COMMANDS[0];
     expect(tree.name).toBe('workspace');
     const names = tree.options.map((o) => o.name).sort();
-    expect(names).toEqual(['link', 'link-confirm', 'show', 'start', 'unlink']);
+    expect(names).toEqual(['ask', 'link', 'link-confirm', 'show', 'start', 'unlink', 'who']);
     const confirm = tree.options.find((o) => o.name === 'link-confirm') as { options?: readonly { name: string; required?: boolean }[] };
     expect(confirm.options?.[0]?.name).toBe('pod');
     expect(confirm.options?.[0]?.required).toBe(true);
+  });
+
+  it('registers `ask` with a LIVE picker and no static choice list', () => {
+    // ★ A STATIC `choices` ARRAY WOULD BE THIS BOT'S CACHED OPINION OF SOMEBODY ELSE'S REGISTRY.
+    // Which agents exist, which their delegator still authorises and which have said their host is
+    // up are all facts on other people's pods that change between one command and the next.
+    const tree = COMMANDS[0] as unknown as { options: readonly { name: string; options?: readonly Record<string, unknown>[] }[] };
+    const askCmd = tree.options.find((o) => o.name === 'ask') as { options: readonly Record<string, unknown>[] };
+    const agent = askCmd.options.find((o) => o['name'] === 'agent') as Record<string, unknown>;
+    expect(agent['autocomplete']).toBe(true);
+    expect(agent['required']).toBe(true);
+    expect(agent['choices']).toBeUndefined();
+    expect(askCmd.options.find((o) => o['name'] === 'task')?.['required']).toBe(true);
   });
 });
 
@@ -273,6 +355,24 @@ describe('REST', () => {
   it('reports a failure with the status and the body, not as a silent no-op', async () => {
     const { impl } = fetchOf([{ status: 403, body: '{"message":"Missing Access"}' }]);
     await expect(new DiscordRest('tok', impl).post('c1', 'x')).rejects.toThrow(/HTTP 403.*Missing Access/);
+  });
+
+  it('answers a picker as a type-8 CALLBACK, capped at 25 and clamped at 100 characters', async () => {
+    // ★ ONE OVER-LONG LABEL WOULD MAKE THE WHOLE LIST FAIL TO RENDER, and there is no deferral for
+    // an autocomplete — no second chance to send a shorter one. The person would see an empty box
+    // that says nothing about why, which is the failure mode this bot exists to not have.
+    const { impl, calls } = fetchOf([{ status: 200, body: '{}' }]);
+    const many = Array.from({ length: 40 }, (_, i) => ({ name: 'agent-' + i + '-' + 'x'.repeat(200), value: 'did:web:x:agents:a' + i }));
+    await new DiscordRest('tok', impl).autocomplete('a1', 'tk', many);
+    expect(calls[0]?.url).toContain('/interactions/a1/tk/callback');
+    const sent = JSON.parse(String(calls[0]?.init.body)) as { type: number; data: { choices: { name: string; value: string }[] } };
+    expect(sent.type).toBe(8);
+    expect(sent.data.choices).toHaveLength(25);
+    for (const c of sent.data.choices) expect(c.name.length).toBeLessThanOrEqual(100);
+    // Clamping says it clamped, rather than ending mid-word as though that were the whole label.
+    expect(sent.data.choices[0]?.name.endsWith('…')).toBe(true);
+    // The VALUE is the DID and is not decorated: it is what the command actually receives.
+    expect(sent.data.choices[0]?.value).toBe('did:web:x:agents:a0');
   });
 
   it('defers with the ephemeral flag only when asked', async () => {

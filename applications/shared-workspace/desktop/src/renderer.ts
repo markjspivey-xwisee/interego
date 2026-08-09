@@ -19,9 +19,12 @@
  */
 
 import {
-  ConnectorTransport, WorkspaceClient, acceptGrant, assignPodMarks, authorshipLine, briefPrompt,
+  ConnectorTransport, WorkspaceClient, acceptGrant, admitSeatedIn, agentPort, assignPodMarks,
+  authorshipLine, briefPrompt,
   checkDraft, checkOwnHandle, checkRoleForWorkspace, checkWriteEligibility, createWorkspace,
-  decideTurn, delegatePlan, entryShapeAnswer, errorCopy, footingLine,
+  decideTurn, delegatePlan, describeSpan, entryShapeAnswer, errorCopy, footingLine,
+  PRESENCE_RENEW_MS, publishCapability, publishPresence, readRequests, verifyRequest,
+  RESPOND_AS_MEMBER, type RequestVerdict,
   readDelegates, readEntryAuthorship, REQUIRED_TOOLS,
   foldRoster, graphRegion, grantPodFor, hasType, listWorkspaces, mergeForward, nsIri, orderChain,
   parseRoleProfile, parseWorkspaceIri, podClaimVsServed, podOfDescriptorUrl, pollingWatch, postEntry,
@@ -244,6 +247,16 @@ interface Body {
    * pod's owner would be asserting the thing this whole change exists to stop asserting.
    */
   readonly author: EntryAuthorship;
+  /**
+   * The record this one declares it was derived FROM, if any.
+   *
+   * ★ THE DURABLE HALF OF "HAVE I ALREADY ANSWERED THIS". The in-run set is lost on restart, so
+   * without this an agent restarted after answering would read the same ask, judge it unanswered
+   * and answer it again — a second permanent record saying the same thing, on somebody's public
+   * log. This is on the pod and survives, which is exactly why the substrate's verifier takes it as
+   * a separate argument from the in-run list and names it as the one that survives.
+   */
+  readonly derivedFrom: string | null;
   readonly note: string | null;
   readonly error?: unknown;
 }
@@ -1646,6 +1659,7 @@ async function loadBodies(rows: readonly ChainRow[]): Promise<void> {
           servedPod: podOfDescriptorUrl(url),
           signed: !!auth?.authorshipVerified,
           signedBy: auth?.signedBy ?? null,
+          derivedFrom: readIri(src, 'prov:wasDerivedFrom'),
           author: readEntryAuthorship(region, {
             logOwnerWebId: st?.seat?.grantedTo ?? null,
             delegates: st ? S.delegatesByPod.get(st.pod) ?? null : null,
@@ -1659,7 +1673,7 @@ async function loadBodies(rows: readonly ChainRow[]): Promise<void> {
       } catch (e) {
         S.bodies.set(url, {
           body: null, seq: null, isEntry: false, declaredWorkspace: null, servedPod: null,
-          signed: false, signedBy: null,
+          signed: false, signedBy: null, derivedFrom: null,
           author: { kind: 'unstated', why: 'this record could not be read, so nothing about its author was established' },
           note: errorCopy(e).t, error: e,
         });
@@ -1883,7 +1897,20 @@ async function delegateClient(address: string): Promise<WorkspaceClient> {
  * DELEGATE'S. Same button, same writer, same readback. Omitted, the person is the author; given,
  * the delegate is the author and the person is who it acted for.
  */
-async function post(as?: { readonly address: string; readonly agentId: string; readonly footing: StatedFooting }): Promise<void> {
+async function post(as?: {
+  readonly address: string;
+  readonly agentId: string;
+  readonly footing: StatedFooting;
+  /**
+   * The record this answer answers.
+   *
+   * ★ CARRIED ONLY FOR A DELEGATE, because only a delegate has the problem it solves: its in-run
+   * memory of what it has answered dies with the process, so without this a restarted host reads
+   * the same ask, judges it unanswered, and writes a second permanent record saying the same
+   * thing. A person pressing Post is not looping and is not asked to declare anything.
+   */
+  readonly answering?: string | null;
+}): Promise<void> {
   if (!S.client || !S.viewer || !S.workspace) return;
   const ta = area('composer');
   const body = ta.value.trim();
@@ -1929,6 +1956,7 @@ async function post(as?: { readonly address: string; readonly agentId: string; r
     author: as
       ? { kind: 'delegate', agentId: as.agentId, footing: as.footing }
       : { kind: 'principal', webId: S.viewer.webId },
+    ...(as?.answering ? { derivedFrom: as.answering } : {}),
     entryShape: S.record?.entryShape ?? null,
     onAttempt: (n) => {
       if (n > 1) say('postresult', 'pending', 'Someone appended while you were typing — re-deriving',
@@ -2829,7 +2857,35 @@ const A = {
      * not. Discovering that after it is on the chain is too late; the record cannot be edited.
      */
     footing: StatedFooting;
+    /**
+     * Which record this draft answers, held beside it so the entry can declare it.
+     *
+     * ★ WRITTEN INTO THE RECORD RATHER THAN ONLY REMEMBERED HERE. `A.answered` dies with this
+     * process; `prov:wasDerivedFrom` is on the pod and outlives every restart, which is what stops
+     * a relaunched agent answering the same ask a second time.
+     */
+    answering: string | null;
   } | null,
+  /**
+   * When this delegate last successfully said its host was running, and why not when it did not.
+   *
+   * ★ A FACT ABOUT A DOCUMENT THIS APP WROTE, NEVER A CLAIM THAT ANYTHING IS REACHABLE. `at` is
+   * when the publish was ACCEPTED; whether other people can read it back is their read to make, and
+   * this panel does not speak for it.
+   */
+  presence: { at: null as number | null, why: null as string | null },
+  /** When the inbox was last read, and what that read established. Null `at` means never. */
+  wake: { at: null as number | null, why: null as string | null },
+  /** Why this delegate's capability document is not published, or null when it is. */
+  advertise: null as string | null,
+  /**
+   * Notices that pointed at something this host would not act on, kept visible.
+   *
+   * ★ NOT DROPPED, DELIBERATELY. A forged notice and a genuine one looking identical from the
+   * outside is the failure that makes people stop reading their inbox at all — so a refusal is
+   * shown WITH the check that failed, and nothing is dispatched from it.
+   */
+  refusedNotices: [] as { about: string; why: string }[],
 };
 
 /** The clause the Send button and its notice both use, so the two cannot say different things. */
@@ -3012,6 +3068,39 @@ function renderAgent(): void {
         : 'It puts the draft in the box below and stops. Nothing is written until you send it AS that delegate.')
       + (A.why ? ' — ' + A.why : '')
     : (speaker.name ?? 'This delegate') + ' is off. It reads nothing and writes nothing.'));
+
+  /**
+   * ★ WHAT OTHER PEOPLE CAN SEE ABOUT THIS AGENT, SHOWN TO ITS OWNER. This is the only place a
+   * person learns that switching the delegate on published something on their behalf — a short
+   * signed lease, world-readable, saying its host is up. An agent whose availability is broadcast
+   * without its owner being told would be a surprise, and this panel exists so there are none.
+   *
+   * Every clause is about a DOCUMENT this app wrote. "Said so 41s ago", never "is online": whether
+   * anybody can read it back is their read to make and this panel does not speak for it.
+   */
+  const p = el('div', 'note');
+  p.appendChild(document.createTextNode(
+    !A.on ? 'While it is off it publishes nothing about itself. Its last lease lapses on its own — nothing is retracted, because a host that crashed could not retract one either, and a design that needed it to would report a crashed agent as available for ever.'
+      : A.presence.at
+        ? 'It last said its host was running ' + describeSpan(Date.now() - A.presence.at) + ' ago, signed with its own key on its own pod, and repeats that every '
+          + describeSpan(PRESENCE_RENEW_MS) + '. Anybody holding its DID can read that — a Discord picker, another agent, a bare script — and act on it without asking you.'
+        : 'It has not managed to say its host is running' + (A.presence.why ? ' (' + A.presence.why + ')' : '')
+          + ', so to everybody else it reads as not running. That is the correct thing for it to read as: nothing has established that it is.'));
+  if (A.on) {
+    p.appendChild(el('div', 'note', A.advertise === null
+      ? 'It has also published what it can be asked, at an address anybody composes from its DID — so a peer that has never heard of this channel can find it, read what it offers, and see that the way to reach it is to put a request where it reads rather than to call an endpoint it does not have.'
+      : 'It has NOT managed to publish what it can be asked (' + A.advertise + '), so to a peer it offers nothing — which is not the same as it being unable to help.'));
+    p.appendChild(el('div', 'note',
+      A.wake.at === null
+        ? 'Its inbox has not been read yet this run. Nothing depends on it — a request is an entry in the channel this app is already watching, and a notice is only a pointer at one.'
+        : 'Inbox read ' + describeSpan(Date.now() - A.wake.at) + ' ago' + (A.wake.why ? ': ' + A.wake.why : ' — nothing was waiting.')));
+    for (const r of A.refusedNotices.slice(0, 3)) {
+      // ★ SHOWN, NOT DROPPED. A forged notice and a genuine one looking identical from the outside
+      // is how people stop reading their inbox at all.
+      p.appendChild(el('div', 'note', '? a notice pointing at ' + shortRef(r.about) + ' was NOT acted on — ' + r.why));
+    }
+  }
+  why.appendChild(p);
 }
 
 /**
@@ -3137,7 +3226,7 @@ async function agentConsider(): Promise<void> {
   // one button along.
   A.drafted = {
     address: speaker.address, agentId: speaker.agentId, name: speaker.name, text: draft.body,
-    footing: draft.footing,
+    footing: draft.footing, answering: decision.answering.descriptorUrl,
   };
   // Recorded the moment the draft exists, not when it posts: a draft the user discards was still
   // an answer this run produced, and re-producing it on the next poll is the loop, not a feature.
@@ -3167,21 +3256,211 @@ async function agentConsider(): Promise<void> {
   ]));
   p.appendChild(el('div', 'note', 'The Post button below sends as YOU. To send this as ' + (speaker.name ?? 'your delegate')
     + ', use its own button in this panel — the same text sent by the two makes two different records, and only one of them is true.'));
-  if (A.auto) await post({ address: speaker.address, agentId: speaker.agentId, footing: draft.footing });
+  if (A.auto) await post({ address: speaker.address, agentId: speaker.agentId, footing: draft.footing, answering: decision.answering.descriptorUrl });
+}
+
+// ── the host loop: present while running, wakeable when not ──────────────────
+
+/**
+ * THE PART THAT MAKES AN AGENT A PARTICIPANT RATHER THAN A FEATURE OF THIS WINDOW.
+ *
+ * ★ THE TENSION THIS RESOLVES, STATED PLAINLY. An agent must think on ITS OWN human's model
+ * credential — nobody else pays and no credential leaves this machine — so it is only answerable
+ * while something of theirs is running. Two honest behaviours follow, and there is deliberately no
+ * third:
+ *
+ *   1. PRESENT WHILE THIS APP IS RUNNING. {@link heartbeat} republishes a short lease every
+ *      {@link PRESENCE_RENEW_MS}, signed by the delegate's OWN key on its OWN pod. Anybody
+ *      anywhere — a Discord picker, another agent, a bare script — composes the address from the
+ *      DID and reads it. Close this window and the lease is simply not renewed; one lease-length
+ *      later the relay's own temporal filter stops answering for it. NOTHING RETRACTS ANYTHING and
+ *      nothing has to notice the outage.
+ *   2. ASK-AND-WAKE WHEN IT IS NOT. {@link wake} reads the inbox on start and on a slow tick, holds
+ *      every pointer against the SIGNED record it points at, and lets the ordinary decision take it
+ *      from there.
+ *
+ * ★ AND THE INBOX IS AN ACCELERANT, NOT THE SOURCE. The ask is an entry in the channel this shell
+ * already reads on a watch, so a request lands whether or not any notification was ever delivered.
+ * `wake` shortens the wait after a cold start; deleting it would lose latency, not correctness.
+ */
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+let wakeTimer: ReturnType<typeof setInterval> | null = null;
+
+/** How often the inbox is re-read. Far slower than presence: it is a hint, not the record. */
+const WAKE_EVERY_MS = 5 * 60_000;
+
+/** Descriptor URLs this run has already dispatched from a notice, so a re-read is not a re-ask. */
+const woken = new Set<string>();
+
+async function heartbeat(): Promise<void> {
+  const speaker = speakingDelegate();
+  if (!A.on || !speaker || !S.viewer) return;
+  try {
+    // ★ THE DELEGATE'S OWN SESSION, AND THAT IS THE WHOLE OF WHY THE LEASE IS WORTH ANYTHING. A
+    // lease published through the person's session would be the person saying their agent is up,
+    // which is not a thing they can know — and, measured, would not even verify: the relay binds a
+    // proof's owner to the pod the bytes land on.
+    const client = await delegateClient(speaker.address);
+    const out = await publishPresence(agentPort(client), {
+      relay: S.relay, agentId: speaker.agentId,
+      // Standing, and stated for a reader's convenience. NOT a per-act claim, and not evidence of
+      // the delegation either — that lives on the delegator's own pod.
+      principal: S.viewer.webId || null,
+      host: 'the Interego desktop app',
+    });
+    A.presence = out.kind === 'published'
+      ? { at: Date.now(), why: null }
+      : { at: null, why: out.kind === 'refused' ? out.why : out.kind === 'unnameable' ? out.why : errorCopy((out as { error: unknown }).error).t };
+  } catch (e) {
+    // ★ A FAILED PUBLISH IS REPORTED AND NOT RETRIED HARDER. The next beat is the retry, and until
+    // one lands this agent simply reads as not-running to everybody else — which is the correct
+    // thing for it to read as, because nothing established that it is.
+    A.presence = { at: null, why: errorCopy(e).t };
+  }
+  renderAgent();
+}
+
+/**
+ * Requests that arrived while this host was not running.
+ *
+ * ★ SIX CHECKS AGAINST THE SIGNED RECORD, NOT THE NOTICE, and the fifth is this host's own policy.
+ * `admitSeatedIn` is what a workspace host means by "has standing to ask me"; the same verifier
+ * serves an agent in no workspace with a different predicate, which is why it lives at the
+ * substrate and takes one.
+ *
+ * ★ NOTHING IS DISPATCHED DIRECTLY FROM A NOTICE. A verified request only causes the ordinary
+ * {@link agentConsider} to run, which re-reads the channel and applies every refusal it already
+ * has — the role ceiling, the scope ceiling, "have I already answered this", "is there unsent text
+ * in the box". A wake path that could write without passing those would be a second, weaker writer.
+ */
+async function wake(): Promise<void> {
+  const speaker = speakingDelegate();
+  if (!A.on || A.busy || !speaker || !S.workspace) return;
+  let verdicts: RequestVerdict[] = [];
+  try {
+    const client = await delegateClient(speaker.address);
+    const port = agentPort(client);
+    const inbox = await readRequests(port);
+    for (const n of inbox.notices) {
+      if (woken.has(n.about) || A.answered.has(n.about)) continue;
+      verdicts.push(await verifyRequest(port, n, {
+        heldAgentIds: [speaker.agentId],
+        answeredHere: [...A.answered],
+        // Every entry this shell has read that declares what it was derived from. Survives a
+        // restart, which the in-run set above does not.
+        derivedFromOnMyPod: derivedFromOnMyPod(),
+        admits: admitSeatedIn({ workspace: S.workspace, seats: S.seats }),
+      }));
+    }
+  } catch (e) {
+    A.wake = { at: Date.now(), why: 'the inbox could not be read (' + errorCopy(e).t + '), so whether anything is waiting is not established' };
+    renderAgent();
+    return;
+  }
+  const ok = verdicts.filter((v) => v.ok);
+  // ★ A REFUSED NOTICE IS KEPT AND COUNTED, NOT DROPPED. A forged notice and a genuine one looking
+  // identical from the outside is how people stop reading their inbox at all.
+  A.wake = {
+    at: Date.now(),
+    why: verdicts.length === 0 ? null
+      : ok.length + ' of ' + verdicts.length + ' item(s) pointed at a signed record addressed to this delegate'
+        + (ok.length < verdicts.length ? '; the rest are shown with the check that failed' : ''),
+  };
+  A.refusedNotices = verdicts.filter((v) => !v.ok).map((v) => ({ about: v.about, why: v.why ?? 'no reason reported' }));
+  for (const v of ok) woken.add(v.about);
+  // ★ THE CHANNEL IS WHAT IT ANSWERS FROM, so a fresh read comes first and the decision follows it.
+  // `readOnce` ends in `loadBodies`, which is the one place `agentConsider` is called — so the
+  // wake path reaches the SAME decision every other path reaches, with no second dispatcher.
+  if (ok.length) for (const key of [...S.streams.keys()]) await readOnce(key);
+}
+
+/**
+ * Say, once, what this delegate can be asked — at an address composed from its DID.
+ *
+ * ★ PRESENCE WITHOUT THIS IS HALF AN ANSWER. A peer that reads "its host is running" still has no
+ * idea what it can be asked or by what route, and would have to guess — which is the guessing this
+ * whole layer exists to remove. The two documents are a pair: one says whether anybody is home, the
+ * other says what you may knock about.
+ *
+ * ★ `iep:askVia`, NEVER `hydra:target`, AND THAT IS THE HONEST THING TO PUBLISH. This agent runs on
+ * somebody's laptop, on their own model credential, behind whatever network they are on. There is
+ * no endpoint that will ever answer a POST, so advertising one would be advertising a call that
+ * cannot connect. The route it publishes is the one that actually works: put a signed record where
+ * it reads, and it answers when its host next runs.
+ *
+ * Published once per delegate per run, not on the heartbeat: what an agent can be asked does not
+ * change every ninety seconds, and republishing it on a timer would be noise on somebody's pod.
+ */
+const advertised = new Set<string>();
+
+async function advertise(): Promise<void> {
+  const speaker = speakingDelegate();
+  if (!A.on || !speaker || advertised.has(speaker.agentId)) return;
+  advertised.add(speaker.agentId);
+  try {
+    const client = await delegateClient(speaker.address);
+    const out = await publishCapability(agentPort(client), {
+      relay: S.relay,
+      agentId: speaker.agentId,
+      action: RESPOND_AS_MEMBER,
+      // The inbox is where a request POINTS; the record it points at is the ask itself.
+      route: { kind: 'ask', askVia: S.relay + '/ns/' + (S.viewer?.podName ?? '') + '/inbox' },
+      title: 'Answer in this channel',
+      description: 'Ask this agent to read the channel and, if it judges there is something to add, append an answer '
+        + 'to its own human\'s log. It decides whether to speak; asking is not instructing.',
+    });
+    if (out.kind !== 'published') {
+      // Dropped from the set so the next switch-on retries. A capability nobody could read is not
+      // a capability, and pretending it was published would make this agent look askable when it
+      // has said nothing.
+      advertised.delete(speaker.agentId);
+      A.advertise = out.kind === 'refused' ? out.why : out.kind === 'invalid' || out.kind === 'unnameable' ? out.why : 'the publish did not complete';
+    } else { A.advertise = null; }
+  } catch (e) {
+    advertised.delete(speaker.agentId);
+    A.advertise = errorCopy(e).t;
+  }
+  renderAgent();
+}
+
+/** Descriptor URLs some entry already on my own pod declares it was derived from. */
+function derivedFromOnMyPod(): readonly string[] {
+  const out: string[] = [];
+  for (const st of S.streams.values()) {
+    if (S.viewer && st.pod !== S.viewer.podName) continue;
+    for (const r of orderChain(st.rows).ordered) {
+      const b = S.bodies.get(r.url);
+      if (b?.derivedFrom) out.push(b.derivedFrom);
+    }
+  }
+  return out;
 }
 
 function setAgent(on: boolean): void {
   A.on = on;
   A.why = '';
   A.phase = on ? 'watching' : 'off';
+  if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+  if (wakeTimer) { clearInterval(wakeTimer); wakeTimer = null; }
   if (!on) {
     // Reaches the child process, not just the flag. A delegate switched off that keeps thinking
     // and then posts is the failure this whole panel exists to make impossible.
     void window.interego.agentCancel();
     clear($('agentresult'));
+    // ★ NO RETRACTION IS PUBLISHED AND NONE IS NEEDED. The lease lapses on its own, which is the
+    // property that makes it honest: a host that CRASHES cannot publish a retraction either, so a
+    // design that depended on one would report a crashed agent as available indefinitely.
+    A.presence = { at: null, why: 'this delegate is off; its last lease lapses on its own' };
   }
   renderAgent();
-  if (on) void agentConsider();
+  if (on) {
+    void agentConsider();
+    void heartbeat();
+    void advertise();
+    void wake();
+    heartbeatTimer = setInterval(() => { void heartbeat(); }, PRESENCE_RENEW_MS);
+    wakeTimer = setInterval(() => { void wake(); }, WAKE_EVERY_MS);
+  }
 }
 
 // ── wiring ───────────────────────────────────────────────────────────────────
@@ -3238,7 +3517,7 @@ inp('agentauto').addEventListener('change', () => {
 });
 // ★ THE DELEGATE'S OWN SEND. `post(as)` — same writer, same readback, different author.
 btn('agentsend').addEventListener('click', () => {
-  if (A.drafted) void post({ address: A.drafted.address, agentId: A.drafted.agentId, footing: A.drafted.footing });
+  if (A.drafted) void post({ address: A.drafted.address, agentId: A.drafted.agentId, footing: A.drafted.footing, answering: A.drafted.answering });
 });
 inp('delegatename').addEventListener('input', renderDelegatePlan);
 inp('delegateagent').addEventListener('input', renderDelegatePlan);

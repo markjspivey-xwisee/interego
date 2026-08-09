@@ -25,7 +25,7 @@
  * defaults to what ran before, so the program is unchanged.
  */
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -41,6 +41,24 @@ const wsp = vi.hoisted(() => ({
   showWorkspace: vi.fn(),
 }));
 vi.mock('../src/workspace.js', () => wsp);
+
+/**
+ * The ASK half, replaced the same way and for the same reason.
+ *
+ * `askCandidates` is three live reads deep — a roster fold, one delegation registry per seated pod,
+ * one presence document per delegate — and every one of them has its own test against a scripted
+ * relay. What this file is about is whether a type-4 Discord frame reaches it at all, whether the
+ * answer goes back as a type-8 callback, and whether `/workspace ask` is serialised on the asker's
+ * pod like every other append.
+ */
+const askmod = vi.hoisted(() => ({
+  ask: vi.fn(),
+  askCandidates: vi.fn(),
+  askChoices: vi.fn(),
+  AUTOCOMPLETE_MAX: 25,
+  canAppend: () => true,
+}));
+vi.mock('../src/ask.js', () => askmod);
 
 import { LinkStore, type Link, type ThreadBinding } from '../src/links.js';
 import { PerKeyQueue, main, type Boot, type SessionLike, type Started } from '../src/main.js';
@@ -177,8 +195,28 @@ const message = (over: Record<string, unknown> = {}): unknown => ({
   d: { id: 'm1', channel_id: THREAD, author: { id: USER, bot: false }, content: 'we should re-tile in spring', ...over },
 });
 
+/** An autocomplete frame — Discord's type 4, which this bot used to drop on the floor. */
+const autocomplete = (sub: string, opts: readonly Record<string, unknown>[]): unknown => ({
+  op: 0, t: 'INTERACTION_CREATE',
+  d: {
+    id: 'a1', token: 'atok', channel_id: THREAD, type: 4,
+    member: { user: { id: USER } },
+    data: { name: 'workspace', options: [{ type: 1, name: sub, options: opts }] },
+  },
+});
+
+beforeEach(() => {
+  // ★ THE WATCHER RUNS FOR REAL IN THESE TESTS and its first pass calls this. A spy with no return
+  // value would hand it `undefined` where a `ShowOut` belongs, and the rejection would surface in
+  // whichever unrelated test happened to be running when the timer fired.
+  wsp.showWorkspace.mockResolvedValue({ kind: 'not-a-workspace' });
+});
+
 afterEach(() => {
-  for (const s of started.splice(0)) s.gateway.stop();
+  // ★ THE WATCHER IS STOPPED, NOT JUST THE GATEWAY. It owns a sweep interval and a timer per
+  // thread; left running they keep a single-threaded vitest worker alive after the assertions have
+  // finished and go on calling spies the next test is about to assert on.
+  for (const s of started.splice(0)) { s.watcher.stop(); s.gateway.stop(); }
   for (const d of dirs.splice(0)) { try { rmSync(d, { recursive: true, force: true }); } catch { /* tmpdir */ } }
   vi.clearAllMocks();
 });
@@ -356,6 +394,147 @@ describe('a slash command, from gateway frame to Discord reply', () => {
     expect(b.calls.filter((c) => c.path.startsWith('/interactions/'))).toEqual([]);
     expect(wsp.startWorkspace).not.toHaveBeenCalled();
     expect(b.lines.some((l) => l.includes('interaction arrived with no user'))).toBe(true);
+  });
+});
+
+/**
+ * ASKING AN AGENT, AND THE PICKER THAT MAKES IT ADDRESSABLE.
+ *
+ * ★ THE TRANSPORT THESE COVER DID NOT EXIST. `discord.ts` dropped interaction type 4 with the
+ * comment "not used by this bot", which was true while every command took a pod name typed by
+ * hand. It stopped being true the moment a command had to offer a choice out of OTHER PEOPLE'S
+ * PODS — which agents exist, which their delegator still authorises, which have said their host is
+ * up — none of which this bot may cache and all of which change between one command and the next.
+ */
+describe('the agent picker and /workspace ask', () => {
+  it('answers a type-4 frame as a type-8 CALLBACK, with the choices the module computed', async () => {
+    const b = await boot({ statePath: statePath((s) => { s.bind(link(USER)); s.bindThread(binding()); }) });
+    askmod.askCandidates.mockResolvedValue({ kind: 'candidates', binding: binding(), targets: [], unread: [], noneOn: [] });
+    askmod.askChoices.mockReturnValue([{ name: 'scheduler · running (said so 41s ago)', value: 'did:web:x:agents:interego-delegate-u-eth-1' }]);
+    b.frame(autocomplete('ask', [{ type: 3, name: 'agent', value: 'sch', focused: true }]));
+    await settle();
+
+    // ★ A CALLBACK, NOT AN EDIT. There is no deferral for an autocomplete and no second chance.
+    const sent = b.calls.find((c) => c.path === '/interactions/a1/atok/callback');
+    expect(sent?.body?.['type']).toBe(8);
+    expect((sent?.body?.['data'] as { choices: unknown[] }).choices).toEqual([
+      { name: 'scheduler · running (said so 41s ago)', value: 'did:web:x:agents:interego-delegate-u-eth-1' },
+    ]);
+    // The query is the text in the FOCUSED box, and it reached the module.
+    expect(askmod.askChoices).toHaveBeenCalledWith(expect.anything(), 'sch');
+  });
+
+  it('★ answers a failed lookup with a row that SAYS so, never with an empty list', async () => {
+    // Discord draws a choice list and nothing else, so "nobody has an agent" and "that pod did not
+    // answer" would render identically — and the second is a failed read being drawn as a fact
+    // about somebody else's pod.
+    const b = await boot({ statePath: statePath((s) => { s.bind(link(USER)); s.bindThread(binding()); }) });
+    askmod.askCandidates.mockRejectedValue(new Error('the relay did not answer'));
+    b.frame(autocomplete('ask', [{ type: 3, name: 'agent', value: '', focused: true }]));
+    await settle();
+
+    const sent = b.calls.find((c) => c.path === '/interactions/a1/atok/callback');
+    const choices = (sent?.body?.['data'] as { choices: { name: string; value: string }[] }).choices;
+    expect(choices).toHaveLength(1);
+    expect(choices[0]?.name).toContain('not established');
+    // Nothing can act on it — it is a sentence, not a target.
+    expect(choices[0]?.value).toBe('?failed');
+    expect(b.lines.some((l) => l.includes('autocomplete failed'))).toBe(true);
+  });
+
+  it('answers an autocomplete on a box it does not fill with an empty list, and looks nothing up', async () => {
+    const b = await boot({ statePath: statePath((s) => { s.bind(link(USER)); s.bindThread(binding()); }) });
+    b.frame(autocomplete('ask', [{ type: 3, name: 'task', value: 'review the numbers', focused: true }]));
+    await settle();
+    expect(askmod.askCandidates).not.toHaveBeenCalled();
+    const sent = b.calls.find((c) => c.path === '/interactions/a1/atok/callback');
+    expect((sent?.body?.['data'] as { choices: unknown[] }).choices).toEqual([]);
+  });
+
+  it('routes /workspace ask with both options and renders what came back', async () => {
+    const b = await boot({ statePath: statePath((s) => { s.bind(link(USER)); s.bindThread(binding()); }) });
+    askmod.ask.mockResolvedValue({ kind: 'empty-task' });
+    b.frame(interaction('ask', {
+      data: {
+        name: 'workspace',
+        options: [{
+          type: 1, name: 'ask',
+          options: [
+            { type: 3, name: 'agent', value: 'did:web:x:agents:interego-delegate-u-eth-1' },
+            { type: 3, name: 'task', value: 'review the Q3 numbers' },
+          ],
+        }],
+      },
+    }));
+    await settle();
+
+    expect(askmod.ask).toHaveBeenCalledWith(
+      expect.objectContaining({ client: CLIENT }),
+      expect.objectContaining({
+        threadId: THREAD, discordUserId: USER,
+        spec: 'did:web:x:agents:interego-delegate-u-eth-1', task: 'review the Q3 numbers',
+      }),
+    );
+    const edit = b.calls.find((c) => c.method === 'PATCH');
+    expect(String(edit?.body?.['content'])).toContain('Nothing was asked');
+  });
+
+  it('★ notes an ask for the silence notice only when one was actually WRITTEN', async () => {
+    // Recording a refused ask would promise a follow-up about an entry that does not exist.
+    const b = await boot({ statePath: statePath((s) => { s.bind(link(USER)); s.bindThread(binding()); }) });
+    askmod.ask.mockResolvedValue({ kind: 'not-a-workspace' });
+    b.frame(interaction('ask', { data: { name: 'workspace', options: [{ type: 1, name: 'ask', options: [{ type: 3, name: 'agent', value: 'x' }, { type: 3, name: 'task', value: 'y' }] }] } }));
+    await settle();
+    expect(b.started.watcher.pending()).toHaveLength(0);
+
+    askmod.ask.mockResolvedValue({
+      kind: 'asked',
+      target: { agentId: 'did:web:x:agents:interego-delegate-u-eth-1', pod: POD, name: 'scheduler', scope: 'PublishOnly', writeEligible: true, isYou: false, presence: { state: 'never', agentId: 'x', pod: POD, iri: null, why: 'w' } },
+      record: { kind: 'recorded', pod: POD },
+      accepted: { kind: 'accepted', seq: 7 },
+      descriptorUrl: 'https://css.example/e/7.ttl',
+      notice: { attempted: true, delivered: true, canonicalInbox: true, inbox: null, warning: null, why: null },
+      checks: [],
+    });
+    b.frame(interaction('ask', { id: 'i2', token: 'itok2', data: { name: 'workspace', options: [{ type: 1, name: 'ask', options: [{ type: 3, name: 'agent', value: 'x' }, { type: 3, name: 'task', value: 'y' }] }] } }));
+    await settle();
+    const pending = b.started.watcher.pending();
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.seq).toBe(7);
+    // Verbatim, so the follow-up quotes what was true when the ask was made rather than
+    // re-deriving a fact that has since changed.
+    expect(pending[0]?.presenceAtAsk).toContain('has never said it was running');
+  });
+
+  it('serialises an ask on the ASKER\'s pod, like every other append to their log', async () => {
+    // An ask IS an entry in their log, so two a second apart race the chain derivation exactly as
+    // two messages would — and this one is likelier, because a person who asks one agent something
+    // often asks the next one straight after.
+    const b = await boot({ statePath: statePath((s) => { s.bind(link(USER)); s.bindThread(binding()); }) });
+    let release = (): void => {};
+    const order: string[] = [];
+    askmod.ask
+      .mockImplementationOnce(async () => { order.push('one:start'); await new Promise<void>((r) => { release = r; }); order.push('one:end'); return { kind: 'empty-task' }; })
+      .mockImplementationOnce(async () => { order.push('two:start'); return { kind: 'empty-task' }; });
+    b.frame(interaction('ask', { data: { name: 'workspace', options: [{ type: 1, name: 'ask', options: [{ type: 3, name: 'agent', value: 'a' }, { type: 3, name: 'task', value: 't' }] }] } }));
+    await settle();
+    b.frame(interaction('ask', { id: 'i2', token: 'itok2', data: { name: 'workspace', options: [{ type: 1, name: 'ask', options: [{ type: 3, name: 'agent', value: 'b' }, { type: 3, name: 'task', value: 't' }] }] } }));
+    await settle();
+    expect(order).toEqual(['one:start']);
+    release();
+    await settle();
+    expect(order).toEqual(['one:start', 'one:end', 'two:start']);
+  });
+
+  it('routes /workspace who and answers privately', async () => {
+    const b = await boot({ statePath: statePath((s) => { s.bind(link(USER)); s.bindThread(binding()); }) });
+    askmod.askCandidates.mockResolvedValue({ kind: 'not-a-workspace' });
+    b.frame(interaction('who'));
+    await settle();
+    expect(askmod.askCandidates).toHaveBeenCalled();
+    // `who` names other people's agents and their availability, so it is the caller's business.
+    const defer = b.calls.find((c) => c.path === '/interactions/i1/itok/callback');
+    expect((defer?.body?.['data'] as { flags?: number }).flags).toBe(64);
   });
 });
 

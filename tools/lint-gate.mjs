@@ -523,7 +523,7 @@ const BASELINE = {};
 // roll-over driven against the live CSS and read back through every consumer, with a full
 // request trace — it is what found the relay's own concurrent bootstrap write 412-ing a
 // roll-over mid-flight), and `tests/bounded-manifest.test.ts`.
-export const MIN_FILES = 391;
+export const MIN_FILES = 400;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.

@@ -1,157 +1,143 @@
 /**
- * How a member that is a PROCESS tells a workspace it can be asked to do something.
+ * TELLING A WORKSPACE WHAT AN AGENT IN IT CAN BE ASKED — by pointing at a document the agent
+ * already publishes about itself, and writing nothing new.
  *
- * ── THE HOLE THIS FILLS ──────────────────────────────────────────────────────
+ * ── THE ERROR THIS FILE USED TO BE ───────────────────────────────────────────
  *
- * The published artifact has had an "ask this member" control since the round that built it.
- * The way it decides whether to offer that control is to look on the member's OWN pod for a
- * document at `<convener pod>--<slug>-affordances`, read an `iep:action` out of it, and follow
- * that action through the relay's `invoke_affordance`. Nothing about the control is written by
- * the page: whether it exists, what it is called and what it invokes all come out of that
- * document.
+ * ★ IT PUT THE CAPABILITY AT `<member pod>/<convener pod>--<slug>-affordances`. The pod was right
+ * and the NAME was wrong, and the name is the whole argument. That address describes a capability
+ * as a fact about an agent IN ONE ROOM: findable only by somebody who already knows the convener's
+ * pod AND the slug, duplicated once per room the agent is in, and invisible to the one question
+ * worth asking across rooms — "does anyone here have a tool for X". An agent's capabilities are not
+ * a property of a room it happens to be in. They are a property OF THE AGENT, true with no
+ * workspace anywhere, and a Codex agent that has never heard of a workspace has them too.
  *
- * ★ AND NOTHING IN THIS REPOSITORY EVER WROTE ONE. Every member in every test workspace was
- * either a person (who publishes no endpoint, correctly) or an agent whose bridge advertises
- * its capability at its OWN deployment URL — a manifest at `/affordances` that the workspace
- * page never looks at, because a workspace member is addressed by their pod and not by a
- * hostname. So the control was never offered, the call was never made, and the artifact was
- * published carrying a request shape that had never been observed against the live relay.
+ * So the document is `agent-<pod>-capabilities` on the agent's own pod, composed from its DID
+ * alone, and it is `@interego/core/agent` that writes and reads it. What is left here is the
+ * workspace's own reason for calling that — and one compatibility reader, because documents at the
+ * old address exist on live pods and a reader that stopped looking would report agents that really
+ * did advertise something as advertising nothing.
  *
- * ── WHY THE DOCUMENT LIVES ON THE MEMBER'S POD AND NOT ANYWHERE ELSE ─────────
+ * ── WHAT THIS VERTICAL STILL LEGITIMATELY OWNS ───────────────────────────────
  *
- * The same reason the log does. A capability advertised in the convener's workspace record
- * would be the convener saying what another participant will do; a capability advertised only
- * at the bridge's own hostname is reachable by whoever already knows the hostname, which is
- * not what a workspace member is. Published here it is a signed statement, by the member,
- * about the member, at an address derived from the workspace they are in — and it disappears
- * from the workspace the moment they stop publishing it, without anyone else's cooperation.
- *
- * ★ THE TARGET IS RE-RESOLVED AT INVOCATION AND THIS IS NOT DECORATION. `invoke_affordance`
- * dereferences the descriptor and reads `hydra:target` out of the signed graph at execution
- * time. A caller therefore cannot redirect the call by supplying a target, and a member can
- * move their endpoint by republishing this one document.
+ * The ACTION: `respond-as-member` is a thing you can ask an agent to do IN A WORKSPACE, and the
+ * workspace defines what it means. Which agent can be asked, where it is, and whether it is
+ * reachable are not this vertical's business and are no longer written by it.
  */
 
-// IEP and WSP are IMPORTED, not restated. Both namespaces are already spelled once in
-// `@interego/workspace-client`, and a second spelling here is the shape of drift that puts a
-// document at an IRI no reader of the first spelling resolves.
-import { escapeTurtleLiteral, IEP, WSP } from '@interego/workspace-client';
-import type { StreamDeps } from './stream.js';
+import {
+  capabilitiesIri, capabilityTurtle, publishCapability as publishAgentCapability, readCapabilities,
+  type AgentPort, type CapabilityPublish, type CapabilityRead, type CapabilityRoute,
+} from '@interego/core/agent';
+import { RESPOND_AS_MEMBER } from '@interego/workspace-client';
 
-const DCT = 'http://purl.org/dc/terms/';
-const HYDRA = 'http://www.w3.org/ns/hydra/core#';
+export {
+  capabilityTurtle, capabilityProblem, capabilitiesIri, readCapabilities,
+  type CapabilityDraft, type CapabilityRoute, type CapabilityPublish, type CapabilityRead,
+} from '@interego/core/agent';
 
 /**
- * One IRI reference, or a throw naming which argument was not serialisable.
+ * Publish "I can be asked to respond as a member of a workspace" on this agent's own pod.
  *
- * ★ REFUSAL, NOT ESCAPING, AND THE REASON IS THE SAME AS IN `documents.ts`. A Turtle IRI
- * reference ends at the first `>` and the production has no escape for one, so an action IRI
- * or a target containing `>` would close the reference and every byte after it would parse as
- * further triples — in a document published under this agent's own signature. The `target`
- * here is the most exposed of the three: it is composed from a deployment URL supplied by
- * whoever runs the process, and a bridge deployed behind a URL somebody else chose would
- * otherwise be a triple-injection vector into its own capability document.
+ * ★ THE ROUTE IS THE CALLER'S TO STATE AND THIS REFUSES TO GUESS IT. A hosted bridge is a process
+ * at a URL and passes `{ kind: 'hosted', target }`; a desktop agent has no endpoint that will ever
+ * answer and passes `{ kind: 'ask', askVia }`. Defaulting either way would advertise, on somebody's
+ * own pod under their own signature, a way of reaching them that does not exist.
  */
-function iriRef(u: string, what: string): string {
-  if (typeof u !== 'string' || u === '') {
-    throw new Error(`advertise: ${what} is missing, so the capability document cannot be written`);
-  }
-  if (/[\s<>"{}|\\^`]/.test(u)) {
-    throw new Error(`advertise: ${what} is not serializable as a Turtle IRI reference and there is no escape `
-      + `for the characters in it, so this document is refused rather than written with a reference that `
-      + `ends somewhere else: ${u}`);
-  }
-  return `<${u}>`;
+export function advertiseRespondAsMember(
+  port: AgentPort,
+  args: {
+    readonly relay: string;
+    readonly agentId: string;
+    readonly route: CapabilityRoute;
+    readonly title?: string;
+    readonly description?: string;
+    readonly requiresSignedRequest?: boolean;
+  },
+): Promise<CapabilityPublish> {
+  return publishAgentCapability(port, {
+    relay: args.relay,
+    agentId: args.agentId,
+    action: RESPOND_AS_MEMBER,
+    route: args.route,
+    title: args.title ?? 'Answer in this channel',
+    description: args.description
+      ?? 'Ask this agent to read the channel and, if it judges there is something to add, append an answer to its own '
+        + 'human\'s log. It decides whether to speak; asking is not instructing.',
+    ...(args.requiresSignedRequest === undefined ? {} : { requiresSignedRequest: args.requiresSignedRequest }),
+  });
 }
 
-export interface CapabilityDraft {
-  /** The document's own IRI — `<relay>/ns/<member pod>/<convener pod>--<slug>-affordances`. */
-  readonly iri: string;
-  /** The workspace this capability is offered in. */
-  readonly workspace: string;
-  /** The `iep:action` a client names when invoking. Dereferenceable, per the URL-identifier rule. */
+/**
+ * The address the FIRST design used, kept for reading only.
+ *
+ * ★ NOT A FALLBACK LOCATION TO WRITE TO. Documents at this address are on live pods and their
+ * authors cannot be made to republish, so a reader that only looked at the new address would report
+ * "advertises nothing" about agents that plainly advertise something — the exact false negative
+ * this vertical's Turtle readers have been hardened against three times. Nothing writes here.
+ */
+export const legacyWorkspaceCapabilityIri = (
+  relay: string, memberPod: string, convenerPod: string, slug: string,
+): string => relay + '/ns/' + memberPod + '/' + convenerPod + '--' + slug + '-affordances';
+
+/**
+ * What this agent advertises: its own document first, the room-scoped one only if that says nothing.
+ *
+ * ★ THE ORDER IS THE MIGRATION AND IT IS ONE-WAY. An agent-scoped document is a statement about the
+ * agent and beats a room-scoped one about the same agent; a room-scoped one is consulted only when
+ * there is no agent-scoped document at all, which is exactly "this agent has not republished yet".
+ * `unreadable` from the first does NOT fall through — a document that failed its signature checks
+ * is a finding, and quietly answering from somewhere else would bury it.
+ */
+export async function readAgentCapability(
+  port: AgentPort,
+  args: {
+    readonly relay: string;
+    readonly agentId: string;
+    /** The room, for the legacy read only. Omit it and only the agent-scoped document is consulted. */
+    readonly legacy?: { readonly memberPod: string; readonly convenerPod: string; readonly slug: string };
+  },
+): Promise<CapabilityRead & { readonly at: 'agent' | 'legacy' | 'none' }> {
+  const own = await readCapabilities(port, args);
+  if (own.kind === 'advertised') return { ...own, at: 'agent' };
+  if (own.kind === 'unreadable' || !args.legacy) return { ...own, at: 'none' };
+  const iri = legacyWorkspaceCapabilityIri(args.relay, args.legacy.memberPod, args.legacy.convenerPod, args.legacy.slug);
+  return {
+    kind: 'none', agentId: args.agentId, iri,
+    at: 'none',
+    why: own.why + ' A room-scoped document may still exist at ' + iri + '; it is not read as a capability of this agent, '
+      + 'because a capability described as a fact about an agent in one room is the shape this address replaced.',
+  };
+}
+
+/**
+ * The SAME capability document, serialised for the room-scoped address.
+ *
+ * ★ THIS EXISTS BECAUSE THE PUBLISHED ARTIFACT STILL READS THAT NAME, and removing the write
+ * without moving the reader would have silently taken the "ask this member" control off a page
+ * already in people's hands — a regression with no error message anywhere, which is the exact class
+ * of failure the agent-scoped move was made to end. So the bytes come from ONE writer,
+ * `capabilityTurtle`, and only the address differs. When `channel.html` reads
+ * `agent-<pod>-capabilities`, this and its caller go.
+ *
+ * The subject is the legacy IRI, because that is the region an `/ns/` reader locates — the artifact
+ * calls `graphRegion(content, iri)` and reads `iep:action` and `hydra:target` out of the result.
+ */
+export function legacyWorkspaceCapabilityTurtle(args: {
+  readonly relay: string;
+  readonly memberPod: string;
+  readonly convenerPod: string;
+  readonly slug: string;
+  readonly agentId: string;
   readonly action: string;
-  /** The HTTP endpoint the relay POSTs to once it has resolved this document. */
-  readonly target: string;
-  /** What a reader shows on the control. Read from here, never composed by the page. */
+  readonly route: CapabilityRoute;
   readonly title: string;
   readonly description: string;
   readonly createdIso?: string;
+}): { readonly iri: string; readonly turtle: string } {
+  const iri = legacyWorkspaceCapabilityIri(args.relay, args.memberPod, args.convenerPod, args.slug);
+  return { iri, turtle: capabilityTurtle({ ...args, iri }) };
 }
 
-/**
- * The capability document, as Turtle.
- *
- * The subject is the document's own IRI because that is the region an `/ns/` reader locates:
- * the artifact calls `graphRegion(content, iri)` and then reads `iep:action` and
- * `hydra:target` out of what that returns. A document whose statements hung off some other
- * subject would publish, dereference, and read as "this member advertises nothing".
- */
-export function capabilityTurtle(draft: CapabilityDraft): string {
-  const self = iriRef(draft.iri, 'the capability document IRI');
-  const ws = iriRef(draft.workspace, 'the workspace IRI');
-  const action = iriRef(draft.action, 'the action IRI');
-  const target = iriRef(draft.target, 'the hydra:target, which comes from this deployment\'s own configuration');
-  const created = draft.createdIso ?? new Date().toISOString();
-  return `@prefix iep: <${IEP}> .\n`
-    + `@prefix hydra: <${HYDRA}> .\n`
-    + `@prefix dct: <${DCT}> .\n`
-    + `@prefix wsp: <${WSP}> .\n`
-    + '@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n'
-    + `${self}\n`
-    + '  a iep:Affordance, hydra:Operation ;\n'
-    + `  wsp:workspace ${ws} ;\n`
-    + `  iep:action ${action} ;\n`
-    + `  hydra:target ${target} ;\n`
-    + '  hydra:method "POST" ;\n'
-    + `  hydra:title "${escapeTurtleLiteral(draft.title)}" ;\n`
-    + `  dct:description "${escapeTurtleLiteral(draft.description)}" ;\n`
-    + `  dct:created "${created}"^^xsd:dateTime .\n`;
-}
-
-export type AdvertiseOutcome =
-  | { readonly outcome: 'published'; readonly iri: string; readonly descriptorUrl: string | null; readonly status: string }
-  | { readonly outcome: 'refused'; readonly iri: string; readonly message: string };
-
-/**
- * Publish the capability document on the agent's own pod.
- *
- * ★ NO `pod_name`, DELIBERATELY, AND FOR THE SAME REASON `agent-session.ts` has none. The
- * relay resolves this bearer to exactly one pod; a `pod_name` argument here would make the
- * pod a caller's choice, and a capability document is a statement about WHO can be asked —
- * the one field that must not be pointable at somebody else.
- *
- * Signed, because an unsigned capability document is an unattributable instruction to POST
- * somewhere. The bytes are immutable once published and the key moves on, so a document that
- * was not signed at write time can never be attributed afterwards.
- */
-export async function publishCapability(
-  draft: CapabilityDraft,
-  // `Pick`, not the whole `StreamDeps`. This writes one document and reads nothing, so asking
-  // for `discover` / `getDescriptor` / `currentHead` / `fetchDocument` would force every caller
-  // to supply four functions it will not call — and the driver that did exactly that reached
-  // for `as never` to get past the compiler, which is a cast that would have hidden a genuine
-  // signature change just as effectively as it hid the four unused fields.
-  deps: Pick<StreamDeps, 'publish'>,
-): Promise<AdvertiseOutcome> {
-  const res = await deps.publish({
-    graph_iri: draft.iri,
-    graph_content: capabilityTurtle(draft),
-    visibility: 'public',
-    // The page reads the CURRENT head of this IRI, so republishing must move the head rather
-    // than fork it. There is no chain to preserve here — unlike a log, a capability document
-    // has no history a reader walks — so the substrate's own supersession is the right one.
-    auto_supersede_prior: true,
-    // ★ NO `conforms_to_shapes`, ON PURPOSE. The sibling writers pass `[WSP_SHAPES]` because
-    // that file constrains exactly what they emit — wsp:Entry, wsp:MembershipGrant,
-    // wsp:MembershipAcceptance. It says nothing about a capability document, so declaring
-    // conformance to it here would put a green "validated" on a gate that targets no node in
-    // this graph and could not fail. When a shape for this document exists, name it.
-    sign_authorship: true,
-  });
-  if (res['error'] !== undefined) {
-    return { outcome: 'refused', iri: draft.iri, message: String(res['message'] ?? res['error']) };
-  }
-  const descriptorUrl = typeof res['descriptorUrl'] === 'string' ? res['descriptorUrl'] : null;
-  return { outcome: 'published', iri: draft.iri, descriptorUrl, status: String(res['status'] ?? 'ok') };
-}
+/** The agent-scoped address, re-exported under the name this vertical's callers already use. */
+export const workspaceCapabilityIri = capabilitiesIri;

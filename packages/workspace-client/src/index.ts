@@ -41,6 +41,8 @@ export {
   type HeadResult, type WorkspaceRecord, type MemberDocLookup,
 } from './substrate.js';
 
+export { RESPOND_AS_MEMBER, actionUrl, actionUrn, actionKey, sameAction } from './actions.js';
+
 export { orderChain, toChainRow, type ChainRow, type ChainWalk } from './chain.js';
 
 export { shortRef } from './format.js';
@@ -112,3 +114,29 @@ export {
   type SeenEntry, type TurnInput, type ChannelBrief, type TurnDecision, type DraftVerdict,
   type SpeakingDelegate,
 } from './localagent.js';
+
+/**
+ * The AGENT surface. ★ EVERY NAME HERE EXCEPT `agentPort` AND `admitSeatedIn` IS DEFINED IN
+ * `@interego/core/agent` and re-exported through these two adapters, for the same reason the
+ * delegate surface above is: an agent's identity, whether its host is running, what it can be
+ * asked, and whether an inbox pointer is a real request are Interego concepts. A workspace only
+ * ever REFERENCES agents that already exist — it does not get to say what one is.
+ *
+ * The two that are genuinely this vertical's are the two adapters: `agentPort` binds this package's
+ * transport to the substrate's port, and `admitSeatedIn` is a workspace's own answer to "may this
+ * party put work to me", which is the one question the substrate cannot answer for it.
+ */
+export {
+  PRESENCE_RENEW_MS, PRESENCE_LEASE_MS, PRESENCE_MAX_LEASE_MS,
+  agentPort, agentPodOf, delegatePodOf, agentNsIri, agentDocName, agentDocIri,
+  presenceIri, capabilitiesIri,
+  presenceTurtle, publishPresence, readPresence, isPresent, presenceLine, describeSpan,
+  capabilityProblem, capabilityTurtle, publishCapability, readCapabilities,
+  type AgentPort, type Presence, type PresencePublish,
+  type CapabilityDraft, type CapabilityRoute, type CapabilityPublish, type CapabilityRead,
+} from './presence.js';
+
+export {
+  REQUEST_INBOX_LIMIT, readRequests, verifyRequest, admitAnyVerifiedSigner, admitSeatedIn,
+  type RequestNotice, type RequestVerdict, type AdmissionPredicate,
+} from './request.js';

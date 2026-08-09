@@ -20,9 +20,20 @@
  * `iep:` namespace-URL prefix — those are already CURIEs/URLs, not `urn:iep:action:`.
  */
 
-/** The protocol naming authority that resolves action definitions. Env-overridable. */
-export const IEP_ACTION_AUTHORITY: string =
-  (process.env.IEP_ACTION_AUTHORITY ?? 'https://relay.interego.xwisee.com/ns/iep/action').replace(/\/+$/, '');
+/**
+ * The protocol naming authority that resolves action definitions. Env-overridable.
+ *
+ * ★ `process` IS TESTED FOR, NOT ASSUMED, AND THAT IS NOT DEFENSIVE PADDING. This module is
+ * import-free, which made it look portable, so it was published as the narrow `@interego/core/action`
+ * subpath for exactly the callers that cannot pull the barrel: a browser artifact and an Electron
+ * renderer. Both threw `process is not defined` AT MODULE SCOPE — before any function ran and
+ * before any test could report anything useful about the file it was actually testing. Import-free
+ * is not the same as environment-free, and a module offered to a browser has to be both.
+ */
+export const IEP_ACTION_AUTHORITY: string = ((): string => {
+  const env = typeof process === 'undefined' ? undefined : process.env?.IEP_ACTION_AUTHORITY;
+  return (env ?? 'https://relay.interego.xwisee.com/ns/iep/action').replace(/\/+$/, '');
+})();
 
 const LEGACY_ACTION_PREFIX = 'urn:iep:action:';
 const URL_AUTHORITY_PREFIX = `${IEP_ACTION_AUTHORITY}/`;

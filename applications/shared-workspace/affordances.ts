@@ -14,10 +14,20 @@
 
 import type { Affordance } from '../_shared/affordance-mcp/index.js';
 import type { IRI } from '@interego/core';
+/**
+ * ★ THE ACTION IS DEFINED IN THE VERTICAL'S CLIENT PACKAGE AND RE-EXPORTED HERE, not the other way
+ * round. Four things name it — this manifest, the capability document an agent publishes about
+ * itself, the desktop shell that publishes one, and any caller invoking it — and three of those are
+ * bundled for a browser or an Electron renderer, which cannot import this file without crossing a
+ * `rootDir`. So it lives where all four can reach it, and there is one spelling of it.
+ */
+import { RESPOND_AS_MEMBER } from '@interego/workspace-client';
+
+export { RESPOND_AS_MEMBER };
 
 const WSP_AFFORDANCES: ReadonlyArray<Affordance> = [
   {
-    action: 'urn:iep:action:wsp:respond-as-member' as IRI,
+    action: RESPOND_AS_MEMBER as IRI,
     toolName: 'wsp.respond_as_member',
     title: 'Read a workspace channel and answer in your own log',
     description:

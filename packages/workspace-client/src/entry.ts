@@ -68,6 +68,36 @@ export function entryTurtle(args: {
   readonly body: string;
   readonly prior: string | null;
   readonly author: EntryAuthor;
+  /**
+   * The agents this entry is a request TO, if any.
+   *
+   * ★ INSIDE THE SIGNED REGION, WHICH IS THE WHOLE POINT OF PUTTING IT HERE RATHER THAN IN THE
+   * NOTIFICATION. An inbox on this relay is world-writable, so who a request is for cannot travel
+   * by inbox — a forger could write it. Here it is covered by the same content-bound signature as
+   * the body, so whoever relays the pointer cannot change who the ask was addressed to.
+   *
+   * ★ AND THE PREDICATE IS `iep:`, NOT `wsp:`. Addressing a record to an agent is not something a
+   * room invented: a Foxxi record, a bare script's record and a channel entry all have to spell it
+   * the same way or an agent reading two of them gets two answers to one question. The verifier
+   * that reads it is at the substrate for exactly that reason, and a vertical-scoped predicate
+   * would have put it back out of reach of every agent that belongs to no room.
+   */
+  readonly addressedTo?: readonly string[];
+  /**
+   * The record this entry was written IN ANSWER TO.
+   *
+   * ★ THE DURABLE HALF OF "HAVE I ALREADY ANSWERED THIS", AND WITHOUT IT THAT PROPERTY IS A
+   * COMMENT. An agent's in-run set of answered asks dies with the process, so a host restarted
+   * after answering reads the same ask, judges it unanswered, and answers it again — a second
+   * permanent record saying the same thing, on somebody's public log, which cannot be edited or
+   * deleted. `prov:wasDerivedFrom` is what a reader — including this agent's next run, and the
+   * substrate's own request verifier — walks to find out that the answer already exists.
+   *
+   * `prov:` and not a minted term: "this was derived from that" is exactly what PROV-O already
+   * says, and restating it under our own name would make every reader outside this vertical learn
+   * a synonym.
+   */
+  readonly derivedFrom?: string | null;
   readonly createdIso?: string;
 }): string {
   const iri = (u: string, what: string): string => {
@@ -90,6 +120,16 @@ export function entryTurtle(args: {
   const footing = a.kind === 'delegate'
     ? footingTurtle({ entryIri, agentId: a.agentId, footing: a.footing, iri, endedIso: created })
     : null;
+  // ★ EVERY ADDRESSEE GOES THROUGH THE SAME IRI GUARD AS THE AUTHOR, and duplicates are collapsed
+  // rather than written twice. These ids come off a picker whose values came off somebody else's
+  // pod, so they are the same class of input as the author's identifier: a `>` in one would close
+  // the reference and every byte after it would parse as further triples, under this entry's own
+  // signature. There is no escape for it in Turtle's IRIREF production, so the only handling is the
+  // refusal `iri` already performs.
+  const addressed = [...new Set(args.addressedTo ?? [])];
+  const addressedLine = addressed.length
+    ? '  iep:addressedTo ' + addressed.map((t) => iri(t, 'an agent this entry is addressed to')).join(', ') + ' ;\n'
+    : '';
   return '@prefix wsp: <' + WSP + '> .\n'
     + '@prefix iep: <' + IEP + '> .\n'
     + '@prefix prov: <' + PROV + '> .\n'
@@ -101,6 +141,8 @@ export function entryTurtle(args: {
     + '  wsp:seq "' + args.seq + '"^^xsd:nonNegativeInteger ;\n'
     + (prior ? '  iep:supersedes ' + prior + ' ;\n' : '')
     + '  prov:wasAttributedTo ' + author + ' ;\n'
+    + addressedLine
+    + (args.derivedFrom ? '  prov:wasDerivedFrom ' + iri(args.derivedFrom, 'the record this entry answers') + ' ;\n' : '')
     + (footing ? footing.generatedBy : '')
     + '  dct:created "' + created + '"^^xsd:dateTime ;\n'
     + '  dct:description "' + escapeTurtleLiteral(args.body) + '" .\n'
@@ -210,6 +252,10 @@ export async function postEntry(
     readonly workspace: string;
     readonly body: string;
     readonly author: EntryAuthor;
+    /** Agents this entry is a request to. Written inside the signed region — see `entryTurtle`. */
+    readonly addressedTo?: readonly string[];
+    /** The record this entry answers, so a restarted host does not answer it twice. */
+    readonly derivedFrom?: string | null;
     readonly entryShape: string | null;
     readonly onAttempt?: (attempt: number) => void;
   },
@@ -241,7 +287,12 @@ export async function postEntry(
       // reported the append accepted.
       pod_name: args.podName,
       graph_iri: args.streamIri,
-      graph_content: entryTurtle({ streamIri: args.streamIri, workspace: args.workspace, seq, body: args.body, prior: prior ? prior.url : null, author: args.author }),
+      graph_content: entryTurtle({
+        streamIri: args.streamIri, workspace: args.workspace, seq, body: args.body,
+        prior: prior ? prior.url : null, author: args.author,
+        ...(args.addressedTo === undefined ? {} : { addressedTo: args.addressedTo }),
+        ...(args.derivedFrom === undefined ? {} : { derivedFrom: args.derivedFrom }),
+      }),
       visibility: 'public',
       auto_supersede_prior: false,
       sign_authorship: true,

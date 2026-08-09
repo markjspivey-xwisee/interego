@@ -56,7 +56,7 @@ import {
   shapesTurtle, verifyInvitation, workspaceTurtle, composedHandle,
   type Viewer,
 } from '@interego/workspace-client';
-import { publishCapability } from '../src/advertise.js';
+import { legacyWorkspaceCapabilityTurtle } from '../src/advertise.js';
 import { mintBearer, type Signer } from './live-identity.js';
 
 const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
@@ -118,16 +118,28 @@ async function advertiseAndInvoke(args: {
   head('the member publishes a capability document on its own pod');
   // The qualified form, which is what the artifact looks at first. `memberDocIris` is the same
   // function the artifact's reader uses, so writer and reader cannot disagree about the address.
+  //
+  // ★ THE ROOM-SCOPED NAME, DELIBERATELY, AND ONLY BECAUSE THIS DRIVER MEASURES THE ARTIFACT. An
+  // agent's capabilities live at `agent-<pod>-capabilities` on its own pod now — composed from its
+  // DID, so a peer that has never heard of this workspace can find them. `channel.html` has not
+  // been moved to that reader yet, and publishing only at the new address would have taken the "ask
+  // this member" control off a page already in people's hands with no error anywhere. The BYTES
+  // come from the one writer either way; only the address differs.
   const docIri = memberDocIris(RELAY, member.viewer.podName, convener.viewer.podName, slug, 'affordances')[0]!.iri;
   log('document :', docIri);
-  const advertised = await publishCapability({
-    iri: docIri, workspace, action, target,
+  const doc = legacyWorkspaceCapabilityTurtle({
+    relay: RELAY, memberPod: member.viewer.podName, convenerPod: convener.viewer.podName, slug,
+    agentId: member.viewer.webId, action, route: { kind: 'hosted', target },
     title: 'Read this channel and answer in my own log',
     description: 'Causes this agent to read the workspace and, if its role permits appending, write one '
       + 'entry to its own log on its own pod. The caller supplies no text.',
-  }, { publish: member.publish });
-  dump('publishCapability', advertised);
-  if (advertised.outcome !== 'published') return 'setup-failed';
+  });
+  const advertised = await member.publish({
+    graph_iri: doc.iri, graph_content: doc.turtle, visibility: 'public',
+    auto_supersede_prior: true, sign_authorship: true,
+  });
+  dump('publish_context', advertised);
+  if (advertised['error'] !== undefined) return 'setup-failed';
 
   // publish_context is DEFERRED — the descriptor is readable a few seconds later. Waiting for
   // the head to resolve is not politeness: invoking before it lands measures a 404 on a
