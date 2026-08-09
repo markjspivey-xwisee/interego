@@ -294,23 +294,31 @@ describe('refineFreshness — may only ever downgrade, and only on certainty', (
     const scope = bundlePathsFor('acme-id');
     expect(scope.confident).toBe(true);
 
+    const diffOf = (sha: string, paths: string[]): string[] => execFileSync(
+      'git', ['diff', '--name-only', `${sha}..HEAD`, '--', ...paths], { encoding: 'utf8' })
+      .split('\n').map((s) => s.trim()).filter(Boolean);
+
+    // ★ THE CONTROL IS BUILT INTO THE SEARCH, not asserted after it. The candidate must
+    // leave acme-id's scope untouched AND differ from HEAD overall — otherwise the empty
+    // scope-diff came from comparing a commit with itself rather than from the pathspec,
+    // and this would pass against a tool that never ran a diff at all.
+    //
+    // Not hypothetical: the first version searched only for the empty scope-diff and went
+    // green locally, then failed in CI. `pull_request` checks out a MERGE commit whose
+    // tree equals the branch tip's, so the very first ancestor examined was
+    // content-identical to HEAD — every diff empty, for the one reason that proves
+    // nothing. Local runs never saw it because master is not checked out that way.
     const log = execFileSync('git', ['log', '-40', '--format=%H'], { encoding: 'utf8' })
       .split('\n').map((s) => s.trim()).filter(Boolean);
-    const clean = log.slice(1).find((sha) => execFileSync(
-      'git', ['diff', '--name-only', `${sha}..HEAD`, '--', ...scope.paths], { encoding: 'utf8' }).trim() === '');
-    expect(clean, 'no ancestor within 40 commits leaves acme-id\'s scope untouched').toBeTruthy();
+    const clean = log.slice(1).find((sha) =>
+      diffOf(sha, scope.paths).length === 0 && diffOf(sha, []).length > 0);
+    expect(clean, "no ancestor within 40 commits both differs from HEAD and leaves acme-id's scope untouched")
+      .toBeTruthy();
 
     const out = refineFreshness(behindRow({ service: 'acme-id', tag: clean as string }));
     expect(out.freshness).toBe('equivalent');
     expect(out.bundleChanged).toEqual([]);
     expect(hasDisagreement([out])).toBe(false);
-
-    // ★ THE CONTROL, and it runs unconditionally. The range must be non-empty OVERALL, or
-    // the emptiness above came from comparing a commit with itself rather than from the
-    // pathspec, and the assertion would pass against a tool that never ran a diff at all.
-    const whole = execFileSync('git', ['diff', '--name-only', `${clean as string}..HEAD`], { encoding: 'utf8' })
-      .split('\n').filter(Boolean);
-    expect(whole.length).toBeGreaterThan(0);
   });
 
   it('★ the same ancestor does NOT clear a service that ships the changed paths', () => {
