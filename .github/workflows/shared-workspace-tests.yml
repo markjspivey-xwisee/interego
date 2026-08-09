@@ -17,9 +17,12 @@ name: Shared Workspace Tests
 #
 # `tests/build-sha-is-verifiable.test.ts` is here rather than with the other root tests because
 # what it asserts is a property OF THIS BOT: that the boot-proof needle
-# `tools/railway-services.mjs` polls for is a line `src/main.ts` really prints, and that it is
-# gated on the gateway reporting READY rather than on two HTTPS calls having succeeded. Those two
-# files can only drift apart from each other, so they are checked together and on either's change.
+# `tools/railway-services.mjs` polls for is a line `src/main.ts` really prints, that it is gated
+# on the gateway reporting READY rather than on two HTTPS calls having succeeded, and that
+# `tools/railway-redeploy.mjs` sends it to Railway QUOTED — without which a needle containing a
+# colon is read as a field selector and matches nothing, so every deploy of this service reported
+# "never printed" about a container that had booted. Those files can only drift apart from each
+# other, so they are checked together and on any of their changes.
 #
 # Pure in-process — no network, no secrets, no live service. Safe on every pull request.
 
@@ -30,6 +33,7 @@ on:
       - 'applications/shared-workspace/discord/**'
       - 'packages/workspace-client/**'
       - 'tools/railway-services.mjs'
+      - 'tools/railway-redeploy.mjs'
       - 'tests/build-sha-is-verifiable.test.ts'
       - '.github/workflows/shared-workspace-tests.yml'
   pull_request:
@@ -38,6 +42,7 @@ on:
       - 'applications/shared-workspace/discord/**'
       - 'packages/workspace-client/**'
       - 'tools/railway-services.mjs'
+      - 'tools/railway-redeploy.mjs'
       - 'tests/build-sha-is-verifiable.test.ts'
       - '.github/workflows/shared-workspace-tests.yml'
   workflow_dispatch:

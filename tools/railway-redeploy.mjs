@@ -590,9 +590,33 @@ async function verifyFromLogs(needle) {
  * deployment for this needle and getting its single boot line from day one. The hits are
  * then re-counted case-SENSITIVELY here, so the count that decides crash-loop-or-not is
  * this file's own comparison and not the platform's looser one.
+ *
+ * ★★ THE NEEDLE IS QUOTED, AND WITHOUT THE QUOTES THIS NEVER MATCHED ANYTHING FOR `discord`.
+ * Railway's filter is not a plain substring: it is a small query language, and a bare word
+ * ending in a COLON is read as a FIELD SELECTOR rather than as text. `discord`'s needle has
+ * always begun `discord: `, so every poll asked for a field named `discord` and got nothing —
+ * for the four minutes the loop allows — and the tool then reported "never printed … within 4
+ * minutes" about a container whose logs contained the line, and exited 1. It is the mirror of
+ * the outage this needle was strengthened for: a RED that means nothing, on every single
+ * deploy of this service, which is precisely how an operator learns to disregard it.
+ *
+ * Measured against the live project on 2026-08-09, same deployment, same line:
+ *
+ *     filter `discord:`               → 0 lines
+ *     filter `discord`                → 5 lines
+ *     filter `discord: bot online`    → 0 lines      ← what this function used to send
+ *     filter `"discord: bot online"`  → 1 line       ← what it sends now
+ *     filter `discord\: bot online`   → 0 lines      (backslash escaping is not the syntax)
+ *
+ * Quoting is a no-op for a needle that has no colon — `"Listening to server at"` returns css's
+ * boot line exactly as the bare form does, checked the same way — so this is one rule for both
+ * services rather than a special case keyed on punctuation. And it stays an EXACT PHRASE, so it
+ * narrows as tightly as before and the css race the filter exists to close stays closed.
+ * `JSON.stringify` rather than string concatenation because it also escapes a quote or
+ * backslash inside a future needle, which hand-built quoting would smuggle into the syntax.
  */
 async function bootLines(needle) {
-  const d = await gql(LOGS, { id: deployId, limit: 500, filter: needle }, { tolerant: true });
+  const d = await gql(LOGS, { id: deployId, limit: 500, filter: JSON.stringify(needle) }, { tolerant: true });
   if (d?._transient) return null;
   return (d.deploymentLogs ?? []).map(l => String(l.message ?? '')).filter(m => m.includes(needle));
 }

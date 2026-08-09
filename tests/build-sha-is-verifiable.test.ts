@@ -199,8 +199,39 @@ describe('a portless service is verified from its own deployment logs', () => {
     // case-sensitive comparison rather than Railway's looser match.
     const src = read('tools/railway-redeploy.mjs');
     expect(src).toMatch(/deploymentLogs\(deploymentId:\$id,limit:\$limit,filter:\$filter\)/);
-    expect(src).toMatch(/filter: needle/);
+    expect(src).toMatch(/filter: JSON\.stringify\(needle\)/);
     expect(src).toMatch(/\.filter\(m => m\.includes\(needle\)\)/);
+  });
+
+  it('★ the needle reaches Railway QUOTED, or a needle containing a colon matches nothing', () => {
+    // ★ MEASURED 2026-08-09 against the live project, one deployment, one line:
+    //     filter `discord: bot online`   → 0 lines
+    //     filter `"discord: bot online"` → 1 line
+    //     filter `discord:`              → 0 lines, while `discord` → 5
+    // Railway's filter is a small query language, not a plain substring, and a bare word
+    // ending in a COLON is read as a FIELD SELECTOR. discord's needle has always begun
+    // `discord: `, so the poll asked for a field named `discord`, got nothing for the whole
+    // four minutes, and reported "never printed" about a container whose logs held the line.
+    // Every deploy of this service failed that way — the mirror of the outage the needle was
+    // strengthened for, and exactly how an operator learns to disregard a red.
+    const src = read('tools/railway-redeploy.mjs');
+    expect(src).not.toMatch(/filter: needle\b/);
+    // Quoting must be applied at the call, not left to the caller of the caller.
+    expect(src).toMatch(/filter: JSON\.stringify\(needle\)/);
+  });
+
+  it('★ every declared needle survives its own quoting round trip', () => {
+    // The guard against a future needle containing a character that would break back OUT of
+    // the quotes and become syntax again. JSON.stringify escapes them; this asserts the
+    // escaped form still contains the needle verbatim between its delimiters.
+    for (const name of serviceNames()) {
+      const proof = bootProofFor(name);
+      if (!proof.ok) continue;
+      const needle = (proof as { needle: string }).needle;
+      const quoted = JSON.stringify(needle);
+      expect(quoted.startsWith('"') && quoted.endsWith('"'), `${name}: not delimited`).toBe(true);
+      expect(quoted.slice(1, -1), `${name}: quoting altered the needle`).toBe(needle);
+    }
   });
 
   it('a declared singleton cannot be deployed while its live settings allow two containers', () => {
