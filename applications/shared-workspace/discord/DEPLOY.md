@@ -146,16 +146,22 @@ gh run watch
 On later deploys drop `set_registry_credentials` (harmless to repeat) and just pass `service` and
 `tag`. There is no `verify_url` to pass, and the deploy is still verified — just not over HTTP.
 Because the bot binds no port there is no URL to derive, so `tools/railway-redeploy.mjs` polls the
-**logs of the deployment it just triggered** until they report `discord: commands registered`, the
-line `src/main.ts` prints only after both credentials have worked (`rest.me()` authenticated the
-bot token, `session.open()` signed the bot key in to the relay). If that line appears **twice** in
+**logs of the deployment it just triggered** until they report `discord: bot online`, the line
+`src/main.ts` prints when — and only when — the Discord gateway has sent `READY` to *this*
+container. That is strictly later than both credentials (`rest.me()` authenticated the bot token,
+`session.open()` signed the bot key in to the relay), and it is the needle for a reason worth
+knowing: it used to be `discord: commands registered`, which proves two HTTPS calls succeeded and
+says **nothing about the WebSocket the bot's entire function depends on**. On 2026-08-09 the
+gateway died at 12:46 and the container sat there for 75 minutes with every boot line present,
+answering nothing in Discord, while Railway reported the deployment SUCCESS. If that line appears **twice** in
 one deployment the container restarted — a crash loop wearing a SUCCESS — and the deploy fails with
 the log tail. `css` is portless too and is still refused by name: nothing here decides what it
 prints, and it is the one service whose correctness needs exactly one container.
 
 **4. Confirm it is alive.** Open the service's **Deploy Logs** on Railway. A healthy boot prints,
 in order: the bot's pod, its wallet address, and **its agent DID** — copy that DID, it is what
-participants delegate — followed by the count of slash commands registered. The DID has the shape
+participants delegate — then whether the slash commands needed re-publishing, then `discord: bot
+online`. The DID has the shape
 
 ```
 did:web:identity.interego.xwisee.com:agents:interego-discord-<the bot's pod>
@@ -168,6 +174,27 @@ new DID; a changed client name is a new DID on the SAME pod. Either invalidates 
 already published, because a delegation names one exact agent string. If instead you see the
 `INTEREGO_BOT_KEY is not set` / `DISCORD_BOT_TOKEN is not set` refusal, a variable did not take; if
 you see close code `4014`, the MESSAGE CONTENT intent (Part A step 3) is off.
+
+### Two symptoms in Discord, and which one is a bug
+
+**"The application did not respond."** Discord invalidates an interaction token that is not
+acknowledged within **3 seconds**. Every command defers immediately (callback type 5) and edits the
+placeholder when the substrate work finishes, so the only way to see this message is that the bot
+never received the interaction at all — i.e. **the gateway is down**. Read the logs for
+`gateway closed`, `reconnecting in … (attempt N of 10)` and `gateway FATAL`. A bot that cannot
+re-establish the gateway after ten attempts now **exits non-zero on purpose**, so Railway restarts
+it; a worker that stays up with no connection is the worst state available, because the platform
+believes it is healthy and nothing tells anyone otherwise.
+
+**"This command is outdated, please try again in a few minutes."** This is Discord's own
+read-repair (error 50035, `INTERACTION_APPLICATION_COMMAND_INVALID_VERSION`): the client invoked a
+command carrying a `version` older than the registered one. Global commands reach clients through a
+cache, so after a **real** change to the command tree this is expected and self-healing within the
+hour — not a fault. It is only a bug if it keeps happening without the tree changing, and the boot
+log now settles which case you are in: the bot reads the registered commands first and prints either
+`commands are registered — unchanged since the last boot …` or `… the definitions differ …`. If you
+see the second line on a boot where nothing changed, the payload in `src/discord.ts` has drifted
+from what Discord normalises and stores, and `commandFingerprint` needs to account for the field.
 
 ---
 

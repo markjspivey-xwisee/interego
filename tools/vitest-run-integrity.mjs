@@ -191,8 +191,9 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // `existsSync`, so css's gitignored `packages/pgsl-store/dist` passed the untracked-source
 // guard because a local build had created it, and every change under `pgsl-store/src` went
 // unseen.
-// The tree reached 244.
-export const MIN_TEST_MODULES = 234;
+// The tree reached 245 — `applications/shared-workspace/discord/tests/gateway-liveness.test.ts`,
+// which spawns a real child process to prove the bot survives a gateway close.
+export const MIN_TEST_MODULES = 235;
 export const FLOOR_ALLOWANCE = 10;
 
 /**

@@ -147,6 +147,10 @@ interface Booted {
   readonly sockets: FakeSocket[];
   readonly lines: string[];
   readonly signals: string[];
+  /** Exit codes the wiring asked for. Empty is the healthy case. */
+  readonly exits: number[];
+  /** The handler `main` registered for "the event loop emptied", so a test can fire it. */
+  idle(): void;
   frame(f: unknown): void;
 }
 
@@ -157,6 +161,8 @@ async function boot(over: Partial<Boot> = {}): Promise<Booted> {
   const sockets: FakeSocket[] = [];
   const lines: string[] = [];
   const signals: string[] = [];
+  const exits: number[] = [];
+  let idle: (() => void) | null = null;
   const s = await main({
     env: { DISCORD_BOT_TOKEN: 'tok', INTEREGO_RELAY: RELAY, INTEREGO_IDENTITY: 'https://id.example' },
     argv: ['node', 'main.ts'],
@@ -166,12 +172,19 @@ async function boot(over: Partial<Boot> = {}): Promise<Booted> {
     statePath: statePath(),
     session: fakeSession().session,
     installSignalHandler: (sig) => { signals.push(sig); },
+    // ★ BOTH OF THESE MUST BE INJECTED OR THE SUITE TAKES ITSELF DOWN. The defaults are
+    // `process.exit` and `process.on('beforeExit')`; the second one is the dangerous one, because a
+    // vitest worker's loop DOES empty when the run finishes, and the real handler would then call
+    // `process.exit(1)` and turn a passing suite into a failed one with no failing test.
+    exit: (code) => { exits.push(code); },
+    onIdle: (h) => { idle = h; },
     ...over,
   });
   if (s === null) throw new Error('boot() is for the connecting path; use main() directly for --register-commands-only');
   started.push(s);
   return {
-    started: s, calls: rest.calls, sockets, lines, signals,
+    started: s, calls: rest.calls, sockets, lines, signals, exits,
+    idle: () => { if (idle) (idle as () => void)(); },
     frame: (f) => { s.gateway.onFrame(JSON.stringify(f)); },
   };
 }
@@ -229,6 +242,11 @@ describe('the boot sequence', () => {
 
     expect(b.calls.map((c) => c.method + ' ' + c.path)).toEqual([
       'GET /users/@me',
+      // ★ THE READ BEFORE THE WRITE. Discord rejects an invocation carrying a stale command
+      // `version` with "This command is outdated", so a PUT that changes nothing but bumps the
+      // version costs real users a working command for as long as their client caches the old one.
+      // The registered tree is read first and the PUT is a decision, not a reflex.
+      'GET /applications/app-1/commands',
       'PUT /applications/app-1/commands',
     ]);
     expect(sess.opens).toBe(1);
@@ -239,7 +257,7 @@ describe('the boot sequence', () => {
     expect(b.started.identity.pod).toBe(POD);
     // Connected: the gateway opened a socket and identified itself on HELLO.
     b.frame({ op: 10, d: { heartbeat_interval: 41250 } });
-    expect(b.lines.some((l) => l.includes('commands registered'))).toBe(true);
+    expect(b.lines.some((l) => l.includes('commands are registered'))).toBe(true);
   });
 
   it('--register-commands-only registers and stops: no relay session, no store, no socket', async () => {
@@ -286,6 +304,134 @@ describe('the boot sequence', () => {
     // Registration is asserted; the handlers are NOT invoked, because each one ends in
     // `process.exit(0)` and calling it would take the vitest worker down with it.
     expect(b.signals).toEqual(['SIGINT', 'SIGTERM']);
+  });
+
+  it('★ an unrecoverable gateway stops the watcher AND exits non-zero', async () => {
+    const opened: FakeSocket[] = [];
+    const b = await boot({
+      openSocket: () => { const s = new FakeSocket(); opened.push(s); return s as unknown as never; },
+      statePath: statePath((s) => { s.bindThread(binding()); }),
+    });
+    // The watcher really is watching something, which is the whole point of the assertion below.
+    expect(b.started.watcher.watching()).toEqual([THREAD]);
+
+    // 4004 — the bot token was rejected. No amount of reconnecting fixes it, so the gateway
+    // declares it fatal rather than looping.
+    opened[0]?.close(4004);
+    await settle();
+
+    expect(b.lines.some((l) => l.includes('gateway FATAL'))).toBe(true);
+    // ★ `process.exitCode = 1` USED TO BE THE WHOLE FATAL PATH, and it is not an exit. With a
+    // bound thread the watcher's poll interval is ref'd, so the bot would have gone on reading
+    // pods forever — unable to speak to Discord, flagged as failing to nobody, and reported
+    // SUCCESS by a platform that can only see whether the container is still running.
+    expect(b.started.watcher.watching(), 'the watcher kept polling after the bot gave up').toEqual([]);
+    expect(b.exits, 'a bot that gave up on Discord did not exit').toEqual([1]);
+  });
+
+  it('★ an event loop that empties is a loud non-zero exit, not a silent zero', async () => {
+    const b = await boot();
+    // The general form of the outage: every handle that could keep this worker alive went away.
+    // Node would exit 0 and Railway, whose restart policy is ON_FAILURE, would leave the
+    // deployment green with nothing behind it. `beforeExit` is the only hook that fires exactly
+    // then — not on an explicit `process.exit()`, so the SIGTERM path is untouched.
+    b.idle();
+    expect(b.exits).toEqual([1]);
+    expect(b.lines.some((l) => l.includes('the event loop emptied'))).toBe(true);
+  });
+});
+
+/**
+ * ★ THE THREE-SECOND WALL, MEASURED RATHER THAN READ.
+ *
+ * Discord invalidates an interaction token that is not acknowledged within THREE SECONDS, and the
+ * client renders "The application did not respond". Every command here is over the substrate: a
+ * fresh identity's first pod-aware call takes 12–17 seconds while `bootstrapPod` runs, and a
+ * manifest write is seconds on its own. So the acknowledgement cannot be allowed to depend on the
+ * work in any way, and "it defers first" is a claim about ORDER that reading the source can only
+ * suggest — the deferral is one `await` above the switch, and any future edit that moves a lookup
+ * above it would still look perfectly reasonable.
+ *
+ * These tests pin the order to work that NEVER COMPLETES, which is the limit case of slow and
+ * strictly worse than the 17 seconds actually measured. If the ACK is on the wire while the command
+ * is still hanging, no amount of substrate latency can ever cost the user their interaction.
+ */
+describe('acknowledging inside Discord\'s three seconds', () => {
+  /** A promise the test decides when to settle. */
+  function gate<T>(): { promise: Promise<T>; release: (v: T) => void } {
+    let release!: (v: T) => void;
+    const promise = new Promise<T>((r) => { release = r; });
+    return { promise, release };
+  }
+
+  it('★ ACKs a command whose substrate work has not finished — and follows up only afterwards', async () => {
+    const g = gate<unknown>();
+    wsp.startWorkspace.mockReturnValue(g.promise);
+
+    const b = await boot();
+    const t0 = Date.now();
+    b.frame(interaction('start'));
+    await settle();
+    const ackMs = Date.now() - t0;
+
+    // The work is still in flight — the spy was entered and its promise has not settled.
+    expect(wsp.startWorkspace).toHaveBeenCalledTimes(1);
+    const ack = b.calls.find((c) => c.path === '/interactions/i1/itok/callback');
+    expect(ack, 'nothing acknowledged the interaction while the command was still running').toBeTruthy();
+    // Type 5 = DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE: the "thinking" state, which converts the
+    // 3-second wall into the 15-minute follow-up window.
+    expect(ack?.body?.['type']).toBe(5);
+    expect(ackMs, 'the acknowledgement itself took longer than Discord allows').toBeLessThan(3000);
+
+    // ★ AND THE ANSWER HAS NOT BEEN SENT YET, which is what makes the above meaningful. If a PATCH
+    // were already here the command would simply have been fast, and the ordering unproven.
+    expect(b.calls.some((c) => c.method === 'PATCH')).toBe(false);
+
+    g.release({ kind: 'not-linked' });
+    await settle();
+    const followUp = b.calls.find((c) => c.method === 'PATCH');
+    expect(followUp, 'the deferred placeholder was never replaced with the real answer').toBeTruthy();
+    expect(followUp?.path).toContain('/webhooks/app-1/itok/messages/@original');
+  });
+
+  it('★ every command ACKs first, not just `start`', async () => {
+    // The brief's instruction, as a loop. `link-confirm` reads a pod registry and `show` folds
+    // every member's log; both are as slow as `start` and neither was covered. A command added
+    // later that skipped the deferral would fail here rather than in Discord.
+    const hang = (): Promise<never> => new Promise<never>(() => { /* never settles */ });
+    for (const name of ['start', 'link', 'link-confirm', 'unlink', 'show', 'who', 'ask'] as const) {
+      wsp.startWorkspace.mockReturnValue(hang());
+      wsp.confirmLink.mockReturnValue(hang());
+      wsp.showWorkspace.mockReturnValue(hang());
+      askmod.ask.mockReturnValue(hang());
+      askmod.askCandidates.mockReturnValue(hang());
+      // `beginLink` and `unlink` are synchronous by design; they still must be deferred first,
+      // because the deferral carries the ephemeral flag and cannot be changed after the fact.
+      wsp.beginLink.mockReturnValue({ kind: 'challenge', agentId: 'did:ethr:0xbot', label: 'l', existing: null });
+      wsp.unlink.mockReturnValue({ kind: 'unlinked', pod: POD });
+
+      const b = await boot();
+      b.frame(interaction(name));
+      await settle();
+      const ack = b.calls.find((c) => c.path === '/interactions/i1/itok/callback');
+      expect(ack, `/workspace ${name} did not acknowledge before doing its work`).toBeTruthy();
+      expect(ack?.body?.['type'], `/workspace ${name} answered with the wrong callback type`).toBe(5);
+    }
+  });
+
+  it('the ACK is sent before the substrate is even entered', async () => {
+    // Strictly stronger than "before it finished": the ordering is asserted at the moment the
+    // command function is CALLED, so a deferral moved below a fast-but-real lookup still fails.
+    let deferredFirst = false;
+    const b = await boot();
+    wsp.showWorkspace.mockImplementation(() => {
+      deferredFirst = b.calls.some((c) => c.path === '/interactions/i1/itok/callback');
+      return Promise.resolve({ kind: 'not-a-workspace' });
+    });
+    b.frame(interaction('show'));
+    await settle();
+    expect(wsp.showWorkspace).toHaveBeenCalled();
+    expect(deferredFirst, 'the substrate was entered before Discord had been acknowledged').toBe(true);
   });
 });
 

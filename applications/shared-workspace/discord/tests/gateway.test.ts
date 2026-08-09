@@ -11,7 +11,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import {
-  DiscordGateway, DiscordRest, COMMANDS, INTENTS,
+  DiscordGateway, DiscordRest, COMMANDS, INTENTS, commandFingerprint,
   type GatewayAutocomplete, type GatewayInteraction, type GatewayMessage,
 } from '../src/discord.js';
 
@@ -310,6 +310,91 @@ describe('the command tree', () => {
     expect(agent['required']).toBe(true);
     expect(agent['choices']).toBeUndefined();
     expect(askCmd.options.find((o) => o['name'] === 'task')?.['required']).toBe(true);
+  });
+});
+
+/**
+ * ★ THE FINGERPRINT DECIDES WHETHER TO RE-REGISTER, AND BOTH WAYS OF BEING WRONG COST SOMETHING.
+ *
+ * Too eager and every boot bumps the command `version`, which makes Discord reject invocations
+ * carrying the older one — "This command is outdated, please try again in a few minutes" — for as
+ * long as a client caches it. Too lax and a real edit to the tree is never published, which is the
+ * worse of the two because nothing anywhere would say so.
+ */
+describe('deciding whether the command tree needs re-registering', () => {
+  /** What Discord hands back: the same tree plus the fields it fills in and this bot never sends. */
+  const asDiscordStoredIt = (): readonly unknown[] => [{
+    id: '123456789',
+    application_id: '987654321',
+    version: '111222333',
+    default_member_permissions: null,
+    dm_permission: true,
+    nsfw: false,
+    // Discord stores CHAT_INPUT explicitly; the bot omits it and relies on the default.
+    type: 1,
+    name: 'workspace',
+    description: COMMANDS[0].description,
+    options: COMMANDS[0].options.map((o) => ({
+      type: o.type, name: o.name, description: o.description,
+      // And it fills in the optional flags the bot leaves off.
+      ...(('options' in o) ? {
+        options: (o as { options: readonly Record<string, unknown>[] }).options.map((x) => ({
+          required: false, autocomplete: false, ...x,
+        })),
+      } : {}),
+    })),
+  }];
+
+  it('★ calls an untouched tree unchanged, despite the fields Discord adds to it', () => {
+    // If this were ever false the bot would re-publish on every boot and every restart would cost
+    // real users a working command until their client caught up.
+    expect(commandFingerprint(asDiscordStoredIt()))
+      .toBe(commandFingerprint(COMMANDS as unknown as readonly unknown[]));
+  });
+
+  it('is not fooled by ordering, which carries no meaning', () => {
+    const shuffled = [{ ...COMMANDS[0], options: [...COMMANDS[0].options].reverse() }];
+    expect(commandFingerprint(shuffled)).toBe(commandFingerprint(COMMANDS as unknown as readonly unknown[]));
+  });
+
+  it('★ sees every kind of real edit, so nothing ships unpublished', () => {
+    const base = commandFingerprint(COMMANDS as unknown as readonly unknown[]);
+    const tree = COMMANDS[0];
+    const variant = (over: Record<string, unknown>): string => commandFingerprint([{ ...tree, ...over }]);
+
+    // A reworded description is a real change: it is what people read in the command picker.
+    expect(variant({ description: 'Something else entirely' })).not.toBe(base);
+    // A subcommand removed.
+    expect(variant({ options: tree.options.filter((o) => o.name !== 'who') })).not.toBe(base);
+    // A subcommand added.
+    expect(variant({ options: [...tree.options, { type: 1, name: 'archive', description: 'x' }] })).not.toBe(base);
+    // A subcommand renamed.
+    expect(variant({
+      options: tree.options.map((o) => (o.name === 'show' ? { ...o, name: 'view' } : o)),
+    })).not.toBe(base);
+    // An argument made optional — the change that would let `/workspace link-confirm` be invoked
+    // with no pod at all.
+    expect(variant({
+      options: tree.options.map((o) => (o.name === 'link-confirm'
+        ? { ...o, options: [{ ...(o as unknown as { options: readonly Record<string, unknown>[] }).options[0], required: false }] }
+        : o)),
+    })).not.toBe(base);
+    // The live picker switched off, which would silently turn `ask` into a free-text field.
+    expect(variant({
+      options: tree.options.map((o) => (o.name === 'ask'
+        ? {
+          ...o,
+          options: (o as unknown as { options: readonly Record<string, unknown>[] }).options
+            .map((x) => (x['name'] === 'agent' ? { ...x, autocomplete: false } : x)),
+        }
+        : o)),
+    })).not.toBe(base);
+  });
+
+  it('treats an empty answer as different, so a wiped registration is republished', () => {
+    // A GET that returns nothing at all — the commands were deleted out from under the bot — must
+    // not read as "unchanged, nothing to do".
+    expect(commandFingerprint([])).not.toBe(commandFingerprint(COMMANDS as unknown as readonly unknown[]));
   });
 });
 

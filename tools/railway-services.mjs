@@ -93,7 +93,7 @@ export const SERVICES = {
   discord: {
     repo: 'interego-discord',
     health: null,
-    bootProof: 'discord: commands registered',
+    bootProof: 'discord: bot online',
   },
 
   // The one that is not. `interego-css` has never existed at any tag; build-ghcr.yml
@@ -374,11 +374,17 @@ export function healthPathFor(service) {
  *
  * ── WHY THE NEEDLE IS THE *LAST* BOOT LINE ───────────────────────────────────
  *
- * For discord it is `discord: commands registered`, which src/main.ts prints only after
- * BOTH credentials have been exercised: `rest.me()` (the Discord token authenticated) and
- * `session.open()` (the bot key signed in to the relay). "The process started" would have
- * been satisfied by a container that then refused both. A test asserts this string is still
- * present in main.ts, so renaming the log line fails the suite rather than the deploy.
+ * For discord it is `discord: bot online`, which src/main.ts prints when — and only when —
+ * the Discord gateway has sent READY to THIS container. That is strictly later than both
+ * credentials: `rest.me()` (the Discord token authenticated) and `session.open()` (the bot
+ * key signed in to the relay) have already returned by then. A test asserts this string is
+ * still present in main.ts, so renaming the log line fails the suite rather than the deploy.
+ *
+ * ★ IT USED TO BE `discord: commands registered`, AND AN OUTAGE SHOWED WHY THAT WAS TOO WEAK.
+ * That line proves two HTTPS calls succeeded and says nothing about the WebSocket the bot's
+ * entire function depends on. A container whose gateway never connected — or connected and
+ * silently died minutes later — printed every boot line perfectly and answered nothing in
+ * Discord. Only the READY line is a statement about the thing that has to be true.
  *
  * ── css: WHY IT WAS REFUSED, AND WHAT REPLACED THE REFUSAL ───────────────────
  *
