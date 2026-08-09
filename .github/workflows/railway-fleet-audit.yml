@@ -80,7 +80,14 @@ jobs:
           RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
         run: node tools/railway-pins.mjs
 
-      - name: Fail if any service contradicts what this repository asserts
+      # ★ NOT `railway-pins.mjs --check`. That asks "is every pin the tip of master", which
+      # has no green answer in a repository that merges more often than it deploys —
+      # measured: commit 2ecd003 touched only .github/, tools/ and tests/, paths NO service
+      # bundles, and turned all sixteen rows red. tools/railway-fleet-audit.ts asks whether
+      # the drift touches anything each service actually SHIPS, reading that from the
+      # service's own Dockerfile, and fails closed on every uncertainty. It calls the same
+      # unmodified `hasDisagreement`, so no axis is dropped.
+      - name: Fail if any service is not running the image master would build for it
         env:
           RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
-        run: node tools/railway-pins.mjs --check
+        run: npx tsx tools/railway-fleet-audit.ts

@@ -180,7 +180,19 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // ★ The floor was ALSO 10 behind a tree of 242 before this suite existed — at exactly the
 // allowance, so the next test file added anywhere was going to trip it regardless of what it was.
 // The tree reached 243.
-export const MIN_TEST_MODULES = 233;
+// 233 -> 234: the one thing allowed to turn a red pin green.
+// `tests/deploy-bundle-scope.test.ts` is the new suite. Scoping the deploy gate did not cure
+// the always-red disease, it moved it: the very commit that shipped the scoped gate touched
+// only `.github/`, `tools/` and `tests/` — paths no service bundles — and turned all sixteen
+// rows of the new scheduled audit red. `refineFreshness` rewrites BEHIND to `equivalent` when
+// the drift touches nothing the service copies into its image, which makes the audit passable
+// and also makes it, structurally, a false-green generator if it errs permissively. Every test
+// in the suite is about the DIRECTION of a mistake. It was written after one: `tracked()` used
+// `existsSync`, so css's gitignored `packages/pgsl-store/dist` passed the untracked-source
+// guard because a local build had created it, and every change under `pgsl-store/src` went
+// unseen.
+// The tree reached 244.
+export const MIN_TEST_MODULES = 234;
 export const FLOOR_ALLOWANCE = 10;
 
 /**

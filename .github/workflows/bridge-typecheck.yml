@@ -103,6 +103,12 @@ on:
       - 'package.json'
       - 'package-lock.json'
       - '.gitattributes'
+      # ★ ADDED BY tests/workflow-trigger-covers-the-suite.test.ts, again, and again not by
+      # anyone noticing. tests/deploy-bundle-scope.test.ts asserts that `.dockerignore` is in
+      # EVERY service's image scope — it is the file that decides what reaches a `context: .`
+      # build at all, and commit 857c536 touched only it. Without this entry a commit editing
+      # only .dockerignore would merge with the assertion about it never executed.
+      - '.dockerignore'
   pull_request:
     branches: [master]
     paths:
@@ -178,6 +184,12 @@ on:
       - 'package.json'
       - 'package-lock.json'
       - '.gitattributes'
+      # ★ ADDED BY tests/workflow-trigger-covers-the-suite.test.ts, again, and again not by
+      # anyone noticing. tests/deploy-bundle-scope.test.ts asserts that `.dockerignore` is in
+      # EVERY service's image scope — it is the file that decides what reaches a `context: .`
+      # build at all, and commit 857c536 touched only it. Without this entry a commit editing
+      # only .dockerignore would merge with the assertion about it never executed.
+      - '.dockerignore'
 
 permissions:
   contents: read

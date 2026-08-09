@@ -532,7 +532,12 @@ const BASELINE = {};
 // reported unset since the invariant was declared, with nothing in the repo able to set it, so
 // the finding had no remedy and a permanent red is a red nobody reads), and
 // `tests/railway-scoped-check-is-not-weaker.test.ts`.
-export const MIN_FILES = 403;
+// 403 -> 406: asking the freshness question that has an achievable green. Three new files:
+// `tools/deploy-bundle-scope.ts` (does the drift touch anything this service SHIPS? — derived
+// from the service's own Dockerfile via the build matrix, never a hand-kept list, and failing
+// closed on every uncertainty), `tools/railway-fleet-audit.ts` (the scheduled audit built on
+// it, calling the same unmodified `hasDisagreement`), and `tests/deploy-bundle-scope.test.ts`.
+export const MIN_FILES = 406;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.
