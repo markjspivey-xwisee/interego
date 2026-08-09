@@ -53,6 +53,13 @@ COPY packages/security-txt/package.json ./packages/security-txt/
 COPY packages/skills/package.json ./packages/skills/
 COPY packages/solid/package.json ./packages/solid/
 COPY packages/transactions/package.json ./packages/transactions/
+# ★ ADDED WHEN `affordances.ts` STARTED IMPORTING IT. The action IRI this bridge advertises is
+# defined in the vertical's client package, because four things name it and three of them are
+# bundled for a browser or an Electron renderer and cannot reach `applications/…/affordances.ts`
+# without crossing a `rootDir`. Without this line `npm ci` never registers the workspace, the
+# symlink below has nothing to point at, and the bridge fails to resolve it AT RUNTIME — after a
+# green build, which is the worst place to find out.
+COPY packages/workspace-client/package.json ./packages/workspace-client/
 COPY mcp-server/package.json ./mcp-server/
 COPY deploy/mcp-relay/package.json ./deploy/mcp-relay/
 COPY deploy/identity/package.json ./deploy/identity/
@@ -86,7 +93,8 @@ RUN npm run build
 RUN mkdir -p node_modules/@interego \
   && ln -sfn /app/packages/core node_modules/@interego/core \
   && ln -sfn /app/packages/solid node_modules/@interego/solid \
-  && ln -sfn /app/packages/pgsl node_modules/@interego/pgsl
+  && ln -sfn /app/packages/pgsl node_modules/@interego/pgsl \
+  && ln -sfn /app/packages/workspace-client node_modules/@interego/workspace-client
 
 # ────────────────────────────────────────────────────────────
 #  Runtime stage
