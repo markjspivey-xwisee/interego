@@ -2644,7 +2644,7 @@ var WSPC = (() => {
     const footing = a.kind === "delegate" ? footingTurtle({ entryIri, agentId: a.agentId, footing: a.footing, iri, endedIso: created2 }) : null;
     const addressed = [...new Set(args.addressedTo ?? [])];
     const addressedLine = addressed.length ? "  iep:addressedTo " + addressed.map((t) => iri(t, "an agent this entry is addressed to")).join(", ") + " ;\n" : "";
-    return "@prefix wsp: <" + WSP + "> .\n@prefix iep: <" + IEP + "> .\n@prefix prov: <" + PROV + "> .\n@prefix dct: <http://purl.org/dc/terms/> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n" + subject + "\n  a wsp:Entry ;\n  wsp:workspace " + workspace + ' ;\n  wsp:seq "' + args.seq + '"^^xsd:nonNegativeInteger ;\n' + (prior ? "  iep:supersedes " + prior + " ;\n" : "") + "  prov:wasAttributedTo " + author + " ;\n" + addressedLine + (footing ? footing.generatedBy : "") + '  dct:created "' + created2 + '"^^xsd:dateTime ;\n  dct:description "' + escapeTurtleLiteral2(args.body) + '" .\n' + (footing ? footing.blocks : "");
+    return "@prefix wsp: <" + WSP + "> .\n@prefix iep: <" + IEP + "> .\n@prefix prov: <" + PROV + "> .\n@prefix dct: <http://purl.org/dc/terms/> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n" + subject + "\n  a wsp:Entry ;\n  wsp:workspace " + workspace + ' ;\n  wsp:seq "' + args.seq + '"^^xsd:nonNegativeInteger ;\n' + (prior ? "  iep:supersedes " + prior + " ;\n" : "") + "  prov:wasAttributedTo " + author + " ;\n" + addressedLine + (args.derivedFrom ? "  prov:wasDerivedFrom " + iri(args.derivedFrom, "the record this entry answers") + " ;\n" : "") + (footing ? footing.generatedBy : "") + '  dct:created "' + created2 + '"^^xsd:dateTime ;\n  dct:description "' + escapeTurtleLiteral2(args.body) + '" .\n' + (footing ? footing.blocks : "");
   }
   function preconditionLine(pc, sent, sentKind) {
     if (pc && typeof pc === "object") {
@@ -2703,7 +2703,8 @@ var WSPC = (() => {
           body: args.body,
           prior: prior ? prior.url : null,
           author: args.author,
-          ...args.addressedTo === void 0 ? {} : { addressedTo: args.addressedTo }
+          ...args.addressedTo === void 0 ? {} : { addressedTo: args.addressedTo },
+          ...args.derivedFrom === void 0 ? {} : { derivedFrom: args.derivedFrom }
         }),
         visibility: "public",
         auto_supersede_prior: false,
@@ -4340,17 +4341,23 @@ var WSPC = (() => {
     const askerPod = podOfDescriptorUrl2(descriptorUrl);
     checks.push({ mark: "y", text: "The address in the notice resolves to a descriptor" + (askerPod ? " served from pod " + askerPod : "") });
     const block = d["authorship"];
-    const verified = block?.["authorshipVerified"] === true || block?.["signed"] === true;
     const binding = typeof block?.["contentBinding"] === "string" ? block["contentBinding"] : null;
     const signedBy = typeof block?.["signedBy"] === "string" ? block["signedBy"] : typeof block?.["signer"] === "string" ? block["signer"] : null;
+    const descriptorBound = block?.["descriptorBinding"]?.bound === true;
     const withDoc = { descriptorUrl, askerPod, signedBy };
-    if (!verified) {
-      return no("that record's authorship did not verify, so who wrote the ask is not established and nothing is being run on it", withDoc);
-    }
     if (binding !== "bound" && binding !== "bound-at-signing") {
-      return no(`that record's signature reports contentBinding "` + (binding ?? "none") + '", so it covers WHICH document was written and not WHAT it says \u2014 the ask inside it is not something that signature stands behind', withDoc);
+      return no(`that record's signature reports contentBinding "` + (binding ?? "none") + '". Only "bound" means a signature was verified AND its digest recomputed over the bytes being served, so nothing here establishes that what the ask says is what anybody signed.', withDoc);
     }
-    checks.push({ mark: "y", text: "Its authorship verified and its signature is bound to its own content" });
+    if (!signedBy) {
+      return no("that record's content is bound to a signature and the response names no signer, so who wrote the ask is not established \u2014 and check 3 below has nothing to hold the deliverer against", withDoc);
+    }
+    checks.push({ mark: "y", text: "Its signature is intact and bound to its own content, signed by " + signedBy });
+    if (!descriptorBound) {
+      checks.push({
+        mark: "q",
+        text: "Its proof does not bind to the address it was served from \u2014 the ordinary shape of a delegated write, where the signer is the agent and the pod is its delegator's. What rules out a proof replayed onto somebody else's pod is not this field but the two checks below: the party that delivered the pointer must BE the signer, and the pod it was served from must have standing."
+      });
+    }
     if (!notice.actor) {
       return no("the notice names no actor, so whether the party that delivered it is the party that wrote the record is not established", withDoc);
     }

@@ -83,6 +83,21 @@ export function entryTurtle(args: {
    * would have put it back out of reach of every agent that belongs to no room.
    */
   readonly addressedTo?: readonly string[];
+  /**
+   * The record this entry was written IN ANSWER TO.
+   *
+   * ★ THE DURABLE HALF OF "HAVE I ALREADY ANSWERED THIS", AND WITHOUT IT THAT PROPERTY IS A
+   * COMMENT. An agent's in-run set of answered asks dies with the process, so a host restarted
+   * after answering reads the same ask, judges it unanswered, and answers it again — a second
+   * permanent record saying the same thing, on somebody's public log, which cannot be edited or
+   * deleted. `prov:wasDerivedFrom` is what a reader — including this agent's next run, and the
+   * substrate's own request verifier — walks to find out that the answer already exists.
+   *
+   * `prov:` and not a minted term: "this was derived from that" is exactly what PROV-O already
+   * says, and restating it under our own name would make every reader outside this vertical learn
+   * a synonym.
+   */
+  readonly derivedFrom?: string | null;
   readonly createdIso?: string;
 }): string {
   const iri = (u: string, what: string): string => {
@@ -127,6 +142,7 @@ export function entryTurtle(args: {
     + (prior ? '  iep:supersedes ' + prior + ' ;\n' : '')
     + '  prov:wasAttributedTo ' + author + ' ;\n'
     + addressedLine
+    + (args.derivedFrom ? '  prov:wasDerivedFrom ' + iri(args.derivedFrom, 'the record this entry answers') + ' ;\n' : '')
     + (footing ? footing.generatedBy : '')
     + '  dct:created "' + created + '"^^xsd:dateTime ;\n'
     + '  dct:description "' + escapeTurtleLiteral(args.body) + '" .\n'
@@ -238,6 +254,8 @@ export async function postEntry(
     readonly author: EntryAuthor;
     /** Agents this entry is a request to. Written inside the signed region — see `entryTurtle`. */
     readonly addressedTo?: readonly string[];
+    /** The record this entry answers, so a restarted host does not answer it twice. */
+    readonly derivedFrom?: string | null;
     readonly entryShape: string | null;
     readonly onAttempt?: (attempt: number) => void;
   },
@@ -273,6 +291,7 @@ export async function postEntry(
         streamIri: args.streamIri, workspace: args.workspace, seq, body: args.body,
         prior: prior ? prior.url : null, author: args.author,
         ...(args.addressedTo === undefined ? {} : { addressedTo: args.addressedTo }),
+        ...(args.derivedFrom === undefined ? {} : { derivedFrom: args.derivedFrom }),
       }),
       visibility: 'public',
       auto_supersede_prior: false,

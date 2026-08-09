@@ -1393,6 +1393,42 @@ describe('the local agent is off, visible, and stoppable', () => {
     expect(text(o.doc, '#agentwhy')).toContain('said its host was running');
   });
 
+  /**
+   * ★ THE DURABLE HALF OF "HAVE I ALREADY ANSWERED THIS", AND WITHOUT IT IT IS A COMMENT.
+   *
+   * `A.answered` dies with the process. A host restarted after answering reads the same ask, judges
+   * it unanswered, and appends a SECOND permanent record saying the same thing to somebody's public
+   * log — which cannot be edited or deleted. The link on the pod is what the next run, and the
+   * substrate's own request verifier, walk to find out the answer already exists.
+   */
+  it('★ a delegate\'s answer DECLARES the ask it answers, so a restart cannot answer it twice', async () => {
+    const o = await open({
+      setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'What did we decide about the roof?', '2026-08-07T10:00:00.000Z')); },
+      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: OWN + 'Patching buys a year.', why: 'ok', ms: 900 }) },
+    });
+    await signInAndSpeak(o);
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    click(o.doc, 'agentsend');
+    await o.settle();
+    const ttl = String(entryPublishes(o).slice(-1)[0]?.input['graph_content']);
+    // The ask it answered is the entry already in POD_B's log, by its descriptor URL.
+    expect(ttl).toMatch(/prov:wasDerivedFrom <[^>]+>/);
+    // `prov:` and not a minted term: "this was derived from that" is what PROV-O already says.
+    expect(ttl).not.toContain('wsp:answers');
+  });
+
+  it('a PERSON\'s post declares no such link, because a person is not looping', async () => {
+    const o = await open({
+      setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'What did we decide?', '2026-08-07T10:00:00.000Z')); },
+    });
+    await signInAndSettle(o);
+    (o.doc.getElementById('composer') as HTMLTextAreaElement).value = 'I think we re-tile.';
+    click(o.doc, 'send');
+    await o.settle();
+    expect(String(entryPublishes(o).slice(-1)[0]?.input['graph_content'])).not.toContain('wasDerivedFrom');
+  });
+
   it('★ switching it off RETRACTS NOTHING — the lease lapses on its own', async () => {
     // ★ A RETRACTION WOULD BE A LIE OF OMISSION IN THE OTHER DIRECTION. A host that CRASHES cannot
     // publish one either, so a design that depended on a retraction would report a crashed agent as

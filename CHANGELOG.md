@@ -17,14 +17,79 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
   record of what changed; they are pinned at 78 so that a *new* citation which fails to
   resolve — a typo, or a hash from someone's local branch — fails the gate the day it is
   written.
-- **There is a large undocumented backlog.** The marker below names the newest commit
-  through which this file is *continuously* current — entries after it exist (the
-  2026-08-04 one, for instance) but are spot entries, not coverage. 433 commits have landed
-  since that anchor. That count is measured from git on every run and has a ceiling, because
-  the previous statement of it lived in a pull request body, said 235, and had reached 431
-  by the time anyone re-measured.
+- **The undocumented backlog is a measured number, and right now it is zero.** The marker
+  below names the newest commit through which this file is *continuously* current;
+  everything after it is undocumented, the count is measured from git on every run, and it
+  has a ceiling. It reached 471 against the old anchor and was moved forward when the entry
+  below was written. The ceiling exists because the previous statement of this number lived
+  in a pull request body, said 235, and had reached 431 by the time anyone re-measured — so
+  the figure in this paragraph is deliberately not a figure any more. `node
+  tools/changelog-lint.mjs` prints the current one.
 
-<!-- documented-through: 2a4f2bb -->
+<!-- documented-through: 3c18204 -->
+
+---
+
+## 2026-08-09 — an agent you can find, ask, and tell whether it is there
+
+### Added
+- **An agent is now two documents at two addresses composed from its DID alone** —
+  `<relay>/ns/<pod>/agent-<pod>-presence` and `…-capabilities`, both on the agent's own pod and
+  signed with its own key. Hold a DID, compose two URLs: no directory, no roster, no channel.
+  Driven live against the relay, a party holding only the DID reads both and verifies both, with
+  no workspace anywhere. The previous capability document was named
+  `<member pod>/<convener pod>--<slug>-affordances`, which described a capability as a fact about
+  an agent *in one room* — duplicated per room, findable only by somebody who already knew the
+  convener and the slug, and invisible to "does anyone here have a tool for X".
+- **Presence, as a short signed lease and never as a flag.** Republished every 90 s claiming
+  180 s, and it decays on the relay's own temporal filter, so nothing runs a timer and nothing has
+  to notice an outage. A relay-held "online" flag is deliberately refused — that would be a third
+  party vouching for a process it cannot see. Five answers and only one is presence: `running`,
+  `stale`, `never`, `overlong` (a lease long enough that renewing it proved nothing —
+  `valid_until` is caller-supplied), `unreadable`. Every rendered sentence is about a document:
+  "said so 41s ago", never "is online". Switching a delegate off retracts nothing, because a host
+  that *crashed* could not retract either.
+- **The Discord bot has a producer.** Its only `setInterval` was the gateway heartbeat, so an
+  agent could read a channel, think on its own human's subscription and append a signed answer,
+  and Discord would never show it. A change-only watch per seated member's log now composes the
+  *same* `showWorkspace` that `/workspace show` calls, so the pushed line and the pulled line
+  cannot disagree. Plus `/workspace who` and `/workspace ask`, whose picker is live per keystroke
+  because which agents exist, which their delegator still authorises and which have said their
+  host is up are facts on other people's pods that this bot may not cache.
+
+### Fixed
+- **The request verifier refused every record it exists to accept.** It required
+  `authorshipVerified`, which is the conjunction of "the signature verified" *and* "the proof
+  names the URL it was served from" — and the second half is false **by construction** for every
+  delegated cross-pod write, which is every entry a conduit relays and every entry a desktop
+  delegate writes for its human. Measured live: such a write returns `authorshipVerified: false`,
+  `descriptorBinding: {bound:false}`, `contentBinding: "bound"`, and a reason beginning "the
+  authorship proof's signature is **intact**". So the ask-and-wake path reported "authorship did
+  not verify" about a signature the relay had just called intact. The check is now
+  `contentBinding === 'bound'`, which the relay's own verifier only ever produces on a path where
+  the signature verified and its digest was recomputed over the served payload; the unbound
+  descriptor is *reported* as an open question naming what carries the weight instead.
+- **The Discord gateway dropped interaction type 4 outright**, so the live agent picker received
+  nothing at all.
+- **A `urn:` action made a workspace agent look capable of nothing.** `capabilitiesFromAffordances`
+  drops any action that is not `http(s)` — correctly, since an unfollowable capability is a promise
+  the substrate cannot keep — but it drops it with a bare `continue`, so the one thing a workspace
+  agent can be asked to do vanished from every per-agent card with no error anywhere, and A2A peers
+  reading that card concluded the agent could do nothing.
+- **A delegate's answer now declares the ask it answers** (`prov:wasDerivedFrom`). Without it the
+  "already answered" test lived only in memory, so a restarted host read the same ask, judged it
+  unanswered, and appended a second permanent record saying the same thing.
+
+### Changed
+- **Moved down to the substrate**, where every vertical reaches them from the layer below rather
+  than sideways out of a peer's client package: agent addressing, the presence lease, the
+  capability document and inbox-request verification (`@interego/core/agent`); and the Turtle
+  scanner, comment/literal mask, region locator and term readers (`@interego/core/rdf/turtle-region`),
+  parameterised by a prefix table so `wsp:` stays out of the substrate. Request check 5 became a
+  pluggable admission predicate — a workspace supplies "seated here", a Codex agent an allowlist,
+  a bare delegate any verified signer. It previously took `seats: readonly Seat[]` and was
+  therefore unusable by an agent belonging to no workspace, which made "a workspace is merely a
+  room agents talk in" false in the code however often it was true in the comments.
 
 ---
 

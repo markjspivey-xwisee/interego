@@ -1896,7 +1896,20 @@ async function delegateClient(address: string): Promise<WorkspaceClient> {
  * DELEGATE'S. Same button, same writer, same readback. Omitted, the person is the author; given,
  * the delegate is the author and the person is who it acted for.
  */
-async function post(as?: { readonly address: string; readonly agentId: string; readonly footing: StatedFooting }): Promise<void> {
+async function post(as?: {
+  readonly address: string;
+  readonly agentId: string;
+  readonly footing: StatedFooting;
+  /**
+   * The record this answer answers.
+   *
+   * ★ CARRIED ONLY FOR A DELEGATE, because only a delegate has the problem it solves: its in-run
+   * memory of what it has answered dies with the process, so without this a restarted host reads
+   * the same ask, judges it unanswered, and writes a second permanent record saying the same
+   * thing. A person pressing Post is not looping and is not asked to declare anything.
+   */
+  readonly answering?: string | null;
+}): Promise<void> {
   if (!S.client || !S.viewer || !S.workspace) return;
   const ta = area('composer');
   const body = ta.value.trim();
@@ -1942,6 +1955,7 @@ async function post(as?: { readonly address: string; readonly agentId: string; r
     author: as
       ? { kind: 'delegate', agentId: as.agentId, footing: as.footing }
       : { kind: 'principal', webId: S.viewer.webId },
+    ...(as?.answering ? { derivedFrom: as.answering } : {}),
     entryShape: S.record?.entryShape ?? null,
     onAttempt: (n) => {
       if (n > 1) say('postresult', 'pending', 'Someone appended while you were typing — re-deriving',
@@ -2842,6 +2856,14 @@ const A = {
      * not. Discovering that after it is on the chain is too late; the record cannot be edited.
      */
     footing: StatedFooting;
+    /**
+     * Which record this draft answers, held beside it so the entry can declare it.
+     *
+     * ★ WRITTEN INTO THE RECORD RATHER THAN ONLY REMEMBERED HERE. `A.answered` dies with this
+     * process; `prov:wasDerivedFrom` is on the pod and outlives every restart, which is what stops
+     * a relaunched agent answering the same ask a second time.
+     */
+    answering: string | null;
   } | null,
   /**
    * When this delegate last successfully said its host was running, and why not when it did not.
@@ -3198,7 +3220,7 @@ async function agentConsider(): Promise<void> {
   // one button along.
   A.drafted = {
     address: speaker.address, agentId: speaker.agentId, name: speaker.name, text: draft.body,
-    footing: draft.footing,
+    footing: draft.footing, answering: decision.answering.descriptorUrl,
   };
   // Recorded the moment the draft exists, not when it posts: a draft the user discards was still
   // an answer this run produced, and re-producing it on the next poll is the loop, not a feature.
@@ -3228,7 +3250,7 @@ async function agentConsider(): Promise<void> {
   ]));
   p.appendChild(el('div', 'note', 'The Post button below sends as YOU. To send this as ' + (speaker.name ?? 'your delegate')
     + ', use its own button in this panel — the same text sent by the two makes two different records, and only one of them is true.'));
-  if (A.auto) await post({ address: speaker.address, agentId: speaker.agentId, footing: draft.footing });
+  if (A.auto) await post({ address: speaker.address, agentId: speaker.agentId, footing: draft.footing, answering: decision.answering.descriptorUrl });
 }
 
 // ── the host loop: present while running, wakeable when not ──────────────────
@@ -3439,7 +3461,7 @@ inp('agentauto').addEventListener('change', () => {
 });
 // ★ THE DELEGATE'S OWN SEND. `post(as)` — same writer, same readback, different author.
 btn('agentsend').addEventListener('click', () => {
-  if (A.drafted) void post({ address: A.drafted.address, agentId: A.drafted.agentId, footing: A.drafted.footing });
+  if (A.drafted) void post({ address: A.drafted.address, agentId: A.drafted.agentId, footing: A.drafted.footing, answering: A.drafted.answering });
 });
 inp('delegatename').addEventListener('input', renderDelegatePlan);
 inp('delegateagent').addEventListener('input', renderDelegatePlan);
