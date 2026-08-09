@@ -75,7 +75,13 @@ export function authorOf(a: EntryAuthorship | null): string {
         + (a.signer.listed === true ? ', a key their own registry lists' + (a.signer.scope ? ' with scope ' + a.signer.scope : '')
           : a.signer.listed === false ? ' — **their registry does not list that key**, so the only thing establishing it may write there is that the relay accepted the write'
             : ', whose standing was not checked here') + ']'
-      : '[written by the pod owner]';
+      // ★ AND "NOT ESTABLISHED" IS ITS OWN LINE. Left folded into the plain case, an entry whose
+      // signature nothing verified read exactly like one the person's own key signed — and a
+      // conduit can publish attributed to its delegator without signing, which is the same words
+      // with nothing behind them.
+      : a.signer.kind === 'not-established'
+        ? '[written by the pod owner **as far as the entry says** — no verified signature reached this reader, so which key carried it is not established]'
+        : '[written by the pod owner]';
     case 'unstated': return '[**author not stated** — this entry names nobody, which is not the same as the pod owner having written it]';
     case 'disputed': return '[**authorship disputed** — ' + a.why + ']';
     case 'delegate': return '[written by **' + (a.name ?? 'an unnamed delegate') + '**, whose own key signed these bytes, a delegate of the pod owner, '
