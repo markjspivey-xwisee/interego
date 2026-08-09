@@ -15,8 +15,10 @@
  * answer plus that service's health path from tools/railway-services.mjs. `--verify-url`
  * is an OVERRIDE for the unusual case (a *.up.railway.app host, a custom domain not yet in
  * DNS) and is refused unless its host is one Railway reports for this service. See §1b.
- * A PORTLESS service (`discord`) has no URL to derive and takes the log-based proof at
- * §1c/§7b instead; `--verify-url` is refused for it outright.
+ * A PORTLESS service (`discord`, `css`) has no URL to derive and takes the log-based proof
+ * at §1c/§7b instead; `--verify-url` is refused for it outright. A service declared a
+ * SINGLETON (`css`) is additionally refused unless its live replica settings hold it to one
+ * container — see §2b.
  *
  * Valid service names, and the image each one runs: `node tools/railway-services.mjs list`.
  * What every service is pinned to RIGHT NOW: `node tools/railway-pins.mjs`.
@@ -81,9 +83,24 @@
  *   runbook said it would deploy without an HTTP probe. Portless services now declare
  *   the line they print when they finish booting, and are verified against the logs of
  *   the deployment THIS run triggered. See §1c and §7b.
+ *
+ *   A CHATTY SERVICE OUT-LOGS A PLAIN TAIL. That log proof searched a 500-line tail. For
+ *   the silent discord bot the boot line is still in it minutes later; for `css` — which
+ *   logs a line per HTTP request while the whole fleet polls it — a 500-line tail spans
+ *   12.7 SECONDS, measured. The boot line is long gone by the first poll, so the tool
+ *   would report "never printed" about a container that booted perfectly, and the reflex
+ *   after a red css deploy is to run it again, which SIGTERMs the healthy container. The
+ *   needle is now passed to Railway as a log FILTER and re-counted here. See §7b.
+ *
+ *   A ROLLOUT IS WHEN A SINGLETON STOPS BEING ONE. `css` holds every pod's data behind a
+ *   PROCESS-LOCAL lock, so two containers mean two lockers over one store and a lost
+ *   update that answers 200 — and a deploy is the one moment Railway deliberately runs
+ *   two. Its replica settings were reported by the scheduled audit and written by a
+ *   separate tool, but nothing checked them on the path that opens the window. §2b does,
+ *   before anything is mutated.
  */
 
-import { bootProofFor, healthPathFor, resolveImageRepo, verifyUrlFor } from './railway-services.mjs';
+import { bootProofFor, healthPathFor, resolveImageRepo, singletonViolations, verifyUrlFor } from './railway-services.mjs';
 
 const EP = 'https://backboard.railway.com/graphql/v2';
 
@@ -119,6 +136,12 @@ if (!resolved.ok) die(resolved.reason);
 function die(msg) { console.error(`error: ${msg}`); process.exit(2); }
 
 const H = { 'Content-Type': 'application/json', 'Project-Access-Token': TOKEN };
+
+// Declared up here, not next to its two callers at the bottom of the file. `verifyFromLogs`
+// is invoked from §7b, which executes BEFORE module evaluation reaches the end of the file;
+// a `const` down there would still be in its temporal dead zone at that point and the
+// portless verification would die with a ReferenceError instead of verifying anything.
+const LOGS = 'query($id:String!,$limit:Int!,$filter:String){ deploymentLogs(deploymentId:$id,limit:$limit,filter:$filter){ timestamp message } }';
 
 async function gql(query, variables = {}, { tolerant = false } = {}) {
   let j;
@@ -230,10 +253,48 @@ if (health.ok) {
 const image = `${resolved.repo}:${tag}`;
 
 // ── 2. Snapshot, so we can tell OUR deployment from the one already running.
-const q = 'query($s:String!,$e:String!){ serviceInstance(serviceId:$s,environmentId:$e){ source{image} latestDeployment{ id status } } }';
+//       The replica settings ride along on the same query because §2b has to read them
+//       before anything is mutated, and a second round trip for three scalars is a second
+//       place for the auth to be wrong.
+const q = 'query($s:String!,$e:String!){ serviceInstance(serviceId:$s,environmentId:$e){ source{image} numReplicas overlapSeconds drainingSeconds latestDeployment{ id status } } }';
 const before = await gql(q, { s: serviceId, e: environmentId });
 console.log(`before: ${before.serviceInstance.source?.image}`);
 console.log(`target: ${image}`);
+
+/**
+ * ── 2b. A DECLARED SINGLETON IS NOT DEPLOYED UNTIL ITS SETTINGS SAY SO ────────
+ *
+ * ★ THE FAILURE THIS PREVENTS. `css` is the only service in the fleet whose CORRECTNESS
+ * depends on exactly one container existing: its store is one shared Postgres-backed PGSL
+ * lattice and its resource locker is PROCESS-LOCAL, so two containers run two independent
+ * lockers over one store and CSS's If-Match read-modify-write — the relay's manifest
+ * compare-and-swap — can have BOTH pass the precondition and both write. A lost update
+ * that answers 200, in the store that holds every pod's data.
+ *
+ * A deploy is exactly when that becomes possible, because a rollout is the one moment
+ * Railway is deliberately running the old container and the new one. So the replica
+ * settings are a PRECONDITION of deploying this service, not a background tidiness item —
+ * and until now they were enforced nowhere on this path. `tools/railway-fleet-audit.ts`
+ * reports them on a schedule and `tools/railway-singleton-settings.ts` writes them, but a
+ * deploy dispatched between the drift and the fix would have proceeded, and the audit that
+ * would have caught it runs after the damage.
+ *
+ * The same predicate both of those use, on the row we just read, before §3 mutates
+ * anything. Deliberately not overridable: an escape hatch here is one more flag typed by
+ * somebody who is already sure, at the only moment it matters.
+ */
+const singleton = singletonViolations([{
+  service,
+  numReplicas: before.serviceInstance.numReplicas ?? null,
+  overlapSeconds: before.serviceInstance.overlapSeconds ?? null,
+  drainingSeconds: before.serviceInstance.drainingSeconds ?? null,
+}]);
+if (singleton.length) {
+  console.error(`error: "${service}" is declared a singleton and its live settings do not hold it to one container.`);
+  for (const v of singleton) console.error(`       ${v.setting} = ${v.live ?? '(unset)'}, want ${v.want ?? 'unset'} — ${v.why}`);
+  console.error('       Nothing has been changed. Fix it first: npx tsx tools/railway-singleton-settings.ts --apply');
+  process.exit(2);
+}
 if (before.serviceInstance.source?.image === image) {
   console.log('already pinned to this tag — deploying anyway to pick up a rebuilt image.');
 }
@@ -461,46 +522,78 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
  */
 async function verifyFromLogs(needle) {
   console.log(`\nverifying deployment ${deployId} logs report ${JSON.stringify(needle)}…`);
-  const LOGS = 'query($id:String!,$limit:Int!){ deploymentLogs(deploymentId:$id,limit:$limit){ timestamp message } }';
   const until = Date.now() + 4 * 60_000;
-  let lines = [];
   while (Date.now() < until) {
-    const d = await gql(LOGS, { id: deployId, limit: 500 }, { tolerant: true });
-    if (d?._transient) {
-      console.log(`  … transient: ${d._transient}`);
-    } else {
-      lines = (d.deploymentLogs ?? []).map(l => String(l.message ?? ''));
-      const hits = lines.filter(m => m.includes(needle));
-      if (hits.length === 1) {
-        console.log(`  booted — ${JSON.stringify(needle)} once in ${lines.length} log line(s)`);
-        // Railway's own opinion, read AFTER the app's: a container that has already died
-        // again by now is not a successful rollout however green the deploy looked.
-        const st = await gql('query($id:String!){ deployment(id:$id){ status } }', { id: deployId }, { tolerant: true });
-        const now = st?._transient ? '(unreadable)' : st.deployment.status;
-        if (now !== 'SUCCESS') {
-          console.error(`\nIt booted, and the deployment is now ${now}. The container did not stay up.`);
-          process.exit(1);
-        }
-        console.log('  deployment still SUCCESS — verified');
-        process.exit(0);
-      }
-      if (hits.length > 1) {
-        console.error(`\n${JSON.stringify(needle)} appears ${hits.length} times in ONE deployment's logs.`);
-        console.error('The container RESTARTED — it boots, exits, and Railway starts it again.');
-        console.error('Railway calls that deployment SUCCESS; it is a crash loop. The cause is in');
-        console.error('the tail below, at the end of the first boot.');
-        printTail(lines);
+    const found = await bootLines(needle);
+    if (found === null) {
+      console.log('  … transient: log query unavailable, retrying');
+    } else if (found.length === 1) {
+      console.log(`  booted — ${JSON.stringify(needle)} appears once in this deployment's logs`);
+      // Railway's own opinion, read AFTER the app's: a container that has already died
+      // again by now is not a successful rollout however green the deploy looked.
+      const st = await gql('query($id:String!){ deployment(id:$id){ status } }', { id: deployId }, { tolerant: true });
+      const now = st?._transient ? '(unreadable)' : st.deployment.status;
+      if (now !== 'SUCCESS') {
+        console.error(`\nIt booted, and the deployment is now ${now}. The container did not stay up.`);
         process.exit(1);
       }
-      console.log(`  … ${lines.length} log line(s), no boot line yet`);
+      console.log('  deployment still SUCCESS — verified');
+      process.exit(0);
+    } else if (found.length > 1) {
+      console.error(`\n${JSON.stringify(needle)} appears ${found.length} times in ONE deployment's logs.`);
+      console.error('The container RESTARTED — it boots, exits, and Railway starts it again.');
+      console.error('Railway calls that deployment SUCCESS; it is a crash loop. The cause is in');
+      console.error('the tail below, at the end of the first boot.');
+      printTail(await recentLines());
+      process.exit(1);
+    } else {
+      console.log('  … no boot line in this deployment yet');
     }
     await sleep(6000);
   }
   console.error(`\nDeployment ${deployId} never printed ${JSON.stringify(needle)} within 4 minutes.`);
   console.error('Railway called the deploy SUCCESS, which for a portless service means only');
   console.error('that the container started — not that it got through its own boot.');
-  printTail(lines);
+  printTail(await recentLines());
   process.exit(1);
+}
+
+/**
+ * Every occurrence of the boot line in THIS deployment, or null if the query was transient.
+ *
+ * ★ THE `filter` ARGUMENT IS LOAD-BEARING, NOT AN OPTIMISATION. This used to ask for a
+ * 500-line tail and search it in JS. That works for `discord`, which is silent between
+ * boots, and it CANNOT work for `css`: MEASURED on 2026-08-09, a 500-line unfiltered tail
+ * of css's logs spans 12.7 SECONDS, because css logs a line for every HTTP request and the
+ * whole fleet polls it continuously. §5 waits for SUCCESS before this function is even
+ * called, so by the first poll the boot line is thousands of lines in the past — and the
+ * tool would report "never printed" about a container that booted perfectly. The reflex
+ * after a red css deploy is to run it again, which SIGTERMs the healthy container holding
+ * every pod's data. A false red here is not a cosmetic defect.
+ *
+ * Railway's `filter` is a case-INSENSITIVE substring match evaluated over the deployment's
+ * whole retained history, not a recent shard — verified by asking a 23-day-old css
+ * deployment for this needle and getting its single boot line from day one. The hits are
+ * then re-counted case-SENSITIVELY here, so the count that decides crash-loop-or-not is
+ * this file's own comparison and not the platform's looser one.
+ */
+async function bootLines(needle) {
+  const d = await gql(LOGS, { id: deployId, limit: 500, filter: needle }, { tolerant: true });
+  if (d?._transient) return null;
+  return (d.deploymentLogs ?? []).map(l => String(l.message ?? '')).filter(m => m.includes(needle));
+}
+
+/**
+ * An UNFILTERED tail, for the failure paths only. The reasons a worker does not boot are in
+ * the lines it DID write — a refused credential, a gateway close code, an unhandled throw —
+ * and none of them contain the needle, so the filtered query above would show an operator
+ * nothing. Fetched on failure rather than on every poll so the diagnosis costs one extra
+ * request instead of forty.
+ */
+async function recentLines() {
+  const d = await gql(LOGS, { id: deployId, limit: 500, filter: null }, { tolerant: true });
+  if (d?._transient) return [`(log tail unavailable: ${d._transient})`];
+  return (d.deploymentLogs ?? []).map(l => String(l.message ?? ''));
 }
 
 function printTail(lines) {

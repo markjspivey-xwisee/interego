@@ -26,23 +26,81 @@ const configPath = path.join(pkgRoot, 'config', 'pgsl-server.json');
 const port = 3456;
 const baseUrl = `http://localhost:${port}/`;
 
+/**
+ * The line `tools/railway-services.mjs` declares as css's `bootProof`.
+ *
+ * ★ WHY THIS STRING IS ASSERTED HERE AND NOT ONLY THERE. css binds no port Railway can
+ * probe and has no public domain, so the ONLY evidence its deploy tool has that a rollout
+ * landed is this line appearing once in the new deployment's logs. It is emitted by
+ * @solid/community-server's ServerInitializer — code this repository does not own — so
+ * nothing but a real boot can confirm it is still the string being printed. Get it wrong
+ * and no test fails: every css deploy simply times out four minutes after a container that
+ * booted perfectly, and the reflex then is to run the deploy again, which SIGTERMs the
+ * healthy container holding every pod's data.
+ *
+ * The two assertions below are the two halves of the claim the deploy tool makes:
+ * the line is printed exactly ONCE per boot (so a second copy really does mean a restart),
+ * and reads SUCCEED after it (so it means "ready", not "starting").
+ */
+const BOOT_PROOF = 'Listening to server at';
+
 async function main(): Promise<void> {
   const backend = process.env.PGSL_INMEM === '1' ? 'in-memory FdbLike' : 'PostgreSQL';
   console.log(`Booting CSS-over-PGSL (${backend}) on ${baseUrl} ...`);
 
-  const app = await new AppRunner().create({
-    loaderProperties: { mainModulePath: pkgRoot, typeChecking: false },
-    config: configPath,
-    shorthand: {
-      port,
-      baseUrl,
-      loggingLevel: 'warn',
-      rootFilePath: path.join(os.tmpdir(), `pgsl-css-${Date.now()}`),
-    },
-  });
-  await app.start();
+  // Tee both streams rather than replace either: the harness's own output still has to
+  // reach the CI log, and which stream winston's bare `new transports.Console()` picks is
+  // a default of a transitive dependency, not something this repository states. Capturing
+  // one of the two would make the assertion below silently depend on that default.
+  // `loggingLevel: 'info'` (was 'warn') because the boot line is info-level — at 'warn' the
+  // server prints it nowhere and this test would be asserting over an empty buffer.
+  const written: string[] = [];
+  const real = { out: process.stdout.write.bind(process.stdout), err: process.stderr.write.bind(process.stderr) };
+  const tee = (to: (c: string | Uint8Array, ...r: unknown[]) => boolean) =>
+    ((chunk: string | Uint8Array, ...rest: unknown[]): boolean => {
+      written.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'));
+      return to(chunk, ...rest);
+    }) as typeof process.stdout.write;
+  process.stdout.write = tee(real.out);
+  process.stderr.write = tee(real.err);
+  const untee = (): void => { process.stdout.write = real.out; process.stderr.write = real.err; };
+
+  async function boot() {
+    try {
+      const a = await new AppRunner().create({
+        loaderProperties: { mainModulePath: pkgRoot, typeChecking: false },
+        config: configPath,
+        shorthand: {
+          port,
+          baseUrl,
+          loggingLevel: 'info',
+          rootFilePath: path.join(os.tmpdir(), `pgsl-css-${Date.now()}`),
+        },
+      });
+      await a.start();
+      return a;
+    } finally {
+      // Restored even when the boot throws, or the failure this harness exists to report
+      // would land in a buffer nobody reads instead of on the CI log.
+      untee();
+    }
+  }
+  const app = await boot();
+
+  const bootHits = written.join('').split(BOOT_PROOF).length - 1;
+  assert.equal(
+    bootHits, 1,
+    `the deploy tool's boot proof ${JSON.stringify(BOOT_PROOF)} must appear EXACTLY once per boot `
+    + `(got ${bootHits}). tools/railway-services.mjs counts occurrences to tell a boot from a `
+    + 'crash loop, and railway-redeploy.mjs fails the deploy on any count but one.');
 
   try {
+    // A read, immediately, with nothing waited for in between: this is what makes the line
+    // above a READINESS proof rather than a banner. If CSS logged it before the store were
+    // usable, this GET would fail here instead of in production.
+    const ready = await fetch(baseUrl, { headers: { accept: 'text/turtle' } });
+    assert.ok(ready.ok, `a read must succeed straight after the boot proof (status ${ready.status})`);
+
     const target = `${baseUrl}pgsl-doc.ttl`;
     const body = '@prefix ex: <http://ex/> .\nex:s ex:p "pgsl-over-css" .\n';
 

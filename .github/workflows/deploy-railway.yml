@@ -137,6 +137,57 @@ jobs:
           fi
           echo "$IMAGE:$TAG exists"
 
+      # ── THE WAY BACK IS CHECKED BEFORE THE WAY FORWARD IS TAKEN ──────────────
+      #
+      # ★ THE GAP THIS CLOSES. railway-redeploy.mjs restores the pin by itself when a
+      # deployment reaches a terminal FAILURE, and that case is covered. The case it cannot
+      # cover is the one that matters on a stateful service: a deploy Railway calls SUCCESS,
+      # whose container boots, and whose new code is wrong anyway. Undoing THAT means
+      # deploying the previous sha by hand — and nothing had ever established that the
+      # previous sha is still pullable. "Roll it back" was a sentence, not a plan.
+      #
+      # It fails the run rather than warning, and the trade is deliberate: refusing to
+      # replace a running image nobody can restore costs one build, while discovering it
+      # afterwards costs the service. The remedy is in the message and it is deterministic
+      # — every image here is built with `npm ci` from a tracked lockfile, so the outgoing
+      # sha rebuilds to the same tree it did the first time.
+      #
+      # It cannot fire on a service's FIRST deploy: railway-current-image.ts exits 1 with
+      # "nothing is pinned yet", which is not a missing rollback target, and this step says
+      # so and carries on.
+      - name: Confirm the image being REPLACED is still recoverable
+        env:
+          RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
+          SERVICE: ${{ inputs.service }}
+        run: |
+          set -o pipefail
+          # ★ `| tail -n 1`, and the exit code taken separately. `npx` prints its own
+          # "Need to install the following packages" line when tsx is not already in the
+          # tree — which it is not here, this job never runs `npm ci` — and that line would
+          # otherwise be captured as the image reference and inspected as one.
+          CURRENT="$(npx --yes tsx tools/railway-current-image.ts "$SERVICE" | tail -n 1)" && rc=0 || rc=$?
+          # ★ EXIT 1 AND EXIT 2 ARE DIFFERENT ANSWERS AND MUST NOT SHARE A BRANCH. 1 is "this
+          # service runs no image yet", a real and harmless state on a first deploy. 2 is a
+          # bad token, an unknown service, or a live repository that disagrees with the
+          # tracked table — treating that as "no rollback target" would turn every auth
+          # failure into a silent pass, which is the fail-open this whole file exists to kill.
+          if [ "$rc" -eq 1 ]; then
+            echo "no image is pinned on $SERVICE yet — a first deploy has nothing to roll back to"
+            exit 0
+          fi
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::could not read the image $SERVICE is currently running (exit $rc). Nothing has been changed."
+            exit 1
+          fi
+          echo "rollback target: $CURRENT"
+          if ! docker buildx imagetools inspect "$CURRENT" > /dev/null 2>&1; then
+            echo "::error::$SERVICE is running $CURRENT, which is NO LONGER IN THE REGISTRY."
+            echo "::error::Deploying over it would be one-way. Build that commit first (build-ghcr.yml"
+            echo "::error::at that sha), then dispatch this workflow again."
+            exit 1
+          fi
+          echo "$CURRENT is still pullable — this deploy is reversible"
+
       # Before the deploy, never after: a credential is consulted at pull time, so setting
       # it afterwards leaves the FAILED deployment standing and the next dispatch looking
       # like the fix.
