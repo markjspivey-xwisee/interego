@@ -183,13 +183,14 @@ describe('a portless service is verified from its own deployment logs', () => {
   });
 
   it('the portless verification asks Railway to FILTER, because css out-logs a plain tail', () => {
-    // ★ MEASURED 2026-08-09: a 500-line unfiltered tail of css's deployment logs spans 12.7
-    // seconds, because css logs a line per HTTP request and the fleet polls it continuously.
-    // The previous implementation fetched that tail and searched it in JS — fine for the
-    // silent discord bot, structurally impossible for css, whose boot line is thousands of
-    // lines in the past by the time §5 has waited for SUCCESS. Assert the query carries the
-    // needle to the server, and that the count that decides crash-loop-or-not is still this
-    // repository's own case-sensitive comparison rather than Railway's looser match.
+    // ★ MEASURED 2026-08-09: a 500-line unfiltered tail of css's steady-state output spans
+    // 12.7 seconds, because css logs a line per HTTP request and the fleet polls it. The
+    // previous implementation fetched that tail and searched it in JS — unconditionally fine
+    // for the silent discord bot, a RACE for css, whose boot line survives an unfiltered tail
+    // only while the new container is under ~500 lines old. §7b does not start until §5 has
+    // seen SUCCESS and nothing bounds that wait. Assert the query carries the needle to the
+    // server, and that the count deciding crash-loop-or-not is still this repository's own
+    // case-sensitive comparison rather than Railway's looser match.
     const src = read('tools/railway-redeploy.mjs');
     expect(src).toMatch(/deploymentLogs\(deploymentId:\$id,limit:\$limit,filter:\$filter\)/);
     expect(src).toMatch(/filter: needle/);
