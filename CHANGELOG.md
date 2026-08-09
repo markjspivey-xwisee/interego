@@ -17,16 +17,22 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
   record of what changed; they are pinned at 78 so that a *new* citation which fails to
   resolve — a typo, or a hash from someone's local branch — fails the gate the day it is
   written.
-- **The undocumented backlog is a measured number, and right now it is zero.** The marker
-  below names the newest commit through which this file is *continuously* current;
-  everything after it is undocumented, the count is measured from git on every run, and it
-  has a ceiling. It reached 471 against the old anchor and was moved forward when the entry
-  below was written. The ceiling exists because the previous statement of this number lived
-  in a pull request body, said 235, and had reached 431 by the time anyone re-measured — so
-  the figure in this paragraph is deliberately not a figure any more. `node
-  tools/changelog-lint.mjs` prints the current one.
+- **The undocumented backlog is a measured number.** The marker below names the newest commit
+  through which this file is *continuously* current; everything after it is undocumented, the
+  count is measured from git on every run, and it has a ceiling. It reached 471 against the
+  old anchor and was moved forward when the entry below was written. The ceiling exists
+  because the previous statement of this number lived in a pull request body, said 235, and
+  had reached 431 by the time anyone re-measured — so the figure in this paragraph is
+  deliberately not a figure any more. `node tools/changelog-lint.mjs` prints the current one.
+- **★ THE MARKER MUST NAME A COMMIT ON THE DEFAULT BRANCH, and that bites exactly once.** It
+  was first moved to the tip of the branch the entry was written on. That sha resolved
+  locally — the branch objects were still there — and then **squash-merge collapsed the
+  branch and deleted it**, so the anchor named a commit a fresh clone cannot resolve and the
+  gate went red on `master` a minute after the merge, having been green on the pull request.
+  A branch tip is not a durable anchor. Either point it at the merge-base (a commit already
+  on `master`, which always resolves) or move it to the squash commit afterwards.
 
-<!-- documented-through: 3c18204 -->
+<!-- documented-through: 7ca657e -->
 
 ---
 
