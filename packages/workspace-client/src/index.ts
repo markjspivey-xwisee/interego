@@ -100,7 +100,7 @@ export {
   DELEGATION_SCOPES, WRITE_ELIGIBLE_SCOPES, isDelegationScope, scopeWriteEligible, AGENT_ID_RX,
   delegateLabel, parseDelegateLabel, delegateNameProblem, delegateAgentId, isDelegateRow,
   readDelegates, delegatePlan, publishDelegation, revokeDelegation,
-  scopeCeiling, judgeAuthorship, authorshipLine, footingLine, signerLine,
+  scopeCeiling, judgeAuthorship, authorshipLine, footingLine, signerLine, verifiedSigner,
   footingTurtle, footingActivityIri, footingDelegationIri,
   delegateCeiling, readEntryAuthorship, delegatePort,
   type DelegateRow, type DelegateRoster, type DelegateRegistryPort,

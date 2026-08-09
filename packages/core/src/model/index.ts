@@ -55,6 +55,7 @@ export {
   authorshipLine,
   signerLine,
   agentPodOf,
+  verifiedSigner,
 } from './delegate.js';
 export type {
   DelegateRow,

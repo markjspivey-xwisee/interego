@@ -27,7 +27,7 @@ import {
   RESPOND_AS_MEMBER, type RequestVerdict,
   readDelegates, readEntryAuthorship, REQUIRED_TOOLS,
   foldRoster, graphRegion, grantPodFor, hasType, listWorkspaces, mergeForward, nsIri, orderChain,
-  parseRoleProfile, parseWorkspaceIri, podClaimVsServed, podOfDescriptorUrl, pollingWatch, postEntry,
+  parseRoleProfile, parseWorkspaceIri, podClaimVsServed, podOfDescriptorUrl, pollingWatch, postEntry, verifiedSigner,
   preconditionLine, publishDelegation, readCanvas, readInbox, readInt, readIri, readLiteral,
   readViewer, revokeDelegation, revokeGrant,
   roleKnown, roleName, roleWhy, saveCanvas, sendInvite, shortRef, slugProblem, verifyInvitation,
@@ -1647,11 +1647,10 @@ async function loadBodies(rows: readonly ChainRow[]): Promise<void> {
         // `''` is a signed block that WAS located and is empty; `null` is one that was not.
         const src = region === null ? '' : region;
         const auth = d['authorship'] as { signedBy?: string; signer?: string; authorshipVerified?: boolean } | undefined;
-        // ★ THE SAME VALUE THE AUTHORSHIP JUDGMENT IS HELD AGAINST, read once. The relay reports the
-        // key it authenticated as `signer` on some paths and `signedBy` on others; taking only one
-        // of them would hand `judgeAuthorship` a null and turn every genuine delegate entry into a
-        // disputed one.
-        const signerAgent = auth?.signedBy ?? auth?.signer ?? null;
+        // ★ THE KEY THE RELAY VERIFIED OVER THESE BYTES — not the one the proof merely NAMES. A
+        // proof that did not bind still reports a signer, and a comparison that decides who spoke
+        // must not turn on a name out of a document the pod's owner controls.
+        const signerAgent = verifiedSigner(d['authorship']);
         // Whose log this is, from the SEAT — the grant's `wsp:grantedTo`, which lives on the
         // convener's pod and which the log's owner therefore cannot write. Taking it from the
         // entry would let the entry decide what it is being checked against.

@@ -26,7 +26,7 @@ import {
   DELEGATE_SURFACE, RelayMcpTransport, WorkspaceClient, acceptGrant, authorshipLine, checkOwnHandle,
   checkWriteEligibility, composedHandle, createWorkspace, delegateAgentId, delegatePlan,
   delegatePort, findSeat, foldRoster, graphRegion, listWorkspaces, mergeForward,
-  parseRoleProfile, postEntry, publishDelegation, readAuthorship, readCanvas, readDelegates, readEntryAuthorship,
+  parseRoleProfile, postEntry, publishDelegation, readCanvas, readDelegates, readEntryAuthorship, verifiedSigner,
   readInbox, readViewer, revokeDelegation, revokeGrant, saveCanvas,
   sendInvite, verifyInvitation, verifyWorkspaceEntry, nsIri, qualifiedName, shortRef,
   type EntryAuthorship, type Viewer,
@@ -289,7 +289,7 @@ async function run(): Promise<number> {
       // The key the relay authenticated over these bytes — the one input on this call that the pod
       // owner cannot compose. Without it, a record naming an agent it was not signed by reads as
       // that agent speaking.
-      signedBy: readAuthorship(d['authorship']).signerAgent,
+      signedBy: verifiedSigner(d['authorship']),
     });
     readAuthorships.push(a);
     log('   ' + p.what.padEnd(11) + ' desktop  · ' + authorshipLine(a, { displayName: 'A' }));

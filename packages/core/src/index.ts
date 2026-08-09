@@ -121,6 +121,7 @@ export {
   authorshipLine,
   signerLine,
   agentPodOf,
+  verifiedSigner,
 } from './model/index.js';
 export type {
   DelegateRow,

@@ -994,6 +994,7 @@ var WSPC = (() => {
     toChainRow: () => toChainRow,
     turtleIri: () => turtleIri,
     unescapeLiteral: () => unescapeLiteral,
+    verifiedSigner: () => verifiedSigner,
     verifyGrantIri: () => verifyGrantIri,
     verifyInvitation: () => verifyInvitation,
     verifyRequest: () => verifyRequest,
@@ -1802,6 +1803,12 @@ var WSPC = (() => {
     doesNot.push(vm ? "The signature verifies against " + vm + " \u2014 the relay's own delegation key, the same one for every pod and every agent on this deployment. It is NOT the author's wallet, and it is not evidence that any human key signed anything." : "The block names no verification method, so what key this would verify against is not established.");
     doesNot.push("It says nothing about whether the pod owner authorised the agent named above. That is a separate document \u2014 the pod's own delegation registry \u2014 and it is what checkDelegation reads.");
     return { present: true, signerAgent: signer, verificationMethod: vm, contentBinding: binding, proves, doesNotProve: doesNot };
+  }
+  function verifiedSigner(authorship) {
+    const a = readAuthorship(authorship);
+    if (a.contentBinding !== "bound" && a.contentBinding !== "bound-at-signing")
+      return null;
+    return a.signerAgent;
   }
   function scopeCeiling(args) {
     const who = args.delegateName ? '"' + args.delegateName + '"' : "this delegate";
@@ -7037,7 +7044,7 @@ function pump() {
         author: readEntryAuthorship(region, {
           logOwnerWebId: (S.members.find((m) => m.stream === owner) || {}).grantedTo || null,
           delegates: null,
-          signedBy: (d.authorship && (d.authorship.signedBy || d.authorship.signer)) || null,
+          signedBy: verifiedSigner(d.authorship),
         }),
         signed: !!(d.authorship && d.authorship.authorshipVerified),
         signedBy: (d.authorship && d.authorship.signedBy) || null,

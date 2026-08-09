@@ -823,6 +823,31 @@ export function readAuthorship(a: unknown): AuthorshipReading {
   return { present: true, signerAgent: signer, verificationMethod: vm, contentBinding: binding, proves, doesNotProve: doesNot };
 }
 
+/**
+ * The agent whose signature the relay VERIFIED over these bytes, or null.
+ *
+ * ★ `AuthorshipReading.signerAgent` IS NOT THIS, AND THE DIFFERENCE IS A HOLE IF A CALLER MISSES
+ * IT. That field is whatever the block NAMES, reported whether or not any check passed — which is
+ * correct for a surface that wants to say "this proof claims X and did not verify". Handing it to
+ * {@link judgeAuthorship} would be handing it a name out of a proof somebody could have written:
+ * this repo has already had a descriptor whose authorship covered only a filename, and a pod's
+ * bytes are its owner's. So the one question an authorship comparison may turn on is asked here,
+ * once, and every caller asks it the same way.
+ *
+ * ★ THE TEST IS `contentBinding`, NOT `authorshipVerified`, FOR THE MEASURED REASON `verifyRequest`
+ * check 2 records: `authorshipVerified` additionally requires the proof to name the URL it was
+ * served from, which is false BY CONSTRUCTION for every delegated cross-pod write — every entry a
+ * conduit relays and every entry a desktop delegate writes for its human. `bound` is only ever
+ * produced on a path where the signature verified AND its digest was recomputed over the bytes
+ * being served, which is exactly the statement "these bytes are authentically attributable to this
+ * agent".
+ */
+export function verifiedSigner(authorship: unknown): string | null {
+  const a = readAuthorship(authorship);
+  if (a.contentBinding !== 'bound' && a.contentBinding !== 'bound-at-signing') return null;
+  return a.signerAgent;
+}
+
 // ── The scope ceiling ────────────────────────────────────────
 
 /** A ceiling verdict, with the sentence a surface shows when it refuses. */
@@ -1238,8 +1263,10 @@ export function judgeAuthorship(
     readonly logOwnerWebId: string | null;
     readonly delegates: DelegateRoster | null;
     /**
-     * The agent whose signature the relay verified over THESE bytes — `AuthorshipReading.signerAgent`
-     * — or null when the reader was given no authorship block. Never a value out of the record.
+     * The agent whose signature the relay VERIFIED over these bytes — {@link verifiedSigner} — or
+     * null when the reader was given no authorship block, or one whose proof did not bind. Never a
+     * value out of the record, and never `readAuthorship(...).signerAgent`, which reports whatever
+     * a proof names whether or not any check passed.
      */
     readonly signedBy: string | null;
   },

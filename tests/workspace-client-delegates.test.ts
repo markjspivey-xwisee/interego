@@ -18,7 +18,7 @@ import {
   DELEGATE_LABEL_PREFIX, DELEGATE_NAME_MAX, DELEGATE_SURFACE,
   authorshipLine, delegateAgentId, delegateCeiling, delegateLabel, delegateNameProblem,
   delegatePlan, entryTurtle, graphRegion, parseDelegateLabel, readDelegates, readEntryAuthorship,
-  readIriAll, RelayMcpTransport, shapesTurtle, WorkspaceClient, isDelegateRow,
+  readIriAll, RelayMcpTransport, shapesTurtle, verifiedSigner, WorkspaceClient, isDelegateRow,
   type AnyTransport, type DelegateRoster, type DelegateRow, type DelegationScope, type RoleTable,
 } from '@interego/workspace-client';
 import type { IRI } from '@interego/core';
@@ -423,6 +423,31 @@ describe('readEntryAuthorship: the entry claims, and two other documents hold it
     const genuine = readEntryAuthorship(t, { logOwnerWebId: WEBID, delegates: r, signedBy: D1 });
     expect(genuine.kind === 'delegate' && genuine.footing.kind).toBe('on-behalf-of');
     expect(genuine.kind === 'delegate' && genuine.signer.signedBy).toBe(D1);
+  });
+
+  /**
+   * ★ AND THE SIGNER A CALLER PASSES MUST BE ONE THE RELAY VERIFIED, NOT ONE A PROOF NAMES.
+   *
+   * `readAuthorship(...).signerAgent` reports whatever the block names, whether or not any check
+   * passed — correct for a surface saying "this proof claims X and did not verify", and a hole if
+   * it reaches the authorship comparison, because a descriptor's bytes are its pod owner's and this
+   * repo has already had one whose authorship covered only a filename. `verifiedSigner` asks the
+   * one question a comparison may turn on, once, so four call sites cannot each get it wrong.
+   */
+  it('★ verifiedSigner refuses a proof that did not bind, and accepts the delegated cross-pod shape', () => {
+    expect(verifiedSigner({ authorshipVerified: true, signedBy: D1, contentBinding: 'bound' })).toBe(D1);
+    // The measured shape of every delegated cross-pod write: NOT `authorshipVerified`, still bound.
+    expect(verifiedSigner({ authorshipVerified: false, signedBy: D1, contentBinding: 'bound', descriptorBinding: { bound: false } })).toBe(D1);
+    for (const b of ['unbound', 'declared', 'mismatched', 'unchecked', undefined]) {
+      expect(verifiedSigner({ authorshipVerified: true, signedBy: D1, contentBinding: b }), String(b)).toBeNull();
+    }
+    expect(verifiedSigner(null)).toBeNull();
+    // And an entry carrying an unbound proof that names its claimed author is therefore disputed.
+    const a = readEntryAuthorship(written(forHuman), {
+      logOwnerWebId: WEBID, delegates: null,
+      signedBy: verifiedSigner({ authorshipVerified: true, signedBy: D1, contentBinding: 'unbound' }),
+    });
+    expect(a.kind).toBe('disputed');
   });
 
   it('★ and a signer this reader was never told is disputed too — not a weaker yes', () => {

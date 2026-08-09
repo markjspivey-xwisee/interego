@@ -35,7 +35,7 @@ import {
   DELEGATE_SURFACE, RelayMcpTransport, WorkspaceClient, acceptGrant, authorshipLine, briefPrompt,
   checkDelegation, checkDraft, createWorkspace, decideTurn, delegateLabel, delegatePlan, findSeat,
   foldRoster, graphRegion, hasType, nsIri, orderChain, parseRoleProfile, postEntry,
-  publishDelegation, qualifiedName, readAuthorship, readDelegates, readEntryAuthorship, readIri, readInt,
+  publishDelegation, qualifiedName, readDelegates, readEntryAuthorship, readIri, readInt, verifiedSigner,
   readLiteral, readViewer, revokeDelegation, sendInvite,
   type DelegateRoster, type RoleTable, type Seat, type SeenEntry, type SpeakingDelegate,
   type Viewer,
@@ -137,7 +137,7 @@ async function readChannel(
           // ★ AND AGAINST THE KEY THE RELAY AUTHENTICATED. Everything else on this call comes out
           // of bytes somebody's pod controls; this does not, and without it an entry naming an
           // agent it was never signed by reads as that agent speaking.
-          signedBy: readAuthorship(d['authorship']).signerAgent,
+          signedBy: verifiedSigner(d['authorship']),
         }),
       });
       void readInt(src, 'wsp:seq');

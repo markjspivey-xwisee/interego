@@ -114,8 +114,9 @@ export function delegateCeiling(args: {
  *
  * ★ AND `signedBy` DOES NOT COME OUT OF THE REGION, WHICH IS THE ONLY REASON ANY OF THE ABOVE IS
  * WORTH READING. Every list below is bytes the pod's writer controls. The signer is the relay's
- * answer about the key it authenticated — `readAuthorship(descriptor.authorship).signerAgent` — and
- * a caller that has a region but no descriptor passes null and gets `disputed` for any record
+ * answer about the key it VERIFIED over these bytes — `verifiedSigner(descriptor.authorship)`, not
+ * `readAuthorship(...).signerAgent`, which reports whatever a proof names whether or not it bound —
+ * and a caller that has a region but no descriptor passes null and gets `disputed` for any record
  * claiming an agent wrote it. See {@link judgeAuthorship}.
  */
 export function readEntryAuthorship(
@@ -148,7 +149,7 @@ export {
   DELEGATION_SCOPES, WRITE_ELIGIBLE_SCOPES, isDelegationScope, scopeWriteEligible, AGENT_ID_RX,
   delegateLabel, parseDelegateLabel, delegateNameProblem, delegateAgentId,
   isDelegateRow, readDelegates, delegatePlan, publishDelegation, revokeDelegation,
-  scopeCeiling, judgeAuthorship, authorshipLine, footingLine, signerLine, agentPodOf,
+  scopeCeiling, judgeAuthorship, authorshipLine, footingLine, signerLine, agentPodOf, verifiedSigner,
   footingTurtle, footingActivityIri, footingDelegationIri,
 } from '@interego/core/delegate';
 export type {

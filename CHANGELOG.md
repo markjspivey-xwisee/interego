@@ -110,6 +110,14 @@ as somebody's agent speaking, and a request that disappears in silence.
   not evidence, and used only for reporting.
 
 ### Changed
+- **`verifiedSigner` is the only way a caller gets a signer into the authorship judgment.**
+  `readAuthorship(...).signerAgent` is whatever the proof NAMES, reported whether or not any check
+  passed — correct for a surface saying "this proof claims X and did not verify", and a hole if it
+  reaches the comparison, because a descriptor's bytes are its pod owner's and this repo has already
+  had one whose authorship covered only a filename. The one question a comparison may turn on is
+  asked once, at the substrate, so four call sites cannot each get it wrong. The test is
+  `contentBinding`, not `authorshipVerified`, for the same measured reason `verifyRequest` check 2
+  records.
 - **`agentIdHash` spells out its own UTF-8 rather than using `TextEncoder`.** Every agent address is
   composed through it, so a runtime where it throws is a runtime where no agent can publish or be
   found — and a JSDOM window has no `TextEncoder`, which surfaced as the desktop heartbeat reporting

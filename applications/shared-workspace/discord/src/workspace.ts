@@ -17,6 +17,7 @@ import {
   POD_RX, acceptGrant, checkDelegation, checkRoleForWorkspace, createWorkspace, errorCopy,
   findSeat, foldRoster, graphRegion, nsIri, orderChain, parseRoleProfile, podOfNsIri, postEntry,
   qualifiedName, readAuthorship, readDelegates, readEntryAuthorship, readInt, readIri, readLiteral,
+  verifiedSigner,
   readMember, sendInvite, toChainRow,
   type AuthorshipReading, type DelegateRoster, type EntryAuthorship, type PostOutcome,
   type WorkspaceClient,
@@ -551,7 +552,10 @@ export async function showWorkspace(deps: Deps, threadId: string): Promise<ShowO
           author: region === null ? null : readEntryAuthorship(region, {
             logOwnerWebId: r.seat.grantedTo ?? null,
             delegates: delegates.get(pod) ?? null,
-            signedBy: readAuthorship(d['authorship']).signerAgent,
+            // `verifiedSigner`, NOT `readAuthorship(...).signerAgent`: the second is whatever the
+            // proof NAMES, reported whether or not any check passed. A comparison that decides who
+            // spoke may only turn on a signature the relay verified over these bytes.
+            signedBy: verifiedSigner(d['authorship']),
           }),
           derivedFrom: region === null ? null : readIri(region, 'prov:wasDerivedFrom'),
           why: region === null ? 'the signed region of this entry could not be located, so nothing was read from bytes anybody signed' : null,
