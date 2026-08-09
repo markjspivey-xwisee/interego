@@ -8,8 +8,10 @@
  * signed by you" is two claims, and the second one is false.
  */
 
-import { shortRef, type Check, type EntryAuthorship } from '@interego/workspace-client';
+import { describeSpan, isPresent, presenceLine, shortRef, type Check, type EntryAuthorship } from '@interego/workspace-client';
 import type { ConfirmOut, LinkChallengeOut, RecordOut, ShowOut, StartOut, UnlinkOut } from './workspace.js';
+import type { AskOut, AskTarget, CandidatesOut } from './ask.js';
+import type { WatchNews } from './watch.js';
 
 /** Discord refuses a message body over 2000 characters outright. */
 export const DISCORD_LIMIT = 2000;
@@ -237,5 +239,148 @@ export function renderShow(out: ShowOut): Message {
         '★ Where that names a delegate, THREE separate things are reported and they can disagree. (1) Is it that person\'s delegate at all — asked of their own pod\'s delegation registry, a document only they can write, and standing until they revoke it. (2) What footing THIS entry was on — read from the entry itself, as a `prov:Delegation` over the act that produced it or an `iep:actedOnOwnAccount` declaring the opposite. An agent can be a properly authorised delegate and still be speaking entirely for itself in any given message. (3) Neither, when the entry does not say — which is reported as not saying, and is not read as either.');
       return body(lines, false);
     }
+  }
+}
+
+// ── agents in the channel ────────────────────────────────────────────────────
+
+/**
+ * One agent, as its own pod and its delegator's pod describe it between them.
+ *
+ * ★ TWO PODS' WORTH OF FACTS AND THE LINE KEEPS THEM APART. The NAME and the SCOPE come from the
+ * delegator's registry — a document only they can write. The PRESENCE comes from the agent's OWN
+ * pod, signed by its own key. Running them together into "scheduler is online" would be one
+ * sentence asserting two things read from two places, either of which can be absent on its own.
+ */
+const agentLine = (t: AskTarget, nowMs: number): string =>
+  '  ' + (isPresent(t.presence) ? '●' : '○') + ' **' + (t.name ?? t.agentId) + '** · '
+  + (t.isYou ? 'yours' : '`' + t.pod + '`') + ' · ' + presenceLine(t.presence, nowMs)
+  + (t.writeEligible ? '' : ' · scope ' + (t.scope ?? 'not reported') + ', **cannot append** — only its delegator can change that');
+
+/**
+ * Who could be asked something here.
+ *
+ * ★ THE EMPTY ANSWERS ARE DIFFERENT FACTS AND EACH GETS ITS OWN SENTENCE. "Nobody has authorised an
+ * agent", "that pod did not answer" and "this thread is not a workspace" would otherwise all render
+ * as an empty list — and the middle one is a failed HTTP call being drawn as a fact about somebody
+ * else's pod.
+ */
+export function renderWho(out: CandidatesOut, nowMs = Date.now()): Message {
+  switch (out.kind) {
+    case 'not-a-workspace': return body(['This thread is not a workspace. `/workspace start` makes it one.'], true);
+    case 'unreadable': return body(['**The roster could not be read**, so who could be asked something here is not established: ' + out.why], true);
+    case 'error': return body(['**The roster could not be read**, so who could be asked something here is not established: ' + ((out.error as Error)?.message ?? String(out.error))], true);
+    case 'candidates': {
+      const lines: string[] = ['**Agents in ' + out.binding.title + '**'];
+      if (out.targets.length) for (const t of out.targets) lines.push(agentLine(t, nowMs));
+      else lines.push('  Nobody seated here has authorised an agent. A person authorises one from their own client with `register_agent`; this bot cannot do it for them and cannot see one that does not exist.');
+      for (const u of out.unread) {
+        lines.push('  ? `' + u.pod + '` did not answer, so what it can be asked is **not established** — which is not the same as it having no agents (' + u.why + ')');
+      }
+      for (const p of out.noneOn) lines.push('  · `' + p + '` answered and its registry lists no agent');
+      lines.push('',
+        '● means that agent published a short lease saying its host was running, signed with its own key, and the lease is live now. ○ means it did not — a lapsed lease, none at all, or a pod that would not answer, and the line says which.',
+        'Presence is read from **the agent\'s own pod**; whether its human authorises it is read from **theirs**. Two documents, and they can disagree.',
+        '`/workspace ask` puts the ask on the record either way. A host that is not running answers when it next runs.');
+      return body(lines, true);
+    }
+  }
+}
+
+/** The picker's own words for a target, reused so an acknowledgement cannot contradict the list. */
+const targetLine = (t: AskTarget, nowMs: number): string =>
+  (t.name ?? t.agentId) + ' on `' + t.pod + '` · ' + presenceLine(t.presence, nowMs);
+
+/**
+ * What an ask did, and — the part that matters — what it did not.
+ *
+ * ★ EVERY BRANCH BELOW SAYS WHETHER ANYTHING WAS WRITTEN. An ask is a permanent record on somebody
+ * else's pod and a notice into somebody else's inbox; a reader who cannot tell from the reply which
+ * of those happened has to go and look, which is the state this bot exists to remove.
+ */
+export function renderAsk(out: AskOut, nowMs = Date.now()): Message {
+  switch (out.kind) {
+    case 'not-a-workspace': return body(['**Nothing was asked.** This thread is not a workspace. `/workspace start` makes it one.'], true);
+    case 'not-linked': return body(['**Nothing was asked.** You are not linked, so this bot has no pod of yours to write the ask onto and will not invent one. Run `/workspace link`.'], true);
+    case 'empty-task': return body(['**Nothing was asked.** The task was empty. What you type is what goes in the record, in your own words — there is nothing here for this bot to fill in.'], true);
+    case 'unreadable': return body(['**Nothing was asked.** ' + out.why], true);
+    case 'error': return body(['**Nothing was asked.** ' + ((out.error as Error)?.message ?? String(out.error)), 'Nothing above this is a statement about anybody\'s pod.'], true);
+    case 'no-match': return body([
+      '**Nothing was asked.** No agent here matches `' + out.spec + '`.',
+      ...(out.known.length
+        ? ['', 'Seated pods currently name:', ...out.known.map((k) => '  · ' + k)]
+        : ['', 'No agent is authorised by anybody seated here. `/workspace who` says which pods answered and which did not.']),
+    ], true);
+    case 'ambiguous': return body([
+      '**Nothing was asked.** `' + out.spec + '` matches ' + out.matches.length + ' agents, and guessing which you meant is how work lands on the wrong pod.',
+      ...out.matches.map((t) => '  · ' + targetLine(t, nowMs)),
+      '',
+      'Pick one from the list — its value is the full agent DID, which is unambiguous by construction.',
+    ], true);
+    case 'target-cannot-append': return body([
+      '**Nothing was asked.** ' + (out.target.name ?? out.target.agentId) + ' has scope `' + (out.target.scope ?? 'not reported') + '` on `' + out.target.pod + '`, so it could read this channel and could **not** append an answer to it.',
+      '',
+      'The ask would sit on the record forever with no possible reply, and only its delegator can change that — `register_agent` from their own client, with a scope that permits publishing. Saying so now is more use than a permanent unanswerable entry.',
+    ], true);
+    case 'not-written': return body([
+      '**Nothing was asked, and nothing was sent.** The write refused first, so there is no notice pointing at an entry that does not exist.',
+      '',
+      renderRecord(out.record)?.content ?? 'The write refused and reported no detail.',
+    ], false);
+    case 'asked': return body([
+      '**Asked ' + (out.target.name ?? out.target.agentId) + '.**',
+      ...checkLines(out.checks),
+      '',
+      out.target.presence.state === 'running'
+        ? 'Its host said it was running ' + describeSpan(nowMs - out.target.presence.saidAtMs) + ' ago, and a running host reads this channel directly. If it judges there is something to add, its answer appears here on its own.'
+        : 'Its host is **not** saying it is running (' + presenceLine(out.target.presence, nowMs) + '), so this is answered when it next runs. Nothing is lost by waiting — the ask is on the record, and the record is what it reads.',
+      '',
+      '★ The ask is entry #' + out.accepted.seq + ' in this channel, not a message in an inbox. An inbox on this relay is world-writable, so what travelled by inbox is only a **pointer** to that entry and carries none of your text. The agent dereferences it and refuses it unless whoever delivered it is whoever signed it.',
+      '★ Asking is not instructing. The agent decides whether there is anything to add, and one that decides there is not **writes nothing** — which from here looks exactly like one that never read it. If nothing is written, this channel says so rather than leaving you to guess.',
+    ], false);
+  }
+}
+
+// ── what the watcher pushes ──────────────────────────────────────────────────
+
+/**
+ * News about the record, pushed without anybody asking.
+ *
+ * ★ ATTRIBUTION GOES THROUGH THE SAME {@link authorOf} AS `/workspace show`. Reading this channel
+ * is the main way a person other than the pod owner meets these records, so a second rendering here
+ * is exactly where "a delegate wrote this, on its own account" would quietly become "they said
+ * this". There is one function and both callers use it.
+ *
+ * Returns null when there is nothing worth a message: a caller that posted an empty body would be
+ * a caller that decided something in a formatter.
+ */
+export function renderNews(news: WatchNews): Message | null {
+  switch (news.kind) {
+    case 'entries': {
+      if (!news.entries.length) return null;
+      const lines: string[] = [];
+      for (const e of news.entries) {
+        lines.push('`' + e.pod + '` ' + authorOf(e.author) + ' #' + (e.seq ?? '?') + ' · ' + (e.created ?? 'no declared time'));
+        // Quoted, so text that came off somebody else's pod cannot be read as this bot's own
+        // sentence — and `rest.post` sends it with mentions disabled, so a body containing
+        // `@everyone` is text and not a ping.
+        lines.push('> ' + (e.body ?? '(this entry names no dct:description)').split('\n').join('\n> '));
+      }
+      return body(lines, false);
+    }
+    case 'burst': return body([
+      '**' + news.count + ' new entries** were appended in this workspace just now — more than this bot posts one at a time, so they are not being replayed here. `/workspace show` reads them out of the pods that hold them.',
+    ], false);
+    case 'forked': return body([
+      '? `' + news.pod + '` — ' + news.why,
+      'Nothing is being read out of that log in sequence until it has one head. Said once, not every time it is noticed.',
+    ], false);
+    case 'unreadable-entry': return body(['? An entry in this workspace could not be read: ' + news.why], false);
+    case 'silence': return body([
+      '**Nothing has been written in answer yet.** You asked ' + news.ask.targetName + ' ' + describeSpan(news.waitedMs) + ' ago (entry #' + news.ask.seq + ').',
+      'Its host ' + news.ask.presenceAtAsk + ' when you asked.',
+      '',
+      'An agent that read this and judged there was nothing to add writes nothing, and so does one that refused — from here those look the same, and this bot will not guess which. The ask is still on the record and is still answerable whenever its host next runs.',
+    ], false);
   }
 }

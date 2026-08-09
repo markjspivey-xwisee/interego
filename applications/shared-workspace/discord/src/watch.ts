@@ -1,0 +1,362 @@
+/**
+ * THE PRODUCER THIS BOT DID NOT HAVE.
+ *
+ * ★ NOTHING PUSHED WORKSPACE ACTIVITY INTO DISCORD. The only `setInterval` in the whole bot was the
+ * gateway heartbeat, and `/workspace show` pulled on demand. So a delegate could read the channel,
+ * think on its human's own subscription and append a signed answer to its human's own pod — and
+ * Discord would never show it. Somebody would have to type `/workspace show` and happen to look.
+ * A channel where half the participants are agents and the agents are invisible is not a channel
+ * they are in.
+ *
+ * ── COMPOSED OUT OF THE TWO THINGS THAT ALREADY EXIST ────────────────────────
+ *
+ *   · `pollingWatch` — a 45-second re-read that fires ONLY WHEN THE ANSWER CHANGES. The desktop
+ *     shell already drives its entire stream view off it, one watch per seated participant. This
+ *     registers the same watches. It is a poll and that is not a disguise: the measurement behind
+ *     `RelayMcpTransport.watchTool` establishes there is nothing to subscribe to on this relay.
+ *   · `showWorkspace` — the SAME function `/workspace show` calls. A change fires the watch and the
+ *     watch calls that, so the pushed line and the pulled line can never disagree about what the
+ *     record says. A second reader written for pushing would drift from the first one the day
+ *     somebody fixed a bug in either.
+ *
+ * ── WHAT IT REFUSES TO DO ────────────────────────────────────────────────────
+ *
+ * ★ IT NEVER POSTS A BACKLOG. The first read of a thread SEEDS what has been seen without posting
+ * any of it. A bot restarted at lunchtime that replayed the morning into the channel would be
+ * writing a second copy of a conversation into the place people are having it.
+ *
+ * ★ IT NEVER SAYS AN AGENT IS THINKING, OR REFUSED, OR IS ABOUT TO ANSWER. It reads pods. Every
+ * sentence it produces is a fact about a document or a constant of its own behaviour — the rule
+ * `render.ts` already sets, and the reason the silence notice below is phrased as a statement about
+ * the RECORD rather than about anybody's agent.
+ */
+
+import { pollingWatch, type Unsubscribe, type WorkspaceClient } from '@interego/workspace-client';
+import type { LinkStore, ThreadBinding } from './links.js';
+import { showWorkspace, type Deps, type ShowOut, type ShownEntry } from './workspace.js';
+
+/** The watch cadence, matched to the desktop's so two readers of one channel see the same news. */
+export const WATCH_INTERVAL_MS = 45_000;
+
+/**
+ * How long after a fired watch the composed read runs.
+ *
+ * Several members' logs change within a second of each other all the time — an ask and its answer,
+ * two people typing. Reading once per fire would fold the same workspace three times and post the
+ * same three entries in three messages.
+ */
+export const COALESCE_MS = 1_500;
+
+/** How often the roster is re-folded even when nothing fired: how a NEW member gets watched. */
+export const REFOLD_EVERY = 8;
+
+/** The most entries pushed into one thread in one window before they are collapsed into a count. */
+export const BURST_MAX = 3;
+export const BURST_WINDOW_MS = 60_000;
+
+/**
+ * How long an addressed ask may sit with nothing written in answer before the channel is told.
+ *
+ * ★ THE WORST OUTCOME IS SILENCE AND IT IS HANDLED EXPLICITLY. `decideTurn` refuses by writing
+ * NOTHING — correctly; a delegate that posted "I have decided not to answer" would be appending
+ * noise to somebody's permanent log — and an agent that read the ask and judged there was nothing
+ * to add also writes nothing. From here those are the same, so the notice says exactly that and
+ * makes no claim about the agent.
+ */
+export const SILENCE_MS = 10 * 60_000;
+
+/** One new entry the channel has not been shown yet. */
+export interface PushedEntry { readonly entry: ShownEntry; readonly workspaceTitle: string }
+
+/** An ask this bot wrote and is waiting to see answered. */
+export interface PendingAsk {
+  readonly threadId: string;
+  readonly descriptorUrl: string;
+  readonly seq: number;
+  readonly targetPod: string;
+  readonly targetName: string;
+  readonly askedAtMs: number;
+  /** What the target's presence said at the moment of asking. Reported verbatim, never re-derived. */
+  readonly presenceAtAsk: string;
+  reported: boolean;
+}
+
+/** What the watcher decided to say about one thread on one pass. Rendered elsewhere. */
+export type WatchNews =
+  | { readonly kind: 'entries'; readonly binding: ThreadBinding; readonly entries: readonly ShownEntry[] }
+  | { readonly kind: 'burst'; readonly binding: ThreadBinding; readonly count: number }
+  | { readonly kind: 'forked'; readonly binding: ThreadBinding; readonly pod: string; readonly why: string }
+  | { readonly kind: 'unreadable-entry'; readonly binding: ThreadBinding; readonly why: string }
+  | { readonly kind: 'silence'; readonly binding: ThreadBinding; readonly ask: PendingAsk; readonly waitedMs: number };
+
+export interface WatchDeps {
+  readonly store: LinkStore;
+  /** Builds the substrate deps for a live client. `main` supplies `session.call` around it. */
+  readonly withClient: <T>(fn: (deps: Deps) => Promise<T>) => Promise<T>;
+  /** Registers a change-only watch. `main` binds the session's transport. */
+  readonly watch: (
+    name: string, input: Record<string, unknown>, onChange: () => void,
+  ) => Unsubscribe | null;
+  readonly emit: (channelId: string, news: WatchNews) => void | Promise<void>;
+  readonly out: (line: string) => void;
+  readonly now?: () => number;
+  readonly interval?: number;
+}
+
+interface ThreadState {
+  seeded: boolean;
+  /** Descriptor URLs already shown in this thread. Bounded — see `remember`. */
+  readonly posted: Set<string>;
+  /** Stream keys currently watched, so a re-fold adds and removes rather than re-registering all. */
+  readonly watches: Map<string, Unsubscribe>;
+  /** Timestamps of pushes in this thread, for the burst bound. */
+  pushes: number[];
+  /** Findings already reported once, so a persistent fork is not shouted every 45 seconds. */
+  readonly told: Set<string>;
+  ticks: number;
+  timer: ReturnType<typeof setTimeout> | null;
+  running: boolean;
+  /** A change arrived while a read was in flight: read again when it finishes. */
+  dirty: boolean;
+}
+
+/** Keep the seen-set from growing without bound in a channel that runs for months. */
+const REMEMBER_MAX = 500;
+
+/**
+ * One watcher for every thread this bot has been told about.
+ *
+ * ★ THREADS ARE ENUMERATED FROM THE STORE ON EVERY SWEEP, so a `/workspace start` in a new thread
+ * is picked up without anything having to call in here. The store is the bot's own index and losing
+ * all of it loses nothing — which is exactly why the watcher reads it rather than holding its own
+ * copy of which threads exist.
+ */
+export class ChannelWatcher {
+  private readonly deps: WatchDeps;
+  private readonly threads = new Map<string, ThreadState>();
+  private readonly asks: PendingAsk[] = [];
+  private sweep: ReturnType<typeof setInterval> | null = null;
+  private stopped = false;
+  private readonly now: () => number;
+  private readonly interval: number;
+
+  constructor(deps: WatchDeps) {
+    this.deps = deps;
+    this.now = deps.now ?? Date.now;
+    this.interval = deps.interval ?? WATCH_INTERVAL_MS;
+  }
+
+  start(): void {
+    if (this.sweep) return;
+    this.adopt();
+    this.sweep = setInterval(() => { this.adopt(); }, this.interval);
+    this.sweep.unref?.();
+  }
+
+  stop(): void {
+    this.stopped = true;
+    if (this.sweep) { clearInterval(this.sweep); this.sweep = null; }
+    for (const st of this.threads.values()) {
+      if (st.timer) clearTimeout(st.timer);
+      for (const un of st.watches.values()) un();
+      st.watches.clear();
+    }
+    this.threads.clear();
+  }
+
+  /**
+   * Record an ask so the channel can be told if nothing is ever written in answer.
+   *
+   * Held in memory only, and deliberately: it is a courtesy notice, not a record. The record is the
+   * entry, which is on a pod and outlives every process here.
+   */
+  noteAsk(ask: Omit<PendingAsk, 'reported'>): void {
+    this.asks.push({ ...ask, reported: false });
+    // Bounded the same way the seen-set is: an unbounded list of courtesies is a leak.
+    if (this.asks.length > REMEMBER_MAX) this.asks.splice(0, this.asks.length - REMEMBER_MAX);
+  }
+
+  /** Threads currently watched. Exported for the operator log and for tests. */
+  watching(): readonly string[] { return [...this.threads.keys()]; }
+
+  /**
+   * Asks still waiting to be seen answered.
+   *
+   * Read-only, and a copy: this list is a courtesy the watcher owns, and a caller that could
+   * mutate it could silence a notice about somebody's unanswered request from outside the one
+   * place that decides whether to send one.
+   */
+  pending(): readonly PendingAsk[] { return this.asks.filter((a) => !a.reported).map((a) => ({ ...a })); }
+
+  private adopt(): void {
+    if (this.stopped) return;
+    for (const b of this.deps.store.allThreads()) {
+      if (this.threads.has(b.threadId)) continue;
+      this.threads.set(b.threadId, {
+        seeded: false, posted: new Set(), watches: new Map(), pushes: [], told: new Set(),
+        ticks: 0, timer: null, running: false, dirty: false,
+      });
+      this.deps.out('watch: following thread ' + b.threadId + ' (' + b.workspace + ')');
+      this.schedule(b.threadId, 0);
+    }
+    // A thread whose binding is gone is dropped, and its watches with it.
+    const live = new Set(this.deps.store.allThreads().map((b) => b.threadId));
+    for (const [id, st] of this.threads) {
+      if (live.has(id)) continue;
+      if (st.timer) clearTimeout(st.timer);
+      for (const un of st.watches.values()) un();
+      this.threads.delete(id);
+    }
+    // The slow tick, so a member who joins is watched without anything having changed on a log this
+    // bot is already looking at — the one case a change-only watch cannot see by construction.
+    for (const [id, st] of this.threads) {
+      st.ticks++;
+      if (st.ticks % REFOLD_EVERY === 0) this.schedule(id, 0);
+    }
+    this.reportSilence();
+  }
+
+  private schedule(threadId: string, delay: number): void {
+    const st = this.threads.get(threadId);
+    if (!st || this.stopped) return;
+    if (st.running) { st.dirty = true; return; }
+    if (st.timer) return;
+    st.timer = setTimeout(() => { st.timer = null; void this.pass(threadId); }, delay);
+    st.timer.unref?.();
+  }
+
+  private async pass(threadId: string): Promise<void> {
+    const st = this.threads.get(threadId);
+    const binding = this.deps.store.threadOf(threadId);
+    if (!st || !binding || this.stopped) return;
+    st.running = true;
+    let view: ShowOut;
+    try { view = await this.deps.withClient((d) => showWorkspace(d, threadId)); }
+    catch (e) {
+      // ★ REPORTED TO THE OPERATOR AND NOT TO THE CHANNEL. A read that failed says nothing about
+      // the record, and a bot that announced every transient 502 into a conversation would be
+      // noise nobody could act on. The next pass is the retry.
+      this.deps.out('watch: reading ' + threadId + ' failed — ' + ((e as Error)?.message ?? String(e)));
+      st.running = false;
+      if (st.dirty) { st.dirty = false; this.schedule(threadId, COALESCE_MS); }
+      return;
+    }
+    st.running = false;
+    if (view.kind === 'view') {
+      this.rewatch(threadId, st, view);
+      this.announce(threadId, st, binding, view);
+    } else if (view.kind === 'unreadable' && !st.told.has('unreadable')) {
+      st.told.add('unreadable');
+      this.deps.out('watch: ' + threadId + ' is bound to a workspace that does not read — ' + view.why);
+    }
+    if (st.dirty) { st.dirty = false; this.schedule(threadId, COALESCE_MS); }
+  }
+
+  /**
+   * Register a change-only watch on every seated member's log, and drop the ones that left.
+   *
+   * ★ THE WATCH IS THE TRIGGER AND `showWorkspace` IS THE READER. The payload a watch delivers is
+   * not rendered — it is a manifest, and rendering one would be a second, weaker version of the
+   * fold. All it is used for is knowing that something moved.
+   */
+  private rewatch(threadId: string, st: ThreadState, view: Extract<ShowOut, { kind: 'view' }>): void {
+    const wanted = new Map<string, { pod: string; stream: string }>();
+    for (const s of view.fold.seats) {
+      if (!s.seated || !s.stream || !s.pod) continue;
+      const pod = s.podServed ?? s.pod;
+      wanted.set(pod + ' ' + s.stream, { pod, stream: s.stream });
+    }
+    for (const [key, un] of st.watches) if (!wanted.has(key)) { un(); st.watches.delete(key); }
+    for (const [key, w] of wanted) {
+      if (st.watches.has(key)) continue;
+      const un = this.deps.watch(
+        'discover_context',
+        { pod_name: w.pod, graph_iri: w.stream, sort: 'oldest-first' },
+        () => { this.schedule(threadId, COALESCE_MS); },
+      );
+      // A transport that registers no watch is not a failure to shout about — the sweep above
+      // re-folds every REFOLD_EVERY ticks regardless, so the thread still catches up. It is said
+      // once so an operator knows why the channel is slower than it should be.
+      if (un) st.watches.set(key, un);
+      else if (!st.told.has('nowatch')) { st.told.add('nowatch'); this.deps.out('watch: this transport registered no live watch for ' + w.stream + '; the slow re-fold is the only producer'); }
+    }
+  }
+
+  private announce(threadId: string, st: ThreadState, binding: ThreadBinding, view: Extract<ShowOut, { kind: 'view' }>): void {
+    const fresh = view.entries.filter((e) => !st.posted.has(e.descriptorUrl));
+    for (const e of fresh) this.remember(st, e.descriptorUrl);
+    if (!st.seeded) {
+      // ★ THE FIRST PASS SEEDS AND SAYS NOTHING. See the header.
+      st.seeded = true;
+      this.deps.out('watch: ' + threadId + ' seeded with ' + view.entries.length + ' entr' + (view.entries.length === 1 ? 'y' : 'ies') + ' already in the record');
+      return;
+    }
+    // Findings about a log, said once each rather than every 45 seconds.
+    for (const s of view.streams) {
+      if (!s.why) continue;
+      const key = 'stream:' + s.pod + ':' + s.why;
+      if (st.told.has(key)) continue;
+      st.told.add(key);
+      void this.deps.emit(threadId, { kind: 'forked', binding, pod: s.pod, why: s.why });
+    }
+    const unreadable = fresh.filter((e) => e.why);
+    const readable = fresh.filter((e) => !e.why && (e.body ?? '').trim());
+    for (const u of unreadable) void this.deps.emit(threadId, { kind: 'unreadable-entry', binding, why: u.why as string });
+    if (!readable.length) return;
+    const now = this.now();
+    st.pushes = st.pushes.filter((t) => now - t < BURST_WINDOW_MS);
+    if (st.pushes.length + readable.length > BURST_MAX) {
+      st.pushes.push(now);
+      void this.deps.emit(threadId, { kind: 'burst', binding, count: readable.length });
+      return;
+    }
+    for (const _ of readable) st.pushes.push(now);
+    void this.deps.emit(threadId, { kind: 'entries', binding, entries: readable });
+    // An answer landing is what ends an ask's wait, whoever wrote it.
+    for (const a of this.asks) {
+      if (a.threadId !== threadId) continue;
+      if (readable.some((e) => e.pod === a.targetPod)) a.reported = true;
+    }
+  }
+
+  private remember(st: ThreadState, url: string): void {
+    st.posted.add(url);
+    if (st.posted.size > REMEMBER_MAX) {
+      // Sets iterate in insertion order, so the oldest go first — and the ones being dropped are
+      // by construction the ones furthest below the render cap, which cannot come back as "new".
+      const drop = st.posted.size - REMEMBER_MAX;
+      let i = 0;
+      for (const k of st.posted) { if (i++ >= drop) break; st.posted.delete(k); }
+    }
+  }
+
+  private reportSilence(): void {
+    const now = this.now();
+    for (const a of this.asks) {
+      if (a.reported || now - a.askedAtMs < SILENCE_MS) continue;
+      a.reported = true;
+      const binding = this.deps.store.threadOf(a.threadId);
+      if (!binding) continue;
+      void this.deps.emit(a.threadId, { kind: 'silence', binding, ask: a, waitedMs: now - a.askedAtMs });
+    }
+  }
+}
+
+/**
+ * Bind `pollingWatch` to a client, for `main` to hand to the watcher.
+ *
+ * ★ THE PAYLOAD IS DISCARDED HERE ON PURPOSE. What the watcher wants is the EDGE — `pollingWatch`
+ * fires only when `JSON.stringify(payload)` changes, and that is the whole of the signal. Passing
+ * the payload on would invite a caller to render it, which is the second reader this file exists
+ * to not have.
+ */
+export const watchVia = (client: WorkspaceClient) =>
+  (name: string, input: Record<string, unknown>, onChange: () => void): Unsubscribe | null =>
+    pollingWatch(
+      // `cache: false`, because a watch reading through a cache is a watch that fires on the
+      // cache's schedule instead of the pod's.
+      (n, i) => client.tool(n, i, { cache: false }),
+      name, input,
+      (ev) => { if (ev.type === 'data') onChange(); },
+      { refetchInterval: WATCH_INTERVAL_MS },
+    );

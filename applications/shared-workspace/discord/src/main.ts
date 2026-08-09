@@ -37,11 +37,20 @@
 
 import { pathToFileURL } from 'node:url';
 import { resolve as resolvePath } from 'node:path';
+import { presenceLine } from '@interego/workspace-client';
 import { LinkStore } from './links.js';
 import { BotSession, type BotIdentity } from './identity.js';
-import { COMMANDS, DiscordGateway, DiscordRest, type GatewayInteraction, type GatewayMessage } from './discord.js';
+import {
+  COMMANDS, DiscordGateway, DiscordRest,
+  type GatewayAutocomplete, type GatewayInteraction, type GatewayMessage,
+} from './discord.js';
 import { beginLink, confirmLink, recordMessage, showWorkspace, startWorkspace, unlink, type Deps } from './workspace.js';
-import { renderChallenge, renderConfirm, renderRecord, renderShow, renderStart, renderUnlink, type Message } from './render.js';
+import { ask, askCandidates, askChoices } from './ask.js';
+import { ChannelWatcher, watchVia } from './watch.js';
+import {
+  renderAsk, renderChallenge, renderConfirm, renderNews, renderRecord, renderShow, renderStart,
+  renderUnlink, renderWho, type Message,
+} from './render.js';
 
 const defaultOut = (line: string): void => { process.stdout.write(new Date().toISOString() + ' ' + line + '\n'); };
 
@@ -56,6 +65,12 @@ export interface Started {
   readonly gateway: DiscordGateway;
   readonly identity: BotIdentity;
   readonly store: LinkStore;
+  /**
+   * The producer. ★ HANDED BACK SO A CALLER CAN STOP IT, which a test must and the program never
+   * does — an interval nobody can clear is an interval that keeps a vitest worker alive after the
+   * assertions have finished.
+   */
+  readonly watcher: ChannelWatcher;
 }
 
 /**
@@ -154,6 +169,25 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
     catch (e) { out('discord: could not post to ' + channelId + ' — ' + ((e as Error).message)); }
   };
 
+  /**
+   * The producer: one change-only watch per seated member's log, per thread.
+   *
+   * ★ IT COMPOSES `showWorkspace` RATHER THAN READING FOR ITSELF — the SAME function `/workspace
+   * show` calls. The pushed line and the pulled line therefore cannot disagree about what the
+   * record says, and there is no second reader to drift the day somebody fixes a bug in either.
+   *
+   * ★ AND `emit` GOES THROUGH `say`, which is the one place this bot posts unprompted. `renderNews`
+   * returning null is a real answer — nothing worth a message — and `say` already declines a null,
+   * so a pass with nothing to report posts nothing rather than an empty line.
+   */
+  const watcher = new ChannelWatcher({
+    store,
+    withClient: (fn) => session.call(async (c) => fn(deps(c))),
+    watch: (name, input, onChange) => watchVia(session.current.client)(name, input, onChange),
+    emit: (channelId, news) => say(channelId, renderNews(news)),
+    out,
+  });
+
   const onInteraction = async (i: GatewayInteraction): Promise<void> => {
     if (!i.userId) { out('discord: an interaction arrived with no user, ignored'); return; }
     // Ephemerality has to be decided BEFORE the work, because the deferral carries the flag and
@@ -182,6 +216,36 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
         case 'workspace show':
           m = renderShow(await session.call((c) => showWorkspace(deps(c), i.channelId)));
           break;
+        case 'workspace who':
+          m = renderWho(await session.call((c) => askCandidates(deps(c), {
+            threadId: i.channelId, discordUserId: i.userId as string,
+          })));
+          break;
+        case 'workspace ask': {
+          // ★ SERIALISED ON THE ASKER'S POD, like every other append. An ask IS an entry in their
+          // log, so two of them a second apart race the chain derivation exactly as two messages
+          // would — and this one is likelier, because a person who asks one agent something often
+          // asks the next one straight after.
+          const askerPod = store.linkOf(i.userId)?.pod ?? i.userId;
+          const out = await queue.run(askerPod, () => session.call((c) => ask(deps(c), {
+            threadId: i.channelId, discordUserId: i.userId as string,
+            spec: i.options['agent'] ?? '', task: i.options['task'] ?? '',
+          })));
+          m = renderAsk(out);
+          // Only a written ask is watched for silence. Recording one that was refused would
+          // promise a follow-up about an entry that does not exist.
+          if (out.kind === 'asked' && out.descriptorUrl) {
+            watcher.noteAsk({
+              threadId: i.channelId, descriptorUrl: out.descriptorUrl, seq: out.accepted.seq,
+              targetPod: out.target.pod, targetName: out.target.name ?? out.target.agentId,
+              askedAtMs: Date.now(),
+              // Verbatim, so the follow-up quotes what was true at the moment of asking rather
+              // than re-deriving a fact that has since changed.
+              presenceAtAsk: presenceLine(out.target.presence),
+            });
+          }
+          break;
+        }
         default:
           m = { content: 'This bot does not know the command `' + i.name + '`.', ephemeral: true };
       }
@@ -194,6 +258,38 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
     }
     try { await rest.edit(who.id, i.token, m.content); }
     catch (e) { out('discord: could not deliver the answer to ' + i.name + ' — ' + (e as Error).message); }
+  };
+
+  /**
+   * The picker, answered live per keystroke.
+   *
+   * ★ THREE SECONDS AND NO DEFERRAL. Discord has no "thinking" state for an autocomplete, so a
+   * handler that overruns produces an empty box with no explanation. Every read behind
+   * `askCandidates` is bounded — one roster fold, one registry read per seated pod, one presence
+   * read per delegate — and if it throws, a row SAYING it failed goes back rather than nothing,
+   * because an empty list and a failed lookup are different facts and Discord draws them the same.
+   *
+   * ★ AND NOTHING IS CACHED BETWEEN KEYSTROKES ON PURPOSE. A delegation revoked thirty seconds ago
+   * must disappear from this list without anything telling this bot, which is only true while the
+   * pods are the ones being asked.
+   */
+  const onAutocomplete = async (a: GatewayAutocomplete): Promise<void> => {
+    if (!a.userId || a.name !== 'workspace ask' || a.focused !== 'agent') {
+      try { await rest.autocomplete(a.id, a.token, []); } catch { /* the box simply stays empty */ }
+      return;
+    }
+    let choices: readonly { name: string; value: string }[];
+    try {
+      const found = await session.call((c) => askCandidates(deps(c), {
+        threadId: a.channelId, discordUserId: a.userId as string,
+      }));
+      choices = askChoices(found, a.query);
+    } catch (e) {
+      out('autocomplete failed for ' + a.channelId + ': ' + ((e as Error)?.message ?? String(e)));
+      choices = [{ name: '· that lookup did not complete, so who can be asked is not established', value: '?failed' }];
+    }
+    try { await rest.autocomplete(a.id, a.token, choices); }
+    catch (e) { out('discord: could not answer the picker — ' + (e as Error).message); }
   };
 
   const onMessage = (msg: GatewayMessage): void => {
@@ -220,17 +316,24 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
   const gateway = new DiscordGateway(token, {
     onMessage,
     onInteraction: (i) => { void onInteraction(i); },
+    onAutocomplete: (a) => { void onAutocomplete(a); },
     onNotice: (l) => { out('gateway: ' + l); },
     onFatal: (why) => { out('gateway FATAL: ' + why); process.exitCode = 1; gateway.stop(); },
   }, boot.openSocket);
   gateway.connect();
+  // ★ THE PRODUCER, AND THE BOT HAD NONE. Before this the only `setInterval` in the whole program
+  // was the gateway heartbeat: an agent could read the channel, think on its own human's
+  // subscription and append a signed answer to its own human's pod, and Discord would never show
+  // it. Somebody had to type `/workspace show` and happen to look. A channel where half the
+  // participants are agents and the agents are invisible is not a channel they are in.
+  watcher.start();
 
   const install = boot.installSignalHandler ?? ((sig, handler) => { process.on(sig, handler); });
   for (const sig of ['SIGINT', 'SIGTERM'] as const) {
-    install(sig, () => { out('shutting down on ' + sig); gateway.stop(); process.exit(0); });
+    install(sig, () => { out('shutting down on ' + sig); watcher.stop(); gateway.stop(); process.exit(0); });
   }
 
-  return { gateway, identity, store };
+  return { gateway, identity, store, watcher };
 }
 
 /**

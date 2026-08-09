@@ -329,7 +329,21 @@ async function seat(deps: Deps, frame: Frame, member: Viewer): Promise<{ readonl
 /** Append one Discord message to its author's own log. */
 export async function recordMessage(
   deps: Deps,
-  args: { readonly threadId: string; readonly discordUserId: string; readonly text: string },
+  args: {
+    readonly threadId: string;
+    readonly discordUserId: string;
+    readonly text: string;
+    /**
+     * Agents this message is a request TO.
+     *
+     * ★ AN ASK GOES DOWN THIS PATH AND NOT A SECOND ONE. The delegation gate, the frame read, the
+     * seating of an unseated member and the per-pod CAS append all happen here; an ask written by
+     * its own writer would be an ask that skipped one of them the first time somebody changed one.
+     * The only difference between "Mark said something" and "Mark asked an agent something" is one
+     * predicate inside the signed region.
+     */
+    readonly addressedTo?: readonly string[];
+  },
 ): Promise<RecordOut> {
   const binding = deps.store.threadOf(args.threadId);
   if (!binding) return { kind: 'not-a-workspace' };
@@ -366,6 +380,7 @@ export async function recordMessage(
     const outcome = await postEntry(deps.client, {
       podName: member.podName, streamIri, workspace: binding.workspace,
       body, entryShape: frame.record.entryShape,
+      ...(args.addressedTo === undefined ? {} : { addressedTo: args.addressedTo }),
       /**
        * ★ THE PERSON, NOT THIS BOT, AND THAT IS NOT AN OVERSIGHT.
        *

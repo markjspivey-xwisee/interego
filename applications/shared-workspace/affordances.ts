@@ -13,11 +13,29 @@
  */
 
 import type { Affordance } from '../_shared/affordance-mcp/index.js';
-import type { IRI } from '@interego/core';
+import { actionUrl, type IRI } from '@interego/core';
+
+/**
+ * The one action this vertical defines, as a URL.
+ *
+ * ★ IT WAS `urn:iep:action:wsp:respond-as-member`, AND THAT FAILED SILENTLY IN THE WORST PLACE.
+ * `capabilitiesFromAffordances` drops any affordance whose action is not `^https?://` — deliberately
+ * and correctly, because an unfollowable capability advertised on a card is a promise the substrate
+ * cannot keep. But the drop is a `continue` with no error, so the ONE thing a workspace agent can
+ * be asked to do vanished from every per-agent card, and an A2A peer reading that card concluded
+ * this agent could do nothing at all. A false "no capabilities" is worse than a broken link,
+ * because nothing anywhere reports it.
+ *
+ * ★ MINTED THROUGH `actionUrl` RATHER THAN TYPED OUT, so this string and the resolver's idea of
+ * what it should be cannot disagree — and `sameAction` still selects it by the legacy urn, so
+ * nothing that already invokes it stops working. Every identifier is a dereferenceable URL; a
+ * `urn:` here was both a principle violation and, measurably, an under-advertised agent.
+ */
+export const RESPOND_AS_MEMBER = actionUrl('urn:iep:action:wsp:respond-as-member');
 
 const WSP_AFFORDANCES: ReadonlyArray<Affordance> = [
   {
-    action: 'urn:iep:action:wsp:respond-as-member' as IRI,
+    action: RESPOND_AS_MEMBER as IRI,
     toolName: 'wsp.respond_as_member',
     title: 'Read a workspace channel and answer in your own log',
     description:

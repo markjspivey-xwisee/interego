@@ -850,8 +850,12 @@ var WSPC = (() => {
     INBOX_LIMIT: () => INBOX_LIMIT,
     NOTHING_TO_ADD: () => NOTHING_TO_ADD,
     POD_RX: () => POD_RX,
+    PRESENCE_LEASE_MS: () => PRESENCE_LEASE_MS,
+    PRESENCE_MAX_LEASE_MS: () => PRESENCE_MAX_LEASE_MS,
+    PRESENCE_RENEW_MS: () => PRESENCE_RENEW_MS,
     PROBE_TOOL: () => PROBE_TOOL,
     PROV: () => PROV,
+    REQUEST_INBOX_LIMIT: () => REQUEST_INBOX_LIMIT,
     REQUIRED_TOOLS: () => REQUIRED_TOOLS,
     RelayMcpTransport: () => RelayMcpTransport,
     SEAT_READ_CAP: () => SEAT_READ_CAP,
@@ -863,6 +867,13 @@ var WSPC = (() => {
     WorkspaceClient: () => WorkspaceClient,
     acceptGrant: () => acceptGrant,
     acceptanceTurtle: () => acceptanceTurtle,
+    admitAnyVerifiedSigner: () => admitAnyVerifiedSigner,
+    admitSeatedIn: () => admitSeatedIn,
+    agentDocIri: () => agentDocIri,
+    agentDocName: () => agentDocName,
+    agentNsIri: () => agentNsIri,
+    agentPodOf: () => agentPodOf,
+    agentPort: () => agentPort,
     asRefusal: () => asRefusal,
     assertPod: () => assertPod,
     assignPodMarks: () => assignPodMarks,
@@ -870,6 +881,9 @@ var WSPC = (() => {
     awaitHead: () => awaitHead,
     briefPrompt: () => briefPrompt,
     canvasTurtle: () => canvasTurtle,
+    capabilitiesIri: () => capabilitiesIri,
+    capabilityProblem: () => capabilityProblem,
+    capabilityTurtle: () => capabilityTurtle,
     checkDelegation: () => checkDelegation2,
     checkDraft: () => checkDraft,
     checkOwnHandle: () => checkOwnHandle,
@@ -883,11 +897,13 @@ var WSPC = (() => {
     delegateLabel: () => delegateLabel,
     delegateNameProblem: () => delegateNameProblem,
     delegatePlan: () => delegatePlan,
+    delegatePodOf: () => agentPodOf,
     delegatePort: () => delegatePort,
+    describeSpan: () => describeSpan,
     entryShapeAnswer: () => entryShapeAnswer,
     entryTurtle: () => entryTurtle,
     errorCopy: () => errorCopy,
-    escapeTurtleLiteral: () => escapeTurtleLiteral,
+    escapeTurtleLiteral: () => escapeTurtleLiteral2,
     fail: () => fail,
     findSeat: () => findSeat,
     foldRoster: () => foldRoster,
@@ -903,6 +919,7 @@ var WSPC = (() => {
     hasType: () => hasType,
     isDelegateRow: () => isDelegateRow,
     isDelegationScope: () => isDelegationScope,
+    isPresent: () => isPresent,
     judgeAuthorship: () => judgeAuthorship,
     legacyName: () => legacyName,
     listWorkspaces: () => listWorkspaces,
@@ -927,10 +944,16 @@ var WSPC = (() => {
     pollingWatch: () => pollingWatch,
     postEntry: () => postEntry,
     preconditionLine: () => preconditionLine,
+    presenceIri: () => presenceIri,
+    presenceLine: () => presenceLine,
+    presenceTurtle: () => presenceTurtle,
+    publishCapability: () => publishCapability,
     publishDelegation: () => publishDelegation,
+    publishPresence: () => publishPresence,
     qualifiedName: () => qualifiedName,
     readAuthorship: () => readAuthorship,
     readCanvas: () => readCanvas,
+    readCapabilities: () => readCapabilities,
     readDelegates: () => readDelegates,
     readEntryAuthorship: () => readEntryAuthorship,
     readInbox: () => readInbox,
@@ -940,6 +963,8 @@ var WSPC = (() => {
     readIriList: () => readIriList,
     readLiteral: () => readLiteral,
     readMember: () => readMember,
+    readPresence: () => readPresence,
+    readRequests: () => readRequests,
     readViewer: () => readViewer,
     refusal: () => refusal,
     resolveInvitee: () => resolveInvitee,
@@ -963,16 +988,23 @@ var WSPC = (() => {
     unescapeLiteral: () => unescapeLiteral,
     verifyGrantIri: () => verifyGrantIri,
     verifyInvitation: () => verifyInvitation,
+    verifyRequest: () => verifyRequest,
     verifyWorkspaceEntry: () => verifyWorkspaceEntry,
     workspaceTurtle: () => workspaceTurtle
   });
 
-  // packages/workspace-client/src/turtle.ts
+  // packages/core/dist/rdf/escape.js
+  function escapeTurtleLiteral(s) {
+    return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t");
+  }
+
+  // packages/core/dist/rdf/turtle-region.js
   var BAD_IRI = /[\s<>"{}|\\^`]/;
   function unescapeLiteral(s) {
     return s.replace(/\\(u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}|.)/g, (_m, g) => {
       const head = g[0];
-      if (head === "u" || head === "U") return String.fromCodePoint(parseInt(g.slice(1), 16));
+      if (head === "u" || head === "U")
+        return String.fromCodePoint(parseInt(g.slice(1), 16));
       const table = {
         n: "\n",
         t: "	",
@@ -995,15 +1027,18 @@ var WSPC = (() => {
       if (c === "<") {
         const close = content.indexOf(">", i);
         if (close > i && !BAD_IRI.test(content.slice(i + 1, close))) {
-          if (onToken(i, c, close) === false) return;
+          if (onToken(i, c, close) === false)
+            return;
           i = close + 1;
           continue;
         }
       }
       if (c === "#") {
         const from = i;
-        while (i < n && content[i] !== "\n") i++;
-        if (onSpan) onSpan("comment", from, i);
+        while (i < n && content[i] !== "\n")
+          i++;
+        if (onSpan)
+          onSpan("comment", from, i);
         continue;
       }
       if (c === '"' || c === "'") {
@@ -1016,11 +1051,14 @@ var WSPC = (() => {
               i += 2;
               continue;
             }
-            if (content.startsWith(triple, i)) break;
+            if (content.startsWith(triple, i))
+              break;
             i++;
           }
-          if (onSpan) onSpan("literal", from2, Math.min(i, n));
-          if (i < n) i += 3;
+          if (onSpan)
+            onSpan("literal", from2, Math.min(i, n));
+          if (i < n)
+            i += 3;
           continue;
         }
         i++;
@@ -1030,15 +1068,20 @@ var WSPC = (() => {
             i += 2;
             continue;
           }
-          if (content[i] === c) break;
-          if (content[i] === "\n") break;
+          if (content[i] === c)
+            break;
+          if (content[i] === "\n")
+            break;
           i++;
         }
-        if (onSpan) onSpan("literal", from, Math.min(i, n));
-        if (i < n && content[i] === c) i++;
+        if (onSpan)
+          onSpan("literal", from, Math.min(i, n));
+        if (i < n && content[i] === c)
+          i++;
         continue;
       }
-      if (onToken(i, c) === false) return;
+      if (onToken(i, c) === false)
+        return;
       i++;
     }
   }
@@ -1046,15 +1089,19 @@ var WSPC = (() => {
     const out = s.split("");
     scanTurtle(s, () => true, (kind, from, to) => {
       const fill = kind === "comment" ? comments : literals;
-      if (fill === null) return;
-      for (let k = from; k < to; k++) if (out[k] !== "\n") out[k] = fill;
+      if (fill === null)
+        return;
+      for (let k = from; k < to; k++)
+        if (out[k] !== "\n")
+          out[k] = fill;
     });
     return out.join("");
   }
   var maskSrc = null;
   var maskOut = null;
   function masked(ttl) {
-    if (ttl === maskSrc && maskOut !== null) return maskOut;
+    if (ttl === maskSrc && maskOut !== null)
+      return maskOut;
     maskSrc = ttl;
     maskOut = maskFill(ttl, " ", " ");
     return maskOut;
@@ -1062,7 +1109,8 @@ var WSPC = (() => {
   var maskComments = (ttl) => maskFill(ttl, " ", null);
   function literalAt(s, i) {
     const q = s[i];
-    if (q !== '"' && q !== "'") return null;
+    if (q !== '"' && q !== "'")
+      return null;
     const triple = q + q + q;
     if (s.startsWith(triple, i)) {
       let j2 = i + 3;
@@ -1071,7 +1119,8 @@ var WSPC = (() => {
           j2 += 2;
           continue;
         }
-        if (s.startsWith(triple, j2)) return s.slice(i + 3, j2);
+        if (s.startsWith(triple, j2))
+          return s.slice(i + 3, j2);
         j2++;
       }
       return null;
@@ -1082,8 +1131,10 @@ var WSPC = (() => {
         j += 2;
         continue;
       }
-      if (s[j] === q) return unescapeLiteral(s.slice(i + 1, j));
-      if (s[j] === "\n") return null;
+      if (s[j] === q)
+        return unescapeLiteral(s.slice(i + 1, j));
+      if (s[j] === "\n")
+        return null;
       j++;
     }
     return null;
@@ -1093,156 +1144,194 @@ var WSPC = (() => {
     const local = colon > 0 ? term.slice(colon + 1) : term;
     const pfx = colon > 0 ? term : null;
     const out = [];
-    if (pfx) out.push(rxEsc(pfx));
-    if (ns) out.push("<" + rxEsc(ns + local) + ">");
+    if (pfx)
+      out.push(rxEsc(pfx));
+    if (ns)
+      out.push("<" + rxEsc(ns + local) + ">");
     return out.length ? out : [rxEsc(term)];
   }
-  var WSP = "https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#";
   var IEP = "https://markjspivey-xwisee.github.io/interego/ns/iep#";
   var PROV = "http://www.w3.org/ns/prov#";
-  function nsOf(term) {
-    if (term.indexOf("wsp:") === 0) return WSP;
-    if (term.indexOf("dct:") === 0) return "http://purl.org/dc/terms/";
-    if (term.indexOf("rdfs:") === 0) return "http://www.w3.org/2000/01/rdf-schema#";
-    if (term.indexOf("hydra:") === 0) return "http://www.w3.org/ns/hydra/core#";
-    if (term.indexOf("iep:") === 0) return IEP;
-    if (term.indexOf("prov:") === 0) return PROV;
+  var SUBSTRATE_NS = {
+    "dct:": "http://purl.org/dc/terms/",
+    "rdfs:": "http://www.w3.org/2000/01/rdf-schema#",
+    "hydra:": "http://www.w3.org/ns/hydra/core#",
+    "iep:": IEP,
+    "prov:": PROV
+  };
+  function nsFrom(table, term) {
+    for (const p of Object.keys(table))
+      if (term.indexOf(p) === 0)
+        return table[p];
     return null;
   }
-  function readLiteral(ttl, term) {
-    if (!ttl) return null;
-    const mk = masked(ttl);
-    for (const f of forms(term, nsOf(term))) {
-      const rx = new RegExp("(?:^|[\\s;\\[])" + f + `\\s+(?=["'])`, "g");
-      let m;
-      while (m = rx.exec(mk)) {
-        const at = m.index + m[0].length;
-        const lit = literalAt(ttl, at);
-        if (lit !== null) return lit;
-        rx.lastIndex = at + 1;
+  var nsOfSubstrate = (term) => nsFrom(SUBSTRATE_NS, term);
+  function makeTurtleReaders(nsOf2) {
+    function readLiteral3(ttl, term) {
+      if (!ttl)
+        return null;
+      const mk = masked(ttl);
+      for (const f of forms(term, nsOf2(term))) {
+        const rx = new RegExp("(?:^|[\\s;\\[])" + f + `\\s+(?=["'])`, "g");
+        let m;
+        while (m = rx.exec(mk)) {
+          const at = m.index + m[0].length;
+          const lit = literalAt(ttl, at);
+          if (lit !== null)
+            return lit;
+          rx.lastIndex = at + 1;
+        }
       }
+      return null;
     }
-    return null;
-  }
-  function readIri(ttl, term) {
-    if (!ttl) return null;
-    const mk = masked(ttl);
-    for (const f of forms(term, nsOf(term))) {
-      const rx = new RegExp("(?:^|[\\s;\\[])" + f + "\\s+<([^>]*)>", "g");
-      let m;
-      while (m = rx.exec(mk)) {
-        const body = m[1];
-        if (!BAD_IRI.test(body)) return body;
-        rx.lastIndex = m.index + m[0].length;
+    function readIri3(ttl, term) {
+      if (!ttl)
+        return null;
+      const mk = masked(ttl);
+      for (const f of forms(term, nsOf2(term))) {
+        const rx = new RegExp("(?:^|[\\s;\\[])" + f + "\\s+<([^>]*)>", "g");
+        let m;
+        while (m = rx.exec(mk)) {
+          const body = m[1];
+          if (!BAD_IRI.test(body))
+            return body;
+          rx.lastIndex = m.index + m[0].length;
+        }
       }
+      return null;
     }
-    return null;
-  }
-  function readIriAll(ttl, term) {
-    if (!ttl) return [];
-    const mk = masked(ttl);
-    const out = [];
-    const seen = /* @__PURE__ */ new Set();
-    const take = (body) => {
-      if (!BAD_IRI.test(body) && !seen.has(body)) {
-        seen.add(body);
-        out.push(body);
+    function readIriAll3(ttl, term) {
+      if (!ttl)
+        return [];
+      const mk = masked(ttl);
+      const out = [];
+      const seen = /* @__PURE__ */ new Set();
+      const take = (body) => {
+        if (!BAD_IRI.test(body) && !seen.has(body)) {
+          seen.add(body);
+          out.push(body);
+        }
+      };
+      for (const f of forms(term, nsOf2(term))) {
+        const rx = new RegExp("(?:^|[\\s;\\[])" + f + "(?=\\s)", "g");
+        let m;
+        while (m = rx.exec(mk)) {
+          let i = m.index + m[0].length;
+          for (; ; ) {
+            while (i < mk.length && /\s/.test(mk[i]))
+              i++;
+            if (mk[i] !== "<")
+              break;
+            const close = mk.indexOf(">", i);
+            if (close < 0)
+              break;
+            take(mk.slice(i + 1, close));
+            i = close + 1;
+            while (i < mk.length && /\s/.test(mk[i]))
+              i++;
+            if (mk[i] !== ",")
+              break;
+            i++;
+          }
+          rx.lastIndex = m.index + m[0].length;
+        }
       }
-    };
-    for (const f of forms(term, nsOf(term))) {
-      const rx = new RegExp("(?:^|[\\s;\\[])" + f + "(?=\\s)", "g");
-      let m;
-      while (m = rx.exec(mk)) {
+      return out;
+    }
+    function readIriList2(ttl, term) {
+      if (!ttl)
+        return [];
+      const mk = masked(ttl);
+      for (const f of forms(term, nsOf2(term))) {
+        const m = new RegExp("(?:^|[\\s;\\[])" + f + "(?=\\s)").exec(mk);
+        if (!m)
+          continue;
+        const out = [];
         let i = m.index + m[0].length;
         for (; ; ) {
-          while (i < mk.length && /\s/.test(mk[i])) i++;
-          if (mk[i] !== "<") break;
-          const close = mk.indexOf(">", i);
-          if (close < 0) break;
-          take(mk.slice(i + 1, close));
-          i = close + 1;
-          while (i < mk.length && /\s/.test(mk[i])) i++;
-          if (mk[i] !== ",") break;
+          while (i < mk.length && /\s/.test(mk[i]))
+            i++;
+          if (i >= mk.length)
+            break;
+          if (mk[i] === "<") {
+            const close = mk.indexOf(">", i);
+            if (close < 0 || BAD_IRI.test(mk.slice(i + 1, close)))
+              break;
+            out.push("<" + mk.slice(i + 1, close) + ">");
+            i = close + 1;
+          } else if (/[A-Za-z_]/.test(mk[i])) {
+            let j = i;
+            while (j < mk.length && !/[\s,;.\])]/.test(mk[j]))
+              j++;
+            out.push(mk.slice(i, j));
+            i = j;
+          } else
+            break;
+          while (i < mk.length && /\s/.test(mk[i]))
+            i++;
+          if (mk[i] !== ",")
+            break;
           i++;
         }
-        rx.lastIndex = m.index + m[0].length;
+        if (out.length)
+          return out;
       }
+      return [];
     }
-    return out;
-  }
-  function readIriList(ttl, term) {
-    if (!ttl) return [];
-    const mk = masked(ttl);
-    for (const f of forms(term, nsOf(term))) {
-      const m = new RegExp("(?:^|[\\s;\\[])" + f + "(?=\\s)").exec(mk);
-      if (!m) continue;
-      const out = [];
-      let i = m.index + m[0].length;
-      for (; ; ) {
-        while (i < mk.length && /\s/.test(mk[i])) i++;
-        if (i >= mk.length) break;
-        if (mk[i] === "<") {
-          const close = mk.indexOf(">", i);
-          if (close < 0 || BAD_IRI.test(mk.slice(i + 1, close))) break;
-          out.push("<" + mk.slice(i + 1, close) + ">");
-          i = close + 1;
-        } else if (/[A-Za-z_]/.test(mk[i])) {
-          let j = i;
-          while (j < mk.length && !/[\s,;.\])]/.test(mk[j])) j++;
-          out.push(mk.slice(i, j));
-          i = j;
-        } else break;
-        while (i < mk.length && /\s/.test(mk[i])) i++;
-        if (mk[i] !== ",") break;
-        i++;
-      }
-      if (out.length) return out;
-    }
-    return [];
-  }
-  function readInt(ttl, term) {
-    if (!ttl) return null;
-    const mk = masked(ttl);
-    for (const f of forms(term, nsOf(term))) {
-      const rx = new RegExp("(?:^|[\\s;\\[])" + f + `\\s+(?=["'\\d])`, "g");
-      let m;
-      while (m = rx.exec(mk)) {
-        const at = m.index + m[0].length;
-        if (mk[at] === '"' || mk[at] === "'") {
-          const lit = literalAt(ttl, at);
-          if (lit !== null && /^\d+$/.test(lit)) return Number(lit);
-        } else {
-          const d = /^\d+/.exec(mk.slice(at));
-          if (d) return Number(d[0]);
+    function readInt2(ttl, term) {
+      if (!ttl)
+        return null;
+      const mk = masked(ttl);
+      for (const f of forms(term, nsOf2(term))) {
+        const rx = new RegExp("(?:^|[\\s;\\[])" + f + `\\s+(?=["'\\d])`, "g");
+        let m;
+        while (m = rx.exec(mk)) {
+          const at = m.index + m[0].length;
+          if (mk[at] === '"' || mk[at] === "'") {
+            const lit = literalAt(ttl, at);
+            if (lit !== null && /^\d+$/.test(lit))
+              return Number(lit);
+          } else {
+            const d = /^\d+/.exec(mk.slice(at));
+            if (d)
+              return Number(d[0]);
+          }
+          rx.lastIndex = at + 1;
         }
-        rx.lastIndex = at + 1;
       }
+      return null;
     }
-    return null;
-  }
-  function hasTrue(ttl, term) {
-    if (!ttl) return false;
-    const mk = masked(ttl);
-    for (const f of forms(term, nsOf(term))) {
-      const rx = new RegExp("(?:^|[\\s;\\[])" + f + `\\s+(?=["'t])`, "g");
-      let m;
-      while (m = rx.exec(mk)) {
-        const at = m.index + m[0].length;
-        if (mk[at] === '"' || mk[at] === "'") {
-          if (literalAt(ttl, at) === "true") return true;
-        } else if (/^true(?=[\s;,.\]]|$)/.test(mk.slice(at))) return true;
-        rx.lastIndex = at + 1;
+    function hasTrue2(ttl, term) {
+      if (!ttl)
+        return false;
+      const mk = masked(ttl);
+      for (const f of forms(term, nsOf2(term))) {
+        const rx = new RegExp("(?:^|[\\s;\\[])" + f + `\\s+(?=["'t])`, "g");
+        let m;
+        while (m = rx.exec(mk)) {
+          const at = m.index + m[0].length;
+          if (mk[at] === '"' || mk[at] === "'") {
+            if (literalAt(ttl, at) === "true")
+              return true;
+          } else if (/^true(?=[\s;,.\]]|$)/.test(mk.slice(at)))
+            return true;
+          rx.lastIndex = at + 1;
+        }
       }
+      return false;
     }
-    return false;
+    function hasType2(ttl, term) {
+      if (!ttl)
+        return false;
+      const mk = masked(ttl);
+      return forms(term, nsOf2(term)).some((f) => new RegExp("(?:^|[\\s;\\[])a\\s+" + f + "(?=[\\s;,.\\]]|$)").test(mk));
+    }
+    return { readLiteral: readLiteral3, readIri: readIri3, readIriAll: readIriAll3, readIriList: readIriList2, readInt: readInt2, hasTrue: hasTrue2, hasType: hasType2 };
   }
-  function hasType(ttl, term) {
-    if (!ttl) return false;
-    const mk = masked(ttl);
-    return forms(term, nsOf(term)).some((f) => new RegExp("(?:^|[\\s;\\[])a\\s+" + f + "(?=[\\s;,.\\]]|$)").test(mk));
-  }
+  var substrateReaders = makeTurtleReaders(nsOfSubstrate);
   function graphRegion(content, graphIri) {
-    if (!content) return null;
+    if (!content)
+      return null;
     let start = -1;
     let depth = 0;
     let end = -1;
@@ -1253,16 +1342,19 @@ var WSPC = (() => {
           return true;
         }
         if (c === "}") {
-          if (depth > 0) depth--;
+          if (depth > 0)
+            depth--;
           return true;
         }
         if (depth === 0 && c === "<" && iriEnd !== void 0 && content.slice(i + 1, iriEnd) === graphIri) {
           const after = content.slice(iriEnd + 1).match(/^(?:\s|#[^\n]*(?:\n|$))*\{/);
-          if (after) start = iriEnd + 1 + after[0].length;
+          if (after)
+            start = iriEnd + 1 + after[0].length;
         }
         return true;
       }
-      if (c === "{") depth++;
+      if (c === "{")
+        depth++;
       else if (c === "}") {
         depth--;
         if (depth === 0) {
@@ -1272,10 +1364,25 @@ var WSPC = (() => {
       }
       return true;
     });
-    if (start < 0 || end < 0) return null;
+    if (start < 0 || end < 0)
+      return null;
     return content.slice(start, end);
   }
-  var escapeTurtleLiteral = (s) => String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t");
+
+  // packages/workspace-client/src/escape-literal.ts
+  var escapeTurtleLiteral2 = (s) => escapeTurtleLiteral(String(s));
+
+  // packages/workspace-client/src/turtle.ts
+  var WSP = "https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#";
+  var nsOf = (term) => nsFrom({ ...SUBSTRATE_NS, "wsp:": WSP }, term);
+  var R = makeTurtleReaders(nsOf);
+  var readLiteral = R.readLiteral;
+  var readIri = R.readIri;
+  var readIriAll = R.readIriAll;
+  var readIriList = R.readIriList;
+  var readInt = R.readInt;
+  var hasTrue = R.hasTrue;
+  var hasType = R.hasType;
   function parseRoleProfile(ttl) {
     const roles = /* @__PURE__ */ new Map();
     const caps = /* @__PURE__ */ new Map();
@@ -2535,7 +2642,9 @@ var WSPC = (() => {
     const author = a.kind === "delegate" ? iri(a.agentId, "the delegate agent id this entry is attributed to") : iri(a.webId, "the WebID this entry is attributed to");
     const created2 = args.createdIso ?? (/* @__PURE__ */ new Date()).toISOString();
     const footing = a.kind === "delegate" ? footingTurtle({ entryIri, agentId: a.agentId, footing: a.footing, iri, endedIso: created2 }) : null;
-    return "@prefix wsp: <" + WSP + "> .\n@prefix iep: <" + IEP + "> .\n@prefix prov: <" + PROV + "> .\n@prefix dct: <http://purl.org/dc/terms/> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n" + subject + "\n  a wsp:Entry ;\n  wsp:workspace " + workspace + ' ;\n  wsp:seq "' + args.seq + '"^^xsd:nonNegativeInteger ;\n' + (prior ? "  iep:supersedes " + prior + " ;\n" : "") + "  prov:wasAttributedTo " + author + " ;\n" + (footing ? footing.generatedBy : "") + '  dct:created "' + created2 + '"^^xsd:dateTime ;\n  dct:description "' + escapeTurtleLiteral(args.body) + '" .\n' + (footing ? footing.blocks : "");
+    const addressed = [...new Set(args.addressedTo ?? [])];
+    const addressedLine = addressed.length ? "  iep:addressedTo " + addressed.map((t) => iri(t, "an agent this entry is addressed to")).join(", ") + " ;\n" : "";
+    return "@prefix wsp: <" + WSP + "> .\n@prefix iep: <" + IEP + "> .\n@prefix prov: <" + PROV + "> .\n@prefix dct: <http://purl.org/dc/terms/> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n" + subject + "\n  a wsp:Entry ;\n  wsp:workspace " + workspace + ' ;\n  wsp:seq "' + args.seq + '"^^xsd:nonNegativeInteger ;\n' + (prior ? "  iep:supersedes " + prior + " ;\n" : "") + "  prov:wasAttributedTo " + author + " ;\n" + addressedLine + (footing ? footing.generatedBy : "") + '  dct:created "' + created2 + '"^^xsd:dateTime ;\n  dct:description "' + escapeTurtleLiteral2(args.body) + '" .\n' + (footing ? footing.blocks : "");
   }
   function preconditionLine(pc, sent, sentKind) {
     if (pc && typeof pc === "object") {
@@ -2587,7 +2696,15 @@ var WSPC = (() => {
         // reported the append accepted.
         pod_name: args.podName,
         graph_iri: args.streamIri,
-        graph_content: entryTurtle({ streamIri: args.streamIri, workspace: args.workspace, seq, body: args.body, prior: prior ? prior.url : null, author: args.author }),
+        graph_content: entryTurtle({
+          streamIri: args.streamIri,
+          workspace: args.workspace,
+          seq,
+          body: args.body,
+          prior: prior ? prior.url : null,
+          author: args.author,
+          ...args.addressedTo === void 0 ? {} : { addressedTo: args.addressedTo }
+        }),
         visibility: "public",
         auto_supersede_prior: false,
         sign_authorship: true
@@ -2803,8 +2920,8 @@ var WSPC = (() => {
   }
   function rolesTurtle(iri) {
     turtleIri(iri, "the role profile IRI");
-    const cap = (frag, label, comment) => "<" + iri + "#" + frag + '> a wsp:Capability ; rdfs:label "' + escapeTurtleLiteral(label) + '" ; rdfs:comment "' + escapeTurtleLiteral(comment) + '" .\n';
-    const role = (frag, label, comment, permits) => "<" + iri + "#" + frag + '> a wsp:Role ; rdfs:label "' + escapeTurtleLiteral(label) + '" ; rdfs:comment "' + escapeTurtleLiteral(comment) + '" ;\n  wsp:permits ' + permits.map((p) => "<" + iri + "#" + p + ">").join(", ") + " .\n";
+    const cap = (frag, label, comment) => "<" + iri + "#" + frag + '> a wsp:Capability ; rdfs:label "' + escapeTurtleLiteral2(label) + '" ; rdfs:comment "' + escapeTurtleLiteral2(comment) + '" .\n';
+    const role = (frag, label, comment, permits) => "<" + iri + "#" + frag + '> a wsp:Role ; rdfs:label "' + escapeTurtleLiteral2(label) + '" ; rdfs:comment "' + escapeTurtleLiteral2(comment) + '" ;\n  wsp:permits ' + permits.map((p) => "<" + iri + "#" + p + ">").join(", ") + " .\n";
     return "@prefix wsp: <" + WSP + "> .\n@prefix rdfs: <" + RDFS + "> .\n\n" + cap("Read", "Read the channel", "Fold every member's log into one view.") + cap("Post", "Post to the channel", "Append an entry to your own log in this workspace.") + cap("Convene", "Invite and revoke", "Publish and withdraw membership grants for this workspace. Only the convener's pod holds grants a reader will count, so only the convener can exercise this.") + "\n" + role("Convener", "Convener", "Holds the pod the grants are read from. Can invite, can revoke, and writes to their own log like anybody else.", ["Read", "Post", "Convene"]) + role("Contributor", "Contributor", "Reads the channel and writes to their own log. Cannot seat or unseat anyone.", ["Read", "Post"]) + role("Reader", "Reader", "Reads the channel. Publishes nothing to it.", ["Read"]);
   }
   function workspaceTurtle(args) {
@@ -2812,7 +2929,7 @@ var WSPC = (() => {
     const conv = turtleIri(args.convenerWebId, "the convener WebID");
     const roles = turtleIri(args.rolesIri, "the role profile IRI");
     const shape = turtleIri(args.shapeIri, "the shape IRI");
-    return "@prefix wsp: <" + WSP + "> .\n@prefix dct: <" + DCT + "> .\n@prefix xsd: <" + XSD + "> .\n\n" + ws + '\n  a wsp:Workspace ;\n  dct:title "' + escapeTurtleLiteral(args.title) + '" ;\n  wsp:convener ' + conv + " ;\n  wsp:roleProfile " + roles + " ;\n  wsp:entryShape " + shape + " ;\n  wsp:grantCapability <" + args.rolesIri + "#Convene> ;\n  dct:created " + created(args.createdIso) + " .\n";
+    return "@prefix wsp: <" + WSP + "> .\n@prefix dct: <" + DCT + "> .\n@prefix xsd: <" + XSD + "> .\n\n" + ws + '\n  a wsp:Workspace ;\n  dct:title "' + escapeTurtleLiteral2(args.title) + '" ;\n  wsp:convener ' + conv + " ;\n  wsp:roleProfile " + roles + " ;\n  wsp:entryShape " + shape + " ;\n  wsp:grantCapability <" + args.rolesIri + "#Convene> ;\n  dct:created " + created(args.createdIso) + " .\n";
   }
   function grantTurtle(args) {
     const g = turtleIri(args.grant, "the grant IRI");
@@ -2827,12 +2944,12 @@ var WSPC = (() => {
     const me = turtleIri(args.memberWebId, "your own WebID");
     const grant = turtleIri(args.grant, "the grant IRI being accepted");
     const stream = turtleIri(args.stream, "the stream IRI");
-    return "@prefix wsp: <" + WSP + "> .\n@prefix dct: <" + DCT + "> .\n@prefix xsd: <" + XSD + "> .\n\n" + acc + "\n  a wsp:MembershipAcceptance ;\n  wsp:workspace " + ws + " ;\n  wsp:member " + me + " ;\n  wsp:accepts " + grant + " ;\n" + (args.grantCid ? '  wsp:acceptsCid "' + escapeTurtleLiteral(args.grantCid) + '" ;\n' : "") + "  wsp:stream " + stream + " ;\n  dct:created " + created(args.createdIso) + " .\n";
+    return "@prefix wsp: <" + WSP + "> .\n@prefix dct: <" + DCT + "> .\n@prefix xsd: <" + XSD + "> .\n\n" + acc + "\n  a wsp:MembershipAcceptance ;\n  wsp:workspace " + ws + " ;\n  wsp:member " + me + " ;\n  wsp:accepts " + grant + " ;\n" + (args.grantCid ? '  wsp:acceptsCid "' + escapeTurtleLiteral2(args.grantCid) + '" ;\n' : "") + "  wsp:stream " + stream + " ;\n  dct:created " + created(args.createdIso) + " .\n";
   }
   function canvasTurtle(args) {
     const c = turtleIri(args.canvas, "the canvas IRI");
     const ws = turtleIri(args.workspace, "the workspace IRI");
-    return "@prefix dct: <" + DCT + "> .\n@prefix dctype: <" + DCTYPE + "> .\n@prefix wsp: <" + WSP + "> .\n\n" + c + "\n  a dctype:Text ;\n  wsp:workspace " + ws + ' ;\n  dct:title "Canvas \u2014 ' + escapeTurtleLiteral(args.slug) + '" ;\n  dct:description "' + escapeTurtleLiteral(args.body) + '" .\n';
+    return "@prefix dct: <" + DCT + "> .\n@prefix dctype: <" + DCTYPE + "> .\n@prefix wsp: <" + WSP + "> .\n\n" + c + "\n  a dctype:Text ;\n  wsp:workspace " + ws + ' ;\n  dct:title "Canvas \u2014 ' + escapeTurtleLiteral2(args.slug) + '" ;\n  dct:description "' + escapeTurtleLiteral2(args.body) + '" .\n';
   }
 
   // packages/workspace-client/src/membership.ts
@@ -3756,6 +3873,559 @@ var WSPC = (() => {
       ok: true,
       body,
       footing: kind === "MY OWN ACCOUNT" ? { kind: "own-account" } : { kind: "on-behalf-of", principal: args.principal }
+    };
+  }
+
+  // packages/core/dist/model/agent.js
+  var { readIri: readIri2, readIriAll: readIriAll2, readLiteral: readLiteral2 } = substrateReaders;
+  function agentPodOf(agentId) {
+    if (typeof agentId !== "string" || !agentId)
+      return null;
+    const m = /agents:[a-z0-9-]*?(u-[a-z0-9-]+)$/i.exec(agentId) ?? /\/users\/([^/]+)\/profile/.exec(agentId);
+    const seg = m?.[1];
+    if (!seg)
+      return null;
+    return /[\s<>"{}|\\^`#?/]/.test(seg) ? null : seg.toLowerCase();
+  }
+  var agentNsIri = (relay, pod, name) => relay + "/ns/" + pod + "/" + name;
+  function agentDocName(agentId, kind) {
+    const pod = agentPodOf(agentId);
+    return pod ? "agent-" + pod + "-" + kind : null;
+  }
+  function agentDocIri(relay, agentId, kind) {
+    const pod = agentPodOf(agentId);
+    const name = agentDocName(agentId, kind);
+    return pod && name ? agentNsIri(relay, pod, name) : null;
+  }
+  var presenceIri = (relay, agentId) => agentDocIri(relay, agentId, "presence");
+  var capabilitiesIri = (relay, agentId) => agentDocIri(relay, agentId, "capabilities");
+  var describe2 = (port, e) => (port.describeError ? port.describeError(e) : String(e?.message ?? e)).toLowerCase();
+  var iriRef = (u, what) => {
+    if (typeof u !== "string" || !u)
+      throw new Error("agent: " + what + " is missing, so this document is refused rather than written without it");
+    if (/[\s<>"{}|\\^`]/.test(u))
+      throw new Error("agent: " + what + " is not serializable as a Turtle IRI reference, so this document is refused rather than written with a reference that ends somewhere else: " + u);
+    return "<" + u + ">";
+  };
+  var parseMs = (s) => {
+    if (typeof s !== "string" || !s)
+      return null;
+    const t = Date.parse(s);
+    return Number.isNaN(t) ? null : t;
+  };
+  var PRESENCE_RENEW_MS = 9e4;
+  var PRESENCE_LEASE_MS = 18e4;
+  var PRESENCE_MAX_LEASE_MS = 3 * PRESENCE_RENEW_MS;
+  function presenceTurtle(args) {
+    const self = iriRef(args.iri, "the presence document IRI");
+    const agent = iriRef(args.agentId, "the agent this lease is about");
+    return "@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .\n@prefix dct: <http://purl.org/dc/terms/> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n" + self + "\n  a iep:PresenceLease ;\n  iep:presenceOf " + agent + " ;\n" + (args.principal ? "  iep:presenceActingFor " + iriRef(args.principal, "the principal this delegate acts for") + " ;\n" : "") + '  iep:presenceHost "' + escapeTurtleLiteral(args.host) + '" ;\n  dct:created "' + args.createdIso + '"^^xsd:dateTime ;\n  iep:leaseExpires "' + args.expiresIso + '"^^xsd:dateTime .\n';
+  }
+  async function publishPresence(port, args) {
+    const iri = presenceIri(args.relay, args.agentId);
+    const pod = agentPodOf(args.agentId) ?? "";
+    if (!iri) {
+      return {
+        kind: "unnameable",
+        why: "This agent's id (" + args.agentId + ') carries no pod segment this client can read, so there is no address a reader would look for its presence at. Nothing was published \u2014 a lease at a name nobody else computes would read to every other client as "this agent has never said it was running".'
+      };
+    }
+    const now = args.nowMs ?? Date.now();
+    const lease = Math.min(args.leaseMs ?? PRESENCE_LEASE_MS, PRESENCE_MAX_LEASE_MS);
+    const createdIso = new Date(now).toISOString();
+    const expiresIso = new Date(now + lease).toISOString();
+    let res;
+    try {
+      res = await port.tool("publish_context", {
+        pod_name: pod,
+        graph_iri: iri,
+        graph_content: presenceTurtle({ iri, agentId: args.agentId, principal: args.principal, host: args.host, createdIso, expiresIso }),
+        visibility: "public",
+        auto_supersede_prior: true,
+        sign_authorship: true,
+        valid_from: createdIso,
+        // ★ THE WHOLE MECHANISM IS THIS ONE FIELD. Past it the relay's own temporal filter stops
+        // answering for this document, and nothing anywhere has to run a timer.
+        valid_until: expiresIso
+      });
+    } catch (e) {
+      return { kind: "error", iri, error: e };
+    }
+    const bad = relayRefusal(res);
+    if (bad)
+      return { kind: "refused", iri, why: String(bad["message"] ?? bad["error"]) };
+    return { kind: "published", iri, descriptorUrl: typeof res["descriptorUrl"] === "string" ? res["descriptorUrl"] : null, expiresIso };
+  }
+  var isPresent = (p) => p.state === "running";
+  async function readPresence(port, args) {
+    const pod = agentPodOf(args.agentId) ?? "";
+    const iri = presenceIri(args.relay, args.agentId);
+    if (!iri) {
+      return {
+        state: "never",
+        agentId: args.agentId,
+        pod,
+        iri: null,
+        why: "that agent id carries no pod segment this reader can name a presence document from, so there is no address to ask about"
+      };
+    }
+    const now = args.nowMs ?? Date.now();
+    const rowsAt = async (effectiveAt) => {
+      const input = { pod_name: pod, graph_iri: iri, sort: "newest-first", limit: 8 };
+      if (effectiveAt)
+        input["effective_at"] = effectiveAt;
+      const p = await port.tool("discover_context", input, { cache: false });
+      const bad = relayRefusal(p);
+      if (bad)
+        throw new Error(String(bad["message"] ?? bad["error"]));
+      return Array.isArray(p?.["entries"]) ? p?.["entries"] : [];
+    };
+    let live;
+    try {
+      live = await rowsAt(new Date(now).toISOString());
+    } catch (e) {
+      return {
+        state: "unreadable",
+        agentId: args.agentId,
+        pod,
+        iri,
+        why: "pod " + pod + " did not answer when asked whether that agent had said it was running (" + describe2(port, e) + "). That is not the same as it being off, and neither is being assumed."
+      };
+    }
+    if (!live.length) {
+      let all;
+      try {
+        all = await rowsAt(null);
+      } catch (e) {
+        return {
+          state: "unreadable",
+          agentId: args.agentId,
+          pod,
+          iri,
+          why: "no lease is live on pod " + pod + " and the follow-up read that would say whether one ever was did not complete (" + describe2(port, e) + "), so whether this agent has EVER said it was running is not established."
+        };
+      }
+      if (!all.length) {
+        return {
+          state: "never",
+          agentId: args.agentId,
+          pod,
+          iri,
+          why: "that pod holds no presence document for this agent at all. It may well be a real agent; nothing has ever published that its host was up."
+        };
+      }
+      const last = all.map((r) => parseMs(r["validUntil"])).filter((t) => t !== null).sort((a, b) => b - a)[0] ?? null;
+      return {
+        state: "stale",
+        agentId: args.agentId,
+        pod,
+        iri,
+        lastExpiresMs: last,
+        why: last === null ? "a presence document exists on that pod and no lease of it is live now; none of them carries a readable expiry, so when it last said so is not established" : "the newest lease this agent published lapsed at " + new Date(last).toISOString() + " and has not been renewed since"
+      };
+    }
+    const row = live[0];
+    const from = parseMs(row["validFrom"]);
+    const until = parseMs(row["validUntil"]);
+    const url = typeof row["descriptorUrl"] === "string" ? row["descriptorUrl"] : "";
+    if (until === null) {
+      return {
+        state: "overlong",
+        agentId: args.agentId,
+        pod,
+        iri,
+        spanMs: null,
+        why: "that lease declares no expiry. A lease is only evidence because it is short and has to be renewed; one that never lapses says nothing about whether anything is running now, so it is not being read as presence."
+      };
+    }
+    const span = from === null ? null : until - from;
+    if (span === null || span > PRESENCE_MAX_LEASE_MS) {
+      return {
+        state: "overlong",
+        agentId: args.agentId,
+        pod,
+        iri,
+        spanMs: span,
+        why: span === null ? "that lease carries an expiry and no readable start, so how long it claims to be good for cannot be computed and it is not being read as presence" : "that lease is valid for " + describeSpan(span) + ". A lease is only evidence because it is short and has to be renewed; one that long says nothing about whether anything is running now, so it is not being read as presence."
+      };
+    }
+    if (!url) {
+      return {
+        state: "unreadable",
+        agentId: args.agentId,
+        pod,
+        iri,
+        why: "a live lease was listed for this agent and the listing named no descriptor to read it out of, so nothing was read from bytes anybody signed"
+      };
+    }
+    let d;
+    try {
+      d = await port.descriptor(url);
+    } catch (e) {
+      return {
+        state: "unreadable",
+        agentId: args.agentId,
+        pod,
+        iri,
+        why: "that lease is listed as live and its descriptor could not be fetched (" + describe2(port, e) + "), so who signed it is not established"
+      };
+    }
+    const authorship = readAuthorship(d["authorship"]);
+    const block = d["authorship"];
+    const verified = block?.["authorshipVerified"] === true || block?.["signed"] === true;
+    if (!verified) {
+      return {
+        state: "unreadable",
+        agentId: args.agentId,
+        pod,
+        iri,
+        why: "that lease's authorship did not verify, so nothing about who published it is established. An unverified claim that a process is running is not evidence that one is."
+      };
+    }
+    if (authorship.contentBinding !== "bound" && authorship.contentBinding !== "bound-at-signing") {
+      return {
+        state: "unreadable",
+        agentId: args.agentId,
+        pod,
+        iri,
+        why: `that lease's signature reports contentBinding "` + (authorship.contentBinding ?? "none") + '", so the proof covers WHICH document was written and not WHAT it says. The expiry inside it is not something that signature stands behind.'
+      };
+    }
+    if (authorship.signerAgent !== args.agentId) {
+      return {
+        state: "unreadable",
+        agentId: args.agentId,
+        pod,
+        iri,
+        why: "that lease was signed by " + (authorship.signerAgent ?? "an agent the response did not name") + " and it claims to be about " + args.agentId + ". Only a process holding that agent's own key can say its host is running, so this is not being read as presence."
+      };
+    }
+    const region = graphRegion(d["graph"]?.content ?? "", iri);
+    if (region === null) {
+      return {
+        state: "unreadable",
+        agentId: args.agentId,
+        pod,
+        iri,
+        why: "the signed region of that lease could not be located, so nothing was read from bytes anybody signed"
+      };
+    }
+    const about = readIriAll2(region, "iep:presenceOf");
+    if (about.length !== 1 || about[0] !== args.agentId) {
+      return {
+        state: "unreadable",
+        agentId: args.agentId,
+        pod,
+        iri,
+        why: about.length > 1 ? "that lease's signed region names " + about.length + " different agents as the one it is about, so which agent it is a claim about is not decided and picking one would be this reader guessing" : "that lease's signed region names " + (about[0] ?? "no agent at all") + " as the agent it is about, and it was asked for " + args.agentId + ". The document name is not an assertion; the region is, and it does not agree."
+      };
+    }
+    const said = parseMs(readLiteral2(region, "dct:created")) ?? from ?? now;
+    return {
+      state: "running",
+      agentId: args.agentId,
+      pod,
+      iri,
+      saidAtMs: said,
+      expiresMs: until,
+      descriptorUrl: url,
+      host: readLiteral2(region, "iep:presenceHost"),
+      authorship
+    };
+  }
+  function describeSpan(ms) {
+    const s = Math.max(0, Math.round(ms / 1e3));
+    if (s < 90)
+      return s + "s";
+    const m = Math.round(s / 60);
+    if (m < 90)
+      return m + "m";
+    const h = Math.round(m / 60);
+    if (h < 48)
+      return h + "h";
+    return Math.round(h / 24) + "d";
+  }
+  function presenceLine(p, nowMs = Date.now()) {
+    switch (p.state) {
+      case "running":
+        return "running (said so " + describeSpan(nowMs - p.saidAtMs) + " ago)";
+      case "stale":
+        return p.lastExpiresMs === null ? "not running as far as its pod says" : "not since " + new Date(p.lastExpiresMs).toISOString();
+      case "never":
+        return "has never said it was running";
+      case "overlong":
+        return "published a lease too long to be evidence";
+      case "unreadable":
+        return "whether it is running is not established";
+    }
+  }
+  function capabilityProblem(draft) {
+    if (typeof draft.action !== "string" || !draft.action) {
+      return "a capability names no iep:action, so there is nothing for a caller to invoke and nothing for a reader to dereference";
+    }
+    if (!/^https?:\/\//.test(draft.action)) {
+      return "a capability's iep:action must be a dereferenceable http(s) URL \u2014 every identifier in this system is one, and a reader that cannot follow it is being handed an opaque token dressed as a link. `" + draft.action + "` is not one.";
+    }
+    const r = draft.route;
+    if (!r || r.kind !== "hosted" && r.kind !== "ask") {
+      return "a capability declares neither a hydra:target nor an iep:askVia, so it advertises an agent reachable by no route at all. That is not a smaller offer than the other two; it is an offer a reader cannot act on in any way.";
+    }
+    if (r.kind === "hosted" && !r.target)
+      return "a hosted capability names no hydra:target";
+    if (r.kind === "ask" && !r.askVia)
+      return "an ask-routed capability names no iep:askVia";
+    return null;
+  }
+  function capabilityTurtle(draft) {
+    const problem = capabilityProblem(draft);
+    if (problem)
+      throw new Error("capabilityTurtle: " + problem);
+    const self = iriRef(draft.iri, "the capability document IRI");
+    const agent = iriRef(draft.agentId, "the agent this capability document is about");
+    const action = iriRef(draft.action, "the action IRI");
+    const route = draft.route.kind === "hosted" ? "  hydra:target " + iriRef(draft.route.target, "the hydra:target, which comes from this deployment's own configuration") + ' ;\n  hydra:method "POST" ;\n' : "  iep:askVia " + iriRef(draft.route.askVia, "the iep:askVia route") + " ;\n";
+    const created2 = draft.createdIso ?? (/* @__PURE__ */ new Date()).toISOString();
+    return "@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .\n@prefix hydra: <http://www.w3.org/ns/hydra/core#> .\n@prefix dct: <http://purl.org/dc/terms/> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n" + self + "\n  a iep:Affordance, hydra:Operation ;\n  iep:capabilityOf " + agent + " ;\n  iep:action " + action + " ;\n" + route + (draft.requiresSignedRequest ? "  iep:requiresSignedRequest true ;\n" : "") + '  hydra:title "' + escapeTurtleLiteral(draft.title) + '" ;\n  dct:description "' + escapeTurtleLiteral(draft.description) + '" ;\n  dct:created "' + created2 + '"^^xsd:dateTime .\n';
+  }
+  async function publishCapability(port, args) {
+    const iri = capabilitiesIri(args.relay, args.agentId);
+    const pod = agentPodOf(args.agentId) ?? "";
+    if (!iri) {
+      return {
+        kind: "unnameable",
+        why: "This agent's id (" + args.agentId + ") carries no pod segment this client can read, so there is no address a peer would look for its capabilities at. Nothing was published."
+      };
+    }
+    const problem = capabilityProblem(args);
+    if (problem)
+      return { kind: "invalid", why: problem };
+    let res;
+    try {
+      res = await port.tool("publish_context", {
+        pod_name: pod,
+        graph_iri: iri,
+        graph_content: capabilityTurtle({ iri, ...args }),
+        visibility: "public",
+        // A reader reads the CURRENT head of this IRI, so republishing must move the head rather than
+        // fork it. Unlike a log there is no history here that a reader walks.
+        auto_supersede_prior: true,
+        // Signed, because an unsigned capability document is an unattributable instruction to POST
+        // somewhere. The bytes are immutable once published and the key moves on, so a document not
+        // signed at write time can never be attributed afterwards.
+        sign_authorship: true
+      });
+    } catch (e) {
+      return { kind: "error", iri, error: e };
+    }
+    const bad = relayRefusal(res);
+    if (bad)
+      return { kind: "refused", iri, why: String(bad["message"] ?? bad["error"]) };
+    return {
+      kind: "published",
+      iri,
+      descriptorUrl: typeof res["descriptorUrl"] === "string" ? res["descriptorUrl"] : null,
+      status: String(res["status"] ?? "ok")
+    };
+  }
+  async function readCapabilities(port, args) {
+    const pod = agentPodOf(args.agentId) ?? "";
+    const iri = capabilitiesIri(args.relay, args.agentId);
+    if (!iri) {
+      return { kind: "none", agentId: args.agentId, iri: null, why: "that agent id carries no pod segment this reader can name a capability document from, so there is no address to ask about" };
+    }
+    let rows;
+    try {
+      const p = await port.tool("discover_context", { pod_name: pod, graph_iri: iri, sort: "newest-first", limit: 4 }, { cache: false });
+      const bad = relayRefusal(p);
+      if (bad)
+        throw new Error(String(bad["message"] ?? bad["error"]));
+      rows = Array.isArray(p?.["entries"]) ? p?.["entries"] : [];
+    } catch (e) {
+      return { kind: "unreadable", agentId: args.agentId, iri, why: "pod " + pod + " did not answer when asked what that agent can be asked (" + describe2(port, e) + "), so its capabilities are not established \u2014 which is not the same as it having none" };
+    }
+    if (!rows.length) {
+      return { kind: "none", agentId: args.agentId, iri, why: "that pod holds no capability document for this agent, so it advertises nothing a reader could invoke" };
+    }
+    const url = typeof rows[0]?.["descriptorUrl"] === "string" ? rows[0]["descriptorUrl"] : "";
+    if (!url)
+      return { kind: "unreadable", agentId: args.agentId, iri, why: "a capability document was listed and the listing named no descriptor to read it out of" };
+    let d;
+    try {
+      d = await port.descriptor(url);
+    } catch (e) {
+      return { kind: "unreadable", agentId: args.agentId, iri, why: "that capability document could not be fetched (" + describe2(port, e) + "), so who published it is not established" };
+    }
+    const authorship = readAuthorship(d["authorship"]);
+    const block = d["authorship"];
+    if (!(block?.["authorshipVerified"] === true || block?.["signed"] === true)) {
+      return { kind: "unreadable", agentId: args.agentId, iri, why: "that capability document's authorship did not verify. An unverified document naming a place to POST is an unattributable instruction, so nothing is being read out of it." };
+    }
+    if (authorship.contentBinding !== "bound" && authorship.contentBinding !== "bound-at-signing") {
+      return { kind: "unreadable", agentId: args.agentId, iri, why: `that capability document's signature reports contentBinding "` + (authorship.contentBinding ?? "none") + '", so it covers WHICH document was written and not WHAT it says \u2014 the target inside it is not something that signature stands behind' };
+    }
+    if (authorship.signerAgent !== args.agentId) {
+      return { kind: "unreadable", agentId: args.agentId, iri, why: "that capability document was signed by " + (authorship.signerAgent ?? "an agent the response did not name") + " and it sits at the address for " + args.agentId + ". Only that agent can say what it can be asked." };
+    }
+    const region = graphRegion(d["graph"]?.content ?? "", iri);
+    if (region === null)
+      return { kind: "unreadable", agentId: args.agentId, iri, why: "the signed region of that capability document could not be located, so nothing was read from bytes anybody signed" };
+    const about = readIriAll2(region, "iep:capabilityOf");
+    if (about.length !== 1 || about[0] !== args.agentId) {
+      return { kind: "unreadable", agentId: args.agentId, iri, why: "that capability document's signed region names " + (about.length > 1 ? about.length + " different agents" : about[0] ?? "no agent at all") + " as the agent it is about, and it was asked for " + args.agentId + ". The document name is not an assertion; the region is." };
+    }
+    const action = readIri2(region, "iep:action");
+    const target = readIri2(region, "hydra:target");
+    const askVia = readIri2(region, "iep:askVia");
+    if (!action)
+      return { kind: "unreadable", agentId: args.agentId, iri, why: "that capability document names no iep:action, so there is nothing in it a caller could invoke" };
+    if (target && askVia) {
+      return { kind: "unreadable", agentId: args.agentId, iri, why: "that capability document declares BOTH a hydra:target and an iep:askVia. Those are two different ways to reach this agent and nothing in the document says which is the real one, so choosing would be this reader guessing on the caller's behalf." };
+    }
+    if (!target && !askVia) {
+      return { kind: "unreadable", agentId: args.agentId, iri, why: "that capability document declares neither a hydra:target nor an iep:askVia, so it advertises an agent reachable by no route at all" };
+    }
+    return {
+      kind: "advertised",
+      agentId: args.agentId,
+      iri,
+      action,
+      route: target ? { kind: "hosted", target } : { kind: "ask", askVia },
+      title: readLiteral2(region, "hydra:title"),
+      description: readLiteral2(region, "dct:description"),
+      requiresSignedRequest: substrateReaders.hasTrue(region, "iep:requiresSignedRequest"),
+      descriptorUrl: url,
+      authorship
+    };
+  }
+  var REQUEST_INBOX_LIMIT = 50;
+  async function readRequests(port, limit = REQUEST_INBOX_LIMIT) {
+    const p = await port.tool("read_inbox", { limit }, { cache: false });
+    const bad = relayRefusal(p);
+    if (bad)
+      throw new Error(String(bad["message"] ?? bad["error"]));
+    const all = Array.isArray(p?.["items"]) ? p?.["items"] : [];
+    const notices = all.filter((it) => it && typeof it["about"] === "string" && it["about"]).map((item) => ({
+      item,
+      about: String(item["about"]),
+      actor: typeof item["actor"] === "string" ? item["actor"] : null,
+      summary: typeof item["summary"] === "string" ? item["summary"] : null,
+      published: typeof item["published"] === "string" ? item["published"] : null
+    }));
+    return { notices, saturated: all.length >= limit, limit };
+  }
+  var admitAnyVerifiedSigner = () => null;
+  async function verifyRequest(port, notice, args) {
+    const checks = [];
+    const base = {
+      about: notice.about,
+      askerPod: null,
+      body: null,
+      addressedTo: [],
+      forMe: [],
+      descriptorUrl: null,
+      signedBy: null,
+      region: null
+    };
+    const no = (why, extra = {}) => {
+      checks.push({ mark: "n", text: why });
+      return { ...base, ...extra, checks, ok: false, why };
+    };
+    let d;
+    try {
+      d = await port.descriptor(notice.about);
+    } catch (e) {
+      return no("the address this notice points at did not resolve to a descriptor (" + describe2(port, e) + "), so there is nothing signed to read the ask out of");
+    }
+    const descriptorUrl = notice.about;
+    const askerPod = podOfDescriptorUrl2(descriptorUrl);
+    checks.push({ mark: "y", text: "The address in the notice resolves to a descriptor" + (askerPod ? " served from pod " + askerPod : "") });
+    const block = d["authorship"];
+    const verified = block?.["authorshipVerified"] === true || block?.["signed"] === true;
+    const binding = typeof block?.["contentBinding"] === "string" ? block["contentBinding"] : null;
+    const signedBy = typeof block?.["signedBy"] === "string" ? block["signedBy"] : typeof block?.["signer"] === "string" ? block["signer"] : null;
+    const withDoc = { descriptorUrl, askerPod, signedBy };
+    if (!verified) {
+      return no("that record's authorship did not verify, so who wrote the ask is not established and nothing is being run on it", withDoc);
+    }
+    if (binding !== "bound" && binding !== "bound-at-signing") {
+      return no(`that record's signature reports contentBinding "` + (binding ?? "none") + '", so it covers WHICH document was written and not WHAT it says \u2014 the ask inside it is not something that signature stands behind', withDoc);
+    }
+    checks.push({ mark: "y", text: "Its authorship verified and its signature is bound to its own content" });
+    if (!notice.actor) {
+      return no("the notice names no actor, so whether the party that delivered it is the party that wrote the record is not established", withDoc);
+    }
+    if (notice.actor !== signedBy) {
+      return no("the notice was delivered by " + notice.actor + " and the record it points at was signed by " + (signedBy ?? "an agent the descriptor did not name") + ". Any account on this relay can deliver into any inbox, so a pointer placed by a party that did not write the thing is somebody else pointing at your record.", withDoc);
+    }
+    checks.push({ mark: "y", text: "The account that delivered the notice is the one that signed the record it points at (" + signedBy + ")" });
+    const content = d["graph"]?.content ?? "";
+    const describes = readIriAll2(typeof d["turtle"] === "string" ? d["turtle"] : "", "iep:describes");
+    let region = null;
+    for (const g of describes) {
+      region = graphRegion(content, g);
+      if (region !== null)
+        break;
+    }
+    if (region === null) {
+      return no("the signed region of that record could not be located" + (describes.length ? " under any of the " + describes.length + " graph IRIs its descriptor declares" : ", and its descriptor declares no iep:describes to look one up by") + ", so nothing was read from bytes anybody signed", withDoc);
+    }
+    const body = readLiteral2(region, "dct:description");
+    const addressedTo = readIriAll2(region, "iep:addressedTo");
+    const withRegion = { ...withDoc, body, addressedTo, region };
+    const held = new Set(args.heldAgentIds);
+    const forMe = addressedTo.filter((a) => held.has(a));
+    if (!addressedTo.length) {
+      return no("that record names no iep:addressedTo, so it is not a request addressed to anybody. It is a record and is read as one; nothing is being dispatched from it.", withRegion);
+    }
+    if (!forMe.length) {
+      return no("that record is addressed to " + addressedTo.join(", ") + " and this machine holds no key for any of them. An agent runs on its own human's credential, so answering for an agent whose key is somewhere else is the one thing this refuses to do.", withRegion);
+    }
+    checks.push({ mark: "y", text: "It is addressed to " + forMe.join(", ") + ", and this machine holds that key" });
+    if (!askerPod) {
+      return no("the pod that record was served from could not be named, so whether its author has standing to ask is not established", { ...withRegion, forMe });
+    }
+    const admits = args.admits ?? admitAnyVerifiedSigner;
+    const refused = await admits({ pod: askerPod, signedBy, region, descriptorUrl });
+    if (refused)
+      return no(refused, { ...withRegion, forMe });
+    checks.push({ mark: "y", text: "Pod " + askerPod + " has standing to ask this agent, by this host's own policy rather than by anything in the notice" });
+    if (args.answeredHere.indexOf(descriptorUrl) >= 0) {
+      return no("this client has already drafted an answer to that record in this run. Answering again would put a second permanent record in your log saying the same thing.", { ...withRegion, forMe });
+    }
+    if (args.derivedFromOnMyPod.indexOf(descriptorUrl) >= 0) {
+      return no("a record already on your pod declares it was derived from that one, so it has been answered \u2014 and that survives a restart of this app, which the in-run list above does not.", { ...withRegion, forMe });
+    }
+    checks.push({ mark: "y", text: "Nothing on your pod and nothing in this run has answered it yet" });
+    return { about: notice.about, ...withRegion, forMe, checks, ok: true, why: null };
+  }
+  function podOfDescriptorUrl2(u) {
+    if (typeof u !== "string")
+      return null;
+    const m = /^https?:\/\/[^/]+\/([^/]+)\//.exec(u);
+    return m?.[1] ?? null;
+  }
+
+  // packages/workspace-client/src/presence.ts
+  var agentPort = (client) => ({
+    ...delegatePort(client),
+    descriptor: (url) => client.descriptor(url)
+  });
+
+  // packages/workspace-client/src/request.ts
+  function admitSeatedIn(args) {
+    return ({ pod, region }) => {
+      const declared = readIri(region, "wsp:workspace");
+      if (!declared) {
+        return "that record declares no wsp:workspace, so which channel it belongs to is not established \u2014 and a record that names no room does not join one by arriving in the inbox of somebody who is in it";
+      }
+      if (declared !== args.workspace) {
+        return "that record belongs to " + declared + " and this host is watching " + args.workspace + ". An ask into another channel is not an ask here.";
+      }
+      const seat = args.seats.find((s) => (s.podServed ?? s.pod) === pod && s.seated) ?? null;
+      if (!seat) {
+        return "pod " + pod + " is not seated in this workspace, so it has no standing to put work into it. Seating is a grant on the convener's pod and an acceptance on theirs \u2014 two documents, neither of them this notice.";
+      }
+      return null;
     };
   }
   return __toCommonJS(index_exports);

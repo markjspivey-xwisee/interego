@@ -199,6 +199,31 @@ export class LinkStore {
   // ── threads ──────────────────────────────────────────────────────────────
   threadOf(threadId: string): ThreadBinding | null { return this.threads.get(threadId) ?? null; }
 
+  /**
+   * Every thread this bot has been told about.
+   *
+   * ★ THE WATCHER ENUMERATES THIS ON EVERY SWEEP RATHER THAN HOLDING ITS OWN COPY, which is what
+   * lets a `/workspace start` in a new thread be picked up without anything having to call into it.
+   * A second list of which threads exist is a second thing to keep in step, and this one is already
+   * the bot's index — the thing the header says is safe to lose.
+   */
+  allThreads(): readonly ThreadBinding[] { return [...this.threads.values()]; }
+
+  /**
+   * Forget a thread.
+   *
+   * ★ THIS DESTROYS NOTHING AND MUST NOT BE DESCRIBED AS IF IT DID, for the same reason
+   * {@link unbind} does not revoke a delegation. The workspace is five documents on the convener's
+   * pod and two per member on theirs; the entries are on their authors' pods, content-addressed and
+   * chained. All this drops is the bot's memory of which thread the workspace was being discussed
+   * in — and `slugFor` derives the slug from the thread id, so even that is reconstructible.
+   */
+  unbindThread(threadId: string): ThreadBinding | null {
+    const had = this.threads.get(threadId) ?? null;
+    if (had) { this.threads.delete(threadId); this.save(); }
+    return had;
+  }
+
   /** Same reason as {@link bind}: what `load` would drop must never be accepted here. */
   bindThread(t: ThreadBinding): void {
     if (!SNOWFLAKE_RX.test(t.threadId)) throw new Error('not a Discord channel id: ' + t.threadId);

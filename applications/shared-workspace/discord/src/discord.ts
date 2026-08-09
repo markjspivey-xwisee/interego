@@ -57,9 +57,45 @@ export interface GatewayInteraction {
   readonly channelName: string | null;
 }
 
+/**
+ * A partially-typed command, arriving per keystroke.
+ *
+ * ★ TYPE 4 USED TO BE DROPPED ON THE FLOOR HERE, with the comment "not used by this bot". That was
+ * true when the bot was a conduit with five commands that took a pod name. It stopped being true
+ * the moment a command had to offer a choice out of OTHER PEOPLE'S PODS: which agents exist, which
+ * of them their delegator still authorises, and which of them have said their host is running are
+ * all facts that live on pods and change between one command and the next. A static choice list
+ * would be this bot's cached opinion of somebody else's registry, which is the one thing its whole
+ * design refuses to be. So the picker is live, and this is the frame it arrives on.
+ */
+export interface GatewayAutocomplete {
+  readonly id: string;
+  readonly token: string;
+  readonly channelId: string;
+  readonly userId: string | null;
+  readonly name: string;
+  /** The option Discord says the cursor is in. */
+  readonly focused: string;
+  /** What has been typed into it so far. Empty on the first keystroke, which is the common case. */
+  readonly query: string;
+  readonly options: Readonly<Record<string, string>>;
+}
+
+/** One choice in an autocomplete response. `value` is what the command actually receives. */
+export interface Choice { readonly name: string; readonly value: string }
+
 export interface GatewayHandlers {
   onMessage(m: GatewayMessage): void;
   onInteraction(i: GatewayInteraction): void;
+  /**
+   * Answer a partially-typed command.
+   *
+   * ★ DISCORD GIVES THIS THREE SECONDS AND NO DEFERRAL EXISTS FOR IT — unlike a command, an
+   * autocomplete has no "thinking" state, so a handler that takes longer produces no list at all
+   * and the person sees an empty box with no explanation. Everything the handler does is therefore
+   * bounded, and an empty result is rendered as a row that SAYS it is empty rather than as nothing.
+   */
+  onAutocomplete(a: GatewayAutocomplete): void;
   onNotice(line: string): void;
   /** Called once, with a sentence, when the connection cannot be recovered. */
   onFatal(why: string): void;
@@ -188,14 +224,42 @@ export class DiscordGateway {
       return;
     }
     if (t === 'INTERACTION_CREATE') {
-      // Type 2 = APPLICATION_COMMAND. Everything else (components, autocomplete, modals) is not
-      // used by this bot and is ignored rather than half-answered.
-      if (p['type'] !== 2) return;
-      const data = p['data'] as { name?: string; options?: readonly { type?: number; name?: string; value?: unknown; options?: readonly { name?: string; value?: unknown }[] }[] } | undefined;
+      // Type 2 = APPLICATION_COMMAND, type 4 = APPLICATION_COMMAND_AUTOCOMPLETE. Components and
+      // modals are still not used by this bot and are ignored rather than half-answered.
+      if (p['type'] !== 2 && p['type'] !== 4) return;
+      type Opt = { type?: number; name?: string; value?: unknown; focused?: boolean; options?: readonly Opt[] };
+      const data = p['data'] as { name?: string; options?: readonly Opt[] } | undefined;
       const member = p['member'] as { user?: { id?: string } } | undefined;
       const user = p['user'] as { id?: string } | undefined;
       const channel = p['channel'] as { name?: string } | undefined;
       if (typeof p['id'] !== 'string' || typeof p['token'] !== 'string' || typeof p['channel_id'] !== 'string' || !data?.name) return;
+      if (p['type'] === 4) {
+        // ★ THE SAME SUBCOMMAND FLATTENING AS BELOW, AND KEYED ON THE SAME FACT. An autocomplete on
+        // `/workspace ask agent:…` arrives as name `workspace` with a type-1 option `ask` whose own
+        // options carry the focus. Reading `data.options` directly would give the SUBCOMMAND as the
+        // focused option and never the argument, so nothing would ever be looked up.
+        const first0 = data.options?.[0];
+        const sub0 = first0 && first0.type === 1 ? first0 : null;
+        const opts = (sub0 ? sub0.options : data.options) ?? [];
+        const focusedOpt = opts.find((o) => o?.focused === true) ?? null;
+        const values: Record<string, string> = {};
+        for (const o of opts) {
+          if (o?.name && (typeof o.value === 'string' || typeof o.value === 'number')) values[o.name] = String(o.value);
+        }
+        this.handlers.onAutocomplete({
+          id: p['id'], token: p['token'], channelId: p['channel_id'],
+          userId: member?.user?.id ?? user?.id ?? null,
+          name: sub0 ? data.name + ' ' + String(sub0.name) : data.name,
+          // ★ `focused` IS READ AND NOT ASSUMED. A command with two autocompleting options would
+          // otherwise have both answered from one option's text. Empty rather than guessed when
+          // Discord names none: a handler told which box it is in can refuse, and one that guessed
+          // would silently answer the wrong box.
+          focused: focusedOpt?.name ?? '',
+          query: typeof focusedOpt?.value === 'string' ? focusedOpt.value : '',
+          options: values,
+        });
+        return;
+      }
       // One level of subcommand: `/workspace start` arrives as name `workspace` with an option
       // of type 1 named `start`. Flattened here so the command router sees `workspace start`.
       //
@@ -297,6 +361,23 @@ export class DiscordRest {
     return this.call('PATCH', '/webhooks/' + applicationId + '/' + token + '/messages/@original', { content, allowed_mentions: { parse: [], users: [] } });
   }
 
+  /**
+   * Answer an autocomplete with a choice list.
+   *
+   * ★ TYPE 8 = APPLICATION_COMMAND_AUTOCOMPLETE_RESULT, and it is a CALLBACK, not an edit — there
+   * is no deferral for an autocomplete and no second chance to send one. Discord caps the list at
+   * 25 and refuses a `name` over 100 characters outright, so both are enforced here rather than
+   * hoped for at the call site: one over-long agent label would make the whole list fail to render,
+   * and the person would see an empty box that says nothing about why.
+   */
+  autocomplete(interactionId: string, token: string, choices: readonly Choice[]): Promise<Record<string, unknown>> {
+    const safe = choices.slice(0, 25).map((c) => ({
+      name: c.name.length > 100 ? c.name.slice(0, 99) + '…' : c.name,
+      value: c.value.length > 100 ? c.value.slice(0, 100) : c.value,
+    }));
+    return this.call('POST', '/interactions/' + interactionId + '/' + token + '/callback', { type: 8, data: { choices: safe } });
+  }
+
   post(channelId: string, content: string, pingUserIds: readonly string[] = []): Promise<Record<string, unknown>> {
     return this.call('POST', '/channels/' + channelId + '/messages', { content, allowed_mentions: { parse: [], users: pingUserIds.slice(0, 1) } });
   }
@@ -333,6 +414,21 @@ export const COMMANDS = [
       },
       { type: 1, name: 'unlink', description: 'Make this bot forget your pod (this does NOT revoke the delegation)' },
       { type: 1, name: 'show', description: 'The composed view of this thread\'s workspace, and the IRI anyone can follow' },
+      {
+        type: 1, name: 'who', description: 'Every agent that could be asked something here, and what its own pod says about it',
+      },
+      {
+        type: 1, name: 'ask',
+        description: 'Ask one agent to do something. The ask goes on the record whether or not its host is running',
+        options: [
+          // ★ `autocomplete: true` AND NO STATIC `choices`. Which agents exist, which their
+          // delegator still authorises and which have said their host is up are facts on other
+          // people's pods that change between one command and the next. A static list would be this
+          // bot's cached opinion of somebody else's registry.
+          { type: 3, name: 'agent', description: 'Which agent. Pick from the list — the value is its full DID', required: true, autocomplete: true },
+          { type: 3, name: 'task', description: 'What you are asking it to do. This goes in the record, in your own words', required: true },
+        ],
+      },
     ],
   },
 ] as const;

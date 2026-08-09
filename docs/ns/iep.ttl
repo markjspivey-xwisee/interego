@@ -2193,3 +2193,85 @@ iep:shapeUnfetchableEgressRefused a sh:ConstraintComponent ;
     rdfs:label "shapeUnfetchableEgressRefused"@en ;
     rdfs:comment "NO REQUEST WAS SENT. The relay's egress screen refused the declared shape's target because its host is, or resolves into, private or internal address space — a caller-supplied shape IRI is an SSRF vector, so the screen runs before any socket is opened. Distinguished from iep:shapeUnfetchable because nothing whatever is known or implied about the named host, the refusal is deterministic rather than transient, and the remedy is to declare a shape on a publicly reachable host rather than to retry. The resolved address is deliberately NOT carried in the message: it is internal topology for any host whose name does not already encode it."@en ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+# ══════════════════════════════════════════════════════════════
+#  An agent as its PEERS see it — availability, capability, address
+# ══════════════════════════════════════════════════════════════
+#
+# An agent exists independently of any room it talks in. Everything below is a
+# statement BY an agent ABOUT ITSELF, published on ITS OWN pod, signed with ITS
+# OWN key, at an address a peer composes from its DID and nothing else:
+#
+#   <relay>/ns/<pod>/agent-<pod>-presence
+#   <relay>/ns/<pod>/agent-<pod>-capabilities
+#
+# ★ THE OWN-POD RULE IS FORCED, NOT CHOSEN. Measured 2026-08-08: the identical
+# document published under a delegation onto the DELEGATOR's pod reads back
+# authorshipVerified:false — "the proof is signed for owner <the delegate's own
+# WebID>" — because the relay's descriptor binding holds the proof's owner
+# against the pod the bytes landed on. On the agent's own pod the same document
+# reads back verified and content-bound. A self-claim is only CHECKABLE where
+# its signer owns the pod, so that is where it goes.
+#
+# ★ AND NONE OF IT IS SCOPED TO A WORKSPACE. An earlier design named the
+# capability document <member pod>/<convener pod>--<slug>-affordances, which
+# described a capability as a fact about an agent IN ONE ROOM: duplicated per
+# room, findable only by somebody who already knew the convener and the slug,
+# and invisible to "does anyone have a tool for X". A Codex agent that has never
+# been in a room has capabilities too.
+
+iep:PresenceLease a owl:Class ;
+    rdfs:label "presence lease"@en ;
+    rdfs:comment "A SHORT, TIME-BOUNDED, SELF-SIGNED CLAIM BY AN AGENT THAT ITS HOST IS RUNNING — and never an observation that one is. An agent that thinks by spawning a model on its own human's machine, on their credential, is only answerable while something of theirs is running; a channel that silently swallowed a request addressed to an absent agent would be lying by omission, so there has to be a document to point at. It is a LEASE and not a flag for two reasons. First, a relay-held 'online' flag would be a third party vouching for a process it cannot see; this is the agent's own statement, worth something only because it is short and had to be renewed. Second, it decays by the substrate's own clock: publish it with valid_from/valid_until and the relay's temporal filter simply stops answering for it, so nothing anywhere runs a timer or has to notice an outage. A reader MUST refuse a lease whose span is long enough that renewing it proved nothing, and one with no expiry at all, reporting each as a finding about the document rather than as presence — valid_until is caller-supplied, so a single publish could otherwise claim a year of availability. A failed read is likewise not absence and not presence: it is a failed read."@en ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:presenceOf a owl:ObjectProperty ;
+    rdfs:label "presence of"@en ;
+    rdfs:comment "The agent a iep:PresenceLease is about, stated INSIDE the signed region. It exists so a reader can hold the agent the lease CLAIMS to concern against the agent that actually SIGNED it: without it the filename would be the only thing naming the subject, and a filename is not an assertion. A reader MUST take every object of this property and refuse anything but exactly one that agrees with the agent it asked about — these regions are read predicate-first and their author controls their bytes, so a reader that returned the first object would let document order decide whose availability was being claimed."@en ;
+    rdfs:domain iep:PresenceLease ;
+    rdfs:range prov:Agent ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:presenceActingFor a owl:ObjectProperty ;
+    rdfs:label "presence acting for"@en ;
+    rdfs:comment "The principal this agent is a delegate of, carried on a lease for a reader's convenience. STANDING, like iep:actsFor, and emphatically not a per-act claim: it says who the agent is authorised to act for, not that anything in particular was done on their behalf. It is also NOT evidence of that standing — the authoritative record is the delegation row on the principal's own pod, which only they can write and revoke. A reader that wants the fact asks their pod; this is a hint, and a lease that omits it says nothing either way."@en ;
+    rdfs:domain iep:PresenceLease ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:presenceHost a owl:DatatypeProperty ;
+    rdfs:label "presence host"@en ;
+    rdfs:comment "Free text naming WHAT is running, e.g. 'the desktop app' — for a person reading a channel, so 'running' is not a bare word. Deliberately not a hostname, an address or a path: an agent's availability is a fact about it, and where its human's machine happens to be is theirs. A reader displays it and derives nothing from it."@en ;
+    rdfs:domain iep:PresenceLease ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:leaseExpires a owl:DatatypeProperty ;
+    rdfs:label "lease expires"@en ;
+    rdfs:comment "When this lease stops being a claim about now, stated inside the signed region. It duplicates the valid_until the publish carries, and that duplication is the point: the temporal filter is the relay's enforcement and this is the AGENT's own signed statement of the same bound, so a reader can check the span against bytes the agent put its key to rather than against metadata the relay computed. A lease with no expiry is not a lease and MUST be refused."@en ;
+    rdfs:domain iep:PresenceLease ;
+    rdfs:range xsd:dateTime ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:capabilityOf a owl:ObjectProperty ;
+    rdfs:label "capability of"@en ;
+    rdfs:comment "The agent whose capability document this is, stated inside the signed region for the same reason iep:presenceOf is: a capability document tells a reader where to POST, so one whose subject came only from its filename would be an unattributable instruction to send somebody else's work to an address of the forger's choosing. A reader MUST require exactly one object and MUST require that the signer of the document be that agent."@en ;
+    rdfs:range prov:Agent ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:askVia a owl:ObjectProperty ;
+    rdfs:label "ask via"@en ;
+    rdfs:comment "HOW TO REACH AN AGENT THAT HAS NO ENDPOINT — the explicit alternative to hydra:target, and the reason a capability document is not obliged to carry one. An agent running on somebody's laptop, on their own model credential, behind whatever network they are on, has nothing that will ever answer a POST; publishing a hydra:target for it would advertise a call that cannot connect. This names the route instead: put a signed record where the agent reads, and it answers when its host next runs. A capability document MUST declare exactly one of hydra:target and iep:askVia. Neither means an agent reachable by no route at all, which is worse than advertising nothing; BOTH leaves a reader choosing which of two ways is the real one with no honest basis, and a reader that finds both MUST refuse rather than choose."@en ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:requiresSignedRequest a owl:DatatypeProperty ;
+    rdfs:label "requires signed request"@en ;
+    rdfs:comment "This agent will only act on a request whose caller signed it. A DECLARATION AND NOT AN ENFORCEMENT POINT: the gate is at the exposing end, where the caller signs a canonical payload, the endpoint recovers the address and compares it to its own policy. It is published so a caller can learn the gate exists before spending a call finding out. Nothing about it is load-bearing for security, and — as everywhere else — its ABSENCE states nothing: a reader that took an unstated value for 'no gate' would be reading absence as evidence."@en ;
+    rdfs:range xsd:boolean ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:addressedTo a owl:ObjectProperty ;
+    rdfs:label "addressed to"@en ;
+    rdfs:comment "The agent or agents a record is a request TO, stated inside the record's own signed region. ★ IT IS HERE AND NOT IN A VERTICAL'S VOCABULARY BECAUSE ADDRESSING AN AGENT IS NOT SOMETHING A ROOM INVENTED: a workspace entry, a Foxxi record and a bare script's record must all spell it identically, or an agent that reads two of them gets two answers to one question — and an agent that belongs to no room could not be addressed at all. ★ AND IT IS IN THE SIGNED REGION RATHER THAN IN THE NOTIFICATION THAT ANNOUNCES IT BECAUSE AN INBOX IS WORLD-WRITABLE. A notification is a POINTER and never the request: it carries no task text, because text that travelled by inbox is text a forger could write. What makes the pointer safe to follow is that the record it names is signed and content-bound, and that its recipient checks the party that delivered the pointer IS the party that signed the record. A reader MUST NOT treat its own absence as anything: a record addressed to nobody is a record, not a request."@en ;
+    rdfs:range prov:Agent ;
+    rdfs:seeAlso iep:askVia ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
