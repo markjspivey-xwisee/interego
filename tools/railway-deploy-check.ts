@@ -55,8 +55,9 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { refineFreshness } from './deploy-bundle-scope.js';
+import type { RefinedRow } from './deploy-bundle-scope.js';
 import { collectPins, gitFacts, hasDisagreement, railwayGql } from './railway-pins.mjs';
-import type { PinRow } from './railway-pins.mjs';
 import { serviceNames, singletonViolations } from './railway-services.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -96,14 +97,20 @@ function token(): string {
 }
 
 /** Every reason this row disagrees, in the words the fleet report uses. */
-function reasons(row: PinRow): string[] {
+function reasons(row: RefinedRow): string[] {
   const out: string[] = [];
   if (row.error) out.push(`could not be read from Railway: ${row.error}`);
   if (row.agreement && row.agreement !== 'ok') {
     out.push(`repo agreement ${row.agreement} (expected ${row.expectedRepo ?? '?'}, live ${row.repo ?? 'none'})`);
   }
   if (row.freshness === 'BEHIND') {
-    out.push(`pinned commit is BEHIND master by ${row.behind} commit(s) — production is not running the code that was merged`);
+    const n = row.bundleChanged?.length ?? 0;
+    out.push(
+      `pinned commit is BEHIND master by ${row.behind} commit(s) — production is not running the code that was merged`
+      + (row.bundleReason && n === 0
+        ? `\n      (and the bundle comparison could not clear it: ${row.bundleReason})`
+        : `\n      files this service ships that changed since the pin (${n}): `
+          + `${(row.bundleChanged ?? []).slice(0, 8).join(', ')}${n > 8 ? `, +${n - 8} more` : ''}`));
   }
   if (row.freshness === 'DIVERGED') out.push('pinned commit is not an ancestor of master');
   if (row.freshness === 'UNKNOWN-COMMIT') {
@@ -124,7 +131,13 @@ function reasons(row: PinRow): string[] {
 
 const gql = railwayGql(token());
 const result = await collectPins(gql, gitFacts(ROOT));
-const row = result.rows.find((r) => r.service === service);
+const found = result.rows.find((r) => r.service === service);
+
+// ★ "BEHIND master" is not the same question as "running stale code", and asking the
+// first one turned this check red on every merge — see refineFreshness. The refinement
+// can only ever DOWNGRADE a red, and only on a confident, empty diff of the paths this
+// service's own Dockerfile copies.
+const row: RefinedRow | undefined = found ? refineFreshness(found, ROOT) : undefined;
 
 if (!row) {
   process.stderr.write(
@@ -153,4 +166,7 @@ if (hasDisagreement([row])) {
   process.exit(1);
 }
 
+if (row.freshness === 'equivalent') {
+  process.stdout.write(`  ${row.bundleReason}\n`);
+}
 process.stdout.write(`\n${service} agrees with master on every axis.\n`);
