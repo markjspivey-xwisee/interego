@@ -523,7 +523,16 @@ const BASELINE = {};
 // roll-over driven against the live CSS and read back through every consumer, with a full
 // request trace — it is what found the relay's own concurrent bootstrap write 412-ing a
 // roll-over mid-flight), and `tests/bounded-manifest.test.ts`.
-export const MIN_FILES = 400;
+// 400 -> 403: splitting the fleet audit out of the deploy path. Three new files:
+// `tools/railway-deploy-check.ts` (the deploy gate, now asking the fleet's own predicate about
+// the ONE service it deployed — a `discord` rollout was failing because `css` was 46 commits
+// behind, and the step was twice dismissed in one session as "the documented always-red step"
+// while the relay was genuinely behind on its own bundled code),
+// `tools/railway-singleton-settings.ts` (the missing WRITE half: `css.numReplicas` had been
+// reported unset since the invariant was declared, with nothing in the repo able to set it, so
+// the finding had no remedy and a permanent red is a red nobody reads), and
+// `tests/railway-scoped-check-is-not-weaker.test.ts`.
+export const MIN_FILES = 403;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.

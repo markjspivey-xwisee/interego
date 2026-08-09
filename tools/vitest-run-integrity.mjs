@@ -168,7 +168,19 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // ceremony over an injected `fetch` and reads the name off the `/register` body, because that is
 // the only copy of it the relay ever sees.
 // The tree reached 237.
-export const MIN_TEST_MODULES = 232;
+// 232 -> 233: pinning the law that lets the deploy gate be SCOPED to one service.
+// `tests/railway-scoped-check-is-not-weaker.test.ts` is the new suite. The deploy path used to
+// end with a FLEET-WIDE `railway-pins.mjs --check`, so a `discord` rollout failed because `css`
+// was behind, and the step — red by design after any merge — was twice dismissed in one session
+// as "the documented always-red step" while the relay was genuinely behind on its own bundled
+// code. The gate now asks the same predicate about the one service it deployed. The new suite
+// pins `hasDisagreement(rows) === rows.some(r => hasDisagreement([r]))` over the power set of a
+// mixed fleet, because a cross-row rule added later would pass both a single-row and a
+// whole-fleet test while making the scoped gate blind to it.
+// ★ The floor was ALSO 10 behind a tree of 242 before this suite existed — at exactly the
+// allowance, so the next test file added anywhere was going to trip it regardless of what it was.
+// The tree reached 243.
+export const MIN_TEST_MODULES = 233;
 export const FLOOR_ALLOWANCE = 10;
 
 /**
