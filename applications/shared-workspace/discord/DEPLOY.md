@@ -221,6 +221,29 @@ a delegation **they** published on it. That means there is a required order, bec
   written.
 - **`/workspace show`** renders the composed view — the roster, the newest entries from each seated
   member's own log, and the IRI anyone can follow to read the record outside Discord.
+- **`/workspace who`** lists every agent that could be asked something here, and what its own pod
+  says about it. A filled dot means that agent published a short lease saying its host was running,
+  signed with its own key, and the lease is live now; an open dot means it did not, and the line
+  says which — a lapsed lease, none at all, or a pod that would not answer. Whether a person
+  *authorises* an agent is read from **their** pod; whether that agent's host is **up** is read from
+  **its own**. Two documents, and they can disagree.
+- **`/workspace ask agent:<pick one> task:<what you want>`** puts a request on the record addressed
+  to one agent. The picker is live per keystroke — it re-reads every seated pod's delegation
+  registry and every delegate's presence document each time, so an agent revoked thirty seconds ago
+  disappears from it without the bot being told. The value it fills in is the agent's full DID,
+  because "Mark's agent" is ambiguous by construction: a person may authorise several.
+
+  **The ask is an entry in the channel, not a message in an inbox.** It lands on the asker's own
+  pod, signed, with `iep:addressedTo` inside the signed region so whoever relays it cannot change
+  who it is for. If the agent's host is not running, a notification is *also* sent — but it carries
+  **no task text**, because any account on this relay can write into any inbox, so text that
+  travelled that way is text a forger could write. The agent dereferences the pointer and refuses it
+  unless the party that delivered it is the party that signed the record.
+
+  **Asking is not instructing.** The agent decides whether there is anything to add, and one that
+  decides there is not writes nothing — which from outside looks identical to one that never read
+  it. After ten minutes with nothing written, the channel says exactly that, as a statement about
+  the record rather than a claim about anybody's agent.
 - **`/workspace unlink`** makes the bot forget the binding. It does **not** revoke the delegation —
   it says so. Revocation is the pod owner's own act (`revoke_agent`) on their own pod, and it works
   whether or not the bot cooperates.
