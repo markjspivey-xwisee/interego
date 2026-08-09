@@ -203,8 +203,11 @@ export function changelogFailures(text, resolves, countSince) {
     if (behind === null) {
       failures.push(
         `CHANGELOG.md's documented-through marker names ${marker[1]}, which this repository\n`
-        + '      cannot resolve. Point it at a commit that exists — it is the anchor the whole\n'
-        + '      backlog measurement hangs off.',
+        + '      cannot resolve OR cannot reach from HEAD. Point it at a commit on the DEFAULT\n'
+        + '      BRANCH — it is the anchor the whole backlog measurement hangs off, and a branch\n'
+        + '      tip is not one: it resolves in the clone that wrote it and disappears the moment\n'
+        + '      the branch is squash-merged, which turns a green pull request red on master a\n'
+        + '      minute later. Use the merge-base, or move the marker after the squash.',
       );
     } else if (behind > BACKLOG_CEILING) {
       failures.push(
@@ -243,8 +246,25 @@ function main() {
   }
 
   const resolves = sha => git(['cat-file', '-e', `${sha}^{commit}`]).status === 0;
+
+  /**
+   * ★ THE ANCHOR MUST BE AN ANCESTOR OF HEAD, NOT MERELY A COMMIT THAT EXISTS.
+   *
+   * `cat-file -e` alone let this gate pass on a working copy and fail on CI for the same file.
+   * The marker was moved to the tip of the branch the entry was written on; that sha resolved
+   * locally because the branch objects were still in the clone, and then SQUASH-MERGE collapsed
+   * the branch and deleted it — so on `master`, in a fresh clone, the anchor named a commit
+   * nothing could reach. Green on the pull request, red on master a minute later, which is the
+   * one place a gate must not be wrong.
+   *
+   * `rev-list <sha>..HEAD` already returns non-zero for an unknown sha, but for a KNOWN commit
+   * that is not an ancestor it happily returns a count — so the ancestry has to be asked for
+   * directly or the number would be measured from somewhere HEAD never came through.
+   */
+  const isAncestor = sha => git(['merge-base', '--is-ancestor', `${sha}^{commit}`, 'HEAD']).status === 0;
+  const anchors = sha => resolves(sha) && isAncestor(sha);
   const countSince = (sha) => {
-    if (!resolves(sha)) return null;
+    if (!anchors(sha)) return null;
     const r = git(['rev-list', '--count', `${sha}..HEAD`]);
     return r.status === 0 ? Number(r.out) : null;
   };
