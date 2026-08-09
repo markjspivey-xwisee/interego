@@ -857,6 +857,7 @@ var WSPC = (() => {
     PROV: () => PROV,
     REQUEST_INBOX_LIMIT: () => REQUEST_INBOX_LIMIT,
     REQUIRED_TOOLS: () => REQUIRED_TOOLS,
+    RESPOND_AS_MEMBER: () => RESPOND_AS_MEMBER,
     RelayMcpTransport: () => RelayMcpTransport,
     SEAT_READ_CAP: () => SEAT_READ_CAP,
     SEAT_SCAN_LIMIT: () => SEAT_SCAN_LIMIT,
@@ -867,6 +868,9 @@ var WSPC = (() => {
     WorkspaceClient: () => WorkspaceClient,
     acceptGrant: () => acceptGrant,
     acceptanceTurtle: () => acceptanceTurtle,
+    actionKey: () => actionKey,
+    actionUrl: () => actionUrl,
+    actionUrn: () => actionUrn,
     admitAnyVerifiedSigner: () => admitAnyVerifiedSigner,
     admitSeatedIn: () => admitSeatedIn,
     agentDocIri: () => agentDocIri,
@@ -974,6 +978,7 @@ var WSPC = (() => {
     roleName: () => roleName,
     roleWhy: () => roleWhy,
     rolesTurtle: () => rolesTurtle,
+    sameAction: () => sameAction,
     saveCanvas: () => saveCanvas,
     scanTurtle: () => scanTurtle,
     scopeCeiling: () => scopeCeiling,
@@ -2581,6 +2586,46 @@ var WSPC = (() => {
     }
   };
 
+  // packages/core/dist/kernel/action-identity.js
+  var IEP_ACTION_AUTHORITY = (() => {
+    const env = typeof process === "undefined" ? void 0 : process.env?.IEP_ACTION_AUTHORITY;
+    return (env ?? "https://relay.interego.xwisee.com/ns/iep/action").replace(/\/+$/, "");
+  })();
+  var LEGACY_ACTION_PREFIX = "urn:iep:action:";
+  var URL_AUTHORITY_PREFIX = `${IEP_ACTION_AUTHORITY}/`;
+  function actionKey(iri) {
+    if (typeof iri !== "string")
+      return "";
+    let tail = iri;
+    if (iri.startsWith(LEGACY_ACTION_PREFIX))
+      tail = iri.slice(LEGACY_ACTION_PREFIX.length);
+    else {
+      const m = /\/ns\/iep\/action\/(.+)$/.exec(iri);
+      if (m && m[1])
+        tail = m[1];
+      else
+        return iri;
+    }
+    return tail.includes("://") ? tail : tail.replace(/:/g, "/");
+  }
+  function actionUrl(iri) {
+    const key = actionKey(iri);
+    if (key.includes("://"))
+      return iri.startsWith(LEGACY_ACTION_PREFIX) ? iri : `${LEGACY_ACTION_PREFIX}${key}`;
+    return `${IEP_ACTION_AUTHORITY}/${key}`;
+  }
+  function actionUrn(iri) {
+    const key = actionKey(iri);
+    return `${LEGACY_ACTION_PREFIX}${key.includes("://") ? key : key.replace(/\//g, ":")}`;
+  }
+  function sameAction(a, b) {
+    const ka = actionKey(a), kb = actionKey(b);
+    return ka !== "" && ka === kb;
+  }
+
+  // packages/workspace-client/src/actions.ts
+  var RESPOND_AS_MEMBER = actionUrl("urn:iep:action:wsp:respond-as-member");
+
   // packages/workspace-client/src/chain.ts
   function toChainRow(e) {
     const sup = e["supersedes"];
@@ -3971,19 +4016,19 @@ var WSPC = (() => {
       };
     }
     const now = args.nowMs ?? Date.now();
-    const rowsAt = async (effectiveAt) => {
-      const input = { pod_name: pod, graph_iri: iri, sort: "newest-first", limit: 8 };
-      if (effectiveAt)
-        input["effective_at"] = effectiveAt;
-      const p = await port.tool("discover_context", input, { cache: false });
+    let rows;
+    try {
+      const p = await port.tool("discover_context", {
+        pod_name: pod,
+        graph_iri: iri,
+        sort: "newest-first",
+        limit: 8
+        // No cache: presence is the one read where a two-minute-old answer is exactly the wrong one.
+      }, { cache: false });
       const bad = relayRefusal(p);
       if (bad)
         throw new Error(String(bad["message"] ?? bad["error"]));
-      return Array.isArray(p?.["entries"]) ? p?.["entries"] : [];
-    };
-    let live;
-    try {
-      live = await rowsAt(new Date(now).toISOString());
+      rows = Array.isArray(p?.["entries"]) ? p?.["entries"] : [];
     } catch (e) {
       return {
         state: "unreadable",
@@ -3993,39 +4038,28 @@ var WSPC = (() => {
         why: "pod " + pod + " did not answer when asked whether that agent had said it was running (" + describe2(port, e) + "). That is not the same as it being off, and neither is being assumed."
       };
     }
-    if (!live.length) {
-      let all;
-      try {
-        all = await rowsAt(null);
-      } catch (e) {
-        return {
-          state: "unreadable",
-          agentId: args.agentId,
-          pod,
-          iri,
-          why: "no lease is live on pod " + pod + " and the follow-up read that would say whether one ever was did not complete (" + describe2(port, e) + "), so whether this agent has EVER said it was running is not established."
-        };
-      }
-      if (!all.length) {
-        return {
-          state: "never",
-          agentId: args.agentId,
-          pod,
-          iri,
-          why: "that pod holds no presence document for this agent at all. It may well be a real agent; nothing has ever published that its host was up."
-        };
-      }
-      const last = all.map((r) => parseMs(r["validUntil"])).filter((t) => t !== null).sort((a, b) => b - a)[0] ?? null;
+    if (!rows.length) {
+      return {
+        state: "never",
+        agentId: args.agentId,
+        pod,
+        iri,
+        why: "that pod holds no presence document for this agent at all. It may well be a real agent; nothing has ever published that its host was up."
+      };
+    }
+    const head = rows[0];
+    const headUntil = parseMs(head["validUntil"]);
+    if (headUntil !== null && headUntil <= now) {
       return {
         state: "stale",
         agentId: args.agentId,
         pod,
         iri,
-        lastExpiresMs: last,
-        why: last === null ? "a presence document exists on that pod and no lease of it is live now; none of them carries a readable expiry, so when it last said so is not established" : "the newest lease this agent published lapsed at " + new Date(last).toISOString() + " and has not been renewed since"
+        lastExpiresMs: headUntil,
+        why: "the newest lease this agent published lapsed at " + new Date(headUntil).toISOString() + " and has not been renewed since. Older leases of its own may still be inside their windows; they are claims it has already superseded, and its current claim is this one."
       };
     }
-    const row = live[0];
+    const row = head;
     const from = parseMs(row["validFrom"]);
     const until = parseMs(row["validUntil"]);
     const url = typeof row["descriptorUrl"] === "string" ? row["descriptorUrl"] : "";

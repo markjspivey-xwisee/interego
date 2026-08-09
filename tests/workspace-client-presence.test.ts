@@ -28,22 +28,31 @@ const AGENT = 'did:web:identity.interego.xwisee.com:agents:interego-delegate-' +
 const IRI = RELAY + '/ns/' + AGENT_POD + '/agent-' + AGENT_POD + '-presence';
 const NOW = Date.parse('2026-08-08T12:00:00.000Z');
 
-/** A relay stubbed at the tool boundary. Nothing here mocks the module under test. */
+/**
+ * A relay stubbed at the tool boundary. Nothing here mocks the module under test.
+ *
+ * ★ ONE READ, NEWEST-FIRST, AND NO `effective_at`. The reader used to ask the relay's temporal
+ * filter "which leases are valid now" and take the first. That is subtly the wrong question, and a
+ * live run found it: an agent published a year-long lease, then an honest 180s one, then stopped —
+ * and once the honest one lapsed the year-long one became the answer, a claim the agent had already
+ * superseded resurfacing because the newer claim expired. Presence is an agent's CURRENT claim, so
+ * the reader takes the head and checks the head's own window.
+ */
 function stub(opts: {
-  live?: readonly Record<string, unknown>[];
-  all?: readonly Record<string, unknown>[];
+  rows?: readonly Record<string, unknown>[];
   descriptor?: Record<string, unknown>;
-  throwOn?: 'live' | 'all' | 'descriptor';
+  throwOn?: 'rows' | 'descriptor';
   onPublish?: (args: Record<string, unknown>) => Record<string, unknown>;
-}): { client: AgentPort; published: Record<string, unknown>[] } {
+}): { client: AgentPort; published: Record<string, unknown>[]; asked: Record<string, unknown>[] } {
   const published: Record<string, unknown>[] = [];
+  const asked: Record<string, unknown>[] = [];
   const client = {
     async tool(name: string, args: Record<string, unknown>): Promise<unknown> {
       if (name === 'publish_context') { published.push(args); return opts.onPublish ? opts.onPublish(args) : { status: 'committed', descriptorUrl: 'https://pod/x.ttl' }; }
       if (name === 'discover_context') {
-        const filtered = args['effective_at'] !== undefined;
-        if (opts.throwOn === (filtered ? 'live' : 'all')) throw new Error('the pod did not answer');
-        return { entries: filtered ? opts.live ?? [] : opts.all ?? [] };
+        asked.push(args);
+        if (opts.throwOn === 'rows') throw new Error('the pod did not answer');
+        return { entries: opts.rows ?? [] };
       }
       throw new Error('unexpected tool ' + name);
     },
@@ -52,27 +61,30 @@ function stub(opts: {
       return opts.descriptor ?? {};
     },
   } as unknown as AgentPort;
-  return { client, published };
+  return { client, published, asked };
 }
 
-/** One live row plus a descriptor that matches it, with whichever field the test is bending. */
+/** One row plus a descriptor that matches it, with whichever field the test is bending. */
 function lease(over: {
   spanMs?: number;
+  /** How long before NOW the lease was written. Past its span, it has lapsed. */
+  agoMs?: number;
   verified?: boolean;
   binding?: string;
   signer?: string;
   about?: string;
   region?: boolean;
-} = {}): { live: Record<string, unknown>[]; descriptor: Record<string, unknown> } {
+} = {}): { rows: Record<string, unknown>[]; descriptor: Record<string, unknown> } {
   const span = over.spanMs ?? 180_000;
-  const from = new Date(NOW - 30_000).toISOString();
-  const until = new Date(NOW - 30_000 + span).toISOString();
+  const ago = over.agoMs ?? 30_000;
+  const from = new Date(NOW - ago).toISOString();
+  const until = new Date(NOW - ago + span).toISOString();
   const body = presenceTurtle({
     iri: IRI, agentId: over.about ?? AGENT, principal: null, host: 'a test',
     createdIso: from, expiresIso: until,
   });
   return {
-    live: [{ descriptorUrl: 'https://pod/lease.ttl', validFrom: from, validUntil: until }],
+    rows: [{ descriptorUrl: 'https://pod/lease.ttl', validFrom: from, validUntil: until }],
     descriptor: {
       authorship: {
         authorshipVerified: over.verified !== false,
@@ -161,21 +173,59 @@ describe('reading presence', () => {
 
   it('is running when a short, signed, bound, self-naming lease is live', async () => {
     const l = lease();
-    const p = await read(stub({ live: l.live, descriptor: l.descriptor }));
+    const p = await read(stub({ rows: l.rows, descriptor: l.descriptor }));
     expect(p.state).toBe('running');
     expect(isPresent(p)).toBe(true);
   });
 
   it('tells "never" from "stale", and neither of them is a failed read', async () => {
-    const never = await read(stub({ live: [], all: [] }));
+    const never = await read(stub({ rows: [] }));
     expect(never.state).toBe('never');
-    const stale = await read(stub({ live: [], all: [{ descriptorUrl: 'u', validUntil: new Date(NOW - 600_000).toISOString() }] }));
+    const stale = await read(stub({ rows: [{ descriptorUrl: 'u', validUntil: new Date(NOW - 600_000).toISOString() }] }));
     expect(stale.state).toBe('stale');
     expect(isPresent(stale)).toBe(false);
   });
 
+  /**
+   * ★ THE LIVE FINDING THIS PINS. An agent published a year-long lease (the forged-lease case),
+   * then an honest 180s one, then stopped. The reader asked the relay's temporal filter "which
+   * leases are valid now" and took the first — so once the honest lease lapsed, the year-long one
+   * became the answer: a claim the agent had already superseded, resurfacing because the newer
+   * claim expired. It was reported as `overlong` and so never read as presence, but the reasoning
+   * was wrong and the shape generalises to any older, longer-lived lease.
+   *
+   * Presence is an agent's CURRENT claim. The head governs, and the head has lapsed.
+   */
+  it('★ is STALE when the newest lease has lapsed, even with an older longer one still in window', async () => {
+    const p = await read(stub({
+      rows: [
+        // The head: honest length, written four minutes ago, so it lapsed a minute ago.
+        { descriptorUrl: 'https://pod/new.ttl', validFrom: new Date(NOW - 240_000).toISOString(), validUntil: new Date(NOW - 60_000).toISOString() },
+        // Superseded, and still nominally valid for another year.
+        { descriptorUrl: 'https://pod/old.ttl', validFrom: new Date(NOW - 600_000).toISOString(), validUntil: new Date(NOW + 365 * 24 * 3600_000).toISOString() },
+      ],
+    }));
+    expect(p.state).toBe('stale');
+    expect(isPresent(p)).toBe(false);
+    if (p.state !== 'stale') throw new Error('narrowed above');
+    expect(p.lastExpiresMs).toBe(NOW - 60_000);
+    expect(p.why).toContain('already superseded');
+  });
+
+  it('★ reads the head in ONE round trip, and asks for no temporal filter', async () => {
+    // One read per delegate matters: a channel picker does this for every agent on every seated
+    // pod, inside Discord's three-second autocomplete budget.
+    const l = lease();
+    const s = stub({ rows: l.rows, descriptor: l.descriptor });
+    await read(s);
+    expect(s.asked).toHaveLength(1);
+    expect(s.asked[0]?.['effective_at']).toBeUndefined();
+    expect(s.asked[0]?.['sort']).toBe('newest-first');
+    expect(s.asked[0]?.['graph_iri']).toBe(IRI);
+  });
+
   it('reports a pod that did not answer as unreadable, and NEVER as absent-or-present', async () => {
-    const p = await read(stub({ throwOn: 'live' }));
+    const p = await read(stub({ throwOn: 'rows' }));
     expect(p.state).toBe('unreadable');
     expect(isPresent(p)).toBe(false);
     if (p.state !== 'unreadable') throw new Error('narrowed above');
@@ -186,29 +236,29 @@ describe('reading presence', () => {
     // ★ THE FORGED-LEASE GUARD. `valid_until` is caller-supplied, so one publish could claim a
     // year — and a reader that accepted it would treat a single write as permanent availability.
     const l = lease({ spanMs: 31 * 24 * 3600_000 });
-    const p = await read(stub({ live: l.live, descriptor: l.descriptor }));
+    const p = await read(stub({ rows: l.rows, descriptor: l.descriptor }));
     expect(p.state).toBe('overlong');
     expect(isPresent(p)).toBe(false);
   });
 
   it('accepts exactly the bound and refuses one millisecond past it', async () => {
     const ok = lease({ spanMs: PRESENCE_MAX_LEASE_MS });
-    expect((await read(stub({ live: ok.live, descriptor: ok.descriptor }))).state).toBe('running');
+    expect((await read(stub({ rows: ok.rows, descriptor: ok.descriptor }))).state).toBe('running');
     const no = lease({ spanMs: PRESENCE_MAX_LEASE_MS + 1 });
-    expect((await read(stub({ live: no.live, descriptor: no.descriptor }))).state).toBe('overlong');
+    expect((await read(stub({ rows: no.rows, descriptor: no.descriptor }))).state).toBe('overlong');
   });
 
   it('refuses a lease with no expiry at all', async () => {
     const l = lease();
     const rows = [{ descriptorUrl: 'https://pod/lease.ttl', validFrom: new Date(NOW - 1000).toISOString() }];
-    const p = await read(stub({ live: rows, descriptor: l.descriptor }));
+    const p = await read(stub({ rows, descriptor: l.descriptor }));
     expect(p.state).toBe('overlong');
   });
 
   it('refuses an unverified lease, an unbound one, and one signed by somebody else', async () => {
     for (const bend of [{ verified: false }, { binding: 'unbound' }, { signer: 'did:web:x:agents:someone-else' }]) {
       const l = lease(bend);
-      const p = await read(stub({ live: l.live, descriptor: l.descriptor }));
+      const p = await read(stub({ rows: l.rows, descriptor: l.descriptor }));
       expect(p.state, JSON.stringify(bend)).toBe('unreadable');
       expect(isPresent(p)).toBe(false);
     }
@@ -218,7 +268,7 @@ describe('reading presence', () => {
     // The filename is not an assertion. Only the region is, and this is the case where the two
     // disagree — a lease published at another delegate's address.
     const l = lease({ about: 'did:web:identity.interego.xwisee.com:agents:interego-delegate-u-eth-cafebabe0002' });
-    const p = await read(stub({ live: l.live, descriptor: l.descriptor }));
+    const p = await read(stub({ rows: l.rows, descriptor: l.descriptor }));
     expect(p.state).toBe('unreadable');
     if (p.state !== 'unreadable') throw new Error('narrowed above');
     expect(p.why).toContain('does not agree');
@@ -226,7 +276,7 @@ describe('reading presence', () => {
 
   it('refuses a lease whose signed region cannot be located', async () => {
     const l = lease({ region: false });
-    expect((await read(stub({ live: l.live, descriptor: l.descriptor }))).state).toBe('unreadable');
+    expect((await read(stub({ rows: l.rows, descriptor: l.descriptor }))).state).toBe('unreadable');
   });
 
   it('refuses a lease that names TWO agents, rather than believing whichever came first', async () => {
@@ -238,33 +288,32 @@ describe('reading presence', () => {
     const other = 'did:web:identity.interego.xwisee.com:agents:interego-delegate-u-eth-cafebabe0002';
     const content = String((l.descriptor['graph'] as { content: string }).content)
       .replace('iep:presenceOf <' + AGENT + '>', 'iep:presenceOf <' + AGENT + '>, <' + other + '>');
-    const p = await read(stub({ live: l.live, descriptor: { ...l.descriptor, graph: { content } } }));
+    const p = await read(stub({ rows: l.rows, descriptor: { ...l.descriptor, graph: { content } } }));
     expect(p.state).toBe('unreadable');
     if (p.state !== 'unreadable') throw new Error('narrowed above');
     expect(p.why).toContain('2 different agents');
   });
 
-  it('asks the relay for leases valid AT AN INSTANT rather than filtering afterwards', async () => {
-    const seen: Record<string, unknown>[] = [];
+  it('reads with no cache, because a two-minute-old answer is exactly the wrong one here', async () => {
     const l = lease();
+    const seen: { args: Record<string, unknown>; opts: unknown }[] = [];
     const client = {
-      async tool(name: string, args: Record<string, unknown>) {
-        seen.push(args);
-        if (name === 'discover_context') return { entries: args['effective_at'] ? l.live : [] };
+      async tool(name: string, args: Record<string, unknown>, opts?: unknown) {
+        seen.push({ args, opts });
+        if (name === 'discover_context') return { entries: l.rows };
         throw new Error('unexpected ' + name);
       },
       async descriptor() { return l.descriptor; },
     } as unknown as AgentPort;
     await readPresence(client, { relay: RELAY, agentId: AGENT, nowMs: NOW });
-    expect(seen[0]?.['effective_at']).toBe(new Date(NOW).toISOString());
-    expect(seen[0]?.['graph_iri']).toBe(IRI);
+    expect((seen[0]?.opts as { cache?: unknown })?.cache).toBe(false);
   });
 });
 
 describe('the sentence a surface shows', () => {
   it('never claims to have seen a process', async () => {
     const l = lease();
-    const p = await readPresence(stub({ live: l.live, descriptor: l.descriptor }).client, {
+    const p = await readPresence(stub({ rows: l.rows, descriptor: l.descriptor }).client, {
       relay: RELAY, agentId: AGENT, nowMs: NOW,
     });
     const line = presenceLine(p, NOW);

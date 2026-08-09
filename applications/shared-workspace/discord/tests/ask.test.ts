@@ -63,12 +63,12 @@ function world(w: World): { client: WorkspaceClient; calls: { name: string; args
         const pod = String(a['pod_name']);
         const graph = String(a['graph_iri'] ?? '');
         if (graph.indexOf('-presence') > 0) {
+          // ★ ONE READ, NEWEST-FIRST, NO TEMPORAL FILTER. The reader takes the HEAD and checks the
+          // head's own window — because an older, longer-lived lease outlives the newer one that
+          // superseded it, so "what is valid now" can hand back a claim already withdrawn.
           const agentPod = /agent-(u-[a-z0-9-]+)-presence/.exec(graph)?.[1] ?? '';
-          const live = (w.running ?? []).indexOf(agentPod) >= 0;
-          if (a['effective_at'] && live) {
-            return { entries: [{ descriptorUrl: 'https://css.internal/' + pod + '/lease-' + agentPod + '.ttl', validFrom: new Date(NOW - 41_000).toISOString(), validUntil: new Date(NOW + 139_000).toISOString() }] };
-          }
-          return { entries: [] };
+          if ((w.running ?? []).indexOf(agentPod) < 0) return { entries: [] };
+          return { entries: [{ descriptorUrl: 'https://css.internal/' + pod + '/lease-' + agentPod + '.ttl', validFrom: new Date(NOW - 41_000).toISOString(), validUntil: new Date(NOW + 139_000).toISOString() }] };
         }
         // The grant scan the roster fold falls back to.
         return {

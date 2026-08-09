@@ -29,7 +29,7 @@ import {
   capabilitiesIri, capabilityTurtle, publishCapability as publishAgentCapability, readCapabilities,
   type AgentPort, type CapabilityPublish, type CapabilityRead, type CapabilityRoute,
 } from '@interego/core/agent';
-import { RESPOND_AS_MEMBER } from '../affordances.js';
+import { RESPOND_AS_MEMBER } from '@interego/workspace-client';
 
 export {
   capabilityTurtle, capabilityProblem, capabilitiesIri, readCapabilities,

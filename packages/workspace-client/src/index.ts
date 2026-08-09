@@ -41,6 +41,8 @@ export {
   type HeadResult, type WorkspaceRecord, type MemberDocLookup,
 } from './substrate.js';
 
+export { RESPOND_AS_MEMBER, actionUrl, actionUrn, actionKey, sameAction } from './actions.js';
+
 export { orderChain, toChainRow, type ChainRow, type ChainWalk } from './chain.js';
 
 export { shortRef } from './format.js';

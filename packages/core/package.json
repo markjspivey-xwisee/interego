@@ -33,6 +33,10 @@
       "import": "./dist/rdf/turtle-region.js",
       "types": "./dist/rdf/turtle-region.d.ts"
     },
+    "./action": {
+      "import": "./dist/kernel/action-identity.js",
+      "types": "./dist/kernel/action-identity.d.ts"
+    },
     "./agent": {
       "import": "./dist/model/agent.js",
       "types": "./dist/model/agent.d.ts"

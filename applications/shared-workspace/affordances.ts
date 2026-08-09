@@ -13,25 +13,17 @@
  */
 
 import type { Affordance } from '../_shared/affordance-mcp/index.js';
-import { actionUrl, type IRI } from '@interego/core';
-
+import type { IRI } from '@interego/core';
 /**
- * The one action this vertical defines, as a URL.
- *
- * ★ IT WAS `urn:iep:action:wsp:respond-as-member`, AND THAT FAILED SILENTLY IN THE WORST PLACE.
- * `capabilitiesFromAffordances` drops any affordance whose action is not `^https?://` — deliberately
- * and correctly, because an unfollowable capability advertised on a card is a promise the substrate
- * cannot keep. But the drop is a `continue` with no error, so the ONE thing a workspace agent can
- * be asked to do vanished from every per-agent card, and an A2A peer reading that card concluded
- * this agent could do nothing at all. A false "no capabilities" is worse than a broken link,
- * because nothing anywhere reports it.
- *
- * ★ MINTED THROUGH `actionUrl` RATHER THAN TYPED OUT, so this string and the resolver's idea of
- * what it should be cannot disagree — and `sameAction` still selects it by the legacy urn, so
- * nothing that already invokes it stops working. Every identifier is a dereferenceable URL; a
- * `urn:` here was both a principle violation and, measurably, an under-advertised agent.
+ * ★ THE ACTION IS DEFINED IN THE VERTICAL'S CLIENT PACKAGE AND RE-EXPORTED HERE, not the other way
+ * round. Four things name it — this manifest, the capability document an agent publishes about
+ * itself, the desktop shell that publishes one, and any caller invoking it — and three of those are
+ * bundled for a browser or an Electron renderer, which cannot import this file without crossing a
+ * `rootDir`. So it lives where all four can reach it, and there is one spelling of it.
  */
-export const RESPOND_AS_MEMBER = actionUrl('urn:iep:action:wsp:respond-as-member');
+import { RESPOND_AS_MEMBER } from '@interego/workspace-client';
+
+export { RESPOND_AS_MEMBER };
 
 const WSP_AFFORDANCES: ReadonlyArray<Affordance> = [
   {

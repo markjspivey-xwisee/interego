@@ -23,7 +23,8 @@ import {
   authorshipLine, briefPrompt,
   checkDraft, checkOwnHandle, checkRoleForWorkspace, checkWriteEligibility, createWorkspace,
   decideTurn, delegatePlan, describeSpan, entryShapeAnswer, errorCopy, footingLine,
-  PRESENCE_RENEW_MS, publishPresence, readRequests, verifyRequest, type RequestVerdict,
+  PRESENCE_RENEW_MS, publishCapability, publishPresence, readRequests, verifyRequest,
+  RESPOND_AS_MEMBER, type RequestVerdict,
   readDelegates, readEntryAuthorship, REQUIRED_TOOLS,
   foldRoster, graphRegion, grantPodFor, hasType, listWorkspaces, mergeForward, nsIri, orderChain,
   parseRoleProfile, parseWorkspaceIri, podClaimVsServed, podOfDescriptorUrl, pollingWatch, postEntry,
@@ -2875,6 +2876,8 @@ const A = {
   presence: { at: null as number | null, why: null as string | null },
   /** When the inbox was last read, and what that read established. Null `at` means never. */
   wake: { at: null as number | null, why: null as string | null },
+  /** Why this delegate's capability document is not published, or null when it is. */
+  advertise: null as string | null,
   /**
    * Notices that pointed at something this host would not act on, kept visible.
    *
@@ -3084,6 +3087,9 @@ function renderAgent(): void {
         : 'It has not managed to say its host is running' + (A.presence.why ? ' (' + A.presence.why + ')' : '')
           + ', so to everybody else it reads as not running. That is the correct thing for it to read as: nothing has established that it is.'));
   if (A.on) {
+    p.appendChild(el('div', 'note', A.advertise === null
+      ? 'It has also published what it can be asked, at an address anybody composes from its DID — so a peer that has never heard of this channel can find it, read what it offers, and see that the way to reach it is to put a request where it reads rather than to call an endpoint it does not have.'
+      : 'It has NOT managed to publish what it can be asked (' + A.advertise + '), so to a peer it offers nothing — which is not the same as it being unable to help.'));
     p.appendChild(el('div', 'note',
       A.wake.at === null
         ? 'Its inbox has not been read yet this run. Nothing depends on it — a request is an entry in the channel this app is already watching, and a notice is only a pointer at one.'
@@ -3368,6 +3374,55 @@ async function wake(): Promise<void> {
   if (ok.length) for (const key of [...S.streams.keys()]) await readOnce(key);
 }
 
+/**
+ * Say, once, what this delegate can be asked — at an address composed from its DID.
+ *
+ * ★ PRESENCE WITHOUT THIS IS HALF AN ANSWER. A peer that reads "its host is running" still has no
+ * idea what it can be asked or by what route, and would have to guess — which is the guessing this
+ * whole layer exists to remove. The two documents are a pair: one says whether anybody is home, the
+ * other says what you may knock about.
+ *
+ * ★ `iep:askVia`, NEVER `hydra:target`, AND THAT IS THE HONEST THING TO PUBLISH. This agent runs on
+ * somebody's laptop, on their own model credential, behind whatever network they are on. There is
+ * no endpoint that will ever answer a POST, so advertising one would be advertising a call that
+ * cannot connect. The route it publishes is the one that actually works: put a signed record where
+ * it reads, and it answers when its host next runs.
+ *
+ * Published once per delegate per run, not on the heartbeat: what an agent can be asked does not
+ * change every ninety seconds, and republishing it on a timer would be noise on somebody's pod.
+ */
+const advertised = new Set<string>();
+
+async function advertise(): Promise<void> {
+  const speaker = speakingDelegate();
+  if (!A.on || !speaker || advertised.has(speaker.agentId)) return;
+  advertised.add(speaker.agentId);
+  try {
+    const client = await delegateClient(speaker.address);
+    const out = await publishCapability(agentPort(client), {
+      relay: S.relay,
+      agentId: speaker.agentId,
+      action: RESPOND_AS_MEMBER,
+      // The inbox is where a request POINTS; the record it points at is the ask itself.
+      route: { kind: 'ask', askVia: S.relay + '/ns/' + (S.viewer?.podName ?? '') + '/inbox' },
+      title: 'Answer in this channel',
+      description: 'Ask this agent to read the channel and, if it judges there is something to add, append an answer '
+        + 'to its own human\'s log. It decides whether to speak; asking is not instructing.',
+    });
+    if (out.kind !== 'published') {
+      // Dropped from the set so the next switch-on retries. A capability nobody could read is not
+      // a capability, and pretending it was published would make this agent look askable when it
+      // has said nothing.
+      advertised.delete(speaker.agentId);
+      A.advertise = out.kind === 'refused' ? out.why : out.kind === 'invalid' || out.kind === 'unnameable' ? out.why : 'the publish did not complete';
+    } else { A.advertise = null; }
+  } catch (e) {
+    advertised.delete(speaker.agentId);
+    A.advertise = errorCopy(e).t;
+  }
+  renderAgent();
+}
+
 /** Descriptor URLs some entry already on my own pod declares it was derived from. */
 function derivedFromOnMyPod(): readonly string[] {
   const out: string[] = [];
@@ -3401,6 +3456,7 @@ function setAgent(on: boolean): void {
   if (on) {
     void agentConsider();
     void heartbeat();
+    void advertise();
     void wake();
     heartbeatTimer = setInterval(() => { void heartbeat(); }, PRESENCE_RENEW_MS);
     wakeTimer = setInterval(() => { void wake(); }, WAKE_EVERY_MS);

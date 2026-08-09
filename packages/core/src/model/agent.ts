@@ -158,11 +158,14 @@ const parseMs = (s: unknown): number | null => {
  * the opposite: a statement BY the host, on its own pod, signed with its own key, and it is only
  * worth anything because it is SHORT and had to be renewed. Nothing was added to the substrate.
  *
- * ★ IT DECAYS BY THE SUBSTRATE'S OWN CLOCK. `discover_context { effective_at: T }` is documented
- * and measured as `validFrom <= T AND (validUntil >= T OR validUntil absent)`, so a lapsed lease is
- * INVISIBLE to the query that asks for presence. The host stops, the lease stops being renewed, and
- * one lease-length later presence stops existing. Nothing has to notice and nothing times anything
- * out.
+ * ★ IT DECAYS BY EXPIRY, AND NOTHING ANYWHERE RUNS A TIMER. The host stops, the lease stops being
+ * renewed, and one lease-length later it is past its own `iep:leaseExpires` — which is inside the
+ * signed region, so the expiry a reader turns on is one the AGENT put its key to rather than one
+ * the relay computed. Nothing has to notice the outage and nothing has to be retracted; a host that
+ * crashed could not retract anything either, which is exactly why lapsing is the mechanism that can
+ * be trusted. The same bound is sent as `valid_until` so the relay's temporal filter agrees, but
+ * the reader does not depend on that filter to pick — see {@link readPresence} for the live
+ * measurement that made the difference matter.
  *
  * ★ AND THE HOLE IS GUARDED RATHER THAN HOPED AWAY. `valid_until` is a caller-supplied argument, so
  * a host COULD publish one lease claiming a year and never run again. A reader refuses any span
@@ -315,10 +318,10 @@ export const isPresent = (p: Presence): boolean => p.state === 'running';
 /**
  * What that pod says about this agent's host, right now.
  *
- * ★ THE FIRST READ IS THE SUBSTRATE'S OWN TEMPORAL FILTER AND THE SECOND ONLY RUNS WHEN IT IS
- * EMPTY. `effective_at` answers "is a lease live at this instant" without this client doing any
- * arithmetic; the unfiltered read exists solely to tell `never` from `stale`, a distinction the
- * empty answer cannot make and which matters to the person being told.
+ * ★ ONE READ, AND IT ASKS FOR THE HEAD RATHER THAN FOR "WHAT IS VALID NOW". See the read itself
+ * for the live measurement that changed this: an older, longer-lived lease outlives the newer one
+ * that superseded it, so the relay's temporal filter can hand back a claim the agent has already
+ * withdrawn. Presence is an agent's CURRENT claim.
  *
  * ★ AND THE SIGNATURE IS CHECKED, NOT THE FILENAME. A lease is only evidence because a process
  * holding the agent's private key had to sign it. So: the descriptor's authorship must verify, its
@@ -345,19 +348,36 @@ export async function readPresence(
     };
   }
   const now = args.nowMs ?? Date.now();
-  const rowsAt = async (effectiveAt: string | null): Promise<readonly Record<string, unknown>[]> => {
-    const input: Record<string, unknown> = { pod_name: pod, graph_iri: iri, sort: 'newest-first', limit: 8 };
-    if (effectiveAt) input['effective_at'] = effectiveAt;
-    // No cache: presence is the one read where a two-minute-old answer is exactly the wrong answer.
-    const p = await port.tool('discover_context', input, { cache: false }) as Record<string, unknown> | null;
+
+  /**
+   * ★ THE NEWEST LEASE THE AGENT HAS PUBLISHED — NOT THE NEWEST ONE STILL INSIDE ITS OWN WINDOW.
+   *
+   * This read used to be `effective_at: now`, letting the relay's temporal filter pick, and that
+   * is subtly the wrong question. MEASURED, live, 2026-08-09: an agent published a year-long lease
+   * (the forged-lease case), then an honest 180s one, then stopped. Once the honest lease lapsed
+   * the year-long one was the only row still valid, so it became the answer — a claim the agent had
+   * already superseded, resurfacing because the newer claim expired. It was reported as `overlong`
+   * and so was never read as presence, but the reasoning was wrong and the shape generalises: any
+   * older, longer-lived lease outlives the newer one that replaced it.
+   *
+   * An agent's presence is its CURRENT claim. So the head is what governs, and its own window is
+   * checked here against `now`. That is also one round trip instead of two — which matters, because
+   * a channel picker reads this once per delegate inside Discord's three-second budget — and it
+   * distinguishes `never` from `stale` without a second query.
+   *
+   * `iep:leaseExpires` is inside the signed region and is checked below, so the expiry this turns
+   * on is one the agent put its own key to rather than one the relay computed.
+   */
+  let rows: readonly Record<string, unknown>[];
+  try {
+    const p = await port.tool('discover_context', {
+      pod_name: pod, graph_iri: iri, sort: 'newest-first', limit: 8,
+      // No cache: presence is the one read where a two-minute-old answer is exactly the wrong one.
+    }, { cache: false }) as Record<string, unknown> | null;
     const bad = relayRefusal(p);
     if (bad) throw new Error(String(bad['message'] ?? bad['error']));
-    return Array.isArray(p?.['entries']) ? p?.['entries'] as Record<string, unknown>[] : [];
-  };
-
-  let live: readonly Record<string, unknown>[];
-  try { live = await rowsAt(new Date(now).toISOString()); }
-  catch (e) {
+    rows = Array.isArray(p?.['entries']) ? p?.['entries'] as Record<string, unknown>[] : [];
+  } catch (e) {
     return {
       state: 'unreadable', agentId: args.agentId, pod, iri,
       why: 'pod ' + pod + ' did not answer when asked whether that agent had said it was running (' + describe(port, e)
@@ -365,35 +385,25 @@ export async function readPresence(
     };
   }
 
-  if (!live.length) {
-    let all: readonly Record<string, unknown>[];
-    try { all = await rowsAt(null); }
-    catch (e) {
-      return {
-        state: 'unreadable', agentId: args.agentId, pod, iri,
-        why: 'no lease is live on pod ' + pod + ' and the follow-up read that would say whether one ever was did not complete ('
-          + describe(port, e) + '), so whether this agent has EVER said it was running is not established.',
-      };
-    }
-    if (!all.length) {
-      return {
-        state: 'never', agentId: args.agentId, pod, iri,
-        why: 'that pod holds no presence document for this agent at all. It may well be a real agent; nothing has ever '
-          + 'published that its host was up.',
-      };
-    }
-    const last = all.map((r) => parseMs(r['validUntil'])).filter((t): t is number => t !== null).sort((a, b) => b - a)[0] ?? null;
+  if (!rows.length) {
     return {
-      state: 'stale', agentId: args.agentId, pod, iri, lastExpiresMs: last,
-      why: last === null
-        ? 'a presence document exists on that pod and no lease of it is live now; none of them carries a readable expiry, so when it last said so is not established'
-        : 'the newest lease this agent published lapsed at ' + new Date(last).toISOString() + ' and has not been renewed since',
+      state: 'never', agentId: args.agentId, pod, iri,
+      why: 'that pod holds no presence document for this agent at all. It may well be a real agent; nothing has ever '
+        + 'published that its host was up.',
     };
   }
 
-  // Newest-first, so the head is the one that governs. A lease is one document with one head;
-  // extra rows are its superseded history and are not consulted.
-  const row = live[0] as Record<string, unknown>;
+  const head = rows[0] as Record<string, unknown>;
+  const headUntil = parseMs(head['validUntil']);
+  if (headUntil !== null && headUntil <= now) {
+    return {
+      state: 'stale', agentId: args.agentId, pod, iri, lastExpiresMs: headUntil,
+      why: 'the newest lease this agent published lapsed at ' + new Date(headUntil).toISOString() + ' and has not been '
+        + 'renewed since. Older leases of its own may still be inside their windows; they are claims it has already '
+        + 'superseded, and its current claim is this one.',
+    };
+  }
+  const row = head;
   const from = parseMs(row['validFrom']);
   const until = parseMs(row['validUntil']);
   const url = typeof row['descriptorUrl'] === 'string' ? row['descriptorUrl'] : '';

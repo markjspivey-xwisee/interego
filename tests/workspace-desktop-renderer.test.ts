@@ -559,11 +559,15 @@ const click = (doc: Document, id: string): void => { (doc.getElementById(id) as 
  * meant, and {@link presencePublishes} pins the other half rather than leaving it unasserted.
  */
 const entryPublishes = (o: Opened): { name: string; input: Record<string, unknown> }[] =>
-  o.s.calls.filter((c) => c.name === 'publish_context' && !String(c.input['graph_iri'] ?? '').includes('-presence'));
+  o.s.calls.filter((c) => c.name === 'publish_context' && !/\/agent-[^/]*-(presence|capabilities)$/.test(String(c.input['graph_iri'] ?? '')));
 
 /** The presence leases. A lease is not an entry and must never be counted as one. */
 const presencePublishes = (o: Opened): { name: string; input: Record<string, unknown> }[] =>
-  o.s.calls.filter((c) => c.name === 'publish_context' && String(c.input['graph_iri'] ?? '').includes('-presence'));
+  o.s.calls.filter((c) => c.name === 'publish_context' && String(c.input['graph_iri'] ?? '').endsWith('-presence'));
+
+/** The capability documents — what an agent says it can be asked, at its own DID-derived address. */
+const capabilityPublishes = (o: Opened): { name: string; input: Record<string, unknown> }[] =>
+  o.s.calls.filter((c) => c.name === 'publish_context' && String(c.input['graph_iri'] ?? '').endsWith('-capabilities'));
 async function signInAndSettle(o: Opened): Promise<void> {
   click(o.doc, 'signin-wallet');
   await o.settle();
@@ -1391,6 +1395,45 @@ describe('the local agent is off, visible, and stoppable', () => {
     expect(String(lease['graph_content'])).toContain('iep:presenceOf <' + D1 + '>');
     // And the person is told, in their own panel, that this went out on their behalf.
     expect(text(o.doc, '#agentwhy')).toContain('said its host was running');
+  });
+
+  /**
+   * ★ PRESENCE WITHOUT THIS IS HALF AN ANSWER. A peer that reads "its host is running" still has no
+   * idea what it can be asked or by what route, and would have to guess.
+   */
+  it('★ also publishes what it can be asked, with iep:askVia and NO endpoint to call', async () => {
+    const o = await open({
+      setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'What did we decide?', '2026-08-07T10:00:00.000Z')); },
+      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: OWN + 'A reply.', why: 'ok', ms: 900 }) },
+    });
+    await signInAndSpeak(o);
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    const caps = capabilityPublishes(o);
+    expect(caps).toHaveLength(1);
+    const ownPod = D1.slice(D1.lastIndexOf('u-'));
+    expect(String(caps[0]?.input['graph_iri'])).toBe(RELAY + '/ns/' + ownPod + '/agent-' + ownPod + '-capabilities');
+    const ttl = String(caps[0]?.input['graph_content']);
+    // ★ THIS AGENT RUNS ON SOMEBODY'S LAPTOP AND HAS NO ENDPOINT THAT WILL EVER ANSWER, so
+    // advertising a `hydra:target` would advertise a call that cannot connect.
+    expect(ttl).toContain('iep:askVia');
+    expect(ttl).not.toContain('hydra:target');
+    expect(ttl).toContain('iep:capabilityOf <' + D1 + '>');
+  });
+
+  it('does not republish the capability on every heartbeat — it does not change every 90s', async () => {
+    const o = await open({
+      setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'What did we decide?', '2026-08-07T10:00:00.000Z')); },
+      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: OWN + 'A reply.', why: 'ok', ms: 900 }) },
+    });
+    await signInAndSpeak(o);
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    expect(capabilityPublishes(o)).toHaveLength(1);
   });
 
   /**
