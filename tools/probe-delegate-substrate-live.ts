@@ -124,7 +124,7 @@ async function main(): Promise<void> {
     qualifiedDelegation: ['https://relay.interego.xwisee.com/ns/probe/e/0#delegation'],
     delegationAgent: [webId], delegationActivity: [ACT],
   });
-  const asDelegate = judgeAuthorship(forHuman, { logOwnerWebId: webId, delegates: roster });
+  const asDelegate = judgeAuthorship(forHuman, { logOwnerWebId: webId, delegates: roster, signedBy: agentId });
   check('a delegate speaking FOR the pod owner reads as on-behalf-of', asDelegate.kind === 'delegate'
     && asDelegate.footing.kind === 'on-behalf-of', asDelegate.kind);
   check('and the owner\'s own registry is what authorises it',
@@ -134,7 +134,7 @@ async function main(): Promise<void> {
   // reading of this record is entirely different — which is the whole point of the split.
   const ownAccount = judgeAuthorship(
     st({ attributedTo: [agentId], generatedBy: [ACT], actedOnOwnAccount: [ACT] }),
-    { logOwnerWebId: webId, delegates: roster });
+    { logOwnerWebId: webId, delegates: roster, signedBy: agentId });
   check('the SAME delegate speaking for ITSELF reads as own-account',
     ownAccount.kind === 'delegate' && ownAccount.footing.kind === 'own-account',
     ownAccount.kind === 'delegate' ? ownAccount.footing.kind : ownAccount.kind);
@@ -145,24 +145,40 @@ async function main(): Promise<void> {
     authorshipLine(asDelegate, { displayName: 'Mark' }) + ' | ' + authorshipLine(ownAccount, { displayName: 'Mark' }));
 
   const unfooted = judgeAuthorship(st({ attributedTo: [agentId], generatedBy: [ACT] }),
-    { logOwnerWebId: webId, delegates: roster });
+    { logOwnerWebId: webId, delegates: roster, signedBy: agentId });
   check('an entry that declares NEITHER reads as not-stated, not as either of them',
     unfooted.kind === 'delegate' && unfooted.footing.kind === 'not-stated');
   const both = judgeAuthorship(
     st({ attributedTo: [agentId], generatedBy: [ACT], actedOnOwnAccount: [ACT], delegationAgent: [webId], delegationActivity: [ACT], qualifiedDelegation: ['urn:x'] }),
-    { logOwnerWebId: webId, delegates: roster });
+    { logOwnerWebId: webId, delegates: roster, signedBy: agentId });
   check('an entry that declares BOTH is disputed rather than resolved', both.kind === 'disputed', both.kind);
 
-  const asPerson = judgeAuthorship(st({ attributedTo: [webId] }), { logOwnerWebId: webId, delegates: roster });
+  const asPerson = judgeAuthorship(st({ attributedTo: [webId] }), { logOwnerWebId: webId, delegates: roster, signedBy: agentId });
   check('the person\'s own record reads as the principal', asPerson.kind === 'principal', asPerson.kind);
   const stranger = judgeAuthorship(
     st({
       attributedTo: ['did:web:example.org:agents:nobody'], generatedBy: [ACT],
       qualifiedDelegation: ['urn:x'], delegationAgent: [webId], delegationActivity: [ACT],
     }),
-    { logOwnerWebId: webId, delegates: roster });
+    { logOwnerWebId: webId, delegates: roster, signedBy: 'did:web:example.org:agents:nobody' });
   check('an agent the registry does NOT list reads as unauthorised, not as absent',
     stranger.kind === 'delegate' && stranger.authorised === false);
+
+  // ★ THE PUPPET, WHICH IS WHAT MAKES EVERY LINE ABOVE WORTH READING. Identical statements to the
+  // `asDelegate` case, signed by a DIFFERENT key — the shape any pod owner (and any conduit holding
+  // a delegation on their pod, e.g. the Discord bot) can write at will. Before the signer was an
+  // input this read back as an authorised delegate speaking for its human.
+  const puppet = judgeAuthorship(forHuman, {
+    logOwnerWebId: webId, delegates: roster,
+    signedBy: 'did:web:identity.interego.xwisee.com:agents:somebody-else-u-eth-000000000000',
+  });
+  check('an entry attributed to an agent it was NOT signed by is disputed, never that agent speaking',
+    puppet.kind === 'disputed', puppet.kind);
+  check('and the reason names both parties', puppet.kind === 'disputed'
+    && puppet.why.includes(agentId) && puppet.why.includes('somebody-else'), puppet.kind === 'disputed' ? puppet.why.slice(0, 120) : '');
+  const unsigned = judgeAuthorship(forHuman, { logOwnerWebId: webId, delegates: roster, signedBy: null });
+  check('and one whose signer this reader was never told is disputed too, not a weaker yes',
+    unsigned.kind === 'disputed', unsigned.kind);
 
   head('5 - revocation is unilateral, and the pod is what confirms it');
   const revoked = await revokeDelegation(port, { agentId, podName });
@@ -171,7 +187,7 @@ async function main(): Promise<void> {
 
   const after = await readDelegates(port, podName);
   check('the pod no longer lists it', !after.rows.some((r) => r.agentId === agentId));
-  const nowUnauthorised = judgeAuthorship(forHuman, { logOwnerWebId: webId, delegates: after });
+  const nowUnauthorised = judgeAuthorship(forHuman, { logOwnerWebId: webId, delegates: after, signedBy: agentId });
   check('and a record it already wrote still names it, now reading as NOT authorised',
     nowUnauthorised.kind === 'delegate' && nowUnauthorised.authorised === false);
   // ★ THE RECORD'S OWN FOOTING IS UNCHANGED BY THE REVOCATION, and must be. What that entry said

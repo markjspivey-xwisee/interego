@@ -875,6 +875,8 @@ var WSPC = (() => {
     admitSeatedIn: () => admitSeatedIn,
     agentDocIri: () => agentDocIri,
     agentDocName: () => agentDocName,
+    agentIdHash: () => agentIdHash,
+    agentInbox: () => agentInbox,
     agentNsIri: () => agentNsIri,
     agentPodOf: () => agentPodOf,
     agentPort: () => agentPort,
@@ -986,11 +988,13 @@ var WSPC = (() => {
     sendInvite: () => sendInvite,
     shapesTurtle: () => shapesTurtle,
     shortRef: () => shortRef,
+    signerLine: () => signerLine,
     slugProblem: () => slugProblem,
     staleDetail: () => staleDetail,
     toChainRow: () => toChainRow,
     turtleIri: () => turtleIri,
     unescapeLiteral: () => unescapeLiteral,
+    verifiedSigner: () => verifiedSigner,
     verifyGrantIri: () => verifyGrantIri,
     verifyInvitation: () => verifyInvitation,
     verifyRequest: () => verifyRequest,
@@ -1517,6 +1521,15 @@ var WSPC = (() => {
   var isDelegationScope = (s) => typeof s === "string" && DELEGATION_SCOPES.includes(s);
   var scopeWriteEligible = (scope) => WRITE_ELIGIBLE_SCOPES.includes(scope ?? "");
   var AGENT_ID_RX = /^[A-Za-z][A-Za-z0-9+.-]*:[^\s<>"'{}|\\^`]+$/;
+  function agentPodOf(agentId) {
+    if (typeof agentId !== "string" || !agentId)
+      return null;
+    const m = /agents:[a-z0-9-]*?(u-[a-z0-9-]+)$/i.exec(agentId) ?? /\/users\/([^/]+)\/profile/.exec(agentId);
+    const seg = m?.[1];
+    if (!seg)
+      return null;
+    return /[\s<>"{}|\\^`#?/]/.test(seg) ? null : seg.toLowerCase();
+  }
   var DELEGATE_LABEL_PREFIX = "delegate ";
   var DELEGATE_NAME_MAX = 48;
   var delegateLabel = (name) => DELEGATE_LABEL_PREFIX + name;
@@ -1791,6 +1804,12 @@ var WSPC = (() => {
     doesNot.push("It says nothing about whether the pod owner authorised the agent named above. That is a separate document \u2014 the pod's own delegation registry \u2014 and it is what checkDelegation reads.");
     return { present: true, signerAgent: signer, verificationMethod: vm, contentBinding: binding, proves, doesNotProve: doesNot };
   }
+  function verifiedSigner(authorship) {
+    const a = readAuthorship(authorship);
+    if (a.contentBinding !== "bound" && a.contentBinding !== "bound-at-signing")
+      return null;
+    return a.signerAgent;
+  }
   function scopeCeiling(args) {
     const who = args.delegateName ? '"' + args.delegateName + '"' : "this delegate";
     if (args.scope === null) {
@@ -1904,6 +1923,7 @@ var WSPC = (() => {
       return { kind: "disputed", why: "this record is attributed to " + author + " and this reader could not establish whose log it is in, so whether that is the owner or somebody acting for them is not decided" };
     }
     const read = footingOf(statements);
+    const rowFor = (who) => args.delegates?.read ? args.delegates.rows.find((r) => r.agentId === who) ?? null : null;
     if (author === args.logOwnerWebId) {
       if (read.ok && read.footing.kind !== "not-stated") {
         return {
@@ -1913,7 +1933,25 @@ var WSPC = (() => {
       }
       if (!read.ok)
         return { kind: "disputed", why: read.why };
-      return { kind: "principal", webId: author };
+      const ownPod = agentPodOf(args.logOwnerWebId);
+      const carrier = args.signedBy;
+      const signer = carrier === null ? {
+        kind: "not-established",
+        why: "no authorship block reached this reader, so which key carried these bytes onto that pod is not established. The relay accepts a write only from the pod owner or a key they registered, and which of those it was is not something this record can settle about itself."
+      } : carrier === args.logOwnerWebId || ownPod !== null && agentPodOf(carrier) === ownPod ? { kind: "the-author", signedBy: carrier } : { kind: "a-conduit", signedBy: carrier, listed: args.delegates?.read ? rowFor(carrier) !== null : null, scope: rowFor(carrier)?.scope ?? null };
+      return { kind: "principal", webId: author, signer };
+    }
+    if (args.signedBy === null) {
+      return {
+        kind: "disputed",
+        why: "this record is attributed to " + author + ' and no authorship block reached this reader, so nothing establishes which key signed these bytes. "This agent wrote it" is then a claim inside a document its author controls, with nothing outside the document holding it down \u2014 which is not the same as that agent having written it.'
+      };
+    }
+    if (args.signedBy !== author) {
+      return {
+        kind: "disputed",
+        why: "this record says " + author + " composed it and the bytes were signed by " + args.signedBy + ". Every PROV triple here is written by whoever can publish to this pod, so an entry naming an agent it was not signed by is that party putting words in that agent's mouth \u2014 it is not being rendered as that agent speaking, authorised or otherwise."
+      };
     }
     if (!read.ok)
       return { kind: "disputed", why: read.why };
@@ -1923,10 +1961,11 @@ var WSPC = (() => {
         why: "this record says " + author + " acted as a delegate of " + read.footing.principal + " when it wrote this, and the pod this log is on belongs to " + args.logOwnerWebId + ". A record in somebody's log declaring it was written for a third party is not something this reader will render as either of them speaking."
       };
     }
-    const row = args.delegates?.read ? args.delegates.rows.find((r) => r.agentId === author) ?? null : null;
+    const row = rowFor(author);
     return {
       kind: "delegate",
       agentId: author,
+      signer: { kind: "the-author", signedBy: args.signedBy },
       footing: read.footing,
       name: row?.name ?? null,
       authorised: args.delegates?.read ? row !== null : null,
@@ -1944,11 +1983,22 @@ var WSPC = (() => {
         return "This record does not say which footing it was made on \u2014 " + f.why + '. That is not "on their behalf" and it is not "on its own account"; it is a record that does not say, and this reader will not fill it in for either of them.';
     }
   }
+  function signerLine(s, args = {}) {
+    const who = args.who ?? "the person whose pod this is";
+    switch (s.kind) {
+      case "the-author":
+        return "The bytes were signed by " + s.signedBy + ", which is the party this record names as its author \u2014 so who composed it is not only asserted inside the record, it is held down by the key the relay authenticated.";
+      case "a-conduit":
+        return "These words are attributed to " + who + " and the key that carried them onto their pod was " + s.signedBy + " \u2014 a conduit relaying what they wrote, not an agent speaking. " + (s.listed === true ? "Their own registry lists that key" + (s.scope ? " with scope " + s.scope : "") + "." : s.listed === false ? "Their own registry does not list it, so the only thing establishing it may write there is that the relay accepted the write." : "Their registry was not read here, so what standing that key has is not established.");
+      case "not-established":
+        return s.why;
+    }
+  }
   function authorshipLine(a, args = {}) {
     const who = args.displayName ? args.displayName : "the person whose pod this is";
     switch (a.kind) {
       case "principal":
-        return who;
+        return a.signer.kind === "a-conduit" ? who + " (relayed by a key they authorised)" : who;
       case "delegate": {
         const name = a.name ? a.name : "an unnamed delegate";
         if (a.footing.kind === "on-behalf-of")
@@ -3924,19 +3974,38 @@ var WSPC = (() => {
 
   // packages/core/dist/model/agent.js
   var { readIri: readIri2, readIriAll: readIriAll2, readLiteral: readLiteral2 } = substrateReaders;
-  function agentPodOf(agentId) {
-    if (typeof agentId !== "string" || !agentId)
-      return null;
-    const m = /agents:[a-z0-9-]*?(u-[a-z0-9-]+)$/i.exec(agentId) ?? /\/users\/([^/]+)\/profile/.exec(agentId);
-    const seg = m?.[1];
-    if (!seg)
-      return null;
-    return /[\s<>"{}|\\^`#?/]/.test(seg) ? null : seg.toLowerCase();
-  }
   var agentNsIri = (relay, pod, name) => relay + "/ns/" + pod + "/" + name;
+  function agentIdHash(agentId) {
+    const OFFSET = 0xcbf29ce484222325n;
+    const PRIME = 0x100000001b3n;
+    const MASK = 0xffffffffffffffffn;
+    let h = OFFSET;
+    const mix = (byte) => {
+      h = (h ^ BigInt(byte)) * PRIME & MASK;
+    };
+    for (const ch of agentId) {
+      const cp = ch.codePointAt(0);
+      if (cp < 128) {
+        mix(cp);
+      } else if (cp < 2048) {
+        mix(192 | cp >> 6);
+        mix(128 | cp & 63);
+      } else if (cp < 65536) {
+        mix(224 | cp >> 12);
+        mix(128 | cp >> 6 & 63);
+        mix(128 | cp & 63);
+      } else {
+        mix(240 | cp >> 18);
+        mix(128 | cp >> 12 & 63);
+        mix(128 | cp >> 6 & 63);
+        mix(128 | cp & 63);
+      }
+    }
+    return h.toString(16).padStart(16, "0");
+  }
   function agentDocName(agentId, kind) {
     const pod = agentPodOf(agentId);
-    return pod ? "agent-" + pod + "-" + kind : null;
+    return pod ? "agent-" + pod + "-" + agentIdHash(agentId) + "-" + kind : null;
   }
   function agentDocIri(relay, agentId, kind) {
     const pod = agentPodOf(agentId);
@@ -3969,8 +4038,8 @@ var WSPC = (() => {
   }
   async function publishPresence(port, args) {
     const iri = presenceIri(args.relay, args.agentId);
-    const pod = agentPodOf(args.agentId) ?? "";
-    if (!iri) {
+    const pod = agentPodOf(args.agentId);
+    if (!iri || !pod) {
       return {
         kind: "unnameable",
         why: "This agent's id (" + args.agentId + ') carries no pod segment this client can read, so there is no address a reader would look for its presence at. Nothing was published \u2014 a lease at a name nobody else computes would read to every other client as "this agent has never said it was running".'
@@ -4004,15 +4073,15 @@ var WSPC = (() => {
   }
   var isPresent = (p) => p.state === "running";
   async function readPresence(port, args) {
-    const pod = agentPodOf(args.agentId) ?? "";
+    const pod = agentPodOf(args.agentId);
     const iri = presenceIri(args.relay, args.agentId);
-    if (!iri) {
+    if (!pod || !iri) {
       return {
-        state: "never",
+        state: "unnameable",
         agentId: args.agentId,
-        pod,
+        pod: null,
         iri: null,
-        why: "that agent id carries no pod segment this reader can name a presence document from, so there is no address to ask about"
+        why: "this client cannot compose a presence address from that agent id (" + args.agentId + "), because it carries no pod segment this reader knows how to take out. No pod was asked, so whether its host is running was never established in either direction."
       };
     }
     const now = args.nowMs ?? Date.now();
@@ -4048,42 +4117,19 @@ var WSPC = (() => {
       };
     }
     const head = rows[0];
-    const headUntil = parseMs(head["validUntil"]);
-    if (headUntil !== null && headUntil <= now) {
+    const rowFrom = parseMs(head["validFrom"]);
+    const rowUntil = parseMs(head["validUntil"]);
+    if (rowUntil !== null && rowUntil <= now) {
       return {
         state: "stale",
         agentId: args.agentId,
         pod,
         iri,
-        lastExpiresMs: headUntil,
-        why: "the newest lease this agent published lapsed at " + new Date(headUntil).toISOString() + " and has not been renewed since. Older leases of its own may still be inside their windows; they are claims it has already superseded, and its current claim is this one."
+        lastExpiresMs: rowUntil,
+        why: "the newest lease this agent published lapsed at " + new Date(rowUntil).toISOString() + " and has not been renewed since. Older leases of its own may still be inside their windows; they are claims it has already superseded, and its current claim is this one."
       };
     }
-    const row = head;
-    const from = parseMs(row["validFrom"]);
-    const until = parseMs(row["validUntil"]);
-    const url = typeof row["descriptorUrl"] === "string" ? row["descriptorUrl"] : "";
-    if (until === null) {
-      return {
-        state: "overlong",
-        agentId: args.agentId,
-        pod,
-        iri,
-        spanMs: null,
-        why: "that lease declares no expiry. A lease is only evidence because it is short and has to be renewed; one that never lapses says nothing about whether anything is running now, so it is not being read as presence."
-      };
-    }
-    const span = from === null ? null : until - from;
-    if (span === null || span > PRESENCE_MAX_LEASE_MS) {
-      return {
-        state: "overlong",
-        agentId: args.agentId,
-        pod,
-        iri,
-        spanMs: span,
-        why: span === null ? "that lease carries an expiry and no readable start, so how long it claims to be good for cannot be computed and it is not being read as presence" : "that lease is valid for " + describeSpan(span) + ". A lease is only evidence because it is short and has to be renewed; one that long says nothing about whether anything is running now, so it is not being read as presence."
-      };
-    }
+    const url = typeof head["descriptorUrl"] === "string" ? head["descriptorUrl"] : "";
     if (!url) {
       return {
         state: "unreadable",
@@ -4155,14 +4201,57 @@ var WSPC = (() => {
         why: about.length > 1 ? "that lease's signed region names " + about.length + " different agents as the one it is about, so which agent it is a claim about is not decided and picking one would be this reader guessing" : "that lease's signed region names " + (about[0] ?? "no agent at all") + " as the agent it is about, and it was asked for " + args.agentId + ". The document name is not an assertion; the region is, and it does not agree."
       };
     }
-    const said = parseMs(readLiteral2(region, "dct:created")) ?? from ?? now;
+    const signedExpires = parseMs(readLiteral2(region, "iep:leaseExpires"));
+    const signedCreated = parseMs(readLiteral2(region, "dct:created"));
+    if (signedExpires === null) {
+      return {
+        state: "overlong",
+        agentId: args.agentId,
+        pod,
+        iri,
+        spanMs: null,
+        why: "that lease's signed region declares no readable iep:leaseExpires. A lease is only evidence because it is short and has to be renewed, and an expiry the agent did not sign is the relay's claim about availability rather than the agent's \u2014 so there is nothing here to read as presence."
+      };
+    }
+    if (rowUntil !== null && Math.abs(rowUntil - signedExpires) > 1e3) {
+      return {
+        state: "disputed",
+        agentId: args.agentId,
+        pod,
+        iri,
+        signedExpiresMs: signedExpires,
+        rowExpiresMs: rowUntil,
+        why: "that lease's signed region says it expires at " + new Date(signedExpires).toISOString() + " and the relay's own row for it says " + new Date(rowUntil).toISOString() + ". One of those the agent put its key to and one of those it did not, they do not agree, and reporting the disagreement is the whole reason the signed value is written."
+      };
+    }
+    if (signedExpires <= now) {
+      return {
+        state: "stale",
+        agentId: args.agentId,
+        pod,
+        iri,
+        lastExpiresMs: signedExpires,
+        why: "the newest lease this agent published expired, by its own signed iep:leaseExpires, at " + new Date(signedExpires).toISOString() + " and has not been renewed since."
+      };
+    }
+    const span = signedCreated === null ? null : signedExpires - signedCreated;
+    if (span === null || span > PRESENCE_MAX_LEASE_MS) {
+      return {
+        state: "overlong",
+        agentId: args.agentId,
+        pod,
+        iri,
+        spanMs: span,
+        why: span === null ? "that lease's signed region carries an expiry and no readable dct:created, so how long it claims to be good for cannot be computed and it is not being read as presence" : "that lease is valid for " + describeSpan(span) + ", by its own signed dates. A lease is only evidence because it is short and has to be renewed; one that long says nothing about whether anything is running now, so it is not being read as presence."
+      };
+    }
     return {
       state: "running",
       agentId: args.agentId,
       pod,
       iri,
-      saidAtMs: said,
-      expiresMs: until,
+      saidAtMs: signedCreated ?? rowFrom ?? now,
+      expiresMs: signedExpires,
       descriptorUrl: url,
       host: readLiteral2(region, "iep:presenceHost"),
       authorship
@@ -4187,11 +4276,17 @@ var WSPC = (() => {
       case "stale":
         return p.lastExpiresMs === null ? "not running as far as its pod says" : "not since " + new Date(p.lastExpiresMs).toISOString();
       case "never":
-        return "has never said it was running";
+        return "its pod holds no lease for it at all";
       case "overlong":
         return "published a lease too long to be evidence";
+      case "disputed":
+        return "its lease and the relay disagree about when it expires";
       case "unreadable":
         return "whether it is running is not established";
+      // ★ SAYS WHAT HAPPENED, WHICH IS THAT NOTHING DID. Every other line here reports a document;
+      // this one reports that no document was looked for, because no address could be composed.
+      case "unnameable":
+        return "this client cannot compose a presence address from that agent id, so whether it is running was never asked";
     }
   }
   function capabilityProblem(draft) {
@@ -4224,8 +4319,8 @@ var WSPC = (() => {
   }
   async function publishCapability(port, args) {
     const iri = capabilitiesIri(args.relay, args.agentId);
-    const pod = agentPodOf(args.agentId) ?? "";
-    if (!iri) {
+    const pod = agentPodOf(args.agentId);
+    if (!iri || !pod) {
       return {
         kind: "unnameable",
         why: "This agent's id (" + args.agentId + ") carries no pod segment this client can read, so there is no address a peer would look for its capabilities at. Nothing was published."
@@ -4263,10 +4358,15 @@ var WSPC = (() => {
     };
   }
   async function readCapabilities(port, args) {
-    const pod = agentPodOf(args.agentId) ?? "";
+    const pod = agentPodOf(args.agentId);
     const iri = capabilitiesIri(args.relay, args.agentId);
-    if (!iri) {
-      return { kind: "none", agentId: args.agentId, iri: null, why: "that agent id carries no pod segment this reader can name a capability document from, so there is no address to ask about" };
+    if (!pod || !iri) {
+      return {
+        kind: "unnameable",
+        agentId: args.agentId,
+        iri: null,
+        why: "this client cannot compose a capability address from that agent id (" + args.agentId + "), because it carries no pod segment this reader knows how to take out. No pod was asked, so what that agent can be asked is not established \u2014 which is not the same as it advertising nothing."
+      };
     }
     let rows;
     try {
@@ -4338,6 +4438,7 @@ var WSPC = (() => {
     const bad = relayRefusal(p);
     if (bad)
       throw new Error(String(bad["message"] ?? bad["error"]));
+    const inbox = typeof p?.["inbox"] === "string" ? p["inbox"] : null;
     const all = Array.isArray(p?.["items"]) ? p?.["items"] : [];
     const notices = all.filter((it) => it && typeof it["about"] === "string" && it["about"]).map((item) => ({
       item,
@@ -4346,14 +4447,21 @@ var WSPC = (() => {
       summary: typeof item["summary"] === "string" ? item["summary"] : null,
       published: typeof item["published"] === "string" ? item["published"] : null
     }));
-    return { notices, saturated: all.length >= limit, limit };
+    return { notices, saturated: all.length >= limit, limit, inbox };
+  }
+  async function agentInbox(port) {
+    const p = await port.tool("read_inbox", { limit: 1 }, { cache: false });
+    const bad = relayRefusal(p);
+    if (bad)
+      throw new Error(String(bad["message"] ?? bad["error"]));
+    return typeof p?.["inbox"] === "string" && p["inbox"] ? p["inbox"] : null;
   }
   var admitAnyVerifiedSigner = () => null;
   async function verifyRequest(port, notice, args) {
     const checks = [];
     const base = {
       about: notice.about,
-      askerPod: null,
+      servedFromPath: null,
       body: null,
       addressedTo: [],
       forMe: [],
@@ -4372,13 +4480,13 @@ var WSPC = (() => {
       return no("the address this notice points at did not resolve to a descriptor (" + describe2(port, e) + "), so there is nothing signed to read the ask out of");
     }
     const descriptorUrl = notice.about;
-    const askerPod = podOfDescriptorUrl2(descriptorUrl);
-    checks.push({ mark: "y", text: "The address in the notice resolves to a descriptor" + (askerPod ? " served from pod " + askerPod : "") });
+    const servedFromPath = podOfDescriptorUrl2(descriptorUrl);
+    checks.push({ mark: "y", text: "The address in the notice resolves to a descriptor" + (servedFromPath ? ", at a URL whose first path segment is " + servedFromPath : "") });
     const block = d["authorship"];
     const binding = typeof block?.["contentBinding"] === "string" ? block["contentBinding"] : null;
     const signedBy = typeof block?.["signedBy"] === "string" ? block["signedBy"] : typeof block?.["signer"] === "string" ? block["signer"] : null;
     const descriptorBound = block?.["descriptorBinding"]?.bound === true;
-    const withDoc = { descriptorUrl, askerPod, signedBy };
+    const withDoc = { descriptorUrl, servedFromPath, signedBy };
     if (binding !== "bound" && binding !== "bound-at-signing") {
       return no(`that record's signature reports contentBinding "` + (binding ?? "none") + '". Only "bound" means a signature was verified AND its digest recomputed over the bytes being served, so nothing here establishes that what the ask says is what anybody signed.', withDoc);
     }
@@ -4422,14 +4530,11 @@ var WSPC = (() => {
       return no("that record is addressed to " + addressedTo.join(", ") + " and this machine holds no key for any of them. An agent runs on its own human's credential, so answering for an agent whose key is somewhere else is the one thing this refuses to do.", withRegion);
     }
     checks.push({ mark: "y", text: "It is addressed to " + forMe.join(", ") + ", and this machine holds that key" });
-    if (!askerPod) {
-      return no("the pod that record was served from could not be named, so whether its author has standing to ask is not established", { ...withRegion, forMe });
-    }
     const admits = args.admits ?? admitAnyVerifiedSigner;
-    const refused = await admits({ pod: askerPod, signedBy, region, descriptorUrl });
+    const refused = await admits({ servedFromPath: servedFromPath ?? "", signedBy, region, descriptorUrl });
     if (refused)
       return no(refused, { ...withRegion, forMe });
-    checks.push({ mark: "y", text: "Pod " + askerPod + " has standing to ask this agent, by this host's own policy rather than by anything in the notice" });
+    checks.push({ mark: "y", text: signedBy + " has standing to ask this agent, by this host's own policy rather than by anything in the notice" });
     if (args.answeredHere.indexOf(descriptorUrl) >= 0) {
       return no("this client has already drafted an answer to that record in this run. Answering again would put a second permanent record in your log saying the same thing.", { ...withRegion, forMe });
     }
@@ -4454,7 +4559,17 @@ var WSPC = (() => {
 
   // packages/workspace-client/src/request.ts
   function admitSeatedIn(args) {
-    return ({ pod, region }) => {
+    const rosters = /* @__PURE__ */ new Map();
+    const seatedPods = () => {
+      const out = [];
+      for (const s of args.seats) {
+        if (!s.seated) continue;
+        const p = s.podServed ?? s.pod;
+        if (p && out.indexOf(p) < 0) out.push(p);
+      }
+      return out;
+    };
+    return async ({ signedBy, region }) => {
       const declared = readIri(region, "wsp:workspace");
       if (!declared) {
         return "that record declares no wsp:workspace, so which channel it belongs to is not established \u2014 and a record that names no room does not join one by arriving in the inbox of somebody who is in it";
@@ -4462,11 +4577,44 @@ var WSPC = (() => {
       if (declared !== args.workspace) {
         return "that record belongs to " + declared + " and this host is watching " + args.workspace + ". An ask into another channel is not an ask here.";
       }
-      const seat = args.seats.find((s) => (s.podServed ?? s.pod) === pod && s.seated) ?? null;
-      if (!seat) {
-        return "pod " + pod + " is not seated in this workspace, so it has no standing to put work into it. Seating is a grant on the convener's pod and an acceptance on theirs \u2014 two documents, neither of them this notice.";
+      const pods = seatedPods();
+      if (!pods.length) {
+        return "nobody is seated in " + args.workspace + " as this host reads it, so there is no seat for " + signedBy + " to be resolved to. Seating is a grant on the convener's pod and an acceptance on theirs.";
       }
-      return null;
+      const signerPod = agentPodOf(signedBy);
+      for (const s of args.seats) {
+        if (!s.seated) continue;
+        const pod = s.podServed ?? s.pod;
+        if (!pod) continue;
+        if (s.grantedTo && s.grantedTo === signedBy) return null;
+        if (signerPod && signerPod === pod) return null;
+      }
+      const unread = [];
+      for (const pod of pods) {
+        if (!args.port) {
+          unread.push(pod);
+          continue;
+        }
+        let roster = rosters.get(pod);
+        if (roster === void 0) {
+          try {
+            roster = await readDelegates(args.port, pod);
+          } catch (e) {
+            roster = { failed: e?.message ?? String(e) };
+          }
+          rosters.set(pod, roster);
+        }
+        if ("failed" in roster) {
+          unread.push(pod);
+          continue;
+        }
+        if (!roster.read) {
+          unread.push(pod);
+          continue;
+        }
+        if (roster.rows.some((r) => r.agentId === signedBy)) return null;
+      }
+      return "the key that signed that record, " + signedBy + ", resolves to no seat in this workspace: it is not a seated member's own WebID, its own pod is not a seated pod, and no seated pod's delegation registry lists it" + (unread.length ? ". " + unread.length + " of " + pods.length + " seated pods' registries could not be read here (" + unread.join(", ") + "), so this is a refusal for lack of an answer rather than a finding that they do not list it." : ". Seating is a grant on the convener's pod and an acceptance on theirs \u2014 two documents, neither of them this notice.");
     };
   }
   return __toCommonJS(index_exports);
@@ -6885,10 +7033,18 @@ function pump() {
            WebID, which lives on the CONVENER's pod, so the log's own owner
            cannot decide what their entries are checked against. `delegates`
            is null here: this page does not read every member's registry, so
-           `authorised` comes back null — "not checked", never "not authorised". */
+           `authorised` comes back null — "not checked", never "not authorised".
+           ★ AND `signedBy` IS THE KEY THE RELAY AUTHENTICATED OVER THESE BYTES,
+           which is the one input to this judgment that does NOT come out of the
+           pod owner's own document. Without it, an entry naming any agent as
+           its author — with a complete per-act on-behalf-of footing — read back
+           as that agent genuinely speaking for its human, while its key had
+           never signed anything. Where the two disagree the answer is
+           `disputed`, and this page draws it as that. */
         author: readEntryAuthorship(region, {
           logOwnerWebId: (S.members.find((m) => m.stream === owner) || {}).grantedTo || null,
           delegates: null,
+          signedBy: verifiedSigner(d.authorship),
         }),
         signed: !!(d.authorship && d.authorship.authorshipVerified),
         signedBy: (d.authorship && d.authorship.signedBy) || null,

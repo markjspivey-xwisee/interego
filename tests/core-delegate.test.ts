@@ -325,8 +325,8 @@ describe('judging authorship is portable across serializations', () => {
   const ownAccount = st({ attributedTo: [D1], generatedBy: [ACT], actedOnOwnAccount: [ACT] });
 
   it('the answers come from IRI lists, with no parser involved', () => {
-    expect(judgeAuthorship(st({ attributedTo: [WEBID] }), { logOwnerWebId: WEBID, delegates: null }).kind).toBe('principal');
-    const d = judgeAuthorship(forOwner, { logOwnerWebId: WEBID, delegates: full });
+    expect(judgeAuthorship(st({ attributedTo: [WEBID] }), { logOwnerWebId: WEBID, delegates: null, signedBy: WEBID }).kind).toBe('principal');
+    const d = judgeAuthorship(forOwner, { logOwnerWebId: WEBID, delegates: full, signedBy: D1 });
     expect(d.kind).toBe('delegate');
     expect(d.kind === 'delegate' && d.authorised).toBe(true);
     expect(d.kind === 'delegate' && d.name).toBe('Claude side');
@@ -339,8 +339,8 @@ describe('judging authorship is portable across serializations', () => {
    * different answers to "was this said for the human".
    */
   it('★ the SAME delegate, the SAME standing, two different footings', () => {
-    const a = judgeAuthorship(forOwner, { logOwnerWebId: WEBID, delegates: full });
-    const b = judgeAuthorship(ownAccount, { logOwnerWebId: WEBID, delegates: full });
+    const a = judgeAuthorship(forOwner, { logOwnerWebId: WEBID, delegates: full, signedBy: D1 });
+    const b = judgeAuthorship(ownAccount, { logOwnerWebId: WEBID, delegates: full, signedBy: D1 });
     expect(a.kind === 'delegate' && a.footing.kind).toBe('on-behalf-of');
     expect(a.kind === 'delegate' && a.footing.kind === 'on-behalf-of' && a.footing.principal).toBe(WEBID);
     expect(b.kind === 'delegate' && b.footing.kind).toBe('own-account');
@@ -351,7 +351,7 @@ describe('judging authorship is portable across serializations', () => {
   });
 
   it('★ an entry that states NEITHER footing is `not-stated` — not either of the two', () => {
-    const d = judgeAuthorship(st({ attributedTo: [D1], generatedBy: [ACT] }), { logOwnerWebId: WEBID, delegates: full });
+    const d = judgeAuthorship(st({ attributedTo: [D1], generatedBy: [ACT] }), { logOwnerWebId: WEBID, delegates: full, signedBy: D1 });
     expect(d.kind).toBe('delegate');
     expect(d.kind === 'delegate' && d.footing.kind).toBe('not-stated');
     // Under the old model this exact record was `disputed` — absence read as a contradiction. It
@@ -360,7 +360,7 @@ describe('judging authorship is portable across serializations', () => {
   });
 
   it('★ an unread registry is `null`, never `false`', () => {
-    const d = judgeAuthorship(forOwner, { logOwnerWebId: WEBID, delegates: null });
+    const d = judgeAuthorship(forOwner, { logOwnerWebId: WEBID, delegates: null, signedBy: D1 });
     expect(d.kind === 'delegate' && d.authorised).toBeNull();
   });
 
@@ -380,22 +380,22 @@ describe('judging authorship is portable across serializations', () => {
       ['a Delegation naming no act at all', st({ attributedTo: [D1], generatedBy: [ACT], qualifiedDelegation: [DEL], delegationAgent: [WEBID] })],
     ];
     for (const [why, s] of cases) {
-      expect(judgeAuthorship(s, { logOwnerWebId: WEBID, delegates: null }).kind, why).toBe('disputed');
+      expect(judgeAuthorship(s, { logOwnerWebId: WEBID, delegates: null, signedBy: D1 }).kind, why).toBe('disputed');
     }
     // And the two that are absence rather than conflict.
-    expect(judgeAuthorship(null, { logOwnerWebId: WEBID, delegates: null }).kind).toBe('unstated');
-    expect(judgeAuthorship(st({}), { logOwnerWebId: WEBID, delegates: null }).kind).toBe('unstated');
+    expect(judgeAuthorship(null, { logOwnerWebId: WEBID, delegates: null, signedBy: D1 }).kind).toBe('unstated');
+    expect(judgeAuthorship(st({}), { logOwnerWebId: WEBID, delegates: null, signedBy: D1 }).kind).toBe('unstated');
   });
 
   it('the line a surface shows never turns absence into a name', () => {
     expect(authorshipLine({ kind: 'unstated', why: 'x' }, { displayName: 'Mark' })).toBe('author not stated');
     expect(authorshipLine({ kind: 'disputed', why: 'x' }, { displayName: 'Mark' })).toBe('authorship disputed');
-    expect(authorshipLine({ kind: 'principal', webId: WEBID }, { displayName: 'Mark' })).toBe('Mark');
+    expect(authorshipLine({ kind: 'principal', webId: WEBID, signer: { kind: 'the-author', signedBy: WEBID } }, { displayName: 'Mark' })).toBe('Mark');
   });
 
   it('★ the three delegate lines are three different sentences', () => {
     const of = (f: EntryFooting): string => authorshipLine(
-      { kind: 'delegate', agentId: D1, footing: f, name: 'Claude side', authorised: true, scope: 'PublishOnly' },
+      { kind: 'delegate', agentId: D1, signer: { kind: 'the-author', signedBy: D1 }, footing: f, name: 'Claude side', authorised: true, scope: 'PublishOnly' },
       { displayName: 'Mark' });
     const behalf = of({ kind: 'on-behalf-of', principal: WEBID });
     const own = of({ kind: 'own-account' });

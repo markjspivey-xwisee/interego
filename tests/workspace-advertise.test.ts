@@ -23,7 +23,7 @@ import { describe, it, expect } from 'vitest';
 import { sameAction } from '@interego/core';
 import { capabilitiesFromAffordances } from '@interego/agent-interop';
 import {
-  capabilitiesIri, capabilityProblem, capabilityTurtle, readCapabilities,
+  agentIdHash, capabilitiesIri, capabilityProblem, capabilityTurtle, readCapabilities,
   type AgentPort,
 } from '@interego/workspace-client';
 import { legacyWorkspaceCapabilityIri } from '../applications/shared-workspace/src/advertise.js';
@@ -32,7 +32,10 @@ import { RESPOND_AS_MEMBER, wspAffordances } from '../applications/shared-worksp
 const RELAY = 'https://relay.interego.xwisee.com';
 const POD = 'u-eth-4a1f00000001';
 const AGENT = 'did:web:identity.interego.xwisee.com:agents:interego-delegate-' + POD;
-const IRI = RELAY + '/ns/' + POD + '/agent-' + POD + '-capabilities';
+// ★ THE POD AND A HASH OF THE WHOLE DID. The pod alone was not injective: `register_agent` issues
+// several distinct DIDs embedding one pod, and they composed one address — so the second publisher
+// silently superseded the first and the first then read back unreadable.
+const IRI = RELAY + '/ns/' + POD + '/agent-' + POD + '-' + agentIdHash(AGENT) + '-capabilities';
 const TARGET = 'https://wsp-bridge.example/wsp/respond_as_member';
 
 const base = {
@@ -46,7 +49,11 @@ describe('where the document lives', () => {
     // ★ THE CODEX TEST, AS AN ASSERTION. An agent that has never been in a workspace still has an
     // address a peer can compose from the one thing a peer holds.
     const codex = 'did:web:identity.interego.xwisee.com:agents:interego-codex-u-eth-99990000abcd';
-    expect(capabilitiesIri(RELAY, codex)).toBe(RELAY + '/ns/u-eth-99990000abcd/agent-u-eth-99990000abcd-capabilities');
+    expect(capabilitiesIri(RELAY, codex))
+      .toBe(RELAY + '/ns/u-eth-99990000abcd/agent-u-eth-99990000abcd-' + agentIdHash(codex) + '-capabilities');
+    // ★ AND A CO-LOCATED AGENT DOES NOT LAND ON THE SAME DOCUMENT. Two DIDs, one pod, two addresses.
+    const sibling = 'did:web:identity.interego.xwisee.com:agents:claude-u-eth-99990000abcd';
+    expect(capabilitiesIri(RELAY, sibling)).not.toBe(capabilitiesIri(RELAY, codex));
   });
 
   it('is NOT the room-scoped name, and the two are visibly different documents', () => {

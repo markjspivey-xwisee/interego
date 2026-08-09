@@ -18,7 +18,7 @@ import {
   DELEGATE_LABEL_PREFIX, DELEGATE_NAME_MAX, DELEGATE_SURFACE,
   authorshipLine, delegateAgentId, delegateCeiling, delegateLabel, delegateNameProblem,
   delegatePlan, entryTurtle, graphRegion, parseDelegateLabel, readDelegates, readEntryAuthorship,
-  readIriAll, RelayMcpTransport, shapesTurtle, WorkspaceClient, isDelegateRow,
+  readIriAll, RelayMcpTransport, shapesTurtle, verifiedSigner, WorkspaceClient, isDelegateRow,
   type AnyTransport, type DelegateRoster, type DelegateRow, type DelegationScope, type RoleTable,
 } from '@interego/workspace-client';
 import type { IRI } from '@interego/core';
@@ -289,7 +289,7 @@ describe('readEntryAuthorship: the entry claims, and two other documents hold it
     region(entryTurtle({ streamIri: STREAM, workspace: WS, seq: 0, body: 'x', prior: null, author, createdIso: '2026-08-07T00:00:00.000Z' }));
 
   it('a person\'s own entry reads as the person', () => {
-    const a = readEntryAuthorship(written({ kind: 'principal', webId: WEBID }), { logOwnerWebId: WEBID, delegates: null });
+    const a = readEntryAuthorship(written({ kind: 'principal', webId: WEBID }), { logOwnerWebId: WEBID, delegates: null, signedBy: WEBID });
     expect(a.kind).toBe('principal');
   });
 
@@ -298,7 +298,7 @@ describe('readEntryAuthorship: the entry claims, and two other documents hold it
 
   it('★ a delegate\'s entry reads as the delegate, named from the delegator\'s own registry', () => {
     const a = readEntryAuthorship(written(forHuman), {
-      logOwnerWebId: WEBID, delegates: roster([row(D1, 'Claude side', 'PublishOnly')]),
+      logOwnerWebId: WEBID, delegates: roster([row(D1, 'Claude side', 'PublishOnly')]), signedBy: D1,
     });
     expect(a).toMatchObject({
       kind: 'delegate', agentId: D1, name: 'Claude side', authorised: true, scope: 'PublishOnly',
@@ -317,8 +317,8 @@ describe('readEntryAuthorship: the entry claims, and two other documents hold it
    */
   it('★ for-the-human and for-itself survive the write→read round trip as different answers', () => {
     const r = roster([row(D1, 'Claude side', 'PublishOnly')]);
-    const a = readEntryAuthorship(written(forHuman), { logOwnerWebId: WEBID, delegates: r });
-    const b = readEntryAuthorship(written(ownAccount), { logOwnerWebId: WEBID, delegates: r });
+    const a = readEntryAuthorship(written(forHuman), { logOwnerWebId: WEBID, delegates: r, signedBy: D1 });
+    const b = readEntryAuthorship(written(ownAccount), { logOwnerWebId: WEBID, delegates: r, signedBy: D1 });
     expect(a.kind === 'delegate' && a.footing.kind).toBe('on-behalf-of');
     expect(b.kind === 'delegate' && b.footing.kind).toBe('own-account');
     expect(a.kind === 'delegate' && a.agentId).toBe(D1);
@@ -331,7 +331,7 @@ describe('readEntryAuthorship: the entry claims, and two other documents hold it
   it('★ an own-account entry names its delegator NOWHERE, so nothing can read it as theirs', () => {
     const t = written(ownAccount);
     expect(t).not.toContain(WEBID);
-    const a = readEntryAuthorship(t, { logOwnerWebId: WEBID, delegates: roster([row(D1, 'Claude side', 'PublishOnly')]) });
+    const a = readEntryAuthorship(t, { logOwnerWebId: WEBID, delegates: roster([row(D1, 'Claude side', 'PublishOnly')]), signedBy: D1 });
     // And the reader still places it correctly, from the pod it is on plus the registry — not from
     // a triple in the record claiming the human's involvement.
     expect(a.kind).toBe('delegate');
@@ -340,8 +340,8 @@ describe('readEntryAuthorship: the entry claims, and two other documents hold it
 
   it('★ two delegates of one person are two distinct authors in one log', () => {
     const r = roster([row(D1, 'Claude side', 'PublishOnly'), row(D2, 'Codex side', 'PublishOnly')]);
-    const a = readEntryAuthorship(written(forHuman), { logOwnerWebId: WEBID, delegates: r });
-    const b = readEntryAuthorship(written({ kind: 'delegate', agentId: D2, footing: { kind: 'on-behalf-of', principal: WEBID } }), { logOwnerWebId: WEBID, delegates: r });
+    const a = readEntryAuthorship(written(forHuman), { logOwnerWebId: WEBID, delegates: r, signedBy: D1 });
+    const b = readEntryAuthorship(written({ kind: 'delegate', agentId: D2, footing: { kind: 'on-behalf-of', principal: WEBID } }), { logOwnerWebId: WEBID, delegates: r, signedBy: D2 });
     expect(a.kind === 'delegate' && a.name).toBe('Claude side');
     expect(b.kind === 'delegate' && b.name).toBe('Codex side');
     expect(a).not.toEqual(b);
@@ -350,29 +350,29 @@ describe('readEntryAuthorship: the entry claims, and two other documents hold it
   it('★ an entry that names nobody is UNSTATED, never the pod owner', () => {
     const bare = region('<' + STREAM + '/e/0> a <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#Entry> ;\n'
       + '  <http://purl.org/dc/terms/description> "x" .');
-    const a = readEntryAuthorship(bare, { logOwnerWebId: WEBID, delegates: null });
+    const a = readEntryAuthorship(bare, { logOwnerWebId: WEBID, delegates: null, signedBy: D1 });
     expect(a.kind).toBe('unstated');
     expect(a.kind === 'unstated' && a.why).toMatch(/not the same as the pod owner having written it/);
   });
 
   it('★ a region that could not be located is unstated, and says that is what happened', () => {
-    const a = readEntryAuthorship(null, { logOwnerWebId: WEBID, delegates: null });
+    const a = readEntryAuthorship(null, { logOwnerWebId: WEBID, delegates: null, signedBy: D1 });
     expect(a.kind).toBe('unstated');
     expect(a.kind === 'unstated' && a.why).toMatch(/could not be located/);
   });
 
   it('★ an unauthorised delegation is a finding; an unread registry is NOT', () => {
     const t = written(forHuman);
-    const notListed = readEntryAuthorship(t, { logOwnerWebId: WEBID, delegates: roster([row(D2, 'Codex side', 'PublishOnly')]) });
+    const notListed = readEntryAuthorship(t, { logOwnerWebId: WEBID, delegates: roster([row(D2, 'Codex side', 'PublishOnly')]), signedBy: D1 });
     expect(notListed.kind === 'delegate' && notListed.authorised).toBe(false);
-    const notRead = readEntryAuthorship(t, { logOwnerWebId: WEBID, delegates: null });
+    const notRead = readEntryAuthorship(t, { logOwnerWebId: WEBID, delegates: null, signedBy: D1 });
     expect(notRead.kind === 'delegate' && notRead.authorised).toBeNull();
-    const failedRead = readEntryAuthorship(t, { logOwnerWebId: WEBID, delegates: { podName: POD, read: false, owner: null, rows: [], delegates: [], others: [], why: 'x' } });
+    const failedRead = readEntryAuthorship(t, { logOwnerWebId: WEBID, delegates: { podName: POD, read: false, owner: null, rows: [], delegates: [], others: [], why: 'x' }, signedBy: D1 });
     expect(failedRead.kind === 'delegate' && failedRead.authorised).toBeNull();
   });
 
   it('★ an agent whose Delegation names somebody who is not the log\'s owner is DISPUTED', () => {
-    const a = readEntryAuthorship(written({ kind: 'delegate', agentId: D1, footing: { kind: 'on-behalf-of', principal: OTHER } }), { logOwnerWebId: WEBID, delegates: null });
+    const a = readEntryAuthorship(written({ kind: 'delegate', agentId: D1, footing: { kind: 'on-behalf-of', principal: OTHER } }), { logOwnerWebId: WEBID, delegates: null, signedBy: D1 });
     expect(a.kind).toBe('disputed');
     expect(a.kind === 'disputed' && a.why).toMatch(/third party/);
   });
@@ -388,9 +388,9 @@ describe('readEntryAuthorship: the entry claims, and two other documents hold it
    * registry, a document the record's author cannot write, and that check is `authorised` — which
    * says `false` here, in a document nobody could forge.
    */
-  it('★ an entry by a stranger with no footing is a delegate whose footing and authority BOTH fail to check out', () => {
+  it('★ an entry naming a stranger, signed by a stranger, has no footing and no authority', () => {
     const t = written({ kind: 'principal', webId: OTHER });
-    const a = readEntryAuthorship(t, { logOwnerWebId: WEBID, delegates: roster([row(D1, 'Claude side', 'PublishOnly')]) });
+    const a = readEntryAuthorship(t, { logOwnerWebId: WEBID, delegates: roster([row(D1, 'Claude side', 'PublishOnly')]), signedBy: OTHER });
     expect(a.kind).toBe('delegate');
     expect(a.kind === 'delegate' && a.footing.kind).toBe('not-stated');
     expect(a.kind === 'delegate' && a.footing.kind === 'not-stated' && a.footing.why).toMatch(/not stated/);
@@ -398,18 +398,98 @@ describe('readEntryAuthorship: the entry claims, and two other documents hold it
     expect(a.kind === 'delegate' && a.authorised).toBe(false);
   });
 
+  /**
+   * ★★ THE PUPPET, AND THE WHOLE REASON THE SIGNER IS AN INPUT.
+   *
+   * These are the exact statements a genuine delegate entry carries — attribution, a per-act
+   * `prov:Delegation` naming the pod's own owner, the Delegation scoped to this record's own act —
+   * and every one of them is bytes the pod's writer controls. Measured live against the shipped
+   * readers: an entry published under ONE session, naming a DIFFERENT registered agent as its
+   * author, read back as `{kind: 'delegate', footing: on-behalf-of, authorised: true}` and rendered
+   * on every surface as that agent speaking for its human — while that agent's key never signed
+   * anything and its host never ran. Anybody who can write to a pod could produce it, which
+   * includes every conduit holding a delegation there.
+   */
+  it('★★ an entry attributed to an agent it was NOT signed by is disputed, never that agent speaking', () => {
+    const t = written(forHuman);
+    const r = roster([row(D1, 'Claude side', 'PublishOnly'), row(D2, 'Codex side', 'PublishOnly')]);
+    const puppet = readEntryAuthorship(t, { logOwnerWebId: WEBID, delegates: r, signedBy: D2 });
+    expect(puppet.kind).toBe('disputed');
+    expect(puppet.kind === 'disputed' && puppet.why).toContain(D1);
+    expect(puppet.kind === 'disputed' && puppet.why).toContain(D2);
+    // And the line every surface shows is the one that cannot be mistaken for an utterance.
+    expect(authorshipLine(puppet, { displayName: 'Mark' })).toBe('authorship disputed');
+    // The identical bytes, signed by the agent they name, are the ordinary case and still read.
+    const genuine = readEntryAuthorship(t, { logOwnerWebId: WEBID, delegates: r, signedBy: D1 });
+    expect(genuine.kind === 'delegate' && genuine.footing.kind).toBe('on-behalf-of');
+    expect(genuine.kind === 'delegate' && genuine.signer.signedBy).toBe(D1);
+  });
+
+  /**
+   * ★ AND THE SIGNER A CALLER PASSES MUST BE ONE THE RELAY VERIFIED, NOT ONE A PROOF NAMES.
+   *
+   * `readAuthorship(...).signerAgent` reports whatever the block names, whether or not any check
+   * passed — correct for a surface saying "this proof claims X and did not verify", and a hole if
+   * it reaches the authorship comparison, because a descriptor's bytes are its pod owner's and this
+   * repo has already had one whose authorship covered only a filename. `verifiedSigner` asks the
+   * one question a comparison may turn on, once, so four call sites cannot each get it wrong.
+   */
+  it('★ verifiedSigner refuses a proof that did not bind, and accepts the delegated cross-pod shape', () => {
+    expect(verifiedSigner({ authorshipVerified: true, signedBy: D1, contentBinding: 'bound' })).toBe(D1);
+    // The measured shape of every delegated cross-pod write: NOT `authorshipVerified`, still bound.
+    expect(verifiedSigner({ authorshipVerified: false, signedBy: D1, contentBinding: 'bound', descriptorBinding: { bound: false } })).toBe(D1);
+    for (const b of ['unbound', 'declared', 'mismatched', 'unchecked', undefined]) {
+      expect(verifiedSigner({ authorshipVerified: true, signedBy: D1, contentBinding: b }), String(b)).toBeNull();
+    }
+    expect(verifiedSigner(null)).toBeNull();
+    // And an entry carrying an unbound proof that names its claimed author is therefore disputed.
+    const a = readEntryAuthorship(written(forHuman), {
+      logOwnerWebId: WEBID, delegates: null,
+      signedBy: verifiedSigner({ authorshipVerified: true, signedBy: D1, contentBinding: 'unbound' }),
+    });
+    expect(a.kind).toBe('disputed');
+  });
+
+  it('★ and a signer this reader was never told is disputed too — not a weaker yes', () => {
+    const a = readEntryAuthorship(written(forHuman), { logOwnerWebId: WEBID, delegates: null, signedBy: null });
+    expect(a.kind).toBe('disputed');
+    expect(a.kind === 'disputed' && a.why).toMatch(/nothing establishes which key signed/);
+  });
+
+  /**
+   * ★ THE ONE LEGITIMATE DISAGREEMENT, MODELLED RATHER THAN LEFT UNCOMPARED. A person's own words
+   * are almost never signed by the person: a conduit relaying what they typed, or their own
+   * session agent, put the bytes on their pod. That must keep working — it is every Discord
+   * message this project records — and a reader is told which key carried it.
+   */
+  it('★ a conduit relaying a person\'s own words stays the person, and the carrier is named', () => {
+    const a = readEntryAuthorship(written({ kind: 'principal', webId: WEBID }), {
+      logOwnerWebId: WEBID, delegates: roster([row(D1, 'Claude side', 'PublishOnly')]), signedBy: D1,
+    });
+    expect(a.kind).toBe('principal');
+    expect(a.kind === 'principal' && a.signer.kind).toBe('a-conduit');
+    expect(a.kind === 'principal' && a.signer.kind === 'a-conduit' && a.signer.signedBy).toBe(D1);
+    expect(a.kind === 'principal' && a.signer.kind === 'a-conduit' && a.signer.listed).toBe(true);
+    // Their OWN key, on their own pod's surface, is not a conduit and is not drawn as one.
+    const ownKey = readEntryAuthorship(written({ kind: 'principal', webId: WEBID }), {
+      logOwnerWebId: WEBID, delegates: null,
+      signedBy: 'did:web:identity.interego.xwisee.com:agents:claude-' + POD,
+    });
+    expect(ownKey.kind === 'principal' && ownKey.signer.kind).toBe('the-author');
+  });
+
   it('★ two attributions, or two footing statements, are refused rather than resolved by taking the first', () => {
     // The bytes are the log owner's, so a hostile writer can state a predicate twice. `readIri`
     // would silently take whichever came first — a choice this reader is not entitled to make.
     const two = region('<' + STREAM + '/e/0> <http://www.w3.org/ns/prov#wasAttributedTo> <' + WEBID + '> ;\n'
       + '  <http://www.w3.org/ns/prov#wasAttributedTo> <' + D1 + '> .');
-    expect(readEntryAuthorship(two, { logOwnerWebId: WEBID, delegates: null }).kind).toBe('disputed');
+    expect(readEntryAuthorship(two, { logOwnerWebId: WEBID, delegates: null, signedBy: D1 }).kind).toBe('disputed');
     const twoPrincipals = region('<' + STREAM + '/e/0> <http://www.w3.org/ns/prov#wasAttributedTo> <' + D1 + '> ;\n'
       + '  <http://www.w3.org/ns/prov#wasGeneratedBy> <' + STREAM + '/e/0#act> .\n'
       + '<' + D1 + '> <http://www.w3.org/ns/prov#qualifiedDelegation> <' + STREAM + '/e/0#delegation> .\n'
       + '<' + STREAM + '/e/0#delegation> <http://www.w3.org/ns/prov#agent> <' + WEBID + '> , <' + OTHER + '> ;\n'
       + '  <http://www.w3.org/ns/prov#hadActivity> <' + STREAM + '/e/0#act> .');
-    expect(readEntryAuthorship(twoPrincipals, { logOwnerWebId: WEBID, delegates: null }).kind).toBe('disputed');
+    expect(readEntryAuthorship(twoPrincipals, { logOwnerWebId: WEBID, delegates: null, signedBy: D1 }).kind).toBe('disputed');
   });
 
   /**
@@ -424,7 +504,7 @@ describe('readEntryAuthorship: the entry claims, and two other documents hold it
       + '  <https://markjspivey-xwisee.github.io/interego/ns/iep#actedOnOwnAccount> <' + STREAM + '/e/0#act> .\n'
       + '<' + STREAM + '/e/0#delegation> <http://www.w3.org/ns/prov#agent> <' + WEBID + '> ;\n'
       + '  <http://www.w3.org/ns/prov#hadActivity> <' + STREAM + '/e/0#act> .');
-    const a = readEntryAuthorship(both, { logOwnerWebId: WEBID, delegates: null });
+    const a = readEntryAuthorship(both, { logOwnerWebId: WEBID, delegates: null, signedBy: D1 });
     expect(a.kind).toBe('disputed');
     expect(a.kind === 'disputed' && a.why).toMatch(/opposite claims about who is accountable/);
   });
@@ -440,7 +520,7 @@ describe('readEntryAuthorship: the entry claims, and two other documents hold it
       + '<' + D1 + '> <http://www.w3.org/ns/prov#qualifiedDelegation> <' + STREAM + '/e/9#delegation> .\n'
       + '<' + STREAM + '/e/9#delegation> <http://www.w3.org/ns/prov#agent> <' + WEBID + '> ;\n'
       + '  <http://www.w3.org/ns/prov#hadActivity> <' + STREAM + '/e/9#act> .');
-    const a = readEntryAuthorship(elsewhere, { logOwnerWebId: WEBID, delegates: null });
+    const a = readEntryAuthorship(elsewhere, { logOwnerWebId: WEBID, delegates: null, signedBy: D1 });
     expect(a.kind).toBe('disputed');
     expect(a.kind === 'disputed' && a.why).toMatch(/says nothing about this one/);
   });
@@ -449,7 +529,7 @@ describe('readEntryAuthorship: the entry claims, and two other documents hold it
     const odd = region('<' + STREAM + '/e/0> <http://www.w3.org/ns/prov#wasAttributedTo> <' + WEBID + '> ;\n'
       + '  <http://www.w3.org/ns/prov#wasGeneratedBy> <' + STREAM + '/e/0#act> .\n'
       + '<' + WEBID + '> <https://markjspivey-xwisee.github.io/interego/ns/iep#actedOnOwnAccount> <' + STREAM + '/e/0#act> .');
-    expect(readEntryAuthorship(odd, { logOwnerWebId: WEBID, delegates: null }).kind).toBe('disputed');
+    expect(readEntryAuthorship(odd, { logOwnerWebId: WEBID, delegates: null, signedBy: D1 }).kind).toBe('disputed');
   });
 
   it('★ a comment cannot introduce a footing, because the readers mask comments', () => {
@@ -459,18 +539,18 @@ describe('readEntryAuthorship: the entry claims, and two other documents hold it
       + '  <http://www.w3.org/ns/prov#wasGeneratedBy> <' + STREAM + '/e/0#act> .\n'
       + '# <' + D1 + '> <http://www.w3.org/ns/prov#qualifiedDelegation> <' + STREAM + '/e/0#delegation> .\n'
       + '# <' + STREAM + '/e/0#delegation> <http://www.w3.org/ns/prov#agent> <' + WEBID + '> ; <http://www.w3.org/ns/prov#hadActivity> <' + STREAM + '/e/0#act> .');
-    const a = readEntryAuthorship(spoof, { logOwnerWebId: WEBID, delegates: null });
+    const a = readEntryAuthorship(spoof, { logOwnerWebId: WEBID, delegates: null, signedBy: D1 });
     expect(a.kind === 'delegate' && a.footing.kind).toBe('not-stated');
   });
 
   it('★ a comment cannot introduce an author, because the readers mask comments', () => {
     const spoof = region('# <' + STREAM + '/e/0> <http://www.w3.org/ns/prov#wasAttributedTo> <' + D1 + '>\n'
       + '<' + STREAM + '/e/0> <http://www.w3.org/ns/prov#wasAttributedTo> <' + WEBID + '> .');
-    expect(readEntryAuthorship(spoof, { logOwnerWebId: WEBID, delegates: null }).kind).toBe('principal');
+    expect(readEntryAuthorship(spoof, { logOwnerWebId: WEBID, delegates: null, signedBy: D1 }).kind).toBe('principal');
   });
 
   it('★ a log this reader cannot attribute to an owner does not guess', () => {
-    const a = readEntryAuthorship(written({ kind: 'principal', webId: WEBID }), { logOwnerWebId: null, delegates: null });
+    const a = readEntryAuthorship(written({ kind: 'principal', webId: WEBID }), { logOwnerWebId: null, delegates: null, signedBy: WEBID });
     expect(a.kind).toBe('disputed');
   });
 });
@@ -492,10 +572,10 @@ describe('the workspace\'s own published shape requires an author', () => {
 
 describe('authorshipLine says the same thing on every surface', () => {
   const d = (footing: Parameters<typeof authorshipLine>[0] extends never ? never : { kind: 'on-behalf-of'; principal: string } | { kind: 'own-account' } | { kind: 'not-stated'; why: string }): string =>
-    authorshipLine({ kind: 'delegate', agentId: D1, footing, name: 'Claude side', authorised: true, scope: 'PublishOnly' }, { displayName: 'Mark' });
+    authorshipLine({ kind: 'delegate', agentId: D1, signer: { kind: 'the-author', signedBy: D1 }, footing, name: 'Claude side', authorised: true, scope: 'PublishOnly' }, { displayName: 'Mark' });
 
   it('names the delegate and its footing, and never reduces the two odd cases to a name', () => {
-    expect(authorshipLine({ kind: 'principal', webId: WEBID }, { displayName: 'Mark' })).toBe('Mark');
+    expect(authorshipLine({ kind: 'principal', webId: WEBID, signer: { kind: 'the-author', signedBy: WEBID } }, { displayName: 'Mark' })).toBe('Mark');
     expect(d({ kind: 'on-behalf-of', principal: WEBID })).toBe('Claude side, speaking for Mark');
     expect(authorshipLine({ kind: 'unstated', why: 'x' })).toBe('author not stated');
     expect(authorshipLine({ kind: 'disputed', why: 'x' })).toBe('authorship disputed');

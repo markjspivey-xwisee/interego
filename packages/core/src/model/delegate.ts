@@ -108,6 +108,36 @@ export const scopeWriteEligible = (scope: string | null | undefined): boolean =>
  */
 export const AGENT_ID_RX = /^[A-Za-z][A-Za-z0-9+.-]*:[^\s<>"'{}|\\^`]+$/;
 
+/**
+ * The pod segment inside an agent DID or a relay WebID, or null when this reader cannot take one
+ * out of it.
+ *
+ * A delegate's DID is `did:web:<host>:agents:<surface>-<pod>` — the pod half comes from the key,
+ * so it is unique per agent and is exactly what distinguishes two delegates of one person. A
+ * person's WebID is `…/users/<pod>/profile#me`, which is how "is this key the pod owner's own"
+ * can be asked at all.
+ *
+ * ★ NULL RATHER THAN A FALLBACK. A name composed from an id this reader could not take apart would
+ * be a document at an address nobody else computes, which reads to every other client as "this
+ * agent has never published anything" — a positive-sounding claim manufactured from a parse
+ * failure. A segment lifted out of somebody else's identifier is also about to be concatenated
+ * into IRIs this client fetches and locates signed regions inside, so it is checked for the
+ * characters that would make those IRIs something other than what the interface says they are.
+ *
+ * ★ IT LIVES HERE RATHER THAN IN `model/agent.ts` BECAUSE BOTH NEED IT AND THAT WOULD BE A CYCLE.
+ * `model/agent.ts` imports the authorship reading from this file; {@link judgeAuthorship} needs to
+ * ask whether the key that carried a person's words is a key on that person's own pod. One
+ * spelling of the rule, imported both ways round, is the only version of this that stays true.
+ */
+export function agentPodOf(agentId: unknown): string | null {
+  if (typeof agentId !== 'string' || !agentId) return null;
+  const m = /agents:[a-z0-9-]*?(u-[a-z0-9-]+)$/i.exec(agentId)
+    ?? /\/users\/([^/]+)\/profile/.exec(agentId);
+  const seg = m?.[1];
+  if (!seg) return null;
+  return /[\s<>"{}|\\^`#?/]/.test(seg) ? null : seg.toLowerCase();
+}
+
 // ── Naming ───────────────────────────────────────────────────
 
 /**
@@ -793,6 +823,31 @@ export function readAuthorship(a: unknown): AuthorshipReading {
   return { present: true, signerAgent: signer, verificationMethod: vm, contentBinding: binding, proves, doesNotProve: doesNot };
 }
 
+/**
+ * The agent whose signature the relay VERIFIED over these bytes, or null.
+ *
+ * ★ `AuthorshipReading.signerAgent` IS NOT THIS, AND THE DIFFERENCE IS A HOLE IF A CALLER MISSES
+ * IT. That field is whatever the block NAMES, reported whether or not any check passed — which is
+ * correct for a surface that wants to say "this proof claims X and did not verify". Handing it to
+ * {@link judgeAuthorship} would be handing it a name out of a proof somebody could have written:
+ * this repo has already had a descriptor whose authorship covered only a filename, and a pod's
+ * bytes are its owner's. So the one question an authorship comparison may turn on is asked here,
+ * once, and every caller asks it the same way.
+ *
+ * ★ THE TEST IS `contentBinding`, NOT `authorshipVerified`, FOR THE MEASURED REASON `verifyRequest`
+ * check 2 records: `authorshipVerified` additionally requires the proof to name the URL it was
+ * served from, which is false BY CONSTRUCTION for every delegated cross-pod write — every entry a
+ * conduit relays and every entry a desktop delegate writes for its human. `bound` is only ever
+ * produced on a path where the signature verified AND its digest was recomputed over the bytes
+ * being served, which is exactly the statement "these bytes are authentically attributable to this
+ * agent".
+ */
+export function verifiedSigner(authorship: unknown): string | null {
+  const a = readAuthorship(authorship);
+  if (a.contentBinding !== 'bound' && a.contentBinding !== 'bound-at-signing') return null;
+  return a.signerAgent;
+}
+
 // ── The scope ceiling ────────────────────────────────────────
 
 /** A ceiling verdict, with the sentence a surface shows when it refuses. */
@@ -995,12 +1050,64 @@ export function footingTurtle(args: {
  * `unstated` is a real answer and a UI must render it as one: a record that names no author is
  * not a record the pod owner wrote, it is one that does not say. Absence is not evidence.
  */
+/**
+ * WHICH KEY ACTUALLY SIGNED THE BYTES, HELD AGAINST WHO THE RECORD SAYS COMPOSED THEM.
+ *
+ * ★ THIS IS THE CHECK WHOSE ABSENCE MADE EVERY OTHER CHECK IN THIS FILE DECORATIVE, AND IT WAS
+ * MEASURED LIVE. The PROV triples below — `prov:wasAttributedTo`, the `prov:Delegation`, its
+ * `prov:hadActivity` — are bytes inside a record, and the party that can write to a pod controls
+ * them completely. So an entry signed by ONE key could name a DIFFERENT agent as its author, with a
+ * complete per-act on-behalf-of footing, and every surface rendered it as that agent genuinely
+ * speaking for the human, "authorised", while that agent's key never signed anything and its host
+ * never ran. That is the puppet this vertical has refused three times, reachable by anybody holding
+ * a delegation on somebody's pod — which is exactly what the Discord conduit holds.
+ *
+ * ★ SO THE COMPOSED AUTHOR IS NOW A CONJUNCTION OF TWO DOCUMENTS' WORTH OF FACTS. The record says
+ * who composed it; the relay's authorship block says whose key it authenticated. A delegate verdict
+ * is returned ONLY where those agree, and a `not-established` signer is not a weaker yes — it is
+ * `disputed`, because a claim inside a document its author controls, with nothing outside the
+ * document holding it down, is not an attribution at all.
+ *
+ * ★ AND THE ONE LEGITIMATE DISAGREEMENT IS MODELLED RATHER THAN LEFT UNCOMPARED. A conduit — the
+ * Discord bot relaying what a person typed, a person's own session agent posting their words —
+ * signs bytes attributed to the PERSON. That is not a delegate speaking; it is somebody's own words
+ * carried by a key they authorised, the relay would refuse the write from any other key, and a
+ * reader is told which key carried it.
+ */
+export type EntrySigner =
+  /** The party the record names as its author is the party whose key the relay authenticated. */
+  | { readonly kind: 'the-author'; readonly signedBy: string }
+  /**
+   * Somebody else's key carried this. Only ever paired with an author who is the pod's own owner:
+   * a delegate attributed to itself and signed by another key is `disputed`, never this.
+   */
+  | {
+      readonly kind: 'a-conduit';
+      readonly signedBy: string;
+      /** Does the pod owner's own registry list the carrying key? Three-valued, like `authorised`. */
+      readonly listed: boolean | null;
+      readonly scope: string | null;
+    }
+  /** No signer was reported to this reader. Not "unsigned" — nothing was established either way. */
+  | { readonly kind: 'not-established'; readonly why: string };
+
 export type EntryAuthorship =
   | { readonly kind: 'unstated'; readonly why: string }
-  | { readonly kind: 'principal'; readonly webId: string }
+  | {
+      readonly kind: 'principal';
+      readonly webId: string;
+      /** Whose key carried these bytes onto their pod — their own, or one they authorised. */
+      readonly signer: EntrySigner;
+    }
   | {
       readonly kind: 'delegate';
       readonly agentId: string;
+      /**
+       * ★ ONLY EVER `the-author`. The variant is carried rather than implied so a surface can say
+       * "signed with its own key" from the value rather than from a comment, and so that widening
+       * this later is a type error at every renderer instead of a silent relaxation.
+       */
+      readonly signer: Extract<EntrySigner, { readonly kind: 'the-author' }>;
       /**
        * What THIS record was made on. Separate from `authorised` below on purpose: one is about
        * the utterance, the other about the agent's standing, and they can disagree in both
@@ -1140,12 +1247,29 @@ function footingOf(st: AuthorshipStatements): FootingRead {
  * however its format demands and gets the same answers. That is also what keeps this module free of
  * a parser dependency, which a browser bundle would otherwise pay for.
  *
+ * ★ AND THE THIRD QUESTION, WHICH IS THE ONE THAT MAKES THE FIRST TWO WORTH READING: DID THE PARTY
+ * THIS RECORD NAMES ACTUALLY SIGN IT. See {@link EntrySigner}. `signedBy` is REQUIRED rather than
+ * optional and may be explicitly null, because a caller that simply forgot to pass it would get
+ * back the exact verdict this check exists to withhold. Where a record attributes itself to an
+ * agent and the bytes were signed by somebody else — or by nobody this reader can name — the answer
+ * is `disputed`. There is no reading of that which is safe to render as an agent speaking.
+ *
  * `delegates` may be null: this is then answered as far as the record alone establishes it, with
  * `authorised: null`, rather than not answered at all.
  */
 export function judgeAuthorship(
   statements: AuthorshipStatements | null,
-  args: { readonly logOwnerWebId: string | null; readonly delegates: DelegateRoster | null },
+  args: {
+    readonly logOwnerWebId: string | null;
+    readonly delegates: DelegateRoster | null;
+    /**
+     * The agent whose signature the relay VERIFIED over these bytes — {@link verifiedSigner} — or
+     * null when the reader was given no authorship block, or one whose proof did not bind. Never a
+     * value out of the record, and never `readAuthorship(...).signerAgent`, which reports whatever
+     * a proof names whether or not any check passed.
+     */
+    readonly signedBy: string | null;
+  },
 ): EntryAuthorship {
   if (statements === null) {
     return { kind: 'unstated', why: 'the signed region of this record could not be located, so nothing about its author was read from bytes anybody signed' };
@@ -1163,6 +1287,8 @@ export function judgeAuthorship(
     return { kind: 'disputed', why: 'this record is attributed to ' + author + ' and this reader could not establish whose log it is in, so whether that is the owner or somebody acting for them is not decided' };
   }
   const read = footingOf(statements);
+  const rowFor = (who: string): DelegateRow | null =>
+    args.delegates?.read ? args.delegates.rows.find((r) => r.agentId === who) ?? null : null;
   if (author === args.logOwnerWebId) {
     // A person composing their own words has no footing question, so any footing statement here is
     // a record saying something about itself that cannot be true. `prov:Delegation` requires two
@@ -1176,7 +1302,46 @@ export function judgeAuthorship(
       };
     }
     if (!read.ok) return { kind: 'disputed', why: read.why };
-    return { kind: 'principal', webId: author };
+    // ★ A PERSON'S OWN WORDS ARE ALMOST NEVER SIGNED BY THE PERSON. They are signed by whatever key
+    // put the bytes on the pod: their own session agent, or a conduit they authorised. Both are
+    // legitimate and the relay refuses the write from any other key — so this is reported, never
+    // refused, and the reader is told which.
+    const ownPod = agentPodOf(args.logOwnerWebId);
+    const carrier = args.signedBy;
+    const signer: EntrySigner = carrier === null
+      ? {
+          kind: 'not-established',
+          why: 'no authorship block reached this reader, so which key carried these bytes onto that pod is not established. '
+            + 'The relay accepts a write only from the pod owner or a key they registered, and which of those it was is not '
+            + 'something this record can settle about itself.',
+        }
+      : carrier === args.logOwnerWebId || (ownPod !== null && agentPodOf(carrier) === ownPod)
+        ? { kind: 'the-author', signedBy: carrier }
+        : { kind: 'a-conduit', signedBy: carrier, listed: args.delegates?.read ? rowFor(carrier) !== null : null, scope: rowFor(carrier)?.scope ?? null };
+    return { kind: 'principal', webId: author, signer };
+  }
+  // ── the author is not the pod's owner, so the record is claiming an AGENT composed it ──
+  //
+  // ★ THE CLAIM IS HELD AGAINST THE SIGNATURE BEFORE ANY FOOTING IS READ, because a footing is a
+  // statement in the same bytes about the same claim. Reading it first and refusing afterwards
+  // would mean a reader had already composed the sentence "speaking for them, authorised" out of
+  // fields nothing outside the document supports.
+  if (args.signedBy === null) {
+    return {
+      kind: 'disputed',
+      why: 'this record is attributed to ' + author + ' and no authorship block reached this reader, so nothing establishes '
+        + 'which key signed these bytes. "This agent wrote it" is then a claim inside a document its author controls, with '
+        + 'nothing outside the document holding it down — which is not the same as that agent having written it.',
+    };
+  }
+  if (args.signedBy !== author) {
+    return {
+      kind: 'disputed',
+      why: 'this record says ' + author + ' composed it and the bytes were signed by ' + args.signedBy
+        + '. Every PROV triple here is written by whoever can publish to this pod, so an entry naming an agent it was not '
+        + 'signed by is that party putting words in that agent\'s mouth — it is not being rendered as that agent speaking, '
+        + 'authorised or otherwise.',
+    };
   }
   if (!read.ok) return { kind: 'disputed', why: read.why };
   if (read.footing.kind === 'on-behalf-of' && read.footing.principal !== args.logOwnerWebId) {
@@ -1187,10 +1352,11 @@ export function judgeAuthorship(
         + 'a third party is not something this reader will render as either of them speaking.',
     };
   }
-  const row = args.delegates?.read ? args.delegates.rows.find((r) => r.agentId === author) ?? null : null;
+  const row = rowFor(author);
   return {
     kind: 'delegate',
     agentId: author,
+    signer: { kind: 'the-author', signedBy: args.signedBy },
     footing: read.footing,
     name: row?.name ?? null,
     authorised: args.delegates?.read ? row !== null : null,
@@ -1241,10 +1407,37 @@ export function footingLine(f: EntryFooting, args: { readonly who: string; reado
   }
 }
 
+/**
+ * The sentence a surface shows about WHICH KEY carried a record, in one place so four of them
+ * agree — the signer half of what {@link footingLine} does for the footing half.
+ *
+ * ★ THE CONDUIT CASE IS THE ONE THIS EXISTS FOR. "The pod owner said this" and "a key they
+ * authorised carried words attributed to them" are the same record to a reader who is not shown
+ * the difference, and a Discord bot holding `PublishOnly` on somebody's pod is exactly such a key.
+ */
+export function signerLine(s: EntrySigner, args: { readonly who?: string } = {}): string {
+  const who = args.who ?? 'the person whose pod this is';
+  switch (s.kind) {
+    case 'the-author':
+      return 'The bytes were signed by ' + s.signedBy + ', which is the party this record names as its author — so who '
+        + 'composed it is not only asserted inside the record, it is held down by the key the relay authenticated.';
+    case 'a-conduit':
+      return 'These words are attributed to ' + who + ' and the key that carried them onto their pod was ' + s.signedBy
+        + ' — a conduit relaying what they wrote, not an agent speaking. '
+        + (s.listed === true
+          ? 'Their own registry lists that key' + (s.scope ? ' with scope ' + s.scope : '') + '.'
+          : s.listed === false
+            ? 'Their own registry does not list it, so the only thing establishing it may write there is that the relay accepted the write.'
+            : 'Their registry was not read here, so what standing that key has is not established.');
+    case 'not-established':
+      return s.why;
+  }
+}
+
 export function authorshipLine(a: EntryAuthorship, args: { readonly displayName?: string | null } = {}): string {
   const who = args.displayName ? args.displayName : 'the person whose pod this is';
   switch (a.kind) {
-    case 'principal': return who;
+    case 'principal': return a.signer.kind === 'a-conduit' ? who + ' (relayed by a key they authorised)' : who;
     case 'delegate': {
       const name = a.name ? a.name : 'an unnamed delegate';
       if (a.footing.kind === 'on-behalf-of') return name + ', speaking for ' + who;

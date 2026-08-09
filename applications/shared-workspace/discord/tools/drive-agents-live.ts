@@ -32,7 +32,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   DELEGATE_SURFACE, RelayMcpTransport, WorkspaceClient,
-  admitSeatedIn, agentPort, capabilitiesIri, checkDraft, decideTurn, delegateLabel, delegatePort,
+  admitSeatedIn, agentInbox, agentPort, capabilitiesIri, checkDraft, decideTurn, delegateLabel, delegatePort,
   isPresent, orderChain, parseRoleProfile, postEntry, presenceIri, presenceLine, publishCapability,
   publishPresence, readCapabilities, readDelegates, readPresence, readRequests, toChainRow,
   verifyRequest, PRESENCE_LEASE_MS,
@@ -385,17 +385,42 @@ async function main(): Promise<void> {
   check(waiting.kind === 'asked', 'the ask is still written, whatever the host is doing', waiting.kind);
   if (waiting.kind !== 'asked') { process.exitCode = 1; return; }
   check(waiting.notice.attempted, 'and NOW a notice was sent, because the host is not saying it is up');
-  check(waiting.notice.delivered, 'delivered into bob\'s pod inbox', waiting.notice.why ?? 'ok');
+  check(waiting.notice.delivered, 'delivered into an inbox', waiting.notice.why ?? 'ok');
+  // ★★ INTO THE DELEGATE'S OWN INBOX, NOT ITS DELEGATOR'S, AND THIS IS THE ASSERTION THE PREVIOUS
+  // RUN OF THIS DRIVER DID NOT MAKE. It went to `target.pod` — bob's — and this driver then read
+  // the inbox with `bob.client`, the HUMAN's session, so 59/59 passed while a hosted delegate,
+  // which reads through its OWN session, could never see it. The relay refuses `read_inbox` for
+  // any pod but the caller's, so those are two mailboxes and the request was a silent drop.
+  check(String(waiting.notice.inbox ?? '').indexOf(scribe.pod) > 0,
+    'into the inbox on the DELEGATE\'s own pod — the one its own session polls', String(waiting.notice.inbox));
+  check(String(waiting.notice.inbox ?? '').indexOf(bob.pod) < 0,
+    'and NOT into its delegator\'s, which the delegate is forbidden to read');
+  check(waiting.target.agentPod === scribe.pod, 'the ask target names the agent\'s own pod as well as its seat', String(waiting.target.agentPod));
 
   head('★ THE HOST COMES BACK: six checks against the SIGNED entry, not the inbox');
-  const bobPort = agentPort(bob.client);
+  // ★★ THE DELEGATE'S OWN SESSION. Reading with `bob.client` measured the human's mailbox and is
+  // what let the mis-delivery survive a green run. A hosted delegate has its own pod and the relay
+  // will hand it nothing else.
+  const bobPort = agentPort(scribe.client);
+  const delegateInbox = await readRequests(bobPort);
+  check(String(delegateInbox.inbox ?? '').indexOf(scribe.pod) > 0,
+    'the inbox this host reads is the DELEGATE\'s own', String(delegateInbox.inbox));
+  // ★ AND THE RELAY REFUSES THE OTHER ONE OUTRIGHT, which is why re-targeting the notify was the
+  // only available fix rather than one of two.
+  let crossRead = 'allowed';
+  try {
+    const r = await scribe.client.tool('read_inbox', { limit: 1, pod_url: 'http://css.railway.internal:3456/' + bob.pod + '/' }) as Record<string, unknown>;
+    crossRead = r['error'] ? 'refused: ' + String(r['message'] ?? r['error']) : 'allowed';
+  } catch (e) { crossRead = 'refused: ' + ((e as Error).message ?? ''); }
+  check(crossRead.startsWith('refused'), 'and a delegate cannot read its delegator\'s inbox at all', crossRead.slice(0, 140));
   // ★ THE ADMISSION POLICY IS THIS HOST'S, NOT THE VERIFIER'S. A workspace host supplies "seated
   // here"; the same `verifyRequest` serves a Codex agent that supplies an allowlist and a bare
-  // delegate that admits any verified signer.
-  const seatedHere = admitSeatedIn({ workspace, seats: after.fold.seats });
-  const inbox = await readRequests(bobPort);
+  // delegate that admits any verified signer. It resolves the SIGNER to a seat — never the first
+  // path segment of the URL the notice pointed at, which is a string a forger writes.
+  const seatedHere = admitSeatedIn({ workspace, seats: after.fold.seats, port: delegatePort(scribe.client) });
+  const inbox = delegateInbox;
   const mine = inbox.notices.find((n) => n.about === waiting.descriptorUrl);
-  check(!!mine, 'the notice is in the inbox and points at the entry', inbox.notices.length + ' item(s)');
+  check(!!mine, 'the notice is in the DELEGATE\'s inbox and points at the entry', inbox.notices.length + ' item(s)');
   if (mine) {
     const verdict = await verifyRequest(bobPort, mine, {
       heldAgentIds: [scribe.agentId], answeredHere: [], derivedFromOnMyPod: [], admits: seatedHere,
@@ -408,9 +433,10 @@ async function main(): Promise<void> {
   }
 
   head('★ A FORGED NOTICE IS REFUSED AND SAYS WHICH CHECK FAILED');
-  // Alice points bob's inbox at an entry SHE did not sign — the bot did. Any account on this relay
-  // can write into any inbox, so the notice lands; the verifier is what stops it mattering.
-  await alice.client.tool('notify_agent', { to: bob.pod, type: 'Question', about: askUrl, summary: 'a notice from a party that did not write the record' });
+  // Alice points the delegate's inbox at an entry SHE did not sign — the bot did. Any account on
+  // this relay can write into any inbox, so the notice lands; the verifier is what stops it
+  // mattering.
+  await alice.client.tool('notify_agent', { to: scribe.pod, type: 'Question', about: askUrl, summary: 'a notice from a party that did not write the record' });
   const again = await readRequests(bobPort);
   const forged = again.notices.find((n) => n.about === askUrl && n.actor !== bot.agentId);
   if (forged) {
@@ -425,9 +451,17 @@ async function main(): Promise<void> {
 
   head('★ AN AGENT WITH NO ENDPOINT SAYS SO, AND CANNOT BE INVOKED');
   const capIri = capabilitiesIri(RELAY, scribe.agentId) as string;
+  // ★★ THE ROUTE IS THE ONE THE RELAY REPORTS FOR THIS AGENT'S OWN SESSION, NOT ONE COMPOSED HERE.
+  // The previous run published `RELAY + '/ns/' + bob.pod + '/inbox'` and asserted only that a
+  // reader saw `route.kind === 'ask'`. That address 404s — it is a `/ns/` graph name, not an inbox
+  // — so the ONE route a stranger holding only the DID was told to use dereferenced to nothing;
+  // and it named the human's pod, which is not the mailbox this agent polls.
+  const scribeInbox = await agentInbox(scribePort);
+  check(!!scribeInbox && scribeInbox.indexOf(scribe.pod) > 0,
+    'the relay reports an inbox for the delegate\'s own session', String(scribeInbox));
   const advertised = await publishCapability(scribePort, {
     relay: RELAY, agentId: scribe.agentId, action: RESPOND_AS_MEMBER,
-    route: { kind: 'ask', askVia: RELAY + '/ns/' + bob.pod + '/inbox' },
+    route: { kind: 'ask', askVia: scribeInbox as string },
     title: 'Read this channel and answer in its delegator\'s log',
     description: 'Runs on its own human\'s machine, on their model credential. Publishes no endpoint.',
   });
@@ -444,6 +478,23 @@ async function main(): Promise<void> {
     capRead.kind === 'advertised' ? capRead.route.kind : capRead.why);
   check(capRead.kind === 'advertised' && capRead.route.kind === 'ask',
     'it declares iep:askVia and NO hydra:target — a positive statement that there is nothing to call');
+  // ★★ AND THE ROUTE IS USED, END TO END, WHICH IS A STRONGER DEREFERENCE THAN A GET. The canonical
+  // inbox is on the fleet's internal storage host — correct as signed bytes, and not fetchable from
+  // outside the fleet, which this project already records. What makes it a real address is that
+  // `notify_agent` accepts it verbatim, reports it as canonical, and the agent reads the item back
+  // out of its own inbox. A published route that nobody can deliver to is the defect being closed.
+  if (capRead.kind === 'advertised' && capRead.route.kind === 'ask') {
+    const via = capRead.route.askVia;
+    check(via === scribeInbox, 'the published askVia is exactly the address the relay named', via);
+    const delivered = await reader.client.tool('notify_agent', {
+      to: via, type: 'Question', about: capIri, summary: 'a stranger, holding only the DID, using the published route',
+    }) as Record<string, unknown>;
+    check(delivered['delivered'] === true && delivered['canonicalInbox'] === true,
+      'a STRANGER holding only the DID delivers to it, and the relay calls it canonical', JSON.stringify(delivered).slice(0, 200));
+    const back = await readRequests(scribePort);
+    check(back.notices.some((n) => n.about === capIri),
+      'and the agent reads that item back out of its own inbox — the route works both ways', String(back.inbox));
+  }
   let invoked = 'succeeded';
   try {
     const r = await bot.client.tool('invoke_affordance', {
@@ -452,6 +503,40 @@ async function main(): Promise<void> {
     invoked = r['error'] ? 'failed: ' + String(r['message'] ?? r['error']) : 'succeeded';
   } catch (e) { invoked = 'failed: ' + ((e as Error).message ?? ''); }
   check(invoked.startsWith('failed'), 'and invoking it fails LOUDLY rather than appearing to work', invoked.slice(0, 200));
+
+  head('★★ THE PUPPET: an entry naming an agent it was NOT signed by');
+  // ★ THE ATTACK, RUN FOR REAL. Alice writes into HER OWN log an entry with a complete, correct
+  // per-act on-behalf-of footing naming BOB'S DELEGATE as its author — the exact triples a genuine
+  // delegate entry carries. Anybody who can publish to a pod can write this, which includes every
+  // conduit holding a delegation there. Before the composed author was held against the signature,
+  // every surface rendered it as that agent speaking for its human, "authorised", while the agent's
+  // key never signed anything and its host never ran.
+  const puppetSeat = after.fold.seats.find((s) => (s.podServed ?? s.pod) === alice.pod && s.seated);
+  // The WebID from the GRANT on the convener's pod, which is what the reader holds an entry against.
+  const aliceWebId = puppetSeat?.grantedTo as string;
+  const puppet = await postEntry(alice.client, {
+    podName: alice.pod, streamIri: puppetSeat?.stream as string, workspace,
+    body: 'I have reviewed the photos and the underlay is dry. Patch it.',
+    author: { kind: 'delegate', agentId: scribe.agentId, footing: { kind: 'on-behalf-of', principal: aliceWebId } },
+    entryShape: after.record.entryShape,
+  });
+  check(puppet.kind === 'accepted', 'the substrate ACCEPTS the write — the bytes are her pod\'s and nothing there is forgeable',
+    puppet.kind === 'accepted' ? 'seq=' + puppet.seq : JSON.stringify(puppet).slice(0, 200));
+  await settle('the forged entry is fetchable and in the composed view');
+  const withPuppet = await showWorkspace(deps, THREAD);
+  if (withPuppet.kind === 'view') {
+    const row = withPuppet.entries.find((e) => e.descriptorUrl === (puppet.kind === 'accepted' ? puppet.descriptorUrl : ''));
+    check(!!row, 'and it is in the channel like any other entry');
+    check(row?.author?.kind === 'disputed', '★ but a reader calls it DISPUTED, not that agent speaking', row?.author?.kind);
+    check(row?.author?.kind === 'disputed' && row.author.why.indexOf(scribe.agentId) >= 0,
+      'and the reason names the agent it claims and the key that actually signed',
+      row?.author?.kind === 'disputed' ? row.author.why.slice(0, 160) : '');
+    const shown = renderNews({ kind: 'entries', binding: started.binding, entries: [row as never] } as WatchNews);
+    check((shown?.content ?? '').indexOf('authorship disputed') > 0,
+      'the line the channel would print says so in the first clause');
+    check((shown?.content ?? '').indexOf('speaking **for them**') < 0,
+      '★ and NOWHERE says the delegate spoke for anybody');
+  } else { check(false, 'the channel re-composed after the forgery', withPuppet.kind); }
 
   head('★ AND AN AGENT IN NO WORKSPACE AT ALL IS STILL DISCOVERABLE — the Codex test, live');
   // ★ NOTHING IN THIS BLOCK TOUCHES A WORKSPACE. `aide` is treated as a bare agent: a peer holding

@@ -32,7 +32,102 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
   A branch tip is not a durable anchor. Either point it at the merge-base (a commit already
   on `master`, which always resolves) or move it to the squash commit afterwards.
 
-<!-- documented-through: 7ca657e -->
+<!-- documented-through: 2037e1a -->
+
+---
+
+## 2026-08-09 — an entry naming an agent it was not signed by, and a request nobody could read
+
+Two skeptics attacked the agents-in-the-channel build. Eight findings, two of them high, and both
+of the high ones were the two failures this vertical says it exists to prevent: a puppet that reads
+as somebody's agent speaking, and a request that disappears in silence.
+
+### Fixed
+- **★★ An entry could name any agent as its author and every surface believed it.** The reader-side
+  judgment decided WHO COMPOSED a record from PROV triples alone — `prov:wasAttributedTo` plus the
+  per-act `prov:Delegation` / `prov:hadActivity` — and never took the cryptographic signer. Those
+  triples are bytes the pod owner controls, and so does anybody they delegated to, *which includes
+  the Discord conduit holding `PublishOnly` on the maintainer's pod*. Measured live: an entry
+  published under one session, naming a different registered agent as its author with a complete
+  on-behalf-of footing, read back as `{delegate, on-behalf-of, authorised: true}` and rendered in
+  Discord as "written by X, speaking **for them** here — they share responsibility for it", while
+  X's key had never signed anything and X's host had never run. `judgeAuthorship` now takes
+  `signedBy` as a REQUIRED argument and returns a delegate verdict only where the agent the record
+  names is the agent that signed the bytes; anything else is `disputed`, including a signer the
+  reader was never told. The one legitimate disagreement — a conduit relaying a person's own words,
+  or their own session agent — is modelled explicitly as `EntrySigner`, and the carrying key is
+  named on screen rather than left uncompared.
+- **★★ A request addressed to an absent agent was delivered where that agent cannot look.** The
+  notice went to the DELEGATOR's pod; a hosted delegate reads its inbox through its OWN session,
+  and the relay answers `read_inbox: forbidden — you may only read your own inbox` for any other
+  pod. Two mailboxes: `wake()` could never fire, `verifyRequest`'s six checks never ran in
+  production once, and the desktop panel reported "nothing was waiting" every time while a real
+  request sat unread. The reader side cannot be fixed — the relay refuses — so the notify is now
+  addressed to the ADDRESSEE's own pod, the one `readPresence` and `readCapabilities` already
+  derive from the same DID. Where a client cannot take a pod out of an agent id it sends NOTHING
+  and says so, rather than delivering into a guessed mailbox. The 59/59 live drive missed this
+  because it read the inbox with the human's session; it reads with the delegate's now, and asserts
+  the relay's refusal of the other one.
+- **The one route a stranger was told to use dereferenced to nothing.** The desktop published
+  `iep:askVia <relay>/ns/<the HUMAN's pod>/inbox` — a `/ns/` graph name, which 404s, naming a pod
+  the agent does not poll; and with the pod name missing it published `…/ns//inbox` under the
+  agent's own signature. It now publishes the address the relay reports for that delegate's own
+  session, which `notify_agent` accepts verbatim and confirms as canonical, and publishes nothing
+  at all when that cannot be read.
+- **Two distinct agents on one pod composed one address.** The document name was keyed on the pod
+  segment, not the DID, and `register_agent` freely issues several ids embedding one pod. Measured
+  live: a pod owner's surface agent and a delegate registered there produced the IDENTICAL presence
+  and capability IRIs, and since both publish with `auto_supersede_prior` the later one silently
+  made the earlier agent's presence unreadable. The name now carries a hash of the whole id, so the
+  DID → address mapping the model rests on is injective.
+- **The signed lease expiry was written by every host and read by nobody.** `stale`, `overlong` and
+  the expiry a caller was handed all came off `validUntil` / `validFrom` — the relay's own UNSIGNED
+  row metadata, which is precisely the third-party assertion about availability this module says it
+  refuses, and it meant the forged-lease guard was enforced against a span the agent never signed.
+  A descriptor whose signed region said the lease expired a year ago and whose relay row said two
+  minutes remained read back `running (said so 60s ago)`. The signed `iep:leaseExpires` and
+  `dct:created` now decide; the row survives only as a pre-filter; and where the two disagree the
+  answer is a new `disputed` state rather than a pick.
+- **A parse failure was rendered as a fact about somebody's agent.** An agent id with no pod segment
+  — a `did:key`, a `did:ethr`, a cross-issuer `did:web`, which is to say the Codex agent this layer
+  exists to serve — produced `never` and the line "has never said it was running", with no pod asked
+  and no address composed. That is the exact sentence the module's own docstring forbids. There is
+  now an `unnameable` state on both readers, `never` is reserved for a pod that answered and held
+  nothing, and the `/workspace who` legend says all of it.
+- **An unanswered ask was silenced by its human saying anything at all.** The channel watcher
+  cancelled a pending ask on ANY readable entry from the target's pod, so "back from lunch" from
+  the delegator permanently suppressed the notice about their agent's unanswered request — in
+  exactly the case the notice exists for, since an agent's host being off is when its human is
+  likeliest to be the one talking. An ask is ended now by an entry declaring `prov:wasDerivedFrom`
+  it, or by one the ADDRESSED agent composed under its own key.
+- **Admission was gated on a path segment out of an attacker-chosen URL.** Check 5 was handed
+  `podOfDescriptorUrl(notice.about)` — the first path segment of a field a forger writes on a
+  world-writable inbox — and `get_descriptor` will fetch a caller-supplied URL on any public host
+  (measured: it returned `raw.githubusercontent.com/w3c/…`, whose "pod" is `w3c`). A descriptor
+  served from `https://attacker.example/u-eth-<a seated pod>/req.ttl` therefore satisfied "is the
+  asker seated here". `admitSeatedIn` now resolves the KEY that signed the record to a seat, through
+  three documents the asker cannot write; the URL segment is renamed `servedFromPath`, documented as
+  not evidence, and used only for reporting.
+
+### Changed
+- **`verifiedSigner` is the only way a caller gets a signer into the authorship judgment.**
+  `readAuthorship(...).signerAgent` is whatever the proof NAMES, reported whether or not any check
+  passed — correct for a surface saying "this proof claims X and did not verify", and a hole if it
+  reaches the comparison, because a descriptor's bytes are its pod owner's and this repo has already
+  had one whose authorship covered only a filename. The one question a comparison may turn on is
+  asked once, at the substrate, so four call sites cannot each get it wrong. The test is
+  `contentBinding`, not `authorshipVerified`, for the same measured reason `verifyRequest` check 2
+  records.
+- **`agentIdHash` spells out its own UTF-8 rather than using `TextEncoder`.** Every agent address is
+  composed through it, so a runtime where it throws is a runtime where no agent can publish or be
+  found — and a JSDOM window has no `TextEncoder`, which surfaced as the desktop heartbeat reporting
+  "it has not managed to say its host is running".
+- **The desktop panel names the inbox it read**, so "nothing was waiting" and "this read the wrong
+  mailbox" can never again be the same sentence on screen, and the wake result is drawn on the
+  success path too — only the failure path re-rendered before.
+- **The desktop unit double keys its inbox by session pod** and refuses `pod_url`, like the relay. A
+  single shared inbox answering identically for every session is why the ask-and-wake path was green
+  here for a release while production dropped every request on the floor.
 
 ---
 

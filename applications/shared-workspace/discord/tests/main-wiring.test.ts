@@ -503,7 +503,11 @@ describe('the agent picker and /workspace ask', () => {
     expect(pending[0]?.seq).toBe(7);
     // Verbatim, so the follow-up quotes what was true when the ask was made rather than
     // re-deriving a fact that has since changed.
-    expect(pending[0]?.presenceAtAsk).toContain('has never said it was running');
+    expect(pending[0]?.presenceAtAsk).toContain('holds no lease for it at all');
+    // And the ask carries the AGENT it was addressed to, not only its delegator's pod: an answer
+    // is an entry that agent composed or one derived from the ask, never anything at all from
+    // that pod. See `watch.ts` — their human saying "back from lunch" used to end the wait.
+    expect(pending[0]?.targetAgentId).toBeTruthy();
   });
 
   it('serialises an ask on the ASKER\'s pod, like every other append to their log', async () => {

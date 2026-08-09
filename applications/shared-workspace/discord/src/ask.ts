@@ -39,7 +39,7 @@
 
 import {
   type Check, type Presence, type WorkspaceClient,
-  agentPort, delegatePort, errorCopy, foldRoster, isPresent, podOfNsIri, presenceLine,
+  agentPodOf, agentPort, delegatePort, errorCopy, foldRoster, isPresent, podOfNsIri, presenceLine,
   readDelegates, readPresence, scopeWriteEligible,
   type DelegateRoster, type PostOutcome, type RosterFold, type Seat,
 } from '@interego/workspace-client';
@@ -53,8 +53,22 @@ export const AUTOCOMPLETE_MAX = 25;
 /** One delegate somebody in this workspace could be asked something. */
 export interface AskTarget {
   readonly agentId: string;
-  /** The DELEGATOR's pod — whose seat the agent would write under, and where its lease lives. */
+  /**
+   * The DELEGATOR's pod: whose seat this agent would write under, and whose registry authorises it.
+   *
+   * ★ NOT WHERE ANYTHING OF THE AGENT'S OWN LIVES, AND THE DOCSTRING USED TO SAY IT WAS. Its lease
+   * and its capability document are on the AGENT's own pod, derived from its DID — the very next
+   * comment in this file says so about the same value — and so is the inbox it polls. Sending an
+   * ask's notification here is what made the ask-and-wake path deliver into a mailbox nobody read.
+   */
   readonly pod: string;
+  /**
+   * The agent's OWN pod, out of its DID. Where its lease, its capabilities and its inbox are.
+   *
+   * Null when this client cannot take a pod out of that id — a cross-issuer or `did:key` delegate.
+   * Carried rather than recomputed per surface so a renderer cannot quietly substitute `pod`.
+   */
+  readonly agentPod: string | null;
   /** The label that pod's own registry gives it. Null when the row carries no delegate label. */
   readonly name: string | null;
   readonly scope: string | null;
@@ -129,7 +143,7 @@ export async function askCandidates(
         ...(args.nowMs === undefined ? {} : { nowMs: args.nowMs }),
       });
       targets.push({
-        agentId: d.agentId, pod, name: d.name, scope: d.scope,
+        agentId: d.agentId, pod, agentPod: agentPodOf(d.agentId), name: d.name, scope: d.scope,
         writeEligible: d.writeEligible, presence, isYou: pod === mine,
       });
     }
@@ -326,13 +340,32 @@ export async function ask(
     why: 'this agent said its host was running, and a running host reads this channel directly — no notice was sent, because the entry above IS the request',
   };
   if (!isPresent(target.presence) && descriptorUrl) {
-    notice = await notifyAbout(deps.client, {
-      pod: target.pod, about: descriptorUrl,
-      summary: 'A request addressed to ' + (target.name ?? target.agentId) + ' was published in ' + found.candidates.binding.title,
-    });
-    checks.push(notice.delivered
-      ? { mark: notice.canonicalInbox === false ? 'q' : 'y', text: 'A notice pointing at that entry is in ' + target.pod + '\'s inbox' + (notice.canonicalInbox === false ? ', which is not an inbox the recipient is known to poll' : '') }
-      : { mark: 'n', text: 'The notice was not delivered: ' + (notice.why ?? 'no reason reported') + '. The ask is still on the record.' });
+    // ★ THE ADDRESSEE'S OWN POD, NOT ITS DELEGATOR'S, AND THIS IS THE WHOLE OF THE ASK-AND-WAKE
+    // PATH. MEASURED LIVE against the shipped functions: the notice went to `target.pod` — the
+    // seated member's — and a hosted delegate's `wake()` reads its inbox through ITS OWN session,
+    // where the relay answers `read_inbox: forbidden — you may only read your own inbox` for any
+    // other pod. Two different mailboxes, so a request addressed to an absent agent was delivered
+    // where that agent cannot look, sat unread forever, and the desktop panel reported "nothing was
+    // waiting" every time. A request vanishing into silence is worse than the feature being absent.
+    //
+    // The agent's own pod is the one `readPresence` and `readCapabilities` already derive from the
+    // same DID, so there is one address for everything about an agent and it comes from its id.
+    if (!target.agentPod) {
+      notice = {
+        attempted: false, delivered: false, canonicalInbox: null, inbox: null, warning: null,
+        why: 'this client cannot take a pod out of ' + target.agentId + ', so it cannot name the inbox that agent polls. '
+          + 'Nothing was sent — a notice into a guessed mailbox is a notice nobody reads.',
+      };
+      checks.push({ mark: 'q', text: 'No notice was sent: ' + notice.why + ' The ask is on the record and a host that reads this channel will find it.' });
+    } else {
+      notice = await notifyAbout(deps.client, {
+        pod: target.agentPod, about: descriptorUrl,
+        summary: 'A request addressed to ' + (target.name ?? target.agentId) + ' was published in ' + found.candidates.binding.title,
+      });
+      checks.push(notice.delivered
+        ? { mark: notice.canonicalInbox === false ? 'q' : 'y', text: 'A notice pointing at that entry is in the inbox on that AGENT\'s own pod, `' + target.agentPod + '` — the one its own session polls' + (notice.canonicalInbox === false ? ', though the relay did not report it as that pod\'s canonical inbox' : '') }
+        : { mark: 'n', text: 'The notice was not delivered: ' + (notice.why ?? 'no reason reported') + '. The ask is still on the record.' });
+    }
   }
   return { kind: 'asked', target, record, accepted, descriptorUrl, notice, checks };
 }

@@ -119,6 +119,9 @@ export {
   scopeCeiling,
   judgeAuthorship,
   authorshipLine,
+  signerLine,
+  agentPodOf,
+  verifiedSigner,
 } from './model/index.js';
 export type {
   DelegateRow,
@@ -130,6 +133,7 @@ export type {
   DelegateOutcome,
   CeilingVerdict,
   EntryAuthorship,
+  EntrySigner,
 } from './model/index.js';
 export type {
   PublishInputs,

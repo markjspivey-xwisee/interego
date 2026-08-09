@@ -111,10 +111,21 @@ export function delegateCeiling(args: {
  * With fragment IRIs the judge can demand that the Delegation's `prov:hadActivity` BE the
  * `prov:wasGeneratedBy` of this entry — which is the check that makes the footing per-act rather
  * than merely present.
+ *
+ * ★ AND `signedBy` DOES NOT COME OUT OF THE REGION, WHICH IS THE ONLY REASON ANY OF THE ABOVE IS
+ * WORTH READING. Every list below is bytes the pod's writer controls. The signer is the relay's
+ * answer about the key it VERIFIED over these bytes — `verifiedSigner(descriptor.authorship)`, not
+ * `readAuthorship(...).signerAgent`, which reports whatever a proof names whether or not it bound —
+ * and a caller that has a region but no descriptor passes null and gets `disputed` for any record
+ * claiming an agent wrote it. See {@link judgeAuthorship}.
  */
 export function readEntryAuthorship(
   region: string | null,
-  args: { readonly logOwnerWebId: string | null; readonly delegates: DelegateRoster | null },
+  args: {
+    readonly logOwnerWebId: string | null;
+    readonly delegates: DelegateRoster | null;
+    readonly signedBy: string | null;
+  },
 ): EntryAuthorship {
   return judgeAuthorship(
     region === null ? null : {
@@ -138,11 +149,11 @@ export {
   DELEGATION_SCOPES, WRITE_ELIGIBLE_SCOPES, isDelegationScope, scopeWriteEligible, AGENT_ID_RX,
   delegateLabel, parseDelegateLabel, delegateNameProblem, delegateAgentId,
   isDelegateRow, readDelegates, delegatePlan, publishDelegation, revokeDelegation,
-  scopeCeiling, judgeAuthorship, authorshipLine, footingLine,
+  scopeCeiling, judgeAuthorship, authorshipLine, footingLine, signerLine, agentPodOf, verifiedSigner,
   footingTurtle, footingActivityIri, footingDelegationIri,
 } from '@interego/core/delegate';
 export type {
   DelegateRow, DelegateRoster, DelegateRegistryPort, DelegateField, DelegateProblem,
   DelegatePlan, DelegateOutcome, CeilingVerdict, EntryAuthorship, DelegationScope,
-  EntryFooting, StatedFooting, AuthorshipStatements,
+  EntryFooting, StatedFooting, AuthorshipStatements, EntrySigner,
 } from '@interego/core/delegate';

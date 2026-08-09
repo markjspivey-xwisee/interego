@@ -55,14 +55,36 @@ const iri = (u: string): string => '<' + u + '>';
  * person other than the pod owner encounters these records, so a rendering that ran the two
  * together would be the place the distinction actually gets lost. Bolded when the answer is "for
  * itself", because that is the one a skimming reader would otherwise assume the other way.
+ *
+ * ★ AND "A DELEGATE WROTE THIS" IS NOW A CONJUNCTION OF TWO DOCUMENTS. The entry names its author;
+ * the relay's authorship block names the key it verified over those bytes. Every PROV triple here
+ * is written by whoever can publish to that pod — which includes THIS BOT, on the maintainer's —
+ * so an entry naming an agent it was not signed by comes through as `disputed` and is never drawn
+ * as that agent speaking. What that costs is that `principal` now says which key carried the
+ * words, because "the pod owner said this" and "a key they authorised put words attributed to
+ * them on their pod" are the same bytes to a reader who is not shown the difference.
  */
 export function authorOf(a: EntryAuthorship | null): string {
   if (a === null) return '[author not read]';
   switch (a.kind) {
-    case 'principal': return '[written by the pod owner]';
+    // ★ THE CARRIER IS NAMED WHEN IT IS NOT THE PERSON. "The pod owner said this" and "a key they
+    // authorised put words attributed to them on their pod" are the same bytes to a reader who is
+    // not shown the difference — and this bot is exactly such a key, on every message it relays.
+    case 'principal': return a.signer.kind === 'a-conduit'
+      ? '[written by the pod owner, relayed onto their pod by `' + a.signer.signedBy + '`'
+        + (a.signer.listed === true ? ', a key their own registry lists' + (a.signer.scope ? ' with scope ' + a.signer.scope : '')
+          : a.signer.listed === false ? ' — **their registry does not list that key**, so the only thing establishing it may write there is that the relay accepted the write'
+            : ', whose standing was not checked here') + ']'
+      // ★ AND "NOT ESTABLISHED" IS ITS OWN LINE. Left folded into the plain case, an entry whose
+      // signature nothing verified read exactly like one the person's own key signed — and a
+      // conduit can publish attributed to its delegator without signing, which is the same words
+      // with nothing behind them.
+      : a.signer.kind === 'not-established'
+        ? '[written by the pod owner **as far as the entry says** — no verified signature reached this reader, so which key carried it is not established]'
+        : '[written by the pod owner]';
     case 'unstated': return '[**author not stated** — this entry names nobody, which is not the same as the pod owner having written it]';
     case 'disputed': return '[**authorship disputed** — ' + a.why + ']';
-    case 'delegate': return '[written by **' + (a.name ?? 'an unnamed delegate') + '**, a delegate of the pod owner, '
+    case 'delegate': return '[written by **' + (a.name ?? 'an unnamed delegate') + '**, whose own key signed these bytes, a delegate of the pod owner, '
       + (a.footing.kind === 'on-behalf-of' ? 'speaking **for them** here — they share responsibility for it'
         : a.footing.kind === 'own-account' ? 'speaking **for itself** here — its own position, which the pod owner is NOT answerable for'
           : '**footing not stated** — this entry does not say whether it was written for them or on its own account, and neither reading is being assumed')
@@ -235,7 +257,7 @@ export function renderShow(out: ShowOut): Message {
       lines.push('',
         'Order inside one pod\'s log is the supersession chain those entries declare, which nothing outside that pod can rewrite. Order **between** pods is each entry\'s own `dct:created` — a clock its author\'s client set. The substrate establishes no happens-before across pods, so the interleaving above is a presentation, not a finding.',
         '',
-        '★ The pod is whose LOG an entry is in. **Who wrote it** is the name beside it, read from the entry\'s own `prov:wasAttributedTo`.',
+        '★ The pod is whose LOG an entry is in. **Who wrote it** is the name beside it, read from the entry\'s own `prov:wasAttributedTo` **and held against the key the relay authenticated over those bytes**. An entry naming an agent it was not signed by is reported as disputed and is never drawn as that agent speaking — every PROV triple in an entry is written by whoever can publish to that pod, so the signature is the only part of this a pod owner cannot compose.',
         '★ Where that names a delegate, THREE separate things are reported and they can disagree. (1) Is it that person\'s delegate at all — asked of their own pod\'s delegation registry, a document only they can write, and standing until they revoke it. (2) What footing THIS entry was on — read from the entry itself, as a `prov:Delegation` over the act that produced it or an `iep:actedOnOwnAccount` declaring the opposite. An agent can be a properly authorised delegate and still be speaking entirely for itself in any given message. (3) Neither, when the entry does not say — which is reported as not saying, and is not read as either.');
       return body(lines, false);
     }
@@ -279,7 +301,7 @@ export function renderWho(out: CandidatesOut, nowMs = Date.now()): Message {
       }
       for (const p of out.noneOn) lines.push('  · `' + p + '` answered and its registry lists no agent');
       lines.push('',
-        '● means that agent published a short lease saying its host was running, signed with its own key, and the lease is live now. ○ means it did not — a lapsed lease, none at all, or a pod that would not answer, and the line says which.',
+        '● means that agent published a short lease saying its host was running, signed with its own key, and the lease is live by **its own signed expiry**. ○ means anything else, and the line says which: a lapsed lease, no lease on a pod that answered, a lease too long to be evidence, a signed expiry that disagrees with the relay\'s own row, a pod that would not answer, or an agent id this client cannot compose an address from — in which case no pod was asked and nothing was established either way.',
         'Presence is read from **the agent\'s own pod**; whether its human authorises it is read from **theirs**. Two documents, and they can disagree.',
         '`/workspace ask` puts the ask on the record either way. A host that is not running answers when it next runs.');
       return body(lines, true);

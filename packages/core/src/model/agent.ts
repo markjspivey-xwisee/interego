@@ -15,13 +15,23 @@
  * So everything a peer needs is derived from the DID alone:
  *
  *     did:web:<host>:agents:<surface>-<pod>
- *        ├── <relay>/ns/<pod>/agent-<pod>-presence        "my host is running until T"
- *        └── <relay>/ns/<pod>/agent-<pod>-capabilities    "here is what I can be asked, and how"
+ *        ├── <relay>/ns/<pod>/agent-<pod>-<h>-presence        "my host is running until T"
+ *        └── <relay>/ns/<pod>/agent-<pod>-<h>-capabilities    "here is what I can be asked, and how"
+ *
+ *            …where <h> is {@link agentIdHash} over the WHOLE did. See {@link agentDocName} for the
+ *            measurement that put it there: two distinct agents sharing a pod used to compose one
+ *            address, and the second to publish deleted the first one's presence.
  *
  * Hold a DID, compose two URLs, and you know whether it is up and what it offers. No directory, no
  * lookup, no roster, no channel. ★ THE TEST THIS IS BUILT TO PASS: a Codex agent that has never
  * heard of a workspace, reached from a bare script with no Discord anywhere, can be discovered,
  * addressed, asked to do something, and answer. Nothing in this file mentions either.
+ *
+ * ★ AND AN ID THIS READER CANNOT NAME A DOCUMENT FROM IS ITS OWN ANSWER. A `did:key`, a `did:ethr`
+ * or a cross-issuer `did:web` with no pod segment yields no address, and no address means no pod
+ * was asked — which is `unnameable`, and is emphatically NOT "this agent has never said it was
+ * running". That sentence used to be produced for all three, out of a parse failure, with no
+ * network read anywhere behind it.
  *
  * ★ AND THE ERROR THIS REPLACES WAS CONCRETE. The first capability document was named
  * `<member pod>/<convener pod>--<slug>-affordances` — a capability described as a fact about an
@@ -55,7 +65,7 @@
 
 import { escapeTurtleLiteral, graphRegion, substrateReaders } from '../rdf/turtle-region.js';
 import {
-  readAuthorship, relayRefusal,
+  agentPodOf, readAuthorship, relayRefusal,
   type AuthorshipReading, type Check, type DelegateRegistryPort,
 } from './delegate.js';
 
@@ -64,35 +74,80 @@ const { readIri, readIriAll, readLiteral } = substrateReaders;
 // ── Addressing ───────────────────────────────────────────────
 
 /**
- * The pod segment inside an agent DID, or null when this reader cannot take one out of it.
- *
- * A delegate's DID is `did:web:<host>:agents:<surface>-<pod>` — the pod half comes from the key,
- * so it is unique per agent and is exactly what distinguishes two delegates of one person.
- *
- * ★ NULL RATHER THAN A FALLBACK. A name composed from an id this reader could not take apart would
- * be a document at an address nobody else computes, which reads to every other client as "this
- * agent has never published anything" — a positive-sounding claim manufactured from a parse
- * failure. A segment lifted out of somebody else's identifier is also about to be concatenated
- * into IRIs this client fetches and locates signed regions inside, so it is checked for the
- * characters that would make those IRIs something other than what the interface says they are.
+ * Re-exported, not defined here. It reads a pod out of an agent DID and out of a relay WebID, and
+ * {@link judgeAuthorship} needs the second — so it lives in `model/delegate.ts`, which this file
+ * already imports, rather than being spelled a second time on the other side of a cycle.
  */
-export function agentPodOf(agentId: unknown): string | null {
-  if (typeof agentId !== 'string' || !agentId) return null;
-  const m = /agents:[a-z0-9-]*?(u-[a-z0-9-]+)$/i.exec(agentId)
-    ?? /\/users\/([^/]+)\/profile/.exec(agentId);
-  const seg = m?.[1];
-  if (!seg) return null;
-  return /[\s<>"{}|\\^`#?/]/.test(seg) ? null : seg.toLowerCase();
-}
+export { agentPodOf } from './delegate.js';
 
 /** A relay `/ns/` document address. The relay's own route, so the composition is the same one. */
 export const agentNsIri = (relay: string, pod: string, name: string): string =>
   relay + '/ns/' + pod + '/' + name;
 
-/** The last segment of an agent's document of `kind`, or null when the id carries no pod. */
+/**
+ * A 64-bit FNV-1a over the whole agent id, as 16 lowercase hex characters.
+ *
+ * ★ THE WHOLE ID, WHICH IS THE ENTIRE POINT. See {@link agentDocName}: keying a document name on
+ * the pod segment alone made the DID → address mapping non-injective, so two distinct agents that
+ * share a pod composed ONE address and — with `auto_supersede_prior` — the later publisher silently
+ * made the earlier one's presence unreadable. Every byte of the id goes in here.
+ *
+ * ★ AND IT IS A HASH RATHER THAN AN ENCODING, WITH THE TRADE STATED. A base64url of the id would be
+ * exactly injective and would put a ~104-character opaque blob in a URL a person is meant to be
+ * able to read and follow. What a hash costs instead is a collision probability: two DIDs collide
+ * only on a full 64-bit collision, which at a million agents on one deployment is about 3 in 10^8.
+ * That is a real number and not zero, and it is the reason the READER does not trust the name: both
+ * documents restate the agent they are about INSIDE the signed region, and both readers below
+ * refuse anything whose region names a different agent than the one they asked for. The name is an
+ * address; the region is the assertion.
+ *
+ * FNV-1a rather than a cryptographic digest because this has to run in a browser bundle, an
+ * Electron renderer, a Node CLI and the relay, and `node:crypto` is unavailable in one of those
+ * while `crypto.subtle` is asynchronous in all of them. Nothing here is a security boundary.
+ *
+ * ★ AND THE UTF-8 IS SPELLED OUT RATHER THAN TAKEN FROM `TextEncoder`, WHICH IS NOT A STYLE CHOICE.
+ * Every address in this module is composed from this function, so a runtime where it throws is a
+ * runtime where no agent can publish or be found. `TextEncoder` is a global, and it is absent from
+ * a JSDOM window — measured: the desktop shell's presence heartbeat died with
+ * `ReferenceError: TextEncoder is not defined` and reported "it has not managed to say its host is
+ * running", which is exactly the shape of failure that reads as a design problem. Polyfilling it
+ * in a test would have hidden that from the one runtime that caught it, and this repo has already
+ * been bitten by a polyfill in one test file changing another's behaviour through a shared global.
+ */
+export function agentIdHash(agentId: string): string {
+  const OFFSET = 0xcbf29ce484222325n;
+  const PRIME = 0x100000001b3n;
+  const MASK = 0xffffffffffffffffn;
+  let h = OFFSET;
+  const mix = (byte: number): void => { h = ((h ^ BigInt(byte)) * PRIME) & MASK; };
+  // Hashed over UTF-8 bytes rather than UTF-16 code units, so two runtimes cannot disagree about
+  // the address of an id containing a non-ASCII character. `for…of` iterates by CODE POINT, so a
+  // surrogate pair arrives here once, already combined.
+  for (const ch of agentId) {
+    const cp = ch.codePointAt(0) as number;
+    if (cp < 0x80) { mix(cp); }
+    else if (cp < 0x800) { mix(0xc0 | (cp >> 6)); mix(0x80 | (cp & 0x3f)); }
+    else if (cp < 0x10000) { mix(0xe0 | (cp >> 12)); mix(0x80 | ((cp >> 6) & 0x3f)); mix(0x80 | (cp & 0x3f)); }
+    else { mix(0xf0 | (cp >> 18)); mix(0x80 | ((cp >> 12) & 0x3f)); mix(0x80 | ((cp >> 6) & 0x3f)); mix(0x80 | (cp & 0x3f)); }
+  }
+  return h.toString(16).padStart(16, '0');
+}
+
+/**
+ * The last segment of an agent's document of `kind`, or null when the id carries no pod.
+ *
+ * ★ THE NAME CARRIES THE WHOLE AGENT ID, NOT ONLY ITS POD, AND THAT WAS MEASURED THE WRONG WAY
+ * ROUND FIRST. It used to be `agent-<pod>-<kind>`, and `register_agent` freely issues several
+ * distinct DIDs whose ids embed the same pod — a pod owner's own surface agent and any delegate
+ * registered there. Measured on the live relay: `claude-u-pk-63aaca4b0d72` and
+ * `wsp-delegate-u-pk-63aaca4b0d72` composed the IDENTICAL presence and capability IRIs, so the
+ * second one to publish superseded the first at that shared address and the first then read back
+ * `unreadable` — one agent publishing silently deleted another agent's presence. The DID → address
+ * mapping the whole model rests on has to be injective, and the pod segment alone is not the DID.
+ */
 export function agentDocName(agentId: string, kind: 'presence' | 'capabilities'): string | null {
   const pod = agentPodOf(agentId);
-  return pod ? 'agent-' + pod + '-' + kind : null;
+  return pod ? 'agent-' + pod + '-' + agentIdHash(agentId) + '-' + kind : null;
 }
 
 /** `<relay>/ns/<agent pod>/agent-<agent pod>-<kind>`, or null. */
@@ -253,8 +308,8 @@ export async function publishPresence(
   },
 ): Promise<PresencePublish> {
   const iri = presenceIri(args.relay, args.agentId);
-  const pod = agentPodOf(args.agentId) ?? '';
-  if (!iri) {
+  const pod = agentPodOf(args.agentId);
+  if (!iri || !pod) {
     return {
       kind: 'unnameable',
       why: 'This agent\'s id (' + args.agentId + ') carries no pod segment this client can read, so there is no address a '
@@ -287,12 +342,15 @@ export async function publishPresence(
 }
 
 /**
- * FIVE ANSWERS, AND ONLY ONE OF THEM IS PRESENCE.
+ * SEVEN ANSWERS, AND ONLY ONE OF THEM IS PRESENCE.
  *
  * `never` and `stale` are different facts and a reader is told which. `overlong` is a finding about
- * a document that claims too much. `unreadable` is the pod not answering — which is not the same as
- * the host being off, and neither is being assumed. ★ Absence of evidence is not presence, and
- * neither is a failed read.
+ * a document that claims too much. `disputed` is a lease whose SIGNED expiry and the relay's own
+ * row disagree — the case the signed expiry exists to catch, reported rather than resolved by
+ * picking one. `unreadable` is the pod not answering — which is not the same as the host being off.
+ * `unnameable` is this client being unable to compose an address at all, so no pod was asked and
+ * nothing about that agent was established in either direction. ★ Absence of evidence is not
+ * presence, a failed read is not presence, and a parse failure is not a fact about somebody's agent.
  */
 export type Presence =
   | {
@@ -300,17 +358,28 @@ export type Presence =
       readonly agentId: string;
       readonly pod: string;
       readonly iri: string;
-      /** When the lease was written, by its author's own clock. */
+      /** When the lease was written, by its author's own clock, out of the SIGNED region. */
       readonly saidAtMs: number;
+      /** `iep:leaseExpires`, out of the SIGNED region — never the relay's `validUntil`. */
       readonly expiresMs: number;
       readonly descriptorUrl: string;
       readonly host: string | null;
       readonly authorship: AuthorshipReading;
     }
   | { readonly state: 'stale'; readonly agentId: string; readonly pod: string; readonly iri: string; readonly lastExpiresMs: number | null; readonly why: string }
-  | { readonly state: 'never'; readonly agentId: string; readonly pod: string; readonly iri: string | null; readonly why: string }
+  | { readonly state: 'never'; readonly agentId: string; readonly pod: string; readonly iri: string; readonly why: string }
   | { readonly state: 'overlong'; readonly agentId: string; readonly pod: string; readonly iri: string; readonly spanMs: number | null; readonly why: string }
-  | { readonly state: 'unreadable'; readonly agentId: string; readonly pod: string; readonly iri: string | null; readonly why: string };
+  | {
+      readonly state: 'disputed';
+      readonly agentId: string; readonly pod: string; readonly iri: string;
+      /** What the agent signed. */
+      readonly signedExpiresMs: number | null;
+      /** What the relay's own unsigned row says. */
+      readonly rowExpiresMs: number | null;
+      readonly why: string;
+    }
+  | { readonly state: 'unreadable'; readonly agentId: string; readonly pod: string; readonly iri: string; readonly why: string }
+  | { readonly state: 'unnameable'; readonly agentId: string; readonly pod: null; readonly iri: null; readonly why: string };
 
 /** True only for a lease valid now, signed, content-bound, self-declared and within the span bound. */
 export const isPresent = (p: Presence): boolean => p.state === 'running';
@@ -339,12 +408,20 @@ export async function readPresence(
   port: AgentPort,
   args: { readonly relay: string; readonly agentId: string; readonly nowMs?: number },
 ): Promise<Presence> {
-  const pod = agentPodOf(args.agentId) ?? '';
+  const pod = agentPodOf(args.agentId);
   const iri = presenceIri(args.relay, args.agentId);
-  if (!iri) {
+  if (!pod || !iri) {
+    // ★ NOT `never`, AND THE DIFFERENCE IS THE WHOLE OF WHY THIS BRANCH EXISTS. `never` is a fact
+    // about a pod that answered and held nothing. Here no pod was asked and no address was even
+    // composed, and the sentence this used to produce — "has never said it was running" — was a
+    // flat negative claim about somebody's agent manufactured out of a parse failure, with zero
+    // network reads behind it. Reachable for every `did:key`, `did:ethr` and cross-issuer
+    // `did:web` — which is to say, for exactly the Codex agent this module is built to serve.
     return {
-      state: 'never', agentId: args.agentId, pod, iri: null,
-      why: 'that agent id carries no pod segment this reader can name a presence document from, so there is no address to ask about',
+      state: 'unnameable', agentId: args.agentId, pod: null, iri: null,
+      why: 'this client cannot compose a presence address from that agent id (' + args.agentId + '), because it carries no pod '
+        + 'segment this reader knows how to take out. No pod was asked, so whether its host is running was never established in '
+        + 'either direction.',
     };
   }
   const now = args.nowMs ?? Date.now();
@@ -365,8 +442,11 @@ export async function readPresence(
    * a channel picker reads this once per delegate inside Discord's three-second budget — and it
    * distinguishes `never` from `stale` without a second query.
    *
-   * `iep:leaseExpires` is inside the signed region and is checked below, so the expiry this turns
-   * on is one the agent put its own key to rather than one the relay computed.
+   * The row's own `validUntil` is used HERE and only here, as a pre-filter that saves a descriptor
+   * fetch for a lease the relay has already stopped answering for. Every temporal decision — stale,
+   * overlong, the expiry reported to a caller — is taken further down from `iep:leaseExpires` and
+   * `dct:created` INSIDE the signed region, and a disagreement between the two is reported as
+   * `disputed` rather than resolved by picking one.
    */
   let rows: readonly Record<string, unknown>[];
   try {
@@ -393,37 +473,25 @@ export async function readPresence(
     };
   }
 
+  // ── the relay's own row, used ONLY as the cheap pre-filter it is ──────────
+  //
+  // ★ NOTHING BELOW DECIDES ANYTHING FROM THESE TWO NUMBERS. `validFrom` and `validUntil` are the
+  // relay's unsigned row metadata, and this module's whole position is that a relay-held claim
+  // about availability is a third party vouching for a process it cannot see. What the row is good
+  // for is skipping a descriptor fetch for a lease the relay has already stopped answering for —
+  // and, further down, being HELD AGAINST the signed value so a disagreement is visible.
   const head = rows[0] as Record<string, unknown>;
-  const headUntil = parseMs(head['validUntil']);
-  if (headUntil !== null && headUntil <= now) {
+  const rowFrom = parseMs(head['validFrom']);
+  const rowUntil = parseMs(head['validUntil']);
+  if (rowUntil !== null && rowUntil <= now) {
     return {
-      state: 'stale', agentId: args.agentId, pod, iri, lastExpiresMs: headUntil,
-      why: 'the newest lease this agent published lapsed at ' + new Date(headUntil).toISOString() + ' and has not been '
+      state: 'stale', agentId: args.agentId, pod, iri, lastExpiresMs: rowUntil,
+      why: 'the newest lease this agent published lapsed at ' + new Date(rowUntil).toISOString() + ' and has not been '
         + 'renewed since. Older leases of its own may still be inside their windows; they are claims it has already '
         + 'superseded, and its current claim is this one.',
     };
   }
-  const row = head;
-  const from = parseMs(row['validFrom']);
-  const until = parseMs(row['validUntil']);
-  const url = typeof row['descriptorUrl'] === 'string' ? row['descriptorUrl'] : '';
-  if (until === null) {
-    return {
-      state: 'overlong', agentId: args.agentId, pod, iri, spanMs: null,
-      why: 'that lease declares no expiry. A lease is only evidence because it is short and has to be renewed; one that never '
-        + 'lapses says nothing about whether anything is running now, so it is not being read as presence.',
-    };
-  }
-  const span = from === null ? null : until - from;
-  if (span === null || span > PRESENCE_MAX_LEASE_MS) {
-    return {
-      state: 'overlong', agentId: args.agentId, pod, iri, spanMs: span,
-      why: span === null
-        ? 'that lease carries an expiry and no readable start, so how long it claims to be good for cannot be computed and it is not being read as presence'
-        : 'that lease is valid for ' + describeSpan(span) + '. A lease is only evidence because it is short and has to be '
-          + 'renewed; one that long says nothing about whether anything is running now, so it is not being read as presence.',
-    };
-  }
+  const url = typeof head['descriptorUrl'] === 'string' ? head['descriptorUrl'] : '';
   if (!url) {
     return {
       state: 'unreadable', agentId: args.agentId, pod, iri,
@@ -486,10 +554,60 @@ export async function readPresence(
           + args.agentId + '. The document name is not an assertion; the region is, and it does not agree.',
     };
   }
-  const said = parseMs(readLiteral(region, 'dct:created')) ?? from ?? now;
+
+  // ── the two numbers that actually decide this, BOTH out of the signed region ──────────────
+  //
+  // ★ THIS IS THE CHECK THE MODULE CLAIMED TO MAKE AND DID NOT. `iep:leaseExpires` was written by
+  // `presenceTurtle` and never read: `stale`, `overlong` and the reported expiry all came off the
+  // relay's `validUntil`/`validFrom`. Measured against the shipped reader, a descriptor whose SIGNED
+  // region said the lease expired a year ago and whose relay row said two minutes remained came
+  // back `running (said so 60s ago)` — presence decided entirely by the third-party assertion this
+  // file exists to refuse, and the forged-lease guard enforced against a span the agent never
+  // signed. The lease is the agent's claim, so the agent's own numbers govern.
+  const signedExpires = parseMs(readLiteral(region, 'iep:leaseExpires'));
+  const signedCreated = parseMs(readLiteral(region, 'dct:created'));
+  if (signedExpires === null) {
+    return {
+      state: 'overlong', agentId: args.agentId, pod, iri, spanMs: null,
+      why: 'that lease\'s signed region declares no readable iep:leaseExpires. A lease is only evidence because it is short and '
+        + 'has to be renewed, and an expiry the agent did not sign is the relay\'s claim about availability rather than the '
+        + 'agent\'s — so there is nothing here to read as presence.',
+    };
+  }
+  // ★ THE DISAGREEMENT IS REPORTED, NOT RESOLVED. These are the same ISO string in every honest
+  // publish — `publishPresence` sends one value to both — so a difference means the row and the
+  // bytes are telling a reader two different things about the same lease. Picking the signed one
+  // silently would throw away exactly the evidence the signed field exists to produce.
+  if (rowUntil !== null && Math.abs(rowUntil - signedExpires) > 1000) {
+    return {
+      state: 'disputed', agentId: args.agentId, pod, iri,
+      signedExpiresMs: signedExpires, rowExpiresMs: rowUntil,
+      why: 'that lease\'s signed region says it expires at ' + new Date(signedExpires).toISOString() + ' and the relay\'s own '
+        + 'row for it says ' + new Date(rowUntil).toISOString() + '. One of those the agent put its key to and one of those it '
+        + 'did not, they do not agree, and reporting the disagreement is the whole reason the signed value is written.',
+    };
+  }
+  if (signedExpires <= now) {
+    return {
+      state: 'stale', agentId: args.agentId, pod, iri, lastExpiresMs: signedExpires,
+      why: 'the newest lease this agent published expired, by its own signed iep:leaseExpires, at '
+        + new Date(signedExpires).toISOString() + ' and has not been renewed since.',
+    };
+  }
+  const span = signedCreated === null ? null : signedExpires - signedCreated;
+  if (span === null || span > PRESENCE_MAX_LEASE_MS) {
+    return {
+      state: 'overlong', agentId: args.agentId, pod, iri, spanMs: span,
+      why: span === null
+        ? 'that lease\'s signed region carries an expiry and no readable dct:created, so how long it claims to be good for cannot be computed and it is not being read as presence'
+        : 'that lease is valid for ' + describeSpan(span) + ', by its own signed dates. A lease is only evidence because it is '
+          + 'short and has to be renewed; one that long says nothing about whether anything is running now, so it is not being '
+          + 'read as presence.',
+    };
+  }
   return {
     state: 'running', agentId: args.agentId, pod, iri,
-    saidAtMs: said, expiresMs: until, descriptorUrl: url,
+    saidAtMs: signedCreated ?? rowFrom ?? now, expiresMs: signedExpires, descriptorUrl: url,
     host: readLiteral(region, 'iep:presenceHost'),
     authorship,
   };
@@ -517,9 +635,13 @@ export function presenceLine(p: Presence, nowMs = Date.now()): string {
   switch (p.state) {
     case 'running': return 'running (said so ' + describeSpan(nowMs - p.saidAtMs) + ' ago)';
     case 'stale': return p.lastExpiresMs === null ? 'not running as far as its pod says' : 'not since ' + new Date(p.lastExpiresMs).toISOString();
-    case 'never': return 'has never said it was running';
+    case 'never': return 'its pod holds no lease for it at all';
     case 'overlong': return 'published a lease too long to be evidence';
+    case 'disputed': return 'its lease and the relay disagree about when it expires';
     case 'unreadable': return 'whether it is running is not established';
+    // ★ SAYS WHAT HAPPENED, WHICH IS THAT NOTHING DID. Every other line here reports a document;
+    // this one reports that no document was looked for, because no address could be composed.
+    case 'unnameable': return 'this client cannot compose a presence address from that agent id, so whether it is running was never asked';
   }
 }
 
@@ -662,8 +784,8 @@ export async function publishCapability(
   },
 ): Promise<CapabilityPublish> {
   const iri = capabilitiesIri(args.relay, args.agentId);
-  const pod = agentPodOf(args.agentId) ?? '';
-  if (!iri) {
+  const pod = agentPodOf(args.agentId);
+  if (!iri || !pod) {
     return {
       kind: 'unnameable',
       why: 'This agent\'s id (' + args.agentId + ') carries no pod segment this client can read, so there is no address a peer '
@@ -713,8 +835,15 @@ export type CapabilityRead =
       readonly authorship: AuthorshipReading;
     }
   /** The pod answered and holds no capability document. Its own answer, not a failure. */
-  | { readonly kind: 'none'; readonly agentId: string; readonly iri: string | null; readonly why: string }
-  | { readonly kind: 'unreadable'; readonly agentId: string; readonly iri: string | null; readonly why: string };
+  | { readonly kind: 'none'; readonly agentId: string; readonly iri: string; readonly why: string }
+  | { readonly kind: 'unreadable'; readonly agentId: string; readonly iri: string; readonly why: string }
+  /**
+   * No address could be composed from that id, so no pod was asked.
+   *
+   * ★ NOT `none`. This used to collapse into it, and `none` renders as "advertises nothing" — a
+   * statement about an agent, produced from this client's inability to parse its name.
+   */
+  | { readonly kind: 'unnameable'; readonly agentId: string; readonly iri: null; readonly why: string };
 
 /**
  * What this agent says it can be asked, read from its own pod and checked against its own key.
@@ -734,10 +863,15 @@ export async function readCapabilities(
   port: AgentPort,
   args: { readonly relay: string; readonly agentId: string },
 ): Promise<CapabilityRead> {
-  const pod = agentPodOf(args.agentId) ?? '';
+  const pod = agentPodOf(args.agentId);
   const iri = capabilitiesIri(args.relay, args.agentId);
-  if (!iri) {
-    return { kind: 'none', agentId: args.agentId, iri: null, why: 'that agent id carries no pod segment this reader can name a capability document from, so there is no address to ask about' };
+  if (!pod || !iri) {
+    return {
+      kind: 'unnameable', agentId: args.agentId, iri: null,
+      why: 'this client cannot compose a capability address from that agent id (' + args.agentId + '), because it carries no pod '
+        + 'segment this reader knows how to take out. No pod was asked, so what that agent can be asked is not established — '
+        + 'which is not the same as it advertising nothing.',
+    };
   }
   let rows: readonly Record<string, unknown>[];
   try {
@@ -833,15 +967,28 @@ export interface RequestNotice {
   readonly published: string | null;
 }
 
-/** Read the inbox and keep the items that point at something. Nothing is verified here. */
+/**
+ * Read the inbox and keep the items that point at something. Nothing is verified here.
+ *
+ * ★ `pod_url` IS DELIBERATELY NOT SENT AND CANNOT USEFULLY BE. Measured live: the relay answers
+ * `read_inbox: forbidden — you may only read your own inbox` for any pod but the caller's. So this
+ * reads the inbox of whatever session the port carries and nothing else — which is why the address
+ * it read is REPORTED. A request addressed to an agent has to be delivered to the pod that agent's
+ * OWN session polls, and for a whole release it was delivered to its delegator's pod instead, where
+ * it sat unread while the panel said "nothing was waiting". `inbox` is what makes that checkable by
+ * a caller and assertable by a driver.
+ */
 export async function readRequests(port: AgentPort, limit = REQUEST_INBOX_LIMIT): Promise<{
   readonly notices: readonly RequestNotice[];
   readonly saturated: boolean;
   readonly limit: number;
+  /** The inbox the relay reports for THIS session — the canonical address a peer must deliver to. */
+  readonly inbox: string | null;
 }> {
   const p = await port.tool('read_inbox', { limit }, { cache: false }) as Record<string, unknown> | null;
   const bad = relayRefusal(p);
   if (bad) throw new Error(String(bad['message'] ?? bad['error']));
+  const inbox = typeof p?.['inbox'] === 'string' ? p['inbox'] as string : null;
   const all = Array.isArray(p?.['items']) ? p?.['items'] as Record<string, unknown>[] : [];
   const notices = all
     .filter((it) => it && typeof it['about'] === 'string' && it['about'])
@@ -852,7 +999,25 @@ export async function readRequests(port: AgentPort, limit = REQUEST_INBOX_LIMIT)
       summary: typeof item['summary'] === 'string' ? item['summary'] : null,
       published: typeof item['published'] === 'string' ? item['published'] : null,
     }));
-  return { notices, saturated: all.length >= limit, limit };
+  return { notices, saturated: all.length >= limit, limit, inbox };
+}
+
+/**
+ * The canonical LDN inbox of whatever session this port carries, as the relay itself reports it.
+ *
+ * ★ COMPOSED BY THE RELAY, NEVER BY A CLIENT, AND THAT IS THE ENTIRE POINT. The desktop shell used
+ * to advertise `<relay>/ns/<its human's pod>/inbox` as the route by which its agent could be
+ * reached. That address 404s — it is a `/ns/` graph name and not an inbox — AND it named the wrong
+ * pod, so the one route a stranger holding only the DID was told to use dereferenced to nothing and
+ * pointed at a mailbox the agent does not read. Measured: the relay answers with
+ * `http://css.railway.internal:3456/<pod>/inbox/`, an address `notify_agent` accepts directly and
+ * reports back as `canonicalInbox: true`. That is a real route; a composed one was a guess.
+ */
+export async function agentInbox(port: AgentPort): Promise<string | null> {
+  const p = await port.tool('read_inbox', { limit: 1 }, { cache: false }) as Record<string, unknown> | null;
+  const bad = relayRefusal(p);
+  if (bad) throw new Error(String(bad['message'] ?? bad['error']));
+  return typeof p?.['inbox'] === 'string' && p['inbox'] ? p['inbox'] as string : null;
 }
 
 /**
@@ -868,8 +1033,20 @@ export async function readRequests(port: AgentPort, limit = REQUEST_INBOX_LIMIT)
  * Return null to admit, or the sentence explaining the refusal.
  */
 export type AdmissionPredicate = (asker: {
-  /** The pod the record was SERVED from, which is the asker's. */
-  readonly pod: string;
+  /**
+   * The first path segment of the URL the NOTICE pointed at. ★ NOT ESTABLISHED AS A POD, AND A
+   * PREDICATE THAT GATES ON IT IS NOT A GATE.
+   *
+   * The whole URL comes off an inbox item, an inbox on this relay is world-writable, and
+   * `get_descriptor` will fetch a caller-supplied URL on any public host — measured: it returned
+   * the contents of `raw.githubusercontent.com/w3c/…` and this field then read `"w3c"`. So a
+   * descriptor served from `https://attacker.example/u-eth-<a seated pod>/req.ttl` yields the name
+   * of a pod the bytes never touched. It is carried because it is worth SAYING in a report, and it
+   * is named for what it actually is so nobody keys a decision on it again.
+   *
+   * Key on {@link signedBy}, which the relay verified over the bytes.
+   */
+  readonly servedFromPath: string;
   /** The agent or WebID whose signature the relay verified over that record. */
   readonly signedBy: string;
   /** The signed region, for a predicate that needs to read a context out of the record itself. */
@@ -887,7 +1064,12 @@ export interface RequestVerdict {
   /** True only when every check is a finding in favour. A `q` never makes it true. */
   readonly ok: boolean;
   readonly why: string | null;
-  readonly askerPod: string | null;
+  /**
+   * The first path segment of the URL the notice pointed at. ★ A REPORTING FIELD, NOT A FINDING —
+   * see {@link AdmissionPredicate.servedFromPath}: the URL is attacker-chosen and the relay will
+   * fetch any public host, so this is what the address LOOKED like and not where the bytes live.
+   */
+  readonly servedFromPath: string | null;
   /** The body of the ask, read out of the signed region. Null when the region carried none. */
   readonly body: string | null;
   /** The agent ids the record says it is addressed to. */
@@ -947,7 +1129,7 @@ export async function verifyRequest(
 ): Promise<RequestVerdict> {
   const checks: Check[] = [];
   const base = {
-    about: notice.about, askerPod: null, body: null,
+    about: notice.about, servedFromPath: null, body: null,
     addressedTo: [] as readonly string[], forMe: [] as readonly string[],
     descriptorUrl: null, signedBy: null, region: null,
   };
@@ -964,8 +1146,8 @@ export async function verifyRequest(
       + '), so there is nothing signed to read the ask out of');
   }
   const descriptorUrl = notice.about;
-  const askerPod = podOfDescriptorUrl(descriptorUrl);
-  checks.push({ mark: 'y', text: 'The address in the notice resolves to a descriptor' + (askerPod ? ' served from pod ' + askerPod : '') });
+  const servedFromPath = podOfDescriptorUrl(descriptorUrl);
+  checks.push({ mark: 'y', text: 'The address in the notice resolves to a descriptor' + (servedFromPath ? ', at a URL whose first path segment is ' + servedFromPath : '') });
 
   // ── 2. the signature is intact AND covers these bytes ─────────────────────
   //
@@ -1007,7 +1189,7 @@ export async function verifyRequest(
   const signedBy = typeof block?.['signedBy'] === 'string' ? block['signedBy'] as string
     : typeof block?.['signer'] === 'string' ? block['signer'] as string : null;
   const descriptorBound = (block?.['descriptorBinding'] as { bound?: unknown } | undefined)?.bound === true;
-  const withDoc = { descriptorUrl, askerPod, signedBy };
+  const withDoc = { descriptorUrl, servedFromPath, signedBy };
   if (binding !== 'bound' && binding !== 'bound-at-signing') {
     return no('that record\'s signature reports contentBinding "' + (binding ?? 'none') + '". Only "bound" means a signature '
       + 'was verified AND its digest recomputed over the bytes being served, so nothing here establishes that what the ask says '
@@ -1078,13 +1260,18 @@ export async function verifyRequest(
   checks.push({ mark: 'y', text: 'It is addressed to ' + forMe.join(', ') + ', and this machine holds that key' });
 
   // ── 5. the caller's own standing policy ───────────────────────────────────
-  if (!askerPod) {
-    return no('the pod that record was served from could not be named, so whether its author has standing to ask is not established', { ...withRegion, forMe });
-  }
+  //
+  // ★ THE PREDICATE IS HANDED THE SIGNER, AND THE PATH SEGMENT IS LABELLED AS ONE. It used to be
+  // handed `pod`, taken from the first path segment of the notice's own `about` — a field a forger
+  // writes — and `admitSeatedIn` gated on exactly that. A descriptor served from
+  // `https://attacker.example/u-eth-<a seated pod>/req.ttl` therefore produced the name of a pod
+  // the bytes had never touched, and check 5 admitted it. What the relay actually verified over
+  // these bytes is `signedBy`, so that is what a policy resolves; the segment is carried for the
+  // report and named so that nobody keys on it again.
   const admits = args.admits ?? admitAnyVerifiedSigner;
-  const refused = await admits({ pod: askerPod, signedBy: signedBy as string, region, descriptorUrl });
+  const refused = await admits({ servedFromPath: servedFromPath ?? '', signedBy: signedBy as string, region, descriptorUrl });
   if (refused) return no(refused, { ...withRegion, forMe });
-  checks.push({ mark: 'y', text: 'Pod ' + askerPod + ' has standing to ask this agent, by this host\'s own policy rather than by anything in the notice' });
+  checks.push({ mark: 'y', text: signedBy + ' has standing to ask this agent, by this host\'s own policy rather than by anything in the notice' });
 
   // ── 6. it has not already been answered ───────────────────────────────────
   if (args.answeredHere.indexOf(descriptorUrl) >= 0) {
@@ -1101,8 +1288,14 @@ export async function verifyRequest(
 }
 
 /**
- * Where the bytes CAME FROM, taken from the URL that was actually fetched — not a name parsed out
- * of somebody's assertion about where they live. These two can disagree.
+ * The first path segment of a URL, which on a relay pod URL happens to be the pod name.
+ *
+ * ★ WHAT THIS IS NOT: EVIDENCE OF WHERE ANY BYTES CAME FROM. It used to say it was, and that
+ * sentence was the reason a check gated on it. It is string surgery on whatever URL it is handed —
+ * measured: `podOfDescriptorUrl('https://raw.githubusercontent.com/w3c/rdf-tests/main/README.md')`
+ * is `'w3c'`, and `get_descriptor` will fetch and return that document. Where the URL came off an
+ * inbox item, the segment is the sender's choice. Use it to SAY what an address looked like; never
+ * to decide anything. Identity comes from the signature.
  */
 export function podOfDescriptorUrl(u: unknown): string | null {
   if (typeof u !== 'string') return null;

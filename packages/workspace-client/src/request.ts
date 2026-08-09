@@ -16,12 +16,13 @@
  * model says must work, and the reason the split exists rather than the convenience of it.
  */
 
+import { agentPodOf, readDelegates, type DelegateRegistryPort, type DelegateRoster } from '@interego/core/delegate';
 import { type AdmissionPredicate } from '@interego/core/agent';
 import { readIri } from './turtle.js';
 import type { Seat } from './seats.js';
 
 export {
-  REQUEST_INBOX_LIMIT, readRequests, verifyRequest, admitAnyVerifiedSigner,
+  REQUEST_INBOX_LIMIT, readRequests, verifyRequest, admitAnyVerifiedSigner, agentInbox,
   type RequestNotice, type RequestVerdict, type AdmissionPredicate,
 } from '@interego/core/agent';
 
@@ -32,16 +33,51 @@ export {
  * another channel is not an ask here, and a record that declares no room at all does not become one
  * by being delivered to somebody who is in one.
  *
- * ★ AND SEATING COMES FROM THE ROSTER, NOT FROM THE NOTICE. `seats` is the fold this client already
- * computed — one roster per run, not re-derived per item, so a burst of notices cannot turn into a
- * burst of grant scans against the convener's pod.
+ * ★ AND SEATING IS RESOLVED FROM THE SIGNATURE, NOT FROM THE ADDRESS THE NOTICE POINTED AT. This
+ * used to take the `pod` the verifier derived from the notice's own `about` URL — measured, that is
+ * the first path segment of an attacker-chosen string, and `get_descriptor` will fetch a
+ * caller-supplied URL on any public host. A descriptor served from
+ * `https://attacker.example/u-eth-<a seated pod>/req.ttl` therefore named a pod the bytes had never
+ * touched and this predicate admitted it. What the relay verified over the bytes is `signedBy`, so
+ * the question asked here is "whose seat does that KEY belong to", answered from three documents
+ * none of which the asker can write:
+ *
+ *   · the seat's own grantee WebID, when the person signed for themselves;
+ *   · the pod inside the signer's own DID, when it is a member's own session agent;
+ *   · a seated pod's DELEGATION REGISTRY, when it is a delegate of somebody seated.
+ *
+ * ★ AND A REGISTRY THAT WOULD NOT ANSWER IS SAID, NOT SILENTLY READ AS "NOT SEATED". Refusing
+ * somebody's agent because an HTTP call failed is an accusation manufactured from a network error,
+ * and it is the shape of failure that gets read as "your agent is not authorised".
+ *
+ * The rosters are read at most once per pod per predicate, so a burst of notices cannot turn into a
+ * burst of registry scans.
  */
 export function admitSeatedIn(args: {
   /** The workspace this host is currently watching. */
   readonly workspace: string;
   readonly seats: readonly Seat[];
+  /**
+   * How to read a seated pod's delegation registry.
+   *
+   * Optional, and its absence is answered honestly rather than by falling back to the old
+   * URL-segment test: with no way to read a registry, a delegate's key can still be matched to a
+   * seat when the delegate belongs to a seated pod's own surface, and anything else is reported as
+   * not established.
+   */
+  readonly port?: DelegateRegistryPort;
 }): AdmissionPredicate {
-  return ({ pod, region }) => {
+  const rosters = new Map<string, DelegateRoster | { readonly failed: string }>();
+  const seatedPods = (): readonly string[] => {
+    const out: string[] = [];
+    for (const s of args.seats) {
+      if (!s.seated) continue;
+      const p = s.podServed ?? s.pod;
+      if (p && out.indexOf(p) < 0) out.push(p);
+    }
+    return out;
+  };
+  return async ({ signedBy, region }) => {
     const declared = readIri(region, 'wsp:workspace');
     if (!declared) {
       return 'that record declares no wsp:workspace, so which channel it belongs to is not established — and a record that '
@@ -51,11 +87,39 @@ export function admitSeatedIn(args: {
       return 'that record belongs to ' + declared + ' and this host is watching ' + args.workspace
         + '. An ask into another channel is not an ask here.';
     }
-    const seat = args.seats.find((s) => (s.podServed ?? s.pod) === pod && s.seated) ?? null;
-    if (!seat) {
-      return 'pod ' + pod + ' is not seated in this workspace, so it has no standing to put work into it. Seating is a grant on '
-        + 'the convener\'s pod and an acceptance on theirs — two documents, neither of them this notice.';
+    const pods = seatedPods();
+    if (!pods.length) {
+      return 'nobody is seated in ' + args.workspace + ' as this host reads it, so there is no seat for ' + signedBy
+        + ' to be resolved to. Seating is a grant on the convener\'s pod and an acceptance on theirs.';
     }
-    return null;
+    // The person signed for themselves, or a key on their own pod's surface did.
+    const signerPod = agentPodOf(signedBy);
+    for (const s of args.seats) {
+      if (!s.seated) continue;
+      const pod = s.podServed ?? s.pod;
+      if (!pod) continue;
+      if (s.grantedTo && s.grantedTo === signedBy) return null;
+      if (signerPod && signerPod === pod) return null;
+    }
+    // A delegate of somebody seated. Their registry is a document only they can write.
+    const unread: string[] = [];
+    for (const pod of pods) {
+      if (!args.port) { unread.push(pod); continue; }
+      let roster = rosters.get(pod);
+      if (roster === undefined) {
+        try { roster = await readDelegates(args.port, pod); }
+        catch (e) { roster = { failed: (e as Error)?.message ?? String(e) }; }
+        rosters.set(pod, roster);
+      }
+      if ('failed' in roster) { unread.push(pod); continue; }
+      if (!roster.read) { unread.push(pod); continue; }
+      if (roster.rows.some((r) => r.agentId === signedBy)) return null;
+    }
+    return 'the key that signed that record, ' + signedBy + ', resolves to no seat in this workspace: it is not a seated '
+      + 'member\'s own WebID, its own pod is not a seated pod, and no seated pod\'s delegation registry lists it'
+      + (unread.length
+        ? '. ' + unread.length + ' of ' + pods.length + ' seated pods\' registries could not be read here (' + unread.join(', ')
+          + '), so this is a refusal for lack of an answer rather than a finding that they do not list it.'
+        : '. Seating is a grant on the convener\'s pod and an acceptance on theirs — two documents, neither of them this notice.');
   };
 }

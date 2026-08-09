@@ -237,7 +237,8 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
           if (out.kind === 'asked' && out.descriptorUrl) {
             watcher.noteAsk({
               threadId: i.channelId, descriptorUrl: out.descriptorUrl, seq: out.accepted.seq,
-              targetPod: out.target.pod, targetName: out.target.name ?? out.target.agentId,
+              targetPod: out.target.pod, targetAgentId: out.target.agentId,
+              targetName: out.target.name ?? out.target.agentId,
               askedAtMs: Date.now(),
               // Verbatim, so the follow-up quotes what was true at the moment of asking rather
               // than re-deriving a fact that has since changed.

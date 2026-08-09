@@ -28,9 +28,21 @@ const binding = {
   title: 'Roof decision', startedAt: 'now', startedBy: '1',
 };
 
+const AGENT = 'did:web:identity.interego.xwisee.com:agents:interego-delegate-u-eth-429728ca2933';
+
 const entry = (n: number, over: Partial<ShownEntry> = {}): ShownEntry => ({
   pod: POD, seq: n, created: '2026-08-08T1' + n + ':00:00Z', body: 'entry ' + n,
-  descriptorUrl: 'https://css.internal/' + POD + '/e' + n + '.ttl', author: null, why: null, ...over,
+  descriptorUrl: 'https://css.internal/' + POD + '/e' + n + '.ttl', author: null,
+  derivedFrom: null, why: null, ...over,
+});
+
+/** An entry the ADDRESSED delegate composed, with its own key — the only thing that ends a wait. */
+const byTheAgent = (n: number, over: Partial<ShownEntry> = {}): ShownEntry => entry(n, {
+  author: {
+    kind: 'delegate', agentId: AGENT, signer: { kind: 'the-author', signedBy: AGENT },
+    footing: { kind: 'own-account' }, name: 'sam-scribe', authorised: true, scope: 'PublishOnly',
+  },
+  ...over,
 });
 
 const view = (entries: readonly ShownEntry[], streams: { pod: string; why: string | null }[] = []): ShowOut => ({
@@ -165,7 +177,7 @@ describe('the silence notice', () => {
       await vi.advanceTimersByTimeAsync(3000);
       r.watcher.noteAsk({
         threadId: THREAD, descriptorUrl: 'https://css.internal/' + POD + '/ask.ttl', seq: 12,
-        targetPod: POD, targetName: 'sam-scribe', askedAtMs: r.now.ms,
+        targetPod: POD, targetAgentId: AGENT, targetName: 'sam-scribe', askedAtMs: r.now.ms,
         presenceAtAsk: 'said it was running 41s ago',
       });
       // Not yet: the wait has not elapsed.
@@ -181,20 +193,93 @@ describe('the silence notice', () => {
     } finally { vi.useRealTimers(); stopAll(); }
   });
 
-  it('is cancelled by an answer arriving from that pod', async () => {
+  const ASK = 'https://css.internal/' + POD + '/ask.ttl';
+  const noteAsk = (r: ReturnType<typeof rig>): void => {
+    r.watcher.noteAsk({
+      threadId: THREAD, descriptorUrl: ASK, seq: 12,
+      targetPod: POD, targetAgentId: AGENT, targetName: 'sam-scribe', askedAtMs: r.now.ms,
+      presenceAtAsk: 'running',
+    });
+  };
+  const silences = (r: ReturnType<typeof rig>): number => r.news.filter((n) => n.news.kind === 'silence').length;
+  const waitPastIt = (r: ReturnType<typeof rig>): void => {
+    r.now.ms += SILENCE_MS + 1;
+    (r.watcher as unknown as { reportSilence(): void }).reportSilence();
+  };
+
+  it('is cancelled by an entry that declares it was derived from the ask', async () => {
     vi.useFakeTimers();
     try {
-      const r = rig([view([entry(1)]), view([entry(1), entry(2)])]);
+      const answer = entry(2, { derivedFrom: ASK });
+      const r = rig([view([entry(1)]), view([entry(1), answer])]);
       r.watcher.start();
       await vi.advanceTimersByTimeAsync(3000);
-      r.watcher.noteAsk({
-        threadId: THREAD, descriptorUrl: 'https://css.internal/' + POD + '/ask.ttl', seq: 12,
-        targetPod: POD, targetName: 'sam-scribe', askedAtMs: r.now.ms, presenceAtAsk: 'running',
+      noteAsk(r);
+      await pass(r.watcher);
+      waitPastIt(r);
+      expect(silences(r)).toBe(0);
+    } finally { vi.useRealTimers(); stopAll(); }
+  });
+
+  it('is cancelled by an entry the ADDRESSED agent composed, under its own key', async () => {
+    vi.useFakeTimers();
+    try {
+      const r = rig([view([entry(1)]), view([entry(1), byTheAgent(2)])]);
+      r.watcher.start();
+      await vi.advanceTimersByTimeAsync(3000);
+      noteAsk(r);
+      await pass(r.watcher);
+      waitPastIt(r);
+      expect(silences(r)).toBe(0);
+    } finally { vi.useRealTimers(); stopAll(); }
+  });
+
+  /**
+   * ★ THE REGRESSION. This used to cancel on ANY readable entry from `targetPod` — the DELEGATOR's
+   * pod — so the human typing "back from lunch" permanently suppressed the notice about their own
+   * agent's unanswered ask. That is the exact case the notice exists for: an agent's host being off
+   * is precisely when its human is the one still talking. Driven end to end through `announce`.
+   */
+  it('★ is NOT cancelled by their HUMAN saying something unrelated in the same channel', async () => {
+    vi.useFakeTimers();
+    try {
+      const chat = entry(2, {
+        body: 'unrelated: back from lunch',
+        author: { kind: 'principal', webId: 'https://identity.example/users/' + POD + '/profile#me', signer: { kind: 'not-established', why: 'x' } },
       });
-      await pass(r.watcher);                          // entry 2 lands from that pod
-      r.now.ms += SILENCE_MS + 1;
-      (r.watcher as unknown as { reportSilence(): void }).reportSilence();
-      expect(r.news.filter((n) => n.news.kind === 'silence')).toHaveLength(0);
+      const r = rig([view([entry(1)]), view([entry(1), chat])]);
+      r.watcher.start();
+      await vi.advanceTimersByTimeAsync(3000);
+      noteAsk(r);
+      await pass(r.watcher);                          // the HUMAN speaks, from the target's pod
+      expect(r.news.some((n) => n.news.kind === 'entries')).toBe(true);
+      expect(r.watcher.pending()).toHaveLength(1);
+      waitPastIt(r);
+      expect(silences(r)).toBe(1);
+    } finally { vi.useRealTimers(); stopAll(); }
+  });
+
+  /**
+   * ★ AND NOT BY A DIFFERENT AGENT ON THAT POD EITHER. A person may authorise several delegates;
+   * one of them answering says nothing about the one that was asked.
+   */
+  it('★ is NOT cancelled by a DIFFERENT delegate of the same person answering', async () => {
+    vi.useFakeTimers();
+    try {
+      const other = 'did:web:identity.interego.xwisee.com:agents:interego-delegate-u-eth-000000000001';
+      const bySomeoneElse = entry(2, {
+        author: {
+          kind: 'delegate', agentId: other, signer: { kind: 'the-author', signedBy: other },
+          footing: { kind: 'own-account' }, name: 'other-scribe', authorised: true, scope: 'PublishOnly',
+        },
+      });
+      const r = rig([view([entry(1)]), view([entry(1), bySomeoneElse])]);
+      r.watcher.start();
+      await vi.advanceTimersByTimeAsync(3000);
+      noteAsk(r);
+      await pass(r.watcher);
+      waitPastIt(r);
+      expect(silences(r)).toBe(1);
     } finally { vi.useRealTimers(); stopAll(); }
   });
 });

@@ -13,8 +13,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   PRESENCE_MAX_LEASE_MS, PRESENCE_RENEW_MS,
-  agentDocName, delegatePodOf, describeSpan, isPresent, presenceIri, presenceLine,
-  presenceTurtle, publishPresence, readPresence,
+  agentDocName, agentIdHash, capabilitiesIri, delegatePodOf, describeSpan, isPresent, presenceIri,
+  presenceLine, presenceTurtle, publishPresence, readCapabilities, readPresence,
   type AgentPort,
 } from '@interego/workspace-client';
 
@@ -25,7 +25,7 @@ const RELAY = 'https://relay.interego.xwisee.com';
 // wrong pod even by accident — there is no argument to get wrong.
 const AGENT_POD = 'u-eth-cafebabe0001';
 const AGENT = 'did:web:identity.interego.xwisee.com:agents:interego-delegate-' + AGENT_POD;
-const IRI = RELAY + '/ns/' + AGENT_POD + '/agent-' + AGENT_POD + '-presence';
+const IRI = RELAY + '/ns/' + AGENT_POD + '/agent-' + AGENT_POD + '-' + agentIdHash(AGENT) + '-presence';
 const NOW = Date.parse('2026-08-08T12:00:00.000Z');
 
 /**
@@ -99,7 +99,7 @@ function lease(over: {
 describe('naming a presence document', () => {
   it('reads the delegate\'s OWN pod out of its agent DID', () => {
     expect(delegatePodOf(AGENT)).toBe(AGENT_POD);
-    expect(agentDocName(AGENT, 'presence')).toBe('agent-' + AGENT_POD + '-presence');
+    expect(agentDocName(AGENT, 'presence')).toBe('agent-' + AGENT_POD + '-' + agentIdHash(AGENT) + '-presence');
     expect(presenceIri(RELAY, AGENT)).toBe(IRI);
   });
 
@@ -114,6 +114,40 @@ describe('naming a presence document', () => {
   it('names two delegates of one person differently, so presence is per agent', () => {
     const other = 'did:web:identity.interego.xwisee.com:agents:interego-delegate-u-eth-cafebabe0002';
     expect(agentDocName(AGENT, 'presence')).not.toBe(agentDocName(other, 'presence'));
+  });
+
+  /**
+   * ★★ THE COLLISION, PINNED. Measured on the live relay: `register_agent` freely issues several
+   * distinct DIDs whose ids embed the SAME pod — a pod owner's own surface agent, and any delegate
+   * registered there. While the document name was `agent-<pod>-<kind>` those composed the IDENTICAL
+   * presence and capability IRIs; both publishers use `auto_supersede_prior`, so the second silently
+   * superseded the first at the shared address, and the first then read back `unreadable` because
+   * the head's signer was somebody else. One agent publishing deleted another agent's presence.
+   *
+   * "Hold a DID, compose two URLs" is only true where the mapping is injective, so the name carries
+   * a hash of the WHOLE id rather than the pod segment alone.
+   */
+  it('★★ two DISTINCT agents on ONE pod do not compose one address', () => {
+    const surface = 'did:web:identity.interego.xwisee.com:agents:claude-' + AGENT_POD;
+    const delegate = 'did:web:identity.interego.xwisee.com:agents:wsp-delegate-' + AGENT_POD;
+    expect(delegatePodOf(surface)).toBe(delegatePodOf(delegate));
+    expect(presenceIri(RELAY, surface)).not.toBe(presenceIri(RELAY, delegate));
+    expect(capabilitiesIri(RELAY, surface)).not.toBe(capabilitiesIri(RELAY, delegate));
+    // And both still live on that pod, which is the half that was right all along.
+    expect(presenceIri(RELAY, surface)).toContain('/ns/' + AGENT_POD + '/');
+    expect(presenceIri(RELAY, delegate)).toContain('/ns/' + AGENT_POD + '/');
+  });
+
+  it('★ the same DID composes the same address every time, in any runtime', () => {
+    expect(agentIdHash(AGENT)).toBe(agentIdHash(AGENT));
+    expect(agentIdHash(AGENT)).toMatch(/^[0-9a-f]{16}$/);
+    // One character different in the DID is a different document.
+    expect(agentIdHash(AGENT)).not.toBe(agentIdHash(AGENT + 'x'));
+    // ★ AND IT DOES NOT DEPEND ON A GLOBAL THAT SOME RUNTIME LACKS. This was `TextEncoder`, which
+    // a JSDOM window does not define — measured: the desktop shell's heartbeat died with
+    // `ReferenceError: TextEncoder is not defined` and reported "it has not managed to say its host
+    // is running", which reads as a design failure rather than a missing global.
+    expect(agentIdHash('agent-ünïcøde-🙂')).toMatch(/^[0-9a-f]{16}$/);
   });
 });
 
@@ -248,11 +282,94 @@ describe('reading presence', () => {
     expect((await read(stub({ rows: no.rows, descriptor: no.descriptor }))).state).toBe('overlong');
   });
 
-  it('refuses a lease with no expiry at all', async () => {
+  it('refuses a lease whose SIGNED region declares no expiry at all', async () => {
+    // ★ THE SIGNED REGION, NOT THE ROW. A lease is only evidence because it is short and has to be
+    // renewed, and an expiry the agent did not sign is the relay's claim about availability rather
+    // than the agent's.
     const l = lease();
-    const rows = [{ descriptorUrl: 'https://pod/lease.ttl', validFrom: new Date(NOW - 1000).toISOString() }];
-    const p = await read(stub({ rows, descriptor: l.descriptor }));
+    const stripped = {
+      ...l.descriptor,
+      graph: { content: String((l.descriptor['graph'] as { content: string }).content).replace(/\n\s*iep:leaseExpires[^;.]*/, '') },
+    };
+    const p = await read(stub({ rows: l.rows, descriptor: stripped }));
     expect(p.state).toBe('overlong');
+    expect(p.state === 'overlong' && p.why).toContain('iep:leaseExpires');
+  });
+
+  /**
+   * ★★ THE SIGNED EXPIRY IS WHAT A READER TURNS ON. PINNED, BECAUSE IT WAS A COMMENT AND NOT CODE.
+   *
+   * `iep:leaseExpires` was written by `presenceTurtle` and read by nothing: `stale`, `overlong` and
+   * the expiry reported to a caller all came off `validUntil` and `validFrom`, the relay's own
+   * UNSIGNED row metadata — which is precisely the third-party assertion about availability this
+   * module says it exists to refuse, and it meant the forged-lease guard was enforced against a
+   * span the agent never signed. Measured against the shipped reader, a descriptor whose signed
+   * region said the lease expired a YEAR ago and whose relay row said two minutes remained came
+   * back `running (said so 60s ago)`.
+   */
+  it('★★ a lease whose SIGNED expiry has lapsed is not running, whatever the relay\'s row says', async () => {
+    const l = lease();
+    const longAgo = new Date(NOW - 365 * 24 * 3600_000).toISOString();
+    const rotten = {
+      ...l.descriptor,
+      graph: {
+        content: String((l.descriptor['graph'] as { content: string }).content)
+          .replace(/iep:leaseExpires "[^"]*"/, 'iep:leaseExpires "' + longAgo + '"'),
+      },
+    };
+    const p = await read(stub({ rows: l.rows, descriptor: rotten }));
+    // The relay's row still says two minutes of life remain; the agent's own signature says a year
+    // ago. They disagree, and the disagreement is the finding rather than something to pick from.
+    expect(p.state).toBe('disputed');
+    expect(isPresent(p)).toBe(false);
+    expect(presenceLine(p, NOW)).toContain('disagree');
+  });
+
+  it('★ and the expiry a caller is handed is the SIGNED one, not the row\'s', async () => {
+    const l = lease();
+    const signedUntil = Date.parse(String(l.rows[0]?.['validUntil']));
+    // The row is bent, not the region: whatever the relay says, the answer comes off the bytes.
+    const rows = [{ ...l.rows[0], validUntil: new Date(signedUntil + 400).toISOString() }];
+    const p = await read(stub({ rows, descriptor: l.descriptor }));
+    expect(p.state).toBe('running');
+    expect(p.state === 'running' && p.expiresMs).toBe(signedUntil);
+  });
+
+  /**
+   * ★ A PARSE FAILURE IS NOT A FACT ABOUT SOMEBODY'S AGENT.
+   *
+   * `readPresence` used to answer `never` for an id it could not take a pod out of, and
+   * `presenceLine` rendered that as "has never said it was running" — the exact sentence
+   * `agentPodOf`'s own docstring forbids, produced with no pod asked and no address composed.
+   * Reachable for every `did:key`, `did:ethr` and cross-issuer `did:web`, which is to say for the
+   * Codex agent this whole module is built to serve.
+   */
+  it('★ an id this client cannot name a document from is UNNAMEABLE, and asks no pod', async () => {
+    let touched = 0;
+    const blind = {
+      async tool(): Promise<unknown> { touched++; throw new Error('no pod may be asked'); },
+      async descriptor(): Promise<Record<string, unknown>> { touched++; throw new Error('no pod may be asked'); },
+    } as unknown as AgentPort;
+    for (const id of [
+      'did:web:codex.example.com:agents:codex-build-bot',
+      'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK',
+      'did:ethr:0x8f3b8e939600000000000000000000000000679Fd',
+    ]) {
+      const p = await readPresence(blind, { relay: RELAY, agentId: id, nowMs: NOW });
+      expect(p.state, id).toBe('unnameable');
+      expect(isPresent(p)).toBe(false);
+      expect(presenceLine(p, NOW)).toContain('never asked');
+      expect(presenceLine(p, NOW)).not.toContain('never said it was running');
+      const c = await readCapabilities(blind, { relay: RELAY, agentId: id });
+      expect(c.kind, id).toBe('unnameable');
+    }
+    expect(touched).toBe(0);
+  });
+
+  it('★ and `never` is reserved for a pod that answered and held nothing', async () => {
+    const never = await read(stub({ rows: [] }));
+    expect(never.state).toBe('never');
+    expect(presenceLine(never, NOW)).toContain('holds no lease');
   });
 
   it('refuses an unverified lease, an unbound one, and one signed by somebody else', async () => {

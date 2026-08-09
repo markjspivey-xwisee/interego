@@ -33,7 +33,7 @@ export const agentPort = (client: WorkspaceClient): AgentPort => ({
 
 export {
   PRESENCE_RENEW_MS, PRESENCE_LEASE_MS, PRESENCE_MAX_LEASE_MS,
-  agentPodOf, agentPodOf as delegatePodOf, agentNsIri, agentDocName, agentDocIri,
+  agentPodOf, agentPodOf as delegatePodOf, agentNsIri, agentDocName, agentDocIri, agentIdHash,
   presenceIri, capabilitiesIri,
   presenceTurtle, publishPresence, readPresence, isPresent, presenceLine, describeSpan,
   capabilityProblem, capabilityTurtle, publishCapability, readCapabilities,
