@@ -50,6 +50,10 @@ on:
       - 'applications/shared-workspace/discord/**'
       - 'packages/workspace-client/**'
       - 'packages/core/**'
+      # The shell's own tests live in the root suite rather than beside it, so without these two
+      # lines a change to the harness alone would not run the harness.
+      - 'tests/workspace-desktop-renderer.test.ts'
+      - 'tests/workspace-desktop-modelprovider.test.ts'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/desktop-package.yml'
@@ -60,6 +64,10 @@ on:
       - 'applications/shared-workspace/discord/**'
       - 'packages/workspace-client/**'
       - 'packages/core/**'
+      # The shell's own tests live in the root suite rather than beside it, so without these two
+      # lines a change to the harness alone would not run the harness.
+      - 'tests/workspace-desktop-renderer.test.ts'
+      - 'tests/workspace-desktop-modelprovider.test.ts'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/desktop-package.yml'
@@ -69,6 +77,39 @@ permissions:
   contents: read
 
 jobs:
+  # ★ THE SHELL'S OWN TESTS HAD NO WORKFLOW, WHICH IS THE DEFECT #309 FOUND ONE DIRECTORY OVER.
+  #
+  # `tests/workspace-desktop-renderer.test.ts` drives the real bundled renderer in a real document
+  # against the shipping `index.html`, and it has caught a real defect on first run every time it
+  # has been extended. Nothing in CI ran it. There is no workflow anywhere that runs the ROOT
+  # `tests/` suite — `shared-workspace-tests.yml` is scoped to the Discord bot, `relay-tests.yml` to
+  # the relay, and `bridge-typecheck.yml` compiles the program without executing it — so every
+  # renderer case in this repository was a local-only gate, exactly like the bot's 145 were before
+  # #309 gave them a home.
+  #
+  # This is deliberately the two DESKTOP files and not the whole suite: this workflow's triggers are
+  # already the paths those files cover, and a job that quietly became the repository's general test
+  # runner would be one nobody chose. The rest of the suite is still local-only, and that remains a
+  # real gap rather than one this file pretends to have closed.
+  tests:
+    name: "The desktop shell's own tests (real renderer, real document)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+      - name: Install workspace deps
+        run: npm ci --no-audit --no-fund
+      - name: Build the substrate packages the renderer bundles
+        # The harness bundles `src/renderer.ts` itself, but esbuild follows the package `exports` to
+        # reach `@interego/workspace-client` — so its `dist/` must exist or the bundle fails to
+        # resolve. The suite tests BUILT OUTPUT; this is the build.
+        run: npm run build
+      - name: Run them
+        run: npx vitest run tests/workspace-desktop-renderer.test.ts tests/workspace-desktop-modelprovider.test.ts --no-cache
+
   package:
     name: "Package the desktop shell (${{ matrix.os }})"
     runs-on: ${{ matrix.os }}
