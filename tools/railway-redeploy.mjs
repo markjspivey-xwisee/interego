@@ -84,13 +84,15 @@
  *   the line they print when they finish booting, and are verified against the logs of
  *   the deployment THIS run triggered. See §1c and §7b.
  *
- *   A CHATTY SERVICE OUT-LOGS A PLAIN TAIL. That log proof searched a 500-line tail. For
- *   the silent discord bot the boot line is still in it minutes later; for `css` — which
- *   logs a line per HTTP request while the whole fleet polls it — a 500-line tail spans
- *   12.7 SECONDS, measured. The boot line is long gone by the first poll, so the tool
- *   would report "never printed" about a container that booted perfectly, and the reflex
- *   after a red css deploy is to run it again, which SIGTERMs the healthy container. The
- *   needle is now passed to Railway as a log FILTER and re-counted here. See §7b.
+ *   A CHATTY SERVICE TURNS THE LOG PROOF INTO A RACE. That proof searched a 500-line
+ *   tail. For the silent discord bot the boot line is still in it minutes later; for
+ *   `css` — which logs a line per HTTP request while the whole fleet polls it — a
+ *   500-line tail spans 12.7 SECONDS, measured, so the boot line survives an unfiltered
+ *   tail only for the first seconds of a container's life. §7b does not begin until §5
+ *   has seen SUCCESS, and nothing bounds when that is. Losing that race reports "never
+ *   printed" about a container that booted perfectly, and the reflex after a red css
+ *   deploy is to run it again, which SIGTERMs the healthy container. The needle is now
+ *   passed to Railway as a log FILTER and re-counted here. See §7b.
  *
  *   A ROLLOUT IS WHEN A SINGLETON STOPS BEING ONE. `css` holds every pod's data behind a
  *   PROCESS-LOCAL lock, so two containers mean two lockers over one store and a lost
@@ -561,15 +563,27 @@ async function verifyFromLogs(needle) {
 /**
  * Every occurrence of the boot line in THIS deployment, or null if the query was transient.
  *
- * ★ THE `filter` ARGUMENT IS LOAD-BEARING, NOT AN OPTIMISATION. This used to ask for a
- * 500-line tail and search it in JS. That works for `discord`, which is silent between
- * boots, and it CANNOT work for `css`: MEASURED on 2026-08-09, a 500-line unfiltered tail
- * of css's logs spans 12.7 SECONDS, because css logs a line for every HTTP request and the
- * whole fleet polls it continuously. §5 waits for SUCCESS before this function is even
- * called, so by the first poll the boot line is thousands of lines in the past — and the
- * tool would report "never printed" about a container that booted perfectly. The reflex
- * after a red css deploy is to run it again, which SIGTERMs the healthy container holding
- * every pod's data. A false red here is not a cosmetic defect.
+ * ★ THE `filter` ARGUMENT REMOVES A RACE. NOT AN OPTIMISATION, AND NOT A CERTAIN FAILURE
+ * EITHER — the honest version, because the first css deploy through this path produced the
+ * evidence against the stronger claim.
+ *
+ * This used to ask for a 500-line tail and search it in JS. That is unconditionally fine
+ * for `discord`, which is silent between boots. For `css` it is a race, because css logs a
+ * line for every HTTP request while the whole fleet polls it: MEASURED 2026-08-09, a
+ * 500-line tail of css's steady-state output spans 12.7 SECONDS. `deploymentLogs` is scoped
+ * to one deployment, so the tail holds the boot line only until that container has written
+ * ~500 lines of its own — measured at 149 lines in its first 8.6 seconds, i.e. somewhere
+ * around the first 15–25 seconds of its life.
+ *
+ * ★ AND THE RACE WAS WON ON THE RUN THAT PROVED THIS PATH: deployment 0a7c0a0c, boot line
+ * at 14:39:34.845, found by the second poll at 14:39:37.24 with the container only 149 lines
+ * old. An unfiltered tail would have contained it. What decides the race is how long §5
+ * waits for SUCCESS before this function is called at all — 7.1 seconds that time, and
+ * bounded by nothing. A pull that takes longer, a busier fleet, or one transient retry moves
+ * the first poll past the window, and then the tool reports "never printed" about a
+ * container that booted perfectly. The reflex after a red css deploy is to run it again,
+ * which SIGTERMs the healthy container holding every pod's data. Turning a race the deploy
+ * usually wins into an answer that does not depend on timing is worth one query argument.
  *
  * Railway's `filter` is a case-INSENSITIVE substring match evaluated over the deployment's
  * whole retained history, not a recent shard — verified by asking a 23-day-old css

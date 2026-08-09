@@ -156,11 +156,25 @@ export const SERVICES = {
     // the old container 2.5s after the new one starts. Boot time exceeds stop delay by
     // seconds, in the safe direction, on every deploy.
     //
-    // ★ WHAT overlapSeconds: 0 IS ACTUALLY BUYING, then. It cannot close a window that
-    // css's own boot time already closes. What it removes is the possibility of the
-    // platform DELAYING the SIGTERM past 7.3s, at which point the new server would already
-    // be serving while the old one still was. It is the setting that keeps the margin from
-    // being spent, and that is why it is declared rather than left to the default.
+    // ★ REPLICATED on the next deploy (2026-08-09, deployment 0a7c0a0c) — and that one is
+    // the controlled half, because overlapSeconds was explicitly 0 by then where the run
+    // above had it unset:
+    //
+    //   14:39:28.737  NEW  "Starting Container"
+    //   14:39:31.640  OLD  last request served
+    //   14:39:31.646  OLD  SIGTERM
+    //   14:39:32.503  OLD  "Stopping Container"
+    //   14:39:34.845  NEW  "Listening to server at ..."
+    //   14:39:34.852  NEW  first request served, 7ms later
+    //
+    // Container overlap 3.77s, SERVER overlap −3.21s, boot 6.11s, stop delay 2.91s.
+    //
+    // ★ SO overlapSeconds: 0 CHANGED NOTHING MEASURABLE, and saying so is the point. The
+    // stop delay was 2.46s with the setting unset and 2.91s with it at zero — the same
+    // number twice, and neither is Railway's documented 20s. The window is closed by CSS's
+    // BOOT TIME, not by this setting. What the setting removes is the platform's licence to
+    // delay the SIGTERM past that margin, which would put a serving new container alongside
+    // a serving old one. It is insurance on a margin, not the margin.
     //
     // ★ THE PRICE, stated because it is real: ~4.9s in which NEITHER server answers. css
     // has no public domain, so this is an internal connect-refused for the relay and every
@@ -401,13 +415,15 @@ export function healthPathFor(service) {
  * this runs on a 6-second interval, so the gap is unobservable there — but the deploy is
  * still finished by reading real pod bytes back, never by this line alone.
  *
- * ★ THE NEEDLE MUST BE PASSED TO THE LOG QUERY AS A FILTER, not searched for in a plain
- * tail. MEASURED on 2026-08-09: a 500-line unfiltered tail of css's logs spans 12.7 SECONDS,
- * because css logs a line per HTTP request and the fleet polls it continuously. The boot
- * line scrolls out of that window before the deploy tool's first poll can run, so an
- * unfiltered search reports "never printed" for a container that booted perfectly — and the
- * reflex that follows a red css deploy is to re-run it, which SIGTERMs the healthy
- * container. See tools/railway-redeploy.mjs §7b.
+ * ★ THE NEEDLE IS PASSED TO THE LOG QUERY AS A FILTER, not searched for in a plain tail.
+ * MEASURED on 2026-08-09: a 500-line unfiltered tail of css's steady-state output spans 12.7
+ * SECONDS, because css logs a line per HTTP request and the fleet polls it continuously — so
+ * a deployment-scoped tail holds the boot line only until that container has written its own
+ * ~500 lines. Whether the deploy tool's first poll lands inside that window depends on how
+ * long Railway took to report SUCCESS, which nothing bounds. It landed inside on the run that
+ * proved this path; losing that race reports "never printed" for a container that booted
+ * perfectly, and the reflex after a red css deploy is to re-run it, which SIGTERMs the
+ * healthy container. See tools/railway-redeploy.mjs §7b for the numbers.
  */
 export function bootProofFor(service) {
   if (!Object.hasOwn(SERVICES, service)) {
