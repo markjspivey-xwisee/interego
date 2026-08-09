@@ -120,7 +120,7 @@ describe('a portless service is verified from its own deployment logs', () => {
     // there is no URL to derive, AND there is something to verify against.
     expect(healthPathFor('discord').ok).toBe(false);
     expect(verifyUrlFor('discord', [], undefined).ok).toBe(false);
-    expect(bootProofFor('discord')).toEqual({ ok: true, needle: 'discord: commands registered' });
+    expect(bootProofFor('discord')).toEqual({ ok: true, needle: 'discord: bot online' });
   });
 
   it('★ the declared needle is a line the bot really prints', () => {
@@ -133,7 +133,7 @@ describe('a portless service is verified from its own deployment logs', () => {
     expect(read('applications/shared-workspace/discord/src/main.ts')).toContain(needle);
   });
 
-  it('the needle is the LAST boot line, so both credentials have been exercised', () => {
+  it('the needle is the LAST boot line, so both credentials AND the gateway have been exercised', () => {
     // "The process started" would be satisfied by a container that then failed to
     // authenticate to Discord and failed to sign in to the relay. main.ts prints this only
     // after `rest.me()` (the bot token worked) and `session.open()` (the bot key worked).
@@ -141,6 +141,12 @@ describe('a portless service is verified from its own deployment logs', () => {
     const needle = (bootProofFor('discord') as { needle: string }).needle;
     expect(src.indexOf(needle)).toBeGreaterThan(src.indexOf('await session.open()'));
     expect(src.indexOf(needle)).toBeGreaterThan(src.indexOf('await rest.me()'));
+    // ★ AND IT IS GATED ON THE GATEWAY'S OWN READY, which the previous needle was not. Registering
+    // commands is two HTTPS calls; it was printed happily by a container whose WebSocket never came
+    // up, which is precisely the state that went unnoticed for 75 minutes. Asserting the guard here
+    // stops the needle drifting back to something a dead bot can still print.
+    expect(src).toContain("l.startsWith('gateway ready as')");
+    expect(src.indexOf(needle)).toBeGreaterThan(src.indexOf("l.startsWith('gateway ready as')"));
   });
 
   it('★ css declares the line MEASURED off its own live logs, so it has a deploy path at all', () => {

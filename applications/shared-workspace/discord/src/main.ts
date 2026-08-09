@@ -41,7 +41,7 @@ import { presenceLine } from '@interego/workspace-client';
 import { LinkStore } from './links.js';
 import { BotSession, type BotIdentity } from './identity.js';
 import {
-  COMMANDS, DiscordGateway, DiscordRest,
+  COMMANDS, DiscordGateway, DiscordRest, commandFingerprint,
   type GatewayAutocomplete, type GatewayInteraction, type GatewayMessage,
 } from './discord.js';
 import { beginLink, confirmLink, recordMessage, showWorkspace, startWorkspace, unlink, type Deps } from './workspace.js';
@@ -97,6 +97,28 @@ export interface Boot {
    * single-threaded vitest worker, and a listener that calls `process.exit(0)` least of all.
    */
   readonly installSignalHandler?: (signal: 'SIGINT' | 'SIGTERM', handler: () => void) => void;
+  /**
+   * Called when the bot has established it cannot do its job. Defaults to `process.exit`.
+   *
+   * ★ `process.exitCode = 1` IS NOT AN EXIT and that was the bug in the old fatal path. Setting the
+   * code only takes effect when the loop empties on its own; with a single bound thread the
+   * watcher's `pollingWatch` interval is ref'd, so the bot would have sat there forever — polling
+   * pods, unable to speak to Discord, flagged as failing to nobody. A worker's exit code is the one
+   * channel it has to the platform, and using it means actually leaving.
+   */
+  readonly exit?: (code: number) => void;
+  /**
+   * Called with a handler to run if the event loop ever empties. Defaults to `process.on('beforeExit')`.
+   *
+   * ★ THIS IS THE GENERAL FORM OF THE OUTAGE, not a second fix for it. The specific cause — an
+   * `unref()`d reconnect timer — is fixed in `discord.ts`, but the CLASS of fault is "every handle
+   * that could keep this worker alive went away and Node exited zero", and Railway does not restart
+   * a zero exit. `beforeExit` fires exactly then and nowhere else: not on an explicit
+   * `process.exit()`, so the SIGTERM path below is unaffected, and not on a throw. Any future change
+   * that re-creates the same hole gets a loud non-zero exit instead of a green deployment with
+   * nothing behind it.
+   */
+  readonly onIdle?: (handler: () => void) => void;
 }
 
 /**
@@ -156,8 +178,32 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
   const base = { relay: RELAY, agentId: identity.agentId, store };
   const deps = (client: Deps['client']): Deps => ({ ...base, client });
 
-  await rest.registerCommands(who.id, COMMANDS as unknown as readonly unknown[]);
-  out('discord: commands registered');
+  /**
+   * ★ REGISTER ONLY WHEN THE TREE ACTUALLY CHANGED, and this is the "This command is outdated"
+   * finding written as code.
+   *
+   * Discord bumps a command's `version` on a substantial change and then REJECTS an invocation
+   * carrying an older one (error 50035, INTERACTION_APPLICATION_COMMAND_INVALID_VERSION), which the
+   * client renders as "This command is outdated, please try again in a few minutes". Global
+   * commands reach clients through a cache, so after a REAL change that message is expected and
+   * self-healing — which is what the maintainer hit, because `who` and `ask` were added to the tree
+   * that morning. The bulk PUT has been idempotent since 2022, so an unchanged payload should not
+   * bump anything. But a bot that PUTs unconditionally on every boot cannot tell you which of those
+   * two it just did, and this one boots many times a day. Reading first makes the answer a line in
+   * the log instead of an inference.
+   */
+  const want = commandFingerprint(COMMANDS as unknown as readonly unknown[]);
+  // A failed read is not a reason to skip: it is a reason to fall back to what the bot did before.
+  const have = await rest.listCommands(who.id).then(
+    (list) => commandFingerprint(Array.isArray(list) ? list : []),
+    (e: unknown) => { out('discord: could not read the registered commands (' + ((e as Error)?.message ?? String(e)) + '); registering unconditionally'); return null; },
+  );
+  if (have !== null && have === want) {
+    out('discord: commands are registered — unchanged since the last boot, so nothing was re-published and no client\'s cached version was invalidated');
+  } else {
+    await rest.registerCommands(who.id, COMMANDS as unknown as readonly unknown[]);
+    out('discord: commands are registered — the definitions differ from what Discord holds, so they were re-published. Clients caching the previous version will say "This command is outdated" until they reload.');
+  }
 
   const queue = new PerKeyQueue();
   /** One "you are not linked" notice per person per thread. A bot that repeats it is a nuisance. */
@@ -314,12 +360,31 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
     }).catch((e: unknown) => { out('recording failed for message ' + msg.id + ': ' + ((e as Error)?.stack ?? String(e))); });
   };
 
+  const exit = boot.exit ?? ((code: number) => { process.exit(code); });
+
   const gateway = new DiscordGateway(token, {
     onMessage,
     onInteraction: (i) => { void onInteraction(i); },
     onAutocomplete: (a) => { void onAutocomplete(a); },
-    onNotice: (l) => { out('gateway: ' + l); },
-    onFatal: (why) => { out('gateway FATAL: ' + why); process.exitCode = 1; gateway.stop(); },
+    onNotice: (l) => {
+      out('gateway: ' + l);
+      // ★ THE BOOT PROOF, AND IT IS THE GATEWAY'S OWN READY RATHER THAN A REST CALL. It used to be
+      // "commands registered", which proves both credentials work and says NOTHING about whether
+      // the bot is reachable from Discord — the exact gap the outage lived in, where every boot
+      // line was present and the socket was gone. `tools/railway-services.mjs` looks for the string
+      // below, so a deploy is not called verified until Discord has said READY to this container.
+      if (l.startsWith('gateway ready as')) out('discord: bot online — ' + l.slice('gateway ready as '.length));
+    },
+    onFatal: (why) => {
+      out('gateway FATAL: ' + why);
+      // ★ EVERYTHING IS TORN DOWN AND THE PROCESS LEAVES NON-ZERO. Stopping the gateway alone left
+      // the watcher's ref'd poll intervals running, so a bot that had given up on Discord would
+      // keep reading pods forever with `exitCode` set and no exit ever happening. Railway restarts
+      // a non-zero exit and ignores a zero one, so this code is the whole signal.
+      watcher.stop();
+      gateway.stop();
+      exit(1);
+    },
   }, boot.openSocket);
   gateway.connect();
   // ★ THE PRODUCER, AND THE BOT HAD NONE. Before this the only `setInterval` in the whole program
@@ -333,6 +398,17 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
   for (const sig of ['SIGINT', 'SIGTERM'] as const) {
     install(sig, () => { out('shutting down on ' + sig); watcher.stop(); gateway.stop(); process.exit(0); });
   }
+
+  // ★ THE BACKSTOP FOR THE WHOLE CLASS OF FAULT — see `Boot.onIdle`. Installed HERE and not at the
+  // top of `main`, because `--register-commands-only` returns above and is supposed to end.
+  const onIdle = boot.onIdle ?? ((handler: () => void) => { process.on('beforeExit', handler); });
+  onIdle(() => {
+    out('FATAL: the event loop emptied while this bot was supposed to be running. Nothing was holding '
+      + 'the process open — no gateway socket, no pending reconnect, no watch — so Node was about to exit ZERO '
+      + 'and Railway, whose restart policy is ON_FAILURE, would have left the deployment green with no container '
+      + 'behind it. Exiting non-zero instead so the platform restarts this worker.');
+    exit(1);
+  });
 
   return { gateway, identity, store, watcher };
 }

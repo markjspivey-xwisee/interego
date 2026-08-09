@@ -101,6 +101,31 @@ export interface GatewayHandlers {
   onFatal(why: string): void;
 }
 
+/**
+ * How many consecutive attempts to re-establish the gateway before the bot gives up and says so.
+ *
+ * ★ GIVING UP IS THE POINT, and it took an outage to see it. A worker that retries forever in
+ * silence and a worker that is dead are indistinguishable from outside — Railway reports the
+ * deployment SUCCESS either way, because a container that is running is all it can see. The only
+ * signal a portless worker has is its exit code, so the reconnect is BOUNDED and running out is
+ * routed to `onFatal`, which exits non-zero. Ten attempts with the backoff below is a little over
+ * eight minutes of trying, which is longer than any gateway outage that resolves itself.
+ */
+export const MAX_RECONNECT_ATTEMPTS = 10;
+
+/**
+ * How long a fresh socket may sit without sending HELLO before it is abandoned.
+ *
+ * ★ `ws` HAS NO DEFAULT HANDSHAKE TIMEOUT. `handshakeTimeout` is undefined unless passed, and the
+ * defaults object discards any `timeout` given alongside it, so no `'timeout'` handler is
+ * registered at all. A TCP connection that opens and then stalls in the TLS negotiation or never
+ * returns the HTTP 101 therefore emits NEITHER `'error'` NOR `'close'` — the socket hangs, and with
+ * it the bot, with no line in the log and no way for anything to notice. The OS-level ETIMEDOUT
+ * covers only an unanswered SYN, not a connected-but-stalled handshake. This watchdog is the
+ * backstop, and it is armed by this class rather than left to the library on purpose.
+ */
+export const HANDSHAKE_TIMEOUT_MS = 20_000;
+
 /** Close codes Discord will never let a reconnect fix. Anything else is retried. */
 const FATAL_CLOSE: Record<number, string> = {
   4004: 'the bot token was rejected (4004). Check DISCORD_BOT_TOKEN.',
@@ -131,6 +156,21 @@ export class DiscordGateway {
   private backoff = 1000;
   private stopped = false;
   private readonly openSocket: (url: string) => WebSocket;
+  /** The pending reconnect. Held so `stop()` can cancel it — see why it is NOT unref'd below. */
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The handshake watchdog for the CURRENT socket. Cleared the moment HELLO arrives. */
+  private handshakeTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Consecutive attempts since the last READY or RESUMED. Reset by either. */
+  private attempts = 0;
+  /**
+   * Which socket is the live one.
+   *
+   * ★ AN ABANDONED SOCKET MUST NOT STILL DRIVE THIS CLASS. Every listener captures the generation
+   * it was registered under, so a socket the watchdog gave up on cannot deliver a late `close` that
+   * schedules a SECOND reconnect on top of the one already running — two sockets racing, each
+   * closing the other, is a livelock that reads in the log as a reconnect storm.
+   */
+  private gen = 0;
 
   constructor(token: string, handlers: GatewayHandlers, openSocket?: (url: string) => WebSocket) {
     this.token = token;
@@ -140,21 +180,79 @@ export class DiscordGateway {
 
   connect(): void {
     if (this.stopped) return;
+    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+    const gen = ++this.gen;
     const url = (this.sessionId && this.resumeUrl ? this.resumeUrl : 'wss://gateway.discord.gg') + '/?v=10&encoding=json';
-    const ws = this.openSocket(url);
+    let ws: WebSocket;
+    try { ws = this.openSocket(url); }
+    catch (e) {
+      // ★ A SYNCHRONOUS THROW HERE USED TO BE AN UNCAUGHT EXCEPTION. `connect` is called from a
+      // timer callback, so anything the socket constructor threw — a malformed `resume_gateway_url`
+      // from a bad frame is the realistic one — escaped to the top with no handler and no notice.
+      // It is a failed attempt like any other, and it is retried and named.
+      this.handlers.onNotice('gateway could not open a socket to ' + url + ' — ' + ((e as Error)?.message ?? String(e)));
+      this.scheduleReconnect();
+      return;
+    }
     this.ws = ws;
     this.acked = true;
-    ws.on('message', (raw: unknown) => { this.onFrame(String(raw)); });
-    ws.on('close', (code: number) => { this.onClose(code); });
+    // See HANDSHAKE_TIMEOUT_MS: without this, a stalled upgrade hangs forever in total silence.
+    this.handshakeTimer = setTimeout(() => {
+      if (this.stopped || gen !== this.gen) return;
+      this.handlers.onNotice('gateway sent no HELLO within ' + HANDSHAKE_TIMEOUT_MS + 'ms — abandoning this socket, which `ws` would otherwise hold open indefinitely without an error or a close');
+      // Bump the generation FIRST, so anything this socket says from here is ignored.
+      this.gen++;
+      try { ws.close(4000); } catch { /* it is abandoned either way */ }
+      this.ws = null;
+      this.scheduleReconnect();
+    }, HANDSHAKE_TIMEOUT_MS);
+    // Unref'd, and only this one: a real socket mid-handshake is itself a ref'd handle, so the
+    // process cannot fall out from under this timer. The RECONNECT timer has no such companion.
+    this.handshakeTimer.unref?.();
+    ws.on('message', (raw: unknown) => { if (gen === this.gen) this.onFrame(String(raw)); });
+    ws.on('close', (code: number) => { if (gen === this.gen) this.onClose(code); });
     // An error event is always followed by a close on `ws`, so the reconnect is driven from
     // `close` alone. Handling both would double every reconnect.
-    ws.on('error', (e: Error) => { this.handlers.onNotice('gateway socket error: ' + e.message); });
+    ws.on('error', (e: Error) => { if (gen === this.gen) this.handlers.onNotice('gateway socket error: ' + e.message); });
   }
 
   stop(): void {
     this.stopped = true;
+    this.gen++;
     if (this.heartbeat) { clearInterval(this.heartbeat); this.heartbeat = null; }
+    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+    if (this.handshakeTimer) { clearTimeout(this.handshakeTimer); this.handshakeTimer = null; }
     this.ws?.close(1000);
+  }
+
+  /**
+   * Wait, then try again — or give up loudly.
+   *
+   * ★★ THE TIMER IS DELIBERATELY NOT `unref()`d, AND THAT ONE CALL WAS THE OUTAGE. It used to read
+   * `setTimeout(() => this.connect(), wait).unref?.()`. `unref` tells libuv this timer must not keep
+   * the process alive — and at the instant a close is handled it is the ONLY thing left that could:
+   * the heartbeat interval has just been cleared two lines up, the socket is gone, and the bot's
+   * other timers (the watcher sweep, its per-thread reads) are unref'd too and register nothing at
+   * all until a thread is bound. So the event loop emptied, Node exited ZERO, and Railway — whose
+   * default restart policy is ON_FAILURE — treated a clean exit as a job well done and left the
+   * deployment green with no container behind it. Measured: the log said "reconnecting in 1000ms"
+   * and the process was already gone; nothing was ever written again.
+   *
+   * A timer that carries the entire liveness of a process is exactly the timer that must hold it
+   * open. `stop()` cancels it, which is what `unref` was reaching for and got wrong.
+   */
+  private scheduleReconnect(): void {
+    if (this.stopped) return;
+    this.attempts++;
+    if (this.attempts > MAX_RECONNECT_ATTEMPTS) {
+      this.handlers.onFatal('the gateway could not be re-established after ' + MAX_RECONNECT_ATTEMPTS
+        + ' consecutive attempts. The bot is not connected to Discord and cannot become connected by waiting, so it is exiting rather than staying up looking healthy.');
+      return;
+    }
+    const wait = this.backoff;
+    this.backoff = Math.min(this.backoff * 2, 60_000);
+    this.handlers.onNotice('reconnecting in ' + wait + 'ms (attempt ' + this.attempts + ' of ' + MAX_RECONNECT_ATTEMPTS + ')');
+    this.reconnectTimer = setTimeout(() => { this.reconnectTimer = null; this.connect(); }, wait);
   }
 
   private send(op: number, d: unknown): void {
@@ -169,6 +267,9 @@ export class DiscordGateway {
     if (typeof f.s === 'number') this.seq = f.s;
     switch (f.op) {
       case 10: {                                          // HELLO
+        // The socket spoke, so the handshake did not stall. Anything after this is covered by the
+        // heartbeat-ack check instead, which is the right instrument once frames are flowing.
+        if (this.handshakeTimer) { clearTimeout(this.handshakeTimer); this.handshakeTimer = null; }
         const every = (f.d as { heartbeat_interval?: number } | undefined)?.heartbeat_interval ?? 41250;
         if (this.heartbeat) clearInterval(this.heartbeat);
         this.heartbeat = setInterval(() => {
@@ -204,11 +305,14 @@ export class DiscordGateway {
       this.sessionId = typeof p['session_id'] === 'string' ? p['session_id'] : null;
       this.resumeUrl = typeof p['resume_gateway_url'] === 'string' ? p['resume_gateway_url'] : null;
       this.backoff = 1000;
+      // A connection that reached READY is the definition of "the attempts worked", so the budget
+      // that decides whether to give up starts again from here and not from process start.
+      this.attempts = 0;
       const user = p['user'] as { username?: string; id?: string } | undefined;
       this.handlers.onNotice('gateway ready as ' + (user?.username ?? 'unknown') + ' (' + (user?.id ?? '?') + ')');
       return;
     }
-    if (t === 'RESUMED') { this.backoff = 1000; this.handlers.onNotice('gateway resumed'); return; }
+    if (t === 'RESUMED') { this.backoff = 1000; this.attempts = 0; this.handlers.onNotice('gateway resumed'); return; }
     if (t === 'MESSAGE_CREATE') {
       const author = p['author'] as { id?: string; bot?: boolean } | undefined;
       if (typeof p['id'] !== 'string' || typeof p['channel_id'] !== 'string' || typeof author?.id !== 'string') return;
@@ -287,15 +391,14 @@ export class DiscordGateway {
 
   private onClose(code: number): void {
     if (this.heartbeat) { clearInterval(this.heartbeat); this.heartbeat = null; }
+    if (this.handshakeTimer) { clearTimeout(this.handshakeTimer); this.handshakeTimer = null; }
     if (this.stopped) return;
     const fatal = FATAL_CLOSE[code];
     if (fatal) { this.handlers.onFatal(fatal); return; }
     // 4007 / 4009 mean the resume was rejected; anything else may still resume.
     if (code === 4007 || code === 4009) { this.sessionId = null; this.seq = null; }
-    const wait = this.backoff;
-    this.backoff = Math.min(this.backoff * 2, 60_000);
-    this.handlers.onNotice('gateway closed (' + code + '); reconnecting in ' + wait + 'ms');
-    setTimeout(() => { this.connect(); }, wait).unref?.();
+    this.handlers.onNotice('gateway closed (' + code + ')');
+    this.scheduleReconnect();
   }
 }
 
@@ -317,7 +420,9 @@ export class DiscordRest {
     this.fetchImpl = fetchImpl ?? fetch;
   }
 
-  private async call(method: string, path: string, body?: unknown): Promise<Record<string, unknown>> {
+  // Generic in the answer because `GET /commands` returns an ARRAY and everything else an object.
+  // Defaulted to the object shape so no existing call site changes.
+  private async call<T = Record<string, unknown>>(method: string, path: string, body?: unknown): Promise<T> {
     for (let attempt = 0; attempt < 2; attempt++) {
       const res = await this.fetchImpl(API + path, {
         method,
@@ -338,8 +443,8 @@ export class DiscordRest {
         continue;
       }
       if (!res.ok) throw new Error('Discord ' + method + ' ' + path + ' -> HTTP ' + res.status + ' ' + text.slice(0, 300));
-      if (!text) return {};
-      try { return JSON.parse(text) as Record<string, unknown>; } catch { return {}; }
+      if (!text) return {} as T;
+      try { return JSON.parse(text) as T; } catch { return {} as T; }
     }
     /* istanbul ignore next — every path through the loop returns or throws; this satisfies the compiler. */
     throw new Error('Discord ' + method + ' ' + path + ': the retry loop ended without an answer');
@@ -387,6 +492,23 @@ export class DiscordRest {
     return this.call('PUT', '/applications/' + applicationId + '/commands', commands);
   }
 
+  /**
+   * What Discord currently has registered, so a boot can decide whether to publish at all.
+   *
+   * ★ THIS EXISTS BECAUSE RE-REGISTERING IS NOT FREE. Discord bumps a command's `version` on a
+   * substantial change and then REJECTS an invocation carrying an older one — error 50035,
+   * `INTERACTION_APPLICATION_COMMAND_INVALID_VERSION`, which the client renders as "This command is
+   * outdated, please try again in a few minutes". Global commands reach clients through a cache, so
+   * that window is real and is measured in tens of minutes. The bulk PUT has been idempotent since
+   * 2022, so an unchanged payload SHOULD be a no-op — but "should" is a claim about Discord's
+   * normalisation of a payload this bot cannot see the stored form of, and the bot has no way to
+   * tell a spurious bump from a real one after the fact. Reading first turns that into a decision
+   * this program makes and logs, rather than one it hopes about.
+   */
+  listCommands(applicationId: string): Promise<readonly unknown[]> {
+    return this.call<readonly unknown[]>('GET', '/applications/' + applicationId + '/commands');
+  }
+
   /** Who this token is. Used to learn the application id rather than asking for it twice. */
   async me(): Promise<{ id: string; username: string }> {
     const j = await this.call('GET', '/users/@me');
@@ -432,3 +554,51 @@ export const COMMANDS = [
     ],
   },
 ] as const;
+
+/**
+ * A stable string standing for "what the command tree IS", comparable across the two shapes it
+ * comes in: the payload this bot would PUT, and the record Discord hands back from a GET.
+ *
+ * ★ THE TWO SHAPES DIFFER AND ONLY ONE OF THE DIFFERENCES IS REAL. Discord's stored record carries
+ * an `id`, an `application_id`, a `version`, permission and context fields, and localisation maps
+ * this bot never sends — comparing raw JSON would report "changed" on every single boot and defeat
+ * the whole check. So only the fields this bot actually declares are folded in, the defaults
+ * Discord fills in are applied to BOTH sides (a command with no `type` is CHAT_INPUT; an option
+ * with no `required` is optional), and commands and options are sorted by name so that reordering
+ * the source without changing its meaning is not mistaken for a change.
+ *
+ * ★ AND IT IS DELIBERATELY CONSERVATIVE. A field this function ignores is a change it would MISS,
+ * which would leave a real edit unpublished — the worse failure of the two. Every field the tree in
+ * `COMMANDS` uses is therefore folded in, and the test asserts that a change to any of them shows.
+ */
+export function commandFingerprint(commands: readonly unknown[]): string {
+  type Node = { name?: unknown; description?: unknown; type?: unknown; required?: unknown; autocomplete?: unknown; choices?: unknown; options?: unknown };
+  const byName = (a: unknown, b: unknown): number =>
+    String((a as { name?: unknown }).name ?? '').localeCompare(String((b as { name?: unknown }).name ?? ''));
+  const option = (o: unknown): unknown => {
+    const n = (o ?? {}) as Node;
+    return {
+      name: String(n.name ?? ''),
+      description: String(n.description ?? ''),
+      type: Number(n.type ?? 0),
+      required: n.required === true,
+      autocomplete: n.autocomplete === true,
+      choices: Array.isArray(n.choices)
+        ? n.choices.map((c) => ({ name: String((c as Node).name ?? ''), value: (c as { value?: unknown }).value ?? null }))
+        : [],
+      options: Array.isArray(n.options) ? [...n.options].map(option).sort(byName) : [],
+    };
+  };
+  const folded = [...commands].map((c) => {
+    const n = (c ?? {}) as Node;
+    return {
+      name: String(n.name ?? ''),
+      description: String(n.description ?? ''),
+      // Discord stores CHAT_INPUT as type 1 and this bot omits it; without the default every boot
+      // would see 1 on one side and 0 on the other and re-register forever.
+      type: Number(n.type ?? 1),
+      options: Array.isArray(n.options) ? [...n.options].map(option).sort(byName) : [],
+    };
+  }).sort(byName);
+  return JSON.stringify(folded);
+}
