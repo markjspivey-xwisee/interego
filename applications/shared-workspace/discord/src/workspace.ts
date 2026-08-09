@@ -16,7 +16,7 @@ import {
   type Check, type GrantVerdict, type RosterFold, type Seat, type Viewer, type WorkspaceRecord,
   POD_RX, acceptGrant, checkDelegation, checkRoleForWorkspace, createWorkspace, errorCopy,
   findSeat, foldRoster, graphRegion, nsIri, orderChain, parseRoleProfile, podOfNsIri, postEntry,
-  qualifiedName, readAuthorship, readDelegates, readEntryAuthorship, readInt, readLiteral,
+  qualifiedName, readAuthorship, readDelegates, readEntryAuthorship, readInt, readIri, readLiteral,
   readMember, sendInvite, toChainRow,
   type AuthorshipReading, type DelegateRoster, type EntryAuthorship, type PostOutcome,
   type WorkspaceClient,
@@ -419,6 +419,17 @@ export interface ShownEntry {
    * the region could not be located at all — `why` then says so.
    */
   readonly author: EntryAuthorship | null;
+  /**
+   * What this entry declares it was written in answer to — `prov:wasDerivedFrom`, out of the same
+   * signed region.
+   *
+   * ★ CARRIED BECAUSE "HAS THIS ASK BEEN ANSWERED" IS A QUESTION ABOUT A RECORD AND NOT ABOUT A
+   * POD. The watcher used to end an ask's wait when anything at all appeared from the target's
+   * delegator's pod, which meant their human saying "back from lunch" silenced the notice about
+   * their agent's unanswered request. This is the field that makes the real answer checkable, and
+   * it is the same derivation `verifyRequest` reads to know an ask has been answered already.
+   */
+  readonly derivedFrom: string | null;
   readonly why: string | null;
 }
 
@@ -532,14 +543,21 @@ export async function showWorkspace(deps: Deps, threadId: string): Promise<ShowO
           descriptorUrl: r.url,
           // Held against the GRANT's grantee WebID, which lives on the convener's pod — so the log's
           // owner cannot decide what their own entries are checked against.
+          //
+          // ★ AND AGAINST THE KEY THE RELAY AUTHENTICATED, which is the one input here that does not
+          // come out of the pod owner's own bytes. Without it an entry signed by one key could name
+          // any agent as its author, with a full on-behalf-of footing, and this channel would print
+          // it as that agent speaking for its human. See `judgeAuthorship`.
           author: region === null ? null : readEntryAuthorship(region, {
             logOwnerWebId: r.seat.grantedTo ?? null,
             delegates: delegates.get(pod) ?? null,
+            signedBy: readAuthorship(d['authorship']).signerAgent,
           }),
+          derivedFrom: region === null ? null : readIri(region, 'prov:wasDerivedFrom'),
           why: region === null ? 'the signed region of this entry could not be located, so nothing was read from bytes anybody signed' : null,
         });
       } catch (e) {
-        entries.push({ pod: r.seat.podServed ?? r.seat.pod ?? '?', seq: null, created: null, body: null, descriptorUrl: r.url, author: null, why: 'this entry could not be read: ' + errorCopy(e).t });
+        entries.push({ pod: r.seat.podServed ?? r.seat.pod ?? '?', seq: null, created: null, body: null, descriptorUrl: r.url, author: null, derivedFrom: null, why: 'this entry could not be read: ' + errorCopy(e).t });
       }
     }
     // See the header: a clock, and the renderer prints that beside it.

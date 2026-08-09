@@ -100,7 +100,7 @@ export {
   DELEGATION_SCOPES, WRITE_ELIGIBLE_SCOPES, isDelegationScope, scopeWriteEligible, AGENT_ID_RX,
   delegateLabel, parseDelegateLabel, delegateNameProblem, delegateAgentId, isDelegateRow,
   readDelegates, delegatePlan, publishDelegation, revokeDelegation,
-  scopeCeiling, judgeAuthorship, authorshipLine, footingLine,
+  scopeCeiling, judgeAuthorship, authorshipLine, footingLine, signerLine,
   footingTurtle, footingActivityIri, footingDelegationIri,
   delegateCeiling, readEntryAuthorship, delegatePort,
   type DelegateRow, type DelegateRoster, type DelegateRegistryPort,
@@ -128,7 +128,7 @@ export {
  */
 export {
   PRESENCE_RENEW_MS, PRESENCE_LEASE_MS, PRESENCE_MAX_LEASE_MS,
-  agentPort, agentPodOf, delegatePodOf, agentNsIri, agentDocName, agentDocIri,
+  agentPort, agentPodOf, delegatePodOf, agentNsIri, agentDocName, agentDocIri, agentIdHash,
   presenceIri, capabilitiesIri,
   presenceTurtle, publishPresence, readPresence, isPresent, presenceLine, describeSpan,
   capabilityProblem, capabilityTurtle, publishCapability, readCapabilities,
@@ -137,6 +137,6 @@ export {
 } from './presence.js';
 
 export {
-  REQUEST_INBOX_LIMIT, readRequests, verifyRequest, admitAnyVerifiedSigner, admitSeatedIn,
+  REQUEST_INBOX_LIMIT, readRequests, verifyRequest, admitAnyVerifiedSigner, admitSeatedIn, agentInbox,
   type RequestNotice, type RequestVerdict, type AdmissionPredicate,
 } from './request.js';

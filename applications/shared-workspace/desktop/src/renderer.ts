@@ -19,7 +19,7 @@
  */
 
 import {
-  ConnectorTransport, WorkspaceClient, acceptGrant, admitSeatedIn, agentPort, assignPodMarks,
+  ConnectorTransport, WorkspaceClient, acceptGrant, admitSeatedIn, agentInbox, agentPort, assignPodMarks,
   authorshipLine, briefPrompt,
   checkDraft, checkOwnHandle, checkRoleForWorkspace, checkWriteEligibility, createWorkspace,
   decideTurn, delegatePlan, describeSpan, entryShapeAnswer, errorCopy, footingLine,
@@ -1646,7 +1646,12 @@ async function loadBodies(rows: readonly ChainRow[]): Promise<void> {
         const region = g === null ? null : graphRegion((d['graph'] as { content?: string } | undefined)?.content ?? '', g);
         // `''` is a signed block that WAS located and is empty; `null` is one that was not.
         const src = region === null ? '' : region;
-        const auth = d['authorship'] as { signedBy?: string; authorshipVerified?: boolean } | undefined;
+        const auth = d['authorship'] as { signedBy?: string; signer?: string; authorshipVerified?: boolean } | undefined;
+        // ★ THE SAME VALUE THE AUTHORSHIP JUDGMENT IS HELD AGAINST, read once. The relay reports the
+        // key it authenticated as `signer` on some paths and `signedBy` on others; taking only one
+        // of them would hand `judgeAuthorship` a null and turn every genuine delegate entry into a
+        // disputed one.
+        const signerAgent = auth?.signedBy ?? auth?.signer ?? null;
         // Whose log this is, from the SEAT — the grant's `wsp:grantedTo`, which lives on the
         // convener's pod and which the log's owner therefore cannot write. Taking it from the
         // entry would let the entry decide what it is being checked against.
@@ -1658,11 +1663,16 @@ async function loadBodies(rows: readonly ChainRow[]): Promise<void> {
           declaredWorkspace: readIri(src, 'wsp:workspace'),
           servedPod: podOfDescriptorUrl(url),
           signed: !!auth?.authorshipVerified,
-          signedBy: auth?.signedBy ?? null,
+          signedBy: signerAgent,
           derivedFrom: readIri(src, 'prov:wasDerivedFrom'),
           author: readEntryAuthorship(region, {
             logOwnerWebId: st?.seat?.grantedTo ?? null,
             delegates: st ? S.delegatesByPod.get(st.pod) ?? null : null,
+            // ★ THE ONE INPUT HERE THAT IS NOT THE POD OWNER'S OWN BYTES. Stored on the row above
+            // and never compared to the composed author until now: an entry could name any agent
+            // as its author, with a complete on-behalf-of footing, and this stream drew it as that
+            // agent speaking for its human while its key never signed and its host never ran.
+            signedBy: signerAgent,
           }),
           note: g === null
             ? 'this client is no longer tracking which log this record belongs to, so which signed region is its own could not be established'
@@ -3093,7 +3103,13 @@ function renderAgent(): void {
     p.appendChild(el('div', 'note',
       A.wake.at === null
         ? 'Its inbox has not been read yet this run. Nothing depends on it — a request is an entry in the channel this app is already watching, and a notice is only a pointer at one.'
-        : 'Inbox read ' + describeSpan(Date.now() - A.wake.at) + ' ago' + (A.wake.why ? ': ' + A.wake.why : ' — nothing was waiting.')));
+        : 'Inbox read ' + describeSpan(Date.now() - A.wake.at) + ' ago'
+          // ★ THE ADDRESS IS NAMED. "Nothing was waiting" and "this read the wrong mailbox" were
+          // the same sentence for a release, and the only way to tell them apart from the screen is
+          // to say WHICH inbox answered — this delegate's own, which is where an ask addressed to
+          // it has to be delivered.
+          + (readInboxAt ? ' — ' + readInboxAt : ' — the relay named no inbox for this session')
+          + (A.wake.why ? ': ' + A.wake.why : '. Nothing was waiting.')));
     for (const r of A.refusedNotices.slice(0, 3)) {
       // ★ SHOWN, NOT DROPPED. A forged notice and a genuine one looking identical from the outside
       // is how people stop reading their inbox at all.
@@ -3292,6 +3308,9 @@ const WAKE_EVERY_MS = 5 * 60_000;
 /** Descriptor URLs this run has already dispatched from a notice, so a re-read is not a re-ask. */
 const woken = new Set<string>();
 
+/** The inbox the relay reported for the delegate's own session on the last read. Shown, not used. */
+let readInboxAt: string | null = null;
+
 async function heartbeat(): Promise<void> {
   const speaker = speakingDelegate();
   if (!A.on || !speaker || !S.viewer) return;
@@ -3338,9 +3357,16 @@ async function wake(): Promise<void> {
   if (!A.on || A.busy || !speaker || !S.workspace) return;
   let verdicts: RequestVerdict[] = [];
   try {
+    // ★ THE DELEGATE'S OWN SESSION, WHICH IS THE ONLY INBOX IT CAN READ. Measured: the relay
+    // answers `read_inbox: forbidden — you may only read your own inbox` for any other pod. So the
+    // mailbox this polls is the one on the DELEGATE's pod, and for a release the ask path delivered
+    // to its DELEGATOR's pod instead — a request addressed to an absent agent landing where that
+    // agent cannot look, while this panel reported "nothing was waiting". The address is recorded
+    // below so the two halves can be held against each other from the screen.
     const client = await delegateClient(speaker.address);
     const port = agentPort(client);
     const inbox = await readRequests(port);
+    readInboxAt = inbox.inbox;
     for (const n of inbox.notices) {
       if (woken.has(n.about) || A.answered.has(n.about)) continue;
       verdicts.push(await verifyRequest(port, n, {
@@ -3349,7 +3375,10 @@ async function wake(): Promise<void> {
         // Every entry this shell has read that declares what it was derived from. Survives a
         // restart, which the in-run set above does not.
         derivedFromOnMyPod: derivedFromOnMyPod(),
-        admits: admitSeatedIn({ workspace: S.workspace, seats: S.seats }),
+        // ★ THE PREDICATE READS REGISTRIES NOW, so it is given something to read them with. It
+        // resolves the KEY that signed a record to a seat rather than trusting the first path
+        // segment of the URL the notice pointed at, which a forger writes.
+        admits: admitSeatedIn({ workspace: S.workspace, seats: S.seats, port: delegatePort(client) }),
       }));
     }
   } catch (e) {
@@ -3367,6 +3396,11 @@ async function wake(): Promise<void> {
         + (ok.length < verdicts.length ? '; the rest are shown with the check that failed' : ''),
   };
   A.refusedNotices = verdicts.filter((v) => !v.ok).map((v) => ({ about: v.about, why: v.why ?? 'no reason reported' }));
+  // ★ DRAWN ON THE SUCCESS PATH TOO, WHICH IT WAS NOT. Only the catch re-rendered, so a completed
+  // read — including "I read THIS inbox and it was empty" — never reached the screen, and the panel
+  // went on saying the inbox had not been read this run. That is the sentence a person would use to
+  // notice that requests are landing somewhere their agent cannot see.
+  renderAgent();
   for (const v of ok) woken.add(v.about);
   // ★ THE CHANNEL IS WHAT IT ANSWERS FROM, so a fresh read comes first and the decision follows it.
   // `readOnce` ends in `loadBodies`, which is the one place `agentConsider` is called — so the
@@ -3388,6 +3422,16 @@ async function wake(): Promise<void> {
  * cannot connect. The route it publishes is the one that actually works: put a signed record where
  * it reads, and it answers when its host next runs.
  *
+ * ★ AND THE ROUTE IS THE ONE THE RELAY REPORTS FOR THIS DELEGATE'S OWN SESSION, NOT ONE COMPOSED
+ * HERE. This used to publish `<relay>/ns/<the HUMAN's pod>/inbox`, which is wrong twice over: it is
+ * a `/ns/` graph name and 404s, so the single route a stranger holding only the DID was told to use
+ * dereferenced to nothing; and it named the delegator's pod, which is not the mailbox this agent
+ * polls — the relay refuses `read_inbox` for any pod but the caller's. When the pod name was
+ * missing it published `…/ns//inbox` under this agent's own signature rather than refusing. What
+ * goes in now is {@link agentInbox}: the address `read_inbox` reports for THIS session, which
+ * `notify_agent` accepts directly and confirms as canonical. If it cannot be read, NOTHING is
+ * published — an advertised route that does not work is worse than no advertisement.
+ *
  * Published once per delegate per run, not on the heartbeat: what an agent can be asked does not
  * change every ninety seconds, and republishing it on a timer would be noise on somebody's pod.
  */
@@ -3399,12 +3443,20 @@ async function advertise(): Promise<void> {
   advertised.add(speaker.agentId);
   try {
     const client = await delegateClient(speaker.address);
+    const inbox = await agentInbox(agentPort(client));
+    if (!inbox) {
+      advertised.delete(speaker.agentId);
+      A.advertise = 'the relay did not report an inbox for this delegate\'s own session, so there is no route to advertise. '
+        + 'Nothing was published — a capability document naming an address nobody can deliver to is an offer a reader cannot act on.';
+      renderAgent();
+      return;
+    }
     const out = await publishCapability(agentPort(client), {
       relay: S.relay,
       agentId: speaker.agentId,
       action: RESPOND_AS_MEMBER,
       // The inbox is where a request POINTS; the record it points at is the ask itself.
-      route: { kind: 'ask', askVia: S.relay + '/ns/' + (S.viewer?.podName ?? '') + '/inbox' },
+      route: { kind: 'ask', askVia: inbox },
       title: 'Answer in this channel',
       description: 'Ask this agent to read the channel and, if it judges there is something to add, append an answer '
         + 'to its own human\'s log. It decides whether to speak; asking is not instructing.',

@@ -40,7 +40,7 @@ import { delegateLabel } from '@interego/core/delegate';
 // ★ THE REAL WRITER COMPOSES THE FIXTURES. A harness that spelled out the authorship triples
 // itself could not notice the writer changing underneath it — and the writer is what decides
 // whether an entry says it was spoken for its delegator or on the agent's own account.
-import { entryTurtle, type EntryAuthor } from '@interego/workspace-client';
+import { capabilitiesIri, entryTurtle, presenceIri, type EntryAuthor } from '@interego/workspace-client';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DESKTOP = join(ROOT, 'applications/shared-workspace/desktop');
@@ -118,7 +118,18 @@ class Pod {
 
 interface Scripted {
   readonly pods: Map<string, Pod>;
+  /**
+   * The VIEWER's inbox. Every other pod's is {@link Scripted.inboxOf}.
+   *
+   * ★ ONE SHARED INBOX WAS A HARNESS THAT COULD NOT EXPRESS THE DEFECT IT WAS MEANT TO CATCH.
+   * `read_inbox` answered identically for every session, so a request delivered to a delegate's
+   * DELEGATOR's pod appeared in the DELEGATE's read — and the ask-and-wake path passed here for a
+   * whole release while, live, the relay refuses any pod but the caller's and the notice sat unread
+   * forever. A double that answers a question the substrate refuses cannot verify anything about it.
+   */
   inbox: Record<string, unknown>[];
+  /** Per-pod inboxes, keyed by the pod whose SESSION is asking. The viewer's is `inbox` above. */
+  inboxOf: Map<string, Record<string, unknown>[]>;
   /** Per-tool overrides for the failure paths, which a happy store cannot produce. */
   fail: Map<string, (input: Record<string, unknown>) => unknown>;
   calls: { name: string; input: Record<string, unknown> }[];
@@ -179,7 +190,7 @@ function scripted(): Scripted {
       [POD_A, a], [POD_B, b],
       [podOfDelegate(D1), new Pod(podOfDelegate(D1))], [podOfDelegate(D2), new Pod(podOfDelegate(D2))],
     ]),
-    inbox: [], fail: new Map(), calls: [], writeEligible: true,
+    inbox: [], inboxOf: new Map(), fail: new Map(), calls: [], writeEligible: true,
     // One delegate authorised on A's pod, with its key here — the ordinary state a person is in
     // once they have set one up. Cases about having none, or having one hosted elsewhere, say so.
     delegations: new Map([[POD_A, [delegationRow(D1, delegateLabel('Claude side'))]]]),
@@ -284,8 +295,22 @@ function tool(s: Scripted, viewerPod: string, name: string, input: Record<string
         ],
       };
     }
-    case 'read_inbox':
-      return { inbox: 'x', count: s.inbox.length, items: s.inbox.slice(0, Number(input['limit'] ?? 50)) };
+    case 'read_inbox': {
+      // ★ THE CALLER'S OWN POD AND NOTHING ELSE, WHICH IS WHAT THE RELAY DOES. Measured:
+      // `read_inbox: forbidden — you may only read your own inbox` for any other pod. So a notice
+      // delivered to pod X is invisible to a session on pod Y, and a test that wants the delegate
+      // to see something has to put it in the DELEGATE's inbox.
+      if (input['pod_url']) return { error: 'forbidden', message: 'read_inbox: forbidden — you may only read your own inbox' };
+      // The SESSION's pod, which for a delegate's own call is the pod inside its DID — not its
+      // delegator's. That difference is the whole defect this keying exists to make expressible.
+      const sessionPod = caller === 'did:ethr:0xsession' ? viewerPod : podOfDelegate(caller) ?? viewerPod;
+      const items = sessionPod === viewerPod ? s.inbox : s.inboxOf.get(sessionPod) ?? [];
+      return {
+        inbox: 'http://css.railway.internal:3456/' + sessionPod + '/inbox/',
+        count: items.length,
+        items: items.slice(0, Number(input['limit'] ?? 50)),
+      };
+    }
     case 'get_current_head': {
       const pod = podOf(input['pod_name']);
       const urn = String(input['urn']);
@@ -1116,6 +1141,12 @@ const entry = (pod: string, n: number, body: string, at: string, by?: string | n
   return {
     graph: STREAM(pod), cid: 'cid-ag-' + pod + '-' + n, url: DESC(pod, 200 + n), validFrom: at,
     content: trig(STREAM(pod), written),
+    // ★ THE KEY THAT SIGNED IT, WHICH IS THE ONE INPUT TO AUTHORSHIP THAT IS NOT IN THE BYTES.
+    // A delegate's entry is signed by the DELEGATE; a person's is carried by whatever key put it
+    // on their pod. `judgeAuthorship` returns a delegate verdict only where the agent the entry
+    // names is the agent that signed it — so a fixture that left this off would be exercising a
+    // record the readers now (correctly) call disputed, which is not what these tests are about.
+    authorship: { signedBy: by ?? WEBID(pod), authorshipVerified: true, contentBinding: 'bound' },
   };
 };
 
@@ -1380,7 +1411,9 @@ describe('the local agent is off, visible, and stoppable', () => {
     // descriptor binding holds the proof's owner against the pod the bytes landed on. A lease
     // nobody can verify is not evidence.
     const ownPod = D1.slice(D1.lastIndexOf('u-'));
-    expect(String(lease['graph_iri'])).toBe(RELAY + '/ns/' + ownPod + '/agent-' + ownPod + '-presence');
+    // ★ THE ADDRESS IS THE SHIPPED COMPOSITION, and it carries a hash of the WHOLE DID: two agents
+    // sharing a pod used to compose one name, and the later publisher deleted the earlier one.
+    expect(String(lease['graph_iri'])).toBe(presenceIri(RELAY, D1));
     expect(lease['pod_name']).toBe(ownPod);
     expect(lease['sign_authorship']).toBe(true);
     // One head, because a forked lease leaves a reader choosing between two claims about one
@@ -1411,14 +1444,43 @@ describe('the local agent is off, visible, and stoppable', () => {
     await o.settle();
     const caps = capabilityPublishes(o);
     expect(caps).toHaveLength(1);
-    const ownPod = D1.slice(D1.lastIndexOf('u-'));
-    expect(String(caps[0]?.input['graph_iri'])).toBe(RELAY + '/ns/' + ownPod + '/agent-' + ownPod + '-capabilities');
+    expect(String(caps[0]?.input['graph_iri'])).toBe(capabilitiesIri(RELAY, D1));
     const ttl = String(caps[0]?.input['graph_content']);
     // ★ THIS AGENT RUNS ON SOMEBODY'S LAPTOP AND HAS NO ENDPOINT THAT WILL EVER ANSWER, so
     // advertising a `hydra:target` would advertise a call that cannot connect.
     expect(ttl).toContain('iep:askVia');
     expect(ttl).not.toContain('hydra:target');
     expect(ttl).toContain('iep:capabilityOf <' + D1 + '>');
+    /**
+     * ★★ AND THE ROUTE IS THE ADDRESS THE RELAY REPORTS FOR THIS DELEGATE'S OWN SESSION.
+     *
+     * It used to be `<relay>/ns/<the HUMAN's pod>/inbox`, composed here. That is wrong twice: it is
+     * a `/ns/` graph name and 404s — measured against the live relay — so the ONE route a stranger
+     * holding only the DID was told to use dereferenced to nothing; and it named the delegator's
+     * pod, which is not the mailbox this agent polls, because the relay refuses `read_inbox` for
+     * any pod but the caller's. Its own inbox is an address `notify_agent` accepts directly.
+     */
+    const ownPod = D1.slice(D1.lastIndexOf('u-'));
+    expect(ttl).toContain('iep:askVia <http://css.railway.internal:3456/' + ownPod + '/inbox/>');
+    expect(ttl).not.toContain('/ns/' + POD_A + '/inbox');
+    expect(ttl).not.toContain('/ns//inbox');
+  });
+
+  it('★ publishes NOTHING when the relay names no inbox for that session, rather than a guess', async () => {
+    const o = await open({
+      setup: (s) => {
+        (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'What did we decide?', '2026-08-07T10:00:00.000Z'));
+        s.fail.set('read_inbox', () => ({ count: 0, items: [] }));
+      },
+      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: OWN + 'A reply.', why: 'ok', ms: 900 }) },
+    });
+    await signInAndSpeak(o);
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    expect(capabilityPublishes(o)).toHaveLength(0);
+    // A route nobody can deliver to is not a smaller offer than none; it is an offer that fails
+    // silently at the far end, so the panel says the advertisement did not go out.
+    expect(text(o.doc, '#agentwhy')).toContain('NOT managed to publish what it can be asked');
   });
 
   it('does not republish the capability on every heartbeat — it does not change every 90s', async () => {
@@ -1459,6 +1521,36 @@ describe('the local agent is off, visible, and stoppable', () => {
     expect(ttl).toMatch(/prov:wasDerivedFrom <[^>]+>/);
     // `prov:` and not a minted term: "this was derived from that" is what PROV-O already says.
     expect(ttl).not.toContain('wsp:answers');
+  });
+
+  /**
+   * ★★ WHICH MAILBOX THE HOST ACTUALLY POLLS, PINNED FROM BOTH SIDES.
+   *
+   * `wake()` reads through the DELEGATE's own session, and the relay answers
+   * `read_inbox: forbidden — you may only read your own inbox` for any other pod. So a notice
+   * delivered to the delegator's pod — which is where the Discord conduit sent every one of them
+   * for a release — is invisible here, forever, while the panel says "nothing was waiting". The
+   * unit double used to answer one shared inbox for every session, which is exactly why this
+   * passed while production dropped every request on the floor.
+   */
+  it('★★ reads the DELEGATE\'s own inbox, and a notice on its delegator\'s pod is not in it', async () => {
+    const ownPod = D1.slice(D1.lastIndexOf('u-'));
+    const o = await open({
+      // ★ NOTHING FOR IT TO ANSWER, deliberately: the point here is the inbox read, and a delegate
+      // mid-draft is `busy` and does not wake. Every OTHER agent test covers the drafting path.
+      setup: (s) => {
+        // Delivered where the ask path USED to send it: the delegator's pod. Never seen.
+        s.inbox = [{ type: 'Question', about: DESC(POD_B, 200), actor: 'did:ethr:0xB', summary: 'a request' }];
+      },
+    });
+    await signInAndSpeak(o);
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    const why = text(o.doc, '#agentwhy');
+    // The panel names the address it read, so "nothing was waiting" and "this read the wrong
+    // mailbox" can never again be the same sentence on screen.
+    expect(why).toContain('http://css.railway.internal:3456/' + ownPod + '/inbox/');
+    expect(why).toContain('Nothing was waiting');
   });
 
   it('a PERSON\'s post declares no such link, because a person is not looping', async () => {
@@ -1855,6 +1947,8 @@ describe('delegates: separate identities, plural, and visible as such', () => {
         content: trig(STREAM(POD_A), '<' + STREAM(POD_A) + '/e/0> a wsp:Entry ; wsp:workspace <' + WS + '> ;\n'
           + '  wsp:seq "0"^^xsd:nonNegativeInteger ; prov:wasAttributedTo <' + D1 + '> ;\n'
           + '  prov:wasGeneratedBy <' + STREAM(POD_A) + '/e/0#act> ; dct:description "No footing here." .'),
+        // Signed by the delegate it names — the footing is what is missing here, not the signature.
+        authorship: { signedBy: D1, authorshipVerified: true, contentBinding: 'bound' },
       });
     } });
     await signInAndSettle(o);

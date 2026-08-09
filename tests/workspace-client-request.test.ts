@@ -52,14 +52,33 @@ const notice = (over: Partial<RequestNotice> = {}): RequestNotice => ({
   item: {}, about: ABOUT, actor: BOT, summary: 'A request', published: null, ...over,
 });
 
-const clientFor = (d: Record<string, unknown> | Error): AgentPort => ({
-  async tool(): Promise<unknown> { throw new Error('this fixture answers only descriptor reads'); },
+/**
+ * A port that answers descriptor reads AND the one registry read admission now makes.
+ *
+ * ★ THE REGISTRY IS PART OF THE FIXTURE BECAUSE IT IS PART OF THE ANSWER. `admitSeatedIn` resolves
+ * the KEY that signed a record to a seat — the asker's own WebID, a seated pod's own surface, or a
+ * seated pod's delegation registry — rather than gating on the first path segment of the URL the
+ * notice pointed at, which a forger writes. The conduit here is exactly that third case: the bot's
+ * own pod is not seated, and what admits it is that the asker's registry lists it.
+ */
+const clientFor = (d: Record<string, unknown> | Error, registry: readonly Record<string, unknown>[] = [{ agentId: BOT, label: 'delegate discord', scope: 'PublishOnly' }]): AgentPort => ({
+  async tool(name: string): Promise<unknown> {
+    if (name !== 'get_pod_status') throw new Error('this fixture answers descriptor and registry reads only, not ' + name);
+    return { delegationRegistry: { owner: ASKER_WEBID, rows: registry } };
+  },
   async descriptor(): Promise<Record<string, unknown>> { if (d instanceof Error) throw d; return d; },
+});
+
+const port = (registry: readonly Record<string, unknown>[] = [{ agentId: BOT, label: 'delegate discord', scope: 'PublishOnly' }]) => ({
+  tool: (async (name: string) => {
+    if (name !== 'get_pod_status') throw new Error('unexpected ' + name);
+    return { delegationRegistry: { owner: ASKER_WEBID, rows: registry } };
+  }) as never,
 });
 
 const args = (over: Partial<Parameters<typeof verifyRequest>[2]> = {}): Parameters<typeof verifyRequest>[2] => ({
   heldAgentIds: [ME], answeredHere: [], derivedFromOnMyPod: [],
-  admits: admitSeatedIn({ workspace: WORKSPACE, seats: seats(ASKER) }),
+  admits: admitSeatedIn({ workspace: WORKSPACE, seats: seats(ASKER), port: port() }),
   ...over,
 });
 
@@ -91,11 +110,15 @@ describe('an agent that belongs to no workspace at all', () => {
     expect(v.forMe).toEqual([ME]);
   });
 
-  it('takes an allowlist as its policy just as readily as a roster', async () => {
-    const known = ['u-eth-somebody-i-know'];
+  it('takes an allowlist as its policy just as readily as a roster — keyed on the SIGNER', async () => {
+    // ★ AN ALLOWLIST OF KEYS, NOT OF PATH SEGMENTS. The predicate used to be handed a `pod` parsed
+    // out of the notice's own `about` URL — a string a forger writes, on a host `get_descriptor`
+    // will fetch for anybody. What the relay verified over these bytes is the signer, so that is
+    // what a policy is given and `servedFromPath` is named for what it actually is.
+    const known = ['did:web:identity.example:agents:somebody-i-know'];
     const v = await verifyRequest(clientFor(entryDoc({ addressedTo: [ME] })), notice(), {
       heldAgentIds: [ME], answeredHere: [], derivedFromOnMyPod: [],
-      admits: ({ pod }) => (known.indexOf(pod) >= 0 ? null : 'pod ' + pod + ' is not on this agent\'s allowlist'),
+      admits: ({ signedBy }) => (known.indexOf(signedBy) >= 0 ? null : signedBy + ' is not on this agent\'s allowlist'),
     });
     expect(v.ok).toBe(false);
     expect(v.why).toContain('not on this agent\'s allowlist');
@@ -210,9 +233,43 @@ describe('each check, failed on its own', () => {
 
   it('5 — the asker is not seated in the workspace the entry declares', async () => {
     const v = await verifyRequest(clientFor(entryDoc({ addressedTo: [ME] })), notice(),
-      args({ admits: admitSeatedIn({ workspace: WORKSPACE, seats: [] }) }));
+      args({ admits: admitSeatedIn({ workspace: WORKSPACE, seats: [], port: port() }) }));
     expect(v.ok).toBe(false);
-    expect(v.why).toContain('not seated in this workspace');
+    expect(v.why).toContain('nobody is seated in');
+  });
+
+  /**
+   * ★ THE FORGERY CHECK 5 USED TO ADMIT, PINNED.
+   *
+   * The predicate was handed a `pod` derived from the first path segment of the notice's own
+   * `about` — measured, `podOfDescriptorUrl('https://attacker.example/u-eth-<seated>/req.ttl')` is
+   * `'u-eth-<seated>'`, and `get_descriptor` will fetch a caller-supplied URL on any public host.
+   * So a descriptor served from a host that has nothing to do with this fleet satisfied "is the
+   * asker seated here". Nothing about the URL is consulted now; the signature is.
+   */
+  it('★ 5 — a descriptor served from an attacker\'s host whose PATH names a seated pod is refused', async () => {
+    const stranger = 'did:web:attacker.example:agents:nobody-u-eth-000000000009';
+    const doc = {
+      ...entryDoc({ addressedTo: [ME] }),
+      authorship: { authorshipVerified: true, signedBy: stranger, contentBinding: 'bound', descriptorBinding: { bound: false, basis: 'none' } },
+    };
+    const v = await verifyRequest(
+      clientFor(doc),
+      notice({ about: 'https://attacker.example/' + ASKER + '/req.ttl', actor: stranger }),
+      args(),
+    );
+    expect(v.ok).toBe(false);
+    expect(v.why).toContain('resolves to no seat in this workspace');
+    // The path segment IS reported — as what it is, so a reader can see the trick that was tried.
+    expect(v.servedFromPath).toBe(ASKER);
+  });
+
+  it('★ 5 — a registry that would not answer is said so, not read as "not a delegate"', async () => {
+    const failing = { tool: (async () => { throw new Error('502 bad gateway'); }) as never };
+    const v = await verifyRequest(clientFor(entryDoc({ addressedTo: [ME] })), notice(),
+      args({ admits: admitSeatedIn({ workspace: WORKSPACE, seats: seats(ASKER), port: failing }) }));
+    expect(v.ok).toBe(false);
+    expect(v.why).toContain('refusal for lack of an answer');
   });
 
   it('5 — a record that names no room does not join one by arriving in a member\'s inbox', async () => {

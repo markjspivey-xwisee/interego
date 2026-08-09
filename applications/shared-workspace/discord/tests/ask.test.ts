@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import type { WorkspaceClient } from '@interego/workspace-client';
+import { presenceIri, type WorkspaceClient } from '@interego/workspace-client';
 import { ask, askCandidates, askChoices, resolveTarget, AUTOCOMPLETE_MAX } from '../src/ask.js';
 import { LinkStore } from '../src/links.js';
 import type { Deps } from '../src/workspace.js';
@@ -66,7 +66,9 @@ function world(w: World): { client: WorkspaceClient; calls: { name: string; args
           // ★ ONE READ, NEWEST-FIRST, NO TEMPORAL FILTER. The reader takes the HEAD and checks the
           // head's own window — because an older, longer-lived lease outlives the newer one that
           // superseded it, so "what is valid now" can hand back a claim already withdrawn.
-          const agentPod = /agent-(u-[a-z0-9-]+)-presence/.exec(graph)?.[1] ?? '';
+          // ★ THE NAME CARRIES A HASH OF THE WHOLE DID NOW, so two distinct agents on one pod no
+          // longer compose one address. The fixture reads the pod segment out of the same shape.
+          const agentPod = /agent-(u-[a-z0-9-]+)-[0-9a-f]{16}-presence/.exec(graph)?.[1] ?? '';
           if ((w.running ?? []).indexOf(agentPod) < 0) return { entries: [] };
           return { entries: [{ descriptorUrl: 'https://css.internal/' + pod + '/lease-' + agentPod + '.ttl', validFrom: new Date(NOW - 41_000).toISOString(), validUntil: new Date(NOW + 139_000).toISOString() }] };
         }
@@ -88,12 +90,22 @@ function world(w: World): { client: WorkspaceClient; calls: { name: string; args
       const leaseFor = /\/lease-(u-[a-z0-9-]+)\.ttl$/.exec(url)?.[1];
       if (leaseFor) {
         const agentId = 'did:web:identity.interego.xwisee.com:agents:interego-delegate-' + leaseFor;
-        const iri = RELAY + '/ns/' + pod + '/agent-' + leaseFor + '-presence';
+        // ★ COMPOSED BY THE SHIPPED FUNCTION, not spelled out here. The document name carries a
+        // hash of the WHOLE agent DID, and a fixture that wrote the old `agent-<pod>-presence`
+        // shape by hand would locate no signed region and read as `unreadable` for a reason that
+        // has nothing to do with what any of these tests are about.
+        const iri = presenceIri(RELAY, agentId) as string;
         const iep = (t: string): string => '<https://markjspivey-xwisee.github.io/interego/ns/iep#' + t + '>';
         return {
           authorship: { authorshipVerified: true, signedBy: agentId, contentBinding: 'bound' },
+          // ★ `iep:leaseExpires` IS IN HERE BECAUSE THE READER TURNS ON IT NOW. It used to be
+          // written by every host and read by nobody — `stale`, `overlong` and the reported expiry
+          // all came off the relay's own unsigned row — so a fixture without it still said
+          // `running`, which measured the row and not the lease. It decides here, and a signed
+          // expiry that disagrees with the row is reported as a finding rather than picked between.
           graph: { content: '<' + iri + '> {\n<' + iri + '> ' + iep('presenceOf') + ' <' + agentId + '> ;\n  '
             + '<http://purl.org/dc/terms/created> "' + new Date(NOW - 41_000).toISOString() + '" ;\n  '
+            + iep('leaseExpires') + ' "' + new Date(NOW + 139_000).toISOString() + '" ;\n  '
             + iep('presenceHost') + ' "a test host" .\n}' },
         };
       }
@@ -265,6 +277,74 @@ describe('asking', () => {
     // thing it is about to read anyway, and sending one regardless trains every reader to treat
     // the inbox as where requests live.
     expect(out.notice.attempted).toBe(false);
+    expect(calls.some((k) => k.name === 'notify_agent')).toBe(false);
+  });
+
+  /**
+   * ★★ THE MAILBOX. MEASURED LIVE, AND IT MADE ASK-AND-WAKE A SILENT DROP FOR A WHOLE RELEASE.
+   *
+   * The notice went to `target.pod` — the seated MEMBER's pod, i.e. the delegate's delegator. A
+   * hosted delegate reads its inbox through its OWN session, and the relay answers
+   * `read_inbox: forbidden — you may only read your own inbox` for any other pod. Two different
+   * mailboxes: the request sat unread forever while the desktop panel reported "nothing was
+   * waiting", `wake()` could never fire, and `verifyRequest`'s six checks never ran in production
+   * once. A request vanishing into silence is worse than the feature not existing.
+   *
+   * The delegate's own pod is what `readPresence` and `readCapabilities` already derive from the
+   * same DID — so everything about an agent is addressed from its id, including where to knock.
+   */
+  it('★★ sends the notice to the ADDRESSEE\'s own pod, not to its delegator\'s', async () => {
+    const { client, calls } = world({ ...TWO_DELEGATES, running: [] });
+    const c = { ...client, async manifest(): Promise<unknown[]> { return []; } } as unknown as WorkspaceClient;
+    const orig = c.tool.bind(c);
+    (c as unknown as { tool: WorkspaceClient['tool'] }).tool = async (name, a) => {
+      if (name === 'publish_context') return { status: 'committed', descriptorUrl: 'https://css/e7.ttl' };
+      if (name === 'verify_agent') return { enforcement: { writeEligible: true, scope: 'PublishOnly', basis: 'signed-chain', examinedPod: MARK } };
+      return orig(name, a);
+    };
+    const out = await ask(deps(c, store()), {
+      threadId: THREAD, discordUserId: MARK_USER, spec: SCRIBE, task: 'Check the underlay photos.', nowMs: NOW,
+    });
+    expect(out.kind).toBe('asked');
+    if (out.kind !== 'asked') return;
+    expect(out.notice.attempted).toBe(true);
+    const sent = calls.filter((k) => k.name === 'notify_agent');
+    expect(sent).toHaveLength(1);
+    // `interego-delegate-u-eth-5c81be0001` → `u-eth-5c81be0001`. NOT `MARK`, whose seat it writes
+    // under and whose registry authorises it — two different facts about two different pods.
+    expect(sent[0]?.args['to']).toBe('u-eth-5c81be0001');
+    expect(sent[0]?.args['to']).not.toBe(MARK);
+    expect(out.target.agentPod).toBe('u-eth-5c81be0001');
+    expect(out.target.pod).toBe(SAM);
+    // And the acknowledgement says which pod it went to, so the two cannot be conflated on screen.
+    expect(out.checks.some((k) => k.text.includes('u-eth-5c81be0001'))).toBe(true);
+  });
+
+  it('★ sends nothing at all, and says so, when it cannot name the addressee\'s pod', async () => {
+    // A cross-issuer delegate — a Codex agent, a `did:key` — carries no pod segment this client can
+    // read. Guessing a mailbox would be delivering into somebody else's inbox; the ask is still on
+    // the record, which is what a host actually reads.
+    const CODEX = 'did:web:codex.example.com:agents:codex-build-bot';
+    const { client, calls } = world({
+      delegates: {
+        // The conduit's own row, so the ask can be written at all — see TWO_DELEGATES.
+        [MARK]: [{ agentId: BOT, label: 'discord-link ' + MARK_USER, scope: 'PublishOnly' }],
+        [SAM]: [{ agentId: CODEX, label: 'delegate codex', scope: 'PublishOnly' }],
+      },
+      running: [],
+    });
+    const c = { ...client, async manifest(): Promise<unknown[]> { return []; } } as unknown as WorkspaceClient;
+    const orig = c.tool.bind(c);
+    (c as unknown as { tool: WorkspaceClient['tool'] }).tool = async (name, a) => {
+      if (name === 'publish_context') return { status: 'committed', descriptorUrl: 'https://css/e7.ttl' };
+      if (name === 'verify_agent') return { enforcement: { writeEligible: true, scope: 'PublishOnly', basis: 'signed-chain', examinedPod: MARK } };
+      return orig(name, a);
+    };
+    const out = await ask(deps(c, store()), { threadId: THREAD, discordUserId: MARK_USER, spec: CODEX, task: 'x', nowMs: NOW });
+    expect(out.kind).toBe('asked');
+    if (out.kind !== 'asked') return;
+    expect(out.notice.attempted).toBe(false);
+    expect(out.notice.why).toContain('cannot take a pod out of');
     expect(calls.some((k) => k.name === 'notify_agent')).toBe(false);
   });
 

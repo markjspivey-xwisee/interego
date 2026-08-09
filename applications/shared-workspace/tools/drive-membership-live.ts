@@ -26,7 +26,7 @@ import {
   DELEGATE_SURFACE, RelayMcpTransport, WorkspaceClient, acceptGrant, authorshipLine, checkOwnHandle,
   checkWriteEligibility, composedHandle, createWorkspace, delegateAgentId, delegatePlan,
   delegatePort, findSeat, foldRoster, graphRegion, listWorkspaces, mergeForward,
-  parseRoleProfile, postEntry, publishDelegation, readCanvas, readDelegates, readEntryAuthorship,
+  parseRoleProfile, postEntry, publishDelegation, readAuthorship, readCanvas, readDelegates, readEntryAuthorship,
   readInbox, readViewer, revokeDelegation, revokeGrant, saveCanvas,
   sendInvite, verifyInvitation, verifyWorkspaceEntry, nsIri, qualifiedName, shortRef,
   type EntryAuthorship, type Viewer,
@@ -284,7 +284,13 @@ async function run(): Promise<number> {
   for (const p of posts) {
     const d = await A.client.descriptor(p.url);
     const region = graphRegion((d['graph'] as { content?: string } | undefined)?.content ?? '', aStream);
-    const a = readEntryAuthorship(region, { logOwnerWebId: A.viewer.webId, delegates: roster });
+    const a = readEntryAuthorship(region, {
+      logOwnerWebId: A.viewer.webId, delegates: roster,
+      // The key the relay authenticated over these bytes — the one input on this call that the pod
+      // owner cannot compose. Without it, a record naming an agent it was not signed by reads as
+      // that agent speaking.
+      signedBy: readAuthorship(d['authorship']).signerAgent,
+    });
     readAuthorships.push(a);
     log('   ' + p.what.padEnd(11) + ' desktop  · ' + authorshipLine(a, { displayName: 'A' }));
     // ★ A SECOND CONSUMER, NOT THE DESKTOP APP. The Discord conduit renders authorship with its own

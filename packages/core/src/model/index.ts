@@ -53,6 +53,8 @@ export {
   scopeCeiling,
   judgeAuthorship,
   authorshipLine,
+  signerLine,
+  agentPodOf,
 } from './delegate.js';
 export type {
   DelegateRow,
@@ -64,6 +66,7 @@ export type {
   DelegateOutcome,
   CeilingVerdict,
   EntryAuthorship,
+  EntrySigner,
 } from './delegate.js';
 export type {
   DelegationSigner,

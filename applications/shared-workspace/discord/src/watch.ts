@@ -73,7 +73,10 @@ export interface PendingAsk {
   readonly threadId: string;
   readonly descriptorUrl: string;
   readonly seq: number;
+  /** The DELEGATOR's pod. Reported in the notice; NOT what decides whether it was answered. */
   readonly targetPod: string;
+  /** The agent the ask was addressed to. An answer is one of ITS entries, or one derived from it. */
+  readonly targetAgentId: string;
   readonly targetName: string;
   readonly askedAtMs: number;
   /** What the target's presence said at the moment of asking. Reported verbatim, never re-derived. */
@@ -312,10 +315,23 @@ export class ChannelWatcher {
     }
     for (const _ of readable) st.pushes.push(now);
     void this.deps.emit(threadId, { kind: 'entries', binding, entries: readable });
-    // An answer landing is what ends an ask's wait, whoever wrote it.
+    // ★ AN ASK IS ANSWERED BY AN ENTRY THAT SAYS SO, NOT BY ITS TARGET'S POD BEING ALIVE. This used
+    // to cancel on ANY readable entry from `a.targetPod` — the DELEGATOR's pod — so the person
+    // typing "back from lunch" permanently silenced the notice about their own agent's unanswered
+    // ask. That is precisely the case the notice exists for: an agent's host being off is exactly
+    // when its human is the one still talking. Two things end the wait now, and both are statements
+    // about the ask:
+    //
+    //   · an entry declaring `prov:wasDerivedFrom` the ask's own descriptor — the same derivation
+    //     `verifyRequest`'s sixth check reads, so "answered" means one thing in both places; or
+    //   · an entry composed by the ADDRESSED AGENT, which is a claim held down by that agent's own
+    //     signature — see `judgeAuthorship`, which returns `delegate` only where the key that
+    //     signed the bytes is the agent the entry names.
     for (const a of this.asks) {
       if (a.threadId !== threadId) continue;
-      if (readable.some((e) => e.pod === a.targetPod)) a.reported = true;
+      const answered = readable.some((e) => e.derivedFrom === a.descriptorUrl
+        || (e.author?.kind === 'delegate' && e.author.agentId === a.targetAgentId));
+      if (answered) a.reported = true;
     }
   }
 

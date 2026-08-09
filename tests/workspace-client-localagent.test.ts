@@ -47,11 +47,12 @@ const at = (iso: string): number => Date.parse(iso);
 
 /** An entry written by the person whose log it is in. */
 const person = (pod: string): EntryAuthorship =>
-  ({ kind: 'principal', webId: pod === ME ? MY_WEBID : THEIR_WEBID });
+  ({ kind: 'principal', webId: pod === ME ? MY_WEBID : THEIR_WEBID, signer: { kind: 'the-author', signedBy: pod === ME ? MY_WEBID : THEIR_WEBID } });
 /** An entry written by one of that person's delegates, speaking FOR them unless told otherwise. */
 const byDelegate = (pod: string, d: SpeakingDelegate, footing?: EntryAuthorship extends never ? never : { kind: 'own-account' }): EntryAuthorship =>
   ({
-    kind: 'delegate', agentId: d.agentId, name: d.name, authorised: true, scope: d.scope,
+    kind: 'delegate', agentId: d.agentId, signer: { kind: 'the-author', signedBy: d.agentId },
+    name: d.name, authorised: true, scope: d.scope,
     footing: footing ?? { kind: 'on-behalf-of', principal: pod === ME ? MY_WEBID : THEIR_WEBID },
   });
 
