@@ -36,6 +36,32 @@ import '../src/main.js';
 
 const log = (...a: unknown[]): void => { process.stdout.write(a.map(String).join(' ') + '\n'); };
 
+/**
+ * ★ A DRIVER MUST NEVER INTERRUPT THE PERSON WHOSE MACHINE IT RUNS ON.
+ *
+ * Electron's default behaviour for an uncaught exception in the main process is to draw a modal —
+ * "A JavaScript error occurred in the main process" — with the stack TRUNCATED into a text box
+ * somebody has to dismiss. That happened, on the maintainer's desktop, while he was working: this
+ * tool imports the shipping main process, the shipping main process threw on window teardown, and
+ * the dialog named THIS bundle because this bundle is what contained it. Two separate defects, and
+ * the dialog is the one that reached a human.
+ *
+ * The throw itself is fixed at its source in `src/main.ts`. This is the other half: whatever a
+ * future failure turns out to be, it lands on stdout in full and the process exits non-zero, which
+ * is the only form a driver's failure is useful in. Registered at module scope, before the app is
+ * ready, so it covers the whole run rather than the part after `drive()` starts.
+ */
+const bail = (what: string, e: unknown): void => {
+  const err = e as Error | undefined;
+  log('\n' + what + ': ' + (err?.stack ?? String(e)));
+  log('\nDRIVE FAILED (uncaught)');
+  process.exitCode = 1;
+  try { app.exit(1); } catch { /* the app may not be ready, and exiting is still the right end */ }
+  setTimeout(() => process.exit(1), 3000).unref();
+};
+process.on('uncaughtException', (e) => { bail('UNCAUGHT EXCEPTION', e); });
+process.on('unhandledRejection', (e) => { bail('UNHANDLED REJECTION', e); });
+
 /** Read the key out of whatever shape the file is in. Never returned to anything that prints. */
 function readKey(path: string): string {
   const raw = readFileSync(path, 'utf8').trim();
@@ -47,11 +73,24 @@ function readKey(path: string): string {
   return raw;
 }
 
+/**
+ * Run a script in the page, refusing rather than throwing if the window has gone.
+ *
+ * ★ EVERY READ OF THE DOCUMENT GOES THROUGH HERE. A window the person closed — or one torn down
+ * because the app quit underneath a poll — makes `win.webContents` itself throw `Object has been
+ * destroyed`, and a driver that treats that as a crash reports a mystery instead of the plain fact
+ * that its subject went away. It is an ordinary end, so it is named as one.
+ */
+async function exec(win: BrowserWindow, expression: string): Promise<unknown> {
+  if (win.isDestroyed()) throw new Error('the window was closed while this drive was still reading it');
+  return win.webContents.executeJavaScript(expression);
+}
+
 /** Wait for a predicate evaluated IN THE PAGE, polling the real document. */
 async function until(win: BrowserWindow, what: string, expression: string, timeoutMs = 120_000): Promise<string> {
   const t0 = Date.now();
   for (;;) {
-    const got = await win.webContents.executeJavaScript(expression) as string | null;
+    const got = await exec(win, expression) as string | null;
     if (got) return got;
     if (Date.now() - t0 > timeoutMs) throw new Error('timed out after ' + Math.round((Date.now() - t0) / 1000) + 's waiting for ' + what);
     await new Promise((r) => { setTimeout(r, 500); });
@@ -63,7 +102,21 @@ async function theWindow(): Promise<BrowserWindow> {
   for (let i = 0; i < 120; i++) {
     const [win] = BrowserWindow.getAllWindows();
     if (win) {
-      if (win.webContents.isLoading()) await new Promise<void>((r) => { win.webContents.once('did-finish-load', () => { r(); }); });
+      if (win.isDestroyed()) throw new Error('the main process opened a window and it was destroyed before this drive reached it');
+      if (win.webContents.isLoading()) {
+        // ★ BOTH OUTCOMES RESOLVE THE WAIT, AND THE LISTENERS COME BACK OFF.
+        // Waiting only for `did-finish-load` hangs for the full timeout if the window is closed
+        // instead, and a `once` left registered on a window that outlives this call is a callback
+        // holding a reference to a dead object — the exact shape of the bug this run went looking
+        // for. `destroyed` fires on teardown, and whichever arrives first removes the other.
+        await new Promise<void>((resolve) => {
+          const onLoad = (): void => { win.off('closed', onClosed); resolve(); };
+          const onClosed = (): void => { win.webContents.off('did-finish-load', onLoad); resolve(); };
+          win.webContents.once('did-finish-load', onLoad);
+          win.once('closed', onClosed);
+        });
+        if (win.isDestroyed()) throw new Error('the window closed before it finished loading');
+      }
       return win;
     }
     await new Promise((r) => { setTimeout(r, 250); });
@@ -84,7 +137,7 @@ async function drive(): Promise<number> {
 
   // The sign-in card must be on screen and must be offering the new affordance. Asserted rather
   // than assumed: a drive that typed into a field that was not there would report a different bug.
-  const offered = await win.webContents.executeJavaScript(
+  const offered = await exec(win,
     'JSON.stringify({field: !!document.getElementById("signin-importkey"), button: !!document.getElementById("signin-import"),'
     + ' signinVisible: !document.getElementById("signin").hidden})') as string;
   log('sign-in card           :', offered);
@@ -93,7 +146,7 @@ async function drive(): Promise<number> {
   // ★ THE GESTURE, AND NOTHING ELSE. The key goes into the app's own input and the app's own button
   // is pressed; every line of validation, IPC, storage and SIWE below that is the shipping path.
   const t0 = Date.now();
-  await win.webContents.executeJavaScript(
+  await exec(win,
     'document.getElementById("signin-importkey").value = ' + JSON.stringify(key) + ';'
     + 'document.getElementById("signin-import").click(); true;');
 
@@ -113,7 +166,7 @@ async function drive(): Promise<number> {
 
   // ★ AND THE KEY IS NOT IN THE DOCUMENT. The app cleared the field; this checks the whole rendered
   // page, because a success message that quoted the key would be a private key on screen.
-  const leaked = await win.webContents.executeJavaScript(
+  const leaked = await exec(win,
     'document.body.textContent.indexOf(' + JSON.stringify(key.replace(/^0x/, '')) + ') >= 0'
     + ' || Array.from(document.querySelectorAll("input,textarea")).some(function(i){return i.value.indexOf('
     + JSON.stringify(key.replace(/^0x/, '')) + ')>=0;})') as boolean;
@@ -132,12 +185,12 @@ async function drive(): Promise<number> {
   // archive segments, and a client that silently stopped at the first page would show a SUBSET of
   // somebody's workspaces while looking exactly like a complete list. The shell says so when it
   // hits its cap; that sentence is what is looked for here, and its absence is the evidence.
-  log('lobby completeness     :', await win.webContents.executeJavaScript(
+  log('lobby completeness     :', await exec(win,
     '(function(){var n=document.getElementById("wsnote").textContent||"";'
     + 'return document.querySelectorAll("#wslist > *").length+" workspace row(s) · "+n;})()'));
 
   // Open it the way a person does — by its IRI — and read what the channel actually drew.
-  await win.webContents.executeJavaScript(
+  await exec(win,
     'document.getElementById("wsopen").value = ' + JSON.stringify(wantWs) + ';'
     + 'document.getElementById("openbtn").click(); true;');
   const title = await until(win, 'the workspace record to be read',

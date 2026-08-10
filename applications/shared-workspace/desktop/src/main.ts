@@ -300,8 +300,22 @@ function createWindow(): BrowserWindow {
   // this window's document with a page of theirs.
   win.webContents.setWindowOpenHandler(({ url }) => { void shell.openExternal(url); return { action: 'deny' }; });
   win.webContents.on('will-navigate', (e, url) => { e.preventDefault(); void shell.openExternal(url); });
-  listeners.add(win.webContents);
-  win.on('closed', () => { listeners.delete(win.webContents); });
+  // ★ THE REFERENCE IS CAPTURED HERE, WHILE THE WINDOW IS ALIVE, AND THE `closed` HANDLER BELOW
+  // CLOSES OVER IT RATHER THAN RE-READING IT.
+  //
+  // `closed` fires AFTER the window has been destroyed. At that point every property accessor on
+  // the BrowserWindow — `webContents` among them — throws `TypeError: Object has been destroyed`,
+  // so the previous form, `win.on('closed', () => listeners.delete(win.webContents))`, threw on
+  // the way out of the app. Nothing caught it, so Electron's default handler drew "A JavaScript
+  // error occurred in the main process" over whatever the person was doing, EVERY time they closed
+  // the window — and because the throw happened while evaluating the argument, the `delete` never
+  // ran either, so the destroyed WebContents stayed in the set it was supposed to be leaving.
+  //
+  // Deleting by a captured reference needs no `isDestroyed()` guard: it never touches the dead
+  // object at all, it only removes an entry from a Set. `setSession` already guards its own sends.
+  const wc = win.webContents;
+  listeners.add(wc);
+  win.on('closed', () => { listeners.delete(wc); });
   void win.loadFile(join(__dirname, '..', 'index.html'));
   return win;
 }
@@ -800,6 +814,17 @@ app.whenReady().then(() => {
 });
 
 /**
+ * Set while the launch smoke is deliberately closing its own window.
+ *
+ * ★ WITHOUT THIS THE CHECK CANNOT REPORT. Closing the only window fires `window-all-closed`, whose
+ * handler quits the app — so the process was gone before the verdict reached stdout, and the
+ * launcher, which reads stdout for a marker, saw a silent clean exit. That is indistinguishable
+ * from a crash to `ci-launch-smoke.ts` and it failed the leg. The smoke owns its own exit code via
+ * `done()`; this keeps the ordinary quit out of its way for the few hundred milliseconds it needs.
+ */
+let smokeTeardown = false;
+
+/**
  * ★ THE LAUNCH SMOKE TEST, AND WHY IT IS NOT selftest.js.
  *
  * `desktop-package.yml` proves the three platforms BUILD. It did not prove they LAUNCH, and two
@@ -817,6 +842,20 @@ app.whenReady().then(() => {
  *
  * A window that never finishes loading is a FAILURE, reported as one, rather than a hang left to
  * exhaust the job's 40-minute timeout — a timed-out job says nothing about why.
+ *
+ * ★ AND IT CLOSES THE WINDOW BEFORE IT PASSES, BECAUSE OPENING WAS NEVER THE WHOLE LIFECYCLE.
+ * A smoke that only waits for `did-finish-load` proves the app STARTS. It says nothing about the
+ * teardown every single user performs, every time, at the end of every session — and that is
+ * where this app was broken. `createWindow` registered `win.on('closed', () => listeners.delete(
+ * win.webContents))`, and `closed` fires AFTER the window is destroyed, so reading `win.webContents`
+ * inside it threw `TypeError: Object has been destroyed`. Nothing caught it, so Electron's default
+ * handler put "A JavaScript error occurred in the main process" on screen — a modal the person had
+ * to dismiss on the way out of the app, on a build that had passed this very check.
+ *
+ * So the window is now CLOSED here and any uncaught exception during that teardown fails the run.
+ * The handler below is the assertion, not a safety net: it exists so a throw becomes a non-zero
+ * exit with the stack on stdout, on all three platforms, instead of a dialog on a developer's
+ * screen that CI would never see.
  */
 function runLaunchSmoke(win: BrowserWindow): void {
   const done = (code: number, why: string): void => {
@@ -827,11 +866,25 @@ function runLaunchSmoke(win: BrowserWindow): void {
     // and this runs on a throwaway runner where an un-reaped child costs nothing.
     setTimeout(() => process.exit(code), 3000).unref();
   };
+  // Registered before anything is torn down, so a throw raised by closing the window is reported
+  // as this check failing rather than drawn in a dialog box.
+  process.on('uncaughtException', (e: Error) => {
+    done(1, 'an uncaught exception reached the main process: ' + (e?.stack ?? String(e)));
+  });
   const timer = setTimeout(() => done(1, 'the window did not finish loading within 45s'), 45_000);
   const pass = (): void => {
     clearTimeout(timer);
     if (win.isDestroyed()) { done(1, 'the window was destroyed before it finished loading'); return; }
-    done(0, 'window reached did-finish-load; ' + BrowserWindow.getAllWindows().length + ' window(s) open');
+    const open = BrowserWindow.getAllWindows().length;
+    // ★ THE TEARDOWN, EXERCISED. `close()` runs the real `close`/`closed` path — the same one a
+    // person triggers with the window's X — and the `uncaughtException` handler above is what
+    // turns a throw in any listener on it into a failure. The pass is deferred a tick past the
+    // close so that a synchronous throw during teardown lands first and wins.
+    smokeTeardown = true;
+    win.close();
+    setTimeout(() => {
+      done(0, 'window reached did-finish-load and closed cleanly; ' + open + ' window(s) had been open');
+    }, 250);
   };
   win.webContents.on('did-finish-load', pass);
   win.webContents.on('did-fail-load', (_e, code, desc) => { clearTimeout(timer); done(1, 'did-fail-load ' + code + ' ' + desc); });
@@ -841,4 +894,9 @@ function runLaunchSmoke(win: BrowserWindow): void {
   if (!win.webContents.isLoading()) pass();
 }
 
-app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+app.on('window-all-closed', () => {
+  // The launch smoke closes the window on purpose and reports a verdict afterwards; quitting here
+  // would kill it mid-sentence. It exits with its own code. See `smokeTeardown`.
+  if (smokeTeardown) return;
+  if (process.platform !== 'darwin') app.quit();
+});
