@@ -108,11 +108,18 @@ async function theWindow(): Promise<BrowserWindow> {
         // Waiting only for `did-finish-load` hangs for the full timeout if the window is closed
         // instead, and a `once` left registered on a window that outlives this call is a callback
         // holding a reference to a dead object — the exact shape of the bug this run went looking
-        // for. `destroyed` fires on teardown, and whichever arrives first removes the other.
+        // for. `closed` fires on teardown, and whichever arrives first removes the other.
+        //
+        // ★ AND `wc` IS CAPTURED FIRST, FOR THE REASON THIS WHOLE CHANGE EXISTS. The first draft
+        // of these four lines said `win.webContents.off(...)` inside the `closed` handler, which
+        // is `main.ts`'s defect rewritten from memory two hours after diagnosing it: `closed`
+        // fires after destruction and the accessor throws. A rule that is only in a commit
+        // message gets re-broken; holding the reference is what makes it structural.
+        const wc = win.webContents;
         await new Promise<void>((resolve) => {
           const onLoad = (): void => { win.off('closed', onClosed); resolve(); };
-          const onClosed = (): void => { win.webContents.off('did-finish-load', onLoad); resolve(); };
-          win.webContents.once('did-finish-load', onLoad);
+          const onClosed = (): void => { wc.off('did-finish-load', onLoad); resolve(); };
+          wc.once('did-finish-load', onLoad);
           win.once('closed', onClosed);
         });
         if (win.isDestroyed()) throw new Error('the window closed before it finished loading');
