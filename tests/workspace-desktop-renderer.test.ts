@@ -2544,6 +2544,32 @@ describe('signing in with a wallet key you already have', () => {
     expect(accountRow(o, ADDR_A.toLowerCase())).toBeTruthy();
   });
 
+  /**
+   * ★ THE STATE A REVIEW OF THE MAIN PROCESS FOUND, AND THE WAY OUT OF IT.
+   *
+   * Deleting the ACTIVE key while others remain leaves a machine holding keys with none chosen.
+   * `accountSlots` marks a single key active on its own but will not pick between several, because
+   * picking decides somebody's identity for them — and the plain wallet button's "nothing stored, so
+   * mint" branch fell straight through that condition, minting a fresh empty pod for somebody
+   * holding two real ones. The main process now refuses and says to pick one; this asserts that
+   * picking one is a thing the screen actually offers, so the refusal is not a dead end.
+   */
+  it('★ deleting the active key leaves the others signable, so "none chosen" has a way out', async () => {
+    const o = await open({ accounts: {
+      pods: new Map([[ADDR_A.toLowerCase(), POD_A], [ADDR_B.toLowerCase(), POD_B]]),
+      keys: [
+        { address: ADDR_A.toLowerCase(), pod: POD_A, active: true, unreadable: null },
+        { address: ADDR_B.toLowerCase(), pod: POD_B, active: false, unreadable: null },
+      ],
+    } });
+    accountButton(o, ADDR_A.toLowerCase(), 'Delete this key').click();
+    await o.settle();
+    expect(o.accounts.keys.map((k) => k.address)).toEqual([ADDR_B.toLowerCase()]);
+    accountButton(o, ADDR_B.toLowerCase(), 'Sign in with this').click();
+    await o.settle();
+    expect(text(o.doc, '#whoami')).toBe(POD_B);
+  });
+
   it('★ deleting a key on a yes actually deletes it, and the row goes', async () => {
     const o = await open({ accounts: twoKeys() });
     accountButton(o, ADDR_A.toLowerCase(), 'Delete this key').click();

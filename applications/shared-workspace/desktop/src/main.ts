@@ -426,6 +426,14 @@ app.whenReady().then(() => {
       if (unreadable) throw new Error('This machine holds an account key for ' + unreadable.address
         + ' and could not read it back: ' + unreadable.unreadable
         + ' No new identity was minted, because that would leave the pod behind that key stranded.');
+      // ★ AND HOLDING KEYS WITH NONE CHOSEN IS NOT HOLDING NOTHING. Reached by deleting the active
+      // key while others remain: `accountSlots` marks a single key active on its own, but it will
+      // not pick between several, because picking would decide somebody's identity for them. This
+      // branch existed and fell through to minting — which is the exact failure the whole change is
+      // about, one condition later. The keys are listed on screen; the answer is to press one.
+      if (slots.length) throw new Error('This machine holds ' + slots.length + ' account keys and none of them is currently '
+        + 'the one to sign in with. Pick one from the list on the sign-in screen. Nothing was minted, because a new key is a '
+        + 'new pod with none of your words on it.');
       pk = Wallet.createRandom().privateKey;
       putSecret(ACCOUNT_KEY(new Wallet(pk).address), pk);
       minted = true;
