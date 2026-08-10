@@ -404,10 +404,60 @@ interface Opened {
   s: Scripted;
   /** What the renderer asked the model, and how often it was told to stop. */
   agent: AgentScript;
+  /** The account keyring the "main process" holds, and what the renderer did to it. */
+  accounts: AccountScript;
   settle: () => Promise<void>;
   /** Push a session change the way the main process does, through the listener the shell installed. */
   pushSession: (s: Record<string, unknown>) => void;
 }
+
+/**
+ * THE ACCOUNT KEYRING, WHICH IS THE OTHER SIDE OF THE IPC BOUNDARY.
+ *
+ * ★ WHAT IS SCRIPTED AND WHAT IS NOT, because the distinction is the whole value of these cases.
+ * SCRIPTED: the OS secret store and the SIWE ceremony — a keychain and a live relay are exactly the
+ * two things a jsdom document cannot have. NOT scripted: `checkPrivateKey`, which is REAL renderer
+ * code bundled in from `src/privatekey.ts`, so every refusal asserted below is the sentence the
+ * shipping app produces. `importPk` records what actually crossed, so a case can assert that a
+ * malformed key was refused BEFORE the boundary rather than merely refused somewhere.
+ *
+ * ★ AND THE POD IS LOOKED UP, NEVER DERIVED. `pods` maps an address to whatever the scripted relay
+ * answers, and the addresses used below deliberately do NOT match `u-eth-<first 12 hex>` — a shell
+ * that computed the pod name from the address would pass a harness that derived it the same way,
+ * and would then address a pod that does not exist the day the relay changes.
+ */
+interface AccountScript {
+  /** address (lower case) -> the pod the scripted relay answers for that key. */
+  readonly pods: Map<string, string>;
+  /** What this machine holds, in the shape `account:list` returns. */
+  keys: { address: string; pod: string | null; active: boolean; unreadable: string | null }[];
+  /** Every private key that actually crossed the boundary. Empty is the assertion for a pre-flight refusal. */
+  importPk: string[];
+  /** Addresses `account:signInAs` was asked for, and addresses `account:forget` deleted. */
+  switched: string[];
+  forgotten: string[];
+  signOuts: number;
+  /** Make the sign-in half of an import fail, with the key already stored. A real state. */
+  importFails?: string;
+  /**
+   * Make the import refuse BEFORE storing anything — what happens with no OS secret store.
+   *
+   * ★ A SEPARATE FLAG FROM {@link importFails} BECAUSE THEY ARE OPPOSITE FACTS ABOUT THE KEYRING,
+   * and the shell says a different sentence for each. Collapsing them would let the copy claim a
+   * key is safe on this machine when there was nowhere to put it.
+   */
+  refuseStore?: string;
+  /** How long an import takes, so the in-flight sentence can be sampled the way a cold start is. */
+  importMs?: number;
+  /** What `window.confirm` answers. jsdom has no real one, and a dialog is a decision, not a detail. */
+  confirm: boolean;
+  confirms: string[];
+}
+
+/** An address the scripted relay knows, whose pod is deliberately unrelated to its hex. */
+const ACCT = (n: string): string => '0x' + n.repeat(40).slice(0, 40);
+/** A syntactically valid, in-range secp256k1 scalar. Not a real key and never used against anything. */
+const PK = (n: string): string => '0x' + n.repeat(64).slice(0, 64);
 
 /**
  * What the main process would report about this machine's model providers.
@@ -446,9 +496,21 @@ const CLAUDE_ABSENT = {
 } as const;
 
 /** Boot a window with the shipping HTML, the real bundle, and one scripted bridge. */
-async function open(opts: { viewer?: string; setup?: (s: Scripted) => void; coldStartMs?: number; agent?: AgentScript } = {}): Promise<Opened> {
-  const viewer = opts.viewer ?? POD_A;
+async function open(opts: {
+  viewer?: string; setup?: (s: Scripted) => void; coldStartMs?: number; agent?: AgentScript;
+  accounts?: Partial<AccountScript>;
+} = {}): Promise<Opened> {
+  /**
+   * ★ MUTABLE, BECAUSE SWITCHING IDENTITY IS THE FEATURE. Every scripted answer below reads this,
+   * so signing in as a second key changes which pod the relay answers for, exactly as it does live.
+   * A fixed viewer would have let a shell that ignored the switch pass.
+   */
+  let viewer = opts.viewer ?? POD_A;
   const agent: AgentScript = { prompts: [], cancels: 0, ...opts.agent };
+  const accounts: AccountScript = {
+    pods: new Map(), keys: [], importPk: [], switched: [], forgotten: [], signOuts: 0,
+    confirm: true, confirms: [], ...opts.accounts,
+  };
   const s = scripted();
   opts.setup?.(s);
   const html = readFileSync(join(DESKTOP, 'index.html'), 'utf8');
@@ -472,19 +534,87 @@ async function open(opts: { viewer?: string; setup?: (s: Scripted) => void; cold
   const realSetTimeout = win.setTimeout.bind(win) as (fn: () => void, ms?: number) => number;
   (win as unknown as Record<string, unknown>)['setTimeout'] = (fn: () => void, ms?: number): number =>
     realSetTimeout(fn, Math.min(ms ?? 0, 1));
+  /**
+   * ★ A CONFIRMATION IS A DECISION AND IS SCRIPTED AS ONE. jsdom's `window.confirm` is a stub that
+   * returns undefined, which is falsy — so a destructive path guarded by one would appear to be
+   * refused in every test whether the guard existed or not, and deleting the guard would stay
+   * green. This answers what the case says it answers, and records that it was asked.
+   */
+  (win as unknown as Record<string, unknown>)['confirm'] = (message?: string): boolean => {
+    accounts.confirms.push(String(message ?? ''));
+    return accounts.confirm;
+  };
   let sessionListener: ((x: unknown) => void) | null = null;
+  /** A live session, announced through the listener the shell installed, as the main process does. */
+  const live = (pod: string): void => {
+    sessionListener?.({ state: 'live', pod, method: 'wallet', expiresAt: Date.now() + 3600_000, renewable: true, why: null });
+  };
+  /** The pod the scripted relay answers for one account key. Looked up; never derived from the hex. */
+  const podOfKey = (address: string): string => {
+    const pod = accounts.pods.get(address.toLowerCase());
+    if (!pod) throw new Error('the scripted relay knows no pod for ' + address + ' — name one in `accounts.pods`');
+    return pod;
+  };
+  /** Adopt a key as the live identity: the pod changes, and so does what every later read answers. */
+  const becomeAccount = (address: string): { pod: string; displayName: null; method: string; address: string } => {
+    const pod = podOfKey(address);
+    viewer = pod;
+    for (const k of accounts.keys) (k as { active: boolean }).active = k.address === address.toLowerCase();
+    const held = accounts.keys.find((k) => k.address === address.toLowerCase());
+    if (held) held.pod = pod;
+    live(pod);
+    return { pod, displayName: null, method: 'wallet', address };
+  };
   (win as unknown as Record<string, unknown>)['interego'] = {
     describe: async () => ({
       relay: RELAY, identityServer: 'https://identity.interego.xwisee.com',
-      secretStore: true, hasStoredWallet: true, signedInAs: null,
+      secretStore: true, hasStoredWallet: accounts.keys.length > 0, accounts: accounts.keys.slice(),
+      signedInAs: null,
       session: { state: 'signed-out', pod: null, method: null, expiresAt: null, renewable: false, why: null },
       watchDescription: 're-read on a timer, not pushed',
     }),
     signInWithWallet: async () => {
-      sessionListener?.({ state: 'live', pod: viewer, method: 'wallet', expiresAt: Date.now() + 3600_000, renewable: true, why: null });
+      live(viewer);
       return { pod: viewer, displayName: null, method: 'wallet', address: '0x1', mintedNewKey: false };
     },
     signInWithBrowser: async () => ({ pod: viewer, displayName: null, method: 'browser' }),
+    accountList: async () => ({ accounts: accounts.keys.slice(), secretStore: true }),
+    /**
+     * ★ THE MAIN PROCESS'S OWN GUARD IS SCRIPTED TOO, and it is the same one. The renderer refusing
+     * a bad key is a courtesy; this refusing it is the guard, and a harness whose bridge accepted
+     * anything would let a case assert "the renderer refused" while the real boundary did not.
+     */
+    accountImport: async (pk: string) => {
+      accounts.importPk.push(pk);
+      if (!/^0x[0-9a-f]{64}$/.test(pk)) throw new Error('That is not a secp256k1 private key. Nothing was stored.');
+      if (accounts.refuseStore) throw new Error(accounts.refuseStore);
+      const address = ACCT(pk.slice(2, 3));
+      const before = accounts.keys.map((k) => k.address);
+      const alreadyHeld = before.includes(address.toLowerCase());
+      // Stored BEFORE the sign-in is attempted, exactly as the shipping handler does — which is
+      // what makes the failing case below able to assert the honest copy about it.
+      if (!alreadyHeld) accounts.keys.push({ address: address.toLowerCase(), pod: null, active: false, unreadable: null });
+      if (accounts.importMs) await new Promise((r) => { setTimeout(r, accounts.importMs); });
+      if (accounts.importFails) throw new Error(accounts.importFails);
+      return { ...becomeAccount(address), alreadyHeld, kept: before.filter((a) => a !== address.toLowerCase()) };
+    },
+    accountSignInAs: async (address: string) => {
+      accounts.switched.push(address);
+      if (!accounts.keys.some((k) => k.address === address.toLowerCase())) {
+        throw new Error('This machine holds no account key for ' + address + '.');
+      }
+      return becomeAccount(address);
+    },
+    accountForget: async (address: string) => {
+      accounts.forgotten.push(address);
+      accounts.keys = accounts.keys.filter((k) => k.address !== address.toLowerCase());
+      return { forgotten: address, accounts: accounts.keys.slice() };
+    },
+    signOut: async () => {
+      accounts.signOuts++;
+      sessionListener?.({ state: 'signed-out', pod: null, method: null, expiresAt: null, renewable: false, why: null });
+      return { accounts: accounts.keys.slice() };
+    },
     call: async (name: string, input: Record<string, unknown>) => {
       // The measured cold start: the FIRST pod-aware call provisions a pod and took 16.7 s on
       // the live fleet for a fresh wallet. Modelled here because the sentence the shell shows
@@ -564,7 +694,7 @@ async function open(opts: { viewer?: string; setup?: (s: Scripted) => void; cold
   };
   await settle();
   return {
-    doc: dom.window.document, win, s, agent, settle,
+    doc: dom.window.document, win, s, agent, accounts, settle,
     pushSession: (next) => { sessionListener?.(next); },
   };
 }
@@ -2126,5 +2256,338 @@ describe('delegates: separate identities, plural, and visible as such', () => {
     // `briefPrompt`, so this is the same contract `checkDraft` parses on the way back.
     expect(prompt).toContain('FOOTING: ON THEIR BEHALF');
     expect(prompt).toContain('FOOTING: MY OWN ACCOUNT');
+  });
+});
+
+// ── signing in as an identity you already have ───────────────────────────────
+
+/** One row of the sign-in keyring, found by the address it names. */
+const accountRow = (o: Opened, address: string): HTMLElement => {
+  const rows = [...o.doc.querySelectorAll('#signin-accounts .panel')] as HTMLElement[];
+  const row = rows.find((r) => (r.textContent ?? '').includes(address));
+  if (!row) throw new Error('the sign-in keyring lists no row for ' + address);
+  return row;
+};
+const accountButton = (o: Opened, address: string, label: string): HTMLButtonElement => {
+  const b = ([...accountRow(o, address).querySelectorAll('button')] as HTMLButtonElement[])
+    .find((x) => (x.textContent ?? '').includes(label));
+  if (!b) throw new Error('no "' + label + '" control for ' + address);
+  return b;
+};
+/** Paste a key into the sign-in field and press the button, the way a person does. */
+async function pasteAccountKey(o: Opened, value: string): Promise<void> {
+  (o.doc.getElementById('signin-importkey') as HTMLInputElement).value = value;
+  click(o.doc, 'signin-import');
+  await o.settle();
+}
+const importHint = (o: Opened): string => text(o.doc, '#signin-importhint');
+
+/**
+ * THE GAP THIS WHOLE GROUP EXISTS FOR, FOUND BY THE MAINTAINER USING THE APP FOR REAL.
+ *
+ * "Use a wallet key on this machine" MINTED a key when it did not find one, and there was no way to
+ * hand it a key you already had. Somebody whose pod already holds everything they have written
+ * signed in and got a THIRD, empty identity. Two identities belonging to one human corrupt
+ * everything downstream — the roster shows two members, attribution splits, and whose delegate an
+ * agent is stops being answerable — so the affordance that makes one person one identity is worth
+ * as many cases as the failure modes it has, which is what these are.
+ */
+describe('signing in with a wallet key you already have', () => {
+  const KEY_A = PK('a');
+  const KEY_B = PK('b');
+  const ADDR_A = ACCT('a');
+  const ADDR_B = ACCT('b');
+  /** Two keys the scripted relay knows, whose pods are deliberately unrelated to their hex. */
+  const twoKeys = (): Partial<AccountScript> => ({
+    pods: new Map([[ADDR_A.toLowerCase(), POD_A], [ADDR_B.toLowerCase(), POD_B]]),
+    keys: [{ address: ADDR_A.toLowerCase(), pod: POD_A, active: true, unreadable: null }],
+  });
+
+  it('★ a key that is not a key is refused by NAME, and never crosses the boundary', async () => {
+    const o = await open({ accounts: twoKeys() });
+    await pasteAccountKey(o, '0xnot-a-key-at-all');
+    expect(importHint(o)).toContain('"n" at character 3');
+    expect(importHint(o)).toContain('not a hexadecimal digit');
+    // ★ THE ASSERTION THAT MAKES THIS A GUARD RATHER THAN A LABEL. Nothing was handed to the main
+    // process, so a mistyped key never left this window at all.
+    expect(o.accounts.importPk).toEqual([]);
+    expect(o.doc.getElementById('signin')?.hasAttribute('hidden')).toBe(false);
+  });
+
+  it('★ an ADDRESS pasted by mistake is told it is an address, not told "invalid key"', async () => {
+    const o = await open({ accounts: twoKeys() });
+    await pasteAccountKey(o, ADDR_B);
+    expect(importHint(o)).toContain('length of an Ethereum ADDRESS');
+    expect(importHint(o)).toContain('cannot sign for it');
+    expect(o.accounts.importPk).toEqual([]);
+  });
+
+  it('★ a short copy is told it is short, and a long one is told it is long', async () => {
+    const o = await open({ accounts: twoKeys() });
+    await pasteAccountKey(o, '0x' + 'a'.repeat(63));
+    expect(importHint(o)).toContain('63 hexadecimal characters');
+    expect(importHint(o)).toContain('this copy is short');
+    await pasteAccountKey(o, '0x' + 'a'.repeat(70));
+    expect(importHint(o)).toContain('70 hexadecimal characters');
+    expect(importHint(o)).toContain('more than one key\'s worth');
+    expect(o.accounts.importPk).toEqual([]);
+  });
+
+  it('★ 64 valid hex digits that are not a valid scalar are refused for THAT reason', async () => {
+    const o = await open({ accounts: twoKeys() });
+    // Zero and the group order itself: the two values a length-and-hex regex waves straight through.
+    await pasteAccountKey(o, '0x' + '0'.repeat(64));
+    expect(importHint(o)).toContain('all of them are zero');
+    await pasteAccountKey(o, '0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141');
+    expect(importHint(o)).toContain('at or above the secp256k1 group order');
+    expect(importHint(o)).toContain('not a truncation');
+    expect(o.accounts.importPk).toEqual([]);
+  });
+
+  /**
+   * ★ AND A LINE BREAK IS NOT WHAT ARRIVES HERE, WHICH THIS CASE FOUND ON ITS FIRST RUN.
+   *
+   * It was written with a `\n` in the middle, and passed the key straight through: an `<input>` is
+   * single-line, so the HTML value sanitisation algorithm STRIPS CR and LF on the way in and the
+   * renderer never sees one. Splicing a wrapped key back together silently is exactly the
+   * behaviour the guard exists to prevent, and it is the DOM doing it, one layer below anything
+   * this app can refuse. What survives a paste into a single-line field is the SPACE a wrap often
+   * becomes, so that is what is asserted — and the `\s` guard still earns its place on the main
+   * process's side of the boundary, where a key can arrive from anywhere.
+   */
+  it('★ a key with a space through the middle is refused rather than silently spliced together', async () => {
+    const o = await open({ accounts: twoKeys() });
+    await pasteAccountKey(o, '0x' + 'a'.repeat(32) + ' ' + 'a'.repeat(32));
+    expect(importHint(o)).toContain('space or a line break inside it');
+    expect(o.accounts.importPk).toEqual([]);
+  });
+
+  it('★ a valid key signs in as the pod the RELAY answered — never one derived from the address', async () => {
+    const o = await open({ accounts: twoKeys() });
+    await pasteAccountKey(o, KEY_B);
+    expect(o.accounts.importPk).toEqual([KEY_B]);
+    // The address is 0xbbbb…; a shell deriving `u-eth-<first 12 hex>` would say `u-eth-bbbbbbbbbbbb`.
+    expect(text(o.doc, '#whoami')).toBe(POD_B);
+    expect(text(o.doc, '#whoami')).not.toContain('bbbb');
+    expect(o.doc.getElementById('signin')?.hasAttribute('hidden')).toBe(true);
+    expect(o.doc.getElementById('signoutbtn')?.hasAttribute('hidden')).toBe(false);
+  });
+
+  it('★ the key is out of the field the instant it is read, and is nowhere in the document', async () => {
+    const o = await open({ accounts: twoKeys() });
+    await pasteAccountKey(o, KEY_B);
+    expect((o.doc.getElementById('signin-importkey') as HTMLInputElement).value).toBe('');
+    // Not just the field: nothing the shell drew may contain it, including the success copy.
+    expect(o.doc.body.textContent ?? '').not.toContain(KEY_B.slice(2));
+    for (const i of [...o.doc.querySelectorAll('input,textarea')] as HTMLInputElement[]) {
+      expect(i.value).not.toContain(KEY_B.slice(2));
+    }
+  });
+
+  it('★ importing a second identity KEEPS the first, and the screen says which', async () => {
+    const o = await open({ accounts: twoKeys() });
+    await pasteAccountKey(o, KEY_B);
+    const note = text(o.doc, '#signinnote');
+    expect(note).toContain('was KEPT');
+    expect(note).toContain(ADDR_A.toLowerCase());
+    expect(note).toContain('Nothing was overwritten');
+    // ★ AND IT IS TRUE, NOT MERELY SAID. The keyring still holds both, and nothing was deleted.
+    expect(o.accounts.keys.map((k) => k.address).sort()).toEqual([ADDR_A.toLowerCase(), ADDR_B.toLowerCase()].sort());
+    expect(o.accounts.forgotten).toEqual([]);
+  });
+
+  it('★ re-pasting a key this machine already holds is a re-use, not a second identity', async () => {
+    const o = await open({ accounts: twoKeys() });
+    await pasteAccountKey(o, KEY_A);
+    expect(text(o.doc, '#signinnote')).toContain('already held that key');
+    expect(o.accounts.keys).toHaveLength(1);
+  });
+
+  it('★ a pod that does not exist yet is a WAIT with a measured range, not a failure', async () => {
+    const o = await open({ accounts: { ...twoKeys(), importMs: 250 } });
+    (o.doc.getElementById('signin-importkey') as HTMLInputElement).value = KEY_B;
+    click(o.doc, 'signin-import');
+    // Sampled WHILE it is in flight: the sentence belongs to the `wait` state and is correctly
+    // replaced by the outcome. Asserting after settle would be asserting it never finished.
+    let seen = '';
+    for (let i = 0; i < 300 && !seen.includes('provisions'); i++) {
+      await new Promise((r) => { setTimeout(r, 2); });
+      seen = text(o.doc, '#steps');
+    }
+    expect(seen).toContain('provisions one on this first call');
+    expect(seen).toContain('2 to 31 seconds');
+    expect(seen).not.toContain('did not complete');
+    // ★ `settle` CANNOT BE USED TO WAIT FOR THIS, and assuming it could is what this line found.
+    // It waits for the shell to stop making TOOL CALLS, and a sign-in in flight makes none — so it
+    // returned instantly, mid-provision, and the assertion below read an empty header. The thing to
+    // wait for is the outcome itself.
+    for (let i = 0; i < 400 && !text(o.doc, '#whoami'); i++) await new Promise((r) => { setTimeout(r, 4); });
+    await o.settle();
+    expect(text(o.doc, '#whoami')).toBe(POD_B);
+  });
+
+  it('★ a failed sign-in says the key WAS stored, because it was', async () => {
+    const o = await open({ accounts: { ...twoKeys(), importFails: 'the relay refused this wallet proof' } });
+    await pasteAccountKey(o, KEY_B);
+    const note = text(o.doc, '#signinnote');
+    expect(note).toContain('the relay refused this wallet proof');
+    // ★ THE COPY THE DELEGATE IMPORT GOT WRONG. It stored the key and then said "nothing was
+    // stored" — a false sentence about the one thing a person needs to know the truth of.
+    expect(note).toContain('The key WAS stored on this machine');
+    expect(note).not.toContain('did not change');
+    expect(o.doc.getElementById('signin')?.hasAttribute('hidden')).toBe(false);
+    // Every way back in is usable again, and the stored key is listed so it can be retried.
+    for (const id of ['signin-wallet', 'signin-browser', 'signin-import']) {
+      expect((o.doc.getElementById(id) as HTMLButtonElement).disabled).toBe(false);
+    }
+    expect(accountRow(o, ADDR_B.toLowerCase())).toBeTruthy();
+  });
+
+  it('★ and an import refused BEFORE storing does not claim the key is on this machine', async () => {
+    // What happens with no OS secret store: there is nowhere to put a key that is not a plaintext
+    // file, so the handler refuses before storing. A fixed "the key was stored" would tell somebody
+    // their identity is safe here when it is nowhere.
+    const o = await open({ accounts: { ...twoKeys(),
+      refuseStore: 'The OS secret store is not available on this machine. NOTHING WAS STORED.' } });
+    await pasteAccountKey(o, KEY_B);
+    const note = text(o.doc, '#signinnote');
+    expect(note).toContain('NOTHING WAS STORED');
+    expect(note).toContain('keyring did not change');
+    expect(note).not.toContain('The key WAS stored on this machine');
+    expect(o.accounts.keys.map((k) => k.address)).toEqual([ADDR_A.toLowerCase()]);
+  });
+
+  it('★ the keyring names a pod only where the relay named one', async () => {
+    const o = await open({ accounts: {
+      pods: new Map([[ADDR_B.toLowerCase(), POD_B]]),
+      keys: [{ address: ADDR_B.toLowerCase(), pod: null, active: true, unreadable: null }],
+    } });
+    expect(accountRow(o, ADDR_B.toLowerCase()).textContent).toContain('not established here');
+    expect(accountRow(o, ADDR_B.toLowerCase()).textContent).toContain('does not work pod names out from addresses');
+    expect(accountRow(o, ADDR_B.toLowerCase()).textContent).not.toContain('u-eth-bbbb');
+  });
+
+  it('★ a stored key that will not decrypt is shown as unreadable, and is not offered to sign in with', async () => {
+    const o = await open({ accounts: {
+      pods: new Map([[ADDR_A.toLowerCase(), POD_A]]),
+      keys: [{ address: ADDR_A.toLowerCase(), pod: POD_A, active: false, unreadable: 'it was encrypted by a different OS user account' } ],
+    } });
+    const row = accountRow(o, ADDR_A.toLowerCase());
+    expect(row.textContent).toContain('could not be read back');
+    expect(row.textContent).toContain('a different OS user account');
+    // ★ ABSENT AND UNREADABLE ARE DIFFERENT STATES. Offering "sign in with this" for a key that
+    // cannot be read would fail every time; hiding the row entirely would tell somebody their pod
+    // is gone when the key is still sitting there.
+    //
+    // ★ THE EXACT SET OF CONTROLS, NOT "NOT THIS ONE LABEL", AND THAT DISTINCTION IS WHY THIS LINE
+    // READS AS IT DOES. It was written as `not.toContain('Sign in with this key')` and a mutant
+    // that offered the button anyway SURVIVED: the row is not the active key, so the button it drew
+    // said "Sign in with this one instead" and the assertion sailed past the very thing it named.
+    expect(([...row.querySelectorAll('button')] as HTMLButtonElement[]).map((b) => b.textContent))
+      .toEqual(['Delete this key from this machine']);
+  });
+
+  it('★ switching: signing out returns the card, and the other key signs in as its OWN pod', async () => {
+    const o = await open({ accounts: twoKeys() });
+    await signInAndSettle(o);
+    expect(text(o.doc, '#whoami')).toBe(POD_A);
+    click(o.doc, 'signoutbtn');
+    await o.settle();
+    expect(o.accounts.signOuts).toBe(1);
+    expect(o.doc.getElementById('signin')?.hasAttribute('hidden')).toBe(false);
+    expect(o.doc.getElementById('shell')?.hasAttribute('hidden')).toBe(true);
+    expect(o.doc.getElementById('lobby')?.hasAttribute('hidden')).toBe(true);
+    expect(text(o.doc, '#whoami')).toBe('');
+    // ★ AND NOTHING OF THE PREVIOUS IDENTITY'S READS IS LEFT ON SCREEN UNDER THE NEXT ONE'S NAME.
+    expect(text(o.doc, '#wstitle')).toBe('');
+    // Now the second identity, from the keyring rather than from a paste.
+    await pasteAccountKey(o, KEY_B);
+    expect(o.accounts.switched).toEqual([]);
+    expect(text(o.doc, '#whoami')).toBe(POD_B);
+  });
+
+  it('★ signing out keeps every key — it is not forgetting', async () => {
+    const o = await open({ accounts: twoKeys() });
+    await signInAndSettle(o);
+    click(o.doc, 'signoutbtn');
+    await o.settle();
+    expect(o.accounts.forgotten).toEqual([]);
+    expect(o.accounts.keys).toHaveLength(1);
+    expect(accountRow(o, ADDR_A.toLowerCase())).toBeTruthy();
+  });
+
+  it('★ a stored key signs in through its own control, and that is the switch', async () => {
+    const o = await open({ accounts: {
+      pods: new Map([[ADDR_A.toLowerCase(), POD_A], [ADDR_B.toLowerCase(), POD_B]]),
+      keys: [
+        { address: ADDR_A.toLowerCase(), pod: POD_A, active: true, unreadable: null },
+        { address: ADDR_B.toLowerCase(), pod: POD_B, active: false, unreadable: null },
+      ],
+    } });
+    accountButton(o, ADDR_B.toLowerCase(), 'Sign in with this one instead').click();
+    await o.settle();
+    expect(o.accounts.switched).toEqual([ADDR_B.toLowerCase()]);
+    expect(text(o.doc, '#whoami')).toBe(POD_B);
+    // No key crossed the boundary: switching to a key already held must never re-send one.
+    expect(o.accounts.importPk).toEqual([]);
+  });
+
+  it('★ deleting a key ASKS first, names what becomes unreachable, and obeys a no', async () => {
+    const o = await open({ accounts: { ...twoKeys(), confirm: false } });
+    accountButton(o, ADDR_A.toLowerCase(), 'Delete this key').click();
+    await o.settle();
+    expect(o.accounts.confirms[0]).toContain('permanently unreachable');
+    expect(o.accounts.confirms[0]).toContain(POD_A);
+    expect(o.accounts.confirms[0]).toContain('no recovery');
+    // ★ A DIALOG THAT IS NOT OBEYED IS A DIALOG THAT IS NOT A GUARD.
+    expect(o.accounts.forgotten).toEqual([]);
+    expect(accountRow(o, ADDR_A.toLowerCase())).toBeTruthy();
+  });
+
+  /**
+   * ★ THE STATE A REVIEW OF THE MAIN PROCESS FOUND, AND THE WAY OUT OF IT.
+   *
+   * Deleting the ACTIVE key while others remain leaves a machine holding keys with none chosen.
+   * `accountSlots` marks a single key active on its own but will not pick between several, because
+   * picking decides somebody's identity for them — and the plain wallet button's "nothing stored, so
+   * mint" branch fell straight through that condition, minting a fresh empty pod for somebody
+   * holding two real ones. The main process now refuses and says to pick one; this asserts that
+   * picking one is a thing the screen actually offers, so the refusal is not a dead end.
+   */
+  it('★ deleting the active key leaves the others signable, so "none chosen" has a way out', async () => {
+    const o = await open({ accounts: {
+      pods: new Map([[ADDR_A.toLowerCase(), POD_A], [ADDR_B.toLowerCase(), POD_B]]),
+      keys: [
+        { address: ADDR_A.toLowerCase(), pod: POD_A, active: true, unreadable: null },
+        { address: ADDR_B.toLowerCase(), pod: POD_B, active: false, unreadable: null },
+      ],
+    } });
+    accountButton(o, ADDR_A.toLowerCase(), 'Delete this key').click();
+    await o.settle();
+    expect(o.accounts.keys.map((k) => k.address)).toEqual([ADDR_B.toLowerCase()]);
+    accountButton(o, ADDR_B.toLowerCase(), 'Sign in with this').click();
+    await o.settle();
+    expect(text(o.doc, '#whoami')).toBe(POD_B);
+  });
+
+  it('★ deleting a key on a yes actually deletes it, and the row goes', async () => {
+    const o = await open({ accounts: twoKeys() });
+    accountButton(o, ADDR_A.toLowerCase(), 'Delete this key').click();
+    await o.settle();
+    expect(o.accounts.forgotten).toEqual([ADDR_A.toLowerCase()]);
+    expect(o.doc.querySelectorAll('#signin-accounts .panel')).toHaveLength(0);
+  });
+
+  it('★ minting a fresh key says, in the same breath, that it is not a door to a pod you have', async () => {
+    // No stored key at all: the plain wallet button is the only path, and it mints.
+    const o = await open({ accounts: { pods: new Map(), keys: [] } });
+    expect(o.doc.querySelectorAll('#signin-accounts .panel')).toHaveLength(0);
+    (o.win as unknown as { interego: { signInWithWallet: () => Promise<unknown> } }).interego.signInWithWallet = async () =>
+      ({ pod: POD_A, displayName: null, method: 'wallet', address: ADDR_A, mintedNewKey: true });
+    await signInAndSettle(o);
+    const note = text(o.doc, '#signinnote');
+    expect(note).toContain('brand new pod with nothing on it yet');
+    expect(note).toContain('sign out and paste its key instead');
+    expect(note).toContain('not another door to it');
   });
 });

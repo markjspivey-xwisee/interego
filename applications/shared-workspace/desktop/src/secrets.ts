@@ -39,33 +39,89 @@ function secretPath(name: string): string {
 }
 
 /**
- * WHERE A DELEGATE'S KEY LIVES, AND WHY IT IS KEYED ON THE KEY'S OWN ADDRESS.
+ * A SECRET NAMED AFTER THE ADDRESS OF THE KEY IN IT.
  *
  * ★ THE IDENTITY IS THE KEY, NOT THIS FILE. `delegates.ts` in the shared package states the rule
  * and the measurement behind it: a delegate's DID is a function of its own keypair plus one
- * constant surface name, so the same key is the same delegate in any client that holds it. This
- * app is a HOST. Naming the file after the address rather than after a slot number ("delegate-1")
- * makes that true in the storage layer too: two apps holding the same key agree about which
- * delegate it is, and reinstalling this one loses the key without changing who the delegate was.
+ * constant surface name, so the same key is the same delegate in any client that holds it. The
+ * same is true one level up: which pod the relay provisions is a function of the account key, so
+ * the same key is the same person's account in any client that holds it. This app is a HOST for
+ * both. Naming a file after the address rather than after a slot number ("delegate-1", or one
+ * fixed "the wallet") makes that true in the storage layer too: two apps holding the same key
+ * agree about whose it is, and reinstalling this one loses the key without changing who it was.
  *
- * A person may have several, so this is a family of names rather than a constant.
+ * ★ AND IT IS WHY NOTHING HERE CAN BE OVERWRITTEN BY IMPORTING A DIFFERENT KEY. A single slot
+ * means the second key a person pastes destroys the first, and a private key is the WHOLE of an
+ * identity — there is no reset, no recovery and no support desk, so a silent overwrite is the
+ * permanent loss of a pod and everything written to it. Address-keying makes that impossible by
+ * construction rather than by remembering to warn.
  */
-export const DELEGATE_KEY = (address: string): string => {
+const addressSlot = (prefix: 'delegate' | 'account' | 'accountpod', address: string, what: string): string => {
   if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
-    throw new Error('DELEGATE_KEY: "' + address + '" is not an Ethereum address, so it is not a delegate this app holds a key for.');
+    throw new Error(prefix.toUpperCase() + '_KEY: "' + address + '" is not an Ethereum address, so it is not ' + what + '.');
   }
-  return 'delegate-' + address.toLowerCase();
+  return prefix + '-' + address.toLowerCase();
 };
 
-/** Every delegate this machine holds a key for. The POD is the roster; this is the keyring. */
-export function listDelegateKeys(): readonly string[] {
+/** Where a DELEGATE's key lives. A person may have several, so this is a family of names. */
+export const DELEGATE_KEY = (address: string): string => addressSlot('delegate', address, 'a delegate this app holds a key for');
+
+/**
+ * Where an ACCOUNT's key lives — the key that decides which pod the person's own words land on.
+ *
+ * The same shape as {@link DELEGATE_KEY} and deliberately a DIFFERENT prefix. They are separate
+ * namespaces because they are separate kinds of identity: an account signs in under this app's
+ * own OAuth client name and provisions the person's pod, a delegate signs in under
+ * `DELEGATE_SURFACE` and provisions its own. The same key in both slots would be the same secp256k1
+ * secret acting as two identities, which is legal and confusing; keeping the namespaces apart means
+ * "forget my delegate" can never reach the key holding somebody's account.
+ */
+export const ACCOUNT_KEY = (address: string): string => addressSlot('account', address, 'an account this app holds a key for');
+
+/**
+ * The pod the RELAY answered, the last time this account key signed in on this machine.
+ *
+ * ★ REMEMBERED, NEVER DERIVED. `u-eth-<first 12 hex of the address>` is what the relay does today
+ * and deriving it here would silently address a pod that does not exist the day it stops — and a
+ * wrong pod name reads back as an EMPTY LOG rather than as an error, which is the confident
+ * falsehood this vertical is written against (`openAgentSession` records the same rule). So this
+ * is a cache of an ANSWER, written only after a real sign-in, and its absence means "not
+ * established here" rather than "this key has no pod".
+ */
+export const ACCOUNT_POD = (address: string): string => addressSlot('accountpod', address, 'an account this app has signed in');
+
+/**
+ * Which stored account key the wallet button signs in with.
+ *
+ * Holds an address, not a key. It is in the encrypted store rather than a plain file only because
+ * that is the one place this process already writes to; nothing about an address is secret.
+ */
+export const ACTIVE_ACCOUNT = 'active-account';
+
+const slotDir = (): string => {
   const dir = join(app.getPath('userData'), 'secrets');
   mkdirSync(dir, { recursive: true });
-  return readdirSync(dir)
-    .map((f) => /^delegate-(0x[0-9a-f]{40})\.bin$/.exec(f)?.[1] ?? null)
+  return dir;
+};
+
+/** Every address this machine holds a key for under one prefix. */
+const listSlots = (prefix: 'delegate' | 'account'): readonly string[] =>
+  readdirSync(slotDir())
+    .map((f) => new RegExp('^' + prefix + '-(0x[0-9a-f]{40})\\.bin$').exec(f)?.[1] ?? null)
     .filter((a): a is string => a !== null)
     .sort();
-}
+
+/** Every delegate this machine holds a key for. The POD is the roster; this is the keyring. */
+export const listDelegateKeys = (): readonly string[] => listSlots('delegate');
+
+/**
+ * Every account this machine holds a key for.
+ *
+ * Plural on purpose. One person can hold more than one account — a pod they use and a pod they are
+ * testing with — and the app's job is to let them say which one is speaking, not to decide for
+ * them by keeping only the most recent.
+ */
+export const listAccountKeys = (): readonly string[] => listSlots('account');
 
 export class OsSecretStoreUnavailable extends Error {
   constructor() {
@@ -105,6 +161,15 @@ export function forgetSecret(name: string): void {
   if (existsSync(p)) unlinkSync(p);
 }
 
-/** Where a token may be cached. Tokens are short-lived; the key is the thing worth protecting. */
+/**
+ * THE ORIGINAL SINGLE ACCOUNT SLOT, KEPT BECAUSE PEOPLE HAVE KEYS IN IT.
+ *
+ * ★ IT IS LEGACY AND IT IS NOT DELETED. Every install before account keys became address-keyed
+ * wrote here, and that file is the only copy of the identity behind somebody's pod. `main.ts`
+ * COPIES it into an {@link ACCOUNT_KEY} slot on startup and then works only in the new namespace;
+ * the old file is left exactly where it was. Removing it after a successful copy would be tidier
+ * and would also mean that a bug in the copy — or a downgrade to an older build — costs a person
+ * their pod. Tidiness is not worth that trade, and an encrypted 32-byte file costs nothing.
+ */
 export const WALLET_KEY = 'wallet-privkey';
 export const CACHED_BEARER = 'relay-bearer';
