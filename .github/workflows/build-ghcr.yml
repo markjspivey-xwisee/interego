@@ -192,19 +192,33 @@ jobs:
       - uses: docker/setup-buildx-action@v3
         if: steps.gate.outputs.skip != 'true'
 
-      # GITHUB_TOKEN can only write packages that are CONNECTED to this repo. The
-      # images were first pushed by `crane` during the ACR->GHCR migration, which
-      # created them unconnected, so GITHUB_TOKEN gets a 403 on push. GHCR_TOKEN
-      # (a write:packages PAT) is the bootstrap credential; the source label below
-      # connects each package on first push, after which GITHUB_TOKEN suffices and
-      # the secret can be deleted.
+      # ★ THE BOOTSTRAP IS OVER, AND THE PAT EXPIRING IS WHAT PROVED IT WAS STILL LOAD-BEARING.
+      #
+      # What this said before, and it was correct at the time: GITHUB_TOKEN can only write packages
+      # CONNECTED to this repo; the images were first pushed by `crane` during the ACR->GHCR
+      # migration, which created them unconnected, so GITHUB_TOKEN got a 403 on push. GHCR_TOKEN (a
+      # write:packages PAT) was the bootstrap credential, and the `org.opencontainers.image.source`
+      # label below connects each package on first push — "after which GITHUB_TOKEN suffices and
+      # the secret can be deleted".
+      #
+      # That sentence was written and never acted on, so the fleet went on depending on a PAT it
+      # no longer needed. On 2026-08-11 the PAT (set 2026-07-12) expired and every build failed at
+      # THIS STEP with `Get "https://ghcr.io/v2/": denied: denied` — three separate dispatches,
+      # three different images, identical failure, before a single layer was built. Every image has
+      # been pushed with the source label many times since the migration, so the condition the old
+      # comment named has long been met.
+      #
+      # ★ GITHUB_TOKEN IS ALSO THE BETTER CREDENTIAL, not merely the available one: it is minted
+      # per run, scoped by the `packages: write` this job already declares, and CANNOT expire. A
+      # long-lived PAT in its place is a deploy path that silently acquires an expiry date nobody
+      # is watching — which is exactly how this failed.
       - name: Log in to GHCR
         if: steps.gate.outputs.skip != 'true'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
-          password: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build & push
         if: steps.gate.outputs.skip != 'true'
