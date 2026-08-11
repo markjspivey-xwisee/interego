@@ -36,7 +36,8 @@ import {
   type CanvasRead, type ChainRow, type Check, type ConnectorMcp, type DelegateRoster, type DelegateRow,
   type EntryAuthorship, type GrantVerdict, type Invitation, type RoleTable, type Seat,
   type EntryFooting, type StatedFooting,
-  type SeenEntry, type SpeakingDelegate, type Viewer, type WorkspaceEntry, type WorkspaceRecord,
+  type SeenEntry, type SpeakingDelegate, type Viewer, type WithheldAcceptance,
+  type WorkspaceEntry, type WorkspaceRecord,
 } from '@interego/workspace-client';
 /**
  * ★ THE DISCORD LINK FORM COMES FROM THE DISCORD CONDUIT, NOT FROM THE SHARED CLIENT.
@@ -320,6 +321,11 @@ const S = {
   inviteError: null as unknown,
   inboxSaturated: false,
   spaces: null as WorkspaceEntry[] | null,
+  /**
+   * Acceptances on this pod that are NOT places to go — retired ones, and ones that could not be
+   * read. Held apart from `spaces` because `spaces` is what the switcher draws Open controls on.
+   */
+  withheld: [] as readonly WithheldAcceptance[],
   spacesError: null as unknown,
   spacesSaturated: false,
   lobbyOpen: true,
@@ -877,16 +883,26 @@ async function loadSpaces(): Promise<void> {
   try {
     list = await listWorkspaces(S.client, S.relay, S.viewer.podName);
   } catch (e) {
-    S.spacesError = e; S.spaces = null;
+    S.spacesError = e; S.spaces = null; S.withheld = [];
     step('spaces', 'Your own pod\'s manifest could not be read', 'err');
     renderLobby();
     return;
   }
   S.spaces = list.entries.slice();
+  S.withheld = list.withheld;
   S.spacesSaturated = list.saturated;
   S.spacesError = null;
+  const retired = S.withheld.filter((w) => w.kind === 'retired').length;
+  const unread = S.withheld.length - retired;
+  // The withheld count is on the STEP as well as in the card, because the step line is the
+  // running account of what boot did and "twenty acceptances were read and eighteen of them are
+  // retired" is part of that account — not a detail to be discovered later.
+  const aside = S.withheld.length
+    ? ' · ' + (retired ? retired + ' retired' : '') + (retired && unread ? ', ' : '')
+      + (unread ? unread + ' could not be read' : '') + ' and not offered'
+    : '';
   step('spaces', 'Found ' + list.entries.length + ' acceptance' + (list.entries.length === 1 ? '' : 's')
-    + ' on your pod — checking each against its convener\'s pod', 'wait');
+    + ' on your pod that name a workspace' + aside + ' — checking each against its convener\'s pod', 'wait');
   renderLobby();
   let verified = 0;
   for (const c of S.spaces) {
@@ -896,8 +912,8 @@ async function loadSpaces(): Promise<void> {
   }
   step('spaces', list.entries.length
     ? verified + ' of ' + list.entries.length + ' acceptance' + (list.entries.length === 1 ? '' : 's')
-      + ' on your pod verified against the convener\'s pod'
-    : 'No acceptance on your pod — you are in no workspace yet', 'done');
+      + ' on your pod verified against the convener\'s pod' + aside
+    : 'No acceptance on your pod names a workspace you are in' + aside, 'done');
 }
 
 function inviteRow(inv: Invitation): HTMLElement {
@@ -999,6 +1015,51 @@ function spaceRow(c: WorkspaceEntry): HTMLElement {
   return row;
 }
 
+/**
+ * The acceptances that are NOT places to go: a count, and the whole of the detail one click away.
+ *
+ * ★ WHY A DISCLOSURE AND NOT A ROW. Every sentence here is worth keeping — a real membership that
+ * fails to parse is a defect, and a record you retired is still a record you published. What made
+ * the old rendering useless was not the sentences, it was that they sat in the list of things you
+ * could open: measured on the maintainer's pod, twenty retired test memberships buried the one
+ * live workspace. A count states the fact at a glance, the disclosure holds the evidence, and
+ * neither of them offers an Open control — because none of these is somewhere to go.
+ *
+ * ★ AND THE TWO KINDS ARE DRAWN APART. "Its author withdrew it" and "this could not be read" are
+ * different facts about different worlds; one is somebody's decision and the other is a fault.
+ */
+function withheldPanel(rows: readonly WithheldAcceptance[]): HTMLElement {
+  const retired = rows.filter((w) => w.kind === 'retired');
+  const unread = rows.filter((w) => w.kind === 'unreadable');
+  const d = el('details', 'withheld');
+  const sum = el('summary', undefined,
+    rows.length + ' acceptance' + (rows.length === 1 ? '' : 's') + ' on your pod ' + (rows.length === 1 ? 'is' : 'are')
+    + ' not offered above — ' + [
+      retired.length ? retired.length + ' retired by you' : '',
+      unread.length ? unread.length + ' this client could not read' : '',
+    ].filter(Boolean).join(', '));
+  d.appendChild(sum);
+  const group = (kind: string, list: readonly WithheldAcceptance[], head: string): void => {
+    if (!list.length) return;
+    d.appendChild(el('div', 'note ' + kind, head));
+    for (const w of list) {
+      const row = el('div', 'item ' + kind);
+      row.appendChild(el('div', 'iri', w.acceptanceIri));
+      if (w.workspace) row.appendChild(el('div', 'iri', 'for workspace ' + w.workspace));
+      row.appendChild(el('div', 'note', w.why));
+      d.appendChild(row);
+    }
+  };
+  group('retired', retired, 'Retired. Each of these states iep:modalStatus "Retracted" in its own '
+    + 'signed region — read out of the document, not guessed from what is missing. The record is still on your pod; '
+    + 'what it says is that the membership it recorded is over.');
+  group('bad', unread, 'Not read. Which workspace these are for was not established — the descriptor did not fetch, '
+    + 'its signed region was not found, or it names no wsp:workspace. This is NOT being reported as a retraction: a '
+    + 'truncated read and a tombstone look identical from outside, and only the record\'s own iep:modalStatus tells '
+    + 'them apart. If one of these is a workspace you are really in, that is a fault worth reporting.');
+  return d;
+}
+
 function renderLobby(): void {
   if (!document.getElementById('lobby')) return;
   renderSteps();
@@ -1040,8 +1101,10 @@ function renderLobby(): void {
       ? 'This read asked your own pod for its most recent descriptors and got exactly that many back, so an older acceptance may lie past the end of it.'
       : 'Read from your own pod in one call. A workspace-qualified acceptance name carries the workspace inside it, so most of these needed no further read.';
     if (S.spacesError) wl.appendChild(errBox(S.spacesError, 'Your own pod\'s manifest is where the list of workspaces comes from.', () => { void loadSpaces(); }));
-    else if (!S.spaces?.length) wl.appendChild(el('div', 'note', 'No acceptance on your pod names a workspace, so you are in none yet. Accept an invitation above, or create one below.'));
+    else if (!S.spaces?.length) wl.appendChild(el('div', 'note', 'No acceptance on your pod names a workspace you are in, so you are in none yet. Accept an invitation above, or create one below.'));
     else for (const c of S.spaces) wl.appendChild(spaceRow(c));
+    // Below the list, never inside it. See `withheldPanel`.
+    if (!S.spacesError && S.withheld.length) wl.appendChild(withheldPanel(S.withheld));
   } else wc.hidden = true;
 
   const ready = !!S.viewer?.podName;

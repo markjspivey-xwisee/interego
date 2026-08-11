@@ -316,6 +316,13 @@ hr.sep{border:0; border-top:1px solid var(--line-2); margin:14px 0;}
 .item.bad{border-color:color-mix(in srgb,var(--refused) 40%,transparent);}
 .item.cur{border-color:var(--c1);}
 .item h4{margin:0; font-size:13.5px; font-weight:650;}
+/* acceptances that are not places to go: collapsed by default, and visibly not a
+   row you can open — the whole point of moving them out of the list above is that
+   they stop competing with it */
+details.withheld{margin:10px 0 2px; border-top:1px dashed var(--line); padding-top:8px;}
+details.withheld > summary{cursor:pointer; color:var(--muted); font-size:11.5px;}
+details.withheld .item{background:transparent; opacity:.85; margin:8px 0;}
+details.withheld .item.retired{border-style:dashed;}
 .item .iri{font-family:var(--mono); font-size:10.5px; color:var(--faint); overflow-wrap:anywhere;}
 .verdict{
   display:inline-flex; align-items:center; gap:6px; align-self:flex-start;
@@ -848,6 +855,7 @@ var WSPC = (() => {
     GRANT_READ_CAP: () => GRANT_READ_CAP,
     IEP: () => IEP,
     INBOX_LIMIT: () => INBOX_LIMIT,
+    MODAL_RETRACTED: () => MODAL_RETRACTED,
     NOTHING_TO_ADD: () => NOTHING_TO_ADD,
     POD_RX: () => POD_RX,
     PRESENCE_LEASE_MS: () => PRESENCE_LEASE_MS,
@@ -862,6 +870,7 @@ var WSPC = (() => {
     SEAT_READ_CAP: () => SEAT_READ_CAP,
     SEAT_SCAN_LIMIT: () => SEAT_SCAN_LIMIT,
     SLUG_RX: () => SLUG_RX,
+    STATUS_READ_CONCURRENCY: () => STATUS_READ_CONCURRENCY,
     ToolCallError: () => ToolCallError,
     WRITE_ELIGIBLE_SCOPES: () => WRITE_ELIGIBLE_SCOPES,
     WSP: () => WSP,
@@ -926,6 +935,7 @@ var WSPC = (() => {
     isDelegateRow: () => isDelegateRow,
     isDelegationScope: () => isDelegationScope,
     isPresent: () => isPresent,
+    isRetracted: () => isRetracted,
     judgeAuthorship: () => judgeAuthorship,
     legacyName: () => legacyName,
     listWorkspaces: () => listWorkspaces,
@@ -969,6 +979,7 @@ var WSPC = (() => {
     readIriList: () => readIriList,
     readLiteral: () => readLiteral,
     readMember: () => readMember,
+    readModalStatus: () => readModalStatus,
     readPresence: () => readPresence,
     readRequests: () => readRequests,
     readViewer: () => readViewer,
@@ -1392,6 +1403,19 @@ var WSPC = (() => {
   var readInt = R.readInt;
   var hasTrue = R.hasTrue;
   var hasType = R.hasType;
+  function readModalStatus(region) {
+    const lit = readLiteral(region, "iep:modalStatus");
+    if (lit !== null && lit.trim()) return lit.trim();
+    for (const t of readIriList(region, "iep:modalStatus")) {
+      const body = t.charAt(0) === "<" ? t.slice(1, -1) : t;
+      const cut = Math.max(body.lastIndexOf("#"), body.lastIndexOf("/"), body.lastIndexOf(":"));
+      const local = body.slice(cut + 1).trim();
+      if (local) return local;
+    }
+    return null;
+  }
+  var MODAL_RETRACTED = "Retracted";
+  var isRetracted = (region) => (readModalStatus(region) ?? "").toLowerCase() === MODAL_RETRACTED.toLowerCase();
   function parseRoleProfile(ttl) {
     const roles = /* @__PURE__ */ new Map();
     const caps = /* @__PURE__ */ new Map();
@@ -2889,6 +2913,12 @@ var WSPC = (() => {
         m.role = readIri(region, "wsp:role");
         m.grantAuthorship = d["authorship"] ?? null;
         m.revoked = hasTrue(region, "wsp:revoked");
+        m.grantStatus = readModalStatus(region);
+        if (isRetracted(region)) {
+          m.why = 'this grant states iep:modalStatus "' + String(m.grantStatus) + '", so the pod that published it has withdrawn it as an assertion. That is not the same as wsp:revoked \u2014 nobody unseated this member, the record naming them was retired \u2014 and either way it seats nobody now.';
+          seats.push(m);
+          continue;
+        }
       } catch (e) {
         m.why = "the grant record could not be read: " + (e?.message ?? String(e?.code));
         seats.push(m);
@@ -2925,6 +2955,12 @@ var WSPC = (() => {
         const region = graphRegion(ad["graph"]?.content ?? "", found.iri);
         if (region === null) {
           m.why = "the signed region of their acceptance could not be located, so no seat will be read out of it";
+          seats.push(m);
+          continue;
+        }
+        m.acceptStatus = readModalStatus(region);
+        if (isRetracted(region)) {
+          m.why = 'their acceptance states iep:modalStatus "' + String(m.acceptStatus) + '", so they have withdrawn it on their own pod. The grant naming them still stands; what they retired is their own half of the seat.';
           seats.push(m);
           continue;
         }
@@ -3330,8 +3366,12 @@ var WSPC = (() => {
       grantAuthorship: d["authorship"] ?? null,
       grantedTo: readIri(region, "wsp:grantedTo"),
       role: readIri(region, "wsp:role"),
-      revoked: hasTrue(region, "wsp:revoked")
+      revoked: hasTrue(region, "wsp:revoked"),
+      modalStatus: readModalStatus(region)
     };
+    if (isRetracted(region)) {
+      return no('that grant states iep:modalStatus "' + String(base.modalStatus) + '", so the pod that published it has withdrawn it as an assertion. A withdrawn record seats nobody.', base);
+    }
     if (base.revoked) return no("that grant carries wsp:revoked true", base);
     if (!base.grantedTo) return no("the grant names no wsp:grantedTo", base);
     if (base.grantedTo !== args.viewer.webId) {
@@ -3511,6 +3551,7 @@ var WSPC = (() => {
       why: (mine ? "a grant for this workspace does name you, and it does not seat you: " + mine.why : read + " grant" + (read === 1 ? "" : "s") + " for this workspace on " + owner + " were read and none of them names you" + (grants.length > read ? " (of " + grants.length + " found; this reader reads at most " + SEAT_READ_CAP + ")" : "") + (last?.why ? " \u2014 the last one: " + last.why : "")) + capNote
     };
   }
+  var STATUS_READ_CONCURRENCY = 8;
   async function listWorkspaces(client, relay, podName, limit = SEAT_SCAN_LIMIT) {
     const p = await client.tool("discover_context", { pod_name: podName, limit, sort: "newest-first" }, { cache: false });
     const bad = refusal(p);
@@ -3534,24 +3575,62 @@ var WSPC = (() => {
         });
       }
     }
-    const entries = [...found.values()];
-    for (const c of entries) {
-      if (c.workspace) continue;
+    const candidates = [...found.values()];
+    const readOne = async (c) => {
+      const fromName = c.workspace;
       try {
         const d = await client.descriptor(c.descriptorUrl);
         const region = graphRegion(d["graph"]?.content ?? "", c.acceptanceIri);
         if (region === null) {
-          c.why = "its signed region could not be located";
-          continue;
+          c.why = "its signed region could not be located, so nothing was read out of bytes anybody signed \u2014 including whether it still stands";
+          return;
         }
-        c.workspace = readIri(region, "wsp:workspace");
-        if (!c.workspace) c.why = "this acceptance names no wsp:workspace, so which workspace it is for is not established";
-        else c.owner = podOfNsIri(c.workspace);
+        c.modalStatus = readModalStatus(region);
+        if (!fromName) {
+          c.workspace = readIri(region, "wsp:workspace");
+          if (c.workspace) c.owner = podOfNsIri(c.workspace);
+          else if (!isRetracted(region)) {
+            c.why = "this acceptance names no wsp:workspace, so which workspace it is for is not established";
+          }
+        }
       } catch (e) {
         c.why = "its descriptor could not be read: " + (e?.message ?? String(e?.code));
       }
+    };
+    for (let i = 0; i < candidates.length; i += STATUS_READ_CONCURRENCY) {
+      await Promise.all(candidates.slice(i, i + STATUS_READ_CONCURRENCY).map(readOne));
     }
-    return { entries, saturated: rows.length >= limit, limit };
+    const entries = [];
+    const withheld = [];
+    for (const c of candidates) {
+      const retired = (c.modalStatus ?? "").toLowerCase() === MODAL_RETRACTED.toLowerCase();
+      if (retired) {
+        withheld.push({
+          acceptanceIri: c.acceptanceIri,
+          descriptorUrl: c.descriptorUrl,
+          naming: c.naming,
+          kind: "retired",
+          modalStatus: c.modalStatus ?? null,
+          workspace: c.workspace,
+          why: 'this acceptance states iep:modalStatus "' + String(c.modalStatus) + '", so the pod that published it has withdrawn it. It is a record of a membership that was, not one you are in.'
+        });
+        continue;
+      }
+      if (!c.workspace) {
+        withheld.push({
+          acceptanceIri: c.acceptanceIri,
+          descriptorUrl: c.descriptorUrl,
+          naming: c.naming,
+          kind: "unreadable",
+          modalStatus: c.modalStatus ?? null,
+          workspace: null,
+          why: (c.why ?? "which workspace this acceptance is for could not be established") + ". It is NOT being read as withdrawn: " + (c.modalStatus ? 'it states iep:modalStatus "' + c.modalStatus + '", which is not a retraction.' : "it states no iep:modalStatus at all, and a read that failed looks the same from here as a record that was retired.")
+        });
+        continue;
+      }
+      entries.push(c);
+    }
+    return { entries, withheld, saturated: rows.length >= limit, limit };
   }
   async function verifyWorkspaceEntry(client, relay, viewer, c) {
     if (!c.workspace) {
@@ -4836,6 +4915,10 @@ const S = {
   invites: null,         // [{item, verified, why, ...}] — null until read
   inviteError: null,
   spaces: null,          // [{workspace, verified, why, ...}] — null until read
+  /* Acceptances that are NOT places to go: retired ones, and ones this page could
+     not read. Held apart from `spaces` because `spaces` is what the switcher draws
+     Open controls on — see `withheldPanel`. */
+  withheld: [],
   spacesError: null,
   spacesSaturated: false,
   spacesLimit: null,     // the cap that read actually asked for, off the answer
@@ -5296,11 +5379,15 @@ async function loadInvites() {
    the module puts the truncation inside the sentence every caller does render.
 
    ── Flow D: which workspaces am I in? ────────────────────────────────────
-   ONE manifest read, of the viewer's own pod. A qualified acceptance name
-   carries the workspace inside it, so the list needs no descriptor reads at all;
-   only the older unqualified names cost one each. Every candidate is then put
-   through exactly the same verification an invitation goes through, and one that
-   fails is listed with the reason rather than dropped. */
+   One manifest read of the viewer's own pod, then each candidate's own document
+   for the one fact only the document carries: whether the record still stands.
+   A qualified acceptance name still settles WHICH workspace it is for with no
+   read — the read establishes iep:modalStatus. Candidates that name no workspace,
+   and candidates their own author has retired, are NOT in `entries`: they come
+   back in `withheld` with the reason and the kind, and this page draws them as a
+   count below the list rather than as rows you might try to open. Everything in
+   `entries` is then put through the same verification an invitation goes through,
+   and one that fails verification IS listed, with the reason. */
 async function loadSpaces() {
   step("spaces", "Looking for acceptances on your own pod", "wait");
   const pod = S.viewer.podName;
@@ -5308,7 +5395,7 @@ async function loadSpaces() {
   try {
     out = await listWorkspaces(pod);
   } catch (e) {
-    S.spacesError = e; S.spaces = null;
+    S.spacesError = e; S.spaces = null; S.withheld = [];
     /* ── settle the promise on the way out ────────────────────────────────
        `S.firstVerified` is created BELOW, after this return. Leaving it
        undefined here made boot()'s `if (!want && S.firstVerified)` guard skip
@@ -5325,8 +5412,18 @@ async function loadSpaces() {
      off the answer rather than typed twice. */
   S.spacesLimit = out.limit;
   S.spaces = list;
+  S.withheld = out.withheld;
   S.spacesError = null;
-  step("spaces", "Found " + list.length + " acceptance" + (list.length === 1 ? "" : "s") + " on your pod — checking each against its convener's pod", "wait");
+  /* The withheld count goes on the STEP as well as into the card. The step line is
+     the running account of what boot did, and "twenty were read and eighteen are
+     retired" is part of that account, not a detail to be discovered later. */
+  const retiredN = S.withheld.filter((w) => w.kind === "retired").length;
+  const unreadN = S.withheld.length - retiredN;
+  const aside = S.withheld.length
+    ? " · " + (retiredN ? retiredN + " retired" : "") + (retiredN && unreadN ? ", " : "")
+      + (unreadN ? unreadN + " could not be read" : "") + " and not offered"
+    : "";
+  step("spaces", "Found " + list.length + " acceptance" + (list.length === 1 ? "" : "s") + " on your pod that name a workspace" + aside + " — checking each against its convener's pod", "wait");
   renderLobby();
 
   /* ── verification runs AFTER this function returns ─────────────────────
@@ -5352,8 +5449,8 @@ async function loadSpaces() {
     }
     if (!fired) settle(null);
     step("spaces", list.length
-      ? count + " of " + list.length + " acceptance" + (list.length === 1 ? "" : "s") + " on your pod verified against the convener's pod"
-      : "No acceptance on your pod — you are in no workspace yet", "done");
+      ? count + " of " + list.length + " acceptance" + (list.length === 1 ? "" : "s") + " on your pod verified against the convener's pod" + aside
+      : "No acceptance on your pod names a workspace you are in" + aside, "done");
   })();
 }
 
@@ -5572,10 +5669,11 @@ function spaceRow(c) {
   /* ── which side of the composed/read line this IRI is on ──────────────────
      A qualified acceptance name carries the convener pod and the slug, so the
      workspace IRI on this row is TAKEN APART OUT OF THE FILENAME rather than
-     read from the document. That is the whole reason the list is one manifest
-     read, and it is also why the row must not present the IRI as something the
-     acceptance stated. The verdict below is what settles whether anything is
-     actually there: it is reached by reading that IRI's record off its pod. */
+     read from the document — which is why the row must not present the IRI as
+     something the acceptance stated. (The document IS read, for the one thing a
+     filename cannot carry: whether the record still stands.) The verdict below is
+     what settles whether anything is actually there: it is reached by reading
+     that IRI's record off its pod. */
   wi.title = c.naming === "qualified"
     ? "Composed from the acceptance's own filename (" + c.acceptanceIri + "), not read out of the document. "
       + "Whether a workspace record exists at it is what the verdict below reports."
@@ -5610,6 +5708,51 @@ function spaceRow(c) {
     }
   }
   return row;
+}
+
+/* ── the acceptances that are NOT places to go ─────────────────────────────
+   A count, and the whole of the detail one click away.
+
+   WHY A DISCLOSURE AND NOT A ROW. Every sentence here is worth keeping — a real
+   membership that fails to parse is a defect, and a record you retired is still a
+   record you published. What made the old rendering useless was not the sentences,
+   it was that they sat in the list of things you could OPEN: measured on a live pod,
+   twenty retired test memberships buried the one workspace that was real. A count
+   states the fact at a glance, the disclosure holds the evidence, and neither of them
+   offers an Open control, because none of these is somewhere to go.
+
+   AND THE TWO KINDS ARE DRAWN APART. "Its author withdrew it" and "this could not be
+   read" are different facts about different worlds; one is somebody's decision, the
+   other is a fault. Absence of wsp:workspace is not proof of either — only the
+   record's own iep:modalStatus is. */
+function withheldPanel(rows) {
+  const retired = rows.filter((w) => w.kind === "retired");
+  const unread = rows.filter((w) => w.kind === "unreadable");
+  const d = el("details", "withheld");
+  d.appendChild(el("summary", null,
+    rows.length + " acceptance" + (rows.length === 1 ? "" : "s") + " on your pod "
+    + (rows.length === 1 ? "is" : "are") + " not offered above — "
+    + [retired.length ? retired.length + " retired by you" : "",
+       unread.length ? unread.length + " this page could not read" : ""].filter(Boolean).join(", ")));
+  const group = (kind, list, head) => {
+    if (!list.length) return;
+    d.appendChild(el("div", "note " + kind, head));
+    for (const w of list) {
+      const row = el("div", "item " + kind);
+      row.appendChild(el("div", "iri", w.acceptanceIri));
+      if (w.workspace) row.appendChild(el("div", "iri", "for workspace " + w.workspace));
+      row.appendChild(el("div", "note", w.why));
+      d.appendChild(row);
+    }
+  };
+  group("retired", retired, 'Retired. Each of these states iep:modalStatus "Retracted" in its own '
+    + "signed region — read out of the document, not guessed from what is missing. The record is still on your pod; "
+    + "what it says is that the membership it recorded is over.");
+  group("bad", unread, "Not read. Which workspace these are for was not established — the descriptor did not fetch, "
+    + "its signed region was not found, or it names no wsp:workspace. This is NOT being reported as a retraction: a "
+    + "truncated read and a tombstone look identical from outside, and only the record's own iep:modalStatus tells "
+    + "them apart. If one of these is a workspace you are really in, that is a fault worth reporting.");
+  return d;
 }
 
 function renderLobby() {
@@ -5656,8 +5799,10 @@ function renderLobby() {
       ? "This read asked your own pod for its most recent " + S.spacesLimit + " descriptors and got exactly that many back, so an older acceptance may lie past the end of it."
       : "Read from your own pod in one call. A workspace-qualified acceptance name carries the workspace inside it, so most of these needed no further read.";
     if (S.spacesError) wl.appendChild(errBox(S.spacesError, "Your own pod's manifest is where the list of workspaces comes from.", () => loadSpaces()));
-    else if (!S.spaces.length) wl.appendChild(el("div", "note", "No acceptance on your pod names a workspace, so you are in none yet. Accept an invitation above, or create one below."));
+    else if (!S.spaces.length) wl.appendChild(el("div", "note", "No acceptance on your pod names a workspace you are in, so you are in none yet. Accept an invitation above, or create one below."));
     else for (const c of S.spaces) wl.appendChild(spaceRow(c));
+    /* Below the list, never inside it. See `withheldPanel`. */
+    if (!S.spacesError && S.withheld.length) wl.appendChild(withheldPanel(S.withheld));
   } else wc.hidden = true;
 
   /* create / open are always available once the viewer is known */

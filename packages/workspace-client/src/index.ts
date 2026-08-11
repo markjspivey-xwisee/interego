@@ -18,6 +18,7 @@ export {
   scanTurtle, maskFill, masked, maskComments, literalAt, unescapeLiteral,
   forms, nsOf, readLiteral, readIri, readIriAll, readIriList, readInt, hasTrue, hasType,
   graphRegion, escapeTurtleLiteral, parseRoleProfile,
+  readModalStatus, isRetracted, MODAL_RETRACTED,
   type SpanKind, type RoleProfile,
 } from './turtle.js';
 
@@ -66,12 +67,12 @@ export {
   GRANT_IRI_RX, verifyGrantIri, acceptGrant, revokeGrant,
   INBOX_LIMIT, readInbox, verifyInvitation,
   SEAT_SCAN_LIMIT, SEAT_READ_CAP, findSeat,
-  listWorkspaces, verifyWorkspaceEntry,
+  listWorkspaces, verifyWorkspaceEntry, STATUS_READ_CONCURRENCY,
   roleName, roleWhy, roleKnown, checkRoleForWorkspace,
   type Check, type Viewer, type WriteVerdict, type CreateStep, type CreateOutcome,
   type InviteeResolution, type NotifyReport, type InviteOutcome, type GrantVerdict,
   type AcceptOutcome, type RevokeOutcome, type Invitation, type InboxRead,
-  type WorkspaceEntry, type WorkspaceList, type RoleTable,
+  type WorkspaceEntry, type WorkspaceList, type WithheldAcceptance, type RoleTable,
 } from './membership.js';
 
 export {

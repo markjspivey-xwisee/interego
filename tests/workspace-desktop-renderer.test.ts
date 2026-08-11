@@ -1188,6 +1188,114 @@ describe('the switcher lists what this viewer accepted, read from their own pod'
     expect(o.doc.querySelector('#wslist .verdict.no')).toBe(null);
   });
 
+  /**
+   * ★ THE DEFECT, DRAWN. Measured on the maintainer's own pod (2026-08-11): twenty retired test
+   * memberships were listed as twenty rows, each carrying an honest explanation of why it was not
+   * a workspace, and the ONE workspace he was really in was lost among them. Honest, and useless.
+   *
+   * The tombstone bytes below are the live ones: a supersession carrying `iep:modalStatus
+   * "Retracted"` as a plain literal inside the signed block, and no `wsp:workspace` at all.
+   */
+  describe('★ retired acceptances do not crowd out the workspace you are actually in', () => {
+    const RETIRED_ACC = (n: number): string => RELAY + '/ns/' + POD_A + '/' + POD_A + '--dead-' + n + '-acceptance';
+    const tombstone = (iri: string): string =>
+      '@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .\n'
+      + '@prefix dct: <http://purl.org/dc/terms/> .\n'
+      + '<' + iri + '> {\n    <' + iri + '>\n      iep:modalStatus "Retracted" ;\n'
+      + '      dct:description "Test membership created by an automated driver; retired during cleanup." .\n}\n';
+    const withTwentyTombstones = (s: Scripted): void => {
+      const a = s.pods.get(POD_A) as Pod;
+      for (let n = 0; n < 20; n++) {
+        a.put({ graph: RETIRED_ACC(n), cid: 'cid-dead-' + n, url: DESC(POD_A, 500 + n), content: tombstone(RETIRED_ACC(n)) });
+      }
+    };
+
+    it('lists exactly the one live workspace, and puts no Open control on a retired one', async () => {
+      const o = await open({ setup: withTwentyTombstones });
+      await signInAndSettle(o);
+      // One row in the list proper — the workspace this viewer is really in.
+      expect(o.doc.querySelectorAll('#wslist > .item')).toHaveLength(1);
+      expect(text(o.doc, '#wslist > .item')).toContain(WS);
+      // And not one of the twenty offers anywhere to go.
+      expect([...o.doc.querySelectorAll('#wslist button')].map((b) => b.textContent))
+        .not.toContain('Open it anyway');
+      for (let n = 0; n < 20; n++) {
+        const row = [...o.doc.querySelectorAll('#wslist > .item')].find((r) => (r.textContent ?? '').includes(RETIRED_ACC(n)));
+        expect(row, 'a retired acceptance must not be a row in the list of places to go').toBe(undefined);
+      }
+    });
+
+    it('★ keeps every diagnostic — the count is on screen and the detail is one disclosure away', async () => {
+      const o = await open({ setup: withTwentyTombstones });
+      await signInAndSettle(o);
+      const panel = o.doc.querySelector('#wslist details.withheld') as HTMLElement;
+      expect(panel, 'the diagnostics must still be reachable, just not in the list').not.toBe(null);
+      expect(text(o.doc, '#wslist details.withheld > summary')).toContain('20 acceptances');
+      expect(text(o.doc, '#wslist details.withheld > summary')).toContain('retired by you');
+      // Collapsed, so it states the count without competing with the one row above it.
+      expect(panel.hasAttribute('open')).toBe(false);
+      const body = panel.textContent ?? '';
+      for (let n = 0; n < 20; n++) expect(body).toContain(RETIRED_ACC(n));
+      expect(body).toContain('iep:modalStatus "Retracted"');
+      // And the boot checklist accounts for them rather than quietly losing twenty records.
+      expect(text(o.doc, '#lobbysteps')).toContain('20 retired');
+    });
+
+    it('★ draws "retired" and "could not be read" as different facts, never as one', async () => {
+      const HALF = RELAY + '/ns/' + POD_A + '/half-acceptance';   // unqualified: the workspace must be read
+      const o = await open({ setup: (s) => {
+        withTwentyTombstones(s);
+        (s.pods.get(POD_A) as Pod).put({
+          graph: HALF, cid: 'cid-half', url: DESC(POD_A, 560),
+          content: trig(HALF, '<' + HALF + '> dct:description "a read that came back short" .'),
+        });
+      } });
+      await signInAndSettle(o);
+      const panel = o.doc.querySelector('#wslist details.withheld') as HTMLElement;
+      expect(text(o.doc, '#wslist details.withheld > summary')).toContain('20 retired by you');
+      expect(text(o.doc, '#wslist details.withheld > summary')).toContain('1 this client could not read');
+      // The two groups are separate elements with separate copy — a shell that rendered one
+      // sentence for both would pass a substring test on either alone.
+      const retiredHead = panel.querySelector('.note.retired') as HTMLElement;
+      const badHead = panel.querySelector('.note.bad') as HTMLElement;
+      expect(retiredHead.textContent).toContain('read out of the document, not guessed from what is missing');
+      expect(badHead.textContent).toContain('NOT being reported as a retraction');
+      // The short read is in the "could not be read" group and NOWHERE in the retired one.
+      const bad = [...panel.querySelectorAll('.item.bad')].map((n) => n.textContent ?? '').join(' ');
+      const retired = [...panel.querySelectorAll('.item.retired')].map((n) => n.textContent ?? '').join(' ');
+      expect(bad).toContain(HALF);
+      expect(retired).not.toContain(HALF);
+    });
+
+    it('★ a member who retired their own acceptance is not folded into the roster as seated', async () => {
+      // The other half of the seat, and the one only the MEMBER can withdraw. Before this, the
+      // fold read their acceptance's `wsp:accepts` and kept them seated and their log folded in.
+      const o = await open({ setup: (s) => {
+        (s.pods.get(POD_B) as Pod).put({
+          graph: ACC(POD_B), cid: 'cid-acc-b2', url: DESC(POD_B, 21),
+          content: tombstone(ACC(POD_B)),
+        });
+      } });
+      await signInAndSettle(o);
+      const roster = text(o.doc, '#roster');
+      expect(roster).toContain('withdrawn it on their own pod');
+      expect(roster).toContain('The grant naming them still stands');
+      // ★ AND NOT AS A REVOCATION. Nobody unseated them.
+      expect(roster).not.toContain('this grant was revoked');
+    });
+
+    it('★ a grant the convener retired is refused, and not reported as wsp:revoked', async () => {
+      const o = await open({ setup: (s) => {
+        (s.pods.get(POD_A) as Pod).put({ graph: GRANT_B, cid: 'cid-grant-b3', url: DESC(POD_A, 99), content: tombstone(GRANT_B) });
+      } });
+      await signInAndSettle(o);
+      const roster = text(o.doc, '#roster');
+      expect(roster).toContain('withdrawn it as an assertion');
+      expect(roster).toContain('not the same as wsp:revoked');
+      expect(roster).not.toContain('this grant was revoked.');
+    });
+  });
+
   it('★ does not silently drop an acceptance that no longer seats you — it says why', async () => {
     const o = await open({ viewer: POD_B, setup: (s) => {
       // B still holds an acceptance; A revoked the grant. The acceptance is a fact about B

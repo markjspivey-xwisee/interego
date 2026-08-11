@@ -12,7 +12,7 @@
  * refused.
  */
 
-import { graphRegion, hasTrue, readIri, readLiteral } from './turtle.js';
+import { graphRegion, hasTrue, isRetracted, readIri, readLiteral, readModalStatus } from './turtle.js';
 import { podOfDescriptorUrl, podBaseOfDescriptorUrl, podOfNsIri, podOfWebid } from './naming.js';
 import { shortRef } from './format.js';
 import { fail, refusal } from './transport.js';
@@ -32,6 +32,16 @@ export interface Seat {
   /** Granted and awaiting an acceptance — an ordinary state, not a failure. */
   pending?: boolean;
   revoked?: boolean;
+  /**
+   * What each half of the seat states about its OWN status, read from its signed region.
+   *
+   * ★ SEPARATE FROM `revoked`, BECAUSE THEY ARE SEPARATE FACTS. `wsp:revoked` is the convener
+   * withdrawing a seat; `iep:modalStatus "Retracted"` is the author of those bytes withdrawing
+   * the record itself — and either half can be withdrawn by its own owner without touching the
+   * other. Null is "the record stated no status", which is not a withdrawal.
+   */
+  grantStatus?: string | null;
+  acceptStatus?: string | null;
   acceptIri?: string;
   acceptNaming?: string;
   acceptUrl?: string;
@@ -148,6 +158,17 @@ export async function foldRoster(
       m.role = readIri(region, 'wsp:role');
       m.grantAuthorship = d['authorship'] ?? null;
       m.revoked = hasTrue(region, 'wsp:revoked');
+      m.grantStatus = readModalStatus(region);
+      // ★ A GRANT ITS OWN AUTHOR HAS WITHDRAWN IS NOT A SEAT EITHER, AND IT IS NOT A REVOCATION.
+      // The convener owns both spellings here — the grant is on their pod — but they are not the
+      // same statement, so they do not collapse into one sentence. Tested before the grantee is
+      // resolved, because a withdrawn record's other fields are not current claims.
+      if (isRetracted(region)) {
+        m.why = 'this grant states iep:modalStatus "' + String(m.grantStatus) + '", so the pod that published it has '
+          + 'withdrawn it as an assertion. That is not the same as wsp:revoked — nobody unseated this member, the '
+          + 'record naming them was retired — and either way it seats nobody now.';
+        seats.push(m); continue;
+      }
     } catch (e) {
       m.why = 'the grant record could not be read: ' + ((e as Error)?.message ?? String((e as { code?: string })?.code));
       seats.push(m); continue;
@@ -182,6 +203,16 @@ export async function foldRoster(
       const ad = await client.descriptor(found.head.url);
       const region = graphRegion((ad['graph'] as { content?: string } | undefined)?.content ?? '', found.iri);
       if (region === null) { m.why = 'the signed region of their acceptance could not be located, so no seat will be read out of it'; seats.push(m); continue; }
+      m.acceptStatus = readModalStatus(region);
+      // ★ AND THE MEMBER'S OWN HALF, WHICH ONLY THEY CAN WITHDRAW. Their acceptance is on their
+      // pod under their signature; retiring it is how somebody leaves a room without asking the
+      // convener's permission, and a fold that ignored it kept folding their log in after they
+      // had said they were done. Said as its own reason, never as "their acceptance is malformed".
+      if (isRetracted(region)) {
+        m.why = 'their acceptance states iep:modalStatus "' + String(m.acceptStatus) + '", so they have withdrawn it '
+          + 'on their own pod. The grant naming them still stands; what they retired is their own half of the seat.';
+        seats.push(m); continue;
+      }
       m.acceptUrl = found.head.url;
       // The pod the acceptance was actually SERVED from, and its base URL. Everything
       // downstream that needs to address this member's storage uses these rather than a name
