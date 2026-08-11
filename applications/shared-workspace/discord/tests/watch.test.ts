@@ -33,7 +33,7 @@ const AGENT = 'did:web:identity.interego.xwisee.com:agents:interego-delegate-u-e
 const entry = (n: number, over: Partial<ShownEntry> = {}): ShownEntry => ({
   pod: POD, seq: n, created: '2026-08-08T1' + n + ':00:00Z', body: 'entry ' + n,
   descriptorUrl: 'https://css.internal/' + POD + '/e' + n + '.ttl', author: null,
-  derivedFrom: null, why: null, ...over,
+  derivedFrom: null, addressedTo: [], why: null, ...over,
 });
 
 /** An entry the ADDRESSED delegate composed, with its own key — the only thing that ends a wait. */

@@ -36,6 +36,14 @@ became the head.
 | authorise a delegate on your own pod, and revoke it | `delegatePlan` / `publishDelegation` / `revokeDelegation` / `readDelegates` | yes |
 | run one of your delegates on your own model subscription | `decideTurn` / `briefPrompt` / `checkDraft` / `delegateCeiling` + `modelprovider.ts` | yes |
 | tell a delegate's entry from its delegator's, as a reader | `readEntryAuthorship` / `authorshipLine` | yes |
+| **address a message to one named agent — yours or another member's** | `postEntry`'s `addressedTo` → `iep:addressedTo` in the signed region, `notifyAsk` for an absent host | yes |
+| **receive one, and refuse an inbox notice not addressed to a key held here** | `readRequests` / `verifyRequest` | yes |
+
+**Addressing and authorship are different axes, and the two controls are deliberately far apart.**
+"Speaking as" above the composer picks which of *your own* delegates is activated to compose — an
+author, written as `prov:wasAttributedTo`. **Ask** on a roster row picks who a message is *for* —
+an addressee, written as `iep:addressedTo`, usually somebody else's agent. Neither is inferred
+from the other by any reader, and an entry may carry one, both, or neither.
 
 Every delegate row above comes from **`@interego/core/delegate`**, not from the workspace package.
 "An identity a person authorises to act for them" is an Interego concept — it sits beside the

@@ -38,8 +38,8 @@
  */
 
 import {
-  type Check, type Presence, type WorkspaceClient,
-  agentPodOf, agentPort, delegatePort, errorCopy, foldRoster, isPresent, podOfNsIri, presenceLine,
+  type AskNotice, type Check, type Presence,
+  agentPodOf, agentPort, delegatePort, errorCopy, foldRoster, isPresent, notifyAsk, podOfNsIri, presenceLine,
   readDelegates, readPresence, scopeWriteEligible,
   type DelegateRoster, type PostOutcome, type RosterFold, type Seat,
 } from '@interego/workspace-client';
@@ -234,14 +234,16 @@ export async function resolveTarget(
 // ── the ask ──────────────────────────────────────────────────────────────────
 
 /** What `notify_agent` reported, kept as reported rather than summarised into a boolean. */
-export interface NoticeReport {
-  readonly attempted: boolean;
-  readonly delivered: boolean;
-  readonly canonicalInbox: boolean | null;
-  readonly inbox: string | null;
-  readonly warning: string | null;
-  readonly why: string | null;
-}
+/**
+ * ★ NOW ONE DEFINITION, IN THE SHARED PACKAGE, BECAUSE A SECOND SURFACE NEEDED THE SAME DECISION.
+ *
+ * This used to be an interface here and a `notifyAbout` beside it, which was correct while Discord
+ * was the only thing that could ask. The desktop shell can now ask too, and the three branches
+ * (running host → send nothing; underivable pod → send nothing and say so; otherwise send a
+ * pointer carrying no task text) are exactly the rules that go wrong when they are written twice.
+ * The name is kept as an alias so this file's own union reads the same as it did.
+ */
+export type NoticeReport = AskNotice;
 
 export type AskOut =
   | { readonly kind: 'not-a-workspace' }
@@ -331,75 +333,33 @@ export async function ask(
     { mark: 'y', text: 'It carries iep:addressedTo ' + target.agentId + ' inside the signed region, so who it is for cannot be changed by whoever relays it' },
   ];
 
-  // ★ THE NOTIFICATION IS ONLY SENT WHEN THE HOST IS NOT SAYING IT IS UP, AND THAT IS NOT AN
-  // OPTIMISATION. A running host is already watching this channel; a notice would be a second
-  // pointer to a thing it is about to read anyway. Sending one regardless would train every reader
-  // to treat the inbox as where requests live, which is the one place they must never live.
-  let notice: NoticeReport = {
-    attempted: false, delivered: false, canonicalInbox: null, inbox: null, warning: null,
-    why: 'this agent said its host was running, and a running host reads this channel directly — no notice was sent, because the entry above IS the request',
-  };
-  if (!isPresent(target.presence) && descriptorUrl) {
-    // ★ THE ADDRESSEE'S OWN POD, NOT ITS DELEGATOR'S, AND THIS IS THE WHOLE OF THE ASK-AND-WAKE
-    // PATH. MEASURED LIVE against the shipped functions: the notice went to `target.pod` — the
-    // seated member's — and a hosted delegate's `wake()` reads its inbox through ITS OWN session,
-    // where the relay answers `read_inbox: forbidden — you may only read your own inbox` for any
-    // other pod. Two different mailboxes, so a request addressed to an absent agent was delivered
-    // where that agent cannot look, sat unread forever, and the desktop panel reported "nothing was
-    // waiting" every time. A request vanishing into silence is worse than the feature being absent.
-    //
-    // The agent's own pod is the one `readPresence` and `readCapabilities` already derive from the
-    // same DID, so there is one address for everything about an agent and it comes from its id.
-    if (!target.agentPod) {
-      notice = {
-        attempted: false, delivered: false, canonicalInbox: null, inbox: null, warning: null,
-        why: 'this client cannot take a pod out of ' + target.agentId + ', so it cannot name the inbox that agent polls. '
-          + 'Nothing was sent — a notice into a guessed mailbox is a notice nobody reads.',
-      };
-      checks.push({ mark: 'q', text: 'No notice was sent: ' + notice.why + ' The ask is on the record and a host that reads this channel will find it.' });
-    } else {
-      notice = await notifyAbout(deps.client, {
-        pod: target.agentPod, about: descriptorUrl,
-        summary: 'A request addressed to ' + (target.name ?? target.agentId) + ' was published in ' + found.candidates.binding.title,
-      });
-      checks.push(notice.delivered
-        ? { mark: notice.canonicalInbox === false ? 'q' : 'y', text: 'A notice pointing at that entry is in the inbox on that AGENT\'s own pod, `' + target.agentPod + '` — the one its own session polls' + (notice.canonicalInbox === false ? ', though the relay did not report it as that pod\'s canonical inbox' : '') }
-        : { mark: 'n', text: 'The notice was not delivered: ' + (notice.why ?? 'no reason reported') + '. The ask is still on the record.' });
-    }
+  // ★ WHETHER A NOTICE GOES AT ALL IS `notifyAsk`'s CALL, NOT THIS FILE'S. All three branches — a
+  // running host is sent nothing, an underivable pod is sent nothing and says so, otherwise a
+  // pointer with no task text goes to the ADDRESSEE's own pod — now live in the shared package, so
+  // the desktop shell and this bot cannot come to differ about them. What stays here is the
+  // rendering: Discord's checklist is Discord's business.
+  const notice: NoticeReport = descriptorUrl
+    ? await notifyAsk(deps.client, {
+      agentId: target.agentId, agentPod: target.agentPod, presence: target.presence,
+      about: descriptorUrl,
+      summary: 'A request addressed to ' + (target.name ?? target.agentId) + ' was published in ' + found.candidates.binding.title,
+    })
+    : {
+      attempted: false, delivered: false, canonicalInbox: null, inbox: null, warning: null,
+      why: 'the append was accepted but the relay named no descriptor for it, so there is no record for a notice to '
+        + 'point AT. Nothing was sent rather than a pointer to nowhere.',
+    };
+  if (notice.attempted) {
+    checks.push(notice.delivered
+      ? { mark: notice.canonicalInbox === false ? 'q' : 'y', text: 'A notice pointing at that entry is in the inbox on that AGENT\'s own pod, `' + target.agentPod + '` — the one its own session polls' + (notice.canonicalInbox === false ? ', though the relay did not report it as that pod\'s canonical inbox' : '') }
+      : { mark: 'n', text: 'The notice was not delivered: ' + (notice.why ?? 'no reason reported') + '. The ask is still on the record.' });
+  } else if (!isPresent(target.presence)) {
+    // Not sent, and the host is NOT up — so the reason is worth printing. When the host IS up,
+    // "no notice was sent" is the expected path and saying so would read as a failure.
+    checks.push({ mark: 'q', text: 'No notice was sent: ' + (notice.why ?? 'no reason reported')
+      + ' The ask is on the record and a host that reads this channel will find it.' });
   }
   return { kind: 'asked', target, record, accepted, descriptorUrl, notice, checks };
-}
-
-/**
- * `notify_agent` with no task text in it, ever.
- *
- * ★ THE SENDER IS SERVER-AUTHORITATIVE AND THAT IS WHY THIS IS SAFE TO USE AT ALL. The relay takes
- * the actor from the caller's session and never from an argument, so the notice cannot claim to be
- * from somebody else. What it CAN do is arrive in any inbox from any account — so the recipient
- * dereferences the `about` and checks it, and this sends nothing the recipient would have to
- * believe.
- */
-async function notifyAbout(
-  client: WorkspaceClient,
-  args: { readonly pod: string; readonly about: string; readonly summary: string },
-): Promise<NoticeReport> {
-  let res: Record<string, unknown>;
-  try {
-    res = await client.tool('notify_agent', {
-      to: args.pod, type: 'Question', about: args.about, summary: args.summary,
-    }) as Record<string, unknown>;
-  } catch (e) {
-    return { attempted: true, delivered: false, canonicalInbox: null, inbox: null, warning: null, why: errorCopy(e).t };
-  }
-  const delivered = res['delivered'] === true;
-  return {
-    attempted: true,
-    delivered,
-    canonicalInbox: typeof res['canonicalInbox'] === 'boolean' ? res['canonicalInbox'] : null,
-    inbox: typeof res['inbox'] === 'string' ? res['inbox'] : null,
-    warning: typeof res['warning'] === 'string' ? res['warning'] : null,
-    why: delivered ? null : String(res['error'] ?? res['message'] ?? 'the relay reported the delivery as not made and gave no reason'),
-  };
 }
 
 /** True when this scope string would let a delegate append. Re-exported so renderers agree. */

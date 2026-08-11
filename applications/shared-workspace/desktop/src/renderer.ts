@@ -28,8 +28,9 @@ import {
   readDelegates, readEntryAuthorship, REQUIRED_TOOLS,
   foldRoster, graphRegion, grantPodFor, hasType, listWorkspaces, mergeForward, nsIri, orderChain,
   parseRoleProfile, parseWorkspaceIri, podClaimVsServed, podOfDescriptorUrl, pollingWatch, postEntry, verifiedSigner,
-  preconditionLine, publishDelegation, readCanvas, readInbox, readInt, readIri, readLiteral,
-  readViewer, revokeDelegation, revokeGrant,
+  preconditionLine, publishDelegation, readCanvas, readInbox, readInt, readIri, readIriAll, readLiteral,
+  readPresence, readViewer, revokeDelegation, revokeGrant,
+  agentPodOf, notifyAsk, presenceLine, type Presence,
   roleKnown, roleName, roleWhy, saveCanvas, sendInvite, shortRef, slugProblem, verifyInvitation,
   verifyWorkspaceEntry,
   delegatePort,
@@ -267,6 +268,14 @@ interface Body {
    * a separate argument from the in-run list and names it as the one that survives.
    */
   readonly derivedFrom: string | null;
+  /**
+   * The agents this entry names as its addressees — `iep:addressedTo`, from the signed region.
+   *
+   * ★ READ FROM THE SIGNED BYTES AND NOWHERE ELSE, which is the only reason it is worth anything.
+   * The predicate decides which delegate a request belongs to; taken from anywhere the relaying
+   * party could edit, it would let whoever carried the message re-address it in flight.
+   */
+  readonly addressedTo: readonly string[];
   readonly note: string | null;
   readonly error?: unknown;
 }
@@ -345,6 +354,22 @@ const S = {
    * authorised and silent, which is a different state from being revoked.
    */
   speaking: null as string | null,
+  /**
+   * The agent your NEXT message will be addressed to, chosen from the roster. Null is the default
+   * and means the open floor.
+   *
+   * ★ NOT THE SAME AXIS AS `speaking`, AND CONFUSING THE TWO IS THE WHOLE REASON THIS IS SPELLED
+   * OUT. `speaking` picks which of YOUR OWN delegates is activated to compose — an author. This
+   * picks WHO A MESSAGE IS FOR — an addressee, usually somebody else's agent. A person can have
+   * both set, one set, or neither, and the three read differently in the record: an entry names
+   * its author in `prov:wasAttributedTo` and its addressee in `iep:addressedTo`, and no reader
+   * infers either from the other.
+   *
+   * ★ AND IT IS CLEARED AFTER EVERY POST RATHER THAN LEFT STICKY. An addressee that persisted
+   * would make the message after the ask — "thanks", "one more thing" — a second request to the
+   * same agent, permanently, with no visible reason.
+   */
+  ask: null as { agentId: string; name: string | null; pod: string; agentPod: string | null } | null,
   /** A freshly minted key, shown once and never stored here. Cleared as soon as it is dismissed. */
   mintedKey: null as { address: string; agentId: string; privateKey: string } | null,
 };
@@ -1396,6 +1421,12 @@ function teardownWorkspace(): void {
   // Whose delegates were read is a fact about the OTHER MEMBERS of the workspace being left, and
   // carrying it forward would attribute one channel's delegates to another channel's authors.
   S.delegatesByPod.clear();
+  // ★ AND SO IS THE PENDING ADDRESSEE, FOR THE SAME REASON THE DELEGATE ROSTER IS. It names an
+  // agent chosen from the roster of the workspace being LEFT. Carrying it into the next channel
+  // would address a message to somebody who may not be seated there at all — and it would do it
+  // silently, since the chip that shows it is drawn from this state.
+  S.ask = null;
+  renderAsk();
   S.roles = { roles: null, caps: null };
   S.profileFrom = null; S.profileError = null;
   S.streamsOpened = false; S.streamIri = null;
@@ -1811,6 +1842,37 @@ function delegateRows(box: HTMLElement, pod: string): void {
       + 'The id is a function of the delegate\'s key and one shared surface name, so it is the same delegate in any client that holds that key.';
     right.appendChild(id);
     if (d.validFrom) right.appendChild(el('div', 'mpod', 'delegated ' + d.validFrom));
+    /**
+     * ★ THE ONE AFFORDANCE THAT MAKES ANOTHER PERSON'S AGENT REACHABLE FROM THIS APP.
+     *
+     * Everything needed for it was already on this row and unused: the agent's id, whose pod
+     * authorises it, and whether that pod's own registry lets it append. The rows were read for
+     * every SEATED member, not only the viewer, so the one thing that had to change is that they
+     * became clickable. Until this existed the app could RECEIVE an ask — `wake()` verifies one
+     * against `iep:addressedTo` and refuses anything not naming a key this machine holds — and had
+     * no way whatsoever to send one, so the whole surface was half a conversation.
+     *
+     * ★ A DELEGATE ITS OWN POD WILL NOT LET PUBLISH IS NOT OFFERED. It could read the ask and think
+     * about it and never append the answer, which would leave a permanent unanswerable entry on
+     * YOUR log. Only its delegator can change that, so the button says so instead of writing one.
+     */
+    const askIt = el('button', 'sm') as HTMLButtonElement;
+    askIt.textContent = 'Ask ' + (d.name ?? 'this delegate');
+    askIt.disabled = !d.writeEligible;
+    askIt.title = d.writeEligible
+      ? 'Address your next message to this agent by name. It is written into the signed region of your entry as '
+        + 'iep:addressedTo, so whoever relays it cannot change who it is for — and an agent that is not named will '
+        + 'leave it alone.'
+      : 'This delegate\'s own row grants a scope that cannot publish, so it could read your ask and never answer it. '
+        + 'Only ' + pod + ' can change that.';
+    askIt.addEventListener('click', () => {
+      S.ask = { agentId: d.agentId, name: d.name, pod, agentPod: agentPodOf(d.agentId) };
+      renderAsk();
+      area('composer').focus();
+    });
+    const acts = el('div', 'row');
+    acts.appendChild(askIt);
+    right.appendChild(acts);
     r.appendChild(right);
     box.appendChild(r);
   }
@@ -1964,6 +2026,7 @@ async function loadBodies(rows: readonly ChainRow[]): Promise<void> {
           signed: !!auth?.authorshipVerified,
           signedBy: signerAgent,
           derivedFrom: readIri(src, 'prov:wasDerivedFrom'),
+          addressedTo: readIriAll(src, 'iep:addressedTo'),
           author: readEntryAuthorship(region, {
             logOwnerWebId: st?.seat?.grantedTo ?? null,
             delegates: st ? S.delegatesByPod.get(st.pod) ?? null : null,
@@ -1982,7 +2045,7 @@ async function loadBodies(rows: readonly ChainRow[]): Promise<void> {
       } catch (e) {
         S.bodies.set(url, {
           body: null, seq: null, isEntry: false, declaredWorkspace: null, servedPod: null,
-          signed: false, signedBy: null, derivedFrom: null,
+          signed: false, signedBy: null, derivedFrom: null, addressedTo: [],
           author: { kind: 'unstated', why: 'this record could not be read, so nothing about its author was established' },
           note: errorCopy(e).t, error: e,
         });
@@ -2266,6 +2329,11 @@ async function post(as?: {
       ? { kind: 'delegate', agentId: as.agentId, footing: as.footing }
       : { kind: 'principal', webId: S.viewer.webId },
     ...(as?.answering ? { derivedFrom: as.answering } : {}),
+    // ★ WHO IT IS FOR, INSIDE THE SIGNED REGION, AND APPLIED WHOEVER THE AUTHOR IS. Addressing and
+    // authorship are different axes: a person may address another person's agent, and so may a
+    // delegate. Restricting this to the human's own Post would have made the chip above the box
+    // lie the moment a delegate's draft was in it.
+    ...(S.ask ? { addressedTo: [S.ask.agentId] } : {}),
     entryShape: S.record?.entryShape ?? null,
     onAttempt: (n) => {
       if (n > 1) say('postresult', 'pending', 'Someone appended while you were typing — re-deriving',
@@ -2309,6 +2377,12 @@ async function post(as?: {
       ? 'prov:wasAttributedTo ' + as.agentId + ' — your delegate, and the entry also states it acted on behalf of ' + S.viewer.webId
       : 'prov:wasAttributedTo ' + S.viewer.webId + ' — you. Nothing acted on your behalf here.'],
     ['wsp:seq', String(out.seq)],
+    // Stated as the triple, like every other line here. "Addressed to Scribe" is what the UI did;
+    // `iep:addressedTo <did>` is what the record now says, and only the second one is checkable.
+    ['addressed to', S.ask
+      ? 'iep:addressedTo ' + S.ask.agentId + ' — inside the signed region, so whoever relays this cannot change who it '
+        + 'is for. Every other agent reading this channel is expected to leave it alone.'
+      : 'nobody — this entry names no iep:addressedTo, so it is open to any agent that reads the channel'],
     ['descriptor', out.descriptorUrl ?? 'not reported by the response'],
     ['shape asserted', entryShapeAnswer(out.shapeSent, S.recordResult, S.workspace)],
     // ABSENCE IS NOT EVIDENCE. What was SENT is on the outcome, so the two are reported
@@ -2357,6 +2431,46 @@ async function post(as?: {
     // the NEXT thing typed there be sent as that delegate.
     A.drafted = null;
     A.phase = A.on ? 'watching' : 'off';
+    /**
+     * ★ THE POINTER GOES ONLY AFTER THE RECORD IS CONFIRMED READABLE, WHICH IS THE ORDERING THAT
+     * MATTERS. The ask IS the entry; the notice is an accelerant for a host that is not running.
+     * Sending it earlier would risk a notice pointing at a record that never landed — and a
+     * recipient dereferencing `about` to find nothing has been handed a mystery rather than a
+     * request. Whether it goes at all is `notifyAsk`'s call, shared with the Discord conduit so
+     * the two surfaces cannot come to disagree about it.
+     */
+    const target = S.ask;
+    if (target) {
+      S.ask = null;
+      renderAsk();
+      /**
+       * ★ A FAILED PRESENCE READ IS `unreadable`, WHICH IS NOT PRESENT — SO THE NOTICE STILL GOES.
+       * The asymmetry is deliberate and it is the safe direction: treating a failed read as
+       * "running" would suppress the pointer to an agent that is in fact asleep, and the ask would
+       * sit unread until somebody happened to start its host. `isPresent` is true only for a
+       * verified live lease, so every other answer — including this one — sends.
+       */
+      const presence = await readPresence(agentPort(S.client), { relay: S.relay, agentId: target.agentId })
+        .catch((e): Presence => ({
+          state: 'unreadable', agentId: target.agentId, pod: target.agentPod ?? '', iri: '',
+          why: 'the read of this agent\'s presence lease failed: ' + errorCopy(e).t,
+        }));
+      const notice = await notifyAsk(S.client, {
+        agentId: target.agentId, agentPod: target.agentPod, presence,
+        about: out.descriptorUrl,
+        summary: 'A request addressed to ' + (target.name ?? target.agentId) + ' was published in this workspace',
+      });
+      p.appendChild(kvPair([
+        ['its host', presenceLine(presence)],
+        ['notice', notice.attempted
+          ? (notice.delivered
+            ? 'delivered into the inbox on that AGENT\'s own pod' + (target.agentPod ? ' (' + target.agentPod + ')' : '')
+              + ' — the one its own session polls, not its delegator\'s, which it is forbidden to read'
+              + (notice.canonicalInbox === false ? '. The relay did not report that as the pod\'s canonical inbox, so this is reported as sent rather than as arrived' : '')
+            : 'NOT delivered: ' + (notice.why ?? 'no reason reported') + '. The ask is still on the record, so a host that reads this channel will still find it.')
+          : (notice.why ?? 'nothing was sent and no reason was reported')],
+      ]));
+    }
   } else {
     p.className = 'panel pending';
     (p.querySelector('h4') as HTMLElement).textContent = 'Accepted, but not yet readable';
@@ -3452,7 +3566,15 @@ function agentEntries(): { entries: SeenEntry[]; unreadable: number } {
         pod: st.pod,
         descriptorUrl: r.url,
         body: b.body,
-        derivedFrom: null,
+        // ★ THIS WAS `null`, AND THAT MADE A DOCUMENTED GUARD INERT IN THIS CLIENT. `decideTurn`
+        // treats `prov:wasDerivedFrom` on your own pod as the half of "have I answered this" that
+        // survives a restart — the in-run set does not. Hardcoding null here meant the durable
+        // half never fired in this app: the value was read into `b.derivedFrom` on the way in, used
+        // for the wake path, and dropped on the way to the decision.
+        derivedFrom: b.derivedFrom,
+        // Read from the same signed region as the body. An entry addressed to another agent by
+        // name is not this delegate's to answer, and until this was passed it answered anyway.
+        addressedTo: b.addressedTo,
         at: Number.isNaN(t) ? null : t,
         // Read from the same signed region as the body, so the transcript the model sees names
         // each speaker rather than calling every entry on this pod "you".
@@ -3774,6 +3896,29 @@ async function advertise(): Promise<void> {
   renderAgent();
 }
 
+/**
+ * Draw who the next message is addressed to, or nothing at all.
+ *
+ * ★ THE COPY NAMES THE CONSEQUENCE, NOT THE FEATURE. "Addressed to X" is a UI state; what is
+ * actually about to happen is that a permanent public record will name that agent inside bytes
+ * nobody downstream can alter, and every OTHER agent reading this channel will leave it alone.
+ * A person cannot consent to a distinction the control does not show them.
+ */
+function renderAsk(): void {
+  const row = $('askrow');
+  const a = S.ask;
+  row.hidden = !a;
+  if (!a) return;
+  const who = a.name ?? a.agentId;
+  clear($('askto')).appendChild(document.createTextNode(
+    'Addressed to ' + who + ', a delegate of ' + a.pod + '. Your next post names it in the signed region, so no other '
+    + 'agent here will treat it as theirs to answer'
+    + (a.agentPod ? '' : ' — though this client cannot derive an inbox from that id, so if its host is not running it '
+      + 'will only find the ask when it next reads the channel')
+    + '.',
+  ));
+}
+
 /** Descriptor URLs some entry already on my own pod declares it was derived from. */
 function derivedFromOnMyPod(): readonly string[] {
   const out: string[] = [];
@@ -3840,6 +3985,7 @@ inp('wstitleIn').addEventListener('input', renderSlugHint);
 btn('sendinvite').addEventListener('click', () => { void invite(); });
 inp('invitee').addEventListener('keydown', (e) => { if ((e as KeyboardEvent).key === 'Enter' && !btn('sendinvite').disabled) void invite(); });
 btn('send').addEventListener('click', () => { void post(); });
+btn('askclear').addEventListener('click', () => { S.ask = null; renderAsk(); area('composer').focus(); });
 area('composer').addEventListener('keydown', (e) => {
   const ev = e as KeyboardEvent;
   if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); if (!btn('send').disabled) void post(); }

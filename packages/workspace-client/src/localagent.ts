@@ -52,6 +52,24 @@ export interface SeenEntry {
   /** Unix ms, or null when the entry did not carry a readable time. Never a guessed one. */
   readonly at: number | null;
   /**
+   * The agents this entry names as its addressees — `iep:addressedTo`, from its signed region.
+   *
+   * ★ REQUIRED, AND FOR A SHARPER REASON THAN THE OTHERS. This is the only field here that can
+   * make a delegate stay silent about an entry it can plainly see, so a client that had not read
+   * it must not be able to hand this decision a channel in which nothing is addressed to anybody.
+   * Optional would have meant every existing caller kept the old behaviour by saying nothing —
+   * which is exactly the defect: the predicate has been written into the signed region by the
+   * Discord conduit since it shipped, the substrate's own request verifier has refused on it since
+   * it shipped, and this decision never once looked at it. A running host therefore answered asks
+   * addressed to somebody else, while the identical ask to a SLEEPING host was refused by
+   * `verifyRequest`. Making it required turns every client that had not read it into a compile
+   * error rather than a silent wrong answer on somebody's permanent log.
+   *
+   * Empty means the entry addressed nobody, which is the open floor and is not the same as
+   * "unread". A client that could not read the region reports the row as unreadable instead.
+   */
+  readonly addressedTo: readonly string[];
+  /**
    * Who composed it, read from its own signed region.
    *
    * ★ REQUIRED, so that a caller cannot hand this decision a channel it has not asked the
@@ -129,6 +147,14 @@ export interface ChannelBrief {
   readonly slug: string;
   /** The entry being answered, rendered for a reader. */
   readonly answering: string;
+  /**
+   * Whether the entry being answered names THIS delegate in `iep:addressedTo`.
+   *
+   * A model that cannot tell a request made of it from a conversation it happens to be reading
+   * answers both the same way. The two are not the same act: one is a task somebody is waiting on
+   * and will be able to point at afterwards, the other is a remark in a room.
+   */
+  readonly addressed: boolean;
   /** Oldest-first, most recent last, each line already attributed. Bounded — see BRIEF_ENTRIES. */
   readonly transcript: readonly string[];
   /** How many entries were left out of `transcript` because of the bound. Zero, never omitted. */
@@ -300,16 +326,63 @@ export function decideTurn(input: TurnInput): TurnDecision {
    * unanswered thing somebody else said, which is the question that was meant all along.
    */
   const answered = new Set(input.answeredHere);
-  const lastTheirs = [...dated].reverse()
-    .find((e) => e.pod !== input.mePod && !answered.has(e.descriptorUrl)) ?? null;
+  /**
+   * ★ THE DURABLE HALF OF THE SAME QUESTION, PROMOTED FROM A LATE GUARD TO A FILTER.
+   *
+   * `prov:wasDerivedFrom` on my own pod outlives the process, where `answeredHere` does not. It
+   * used to be consulted only AFTER a candidate had been chosen, which meant one discharged ask
+   * could stop the delegate dead: the newest thing another member said was already answered in a
+   * previous run, the check fired, and nothing older was ever considered. Removing answered
+   * entries from the pool before anything picks from it is the same statement without that edge.
+   */
+  const derivedHere = new Set(
+    input.entries.filter((e) => e.pod === input.mePod && e.derivedFrom).map((e) => e.derivedFrom as string),
+  );
+  const me = input.delegate.agentId;
+  /**
+   * ★ ADDRESSED, AND NOT TO ME. This is the whole of the fix, and it can only ADD a refusal —
+   * the rule every guard in this function follows. An entry that names its addressees has said
+   * who it is for; a delegate that is not among them is not a party to it and answering would put
+   * a second permanent record under a question somebody asked of somebody else. An entry naming
+   * NOBODY is unchanged: that is the open floor, and any delegate may answer it.
+   */
+  const forSomebodyElse = (e: SeenEntry): boolean => e.addressedTo.length > 0 && !e.addressedTo.includes(me);
+  const forMe = (e: SeenEntry): boolean => e.addressedTo.includes(me);
+
+  const theirs = dated.filter((e) => e.pod !== input.mePod);
+  const open = theirs.filter((e) => !answered.has(e.descriptorUrl) && !derivedHere.has(e.descriptorUrl));
+  /**
+   * ★ A DIRECT ASK OUTRANKS THE CONVERSATION, AND IS TAKEN OLDEST FIRST.
+   *
+   * `dated` is oldest-first, so `find` returns the earliest ask still outstanding. Taking the
+   * newest instead would let a second ask bury the first one permanently, which is not what
+   * somebody who asked twice meant. Ordinary talk is still taken NEWEST first, because there the
+   * question is "what is the conversation now" and not "what am I still holding".
+   */
+  const asked = open.find(forMe) ?? null;
+  const chatter = [...open].reverse().find((e) => !forSomebodyElse(e)) ?? null;
+  const lastTheirs = asked ?? chatter;
 
   if (!lastTheirs) {
-    const anyTheirs = dated.some((e) => e.pod !== input.mePod);
+    const anyTheirs = theirs.length > 0;
+    const elsewhere = open.filter(forSomebodyElse);
+    if (elsewhere.length) {
+      // Its own answer, and not "nobody has spoken". A panel that said the channel was quiet while
+      // an unanswered question sat on screen would read as a broken agent rather than a correct one.
+      return {
+        kind: 'nothing-to-answer',
+        why: 'Everything unanswered in this channel is addressed to another agent by name. '
+          + elsewhere.length + ' entr' + (elsewhere.length === 1 ? 'y names' : 'ies name') + ' an addressee in '
+          + 'the signed region and none of them is this delegate, so none of them is this delegate\'s to answer. '
+          + 'An entry addressed to nobody is open to any agent; one addressed to a named agent is not.',
+      };
+    }
     return {
       kind: anyTheirs ? 'already-answered' : 'nothing-to-answer',
       ...(anyTheirs ? { answering: dated[dated.length - 1] as SeenEntry } : {}),
       why: anyTheirs
-        ? 'Everything another member has said in this channel has already been answered by this client in this run. '
+        ? 'Everything another member has said in this channel has already been answered — by this client in this run, '
+          + 'or by an entry on your delegator\'s own log that declares what it was derived from. '
           + 'Appending again would put a second permanent record in your delegator\'s log saying the same thing.'
         : undated.length
           ? 'Nothing another member wrote in this channel carries a readable time, so whether any of it is new is not '
@@ -346,7 +419,18 @@ export function decideTurn(input: TurnInput): TurnDecision {
   //
   // `>=` and not `>`: two entries sharing a timestamp is a tie this cannot resolve, and the safe
   // side of a tie is silence.
-  if (lastMine && lastMine.at !== null && lastTheirs.at !== null && lastMine.at >= lastTheirs.at) {
+  //
+  // ★ AND A DIRECT ASK IS EXEMPT FROM IT, WHICH IS THE ONE PLACE THIS FUNCTION LETS A GUARD GO.
+  // The guard asks "has anybody on my pod spoken since they did" — a question about the flow of a
+  // conversation, answered at POD granularity. Applied to an ask addressed to this delegate by
+  // name it says something quite different and wrong: that the delegator talking after asking
+  // withdraws the ask. It does not. Ask your agent to summarise the thread, type two more
+  // sentences while it is thinking, and the ask would be silenced by your own typing — forever,
+  // since every further message renews it. A direct ask is discharged by an ANSWER to it and by
+  // nothing else, and both halves of that discharge already removed it from `open` above: the
+  // in-run set and the durable `prov:wasDerivedFrom` on this pod. So the loop this guard exists to
+  // prevent is still prevented, by the two guards that actually name the ask.
+  if (!asked && lastMine && lastMine.at !== null && lastTheirs.at !== null && lastMine.at >= lastTheirs.at) {
     return {
       kind: 'already-answered',
       answering: lastTheirs,
@@ -356,18 +440,9 @@ export function decideTurn(input: TurnInput): TurnDecision {
         + 'log with nothing new to answer.',
     };
   }
-  // Still honoured when present, because the bridge's own writer DOES emit it and an explicit
-  // derivation link is a stronger statement than an ordering.
-  const derived = input.entries.find((e) => e.pod === input.mePod && e.derivedFrom === lastTheirs.descriptorUrl);
-  if (derived) {
-    return {
-      kind: 'already-answered',
-      answering: lastTheirs,
-      why: 'The newest entry from another member is already declared as answered on your delegator\'s log ('
-        + shortRef(derived.descriptorUrl) + '). Appending again would put two permanent records in that log '
-        + 'saying the same thing.',
-    };
-  }
+  // The explicit derivation link used to be checked HERE, after a candidate had been chosen. It is
+  // now `derivedHere` above, applied before anything picks — same statement, one edge fewer. See
+  // the comment there for what that edge cost.
 
   const newest = lastTheirs;
   // The transcript keeps undated entries — a reader sees them, so the agent should too — placed
@@ -381,6 +456,7 @@ export function decideTurn(input: TurnInput): TurnDecision {
       workspace: input.workspace,
       slug: input.slug,
       answering: line(newest, input),
+      addressed: forMe(newest),
       transcript: window.map((e) => line(e, input)),
       omitted: Math.max(0, ordered.length - window.length),
     },
@@ -438,6 +514,17 @@ export function briefPrompt(
     'Recent entries, oldest first:',
     ...brief.transcript.map((t) => '  ' + t),
     '',
+    // ★ SAID ONLY WHEN IT IS TRUE. An instruction to "do the thing asked" attached to every turn
+    // would make the delegate treat a remark it happened to read as a job it had been given.
+    ...(brief.addressed
+      ? [
+        'This entry is ADDRESSED TO YOU BY NAME — it names you inside its signed region, so it is a',
+        'request made OF YOU and the person who wrote it is waiting on it. Do what is asked, or say',
+        'plainly what you would need in order to do it. Do not answer as if you had merely overheard',
+        'it, and do not hand it back unless you genuinely cannot act on it.',
+        '',
+      ]
+      : []),
     'Reply to this entry:',
     '  ' + brief.answering,
     '',

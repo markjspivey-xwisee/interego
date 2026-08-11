@@ -16,7 +16,7 @@ import {
   type Check, type GrantVerdict, type RosterFold, type Seat, type Viewer, type WorkspaceRecord,
   POD_RX, acceptGrant, checkDelegation, checkRoleForWorkspace, createWorkspace, errorCopy,
   findSeat, foldRoster, graphRegion, nsIri, orderChain, parseRoleProfile, podOfNsIri, postEntry,
-  qualifiedName, readAuthorship, readDelegates, readEntryAuthorship, readInt, readIri, readLiteral,
+  qualifiedName, readAuthorship, readDelegates, readEntryAuthorship, readInt, readIri, readIriAll, readLiteral,
   verifiedSigner,
   readMember, sendInvite, toChainRow,
   type AuthorshipReading, type DelegateRoster, type EntryAuthorship, type PostOutcome,
@@ -431,6 +431,16 @@ export interface ShownEntry {
    * it is the same derivation `verifyRequest` reads to know an ask has been answered already.
    */
   readonly derivedFrom: string | null;
+  /**
+   * The agents this entry names as its addressees — `iep:addressedTo`, same signed region.
+   *
+   * ★ CARRIED SO THAT "WHO IS THIS FOR" TRAVELS WITH THE ENTRY RATHER THAN BEING RE-FETCHED. A
+   * reader that had to go back to the descriptor to find out would be a reader that usually did
+   * not bother. Empty when the region says nobody — and ALSO empty when the region could not be
+   * located, which is why `why` is non-null in exactly that case and every consumer that acts on
+   * addressing has to treat an unreadable entry as unreadable rather than as unaddressed.
+   */
+  readonly addressedTo: readonly string[];
   readonly why: string | null;
 }
 
@@ -558,10 +568,11 @@ export async function showWorkspace(deps: Deps, threadId: string): Promise<ShowO
             signedBy: verifiedSigner(d['authorship']),
           }),
           derivedFrom: region === null ? null : readIri(region, 'prov:wasDerivedFrom'),
+          addressedTo: region === null ? [] : readIriAll(region, 'iep:addressedTo'),
           why: region === null ? 'the signed region of this entry could not be located, so nothing was read from bytes anybody signed' : null,
         });
       } catch (e) {
-        entries.push({ pod: r.seat.podServed ?? r.seat.pod ?? '?', seq: null, created: null, body: null, descriptorUrl: r.url, author: null, derivedFrom: null, why: 'this entry could not be read: ' + errorCopy(e).t });
+        entries.push({ pod: r.seat.podServed ?? r.seat.pod ?? '?', seq: null, created: null, body: null, descriptorUrl: r.url, author: null, derivedFrom: null, addressedTo: [], why: 'this entry could not be read: ' + errorCopy(e).t });
       }
     }
     // See the header: a clock, and the renderer prints that beside it.

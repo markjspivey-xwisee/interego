@@ -141,7 +141,7 @@ describe('the composed view', () => {
     record: { head: { forked: false, url: 'u', cid: null, headError: null, message: null }, regionFound: true, convener: 'w', roleProfile: null, entryShape: null, grantCapability: null, title: 'design review', authorship: null, convenerPod: POD, servedFrom: POD },
     fold: { seats: [seat(POD, true, null), seat('u-eth-ffffffffffff', false, 'granted, but no acceptance published on their pod yet')], grantPod: POD, grantPodDerivedFrom: 'wsp:convener in the record', grantScanSaturated: false, grantLimit: 400, grantsFound: 2, grantsRead: 2, grantReadCap: 25 },
     streams: [{ pod: POD, stream: 's', total: 1, forked: false, partial: false, why: null }],
-    entries: [{ pod: POD, seq: 0, created: '2026-08-07T00:00:00.000Z', body: 'hello', descriptorUrl: 'u', author: { kind: 'principal', webId: WEBID, signer: { kind: 'the-author', signedBy: WEBID } }, derivedFrom: null, why: null }],
+    entries: [{ pod: POD, seq: 0, created: '2026-08-07T00:00:00.000Z', body: 'hello', descriptorUrl: 'u', author: { kind: 'principal', webId: WEBID, signer: { kind: 'the-author', signedBy: WEBID } }, derivedFrom: null, addressedTo: [], why: null }],
     truncated: false, totalEntries: 1,
     ...over,
   } as ShowOut);

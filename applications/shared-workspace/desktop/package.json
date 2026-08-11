@@ -1,6 +1,6 @@
 {
   "name": "@interego/workspace-desktop",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Desktop shell for the shared-workspace client. Walking skeleton: boot -> authenticate (SIWE wallet held in the OS secret store, or the relay's own browser sign-in over a loopback redirect) -> read a workspace -> render roster and stream -> post an entry onto the user's own pod. All substrate logic comes from @interego/workspace-client; this package only draws and holds keys.",
   "author": "Mark Spivey",
   "license": "MIT",

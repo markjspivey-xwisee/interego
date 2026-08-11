@@ -56,8 +56,15 @@ const byDelegate = (pod: string, d: SpeakingDelegate, footing?: EntryAuthorship 
     footing: footing ?? { kind: 'on-behalf-of', principal: pod === ME ? MY_WEBID : THEIR_WEBID },
   });
 
-const said = (pod: string, url: string, body: string | null, when: number | null, derivedFrom: string | null = null, author?: EntryAuthorship): SeenEntry =>
-  ({ pod, descriptorUrl: url, body, derivedFrom, at: when, author: author ?? person(pod) });
+const said = (
+  pod: string, url: string, body: string | null, when: number | null,
+  derivedFrom: string | null = null, author?: EntryAuthorship, addressedTo: readonly string[] = [],
+): SeenEntry =>
+  ({ pod, descriptorUrl: url, body, derivedFrom, at: when, author: author ?? person(pod), addressedTo });
+
+/** The same entry, addressed to one agent by name — what `/workspace ask` writes. */
+const askedOf = (agentId: string, pod: string, url: string, body: string, when: number | null): SeenEntry =>
+  said(pod, url, body, when, null, undefined, [agentId]);
 
 const input = (over: Partial<TurnInput> = {}): TurnInput => ({
   workspace: WS, slug: 'room', mePod: ME, delegate: CLAUDE_SIDE,
@@ -328,7 +335,7 @@ describe('decideTurn: the agent is a delegate, and is not the person it acts for
 });
 
 describe('briefPrompt: what the agent is asked, and what it is never handed', () => {
-  const brief = { workspace: WS, slug: 'room', answering: THEM + ': the question', transcript: [THEM + ': the question'], omitted: 0 };
+  const brief = { workspace: WS, slug: 'room', answering: THEM + ': the question', transcript: [THEM + ': the question'], omitted: 0, addressed: false };
 
   it('names the channel and states that the record is permanent', () => {
     const p = briefPrompt(brief, { displayName: null, delegateName: 'Claude side' });
@@ -481,5 +488,122 @@ describe('checkDraft: what may be appended to a permanent public log', () => {
     // Half a sentence recorded permanently is worse than none, and a reader cannot tell it was cut.
     if (!v.ok) expect(v.why).toContain('refused rather than truncated');
     expect(checkDraft(OWN + 'x'.repeat(DRAFT_MAX), PRINCIPAL).ok).toBe(true);
+  });
+});
+
+/**
+ * WHO AN ENTRY IS FOR, WHICH THIS DECISION IGNORED ENTIRELY UNTIL NOW.
+ *
+ * ★ THE DEFECT THESE PIN, STATED PLAINLY. `iep:addressedTo` has been written into the signed
+ * region of an ask since the Discord conduit shipped, and the substrate's own `verifyRequest` has
+ * refused an inbox notice that does not name a key the machine holds since the same day. This
+ * function never read it. The consequence was not subtle and was not theoretical: with two people
+ * in a channel each running a delegate, asking ONE of them a question by name produced an answer
+ * from BOTH — and the ask-and-wake path, for the identical ask to a SLEEPING host, refused it
+ * correctly. The same request meant two different things depending on whether the addressee
+ * happened to be awake.
+ *
+ * ★ MEASURED, AND THE COUNT IS STATED RATHER THAN IMPLIED. With the addressing read reverted —
+ * both predicates forced to `false`, rebuilt, since this suite executes `dist` and not `src` — SIX
+ * of the eleven cases below fail. The other five pass either way ON PURPOSE: they pin behaviour
+ * that must NOT change (an unaddressed entry stays open to any agent; an ask naming several agents
+ * including me is mine; an answered ask stays answered) and are regression guards, not evidence
+ * for the fix. Saying which is which is the point — a file that claimed all eleven discriminated
+ * would be counting five tests that cannot fail.
+ */
+describe('decideTurn: an entry addressed to one agent by name', () => {
+  const OTHER = 'did:web:identity.interego.xwisee.com:agents:interego-delegate-u-eth-999999999999';
+
+  it('★ is NOT answered by a delegate it does not name', () => {
+    const d = decideTurn(input({ entries: [askedOf(OTHER, THEM, 'u1', 'Scribe, summarise the thread', at('2026-08-07T10:00:00Z'))] }));
+    expect(d.kind).toBe('nothing-to-answer');
+    if (d.kind === 'nothing-to-answer') expect(d.why).toContain('addressed to another agent by name');
+  });
+
+  it('is answered by the delegate it DOES name', () => {
+    const d = decideTurn(input({ entries: [askedOf(D1, THEM, 'u1', 'Claude side, summarise the thread', at('2026-08-07T10:00:00Z'))] }));
+    expect(d.kind).toBe('answer');
+    if (d.kind === 'answer') expect(d.answering.descriptorUrl).toBe('u1');
+  });
+
+  it('leaves an entry addressed to NOBODY open to any delegate, which is the unchanged default', () => {
+    const d = decideTurn(input({ entries: [said(THEM, 'u1', 'anyone know the roof warranty?', at('2026-08-07T10:00:00Z'))] }));
+    expect(d.kind).toBe('answer');
+  });
+
+  it('★ the same channel gives two delegates two different answers, which is the whole point', () => {
+    const entries = [askedOf(D1, THEM, 'u1', 'Claude side, do this', at('2026-08-07T10:00:00Z'))];
+    expect(decideTurn(input({ entries, delegate: CLAUDE_SIDE })).kind).toBe('answer');
+    expect(decideTurn(input({ entries, delegate: CODEX_SIDE })).kind).toBe('nothing-to-answer');
+  });
+
+  it('★ a direct ask is NOT silenced by its asker carrying on talking', () => {
+    // The ordering guard asks "has anybody on my pod spoken since they did" at POD granularity.
+    // Applied to an ask addressed to this delegate it says the delegator's own next sentence
+    // withdraws the ask — and since every further message renews that, permanently.
+    const d = decideTurn(input({ entries: [
+      askedOf(D1, THEM, 'u1', 'Claude side, summarise the thread', at('2026-08-07T10:00:00Z')),
+      said(ME, 'u2', 'and take your time', at('2026-08-07T10:05:00Z')),
+    ] }));
+    expect(d.kind).toBe('answer');
+    if (d.kind === 'answer') expect(d.answering.descriptorUrl).toBe('u1');
+  });
+
+  it('★ but IS discharged by an answer to it that survives a restart', () => {
+    // `answeredHere` dies with the process; `prov:wasDerivedFrom` on my own pod does not. This is
+    // the guard that makes the exemption above safe rather than a loop.
+    const d = decideTurn(input({ entries: [
+      askedOf(D1, THEM, 'u1', 'Claude side, summarise the thread', at('2026-08-07T10:00:00Z')),
+      said(ME, 'u2', 'here is the summary', at('2026-08-07T10:05:00Z'), 'u1'),
+    ], answeredHere: [] }));
+    expect(d.kind).not.toBe('answer');
+  });
+
+  it('takes the OLDEST outstanding ask, so a second one cannot bury the first', () => {
+    const d = decideTurn(input({ entries: [
+      askedOf(D1, THEM, 'u1', 'first thing', at('2026-08-07T10:00:00Z')),
+      askedOf(D1, THEM, 'u2', 'second thing', at('2026-08-07T10:01:00Z')),
+    ] }));
+    expect(d.kind).toBe('answer');
+    if (d.kind === 'answer') expect(d.answering.descriptorUrl).toBe('u1');
+  });
+
+  it('prefers a direct ask over newer chatter rather than letting the room starve it', () => {
+    const d = decideTurn(input({ entries: [
+      askedOf(D1, THEM, 'u1', 'Claude side, do this', at('2026-08-07T10:00:00Z')),
+      said(THEM, 'u2', 'anyway, nice weather', at('2026-08-07T10:09:00Z')),
+    ] }));
+    expect(d.kind).toBe('answer');
+    if (d.kind === 'answer') expect(d.answering.descriptorUrl).toBe('u1');
+  });
+
+  it('still answers open talk when the only addressed entry belongs to somebody else', () => {
+    const d = decideTurn(input({ entries: [
+      askedOf(OTHER, THEM, 'u1', 'Scribe, do this', at('2026-08-07T10:00:00Z')),
+      said(THEM, 'u2', 'and separately — anyone know the warranty?', at('2026-08-07T10:01:00Z')),
+    ] }));
+    expect(d.kind).toBe('answer');
+    if (d.kind === 'answer') expect(d.answering.descriptorUrl).toBe('u2');
+  });
+
+  it('★ tells the model when it was addressed, and does not claim it when it was not', () => {
+    const asked = decideTurn(input({ entries: [askedOf(D1, THEM, 'u1', 'do this', at('2026-08-07T10:00:00Z'))] }));
+    const open = decideTurn(input({ entries: [said(THEM, 'u1', 'do this', at('2026-08-07T10:00:00Z'))] }));
+    expect(asked.kind === 'answer' && asked.brief.addressed).toBe(true);
+    expect(open.kind === 'answer' && open.brief.addressed).toBe(false);
+    if (asked.kind === 'answer') {
+      expect(briefPrompt(asked.brief, { displayName: null, delegateName: 'Claude side' })).toContain('ADDRESSED TO YOU BY NAME');
+    }
+    if (open.kind === 'answer') {
+      // A delegate told to "do what is asked" on every turn treats a remark it overheard as a job.
+      expect(briefPrompt(open.brief, { displayName: null, delegateName: 'Claude side' })).not.toContain('ADDRESSED TO YOU BY NAME');
+    }
+  });
+
+  it('★ an entry addressed to several agents including me is mine to answer', () => {
+    const d = decideTurn(input({ entries: [
+      said(THEM, 'u1', 'both of you, please look', at('2026-08-07T10:00:00Z'), null, undefined, [OTHER, D1]),
+    ] }));
+    expect(d.kind).toBe('answer');
   });
 });
