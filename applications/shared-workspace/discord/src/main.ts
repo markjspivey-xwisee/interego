@@ -209,10 +209,40 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
   /** One "you are not linked" notice per person per thread. A bot that repeats it is a nuisance. */
   const toldUnlinked = new Set<string>();
 
-  const say = async (channelId: string, m: Message | null, ping: readonly string[] = []): Promise<void> => {
+  /**
+   * The one place this bot posts unprompted, and now the one place a MULTI-PART post stays whole.
+   *
+   * ★ THE QUEUE IS INSIDE HERE RATHER THAN AROUND ONE CALLER. Three different paths post to a
+   * channel — the watcher's `emit`, the "not recorded" notice, and the post-append report — and a
+   * multi-part message from one of them interleaving with a single-line message from another
+   * would splice somebody's entry into the middle of somebody else's report. Keyed on the CHANNEL,
+   * which is deliberately a different key space from the per-pod write queue: the nested call
+   * from the append path therefore never waits on its own chain.
+   *
+   * ★ AND A PART THAT FAILS IS REPORTED IN THE CHANNEL, not only to the operator log. Every part
+   * already carries a `(k/n)` marker, so a reader can see that part 3 of 5 never arrived; this
+   * adds a line saying so when the send itself is what failed, because a sequence that simply
+   * stops reads as a message that simply ended.
+   */
+  const say = async (channelId: string, m: Message | readonly Message[] | null, ping: readonly string[] = []): Promise<void> => {
     if (!m) return;
-    try { await rest.post(channelId, m.content, ping); }
-    catch (e) { out('discord: could not post to ' + channelId + ' — ' + ((e as Error).message)); }
+    const parts = Array.isArray(m) ? m as readonly Message[] : [m as Message];
+    if (!parts.length) return;
+    await queue.run('say:' + channelId, async () => {
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i] as Message;
+        try { await rest.post(channelId, part.content, i === 0 ? ping : []); }
+        catch (e) {
+          out('discord: could not post part ' + (i + 1) + '/' + parts.length + ' to ' + channelId + ' — ' + ((e as Error).message));
+          if (i > 0) {
+            try {
+              await rest.post(channelId, '? Part ' + (i + 1) + ' of ' + parts.length + ' could not be sent, so what is above is incomplete. `/workspace show` reads the whole thing again from the pods that hold it.');
+            } catch { /* the marker on the last part that DID land still tells the truth */ }
+          }
+          return;
+        }
+      }
+    });
   };
 
   /**
@@ -242,7 +272,9 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
     const ephemeral = i.name !== 'workspace start' && i.name !== 'workspace show';
     try { await rest.defer(i.id, i.token, ephemeral); }
     catch (e) { out('discord: could not acknowledge ' + i.name + ' — ' + (e as Error).message); return; }
-    let m: Message;
+    // One message or several: the renderers that can overflow Discord's 2000-character limit
+    // return every part, and the delivery loop below sends them in order.
+    let m: Message | readonly Message[];
     try {
       switch (i.name) {
         case 'workspace link':
@@ -303,8 +335,34 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
       m = { content: '**That did not complete.** ' + ((e as Error)?.message ?? String(e)) + '\nNothing below this is a statement about your pod.', ephemeral };
       out('command ' + i.name + ' failed: ' + ((e as Error)?.stack ?? String(e)));
     }
-    try { await rest.edit(who.id, i.token, m.content); }
-    catch (e) { out('discord: could not deliver the answer to ' + i.name + ' — ' + (e as Error).message); }
+    /**
+     * ★ THE FIRST PART EDITS THE PLACEHOLDER; THE REST ARE FOLLOWUPS ON THE SAME TOKEN.
+     *
+     * A deferred interaction has exactly one placeholder, so a reply longer than one message
+     * cannot be delivered by `edit` alone — which is why `/workspace show` was clipped rather
+     * than continued. Each followup restates `ephemeral`, because the flag is NOT inherited from
+     * the deferral and a private reply's later parts would otherwise land in the channel.
+     *
+     * A part that fails is announced rather than swallowed: the `(k/n)` marker on the parts that
+     * did arrive already tells a reader something is missing, and this says which.
+     */
+    const parts = Array.isArray(m) ? m as readonly Message[] : [m as Message];
+    for (let k = 0; k < parts.length; k++) {
+      const part = parts[k] as Message;
+      try {
+        if (k === 0) await rest.edit(who.id, i.token, part.content);
+        else await rest.followup(who.id, i.token, part.content, part.ephemeral);
+      } catch (e) {
+        out('discord: could not deliver part ' + (k + 1) + '/' + parts.length + ' of ' + i.name + ' — ' + (e as Error).message);
+        if (k > 0) {
+          try {
+            await rest.followup(who.id, i.token, '? Part ' + (k + 1) + ' of ' + parts.length
+              + ' could not be sent, so the answer above is incomplete.', part.ephemeral);
+          } catch { /* the marker on the parts that landed still says how many there should be */ }
+        }
+        return;
+      }
+    }
   };
 
   /**

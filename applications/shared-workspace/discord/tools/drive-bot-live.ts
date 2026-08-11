@@ -157,7 +157,8 @@ async function main(): Promise<void> {
 
   head('/workspace show — the composed view');
   const view = await showWorkspace(deps, THREAD);
-  log(renderShow(view).content);
+  // Every part: this render can exceed Discord's per-message limit and now returns each one.
+  log(renderShow(view).map((p) => p.content).join('\n'));
   check(view.kind === 'view', 'the workspace composed', view.kind);
   if (view.kind === 'view') {
     const seated = view.fold.seats.filter((s) => s.seated);

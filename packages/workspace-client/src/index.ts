@@ -56,7 +56,7 @@ export {
 } from './entry.js';
 
 export {
-  foldRoster, grantPodFor, GRANT_LIMIT, GRANT_READ_CAP, type Seat, type RosterFold,
+  foldRoster, grantPodFor, GRANT_READ_CAP, type Seat, type RosterFold,
 } from './seats.js';
 
 export {
@@ -68,7 +68,7 @@ export {
   createWorkspace, resolveInvitee, sendInvite,
   GRANT_IRI_RX, verifyGrantIri, acceptGrant, revokeGrant,
   INBOX_LIMIT, readInbox, verifyInvitation,
-  SEAT_SCAN_LIMIT, SEAT_READ_CAP, findSeat,
+  SEAT_READ_CAP, findSeat,
   listWorkspaces, verifyWorkspaceEntry, STATUS_READ_CONCURRENCY,
   roleName, roleWhy, roleKnown, checkRoleForWorkspace,
   type Check, type Viewer, type WriteVerdict, type CreateStep, type CreateOutcome,

@@ -24,12 +24,69 @@ export interface Message { readonly content: string; readonly ephemeral: boolean
  * A silently truncated message is a report that ends mid-sentence and reads as if that were all
  * there was — which, in a bot whose entire job is to be trusted about what it did and did not do,
  * is the worst possible failure of a formatter.
+ *
+ * ★ THIS IS NOW THE ONE-MESSAGE PATH ONLY. Callers that can send several use {@link bodyParts},
+ * which does not clip at all. This remains for the surfaces that genuinely get one message.
  */
 export function body(lines: readonly string[], ephemeral: boolean): Message {
   const note = '\n… clipped: Discord refuses a message over ' + DISCORD_LIMIT + ' characters.';
   const full = lines.join('\n');
   if (full.length <= DISCORD_LIMIT) return { content: full, ephemeral };
   return { content: full.slice(0, DISCORD_LIMIT - note.length) + note, ephemeral };
+}
+
+/** Room kept on every part for the `(k/n)` marker, which is added after packing. */
+const MARKER_ROOM = 24;
+
+/**
+ * The same lines, packed into as many messages as they need. Nothing is dropped.
+ *
+ * ★ THE SEAM IS AN ARRAY ELEMENT, NOT A LINE, AND THAT IS THE WHOLE DESIGN.
+ *
+ * The obvious splitter cuts at the last newline that fits. Measured against real `renderShow`
+ * output, that severs an entry's ATTRIBUTION from its TEXT: part 2 ends "…speaking **for itself**
+ * here — its own position, which the pod owner is NOT answerable for" and part 3 begins with the
+ * body, as a standalone Discord message with no author beside it. A line boundary cannot corrupt
+ * a markdown span, which is what makes it look safe — but this file exists to stop "a delegate
+ * wrote this, on its own account" turning into "they said this", and an orphaned body in its own
+ * message is exactly that. It is strictly worse than the mid-sentence clip it replaces.
+ *
+ * The callers already hand over the right seams: `renderShow` pushes each entry's header AND body
+ * as ONE element. So this packs whole elements and never looks inside one. A heuristic over
+ * leading whitespace was tried and is inert here anyway — an entry's header begins with two
+ * spaces and its body with four, so both look like continuations.
+ *
+ * ★ AN ELEMENT LONGER THAN A WHOLE MESSAGE IS THE ONLY INNER CUT, and it is marked. One
+ * 2000-character entry body cannot be delivered whole; it is split with "(continued)" so a reader
+ * can see the seam rather than infer one.
+ */
+export function bodyParts(lines: readonly string[], ephemeral: boolean): readonly Message[] {
+  const room = DISCORD_LIMIT - MARKER_ROOM;
+  /** Elements, with any single over-long one already cut down to deliverable pieces. */
+  const units: string[] = [];
+  for (const line of lines) {
+    if (line.length <= room) { units.push(line); continue; }
+    const cont = ' (continued)';
+    let rest = line;
+    while (rest.length > room) {
+      units.push(rest.slice(0, room - cont.length) + cont);
+      rest = rest.slice(room - cont.length);
+    }
+    units.push(rest);
+  }
+  const parts: string[] = [];
+  let cur = '';
+  for (const u of units) {
+    const next = cur ? cur + '\n' + u : u;
+    if (next.length > room && cur) { parts.push(cur); cur = u; continue; }
+    cur = next;
+  }
+  if (cur || !parts.length) parts.push(cur);
+  // ★ EVERY PART SAYS WHICH PART IT IS, so a followup that never arrives is visible to the READER
+  // and not only to an operator reading the log. A single message gets no marker — a "(1/1)" on
+  // every reply would be noise, and there is nothing there for a reader to miss.
+  if (parts.length === 1) return [{ content: parts[0] as string, ephemeral }];
+  return parts.map((content, i) => ({ content: '`(' + (i + 1) + '/' + parts.length + ')`\n' + content, ephemeral }));
 }
 
 const MARK: Record<Check['mark'], string> = { y: '✓', n: '✗', q: '?' };
@@ -223,11 +280,11 @@ export function renderRecord(out: RecordOut): Message | null {
   }
 }
 
-export function renderShow(out: ShowOut): Message {
+export function renderShow(out: ShowOut): readonly Message[] {
   switch (out.kind) {
-    case 'not-a-workspace': return body(['This thread is not a workspace. `/workspace start` makes it one.'], true);
-    case 'unreadable': return body(['The workspace at ' + iri(out.binding.workspace) + ' could not be read: ' + out.why], false);
-    case 'error': return body(['The workspace could not be read: ' + ((out.error as Error)?.message ?? String(out.error))], false);
+    case 'not-a-workspace': return [body(['This thread is not a workspace. `/workspace start` makes it one.'], true)];
+    case 'unreadable': return [body(['The workspace at ' + iri(out.binding.workspace) + ' could not be read: ' + out.why], false)];
+    case 'error': return [body(['The workspace could not be read: ' + ((out.error as Error)?.message ?? String(out.error))], false)];
     case 'view': {
       const lines: string[] = [
         '**' + (out.record.title || out.binding.slug) + '**',
@@ -241,25 +298,43 @@ export function renderShow(out: ShowOut): Message {
         lines.push('  ' + (s.seated ? '✓' : '·') + ' `' + (s.podServed ?? s.pod ?? 'unresolved') + '`'
           + (s.seated ? ' — seated' : ' — not seated: ' + (s.why ?? 'no reason recorded')));
       }
-      if (out.fold.grantScanSaturated) lines.push('  ? that scan of ' + out.fold.grantPod + ' came back full at ' + out.fold.grantLimit + ' descriptors, so an older grant may lie past the end of it');
+      // The "came back full at 400 descriptors" line is gone with the cap that caused it — this
+      // scan asks for the pod's whole index now. What remains is the READ bound, which is real.
       if (out.fold.grantsFound > out.fold.grantsRead) lines.push('  ? ' + out.fold.grantsFound + ' grants found, ' + out.fold.grantsRead + ' read (cap ' + out.fold.grantReadCap + ')');
 
       for (const st of out.streams) if (st.why) lines.push('  ? `' + st.pod + '`: ' + st.why);
+
+      /**
+       * ★ THE EXPLAINER GOES BEFORE THE ENTRIES, WHICH IS THE ONLY REASON IT SURVIVES.
+       *
+       * It used to close the message. That put the qualifications LAST, so any bound on delivery
+       * — the old 2000-character clip, and equally a part that fails to send — dropped the
+       * caveats and kept the claims. That is the precise inversion this whole file exists to
+       * prevent: "written by X, speaking for them" is only safe to print beside an explanation of
+       * what was and was not checked.
+       *
+       * The entries are the part a reader can recover elsewhere — the workspace IRI printed above
+       * dereferences to all of them, with or without this bot. The explanation exists nowhere
+       * else. So the recoverable thing is what goes at the end.
+       */
+      lines.push('',
+        'Order inside one pod\'s log is the supersession chain those entries declare, which nothing outside that pod can rewrite. Order **between** pods is each entry\'s own `dct:created` — a clock its author\'s client set. The substrate establishes no happens-before across pods, so the interleaving below is a presentation, not a finding.',
+        '',
+        '★ The pod is whose LOG an entry is in. **Who wrote it** is the name beside it, read from the entry\'s own `prov:wasAttributedTo` **and held against the key the relay authenticated over those bytes**. An entry naming an agent it was not signed by is reported as disputed and is never drawn as that agent speaking — every PROV triple in an entry is written by whoever can publish to that pod, so the signature is the only part of this a pod owner cannot compose.',
+        '★ Where that names a delegate, THREE separate things are reported and they can disagree. (1) Is it that person\'s delegate at all — asked of their own pod\'s delegation registry, a document only they can write, and standing until they revoke it. (2) What footing THIS entry was on — read from the entry itself, as a `prov:Delegation` over the act that produced it or an `iep:actedOnOwnAccount` declaring the opposite. An agent can be a properly authorised delegate and still be speaking entirely for itself in any given message. (3) Neither, when the entry does not say — which is reported as not saying, and is not read as either.');
 
       lines.push('', '**Entries** — ' + out.totalEntries + ' in ' + out.streams.length + ' log' + (out.streams.length === 1 ? '' : 's')
         + (out.truncated ? ', newest ' + out.entries.length + ' shown' : ''));
       if (!out.entries.length) lines.push('  none read');
       for (const e of out.entries) {
+        // ★ ONE ELEMENT PER ENTRY, header and body together. `bodyParts` splits between elements
+        // and never inside one, so this is what guarantees an attribution is never delivered in a
+        // different message from the words it attributes.
         lines.push(e.why
           ? '  ? `' + e.pod + '` — ' + e.why
           : '  `' + e.pod + '` ' + authorOf(e.author) + ' #' + (e.seq ?? '?') + ' · ' + (e.created ?? 'no declared time') + '\n    ' + (e.body ?? '(this entry names no dct:description)'));
       }
-      lines.push('',
-        'Order inside one pod\'s log is the supersession chain those entries declare, which nothing outside that pod can rewrite. Order **between** pods is each entry\'s own `dct:created` — a clock its author\'s client set. The substrate establishes no happens-before across pods, so the interleaving above is a presentation, not a finding.',
-        '',
-        '★ The pod is whose LOG an entry is in. **Who wrote it** is the name beside it, read from the entry\'s own `prov:wasAttributedTo` **and held against the key the relay authenticated over those bytes**. An entry naming an agent it was not signed by is reported as disputed and is never drawn as that agent speaking — every PROV triple in an entry is written by whoever can publish to that pod, so the signature is the only part of this a pod owner cannot compose.',
-        '★ Where that names a delegate, THREE separate things are reported and they can disagree. (1) Is it that person\'s delegate at all — asked of their own pod\'s delegation registry, a document only they can write, and standing until they revoke it. (2) What footing THIS entry was on — read from the entry itself, as a `prov:Delegation` over the act that produced it or an `iep:actedOnOwnAccount` declaring the opposite. An agent can be a properly authorised delegate and still be speaking entirely for itself in any given message. (3) Neither, when the entry does not say — which is reported as not saying, and is not read as either.');
-      return body(lines, false);
+      return bodyParts(lines, false);
     }
   }
 }
@@ -287,11 +362,11 @@ const agentLine = (t: AskTarget, nowMs: number): string =>
  * as an empty list — and the middle one is a failed HTTP call being drawn as a fact about somebody
  * else's pod.
  */
-export function renderWho(out: CandidatesOut, nowMs = Date.now()): Message {
+export function renderWho(out: CandidatesOut, nowMs = Date.now()): readonly Message[] {
   switch (out.kind) {
-    case 'not-a-workspace': return body(['This thread is not a workspace. `/workspace start` makes it one.'], true);
-    case 'unreadable': return body(['**The roster could not be read**, so who could be asked something here is not established: ' + out.why], true);
-    case 'error': return body(['**The roster could not be read**, so who could be asked something here is not established: ' + ((out.error as Error)?.message ?? String(out.error))], true);
+    case 'not-a-workspace': return [body(['This thread is not a workspace. `/workspace start` makes it one.'], true)];
+    case 'unreadable': return [body(['**The roster could not be read**, so who could be asked something here is not established: ' + out.why], true)];
+    case 'error': return [body(['**The roster could not be read**, so who could be asked something here is not established: ' + ((out.error as Error)?.message ?? String(out.error))], true)];
     case 'candidates': {
       const lines: string[] = ['**Agents in ' + out.binding.title + '**'];
       if (out.targets.length) for (const t of out.targets) lines.push(agentLine(t, nowMs));
@@ -304,7 +379,7 @@ export function renderWho(out: CandidatesOut, nowMs = Date.now()): Message {
         '● means that agent published a short lease saying its host was running, signed with its own key, and the lease is live by **its own signed expiry**. ○ means anything else, and the line says which: a lapsed lease, no lease on a pod that answered, a lease too long to be evidence, a signed expiry that disagrees with the relay\'s own row, a pod that would not answer, or an agent id this client cannot compose an address from — in which case no pod was asked and nothing was established either way.',
         'Presence is read from **the agent\'s own pod**; whether its human authorises it is read from **theirs**. Two documents, and they can disagree.',
         '`/workspace ask` puts the ask on the record either way. A host that is not running answers when it next runs.');
-      return body(lines, true);
+      return bodyParts(lines, true);
     }
   }
 }
@@ -376,33 +451,38 @@ export function renderAsk(out: AskOut, nowMs = Date.now()): Message {
  * Returns null when there is nothing worth a message: a caller that posted an empty body would be
  * a caller that decided something in a formatter.
  */
-export function renderNews(news: WatchNews): Message | null {
+export function renderNews(news: WatchNews): readonly Message[] | null {
   switch (news.kind) {
     case 'entries': {
       if (!news.entries.length) return null;
       const lines: string[] = [];
       for (const e of news.entries) {
-        lines.push('`' + e.pod + '` ' + authorOf(e.author) + ' #' + (e.seq ?? '?') + ' · ' + (e.created ?? 'no declared time'));
+        // ★ ONE ELEMENT PER ENTRY — attribution and quote together. These were two consecutive
+        // pushes, which `bodyParts` would have been free to separate: the header could land at the
+        // end of one message and the words it attributes at the start of the next, which is the
+        // exact failure this file's whole authorship apparatus exists to prevent.
+        //
         // Quoted, so text that came off somebody else's pod cannot be read as this bot's own
         // sentence — and `rest.post` sends it with mentions disabled, so a body containing
         // `@everyone` is text and not a ping.
-        lines.push('> ' + (e.body ?? '(this entry names no dct:description)').split('\n').join('\n> '));
+        lines.push('`' + e.pod + '` ' + authorOf(e.author) + ' #' + (e.seq ?? '?') + ' · ' + (e.created ?? 'no declared time')
+          + '\n> ' + (e.body ?? '(this entry names no dct:description)').split('\n').join('\n> '));
       }
-      return body(lines, false);
+      return bodyParts(lines, false);
     }
-    case 'burst': return body([
+    case 'burst': return [body([
       '**' + news.count + ' new entries** were appended in this workspace just now — more than this bot posts one at a time, so they are not being replayed here. `/workspace show` reads them out of the pods that hold them.',
-    ], false);
-    case 'forked': return body([
+    ], false)];
+    case 'forked': return [body([
       '? `' + news.pod + '` — ' + news.why,
       'Nothing is being read out of that log in sequence until it has one head. Said once, not every time it is noticed.',
-    ], false);
-    case 'unreadable-entry': return body(['? An entry in this workspace could not be read: ' + news.why], false);
-    case 'silence': return body([
+    ], false)];
+    case 'unreadable-entry': return [body(['? An entry in this workspace could not be read: ' + news.why], false)];
+    case 'silence': return [body([
       '**Nothing has been written in answer yet.** You asked ' + news.ask.targetName + ' ' + describeSpan(news.waitedMs) + ' ago (entry #' + news.ask.seq + ').',
       'Its host ' + news.ask.presenceAtAsk + ' when you asked.',
       '',
       'An agent that read this and judged there was nothing to add writes nothing, and so does one that refused — from here those look the same, and this bot will not guess which. The ask is still on the record and is still answerable whenever its host next runs.',
-    ], false);
+    ], false)];
   }
 }

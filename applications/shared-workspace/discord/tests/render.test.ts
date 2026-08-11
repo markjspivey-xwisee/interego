@@ -11,7 +11,8 @@
 
 import { describe, it, expect } from 'vitest';
 import type { Check } from '@interego/workspace-client';
-import { DISCORD_LIMIT, body, renderChallenge, renderConfirm, renderRecord, renderShow, renderStart, renderUnlink } from '../src/render.js';
+import { DISCORD_LIMIT, body, bodyParts, renderChallenge, renderConfirm, renderRecord, renderShow, renderStart, renderUnlink } from '../src/render.js';
+import type { Message } from '../src/render.js';
 import type { Seat } from '@interego/workspace-client';
 import type { RecordOut, ShowOut } from '../src/workspace.js';
 
@@ -23,6 +24,15 @@ const WEBID = 'https://identity.interego.xwisee.com/users/' + POD + '/profile#me
 /** A delegate DID in the shape the relay actually issues — surface constant, then the pod. */
 const DELEGATE = 'did:web:identity.interego.xwisee.com:agents:interego-delegate-u-eth-cafebabe0001';
 
+/**
+ * Everything a multi-part render would actually put on screen, in order.
+ *
+ * ★ THE ASSERTIONS BELOW READ THE WHOLE REPLY, NOT PART ONE. A helper that returned `[0].content`
+ * would pass every "does it say X" test by accident while parts 2..n were being dropped — which
+ * is the failure this whole change exists to end, reproduced inside its own test file.
+ */
+const whole = (m: readonly Message[]): string => m.map((p) => p.content).join('\n');
+
 describe('body', () => {
   it('says when it clipped', () => {
     const m = body([`${'x'.repeat(DISCORD_LIMIT * 2)}`], false);
@@ -31,6 +41,61 @@ describe('body', () => {
   });
   it('leaves a short message alone', () => {
     expect(body(['a', 'b'], true)).toEqual({ content: 'a\nb', ephemeral: true });
+  });
+});
+
+/**
+ * ★ THE SPLITTER, AND THE PROPERTY IT EXISTS FOR.
+ *
+ * `body` clips. `bodyParts` does not, and the reason it is a separate function rather than a
+ * smarter `body` is the seam: it may only cut BETWEEN the elements it was handed, because each
+ * element is one record's attribution and the words that attribution is about.
+ */
+describe('bodyParts', () => {
+  it('never exceeds the limit and never drops a line', () => {
+    const lines = Array.from({ length: 40 }, (_, i) => 'line ' + i + ' ' + 'y'.repeat(200));
+    const parts = bodyParts(lines, false);
+    expect(parts.length).toBeGreaterThan(1);
+    for (const p of parts) expect(p.content.length).toBeLessThanOrEqual(DISCORD_LIMIT);
+    for (const l of lines) expect(whole(parts)).toContain(l);
+  });
+
+  it('★ never separates an element from itself — an attribution keeps its text', () => {
+    // Each element here is "header\n    body", the shape renderShow pushes per entry. A splitter
+    // that cut at the last newline that fits would land the body in a message with no author.
+    const entries = Array.from({ length: 12 }, (_, i) =>
+      '  `pod-' + i + '` [written by X, speaking **for itself**] #' + i + '\n    ' + 'z'.repeat(300));
+    const parts = bodyParts(entries, false);
+    expect(parts.length).toBeGreaterThan(1);
+    for (const e of entries) {
+      // The whole element must appear inside ONE part, not merely somewhere across the join.
+      expect(parts.some((p) => p.content.includes(e))).toBe(true);
+    }
+  });
+
+  it('marks every part so a reader can tell one never arrived', () => {
+    const parts = bodyParts(Array.from({ length: 30 }, () => 'w'.repeat(200)), false);
+    expect(parts.length).toBeGreaterThan(1);
+    parts.forEach((p, i) => { expect(p.content.startsWith('`(' + (i + 1) + '/' + parts.length + ')`')).toBe(true); });
+  });
+
+  it('does not mark a single message — there is nothing there to miss', () => {
+    const parts = bodyParts(['short'], true);
+    expect(parts).toEqual([{ content: 'short', ephemeral: true }]);
+  });
+
+  it('★ carries the ephemeral flag onto EVERY part, not just the first', () => {
+    // Discord does not inherit `flags` from the deferral, so a private reply whose later parts
+    // forgot the flag would publish them into the channel.
+    const parts = bodyParts(Array.from({ length: 30 }, () => 'v'.repeat(200)), true);
+    expect(parts.length).toBeGreaterThan(1);
+    for (const p of parts) expect(p.ephemeral).toBe(true);
+  });
+
+  it('cuts inside one element only when that element alone cannot fit, and says so', () => {
+    const parts = bodyParts(['q'.repeat(DISCORD_LIMIT * 2)], false);
+    expect(parts.length).toBeGreaterThan(1);
+    expect(parts[0]?.content).toContain('(continued)');
   });
 });
 
@@ -148,29 +213,40 @@ describe('the composed view', () => {
 
   it('publishes the IRI as the thing that outlives the bot', () => {
     const m = renderShow(view());
-    expect(m.content).toContain('<https://relay.interego.xwisee.com/ns/' + POD + '/d-1>');
-    expect(m.content).toContain('with or without this bot');
+    expect(whole(m)).toContain('<https://relay.interego.xwisee.com/ns/' + POD + '/d-1>');
+    expect(whole(m)).toContain('with or without this bot');
   });
 
   it('carries a non-seat\'s own reason rather than dropping the row', () => {
     const m = renderShow(view());
-    expect(m.content).toContain('granted, but no acceptance published on their pod yet');
+    expect(whole(m)).toContain('granted, but no acceptance published on their pod yet');
   });
 
   it('says the cross-pod interleaving is a clock and not a finding', () => {
     const m = renderShow(view());
-    expect(m.content).toContain('is a presentation, not a finding');
-    expect(m.content).toContain('supersession chain');
+    expect(whole(m)).toContain('is a presentation, not a finding');
+    expect(whole(m)).toContain('supersession chain');
   });
 
   it('renders an entry whose region could not be located as a question, not as an empty message', () => {
     const m = renderShow(view({ entries: [{ pod: POD, seq: null, created: null, body: null, descriptorUrl: 'u', author: null, why: 'the signed region of this entry could not be located, so nothing was read from bytes anybody signed' }] }));
-    expect(m.content).toContain('? `' + POD + '` — the signed region');
+    expect(whole(m)).toContain('? `' + POD + '` — the signed region');
   });
 
-  it('reports a truncated scan rather than presenting a short roster as the whole one', () => {
-    const m = renderShow(view({ fold: { ...(view() as { fold: unknown }).fold as Record<string, unknown>, grantScanSaturated: true } }));
-    expect(m.content).toContain('came back full at 400');
+  /**
+   * ★ THE SCAN WARNING IS GONE WITH THE CAP THAT CAUSED IT; THE READ BOUND IS NOT, AND MUST STILL
+   * BE REPORTED. Two different truncations lived here and only one of them was fixed: the
+   * ENUMERATION is now complete (no `limit` on `discover_context`), but how many of the grants
+   * found this client will DEREFERENCE is still bounded, and a roster short for that reason is
+   * still a roster that is not the whole one.
+   */
+  it('reports a bounded READ rather than presenting a short roster as the whole one', () => {
+    const m = renderShow(view({
+      fold: { ...(view() as { fold: unknown }).fold as Record<string, unknown>, grantsFound: 40, grantsRead: 25, grantReadCap: 25 },
+    }));
+    expect(whole(m)).toContain('40 grants found, 25 read (cap 25)');
+    // And the sentence it replaced must not come back: nothing here truncates at 400 any more.
+    expect(whole(m)).not.toContain('came back full');
   });
 
   // ── who wrote it, which the pod does not answer ────────────────────────────
@@ -196,9 +272,9 @@ describe('the composed view', () => {
 
   it('★ names a delegate as the author, and says whose pod authorises it', () => {
     const m = renderShow(view({ entries: [entry({ kind: 'delegate', agentId: DELEGATE, footing: FOR_THEM, name: 'Research assistant', authorised: true, scope: 'PublishOnly' })] }));
-    expect(m.content).toContain('written by **Research assistant**');
-    expect(m.content).toContain('a delegate of the pod owner');
-    expect(m.content).toContain('own registry authorises it with scope PublishOnly');
+    expect(whole(m)).toContain('written by **Research assistant**');
+    expect(whole(m)).toContain('a delegate of the pod owner');
+    expect(whole(m)).toContain('own registry authorises it with scope PublishOnly');
   });
 
   /**
@@ -209,9 +285,9 @@ describe('the composed view', () => {
    * reader would get backwards is asserted to say so in words.
    */
   it('★ speaking FOR the owner and speaking FOR ITSELF are two different clauses here too', () => {
-    const d = (footing: unknown): string => renderShow(view({
+    const d = (footing: unknown): string => whole(renderShow(view({
       entries: [entry({ kind: 'delegate', agentId: DELEGATE, footing, name: 'Claude side', authorised: true, scope: 'PublishOnly' })],
-    })).content;
+    })));
     const forThem = d(FOR_THEM);
     const forItself = d(FOR_ITSELF);
     expect(forThem).toContain('speaking **for them** here — they share responsibility for it');
@@ -228,12 +304,12 @@ describe('the composed view', () => {
     const m = renderShow(view({
       entries: [entry({ kind: 'delegate', agentId: DELEGATE, footing: { kind: 'not-stated', why: 'x' }, name: 'Claude side', authorised: true, scope: 'PublishOnly' })],
     }));
-    expect(m.content).toContain('**footing not stated**');
-    expect(m.content).toContain('neither reading is being assumed');
+    expect(whole(m)).toContain('**footing not stated**');
+    expect(whole(m)).toContain('neither reading is being assumed');
     // Neither of the two positive clauses may appear. (The closing explainer legitimately uses the
     // words in describing what the three answers ARE, so this checks the author clause's wording.)
-    expect(m.content).not.toContain('speaking **for them**');
-    expect(m.content).not.toContain('speaking **for itself**');
+    expect(whole(m)).not.toContain('speaking **for them**');
+    expect(whole(m)).not.toContain('speaking **for itself**');
   });
 
   it('★ two delegates of one person are two authors in one log, not one', () => {
@@ -244,36 +320,36 @@ describe('the composed view', () => {
         entry({ kind: 'delegate', agentId: DELEGATE + '-2', footing: FOR_THEM, name: 'Codex side', authorised: true, scope: 'PublishOnly' }, 'second delegate'),
       ],
     }));
-    expect(m.content).toContain('written by the pod owner');
-    expect(m.content).toContain('written by **Claude side**');
-    expect(m.content).toContain('written by **Codex side**');
+    expect(whole(m)).toContain('written by the pod owner');
+    expect(whole(m)).toContain('written by **Claude side**');
+    expect(whole(m)).toContain('written by **Codex side**');
   });
 
   it('★ an unstated author never renders as the pod owner', () => {
     const m = renderShow(view({ entries: [entry({ kind: 'unstated', why: 'this entry names no prov:wasAttributedTo' })] }));
-    expect(m.content).toContain('**author not stated**');
-    expect(m.content).toContain('not the same as the pod owner having written it');
-    expect(m.content).not.toContain('written by the pod owner');
+    expect(whole(m)).toContain('**author not stated**');
+    expect(whole(m)).toContain('not the same as the pod owner having written it');
+    expect(whole(m)).not.toContain('written by the pod owner');
   });
 
   it('★ a delegation the pod does not record is a finding; one that was not checked is not', () => {
     const notListed = renderShow(view({ entries: [entry({ kind: 'delegate', agentId: DELEGATE, footing: FOR_THEM, name: null, authorised: false, scope: null })] }));
-    expect(notListed.content).toContain('does NOT list this agent');
+    expect(whole(notListed)).toContain('does NOT list this agent');
     const notRead = renderShow(view({ entries: [entry({ kind: 'delegate', agentId: DELEGATE, footing: FOR_THEM, name: null, authorised: null, scope: null })] }));
-    expect(notRead.content).toContain('was not read here');
-    expect(notRead.content).not.toContain('does NOT list this agent');
+    expect(whole(notRead)).toContain('was not read here');
+    expect(whole(notRead)).not.toContain('does NOT list this agent');
   });
 
   it('★ a disputed attribution carries its own reason rather than a shrug', () => {
     const m = renderShow(view({ entries: [entry({ kind: 'disputed', why: 'this entry says X acted on behalf of Y, and the pod belongs to Z' })] }));
-    expect(m.content).toContain('**authorship disputed**');
-    expect(m.content).toContain('acted on behalf of Y');
+    expect(whole(m)).toContain('**authorship disputed**');
+    expect(whole(m)).toContain('acted on behalf of Y');
   });
 
   it('★ says the pod is the log and the name beside it is the author', () => {
     const m = renderShow(view());
-    expect(m.content).toContain('The pod is whose LOG an entry is in');
-    expect(m.content).toContain('prov:wasAttributedTo');
+    expect(whole(m)).toContain('The pod is whose LOG an entry is in');
+    expect(whole(m)).toContain('prov:wasAttributedTo');
   });
 });
 

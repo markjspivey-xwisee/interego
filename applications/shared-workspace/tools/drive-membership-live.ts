@@ -178,7 +178,7 @@ async function run(): Promise<number> {
 
   head('B: which workspaces am I in? — one manifest read of B\'s OWN pod');
   const list = await listWorkspaces(B.client, RELAY, B.viewer.podName);
-  log('   acceptances found:', list.entries.length, '· read came back full:', list.saturated);
+  log('   acceptances found:', list.entries.length, '· descriptors scanned:', list.scanned);
   for (const c of list.entries) {
     await verifyWorkspaceEntry(B.client, RELAY, B.viewer, c);
     log('   ', c.verified ? 'VERIFIED' : 'not     ', c.workspace ?? c.acceptanceIri, '·', c.naming, '·', c.title ?? c.why ?? '');

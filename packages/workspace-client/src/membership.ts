@@ -745,9 +745,15 @@ export async function verifyInvitation(
 
 // ── does anything on that pod seat me? ───────────────────────────────────────
 
-/** How many entries a pod is scanned for when the composed grant name did not answer. */
-export const SEAT_SCAN_LIMIT = 400;
-/** How many of the grants that scan FINDS are then read. Each read is two round trips. */
+/**
+ * How many of the grants a scan FINDS are then read. Each read is two round trips.
+ *
+ * ★ THE SCAN ITSELF IS NO LONGER CAPPED — `SEAT_SCAN_LIMIT = 400` used to sit beside this and is
+ * gone. See {@link foldRoster} for the measurement: `discover_context`'s `limit` is optional and
+ * unbounded by default, the relay builds and caches the whole manifest either way, and it slices
+ * LAST — so the cap truncated the answer and bought nothing. What remains is this read bound,
+ * which is real work against possibly-cold pods.
+ */
 export const SEAT_READ_CAP = 25;
 
 /**
@@ -772,14 +778,14 @@ export async function findSeat(
   if (direct.ok) return direct;
 
   let rows: readonly Record<string, unknown>[];
-  let saturated = false;
   try {
-    const p = await client.tool('discover_context', { pod_name: owner, limit: SEAT_SCAN_LIMIT, sort: 'newest-first' }) as Record<string, unknown> | null;
+    // No `limit`: the relay's own default is unbounded and it slices last, so a cap here could
+    // only hide an older grant — including, on a long-lived pod, the one that seats this viewer.
+    const p = await client.tool('discover_context', { pod_name: owner, sort: 'newest-first' }) as Record<string, unknown> | null;
     const bad = refusal(p);
     if (bad) return { grantIri: direct.grantIri, ok: false, checks: direct.checks, why: String(bad['message'] ?? bad['error']) };
     assertPod(owner, p?.['pod'], 'discover_context');
     rows = (p?.['entries'] as readonly Record<string, unknown>[]) ?? [];
-    saturated = rows.length >= SEAT_SCAN_LIMIT;
   } catch (e) {
     const t = errorCopy(e).t;
     return { grantIri: direct.grantIri, ok: false, checks: direct.checks, why: t + ((e as Error)?.message ? ' — ' + (e as Error).message : '') };
@@ -795,14 +801,14 @@ export async function findSeat(
       if (typeof g === 'string' && g.indexOf(prefix) === 0 && !seen.has(g)) { seen.add(g); grants.push(g); }
     }
   }
-  // ★ THE TRUNCATION GOES INTO THE SENTENCE, NOT ONTO AN UNREAD FLAG. A `saturated` boolean
-  // lived on this return and no caller ever read it, so a scan that came back full said "none of
-  // them names you" with nothing about the scan having been cut off.
-  const capNote = saturated ? '. That scan of ' + owner + ' came back full at ' + SEAT_SCAN_LIMIT
-    + ' descriptors, so an older grant may lie past the end of it' : '';
+  // ★ AND NOW THIS IS A COMPLETE ANSWER RATHER THAN A HEDGED ONE. There used to be a `capNote`
+  // here — "that scan came back full at 400 descriptors, so an older grant may lie past the end
+  // of it" — because the scan was capped. It is not, and `discover()` throws rather than return a
+  // partial pod, so "no grant for this workspace is on that pod" is now something this can say.
   if (!grants.length) {
     return { grantIri: direct.grantIri, ok: false, checks: direct.checks,
-      why: 'no grant for this workspace appeared among the ' + rows.length + ' most recent descriptors on ' + owner + capNote };
+      why: 'no grant for this workspace appears among the ' + rows.length + ' descriptors on ' + owner
+        + ', which is that pod\'s whole index and not a window into it' };
   }
 
   // ★ WHICH FAILURE TO REPORT. A workspace has grants for everybody in it, so most fail this
@@ -828,7 +834,7 @@ export async function findSeat(
       : read + ' grant' + (read === 1 ? '' : 's') + ' for this workspace on ' + owner
         + ' were read and none of them names you'
         + (grants.length > read ? ' (of ' + grants.length + ' found; this reader reads at most ' + SEAT_READ_CAP + ')' : '')
-        + (last?.why ? ' — the last one: ' + last.why : '')) + capNote,
+        + (last?.why ? ' — the last one: ' + last.why : '')),
   };
 }
 
@@ -883,8 +889,11 @@ export interface WorkspaceList {
   readonly entries: readonly WorkspaceEntry[];
   /** Everything the read found and did not offer, with the reason and the kind. Never empty-lossy. */
   readonly withheld: readonly WithheldAcceptance[];
-  readonly saturated: boolean;
-  readonly limit: number;
+  /**
+   * How many descriptors that pod's index held. Reported so a shell can say what was examined —
+   * NOT a cap, and there is no `saturated` beside it any more, because the scan is complete.
+   */
+  readonly scanned: number;
 }
 
 /**
@@ -931,12 +940,17 @@ export const STATUS_READ_CONCURRENCY = 8;
  * every other graph on it fall out here rather than being listed as somewhere you are a member.
  */
 export async function listWorkspaces(
-  client: WorkspaceClient, relay: string, podName: string, limit = SEAT_SCAN_LIMIT,
+  client: WorkspaceClient, relay: string, podName: string,
 ): Promise<WorkspaceList> {
   // `cache: false`, not an omitted option: this list is re-read immediately after an Accept, and
   // a host-cached answer from before that write would show the viewer a workspace list that does
   // not contain the workspace they just joined.
-  const p = await client.tool('discover_context', { pod_name: podName, limit, sort: 'newest-first' }, { cache: false }) as Record<string, unknown> | null;
+  //
+  // ★ AND NO `limit`. This took one (400) and reported `saturated`, which meant the list of rooms
+  // you are in could silently omit the one you joined first. The relay's own default is unbounded
+  // and it slices last, so the cap only ever hid the oldest acceptances — the ones most likely to
+  // matter to somebody who has been here a while.
+  const p = await client.tool('discover_context', { pod_name: podName, sort: 'newest-first' }, { cache: false }) as Record<string, unknown> | null;
   const bad = refusal(p);
   if (bad) throw fail('tool_error', String(bad['message'] ?? bad['error']));
   assertPod(podName, p?.['pod'], 'discover_context');
@@ -1012,7 +1026,7 @@ export async function listWorkspaces(
     }
     entries.push(c);
   }
-  return { entries, withheld, saturated: rows.length >= limit, limit };
+  return { entries, withheld, scanned: rows.length };
 }
 
 /**
