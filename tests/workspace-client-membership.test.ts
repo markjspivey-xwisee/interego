@@ -260,35 +260,239 @@ describe('findSeat: the honest path, and the truncation is in the sentence', () 
 });
 
 describe('listWorkspaces reads the switcher off the viewer\'s OWN pod', () => {
-  it('takes the workspace apart out of a qualified filename with no extra read', async () => {
+  /** The manifest row the maintainer's pod actually returns for an acceptance. */
+  const row = (n: string, iri: string): Record<string, unknown> => ({ descriptorUrl: n, describes: [iri] });
+  const listing = (pod: string, ...entries: Record<string, unknown>[]): Record<string, unknown> =>
+    ({ pod: 'http://css.railway.internal:3456/' + pod + '/', entries });
+
+  it('takes the workspace apart out of a qualified FILENAME, never out of the document', async () => {
     const acc = RELAY + '/ns/' + OTHER + '/' + POD + '--room-acceptance';
-    let descriptorReads = 0;
+    // ★ THE DOCUMENT NAMES A DIFFERENT WORKSPACE ON PURPOSE. The qualified name is what every
+    // other reader composes acceptance, stream and canvas IRIs from, so the filename settles
+    // which workspace this is for and the document does not get to move it. This is the
+    // assertion the old "zero descriptor reads" count was standing in for; the read itself is
+    // now made for a different fact (see the retraction cases below) and counting it would only
+    // pin an implementation detail.
     const c = client({
-      discover_context: () => ({
-        pod: 'http://css.railway.internal:3456/' + OTHER + '/',
-        entries: [
-          { descriptorUrl: 'd1', describes: [acc] },
-          // The pod's own profile is NOT a workspace, and must not be listed as one.
-          { descriptorUrl: 'd2', describes: [RELAY + '/ns/' + OTHER + '/profile'] },
-        ],
-      }),
-      get_descriptor: () => { descriptorReads++; return { graph: { content: '' } }; },
+      discover_context: () => listing(OTHER,
+        row('d1', acc),
+        // The pod's own profile is NOT a workspace, and must not be listed as one.
+        row('d2', RELAY + '/ns/' + OTHER + '/profile')),
+      get_descriptor: () => ({ graph: { content: trig(acc, '<' + acc + '> wsp:workspace <' + RELAY + '/ns/' + POD + '/somewhere-else> .') } }),
     });
     const list = await listWorkspaces(c, RELAY, OTHER);
     expect(list.entries).toHaveLength(1);
     expect(list.entries[0]?.workspace).toBe(WS);
     expect(list.entries[0]?.naming).toBe('qualified');
-    expect(descriptorReads, 'a qualified name needs no descriptor read — that is why it exists').toBe(0);
+    expect(list.withheld).toHaveLength(0);
   });
+
   it('reads the workspace out of the DOCUMENT when the name is the older unqualified form', async () => {
     const acc = RELAY + '/ns/' + OTHER + '/room-acceptance';
     const c = client({
-      discover_context: () => ({ pod: 'http://css.railway.internal:3456/' + OTHER + '/', entries: [{ descriptorUrl: 'd1', describes: [acc] }] }),
+      discover_context: () => listing(OTHER, row('d1', acc)),
       get_descriptor: () => ({ graph: { content: trig(acc, '<' + acc + '> wsp:workspace <' + WS + '> .') } }),
     });
     const list = await listWorkspaces(c, RELAY, OTHER);
     expect(list.entries[0]?.naming).toBe('legacy');
     expect(list.entries[0]?.workspace).toBe(WS);
+  });
+
+  /**
+   * ★ THE DEFECT THIS BLOCK EXISTS FOR, MEASURED ON THE MAINTAINER'S OWN POD (2026-08-11).
+   *
+   * Twenty test memberships were retired by superseding each acceptance with a tombstone
+   * carrying `iep:modalStatus "Retracted"` and no `wsp:workspace`. The desktop still listed all
+   * twenty — each with an honest sentence about why it was not a workspace — and the ONE real
+   * workspace was lost among them. Honest, and useless.
+   */
+  describe('★ a candidate that is not a place to go is not offered as one', () => {
+    /**
+     * The tombstone byte for byte as the live pod serves it: prefixes at the top of the TriG
+     * document, the literal form of the status inside the signed block, and no `wsp:workspace`.
+     * Copied from `.../u-eth-8f3b8e939600--drive-hyvocq-acceptance`, read 2026-08-11.
+     */
+    const retiredDoc = (iri: string): string =>
+      '@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .\n'
+      + '@prefix dct: <http://purl.org/dc/terms/> .\n'
+      + '<' + iri + '> {\n'
+      + '    <' + iri + '>\n'
+      + '      iep:modalStatus "Retracted" ;\n'
+      + '      dct:description "Test membership created by an automated driver; retired during cleanup." .\n'
+      + '}\n';
+
+    const twentyRetiredAndOneReal = (): { readonly c: WorkspaceClient; readonly real: string } => {
+      const retiredIris = Array.from({ length: 20 }, (_, i) => RELAY + '/ns/' + POD + '/' + POD + '--drive-x' + i + '-acceptance');
+      const real = RELAY + '/ns/' + POD + '/' + POD + '--room-acceptance';
+      const byUrl = new Map<string, string>();
+      const entries = retiredIris.map((iri, i) => {
+        byUrl.set('d' + i, retiredDoc(iri));
+        return row('d' + i, iri);
+      });
+      byUrl.set('dreal', trig(real, '<' + real + '> a wsp:MembershipAcceptance ; wsp:workspace <' + WS + '> .'));
+      entries.push(row('dreal', real));
+      return {
+        real,
+        c: client({
+          discover_context: () => listing(POD, ...entries),
+          get_descriptor: (i) => ({ graph: { content: byUrl.get(String(i['url'])) ?? '' } }),
+        }),
+      };
+    };
+
+    it('leaves exactly the one live workspace in `entries` when twenty beside it were retired', async () => {
+      const { c } = twentyRetiredAndOneReal();
+      const list = await listWorkspaces(c, RELAY, POD);
+      expect(list.entries.map((e) => e.workspace)).toEqual([WS]);
+      expect(list.withheld).toHaveLength(20);
+      expect(list.withheld.every((w) => w.kind === 'retired')).toBe(true);
+    });
+
+    it('keeps the diagnostic rather than dropping it — every retired one carries its reason', async () => {
+      const { c } = twentyRetiredAndOneReal();
+      const list = await listWorkspaces(c, RELAY, POD);
+      for (const w of list.withheld) {
+        expect(w.modalStatus).toBe('Retracted');
+        expect(w.why).toContain('iep:modalStatus "Retracted"');
+        expect(w.why).toContain('withdrawn it');
+        expect(w.acceptanceIri).toMatch(/-acceptance$/);
+      }
+    });
+
+    it('★ reads the status and never infers it: no wsp:workspace and no status is NOT a retraction', async () => {
+      // A truncated read looks identical to a tombstone from outside. The only thing that
+      // separates them is what the record says about itself, so a record that says nothing is
+      // reported as unread — never as withdrawn.
+      const acc = RELAY + '/ns/' + POD + '/legacy-acceptance';
+      const c = client({
+        discover_context: () => listing(POD, row('d1', acc)),
+        get_descriptor: () => ({ graph: { content: trig(acc, '<' + acc + '> dct:description "half a document" .') } }),
+      });
+      const list = await listWorkspaces(c, RELAY, POD);
+      expect(list.entries).toHaveLength(0);
+      expect(list.withheld).toHaveLength(1);
+      expect(list.withheld[0]?.kind).toBe('unreadable');
+      expect(list.withheld[0]?.modalStatus).toBe(null);
+      expect(list.withheld[0]?.why).toContain('names no wsp:workspace');
+      expect(list.withheld[0]?.why).toContain('NOT being read as withdrawn');
+    });
+
+    it('tells a failed FETCH apart from a retraction too', async () => {
+      const acc = RELAY + '/ns/' + POD + '/legacy-acceptance';
+      const c = client({
+        discover_context: () => listing(POD, row('d1', acc)),
+        get_descriptor: () => { throw new Error('socket hang up'); },
+      });
+      const list = await listWorkspaces(c, RELAY, POD);
+      expect(list.withheld[0]?.kind).toBe('unreadable');
+      expect(list.withheld[0]?.why).toContain('socket hang up');
+      expect(list.withheld[0]?.why).toContain('NOT being read as withdrawn');
+      expect(list.withheld[0]?.modalStatus).toBe(null);
+    });
+
+    it('honours the IRI form of the status as well as the literal one', async () => {
+      // `iep:modalStatus iep:Retracted` is what the ontology's own owl:oneOf enumerates; the
+      // live tombstones use the literal. A reader that knew one form would call a withdrawn
+      // record current.
+      const acc = RELAY + '/ns/' + POD + '/' + POD + '--room-acceptance';
+      const c = client({
+        discover_context: () => listing(POD, row('d1', acc)),
+        get_descriptor: () => ({ graph: { content:
+          '@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .\n'
+          + '<' + acc + '> {\n<' + acc + '> iep:modalStatus iep:Retracted .\n}\n' } }),
+      });
+      const list = await listWorkspaces(c, RELAY, POD);
+      expect(list.entries).toHaveLength(0);
+      expect(list.withheld[0]?.kind).toBe('retired');
+      expect(list.withheld[0]?.modalStatus).toBe('Retracted');
+    });
+
+    it('a QUALIFIED name does not exempt a record from being read as retired', async () => {
+      // The whole reason the bug survived: the qualified filename answered "which workspace",
+      // so the document was never opened and its own retraction was never seen.
+      const acc = RELAY + '/ns/' + POD + '/' + POD + '--room-acceptance';
+      const c = client({
+        discover_context: () => listing(POD, row('d1', acc)),
+        get_descriptor: () => ({ graph: { content: retiredDoc(acc) } }),
+      });
+      const list = await listWorkspaces(c, RELAY, POD);
+      expect(list.entries).toHaveLength(0);
+      expect(list.withheld[0]?.kind).toBe('retired');
+      // The name still told us which workspace it was for, and that is carried through.
+      expect(list.withheld[0]?.workspace).toBe(WS);
+    });
+
+    it('an ordinary Asserted acceptance is untouched', async () => {
+      const acc = RELAY + '/ns/' + POD + '/' + POD + '--room-acceptance';
+      const c = client({
+        discover_context: () => listing(POD, row('d1', acc)),
+        get_descriptor: () => ({ graph: { content:
+          '@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .\n'
+          + '@prefix wsp: <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#> .\n'
+          + '<' + acc + '> {\n<' + acc + '> iep:modalStatus "Asserted" ; wsp:workspace <' + WS + '> .\n}\n' } }),
+      });
+      const list = await listWorkspaces(c, RELAY, POD);
+      expect(list.entries).toHaveLength(1);
+      expect(list.entries[0]?.modalStatus).toBe('Asserted');
+      expect(list.withheld).toHaveLength(0);
+    });
+
+    it('★ never reads a status out of the UNSIGNED descriptor level', async () => {
+      // The relay serves the descriptor and the payload in one document, and the descriptor
+      // carries its own `iep:modalStatus` facet. Only the signed block is the record's own
+      // statement — a reader that matched the whole document would take the relay's default
+      // for the author's word, in both directions.
+      const acc = RELAY + '/ns/' + POD + '/' + POD + '--room-acceptance';
+      const c = client({
+        discover_context: () => listing(POD, row('d1', acc)),
+        get_descriptor: () => ({ graph: { content:
+          '@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .\n'
+          + '<urn:iep:descriptor> iep:modalStatus "Retracted" .\n'
+          + '<' + acc + '> {\n<' + acc + '> iep:modalStatus "Asserted" .\n}\n' } }),
+      });
+      const list = await listWorkspaces(c, RELAY, POD);
+      expect(list.entries, 'a qualified name still supplies the workspace').toHaveLength(1);
+      expect(list.entries[0]?.modalStatus).toBe('Asserted');
+    });
+  });
+});
+
+describe('★ a grant its own author retracted seats nobody, and it is not a revocation', () => {
+  const grantDoc = (extra: string): string =>
+    '@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .\n'
+    + '@prefix wsp: <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#> .\n'
+    + '<' + GRANT + '> {\n<' + GRANT + '> a wsp:MembershipGrant ; wsp:workspace <' + WS + '> ;\n'
+    + '  wsp:grantedTo <' + WEBID(OTHER) + '> ; wsp:role <' + ROLES + '#Contributor> ;\n' + extra + '\n}\n';
+
+  const withGrant = (extra: string): WorkspaceClient => client({
+    get_current_head: (i) => ({ urn: i['urn'], head: { descriptorUrl: 'g1', cid: 'cid-g' } }),
+    get_descriptor: () => ({ graph: { content: grantDoc(extra) } }),
+  });
+
+  it('refuses a grant that states iep:modalStatus "Retracted"', async () => {
+    const v = await verifyGrantIri(withGrant('  iep:modalStatus "Retracted" .'), { relay: RELAY, viewer: viewer(OTHER), grantIri: GRANT });
+    expect(v.ok).toBe(false);
+    expect(v.modalStatus).toBe('Retracted');
+    expect(v.why).toContain('withdrawn it as an assertion');
+  });
+
+  it('does not call it a revocation — the two withdrawals are different statements', async () => {
+    const v = await verifyGrantIri(withGrant('  iep:modalStatus "Retracted" .'), { relay: RELAY, viewer: viewer(OTHER), grantIri: GRANT });
+    expect(v.why).not.toContain('wsp:revoked');
+    expect(v.revoked, 'nobody revoked it; its author retired the record').toBe(false);
+  });
+
+  it('leaves an Asserted grant alone, so the check cannot pass by refusing everything', async () => {
+    // Without this the two cases above would be green for a verifier that refused every grant.
+    const c = client({
+      get_current_head: (i) => ({ urn: i['urn'], head: { descriptorUrl: String(i['urn']).endsWith('/room') ? 'w1' : 'g1', cid: 'cid-g' } }),
+      get_descriptor: (i) => ({ graph: { content: String(i['url']) === 'w1'
+        ? trig(WS, '<' + WS + '> a wsp:Workspace ; dct:title "Room" ; wsp:convener <' + WEBID(POD) + '> .')
+        : grantDoc('  iep:modalStatus "Asserted" .') } }),
+    });
+    const v = await verifyGrantIri(c, { relay: RELAY, viewer: viewer(OTHER), grantIri: GRANT });
+    expect(v.ok, v.why).toBe(true);
+    expect(v.modalStatus).toBe('Asserted');
   });
 });
 

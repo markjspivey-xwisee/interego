@@ -74,6 +74,50 @@ export const hasType = R.hasType;
  */
 export { escapeTurtleLiteral } from './escape-literal.js';
 
+/**
+ * ★ THE ONE MODAL STATUS READER, AND WHY IT IS COMPOSED HERE RATHER THAN ADDED TO THE SUBSTRATE.
+ *
+ * `iep:modalStatus` is the SUBSTRATE's vocabulary — `iep:` is already in `SUBSTRATE_NS`, so
+ * {@link nsOf} resolves it without this vertical restating a namespace. What is composed here is
+ * only the two-form read, because a membership document may state its status either way and a
+ * reader that knew one form would report a withdrawn record as current:
+ *
+ *   · `iep:modalStatus "Retracted"` — a plain literal, which is what the maintainer's own
+ *     tombstones on the live pod carry (measured, 2026-08-11);
+ *   · `iep:modalStatus iep:Retracted` — the IRI form the ontology's `owl:oneOf` enumerates.
+ *
+ * ★ ABSENCE IS NOT RETRACTION AND RETRACTION IS NOT MALFORMEDNESS. This returns `null` for a
+ * region that says nothing about its own status, and callers must render that as "said nothing"
+ * — a truncated read, an unlocatable signed region and a deliberate withdrawal all produce a
+ * record with no `wsp:workspace` in it, and only one of them is a statement by its author.
+ */
+export function readModalStatus(region: string | null | undefined): string | null {
+  const lit = readLiteral(region, 'iep:modalStatus');
+  if (lit !== null && lit.trim()) return lit.trim();
+  for (const t of readIriList(region, 'iep:modalStatus')) {
+    // `readIriList` hands back `<full-iri>` and prefixed names alike, so the local part is taken
+    // after whichever of `#`, `/` or `:` comes last. A bare `<>` yields nothing and is skipped.
+    const body = t.charAt(0) === '<' ? t.slice(1, -1) : t;
+    const cut = Math.max(body.lastIndexOf('#'), body.lastIndexOf('/'), body.lastIndexOf(':'));
+    const local = body.slice(cut + 1).trim();
+    if (local) return local;
+  }
+  return null;
+}
+
+/** The one value that withdraws a record — `iep:ModalStatusEnum`'s own spelling. */
+export const MODAL_RETRACTED = 'Retracted';
+
+/**
+ * Whether a signed region states that its own content has been withdrawn.
+ *
+ * Case-insensitive on the token alone: the value is an enumerated term, and a document that
+ * spells it `retracted` has still said the thing. Nothing is inferred — a region that states no
+ * status at all is not retracted, however little else it says.
+ */
+export const isRetracted = (region: string | null | undefined): boolean =>
+  (readModalStatus(region) ?? '').toLowerCase() === MODAL_RETRACTED.toLowerCase();
+
 /** A role table read out of a role-profile document. */
 export interface RoleProfile {
   readonly roles: Map<string, { label: string; comment: string; permits: readonly string[] }>;

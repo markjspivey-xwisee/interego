@@ -27,7 +27,7 @@ import {
   nsIri, parseAcceptanceIri, podOfDescriptorUrl, podOfNsIri, podOfWebid, POD_RX, qualifiedName,
   slugProblem, type Naming,
 } from './naming.js';
-import { graphRegion, hasTrue, readIri } from './turtle.js';
+import { graphRegion, hasTrue, isRetracted, MODAL_RETRACTED, readIri, readModalStatus } from './turtle.js';
 import { fail, refusal } from './transport.js';
 import { assertPod, errorCopy, type HeadResult, type WorkspaceClient } from './substrate.js';
 
@@ -441,6 +441,8 @@ export interface GrantVerdict {
   readonly grantedTo?: string | null;
   readonly role?: string | null;
   readonly revoked?: boolean;
+  /** What the grant's own signed region states about its status, or null when it states none. */
+  readonly modalStatus?: string | null;
   readonly workspace?: string;
   readonly title?: string;
   readonly convener?: string | null;
@@ -512,7 +514,17 @@ export async function verifyGrantIri(
     grantedTo: readIri(region, 'wsp:grantedTo'),
     role: readIri(region, 'wsp:role'),
     revoked: hasTrue(region, 'wsp:revoked'),
+    modalStatus: readModalStatus(region),
   };
+  // ★ TWO DIFFERENT WITHDRAWALS, TESTED SEPARATELY AND REPORTED SEPARATELY. `wsp:revoked` is the
+  // convener saying "this seat is withdrawn"; `iep:modalStatus "Retracted"` is the AUTHOR of the
+  // bytes saying "this record is no longer an assertion of mine". A reader that honoured only the
+  // first kept quoting a document its own author had withdrawn. Retraction is tested first
+  // because a retracted document's other fields are not current claims to reason from.
+  if (isRetracted(region)) {
+    return no('that grant states iep:modalStatus "' + String(base.modalStatus)
+      + '", so the pod that published it has withdrawn it as an assertion. A withdrawn record seats nobody.', base);
+  }
   if (base.revoked) return no('that grant carries wsp:revoked true', base);
   if (!base.grantedTo) return no('the grant names no wsp:grantedTo', base);
   if (base.grantedTo !== args.viewer.webId) {
@@ -830,6 +842,8 @@ export interface WorkspaceEntry {
   owner: string | null;
   slug: string;
   workspace: string | null;
+  /** What the acceptance states about its own status, or null when it states none. */
+  modalStatus?: string | null;
   /** undefined = not verified yet. A real third state, and shells must render it as one. */
   verified?: boolean;
   verdict?: GrantVerdict;
@@ -837,18 +851,80 @@ export interface WorkspaceEntry {
   why?: string;
 }
 
+/**
+ * An acceptance on the viewer's own pod that is NOT offered as somewhere to go, and which of the
+ * two entirely different reasons that is.
+ *
+ * ★ THE TWO KINDS MUST NEVER RENDER THE SAME, AND ABSENCE IS NOT EVIDENCE OF EITHER.
+ *   · `retired` — the record STATES `iep:modalStatus "Retracted"`. Its author withdrew it. That
+ *     is a fact read out of the document, and it is the only thing that earns this kind.
+ *   · `unreadable` — the descriptor did not fetch, its signed region could not be located, or it
+ *     named no `wsp:workspace`. Something is wrong with the READ or with the document, and a
+ *     real membership landing here is a defect worth seeing. A truncated read looks exactly like
+ *     a tombstone from the outside, which is precisely why the status is read and never inferred.
+ */
+export interface WithheldAcceptance {
+  readonly acceptanceIri: string;
+  readonly descriptorUrl: string;
+  readonly naming: Naming;
+  readonly kind: 'retired' | 'unreadable';
+  /** What `iep:modalStatus` said, when it said anything. Null is "the record stated no status". */
+  readonly modalStatus: string | null;
+  /** The workspace the name or the document named, when either did. */
+  readonly workspace: string | null;
+  readonly why: string;
+}
+
 export interface WorkspaceList {
+  /**
+   * The workspaces this viewer can be offered. ★ EVERY ONE OF THESE NAMES A WORKSPACE AND NONE
+   * OF THEM IS RETIRED — a shell may put an Open control on any row here without a further test.
+   */
   readonly entries: readonly WorkspaceEntry[];
+  /** Everything the read found and did not offer, with the reason and the kind. Never empty-lossy. */
+  readonly withheld: readonly WithheldAcceptance[];
   readonly saturated: boolean;
   readonly limit: number;
 }
 
 /**
- * Every workspace this viewer has ACCEPTED, read from their own pod in ONE manifest read.
+ * How many acceptance descriptors are read at once.
  *
- * A workspace-qualified acceptance name carries the convener pod and the slug inside it, so the
- * list needs no descriptor reads at all — that is the whole reason the qualified form exists.
- * Only the older unqualified names cost one each.
+ * Every candidate is now read, because whether a record still stands is a fact only the document
+ * carries — so the read that used to be paid only by the older unqualified names is paid by all
+ * of them. Sequentially that is one round trip per acceptance before the lobby can draw; a small
+ * fan-out keeps it to roughly one. It is bounded rather than unbounded because the answers come
+ * from a pod that may be cold, and twenty simultaneous reads at a cold relay is a client that
+ * appears to hang in a different way.
+ *
+ * ★ IT IS ALSO A NET SAVING WHERE IT MATTERS. A retired acceptance never reaches
+ * `verifyWorkspaceEntry`, which costs a head, a descriptor and — when the composed grant name
+ * misses — a whole pod scan and up to {@link SEAT_READ_CAP} more reads.
+ */
+export const STATUS_READ_CONCURRENCY = 8;
+
+/**
+ * Every workspace this viewer has ACCEPTED, read from their own pod.
+ *
+ * ★ WHAT THE LIST IS FOR DECIDES WHAT MAY BE IN IT. `entries` is the set of places a shell will
+ * put an Open control on, so a candidate that does not name a workspace, or whose own author has
+ * withdrawn it, IS NOT IN IT. It used to be: an acceptance that named no `wsp:workspace` was
+ * returned with a sentence explaining that which workspace it was for could not be established,
+ * and the shell drew it as a row you could not open. Measured on the maintainer's own pod
+ * (2026-08-11): twenty retired test memberships rendered as twenty such rows, and the one real
+ * workspace was lost among them. An honest sentence in the wrong place is still the wrong place.
+ *
+ * ★ WHERE THE SENTENCE WENT: `withheld`, with a `kind`. Nothing is dropped — a record you
+ * published is a fact about you either way, and a REAL membership that fails to parse is a defect
+ * a shell must be able to show. What changed is that it is no longer mixed in with the things you
+ * can go to, so a shell renders it as a count with the detail one disclosure away.
+ *
+ * ★ AND THE STATUS IS READ, NEVER INFERRED. A tombstone and a truncated read both produce a
+ * document with no `wsp:workspace` in it. The only thing that separates them is what the record
+ * SAYS about itself, so every candidate's descriptor is read — including the qualified names,
+ * whose filename settles which workspace they are for but says nothing about whether they still
+ * stand. `parseAcceptanceIri` still supplies the workspace IRI for those, so the read establishes
+ * status only and the fan-out is bounded by {@link STATUS_READ_CONCURRENCY}.
  *
  * ★ THE ENTRY DESCRIBING YOUR OWN POD IS NOT A WORKSPACE. `parseAcceptanceIri` only matches
  * names ending `-acceptance` under `/ns/<your pod>/`, so the pod's own profile descriptor and
@@ -878,23 +954,65 @@ export async function listWorkspaces(
       });
     }
   }
-  const entries = [...found.values()];
-  // An unqualified name says nothing about which workspace it accepts, so THAT one is read —
-  // one descriptor each, and only for those.
-  for (const c of entries) {
-    if (c.workspace) continue;
+  const candidates = [...found.values()];
+
+  /** Read one candidate's own document: its status always, its workspace when the name lacks one. */
+  const readOne = async (c: WorkspaceEntry): Promise<void> => {
+    const fromName = c.workspace;
     try {
       const d = await client.descriptor(c.descriptorUrl);
       const region = graphRegion((d['graph'] as { content?: string } | undefined)?.content ?? '', c.acceptanceIri);
-      if (region === null) { c.why = 'its signed region could not be located'; continue; }
-      c.workspace = readIri(region, 'wsp:workspace');
-      if (!c.workspace) c.why = 'this acceptance names no wsp:workspace, so which workspace it is for is not established';
-      else c.owner = podOfNsIri(c.workspace);
+      if (region === null) {
+        c.why = 'its signed region could not be located, so nothing was read out of bytes anybody signed — '
+          + 'including whether it still stands';
+        return;
+      }
+      c.modalStatus = readModalStatus(region);
+      // A qualified name has already settled which workspace this is for, and the filename is
+      // what every other reader composes from — so the document does not get to move it.
+      if (!fromName) {
+        c.workspace = readIri(region, 'wsp:workspace');
+        if (c.workspace) c.owner = podOfNsIri(c.workspace);
+        else if (!isRetracted(region)) {
+          c.why = 'this acceptance names no wsp:workspace, so which workspace it is for is not established';
+        }
+      }
     } catch (e) {
       c.why = 'its descriptor could not be read: ' + ((e as Error)?.message ?? String((e as { code?: string })?.code));
     }
+  };
+  for (let i = 0; i < candidates.length; i += STATUS_READ_CONCURRENCY) {
+    await Promise.all(candidates.slice(i, i + STATUS_READ_CONCURRENCY).map(readOne));
   }
-  return { entries, saturated: rows.length >= limit, limit };
+
+  const entries: WorkspaceEntry[] = [];
+  const withheld: WithheldAcceptance[] = [];
+  for (const c of candidates) {
+    const retired = (c.modalStatus ?? '').toLowerCase() === MODAL_RETRACTED.toLowerCase();
+    if (retired) {
+      withheld.push({
+        acceptanceIri: c.acceptanceIri, descriptorUrl: c.descriptorUrl, naming: c.naming,
+        kind: 'retired', modalStatus: c.modalStatus ?? null, workspace: c.workspace,
+        why: 'this acceptance states iep:modalStatus "' + String(c.modalStatus)
+          + '", so the pod that published it has withdrawn it. It is a record of a membership that was, not one you are in.',
+      });
+      continue;
+    }
+    if (!c.workspace) {
+      withheld.push({
+        acceptanceIri: c.acceptanceIri, descriptorUrl: c.descriptorUrl, naming: c.naming,
+        kind: 'unreadable', modalStatus: c.modalStatus ?? null, workspace: null,
+        why: (c.why ?? 'which workspace this acceptance is for could not be established')
+          + '. It is NOT being read as withdrawn: '
+          + (c.modalStatus
+            ? 'it states iep:modalStatus "' + c.modalStatus + '", which is not a retraction.'
+            : 'it states no iep:modalStatus at all, and a read that failed looks the same from here as a record that was retired.'),
+      });
+      continue;
+    }
+    entries.push(c);
+  }
+  return { entries, withheld, saturated: rows.length >= limit, limit };
 }
 
 /**
