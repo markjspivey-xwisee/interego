@@ -1044,7 +1044,7 @@ export function bundlePathsFor(service: string, root = ROOT): BundleScope {
  * already established which commit it means; railway-pins.mjs counts `behind` the same
  * way, from the same checkout.
  */
-export function bundleDriftFor(service: string, pinSha: string, root = ROOT): BundleDrift {
+export function bundleDriftFor(service: string, pinSha: string, root = ROOT, head = 'HEAD'): BundleDrift {
   if (!/^[0-9a-f]{40}$/.test(pinSha)) {
     return { confident: false, changed: [], equivalent: false, reason: `not a 40-hex commit: ${pinSha}` };
   }
@@ -1053,7 +1053,7 @@ export function bundleDriftFor(service: string, pinSha: string, root = ROOT): Bu
 
   let out: string;
   try {
-    out = execFileSync('git', ['diff', '--name-only', `${pinSha}..HEAD`, '--', ...scope.paths], {
+    out = execFileSync('git', ['diff', '--name-only', `${pinSha}..${head}`, '--', ...scope.paths], {
       cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
     });
   } catch (e) {
@@ -1089,11 +1089,26 @@ export function bundleDriftFor(service: string, pinSha: string, root = ROOT): Bu
  * is not evidence of anything. They are the states a rewritten history or a shallow
  * checkout produces, i.e. exactly when a confident-looking answer would be worth least.
  */
-export function refineFreshness(row: PinRow, root = ROOT): RefinedRow {
+/**
+ * ★ `head` IS A PARAMETER SO A TEST IS NOT HOSTAGE TO WHATEVER THE BRANCH TIP TOUCHED.
+ *
+ * Production always wants the default. The reason it exists is a real failure: the case that
+ * proves this function DOWNGRADES searches history for an ancestor whose diff to the comparison
+ * point leaves a service's scope untouched — and when the tip commit ITSELF edits something in
+ * that scope (`build-ghcr.yml` is in every service's, since the build recipe decides the image),
+ * no such ancestor can exist and the test cannot pass. It went red on a pull request that changed
+ * nothing but a COMMENT in that file.
+ *
+ * The test's own note had predicted exactly this — "a test whose pass depends on unrelated commit
+ * content is not testing the tool" — and guarded it by searching further back, which cannot help:
+ * every ancestor differs from a tip that touched the scope. Naming the comparison point lets the
+ * case pick a pair out of history and stop depending on the tip at all.
+ */
+export function refineFreshness(row: PinRow, root = ROOT, head = 'HEAD'): RefinedRow {
   if (row.freshness !== 'BEHIND') return row;
   if (!row.tag || !/^[0-9a-f]{40}$/.test(row.tag)) return row;
 
-  const drift = bundleDriftFor(row.service, row.tag, root);
+  const drift = bundleDriftFor(row.service, row.tag, root, head);
   if (!drift.confident || !drift.equivalent) {
     return { ...row, bundleChanged: drift.changed, bundleReason: drift.reason };
   }

@@ -53,6 +53,47 @@ const SHA = 'a'.repeat(40);
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const WORKFLOW = readFileSync(join(ROOT, '.github/workflows/build-ghcr.yml'), 'utf8');
 
+/**
+ * A REAL commit pair that differs overall and leaves one service's scope untouched.
+ *
+ * ★ NEITHER END IS HEAD, AND THAT IS THE POINT. Comparing candidates against the tip makes the
+ * "does it downgrade" cases unpassable whenever the tip itself edits anything in the scope —
+ * and `build-ghcr.yml` is in EVERY service's scope, because the build recipe decides the image.
+ * Measured: a pull request whose entire content was a comment change in that file turned both
+ * cases red, and stayed red on a re-run. A test that fails on a branch containing no code change
+ * is not testing the tool. So the pair is `(C^, C)` for some historical C.
+ *
+ * ★ AND IT IS ONE `git log` PASS, NOT A SEARCH OVER PAIRS. The first version compared every pair
+ * within an 80-commit window — ~3200 git subprocesses — and died on vitest's 5-second timeout.
+ * The history is read once, filtered in memory, and only the surviving candidates cost a diff.
+ *
+ * The overall-differs half is the CONTROL: without it an empty scope-diff could come from
+ * comparing a commit with itself, which would pass against a tool that never ran a diff at all.
+ */
+function pairLeavingScopeUntouched(scopePaths: readonly string[]): { base: string; head: string } | null {
+  const raw = execFileSync('git', ['log', '-150', '--format=%x00%H', '--name-only'], { cwd: ROOT, encoding: 'utf8' });
+  const commits = raw.split('\0').map((s) => s.trim()).filter(Boolean).map((block) => {
+    const [sha, ...files] = block.split('\n').map((l) => l.trim()).filter(Boolean);
+    return { sha: sha as string, files };
+  });
+  // Cheap prefix prefilter, then confirm with git so the pathspec is matched the way the tool
+  // matches it — a hand-rolled approximation of a pathspec is its own source of wrong answers.
+  const touches = (files: readonly string[]): boolean =>
+    files.some((f) => scopePaths.some((p) => f === p || f.startsWith(p.replace(/\/$/, '') + '/')));
+  for (const c of commits) {
+    if (!c.files.length || touches(c.files)) continue;
+    let parent: string;
+    try { parent = execFileSync('git', ['rev-parse', `${c.sha}^`], { cwd: ROOT, encoding: 'utf8' }).trim(); }
+    catch { continue; }                       // a root commit has no parent
+    const inScope = execFileSync('git', ['diff', '--name-only', `${parent}..${c.sha}`, '--', ...scopePaths],
+      { cwd: ROOT, encoding: 'utf8' }).trim();
+    const overall = execFileSync('git', ['diff', '--name-only', `${parent}..${c.sha}`],
+      { cwd: ROOT, encoding: 'utf8' }).trim();
+    if (!inScope && overall) return { base: parent, head: c.sha };
+  }
+  return null;
+}
+
 function behindRow(over: Partial<PinRow> = {}): PinRow {
   return {
     service: 'relay',
@@ -632,31 +673,29 @@ describe('refineFreshness — may only ever downgrade, and only on certainty', (
     // would go red on any commit editing build-ghcr.yml, .dockerignore, .gitattributes or
     // Dockerfile.acme-id — all newly in acme-id's scope. A test whose pass depends on
     // unrelated commit content is not testing the tool.
+    //
+    // ★★ AND SEARCHING HARDER DID NOT SAVE IT — THE PAIR IS NOW CHOSEN OUT OF HISTORY.
+    //
+    // The note above was right about the danger and wrong about the remedy. Every candidate
+    // was compared against HEAD, so when the TIP commit itself edits something in the scope,
+    // NO ancestor can leave that scope untouched and the search is guaranteed to come back
+    // empty. Widening the window cannot help; every ancestor differs from such a tip.
+    //
+    // Measured: this went red on a pull request whose entire content was a COMMENT change in
+    // `.github/workflows/build-ghcr.yml`, and stayed red on a re-run — a test failing on a
+    // branch that changed no code at all. So the comparison point is now NAMED (`refineFreshness`
+    // takes `head`), and both ends of the pair come from history. Nothing here depends on what
+    // the branch under test happens to contain.
     const scope = bundlePathsFor('acme-id');
     expect(scope.confident).toBe(true);
 
-    const diffOf = (sha: string, paths: string[]): string[] => execFileSync(
-      'git', ['diff', '--name-only', `${sha}..HEAD`, '--', ...paths], { encoding: 'utf8' })
-      .split('\n').map((s) => s.trim()).filter(Boolean);
-
-    // ★ THE CONTROL IS BUILT INTO THE SEARCH, not asserted after it. The candidate must
-    // leave acme-id's scope untouched AND differ from HEAD overall — otherwise the empty
-    // scope-diff came from comparing a commit with itself rather than from the pathspec,
-    // and this would pass against a tool that never ran a diff at all.
-    //
-    // Not hypothetical: the first version searched only for the empty scope-diff and went
-    // green locally, then failed in CI. `pull_request` checks out a MERGE commit whose
-    // tree equals the branch tip's, so the very first ancestor examined was
-    // content-identical to HEAD — every diff empty, for the one reason that proves
-    // nothing. Local runs never saw it because master is not checked out that way.
-    const log = execFileSync('git', ['log', '-40', '--format=%H'], { encoding: 'utf8' })
-      .split('\n').map((s) => s.trim()).filter(Boolean);
-    const clean = log.slice(1).find((sha) =>
-      diffOf(sha, scope.paths).length === 0 && diffOf(sha, []).length > 0);
-    expect(clean, "no ancestor within 40 commits both differs from HEAD and leaves acme-id's scope untouched")
+    // The control — differs overall, scope untouched, neither end HEAD — is inside the helper.
+    const pair = pairLeavingScopeUntouched(scope.paths);
+    expect(pair, "no commit within 150 both differs overall and leaves acme-id's scope untouched")
       .toBeTruthy();
 
-    const out = refineFreshness(behindRow({ service: 'acme-id', tag: clean as string }));
+    const out = refineFreshness(behindRow({ service: 'acme-id', tag: (pair as { base: string }).base }),
+      undefined, (pair as { head: string }).head);
     expect(out.freshness).toBe('equivalent');
     expect(out.bundleChanged).toEqual([]);
     expect(hasDisagreement([out])).toBe(false);
@@ -759,18 +798,10 @@ describe('refineFreshness — may only ever downgrade, and only on certainty', (
     const scope = bundlePathsFor('css');
     expect(scope.confident).toBe(true);
 
-    const diffOf = (sha: string, paths: string[]): string[] => execFileSync(
-      'git', ['diff', '--name-only', `${sha}..HEAD`, '--', ...paths], { cwd: ROOT, encoding: 'utf8' })
-      .split('\n').map((s) => s.trim()).filter(Boolean);
-
-    // ★ Same built-in control as the acme-id case above: the candidate must leave css's
-    // scope untouched AND differ from HEAD overall, or the empty scope-diff came from
-    // comparing a commit with itself rather than from the pathspec.
-    const log = execFileSync('git', ['log', '-60', '--format=%H'], { cwd: ROOT, encoding: 'utf8' })
-      .split('\n').map((s) => s.trim()).filter(Boolean);
-    const cleanSha = log.slice(1).find((sha) =>
-      diffOf(sha, scope.paths).length === 0 && diffOf(sha, []).length > 0);
-    expect(cleanSha, "no ancestor within 60 commits both differs from HEAD and leaves css's scope untouched")
+    // Same control as the acme-id case, same correction: the pair comes out of history, so this
+    // does not depend on what the branch under test happens to have touched.
+    const pair = pairLeavingScopeUntouched(scope.paths);
+    expect(pair, "no commit within 150 both differs overall and leaves css's scope untouched")
       .toBeTruthy();
 
     // css is the fleet's declared singleton, so its row carries settings axes the others
@@ -778,8 +809,8 @@ describe('refineFreshness — may only ever downgrade, and only on certainty', (
     // freshness axis alone — and the fact that a downgraded row still fails on the others
     // is asserted directly, two tests below.
     const out = refineFreshness(behindRow({
-      service: 'css', tag: cleanSha as string, numReplicas: 1, overlapSeconds: 0, drainingSeconds: null,
-    }));
+      service: 'css', tag: (pair as { base: string }).base, numReplicas: 1, overlapSeconds: 0, drainingSeconds: null,
+    }), undefined, (pair as { head: string }).head);
     expect(out.freshness).toBe('equivalent');
     expect(out.bundleChanged).toEqual([]);
     expect(hasDisagreement([out])).toBe(false);
