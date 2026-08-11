@@ -42,8 +42,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
-  buildArtifactDirs, bundlePathsFor, copySources, matrixDockerfiles, matrixLegs, prebuildInputs,
-  prebuildRecipe, producedDirs, refineFreshness, workspaceDirs,
+  buildArtifactDirs, bundleDriftFor, bundlePathsFor, copySources, isRecipePath, matrixDockerfiles,
+  matrixLegs, prebuildInputs, prebuildRecipe, producedDirs, refineFreshness,
+  sameIgnoringWholeLineComments, workspaceDirs,
 } from '../tools/deploy-bundle-scope.js';
 import type { PinRow } from '../tools/railway-pins.mjs';
 import { hasDisagreement } from '../tools/railway-pins.mjs';
@@ -532,8 +533,8 @@ describe('bundlePathsFor — against the real repository', () => {
     // leaked the internal port. acme-id's only COPY source is deploy/acme-id/site, so
     // before the Dockerfile went into scope this was the emptiest possible diff, and the
     // security fix was waved through as `equivalent`.
-    const before = execFileSync('git', ['rev-parse', 'd29ffc8^'], { encoding: 'utf8' }).trim();
-    expect(execFileSync('git', ['show', '--name-only', '--format=', 'd29ffc8'], { encoding: 'utf8' }))
+    const before = execFileSync('git', ['rev-parse', 'd29ffc8^'], { cwd: ROOT, encoding: 'utf8' }).trim();
+    expect(execFileSync('git', ['show', '--name-only', '--format=', 'd29ffc8'], { cwd: ROOT, encoding: 'utf8' }))
       .toMatch(/Dockerfile\.acme-id/);
 
     // ★ Through refineFreshness, the function that actually decides — not a diff
@@ -705,8 +706,8 @@ describe('refineFreshness — may only ever downgrade, and only on certainty', (
     // The other half of the control: a commit range that is clean for acme-id must be
     // dirty for a service whose scope contains the files it touched. Constructed from a
     // commit that really did change packages/, so it cannot silently not run.
-    const sha = execFileSync('git', ['log', '-1', '--format=%H', '--', 'packages/'], { encoding: 'utf8' }).trim();
-    const parent = execFileSync('git', ['rev-parse', `${sha}^`], { encoding: 'utf8' }).trim();
+    const sha = execFileSync('git', ['log', '-1', '--format=%H', '--', 'packages/'], { cwd: ROOT, encoding: 'utf8' }).trim();
+    const parent = execFileSync('git', ['rev-parse', `${sha}^`], { cwd: ROOT, encoding: 'utf8' }).trim();
     const out = refineFreshness(behindRow({ service: 'relay', tag: parent }));
     expect(out.freshness).toBe('BEHIND');
     expect((out.bundleChanged ?? []).some((f) => f.startsWith('packages/'))).toBe(true);
@@ -827,5 +828,100 @@ describe('refineFreshness — may only ever downgrade, and only on certainty', (
     expect(hasDisagreement([{ ...row, deployAgreement: 'STALE-DEPLOY' }])).toBe(true);
     expect(hasDisagreement([{ ...row, limitVerdict: 'BELOW-FLOOR' }])).toBe(true);
     expect(hasDisagreement([{ ...row, service: 'css', numReplicas: null }])).toBe(true);
+  });
+});
+
+/**
+ * A COMMENT IN A FILE THAT IS NEVER COPIED INTO AN IMAGE IS NOT DRIFT.
+ *
+ * ★ THE PRICE THE HEADER NAMED, AND THEN CHARGED. Putting `build-ghcr.yml`, `.dockerignore`
+ * and `.gitattributes` in every service's scope closed a real class of missed change, and the
+ * header stated the cost: "one edit to any of them turns the whole fleet non-equivalent at
+ * once — including a pure comment edit, in a repository whose files are majority comment… If
+ * that churn rises, the answer is to make the comparison content-aware, NOT to drop the paths."
+ *
+ * MEASURED 2026-08-11: a merge whose entire content was corrections to two COMMENTS in
+ * `build-ghcr.yml` took all sixteen services from `equivalent` to `BEHIND`, one hour after the
+ * fleet had been brought fully current. That is a red on a schedule set by unrelated edits —
+ * the disease this whole file exists to cure.
+ *
+ * ★ AND THE DANGER OF THE CURE IS A FALSE GREEN, on the one axis that says whether production
+ * runs the merged code. So "the audit went green" is NOT evidence here — it is the symptom the
+ * change was made to produce. The sweep at the bottom asks the opposite question against real
+ * history, and the unit cases below pin the conservatism that makes it safe.
+ */
+describe('recipe files: comments do not reach the image, and everything else still does', () => {
+  it('ignores whole-line comments and blank lines', () => {
+    expect(sameIgnoringWholeLineComments('# a\nkey: 1\n', '# b\n\nkey: 1\n')).toBe(true);
+  });
+
+  it('★ does NOT ignore an inline #, because it may be inside a string', () => {
+    // A URL fragment, a colour, a shell word. Stripping from the first `#` anywhere would let a
+    // real edit hide behind one — so an inline change counts as drift. Over-reports, never under.
+    expect(sameIgnoringWholeLineComments('url: https://x#a\n', 'url: https://x#b\n')).toBe(false);
+    expect(sameIgnoringWholeLineComments('key: 1  # note\n', 'key: 1  # other\n')).toBe(false);
+  });
+
+  it('does not ignore a real change that happens to sit beside a comment', () => {
+    expect(sameIgnoringWholeLineComments('# a\nkey: 1\n', '# a\nkey: 2\n')).toBe(false);
+  });
+
+  it('★ only the four build-shaping paths qualify — anything COPIED into an image never does', () => {
+    // The distinction the whole exemption rests on. A file under packages/ IS copied in, so a
+    // comment edit to it genuinely changes the bytes shipped and must never be waved through.
+    for (const p of ['.github/workflows/build-ghcr.yml', '.dockerignore', '.gitattributes',
+      'deploy/Dockerfile.relay', 'deploy/Dockerfile.css-pgsl']) {
+      expect(isRecipePath(p), p).toBe(true);
+    }
+    for (const p of ['packages/core/src/index.ts', 'applications/shared-workspace/src/respond.ts',
+      'package-lock.json', 'docs/ns/iep.ttl', 'deploy/nginx-spa.conf']) {
+      expect(isRecipePath(p), p).toBe(false);
+    }
+  });
+
+  /**
+   * ★ THE SWEEP, AND IT IS THE ONLY CASE HERE THAT COULD CATCH A FALSE GREEN.
+   *
+   * Every commit that has ever touched `build-ghcr.yml` is classified independently — by asking
+   * git which lines it changed — and then compared against what the tool says. A real edit
+   * cleared as `equivalent` on the strength of that file alone is the failure mode, and it is
+   * asserted directly rather than inferred from a green fleet.
+   *
+   * Both classes are required non-empty, so the sweep cannot pass by finding nothing to judge.
+   */
+  it('★ clears comment-only workflow edits and still catches every real one, over real history', () => {
+    const git = (...a: string[]): string => execFileSync('git', a, { cwd: ROOT, encoding: 'utf8' }).trim();
+    const shas = git('log', '-30', '--format=%H', '--', '.github/workflows/build-ghcr.yml')
+      .split('\n').map((s) => s.trim()).filter(Boolean);
+
+    let cleared = 0;
+    let caught = 0;
+    for (const sha of shas) {
+      let parent: string;
+      try { parent = git('rev-parse', `${sha}^`); } catch { continue; }
+
+      const diff = git('diff', '-U0', `${parent}..${sha}`, '--', '.github/workflows/build-ghcr.yml');
+      const touched = diff.split('\n')
+        .filter((l) => (l.startsWith('+') || l.startsWith('-')) && !l.startsWith('+++') && !l.startsWith('---'))
+        .map((l) => l.slice(1));
+      const codeLines = touched.filter((l) => l.trim() !== '' && !l.trimStart().startsWith('#'));
+      const commentOnly = touched.length > 0 && codeLines.length === 0;
+
+      const d = bundleDriftFor('acme-id', parent, ROOT, sha);
+      if (!d.confident) continue;
+      const workflowOnly = d.changed.length === 1 && (d.changed[0] as string).endsWith('build-ghcr.yml');
+      if (!workflowOnly) continue;
+
+      if (commentOnly) {
+        expect(d.equivalent, `${sha}: comment-only workflow edit should be equivalent`).toBe(true);
+        cleared++;
+      } else {
+        expect(d.equivalent, `${sha}: REAL workflow edit cleared as equivalent — false green`).toBe(false);
+        caught++;
+      }
+    }
+    // Measured at the time of writing: 2 cleared, 9 caught, out of 11 commits touching the file.
+    expect(cleared, 'no comment-only workflow commit found to judge').toBeGreaterThan(0);
+    expect(caught, 'no real workflow commit found to judge').toBeGreaterThan(0);
   });
 });

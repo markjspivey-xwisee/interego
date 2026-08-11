@@ -1044,6 +1044,81 @@ export function bundlePathsFor(service: string, root = ROOT): BundleScope {
  * already established which commit it means; railway-pins.mjs counts `behind` the same
  * way, from the same checkout.
  */
+/**
+ * The four paths that shape an image without ever being COPIED into one.
+ *
+ * ★ THE DISTINCTION THAT LICENSES IGNORING THEIR COMMENTS, and it is the whole basis of
+ * {@link recipeOnlyCommentChange}. A file under `packages/` is COPIED INTO the image, so editing
+ * a comment in it genuinely changes the bytes shipped. None of these four is copied anywhere:
+ * the Dockerfile is a recipe, `build-ghcr.yml` supplies `build_args`, `.dockerignore` decides
+ * what reaches the context, `.gitattributes` decides the eol applied to it. A comment in any of
+ * them cannot reach the image, so a comment-only edit to one is not drift.
+ */
+const RECIPE_RX = /(^|\/)(Dockerfile[^/]*|\.dockerignore|\.gitattributes)$|^\.github\/workflows\/build-ghcr\.yml$/;
+
+/**
+ * Did these paths change ONLY in whole-line comments and blank lines?
+ *
+ * ── WHY THIS EXISTS, MEASURED ────────────────────────────────────────────────
+ *
+ * The header states the price of putting `build-ghcr.yml`, `.dockerignore` and `.gitattributes`
+ * in every service's scope: "one edit to any of them turns the whole fleet non-equivalent at
+ * once — including a pure comment edit, in a repository whose files are majority comment", and
+ * names the remedy — "make the comparison content-aware, NOT to drop the paths".
+ *
+ * The churn arrived. On 2026-08-11 a merge whose ENTIRE content was corrections to two comments
+ * in `build-ghcr.yml` took all sixteen services from `equivalent` to `BEHIND` in one step, an
+ * hour after the fleet had been brought fully current. A red on a schedule set by unrelated
+ * edits is exactly the disease this file was written to cure, arriving through the door its own
+ * header left open.
+ *
+ * ── FAIL CLOSED, STILL ───────────────────────────────────────────────────────
+ *
+ * ★ ONLY WHOLE-LINE COMMENTS ARE STRIPPED — a line whose first non-space character is `#`. An
+ * inline `#` is never touched, so a `#` inside a quoted string (a URL fragment, a colour) cannot
+ * be mistaken for a comment and cannot hide a real edit. That is deliberately conservative: an
+ * edit to a trailing comment still counts as drift, which over-reports and never under-reports.
+ *
+ * ★ AND ANY UNCERTAINTY IS DRIFT. A path that cannot be read at either end — added, deleted,
+ * renamed, unreadable — returns false and the caller leaves the row BEHIND. All four of these
+ * files use `#` for comments; a path that is not one of them is never considered here at all.
+ */
+/**
+ * The pure half, exported so it can be tested without a repository.
+ *
+ * Whole-line comments and blank lines only. An inline `#` is never touched — see
+ * {@link recipeOnlyCommentChange} for why that conservatism is the point.
+ */
+export function sameIgnoringWholeLineComments(before: string, after: string): boolean {
+  const strip = (text: string): string => text
+    .split('\n')
+    .filter((line) => line.trim() !== '' && !line.trimStart().startsWith('#'))
+    .map((line) => line.replace(/\s+$/, ''))
+    .join('\n');
+  return strip(before) === strip(after);
+}
+
+/** True when `p` shapes an image without ever being copied into one. Exported for the tests. */
+export const isRecipePath = (p: string): boolean => RECIPE_RX.test(p);
+
+function recipeOnlyCommentChange(changed: readonly string[], from: string, to: string, root: string): boolean {
+  if (!changed.length) return false;
+  if (!changed.every((p) => RECIPE_RX.test(p))) return false;
+
+  for (const path of changed) {
+    let before: string;
+    let after: string;
+    try {
+      before = execFileSync('git', ['show', `${from}:${path}`], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+      after = execFileSync('git', ['show', `${to}:${path}`], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch {
+      return false;                    // added, deleted or unreadable at one end — that is drift
+    }
+    if (!sameIgnoringWholeLineComments(before, after)) return false;
+  }
+  return true;
+}
+
 export function bundleDriftFor(service: string, pinSha: string, root = ROOT, head = 'HEAD'): BundleDrift {
   if (!/^[0-9a-f]{40}$/.test(pinSha)) {
     return { confident: false, changed: [], equivalent: false, reason: `not a 40-hex commit: ${pinSha}` };
@@ -1061,6 +1136,11 @@ export function bundleDriftFor(service: string, pinSha: string, root = ROOT, hea
   }
 
   const changed = out.split('\n').map((s) => s.trim()).filter(Boolean);
+  if (changed.length && recipeOnlyCommentChange(changed, pinSha, head, root)) {
+    // Reported as changed-but-equivalent rather than as no change at all: the files DID move,
+    // and a reader comparing this against `git diff` must not be told otherwise.
+    return { confident: true, changed, equivalent: true, reason: 'the only paths that changed are build recipes, and only in whole-line comments — nothing that reaches the image' };
+  }
   return { confident: true, changed, equivalent: changed.length === 0 };
 }
 
