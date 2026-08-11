@@ -35,7 +35,7 @@ import {
   DELEGATE_SURFACE, RelayMcpTransport, WorkspaceClient, acceptGrant, authorshipLine, briefPrompt,
   checkDelegation, checkDraft, createWorkspace, decideTurn, delegateLabel, delegatePlan, findSeat,
   foldRoster, graphRegion, hasType, nsIri, orderChain, parseRoleProfile, postEntry,
-  publishDelegation, qualifiedName, readDelegates, readEntryAuthorship, readIri, readInt, verifiedSigner,
+  publishDelegation, qualifiedName, readDelegates, readEntryAuthorship, readIri, readIriAll, readInt, verifiedSigner,
   readLiteral, readViewer, revokeDelegation, sendInvite,
   type DelegateRoster, type RoleTable, type Seat, type SeenEntry, type SpeakingDelegate,
   type Viewer,
@@ -128,6 +128,9 @@ async function readChannel(
         descriptorUrl: row.url,
         body: readLiteral(src, 'dct:description'),
         derivedFrom: readIri(src, 'prov:wasDerivedFrom'),
+        // Same signed region as the body, same reader the shell uses. An entry addressed to
+        // another agent by name is not this delegate's to answer.
+        addressedTo: readIriAll(src, 'iep:addressedTo'),
         at: Number.isNaN(t) ? null : t,
         // ★ HELD AGAINST THE GRANT'S grantee WebID, which lives on the CONVENER's pod — so the
         // owner of the log cannot decide what their own entries are checked against.

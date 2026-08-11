@@ -480,6 +480,16 @@
           <button id="agentsend" hidden>Send</button>
         </div>
       </div>
+      <!--
+        ★ WHO THE NEXT MESSAGE IS FOR, SHOWN ABOVE THE BOX IT APPLIES TO AND NOWHERE ELSE.
+        Addressing is a triple inside the signed region of a permanent record, so the one thing
+        this control must never do is be set without the person seeing it. It is hidden when
+        nothing is addressed, and it clears itself after every post.
+      -->
+      <div class="row" id="askrow" hidden>
+        <span class="note" id="askto"></span>
+        <button class="sm" id="askclear">Not addressed to anyone</button>
+      </div>
       <textarea id="composer" rows="2" placeholder="Resolving the channel…" disabled aria-label="Message"></textarea>
       <div class="row"><button class="primary" id="send" disabled>Post to my pod</button></div>
       <div class="cfoot">

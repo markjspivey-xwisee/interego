@@ -36,6 +36,58 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
 
 ---
 
+## 2026-08-11 — addressing was written, verified, and then ignored by the thing it was for
+
+`iep:addressedTo` has been written into the signed region of an ask since the Discord conduit
+shipped, and `verifyRequest` has refused an inbox notice that does not name a key the machine holds
+since the same day. The decision that actually chooses what a running delegate answers never read
+it. So the substrate enforced addressing for a SLEEPING agent and ignored it for an AWAKE one — the
+same request meant two different things depending on whether its addressee happened to be up.
+
+### Fixed
+- **★★ A running delegate answered asks addressed to somebody else.** `decideTurn` selected "the
+  newest unanswered entry from any pod that is not mine" and had no addressing term anywhere in it;
+  `SeenEntry` had no field for one, and no client read the predicate. With two people in a channel
+  each running a delegate, asking ONE of them a question by name produced an answer from BOTH, and
+  the ask's own silence notice still fired afterwards — it counts an ask answered only by the agent
+  it named. An entry naming addressees is now not a candidate for any delegate it does not name.
+  `SeenEntry.addressedTo` is REQUIRED rather than optional, so every client that had not read it is
+  a compile error instead of a silent wrong answer on somebody's permanent log.
+- **★ A direct ask was silenced by its own asker carrying on talking.** The "has anybody on my pod
+  spoken since they did" guard is a question about a conversation, answered at pod granularity.
+  Applied to an ask addressed to this delegate by name it said the delegator's next sentence
+  withdraws the ask — and since every further message renews that, permanently. A direct ask is now
+  exempt from that guard alone, and is discharged only by an answer TO it: the in-run set, or
+  `prov:wasDerivedFrom` on the delegator's pod. Asks are taken oldest-first so a second cannot bury
+  the first, and preferred over newer chatter so the room cannot starve one.
+- **The durable half of "have I answered this" was inert in the desktop app.** `agentEntries()`
+  passed `derivedFrom: null` for every entry while the value sat read and unused two functions
+  away, so the guard that survives a restart — extensively documented, and the reason `postEntry`
+  emits the triple at all — had never once fired in that client. It is also now applied as a filter
+  before a candidate is chosen rather than as a check after, so one discharged ask no longer stops
+  the delegate considering anything older.
+
+### Added
+- **The desktop shell can address a message to one named agent.** It could already RECEIVE one —
+  `wake()` verifies an incoming notice against `iep:addressedTo` and refuses anything not naming a
+  key this machine holds — and had no way whatsoever to send one; `git log -S"addressedTo"` over
+  that directory returned nothing. Every roster row for a seated member's delegate now carries an
+  **Ask**, including other people's, disabled where that delegate's own registry scope could not
+  append the answer. The addressee is shown above the composer before anything is written, is
+  cleared after each post rather than left sticky, and is dropped when the workspace changes.
+- **`notifyAsk` in `@interego/workspace-client`.** The three-branch notice decision — a running
+  host is sent nothing, an underivable pod is sent nothing and says so, otherwise a pointer
+  carrying no task text goes to the ADDRESSEE's own pod — was Discord-only. A second surface needed
+  the identical rules, and these are exactly the rules that go wrong when written twice; the bot
+  now calls the shared one.
+- **The brief tells a delegate when it was addressed by name**, and does not say so otherwise. A
+  model told to "do what is asked" on every turn treats a remark it overheard as a job.
+
+### Documented
+- The Discord README's command table omitted `/workspace who` and `/workspace ask` entirely — the
+  two commands that make per-agent addressing reachable — so the feature was invisible to anyone
+  reading it. Both are listed, along with why a Discord `@mention` is not an address.
+
 ## 2026-08-09 — an entry naming an agent it was not signed by, and a request nobody could read
 
 Two skeptics attacked the agents-in-the-channel build. Eight findings, two of them high, and both

@@ -279,9 +279,14 @@ async function main(): Promise<void> {
   const view = await showWorkspace(deps, THREAD);
   if (view.kind !== 'view') { check(false, 'the channel composed', view.kind); process.exitCode = 1; return; }
   const seen: SeenEntry[] = view.entries.map((e) => ({
-    pod: e.pod, descriptorUrl: e.descriptorUrl, body: e.body, derivedFrom: null,
+    pod: e.pod, descriptorUrl: e.descriptorUrl, body: e.body, derivedFrom: e.derivedFrom,
     at: e.created ? Date.parse(e.created) : null,
     author: e.author ?? { kind: 'unstated', why: 'this reader did not resolve an author' },
+    // ★ THE REAL PREDICATE OUT OF THE REAL SIGNED REGION, not `[]`. Passing an empty list would
+    // make every entry look unaddressed, and this driver's whole claim past this point is that
+    // `decideTurn` picks ALICE'S ASK because the ask names this delegate — a claim an empty list
+    // would satisfy for the wrong reason.
+    addressedTo: e.addressedTo,
   }));
   // ★ THE REAL ROLE TABLE, READ FROM THE WORKSPACE. An empty one is not a neutral stand-in: the
   // role ceiling refuses a role its table does not define, so passing `new Map()` made every

@@ -137,6 +137,13 @@ and stops itself; it does not lean on the relay to stop it.
 | `/workspace link-confirm pod:<pod>` | Verifies the delegation and binds the account. |
 | `/workspace unlink` | Makes the bot forget the binding. **Does not revoke** — it says so. |
 | `/workspace show` | The composed view: roster with each non-seat's own reason, the newest entries from every seated member's own log, and the IRI anyone can follow. |
+| `/workspace who` | Every agent addressable in this thread — one line per delegate of **every seated pod, not only yours** — with whether its host is running, whose pod authorises it, and whether its scope lets it append. |
+| `/workspace ask agent:<pick> task:<what>` | Puts a request on the record addressed to **one** agent. `agent:` autocompletes live against each seated pod's own registry and submits the full agent DID; a label matching two delegates is refused rather than guessed. |
+
+**A Discord `@mention` is not an address and is never read as one.** A mention resolves to a
+Discord account, which this bot's index maps to one pod, which that pod's registry maps to N
+delegates — half an address. The addressable unit is the delegate's agent DID, and `/workspace ask`
+is the only thing that sets one. An ordinary message, mentions and all, is written unaddressed.
 
 Messages from a linked participant in a started thread become entries on their pod. A participant
 who is **not** linked is ignored — visibly: the bot says once, in the thread, that nothing of

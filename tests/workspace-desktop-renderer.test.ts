@@ -991,6 +991,109 @@ describe('the stream: five states for a body, and they do not look the same', ()
   });
 });
 
+/**
+ * ADDRESSING SOMEBODY ELSE'S AGENT FROM THIS SHELL, WHICH IT COULD NOT DO AT ALL.
+ *
+ * ★ THE ASYMMETRY THIS CLOSES, AND IT WAS COMPLETE. `wake()` here verifies an incoming ask
+ * against `iep:addressedTo` and refuses anything not naming a key this machine holds; the shell
+ * advertised an `askVia` inbox saying "you may address me"; and `postEntry` has accepted an
+ * `addressedTo` argument since it was written. This surface supplied it ZERO times — `git log -S`
+ * over the desktop directory returned no commit that ever contained the term. So the app could
+ * receive a request and had no way whatsoever to make one, and the only client that could was
+ * the Discord conduit.
+ */
+describe('addressing: naming which agent a message is for', () => {
+  /** Somebody else's delegate, authorised on THEIR pod — the case the roster rail draws. */
+  const withTheirDelegate = (s: Scripted, over: { scope?: string } = {}): void => {
+    seatDelegate(s, POD_B, {
+      agentId: D2, name: 'their scribe', hosted: false, ...(over.scope ? { scope: over.scope } : {}),
+    });
+  };
+  /**
+   * The Ask on ONE named delegate's row.
+   *
+   * ★ SELECTED BY DID AND NEVER BY POSITION. The first draft of this took the first `Ask …` in
+   * the roster and got the VIEWER'S OWN delegate every time, because your own agents are listed
+   * too — and they are addressable too, which is the point. A positional helper would have made
+   * every case here silently assert something about the wrong agent.
+   */
+  const askButton = (o: Opened, did: string): HTMLButtonElement | null => {
+    const row = [...o.doc.querySelectorAll('#roster .member')].find((m) => (m.textContent ?? '').includes(did));
+    return (row?.querySelector('button') as HTMLButtonElement | null) ?? null;
+  };
+
+  it('★ writes iep:addressedTo into the entry, naming the agent that was chosen', async () => {
+    const o = await open({ setup: withTheirDelegate });
+    await signInAndSettle(o);
+    const ask = askButton(o, D2);
+    expect(ask?.textContent).toBe('Ask their scribe');
+    ask?.click();
+    await o.settle();
+    (o.doc.getElementById('composer') as HTMLTextAreaElement).value = 'please summarise the thread';
+    click(o.doc, 'send');
+    await o.settle();
+    const sent = entryPublishes(o).pop();
+    expect(String(sent?.input['graph_content'])).toContain('iep:addressedTo <' + D2 + '>');
+    // And the panel states the triple rather than the UI gesture, like every other line there.
+    expect(text(o.doc, '#postresult')).toContain('iep:addressedTo ' + D2);
+  });
+
+  it('an ordinary post names no addressee at all, which is the unchanged default', async () => {
+    const o = await open({ setup: withTheirDelegate });
+    await signInAndSettle(o);
+    (o.doc.getElementById('composer') as HTMLTextAreaElement).value = 'just talking';
+    click(o.doc, 'send');
+    await o.settle();
+    const sent = entryPublishes(o).pop();
+    expect(String(sent?.input['graph_content'])).not.toContain('iep:addressedTo');
+    expect(text(o.doc, '#postresult')).toContain('this entry names no iep:addressedTo');
+  });
+
+  it('★ the addressee does NOT stick to the next message', async () => {
+    // A sticky addressee makes "thanks" a second permanent request to the same agent, silently.
+    const o = await open({ setup: withTheirDelegate });
+    await signInAndSettle(o);
+    askButton(o, D2)?.click();
+    await o.settle();
+    (o.doc.getElementById('composer') as HTMLTextAreaElement).value = 'first, addressed';
+    click(o.doc, 'send');
+    await o.settle();
+    expect((o.doc.getElementById('askrow') as HTMLElement).hidden).toBe(true);
+    (o.doc.getElementById('composer') as HTMLTextAreaElement).value = 'second, to nobody';
+    click(o.doc, 'send');
+    await o.settle();
+    expect(String(entryPublishes(o).pop()?.input['graph_content'])).not.toContain('iep:addressedTo');
+  });
+
+  it('★ points the inbox on the ADDRESSEE\'s own pod, never its delegator\'s', async () => {
+    // The bug this pins was measured and fixed once already on the Discord side: `read_inbox` is
+    // own-pod only, so a notice sent to the seated member's pod lands where the agent cannot look.
+    const o = await open({ setup: withTheirDelegate });
+    await signInAndSettle(o);
+    askButton(o, D2)?.click();
+    await o.settle();
+    (o.doc.getElementById('composer') as HTMLTextAreaElement).value = 'wake up and read this';
+    click(o.doc, 'send');
+    await o.settle();
+    const notice = o.s.calls.filter((c) => c.name === 'notify_agent').pop();
+    expect(notice?.input['to']).toBe(podOfDelegate(D2));
+    expect(notice?.input['to']).not.toBe(POD_B);
+    // ★ AND IT CARRIES NO TASK TEXT. An inbox on this relay is world-writable, so anything that
+    // travelled by inbox is something a forger could have written. The pointer is the payload.
+    expect(String(notice?.input['summary'] ?? '')).not.toContain('wake up and read this');
+    expect(notice?.input['about']).toBeTruthy();
+  });
+
+  it('★ offers no Ask on a delegate its own pod will not let publish', async () => {
+    // It could read the ask and never append the answer, leaving a permanent unanswerable entry
+    // on YOUR log. Only its delegator can change that.
+    const o = await open({ setup: (s) => { withTheirDelegate(s, { scope: 'ReadOnly' }); } });
+    await signInAndSettle(o);
+    expect(askButton(o, D2)?.disabled).toBe(true);
+    expect(askButton(o, D2)?.getAttribute('title') ?? '').toContain('could read your ask and never answer it');
+  });
+});
+
 describe('posting: the acknowledgement is not the check', () => {
   it('reports the shape the WORKSPACE declared, not one the shell chose', async () => {
     const o = await open();

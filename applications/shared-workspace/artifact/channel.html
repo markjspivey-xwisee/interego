@@ -945,6 +945,7 @@ var WSPC = (() => {
     masked: () => masked,
     memberDocIris: () => memberDocIris,
     mergeForward: () => mergeForward,
+    notifyAsk: () => notifyAsk,
     nsIri: () => nsIri,
     nsOf: () => nsOf,
     orderChain: () => orderChain,
@@ -2745,6 +2746,617 @@ var WSPC = (() => {
     return v.slice(0, 10) + "\u2026" + v.slice(-6);
   }
 
+  // packages/core/dist/model/agent.js
+  var { readIri: readIri2, readIriAll: readIriAll2, readLiteral: readLiteral2 } = substrateReaders;
+  var agentNsIri = (relay, pod, name) => relay + "/ns/" + pod + "/" + name;
+  function agentIdHash(agentId) {
+    const OFFSET = 0xcbf29ce484222325n;
+    const PRIME = 0x100000001b3n;
+    const MASK = 0xffffffffffffffffn;
+    let h = OFFSET;
+    const mix = (byte) => {
+      h = (h ^ BigInt(byte)) * PRIME & MASK;
+    };
+    for (const ch of agentId) {
+      const cp = ch.codePointAt(0);
+      if (cp < 128) {
+        mix(cp);
+      } else if (cp < 2048) {
+        mix(192 | cp >> 6);
+        mix(128 | cp & 63);
+      } else if (cp < 65536) {
+        mix(224 | cp >> 12);
+        mix(128 | cp >> 6 & 63);
+        mix(128 | cp & 63);
+      } else {
+        mix(240 | cp >> 18);
+        mix(128 | cp >> 12 & 63);
+        mix(128 | cp >> 6 & 63);
+        mix(128 | cp & 63);
+      }
+    }
+    return h.toString(16).padStart(16, "0");
+  }
+  function agentDocName(agentId, kind) {
+    const pod = agentPodOf(agentId);
+    return pod ? "agent-" + pod + "-" + agentIdHash(agentId) + "-" + kind : null;
+  }
+  function agentDocIri(relay, agentId, kind) {
+    const pod = agentPodOf(agentId);
+    const name = agentDocName(agentId, kind);
+    return pod && name ? agentNsIri(relay, pod, name) : null;
+  }
+  var presenceIri = (relay, agentId) => agentDocIri(relay, agentId, "presence");
+  var capabilitiesIri = (relay, agentId) => agentDocIri(relay, agentId, "capabilities");
+  var describe2 = (port, e) => (port.describeError ? port.describeError(e) : String(e?.message ?? e)).toLowerCase();
+  var iriRef = (u, what) => {
+    if (typeof u !== "string" || !u)
+      throw new Error("agent: " + what + " is missing, so this document is refused rather than written without it");
+    if (/[\s<>"{}|\\^`]/.test(u))
+      throw new Error("agent: " + what + " is not serializable as a Turtle IRI reference, so this document is refused rather than written with a reference that ends somewhere else: " + u);
+    return "<" + u + ">";
+  };
+  var parseMs = (s) => {
+    if (typeof s !== "string" || !s)
+      return null;
+    const t = Date.parse(s);
+    return Number.isNaN(t) ? null : t;
+  };
+  var PRESENCE_RENEW_MS = 9e4;
+  var PRESENCE_LEASE_MS = 18e4;
+  var PRESENCE_MAX_LEASE_MS = 3 * PRESENCE_RENEW_MS;
+  function presenceTurtle(args) {
+    const self = iriRef(args.iri, "the presence document IRI");
+    const agent = iriRef(args.agentId, "the agent this lease is about");
+    return "@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .\n@prefix dct: <http://purl.org/dc/terms/> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n" + self + "\n  a iep:PresenceLease ;\n  iep:presenceOf " + agent + " ;\n" + (args.principal ? "  iep:presenceActingFor " + iriRef(args.principal, "the principal this delegate acts for") + " ;\n" : "") + '  iep:presenceHost "' + escapeTurtleLiteral(args.host) + '" ;\n  dct:created "' + args.createdIso + '"^^xsd:dateTime ;\n  iep:leaseExpires "' + args.expiresIso + '"^^xsd:dateTime .\n';
+  }
+  async function publishPresence(port, args) {
+    const iri = presenceIri(args.relay, args.agentId);
+    const pod = agentPodOf(args.agentId);
+    if (!iri || !pod) {
+      return {
+        kind: "unnameable",
+        why: "This agent's id (" + args.agentId + ') carries no pod segment this client can read, so there is no address a reader would look for its presence at. Nothing was published \u2014 a lease at a name nobody else computes would read to every other client as "this agent has never said it was running".'
+      };
+    }
+    const now = args.nowMs ?? Date.now();
+    const lease = Math.min(args.leaseMs ?? PRESENCE_LEASE_MS, PRESENCE_MAX_LEASE_MS);
+    const createdIso = new Date(now).toISOString();
+    const expiresIso = new Date(now + lease).toISOString();
+    let res;
+    try {
+      res = await port.tool("publish_context", {
+        pod_name: pod,
+        graph_iri: iri,
+        graph_content: presenceTurtle({ iri, agentId: args.agentId, principal: args.principal, host: args.host, createdIso, expiresIso }),
+        visibility: "public",
+        auto_supersede_prior: true,
+        sign_authorship: true,
+        valid_from: createdIso,
+        // ★ THE WHOLE MECHANISM IS THIS ONE FIELD. Past it the relay's own temporal filter stops
+        // answering for this document, and nothing anywhere has to run a timer.
+        valid_until: expiresIso
+      });
+    } catch (e) {
+      return { kind: "error", iri, error: e };
+    }
+    const bad = relayRefusal(res);
+    if (bad)
+      return { kind: "refused", iri, why: String(bad["message"] ?? bad["error"]) };
+    return { kind: "published", iri, descriptorUrl: typeof res["descriptorUrl"] === "string" ? res["descriptorUrl"] : null, expiresIso };
+  }
+  var isPresent = (p) => p.state === "running";
+  async function readPresence(port, args) {
+    const pod = agentPodOf(args.agentId);
+    const iri = presenceIri(args.relay, args.agentId);
+    if (!pod || !iri) {
+      return {
+        state: "unnameable",
+        agentId: args.agentId,
+        pod: null,
+        iri: null,
+        why: "this client cannot compose a presence address from that agent id (" + args.agentId + "), because it carries no pod segment this reader knows how to take out. No pod was asked, so whether its host is running was never established in either direction."
+      };
+    }
+    const now = args.nowMs ?? Date.now();
+    let rows;
+    try {
+      const p = await port.tool("discover_context", {
+        pod_name: pod,
+        graph_iri: iri,
+        sort: "newest-first",
+        limit: 8
+        // No cache: presence is the one read where a two-minute-old answer is exactly the wrong one.
+      }, { cache: false });
+      const bad = relayRefusal(p);
+      if (bad)
+        throw new Error(String(bad["message"] ?? bad["error"]));
+      rows = Array.isArray(p?.["entries"]) ? p?.["entries"] : [];
+    } catch (e) {
+      return {
+        state: "unreadable",
+        agentId: args.agentId,
+        pod,
+        iri,
+        why: "pod " + pod + " did not answer when asked whether that agent had said it was running (" + describe2(port, e) + "). That is not the same as it being off, and neither is being assumed."
+      };
+    }
+    if (!rows.length) {
+      return {
+        state: "never",
+        agentId: args.agentId,
+        pod,
+        iri,
+        why: "that pod holds no presence document for this agent at all. It may well be a real agent; nothing has ever published that its host was up."
+      };
+    }
+    const head = rows[0];
+    const rowFrom = parseMs(head["validFrom"]);
+    const rowUntil = parseMs(head["validUntil"]);
+    if (rowUntil !== null && rowUntil <= now) {
+      return {
+        state: "stale",
+        agentId: args.agentId,
+        pod,
+        iri,
+        lastExpiresMs: rowUntil,
+        why: "the newest lease this agent published lapsed at " + new Date(rowUntil).toISOString() + " and has not been renewed since. Older leases of its own may still be inside their windows; they are claims it has already superseded, and its current claim is this one."
+      };
+    }
+    const url = typeof head["descriptorUrl"] === "string" ? head["descriptorUrl"] : "";
+    if (!url) {
+      return {
+        state: "unreadable",
+        agentId: args.agentId,
+        pod,
+        iri,
+        why: "a live lease was listed for this agent and the listing named no descriptor to read it out of, so nothing was read from bytes anybody signed"
+      };
+    }
+    let d;
+    try {
+      d = await port.descriptor(url);
+    } catch (e) {
+      return {
+        state: "unreadable",
+        agentId: args.agentId,
+        pod,
+        iri,
+        why: "that lease is listed as live and its descriptor could not be fetched (" + describe2(port, e) + "), so who signed it is not established"
+      };
+    }
+    const authorship = readAuthorship(d["authorship"]);
+    const block = d["authorship"];
+    const verified = block?.["authorshipVerified"] === true || block?.["signed"] === true;
+    if (!verified) {
+      return {
+        state: "unreadable",
+        agentId: args.agentId,
+        pod,
+        iri,
+        why: "that lease's authorship did not verify, so nothing about who published it is established. An unverified claim that a process is running is not evidence that one is."
+      };
+    }
+    if (authorship.contentBinding !== "bound" && authorship.contentBinding !== "bound-at-signing") {
+      return {
+        state: "unreadable",
+        agentId: args.agentId,
+        pod,
+        iri,
+        why: `that lease's signature reports contentBinding "` + (authorship.contentBinding ?? "none") + '", so the proof covers WHICH document was written and not WHAT it says. The expiry inside it is not something that signature stands behind.'
+      };
+    }
+    if (authorship.signerAgent !== args.agentId) {
+      return {
+        state: "unreadable",
+        agentId: args.agentId,
+        pod,
+        iri,
+        why: "that lease was signed by " + (authorship.signerAgent ?? "an agent the response did not name") + " and it claims to be about " + args.agentId + ". Only a process holding that agent's own key can say its host is running, so this is not being read as presence."
+      };
+    }
+    const region = graphRegion(d["graph"]?.content ?? "", iri);
+    if (region === null) {
+      return {
+        state: "unreadable",
+        agentId: args.agentId,
+        pod,
+        iri,
+        why: "the signed region of that lease could not be located, so nothing was read from bytes anybody signed"
+      };
+    }
+    const about = readIriAll2(region, "iep:presenceOf");
+    if (about.length !== 1 || about[0] !== args.agentId) {
+      return {
+        state: "unreadable",
+        agentId: args.agentId,
+        pod,
+        iri,
+        why: about.length > 1 ? "that lease's signed region names " + about.length + " different agents as the one it is about, so which agent it is a claim about is not decided and picking one would be this reader guessing" : "that lease's signed region names " + (about[0] ?? "no agent at all") + " as the agent it is about, and it was asked for " + args.agentId + ". The document name is not an assertion; the region is, and it does not agree."
+      };
+    }
+    const signedExpires = parseMs(readLiteral2(region, "iep:leaseExpires"));
+    const signedCreated = parseMs(readLiteral2(region, "dct:created"));
+    if (signedExpires === null) {
+      return {
+        state: "overlong",
+        agentId: args.agentId,
+        pod,
+        iri,
+        spanMs: null,
+        why: "that lease's signed region declares no readable iep:leaseExpires. A lease is only evidence because it is short and has to be renewed, and an expiry the agent did not sign is the relay's claim about availability rather than the agent's \u2014 so there is nothing here to read as presence."
+      };
+    }
+    if (rowUntil !== null && Math.abs(rowUntil - signedExpires) > 1e3) {
+      return {
+        state: "disputed",
+        agentId: args.agentId,
+        pod,
+        iri,
+        signedExpiresMs: signedExpires,
+        rowExpiresMs: rowUntil,
+        why: "that lease's signed region says it expires at " + new Date(signedExpires).toISOString() + " and the relay's own row for it says " + new Date(rowUntil).toISOString() + ". One of those the agent put its key to and one of those it did not, they do not agree, and reporting the disagreement is the whole reason the signed value is written."
+      };
+    }
+    if (signedExpires <= now) {
+      return {
+        state: "stale",
+        agentId: args.agentId,
+        pod,
+        iri,
+        lastExpiresMs: signedExpires,
+        why: "the newest lease this agent published expired, by its own signed iep:leaseExpires, at " + new Date(signedExpires).toISOString() + " and has not been renewed since."
+      };
+    }
+    const span = signedCreated === null ? null : signedExpires - signedCreated;
+    if (span === null || span > PRESENCE_MAX_LEASE_MS) {
+      return {
+        state: "overlong",
+        agentId: args.agentId,
+        pod,
+        iri,
+        spanMs: span,
+        why: span === null ? "that lease's signed region carries an expiry and no readable dct:created, so how long it claims to be good for cannot be computed and it is not being read as presence" : "that lease is valid for " + describeSpan(span) + ", by its own signed dates. A lease is only evidence because it is short and has to be renewed; one that long says nothing about whether anything is running now, so it is not being read as presence."
+      };
+    }
+    return {
+      state: "running",
+      agentId: args.agentId,
+      pod,
+      iri,
+      saidAtMs: signedCreated ?? rowFrom ?? now,
+      expiresMs: signedExpires,
+      descriptorUrl: url,
+      host: readLiteral2(region, "iep:presenceHost"),
+      authorship
+    };
+  }
+  function describeSpan(ms) {
+    const s = Math.max(0, Math.round(ms / 1e3));
+    if (s < 90)
+      return s + "s";
+    const m = Math.round(s / 60);
+    if (m < 90)
+      return m + "m";
+    const h = Math.round(m / 60);
+    if (h < 48)
+      return h + "h";
+    return Math.round(h / 24) + "d";
+  }
+  function presenceLine(p, nowMs = Date.now()) {
+    switch (p.state) {
+      case "running":
+        return "running (said so " + describeSpan(nowMs - p.saidAtMs) + " ago)";
+      case "stale":
+        return p.lastExpiresMs === null ? "not running as far as its pod says" : "not since " + new Date(p.lastExpiresMs).toISOString();
+      case "never":
+        return "its pod holds no lease for it at all";
+      case "overlong":
+        return "published a lease too long to be evidence";
+      case "disputed":
+        return "its lease and the relay disagree about when it expires";
+      case "unreadable":
+        return "whether it is running is not established";
+      // ★ SAYS WHAT HAPPENED, WHICH IS THAT NOTHING DID. Every other line here reports a document;
+      // this one reports that no document was looked for, because no address could be composed.
+      case "unnameable":
+        return "this client cannot compose a presence address from that agent id, so whether it is running was never asked";
+    }
+  }
+  function capabilityProblem(draft) {
+    if (typeof draft.action !== "string" || !draft.action) {
+      return "a capability names no iep:action, so there is nothing for a caller to invoke and nothing for a reader to dereference";
+    }
+    if (!/^https?:\/\//.test(draft.action)) {
+      return "a capability's iep:action must be a dereferenceable http(s) URL \u2014 every identifier in this system is one, and a reader that cannot follow it is being handed an opaque token dressed as a link. `" + draft.action + "` is not one.";
+    }
+    const r = draft.route;
+    if (!r || r.kind !== "hosted" && r.kind !== "ask") {
+      return "a capability declares neither a hydra:target nor an iep:askVia, so it advertises an agent reachable by no route at all. That is not a smaller offer than the other two; it is an offer a reader cannot act on in any way.";
+    }
+    if (r.kind === "hosted" && !r.target)
+      return "a hosted capability names no hydra:target";
+    if (r.kind === "ask" && !r.askVia)
+      return "an ask-routed capability names no iep:askVia";
+    return null;
+  }
+  function capabilityTurtle(draft) {
+    const problem = capabilityProblem(draft);
+    if (problem)
+      throw new Error("capabilityTurtle: " + problem);
+    const self = iriRef(draft.iri, "the capability document IRI");
+    const agent = iriRef(draft.agentId, "the agent this capability document is about");
+    const action = iriRef(draft.action, "the action IRI");
+    const route = draft.route.kind === "hosted" ? "  hydra:target " + iriRef(draft.route.target, "the hydra:target, which comes from this deployment's own configuration") + ' ;\n  hydra:method "POST" ;\n' : "  iep:askVia " + iriRef(draft.route.askVia, "the iep:askVia route") + " ;\n";
+    const created2 = draft.createdIso ?? (/* @__PURE__ */ new Date()).toISOString();
+    return "@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .\n@prefix hydra: <http://www.w3.org/ns/hydra/core#> .\n@prefix dct: <http://purl.org/dc/terms/> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n" + self + "\n  a iep:Affordance, hydra:Operation ;\n  iep:capabilityOf " + agent + " ;\n  iep:action " + action + " ;\n" + route + (draft.requiresSignedRequest ? "  iep:requiresSignedRequest true ;\n" : "") + '  hydra:title "' + escapeTurtleLiteral(draft.title) + '" ;\n  dct:description "' + escapeTurtleLiteral(draft.description) + '" ;\n  dct:created "' + created2 + '"^^xsd:dateTime .\n';
+  }
+  async function publishCapability(port, args) {
+    const iri = capabilitiesIri(args.relay, args.agentId);
+    const pod = agentPodOf(args.agentId);
+    if (!iri || !pod) {
+      return {
+        kind: "unnameable",
+        why: "This agent's id (" + args.agentId + ") carries no pod segment this client can read, so there is no address a peer would look for its capabilities at. Nothing was published."
+      };
+    }
+    const problem = capabilityProblem(args);
+    if (problem)
+      return { kind: "invalid", why: problem };
+    let res;
+    try {
+      res = await port.tool("publish_context", {
+        pod_name: pod,
+        graph_iri: iri,
+        graph_content: capabilityTurtle({ iri, ...args }),
+        visibility: "public",
+        // A reader reads the CURRENT head of this IRI, so republishing must move the head rather than
+        // fork it. Unlike a log there is no history here that a reader walks.
+        auto_supersede_prior: true,
+        // Signed, because an unsigned capability document is an unattributable instruction to POST
+        // somewhere. The bytes are immutable once published and the key moves on, so a document not
+        // signed at write time can never be attributed afterwards.
+        sign_authorship: true
+      });
+    } catch (e) {
+      return { kind: "error", iri, error: e };
+    }
+    const bad = relayRefusal(res);
+    if (bad)
+      return { kind: "refused", iri, why: String(bad["message"] ?? bad["error"]) };
+    return {
+      kind: "published",
+      iri,
+      descriptorUrl: typeof res["descriptorUrl"] === "string" ? res["descriptorUrl"] : null,
+      status: String(res["status"] ?? "ok")
+    };
+  }
+  async function readCapabilities(port, args) {
+    const pod = agentPodOf(args.agentId);
+    const iri = capabilitiesIri(args.relay, args.agentId);
+    if (!pod || !iri) {
+      return {
+        kind: "unnameable",
+        agentId: args.agentId,
+        iri: null,
+        why: "this client cannot compose a capability address from that agent id (" + args.agentId + "), because it carries no pod segment this reader knows how to take out. No pod was asked, so what that agent can be asked is not established \u2014 which is not the same as it advertising nothing."
+      };
+    }
+    let rows;
+    try {
+      const p = await port.tool("discover_context", { pod_name: pod, graph_iri: iri, sort: "newest-first", limit: 4 }, { cache: false });
+      const bad = relayRefusal(p);
+      if (bad)
+        throw new Error(String(bad["message"] ?? bad["error"]));
+      rows = Array.isArray(p?.["entries"]) ? p?.["entries"] : [];
+    } catch (e) {
+      return { kind: "unreadable", agentId: args.agentId, iri, why: "pod " + pod + " did not answer when asked what that agent can be asked (" + describe2(port, e) + "), so its capabilities are not established \u2014 which is not the same as it having none" };
+    }
+    if (!rows.length) {
+      return { kind: "none", agentId: args.agentId, iri, why: "that pod holds no capability document for this agent, so it advertises nothing a reader could invoke" };
+    }
+    const url = typeof rows[0]?.["descriptorUrl"] === "string" ? rows[0]["descriptorUrl"] : "";
+    if (!url)
+      return { kind: "unreadable", agentId: args.agentId, iri, why: "a capability document was listed and the listing named no descriptor to read it out of" };
+    let d;
+    try {
+      d = await port.descriptor(url);
+    } catch (e) {
+      return { kind: "unreadable", agentId: args.agentId, iri, why: "that capability document could not be fetched (" + describe2(port, e) + "), so who published it is not established" };
+    }
+    const authorship = readAuthorship(d["authorship"]);
+    const block = d["authorship"];
+    if (!(block?.["authorshipVerified"] === true || block?.["signed"] === true)) {
+      return { kind: "unreadable", agentId: args.agentId, iri, why: "that capability document's authorship did not verify. An unverified document naming a place to POST is an unattributable instruction, so nothing is being read out of it." };
+    }
+    if (authorship.contentBinding !== "bound" && authorship.contentBinding !== "bound-at-signing") {
+      return { kind: "unreadable", agentId: args.agentId, iri, why: `that capability document's signature reports contentBinding "` + (authorship.contentBinding ?? "none") + '", so it covers WHICH document was written and not WHAT it says \u2014 the target inside it is not something that signature stands behind' };
+    }
+    if (authorship.signerAgent !== args.agentId) {
+      return { kind: "unreadable", agentId: args.agentId, iri, why: "that capability document was signed by " + (authorship.signerAgent ?? "an agent the response did not name") + " and it sits at the address for " + args.agentId + ". Only that agent can say what it can be asked." };
+    }
+    const region = graphRegion(d["graph"]?.content ?? "", iri);
+    if (region === null)
+      return { kind: "unreadable", agentId: args.agentId, iri, why: "the signed region of that capability document could not be located, so nothing was read from bytes anybody signed" };
+    const about = readIriAll2(region, "iep:capabilityOf");
+    if (about.length !== 1 || about[0] !== args.agentId) {
+      return { kind: "unreadable", agentId: args.agentId, iri, why: "that capability document's signed region names " + (about.length > 1 ? about.length + " different agents" : about[0] ?? "no agent at all") + " as the agent it is about, and it was asked for " + args.agentId + ". The document name is not an assertion; the region is." };
+    }
+    const action = readIri2(region, "iep:action");
+    const target = readIri2(region, "hydra:target");
+    const askVia = readIri2(region, "iep:askVia");
+    if (!action)
+      return { kind: "unreadable", agentId: args.agentId, iri, why: "that capability document names no iep:action, so there is nothing in it a caller could invoke" };
+    if (target && askVia) {
+      return { kind: "unreadable", agentId: args.agentId, iri, why: "that capability document declares BOTH a hydra:target and an iep:askVia. Those are two different ways to reach this agent and nothing in the document says which is the real one, so choosing would be this reader guessing on the caller's behalf." };
+    }
+    if (!target && !askVia) {
+      return { kind: "unreadable", agentId: args.agentId, iri, why: "that capability document declares neither a hydra:target nor an iep:askVia, so it advertises an agent reachable by no route at all" };
+    }
+    return {
+      kind: "advertised",
+      agentId: args.agentId,
+      iri,
+      action,
+      route: target ? { kind: "hosted", target } : { kind: "ask", askVia },
+      title: readLiteral2(region, "hydra:title"),
+      description: readLiteral2(region, "dct:description"),
+      requiresSignedRequest: substrateReaders.hasTrue(region, "iep:requiresSignedRequest"),
+      descriptorUrl: url,
+      authorship
+    };
+  }
+  var REQUEST_INBOX_LIMIT = 50;
+  async function readRequests(port, limit = REQUEST_INBOX_LIMIT) {
+    const p = await port.tool("read_inbox", { limit }, { cache: false });
+    const bad = relayRefusal(p);
+    if (bad)
+      throw new Error(String(bad["message"] ?? bad["error"]));
+    const inbox = typeof p?.["inbox"] === "string" ? p["inbox"] : null;
+    const all = Array.isArray(p?.["items"]) ? p?.["items"] : [];
+    const notices = all.filter((it) => it && typeof it["about"] === "string" && it["about"]).map((item) => ({
+      item,
+      about: String(item["about"]),
+      actor: typeof item["actor"] === "string" ? item["actor"] : null,
+      summary: typeof item["summary"] === "string" ? item["summary"] : null,
+      published: typeof item["published"] === "string" ? item["published"] : null
+    }));
+    return { notices, saturated: all.length >= limit, limit, inbox };
+  }
+  async function agentInbox(port) {
+    const p = await port.tool("read_inbox", { limit: 1 }, { cache: false });
+    const bad = relayRefusal(p);
+    if (bad)
+      throw new Error(String(bad["message"] ?? bad["error"]));
+    return typeof p?.["inbox"] === "string" && p["inbox"] ? p["inbox"] : null;
+  }
+  var admitAnyVerifiedSigner = () => null;
+  async function verifyRequest(port, notice, args) {
+    const checks = [];
+    const base = {
+      about: notice.about,
+      servedFromPath: null,
+      body: null,
+      addressedTo: [],
+      forMe: [],
+      descriptorUrl: null,
+      signedBy: null,
+      region: null
+    };
+    const no = (why, extra = {}) => {
+      checks.push({ mark: "n", text: why });
+      return { ...base, ...extra, checks, ok: false, why };
+    };
+    let d;
+    try {
+      d = await port.descriptor(notice.about);
+    } catch (e) {
+      return no("the address this notice points at did not resolve to a descriptor (" + describe2(port, e) + "), so there is nothing signed to read the ask out of");
+    }
+    const descriptorUrl = notice.about;
+    const servedFromPath = podOfDescriptorUrl2(descriptorUrl);
+    checks.push({ mark: "y", text: "The address in the notice resolves to a descriptor" + (servedFromPath ? ", at a URL whose first path segment is " + servedFromPath : "") });
+    const block = d["authorship"];
+    const binding = typeof block?.["contentBinding"] === "string" ? block["contentBinding"] : null;
+    const signedBy = typeof block?.["signedBy"] === "string" ? block["signedBy"] : typeof block?.["signer"] === "string" ? block["signer"] : null;
+    const descriptorBound = block?.["descriptorBinding"]?.bound === true;
+    const withDoc = { descriptorUrl, servedFromPath, signedBy };
+    if (binding !== "bound" && binding !== "bound-at-signing") {
+      return no(`that record's signature reports contentBinding "` + (binding ?? "none") + '". Only "bound" means a signature was verified AND its digest recomputed over the bytes being served, so nothing here establishes that what the ask says is what anybody signed.', withDoc);
+    }
+    if (!signedBy) {
+      return no("that record's content is bound to a signature and the response names no signer, so who wrote the ask is not established \u2014 and check 3 below has nothing to hold the deliverer against", withDoc);
+    }
+    checks.push({ mark: "y", text: "Its signature is intact and bound to its own content, signed by " + signedBy });
+    if (!descriptorBound) {
+      checks.push({
+        mark: "q",
+        text: "Its proof does not bind to the address it was served from \u2014 the ordinary shape of a delegated write, where the signer is the agent and the pod is its delegator's. What rules out a proof replayed onto somebody else's pod is not this field but the two checks below: the party that delivered the pointer must BE the signer, and the pod it was served from must have standing."
+      });
+    }
+    if (!notice.actor) {
+      return no("the notice names no actor, so whether the party that delivered it is the party that wrote the record is not established", withDoc);
+    }
+    if (notice.actor !== signedBy) {
+      return no("the notice was delivered by " + notice.actor + " and the record it points at was signed by " + (signedBy ?? "an agent the descriptor did not name") + ". Any account on this relay can deliver into any inbox, so a pointer placed by a party that did not write the thing is somebody else pointing at your record.", withDoc);
+    }
+    checks.push({ mark: "y", text: "The account that delivered the notice is the one that signed the record it points at (" + signedBy + ")" });
+    const content = d["graph"]?.content ?? "";
+    const describes = readIriAll2(typeof d["turtle"] === "string" ? d["turtle"] : "", "iep:describes");
+    let region = null;
+    for (const g of describes) {
+      region = graphRegion(content, g);
+      if (region !== null)
+        break;
+    }
+    if (region === null) {
+      return no("the signed region of that record could not be located" + (describes.length ? " under any of the " + describes.length + " graph IRIs its descriptor declares" : ", and its descriptor declares no iep:describes to look one up by") + ", so nothing was read from bytes anybody signed", withDoc);
+    }
+    const body = readLiteral2(region, "dct:description");
+    const addressedTo = readIriAll2(region, "iep:addressedTo");
+    const withRegion = { ...withDoc, body, addressedTo, region };
+    const held = new Set(args.heldAgentIds);
+    const forMe = addressedTo.filter((a) => held.has(a));
+    if (!addressedTo.length) {
+      return no("that record names no iep:addressedTo, so it is not a request addressed to anybody. It is a record and is read as one; nothing is being dispatched from it.", withRegion);
+    }
+    if (!forMe.length) {
+      return no("that record is addressed to " + addressedTo.join(", ") + " and this machine holds no key for any of them. An agent runs on its own human's credential, so answering for an agent whose key is somewhere else is the one thing this refuses to do.", withRegion);
+    }
+    checks.push({ mark: "y", text: "It is addressed to " + forMe.join(", ") + ", and this machine holds that key" });
+    const admits = args.admits ?? admitAnyVerifiedSigner;
+    const refused = await admits({ servedFromPath: servedFromPath ?? "", signedBy, region, descriptorUrl });
+    if (refused)
+      return no(refused, { ...withRegion, forMe });
+    checks.push({ mark: "y", text: signedBy + " has standing to ask this agent, by this host's own policy rather than by anything in the notice" });
+    if (args.answeredHere.indexOf(descriptorUrl) >= 0) {
+      return no("this client has already drafted an answer to that record in this run. Answering again would put a second permanent record in your log saying the same thing.", { ...withRegion, forMe });
+    }
+    if (args.derivedFromOnMyPod.indexOf(descriptorUrl) >= 0) {
+      return no("a record already on your pod declares it was derived from that one, so it has been answered \u2014 and that survives a restart of this app, which the in-run list above does not.", { ...withRegion, forMe });
+    }
+    checks.push({ mark: "y", text: "Nothing on your pod and nothing in this run has answered it yet" });
+    return { about: notice.about, ...withRegion, forMe, checks, ok: true, why: null };
+  }
+  function podOfDescriptorUrl2(u) {
+    if (typeof u !== "string")
+      return null;
+    const m = /^https?:\/\/[^/]+\/([^/]+)\//.exec(u);
+    return m?.[1] ?? null;
+  }
+
+  // packages/workspace-client/src/ask.ts
+  var NOT_SENT = (why) => ({ attempted: false, delivered: false, canonicalInbox: null, inbox: null, warning: null, why });
+  async function notifyAsk(client, args) {
+    if (isPresent(args.presence)) {
+      return NOT_SENT("this agent said its host was running, and a running host reads the channel directly \u2014 no notice was sent, because the entry on the record IS the request");
+    }
+    const pod = args.agentPod ?? agentPodOf(args.agentId);
+    if (!pod) {
+      return NOT_SENT("this client cannot take a pod out of " + args.agentId + ", so it cannot name the inbox that agent polls. Nothing was sent \u2014 a notice into a guessed mailbox is a notice nobody reads. The ask is on the record, and a host that reads this channel will find it there.");
+    }
+    let res;
+    try {
+      res = await client.tool("notify_agent", {
+        to: pod,
+        type: "Question",
+        about: args.about,
+        summary: args.summary
+      });
+    } catch (e) {
+      return { attempted: true, delivered: false, canonicalInbox: null, inbox: null, warning: null, why: errorCopy(e).t };
+    }
+    const delivered = res["delivered"] === true;
+    return {
+      attempted: true,
+      delivered,
+      canonicalInbox: typeof res["canonicalInbox"] === "boolean" ? res["canonicalInbox"] : null,
+      inbox: typeof res["inbox"] === "string" ? res["inbox"] : null,
+      warning: typeof res["warning"] === "string" ? res["warning"] : null,
+      why: delivered ? null : String(res["error"] ?? res["message"] ?? "the relay reported the delivery as not made and gave no reason")
+    };
+  }
+
   // packages/workspace-client/src/entry.ts
   function entryTurtle(args) {
     const iri = (u, what) => {
@@ -3905,13 +4517,30 @@ var WSPC = (() => {
     const undated = input.entries.filter((e) => e.at === null);
     const lastMine = [...dated].reverse().find((e) => e.pod === input.mePod) ?? null;
     const answered = new Set(input.answeredHere);
-    const lastTheirs = [...dated].reverse().find((e) => e.pod !== input.mePod && !answered.has(e.descriptorUrl)) ?? null;
+    const derivedHere = new Set(
+      input.entries.filter((e) => e.pod === input.mePod && e.derivedFrom).map((e) => e.derivedFrom)
+    );
+    const me = input.delegate.agentId;
+    const forSomebodyElse = (e) => e.addressedTo.length > 0 && !e.addressedTo.includes(me);
+    const forMe = (e) => e.addressedTo.includes(me);
+    const theirs = dated.filter((e) => e.pod !== input.mePod);
+    const open = theirs.filter((e) => !answered.has(e.descriptorUrl) && !derivedHere.has(e.descriptorUrl));
+    const asked = open.find(forMe) ?? null;
+    const chatter = [...open].reverse().find((e) => !forSomebodyElse(e)) ?? null;
+    const lastTheirs = asked ?? chatter;
     if (!lastTheirs) {
-      const anyTheirs = dated.some((e) => e.pod !== input.mePod);
+      const anyTheirs = theirs.length > 0;
+      const elsewhere = open.filter(forSomebodyElse);
+      if (elsewhere.length) {
+        return {
+          kind: "nothing-to-answer",
+          why: "Everything unanswered in this channel is addressed to another agent by name. " + elsewhere.length + " entr" + (elsewhere.length === 1 ? "y names" : "ies name") + " an addressee in the signed region and none of them is this delegate, so none of them is this delegate's to answer. An entry addressed to nobody is open to any agent; one addressed to a named agent is not."
+        };
+      }
       return {
         kind: anyTheirs ? "already-answered" : "nothing-to-answer",
         ...anyTheirs ? { answering: dated[dated.length - 1] } : {},
-        why: anyTheirs ? "Everything another member has said in this channel has already been answered by this client in this run. Appending again would put a second permanent record in your delegator's log saying the same thing." : undated.length ? "Nothing another member wrote in this channel carries a readable time, so whether any of it is new is not established. A delegate answers what it can place in the conversation, and it can place none of this." : "Nobody else has written anything readable in this channel yet."
+        why: anyTheirs ? "Everything another member has said in this channel has already been answered \u2014 by this client in this run, or by an entry on your delegator's own log that declares what it was derived from. Appending again would put a second permanent record in your delegator's log saying the same thing." : undated.length ? "Nothing another member wrote in this channel carries a readable time, so whether any of it is new is not established. A delegate answers what it can place in the conversation, and it can place none of this." : "Nobody else has written anything readable in this channel yet."
       };
     }
     if (input.entries.some((e) => e.pod === input.mePod && e.at === null && said(e))) {
@@ -3920,19 +4549,11 @@ var WSPC = (() => {
         why: "One of the entries in your delegator's own log carries no readable time, so whether anybody on that pod has already spoken since " + lastTheirs.pod + " did is not established. Answering on that is how the same message gets answered twice."
       };
     }
-    if (lastMine && lastMine.at !== null && lastTheirs.at !== null && lastMine.at >= lastTheirs.at) {
+    if (!asked && lastMine && lastMine.at !== null && lastTheirs.at !== null && lastMine.at >= lastTheirs.at) {
       return {
         kind: "already-answered",
         answering: lastTheirs,
         why: "Somebody on your delegator's pod \u2014 them, you, or another of their delegates \u2014 has written in this channel since " + lastTheirs.pod + " last did (" + shortRef(lastMine.descriptorUrl) + "). A delegate answers when somebody ELSE has spoken last; appending now would put a second permanent record in that log with nothing new to answer."
-      };
-    }
-    const derived = input.entries.find((e) => e.pod === input.mePod && e.derivedFrom === lastTheirs.descriptorUrl);
-    if (derived) {
-      return {
-        kind: "already-answered",
-        answering: lastTheirs,
-        why: "The newest entry from another member is already declared as answered on your delegator's log (" + shortRef(derived.descriptorUrl) + "). Appending again would put two permanent records in that log saying the same thing."
       };
     }
     const newest = lastTheirs;
@@ -3945,6 +4566,7 @@ var WSPC = (() => {
         workspace: input.workspace,
         slug: input.slug,
         answering: line(newest, input),
+        addressed: forMe(newest),
         transcript: window.map((e) => line(e, input)),
         omitted: Math.max(0, ordered.length - window.length)
       }
@@ -3991,6 +4613,15 @@ var WSPC = (() => {
       "Recent entries, oldest first:",
       ...brief.transcript.map((t) => "  " + t),
       "",
+      // ★ SAID ONLY WHEN IT IS TRUE. An instruction to "do the thing asked" attached to every turn
+      // would make the delegate treat a remark it happened to read as a job it had been given.
+      ...brief.addressed ? [
+        "This entry is ADDRESSED TO YOU BY NAME \u2014 it names you inside its signed region, so it is a",
+        "request made OF YOU and the person who wrote it is waiting on it. Do what is asked, or say",
+        "plainly what you would need in order to do it. Do not answer as if you had merely overheard",
+        "it, and do not hand it back unless you genuinely cannot act on it.",
+        ""
+      ] : [],
       "Reply to this entry:",
       "  " + brief.answering,
       "",
@@ -4049,585 +4680,6 @@ var WSPC = (() => {
       body,
       footing: kind === "MY OWN ACCOUNT" ? { kind: "own-account" } : { kind: "on-behalf-of", principal: args.principal }
     };
-  }
-
-  // packages/core/dist/model/agent.js
-  var { readIri: readIri2, readIriAll: readIriAll2, readLiteral: readLiteral2 } = substrateReaders;
-  var agentNsIri = (relay, pod, name) => relay + "/ns/" + pod + "/" + name;
-  function agentIdHash(agentId) {
-    const OFFSET = 0xcbf29ce484222325n;
-    const PRIME = 0x100000001b3n;
-    const MASK = 0xffffffffffffffffn;
-    let h = OFFSET;
-    const mix = (byte) => {
-      h = (h ^ BigInt(byte)) * PRIME & MASK;
-    };
-    for (const ch of agentId) {
-      const cp = ch.codePointAt(0);
-      if (cp < 128) {
-        mix(cp);
-      } else if (cp < 2048) {
-        mix(192 | cp >> 6);
-        mix(128 | cp & 63);
-      } else if (cp < 65536) {
-        mix(224 | cp >> 12);
-        mix(128 | cp >> 6 & 63);
-        mix(128 | cp & 63);
-      } else {
-        mix(240 | cp >> 18);
-        mix(128 | cp >> 12 & 63);
-        mix(128 | cp >> 6 & 63);
-        mix(128 | cp & 63);
-      }
-    }
-    return h.toString(16).padStart(16, "0");
-  }
-  function agentDocName(agentId, kind) {
-    const pod = agentPodOf(agentId);
-    return pod ? "agent-" + pod + "-" + agentIdHash(agentId) + "-" + kind : null;
-  }
-  function agentDocIri(relay, agentId, kind) {
-    const pod = agentPodOf(agentId);
-    const name = agentDocName(agentId, kind);
-    return pod && name ? agentNsIri(relay, pod, name) : null;
-  }
-  var presenceIri = (relay, agentId) => agentDocIri(relay, agentId, "presence");
-  var capabilitiesIri = (relay, agentId) => agentDocIri(relay, agentId, "capabilities");
-  var describe2 = (port, e) => (port.describeError ? port.describeError(e) : String(e?.message ?? e)).toLowerCase();
-  var iriRef = (u, what) => {
-    if (typeof u !== "string" || !u)
-      throw new Error("agent: " + what + " is missing, so this document is refused rather than written without it");
-    if (/[\s<>"{}|\\^`]/.test(u))
-      throw new Error("agent: " + what + " is not serializable as a Turtle IRI reference, so this document is refused rather than written with a reference that ends somewhere else: " + u);
-    return "<" + u + ">";
-  };
-  var parseMs = (s) => {
-    if (typeof s !== "string" || !s)
-      return null;
-    const t = Date.parse(s);
-    return Number.isNaN(t) ? null : t;
-  };
-  var PRESENCE_RENEW_MS = 9e4;
-  var PRESENCE_LEASE_MS = 18e4;
-  var PRESENCE_MAX_LEASE_MS = 3 * PRESENCE_RENEW_MS;
-  function presenceTurtle(args) {
-    const self = iriRef(args.iri, "the presence document IRI");
-    const agent = iriRef(args.agentId, "the agent this lease is about");
-    return "@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .\n@prefix dct: <http://purl.org/dc/terms/> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n" + self + "\n  a iep:PresenceLease ;\n  iep:presenceOf " + agent + " ;\n" + (args.principal ? "  iep:presenceActingFor " + iriRef(args.principal, "the principal this delegate acts for") + " ;\n" : "") + '  iep:presenceHost "' + escapeTurtleLiteral(args.host) + '" ;\n  dct:created "' + args.createdIso + '"^^xsd:dateTime ;\n  iep:leaseExpires "' + args.expiresIso + '"^^xsd:dateTime .\n';
-  }
-  async function publishPresence(port, args) {
-    const iri = presenceIri(args.relay, args.agentId);
-    const pod = agentPodOf(args.agentId);
-    if (!iri || !pod) {
-      return {
-        kind: "unnameable",
-        why: "This agent's id (" + args.agentId + ') carries no pod segment this client can read, so there is no address a reader would look for its presence at. Nothing was published \u2014 a lease at a name nobody else computes would read to every other client as "this agent has never said it was running".'
-      };
-    }
-    const now = args.nowMs ?? Date.now();
-    const lease = Math.min(args.leaseMs ?? PRESENCE_LEASE_MS, PRESENCE_MAX_LEASE_MS);
-    const createdIso = new Date(now).toISOString();
-    const expiresIso = new Date(now + lease).toISOString();
-    let res;
-    try {
-      res = await port.tool("publish_context", {
-        pod_name: pod,
-        graph_iri: iri,
-        graph_content: presenceTurtle({ iri, agentId: args.agentId, principal: args.principal, host: args.host, createdIso, expiresIso }),
-        visibility: "public",
-        auto_supersede_prior: true,
-        sign_authorship: true,
-        valid_from: createdIso,
-        // ★ THE WHOLE MECHANISM IS THIS ONE FIELD. Past it the relay's own temporal filter stops
-        // answering for this document, and nothing anywhere has to run a timer.
-        valid_until: expiresIso
-      });
-    } catch (e) {
-      return { kind: "error", iri, error: e };
-    }
-    const bad = relayRefusal(res);
-    if (bad)
-      return { kind: "refused", iri, why: String(bad["message"] ?? bad["error"]) };
-    return { kind: "published", iri, descriptorUrl: typeof res["descriptorUrl"] === "string" ? res["descriptorUrl"] : null, expiresIso };
-  }
-  var isPresent = (p) => p.state === "running";
-  async function readPresence(port, args) {
-    const pod = agentPodOf(args.agentId);
-    const iri = presenceIri(args.relay, args.agentId);
-    if (!pod || !iri) {
-      return {
-        state: "unnameable",
-        agentId: args.agentId,
-        pod: null,
-        iri: null,
-        why: "this client cannot compose a presence address from that agent id (" + args.agentId + "), because it carries no pod segment this reader knows how to take out. No pod was asked, so whether its host is running was never established in either direction."
-      };
-    }
-    const now = args.nowMs ?? Date.now();
-    let rows;
-    try {
-      const p = await port.tool("discover_context", {
-        pod_name: pod,
-        graph_iri: iri,
-        sort: "newest-first",
-        limit: 8
-        // No cache: presence is the one read where a two-minute-old answer is exactly the wrong one.
-      }, { cache: false });
-      const bad = relayRefusal(p);
-      if (bad)
-        throw new Error(String(bad["message"] ?? bad["error"]));
-      rows = Array.isArray(p?.["entries"]) ? p?.["entries"] : [];
-    } catch (e) {
-      return {
-        state: "unreadable",
-        agentId: args.agentId,
-        pod,
-        iri,
-        why: "pod " + pod + " did not answer when asked whether that agent had said it was running (" + describe2(port, e) + "). That is not the same as it being off, and neither is being assumed."
-      };
-    }
-    if (!rows.length) {
-      return {
-        state: "never",
-        agentId: args.agentId,
-        pod,
-        iri,
-        why: "that pod holds no presence document for this agent at all. It may well be a real agent; nothing has ever published that its host was up."
-      };
-    }
-    const head = rows[0];
-    const rowFrom = parseMs(head["validFrom"]);
-    const rowUntil = parseMs(head["validUntil"]);
-    if (rowUntil !== null && rowUntil <= now) {
-      return {
-        state: "stale",
-        agentId: args.agentId,
-        pod,
-        iri,
-        lastExpiresMs: rowUntil,
-        why: "the newest lease this agent published lapsed at " + new Date(rowUntil).toISOString() + " and has not been renewed since. Older leases of its own may still be inside their windows; they are claims it has already superseded, and its current claim is this one."
-      };
-    }
-    const url = typeof head["descriptorUrl"] === "string" ? head["descriptorUrl"] : "";
-    if (!url) {
-      return {
-        state: "unreadable",
-        agentId: args.agentId,
-        pod,
-        iri,
-        why: "a live lease was listed for this agent and the listing named no descriptor to read it out of, so nothing was read from bytes anybody signed"
-      };
-    }
-    let d;
-    try {
-      d = await port.descriptor(url);
-    } catch (e) {
-      return {
-        state: "unreadable",
-        agentId: args.agentId,
-        pod,
-        iri,
-        why: "that lease is listed as live and its descriptor could not be fetched (" + describe2(port, e) + "), so who signed it is not established"
-      };
-    }
-    const authorship = readAuthorship(d["authorship"]);
-    const block = d["authorship"];
-    const verified = block?.["authorshipVerified"] === true || block?.["signed"] === true;
-    if (!verified) {
-      return {
-        state: "unreadable",
-        agentId: args.agentId,
-        pod,
-        iri,
-        why: "that lease's authorship did not verify, so nothing about who published it is established. An unverified claim that a process is running is not evidence that one is."
-      };
-    }
-    if (authorship.contentBinding !== "bound" && authorship.contentBinding !== "bound-at-signing") {
-      return {
-        state: "unreadable",
-        agentId: args.agentId,
-        pod,
-        iri,
-        why: `that lease's signature reports contentBinding "` + (authorship.contentBinding ?? "none") + '", so the proof covers WHICH document was written and not WHAT it says. The expiry inside it is not something that signature stands behind.'
-      };
-    }
-    if (authorship.signerAgent !== args.agentId) {
-      return {
-        state: "unreadable",
-        agentId: args.agentId,
-        pod,
-        iri,
-        why: "that lease was signed by " + (authorship.signerAgent ?? "an agent the response did not name") + " and it claims to be about " + args.agentId + ". Only a process holding that agent's own key can say its host is running, so this is not being read as presence."
-      };
-    }
-    const region = graphRegion(d["graph"]?.content ?? "", iri);
-    if (region === null) {
-      return {
-        state: "unreadable",
-        agentId: args.agentId,
-        pod,
-        iri,
-        why: "the signed region of that lease could not be located, so nothing was read from bytes anybody signed"
-      };
-    }
-    const about = readIriAll2(region, "iep:presenceOf");
-    if (about.length !== 1 || about[0] !== args.agentId) {
-      return {
-        state: "unreadable",
-        agentId: args.agentId,
-        pod,
-        iri,
-        why: about.length > 1 ? "that lease's signed region names " + about.length + " different agents as the one it is about, so which agent it is a claim about is not decided and picking one would be this reader guessing" : "that lease's signed region names " + (about[0] ?? "no agent at all") + " as the agent it is about, and it was asked for " + args.agentId + ". The document name is not an assertion; the region is, and it does not agree."
-      };
-    }
-    const signedExpires = parseMs(readLiteral2(region, "iep:leaseExpires"));
-    const signedCreated = parseMs(readLiteral2(region, "dct:created"));
-    if (signedExpires === null) {
-      return {
-        state: "overlong",
-        agentId: args.agentId,
-        pod,
-        iri,
-        spanMs: null,
-        why: "that lease's signed region declares no readable iep:leaseExpires. A lease is only evidence because it is short and has to be renewed, and an expiry the agent did not sign is the relay's claim about availability rather than the agent's \u2014 so there is nothing here to read as presence."
-      };
-    }
-    if (rowUntil !== null && Math.abs(rowUntil - signedExpires) > 1e3) {
-      return {
-        state: "disputed",
-        agentId: args.agentId,
-        pod,
-        iri,
-        signedExpiresMs: signedExpires,
-        rowExpiresMs: rowUntil,
-        why: "that lease's signed region says it expires at " + new Date(signedExpires).toISOString() + " and the relay's own row for it says " + new Date(rowUntil).toISOString() + ". One of those the agent put its key to and one of those it did not, they do not agree, and reporting the disagreement is the whole reason the signed value is written."
-      };
-    }
-    if (signedExpires <= now) {
-      return {
-        state: "stale",
-        agentId: args.agentId,
-        pod,
-        iri,
-        lastExpiresMs: signedExpires,
-        why: "the newest lease this agent published expired, by its own signed iep:leaseExpires, at " + new Date(signedExpires).toISOString() + " and has not been renewed since."
-      };
-    }
-    const span = signedCreated === null ? null : signedExpires - signedCreated;
-    if (span === null || span > PRESENCE_MAX_LEASE_MS) {
-      return {
-        state: "overlong",
-        agentId: args.agentId,
-        pod,
-        iri,
-        spanMs: span,
-        why: span === null ? "that lease's signed region carries an expiry and no readable dct:created, so how long it claims to be good for cannot be computed and it is not being read as presence" : "that lease is valid for " + describeSpan(span) + ", by its own signed dates. A lease is only evidence because it is short and has to be renewed; one that long says nothing about whether anything is running now, so it is not being read as presence."
-      };
-    }
-    return {
-      state: "running",
-      agentId: args.agentId,
-      pod,
-      iri,
-      saidAtMs: signedCreated ?? rowFrom ?? now,
-      expiresMs: signedExpires,
-      descriptorUrl: url,
-      host: readLiteral2(region, "iep:presenceHost"),
-      authorship
-    };
-  }
-  function describeSpan(ms) {
-    const s = Math.max(0, Math.round(ms / 1e3));
-    if (s < 90)
-      return s + "s";
-    const m = Math.round(s / 60);
-    if (m < 90)
-      return m + "m";
-    const h = Math.round(m / 60);
-    if (h < 48)
-      return h + "h";
-    return Math.round(h / 24) + "d";
-  }
-  function presenceLine(p, nowMs = Date.now()) {
-    switch (p.state) {
-      case "running":
-        return "running (said so " + describeSpan(nowMs - p.saidAtMs) + " ago)";
-      case "stale":
-        return p.lastExpiresMs === null ? "not running as far as its pod says" : "not since " + new Date(p.lastExpiresMs).toISOString();
-      case "never":
-        return "its pod holds no lease for it at all";
-      case "overlong":
-        return "published a lease too long to be evidence";
-      case "disputed":
-        return "its lease and the relay disagree about when it expires";
-      case "unreadable":
-        return "whether it is running is not established";
-      // ★ SAYS WHAT HAPPENED, WHICH IS THAT NOTHING DID. Every other line here reports a document;
-      // this one reports that no document was looked for, because no address could be composed.
-      case "unnameable":
-        return "this client cannot compose a presence address from that agent id, so whether it is running was never asked";
-    }
-  }
-  function capabilityProblem(draft) {
-    if (typeof draft.action !== "string" || !draft.action) {
-      return "a capability names no iep:action, so there is nothing for a caller to invoke and nothing for a reader to dereference";
-    }
-    if (!/^https?:\/\//.test(draft.action)) {
-      return "a capability's iep:action must be a dereferenceable http(s) URL \u2014 every identifier in this system is one, and a reader that cannot follow it is being handed an opaque token dressed as a link. `" + draft.action + "` is not one.";
-    }
-    const r = draft.route;
-    if (!r || r.kind !== "hosted" && r.kind !== "ask") {
-      return "a capability declares neither a hydra:target nor an iep:askVia, so it advertises an agent reachable by no route at all. That is not a smaller offer than the other two; it is an offer a reader cannot act on in any way.";
-    }
-    if (r.kind === "hosted" && !r.target)
-      return "a hosted capability names no hydra:target";
-    if (r.kind === "ask" && !r.askVia)
-      return "an ask-routed capability names no iep:askVia";
-    return null;
-  }
-  function capabilityTurtle(draft) {
-    const problem = capabilityProblem(draft);
-    if (problem)
-      throw new Error("capabilityTurtle: " + problem);
-    const self = iriRef(draft.iri, "the capability document IRI");
-    const agent = iriRef(draft.agentId, "the agent this capability document is about");
-    const action = iriRef(draft.action, "the action IRI");
-    const route = draft.route.kind === "hosted" ? "  hydra:target " + iriRef(draft.route.target, "the hydra:target, which comes from this deployment's own configuration") + ' ;\n  hydra:method "POST" ;\n' : "  iep:askVia " + iriRef(draft.route.askVia, "the iep:askVia route") + " ;\n";
-    const created2 = draft.createdIso ?? (/* @__PURE__ */ new Date()).toISOString();
-    return "@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .\n@prefix hydra: <http://www.w3.org/ns/hydra/core#> .\n@prefix dct: <http://purl.org/dc/terms/> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n" + self + "\n  a iep:Affordance, hydra:Operation ;\n  iep:capabilityOf " + agent + " ;\n  iep:action " + action + " ;\n" + route + (draft.requiresSignedRequest ? "  iep:requiresSignedRequest true ;\n" : "") + '  hydra:title "' + escapeTurtleLiteral(draft.title) + '" ;\n  dct:description "' + escapeTurtleLiteral(draft.description) + '" ;\n  dct:created "' + created2 + '"^^xsd:dateTime .\n';
-  }
-  async function publishCapability(port, args) {
-    const iri = capabilitiesIri(args.relay, args.agentId);
-    const pod = agentPodOf(args.agentId);
-    if (!iri || !pod) {
-      return {
-        kind: "unnameable",
-        why: "This agent's id (" + args.agentId + ") carries no pod segment this client can read, so there is no address a peer would look for its capabilities at. Nothing was published."
-      };
-    }
-    const problem = capabilityProblem(args);
-    if (problem)
-      return { kind: "invalid", why: problem };
-    let res;
-    try {
-      res = await port.tool("publish_context", {
-        pod_name: pod,
-        graph_iri: iri,
-        graph_content: capabilityTurtle({ iri, ...args }),
-        visibility: "public",
-        // A reader reads the CURRENT head of this IRI, so republishing must move the head rather than
-        // fork it. Unlike a log there is no history here that a reader walks.
-        auto_supersede_prior: true,
-        // Signed, because an unsigned capability document is an unattributable instruction to POST
-        // somewhere. The bytes are immutable once published and the key moves on, so a document not
-        // signed at write time can never be attributed afterwards.
-        sign_authorship: true
-      });
-    } catch (e) {
-      return { kind: "error", iri, error: e };
-    }
-    const bad = relayRefusal(res);
-    if (bad)
-      return { kind: "refused", iri, why: String(bad["message"] ?? bad["error"]) };
-    return {
-      kind: "published",
-      iri,
-      descriptorUrl: typeof res["descriptorUrl"] === "string" ? res["descriptorUrl"] : null,
-      status: String(res["status"] ?? "ok")
-    };
-  }
-  async function readCapabilities(port, args) {
-    const pod = agentPodOf(args.agentId);
-    const iri = capabilitiesIri(args.relay, args.agentId);
-    if (!pod || !iri) {
-      return {
-        kind: "unnameable",
-        agentId: args.agentId,
-        iri: null,
-        why: "this client cannot compose a capability address from that agent id (" + args.agentId + "), because it carries no pod segment this reader knows how to take out. No pod was asked, so what that agent can be asked is not established \u2014 which is not the same as it advertising nothing."
-      };
-    }
-    let rows;
-    try {
-      const p = await port.tool("discover_context", { pod_name: pod, graph_iri: iri, sort: "newest-first", limit: 4 }, { cache: false });
-      const bad = relayRefusal(p);
-      if (bad)
-        throw new Error(String(bad["message"] ?? bad["error"]));
-      rows = Array.isArray(p?.["entries"]) ? p?.["entries"] : [];
-    } catch (e) {
-      return { kind: "unreadable", agentId: args.agentId, iri, why: "pod " + pod + " did not answer when asked what that agent can be asked (" + describe2(port, e) + "), so its capabilities are not established \u2014 which is not the same as it having none" };
-    }
-    if (!rows.length) {
-      return { kind: "none", agentId: args.agentId, iri, why: "that pod holds no capability document for this agent, so it advertises nothing a reader could invoke" };
-    }
-    const url = typeof rows[0]?.["descriptorUrl"] === "string" ? rows[0]["descriptorUrl"] : "";
-    if (!url)
-      return { kind: "unreadable", agentId: args.agentId, iri, why: "a capability document was listed and the listing named no descriptor to read it out of" };
-    let d;
-    try {
-      d = await port.descriptor(url);
-    } catch (e) {
-      return { kind: "unreadable", agentId: args.agentId, iri, why: "that capability document could not be fetched (" + describe2(port, e) + "), so who published it is not established" };
-    }
-    const authorship = readAuthorship(d["authorship"]);
-    const block = d["authorship"];
-    if (!(block?.["authorshipVerified"] === true || block?.["signed"] === true)) {
-      return { kind: "unreadable", agentId: args.agentId, iri, why: "that capability document's authorship did not verify. An unverified document naming a place to POST is an unattributable instruction, so nothing is being read out of it." };
-    }
-    if (authorship.contentBinding !== "bound" && authorship.contentBinding !== "bound-at-signing") {
-      return { kind: "unreadable", agentId: args.agentId, iri, why: `that capability document's signature reports contentBinding "` + (authorship.contentBinding ?? "none") + '", so it covers WHICH document was written and not WHAT it says \u2014 the target inside it is not something that signature stands behind' };
-    }
-    if (authorship.signerAgent !== args.agentId) {
-      return { kind: "unreadable", agentId: args.agentId, iri, why: "that capability document was signed by " + (authorship.signerAgent ?? "an agent the response did not name") + " and it sits at the address for " + args.agentId + ". Only that agent can say what it can be asked." };
-    }
-    const region = graphRegion(d["graph"]?.content ?? "", iri);
-    if (region === null)
-      return { kind: "unreadable", agentId: args.agentId, iri, why: "the signed region of that capability document could not be located, so nothing was read from bytes anybody signed" };
-    const about = readIriAll2(region, "iep:capabilityOf");
-    if (about.length !== 1 || about[0] !== args.agentId) {
-      return { kind: "unreadable", agentId: args.agentId, iri, why: "that capability document's signed region names " + (about.length > 1 ? about.length + " different agents" : about[0] ?? "no agent at all") + " as the agent it is about, and it was asked for " + args.agentId + ". The document name is not an assertion; the region is." };
-    }
-    const action = readIri2(region, "iep:action");
-    const target = readIri2(region, "hydra:target");
-    const askVia = readIri2(region, "iep:askVia");
-    if (!action)
-      return { kind: "unreadable", agentId: args.agentId, iri, why: "that capability document names no iep:action, so there is nothing in it a caller could invoke" };
-    if (target && askVia) {
-      return { kind: "unreadable", agentId: args.agentId, iri, why: "that capability document declares BOTH a hydra:target and an iep:askVia. Those are two different ways to reach this agent and nothing in the document says which is the real one, so choosing would be this reader guessing on the caller's behalf." };
-    }
-    if (!target && !askVia) {
-      return { kind: "unreadable", agentId: args.agentId, iri, why: "that capability document declares neither a hydra:target nor an iep:askVia, so it advertises an agent reachable by no route at all" };
-    }
-    return {
-      kind: "advertised",
-      agentId: args.agentId,
-      iri,
-      action,
-      route: target ? { kind: "hosted", target } : { kind: "ask", askVia },
-      title: readLiteral2(region, "hydra:title"),
-      description: readLiteral2(region, "dct:description"),
-      requiresSignedRequest: substrateReaders.hasTrue(region, "iep:requiresSignedRequest"),
-      descriptorUrl: url,
-      authorship
-    };
-  }
-  var REQUEST_INBOX_LIMIT = 50;
-  async function readRequests(port, limit = REQUEST_INBOX_LIMIT) {
-    const p = await port.tool("read_inbox", { limit }, { cache: false });
-    const bad = relayRefusal(p);
-    if (bad)
-      throw new Error(String(bad["message"] ?? bad["error"]));
-    const inbox = typeof p?.["inbox"] === "string" ? p["inbox"] : null;
-    const all = Array.isArray(p?.["items"]) ? p?.["items"] : [];
-    const notices = all.filter((it) => it && typeof it["about"] === "string" && it["about"]).map((item) => ({
-      item,
-      about: String(item["about"]),
-      actor: typeof item["actor"] === "string" ? item["actor"] : null,
-      summary: typeof item["summary"] === "string" ? item["summary"] : null,
-      published: typeof item["published"] === "string" ? item["published"] : null
-    }));
-    return { notices, saturated: all.length >= limit, limit, inbox };
-  }
-  async function agentInbox(port) {
-    const p = await port.tool("read_inbox", { limit: 1 }, { cache: false });
-    const bad = relayRefusal(p);
-    if (bad)
-      throw new Error(String(bad["message"] ?? bad["error"]));
-    return typeof p?.["inbox"] === "string" && p["inbox"] ? p["inbox"] : null;
-  }
-  var admitAnyVerifiedSigner = () => null;
-  async function verifyRequest(port, notice, args) {
-    const checks = [];
-    const base = {
-      about: notice.about,
-      servedFromPath: null,
-      body: null,
-      addressedTo: [],
-      forMe: [],
-      descriptorUrl: null,
-      signedBy: null,
-      region: null
-    };
-    const no = (why, extra = {}) => {
-      checks.push({ mark: "n", text: why });
-      return { ...base, ...extra, checks, ok: false, why };
-    };
-    let d;
-    try {
-      d = await port.descriptor(notice.about);
-    } catch (e) {
-      return no("the address this notice points at did not resolve to a descriptor (" + describe2(port, e) + "), so there is nothing signed to read the ask out of");
-    }
-    const descriptorUrl = notice.about;
-    const servedFromPath = podOfDescriptorUrl2(descriptorUrl);
-    checks.push({ mark: "y", text: "The address in the notice resolves to a descriptor" + (servedFromPath ? ", at a URL whose first path segment is " + servedFromPath : "") });
-    const block = d["authorship"];
-    const binding = typeof block?.["contentBinding"] === "string" ? block["contentBinding"] : null;
-    const signedBy = typeof block?.["signedBy"] === "string" ? block["signedBy"] : typeof block?.["signer"] === "string" ? block["signer"] : null;
-    const descriptorBound = block?.["descriptorBinding"]?.bound === true;
-    const withDoc = { descriptorUrl, servedFromPath, signedBy };
-    if (binding !== "bound" && binding !== "bound-at-signing") {
-      return no(`that record's signature reports contentBinding "` + (binding ?? "none") + '". Only "bound" means a signature was verified AND its digest recomputed over the bytes being served, so nothing here establishes that what the ask says is what anybody signed.', withDoc);
-    }
-    if (!signedBy) {
-      return no("that record's content is bound to a signature and the response names no signer, so who wrote the ask is not established \u2014 and check 3 below has nothing to hold the deliverer against", withDoc);
-    }
-    checks.push({ mark: "y", text: "Its signature is intact and bound to its own content, signed by " + signedBy });
-    if (!descriptorBound) {
-      checks.push({
-        mark: "q",
-        text: "Its proof does not bind to the address it was served from \u2014 the ordinary shape of a delegated write, where the signer is the agent and the pod is its delegator's. What rules out a proof replayed onto somebody else's pod is not this field but the two checks below: the party that delivered the pointer must BE the signer, and the pod it was served from must have standing."
-      });
-    }
-    if (!notice.actor) {
-      return no("the notice names no actor, so whether the party that delivered it is the party that wrote the record is not established", withDoc);
-    }
-    if (notice.actor !== signedBy) {
-      return no("the notice was delivered by " + notice.actor + " and the record it points at was signed by " + (signedBy ?? "an agent the descriptor did not name") + ". Any account on this relay can deliver into any inbox, so a pointer placed by a party that did not write the thing is somebody else pointing at your record.", withDoc);
-    }
-    checks.push({ mark: "y", text: "The account that delivered the notice is the one that signed the record it points at (" + signedBy + ")" });
-    const content = d["graph"]?.content ?? "";
-    const describes = readIriAll2(typeof d["turtle"] === "string" ? d["turtle"] : "", "iep:describes");
-    let region = null;
-    for (const g of describes) {
-      region = graphRegion(content, g);
-      if (region !== null)
-        break;
-    }
-    if (region === null) {
-      return no("the signed region of that record could not be located" + (describes.length ? " under any of the " + describes.length + " graph IRIs its descriptor declares" : ", and its descriptor declares no iep:describes to look one up by") + ", so nothing was read from bytes anybody signed", withDoc);
-    }
-    const body = readLiteral2(region, "dct:description");
-    const addressedTo = readIriAll2(region, "iep:addressedTo");
-    const withRegion = { ...withDoc, body, addressedTo, region };
-    const held = new Set(args.heldAgentIds);
-    const forMe = addressedTo.filter((a) => held.has(a));
-    if (!addressedTo.length) {
-      return no("that record names no iep:addressedTo, so it is not a request addressed to anybody. It is a record and is read as one; nothing is being dispatched from it.", withRegion);
-    }
-    if (!forMe.length) {
-      return no("that record is addressed to " + addressedTo.join(", ") + " and this machine holds no key for any of them. An agent runs on its own human's credential, so answering for an agent whose key is somewhere else is the one thing this refuses to do.", withRegion);
-    }
-    checks.push({ mark: "y", text: "It is addressed to " + forMe.join(", ") + ", and this machine holds that key" });
-    const admits = args.admits ?? admitAnyVerifiedSigner;
-    const refused = await admits({ servedFromPath: servedFromPath ?? "", signedBy, region, descriptorUrl });
-    if (refused)
-      return no(refused, { ...withRegion, forMe });
-    checks.push({ mark: "y", text: signedBy + " has standing to ask this agent, by this host's own policy rather than by anything in the notice" });
-    if (args.answeredHere.indexOf(descriptorUrl) >= 0) {
-      return no("this client has already drafted an answer to that record in this run. Answering again would put a second permanent record in your log saying the same thing.", { ...withRegion, forMe });
-    }
-    if (args.derivedFromOnMyPod.indexOf(descriptorUrl) >= 0) {
-      return no("a record already on your pod declares it was derived from that one, so it has been answered \u2014 and that survives a restart of this app, which the in-run list above does not.", { ...withRegion, forMe });
-    }
-    checks.push({ mark: "y", text: "Nothing on your pod and nothing in this run has answered it yet" });
-    return { about: notice.about, ...withRegion, forMe, checks, ok: true, why: null };
-  }
-  function podOfDescriptorUrl2(u) {
-    if (typeof u !== "string")
-      return null;
-    const m = /^https?:\/\/[^/]+\/([^/]+)\//.exec(u);
-    return m?.[1] ?? null;
   }
 
   // packages/workspace-client/src/presence.ts

@@ -48,6 +48,8 @@ export { orderChain, toChainRow, type ChainRow, type ChainWalk } from './chain.j
 
 export { shortRef } from './format.js';
 
+export { notifyAsk, type AskNotice } from './ask.js';
+
 export {
   entryTurtle, preconditionLine, entryShapeAnswer, postEntry,
   type PostOutcome, type EntryAuthor,
