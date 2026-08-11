@@ -6,8 +6,23 @@
 # ghcr.io/<owner>/<image> and Railway pulls them from there with a read:packages
 # token.
 #
-# Auth is the workflow's own GITHUB_TOKEN (packages: write) — no PAT, nothing to
-# rotate, nothing to leak.
+# ★ AUTH IS A PAT (`GHCR_TOKEN`), AND THIS HEADER USED TO SAY THE OPPOSITE.
+#
+# It read: "Auth is the workflow's own GITHUB_TOKEN (packages: write) — no PAT,
+# nothing to rotate, nothing to leak." Every clause of that was false, and the
+# login step forty lines down said so in its own comment the whole time. The two
+# disagreed for months and the reassuring one was at the top.
+#
+# MEASURED 2026-08-11: all sixteen `interego-*` container packages report
+# `repository: null` — NOT LINKED to any repo. GITHUB_TOKEN acts as the
+# REPOSITORY, so it authenticates against ghcr.io fine and is then refused write
+# on every one of them (403 on the blob HEAD; see the login step for the run id).
+# The PAT acts as the package OWNER, which is why only the PAT works.
+#
+# So there IS something to rotate, and it expires: GHCR_TOKEN lapsed on
+# 2026-08-11 and took the whole deploy path down with it. Until each package is
+# given this repository Write access (package settings -> Manage Actions access),
+# that remains true — see the login step for the full note.
 #
 # Usage:
 #   gh workflow run build-ghcr.yml -f image=interego-relay     # one image
