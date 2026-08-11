@@ -6,23 +6,27 @@
 # ghcr.io/<owner>/<image> and Railway pulls them from there with a read:packages
 # token.
 #
-# ★ AUTH IS A PAT (`GHCR_TOKEN`), AND THIS HEADER USED TO SAY THE OPPOSITE.
+# Auth is the workflow's own GITHUB_TOKEN (packages: write) — no PAT, nothing to
+# rotate, nothing to leak.
 #
-# It read: "Auth is the workflow's own GITHUB_TOKEN (packages: write) — no PAT,
-# nothing to rotate, nothing to leak." Every clause of that was false, and the
-# login step forty lines down said so in its own comment the whole time. The two
-# disagreed for months and the reassuring one was at the top.
+# ★ THAT SENTENCE WAS FALSE FOR MONTHS BEFORE IT WAS TRUE, so it is worth saying
+# how it became true rather than leaving a reassuring line nobody can check.
 #
-# MEASURED 2026-08-11: all sixteen `interego-*` container packages report
-# `repository: null` — NOT LINKED to any repo. GITHUB_TOKEN acts as the
-# REPOSITORY, so it authenticates against ghcr.io fine and is then refused write
-# on every one of them (403 on the blob HEAD; see the login step for the run id).
-# The PAT acts as the package OWNER, which is why only the PAT works.
+# It sat here while the login step forty lines down said the opposite in its own
+# comment. The two disagreed, and the reassuring one was at the top — so it was
+# the one people read. On 2026-08-11 the PAT it denied the existence of expired
+# and took the entire deploy path down: no image could be pushed, and Railway,
+# which stores its own per-service copy of the same credential, could not PULL
+# either.
 #
-# So there IS something to rotate, and it expires: GHCR_TOKEN lapsed on
-# 2026-08-11 and took the whole deploy path down with it. Until each package is
-# given this repository Write access (package settings -> Manage Actions access),
-# that remains true — see the login step for the full note.
+# What made it true is a one-time grant OUTSIDE this repository: all sixteen
+# `interego-*` packages now give this repo the Write role under their own
+# "Manage Actions access". Verified by pushing with no PAT present — see the
+# login step for the run ids and for what to do if a NEW package 403s.
+#
+# Note the packages still report `repository: null` over the API; that field is
+# the "Connect repository" association, which is a DIFFERENT setting from the
+# Actions-access grant and is not evidence either way.
 #
 # Usage:
 #   gh workflow run build-ghcr.yml -f image=interego-relay     # one image
@@ -207,35 +211,40 @@ jobs:
       - uses: docker/setup-buildx-action@v3
         if: steps.gate.outputs.skip != 'true'
 
-      # GITHUB_TOKEN can only write packages that are CONNECTED to this repo. The images were first
-      # pushed by `crane` during the ACR->GHCR migration, which created them unconnected, so
-      # GITHUB_TOKEN gets a 403 on push. GHCR_TOKEN (a write:packages PAT) is the credential that
-      # works.
+      # ★ NO PAT. The repository pushes as ITSELF, with a token minted per run that cannot expire.
       #
-      # ★ THIS COMMENT USED TO END "the source label below connects each package on first push,
-      # after which GITHUB_TOKEN suffices and the secret can be deleted". THAT IS FALSE, and it is
-      # corrected here rather than deleted, because it is the kind of false that costs a deploy.
+      # ── HOW THIS GOT HERE, BECAUSE THE HISTORY IS THE WARNING ────────────────────
       #
-      # MEASURED 2026-08-11, on this workflow, on this repo. GHCR_TOKEN (set 2026-07-12) expired;
-      # every build failed at the login step with `Get "https://ghcr.io/v2/": denied: denied`. On
-      # the strength of the sentence above, the login was switched to GITHUB_TOKEN and dispatched
-      # for `interego-discord` (run 31509074883). The result separates the two claims cleanly:
+      # GITHUB_TOKEN can only write packages that GRANT this repository access. These were created
+      # by `crane` during the ACR->GHCR migration, outside any repo, so it got a 403 on push and a
+      # `write:packages` PAT (GHCR_TOKEN) was used instead. This comment then claimed the
+      # `org.opencontainers.image.source` label "connects each package on first push, after which
+      # GITHUB_TOKEN suffices and the secret can be deleted" — and nobody acted on it for months.
       #
-      #   · LOGIN SUCCEEDED — the build ran all the way to `[build 33/38] RUN npm ci`.
-      #   · THE PUSH DID NOT: `failed to push ghcr.io/markjspivey-xwisee/interego-discord:...
-      #     403 Forbidden` on the blob HEAD.
+      # MEASURED 2026-08-11, all three claims, in order:
       #
-      # So the packages are STILL not connected, years of pushes carrying
-      # `org.opencontainers.image.source` notwithstanding — the label does not retroactively grant
-      # a repository write access to a package that was created outside it. Connecting them is a
-      # one-time action in each package's own settings ("Manage Actions access" -> add this
-      # repository with the Write role), and only after that can this fall back to GITHUB_TOKEN and
-      # the secret be deleted.
+      #   1. The PAT (set 2026-07-12) EXPIRED and took the whole deploy path down. Every build
+      #      failed here with `Get "https://ghcr.io/v2/": denied: denied`, before a layer was built.
+      #      Worse, it gates TWO things: Railway stores its own per-service copy to PULL with, so
+      #      redeploys failed separately with "never resolved to a digest" and empty logs.
+      #   2. The label claim was FALSE. Switching to GITHUB_TOKEN (run 31509074883) got past login
+      #      — the build reached `[build 33/38] RUN npm ci` — and then died on the push with
+      #      `403 Forbidden`. The label does not retroactively grant a repository access to a
+      #      package created outside it, however many times it is pushed.
+      #   3. Granting it explicitly DOES work. All sixteen `interego-*` packages were given this
+      #      repository the Write role under "Manage Actions access", and run 31531305564 pushed
+      #      `interego-discord:d5cc893f…` as the repository with no PAT in the workflow at all.
       #
-      # ★ UNTIL THEN THIS DEPLOY PATH HAS AN EXPIRY DATE NOBODY IS WATCHING, which is worth saying
-      # plainly: a PAT here is not a credential choice, it is a scheduled outage. `secrets.X || Y`
-      # picks whichever secret is NON-EMPTY, not whichever still works, so an expired PAT does not
-      # fall back — it just fails.
+      # ── WHY THE PAT IS NOT KEPT AS A FALLBACK ────────────────────────────────────
+      #
+      # It cannot act as one. `secrets.X || secrets.Y` picks whichever is NON-EMPTY, not whichever
+      # still works — so a stale PAT does not fall back to anything, it just fails, which is
+      # precisely what happened. A credential that can only ever mask this one is worse than none.
+      #
+      # ★ IF A NEW PACKAGE 403s ON ITS FIRST PUSH, that is this same story starting again: a
+      # package created outside the repo has no grant. Add the repo under its "Manage Actions
+      # access" with the Write role. Do NOT reintroduce a PAT — that is how this became a
+      # scheduled outage nobody was watching.
       - name: Log in to GHCR
         if: steps.gate.outputs.skip != 'true'
         uses: docker/login-action@v3
