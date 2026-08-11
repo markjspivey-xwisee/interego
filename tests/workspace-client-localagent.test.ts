@@ -600,6 +600,43 @@ describe('decideTurn: an entry addressed to one agent by name', () => {
     }
   });
 
+  /**
+   * ★★ THE ASK A HUMAN ACTUALLY MADE, WHICH THE FIRST VERSION OF THIS COULD NOT SEE.
+   *
+   * Ordinary talk is filtered to OTHER members' pods — correct, because "has somebody else
+   * spoken" is what a delegate answers in a conversation. But a person asking their OWN agent
+   * writes it on their OWN pod, so the filter removed it before addressing was consulted.
+   *
+   * Measured on the live fleet the first time the feature was used end to end: `/workspace ask`
+   * wrote the ask with `iep:addressedTo` naming the delegate, the delegate's host was up and
+   * publishing presence, and nothing was ever answered. Both surfaces OFFER asking your own agent,
+   * so the offer was real and the answer was structurally impossible.
+   */
+  it('★★ answers an ask from its OWN principal, on its own delegator\'s pod', () => {
+    const d = decideTurn(input({ entries: [
+      askedOf(D1, ME, 'u1', 'Claude side, what do I usually ask you to build?', at('2026-08-07T10:00:00Z')),
+    ] }));
+    expect(d.kind).toBe('answer');
+    if (d.kind === 'answer') {
+      expect(d.answering.descriptorUrl).toBe('u1');
+      expect(d.brief.addressed).toBe(true);
+    }
+  });
+
+  it('★ but never answers its OWN words, however they are addressed', () => {
+    // The one loop the rule above could open: an entry this delegate wrote, naming itself.
+    const mine = said(ME, 'u1', 'something I said', at('2026-08-07T10:00:00Z'), null,
+      byDelegate(ME, CLAUDE_SIDE), [D1]);
+    expect(decideTurn(input({ entries: [mine] })).kind).not.toBe('answer');
+  });
+
+  it('an unaddressed entry on my own pod is still not mine to answer', () => {
+    // The pod filter is right for ordinary talk and stays: a delegate does not reply to its
+    // delegator thinking aloud. Only being NAMED lifts it.
+    expect(decideTurn(input({ entries: [said(ME, 'u1', 'just a note to self', at('2026-08-07T10:00:00Z'))] })).kind)
+      .not.toBe('answer');
+  });
+
   it('★ an entry addressed to several agents including me is mine to answer', () => {
     const d = decideTurn(input({ entries: [
       said(THEM, 'u1', 'both of you, please look', at('2026-08-07T10:00:00Z'), null, undefined, [OTHER, D1]),

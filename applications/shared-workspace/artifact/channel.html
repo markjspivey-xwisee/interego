@@ -4527,9 +4527,11 @@ var WSPC = (() => {
     const me = input.delegate.agentId;
     const forSomebodyElse = (e) => e.addressedTo.length > 0 && !e.addressedTo.includes(me);
     const forMe = (e) => e.addressedTo.includes(me);
+    const unanswered = (e) => !answered.has(e.descriptorUrl) && !derivedHere.has(e.descriptorUrl);
+    const authoredByMe = (e) => e.author.kind === "delegate" && e.author.agentId === me;
     const theirs = dated.filter((e) => e.pod !== input.mePod);
-    const open = theirs.filter((e) => !answered.has(e.descriptorUrl) && !derivedHere.has(e.descriptorUrl));
-    const asked = open.find(forMe) ?? null;
+    const open = theirs.filter(unanswered);
+    const asked = dated.filter(unanswered).find((e) => forMe(e) && !authoredByMe(e)) ?? null;
     const chatter = [...open].reverse().find((e) => !forSomebodyElse(e)) ?? null;
     const lastTheirs = asked ?? chatter;
     if (!lastTheirs) {
