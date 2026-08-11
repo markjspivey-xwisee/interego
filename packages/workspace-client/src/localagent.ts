@@ -349,8 +349,16 @@ export function decideTurn(input: TurnInput): TurnDecision {
   const forSomebodyElse = (e: SeenEntry): boolean => e.addressedTo.length > 0 && !e.addressedTo.includes(me);
   const forMe = (e: SeenEntry): boolean => e.addressedTo.includes(me);
 
+  const unanswered = (e: SeenEntry): boolean => !answered.has(e.descriptorUrl) && !derivedHere.has(e.descriptorUrl);
+  /**
+   * ★ AN ENTRY THIS DELEGATE WROTE IS NEVER A THING IT ANSWERS. The only loop the rule below
+   * could open, closed where it opens: without this, an agent that addressed itself — or that
+   * relayed an ask — would answer its own words forever.
+   */
+  const authoredByMe = (e: SeenEntry): boolean => e.author.kind === 'delegate' && e.author.agentId === me;
+
   const theirs = dated.filter((e) => e.pod !== input.mePod);
-  const open = theirs.filter((e) => !answered.has(e.descriptorUrl) && !derivedHere.has(e.descriptorUrl));
+  const open = theirs.filter(unanswered);
   /**
    * ★ A DIRECT ASK OUTRANKS THE CONVERSATION, AND IS TAKEN OLDEST FIRST.
    *
@@ -358,8 +366,26 @@ export function decideTurn(input: TurnInput): TurnDecision {
    * newest instead would let a second ask bury the first one permanently, which is not what
    * somebody who asked twice meant. Ordinary talk is still taken NEWEST first, because there the
    * question is "what is the conversation now" and not "what am I still holding".
+   *
+   * ★★ AND IT IS DRAWN FROM `dated`, NOT FROM `theirs` — THE COMMONEST ASK OF ALL COMES FROM MY
+   * OWN PRINCIPAL, AND THIS FUNCTION COULD NOT SEE IT.
+   *
+   * Ordinary talk is filtered to OTHER members' pods, and rightly: "has somebody else spoken" is
+   * the question a delegate answers in a conversation. An ask is not that question. A person
+   * asking their OWN agent something writes it on their OWN pod — that is where their entries go
+   * — so the pod filter removed it before addressing was ever consulted, and the agent skipped a
+   * question addressed to it by name, sitting in the log it reads every 45 seconds.
+   *
+   * MEASURED 2026-08-11, on the live fleet, first time a human used the feature end to end:
+   * `/workspace ask` wrote entry #4 on `u-eth-8f3b8e939600` carrying
+   * `iep:addressedTo <…interego-delegate-u-eth-03f52e15b9df>`, the delegate's host was up and
+   * publishing presence leases, and nothing was ever answered. Both surfaces OFFER asking your own
+   * agent — the Discord picker labels those candidates `you`, and the desktop draws an Ask on your
+   * own delegate rows — so the offer was real and the answer was structurally impossible.
+   *
+   * The loop this could open is closed by `authoredByMe`: a delegate never answers its own words.
    */
-  const asked = open.find(forMe) ?? null;
+  const asked = dated.filter(unanswered).find((e) => forMe(e) && !authoredByMe(e)) ?? null;
   const chatter = [...open].reverse().find((e) => !forSomebodyElse(e)) ?? null;
   const lastTheirs = asked ?? chatter;
 
