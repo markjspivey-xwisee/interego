@@ -58,27 +58,31 @@ export interface Seat {
   acceptAuthorship?: unknown;
 }
 
-/** What the fold found, plus every cap it hit — a capped scan that came back full may have cut members off. */
+/** What the fold found, and the one cap it still has — how many of the grants it found it READ. */
 export interface RosterFold {
   readonly seats: readonly Seat[];
   readonly grantPod: string;
   /** Non-null when the grant pod came from `wsp:convener` rather than the workspace IRI. */
   readonly grantPodDerivedFrom: string | null;
-  readonly grantScanSaturated: boolean;
-  readonly grantLimit: number;
   readonly grantsFound: number;
   readonly grantsRead: number;
   readonly grantReadCap: number;
 }
 
-/** How many entries the convener's pod is scanned for. */
-export const GRANT_LIMIT = 400;
 /**
- * How many of the grants that scan FINDS are then read.
+ * How many of the grants the scan FINDS are then read.
  *
- * Each read is two round trips (head + descriptor) against a possibly cold pod, so an
- * unbounded fold on a large workspace is a client that appears to hang. A workspace with more
- * members than this is read down to the cap and the caller is told how many were found.
+ * ★ THE ONLY CAP LEFT, AND IT IS A WORK BOUND RATHER THAN A VISIBILITY ONE. Each read is two
+ * round trips (head + descriptor) against a possibly cold pod plus an acceptance lookup on the
+ * member's own, so an unbounded fold on a large workspace is a client that appears to hang. The
+ * ENUMERATION is now complete (see {@link foldRoster}); this bounds only how much of it one
+ * caller will dereference, and the caller is told both numbers.
+ *
+ * ★ AND IT IS A DEFAULT, NOT A CONSTANT ANY MORE. One number cannot serve a background responder
+ * and a per-keystroke Discord autocomplete: `main.ts` states that picker's budget as three
+ * seconds with NO deferral — Discord has no "thinking" state for an autocomplete, so a handler
+ * that overruns produces an empty box with no explanation. Callers with room pass a bigger
+ * `readCap`; the picker keeps this.
  */
 export const GRANT_READ_CAP = 25;
 
@@ -109,6 +113,24 @@ export async function foldRoster(
     readonly slug: string;
     readonly convener: string | null;
     readonly convenerPod: string | null;
+    /**
+     * How many of the grants found may be dereferenced. Defaults to {@link GRANT_READ_CAP}.
+     *
+     * Per-caller because the budgets genuinely differ — see the constant. A caller that raises
+     * this is claiming it has the time, and nothing here can check that claim for it.
+     */
+    readonly readCap?: number;
+    /**
+     * Pods whose grant should be read FIRST if the cap bites. The convener's own is always
+     * included; a shell adds the viewer's.
+     *
+     * ★ WHICH GRANTS SURVIVE A TRUNCATED READ IS THE REAL DEFECT ONCE ENUMERATION IS COMPLETE.
+     * The scan is newest-first, and grants are written ONCE at invite time while entries are
+     * published to the same pod continuously — so the oldest members, very often including the
+     * convener's own founding grant, are exactly the rows a cap drops. Ordering the rows that
+     * matter to the front costs nothing and removes that symptom without raising the cap.
+     */
+    readonly prefer?: readonly string[];
   },
 ): Promise<RosterFold> {
   // ★ WHICH POD HOLDS THE GRANTS — see `grantPodFor`. Using the pod segment inside the
@@ -116,13 +138,31 @@ export async function foldRoster(
   // was read from the wrong pod and reported an empty roster.
   const grantPod = grantPodFor(args.convenerPod, args.iriOwner);
 
-  const p = await client.tool('discover_context', { pod_name: grantPod, limit: GRANT_LIMIT, sort: 'newest-first' }) as Record<string, unknown> | null;
+  /**
+   * ★ NO `limit`, AND THAT IS THE FIX RATHER THAN AN OVERSIGHT.
+   *
+   * This asked for `limit: 400` and then reported `grantScanSaturated` when 400 came back, which
+   * every surface rendered as "older grants may lie past the end of this — a member missing from
+   * the roster would also be missing from the channel". Honest, and avoidable: the cap bought
+   * NOTHING. Read from the relay's own handler rather than assumed — `discover_context`'s `limit`
+   * is optional, documented "Default: unbounded", has no maximum, and is applied LAST, as
+   * `sorted.slice(0, limit)` over a set the relay has already built in full. It caches the whole
+   * pod manifest server-side either way. So the 400 sliced the JSON response and cost this fold
+   * the ability to see a founding member.
+   *
+   * ★ AND REMOVING IT CANNOT UNSEAT ANYBODY, because the relay sorts THEN slices: the capped
+   * answer was exactly the newest-400 PREFIX of the uncapped one, so this can only append rows
+   * older than the old cutoff. Monotone, checked against the handler and not inferred.
+   *
+   * ★ WHICH IS WHAT EARNS THE SILENCE. Dropping a "may be incomplete" warning is only honest if
+   * the read is now complete, and this one is: `discover()` follows the manifest's archive chain
+   * and THROWS rather than hand back a partial pod, so a short answer here is a real answer and
+   * not a truncated one. Absence is evidence only when the read could not have missed anything.
+   */
+  const p = await client.tool('discover_context', { pod_name: grantPod, sort: 'newest-first' }) as Record<string, unknown> | null;
   const bad = refusal(p);
   if (bad) throw fail('tool_error', String(bad['message'] ?? bad['error']));
   const rows = (p?.['entries'] as readonly Record<string, unknown>[]) ?? [];
-  // A capped scan that came back full may have cut grants off the end. Silent truncation would
-  // drop a member from the roster and their messages from the channel with nothing said.
-  const grantScanSaturated = rows.length >= GRANT_LIMIT;
 
   const prefix = args.workspace + '-grant-';
   const seen = new Set<string>();
@@ -136,7 +176,13 @@ export async function foldRoster(
     grantRows.push({ graph: g });
   }
   const grantsFound = grantRows.length;
-  const toRead = grantRows.slice(0, GRANT_READ_CAP);
+  const grantReadCap = args.readCap ?? GRANT_READ_CAP;
+  // ★ A STABLE PARTITION, NOT A SORT. The relay's order is the only ordering evidence there is
+  // for the rest; this moves the grants a truncated read must not lose to the front and leaves
+  // every other row exactly where the relay put it.
+  const first = new Set<string>([prefix + grantPod, ...(args.prefer ?? []).map((pod) => prefix + pod)]);
+  const ordered = [...grantRows.filter((g) => first.has(g.graph)), ...grantRows.filter((g) => !first.has(g.graph))];
+  const toRead = ordered.slice(0, grantReadCap);
 
   const seats: Seat[] = [];
   for (const g of toRead) {
@@ -292,10 +338,8 @@ export async function foldRoster(
     seats,
     grantPod,
     grantPodDerivedFrom: args.convenerPod ? 'wsp:convener in the record' : null,
-    grantScanSaturated,
-    grantLimit: GRANT_LIMIT,
     grantsFound,
     grantsRead: toRead.length,
-    grantReadCap: GRANT_READ_CAP,
+    grantReadCap,
   };
 }

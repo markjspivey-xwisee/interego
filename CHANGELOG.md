@@ -36,6 +36,56 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
 
 ---
 
+## 2026-08-11 — a cap that hid members and bought nothing, and a report that dropped its own qualifications
+
+Two warnings this vertical printed honestly for months turn out to have been describing damage it
+was doing to itself.
+
+### Fixed
+- **★★ A 400-descriptor scan cap could hide a real member, and the relay never asked for it.** Three
+  independent reads — `foldRoster`, `findSeat`, `listWorkspaces` — sent `limit: 400` to
+  `discover_context` and then reported "that read came back full, so an older grant may lie past
+  the end of it". Read from the relay's own handler rather than assumed: `limit` is OPTIONAL,
+  documented "Default: unbounded", has no maximum, and is applied LAST, as a slice over a set the
+  relay has already built and cached in full. The cap truncated the JSON response and bought
+  nothing. It was also systematically the wrong 400: grants are written ONCE at invite time while
+  entries are published to the same pod continuously, so newest-first drops the OLDEST members
+  first — very often including the convener's own founding grant. Every one of the three is gone,
+  and with them the warnings, the `grantScanSaturated` / `saturated` flags, `GRANT_LIMIT` and
+  `SEAT_SCAN_LIMIT`. Removing them cannot unseat anybody, because the relay sorts THEN slices: the
+  capped answer was exactly the newest-N prefix of the uncapped one. Dropping a "may be
+  incomplete" hedge is only honest if the read is now complete, and it is — `discover()` follows
+  the manifest's archive chain and throws rather than return a partial pod.
+- **The read cap that remains was one number for two incompatible budgets.** `GRANT_READ_CAP = 25`
+  bounds how many found grants get dereferenced, which is real work. It is now a per-caller
+  argument: the desktop shell and `/workspace show` pass 200, and the Discord Ask autocomplete
+  keeps 25 because Discord gives an autocomplete three seconds and NO deferral — a handler that
+  overruns draws an empty box with no explanation. Where the cap does bite, the grants that matter
+  are read first (the viewer's own seat, and the convener's) by a stable partition, so a truncated
+  read can no longer tell somebody they are not in a room they are in.
+- **`respondAsMember` had no read bound at all**, so uncapping its enumeration would have turned
+  "grants in the 400-window" into "every grant that ever existed on that pod", sequentially. It
+  takes the same explicit read cap and reports found-vs-read.
+- **★ `/workspace show` was clipped mid-sentence and dropped exactly the wrong half.** Measured:
+  the render is 1787 characters with ZERO entries, and any workspace with one entry hit the
+  2000-character limit. What got cut was always the trailing explainer — the part that says an
+  entry's author is held against the key the relay verified, and that a delegate's standing and
+  its footing on any given message are separate questions. The claims survived and the
+  qualifications did not. Long replies are now delivered as several messages via the interaction
+  followup endpoint, the explainer moved ABOVE the entries so no delivery bound can drop it, and
+  the entries — which are re-readable from the workspace IRI — go last.
+- **The obvious splitter would have been worse than the clip, and was rejected on measurement.**
+  Cutting at the last newline that fits severs an entry's ATTRIBUTION from its TEXT: a body
+  arrives as a standalone message with no author beside it, which is precisely the confusion this
+  vertical exists to prevent. `bodyParts` cuts only BETWEEN the elements its caller handed over —
+  one element per entry, header and body together — so that cannot happen. `renderNews` pushed
+  those as two elements and now pushes one.
+- **A part that never arrives is now visible to the reader.** Every part of a multi-part message
+  carries a `(k/n)` marker and a failed send is announced in the channel, rather than the sequence
+  simply stopping — which reads as a message that simply ended. The per-channel send queue moved
+  inside `say`, so the watcher, the "not recorded" notice and the post-append report can no longer
+  interleave parts of different messages.
+
 ## 2026-08-11 — addressing was written, verified, and then ignored by the thing it was for
 
 `iep:addressedTo` has been written into the signed region of an ask since the Discord conduit

@@ -671,23 +671,34 @@ const RELAY   = "https://relay.interego.xwisee.com";
       and `podOfNsIri`'s "/ns/<pod>/" shape, used to check stream ownership.
    7. `podMark`'s "u-(eth|pk|did)-" prefix set — also `POD_RX`, which decides
       whether a segment can be a pod at all.
-   8. FIVE caps, not two — an earlier version of this item said two and there
-      were three 400-scans alone, which is how one of them came to compute a
-      saturation flag nobody read. All five now live in the module, so the number
-      a panel STATES and the number a read asks for cannot be two numbers:
-        · `SEAT_SCAN_LIMIT = 400` in `findSeat` — the convener's pod, scanned for
-          a grant naming you when the composed name did not answer;
-        · the same cap in `listWorkspaces` — your own pod, scanned for
-          acceptances;
-        · `GRANT_LIMIT = 400` in `foldRoster` — the convener's pod, scanned for
-          this workspace's grants;
-        · `SEAT_READ_CAP = 25` — how many of the grants that scan FINDS are
-          then read. A workspace with more members than that is read down to 25
-          and the row says how many were found;
+   8. TWO caps now, and the three that are gone are worth the sentence. This item
+      once said "five caps, not two", and three of the five were 400-descriptor
+      SCAN caps — one in `findSeat`, one in `listWorkspaces`, one in `foldRoster`
+      — each of which computed a saturation flag and printed "that read came back
+      full, so an older grant may lie past the end of it". Honest, and avoidable:
+      the caps bought NOTHING. Read from the relay's own handler rather than
+      assumed, `discover_context`'s `limit` is optional, documented as unbounded
+      by default, has no maximum, and is applied LAST as a slice over a set the
+      relay has already built and cached in full. So the cap truncated the JSON
+      and cost a fold the ability to see a founding member — grants are written
+      once at invite time while entries are published continuously to the same
+      pod, so newest-first drops the OLDEST members first, very often including
+      the convener's own. All three are gone, and the warnings with them:
+        · `GRANT_READ_CAP = 25` — how many of the grants a scan FINDS are then
+          dereferenced. A real work bound: two round trips each against a
+          possibly-cold pod. It is now a per-caller argument, because one number
+          cannot serve a background responder and a Discord autocomplete that has
+          three seconds and no deferral. A workspace with more members than the
+          caller's cap is read down to it and the row says how many were found —
+          and the grants that matter (yours, the convener's) are read first;
         · `INBOX_LIMIT = 50` on `read_inbox`. Measured: the response reports how
           many it RETURNED, never a total, so saturation is not detectable from
           it and the cap itself is what gets stated.
-      All five say so when the read comes back full.
+      Dropping a "this may be incomplete" warning is only honest if the read is
+      now complete, and this one is: `discover()` follows the manifest's archive
+      chain and THROWS rather than hand back a partial pod, so a short answer is
+      a real answer. Absence is evidence only where the read could not have
+      missed anything.
    8a. The handle shape `acct:<your pod>@<RELAY's host>`, composed by the module's
       `composedHandle` out of two things this page already holds. It is the one
       identifier the whole second-person flow turns on, and it is composed rather
@@ -851,7 +862,6 @@ var WSPC = (() => {
     DELEGATION_SCOPES: () => DELEGATION_SCOPES,
     DRAFT_MAX: () => DRAFT_MAX,
     GRANT_IRI_RX: () => GRANT_IRI_RX,
-    GRANT_LIMIT: () => GRANT_LIMIT,
     GRANT_READ_CAP: () => GRANT_READ_CAP,
     IEP: () => IEP,
     INBOX_LIMIT: () => INBOX_LIMIT,
@@ -868,7 +878,6 @@ var WSPC = (() => {
     RESPOND_AS_MEMBER: () => RESPOND_AS_MEMBER,
     RelayMcpTransport: () => RelayMcpTransport,
     SEAT_READ_CAP: () => SEAT_READ_CAP,
-    SEAT_SCAN_LIMIT: () => SEAT_SCAN_LIMIT,
     SLUG_RX: () => SLUG_RX,
     STATUS_READ_CONCURRENCY: () => STATUS_READ_CONCURRENCY,
     ToolCallError: () => ToolCallError,
@@ -3474,16 +3483,14 @@ var WSPC = (() => {
   }
 
   // packages/workspace-client/src/seats.ts
-  var GRANT_LIMIT = 400;
   var GRANT_READ_CAP = 25;
   var grantPodFor = (convenerPod, iriOwner) => convenerPod ?? iriOwner;
   async function foldRoster(client, args) {
     const grantPod = grantPodFor(args.convenerPod, args.iriOwner);
-    const p = await client.tool("discover_context", { pod_name: grantPod, limit: GRANT_LIMIT, sort: "newest-first" });
+    const p = await client.tool("discover_context", { pod_name: grantPod, sort: "newest-first" });
     const bad = refusal(p);
     if (bad) throw fail("tool_error", String(bad["message"] ?? bad["error"]));
     const rows = p?.["entries"] ?? [];
-    const grantScanSaturated = rows.length >= GRANT_LIMIT;
     const prefix = args.workspace + "-grant-";
     const seen = /* @__PURE__ */ new Set();
     const grantRows = [];
@@ -3496,7 +3503,10 @@ var WSPC = (() => {
       grantRows.push({ graph: g });
     }
     const grantsFound = grantRows.length;
-    const toRead = grantRows.slice(0, GRANT_READ_CAP);
+    const grantReadCap = args.readCap ?? GRANT_READ_CAP;
+    const first = /* @__PURE__ */ new Set([prefix + grantPod, ...(args.prefer ?? []).map((pod) => prefix + pod)]);
+    const ordered = [...grantRows.filter((g) => first.has(g.graph)), ...grantRows.filter((g) => !first.has(g.graph))];
+    const toRead = ordered.slice(0, grantReadCap);
     const seats = [];
     for (const g of toRead) {
       const m = { graph: g.graph, grantUrl: null, grantCid: null, role: null, grantedTo: null, pod: null, seated: false, why: null };
@@ -3635,11 +3645,9 @@ var WSPC = (() => {
       seats,
       grantPod,
       grantPodDerivedFrom: args.convenerPod ? "wsp:convener in the record" : null,
-      grantScanSaturated,
-      grantLimit: GRANT_LIMIT,
       grantsFound,
       grantsRead: toRead.length,
-      grantReadCap: GRANT_READ_CAP
+      grantReadCap
     };
   }
 
@@ -4100,7 +4108,6 @@ var WSPC = (() => {
     inv.lead = !inv.verdict.ok && /^https:\/\/[^/]+\/ns\/[^/]+\/[^/]+$/.test(about) && !/-grant-/.test(about) ? about : null;
     return inv;
   }
-  var SEAT_SCAN_LIMIT = 400;
   var SEAT_READ_CAP = 25;
   async function findSeat(client, args) {
     const owner = podOfNsIri(args.workspace);
@@ -4110,14 +4117,12 @@ var WSPC = (() => {
     const direct = await verifyGrantIri(client, { relay: args.relay, viewer: args.viewer, grantIri: args.workspace + "-grant-" + args.viewer.podName });
     if (direct.ok) return direct;
     let rows;
-    let saturated = false;
     try {
-      const p = await client.tool("discover_context", { pod_name: owner, limit: SEAT_SCAN_LIMIT, sort: "newest-first" });
+      const p = await client.tool("discover_context", { pod_name: owner, sort: "newest-first" });
       const bad = refusal(p);
       if (bad) return { grantIri: direct.grantIri, ok: false, checks: direct.checks, why: String(bad["message"] ?? bad["error"]) };
       assertPod(owner, p?.["pod"], "discover_context");
       rows = p?.["entries"] ?? [];
-      saturated = rows.length >= SEAT_SCAN_LIMIT;
     } catch (e) {
       const t = errorCopy(e).t;
       return { grantIri: direct.grantIri, ok: false, checks: direct.checks, why: t + (e?.message ? " \u2014 " + e.message : "") };
@@ -4135,13 +4140,12 @@ var WSPC = (() => {
         }
       }
     }
-    const capNote = saturated ? ". That scan of " + owner + " came back full at " + SEAT_SCAN_LIMIT + " descriptors, so an older grant may lie past the end of it" : "";
     if (!grants.length) {
       return {
         grantIri: direct.grantIri,
         ok: false,
         checks: direct.checks,
-        why: "no grant for this workspace appeared among the " + rows.length + " most recent descriptors on " + owner + capNote
+        why: "no grant for this workspace appears among the " + rows.length + " descriptors on " + owner + ", which is that pod's whole index and not a window into it"
       };
     }
     let mine = direct.grantedTo === args.viewer.webId ? direct : null;
@@ -4160,12 +4164,12 @@ var WSPC = (() => {
       grantIri: direct.grantIri,
       ok: false,
       checks: pick?.checks ?? direct.checks,
-      why: (mine ? "a grant for this workspace does name you, and it does not seat you: " + mine.why : read + " grant" + (read === 1 ? "" : "s") + " for this workspace on " + owner + " were read and none of them names you" + (grants.length > read ? " (of " + grants.length + " found; this reader reads at most " + SEAT_READ_CAP + ")" : "") + (last?.why ? " \u2014 the last one: " + last.why : "")) + capNote
+      why: mine ? "a grant for this workspace does name you, and it does not seat you: " + mine.why : read + " grant" + (read === 1 ? "" : "s") + " for this workspace on " + owner + " were read and none of them names you" + (grants.length > read ? " (of " + grants.length + " found; this reader reads at most " + SEAT_READ_CAP + ")" : "") + (last?.why ? " \u2014 the last one: " + last.why : "")
     };
   }
   var STATUS_READ_CONCURRENCY = 8;
-  async function listWorkspaces(client, relay, podName, limit = SEAT_SCAN_LIMIT) {
-    const p = await client.tool("discover_context", { pod_name: podName, limit, sort: "newest-first" }, { cache: false });
+  async function listWorkspaces(client, relay, podName) {
+    const p = await client.tool("discover_context", { pod_name: podName, sort: "newest-first" }, { cache: false });
     const bad = refusal(p);
     if (bad) throw fail("tool_error", String(bad["message"] ?? bad["error"]));
     assertPod(podName, p?.["pod"], "discover_context");
@@ -4242,7 +4246,7 @@ var WSPC = (() => {
       }
       entries.push(c);
     }
-    return { entries, withheld, saturated: rows.length >= limit, limit };
+    return { entries, withheld, scanned: rows.length };
   }
   async function verifyWorkspaceEntry(client, relay, viewer, c) {
     if (!c.workspace) {
@@ -4861,7 +4865,7 @@ const workspaceTurtle = WSPC.workspaceTurtle, grantTurtle = WSPC.grantTurtle;
 const acceptanceTurtle = WSPC.acceptanceTurtle, canvasTurtle = WSPC.canvasTurtle;
 const GRANT_IRI_RX = WSPC.GRANT_IRI_RX;
 const INBOX_LIMIT = WSPC.INBOX_LIMIT;
-const SEAT_SCAN_LIMIT = WSPC.SEAT_SCAN_LIMIT, SEAT_READ_CAP = WSPC.SEAT_READ_CAP;
+const SEAT_READ_CAP = WSPC.SEAT_READ_CAP;
 const awaitHead = WSPC.awaitHead, staleDetail = WSPC.staleDetail;
 /* ★ WHO WROTE AN ENTRY, which is not whose log it is in. A delegate writes into its
    delegator's log and the entry names the delegate; a reader that labelled every entry

@@ -50,7 +50,7 @@ const view = (entries: readonly ShownEntry[], streams: { pod: string; why: strin
   record: { head: { url: 'u', cid: null } as never, regionFound: true, convener: null, roleProfile: null, entryShape: null, grantCapability: null, title: 'Roof decision', authorship: null, convenerPod: POD, servedFrom: POD },
   fold: {
     seats: [{ graph: WORKSPACE, grantUrl: null, grantCid: null, role: null, grantedTo: null, pod: POD, seated: true, why: null, stream: RELAY + '/ns/' + POD + '/s' }],
-    grantPod: POD, grantPodDerivedFrom: null, grantScanSaturated: false, grantLimit: 400, grantsFound: 1, grantsRead: 1, grantReadCap: 25,
+    grantPod: POD, grantPodDerivedFrom: null, grantsFound: 1, grantsRead: 1, grantReadCap: 25,
   },
   streams: streams.map((s) => ({ pod: s.pod, stream: RELAY + '/ns/' + s.pod + '/s', total: 0, forked: !!s.why, partial: false, why: s.why })),
   truncated: false, totalEntries: entries.length,

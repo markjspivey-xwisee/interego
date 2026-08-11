@@ -39,6 +39,11 @@ import {
   foldRoster, may, explain,
   type Acceptance, type Grant, type Roster, type RoleProfile,
 } from './roster.js';
+// ★ THE READ CAP COMES FROM THE SHARED CLIENT rather than being spelled again here. The number
+// that used to sit in this file was a SCAN cap (`?? 400`) and it disagreed with the one in
+// `seats.ts` about what it even bounded. One definition of "how many grants will I dereference"
+// is the point; `advertise.ts` already takes this package's dependency on the same module.
+import { GRANT_READ_CAP } from '@interego/workspace-client';
 import { CAPS, capabilitiesForScope } from './can.js';
 import type { AgentSession } from './agent-session.js';
 
@@ -181,18 +186,24 @@ async function grantHeads(args: {
   readonly workspace: string;
   readonly convenerPod: string;
   readonly deps: StreamDeps;
-  readonly limit: number;
-}): Promise<{ readonly heads: readonly string[]; readonly saturated: boolean; readonly why: string | null }> {
+  /** How many of the grants found may be READ. The scan itself is not capped — see below. */
+  readonly readCap: number;
+}): Promise<{ readonly heads: readonly string[]; readonly found: number; readonly why: string | null }> {
   let res: Record<string, unknown>;
   try {
-    res = await args.deps.discover({
-      pod_name: args.convenerPod, limit: args.limit, sort: 'newest-first',
-    });
+    // ★ NO `limit`, FOR THE REASON `foldRoster` RECORDS: the relay's own default is unbounded, it
+    // caches the whole manifest either way, and it slices LAST — so a cap truncated the answer and
+    // bought nothing. What replaces it is a READ cap below, which bounds the thing that is
+    // genuinely expensive. This responder had NO read bound at all: it walked every grant head it
+    // found, then a head and a descriptor per member, then every seated member's whole log,
+    // sequentially. Uncapping the enumeration without capping the reads would have turned "grants
+    // in the 400-window" into "every grant that ever existed on this pod", unbounded.
+    res = await args.deps.discover({ pod_name: args.convenerPod, sort: 'newest-first' });
   } catch (e) {
-    return { heads: [], saturated: false, why: `discover_context on '${args.convenerPod}' threw: ${(e as Error).message}` };
+    return { heads: [], found: 0, why: `discover_context on '${args.convenerPod}' threw: ${(e as Error).message}` };
   }
   if (res['error'] !== undefined) {
-    return { heads: [], saturated: false, why: `discover_context on '${args.convenerPod}': ${String(res['message'] ?? res['error'])}` };
+    return { heads: [], found: 0, why: `discover_context on '${args.convenerPod}': ${String(res['message'] ?? res['error'])}` };
   }
   const rows = Array.isArray(res['entries']) ? res['entries'] as Array<Record<string, unknown>> : [];
   const prefix = `${args.workspace}-grant-`;
@@ -206,9 +217,9 @@ async function grantHeads(args: {
     seen.add(g);
     heads.push(url);
   }
-  // A capped scan that came back full may have cut grants off the end; silent truncation
-  // would drop a member from the roster with nothing said.
-  return { heads, saturated: rows.length >= args.limit, why: null };
+  // The enumeration is complete; the READ is what is bounded, and both numbers are reported so
+  // the responder states its own work bound instead of inheriting one from a truncated index.
+  return { heads: heads.slice(0, args.readCap), found: heads.length, why: null };
 }
 
 export interface RespondOptions {
@@ -220,8 +231,14 @@ export interface RespondOptions {
    * is reported as such.
    */
   readonly slug?: string;
-  /** Cap on the grant scan. Reported when it saturates. */
-  readonly grantLimit?: number;
+  /**
+   * How many of the grants found may be READ. Defaults to `GRANT_READ_CAP`.
+   *
+   * ★ THIS REPLACED A SCAN CAP, AND THE TWO ARE NOT THE SAME KNOB. The old `grantLimit` bounded
+   * how much of the convener pod's index came back, which hid members. This bounds how much work
+   * this responder does per run, which is the thing that was actually unbounded here.
+   */
+  readonly grantReadCap?: number;
 }
 
 /**
@@ -269,8 +286,8 @@ export async function respondAsMember(
   consulted.push(roleEvidence.document.head);
 
   // ── 3. both halves of every membership ─────────────────────────────────────
-  const limit = opts.grantLimit ?? 400;
-  const scan = await grantHeads({ workspace, convenerPod, deps, limit });
+  const readCap = opts.grantReadCap ?? GRANT_READ_CAP;
+  const scan = await grantHeads({ workspace, convenerPod, deps, readCap });
   if (scan.why !== null) {
     return { outcome: 'refused', reason: 'unreadable-workspace', message: scan.why, read: null };
   }

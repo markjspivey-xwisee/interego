@@ -174,7 +174,9 @@ export async function block() {
     'const acceptanceTurtle = WSPC.acceptanceTurtle, canvasTurtle = WSPC.canvasTurtle;',
     'const GRANT_IRI_RX = WSPC.GRANT_IRI_RX;',
     'const INBOX_LIMIT = WSPC.INBOX_LIMIT;',
-    'const SEAT_SCAN_LIMIT = WSPC.SEAT_SCAN_LIMIT, SEAT_READ_CAP = WSPC.SEAT_READ_CAP;',
+    // `SEAT_SCAN_LIMIT` used to be emitted here beside this. It is gone with the 400-descriptor
+    // scan cap it named — see the "TWO caps now" note in the page's own header.
+    'const SEAT_READ_CAP = WSPC.SEAT_READ_CAP;',
     'const awaitHead = WSPC.awaitHead, staleDetail = WSPC.staleDetail;',
     '/* ★ WHO WROTE AN ENTRY, which is not whose log it is in. A delegate writes into its',
     '   delegator\'s log and the entry names the delegate; a reader that labelled every entry',

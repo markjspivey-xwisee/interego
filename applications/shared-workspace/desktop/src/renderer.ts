@@ -336,7 +336,8 @@ const S = {
    */
   withheld: [] as readonly WithheldAcceptance[],
   spacesError: null as unknown,
-  spacesSaturated: false,
+  /** How many descriptors your pod's index held. Reported, never a cap — the read is complete. */
+  spacesScanned: 0,
   lobbyOpen: true,
 
   // ── delegates ──────────────────────────────────────────────────────────────
@@ -915,7 +916,7 @@ async function loadSpaces(): Promise<void> {
   }
   S.spaces = list.entries.slice();
   S.withheld = list.withheld;
-  S.spacesSaturated = list.saturated;
+  S.spacesScanned = list.scanned;
   S.spacesError = null;
   const retired = S.withheld.filter((w) => w.kind === 'retired').length;
   const unread = S.withheld.length - retired;
@@ -1122,9 +1123,12 @@ function renderLobby(): void {
   if (S.spaces || S.spacesError) {
     wc.hidden = false;
     clear(wl);
-    $('wsnote').textContent = S.spacesSaturated
-      ? 'This read asked your own pod for its most recent descriptors and got exactly that many back, so an older acceptance may lie past the end of it.'
-      : 'Read from your own pod in one call. A workspace-qualified acceptance name carries the workspace inside it, so most of these needed no further read.';
+    // ★ NO LONGER TWO SENTENCES. One of them said "an older acceptance may lie past the end of
+    // it" — a real possibility while this read asked for a capped window. It asks for the whole
+    // index now, so the count is what that pod holds rather than what fitted.
+    $('wsnote').textContent = 'Read from your own pod in one call — all ' + S.spacesScanned
+      + ' descriptors it lists, not a window into them. A workspace-qualified acceptance name carries the workspace '
+      + 'inside it, so most of these needed no further read.';
     if (S.spacesError) wl.appendChild(errBox(S.spacesError, 'Your own pod\'s manifest is where the list of workspaces comes from.', () => { void loadSpaces(); }));
     else if (!S.spaces?.length) wl.appendChild(el('div', 'note', 'No acceptance on your pod names a workspace you are in, so you are in none yet. Accept an invitation above, or create one below.'));
     else for (const c of S.spaces) wl.appendChild(spaceRow(c));
@@ -1576,6 +1580,18 @@ async function loadRoster(): Promise<void> {
     fold = await foldRoster(S.client, {
       workspace: S.workspace, iriOwner: S.iriOwner, slug: S.slug,
       convener: rec.convener, convenerPod: rec.convenerPod,
+      /**
+       * ★ A DESKTOP SHELL IS NOT A THREE-SECOND AUTOCOMPLETE, so it reads further than the
+       * default. The reads are two round trips per grant against possibly-cold pods, which is a
+       * real cost — but this panel is already showing a spinner and can afford it, where the
+       * Discord Ask picker cannot: Discord gives an autocomplete no "thinking" state, so a
+       * handler that overruns draws an empty box with no explanation. One number could not serve
+       * both, which is why this is per-caller and the picker keeps the default.
+       */
+      readCap: 200,
+      // If the cap does bite, read the grants that matter first: the viewer's own seat, so this
+      // client can never tell somebody they are not in a room they are in, and the convener's.
+      prefer: S.viewer ? [S.viewer.podName] : [],
     });
   } catch (e) {
     clear(box).appendChild(errBox(e, 'Grants live on the convener\'s pod (' + grantPodFor(rec.convenerPod, S.iriOwner)
@@ -1663,14 +1679,11 @@ function renderRoster(): void {
     box.appendChild(el('div', 'note', fold.grantPodDerivedFrom
       ? 'Grants below were read from pod ' + fold.grantPod + ', chosen by resolving the ' + fold.grantPodDerivedFrom + '.'
       : 'Grants below were read from pod ' + fold.grantPod + ', taken from the workspace IRI because the record named no convener.'));
-    if (fold.grantScanSaturated) {
-      const w = el('div', 'panel pending');
-      w.appendChild(el('h4', undefined, 'The grant scan came back full'));
-      w.appendChild(el('div', undefined, 'This read asked the convener\'s pod for its most recent ' + fold.grantLimit
-        + ' descriptors and got exactly that many back, so older grants may lie past the end of it. A member missing from '
-        + 'the roster below would also be missing from the channel.'));
-      box.appendChild(w);
-    }
+    // ★ THE "grant scan came back full" WARNING USED TO LIVE HERE AND IS GONE BECAUSE THE SCAN IS
+    // NO LONGER CAPPED. It said a member missing from the roster might also be missing from the
+    // channel — true at the time, and caused by this client asking for only 400 descriptors when
+    // the relay's own default is unbounded. Nothing about it is being suppressed; the condition
+    // it reported cannot arise.
     if (fold.grantsFound > fold.grantsRead) {
       const w = el('div', 'panel pending');
       w.appendChild(el('h4', undefined, fold.grantsFound + ' grants were found and ' + fold.grantsRead + ' of them were read'));
@@ -1781,8 +1794,6 @@ function renderRoster(): void {
       : yourRows.length + ' grants on the convener\'s pod name your pod, and none of them seats you: ')
       + yourRows.map((m) => m.revoked ? 'revoked' : m.pending ? 'granted, awaiting your acceptance on your own pod' : (m.why ?? 'seated by neither half of the two-sided check')).join(' — ')
       + ' That row is above; this block is not claiming otherwise. ';
-  } else if (S.fold?.grantScanSaturated) {
-    w += 'No grant naming your pod appeared in the grants this client could see — and that scan came back full, so this is what was read, not necessarily all there is. ';
   } else if (S.fold && S.fold.grantsFound > S.fold.grantsRead) {
     w += 'No grant naming your pod appeared in the ' + S.fold.grantsRead + ' grants this client read, and ' + S.fold.grantsFound
       + ' were found — so this is what was read, not necessarily all there is. ';

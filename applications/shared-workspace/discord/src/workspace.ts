@@ -489,6 +489,9 @@ export async function showWorkspace(deps: Deps, threadId: string): Promise<ShowO
     const fold = await foldRoster(deps.client, {
       workspace: binding.workspace, iriOwner, slug: binding.slug,
       convener: frame.record.convener, convenerPod: frame.record.convenerPod,
+      // ★ A COMMAND, NOT AN AUTOCOMPLETE. `/workspace show` is deferred and has fifteen minutes;
+      // the Ask picker in `ask.ts` has three seconds and no deferral, so it keeps the default.
+      readCap: 200,
     });
 
     const streams: ShownStream[] = [];

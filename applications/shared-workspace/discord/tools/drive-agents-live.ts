@@ -74,6 +74,10 @@ const settle = async (why: string): Promise<void> => {
 };
 
 let failures = 0;
+/** Every part of a render, joined — these renderers may return more than one message. */
+const whole = (m: { readonly content: string }[] | readonly { readonly content: string }[] | null | undefined): string =>
+  (m ?? []).map((x) => x.content).join('\n');
+
 function check(ok: boolean, what: string, detail?: string): void {
   if (!ok) failures++;
   log((ok ? '  PASS  ' : '  FAIL  ') + what + (detail ? '\n         ' + detail : ''));
@@ -185,7 +189,7 @@ async function main(): Promise<void> {
   const coldScribe = cold.targets.find((t) => t.agentId === scribe.agentId);
   check(coldScribe?.presence.state === 'never', 'bob-scribe has never said it was running', coldScribe?.presence.state);
   check(!isPresent(coldScribe?.presence as Presence), 'and "never" is not presence', presenceLine(coldScribe?.presence as Presence));
-  log(renderWho(cold).content.split('\n').slice(0, 8).join('\n'));
+  log(whole(renderWho(cold)).split('\n').slice(0, 8).join('\n'));
 
   head('★ bob\'s host comes up and publishes a lease, ON THE DELEGATE\'S OWN POD, WITH ITS OWN KEY');
   const scribePort = agentPort(scribe.client);
@@ -247,7 +251,7 @@ async function main(): Promise<void> {
   head('★ the picker, live: two humans, two delegates, one of them running');
   const warm = await askCandidates(deps, { threadId: THREAD, discordUserId: ALICE_DISCORD });
   if (warm.kind !== 'candidates') { check(false, 'the roster folded', warm.kind); process.exitCode = 1; return; }
-  log(renderWho(warm).content);
+  log(whole(renderWho(warm)));
   const choices = askChoices(warm, '');
   check(choices.some((c) => c.value === scribe.agentId), 'the picker offers bob-scribe by its full agent DID');
   check(choices.every((c) => c.value.startsWith('did:')), 'and every choice is a DID, never a nickname', choices.map((c) => c.value).join(' '));
@@ -334,8 +338,8 @@ async function main(): Promise<void> {
   check(reply?.author?.kind === 'delegate' && reply.author.authorised === true,
     'and BOB\'s own registry authorises it — a separate fact, read from a separate document');
   const news = renderNews({ kind: 'entries', binding: started.binding, entries: [reply as never] } as WatchNews);
-  log('  what the channel would show:\n' + (news?.content ?? '').split('\n').map((l) => '  ' + l).join('\n'));
-  check((news?.content ?? '').indexOf('for itself') > 0, 'and the pushed line names the footing');
+  log('  what the channel would show:\n' + whole(news).split('\n').map((l) => '  ' + l).join('\n'));
+  check(whole(news).indexOf('for itself') > 0, 'and the pushed line names the footing');
 
   head('★ AN AGENT ASKS ANOTHER AGENT — alice\'s delegate addresses bob\'s');
   const aliceSeat = after.fold.seats.find((s) => (s.podServed ?? s.pod) === alice.pod && s.seated);
@@ -537,9 +541,9 @@ async function main(): Promise<void> {
       'and the reason names the agent it claims and the key that actually signed',
       row?.author?.kind === 'disputed' ? row.author.why.slice(0, 160) : '');
     const shown = renderNews({ kind: 'entries', binding: started.binding, entries: [row as never] } as WatchNews);
-    check((shown?.content ?? '').indexOf('authorship disputed') > 0,
+    check(whole(shown).indexOf('authorship disputed') > 0,
       'the line the channel would print says so in the first clause');
-    check((shown?.content ?? '').indexOf('speaking **for them**') < 0,
+    check(whole(shown).indexOf('speaking **for them**') < 0,
       '★ and NOWHERE says the delegate spoke for anybody');
   } else { check(false, 'the channel re-composed after the forgery', withPuppet.kind); }
 
@@ -568,7 +572,7 @@ async function main(): Promise<void> {
 
   head('the channel, as anybody can read it');
   const final = await showWorkspace(deps, THREAD);
-  log(renderShow(final).content);
+  log(whole(renderShow(final)));
   if (final.kind === 'view') {
     const chain = final.fold.seats.filter((s) => s.seated).length;
     check(chain === 2, 'two seats, two pods', String(chain));

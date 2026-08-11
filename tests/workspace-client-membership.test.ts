@@ -226,17 +226,36 @@ describe('★ an inbox item is a claim: verifyGrantIri is what turns one into a 
   });
 });
 
-describe('findSeat: the honest path, and the truncation is in the sentence', () => {
-  it('★ says a capped scan came back full instead of asserting nobody granted you', async () => {
+describe('findSeat: the honest path, and what it may now say about absence', () => {
+  /**
+   * ★ THIS CASE USED TO ASSERT THE HEDGE, AND NOW ASSERTS THAT THE HEDGE IS GONE — because the
+   * thing it hedged about is gone.
+   *
+   * It pinned "that scan came back full at 400 descriptors, so an older grant may lie past the end
+   * of it", which was the honest thing to say while this client asked for `limit: 400`. It no
+   * longer asks for a limit: the relay's own default is unbounded, it builds and caches the whole
+   * manifest either way, and it applies `limit` LAST as a slice over the finished set — so the cap
+   * truncated the answer and bought nothing.
+   *
+   * What makes the new sentence honest rather than merely shorter is a separate fact, and it is
+   * the only reason this may be asserted at all: `discover()` follows the manifest's archive chain
+   * and THROWS rather than return a partial pod. A short answer is a real answer. Absence is
+   * evidence only where the read could not have missed anything.
+   */
+  it('★ asks for the pod\'s whole index, and says so rather than hedging about a window', async () => {
     const entries = Array.from({ length: 400 }, (_, i) => ({ descriptorUrl: 'u' + i, describes: ['https://x/unrelated'] }));
+    const seen: Record<string, unknown>[] = [];
     const c = client({
       ...podWith({ [WS]: WS_DOC }),
-      discover_context: () => ({ pod: 'http://css.railway.internal:3456/' + POD + '/', entries }),
+      discover_context: (i) => { seen.push(i); return { pod: 'http://css.railway.internal:3456/' + POD + '/', entries }; },
     });
     const v = await findSeat(c, { relay: RELAY, viewer: viewer(OTHER), workspace: WS });
     expect(v.ok).toBe(false);
-    expect(v.why).toMatch(/came back full at 400/);
-    expect(v.why).toMatch(/an older grant may lie past the end of it/);
+    // The cap is not merely absent from the copy — it is absent from the CALL. A message that
+    // stopped hedging while the request stayed capped would be the worst of both.
+    expect(seen.some((i) => 'limit' in i)).toBe(false);
+    expect(v.why).toMatch(/whole index and not a window into it/);
+    expect(v.why).not.toMatch(/came back full|may lie past the end/);
   });
   it('reports the grant that IS about you ahead of the one read last', async () => {
     const mine = WS + '-grant-' + OTHER;

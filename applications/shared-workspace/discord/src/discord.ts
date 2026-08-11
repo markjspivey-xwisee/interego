@@ -458,6 +458,24 @@ export class DiscordRest {
     return this.call('POST', '/interactions/' + interactionId + '/' + token + '/callback', { type: 5, data: ephemeral ? { flags: EPHEMERAL } : {} });
   }
 
+  /**
+   * A SECOND (third, fourth…) message on the same interaction.
+   *
+   * ★ THIS IS THE ONLY WAY A DEFERRED COMMAND SAYS MORE THAN 2000 CHARACTERS. `edit` replaces the
+   * one placeholder; the followup endpoint creates additional messages under the same token, for
+   * as long as the token lives (fifteen minutes — far longer than any command here takes).
+   *
+   * ★ AND `flags` IS NOT INHERITED FROM THE DEFERRAL. An ephemeral command's followups are public
+   * unless each one says otherwise, which for `/workspace who` — a private reply about who is in
+   * a room — would leak parts 2..n into the channel. So the flag is passed explicitly on every
+   * one rather than assumed to carry over.
+   */
+  followup(applicationId: string, token: string, content: string, ephemeral: boolean): Promise<Record<string, unknown>> {
+    return this.call('POST', '/webhooks/' + applicationId + '/' + token, {
+      content, allowed_mentions: { parse: [], users: [] }, ...(ephemeral ? { flags: EPHEMERAL } : {}),
+    });
+  }
+
   /** Replace the deferred placeholder with the real answer. */
   edit(applicationId: string, token: string, content: string): Promise<Record<string, unknown>> {
     // `allowed_mentions` is empty except for the one user a "not recorded" notice pings: this bot
