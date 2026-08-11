@@ -192,33 +192,42 @@ jobs:
       - uses: docker/setup-buildx-action@v3
         if: steps.gate.outputs.skip != 'true'
 
-      # ★ THE BOOTSTRAP IS OVER, AND THE PAT EXPIRING IS WHAT PROVED IT WAS STILL LOAD-BEARING.
+      # GITHUB_TOKEN can only write packages that are CONNECTED to this repo. The images were first
+      # pushed by `crane` during the ACR->GHCR migration, which created them unconnected, so
+      # GITHUB_TOKEN gets a 403 on push. GHCR_TOKEN (a write:packages PAT) is the credential that
+      # works.
       #
-      # What this said before, and it was correct at the time: GITHUB_TOKEN can only write packages
-      # CONNECTED to this repo; the images were first pushed by `crane` during the ACR->GHCR
-      # migration, which created them unconnected, so GITHUB_TOKEN got a 403 on push. GHCR_TOKEN (a
-      # write:packages PAT) was the bootstrap credential, and the `org.opencontainers.image.source`
-      # label below connects each package on first push — "after which GITHUB_TOKEN suffices and
-      # the secret can be deleted".
+      # ★ THIS COMMENT USED TO END "the source label below connects each package on first push,
+      # after which GITHUB_TOKEN suffices and the secret can be deleted". THAT IS FALSE, and it is
+      # corrected here rather than deleted, because it is the kind of false that costs a deploy.
       #
-      # That sentence was written and never acted on, so the fleet went on depending on a PAT it
-      # no longer needed. On 2026-08-11 the PAT (set 2026-07-12) expired and every build failed at
-      # THIS STEP with `Get "https://ghcr.io/v2/": denied: denied` — three separate dispatches,
-      # three different images, identical failure, before a single layer was built. Every image has
-      # been pushed with the source label many times since the migration, so the condition the old
-      # comment named has long been met.
+      # MEASURED 2026-08-11, on this workflow, on this repo. GHCR_TOKEN (set 2026-07-12) expired;
+      # every build failed at the login step with `Get "https://ghcr.io/v2/": denied: denied`. On
+      # the strength of the sentence above, the login was switched to GITHUB_TOKEN and dispatched
+      # for `interego-discord` (run 31509074883). The result separates the two claims cleanly:
       #
-      # ★ GITHUB_TOKEN IS ALSO THE BETTER CREDENTIAL, not merely the available one: it is minted
-      # per run, scoped by the `packages: write` this job already declares, and CANNOT expire. A
-      # long-lived PAT in its place is a deploy path that silently acquires an expiry date nobody
-      # is watching — which is exactly how this failed.
+      #   · LOGIN SUCCEEDED — the build ran all the way to `[build 33/38] RUN npm ci`.
+      #   · THE PUSH DID NOT: `failed to push ghcr.io/markjspivey-xwisee/interego-discord:...
+      #     403 Forbidden` on the blob HEAD.
+      #
+      # So the packages are STILL not connected, years of pushes carrying
+      # `org.opencontainers.image.source` notwithstanding — the label does not retroactively grant
+      # a repository write access to a package that was created outside it. Connecting them is a
+      # one-time action in each package's own settings ("Manage Actions access" -> add this
+      # repository with the Write role), and only after that can this fall back to GITHUB_TOKEN and
+      # the secret be deleted.
+      #
+      # ★ UNTIL THEN THIS DEPLOY PATH HAS AN EXPIRY DATE NOBODY IS WATCHING, which is worth saying
+      # plainly: a PAT here is not a credential choice, it is a scheduled outage. `secrets.X || Y`
+      # picks whichever secret is NON-EMPTY, not whichever still works, so an expired PAT does not
+      # fall back — it just fails.
       - name: Log in to GHCR
         if: steps.gate.outputs.skip != 'true'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          password: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Build & push
         if: steps.gate.outputs.skip != 'true'
