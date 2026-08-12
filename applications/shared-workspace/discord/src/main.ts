@@ -51,6 +51,7 @@ import { ask, askCandidates, askChoices } from './ask.js';
 import { addressedText } from './address.js';
 import { ChannelWatcher, watchVia } from './watch.js';
 import { WebhookPoster } from './webhook.js';
+import { SpokenBy } from './spoken-by.js';
 import {
   renderAsk, renderChallenge, renderConfirm, renderNews, renderRecord, renderShow, renderStart,
   renderUnlink, renderWho, type Message, type NewsPost,
@@ -267,10 +268,18 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
       for (const p of posts) {
         if (p.kind === 'agent') {
           const sent = await webhooks.postAs(channelId, p.who, p.content);
-          if (sent) continue;
+          if (sent) { spokenBy.remember(sent, p.agentId); continue; }
           // Fall back to the bot's voice, and NAME the agent in it — the display was the only
           // thing lost, and dropping the attribution with it would be the real failure.
-          try { await rest.post(channelId, '**' + p.who + '** —\n' + p.content, []); }
+          //
+          // ★ AND THIS POST IS REMEMBERED TOO. Replying is not a feature of the webhook display;
+          // it is how a person addresses an agent. A channel without MANAGE_WEBHOOKS would
+          // otherwise lose the gesture as well as the avatar, which is a much bigger loss than
+          // the one the fallback exists to absorb.
+          try {
+            const posted = await rest.post(channelId, '**' + p.who + '** —\n' + p.content, []);
+            if (typeof posted['id'] === 'string') spokenBy.remember(posted['id'], p.agentId);
+          }
           catch (e) { out('discord: could not post ' + p.who + '\'s entry to ' + channelId + ' — ' + ((e as Error).message)); }
           continue;
         }
@@ -294,6 +303,14 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
   /** One webhook per channel, created on first use. See webhook.ts for why the name is only
    *  ever used for an entry whose own key signed it. */
   const webhooks = new WebhookPoster(rest, out);
+  /**
+   * Which Discord message was which agent speaking, so a reply reaches the one that spoke.
+   *
+   * In memory and bounded on purpose — see `spoken-by.ts`. It holds no authority and nothing is
+   * decided from it: what it yields is a candidate name for the same `ask()` every other path
+   * calls, which re-resolves against the delegator's own pod and refuses if that pod says no.
+   */
+  const spokenBy = new SpokenBy();
 
   const watcher = new ChannelWatcher({
     store,
@@ -493,7 +510,26 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
        * as if this had never looked. That fallback is what lets the form be usable without being
        * dangerous — "Yes, do that" costs nothing.
        */
-      const addressed = addressedText(msg.content);
+      /**
+       * ★ A REPLY IS ADDRESSING, AND IT OUTRANKS NOTHING — IT ONLY FILLS IN WHAT WAS NOT TYPED.
+       *
+       * Discord's reply is the gesture people actually reach for, and it was the one this bot
+       * could not read: a follow-up to a delegate's answer arrived indistinguishable from any
+       * other sentence and was filed as an ordinary entry addressed to nobody. `spokenBy` knows
+       * which message was which agent, so the name comes from context instead of being retyped.
+       *
+       * ★ A TYPED NAME STILL WINS. Someone who replies to one agent while writing "Claude Desktop,
+       * ..." means the one they named — reading the reference over their words would be this bot
+       * deciding it knows better. So the explicit form is consulted first and this is the default.
+       *
+       * ★ AND IT ROUTES THROUGH THE SAME `ask()`, so a reply to an agent that has since been
+       * revoked, or that cannot append here, gets the same refusal every other path gets. Nothing
+       * about being a reply grants anything: it supplies a candidate, and the delegator's own pod
+       * remains the only thing that decides.
+       */
+      const typed = addressedText(msg.content);
+      const repliedTo = typed.spec ? null : spokenBy.agentFor(msg.replyToId);
+      const addressed = typed.spec ? typed : { spec: repliedTo, rest: msg.content };
       if (addressed.spec) {
         const out = await session.call((c) => ask(deps(c), {
           threadId: msg.channelId, discordUserId: msg.authorId,
@@ -525,6 +561,35 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
       const res = await session.call((c) => recordMessage(deps(c), {
         threadId: msg.channelId, discordUserId: msg.authorId, text: msg.content,
       }));
+      /**
+       * ★ AN ATTACHMENT WITH NO CAPTION WROTE NOTHING AND SAID NOTHING.
+       *
+       * A message carrying only an image arrives with `content: ""`. `recordMessage` answers
+       * `{ kind: 'empty' }` and `renderRecord` renders that as null — correctly, because an empty
+       * message IS nothing to record. But the person did not send an empty message; they sent a
+       * picture, and from their side the result was a bot that ignored them without a word.
+       *
+       * ★ AND THE LIMIT IS STATED RATHER THAN IMPLIED. A `wsp:Entry` holds text and its shape is
+       * `sh:closed`, so carrying the file itself would mean new predicates on a published shape —
+       * a substrate decision this bot does not get to take by writing a URL into somebody's
+       * record. Saying plainly that the words were kept and the file was not is the honest
+       * version, and it is what lets a person decide to type a sentence instead of assuming the
+       * image landed.
+       */
+      const attached = msg.attachmentNames;
+      if (attached.length) {
+        const names = attached.slice(0, 5).join(', ') + (attached.length > 5 ? ` and ${attached.length - 5} more` : '');
+        await say(msg.channelId, {
+          // Not ephemeral: the channel is the record's shop window, and a note saying an entry
+          // does NOT hold what somebody just posted is exactly the kind of thing every reader of
+          // the thread needs, not only the person who posted it.
+          ephemeral: false,
+          content: res.kind === 'empty'
+            ? `**Nothing was recorded.** You attached ${names}, with no message. This workspace records what people *write*: an entry holds text, and its published shape does not admit a file, so there was nothing here to put on your pod. Type a line with it and the line is recorded.`
+            : `**Your message was recorded. ${attached.length === 1 ? 'The attachment was' : 'The attachments were'} not** — ${names} stayed in Discord. An entry holds text, so an agent reading this channel sees your words and not the file.`,
+        });
+        if (res.kind === 'empty') return;
+      }
       await say(msg.channelId, renderRecord(res));
     }).catch((e: unknown) => { out('recording failed for message ' + msg.id + ': ' + ((e as Error)?.stack ?? String(e))); });
   };

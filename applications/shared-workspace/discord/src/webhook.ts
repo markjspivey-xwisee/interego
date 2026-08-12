@@ -74,15 +74,19 @@ export class WebhookPoster {
   ) {}
 
   /**
-   * Post as `who`, or report that this channel cannot.
+   * Post as `who`, and return the id of the message that became — or null if it did not post.
    *
-   * ★ FALSE IS A REAL ANSWER AND THE CALLER MUST HANDLE IT. Webhook creation needs
+   * ★ NULL IS A REAL ANSWER AND THE CALLER MUST HANDLE IT. Webhook creation needs
    * MANAGE_WEBHOOKS, which an operator may simply not have granted. A bot that treated that as
    * fatal would go silent in a channel where the ordinary path works perfectly; the caller falls
    * back to its own format, so the words still arrive.
+   *
+   * ★ AND AN ID RATHER THAN A BOOLEAN, because "it posted" is not enough to be replied to. A
+   * reply arrives naming a message id, so unless the bot remembers that this particular id WAS a
+   * particular agent speaking, Discord's own gesture for "I am talking to you" reaches nobody.
    */
-  async postAs(channelId: string, who: string, content: string): Promise<boolean> {
-    if (this.unavailable.has(channelId)) return false;
+  async postAs(channelId: string, who: string, content: string): Promise<string | null> {
+    if (this.unavailable.has(channelId)) return null;
     let hook = this.cache.get(channelId) ?? null;
     if (!hook) {
       try { hook = await this.resolve(channelId); }
@@ -92,17 +96,20 @@ export class WebhookPoster {
         this.unavailable.add(channelId);
         this.out('discord: cannot post as an agent in ' + channelId + ' (' + ((e as Error)?.message ?? String(e))
           + '); agents will appear as quoted entries from this bot instead');
-        return false;
+        return null;
       }
     }
     try {
-      await this.rest.executeWebhook(hook.id, hook.token, { content, username: who });
-      return true;
+      const sent = await this.rest.executeWebhook(hook.id, hook.token, { content, username: who });
+      // `?wait=true` makes Discord answer with the message. A post that somehow arrives without
+      // one still succeeded — it just cannot be replied to, which is reported as a null id rather
+      // than as a failure to post.
+      return typeof sent['id'] === 'string' ? sent['id'] : null;
     } catch (e) {
       this.out('discord: posting as ' + who + ' in ' + channelId + ' failed — ' + ((e as Error)?.message ?? String(e)));
       // The webhook may have been deleted underneath us; drop it so the next post re-resolves.
       this.cache.delete(channelId);
-      return false;
+      return null;
     }
   }
 

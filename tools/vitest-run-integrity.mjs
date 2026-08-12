@@ -193,7 +193,11 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // unseen.
 // The tree reached 245 — `applications/shared-workspace/discord/tests/gateway-liveness.test.ts`,
 // which spawns a real child process to prove the bot survives a gateway close.
-export const MIN_TEST_MODULES = 236;
+// The tree reached 247 — `applications/shared-workspace/discord/tests/spoken-by.test.ts`, which
+// pins the two things `MESSAGE_CREATE` carried and the bot discarded: the reply reference, so a
+// person can address an agent the way Discord means it, and the attachment names, so posting a
+// picture stops writing nothing and saying nothing.
+export const MIN_TEST_MODULES = 237;
 export const FLOOR_ALLOWANCE = 10;
 
 /**
