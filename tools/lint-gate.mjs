@@ -155,7 +155,11 @@ const UNLINTED_FRONTIER = {
   // carries 24 of the 356 and was under active edit when this number was taken. If that work
   // lands and the count moves past the tolerance, the failure is the ratchet working, not a
   // false alarm: write the new number in and move on.
-  deploy: { errors: 356, files: 106 },
+  // ★ 106 -> 113, and this is the ratchet working exactly as the note above predicts. The added
+  // file is `deploy/mcp-relay/tests/pod-status-is-callable.test.ts`, which pins the cap on
+  // `get_pod_status` — a response measured at 56,450,477 bytes, too large for any MCP client to
+  // receive. The count moved because a test landed, not because debt did.
+  deploy: { errors: 356, files: 113 },
   // The bulk of these are `no-console` in vertical bridges and CLI entry points — one config
   // decision, not a thousand defects. See the note above.
   // ★ 320 -> 337, and the ratchet caught it in CI rather than locally, which is the interesting
