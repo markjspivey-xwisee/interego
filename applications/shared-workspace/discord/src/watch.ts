@@ -100,6 +100,7 @@ export interface WatchDeps {
   /** Registers a change-only watch. `main` binds the session's transport. */
   readonly watch: (
     name: string, input: Record<string, unknown>, onChange: () => void,
+    onError?: (why: string) => void,
   ) => Unsubscribe | null;
   readonly emit: (channelId: string, news: WatchNews) => void | Promise<void>;
   readonly out: (line: string) => void;
@@ -338,6 +339,19 @@ export class ChannelWatcher {
         'discover_context',
         { pod_name: w.pod, graph_iri: w.stream, sort: 'oldest-first' },
         () => { this.schedule(threadId, COALESCE_MS); },
+        // ★ A FAILING WATCH IS A REASON TO LOOK, NOT A REASON TO WAIT. Said once per stream so a
+        // persistent outage is not shouted every 45 seconds, and a read is scheduled anyway: the
+        // alternative — what this did before — is a watch that fails forever in silence while the
+        // channel falls back to the six-minute re-fold with nothing anywhere saying why.
+        (why) => {
+          const key = 'watcherr ' + w.stream;
+          if (!st.told.has(key)) {
+            st.told.add(key);
+            this.deps.out('watch: the live watch on ' + w.stream + ' is failing (' + why
+              + '); this thread is falling back to the periodic re-fold until it recovers');
+          }
+          this.schedule(threadId, COALESCE_MS);
+        },
       );
       // A transport that registers no watch is not a failure to shout about — the sweep above
       // re-folds every REFOLD_EVERY ticks regardless, so the thread still catches up. It is said
@@ -428,13 +442,44 @@ export class ChannelWatcher {
  * the payload on would invite a caller to render it, which is the second reader this file exists
  * to not have.
  */
-export const watchVia = (client: WorkspaceClient) =>
-  (name: string, input: Record<string, unknown>, onChange: () => void): Unsubscribe | null =>
+/**
+ * ★ THE CLIENT IS FETCHED PER POLL, AND AN ERROR IS REPORTED RATHER THAN DROPPED.
+ *
+ * Both halves of this were wrong and together they cost the push its whole point.
+ *
+ * MEASURED 2026-08-11: an entry written at 01:46:12 reached the channel at 01:51:28 — 5m16s,
+ * against a 45-second watch cadence. The read itself is not slow (86 ms, payload stable across
+ * repeats), and 316s sits just under `REFOLD_EVERY × WATCH_INTERVAL_MS` = 360s. So the change
+ * watch never fired at all and the SIX-MINUTE safety re-fold is what delivered it.
+ *
+ *   1. THE CLIENT WAS CAPTURED AT REGISTRATION — `watchVia(session.current.client)` binds one
+ *      client for the life of the watch. The bot re-mints its session (bearer expiry, or a relay
+ *      that restarted underneath it, which happened at 21:50 the same evening). Every poll after
+ *      that used a client whose session was gone. Taking a GETTER means each poll uses whatever
+ *      session is current, so a re-mint heals the watch instead of orphaning it.
+ *
+ *   2. ERROR EVENTS WERE DISCARDED — `if (ev.type === 'data') onChange()` and nothing else. A
+ *      watch failing every 45 seconds forever is then indistinguishable from a channel where
+ *      nothing is happening: no push, no log, no signal of any kind. `pollingWatch` faithfully
+ *      reports each failure and this threw them away.
+ *
+ * A failure now reaches the caller, which says so ONCE per watch and schedules a read anyway —
+ * because "I could not tell whether anything changed" is a reason to look, not a reason to wait
+ * six minutes.
+ */
+export const watchVia = (client: WorkspaceClient | (() => WorkspaceClient)) =>
+  (
+    name: string, input: Record<string, unknown>, onChange: () => void,
+    onError?: (why: string) => void,
+  ): Unsubscribe | null =>
     pollingWatch(
       // `cache: false`, because a watch reading through a cache is a watch that fires on the
       // cache's schedule instead of the pod's.
-      (n, i) => client.tool(n, i, { cache: false }),
+      (n, i) => (typeof client === 'function' ? client() : client).tool(n, i, { cache: false }),
       name, input,
-      (ev) => { if (ev.type === 'data') onChange(); },
+      (ev) => {
+        if (ev.type === 'data') onChange();
+        else onError?.(ev.error?.message ?? ev.error?.code ?? 'no reason reported');
+      },
       { refetchInterval: WATCH_INTERVAL_MS },
     );

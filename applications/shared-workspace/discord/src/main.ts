@@ -259,7 +259,12 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
   const watcher = new ChannelWatcher({
     store,
     withClient: (fn) => session.call(async (c) => fn(deps(c))),
-    watch: (name, input, onChange) => watchVia(session.current.client)(name, input, onChange),
+    // ★ A GETTER, NOT THE CLIENT. `session.current.client` evaluated HERE binds one client for the
+    // life of the watch, so a re-minted session — a bearer expiring, or the relay restarting
+    // underneath the bot — left every watch polling with a session that no longer exists. Passing
+    // the getter means each poll uses whatever session is current, so a re-mint heals them.
+    watch: (name, input, onChange, onError) =>
+      watchVia(() => session.current.client)(name, input, onChange, onError),
     emit: (channelId, news) => say(channelId, renderNews(news)),
     out,
   });
