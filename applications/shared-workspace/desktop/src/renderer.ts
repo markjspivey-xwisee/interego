@@ -3614,6 +3614,10 @@ async function agentConsider(): Promise<void> {
     delegate: speaking,
     seats: S.seats, roles: S.roles.roles ? S.roles : null,
     entries: read.entries, unreadable: read.unreadable, answeredHere: [...A.answered],
+    // This shell runs the turn with the Interego MCP under the delegate's own bearer
+    // whenever it can open that delegate's session — which it can whenever a delegate is
+    // selected, since selection already requires a key on this machine.
+    tools: true,
   });
   if (decision.kind !== 'answer') {
     A.why = decision.why;
@@ -3633,8 +3637,16 @@ async function agentConsider(): Promise<void> {
     'Running on ' + provider.label + ' under ' + (provider.account ?? 'your own account') + '. Nothing has been written.');
   let turn;
   try {
+    /**
+     * ★ THE TURN RUNS AS THE DELEGATE, NOT AS THIS APP. Passing the speaker's ADDRESS lets the
+     * main process open that delegate's own relay session and hand the child the Interego MCP
+     * under its bearer — so the agent can read the substrate, and what it may do is the scope its
+     * delegator granted rather than anything decided here. An address, never a credential: the
+     * renderer must not be able to name a bearer.
+     */
     turn = await window.interego.agentThink(
-      briefPrompt(decision.brief, { displayName: S.viewer.displayName, delegateName: speaker.name }), null);
+      briefPrompt(decision.brief, { displayName: S.viewer.displayName, delegateName: speaker.name }),
+      null, speaker.address);
   } catch (e) {
     A.busy = false; A.phase = 'watching';
     clear($('agentresult')).appendChild(errBox(e, 'Your delegate could not be run, so nothing was drafted and nothing was written.'));

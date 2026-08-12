@@ -139,6 +139,14 @@ export interface TurnInput {
    * visible in the composer before it is posted — as against an unbounded loop.
    */
   readonly answeredHere: readonly string[];
+  /**
+   * Whether the shell will run this turn with the Interego MCP under the delegate's own bearer.
+   *
+   * Supplied by the client because only the client knows: the desktop opens the delegate's session
+   * and writes the config, the bridge does not. Defaults to false, so a caller that says nothing
+   * gets a brief that claims nothing.
+   */
+  readonly tools?: boolean;
 }
 
 /** What a model is given. Text only — no IRIs to fetch, no tools, no credential. */
@@ -159,6 +167,17 @@ export interface ChannelBrief {
   readonly transcript: readonly string[];
   /** How many entries were left out of `transcript` because of the bound. Zero, never omitted. */
   readonly omitted: number;
+  /**
+   * Whether this turn can reach the substrate through the Interego MCP, under this delegate's own
+   * credential.
+   *
+   * ★ THE PROMPT MUST NOT CLAIM TOOLS A TURN DOES NOT HAVE, and must not withhold the fact when it
+   * does. A delegate told it can look things up when it cannot will say "let me check" and then
+   * invent; one that can look and is not told will answer from memory — which is what happened the
+   * first time a person asked their own agent a question about their own workspace, and got a
+   * confident paragraph of general knowledge instead of a read.
+   */
+  readonly tools: boolean;
 }
 
 export type TurnDecision =
@@ -483,6 +502,7 @@ export function decideTurn(input: TurnInput): TurnDecision {
       slug: input.slug,
       answering: line(newest, input),
       addressed: forMe(newest),
+      tools: input.tools === true,
       transcript: window.map((e) => line(e, input)),
       omitted: Math.max(0, ordered.length - window.length),
     },
@@ -562,6 +582,23 @@ export function briefPrompt(
     // agent that abstains from every genuine question is not cautious, it is broken. So the
     // permanence is stated as a constraint on TONE, and the sentinel is scoped to the narrow case
     // it is actually for.
+    ...(brief.tools
+      ? [
+        // ★ SAID ONLY WHEN IT IS TRUE, and said plainly when it is. The tools are the Interego
+        // relay's, reached under THIS delegate's own credential — so what they will let it do is
+        // whatever its delegator authorised, and a refusal from the relay is that authorisation
+        // speaking, not a fault to work around.
+        'You can reach the Interego substrate directly: the relay tools are available to you in',
+        'this turn, under YOUR OWN credential as a delegate. Use them rather than answering from',
+        'memory — discover and read what is actually published, and cite what you read. What they',
+        'will let you do is exactly what the person who authorised you granted; a refusal is that',
+        'grant speaking and is not something to route around.',
+        '',
+        'Prefer a narrow read to a broad one. Some of these answers are very large, and a whole',
+        'pod index is rarely the question.',
+        '',
+      ]
+      : []),
     'Reply as a thoughtful participant. You are not expected to know things the channel has not',
     'said — where a decision is theirs to make, engage with the substance, lay out the trade-off as',
     'you see it from what was written, or ask the one question that would settle it. Do not invent',

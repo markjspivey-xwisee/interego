@@ -20,7 +20,8 @@
     "package": "npm run build && electron-builder --win --publish never --config electron-builder.yml",
     "package:linux": "npm run build && electron-builder --linux --publish never --config electron-builder.yml",
     "package:mac": "npm run build && electron-builder --mac --publish never --config electron-builder.yml",
-    "drive:delegates": "npm run build && esbuild tools/drive-delegate-list-live.ts --bundle --format=cjs --platform=node --target=es2020 --external:electron --outfile=dist/drive-delegate-list-live.js && electron dist/drive-delegate-list-live.js"
+    "drive:delegates": "npm run build && esbuild tools/drive-delegate-list-live.ts --bundle --format=cjs --platform=node --target=es2020 --external:electron --outfile=dist/drive-delegate-list-live.js && electron dist/drive-delegate-list-live.js",
+    "drive:agent-tools": "npm run build && esbuild tools/drive-agent-tools-live.ts --bundle --format=cjs --platform=node --target=es2020 --external:electron --outfile=dist/drive-agent-tools-live.js && electron dist/drive-agent-tools-live.js"
   },
   "engines": {
     "node": ">=20.0.0"

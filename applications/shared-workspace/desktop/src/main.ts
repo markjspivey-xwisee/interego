@@ -35,7 +35,13 @@ import {
   listDelegateKeys, putSecret, secretStoreAvailable, WALLET_KEY,
 } from './secrets.js';
 import { checkPrivateKey } from './privatekey.js';
-import { CODEX_UNSUPPORTED, probeClaude, runClaude, type ProviderStatus } from './modelprovider.js';
+import {
+  CODEX_UNSUPPORTED, probeClaude, runClaude,
+  type ModelRun, type ProviderStatus, type TurnTools,
+} from './modelprovider.js';
+// The relay's OWN MCP endpoint, named under the delegate's bearer. Not a second server —
+// see agent-tools.ts.
+import { withAgentTools } from './agent-tools.js';
 
 const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
 const IDENTITY = process.env['INTEREGO_IDENTITY'] ?? 'https://identity.interego.xwisee.com';
@@ -772,7 +778,7 @@ app.whenReady().then(() => {
    * from the call — a renderer that could pass an executable path would be able to make this
    * process run anything, and the renderer is the half that renders bytes other people wrote.
    */
-  ipcMain.handle('agent:think', async (_e, prompt: string, systemPrompt: string | null) => {
+  ipcMain.handle('agent:think', async (_e, prompt: string, systemPrompt: string | null, asDelegate?: string) => {
     if (typeof prompt !== 'string' || !prompt.trim()) throw new Error('a model turn needs a prompt');
     /**
      * ★ THIS TURN IS REGISTERED BEFORE ANY CHILD EXISTS, AND `cancelled` IS CHECKED AFTER EVERY
@@ -793,10 +799,11 @@ app.whenReady().then(() => {
       });
       if (turn.cancelled) return { ok: false, text: null, ms: 0, why: 'You turned your agent off before it started. Nothing was written.' };
       if (!status.usable || !status.path) return { ok: false, text: null, ms: 0, why: status.why };
-      const run = await runClaude({
-        binary: status.path,
+      const spawnTurn = (tools?: TurnTools): Promise<ModelRun> => runClaude({
+        binary: status.path as string,
         prompt,
         ...(typeof systemPrompt === 'string' && systemPrompt ? { systemPrompt } : {}),
+        ...(tools ? { tools } : {}),
         onChild: (kill) => {
           turn.kill = kill;
           // Cancelled while the child was being spawned: kill it the moment it exists, or it
@@ -804,6 +811,55 @@ app.whenReady().then(() => {
           if (turn.cancelled) kill();
         },
       });
+
+      /**
+       * ★ THE TURN RUNS UNDER THE DELEGATE'S OWN SESSION, OR UNDER NO TOOLS AT ALL.
+       *
+       * `asDelegate` is an ADDRESS this process holds a key for, never a bearer from the
+       * renderer — the renderer must not be able to name a credential, only a delegate this
+       * machine already hosts. `delegateSession` does the sign-in and the relay issues the scope;
+       * nothing here decides what the agent may do.
+       *
+       * ★ AND A FAILURE TO OPEN THAT SESSION FALLS BACK TO NO TOOLS RATHER THAN TO THE PERSON'S.
+       * The tempting recovery — use the account session, it is right there — would hand a
+       * delegate its human's full credential, which is the one thing every part of this vertical
+       * refuses. A turn with no tools still writes a sentence; a turn with the wrong identity
+       * writes a permanent record under it.
+       */
+      let run: ModelRun;
+      if (typeof asDelegate === 'string' && asDelegate) {
+        let bearer: string | null = null;
+        let delegatePod = '';
+        let why: string | null = null;
+        try {
+          const live = await delegateSession(asDelegate);
+          bearer = live.bearer.accessToken;
+          delegatePod = live.pod;
+        } catch (e) { why = (e as Error)?.message ?? String(e); }
+        if (bearer) {
+          run = await withAgentTools({ relay: RELAY, bearer, delegatePod }, (tools) => spawnTurn(tools));
+        } else {
+          /**
+           * ★ REFUSED, NOT QUIETLY DEGRADED. The tempting recovery is to run the turn with no
+           * tools — it would still produce a paragraph, and nobody would see an error. That is
+           * the trap: an agent that could not look anything up writes an answer that READS
+           * exactly like one that did, and it would land on a permanent public log as though it
+           * had. A person who switched on an agent that can consult the substrate is owed the
+           * difference between "it looked and this is what it found" and "it could not look".
+           *
+           * A turn that refuses costs one poll. `agentConsider` runs again on the next read.
+           */
+          run = {
+            ok: false, text: null, ms: 0,
+            why: 'This delegate could not open its own relay session, so it has no tools for this '
+              + 'turn and nothing was drafted. It is NOT falling back to answering without them: an '
+              + 'answer written with no way to look anything up reads exactly like one written after '
+              + 'looking, and would land on your log as though it had. ' + (why ?? 'No reason was reported.'),
+          };
+        }
+      } else {
+        run = await spawnTurn();
+      }
       if (turn.cancelled) return { ok: false, text: null, ms: run.ms, why: 'You turned your agent off while it was thinking. Its answer was discarded and nothing was written.' };
       return run;
     } finally {

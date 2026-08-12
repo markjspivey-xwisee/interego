@@ -150,7 +150,15 @@ export interface WorkspaceBridge {
    * No binary path and no model credential crosses in either direction — the renderer says what to
    * ask, the main process decides what to ask it with.
    */
-  agentThink(prompt: string, systemPrompt: string | null): Promise<ModelTurn>;
+  /**
+   * Run one model turn.
+   *
+   * `asDelegate` is the ADDRESS of a delegate this machine holds a key for — never a credential.
+   * The main process opens that delegate's own relay session and gives the child the Interego MCP
+   * under ITS bearer, so what the agent may do is the scope its delegator granted, enforced by the
+   * relay. Omit it and the turn runs with no tools at all.
+   */
+  agentThink(prompt: string, systemPrompt: string | null, asDelegate?: string): Promise<ModelTurn>;
   /**
    * Stop a turn already running.
    *
@@ -201,7 +209,7 @@ const bridge: WorkspaceBridge = {
   // carries a `sender` the renderer has no business holding.
   onSessionChanged: (fn) => { ipcRenderer.on('session:changed', (_e, s: SessionInfo) => { fn(s); }); },
   agentProbe: () => ipcRenderer.invoke('agent:probe'),
-  agentThink: (prompt, systemPrompt) => ipcRenderer.invoke('agent:think', prompt, systemPrompt),
+  agentThink: (prompt, systemPrompt, asDelegate) => ipcRenderer.invoke('agent:think', prompt, systemPrompt, asDelegate),
   agentCancel: () => ipcRenderer.invoke('agent:cancel'),
   delegateList: () => ipcRenderer.invoke('delegate:list'),
   delegateMint: () => ipcRenderer.invoke('delegate:mint'),
