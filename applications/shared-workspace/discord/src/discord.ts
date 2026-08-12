@@ -44,6 +44,19 @@ export interface GatewayMessage {
   readonly authorId: string;
   readonly authorBot: boolean;
   readonly content: string;
+  /**
+   * The message this one is a reply to, or null.
+   *
+   * ★ THIS IS HOW A PERSON ADDRESSES AN AGENT WITHOUT TYPING ITS NAME. Discord's own gesture for
+   * "I am talking to you" is the reply, and the bot could not see it: `MESSAGE_CREATE` carries
+   * `message_reference` and nothing read it, so a reply to an agent's answer arrived looking like
+   * any other sentence in the channel and was recorded as an ordinary entry addressed to nobody.
+   *
+   * Taken from `message_reference.message_id` rather than from `referenced_message`, which
+   * Discord omits when the replied-to message is unavailable — the reference survives a deleted
+   * or uncached target and the embedded copy does not.
+   */
+  readonly replyToId: string | null;
 }
 
 export interface GatewayInteraction {
@@ -324,6 +337,10 @@ export class DiscordGateway {
         // here, and the caller cannot tell them apart — which is exactly why 4014 is fatal above,
         // so the first case never reaches this line.
         content: typeof p['content'] === 'string' ? p['content'] : '',
+        replyToId: ((): string | null => {
+          const ref = p['message_reference'] as { message_id?: unknown } | undefined;
+          return typeof ref?.message_id === 'string' ? ref.message_id : null;
+        })(),
       });
       return;
     }
@@ -530,7 +547,15 @@ export class DiscordRest {
     webhookId: string, webhookToken: string,
     body: { content: string; username: string; avatar_url?: string },
   ): Promise<Record<string, unknown>> {
-    return this.call('POST', '/webhooks/' + webhookId + '/' + webhookToken, {
+    /**
+     * ★ `?wait=true`, OR DISCORD ANSWERS 204 AND THE MESSAGE HAS NO ID HERE.
+     *
+     * The default is fire-and-forget: the post lands, the response is empty, and the caller never
+     * learns which message it became. That is enough to display an agent's answer and not enough
+     * to let anyone REPLY to it — a reply arrives naming a message id, and without this the bot
+     * has no record that the id was ever an agent's.
+     */
+    return this.call('POST', '/webhooks/' + webhookId + '/' + webhookToken + '?wait=true', {
       ...body, allowed_mentions: { parse: [], users: [] },
     });
   }

@@ -185,7 +185,24 @@ export function agentFooter(a: Extract<EntryAuthorship, { kind: 'delegate' }>, p
  */
 export type NewsPost =
   | { readonly kind: 'bot'; readonly message: Message }
-  | { readonly kind: 'agent'; readonly who: string; readonly content: string };
+  | {
+      readonly kind: 'agent';
+      readonly who: string;
+      readonly content: string;
+      /**
+       * WHICH agent, as its DID — not the display name beside it.
+       *
+       * ★ CARRIED SO A REPLY CAN REACH IT. `who` is a label from somebody's registry and is not an
+       * identifier; two pods may legitimately publish the same one. When the sender learns what
+       * Discord message this became, this is what it remembers against that id, so replying to the
+       * message addresses the agent that actually wrote it.
+       *
+       * Available for free at this point and nowhere later: the `delegate` variant of
+       * `EntryAuthorship` types its signer as `the-author`, so reaching this branch is already the
+       * proof that this agent's own key signed those bytes.
+       */
+      readonly agentId: string;
+    };
 
 export function renderChallenge(out: LinkChallengeOut): Message {
   return body([
@@ -511,6 +528,7 @@ export function renderNews(news: WatchNews): readonly NewsPost[] | null {
           posts.push({
             kind: 'agent',
             who,
+            agentId: e.author.agentId,
             content: (e.body ?? '(this entry names no dct:description)')
               + '\n' + agentFooter(e.author, e.pod),
           });
