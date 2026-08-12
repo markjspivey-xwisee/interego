@@ -193,7 +193,7 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // unseen.
 // The tree reached 245 — `applications/shared-workspace/discord/tests/gateway-liveness.test.ts`,
 // which spawns a real child process to prove the bot survives a gateway close.
-export const MIN_TEST_MODULES = 235;
+export const MIN_TEST_MODULES = 236;
 export const FLOOR_ALLOWANCE = 10;
 
 /**
