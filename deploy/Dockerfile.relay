@@ -120,7 +120,6 @@ COPY deploy/mcp-relay/required-args.ts ./
 COPY deploy/mcp-relay/pod-selector.ts ./
 COPY deploy/mcp-relay/interop-principal.ts ./
 COPY deploy/mcp-relay/notification-log.ts ./
-COPY deploy/mcp-relay/pod-status-page.ts ./
 COPY deploy/mcp-relay/amep.ts ./
 COPY deploy/mcp-relay/amep-session-bridge.ts ./
 COPY deploy/mcp-relay/note-view.ts ./
