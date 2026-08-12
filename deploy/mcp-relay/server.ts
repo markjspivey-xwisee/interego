@@ -341,6 +341,7 @@ import {
 } from './supersession-frontier.js';
 import { resolveInteropPrincipal } from './interop-principal.js';
 import { NotificationLog } from './notification-log.js';
+import { POD_STATUS_ENTRY_BUDGET_BYTES, podStatusEntryPage } from './pod-status-page.js';
 import { ENFORCED_REQUIRED_ARGS, requiredArgsRefusal } from './required-args.js';
 import {
   resolvePodSubject, podNameOf, POD_URL_INJECTED, POD_NAME_INJECTED,
@@ -4722,15 +4723,6 @@ function jwtUserIdClaim(token: string): string | undefined {
   }
 }
 
-/**
- * How many manifest entries `get_pod_status` returns.
- *
- * Chosen from the data rather than picked round: a descriptor entry measured a 741-byte mean, so
- * 100 keeps this array near 74 KB and the whole response comfortably inside what every MCP client
- * carries. The status itself — identity, registry, delegation rows — is about 5 KB regardless.
- */
-const POD_STATUS_ENTRY_CAP = 100;
-
 async function handleGetPodStatus(args: ToolArgs): Promise<string> {
   // ★ THIS ONE RETURNED A SUCCESSFUL-LOOKING STATUS FOR NO POD AT ALL. Only `/mcp` fills
   // `pod_url`; this tool is in neither AUTH_REQUIRED_TOOLS (so no selector is injected on
@@ -4906,6 +4898,7 @@ async function handleGetPodStatus(args: ToolArgs): Promise<string> {
     } : {}),
   } : null;
 
+  const entryPage = podStatusEntryPage(entries);
   return JSON.stringify({
     pod: podUrl,
     css: CSS_URL,
@@ -4942,7 +4935,7 @@ async function handleGetPodStatus(args: ToolArgs): Promise<string> {
     } : null,
     descriptors: entries.length,
     /**
-     * ★ CAPPED, BECAUSE AN UNCAPPED MANIFEST MAKES THIS TOOL IMPOSSIBLE TO CALL.
+     * ★ CAPPED BY BYTES, BECAUSE AN UNCAPPED MANIFEST MAKES THIS TOOL IMPOSSIBLE TO CALL.
      *
      * MEASURED 2026-08-12: this response was **56,450,477 bytes** on a working pod, and grew by
      * 1.4 MB over a single afternoon. Of a 579,536-byte response on a second pod, 574,382 bytes
@@ -4961,14 +4954,15 @@ async function handleGetPodStatus(args: ToolArgs): Promise<string> {
      *
      * `slice(-N)` matches `recentNotifications` below, which has always capped the same way.
      */
-    entries: entries.slice(-POD_STATUS_ENTRY_CAP),
-    ...(entries.length > POD_STATUS_ENTRY_CAP ? {
+    entries: entryPage.page,
+    ...(entryPage.omitted > 0 ? {
       entriesTruncated: {
-        returned: POD_STATUS_ENTRY_CAP,
-        omitted: entries.length - POD_STATUS_ENTRY_CAP,
-        note: 'The last ' + POD_STATUS_ENTRY_CAP + ' of ' + entries.length + ' in manifest order. '
-          + '`descriptors` is the exact total. Uncapped, this response reached 56 MB on a real pod '
-          + 'and no MCP client could receive it. Use discover_context to read a pod\'s contents.',
+        returned: entryPage.page.length,
+        omitted: entryPage.omitted,
+        note: 'The newest ' + entryPage.page.length + ' of ' + entries.length + ' that fit in '
+          + POD_STATUS_ENTRY_BUDGET_BYTES + ' bytes. `descriptors` is the exact total. Uncapped, '
+          + 'this response reached 56 MB on a real pod and no MCP client could receive it. Use '
+          + 'discover_context to read a pod\'s contents.',
       },
     } : {}),
     // Present only for the pod's proven owner — see `mayReadActivity` above. The spread

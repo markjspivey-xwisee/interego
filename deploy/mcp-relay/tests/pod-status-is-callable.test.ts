@@ -39,6 +39,9 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { stripComments } from './strip-comments.js';
+import {
+  POD_STATUS_ENTRY_BUDGET_BYTES, POD_STATUS_ENTRY_CAP, podStatusEntryPage,
+} from '../pod-status-page.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SERVER = readFileSync(join(here, '..', 'server.ts'), 'utf8');
@@ -72,19 +75,24 @@ const TRANSPORT_CEILING = 1_000_000;
 
 console.log('\nget_pod_status is callable from a real client, not only from curl');
 
-// ── 1. THE CAP EXISTS AND IS SIZED FROM THE DATA ─────────────────────────────
-console.log('\n1. the cap keeps the response inside what a client can receive');
+// ── 1. THE BOUND EXISTS AND IS SIZED FROM THE DATA ───────────────────────────
+console.log('\n1. the bound keeps the response inside what a client can receive');
 {
-  const capMatch = /const POD_STATUS_ENTRY_CAP = (\d+)/.exec(SERVER_CODE);
-  check('POD_STATUS_ENTRY_CAP is declared', !!capMatch);
-  const cap = capMatch ? Number(capMatch[1]) : 0;
-  const projected = cap * MEAN_ENTRY_BYTES;
-  check('the capped entries array stays well inside the transport ceiling',
-    projected > 0 && projected < TRANSPORT_CEILING,
-    `${cap} entries x ${MEAN_ENTRY_BYTES} B = ${projected.toLocaleString('en-US')} B`);
-  // A cap of zero would pass the ceiling check and destroy the field's usefulness, so the
-  // floor is asserted too: this is a bound on a useful answer, not a deletion of one.
-  check('and is still a useful sample rather than an empty array', cap >= 25, `cap = ${cap}`);
+  check('a byte budget is declared', POD_STATUS_ENTRY_BUDGET_BYTES > 0);
+  check('and sits well inside the transport ceiling',
+    POD_STATUS_ENTRY_BUDGET_BYTES < TRANSPORT_CEILING / 2,
+    `${POD_STATUS_ENTRY_BUDGET_BYTES.toLocaleString('en-US')} B vs ceiling ${TRANSPORT_CEILING.toLocaleString('en-US')} B`);
+  check('a count cap is declared on top of it', POD_STATUS_ENTRY_CAP > 0);
+  // A cap of zero would satisfy every ceiling check and destroy the field, so the floor is
+  // asserted too: this is a bound on a useful answer, not a deletion of one.
+  check('and is still a useful sample rather than an empty array',
+    POD_STATUS_ENTRY_CAP >= 25, `cap = ${POD_STATUS_ENTRY_CAP}`);
+  // ★ THE RELAY MUST USE THE SHARED MODULE. Re-declaring either constant inside `server.ts` would
+  // give the deployed path its own copy, and every assertion in this file would then be about a
+  // function the relay does not call.
+  check('server.ts imports the paging module rather than re-declaring it',
+    /from '\.\/pod-status-page\.js'/.test(SERVER_CODE)
+    && !/const POD_STATUS_ENTRY_(CAP|BUDGET_BYTES)\s*=/.test(SERVER_CODE));
 }
 
 // ── 2. THE COUNT IS UNAFFECTED ───────────────────────────────────────────────
@@ -94,11 +102,10 @@ console.log('\n2. `descriptors` is still the exact total, not the page size');
 {
   const payload = region(SERVER_CODE, 'descriptors: entries.length', 'recentNotifications', 'status payload');
   check('descriptors is entries.length, taken before any slice', payload.startsWith('descriptors: entries.length'));
-  check('the slice is applied to the returned array only, not to the count',
-    /entries:\s*entries\.slice\(-POD_STATUS_ENTRY_CAP\)/.test(payload),
-    payload.slice(0, 120));
-  check('the count is not itself sliced',
-    !/descriptors:\s*entries\.slice/.test(SERVER_CODE));
+  check('the page is what is returned, not the whole array',
+    /entries:\s*entryPage\.page/.test(payload), payload.slice(0, 120));
+  check('the count is not itself paged',
+    !/descriptors:\s*(entryPage|entries\.slice)/.test(SERVER_CODE));
 }
 
 // ── 3. TRUNCATION IS STATED, NOT SILENT ──────────────────────────────────────
@@ -110,10 +117,10 @@ console.log('\n3. a truncated answer says so, and says how much it dropped');
   const payload = region(SERVER_CODE, 'descriptors: entries.length', 'recentNotifications', 'status payload');
   check('an entriesTruncated block is emitted', /entriesTruncated/.test(payload));
   check('it is conditional on there being something omitted',
-    /entries\.length\s*>\s*POD_STATUS_ENTRY_CAP\s*\?/.test(payload),
+    /entryPage\.omitted\s*>\s*0\s*\?/.test(payload),
     'an unconditional marker would claim truncation on a small pod');
-  check('it reports the omitted count arithmetically rather than as prose',
-    /omitted:\s*entries\.length\s*-\s*POD_STATUS_ENTRY_CAP/.test(payload));
+  check('it reports the omitted count from the page rather than as prose',
+    /omitted:\s*entryPage\.omitted/.test(payload));
   check('and points at the tool that does read a pod\'s contents',
     /discover_context/.test(payload));
 }
@@ -125,7 +132,7 @@ console.log('\n4. a small pod carries no truncation marker at all');
 {
   const payload = region(SERVER_CODE, 'descriptors: entries.length', 'recentNotifications', 'status payload');
   check('the block is spread conditionally rather than set to null',
-    /\.\.\.\(entries\.length\s*>\s*POD_STATUS_ENTRY_CAP\s*\?/.test(payload));
+    /\.\.\.\(entryPage\.omitted\s*>\s*0\s*\?/.test(payload));
   /**
    * ★ POSITION, NOT ABSENCE. The obvious form of this check — "no line begins with
    * `entriesTruncated:`" — matches the key INSIDE the conditional spread, because that key is on
@@ -133,54 +140,120 @@ console.log('\n4. a small pod carries no truncation marker at all');
    * guarded emission from an unguarded one is that the only occurrence sits after the guard.
    */
   const occurrences = (payload.match(/entriesTruncated/g) ?? []).length;
-  const guardAt = payload.indexOf('...(entries.length >');
+  const guardAt = payload.indexOf('...(entryPage.omitted >');
   check('entriesTruncated appears exactly once, and after the guard that conditions it',
     occurrences === 1 && guardAt >= 0 && payload.indexOf('entriesTruncated') > guardAt,
     `${occurrences} occurrence(s)`);
 }
 
-// ── 5. THE ARITHMETIC, EXERCISED ─────────────────────────────────────────────
-// The source assertions above pin the shape; this pins that the shape computes correct numbers,
-// including the boundary where a pod sits exactly on the cap.
-console.log('\n5. the numbers come out right at, below and above the cap');
-{
-  const cap = Number(/const POD_STATUS_ENTRY_CAP = (\d+)/.exec(SERVER_CODE)?.[1] ?? 0);
-  const project = (total: number): { returned: number; omitted: number; marked: boolean } => {
-    const entries = Array.from({ length: total }, (_, i) => i);
-    const shown = entries.slice(-cap);
-    return { returned: shown.length, omitted: total - cap, marked: total > cap };
+// ── 5. THE ARITHMETIC, EXERCISED ─────────────────────────────
+/**
+ * The source assertions above pin the shape; these pin that it computes correct numbers.
+ *
+ * ★ THE MODEL BELOW MIRRORS `podStatusEntryPage` RATHER THAN CALLING IT, because `server.ts` is
+ * self-starting and cannot be imported — the same reason every other assertion in this file is
+ * over its text. That is a real weakness and it is bounded deliberately: §1–§4 pin the actual call
+ * site, so a divergence between this model and the shipped function shows up there as a shape that
+ * no longer matches, not as a green test over a fiction.
+ */
+const CAP = POD_STATUS_ENTRY_CAP;
+const BUDGET = POD_STATUS_ENTRY_BUDGET_BYTES;
+
+/**
+ * ★ THE REAL FUNCTION, NOT A MODEL OF IT.
+ *
+ * This file first carried its own copy of the paging algorithm, because `server.ts` is
+ * self-starting and cannot be imported. MEASURED: deleting the budget check from the server
+ * produced ZERO failures here — the test agreed with itself about a function it never called, and
+ * would have waved through exactly the defect it was written for. The function now lives in
+ * `pod-status-page.ts` so both the relay and this file use the one implementation.
+ *
+ * Entries are sized by their JSON length, so a fixture of strings of a known length gives a page
+ * whose byte total is predictable without inventing a second notion of size.
+ */
+function page(entrySizes: readonly number[]): { returned: number; omitted: number; bytes: number } {
+  // A JSON string of n characters serialises to n + 2 bytes (the quotes), so ask for n - 2.
+  const entries = entrySizes.map((n) => 'x'.repeat(Math.max(1, n - 2)));
+  const out = podStatusEntryPage(entries);
+  return {
+    returned: out.page.length,
+    omitted: out.omitted,
+    // `reduce<number>`, not an annotated parameter: `page` is `readonly unknown[]`, so without the
+    // explicit type argument TypeScript infers the accumulator as `unknown` and the addition fails.
+    bytes: out.page.reduce<number>((sum, e) => sum + JSON.stringify(e).length, 0),
   };
-  const below = project(cap - 1);
-  check('below the cap: everything is returned and nothing is marked',
-    below.returned === cap - 1 && !below.marked, JSON.stringify(below));
-  const at = project(cap);
-  check('exactly at the cap: everything is returned and nothing is marked',
-    at.returned === cap && !at.marked, JSON.stringify(at));
-  const over = project(76_000);
-  check('far above it: the page is the cap and the omitted count is the remainder',
-    over.returned === cap && over.omitted === 76_000 - cap && over.marked, JSON.stringify(over));
-  check('returned + omitted reconstructs the total the caller was told',
-    over.returned + over.omitted === 76_000);
 }
 
-// ── 6. THE PROJECTED SIZE OF THE REAL FAILURE ────────────────────────────────
-// ★ THIS IS THE REGRESSION THE FILE IS FOR. Removing the slice restores a response that no MCP
-// client can receive, and every other test in this repository would still pass — because they
-// reach the relay with a `fetch`, which is precisely the caller that succeeds.
-console.log('\n6. the uncapped shape is the one that could not be received');
+const sized = (n: number, each: number): number[] => Array.from({ length: n }, () => each);
+
+console.log('\n5. the page is bounded in bytes, and the totals still reconcile');
 {
-  const cap = Number(/const POD_STATUS_ENTRY_CAP = (\d+)/.exec(SERVER_CODE)?.[1] ?? 0);
-  const REAL_POD_DESCRIPTORS = 76_000;
-  const uncapped = REAL_POD_DESCRIPTORS * MEAN_ENTRY_BYTES;
-  const capped = cap * MEAN_ENTRY_BYTES;
+  check('the byte budget is declared', BUDGET > 0, `BUDGET = ${BUDGET}`);
+  check('and is comfortably inside the transport ceiling', BUDGET > 0 && BUDGET < TRANSPORT_CEILING / 2,
+    `${BUDGET.toLocaleString('en-US')} B vs ceiling ${TRANSPORT_CEILING.toLocaleString('en-US')} B`);
+
+  const small = page(sized(10, MEAN_ENTRY_BYTES));
+  check('a small pod returns everything and omits nothing',
+    small.returned === 10 && small.omitted === 0, JSON.stringify(small));
+
+  const many = page(sized(76_000, MEAN_ENTRY_BYTES));
+  check('a huge pod of ordinary entries is bounded by the COUNT, and reconciles',
+    many.returned === CAP && many.returned + many.omitted === 76_000, JSON.stringify(many));
+  check('and lands well inside the ceiling', many.bytes < TRANSPORT_CEILING / 3,
+    `${many.bytes.toLocaleString('en-US')} B`);
+}
+
+// ── 6. THE CASE A COUNT CAP GOT WRONG ────────────────────────
+/**
+ * ★ THIS SECTION EXISTS BECAUSE THE FIRST FIX WAS WRONG AND SHIPPED.
+ *
+ * The cap was a COUNT, sized from a 741-byte mean measured on one pod. MEASURED against the next
+ * pod after deploying it: 100 entries came to 989,903 bytes, because that pod's entries average
+ * 9.9 KB. It sat a hair under the ceiling it was meant to keep the response far below, and would
+ * have gone over for any pod whose entries ran larger still. The 56 MB case was fixed by luck.
+ */
+const HEAVY_ENTRY_BYTES = 9_900;
+
+console.log('\n6. a pod whose entries are 13x heavier is still bounded');
+{
+  const heavy = page(sized(76_000, HEAVY_ENTRY_BYTES));
+  check('the heavy pod is bounded by BYTES, not by the count',
+    heavy.returned < CAP, `returned ${heavy.returned} of a ${CAP} cap`);
+  check('★ and the payload stays far under the ceiling, which a count cap did not achieve',
+    heavy.bytes <= BUDGET && heavy.bytes < TRANSPORT_CEILING / 3,
+    `${heavy.bytes.toLocaleString('en-US')} B (a count cap of ${CAP} gave 989,903 B)`);
+  check('the totals still reconcile', heavy.returned + heavy.omitted === 76_000);
+
+  // What the old cap would have produced on that same pod, stated so the regression is legible.
+  check('a count-only cap would have exceeded three quarters of the ceiling',
+    CAP * HEAVY_ENTRY_BYTES > TRANSPORT_CEILING * 0.75,
+    `${(CAP * HEAVY_ENTRY_BYTES).toLocaleString('en-US')} B`);
+}
+
+// ── 7. NEVER AN EMPTY PAGE WHEN THERE IS SOMETHING TO SHOW ──────────
+// An entry larger than the entire budget must still be returned. An empty array on a pod that has
+// descriptors reads as "this pod has nothing", which is the false-negative this whole file is
+// about — a wrong answer that looks like a healthy one.
+console.log('\n7. an oversized single entry is returned rather than silently dropped');
+{
+  const one = page([BUDGET * 3]);
+  check('the one entry comes back', one.returned === 1 && one.omitted === 0, JSON.stringify(one));
+  const firstOfMany = page([...sized(50, 10), BUDGET * 3]);
+  check('and when it is the newest of many, it comes back with the rest omitted',
+    firstOfMany.returned === 1 && firstOfMany.omitted === 50, JSON.stringify(firstOfMany));
+}
+
+// ── 8. THE UNCAPPED SHAPE IS THE ONE THAT COULD NOT BE RECEIVED ───────
+// ★ THE REGRESSION THE FILE IS FOR. Removing the bound restores a response no MCP client can
+// receive, and every other test in this repository would still pass — because they reach the relay
+// with a `fetch`, which is precisely the caller that succeeds.
+console.log('\n8. unbounded, the same pod is unreachable');
+{
+  const uncapped = 76_000 * MEAN_ENTRY_BYTES;
   check('uncapped, a real pod exceeds the ceiling by orders of magnitude',
-    uncapped > TRANSPORT_CEILING * 25,
-    `${uncapped.toLocaleString('en-US')} B`);
-  check('capped, the same pod answers in a fraction of it',
-    capped < TRANSPORT_CEILING / 10,
-    `${capped.toLocaleString('en-US')} B`);
-  check('the cap is what separates them, not the pod',
-    uncapped / Math.max(1, capped) > 100);
+    uncapped > TRANSPORT_CEILING * 25, `${uncapped.toLocaleString('en-US')} B`);
+  check('bounded, it answers in a fraction of it',
+    page(sized(76_000, MEAN_ENTRY_BYTES)).bytes < TRANSPORT_CEILING / 3);
 }
 
 console.log(failures
