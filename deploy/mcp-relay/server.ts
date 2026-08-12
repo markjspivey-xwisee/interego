@@ -4722,6 +4722,15 @@ function jwtUserIdClaim(token: string): string | undefined {
   }
 }
 
+/**
+ * How many manifest entries `get_pod_status` returns.
+ *
+ * Chosen from the data rather than picked round: a descriptor entry measured a 741-byte mean, so
+ * 100 keeps this array near 74 KB and the whole response comfortably inside what every MCP client
+ * carries. The status itself — identity, registry, delegation rows — is about 5 KB regardless.
+ */
+const POD_STATUS_ENTRY_CAP = 100;
+
 async function handleGetPodStatus(args: ToolArgs): Promise<string> {
   // ★ THIS ONE RETURNED A SUCCESSFUL-LOOKING STATUS FOR NO POD AT ALL. Only `/mcp` fills
   // `pod_url`; this tool is in neither AUTH_REQUIRED_TOOLS (so no selector is injected on
@@ -4932,7 +4941,36 @@ async function handleGetPodStatus(args: ToolArgs): Promise<string> {
       note: 'A COUNT of the pod delegation registry, not the `agents` array above. The rows are under `delegationRegistry`.',
     } : null,
     descriptors: entries.length,
-    entries,
+    /**
+     * ★ CAPPED, BECAUSE AN UNCAPPED MANIFEST MAKES THIS TOOL IMPOSSIBLE TO CALL.
+     *
+     * MEASURED 2026-08-12: this response was **56,450,477 bytes** on a working pod, and grew by
+     * 1.4 MB over a single afternoon. Of a 579,536-byte response on a second pod, 574,382 bytes
+     * were this array and 5,154 bytes were the status — the part anybody actually asks for.
+     *
+     * A `fetch` buffers that without complaint, so every direct probe passes and the tool looks
+     * healthy. A real MCP client does not: it drops the connection, and the Claude CLI reports
+     * `MCP session expired during tool call`. That names a session problem, so it sends you to
+     * auth, where everything checks out — the bearer is valid before and after, `initialize`,
+     * `tools/list` and `tools/call` all answer 200. The tool was simply too big to call, from
+     * every MCP client including the pod owner's own claude.ai connector.
+     *
+     * `descriptors` above stays the EXACT total, so nothing that counts is affected. Nothing in
+     * this repository reads `entries` from this tool — it is `discover_context` that reads a
+     * pod's content, and that is where a caller who wants all of them should go.
+     *
+     * `slice(-N)` matches `recentNotifications` below, which has always capped the same way.
+     */
+    entries: entries.slice(-POD_STATUS_ENTRY_CAP),
+    ...(entries.length > POD_STATUS_ENTRY_CAP ? {
+      entriesTruncated: {
+        returned: POD_STATUS_ENTRY_CAP,
+        omitted: entries.length - POD_STATUS_ENTRY_CAP,
+        note: 'The last ' + POD_STATUS_ENTRY_CAP + ' of ' + entries.length + ' in manifest order. '
+          + '`descriptors` is the exact total. Uncapped, this response reached 56 MB on a real pod '
+          + 'and no MCP client could receive it. Use discover_context to read a pod\'s contents.',
+      },
+    } : {}),
     // Present only for the pod's proven owner — see `mayReadActivity` above. The spread
     // keeps the key ABSENT rather than null for everyone else.
     ...(recentNotifications ? { recentNotifications } : {}),
