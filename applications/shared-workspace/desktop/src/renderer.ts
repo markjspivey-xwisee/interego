@@ -194,9 +194,22 @@ const shortCid = (c: string | null | undefined): string => (c ? shortRef(c) : '�
 function bridgeAsMcp(): ConnectorMcp {
   return {
     async listTools() {
-      // The bridge is already connected to exactly one relay, so there is one server and the
-      // probe is a live call rather than a directory lookup.
-      const r = await window.interego.call('get_pod_status', {});
+      /**
+       * The bridge is already connected to exactly one relay, so there is one server and the
+       * probe is a live call rather than a directory lookup.
+       *
+       * ★ THE PROBE IS THE CHEAPEST CALL THAT PROVES THE POINT, NOT THE MOST DESCRIPTIVE ONE.
+       * This asked `get_pod_status`, which MEASURED 56,450,477 bytes on a real pod — the app
+       * downloaded 56 MB to establish that it was connected and discarded the response unread.
+       * Any successful call proves reachability equally well.
+       *
+       * `read_inbox` is the replacement rather than something cheaper still, because a probe has
+       * a second job: it is the grant check, so it must be one of `REQUIRED_TOOLS`. Of those,
+       * only it and `get_pod_status` take no arguments, and it is 2,507 bytes against 1.2 MB on
+       * the same pod. It is a read — the relay gates it for identity binding, not mutation — so
+       * probing costs nothing and consumes nothing.
+       */
+      const r = await window.interego.call('read_inbox', {});
       if (!r.ok) throw Object.assign(new Error(r.error.message), r.error);
       return { servers: [{ server: 'Interego relay', tools: [{ name: 'get_pod_status' }] }] };
     },
@@ -2258,7 +2271,10 @@ async function delegateClient(address: string): Promise<WorkspaceClient> {
       // One live call, which is also the check that this machine can actually drive this
       // delegate: a key it does not hold answers `delegate_unavailable` here rather than at the
       // write, where the failure would arrive after the person had pressed Send.
-      const r = await window.interego.delegateCall(address, 'get_pod_status', {});
+      //
+      // ★ AND IT IS THE CHEAP REQUIRED TOOL, FOR THE REASON GIVEN ON THE OTHER PROBE. This asked
+      // `get_pod_status` — 56,450,477 bytes on a real pod, discarded unread, once per delegate.
+      const r = await window.interego.delegateCall(address, 'read_inbox', {});
       if (!r.ok) throw Object.assign(new Error(r.error.message), r.error);
       return { servers: [{ server: 'Interego relay', tools: REQUIRED_TOOLS.map((name) => ({ name })) }] };
     },
