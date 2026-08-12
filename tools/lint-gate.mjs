@@ -171,7 +171,17 @@ const UNLINTED_FRONTIER = {
   // (`applications/agent-collective/tests/pod-publisher-attribution.test.ts`, the coverage
   // `recordCrossAgentAudit` never had). Re-pinned to what is committed rather than to what a
   // pre-commit local run happened to see.
-  applications: { errors: 1310, files: 355 },
+  // ★ 355 -> 374, and CI caught it a THIRD time for the reason written twice above. The local
+  // run measured 373 and sat inside the slack; the commit measured 374 and failed. This is not
+  // three separate oversights — it is the same one, and the pattern is now worth stating as a
+  // rule rather than as an anecdote: THE ONLY LINT RUN WORTH BELIEVING IS ONE TAKEN AFTER
+  // `git add`, because `lintTrackedUnder` reads `git ls-files` and an uncommitted new file is
+  // invisible to it. A pre-commit run measures the tree you had, not the tree you are pushing.
+  //
+  // This round contributed the Discord bot's `address.ts` and `webhook.ts` with their tests, and
+  // the desktop's `drive-delegate-list-live.ts` — four `no-console` CLI/driver files and two
+  // source files in a vertical that is not on the linted frontier.
+  applications: { errors: 1323, files: 374 },
   benchmarks: { errors: 193, files: 31 },
   demos: { errors: 48, files: 37 },
   // A declared npm workspace (see package.json `workspaces`), never linted.
