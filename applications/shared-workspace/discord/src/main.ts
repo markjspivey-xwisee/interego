@@ -561,6 +561,35 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
       const res = await session.call((c) => recordMessage(deps(c), {
         threadId: msg.channelId, discordUserId: msg.authorId, text: msg.content,
       }));
+      /**
+       * ★ AN ATTACHMENT WITH NO CAPTION WROTE NOTHING AND SAID NOTHING.
+       *
+       * A message carrying only an image arrives with `content: ""`. `recordMessage` answers
+       * `{ kind: 'empty' }` and `renderRecord` renders that as null — correctly, because an empty
+       * message IS nothing to record. But the person did not send an empty message; they sent a
+       * picture, and from their side the result was a bot that ignored them without a word.
+       *
+       * ★ AND THE LIMIT IS STATED RATHER THAN IMPLIED. A `wsp:Entry` holds text and its shape is
+       * `sh:closed`, so carrying the file itself would mean new predicates on a published shape —
+       * a substrate decision this bot does not get to take by writing a URL into somebody's
+       * record. Saying plainly that the words were kept and the file was not is the honest
+       * version, and it is what lets a person decide to type a sentence instead of assuming the
+       * image landed.
+       */
+      const attached = msg.attachmentNames;
+      if (attached.length) {
+        const names = attached.slice(0, 5).join(', ') + (attached.length > 5 ? ` and ${attached.length - 5} more` : '');
+        await say(msg.channelId, {
+          // Not ephemeral: the channel is the record's shop window, and a note saying an entry
+          // does NOT hold what somebody just posted is exactly the kind of thing every reader of
+          // the thread needs, not only the person who posted it.
+          ephemeral: false,
+          content: res.kind === 'empty'
+            ? `**Nothing was recorded.** You attached ${names}, with no message. This workspace records what people *write*: an entry holds text, and its published shape does not admit a file, so there was nothing here to put on your pod. Type a line with it and the line is recorded.`
+            : `**Your message was recorded. ${attached.length === 1 ? 'The attachment was' : 'The attachments were'} not** — ${names} stayed in Discord. An entry holds text, so an agent reading this channel sees your words and not the file.`,
+        });
+        if (res.kind === 'empty') return;
+      }
       await say(msg.channelId, renderRecord(res));
     }).catch((e: unknown) => { out('recording failed for message ' + msg.id + ': ' + ((e as Error)?.stack ?? String(e))); });
   };

@@ -57,6 +57,19 @@ export interface GatewayMessage {
    * or uncached target and the embedded copy does not.
    */
   readonly replyToId: string | null;
+  /**
+   * File names of anything attached to the message. Empty for an ordinary one.
+   *
+   * ★ SURFACED SO THE BOT CAN SAY WHAT IT DID NOT DO. A message carrying only an image has
+   * `content: ""`, which `recordMessage` answers with `{ kind: 'empty' }`, which renders as null —
+   * so posting a picture wrote nothing to the pod AND said nothing in the channel. From the
+   * person's side that is indistinguishable from a bot that has crashed.
+   *
+   * Names only, deliberately. A `wsp:Entry` holds text and its shape is `sh:closed`, so carrying
+   * a file would mean new predicates and a republished shape — a substrate decision, not one this
+   * bot may take on its own. What it can do is stop being silent about the gap.
+   */
+  readonly attachmentNames: readonly string[];
 }
 
 export interface GatewayInteraction {
@@ -341,6 +354,9 @@ export class DiscordGateway {
           const ref = p['message_reference'] as { message_id?: unknown } | undefined;
           return typeof ref?.message_id === 'string' ? ref.message_id : null;
         })(),
+        attachmentNames: (Array.isArray(p['attachments']) ? p['attachments'] : [])
+          .map((a) => (a as { filename?: unknown })?.filename)
+          .filter((n): n is string => typeof n === 'string' && n.length > 0),
       });
       return;
     }

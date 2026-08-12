@@ -80,6 +80,40 @@ describe('a reply arrives with the message it answers', () => {
   });
 });
 
+describe('an attachment is visible to the bot, so it can say what it did not keep', () => {
+  it('★ a picture with no caption is no longer an empty message with nothing to show for it', () => {
+    // The defect: `content: ""` reaches `recordMessage`, which answers `{ kind: 'empty' }`, which
+    // `renderRecord` renders as null. Posting an image wrote nothing to the pod AND said nothing
+    // in the channel — indistinguishable, from the person's side, from a bot that had crashed.
+    const [msg] = messagesFrom({
+      ...BASE, content: '',
+      attachments: [{ filename: 'floorplan.png', url: 'https://cdn.discordapp.com/x/floorplan.png' }],
+    });
+    expect(msg?.content).toBe('');
+    expect(msg?.attachmentNames).toEqual(['floorplan.png']);
+  });
+
+  it('an ordinary message reports no attachments rather than undefined', () => {
+    expect(messagesFrom(BASE)[0]?.attachmentNames).toEqual([]);
+  });
+
+  it('keeps every name when several are posted at once', () => {
+    const [msg] = messagesFrom({
+      ...BASE,
+      attachments: [{ filename: 'a.png' }, { filename: 'b.pdf' }, { filename: 'c.csv' }],
+    });
+    expect(msg?.attachmentNames).toEqual(['a.png', 'b.pdf', 'c.csv']);
+  });
+
+  it('drops a malformed entry instead of putting undefined in the list', () => {
+    const [msg] = messagesFrom({
+      ...BASE,
+      attachments: [{ filename: 'good.png' }, { url: 'no-filename' }, { filename: '' }, null],
+    });
+    expect(msg?.attachmentNames).toEqual(['good.png']);
+  });
+});
+
 // ── §2 THE STORE ─────────────────────────────────────────────────────────────
 
 const AGENT_A = 'did:web:identity.interego.xwisee.com:agents:interego-delegate-a';
