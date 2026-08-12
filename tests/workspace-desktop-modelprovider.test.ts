@@ -14,7 +14,10 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { childEnv, resolveClaudeCli, turnArgv } from '../applications/shared-workspace/desktop/src/modelprovider.js';
+import { existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { DENIED_BUILTINS, childEnv, neutralCwd, resolveClaudeCli, turnArgv } from '../applications/shared-workspace/desktop/src/modelprovider.js';
 
 const WIN = process.platform === 'win32';
 
@@ -125,5 +128,105 @@ describe('the arguments a turn is run with', () => {
     expect(turnArgv({})).not.toContain('--append-system-prompt');
     const s = turnArgv({ systemPrompt: 'be terse' });
     expect(s[s.indexOf('--append-system-prompt') + 1]).toBe('be terse');
+  });
+});
+
+/**
+ * A DELEGATE'S TOOLS, AND THE THREE THINGS THAT MUST STAY TRUE WHEN IT HAS THEM.
+ *
+ * ★ EVERY ONE OF THESE WAS MEASURED AGAINST A REAL CHILD BEFORE IT WAS WRITTEN, because every
+ * assumption in this area turned out to be wrong in a way that mattered:
+ *
+ *   · `--tools ""` — the flag that kept a delegate safe — ALSO removes MCP servers. A child run
+ *     with it and a valid `--mcp-config` reported "SERVERS: NONE". That is why a delegate has had
+ *     no tools at all, and why the flag cannot simply be kept alongside the config.
+ *   · `--allowedTools` is an AUTO-APPROVE list, NOT a restriction. With `mcp__interego` as its
+ *     only entry, a child asked to ATTEMPT three things answered `BASH: hello`. Read and Write
+ *     were refused; the shell was not. So the built-ins are denied by name.
+ *   · `--strict-mcp-config` is the security property. The control run without it saw
+ *     "claude.ai Gmail, claude.ai Google Drive, claude.ai robinhood, claude.ai Intuit TurboTax…"
+ *     and answered YES to "can you see a gmail tool". A delegate is authorised over its human's
+ *     POD; it is not authorised to read their mail.
+ *
+ * The argv is a value so these can be asserted without spawning — the same reason `--bare`'s
+ * absence is asserted here rather than driven.
+ */
+describe('turnArgv with tools: what a delegate may reach', () => {
+  const TOOLS = { mcpConfigPath: '/tmp/x/mcp.json', server: 'interego' };
+
+  it('★ never inherits the human\'s own MCP servers', () => {
+    // The one flag standing between a delegate and its human's Gmail.
+    expect(turnArgv({ tools: TOOLS })).toContain('--strict-mcp-config');
+  });
+
+  it('★ denies every built-in by name, because an allowlist does not exclude them', () => {
+    const argv = turnArgv({ tools: TOOLS });
+    expect(argv).toContain('--disallowedTools');
+    for (const t of DENIED_BUILTINS) expect(argv).toContain(t);
+    // Bash above all: it was the one that actually ran when only the allowlist was in place.
+    expect(argv).toContain('Bash');
+  });
+
+  it('★ allows the SERVER, never a list of tool names', () => {
+    // A list here would be a second copy of an authorization record. What a delegate may do is
+    // its delegation scope, enforced by the relay on every call — see agent-tools.ts.
+    const argv = turnArgv({ tools: TOOLS });
+    const allow = argv[argv.indexOf('--allowedTools') + 1];
+    expect(allow).toBe('mcp__interego');
+    expect(argv.join(' ')).not.toMatch(/mcp__interego__/);
+  });
+
+  it('does not pass --tools "" alongside a config, which would remove the MCP server', () => {
+    expect(turnArgv({ tools: TOOLS })).not.toContain('--tools');
+  });
+
+  it('and with NO tools it is exactly what it always was', () => {
+    const argv = turnArgv({});
+    expect(argv).toContain('--tools');
+    expect(argv[argv.indexOf('--tools') + 1]).toBe('');
+    expect(argv).not.toContain('--mcp-config');
+    expect(argv).not.toContain('--disallowedTools');
+  });
+
+  it('runs unattended — there is nobody to answer a permission prompt', () => {
+    const argv = turnArgv({ tools: TOOLS });
+    expect(argv[argv.indexOf('--permission-mode') + 1]).toBe('dontAsk');
+  });
+
+  it('★ still never adds the flag that would disable OAuth', () => {
+    expect(turnArgv({ tools: TOOLS })).not.toContain('--bare');
+  });
+});
+
+/**
+ * ★ THE DIRECTORY THE CHILD RUNS IN IS PART OF ITS PROMPT.
+ *
+ * The CLI reads the directory it is started in — `CLAUDE.md`, `.claude/`, a project `.mcp.json`.
+ * A plain `spawn` with no `cwd` inherits whatever directory the app was launched from, and
+ * MEASURED 2026-08-12: a delegate turn driven from inside this repository answered "Monitor
+ * completed cleanly. No action needed." — a sentence out of the maintainer's tooling context with
+ * nothing to do with the workspace it was asked about. Shipped, that directory is wherever the
+ * person happened to start the app.
+ *
+ * A delegate answers from the channel it was given and the substrate it can reach. Anything the
+ * filesystem contributes is contamination, and on somebody else's machine it is contamination
+ * that leaves no trace in the record.
+ */
+describe('neutralCwd: the child answers from the channel, not from a directory', () => {
+  it('is a real directory, and not the one this process happens to be in', () => {
+    const dir = neutralCwd();
+    expect(existsSync(dir)).toBe(true);
+    expect(resolve(dir)).not.toBe(resolve(process.cwd()));
+  });
+
+  it('★ holds none of the files the CLI would read as project context', () => {
+    const dir = neutralCwd();
+    for (const f of ['CLAUDE.md', '.claude', '.mcp.json', 'package.json']) {
+      expect(existsSync(join(dir, f))).toBe(false);
+    }
+  });
+
+  it('is under the OS temp directory, so it is not inside anybody\'s project', () => {
+    expect(resolve(neutralCwd()).startsWith(resolve(tmpdir()))).toBe(true);
   });
 });

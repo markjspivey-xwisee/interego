@@ -52,7 +52,8 @@
  */
 
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 
 /** Which provider a run used. One value today; the type is the seam for a second. */
@@ -123,13 +124,35 @@ export function resolveClaudeCli(env: NodeJS.ProcessEnv = process.env, exists: (
 /** The result of one child process. */
 interface Ran { readonly code: number | null; readonly stdout: string; readonly stderr: string; readonly spawnError: string | null; readonly timedOut: boolean }
 
+/**
+ * A directory with nothing in it, for the child to run in.
+ *
+ * ★ THE CHILD INHERITED WHATEVER DIRECTORY THE APP WAS LAUNCHED FROM, AND THE CLI READS THE
+ * DIRECTORY IT IS IN. `CLAUDE.md`, `.claude/`, a project `.mcp.json` — all of it applies to a
+ * plain `spawn` with no `cwd`.
+ *
+ * MEASURED 2026-08-12: a delegate turn driven from inside this repository answered "Monitor
+ * completed cleanly. No action needed." — a sentence out of the maintainer's own tooling context,
+ * with nothing to do with the workspace it was asked about. Shipped, the directory would be
+ * wherever the person happened to start the app: their home, their desktop, a project of theirs.
+ *
+ * A delegate answers from the CHANNEL it was given and the substrate it can reach. Anything the
+ * filesystem contributes is contamination, and on somebody else's machine it is contamination
+ * nobody can see in the record afterwards.
+ */
+export function neutralCwd(): string {
+  const dir = join(tmpdir(), 'interego-turn');
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
 function run(bin: string, args: readonly string[], opts: { readonly env: NodeJS.ProcessEnv; readonly timeoutMs: number; readonly stdin?: string; readonly onChild?: (kill: () => void) => void }): Promise<Ran> {
   return new Promise((resolve) => {
     let cp;
     try {
       // shell:false, always. A shell would re-expand arguments, and the text flowing through here
       // is written by other members of a workspace.
-      cp = spawn(bin, [...args], { env: opts.env, shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+      cp = spawn(bin, [...args], { env: opts.env, cwd: neutralCwd(), shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     } catch (e) {
       resolve({ code: null, stdout: '', stderr: '', spawnError: (e as Error).message, timedOut: false });
       return;
@@ -317,14 +340,73 @@ export interface ModelRun {
  * driver's own box would never see. So the argv is a value, and `tests/workspace-desktop-
  * modelprovider.test.ts` asserts on the array rather than grepping this file.
  */
-export function turnArgv(args: { readonly model?: string; readonly systemPrompt?: string }): string[] {
+/**
+ * The built-in tools a delegate must never have, named one by one.
+ *
+ * ★ NAMED AND DENIED, BECAUSE AN ALLOWLIST DOES NOT EXCLUDE THEM. `--allowedTools` is an
+ * AUTO-APPROVE list, not a restriction — measured 2026-08-12 with `--allowedTools mcp__interego`
+ * as the only entry, the child was asked to attempt three things and answered `BASH: hello`. Read
+ * and Write were refused and Bash was not; a shell reads any file the refused Read would have.
+ *
+ * `--tools ""`, which is what kept them out before, cannot be used any more: the same measurement
+ * showed it also removes MCP servers ("SERVERS: NONE"), which is precisely why a delegate has had
+ * no tools at all.
+ */
+export const DENIED_BUILTINS = [
+  'Bash', 'BashOutput', 'KillShell', 'Read', 'Write', 'Edit', 'NotebookEdit',
+  'Glob', 'Grep', 'WebFetch', 'WebSearch', 'Task', 'TodoWrite', 'SlashCommand', 'ExitPlanMode',
+] as const;
+
+/**
+ * One MCP server the turn may use, and nothing else.
+ *
+ * The path is a file this process wrote; `server` is the key inside it. Both are supplied by the
+ * caller so this module never learns what a relay or a delegate is.
+ */
+export interface TurnTools {
+  readonly mcpConfigPath: string;
+  readonly server: string;
+}
+
+export function turnArgv(args: {
+  readonly model?: string;
+  readonly systemPrompt?: string;
+  /** Omitted: the turn writes a sentence and can reach nothing, which is the old behaviour. */
+  readonly tools?: TurnTools;
+}): string[] {
   return [
     '-p',
     '--model', args.model ?? 'sonnet',
     // NEVER add the flag that makes the CLI read only an API key — see footgun 1 in the header.
     // It disables OAuth, which is the entire credential this feature runs on.
-    '--tools', '',                 // no filesystem, no shell, no network: it writes a sentence
-    '--no-session-persistence',    // an unattended loop must not litter the user's ~/.claude
+    ...(args.tools
+      ? [
+        '--mcp-config', args.tools.mcpConfigPath,
+        /**
+         * ★ THE SECURITY FLAG, AND THE CONTROL THAT PROVES IT. Without `--strict-mcp-config` the
+         * child inherits every MCP server its human is signed into: the same measurement run
+         * without it reported "claude.ai Gmail, claude.ai Google Drive, claude.ai robinhood,
+         * claude.ai Intuit TurboTax…" and answered YES to "can you see a gmail tool". A delegate
+         * is authorised to act on its human's POD; it is not authorised to read their mail.
+         */
+        '--strict-mcp-config',
+        /**
+         * ★ THE SERVER, NOT A LIST OF TOOLS — and that is the whole design. Naming individual
+         * tools here would put a copy of "what an agent may do" in this shell, where it would
+         * drift from the delegation the person actually granted. The relay already enforces that
+         * grant on every call: the bearer in the config is the DELEGATE's, so its scope
+         * (`PublishOnly`, the own-pod gates) is the ceiling, applied by the substrate rather than
+         * by an allowlist here. A capability added to the relay tomorrow is reachable with no
+         * change to this file, and one the delegator never granted is refused whatever this says.
+         */
+        '--allowedTools', 'mcp__' + args.tools.server,
+        '--disallowedTools', ...DENIED_BUILTINS,
+        // Unattended: there is nobody to answer a permission prompt, and a turn that blocks on
+        // one would hang until the timeout with no way for the person to see why.
+        '--permission-mode', 'dontAsk',
+      ]
+      : ['--tools', '']),           // no tools at all: it writes a sentence
+    '--no-session-persistence',     // an unattended loop must not litter the user's ~/.claude
     '--output-format', 'json',
     ...(args.systemPrompt ? ['--append-system-prompt', args.systemPrompt] : []),
   ];
@@ -337,6 +419,16 @@ export async function runClaude(args: {
   readonly model?: string;
   readonly timeoutMs?: number;
   readonly env?: NodeJS.ProcessEnv;
+  /**
+   * The delegate's own MCP config for this turn, from {@link withAgentTools}.
+   *
+   * Forwarded to `turnArgv` with the rest of `args`. It was reaching the argv before it was
+   * declared here — the whole object is passed through — so a caller supplying it got the right
+   * behaviour and no type to check it against. Declared because the difference between a turn
+   * with tools and one without is the difference between an agent that can read the substrate and
+   * one that guesses.
+   */
+  readonly tools?: TurnTools;
   /** Handed a kill function so a user who turns the agent off mid-thought actually stops it. */
   readonly onChild?: (kill: () => void) => void;
 }): Promise<ModelRun> {

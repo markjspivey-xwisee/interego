@@ -335,7 +335,7 @@ describe('decideTurn: the agent is a delegate, and is not the person it acts for
 });
 
 describe('briefPrompt: what the agent is asked, and what it is never handed', () => {
-  const brief = { workspace: WS, slug: 'room', answering: THEM + ': the question', transcript: [THEM + ': the question'], omitted: 0, addressed: false };
+  const brief = { workspace: WS, slug: 'room', answering: THEM + ': the question', transcript: [THEM + ': the question'], omitted: 0, addressed: false, tools: false };
 
   it('names the channel and states that the record is permanent', () => {
     const p = briefPrompt(brief, { displayName: null, delegateName: 'Claude side' });
