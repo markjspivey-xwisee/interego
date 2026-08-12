@@ -621,7 +621,13 @@ async function open(opts: {
       // during it only exists while it is in flight — a scripted relay that answers instantly
       // cannot exhibit the state the anti-spinner rule is about. This delay is the test's own
       // clock and is not compressed: the window's `setTimeout` is, this is node's.
-      if (opts.coldStartMs && name === 'get_pod_status' && !s.calls.some((c) => c.name === 'get_pod_status')) {
+      //
+      // ★ THE FIRST CALL, WHATEVER IT IS NAMED. This delayed `get_pod_status` specifically, and
+      // silently stopped simulating anything the day the boot probe became a cheaper tool — the
+      // cold-start sentence then never appeared and the test failed on a UI that was fine. What
+      // the shell says is "the FIRST pod-aware call provisions a pod", so the simulation keys on
+      // being first, which is the property under test and cannot drift with the probe's name.
+      if (opts.coldStartMs && s.calls.length === 0) {
         await new Promise((r) => { setTimeout(r, opts.coldStartMs); });
       }
       const payload = tool(s, viewer, name, input);
