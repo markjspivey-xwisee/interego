@@ -178,7 +178,9 @@ function page(entrySizes: readonly number[]): { returned: number; omitted: numbe
   return {
     returned: out.page.length,
     omitted: out.omitted,
-    bytes: out.page.reduce((sum: number, e) => sum + JSON.stringify(e).length, 0),
+    // `reduce<number>`, not an annotated parameter: `page` is `readonly unknown[]`, so without the
+    // explicit type argument TypeScript infers the accumulator as `unknown` and the addition fails.
+    bytes: out.page.reduce<number>((sum, e) => sum + JSON.stringify(e).length, 0),
   };
 }
 
