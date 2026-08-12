@@ -11,7 +11,7 @@
 
 import { describe, it, expect } from 'vitest';
 import type { Check } from '@interego/workspace-client';
-import { DISCORD_LIMIT, body, bodyParts, renderChallenge, renderConfirm, renderRecord, renderShow, renderStart, renderUnlink } from '../src/render.js';
+import { DISCORD_LIMIT, body, bodyParts, renderChallenge, renderConfirm, renderNews, renderRecord, renderShow, renderStart, renderUnlink } from '../src/render.js';
 import type { Message } from '../src/render.js';
 import type { Seat } from '@interego/workspace-client';
 import type { RecordOut, ShowOut } from '../src/workspace.js';
@@ -365,5 +365,76 @@ describe('marks', () => {
     const m = renderConfirm({ kind: 'error', error: new Error('the relay did not answer') });
     expect(m.content).toContain('Nothing was written');
     expect(m.content).toContain('nothing is claimed about your pod');
+  });
+});
+
+/**
+ * A DELEGATE'S WORDS UNDER ITS OWN NAME — AND EVERYTHING ELSE STILL THE BOT'S.
+ *
+ * ★ THE SPLIT IS THE SAFETY PROPERTY, NOT THE FEATURE. Posting under a chosen name reads as
+ * presence, and Discord cannot verify a webhook name — so the name is the one part of such a
+ * message that establishes nothing. It may therefore only be used where the record already proves
+ * who wrote the bytes: `EntryAuthorship`'s `delegate` variant types its signer as `the-author` and
+ * nothing else, so reaching that branch IS the proof. A disputed entry, an unstated author, or a
+ * person's own words relayed by a conduit must keep the bot's quoted format, because those are
+ * exactly the cases where a confident display name would be a claim nobody checked.
+ */
+describe('renderNews: who appears to be speaking', () => {
+  const entry = (author: unknown, over: Record<string, unknown> = {}): unknown => ({
+    pod: POD, seq: 7, created: '2026-08-12T01:46:12.346Z', body: 'the quote looks high',
+    descriptorUrl: 'u7', author, derivedFrom: null, addressedTo: [], why: null, ...over,
+  });
+  const news = (entries: unknown[]): never => ({
+    kind: 'entries', binding: { title: 'T' }, entries,
+  } as never);
+
+  const DELEGATE_AUTHOR = {
+    kind: 'delegate', agentId: DELEGATE, signer: { kind: 'the-author', signedBy: DELEGATE },
+    name: 'Claude Desktop', authorised: true, scope: 'PublishOnly',
+    footing: { kind: 'own-account' },
+  };
+
+  it('★ posts a delegate\'s entry under its own name, with the provenance still on it', () => {
+    const posts = renderNews(news([entry(DELEGATE_AUTHOR)])) ?? [];
+    expect(posts).toHaveLength(1);
+    const p = posts[0] as { kind: string; who?: string; content?: string };
+    expect(p.kind).toBe('agent');
+    expect(p.who).toBe('Claude Desktop');
+    expect(p.content).toContain('the quote looks high');
+    // The three claims that can disagree, none of them traded for the nicer frame.
+    expect(p.content).toContain('its own key signed these bytes');
+    expect(p.content).toContain('for itself');
+    expect(p.content).toContain('PublishOnly');
+    // And the one thing the frame itself cannot establish is said outright.
+    expect(p.content).toContain('not something Discord can verify');
+  });
+
+  it.each([
+    ['a disputed entry', { kind: 'disputed', why: 'the key that signed it is not the agent it names' }],
+    ['an unstated author', { kind: 'unstated', why: 'this entry names nobody' }],
+    ['the pod owner\'s own words', { kind: 'principal', webId: WEBID, signer: { kind: 'the-author', signedBy: WEBID } }],
+    ['words relayed by a conduit', { kind: 'principal', webId: WEBID, signer: { kind: 'a-conduit', signedBy: AGENT, listed: true, scope: 'PublishOnly' } }],
+  ])('★ never posts %s under a name', (_what, author) => {
+    const posts = renderNews(news([entry(author)])) ?? [];
+    expect(posts.every((p) => p.kind === 'bot')).toBe(true);
+  });
+
+  it('keeps channel order when agents and other entries interleave', () => {
+    // An agent's answer arriving before the entry it answers would be a conversation reordered by
+    // an implementation detail of how each message is transmitted.
+    const posts = renderNews(news([
+      entry({ kind: 'principal', webId: WEBID, signer: { kind: 'the-author', signedBy: WEBID } }, { body: 'first', descriptorUrl: 'u1' }),
+      entry(DELEGATE_AUTHOR, { body: 'second', descriptorUrl: 'u2' }),
+    ])) ?? [];
+    expect(posts).toHaveLength(2);
+    expect(posts[0]?.kind).toBe('bot');
+    expect(posts[1]?.kind).toBe('agent');
+  });
+
+  it('★ falls back to the bot when the name cannot be a Discord username', () => {
+    // A label Discord refuses would make every post from that agent fail with a 400 that reads
+    // like a bot outage. Better the old format than no message.
+    const posts = renderNews(news([entry({ ...DELEGATE_AUTHOR, name: 'discord helper' })])) ?? [];
+    expect(posts.every((p) => p.kind === 'bot')).toBe(true);
   });
 });

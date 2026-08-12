@@ -50,9 +50,10 @@ import { beginLink, confirmLink, recordMessage, showWorkspace, startWorkspace, u
 import { ask, askCandidates, askChoices } from './ask.js';
 import { addressedText } from './address.js';
 import { ChannelWatcher, watchVia } from './watch.js';
+import { WebhookPoster } from './webhook.js';
 import {
   renderAsk, renderChallenge, renderConfirm, renderNews, renderRecord, renderShow, renderStart,
-  renderUnlink, renderWho, type Message,
+  renderUnlink, renderWho, type Message, type NewsPost,
 } from './render.js';
 
 const defaultOut = (line: string): void => { process.stdout.write(new Date().toISOString() + ' ' + line + '\n'); };
@@ -249,6 +250,37 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
   };
 
   /**
+   * Deliver what the watcher decided to say: the bot's own messages as itself, a delegate's words
+   * under the delegate's own name.
+   *
+   * ★ ORDER IS PRESERVED ACROSS THE TWO CHANNELS, which is why this is one queued sequence rather
+   * than two independent sends. An agent's answer arriving before the entry it answers would be a
+   * conversation reordered by an implementation detail of how each message is transmitted.
+   *
+   * ★ AND A WEBHOOK THAT WILL NOT POST IS NOT A LOST MESSAGE. `postAs` returns false when the
+   * channel has no MANAGE_WEBHOOKS or the call failed; the words then go out as an ordinary post
+   * from the bot, which is exactly what happened before this existed.
+   */
+  const sayNews = async (channelId: string, posts: readonly NewsPost[] | null): Promise<void> => {
+    if (!posts?.length) return;
+    await queue.run('say:' + channelId, async () => {
+      for (const p of posts) {
+        if (p.kind === 'agent') {
+          const sent = await webhooks.postAs(channelId, p.who, p.content);
+          if (sent) continue;
+          // Fall back to the bot's voice, and NAME the agent in it — the display was the only
+          // thing lost, and dropping the attribution with it would be the real failure.
+          try { await rest.post(channelId, '**' + p.who + '** —\n' + p.content, []); }
+          catch (e) { out('discord: could not post ' + p.who + '\'s entry to ' + channelId + ' — ' + ((e as Error).message)); }
+          continue;
+        }
+        try { await rest.post(channelId, p.message.content, []); }
+        catch (e) { out('discord: could not post to ' + channelId + ' — ' + ((e as Error).message)); return; }
+      }
+    });
+  };
+
+  /**
    * The producer: one change-only watch per seated member's log, per thread.
    *
    * ★ IT COMPOSES `showWorkspace` RATHER THAN READING FOR ITSELF — the SAME function `/workspace
@@ -259,6 +291,10 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
    * returning null is a real answer — nothing worth a message — and `say` already declines a null,
    * so a pass with nothing to report posts nothing rather than an empty line.
    */
+  /** One webhook per channel, created on first use. See webhook.ts for why the name is only
+   *  ever used for an entry whose own key signed it. */
+  const webhooks = new WebhookPoster(rest, out);
+
   const watcher = new ChannelWatcher({
     store,
     withClient: (fn) => session.call(async (c) => fn(deps(c))),
@@ -268,7 +304,7 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
     // the getter means each poll uses whatever session is current, so a re-mint heals them.
     watch: (name, input, onChange, onError) =>
       watchVia(() => session.current.client)(name, input, onChange, onError),
-    emit: (channelId, news) => say(channelId, renderNews(news)),
+    emit: (channelId, news) => sayNews(channelId, renderNews(news)),
     out,
   });
 

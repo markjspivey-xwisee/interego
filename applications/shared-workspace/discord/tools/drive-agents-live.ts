@@ -78,6 +78,19 @@ let failures = 0;
 const whole = (m: { readonly content: string }[] | readonly { readonly content: string }[] | null | undefined): string =>
   (m ?? []).map((x) => x.content).join('\n');
 
+/**
+ * The same, for `renderNews`, which returns POSTS rather than messages.
+ *
+ * A post is either the bot's own message or a delegate's words destined for a webhook under its
+ * own name. Both carry text and this driver asserts on the text, so both are flattened — with the
+ * agent's display name KEPT, because "who it would appear as" is exactly what the webhook path
+ * changed, and a check that dropped it would stop seeing the thing under test.
+ */
+const wholeNews = (
+  posts: readonly ({ readonly kind: 'bot'; readonly message: { readonly content: string } }
+  | { readonly kind: 'agent'; readonly who: string; readonly content: string })[] | null | undefined,
+): string => (posts ?? []).map((p) => (p.kind === 'agent' ? p.who + ': ' + p.content : p.message.content)).join('\n');
+
 function check(ok: boolean, what: string, detail?: string): void {
   if (!ok) failures++;
   log((ok ? '  PASS  ' : '  FAIL  ') + what + (detail ? '\n         ' + detail : ''));
@@ -338,8 +351,8 @@ async function main(): Promise<void> {
   check(reply?.author?.kind === 'delegate' && reply.author.authorised === true,
     'and BOB\'s own registry authorises it — a separate fact, read from a separate document');
   const news = renderNews({ kind: 'entries', binding: started.binding, entries: [reply as never] } as WatchNews);
-  log('  what the channel would show:\n' + whole(news).split('\n').map((l) => '  ' + l).join('\n'));
-  check(whole(news).indexOf('for itself') > 0, 'and the pushed line names the footing');
+  log('  what the channel would show:\n' + wholeNews(news).split('\n').map((l) => '  ' + l).join('\n'));
+  check(wholeNews(news).indexOf('for itself') > 0, 'and the pushed line names the footing');
 
   head('★ AN AGENT ASKS ANOTHER AGENT — alice\'s delegate addresses bob\'s');
   const aliceSeat = after.fold.seats.find((s) => (s.podServed ?? s.pod) === alice.pod && s.seated);
@@ -541,9 +554,9 @@ async function main(): Promise<void> {
       'and the reason names the agent it claims and the key that actually signed',
       row?.author?.kind === 'disputed' ? row.author.why.slice(0, 160) : '');
     const shown = renderNews({ kind: 'entries', binding: started.binding, entries: [row as never] } as WatchNews);
-    check(whole(shown).indexOf('authorship disputed') > 0,
+    check(wholeNews(shown).indexOf('authorship disputed') > 0,
       'the line the channel would print says so in the first clause');
-    check(whole(shown).indexOf('speaking **for them**') < 0,
+    check(wholeNews(shown).indexOf('speaking **for them**') < 0,
       '★ and NOWHERE says the delegate spoke for anybody');
   } else { check(false, 'the channel re-composed after the forgery', withPuppet.kind); }
 

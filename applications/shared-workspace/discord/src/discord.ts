@@ -505,6 +505,36 @@ export class DiscordRest {
     return this.call('POST', '/channels/' + channelId + '/messages', { content, allowed_mentions: { parse: [], users: pingUserIds.slice(0, 1) } });
   }
 
+  /** Webhooks that already exist on a channel. Needs MANAGE_WEBHOOKS. */
+  listWebhooks(channelId: string): Promise<Record<string, unknown>[]> {
+    return this.call('GET', '/channels/' + channelId + '/webhooks') as Promise<Record<string, unknown>[]>;
+  }
+
+  createWebhook(channelId: string, name: string): Promise<Record<string, unknown>> {
+    return this.call('POST', '/channels/' + channelId + '/webhooks', { name });
+  }
+
+  /**
+   * Post through a webhook under a chosen display name.
+   *
+   * ★ THE NAME IS A LABEL, NOT AN IDENTITY, AND NOTHING HERE PRETENDS OTHERWISE. Discord has no
+   * way to verify it: this bot is the writer, and the name is one it chose from a record it read.
+   * Discord's own client marks every webhook message `[APP]`, which is the one honest signal in
+   * the frame — and the provenance the message carries is what actually establishes who wrote the
+   * words. See `webhook.ts` for the rule about WHEN a name may be used at all.
+   *
+   * `allowed_mentions` is empty for the same reason every other post here is: this renders text
+   * that came off somebody else's pod, and a body containing `@everyone` must be text.
+   */
+  executeWebhook(
+    webhookId: string, webhookToken: string,
+    body: { content: string; username: string; avatar_url?: string },
+  ): Promise<Record<string, unknown>> {
+    return this.call('POST', '/webhooks/' + webhookId + '/' + webhookToken, {
+      ...body, allowed_mentions: { parse: [], users: [] },
+    });
+  }
+
   /** Global command registration. Discord may take up to an hour to roll these out. */
   registerCommands(applicationId: string, commands: readonly unknown[]): Promise<Record<string, unknown>> {
     return this.call('PUT', '/applications/' + applicationId + '/commands', commands);
