@@ -45,7 +45,10 @@ import {
   type GatewayAutocomplete, type GatewayInteraction, type GatewayMessage,
 } from './discord.js';
 import { beginLink, confirmLink, recordMessage, showWorkspace, startWorkspace, unlink, type Deps } from './workspace.js';
+// `askCandidates` is still called directly by `/workspace who`, which is DEFERRED and has fifteen
+// minutes — unlike the picker, which now reads the watcher's snapshot because it has three seconds.
 import { ask, askCandidates, askChoices } from './ask.js';
+import { addressedText } from './address.js';
 import { ChannelWatcher, watchVia } from './watch.js';
 import {
   renderAsk, renderChallenge, renderConfirm, renderNews, renderRecord, renderShow, renderStart,
@@ -436,6 +439,53 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
     }
     const pod = store.linkOf(msg.authorId)?.pod ?? msg.authorId;
     void queue.run(pod, async () => {
+      /**
+       * ★ A MESSAGE THAT OPENS BY NAMING AN AGENT IS AN ASK, AND GOES THROUGH `ask()`.
+       *
+       * Not a second writer: the same function `/workspace ask` calls, so the addressing triple,
+       * the write-eligibility refusal, the notice to an absent host and the re-resolution against
+       * the delegator's own pod are all the ones already tested. What differs is only how the
+       * name arrived — typed at the start of a sentence instead of chosen from a picker.
+       *
+       * ★ AND THE WHOLE LINE IS WHAT GETS RECORDED. `task` is the text that lands in the entry, so
+       * it is `msg.content` and not the remainder after the name: the person typed "Claude
+       * Desktop, do X", and a record holding only "do X" would be this bot editing their words on
+       * their own pod.
+       *
+       * ★ A CANDIDATE THAT MATCHES NOBODY IS NOT AN ERROR. `addressedText` only proposes; when no
+       * delegate answers to the name the message is recorded as an ordinary one, silently, exactly
+       * as if this had never looked. That fallback is what lets the form be usable without being
+       * dangerous — "Yes, do that" costs nothing.
+       */
+      const addressed = addressedText(msg.content);
+      if (addressed.spec) {
+        const out = await session.call((c) => ask(deps(c), {
+          threadId: msg.channelId, discordUserId: msg.authorId,
+          spec: addressed.spec as string, task: msg.content,
+        }));
+        if (out.kind === 'asked') {
+          if (out.descriptorUrl) {
+            watcher.noteAsk({
+              threadId: msg.channelId, descriptorUrl: out.descriptorUrl, seq: out.accepted.seq,
+              targetPod: out.target.pod, targetAgentId: out.target.agentId,
+              targetName: out.target.name ?? out.target.agentId,
+              askedAtMs: Date.now(),
+              presenceAtAsk: presenceLine(out.target.presence),
+            });
+          }
+          await say(msg.channelId, renderAsk(out));
+          return;
+        }
+        // ★ TWO OUTCOMES ARE WORTH A REPLY AND THE REST ARE NOT. A name matching SEVERAL delegates,
+        // or one whose pod will not let it publish, are real attempts that produced no ask and the
+        // person has to know. `no-match` is not: it is far likelier that a sentence merely opened
+        // with a capitalised word, and answering every one of those would make the channel
+        // unusable. Both of the reported cases wrote nothing, and `renderAsk` says so.
+        if (out.kind === 'ambiguous' || out.kind === 'target-cannot-append') {
+          await say(msg.channelId, renderAsk(out));
+          return;
+        }
+      }
       const res = await session.call((c) => recordMessage(deps(c), {
         threadId: msg.channelId, discordUserId: msg.authorId, text: msg.content,
       }));

@@ -834,3 +834,66 @@ describe('PerKeyQueue', () => {
   // "fix" it by pinning the implementation instead of the behaviour. Removing BOTH guards does
   // fail the test above.
 });
+
+/**
+ * NAMING AN AGENT IN AN ORDINARY MESSAGE.
+ *
+ * ★ THE ROUTING IS THE WHOLE RISK. A message that opens by naming a delegate must go through
+ * `ask()` — the same function the slash command uses, so the addressing triple, the
+ * write-eligibility refusal, the notice to an absent host and the live re-resolution are the ones
+ * already tested — and a message that does NOT must go through `recordMessage` exactly as before.
+ * Sending an ordinary sentence down the ask path would write a request nobody made; sending a real
+ * request down the record path would drop the addressing silently.
+ */
+describe('addressing by typing a name', () => {
+  it('★ routes a named opening through ask(), with the WHOLE line as the recorded text', async () => {
+    const b = await boot({ statePath: statePath((s) => { s.bind(link(USER)); s.bindThread(binding()); }) });
+    askmod.ask.mockResolvedValue({ kind: 'no-match', spec: 'Claude Desktop', known: [] });
+    b.frame(message({ content: 'Claude Desktop, summarise the thread' }));
+    await settle();
+
+    expect(askmod.ask).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      spec: 'Claude Desktop',
+      // Not the remainder after the name — the person typed the whole line and that is the record.
+      task: 'Claude Desktop, summarise the thread',
+    }));
+  });
+
+  it('★ a name matching nobody is recorded as an ordinary message, silently', async () => {
+    // `addressedText` only proposes. A candidate no delegate answers to must cost nothing — the
+    // alternative is a channel that argues with every sentence opening with a capitalised word.
+    const b = await boot({ statePath: statePath((s) => { s.bind(link(USER)); s.bindThread(binding()); }) });
+    askmod.ask.mockResolvedValue({ kind: 'no-match', spec: 'Yes', known: [] });
+    wsp.recordMessage.mockResolvedValue({ kind: 'empty' });
+    b.frame(message({ content: 'Yes, do that' }));
+    await settle();
+
+    expect(wsp.recordMessage).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      text: 'Yes, do that',
+    }));
+    // And nothing was said about it: no-match is not an error worth answering.
+    const posts = b.calls.filter((c) => c.path === '/channels/' + THREAD + '/messages');
+    expect(posts).toHaveLength(0);
+  });
+
+  it('does not send an unnamed message down the ask path at all', async () => {
+    const b = await boot({ statePath: statePath((s) => { s.bind(link(USER)); s.bindThread(binding()); }) });
+    wsp.recordMessage.mockResolvedValue({ kind: 'empty' });
+    b.frame(message({ content: 'we should re-tile in spring' }));
+    await settle();
+
+    expect(askmod.ask).not.toHaveBeenCalled();
+    expect(wsp.recordMessage).toHaveBeenCalled();
+  });
+
+  it('★ reports an AMBIGUOUS name, because that was a real attempt that wrote nothing', async () => {
+    const b = await boot({ statePath: statePath((s) => { s.bind(link(USER)); s.bindThread(binding()); }) });
+    askmod.ask.mockResolvedValue({ kind: 'ambiguous', spec: 'assistant', matches: [] });
+    b.frame(message({ content: 'assistant Two, do the thing' }));
+    await settle();
+
+    // It did not fall through to an ordinary record — that would drop the addressing in silence.
+    expect(wsp.recordMessage).not.toHaveBeenCalled();
+    expect(b.calls.some((c) => c.path === '/channels/' + THREAD + '/messages')).toBe(true);
+  });
+});
