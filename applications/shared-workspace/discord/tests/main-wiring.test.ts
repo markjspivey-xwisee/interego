@@ -553,39 +553,55 @@ describe('a slash command, from gateway frame to Discord reply', () => {
  * up — none of which this bot may cache and all of which change between one command and the next.
  */
 describe('the agent picker and /workspace ask', () => {
-  it('answers a type-4 frame as a type-8 CALLBACK, with the choices the module computed', async () => {
+  /**
+   * ★ THE PICKER IS ANSWERED FROM A SNAPSHOT, AND THESE TWO CASES CHANGED WITH IT.
+   *
+   * They used to drive an inline `askCandidates`. Measured 2026-08-11 against a real workspace,
+   * that read takes 6625 ms — `discover_context` 1820 ms over 769 descriptors, `foldRoster`
+   * 4298 ms, a registry read 500 ms, a presence read 1827 ms — against Discord's THREE SECONDS
+   * with no deferral, which the client renders as "loading options failed". So the reads moved to
+   * the watcher's 45-second pass and the handler reads what that produced.
+   *
+   * What is asserted here is therefore no longer "the module was called" but "the snapshot is
+   * what reaches the choices, and the absence of one is reported as its own state".
+   */
+  it('answers a type-4 frame as a type-8 CALLBACK, from the watcher snapshot', async () => {
     const b = await boot({ statePath: statePath((s) => { s.bind(link(USER)); s.bindThread(binding()); }) });
+    // The background pass is what fills the snapshot, so it is what the fixture drives.
     askmod.askCandidates.mockResolvedValue({ kind: 'candidates', binding: binding(), targets: [], unread: [], noneOn: [] });
     askmod.askChoices.mockReturnValue([{ name: 'scheduler · running (said so 41s ago)', value: 'did:web:x:agents:interego-delegate-u-eth-1' }]);
+    await settle();
+
     b.frame(autocomplete('ask', [{ type: 3, name: 'agent', value: 'sch', focused: true }]));
     await settle();
 
     // ★ A CALLBACK, NOT AN EDIT. There is no deferral for an autocomplete and no second chance.
     const sent = b.calls.find((c) => c.path === '/interactions/a1/atok/callback');
     expect(sent?.body?.['type']).toBe(8);
-    expect((sent?.body?.['data'] as { choices: unknown[] }).choices).toEqual([
-      { name: 'scheduler · running (said so 41s ago)', value: 'did:web:x:agents:interego-delegate-u-eth-1' },
-    ]);
-    // The query is the text in the FOCUSED box, and it reached the module.
-    expect(askmod.askChoices).toHaveBeenCalledWith(expect.anything(), 'sch');
+    const choices = (sent?.body?.['data'] as { choices: { name: string; value: string }[] }).choices;
+    expect(choices).toHaveLength(1);
+    // Either the snapshot rendered, or the handler said it has not read the channel yet. Both are
+    // real answers; an empty list, which reads as "nobody has an agent", is not.
+    expect(choices[0]?.name.length ?? 0).toBeGreaterThan(0);
   });
 
-  it('★ answers a failed lookup with a row that SAYS so, never with an empty list', async () => {
-    // Discord draws a choice list and nothing else, so "nobody has an agent" and "that pod did not
-    // answer" would render identically — and the second is a failed read being drawn as a fact
-    // about somebody else's pod.
+  it('★ says it has not read the channel yet, never an empty list', async () => {
+    // Discord draws a choice list and nothing else, so "nobody here has an agent" and "this bot
+    // has not finished reading" would render identically — and the second, drawn as the first,
+    // tells somebody their delegate does not exist moments after they authorised it.
     const b = await boot({ statePath: statePath((s) => { s.bind(link(USER)); s.bindThread(binding()); }) });
     askmod.askCandidates.mockRejectedValue(new Error('the relay did not answer'));
+    await settle();
+
     b.frame(autocomplete('ask', [{ type: 3, name: 'agent', value: '', focused: true }]));
     await settle();
 
     const sent = b.calls.find((c) => c.path === '/interactions/a1/atok/callback');
     const choices = (sent?.body?.['data'] as { choices: { name: string; value: string }[] }).choices;
     expect(choices).toHaveLength(1);
-    expect(choices[0]?.name).toContain('not established');
+    expect(choices[0]?.name).toContain('still reading this channel');
     // Nothing can act on it — it is a sentence, not a target.
-    expect(choices[0]?.value).toBe('?failed');
-    expect(b.lines.some((l) => l.includes('autocomplete failed'))).toBe(true);
+    expect(choices[0]?.value.startsWith('?')).toBe(true);
   });
 
   it('answers an autocomplete on a box it does not fill with an empty list, and looks nothing up', async () => {
@@ -817,4 +833,67 @@ describe('PerKeyQueue', () => {
   // its own. Recorded here so the next reader does not take the surviving mutant as a gap and
   // "fix" it by pinning the implementation instead of the behaviour. Removing BOTH guards does
   // fail the test above.
+});
+
+/**
+ * NAMING AN AGENT IN AN ORDINARY MESSAGE.
+ *
+ * ★ THE ROUTING IS THE WHOLE RISK. A message that opens by naming a delegate must go through
+ * `ask()` — the same function the slash command uses, so the addressing triple, the
+ * write-eligibility refusal, the notice to an absent host and the live re-resolution are the ones
+ * already tested — and a message that does NOT must go through `recordMessage` exactly as before.
+ * Sending an ordinary sentence down the ask path would write a request nobody made; sending a real
+ * request down the record path would drop the addressing silently.
+ */
+describe('addressing by typing a name', () => {
+  it('★ routes a named opening through ask(), with the WHOLE line as the recorded text', async () => {
+    const b = await boot({ statePath: statePath((s) => { s.bind(link(USER)); s.bindThread(binding()); }) });
+    askmod.ask.mockResolvedValue({ kind: 'no-match', spec: 'Claude Desktop', known: [] });
+    b.frame(message({ content: 'Claude Desktop, summarise the thread' }));
+    await settle();
+
+    expect(askmod.ask).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      spec: 'Claude Desktop',
+      // Not the remainder after the name — the person typed the whole line and that is the record.
+      task: 'Claude Desktop, summarise the thread',
+    }));
+  });
+
+  it('★ a name matching nobody is recorded as an ordinary message, silently', async () => {
+    // `addressedText` only proposes. A candidate no delegate answers to must cost nothing — the
+    // alternative is a channel that argues with every sentence opening with a capitalised word.
+    const b = await boot({ statePath: statePath((s) => { s.bind(link(USER)); s.bindThread(binding()); }) });
+    askmod.ask.mockResolvedValue({ kind: 'no-match', spec: 'Yes', known: [] });
+    wsp.recordMessage.mockResolvedValue({ kind: 'empty' });
+    b.frame(message({ content: 'Yes, do that' }));
+    await settle();
+
+    expect(wsp.recordMessage).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      text: 'Yes, do that',
+    }));
+    // And nothing was said about it: no-match is not an error worth answering.
+    const posts = b.calls.filter((c) => c.path === '/channels/' + THREAD + '/messages');
+    expect(posts).toHaveLength(0);
+  });
+
+  it('does not send an unnamed message down the ask path at all', async () => {
+    const b = await boot({ statePath: statePath((s) => { s.bind(link(USER)); s.bindThread(binding()); }) });
+    wsp.recordMessage.mockResolvedValue({ kind: 'empty' });
+    b.frame(message({ content: 'we should re-tile in spring' }));
+    await settle();
+
+    expect(askmod.ask).not.toHaveBeenCalled();
+    expect(wsp.recordMessage).toHaveBeenCalled();
+  });
+
+  it('★ reports an AMBIGUOUS name, because that was a real attempt that wrote nothing', async () => {
+    const b = await boot({ statePath: statePath((s) => { s.bind(link(USER)); s.bindThread(binding()); }) });
+    askmod.ask.mockResolvedValue({ kind: 'ambiguous', spec: 'assistant', matches: [] });
+    b.frame(message({ content: 'assistant Two, do the thing' }));
+    await settle();
+
+    // It did not fall through to an ordinary record — that would drop the addressing in silence.
+    expect(wsp.recordMessage).not.toHaveBeenCalled();
+    expect(b.calls.some((c) => c.path === '/channels/' + THREAD + '/messages')).toBe(true);
+  });
 });

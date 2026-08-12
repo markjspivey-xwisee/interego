@@ -628,17 +628,40 @@ app.whenReady().then(() => {
    * segment and the surface constant — so listing does not sign anything in. `pod` here is the
    * DELEGATE's own pod (the one its key provisions), which is not where it writes.
    */
-  ipcMain.handle('delegate:list', () => {
+  ipcMain.handle('delegate:list', async () => {
     const out: { address: string; agentId: string | null; why: string | null }[] = [];
     for (const address of listDelegateKeys()) {
-      const live = hosted.get(address);
-      out.push({
-        address,
-        // Only a session that has actually happened reports an id. A computed one would be this
-        // process asserting what the relay would answer, and the relay is the authority on that.
-        agentId: live?.agentId ?? null,
-        why: live ? null : 'this delegate has not signed in during this run, so the id the relay issues it is not established here',
-      });
+      let live = hosted.get(address.toLowerCase()) ?? null;
+      let why: string | null = null;
+      if (!live) {
+        /**
+         * ★★ ASK THE RELAY, RATHER THAN REPORT THAT NOBODY HAS ASKED IT. THIS WAS A DEADLOCK,
+         * AND IT MADE EVERY DELEGATE STOP WORKING THE MOMENT THE APP RESTARTED.
+         *
+         * This used to return `agentId: null` with "has not signed in during this run", on the
+         * principle — a good one — that a COMPUTED id would be this process asserting what the
+         * relay would answer. But `hosted` is a per-run Map, so after any restart it is empty and
+         * every stored key reported null. The renderer matches a held key to a registry row BY
+         * AGENT ID, so a null made the row read "no key on this machine" and DISABLED it — and
+         * the id only becomes known by signing the delegate in, which requires selecting the
+         * option that is disabled. Nothing could ever break the cycle.
+         *
+         * MEASURED 2026-08-11: a delegate minted and authorised at 16:20 was unusable by 21:40,
+         * with its key sitting in `secrets/delegate-0x03f52e15b9df….bin` the whole time. The app
+         * said the key was not on the machine while holding it.
+         *
+         * The principle is kept exactly — the id still comes from the relay and is never derived
+         * here. `delegateSession` performs the real sign-in, so what is reported is established
+         * rather than asserted. It costs one ceremony per delegate per run: the session is cached
+         * in `hosted`, and a live bearer short-circuits on every later call.
+         */
+        try { live = await delegateSession(address); }
+        catch (e) {
+          why = 'this delegate holds a key here but could not open its own relay session, so the '
+            + 'id the relay issues it is not established: ' + ((e as Error)?.message ?? String(e));
+        }
+      }
+      out.push({ address, agentId: live?.agentId ?? null, why });
     }
     return { delegates: out, secretStore: secretStoreAvailable() };
   });

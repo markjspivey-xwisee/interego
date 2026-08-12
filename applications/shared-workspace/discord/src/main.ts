@@ -45,11 +45,15 @@ import {
   type GatewayAutocomplete, type GatewayInteraction, type GatewayMessage,
 } from './discord.js';
 import { beginLink, confirmLink, recordMessage, showWorkspace, startWorkspace, unlink, type Deps } from './workspace.js';
+// `askCandidates` is still called directly by `/workspace who`, which is DEFERRED and has fifteen
+// minutes — unlike the picker, which now reads the watcher's snapshot because it has three seconds.
 import { ask, askCandidates, askChoices } from './ask.js';
+import { addressedText } from './address.js';
 import { ChannelWatcher, watchVia } from './watch.js';
+import { WebhookPoster } from './webhook.js';
 import {
   renderAsk, renderChallenge, renderConfirm, renderNews, renderRecord, renderShow, renderStart,
-  renderUnlink, renderWho, type Message,
+  renderUnlink, renderWho, type Message, type NewsPost,
 } from './render.js';
 
 const defaultOut = (line: string): void => { process.stdout.write(new Date().toISOString() + ' ' + line + '\n'); };
@@ -246,6 +250,37 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
   };
 
   /**
+   * Deliver what the watcher decided to say: the bot's own messages as itself, a delegate's words
+   * under the delegate's own name.
+   *
+   * ★ ORDER IS PRESERVED ACROSS THE TWO CHANNELS, which is why this is one queued sequence rather
+   * than two independent sends. An agent's answer arriving before the entry it answers would be a
+   * conversation reordered by an implementation detail of how each message is transmitted.
+   *
+   * ★ AND A WEBHOOK THAT WILL NOT POST IS NOT A LOST MESSAGE. `postAs` returns false when the
+   * channel has no MANAGE_WEBHOOKS or the call failed; the words then go out as an ordinary post
+   * from the bot, which is exactly what happened before this existed.
+   */
+  const sayNews = async (channelId: string, posts: readonly NewsPost[] | null): Promise<void> => {
+    if (!posts?.length) return;
+    await queue.run('say:' + channelId, async () => {
+      for (const p of posts) {
+        if (p.kind === 'agent') {
+          const sent = await webhooks.postAs(channelId, p.who, p.content);
+          if (sent) continue;
+          // Fall back to the bot's voice, and NAME the agent in it — the display was the only
+          // thing lost, and dropping the attribution with it would be the real failure.
+          try { await rest.post(channelId, '**' + p.who + '** —\n' + p.content, []); }
+          catch (e) { out('discord: could not post ' + p.who + '\'s entry to ' + channelId + ' — ' + ((e as Error).message)); }
+          continue;
+        }
+        try { await rest.post(channelId, p.message.content, []); }
+        catch (e) { out('discord: could not post to ' + channelId + ' — ' + ((e as Error).message)); return; }
+      }
+    });
+  };
+
+  /**
    * The producer: one change-only watch per seated member's log, per thread.
    *
    * ★ IT COMPOSES `showWorkspace` RATHER THAN READING FOR ITSELF — the SAME function `/workspace
@@ -256,11 +291,20 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
    * returning null is a real answer — nothing worth a message — and `say` already declines a null,
    * so a pass with nothing to report posts nothing rather than an empty line.
    */
+  /** One webhook per channel, created on first use. See webhook.ts for why the name is only
+   *  ever used for an entry whose own key signed it. */
+  const webhooks = new WebhookPoster(rest, out);
+
   const watcher = new ChannelWatcher({
     store,
     withClient: (fn) => session.call(async (c) => fn(deps(c))),
-    watch: (name, input, onChange) => watchVia(session.current.client)(name, input, onChange),
-    emit: (channelId, news) => say(channelId, renderNews(news)),
+    // ★ A GETTER, NOT THE CLIENT. `session.current.client` evaluated HERE binds one client for the
+    // life of the watch, so a re-minted session — a bearer expiring, or the relay restarting
+    // underneath the bot — left every watch polling with a session that no longer exists. Passing
+    // the getter means each poll uses whatever session is current, so a re-mint heals them.
+    watch: (name, input, onChange, onError) =>
+      watchVia(() => session.current.client)(name, input, onChange, onError),
+    emit: (channelId, news) => sayNews(channelId, renderNews(news)),
     out,
   });
 
@@ -383,15 +427,35 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
       try { await rest.autocomplete(a.id, a.token, []); } catch { /* the box simply stays empty */ }
       return;
     }
+    /**
+     * ★ THE SNAPSHOT, NOT A LIVE READ, AND THIS IS THE DIFFERENCE BETWEEN A PICKER AND AN ERROR.
+     *
+     * This used to call `askCandidates` inline. Measured 2026-08-11 on a real workspace that
+     * read took 6625 ms — `discover_context` 1820 ms over 769 descriptors, `foldRoster` 4298 ms,
+     * a registry read 500 ms, a presence read 1827 ms — against Discord's THREE SECONDS with no
+     * deferral. Discord renders that as "loading options failed" and says nothing about why.
+     *
+     * The scan grew when its 400-descriptor cap came off, and the cap was hiding real members, so
+     * the answer is not to put it back. The watcher already folds this thread every 45 seconds;
+     * it now computes the candidates there too, where the budget is 45 seconds instead of three.
+     *
+     * ★ AND A SNAPSHOT CANNOT CAUSE A WRONG ASK. `ask()` re-resolves whatever is submitted against
+     * the delegator's own pod before writing, and refuses a delegate that has since been revoked
+     * or lost write eligibility. The worst a stale list does is offer a name that is then refused
+     * with a reason.
+     */
     let choices: readonly { name: string; value: string }[];
-    try {
-      const found = await session.call((c) => askCandidates(deps(c), {
-        threadId: a.channelId, discordUserId: a.userId as string,
-      }));
-      choices = askChoices(found, a.query);
-    } catch (e) {
-      out('autocomplete failed for ' + a.channelId + ': ' + ((e as Error)?.message ?? String(e)));
-      choices = [{ name: '· that lookup did not complete, so who can be asked is not established', value: '?failed' }];
+    const snap = watcher.candidatesFor(a.channelId);
+    if (!snap) {
+      // Not "nobody has an agent" — this bot has not finished reading the channel yet. Saying the
+      // first would tell somebody their delegate does not exist moments after authorising it.
+      choices = [{ name: '· still reading this channel — try again in a few seconds', value: '?unread:' }];
+    } else {
+      // `isYou` is recomputed here because the background pass has no asking user. Everything
+      // else — who is seated, who they authorise, whose host is up — is from the snapshot.
+      const mine = store.linkOf(a.userId)?.pod ?? null;
+      const seen = { ...snap.out, targets: snap.out.targets.map((t) => ({ ...t, isYou: t.pod === mine })) };
+      choices = askChoices(seen, a.query);
     }
     try { await rest.autocomplete(a.id, a.token, choices); }
     catch (e) { out('discord: could not answer the picker — ' + (e as Error).message); }
@@ -411,6 +475,53 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
     }
     const pod = store.linkOf(msg.authorId)?.pod ?? msg.authorId;
     void queue.run(pod, async () => {
+      /**
+       * ★ A MESSAGE THAT OPENS BY NAMING AN AGENT IS AN ASK, AND GOES THROUGH `ask()`.
+       *
+       * Not a second writer: the same function `/workspace ask` calls, so the addressing triple,
+       * the write-eligibility refusal, the notice to an absent host and the re-resolution against
+       * the delegator's own pod are all the ones already tested. What differs is only how the
+       * name arrived — typed at the start of a sentence instead of chosen from a picker.
+       *
+       * ★ AND THE WHOLE LINE IS WHAT GETS RECORDED. `task` is the text that lands in the entry, so
+       * it is `msg.content` and not the remainder after the name: the person typed "Claude
+       * Desktop, do X", and a record holding only "do X" would be this bot editing their words on
+       * their own pod.
+       *
+       * ★ A CANDIDATE THAT MATCHES NOBODY IS NOT AN ERROR. `addressedText` only proposes; when no
+       * delegate answers to the name the message is recorded as an ordinary one, silently, exactly
+       * as if this had never looked. That fallback is what lets the form be usable without being
+       * dangerous — "Yes, do that" costs nothing.
+       */
+      const addressed = addressedText(msg.content);
+      if (addressed.spec) {
+        const out = await session.call((c) => ask(deps(c), {
+          threadId: msg.channelId, discordUserId: msg.authorId,
+          spec: addressed.spec as string, task: msg.content,
+        }));
+        if (out.kind === 'asked') {
+          if (out.descriptorUrl) {
+            watcher.noteAsk({
+              threadId: msg.channelId, descriptorUrl: out.descriptorUrl, seq: out.accepted.seq,
+              targetPod: out.target.pod, targetAgentId: out.target.agentId,
+              targetName: out.target.name ?? out.target.agentId,
+              askedAtMs: Date.now(),
+              presenceAtAsk: presenceLine(out.target.presence),
+            });
+          }
+          await say(msg.channelId, renderAsk(out));
+          return;
+        }
+        // ★ TWO OUTCOMES ARE WORTH A REPLY AND THE REST ARE NOT. A name matching SEVERAL delegates,
+        // or one whose pod will not let it publish, are real attempts that produced no ask and the
+        // person has to know. `no-match` is not: it is far likelier that a sentence merely opened
+        // with a capitalised word, and answering every one of those would make the channel
+        // unusable. Both of the reported cases wrote nothing, and `renderAsk` says so.
+        if (out.kind === 'ambiguous' || out.kind === 'target-cannot-append') {
+          await say(msg.channelId, renderAsk(out));
+          return;
+        }
+      }
       const res = await session.call((c) => recordMessage(deps(c), {
         threadId: msg.channelId, discordUserId: msg.authorId, text: msg.content,
       }));

@@ -1,6 +1,6 @@
 {
   "name": "@interego/workspace-desktop",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Desktop shell for the shared-workspace client. Walking skeleton: boot -> authenticate (SIWE wallet held in the OS secret store, or the relay's own browser sign-in over a loopback redirect) -> read a workspace -> render roster and stream -> post an entry onto the user's own pod. All substrate logic comes from @interego/workspace-client; this package only draws and holds keys.",
   "author": "Mark Spivey",
   "license": "MIT",
@@ -19,7 +19,8 @@
     "drive:account": "npm run build && esbuild tools/drive-account-import-live.ts --bundle --format=cjs --platform=node --target=es2020 --external:electron --outfile=dist/drive-account-import-live.js && electron dist/drive-account-import-live.js",
     "package": "npm run build && electron-builder --win --publish never --config electron-builder.yml",
     "package:linux": "npm run build && electron-builder --linux --publish never --config electron-builder.yml",
-    "package:mac": "npm run build && electron-builder --mac --publish never --config electron-builder.yml"
+    "package:mac": "npm run build && electron-builder --mac --publish never --config electron-builder.yml",
+    "drive:delegates": "npm run build && esbuild tools/drive-delegate-list-live.ts --bundle --format=cjs --platform=node --target=es2020 --external:electron --outfile=dist/drive-delegate-list-live.js && electron dist/drive-delegate-list-live.js"
   },
   "engines": {
     "node": ">=20.0.0"

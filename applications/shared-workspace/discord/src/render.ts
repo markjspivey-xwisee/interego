@@ -12,6 +12,7 @@ import { describeSpan, isPresent, presenceLine, shortRef, type Check, type Entry
 import type { ConfirmOut, LinkChallengeOut, RecordOut, ShowOut, StartOut, UnlinkOut } from './workspace.js';
 import type { AskOut, AskTarget, CandidatesOut } from './ask.js';
 import type { WatchNews } from './watch.js';
+import { displayName } from './webhook.js';
 
 /** Discord refuses a message body over 2000 characters outright. */
 export const DISCORD_LIMIT = 2000;
@@ -151,6 +152,40 @@ export function authorOf(a: EntryAuthorship | null): string {
       + ']';
   }
 }
+
+/**
+ * The same three claims `authorOf` makes about a delegate, as a footer under its own name.
+ *
+ * ★ NOTHING IS TRADED AWAY FOR THE NICER FRAME. Posting a delegate's words under its own display
+ * name reads as presence, and the temptation is to let the name carry the meaning and drop the
+ * rest. It cannot: Discord does not verify a webhook name, so the name is the one part of the
+ * message that establishes nothing. These three do, and they are exactly the three that can
+ * disagree — whose KEY signed the bytes, what FOOTING this message was on, and whether the
+ * delegator's pod authorises the agent at all.
+ *
+ * `-#` is Discord's subtext: small, quiet, and present on every message rather than promoted to a
+ * banner nobody reads twice.
+ */
+export function agentFooter(a: Extract<EntryAuthorship, { kind: 'delegate' }>, pod: string): string {
+  const footing = a.footing.kind === 'on-behalf-of' ? 'speaking **for** the pod owner — they share responsibility'
+    : a.footing.kind === 'own-account' ? 'speaking **for itself** — the pod owner is NOT answerable for it'
+      : '**footing not stated** — neither reading is being assumed';
+  const standing = a.authorised === true ? 'authorised by `' + pod + '`' + (a.scope ? ' (' + a.scope + ')' : '')
+    : a.authorised === false ? '**`' + pod + '`\'s registry does NOT list it**'
+      : 'standing not checked here';
+  return '-# ⎔ its own key signed these bytes · ' + footing + ' · ' + standing
+    + ' · this display name is chosen by the bot and is not something Discord can verify';
+}
+
+/**
+ * One thing to post: either from the bot, or under an agent's own name.
+ *
+ * ★ THE DISCRIMINANT EXISTS SO THE CHOICE IS MADE ONCE, HERE, where the authorship is in hand —
+ * rather than in the sender, which would have to re-derive it and could get it wrong differently.
+ */
+export type NewsPost =
+  | { readonly kind: 'bot'; readonly message: Message }
+  | { readonly kind: 'agent'; readonly who: string; readonly content: string };
 
 export function renderChallenge(out: LinkChallengeOut): Message {
   return body([
@@ -451,12 +486,36 @@ export function renderAsk(out: AskOut, nowMs = Date.now()): Message {
  * Returns null when there is nothing worth a message: a caller that posted an empty body would be
  * a caller that decided something in a formatter.
  */
-export function renderNews(news: WatchNews): readonly Message[] | null {
+export function renderNews(news: WatchNews): readonly NewsPost[] | null {
   switch (news.kind) {
     case 'entries': {
       if (!news.entries.length) return null;
+      /**
+       * ★ A DELEGATE'S WORDS GO OUT UNDER ITS OWN NAME; EVERYTHING ELSE STAYS THE BOT'S.
+       *
+       * The split is on `kind === 'delegate'` and that is not a style choice: the type of that
+       * variant's `signer` is `the-author` and nothing else, so reaching this branch IS the proof
+       * that the agent's own key signed those bytes. A disputed entry, an unstated author, or a
+       * person's own words relayed by a conduit all keep the bot's quoted format — those are
+       * exactly the cases where a confident display name would be a claim nobody checked.
+       */
+      const posts: NewsPost[] = [];
       const lines: string[] = [];
+      const flush = (): void => { if (lines.length) { posts.push(...bodyParts(lines, false).map((message) => ({ kind: 'bot' as const, message }))); lines.length = 0; } };
       for (const e of news.entries) {
+        const who = e.author?.kind === 'delegate' ? displayName(e.author.name) : null;
+        if (who && e.author?.kind === 'delegate') {
+          // Order matters: the bot's own preceding lines go first, so the channel reads in the
+          // order the entries did rather than with every agent's message bunched at the end.
+          flush();
+          posts.push({
+            kind: 'agent',
+            who,
+            content: (e.body ?? '(this entry names no dct:description)')
+              + '\n' + agentFooter(e.author, e.pod),
+          });
+          continue;
+        }
         // ★ ONE ELEMENT PER ENTRY — attribution and quote together. These were two consecutive
         // pushes, which `bodyParts` would have been free to separate: the header could land at the
         // end of one message and the words it attributes at the start of the next, which is the
@@ -468,21 +527,22 @@ export function renderNews(news: WatchNews): readonly Message[] | null {
         lines.push('`' + e.pod + '` ' + authorOf(e.author) + ' #' + (e.seq ?? '?') + ' · ' + (e.created ?? 'no declared time')
           + '\n> ' + (e.body ?? '(this entry names no dct:description)').split('\n').join('\n> '));
       }
-      return bodyParts(lines, false);
+      flush();
+      return posts;
     }
-    case 'burst': return [body([
+    case 'burst': return [{ kind: 'bot', message: body([
       '**' + news.count + ' new entries** were appended in this workspace just now — more than this bot posts one at a time, so they are not being replayed here. `/workspace show` reads them out of the pods that hold them.',
-    ], false)];
-    case 'forked': return [body([
+    ], false) }];
+    case 'forked': return [{ kind: 'bot', message: body([
       '? `' + news.pod + '` — ' + news.why,
       'Nothing is being read out of that log in sequence until it has one head. Said once, not every time it is noticed.',
-    ], false)];
-    case 'unreadable-entry': return [body(['? An entry in this workspace could not be read: ' + news.why], false)];
-    case 'silence': return [body([
+    ], false) }];
+    case 'unreadable-entry': return [{ kind: 'bot', message: body(['? An entry in this workspace could not be read: ' + news.why], false) }];
+    case 'silence': return [{ kind: 'bot', message: body([
       '**Nothing has been written in answer yet.** You asked ' + news.ask.targetName + ' ' + describeSpan(news.waitedMs) + ' ago (entry #' + news.ask.seq + ').',
       'Its host ' + news.ask.presenceAtAsk + ' when you asked.',
       '',
       'An agent that read this and judged there was nothing to add writes nothing, and so does one that refused — from here those look the same, and this bot will not guess which. The ask is still on the record and is still answerable whenever its host next runs.',
-    ], false)];
+    ], false) }];
   }
 }
