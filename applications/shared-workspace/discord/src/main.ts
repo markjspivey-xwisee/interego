@@ -383,15 +383,35 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
       try { await rest.autocomplete(a.id, a.token, []); } catch { /* the box simply stays empty */ }
       return;
     }
+    /**
+     * ★ THE SNAPSHOT, NOT A LIVE READ, AND THIS IS THE DIFFERENCE BETWEEN A PICKER AND AN ERROR.
+     *
+     * This used to call `askCandidates` inline. Measured 2026-08-11 on a real workspace that
+     * read took 6625 ms — `discover_context` 1820 ms over 769 descriptors, `foldRoster` 4298 ms,
+     * a registry read 500 ms, a presence read 1827 ms — against Discord's THREE SECONDS with no
+     * deferral. Discord renders that as "loading options failed" and says nothing about why.
+     *
+     * The scan grew when its 400-descriptor cap came off, and the cap was hiding real members, so
+     * the answer is not to put it back. The watcher already folds this thread every 45 seconds;
+     * it now computes the candidates there too, where the budget is 45 seconds instead of three.
+     *
+     * ★ AND A SNAPSHOT CANNOT CAUSE A WRONG ASK. `ask()` re-resolves whatever is submitted against
+     * the delegator's own pod before writing, and refuses a delegate that has since been revoked
+     * or lost write eligibility. The worst a stale list does is offer a name that is then refused
+     * with a reason.
+     */
     let choices: readonly { name: string; value: string }[];
-    try {
-      const found = await session.call((c) => askCandidates(deps(c), {
-        threadId: a.channelId, discordUserId: a.userId as string,
-      }));
-      choices = askChoices(found, a.query);
-    } catch (e) {
-      out('autocomplete failed for ' + a.channelId + ': ' + ((e as Error)?.message ?? String(e)));
-      choices = [{ name: '· that lookup did not complete, so who can be asked is not established', value: '?failed' }];
+    const snap = watcher.candidatesFor(a.channelId);
+    if (!snap) {
+      // Not "nobody has an agent" — this bot has not finished reading the channel yet. Saying the
+      // first would tell somebody their delegate does not exist moments after authorising it.
+      choices = [{ name: '· still reading this channel — try again in a few seconds', value: '?unread:' }];
+    } else {
+      // `isYou` is recomputed here because the background pass has no asking user. Everything
+      // else — who is seated, who they authorise, whose host is up — is from the snapshot.
+      const mine = store.linkOf(a.userId)?.pod ?? null;
+      const seen = { ...snap.out, targets: snap.out.targets.map((t) => ({ ...t, isYou: t.pod === mine })) };
+      choices = askChoices(seen, a.query);
     }
     try { await rest.autocomplete(a.id, a.token, choices); }
     catch (e) { out('discord: could not answer the picker — ' + (e as Error).message); }

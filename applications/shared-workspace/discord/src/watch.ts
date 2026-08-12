@@ -34,6 +34,7 @@
 import { pollingWatch, type Unsubscribe, type WorkspaceClient } from '@interego/workspace-client';
 import type { LinkStore, ThreadBinding } from './links.js';
 import { showWorkspace, type Deps, type ShowOut, type ShownEntry } from './workspace.js';
+import { askCandidates, type CandidatesOut } from './ask.js';
 
 /** The watch cadence, matched to the desktop's so two readers of one channel see the same news. */
 export const WATCH_INTERVAL_MS = 45_000;
@@ -106,8 +107,37 @@ export interface WatchDeps {
   readonly interval?: number;
 }
 
+/**
+ * The picker's candidates as of one background pass, with the moment they were read.
+ *
+ * Narrowed to the `candidates` variant on purpose: only a pass that actually produced a list is
+ * stored, so a caller never has to re-handle "not a workspace" from a stale snapshot of a thread
+ * that plainly is one.
+ */
+export interface CandidateSnapshot {
+  readonly at: number;
+  readonly out: Extract<CandidatesOut, { kind: 'candidates' }>;
+}
+
 interface ThreadState {
   seeded: boolean;
+  /**
+   * The last candidate list this thread's background pass computed, for the Ask picker.
+   *
+   * ★ BECAUSE THE PICKER HAS THREE SECONDS AND NO DEFERRAL, AND THE LIVE READ TAKES SIX.
+   * Measured 2026-08-11 on a real workspace: `discover_context` 1820 ms for 769 descriptors,
+   * `foldRoster` 4298 ms, one registry read 500 ms, one presence read 1827 ms — 6625 ms against a
+   * 3000 ms budget, which Discord renders as "loading options failed" with no explanation. The
+   * scan grew when its 400-descriptor cap was removed; the cap was hiding members, so it is not
+   * coming back.
+   *
+   * ★ AND A SNAPSHOT IS SAFE HERE FOR A REASON THAT IS NOT "it is probably fresh enough". `ask()`
+   * RE-RESOLVES the typed value against the delegator's own pod before it writes anything, and
+   * refuses a delegate that has been revoked or is no longer write-eligible. The picker is a
+   * convenience; the authority is re-read at the moment of the ask. So the worst a stale snapshot
+   * can do is offer a name that is then refused with a reason — never write a wrong ask.
+   */
+  candidates: CandidateSnapshot | null;
   /** Descriptor URLs already shown in this thread. Bounded — see `remember`. */
   readonly posted: Set<string>;
   /** Stream keys currently watched, so a re-fold adds and removes rather than re-registering all. */
@@ -196,7 +226,7 @@ export class ChannelWatcher {
     for (const b of this.deps.store.allThreads()) {
       if (this.threads.has(b.threadId)) continue;
       this.threads.set(b.threadId, {
-        seeded: false, posted: new Set(), watches: new Map(), pushes: [], told: new Set(),
+        seeded: false, candidates: null, posted: new Set(), watches: new Map(), pushes: [], told: new Set(),
         ticks: 0, timer: null, running: false, dirty: false,
       });
       this.deps.out('watch: following thread ' + b.threadId + ' (' + b.workspace + ')');
@@ -248,11 +278,43 @@ export class ChannelWatcher {
     if (view.kind === 'view') {
       this.rewatch(threadId, st, view);
       this.announce(threadId, st, binding, view);
+      // ★ AFTER THE PUSH, NEVER BEFORE IT. Refreshing the picker is a convenience; getting an
+      // entry into the channel is the job, and one must not delay the other.
+      void this.refreshCandidates(threadId, st);
     } else if (view.kind === 'unreadable' && !st.told.has('unreadable')) {
       st.told.add('unreadable');
       this.deps.out('watch: ' + threadId + ' is bound to a workspace that does not read — ' + view.why);
     }
     if (st.dirty) { st.dirty = false; this.schedule(threadId, COALESCE_MS); }
+  }
+
+  /**
+   * The picker's candidates as of the last background pass, or null if none has completed.
+   *
+   * Null is a real answer and the caller must render it as one — "still reading this channel" is
+   * different from "nobody here has an agent", and a picker that collapsed them would tell
+   * somebody their delegate does not exist thirty seconds after they authorised it.
+   */
+  candidatesFor(threadId: string): CandidateSnapshot | null {
+    return this.threads.get(threadId)?.candidates ?? null;
+  }
+
+  /**
+   * Re-read who could be asked something here, off the critical path.
+   *
+   * ★ THE READS ARE THE SAME ONES THE PICKER USED TO DO INLINE. Nothing is cheaper or weaker
+   * here; it has simply moved to a place with a 45-second budget instead of a three-second one.
+   * A failure is swallowed deliberately: the previous snapshot stays, and its age is carried so
+   * the caller can say how old it is rather than presenting it as current.
+   */
+  private async refreshCandidates(threadId: string, st: ThreadState): Promise<void> {
+    try {
+      const out = await this.deps.withClient((d) => askCandidates(d, { threadId, discordUserId: '' }));
+      if (out.kind === 'candidates') st.candidates = { at: this.now(), out };
+    } catch (e) {
+      this.deps.out('watch: could not refresh the ask picker for ' + threadId + ' — '
+        + ((e as Error)?.message ?? String(e)));
+    }
   }
 
   /**
