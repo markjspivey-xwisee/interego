@@ -208,8 +208,18 @@ describe('★★ what the adversarial review found', () => {
     // The difference between refused and allowed was the two characters `C:`.
     const ws = tmp();
     const p = policy({ workspace: ws });
+    // Naming a never-listed path is refused on every platform: the check flattens separators
+    // before comparing, so the backslash spelling no longer slips past the list.
     expect(decide(call('Bash', { command: 'type \\Users\\x\\.claude\\.credentials.json' }), p).kind).toBe('deny');
-    expect(decide(call('Bash', { command: 'type \\Users\\x\\Documents\\taxes.txt' }), p).kind).toBe('ask');
+    /**
+     * ★ AND THE REST IS WINDOWS-ONLY, WHICH CI TAUGHT ME BY FAILING. On Linux a backslash is an
+     * ordinary character in a filename, so `\Users\x\Documents\taxes.txt` is a RELATIVE path inside
+     * the workspace and `allow` is the correct answer there. Asserting `ask` everywhere was
+     * asserting that Linux has drive-relative paths. The hazard is real and it is Windows'.
+     */
+    if (process.platform === 'win32') {
+      expect(decide(call('Bash', { command: 'type \\Users\\x\\Documents\\taxes.txt' }), p).kind).toBe('ask');
+    }
     rmSync(ws, { recursive: true, force: true });
   });
 
