@@ -22,7 +22,7 @@
 
 import { app, BrowserWindow, ipcMain, shell, type WebContents } from 'electron';
 import { join } from 'node:path';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { gateSettings, writeGateConfig } from './gate.js';
 import { readPolicy } from './permission.js';
 import { Wallet } from 'ethers';
@@ -860,7 +860,28 @@ function composeGate(args: {
    * plain Node when that variable is set, which is the same flag `childEnv` strips from the MODEL
    * child for the opposite reason.
    */
-  const gateScript = join(__dirname, 'gate.mjs');
+  /**
+   * ★ THE GATE IS COPIED OUT OF THE BUNDLE BEFORE IT IS RUN.
+   *
+   * `__dirname` in a packaged app is inside `app.asar`. Electron patches `fs` so its own code can
+   * read from there — but the launcher runs Electron with `ELECTRON_RUN_AS_NODE=1`, which is plain
+   * Node, and plain Node has never heard of an asar. The hook would fail to start on a packaged
+   * install while working perfectly from source, which is the worst shape a bug can have.
+   *
+   * Copied to `userData` — a real directory on a real filesystem — and refreshed whenever the
+   * bundled one differs, so an app update cannot leave an old gate enforcing an old policy.
+   */
+  const bundled = join(__dirname, 'gate.mjs');
+  const gateScript = join(dir, 'gate.mjs');
+  try {
+    const want = readFileSync(bundled, 'utf8');
+    const have = existsSync(gateScript) ? readFileSync(gateScript, 'utf8') : '';
+    if (want !== have) writeFileSync(gateScript, want, { mode: 0o700, encoding: 'utf8' });
+  } catch (e) {
+    // ★ AND IF IT CANNOT BE PLACED, THE TURN GETS NO TOOLS RATHER THAN UNGATED ONES.
+    throw new Error('the permission gate could not be prepared (' + ((e as Error)?.message ?? String(e))
+      + '), so this delegate is not being given tools this turn');
+  }
   const launcher = writeGateLauncher(dir, gateScript, cfgPath);
   const settingsPath = join(dir, 'settings.json');
   writeFileSync(settingsPath, gateSettings(launcher), { mode: 0o600, encoding: 'utf8' });
