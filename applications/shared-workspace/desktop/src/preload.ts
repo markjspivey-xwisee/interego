@@ -158,7 +158,8 @@ export interface WorkspaceBridge {
    * under ITS bearer, so what the agent may do is the scope its delegator granted, enforced by the
    * relay. Omit it and the turn runs with no tools at all.
    */
-  agentThink(prompt: string, systemPrompt: string | null, asDelegate?: string): Promise<ModelTurn>;
+  agentThink(prompt: string, systemPrompt: string | null, asDelegate?: string,
+    context?: { agentName?: string; askedBy?: string; channel?: string }): Promise<ModelTurn>;
   /**
    * Stop a turn already running.
    *
@@ -209,7 +210,7 @@ const bridge: WorkspaceBridge = {
   // carries a `sender` the renderer has no business holding.
   onSessionChanged: (fn) => { ipcRenderer.on('session:changed', (_e, s: SessionInfo) => { fn(s); }); },
   agentProbe: () => ipcRenderer.invoke('agent:probe'),
-  agentThink: (prompt, systemPrompt, asDelegate) => ipcRenderer.invoke('agent:think', prompt, systemPrompt, asDelegate),
+  agentThink: (prompt, systemPrompt, asDelegate, context) => ipcRenderer.invoke('agent:think', prompt, systemPrompt, asDelegate, context),
   agentCancel: () => ipcRenderer.invoke('agent:cancel'),
   delegateList: () => ipcRenderer.invoke('delegate:list'),
   delegateMint: () => ipcRenderer.invoke('delegate:mint'),

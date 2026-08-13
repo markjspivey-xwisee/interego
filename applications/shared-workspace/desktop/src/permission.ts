@@ -312,5 +312,5 @@ export function writeGrant(userData: string, grant: Grant): void {
 
 /** A stable id for one pending request, so the app and the hook name the same thing. */
 export function requestId(call: ToolCall): string {
-  return createHash('sha256').update(call.tool + ' ' + JSON.stringify(call.input)).digest('hex').slice(0, 16);
+  return createHash('sha256').update(call.tool + '' + JSON.stringify(call.input)).digest('hex').slice(0, 16);
 }

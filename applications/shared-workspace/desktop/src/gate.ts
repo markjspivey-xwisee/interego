@@ -134,8 +134,10 @@ export function runGate(): void {
  * treats an unrecognised tool as "ask", so an unknown arrival reaches the human rather than the
  * machine — but only if the hook is invoked for it at all.
  */
-export function gateSettings(nodePath: string, gateScript: string, cfgPath: string): string {
-  const command = JSON.stringify(nodePath) + ' ' + JSON.stringify(gateScript) + ' ' + JSON.stringify(cfgPath);
+export function gateSettings(launcher: string): string {
+  // The launcher already carries the script and the config path — see `writeGateLauncher`, which
+  // exists because the hook needs an environment variable set that cannot travel in this string.
+  const command = JSON.stringify(launcher);
   return JSON.stringify({
     hooks: { PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command }] }] },
   });
