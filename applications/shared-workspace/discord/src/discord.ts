@@ -105,6 +105,31 @@ export interface GatewayInteraction {
   readonly name: string;
   readonly options: Readonly<Record<string, string>>;
   readonly channelName: string | null;
+  /**
+   * The message a context-menu command was invoked on, or null for a slash command.
+   *
+   * A `type: 3` command carries no options — the message IS the argument — so this is the only
+   * thing that says what it was invoked about.
+   */
+  readonly targetMessageId: string | null;
+}
+
+/**
+ * A modal's answer, arriving as its own interaction.
+ *
+ * ★ IT REMEMBERS NOTHING ABOUT THE INTERACTION THAT OPENED IT. Discord does not thread the two
+ * together, so whatever the handler needs to know — which agent this ask is for — has to be
+ * carried in `customId` and read back out here. That is why the id is structured rather than a
+ * bare label.
+ */
+export interface GatewayModalSubmit {
+  readonly id: string;
+  readonly token: string;
+  readonly channelId: string;
+  readonly userId: string | null;
+  readonly customId: string;
+  /** Field id -> what was typed. */
+  readonly fields: Readonly<Record<string, string>>;
 }
 
 /**
@@ -146,6 +171,8 @@ export interface GatewayHandlers {
    * bounded, and an empty result is rendered as a row that SAYS it is empty rather than as nothing.
    */
   onAutocomplete(a: GatewayAutocomplete): void;
+  /** A modal was submitted. See {@link GatewayModalSubmit} for why it carries its own state. */
+  onModalSubmit(m: GatewayModalSubmit): void;
   onNotice(line: string): void;
   /** Called once, with a sentence, when the connection cannot be recovered. */
   onFatal(why: string): void;
@@ -392,8 +419,41 @@ export class DiscordGateway {
       return;
     }
     if (t === 'INTERACTION_CREATE') {
-      // Type 2 = APPLICATION_COMMAND, type 4 = APPLICATION_COMMAND_AUTOCOMPLETE. Components and
-      // modals are still not used by this bot and are ignored rather than half-answered.
+      /**
+       * Type 2 = APPLICATION_COMMAND, type 4 = AUTOCOMPLETE, type 5 = MODAL_SUBMIT.
+       *
+       * ★ TYPE 5 USED TO BE DROPPED HERE with the comment "modals are still not used by this bot".
+       * That was true while every command took its arguments on the command line. A CONTEXT-MENU
+       * command cannot: Discord hands it the message that was right-clicked and nothing else, so
+       * the question has to be collected by a modal, and a modal's answer arrives as its own
+       * interaction. Dropping type 5 meant a person typed their question into a box, pressed
+       * submit, and Discord showed "Something went wrong" while the bot saw nothing at all.
+       *
+       * Type 3 (message components) is still unused and still ignored rather than half-answered.
+       */
+      if (p['type'] === 5) {
+        const md = p['data'] as { custom_id?: unknown; components?: unknown } | undefined;
+        const member5 = p['member'] as { user?: { id?: string } } | undefined;
+        const user5 = p['user'] as { id?: string } | undefined;
+        if (typeof p['id'] !== 'string' || typeof p['token'] !== 'string'
+          || typeof p['channel_id'] !== 'string' || typeof md?.custom_id !== 'string') return;
+        // Rows of components, each row holding the inputs. Flattened to id -> value; a modal with
+        // one field is the only shape this bot opens, and reading them all keeps that from being
+        // an assumption the parser depends on.
+        const fields: Record<string, string> = {};
+        for (const row of (Array.isArray(md.components) ? md.components : [])) {
+          for (const c of ((row as { components?: unknown[] })?.components ?? [])) {
+            const f = c as { custom_id?: unknown; value?: unknown };
+            if (typeof f?.custom_id === 'string' && typeof f.value === 'string') fields[f.custom_id] = f.value;
+          }
+        }
+        this.handlers.onModalSubmit({
+          id: p['id'], token: p['token'], channelId: p['channel_id'],
+          userId: member5?.user?.id ?? user5?.id ?? null,
+          customId: md.custom_id, fields,
+        });
+        return;
+      }
       if (p['type'] !== 2 && p['type'] !== 4) return;
       type Opt = { type?: number; name?: string; value?: unknown; focused?: boolean; options?: readonly Opt[] };
       const data = p['data'] as { name?: string; options?: readonly Opt[] } | undefined;
@@ -449,6 +509,16 @@ export class DiscordGateway {
         userId: member?.user?.id ?? user?.id ?? null,
         name: sub ? data.name + ' ' + String(sub.name) : data.name,
         options, channelName: channel?.name ?? null,
+        /**
+         * The message a context-menu command was invoked ON.
+         *
+         * ★ THE WHOLE PAYLOAD OF A `type: 3` COMMAND, and it was being parsed away. Discord sends
+         * no options for one — the message IS the argument — so a handler reading only `options`
+         * receives a command with no subject and can do nothing with it.
+         */
+        targetMessageId: typeof (data as { target_id?: unknown }).target_id === 'string'
+          ? (data as { target_id: string }).target_id
+          : null,
       });
     }
   }
@@ -520,6 +590,47 @@ export class DiscordRest {
     // and Discord kills an interaction that is not acknowledged in 3 s, so every command defers
     // first and edits the placeholder afterwards.
     return this.call('POST', '/interactions/' + interactionId + '/' + token + '/callback', { type: 5, data: ephemeral ? { flags: EPHEMERAL } : {} });
+  }
+
+  /**
+   * Open a modal — the only interaction response that COLLECTS text instead of printing it.
+   *
+   * ★ WHY THIS EXISTS RATHER THAN A SECOND SLASH COMMAND. A context-menu command carries no
+   * arguments: Discord gives it the message that was right-clicked and nothing else. So the
+   * question has to be asked for, and a modal is the only surface that asks. Without it "Ask this
+   * agent" could only re-send the message it was invoked on, which is not a question anybody
+   * wanted answered.
+   *
+   * ★ AND IT MUST BE THE FIRST RESPONSE. Type 9 is not valid after a deferral — Discord answers
+   * 400 `INTERACTION_ALREADY_ACKNOWLEDGED` — so a context-menu command opens the modal INSTEAD of
+   * deferring, and the substrate work happens on the modal's own interaction afterwards. That is
+   * also why the three-second budget is not a problem here: opening a modal touches no pod.
+   *
+   * `customId` carries state back, because a modal submission arrives as its own interaction with
+   * no memory of the one that opened it.
+   */
+  modal(interactionId: string, token: string, args: {
+    readonly customId: string; readonly title: string;
+    readonly fieldId: string; readonly label: string; readonly placeholder?: string;
+  }): Promise<Record<string, unknown>> {
+    return this.call('POST', '/interactions/' + interactionId + '/' + token + '/callback', {
+      type: 9,
+      data: {
+        custom_id: args.customId,
+        // Discord rejects a title over 45 characters with a 400 that names no field.
+        title: args.title.slice(0, 45),
+        components: [{
+          type: 1,
+          components: [{
+            // Type 4 = TEXT_INPUT, style 2 = paragraph. An ask is prose, and a single-line box
+            // would truncate the thing that lands on somebody's permanent record.
+            type: 4, custom_id: args.fieldId, style: 2,
+            label: args.label.slice(0, 45), required: true, max_length: 1800,
+            ...(args.placeholder ? { placeholder: args.placeholder.slice(0, 100) } : {}),
+          }],
+        }],
+      },
+    });
   }
 
   /**
@@ -672,6 +783,23 @@ export const COMMANDS = [
         ],
       },
     ],
+  },
+  /**
+   * ★ THE DISCORD-NATIVE WAY TO ADDRESS AN AGENT: right-click its message → Apps → Ask this agent.
+   *
+   * The three ways to address one before this were a slash-command picker, a REPLY, and a message
+   * that opens by typing the agent's name — and the last is a text heuristic (`addressedText`)
+   * doing a job Discord has an actual gesture for. A context-menu command is what Discord offers
+   * for "act on THIS message": no name to spell, no picker to scroll, and the agent is identified
+   * by the message it wrote rather than by a string that has to be matched against a roster.
+   *
+   * `type: 3` is MESSAGE. There is no `description` — Discord rejects one on a context-menu
+   * command with a 400 — and the NAME is the label a person reads in the menu, so it is written
+   * as a sentence rather than as an identifier.
+   */
+  {
+    name: 'Ask this agent',
+    type: 3,
   },
 ] as const;
 

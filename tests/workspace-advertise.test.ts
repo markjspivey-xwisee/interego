@@ -142,6 +142,129 @@ describe('an affordance can say what it expects', () => {
   });
 });
 
+/**
+ * AN AGENT THAT CAN DO MORE THAN ONE THING.
+ *
+ * The unit used to be the DOCUMENT: one `iep:action` on the document IRI, and `capabilitiesIri`
+ * composes exactly one address per agent — so an agent with three skills could not publish them.
+ * One agent, one verb, permanently.
+ *
+ * The substrate never required that. The kernel's affordance extractor already finds EVERY subject
+ * typed `iep:Affordance` and matches by action, and the relay already emits several that way
+ * (`<#canDecrypt>`, `<#renderView>`). Only this writer and its reader insisted on one.
+ */
+describe('an agent can offer several skills', () => {
+  const SHAPE = 'https://relay.interego.xwisee.com/ns/' + POD + '/teach-shape';
+  const TEACH = 'https://relay.interego.xwisee.com/ns/' + POD + '/teach';
+  const REVIEW = 'https://relay.interego.xwisee.com/ns/' + POD + '/review';
+  const ASK_VIA = RELAY + '/ns/' + POD + '/inbox';
+  const two = [
+    { action: TEACH, route: { kind: 'hosted', target: TARGET } as const, title: 'Teach', description: 'a', expects: SHAPE },
+    { action: REVIEW, route: { kind: 'ask', askVia: ASK_VIA } as const, title: 'Review', description: 'b' },
+  ];
+
+  const portFor = (turtle: string): AgentPort => ({
+    async tool(name: string): Promise<unknown> {
+      if (name === 'discover_context') return { entries: [{ descriptorUrl: 'https://pod/c.ttl' }] };
+      throw new Error('unexpected ' + name);
+    },
+    async descriptor(): Promise<Record<string, unknown>> {
+      return {
+        authorship: { authorshipVerified: true, signedBy: AGENT, contentBinding: 'bound' },
+        graph: { content: '<' + IRI + '> {\n' + turtle + '\n}' },
+      };
+    },
+  });
+
+  it('★ a SINGLE offer still emits byte-for-byte what it always did', () => {
+    // Every document already published puts the affordance on the document IRI, which is the shape
+    // `invoke_affordance` is handed. Changing that for an unchanged agent would be a diff in
+    // signed bytes with no change in meaning.
+    const legacy = capabilityTurtle({ ...base, route: { kind: 'hosted', target: TARGET } });
+    expect(legacy).toContain('<' + IRI + '>\n  a iep:Affordance, hydra:Operation ;');
+    expect(legacy).not.toContain('iep:offers');
+    expect(legacy).not.toContain('iep:CapabilityDocument');
+  });
+
+  it('names each offer at its own fragment, and lists them on the document', () => {
+    const t = capabilityTurtle({ ...base, offers: two });
+    expect(t).toContain('a iep:CapabilityDocument');
+    expect(t).toContain('iep:offers <' + IRI + '#teach>, <' + IRI + '#review>');
+    expect(t).toContain('<' + IRI + '#teach>\n  a iep:Affordance, hydra:Operation ;');
+    expect(t).toContain('<' + IRI + '#review>\n  a iep:Affordance, hydra:Operation ;');
+  });
+
+  it('★ the fragment is derived from the action, so removing one does not move the others', () => {
+    // `#a0`/`#a1` would renumber when an offer is dropped from the middle, and a caller holding
+    // `<doc#a1>` would silently hold a different action than the one it resolved — and those IRIs
+    // are exactly what `invoke_affordance` is handed.
+    const second = two[1];
+    if (!second) throw new Error('fixture');
+    const dropped = capabilityTurtle({ ...base, offers: [second] });
+    expect(dropped).toContain('<' + IRI + '#review>');
+    expect(dropped).not.toContain('#a0');
+  });
+
+  it('keeps two actions whose last segment matches distinct', () => {
+    const t = capabilityTurtle({ ...base, offers: [
+      { action: 'https://a.example/ns/x/teach', route: { kind: 'hosted', target: TARGET } as const, title: 'A', description: 'a' },
+      { action: 'https://b.example/ns/y/teach', route: { kind: 'hosted', target: TARGET } as const, title: 'B', description: 'b' },
+    ] });
+    // Colliding onto one subject would let the second silently overwrite the first's triples.
+    expect(t).toContain('<' + IRI + '#teach>');
+    expect(t).toContain('<' + IRI + '#teach-2>');
+  });
+
+  it('★ every offer carries its OWN route, shape and title', () => {
+    const t = capabilityTurtle({ ...base, offers: two });
+    expect(t).toContain('hydra:expects <' + SHAPE + '>');
+    expect(t).toContain('iep:askVia <' + ASK_VIA + '>');
+    expect(t).toContain('hydra:title "Teach"');
+    expect(t).toContain('hydra:title "Review"');
+  });
+
+  it('★ reads them all back out of the SIGNED region, in order', async () => {
+    const read = await readCapabilities(portFor(capabilityTurtle({ ...base, offers: two })), { relay: RELAY, agentId: AGENT });
+    expect(read.kind).toBe('advertised');
+    if (read.kind !== 'advertised') throw new Error('narrowed above');
+    expect(read.offers).toHaveLength(2);
+    expect(read.offers.map((o) => o.action)).toEqual([TEACH, REVIEW]);
+    expect(read.offers[0]?.expects).toBe(SHAPE);
+    expect(read.offers[0]?.route).toEqual({ kind: 'hosted', target: TARGET });
+    expect(read.offers[1]?.route.kind).toBe('ask');
+    // The flat fields are the FIRST offer, so every existing caller keeps working unchanged.
+    expect(read.action).toBe(TEACH);
+    expect(read.route).toEqual({ kind: 'hosted', target: TARGET });
+  });
+
+  it('★ a one-offer document reads as one offer, not as none', async () => {
+    // The legacy shape has no `iep:offers` and its affordance IS the document. A reader that only
+    // understood the new form would report an agent advertising nothing.
+    const read = await readCapabilities(portFor(capabilityTurtle({ ...base, route: { kind: 'hosted', target: TARGET } })), { relay: RELAY, agentId: AGENT });
+    expect(read.kind).toBe('advertised');
+    if (read.kind !== 'advertised') throw new Error('narrowed above');
+    expect(read.offers).toHaveLength(1);
+    expect(read.offers[0]?.action).toBe(read.action);
+  });
+
+  it('★ the agent is named once per subject and that is still ONE agent', () => {
+    // `iep:capabilityOf` now appears on the document AND on every offer, so a three-skill agent
+    // puts four in the region. The check is "how many DISTINCT agents", and an earlier version
+    // counted occurrences — which would have rejected every multi-offer document as naming four.
+    const t = capabilityTurtle({ ...base, offers: two });
+    expect((t.match(/iep:capabilityOf/g) ?? []).length).toBeGreaterThan(1);
+  });
+
+  it('★ refuses when ONE offer among several is unroutable', async () => {
+    // Picking the readable ones would be this reader deciding which half of a signed document to
+    // believe. A document a caller cannot act on safely is unreadable, not partly available.
+    const broken = capabilityTurtle({ ...base, offers: two })
+      .replace('  iep:askVia <' + ASK_VIA + '> ;\n', '');
+    const read = await readCapabilities(portFor(broken), { relay: RELAY, agentId: AGENT });
+    expect(read.kind).toBe('unreadable');
+  });
+});
+
 describe('an agent with no endpoint', () => {
   it('publishes iep:askVia and NO target, so a reader cannot mistake it for callable', () => {
     const t = capabilityTurtle({ ...base, route: { kind: 'ask', askVia: RELAY + '/ns/' + POD + '/inbox' } });

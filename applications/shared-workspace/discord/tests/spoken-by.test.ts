@@ -26,7 +26,10 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { DiscordGateway, type GatewayAutocomplete, type GatewayInteraction, type GatewayMessage } from '../src/discord.js';
+import {
+  DiscordGateway,
+  type GatewayAutocomplete, type GatewayInteraction, type GatewayMessage, type GatewayModalSubmit,
+} from '../src/discord.js';
 import { SpokenBy, SPOKEN_BY_LIMIT } from '../src/spoken-by.js';
 
 // ── §1 THE GATEWAY SURFACES THE REFERENCE ────────────────────────────────────
@@ -44,6 +47,7 @@ function messagesFrom(payload: Record<string, unknown>): readonly GatewayMessage
     onMessage: (m) => seen.push(m),
     onInteraction: (_i: GatewayInteraction) => undefined,
     onAutocomplete: (_a: GatewayAutocomplete) => undefined,
+    onModalSubmit: () => undefined,
     onNotice: () => undefined,
     onFatal: () => undefined,
   }, () => new FakeSocket() as unknown as never);
@@ -135,6 +139,131 @@ describe('an attachment is a thing that was posted, and now reaches the record',
       ],
     });
     expect(msg?.attachments.map((a) => a.name)).toEqual(['good.png']);
+  });
+});
+
+/**
+ * THE CONTEXT-MENU PATH: the two frames the gateway used to throw away.
+ *
+ * A `type: 3` command carries no options — the message IS the argument — so a handler reading only
+ * `options` gets a command with no subject. And its answer arrives as a MODAL SUBMIT, which the
+ * dispatcher dropped outright with the comment "modals are still not used by this bot": a person
+ * typed their question, pressed submit, Discord showed "Something went wrong", and the bot saw
+ * nothing at all.
+ */
+function interactionsFrom(payload: Record<string, unknown>): readonly GatewayInteraction[] {
+  const seen: GatewayInteraction[] = [];
+  const gw = new DiscordGateway('tok', {
+    onMessage: () => undefined,
+    onInteraction: (i) => seen.push(i),
+    onAutocomplete: (_a: GatewayAutocomplete) => undefined,
+    onModalSubmit: () => undefined,
+    onNotice: () => undefined,
+    onFatal: () => undefined,
+  }, () => new FakeSocket() as unknown as never);
+  gw.onFrame(JSON.stringify({ op: 0, t: 'INTERACTION_CREATE', d: payload }));
+  gw.stop();
+  return seen;
+}
+
+function modalsFrom(payload: Record<string, unknown>): readonly GatewayModalSubmit[] {
+  const seen: GatewayModalSubmit[] = [];
+  const gw = new DiscordGateway('tok', {
+    onMessage: () => undefined,
+    onInteraction: () => undefined,
+    onAutocomplete: (_a: GatewayAutocomplete) => undefined,
+    onModalSubmit: (m) => seen.push(m),
+    onNotice: () => undefined,
+    onFatal: () => undefined,
+  }, () => new FakeSocket() as unknown as never);
+  gw.onFrame(JSON.stringify({ op: 0, t: 'INTERACTION_CREATE', d: payload }));
+  gw.stop();
+  return seen;
+}
+
+describe('right-clicking a message to ask the agent that wrote it', () => {
+  it('★ surfaces target_id, which is the whole payload of a context-menu command', () => {
+    const [i] = interactionsFrom({
+      id: 'i1', token: 't1', channel_id: 'c1', type: 2,
+      member: { user: { id: 'u1' } },
+      data: { name: 'Ask this agent', type: 3, target_id: 'm-agent-1' },
+    });
+    expect(i?.name).toBe('Ask this agent');
+    expect(i?.targetMessageId).toBe('m-agent-1');
+  });
+
+  it('reports null for a slash command, which acts on no message', () => {
+    const [i] = interactionsFrom({
+      id: 'i2', token: 't2', channel_id: 'c1', type: 2,
+      member: { user: { id: 'u1' } },
+      data: { name: 'workspace', options: [{ type: 1, name: 'show' }] },
+    });
+    expect(i?.name).toBe('workspace show');
+    expect(i?.targetMessageId).toBeNull();
+  });
+
+  it('★ delivers a modal submission, which used to be dropped on the floor', () => {
+    const [m] = modalsFrom({
+      id: 'i3', token: 't3', channel_id: 'c1', type: 5,
+      member: { user: { id: 'u1' } },
+      data: {
+        custom_id: 'ask-agent:m-agent-1',
+        components: [{ type: 1, components: [{ type: 4, custom_id: 'task', value: 'What did the survey say?' }] }],
+      },
+    });
+    expect(m?.customId).toBe('ask-agent:m-agent-1');
+    expect(m?.fields['task']).toBe('What did the survey say?');
+    expect(m?.userId).toBe('u1');
+  });
+
+  it('★ carries the MESSAGE id, not the DID — and NOT because a DID would not fit', () => {
+    /**
+     * The first version of this asserted the DID was too long for Discord's 100-character custom
+     * id. It is not: a live one comes to 90 with the prefix. The test failed against correct code
+     * and the comment beside the code was making the same false claim.
+     *
+     * The two real reasons:
+     *
+     *   · 90 of 100 is ten characters of margin on a value whose length nothing here controls. A
+     *     longer pod segment or a different identity form exceeds it and Discord answers 400.
+     *   · A custom id comes back from the CLIENT. Trusting a DID out of one would let a crafted
+     *     submission name any agent at all; a message id is re-resolved through `spokenBy`, so
+     *     the only agents addressable this way are ones actually seen posting in that channel.
+     */
+    const did = 'did:web:identity.interego.xwisee.com:agents:interego-delegate-u-eth-03f52e15b9df';
+    expect(('ask-agent:' + did).length).toBeGreaterThan(85);   // fits, but barely
+    expect(('ask-agent:' + '1786584766258123456').length).toBeLessThan(35);
+  });
+
+  it('★ a crafted custom id naming an unknown message resolves to no agent', () => {
+    // The security property behind the indirection: what comes back from the client is a lookup
+    // key, not an identity. An id the bot never recorded yields null, and the handler refuses.
+    const s = new SpokenBy();
+    s.remember('m-real', AGENT_A);
+    expect(s.agentFor('m-forged')).toBeNull();
+    expect(s.agentFor('m-real')).toBe(AGENT_A);
+  });
+
+  it('reads every field of a modal, so a second input would not be silently lost', () => {
+    const [m] = modalsFrom({
+      id: 'i4', token: 't4', channel_id: 'c1', type: 5,
+      member: { user: { id: 'u1' } },
+      data: {
+        custom_id: 'ask-agent:m1',
+        components: [
+          { type: 1, components: [{ type: 4, custom_id: 'task', value: 'a' }] },
+          { type: 1, components: [{ type: 4, custom_id: 'note', value: 'b' }] },
+        ],
+      },
+    });
+    expect(m?.fields).toEqual({ task: 'a', note: 'b' });
+  });
+
+  it('ignores a modal with no custom id rather than dispatching a nameless one', () => {
+    expect(modalsFrom({
+      id: 'i5', token: 't5', channel_id: 'c1', type: 5,
+      member: { user: { id: 'u1' } }, data: { components: [] },
+    })).toHaveLength(0);
   });
 });
 

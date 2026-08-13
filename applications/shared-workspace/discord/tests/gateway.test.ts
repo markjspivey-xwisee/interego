@@ -12,7 +12,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   DiscordGateway, DiscordRest, COMMANDS, INTENTS, commandFingerprint,
-  type GatewayAutocomplete, type GatewayInteraction, type GatewayMessage,
+  type GatewayAutocomplete, type GatewayInteraction, type GatewayMessage, type GatewayModalSubmit,
 } from '../src/discord.js';
 
 /** A socket that records what was sent and lets a test deliver frames and closes. */
@@ -37,6 +37,7 @@ interface Harness {
   readonly messages: GatewayMessage[];
   readonly interactions: GatewayInteraction[];
   readonly autocompletes: GatewayAutocomplete[];
+  readonly modals: GatewayModalSubmit[];
   readonly notices: string[];
   readonly fatals: string[];
   socket(): FakeSocket;
@@ -48,17 +49,19 @@ function harness(): Harness {
   const messages: GatewayMessage[] = [];
   const interactions: GatewayInteraction[] = [];
   const autocompletes: GatewayAutocomplete[] = [];
+  const modals: GatewayModalSubmit[] = [];
   const notices: string[] = [];
   const fatals: string[] = [];
   const gw = new DiscordGateway('tok', {
     onMessage: (m) => messages.push(m),
     onInteraction: (i) => interactions.push(i),
     onAutocomplete: (a) => autocompletes.push(a),
+    onModalSubmit: (m) => modals.push(m),
     onNotice: (l) => notices.push(l),
     onFatal: (w) => fatals.push(w),
   }, () => { const s = new FakeSocket(); sockets.push(s); return s as unknown as never; });
   const socket = (): FakeSocket => sockets[sockets.length - 1] as FakeSocket;
-  return { gw, sockets, messages, interactions, autocompletes, notices, fatals, socket, frame: (f) => { gw.onFrame(JSON.stringify(f)); } };
+  return { gw, sockets, messages, interactions, autocompletes, modals, notices, fatals, socket, frame: (f) => { gw.onFrame(JSON.stringify(f)); } };
 }
 
 const HELLO = { op: 10, d: { heartbeat_interval: 41250 } };
@@ -343,7 +346,39 @@ describe('deciding whether the command tree needs re-registering', () => {
         })),
       } : {}),
     })),
+  },
+  /**
+   * ★ AND THE CONTEXT-MENU COMMAND, WHICH DISCORD STORES DIFFERENTLY FROM HOW THE BOT SENDS IT.
+   *
+   * A `type: 3` command is sent with no `description` — Discord rejects one with a 400 — and comes
+   * back with `description: ''`. If the fingerprint did not normalise that to the same thing, the
+   * bot would decide the tree had changed on EVERY boot and re-publish, which costs real users a
+   * working command until their client catches up. That is precisely what this pair asserts, so
+   * the fixture has to carry the asymmetry rather than paper over it.
+   */
+  {
+    id: '223456789',
+    application_id: '987654321',
+    version: '211222333',
+    default_member_permissions: null,
+    dm_permission: true,
+    nsfw: false,
+    type: 3,
+    name: 'Ask this agent',
+    description: '',
+    options: [],
   }];
+
+  it('★ registers a MESSAGE context-menu command, which is how Discord addresses a message', () => {
+    // The three earlier ways to address an agent were a picker, a reply, and typing its name at
+    // the start of a sentence — and the last is a text heuristic doing a job Discord has a gesture
+    // for. `type: 3` is that gesture. It carries no description: Discord rejects one with a 400.
+    const menu = (COMMANDS as readonly { name: string; type?: number; description?: string }[])
+      .find((c) => c.type === 3);
+    expect(menu, 'no MESSAGE command is registered').toBeTruthy();
+    expect(menu?.name).toBe('Ask this agent');
+    expect(menu?.description).toBeUndefined();
+  });
 
   it('★ calls an untouched tree unchanged, despite the fields Discord adds to it', () => {
     // If this were ever false the bot would re-publish on every boot and every restart would cost
@@ -353,7 +388,12 @@ describe('deciding whether the command tree needs re-registering', () => {
   });
 
   it('is not fooled by ordering, which carries no meaning', () => {
-    const shuffled = [{ ...COMMANDS[0], options: [...COMMANDS[0].options].reverse() }];
+    // Both the option order WITHIN a command and the order OF the commands are meaningless, and
+    // the second only became testable once there were two commands to swap.
+    const shuffled = [
+      COMMANDS[1],
+      { ...COMMANDS[0], options: [...COMMANDS[0].options].reverse() },
+    ];
     expect(commandFingerprint(shuffled)).toBe(commandFingerprint(COMMANDS as unknown as readonly unknown[]));
   });
 
