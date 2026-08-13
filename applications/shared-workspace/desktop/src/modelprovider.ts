@@ -436,12 +436,23 @@ export async function runClaude(args: {
   const argv = turnArgv(args);
   const r = await run(args.binary, argv, {
     env: args.env ?? childEnv(),
-    timeoutMs: args.timeoutMs ?? 120_000,
+    /**
+     * ★ 120 s WAS SET BEFORE A DELEGATE HAD TOOLS, and it started killing real turns.
+     *
+     * MEASURED in a live channel: asked to produce a picture, the agent was stopped at 120 seconds
+     * with nothing written. A turn is no longer one model call — it can be several MCP round trips
+     * against the relay, each a network hop, before a word is drafted. `drive-agent-tools-live.ts`
+     * has used 240 s since tools landed and has never timed out.
+     *
+     * A ceiling still has to exist: this is a child process on somebody's laptop, spawned by a
+     * poll loop, and one that never returns would hold the turn open forever.
+     */
+    timeoutMs: args.timeoutMs ?? 240_000,
     stdin: args.prompt,
     ...(args.onChild ? { onChild: args.onChild } : {}),
   });
   const ms = Date.now() - t0;
-  if (r.timedOut) return { ok: false, text: null, ms, why: 'Your agent did not answer within ' + Math.round((args.timeoutMs ?? 120_000) / 1000) + ' seconds and was stopped. Nothing was written.' };
+  if (r.timedOut) return { ok: false, text: null, ms, why: 'Your agent did not answer within ' + Math.round((args.timeoutMs ?? 240_000) / 1000) + ' seconds and was stopped. Nothing was written.' };
   if (r.spawnError) return { ok: false, text: null, ms, why: 'Claude Code could not be started: ' + r.spawnError + '. Nothing was written.' };
   let j: Record<string, unknown> | null = null;
   try { j = JSON.parse(r.stdout) as Record<string, unknown>; } catch { j = null; }
