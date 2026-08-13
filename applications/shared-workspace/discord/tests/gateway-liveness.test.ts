@@ -62,6 +62,7 @@ function harness(openSocket?: () => FakeSocket): Harness {
     onMessage: () => undefined,
     onInteraction: () => undefined,
     onAutocomplete: () => undefined,
+    onModalSubmit: () => undefined,
     onNotice: (l) => notices.push(l),
     onFatal: (w) => fatals.push(w),
   }, () => { const s = openSocket ? openSocket() : new FakeSocket(); sockets.push(s); return s as unknown as never; });

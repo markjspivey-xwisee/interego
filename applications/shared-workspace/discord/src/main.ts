@@ -42,7 +42,7 @@ import { LinkStore } from './links.js';
 import { BotSession, type BotIdentity } from './identity.js';
 import {
   COMMANDS, DiscordGateway, DiscordRest, commandFingerprint,
-  type GatewayAutocomplete, type GatewayInteraction, type GatewayMessage,
+  type GatewayAutocomplete, type GatewayInteraction, type GatewayMessage, type GatewayModalSubmit,
 } from './discord.js';
 import { beginLink, confirmLink, recordMessage, showWorkspace, startWorkspace, unlink, type Deps } from './workspace.js';
 // `askCandidates` is still called directly by `/workspace who`, which is DEFERRED and has fifteen
@@ -325,8 +325,65 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
     out,
   });
 
+  /**
+   * The prefix that carries an agent's identity from the context menu into the modal's answer.
+   *
+   * ★ A MODAL SUBMISSION REMEMBERS NOTHING. Discord does not thread it to the interaction that
+   * opened it, so which agent the person right-clicked has to travel in the custom id or be lost.
+   *
+   * ★ WHAT TRAVELS IS THE MESSAGE ID, AND NOT BECAUSE A DID WOULD NOT FIT — an earlier version of
+   * this comment claimed that and a test proved it false: a live DID plus this prefix comes to 90
+   * of Discord's 100 characters. Two better reasons:
+   *
+   *   · ten characters of margin on a value whose length nothing here controls is not margin. A
+   *     longer pod segment or a later identity form exceeds it and Discord answers 400.
+   *   · a custom id comes back from the CLIENT. Trusting a DID out of one would let a crafted
+   *     submission name any agent; a message id is re-resolved through `spokenBy`, so the only
+   *     agents reachable this way are ones actually seen posting in that channel.
+   */
+  const ASK_MODAL = 'ask-agent:';
+  const ASK_FIELD = 'task';
+
   const onInteraction = async (i: GatewayInteraction): Promise<void> => {
     if (!i.userId) { out('discord: an interaction arrived with no user, ignored'); return; }
+    /**
+     * ★ THE CONTEXT-MENU COMMAND ANSWERS WITH A MODAL AND MUST NOT DEFER FIRST.
+     *
+     * Type 9 is invalid after an acknowledgement — Discord answers 400
+     * INTERACTION_ALREADY_ACKNOWLEDGED — so this branch runs before the `defer` below. It can
+     * afford to: opening a modal touches no pod, so the three-second budget the deferral exists
+     * for is not in play.
+     *
+     * Everything this refuses is refused HERE rather than after the person has typed a question,
+     * because a modal that collects prose and then says "that was not an agent" has wasted the
+     * only thing it asked for.
+     */
+    if (i.name === 'Ask this agent') {
+      const agentId = spokenBy.agentFor(i.targetMessageId);
+      if (!agentId) {
+        try {
+          await rest.defer(i.id, i.token, true);
+          await rest.edit(who.id, i.token, [
+            '**That message is not an agent’s.** This asks the agent that WROTE the message you picked, so it works',
+            'only on one an agent posted here — and only while this bot still remembers it.',
+            '',
+            'Use `/workspace ask` to choose from every agent that could be asked something here.',
+          ].join('\n'));
+        } catch (e) { out('discord: could not answer a context-menu ask — ' + (e as Error).message); }
+        return;
+      }
+      try {
+        await rest.modal(i.id, i.token, {
+          // The MESSAGE id, not the DID: Discord caps a custom id at 100 characters.
+          customId: ASK_MODAL + i.targetMessageId,
+          title: 'Ask this agent',
+          fieldId: ASK_FIELD,
+          label: 'What are you asking it to do?',
+          placeholder: 'This goes on the record, in your own words',
+        });
+      } catch (e) { out('discord: could not open the ask modal — ' + (e as Error).message); }
+      return;
+    }
     // Ephemerality has to be decided BEFORE the work, because the deferral carries the flag and
     // it cannot be changed afterwards. Everything except `start` and `show` is private to the
     // caller — a link code in a public channel is a link code somebody else can use.
@@ -439,6 +496,72 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
    * must disappear from this list without anything telling this bot, which is only true while the
    * pods are the ones being asked.
    */
+  /**
+   * The answer to "Ask this agent", which arrives as its own interaction.
+   *
+   * ★ IT ROUTES THROUGH THE SAME `ask()` AS EVERY OTHER PATH, and that is the whole reason this is
+   * a few lines rather than a second implementation. The picker, a typed name, a reply and this
+   * all converge on one function — so the addressing triple, the write-eligibility refusal, the
+   * notice to an absent host and the re-resolution against the delegator's own pod are the ones
+   * already tested. What differs between the four is only how the agent got named.
+   *
+   * ★ AND THE AGENT IS RE-RESOLVED FROM THE MESSAGE, NOT TRUSTED FROM THE MODAL. The custom id
+   * carries a Discord message id, which is public and could be anything; `spokenBy` is what turns
+   * it into an agent, and `ask()` then checks that agent against its delegator's pod. A forged id
+   * resolves to nothing and is refused, and one that resolves to an agent whose delegation has
+   * since been withdrawn is refused by the same gate every other path meets.
+   */
+  const onModalSubmit = async (m: GatewayModalSubmit): Promise<void> => {
+    if (!m.userId) { out('discord: a modal arrived with no user, ignored'); return; }
+    if (!m.customId.startsWith(ASK_MODAL)) { out('discord: unknown modal ' + m.customId + ', ignored'); return; }
+    try { await rest.defer(m.id, m.token, false); }
+    catch (e) { out('discord: could not acknowledge the ask modal — ' + (e as Error).message); return; }
+
+    const targetMessageId = m.customId.slice(ASK_MODAL.length);
+    const agentId = spokenBy.agentFor(targetMessageId);
+    const task = (m.fields[ASK_FIELD] ?? '').trim();
+    const pod = store.linkOf(m.userId)?.pod ?? m.userId;
+
+    await queue.run(pod, async () => {
+      try {
+        if (!agentId) {
+          await rest.edit(who.id, m.token, '**Nothing was asked.** This bot no longer remembers which agent wrote that '
+            + 'message, so there is nobody to address. `/workspace ask` chooses from a live list instead.');
+          return;
+        }
+        if (!task) {
+          await rest.edit(who.id, m.token, '**Nothing was asked.** The box was empty, and what you type is what goes in '
+            + 'the record — there is nothing here for this bot to fill in.');
+          return;
+        }
+        const outcome = await session.call((c) => ask(deps(c), {
+          threadId: m.channelId, discordUserId: m.userId as string, spec: agentId, task,
+        }));
+        if (outcome.kind === 'asked' && outcome.descriptorUrl) {
+          watcher.noteAsk({
+            threadId: m.channelId, descriptorUrl: outcome.descriptorUrl, seq: outcome.accepted.seq,
+            targetPod: outcome.target.pod, targetAgentId: outcome.target.agentId,
+            targetName: outcome.target.name ?? outcome.target.agentId,
+            askedAtMs: Date.now(),
+            presenceAtAsk: presenceLine(outcome.target.presence),
+          });
+        }
+        const parts = renderAsk(outcome);
+        const list = Array.isArray(parts) ? parts : [parts];
+        for (let k = 0; k < list.length; k++) {
+          const part = list[k];
+          if (!part) continue;
+          if (k === 0) await rest.edit(who.id, m.token, part.content);
+          else await rest.followup(who.id, m.token, part.content, part.ephemeral);
+        }
+      } catch (e) {
+        out('discord: the ask modal failed — ' + ((e as Error)?.stack ?? String(e)));
+        try { await rest.edit(who.id, m.token, '**Nothing was asked.** ' + ((e as Error)?.message ?? String(e))); }
+        catch { /* the interaction token may already be gone; the log above is the record */ }
+      }
+    });
+  };
+
   const onAutocomplete = async (a: GatewayAutocomplete): Promise<void> => {
     if (!a.userId || a.name !== 'workspace ask' || a.focused !== 'agent') {
       try { await rest.autocomplete(a.id, a.token, []); } catch { /* the box simply stays empty */ }
@@ -598,6 +721,7 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
     onMessage,
     onInteraction: (i) => { void onInteraction(i); },
     onAutocomplete: (a) => { void onAutocomplete(a); },
+    onModalSubmit: (m) => { void onModalSubmit(m); },
     onNotice: (l) => {
       out('gateway: ' + l);
       // ★ THE BOOT PROOF, AND IT IS THE GATEWAY'S OWN READY RATHER THAN A REST CALL. It used to be

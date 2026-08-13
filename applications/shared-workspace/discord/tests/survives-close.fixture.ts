@@ -32,6 +32,7 @@ const gw: DiscordGateway = new DiscordGateway('tok', {
   onMessage: () => undefined,
   onInteraction: () => undefined,
   onAutocomplete: () => undefined,
+  onModalSubmit: () => undefined,
   onNotice: (l) => { process.stdout.write('notice: ' + l + '\n'); },
   onFatal: (w) => { process.stdout.write('fatal: ' + w + '\n'); },
 }, () => {

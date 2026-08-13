@@ -676,7 +676,7 @@ export type CapabilityRoute =
   /** No endpoint. Reached by putting a record on the channel and waiting for its host to run. */
   | { readonly kind: 'ask'; readonly askVia: string };
 
-export interface CapabilityDraft {
+interface CapabilityDraftBase {
   /** The document's own IRI — `<relay>/ns/<agent pod>/agent-<agent pod>-capabilities`. */
   readonly iri: string;
   /** The agent this document is about. Inside the signed region, so a filename is not the claim. */
@@ -703,6 +703,15 @@ export interface CapabilityDraft {
    * as evidence.
    */
   readonly expects?: string;
+  /**
+   * Several things this agent offers, instead of the single one the flat fields above describe.
+   *
+   * ★ WHEN PRESENT THIS WINS AND THE FLAT FIELDS ARE IGNORED. They are kept because every
+   * capability document already published uses them and emits the affordance on the document IRI
+   * itself — the shape `invoke_affordance` is handed. A one-skill agent therefore keeps producing
+   * byte-identical output, and only an agent that actually has several changes shape.
+   */
+  readonly offers?: readonly CapabilityOffer[];
   /** What a reader shows on the control. Read from here, never composed by the page. */
   readonly title: string;
   readonly description: string;
@@ -719,6 +728,20 @@ export interface CapabilityDraft {
   readonly requiresSignedRequest?: boolean;
   readonly createdIso?: string;
 }
+
+/**
+ * A capability document to publish: EITHER one offer described inline, OR a list of them.
+ *
+ * The union is not decoration. With a single interface, `offers` had to be optional beside a
+ * REQUIRED `action`/`route`/`title`, so a multi-skill draft was forced to supply a flat offer
+ * that would then be ignored — a type demanding data it does not read, and a caller left to guess
+ * which of the two the writer honours. Here the shape says it: give one, or give many.
+ */
+export type CapabilityDraft =
+  | (CapabilityDraftBase & { readonly offers?: undefined })
+  | (Pick<CapabilityDraftBase, 'iri' | 'agentId' | 'createdIso'> & {
+      readonly offers: readonly CapabilityOffer[];
+    });
 
 /** Why this draft cannot be published, or null when it can. */
 export function capabilityProblem(draft: {
@@ -766,34 +789,162 @@ export function capabilityProblem(draft: {
  * document whose statements hung off some other subject would publish, dereference, and read as
  * "this agent advertises nothing".
  */
+/**
+ * One thing an agent offers. An agent may offer several.
+ *
+ * ★ THE UNIT USED TO BE THE DOCUMENT, AND THAT WAS THE WHOLE LIMIT. A capability document named
+ * one `iep:action` on its own IRI, so an agent that could do three things had to publish three
+ * documents at three addresses — and `capabilitiesIri` composes exactly one address per agent, so
+ * it could not. One agent, one verb, for ever.
+ *
+ * The substrate never required that. The kernel's affordance extractor already finds EVERY subject
+ * typed `iep:Affordance` in a document and matches by action, and the relay already emits several
+ * that way (`<#canDecrypt>`, `<#renderView>`). Only this writer and its reader insisted on one.
+ */
+export interface CapabilityOffer {
+  /** The `iep:action` a caller names when invoking. Dereferenceable, per the URL-identifier rule. */
+  readonly action: string;
+  readonly route: CapabilityRoute;
+  /**
+   * What a reader shows on the control. Read from the document, never composed by the page.
+   *
+   * Nullable on the way OUT because a document may carry none, and a reader that substituted the
+   * action IRI would be putting words on a control the publisher did not write. A DRAFT requires
+   * both — see `capabilityProblem` — so nothing this client publishes is ever missing them.
+   */
+  readonly title: string | null;
+  readonly description: string | null;
+  /** A published SHACL shape the request body must satisfy. See {@link CapabilityDraft.expects}. */
+  readonly expects?: string;
+  /** This offer will only be acted on if the caller signed the request. A declaration, not a gate. */
+  readonly requiresSignedRequest?: boolean;
+}
+
+/**
+ * The fragment an offer lives at, derived from its action.
+ *
+ * ★ DERIVED, NOT COUNTED. `#a0`, `#a1` would renumber the moment an offer is removed from the
+ * middle of the list, so a caller holding `<doc#a1>` would silently be holding a different action
+ * than the one it resolved — and these IRIs are the things `invoke_affordance` is handed. Deriving
+ * from the action makes the address a function of what it names, so removing an offer changes
+ * nothing about the others.
+ *
+ * Non-alphanumerics collapse to `-` because a fragment must survive being written into a Turtle
+ * IRI reference, where there is no escape for the characters `iriRef` refuses.
+ */
+export function offerFragment(action: string): string {
+  const tail = action.replace(/^.*[/#]/, '') || action;
+  const slug = tail.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);
+  return slug || 'offer';
+}
+
 export function capabilityTurtle(draft: CapabilityDraft): string {
-  const problem = capabilityProblem(draft);
-  if (problem) throw new Error('capabilityTurtle: ' + problem);
+  /**
+   * ★ EVERY OFFER IS VALIDATED, NOT JUST THE FIRST. A draft with three skills where the second
+   * names an unfetchable shape is a draft that must not publish — the document is signed as a
+   * whole, and a caller reading offer two would meet a contract it cannot resolve.
+   */
+  // ★ AN EMPTY LIST IS A MISTAKE, NOT A SHORTHAND. Falling back to the flat fields here would
+  // silently publish a one-skill document for a caller that asked for none, and `offers: []` far
+  // more likely means a list was built and came out empty than that no list was intended.
+  if (draft.offers !== undefined && draft.offers.length === 0) {
+    throw new Error('capabilityTurtle: a draft was given an empty offers list, so it names nothing '
+      + 'a caller could invoke. Publish at least one offer, or use the single-offer form.');
+  }
+  // Narrowed on the discriminant itself: the branch WITHOUT `offers` is the one carrying the flat
+  // fields, so reading them is only legal inside it.
+  const drafted: readonly CapabilityOffer[] = draft.offers === undefined
+    ? [{
+        action: draft.action, route: draft.route, title: draft.title, description: draft.description,
+        ...(draft.expects ? { expects: draft.expects } : {}),
+        ...(draft.requiresSignedRequest ? { requiresSignedRequest: draft.requiresSignedRequest } : {}),
+      }]
+    : draft.offers;
+  for (const o of drafted) {
+    const problem = capabilityProblem(o);
+    if (problem) throw new Error('capabilityTurtle: ' + problem);
+  }
   const self = iriRef(draft.iri, 'the capability document IRI');
   const agent = iriRef(draft.agentId, 'the agent this capability document is about');
-  const action = iriRef(draft.action, 'the action IRI');
-  const route = draft.route.kind === 'hosted'
-    ? '  hydra:target ' + iriRef(draft.route.target, 'the hydra:target, which comes from this deployment\'s own configuration') + ' ;\n'
-      + '  hydra:method "POST" ;\n'
-    : '  iep:askVia ' + iriRef(draft.route.askVia, 'the iep:askVia route') + ' ;\n';
-  const expects = draft.expects
-    ? '  hydra:expects ' + iriRef(draft.expects, 'the hydra:expects shape IRI') + ' ;\n'
-    : '';
   const created = draft.createdIso ?? new Date().toISOString();
-  return '@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .\n'
+
+  const offerBlock = (o: CapabilityOffer, subject: string): string => {
+    const route = o.route.kind === 'hosted'
+      ? '  hydra:target ' + iriRef(o.route.target, 'the hydra:target, which comes from this deployment\'s own configuration') + ' ;\n'
+        + '  hydra:method "POST" ;\n'
+      : '  iep:askVia ' + iriRef(o.route.askVia, 'the iep:askVia route') + ' ;\n';
+    return subject + '\n'
+      + '  a iep:Affordance, hydra:Operation ;\n'
+      + '  iep:capabilityOf ' + agent + ' ;\n'
+      + '  iep:action ' + iriRef(o.action, 'the action IRI') + ' ;\n'
+      + route
+      + (o.expects ? '  hydra:expects ' + iriRef(o.expects, 'the hydra:expects shape IRI') + ' ;\n' : '')
+      + (o.requiresSignedRequest ? '  iep:requiresSignedRequest true ;\n' : '')
+      // ★ EMITTED ONLY WHEN PRESENT. The type is nullable because a document READ from a pod may
+      // carry neither; a draft this client publishes always does (`capabilityProblem` requires
+      // them). Writing `hydra:title ""` for an absent one would put an empty label on a control
+      // and read as a publisher who named it nothing, rather than as one who named it at all.
+      + (o.title ? '  hydra:title "' + escapeTurtleLiteral(o.title) + '" ;\n' : '')
+      + (o.description ? '  dct:description "' + escapeTurtleLiteral(o.description) + '" ;\n' : '')
+      + '  dct:created "' + created + '"^^xsd:dateTime .\n';
+  };
+
+  const prefixes = '@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .\n'
     + '@prefix hydra: <http://www.w3.org/ns/hydra/core#> .\n'
     + '@prefix dct: <http://purl.org/dc/terms/> .\n'
-    + '@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n'
+    + '@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n';
+
+  /**
+   * ★ ONE OFFER STILL EMITS EXACTLY THE BYTES IT ALWAYS DID.
+   *
+   * Every capability document already published puts the affordance on the document IRI itself,
+   * and `invoke_affordance` is handed that IRI. Emitting the multi-offer shape for a single skill
+   * would change what an unchanged agent publishes — a diff in signed bytes with no change in
+   * meaning — so the legacy form is not a fallback here, it is the correct output for the case it
+   * describes. The reader below accepts both, which is what makes adding a second offer safe.
+   */
+  if (draft.offers === undefined) {
+    const only = drafted[0];
+    if (!only) throw new Error('capabilityTurtle: a draft describes no offer at all');
+    return prefixes + offerBlock(only, self);
+  }
+
+  /**
+   * Several offers: the document names them and each lives at its own fragment.
+   *
+   * The document keeps `iep:capabilityOf` so "whose document is this" is answerable without
+   * reading any offer, which is the check `readCapabilities` makes before it reads anything else.
+   */
+  const seen = new Set<string>();
+  const fragments = drafted.map((o) => {
+    let frag = offerFragment(o.action);
+    // Two actions whose last segment matches would otherwise collide onto one subject and the
+    // second would overwrite the first's triples in every reader.
+    let n = 2;
+    while (seen.has(frag)) { frag = offerFragment(o.action) + '-' + n; n++; }
+    seen.add(frag);
+    return { offer: o, subject: iriRef(draft.iri + '#' + frag, 'an offer IRI') };
+  });
+  /**
+   * ★ NO NEW TERMS. The first version of this minted `iep:CapabilityDocument`, and the
+   * owned-namespace gate refused it — correctly, and for a better reason than "undeclared":
+   * `iep:AffordanceManifest` already means exactly this, "a document enumerating the
+   * iep:Affordance instances a deployment offers, with the input contract of each". Minting a
+   * synonym would make every reader learn two words for one thing.
+   *
+   * ★ AND `iep:offers` HANGS OFF THE AGENT, NOT THE DOCUMENT, because its declared
+   * `rdfs:domain` is `iep:Agent`. That is also the truer statement: the AGENT offers the skills,
+   * and the document is a description of the agent. Asserting it about the agent is legitimate
+   * here in a way it would not be anywhere else — this document lives on that agent's own pod and
+   * is signed by that agent's own key, so it is the agent describing itself.
+   */
+  return prefixes
     + self + '\n'
-    + '  a iep:Affordance, hydra:Operation ;\n'
+    + '  a iep:AffordanceManifest ;\n'
     + '  iep:capabilityOf ' + agent + ' ;\n'
-    + '  iep:action ' + action + ' ;\n'
-    + route
-    + expects
-    + (draft.requiresSignedRequest ? '  iep:requiresSignedRequest true ;\n' : '')
-    + '  hydra:title "' + escapeTurtleLiteral(draft.title) + '" ;\n'
-    + '  dct:description "' + escapeTurtleLiteral(draft.description) + '" ;\n'
-    + '  dct:created "' + created + '"^^xsd:dateTime .\n';
+    + '  dct:created "' + created + '"^^xsd:dateTime .\n\n'
+    + agent + ' iep:offers ' + fragments.map((f) => f.subject).join(', ') + ' .\n\n'
+    + fragments.map((f) => offerBlock(f.offer, f.subject)).join('\n');
 }
 
 export type CapabilityPublish =
@@ -876,6 +1027,16 @@ export type CapabilityRead =
        * contract would be inventing the agent's terms for it.
        */
       readonly expects?: string;
+      /**
+       * Everything this agent offers. Always at least one when `kind` is `advertised`.
+       *
+       * ★ THE FIELDS ABOVE ARE THE FIRST OF THESE, KEPT SO EXISTING CALLERS DO NOT MOVE. A reader
+       * that only ever asked "what can this agent do" in the singular still gets a true answer;
+       * one that wants the whole list reads this. Making the list the only surface would have
+       * meant touching every caller in the same change that introduced the concept, which is how
+       * a migration acquires unrelated risk.
+       */
+      readonly offers: readonly CapabilityOffer[];
       readonly title: string | null;
       readonly description: string | null;
       /** What the document DECLARES about a signing gate. Absence is not "no gate" — see the draft. */
@@ -952,31 +1113,71 @@ export async function readCapabilities(
   }
   const region = graphRegion((d['graph'] as { content?: string } | undefined)?.content ?? '', iri);
   if (region === null) return { kind: 'unreadable', agentId: args.agentId, iri, why: 'the signed region of that capability document could not be located, so nothing was read from bytes anybody signed' };
-  const about = readIriAll(region, 'iep:capabilityOf');
+  /**
+   * ★ DEDUPED, BECAUSE A MULTI-OFFER DOCUMENT NAMES ITS AGENT ONCE PER SUBJECT.
+   *
+   * The document carries `iep:capabilityOf` and so does every offer, so a three-skill agent puts
+   * four of them in the region — and the check below was `about.length !== 1`, which would have
+   * rejected every multi-offer document as "names 4 different agents". The question it is actually
+   * asking is how many DISTINCT agents the region claims to be about, and the answer must be one.
+   */
+  const about = [...new Set(readIriAll(region, 'iep:capabilityOf'))];
   if (about.length !== 1 || about[0] !== args.agentId) {
     return { kind: 'unreadable', agentId: args.agentId, iri, why: 'that capability document\'s signed region names ' + (about.length > 1 ? about.length + ' different agents' : (about[0] ?? 'no agent at all')) + ' as the agent it is about, and it was asked for ' + args.agentId + '. The document name is not an assertion; the region is.' };
   }
-  const action = readIri(region, 'iep:action');
-  const expects = readIri(region, 'hydra:expects');
-  const target = readIri(region, 'hydra:target');
-  const askVia = readIri(region, 'iep:askVia');
-  if (!action) return { kind: 'unreadable', agentId: args.agentId, iri, why: 'that capability document names no iep:action, so there is nothing in it a caller could invoke' };
-  if (target && askVia) {
-    return { kind: 'unreadable', agentId: args.agentId, iri, why: 'that capability document declares BOTH a hydra:target and an iep:askVia. Those are two different ways to reach this agent and nothing in the document says which is the real one, so choosing would be this reader guessing on the caller\'s behalf.' };
+
+  /**
+   * ★ ONE BLOCK PER SUBJECT, BECAUSE THE PREDICATE READERS ARE TEXT-SCOPED.
+   *
+   * `readIri(region, 'iep:action')` answers with the FIRST match in the whole region. Against a
+   * document with three offers that is the first offer's action reported as though it were the
+   * agent's only one — a wrong answer, not a partial one. Every offer therefore gets its own slice
+   * of text and the same readers run inside it.
+   *
+   * Split on a newline followed by a non-space, which is exactly how this module emits a subject:
+   * the subject at column 0, its predicates indented. That is a property of what
+   * `capabilityTurtle` writes rather than of Turtle in general, and it is the same assumption
+   * `graphRegion` and every other reader in this file already make about these documents.
+   */
+  const blocks = region.split(/\n(?=\S)/).filter((b) => b.includes('iep:action'));
+  const offers: CapabilityOffer[] = [];
+  for (const b of blocks) {
+    const a = readIri(b, 'iep:action');
+    if (!a) continue;
+    const t = readIri(b, 'hydra:target');
+    const via = readIri(b, 'iep:askVia');
+    // ★ THE SAME TWO REFUSALS AS BEFORE, PER OFFER. One malformed offer among three is still a
+    // document a caller cannot act on safely, and picking the readable ones would be this reader
+    // deciding which half of a signed document to believe.
+    if (t && via) {
+      return { kind: 'unreadable', agentId: args.agentId, iri, why: 'an offer in that capability document declares BOTH a hydra:target and an iep:askVia. Those are two different ways to reach this agent and nothing in the document says which is the real one, so choosing would be this reader guessing on the caller\'s behalf.' };
+    }
+    if (!t && !via) {
+      return { kind: 'unreadable', agentId: args.agentId, iri, why: 'an offer in that capability document declares neither a hydra:target nor an iep:askVia, so it advertises an action reachable by no route at all' };
+    }
+    const ex = readIri(b, 'hydra:expects');
+    offers.push({
+      action: a,
+      route: t ? { kind: 'hosted', target: t } : { kind: 'ask', askVia: via as string },
+      title: readLiteral(b, 'hydra:title'),
+      description: readLiteral(b, 'dct:description'),
+      ...(ex ? { expects: ex } : {}),
+      ...(substrateReaders.hasTrue(b, 'iep:requiresSignedRequest') ? { requiresSignedRequest: true } : {}),
+    });
   }
-  if (!target && !askVia) {
-    return { kind: 'unreadable', agentId: args.agentId, iri, why: 'that capability document declares neither a hydra:target nor an iep:askVia, so it advertises an agent reachable by no route at all' };
-  }
+  const first = offers[0];
+  if (!first) return { kind: 'unreadable', agentId: args.agentId, iri, why: 'that capability document names no iep:action, so there is nothing in it a caller could invoke' };
+
   return {
-    kind: 'advertised', agentId: args.agentId, iri, action,
-    route: target ? { kind: 'hosted', target } : { kind: 'ask', askVia: askVia as string },
-    // ★ ABSENT STAYS ABSENT. Defaulting this would report that the agent accepts anything, which
-    // is a claim its document did not make — the same absence-is-not-evidence rule the rest of
-    // this reader is built on.
-    ...(expects ? { expects } : {}),
-    title: readLiteral(region, 'hydra:title'),
-    description: readLiteral(region, 'dct:description'),
-    requiresSignedRequest: substrateReaders.hasTrue(region, 'iep:requiresSignedRequest'),
+    kind: 'advertised', agentId: args.agentId, iri,
+    // The flat fields are the FIRST offer, so every existing caller keeps working unchanged.
+    action: first.action,
+    route: first.route,
+    ...(first.expects ? { expects: first.expects } : {}),
+    title: first.title,
+    description: first.description,
+    requiresSignedRequest: first.requiresSignedRequest === true,
+    offers,
     descriptorUrl: url, authorship,
   };
 }

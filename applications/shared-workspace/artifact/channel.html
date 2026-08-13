@@ -3097,17 +3097,54 @@ var WSPC = (() => {
     }
     return null;
   }
+  function offerFragment(action) {
+    const tail = action.replace(/^.*[/#]/, "") || action;
+    const slug = tail.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
+    return slug || "offer";
+  }
   function capabilityTurtle(draft) {
-    const problem = capabilityProblem(draft);
-    if (problem)
-      throw new Error("capabilityTurtle: " + problem);
+    if (draft.offers !== void 0 && draft.offers.length === 0) {
+      throw new Error("capabilityTurtle: a draft was given an empty offers list, so it names nothing a caller could invoke. Publish at least one offer, or use the single-offer form.");
+    }
+    const drafted = draft.offers === void 0 ? [{
+      action: draft.action,
+      route: draft.route,
+      title: draft.title,
+      description: draft.description,
+      ...draft.expects ? { expects: draft.expects } : {},
+      ...draft.requiresSignedRequest ? { requiresSignedRequest: draft.requiresSignedRequest } : {}
+    }] : draft.offers;
+    for (const o of drafted) {
+      const problem = capabilityProblem(o);
+      if (problem)
+        throw new Error("capabilityTurtle: " + problem);
+    }
     const self = iriRef(draft.iri, "the capability document IRI");
     const agent = iriRef(draft.agentId, "the agent this capability document is about");
-    const action = iriRef(draft.action, "the action IRI");
-    const route = draft.route.kind === "hosted" ? "  hydra:target " + iriRef(draft.route.target, "the hydra:target, which comes from this deployment's own configuration") + ' ;\n  hydra:method "POST" ;\n' : "  iep:askVia " + iriRef(draft.route.askVia, "the iep:askVia route") + " ;\n";
-    const expects = draft.expects ? "  hydra:expects " + iriRef(draft.expects, "the hydra:expects shape IRI") + " ;\n" : "";
     const created2 = draft.createdIso ?? (/* @__PURE__ */ new Date()).toISOString();
-    return "@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .\n@prefix hydra: <http://www.w3.org/ns/hydra/core#> .\n@prefix dct: <http://purl.org/dc/terms/> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n" + self + "\n  a iep:Affordance, hydra:Operation ;\n  iep:capabilityOf " + agent + " ;\n  iep:action " + action + " ;\n" + route + expects + (draft.requiresSignedRequest ? "  iep:requiresSignedRequest true ;\n" : "") + '  hydra:title "' + escapeTurtleLiteral(draft.title) + '" ;\n  dct:description "' + escapeTurtleLiteral(draft.description) + '" ;\n  dct:created "' + created2 + '"^^xsd:dateTime .\n';
+    const offerBlock = (o, subject) => {
+      const route = o.route.kind === "hosted" ? "  hydra:target " + iriRef(o.route.target, "the hydra:target, which comes from this deployment's own configuration") + ' ;\n  hydra:method "POST" ;\n' : "  iep:askVia " + iriRef(o.route.askVia, "the iep:askVia route") + " ;\n";
+      return subject + "\n  a iep:Affordance, hydra:Operation ;\n  iep:capabilityOf " + agent + " ;\n  iep:action " + iriRef(o.action, "the action IRI") + " ;\n" + route + (o.expects ? "  hydra:expects " + iriRef(o.expects, "the hydra:expects shape IRI") + " ;\n" : "") + (o.requiresSignedRequest ? "  iep:requiresSignedRequest true ;\n" : "") + (o.title ? '  hydra:title "' + escapeTurtleLiteral(o.title) + '" ;\n' : "") + (o.description ? '  dct:description "' + escapeTurtleLiteral(o.description) + '" ;\n' : "") + '  dct:created "' + created2 + '"^^xsd:dateTime .\n';
+    };
+    const prefixes = "@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .\n@prefix hydra: <http://www.w3.org/ns/hydra/core#> .\n@prefix dct: <http://purl.org/dc/terms/> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n";
+    if (draft.offers === void 0) {
+      const only = drafted[0];
+      if (!only)
+        throw new Error("capabilityTurtle: a draft describes no offer at all");
+      return prefixes + offerBlock(only, self);
+    }
+    const seen = /* @__PURE__ */ new Set();
+    const fragments = drafted.map((o) => {
+      let frag = offerFragment(o.action);
+      let n = 2;
+      while (seen.has(frag)) {
+        frag = offerFragment(o.action) + "-" + n;
+        n++;
+      }
+      seen.add(frag);
+      return { offer: o, subject: iriRef(draft.iri + "#" + frag, "an offer IRI") };
+    });
+    return prefixes + self + "\n  a iep:AffordanceManifest ;\n  iep:capabilityOf " + agent + ' ;\n  dct:created "' + created2 + '"^^xsd:dateTime .\n\n' + agent + " iep:offers " + fragments.map((f) => f.subject).join(", ") + " .\n\n" + fragments.map((f) => offerBlock(f.offer, f.subject)).join("\n");
   }
   async function publishCapability(port, args) {
     const iri = capabilitiesIri(args.relay, args.agentId);
@@ -3196,35 +3233,49 @@ var WSPC = (() => {
     const region = graphRegion(d["graph"]?.content ?? "", iri);
     if (region === null)
       return { kind: "unreadable", agentId: args.agentId, iri, why: "the signed region of that capability document could not be located, so nothing was read from bytes anybody signed" };
-    const about = readIriAll2(region, "iep:capabilityOf");
+    const about = [...new Set(readIriAll2(region, "iep:capabilityOf"))];
     if (about.length !== 1 || about[0] !== args.agentId) {
       return { kind: "unreadable", agentId: args.agentId, iri, why: "that capability document's signed region names " + (about.length > 1 ? about.length + " different agents" : about[0] ?? "no agent at all") + " as the agent it is about, and it was asked for " + args.agentId + ". The document name is not an assertion; the region is." };
     }
-    const action = readIri2(region, "iep:action");
-    const expects = readIri2(region, "hydra:expects");
-    const target = readIri2(region, "hydra:target");
-    const askVia = readIri2(region, "iep:askVia");
-    if (!action)
+    const blocks = region.split(/\n(?=\S)/).filter((b) => b.includes("iep:action"));
+    const offers = [];
+    for (const b of blocks) {
+      const a = readIri2(b, "iep:action");
+      if (!a)
+        continue;
+      const t = readIri2(b, "hydra:target");
+      const via = readIri2(b, "iep:askVia");
+      if (t && via) {
+        return { kind: "unreadable", agentId: args.agentId, iri, why: "an offer in that capability document declares BOTH a hydra:target and an iep:askVia. Those are two different ways to reach this agent and nothing in the document says which is the real one, so choosing would be this reader guessing on the caller's behalf." };
+      }
+      if (!t && !via) {
+        return { kind: "unreadable", agentId: args.agentId, iri, why: "an offer in that capability document declares neither a hydra:target nor an iep:askVia, so it advertises an action reachable by no route at all" };
+      }
+      const ex = readIri2(b, "hydra:expects");
+      offers.push({
+        action: a,
+        route: t ? { kind: "hosted", target: t } : { kind: "ask", askVia: via },
+        title: readLiteral2(b, "hydra:title"),
+        description: readLiteral2(b, "dct:description"),
+        ...ex ? { expects: ex } : {},
+        ...substrateReaders.hasTrue(b, "iep:requiresSignedRequest") ? { requiresSignedRequest: true } : {}
+      });
+    }
+    const first = offers[0];
+    if (!first)
       return { kind: "unreadable", agentId: args.agentId, iri, why: "that capability document names no iep:action, so there is nothing in it a caller could invoke" };
-    if (target && askVia) {
-      return { kind: "unreadable", agentId: args.agentId, iri, why: "that capability document declares BOTH a hydra:target and an iep:askVia. Those are two different ways to reach this agent and nothing in the document says which is the real one, so choosing would be this reader guessing on the caller's behalf." };
-    }
-    if (!target && !askVia) {
-      return { kind: "unreadable", agentId: args.agentId, iri, why: "that capability document declares neither a hydra:target nor an iep:askVia, so it advertises an agent reachable by no route at all" };
-    }
     return {
       kind: "advertised",
       agentId: args.agentId,
       iri,
-      action,
-      route: target ? { kind: "hosted", target } : { kind: "ask", askVia },
-      // ★ ABSENT STAYS ABSENT. Defaulting this would report that the agent accepts anything, which
-      // is a claim its document did not make — the same absence-is-not-evidence rule the rest of
-      // this reader is built on.
-      ...expects ? { expects } : {},
-      title: readLiteral2(region, "hydra:title"),
-      description: readLiteral2(region, "dct:description"),
-      requiresSignedRequest: substrateReaders.hasTrue(region, "iep:requiresSignedRequest"),
+      // The flat fields are the FIRST offer, so every existing caller keeps working unchanged.
+      action: first.action,
+      route: first.route,
+      ...first.expects ? { expects: first.expects } : {},
+      title: first.title,
+      description: first.description,
+      requiresSignedRequest: first.requiresSignedRequest === true,
+      offers,
       descriptorUrl: url,
       authorship
     };
