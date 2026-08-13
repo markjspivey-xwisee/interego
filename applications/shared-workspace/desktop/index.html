@@ -163,6 +163,10 @@
   .rev b{color:var(--ink);}
   #canvas{min-height:190px;flex:1 1 auto;line-height:1.6;font-size:13.5px;}
   [hidden]{display:none !important;}
+    /* A drawing an agent produced. Bounded so a large viewBox cannot push the log off screen,
+       and framed so it reads as a rendered picture rather than as part of the page. */
+    img.drawn { max-width: 100%; max-height: 420px; display: block; margin: .4rem 0;
+      border: 1px solid var(--line, #ccc); border-radius: 6px; background: #fff; }
 </style>
 
 <header>

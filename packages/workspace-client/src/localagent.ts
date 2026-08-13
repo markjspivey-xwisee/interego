@@ -640,8 +640,33 @@ export function briefPrompt(
     'Plain prose, a few sentences. No markdown headings, bullet lists or code fences. Do not open',
     'with "Sure" or "Here is", and do not sign your name.',
     '',
-    'Reserve this for entries that plainly call for no response at all — an acknowledgement, a',
-    'thank-you, or something already fully answered: reply with exactly NOTHING TO ADD.',
+    /**
+     * ★ ABSTAINING IS NOT OFFERED FOR A QUESTION ADDRESSED TO THIS AGENT BY NAME.
+     *
+     * MEASURED in a live channel: somebody typed `@agent Claude Desktop do you have any memories
+     * about our lightspeed work?`, the ask landed as entry #20 with `iep:addressedTo` inside the
+     * signed region, and the host was running and had said so 69 seconds earlier — and nothing was
+     * ever written. The brief already told it the entry was addressed to it and to do what was
+     * asked, and then, four lines later, handed it a way to say nothing. A model that looked,
+     * found no memory of "lightspeed", and concluded there was nothing to ADD took the exit it had
+     * been given.
+     *
+     * That is the wrong shape for a direct question. "I have no memory of that" IS the answer, and
+     * somebody who addressed an agent by name and got silence cannot tell refusal from absence
+     * from breakage. Abstention exists for the OPEN FLOOR — an acknowledgement, a thank-you,
+     * chatter that calls for no reply — and there it stays.
+     */
+    ...(brief.addressed
+      ? [
+        'You were asked this DIRECTLY, so answer it. If you do not know, or the record holds',
+        'nothing about it, say so — "I have no memory of that here" is a complete answer and is far',
+        'better than silence, which the person cannot tell apart from a refusal or a fault.',
+        'Never reply NOTHING TO ADD to something addressed to you.',
+      ]
+      : [
+        'Reserve this for entries that plainly call for no response at all — an acknowledgement, a',
+        'thank-you, or something already fully answered: reply with exactly NOTHING TO ADD.',
+      ]),
   ].join('\n');
 }
 
@@ -683,7 +708,22 @@ export type DraftVerdict =
  * `principal` is the delegator's WebID — the party a `prov:Delegation` would name. The model is
  * never shown it and never chooses it; it chooses only WHICH footing, and the caller supplies who.
  */
-export function checkDraft(raw: string, args: { readonly principal: string }): DraftVerdict {
+export function checkDraft(
+  raw: string,
+  args: {
+    readonly principal: string;
+    /**
+     * Whether the entry being answered named this delegate in `iep:addressedTo`.
+     *
+     * ★ AN ABSTENTION FROM A DIRECT QUESTION IS REPORTED AS ONE. The brief no longer offers the
+     * sentinel when an ask is addressed by name, and a model that returns it anyway must not have
+     * that read back as "there was nothing worth adding" — because there was: somebody asked. The
+     * person is owed the difference between an agent that saw nothing to say on the open floor and
+     * one that declined a question meant for it.
+     */
+    readonly addressed?: boolean;
+  },
+): DraftVerdict {
   const whole = raw.trim();
   if (!whole) {
     return { ok: false, why: 'The model returned nothing. An empty entry is still a permanent record, so none is written.' };
@@ -691,7 +731,11 @@ export function checkDraft(raw: string, args: { readonly principal: string }): D
   // An abstention needs no footing: there is nothing being said, so there is nothing to be
   // answerable for. Checked before the declaration so a model that abstains cleanly is not nagged
   // about a line it had no reason to write.
-  const abstain = 'Your agent read the channel and judged there was nothing worth adding. Nothing was written.';
+  const abstain = args.addressed === true
+    ? 'Your agent was asked something directly and chose not to answer it. Nothing was written. '
+      + 'That is not the same as having nothing to add — a question addressed to it by name is one '
+      + 'it was asked to answer, even if the answer is that it does not know.'
+    : 'Your agent read the channel and judged there was nothing worth adding. Nothing was written.';
   if (whole.toUpperCase() === NOTHING_TO_ADD) return { ok: false, why: abstain };
 
   const nl = whole.indexOf('\n');

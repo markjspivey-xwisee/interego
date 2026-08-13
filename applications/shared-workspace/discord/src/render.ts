@@ -167,15 +167,60 @@ export function authorOf(a: EntryAuthorship | null): string {
  * `-#` is Discord's subtext: small, quiet, and present on every message rather than promoted to a
  * banner nobody reads twice.
  */
+/**
+ * Detail that belongs in the channel but not in the reader's way.
+ *
+ * ── WHY THIS EXISTS ──────────────────────────────────────────────────────────
+ *
+ * Every message this bot posts carried its full provenance and a paragraph explaining the model
+ * behind it. Each line was true and each was put there for a reason — but a person reading a
+ * conversation met four lines of substrate vocabulary for every sentence anybody said, and asked
+ * for it to stop. "None of this should be displayed, but it should be available on request."
+ *
+ * ★ A SPOILER IS EXACTLY THAT, AND IT IS DISCORD'S OWN AFFORDANCE. `||…||` hides the text behind
+ * one click. Nothing is dropped, nothing is summarised, nothing has to be fetched again by another
+ * command — the claim still travels with the message it is about, which is the property the whole
+ * provenance apparatus exists to have. It is out of the way rather than gone.
+ *
+ * ★ AND THE ALARMING CASE IS NEVER HIDDEN. What made the old output noisy was the GOOD news:
+ * "signed, authorised, footing stated" on every single message. An agent its delegator does NOT
+ * authorise, or one whose footing is unstated, is a finding — and a finding behind a click is a
+ * finding nobody reads. So `quiet` takes only what is reassuring; anything a reader should act on
+ * stays in plain text. See `agentFooter`.
+ */
+export function quiet(parts: readonly string[]): string {
+  const text = parts.filter((p) => p.trim() !== '').join(' · ');
+  // Discord renders `||` inside the hidden run as a terminator, so a part carrying one would end
+  // the spoiler early and spill the rest into the message.
+  return text ? '||' + text.replace(/\|\|/g, '|') + '||' : '';
+}
+
 export function agentFooter(a: Extract<EntryAuthorship, { kind: 'delegate' }>, pod: string): string {
+  const footingOk = a.footing.kind === 'on-behalf-of' || a.footing.kind === 'own-account';
   const footing = a.footing.kind === 'on-behalf-of' ? 'speaking **for** the pod owner — they share responsibility'
     : a.footing.kind === 'own-account' ? 'speaking **for itself** — the pod owner is NOT answerable for it'
       : '**footing not stated** — neither reading is being assumed';
   const standing = a.authorised === true ? 'authorised by `' + pod + '`' + (a.scope ? ' (' + a.scope + ')' : '')
     : a.authorised === false ? '**`' + pod + '`\'s registry does NOT list it**'
       : 'standing not checked here';
-  return '-# ⎔ its own key signed these bytes · ' + footing + ' · ' + standing
-    + ' · this display name is chosen by the bot and is not something Discord can verify';
+
+  /**
+   * ★ THE GOOD NEWS IS HIDDEN; A FINDING IS NOT.
+   *
+   * Every message used to carry all three claims in full, and the reason it read as noise is that
+   * they were almost always the SAME three claims: signed, authorised, footing stated. Behind a
+   * click they are still here, still attached to the message they are about, and still one gesture
+   * away — which is what "available on request" has to mean for something this load-bearing.
+   *
+   * But an agent its delegator does not authorise, or one that stated no footing, is a thing a
+   * reader should act on, and a finding behind a spoiler is a finding nobody reads. Either of
+   * those keeps the whole footer in plain text.
+   */
+  const reassuring = a.authorised === true && footingOk;
+  const detail = [footing, standing, 'this display name is chosen by the bot and is not something Discord can verify'];
+  return reassuring
+    ? '-# ⎔ ' + quiet(['its own key signed these bytes', ...detail])
+    : '-# ⎔ its own key signed these bytes · ' + detail.join(' · ');
 }
 
 /**
@@ -515,15 +560,35 @@ export function renderAsk(out: AskOut, nowMs = Date.now()): Message {
       renderRecord(out.record)?.content ?? 'The write refused and reported no detail.',
     ], false);
     case 'asked': return body([
-      '**Asked ' + (out.target.name ?? out.target.agentId) + '.**',
-      ...checkLines(out.checks),
-      '',
-      out.target.presence.state === 'running'
-        ? 'Its host said it was running ' + describeSpan(nowMs - out.target.presence.saidAtMs) + ' ago, and a running host reads this channel directly. If it judges there is something to add, its answer appears here on its own.'
-        : 'Its host is **not** saying it is running (' + presenceLine(out.target.presence, nowMs) + '), so this is answered when it next runs. Nothing is lost by waiting — the ask is on the record, and the record is what it reads.',
-      '',
-      '★ The ask is entry #' + out.accepted.seq + ' in this channel, not a message in an inbox. An inbox on this relay is world-writable, so what travelled by inbox is only a **pointer** to that entry and carries none of your text. The agent dereferences it and refuses it unless whoever delivered it is whoever signed it.',
-      '★ Asking is not instructing. The agent decides whether there is anything to add, and one that decides there is not **writes nothing** — which from here looks exactly like one that never read it. If nothing is written, this channel says so rather than leaving you to guess.',
+      /**
+       * ★ ONE LINE A PERSON READS, AND THE REST BEHIND A CLICK.
+       *
+       * This used to be nine lines: the confirmation, three checks, a presence paragraph and two
+       * ★ paragraphs about inboxes and what asking is not. Every one was true and each was put
+       * there deliberately — and the effect, in a channel where people are talking to each other,
+       * was four screens of substrate vocabulary around one question.
+       *
+       * Nothing is dropped. It is in the spoiler, attached to the message it is about, one click
+       * away. What stays in plain text is the only part a person is actually waiting on: whether
+       * the thing they asked is going to be answered soon or later.
+       */
+      '**Asked ' + (out.target.name ?? out.target.agentId) + '.** '
+        + (out.target.presence.state === 'running'
+          ? 'Its host is running, so it reads this channel directly — an answer appears here on its own.'
+          : 'Its host is not running, so this is answered when it next does. Nothing is lost by waiting.'),
+      quiet([
+        ...out.checks.map((c) => (c.mark === 'y' ? '✓ ' : c.mark === 'n' ? '✗ ' : '? ') + c.text),
+        out.target.presence.state === 'running'
+          ? 'presence: ' + presenceLine(out.target.presence, nowMs)
+          : 'presence: ' + presenceLine(out.target.presence, nowMs),
+        'The ask is entry #' + out.accepted.seq + ' in this channel, not a message in an inbox. An '
+          + 'inbox on this relay is world-writable, so what travelled by inbox is only a POINTER to '
+          + 'that entry and carries none of your text. The agent dereferences it and refuses it '
+          + 'unless whoever delivered it is whoever signed it.',
+        'Asking is not instructing. The agent decides whether there is anything to add, and one '
+          + 'that decides there is not writes nothing — which from here looks exactly like one that '
+          + 'never read it. If nothing is written, this channel says so rather than leaving you to guess.',
+      ]),
     ], false);
   }
 }
@@ -580,7 +645,13 @@ export function renderNews(news: WatchNews): readonly NewsPost[] | null {
         // Quoted, so text that came off somebody else's pod cannot be read as this bot's own
         // sentence — and `rest.post` sends it with mentions disabled, so a body containing
         // `@everyone` is text and not a ping.
-        lines.push('`' + e.pod + '` ' + authorOf(e.author) + ' #' + (e.seq ?? '?') + ' · ' + (e.created ?? 'no declared time')
+        /**
+         * ★ THE WORDS IN PLAIN TEXT, THE ATTRIBUTION BEHIND A CLICK. A reader watching a channel
+         * wants to see what somebody said; who relayed it onto whose pod with which scope is a
+         * question they ask occasionally and this bot answers always. `authorOf` is unchanged and
+         * still says every one of the five things it said — it is out of the way, not gone.
+         */
+        lines.push('`' + e.pod + '` #' + (e.seq ?? '?') + ' ' + quiet([authorOf(e.author), (e.created ?? 'no declared time')])
           + '\n> ' + (e.body ?? '(this entry names no dct:description)').split('\n').join('\n> '));
       }
       flush();
@@ -595,10 +666,13 @@ export function renderNews(news: WatchNews): readonly NewsPost[] | null {
     ], false) }];
     case 'unreadable-entry': return [{ kind: 'bot', message: body(['? An entry in this workspace could not be read: ' + news.why], false) }];
     case 'silence': return [{ kind: 'bot', message: body([
-      '**Nothing has been written in answer yet.** You asked ' + news.ask.targetName + ' ' + describeSpan(news.waitedMs) + ' ago (entry #' + news.ask.seq + ').',
-      'Its host ' + news.ask.presenceAtAsk + ' when you asked.',
-      '',
-      'An agent that read this and judged there was nothing to add writes nothing, and so does one that refused — from here those look the same, and this bot will not guess which. The ask is still on the record and is still answerable whenever its host next runs.',
+      '**' + news.ask.targetName + ' has not answered yet** — asked ' + describeSpan(news.waitedMs) + ' ago. The ask is on the record and stays answerable.',
+      quiet([
+        'entry #' + news.ask.seq,
+        'its host ' + news.ask.presenceAtAsk + ' when you asked',
+        'An agent that read this and judged there was nothing to add writes nothing, and so does '
+          + 'one that refused — from here those look the same, and this bot will not guess which.',
+      ]),
     ], false) }];
   }
 }

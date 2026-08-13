@@ -403,6 +403,57 @@ describe('briefPrompt: what the agent is asked, and what it is never handed', ()
   });
 });
 
+/**
+ * ★ SILENCE IS NOT AN ANSWER TO A QUESTION ADDRESSED BY NAME.
+ *
+ * MEASURED in a live channel: somebody typed `@agent Claude Desktop do you have any memories about
+ * our lightspeed work?`. The ask landed as entry #20 with `iep:addressedTo` inside the signed
+ * region, the host was running and had said so 69 seconds earlier — and nothing was ever written.
+ *
+ * The brief already told the agent the entry was addressed to it and to do what was asked, and
+ * then, four lines later, offered it a way to say nothing. A model that looked, found no memory of
+ * "lightspeed", and concluded there was nothing to ADD took the exit it had been handed.
+ *
+ * "I have no memory of that" IS the answer. A person who addressed an agent by name and got
+ * silence cannot tell refusal from absence from breakage.
+ */
+describe('a direct ask is answered, not abstained from', () => {
+  const addressed = (b: boolean): string => briefPrompt({
+    workspace: 'https://relay.example/ns/p/room', slug: 'room', me: 'Claude Desktop',
+    principal: 'https://id.example/#me', transcript: ['someone: do you remember the lightspeed work?'],
+    answering: 'do you remember the lightspeed work?', addressed: b, tools: true,
+  } as unknown as Parameters<typeof briefPrompt>[0], { displayName: 'Mark', delegateName: 'Claude Desktop' });
+
+  it('★ the sentinel is NOT offered when the entry names this agent', () => {
+    const p = addressed(true);
+    // ★ NOT "the words never appear" — that failed against correct code, because the prohibition
+    // has to NAME the sentinel to forbid it. What must be absent is the OFFER.
+    expect(p).not.toContain('reply with exactly ' + NOTHING_TO_ADD);
+    expect(p).toContain('Never reply ' + NOTHING_TO_ADD);
+    expect(p).toContain('asked this DIRECTLY');
+    expect(p).toContain('no memory of that here');
+  });
+
+  it('and IS still offered on the open floor, where abstaining is right', () => {
+    // Chatter, a thank-you, something already answered — an agent replying to all of it would be
+    // worse than one that knows when to stay out.
+    expect(addressed(false)).toContain(NOTHING_TO_ADD);
+  });
+
+  it('★ abstaining from a direct ask is reported as that, not as "nothing to add"', () => {
+    const open = checkDraft(NOTHING_TO_ADD, { principal: 'https://id.example/#me' });
+    if (open.ok) throw new Error('an abstention must never be writable');
+    expect(open.why).toContain('nothing worth adding');
+
+    const direct = checkDraft(NOTHING_TO_ADD, { principal: 'https://id.example/#me', addressed: true });
+    if (direct.ok) throw new Error('an abstention must never be writable');
+    // The person is owed the difference between an agent with nothing to say and one that
+    // declined a question meant for it.
+    expect(direct.why).toContain('chose not to answer');
+    expect(direct.why).not.toBe(open.why);
+  });
+});
+
 describe('checkDraft: what may be appended to a permanent public log', () => {
   const PRINCIPAL = { principal: MY_WEBID };
   const BEHALF = 'FOOTING: ON THEIR BEHALF\n';
