@@ -3718,7 +3718,19 @@ async function agentConsider(): Promise<void> {
      */
     turn = await window.interego.agentThink(
       briefPrompt(decision.brief, { displayName: S.viewer.displayName, delegateName: speaker.name }),
-      null, speaker.address);
+      null, speaker.address,
+      /**
+       * ★ WHO CAUSED THIS TURN, so a permission request is answerable.
+       *
+       * A gate that says "Claude Desktop wants to run `npm install`" cannot be answered safely.
+       * The rest of the sentence — because THIS entry, from THIS pod, in THIS workspace — is what
+       * makes it a decision rather than a guess, and this is the only place that knows it.
+       */
+      {
+        agentName: speaker.name ?? speaker.address,
+        askedBy: decision.answering.pod,
+        channel: S.slug ?? S.workspace ?? 'this workspace',
+      });
   } catch (e) {
     A.busy = false; A.phase = 'watching';
     clear($('agentresult')).appendChild(errBox(e, 'Your delegate could not be run, so nothing was drafted and nothing was written.'));

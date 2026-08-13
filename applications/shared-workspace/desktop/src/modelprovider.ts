@@ -368,11 +368,28 @@ export interface TurnTools {
   readonly server: string;
 }
 
+/**
+ * Where the composed permission gate lives for this turn.
+ *
+ * ★ PATHS, NOT POLICY. The rules are in `permission.ts` and the decision is made by a hook in its
+ * own process; this file only has to know which two files to point the CLI at. Keeping the policy
+ * out of the argv builder is what stops a second, drifting copy of "what an agent may do" from
+ * growing here — the same reason the MCP grant names a SERVER rather than a list of tools.
+ */
+export interface TurnGate {
+  /** The settings JSON installing the PreToolUse hook. See `gateSettings`. */
+  readonly settingsPath: string;
+  /** The directory the agent owns, passed to `--add-dir`. */
+  readonly workspace: string;
+}
+
 export function turnArgv(args: {
   readonly model?: string;
   readonly systemPrompt?: string;
   /** Omitted: the turn writes a sentence and can reach nothing, which is the old behaviour. */
   readonly tools?: TurnTools;
+  /** Omitted: the built-ins are denied outright, which is what shipped before the gate existed. */
+  readonly gate?: TurnGate;
 }): string[] {
   return [
     '-p',
@@ -388,22 +405,54 @@ export function turnArgv(args: {
          * without it reported "claude.ai Gmail, claude.ai Google Drive, claude.ai robinhood,
          * claude.ai Intuit TurboTax…" and answered YES to "can you see a gmail tool". A delegate
          * is authorised to act on its human's POD; it is not authorised to read their mail.
+         *
+         * This is the ONE thing the permission gate below does not replace. A gate decides whether
+         * a call may proceed; it cannot decide whether a whole connector should have been in the
+         * agent's reach at all, and a delegate driven by a channel should never see its human's
+         * accounts. Two different questions, two different mechanisms, both kept.
          */
         '--strict-mcp-config',
-        /**
-         * ★ THE SERVER, NOT A LIST OF TOOLS — and that is the whole design. Naming individual
-         * tools here would put a copy of "what an agent may do" in this shell, where it would
-         * drift from the delegation the person actually granted. The relay already enforces that
-         * grant on every call: the bearer in the config is the DELEGATE's, so its scope
-         * (`PublishOnly`, the own-pod gates) is the ceiling, applied by the substrate rather than
-         * by an allowlist here. A capability added to the relay tomorrow is reachable with no
-         * change to this file, and one the delegator never granted is refused whatever this says.
-         */
         '--allowedTools', 'mcp__' + args.tools.server,
-        '--disallowedTools', ...DENIED_BUILTINS,
-        // Unattended: there is nobody to answer a permission prompt, and a turn that blocks on
-        // one would hang until the timeout with no way for the person to see why.
-        '--permission-mode', 'dontAsk',
+        ...(args.gate
+          ? [
+            /**
+             * ★ A NORMAL AGENT BEHIND A GATE, WHICH REPLACES DENYING ITS HANDS.
+             *
+             * This used to be `--disallowedTools <every built-in>`: no Bash, no Read, no Write. It
+             * was safe and it was useless — the delegate could not convert a drawing, look at a
+             * file it was pointed at, or do anything an ordinary session does, and every real task
+             * ended in a refusal or a timeout.
+             *
+             * `--settings` installs a PreToolUse hook in front of EVERY tool. Measured
+             * (`probe-permission-gate.ts`): it fires under `-p`, receives the full call, and its
+             * `deny` genuinely stops the tool. The policy is in `permission.ts` and the four
+             * answers are allow / granted / deny / ask, with "ask" as the fallback so a tool
+             * nobody anticipated reaches the human rather than the machine.
+             */
+            '--settings', args.gate.settingsPath,
+            /**
+             * ★ THE PERSON'S OWN SETTINGS MUST NOT APPLY TO A CHANNEL-DRIVEN AGENT. A developer's
+             * `~/.claude/settings.json` is written for work they are watching, and may permit
+             * anything. Loading none of it means the only policy in force is the one this app
+             * composed for this delegate, for this turn.
+             */
+            '--setting-sources', '',
+            /** The one directory it owns. Created by `readPolicy`, and the gate's `allow` case. */
+            '--add-dir', args.gate.workspace,
+            /**
+             * ★ `default`, NOT `dontAsk`. `dontAsk` is what an agent with no tools needed; with a
+             * gate it would be asking the CLI to skip the very check that makes this safe. The
+             * hook is what answers, and there is no prompt for a human to miss.
+             */
+            '--permission-mode', 'default',
+          ]
+          : [
+            // No gate composed: fall back to the old posture rather than to an ungated agent.
+            // ★ THE DIRECTION MATTERS. A missing policy must narrow what is possible, never widen
+            // it — a caller that forgot to build one gets an agent that can write a sentence.
+            '--disallowedTools', ...DENIED_BUILTINS,
+            '--permission-mode', 'dontAsk',
+          ]),
       ]
       : ['--tools', '']),           // no tools at all: it writes a sentence
     '--no-session-persistence',     // an unattended loop must not litter the user's ~/.claude
@@ -429,6 +478,8 @@ export async function runClaude(args: {
    * one that guesses.
    */
   readonly tools?: TurnTools;
+  /** The composed permission gate for this turn. Forwarded to `turnArgv` with the rest of args. */
+  readonly gate?: TurnGate;
   /** Handed a kill function so a user who turns the agent off mid-thought actually stops it. */
   readonly onChild?: (kill: () => void) => void;
 }): Promise<ModelRun> {
@@ -436,12 +487,23 @@ export async function runClaude(args: {
   const argv = turnArgv(args);
   const r = await run(args.binary, argv, {
     env: args.env ?? childEnv(),
-    timeoutMs: args.timeoutMs ?? 120_000,
+    /**
+     * ★ 120 s WAS SET BEFORE A DELEGATE HAD TOOLS, and it started killing real turns.
+     *
+     * MEASURED in a live channel: asked to produce a picture, the agent was stopped at 120 seconds
+     * with nothing written. A turn is no longer one model call — it can be several MCP round trips
+     * against the relay, each a network hop, before a word is drafted. `drive-agent-tools-live.ts`
+     * has used 240 s since tools landed and has never timed out.
+     *
+     * A ceiling still has to exist: this is a child process on somebody's laptop, spawned by a
+     * poll loop, and one that never returns would hold the turn open forever.
+     */
+    timeoutMs: args.timeoutMs ?? 240_000,
     stdin: args.prompt,
     ...(args.onChild ? { onChild: args.onChild } : {}),
   });
   const ms = Date.now() - t0;
-  if (r.timedOut) return { ok: false, text: null, ms, why: 'Your agent did not answer within ' + Math.round((args.timeoutMs ?? 120_000) / 1000) + ' seconds and was stopped. Nothing was written.' };
+  if (r.timedOut) return { ok: false, text: null, ms, why: 'Your agent did not answer within ' + Math.round((args.timeoutMs ?? 240_000) / 1000) + ' seconds and was stopped. Nothing was written.' };
   if (r.spawnError) return { ok: false, text: null, ms, why: 'Claude Code could not be started: ' + r.spawnError + '. Nothing was written.' };
   let j: Record<string, unknown> | null = null;
   try { j = JSON.parse(r.stdout) as Record<string, unknown>; } catch { j = null; }

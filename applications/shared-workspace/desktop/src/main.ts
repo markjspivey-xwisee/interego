@@ -22,6 +22,9 @@
 
 import { app, BrowserWindow, ipcMain, shell, type WebContents } from 'electron';
 import { join } from 'node:path';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { gateSettings, writeGateConfig } from './gate.js';
+import { readPolicy } from './permission.js';
 import { Wallet } from 'ethers';
 import {
   DELEGATE_SURFACE, RelayMcpTransport, WorkspaceClient, type RelayOAuthBearer,
@@ -42,6 +45,7 @@ import {
 // The relay's OWN MCP endpoint, named under the delegate's bearer. Not a second server —
 // see agent-tools.ts.
 import { withAgentTools } from './agent-tools.js';
+import type { TurnGate } from './modelprovider.js';
 
 const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
 const IDENTITY = process.env['INTEREGO_IDENTITY'] ?? 'https://identity.interego.xwisee.com';
@@ -778,7 +782,107 @@ app.whenReady().then(() => {
    * from the call — a renderer that could pass an executable path would be able to make this
    * process run anything, and the renderer is the half that renders bytes other people wrote.
    */
-  ipcMain.handle('agent:think', async (_e, prompt: string, systemPrompt: string | null, asDelegate?: string) => {
+/**
+ * A launcher for the hook, because the runtime that is certainly present is Electron.
+ *
+ * ★ THE HOOK CANNOT SIMPLY BE `node gate.mjs`. A person running a packaged desktop app has no
+ * guarantee of `node` on their PATH, and most do not have one. The runtime certainly present is
+ * the binary already executing — but Electron only behaves as plain Node when
+ * `ELECTRON_RUN_AS_NODE` is set, and `childEnv()` deliberately STRIPS that from the model child
+ * (footgun 3), which the hook inherits. So the variable has to be set at the moment the hook runs.
+ *
+ * ★ AND IT CANNOT BE SET INLINE IN THE COMMAND. `VAR=1 prog` is shell syntax POSIX understands and
+ * `cmd.exe` does not, and the hook command is run by whatever shell the CLI picks. A tiny script
+ * per platform is the one form that works on both and can be read by somebody wondering what the
+ * app just put on their disk.
+ *
+ * ★ IF THIS IS WRONG THE GATE DOES NOT RUN, so `probe-gated-agent.ts` includes a case where the
+ * hook is deliberately broken — a permission system whose failure mode is "allow" is decoration,
+ * and that must be measured rather than hoped for.
+ */
+function writeGateLauncher(dir: string, gateScript: string, cfgPath: string): string {
+  const exe = process.execPath;
+  if (process.platform === 'win32') {
+    const p = join(dir, 'gate.cmd');
+    writeFileSync(p, [
+      '@echo off',
+      'set ELECTRON_RUN_AS_NODE=1',
+      '"' + exe + '" "' + gateScript + '" "' + cfgPath + '"',
+    ].join('\r\n'), { mode: 0o700, encoding: 'utf8' });
+    return p;
+  }
+  const p = join(dir, 'gate.sh');
+  writeFileSync(p, [
+    '#!/bin/sh',
+    'ELECTRON_RUN_AS_NODE=1 exec ' + JSON.stringify(exe) + ' ' + JSON.stringify(gateScript) + ' ' + JSON.stringify(cfgPath),
+  ].join('\n'), { mode: 0o700, encoding: 'utf8' });
+  return p;
+}
+
+/**
+ * Compose the permission gate for one turn.
+ *
+ * ★ PER TURN, NOT PER SESSION, because the CONTEXT changes every time. A grant is answered by a
+ * person looking at "Claude Desktop wants to run `npm install` — because goldenfleece asked X in
+ * #house". That last clause is what makes the request answerable rather than an anonymous dialog,
+ * and it is different for every ask.
+ *
+ * The grants and the nominated directories are read fresh here too, so an approval given a moment
+ * ago is in force on the next turn without restarting anything — which is the whole point of a
+ * permission that outlives the turn.
+ */
+function composeGate(args: {
+  readonly agentId: string;
+  readonly agentName: string;
+  readonly askedBy: string;
+  readonly channel: string;
+}): TurnGate {
+  const userData = app.getPath('userData');
+  const policy = readPolicy(userData, args.agentId);
+  const dir = join(userData, 'agent-gate', args.agentId.replace(/[^a-zA-Z0-9-]/g, '_'));
+  mkdirSync(dir, { recursive: true });
+
+  const cfgPath = writeGateConfig(dir, {
+    policy,
+    requestsDir: join(userData, 'agent-requests'),
+    auditPath: join(userData, 'agent-audit.jsonl'),
+    context: { agentName: args.agentName, askedBy: args.askedBy, channel: args.channel },
+  });
+
+  /**
+   * ★ THE HOOK RUNS AS A BARE PROCESS AND SO NEEDS A BARE FILE. It is not part of this app: the
+   * CLI spawns it per tool call with no Electron, no bundler and no TypeScript. `dist/gate.mjs` is
+   * built alongside `dist/main.js` by the package script for exactly this.
+   *
+   * ★ AND IT IS RUN BY THIS PROCESS'S OWN BINARY, WITH `ELECTRON_RUN_AS_NODE`. There is no
+   * guarantee a person running a packaged desktop app has `node` on their PATH — most do not — so
+   * the runtime that is certainly present is the one already executing. Electron only behaves as
+   * plain Node when that variable is set, which is the same flag `childEnv` strips from the MODEL
+   * child for the opposite reason.
+   */
+  const gateScript = join(__dirname, 'gate.mjs');
+  const launcher = writeGateLauncher(dir, gateScript, cfgPath);
+  const settingsPath = join(dir, 'settings.json');
+  writeFileSync(settingsPath, gateSettings(launcher), { mode: 0o600, encoding: 'utf8' });
+  return { settingsPath, workspace: policy.workspace };
+}
+
+  ipcMain.handle('agent:think', async (
+    _e,
+    prompt: string,
+    systemPrompt: string | null,
+    asDelegate?: string,
+    /**
+     * Who is being answered, and where.
+     *
+     * ★ CARRIED SO AN APPROVAL IS ANSWERABLE. "Claude Desktop wants to run `npm install`" is not
+     * a question anybody can answer safely; "…because goldenfleece asked X in #house" is. The
+     * renderer is the only place that knows it, so it travels with the request rather than being
+     * re-derived — and it is DESCRIPTIVE only: nothing here grants anything, and a wrong value
+     * makes an approval harder to answer, never easier to obtain.
+     */
+    context?: { readonly agentName?: string; readonly askedBy?: string; readonly channel?: string },
+  ) => {
     if (typeof prompt !== 'string' || !prompt.trim()) throw new Error('a model turn needs a prompt');
     /**
      * ★ THIS TURN IS REGISTERED BEFORE ANY CHILD EXISTS, AND `cancelled` IS CHECKED AFTER EVERY
@@ -799,11 +903,12 @@ app.whenReady().then(() => {
       });
       if (turn.cancelled) return { ok: false, text: null, ms: 0, why: 'You turned your agent off before it started. Nothing was written.' };
       if (!status.usable || !status.path) return { ok: false, text: null, ms: 0, why: status.why };
-      const spawnTurn = (tools?: TurnTools): Promise<ModelRun> => runClaude({
+      const spawnTurn = (tools?: TurnTools, gate?: TurnGate): Promise<ModelRun> => runClaude({
         binary: status.path as string,
         prompt,
         ...(typeof systemPrompt === 'string' && systemPrompt ? { systemPrompt } : {}),
         ...(tools ? { tools } : {}),
+        ...(gate ? { gate } : {}),
         onChild: (kill) => {
           turn.kill = kill;
           // Cancelled while the child was being spawned: kill it the moment it exists, or it
@@ -837,7 +942,19 @@ app.whenReady().then(() => {
           delegatePod = live.pod;
         } catch (e) { why = (e as Error)?.message ?? String(e); }
         if (bearer) {
-          run = await withAgentTools({ relay: RELAY, bearer, delegatePod }, (tools) => spawnTurn(tools));
+          /**
+           * ★ THE GATE IS COMPOSED ONLY WHEN THE DELEGATE HAS ITS OWN SESSION. An agent with no
+           * relay session is already refused below; giving one a permission gate — and therefore
+           * real tools — while it could not establish who it is would be the wrong order to fail
+           * in. Capabilities follow identity here, not the other way round.
+           */
+          const gate = composeGate({
+            agentId: asDelegate,
+            agentName: context?.agentName ?? asDelegate,
+            askedBy: context?.askedBy ?? 'somebody in the channel',
+            channel: context?.channel ?? 'this channel',
+          });
+          run = await withAgentTools({ relay: RELAY, bearer, delegatePod }, (tools) => spawnTurn(tools, gate));
         } else {
           /**
            * ★ REFUSED, NOT QUIETLY DEGRADED. The tempting recovery is to run the turn with no

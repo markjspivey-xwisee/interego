@@ -12,7 +12,7 @@
   },
   "main": "./dist/main.js",
   "scripts": {
-    "build": "tsc --noEmit -p tsconfig.json && esbuild src/main.ts --bundle --format=cjs --platform=node --target=es2020 --external:electron --outfile=dist/main.js && esbuild src/preload.ts --bundle --format=cjs --platform=node --target=es2020 --external:electron --outfile=dist/preload.js && esbuild src/selftest.ts --bundle --format=cjs --platform=node --target=es2020 --external:electron --outfile=dist/selftest.js && esbuild src/renderer.ts --bundle --format=iife --platform=browser --target=es2020 --outfile=dist/renderer.js",
+    "build": "tsc --noEmit -p tsconfig.json && esbuild src/main.ts --bundle --format=cjs --platform=node --target=es2020 --external:electron --outfile=dist/main.js && esbuild src/preload.ts --bundle --format=cjs --platform=node --target=es2020 --external:electron --outfile=dist/preload.js && esbuild src/selftest.ts --bundle --format=cjs --platform=node --target=es2020 --external:electron --outfile=dist/selftest.js && esbuild src/renderer.ts --bundle --format=iife --platform=browser --target=es2020 --outfile=dist/renderer.js && esbuild src/gate-main.ts --bundle --format=esm --platform=node --target=es2020 --outfile=dist/gate.mjs",
     "start": "npm run build && electron dist/main.js",
     "clean": "rm -rf dist/ release/",
     "selftest": "npm run build && electron dist/selftest.js",

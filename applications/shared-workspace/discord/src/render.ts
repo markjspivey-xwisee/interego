@@ -561,34 +561,24 @@ export function renderAsk(out: AskOut, nowMs = Date.now()): Message {
     ], false);
     case 'asked': return body([
       /**
-       * ★ ONE LINE A PERSON READS, AND THE REST BEHIND A CLICK.
+       * ★ ONE LINE. THE ESSAY IS GONE RATHER THAN HIDDEN.
        *
-       * This used to be nine lines: the confirmation, three checks, a presence paragraph and two
-       * ★ paragraphs about inboxes and what asking is not. Every one was true and each was put
-       * there deliberately — and the effect, in a channel where people are talking to each other,
-       * was four screens of substrate vocabulary around one question.
+       * This was nine lines: a confirmation, three checks, a presence paragraph and two ★
+       * paragraphs about inboxes and what asking is not. Putting them behind a spoiler was the
+       * first attempt and it was worse — Discord renders a long hidden run as a WALL OF GREY BARS,
+       * so the noise stayed and became unreadable as well.
        *
-       * Nothing is dropped. It is in the spoiler, attached to the message it is about, one click
-       * away. What stays in plain text is the only part a person is actually waiting on: whether
-       * the thing they asked is going to be answered soon or later.
+       * The real problem was that most of it was CONSTANT. The same two paragraphs on every ask
+       * are documentation, not facts about this message, and documentation belongs in the README
+       * and the command descriptions where somebody reads it once. What is left is what actually
+       * differs per ask: which agent, whether it is running, and where the entry landed.
        */
       '**Asked ' + (out.target.name ?? out.target.agentId) + '.** '
         + (out.target.presence.state === 'running'
-          ? 'Its host is running, so it reads this channel directly — an answer appears here on its own.'
-          : 'Its host is not running, so this is answered when it next does. Nothing is lost by waiting.'),
-      quiet([
-        ...out.checks.map((c) => (c.mark === 'y' ? '✓ ' : c.mark === 'n' ? '✗ ' : '? ') + c.text),
-        out.target.presence.state === 'running'
-          ? 'presence: ' + presenceLine(out.target.presence, nowMs)
-          : 'presence: ' + presenceLine(out.target.presence, nowMs),
-        'The ask is entry #' + out.accepted.seq + ' in this channel, not a message in an inbox. An '
-          + 'inbox on this relay is world-writable, so what travelled by inbox is only a POINTER to '
-          + 'that entry and carries none of your text. The agent dereferences it and refuses it '
-          + 'unless whoever delivered it is whoever signed it.',
-        'Asking is not instructing. The agent decides whether there is anything to add, and one '
-          + 'that decides there is not writes nothing — which from here looks exactly like one that '
-          + 'never read it. If nothing is written, this channel says so rather than leaving you to guess.',
-      ]),
+          ? 'Its host is running, so an answer appears here on its own.'
+          : 'Its host is not running, so this is answered when it next does — nothing is lost by waiting.'),
+      '-# entry #' + out.accepted.seq + ' · addressed to it inside the signed region'
+        + (out.checks.some((c) => c.mark === 'n') ? ' · ' + out.checks.filter((c) => c.mark === 'n').map((c) => '✗ ' + c.text).join(' · ') : ''),
     ], false);
   }
 }
@@ -651,7 +641,17 @@ export function renderNews(news: WatchNews): readonly NewsPost[] | null {
          * question they ask occasionally and this bot answers always. `authorOf` is unchanged and
          * still says every one of the five things it said — it is out of the way, not gone.
          */
-        lines.push('`' + e.pod + '` #' + (e.seq ?? '?') + ' ' + quiet([authorOf(e.author), (e.created ?? 'no declared time')])
+        /**
+         * ★ THE WORDS, AND ONLY WHAT IS UNUSUAL ABOUT WHO WROTE THEM.
+         *
+         * `authorOf` says five things and each matters — but on the ordinary message, which is
+         * nearly every message, it says the same reassuring one every time: the pod owner wrote
+         * this and an authorised key relayed it. Repeating that above every sentence is what made
+         * a conversation unreadable. An `unstated` or `disputed` authorship is a FINDING and stays
+         * in plain text, because a finding nobody reads is not a finding.
+         */
+        lines.push('-# `' + e.pod + '` #' + (e.seq ?? '?') + ' · ' + (e.created ?? 'no declared time')
+          + (e.author && (e.author.kind === 'unstated' || e.author.kind === 'disputed') ? ' ' + authorOf(e.author) : '')
           + '\n> ' + (e.body ?? '(this entry names no dct:description)').split('\n').join('\n> '));
       }
       flush();
@@ -667,12 +667,9 @@ export function renderNews(news: WatchNews): readonly NewsPost[] | null {
     case 'unreadable-entry': return [{ kind: 'bot', message: body(['? An entry in this workspace could not be read: ' + news.why], false) }];
     case 'silence': return [{ kind: 'bot', message: body([
       '**' + news.ask.targetName + ' has not answered yet** — asked ' + describeSpan(news.waitedMs) + ' ago. The ask is on the record and stays answerable.',
-      quiet([
-        'entry #' + news.ask.seq,
-        'its host ' + news.ask.presenceAtAsk + ' when you asked',
-        'An agent that read this and judged there was nothing to add writes nothing, and so does '
-          + 'one that refused — from here those look the same, and this bot will not guess which.',
-      ]),
+      // Constant prose about what silence can mean is documentation, not a fact about this ask —
+      // and repeated on every unanswered one it is the same noise in a different place.
+      '-# entry #' + news.ask.seq + ' · its host ' + news.ask.presenceAtAsk + ' when you asked',
     ], false) }];
   }
 }
