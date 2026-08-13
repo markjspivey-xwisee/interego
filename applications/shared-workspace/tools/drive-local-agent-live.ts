@@ -338,7 +338,7 @@ async function main(): Promise<void> {
   const turn = await runClaude({ binary: provider.path, prompt });
   check('the model answered', turn.ok && !!turn.text, turn.why);
   if (!turn.ok || !turn.text) { process.exit(1); }
-  const draft = checkDraft(turn.text, { principal: A.viewer.webId });
+  const draft = checkDraft(turn.text, { principal: A.viewer.webId, addressed: decision.brief.addressed });
   check('the draft passes the pre-post check', draft.ok, draft.ok ? '' : draft.why);
   if (!draft.ok) { process.exit(1); }
   check('and it came back with a footing the delegate chose for itself',

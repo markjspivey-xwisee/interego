@@ -4767,8 +4767,31 @@ var WSPC = (() => {
       "Plain prose, a few sentences. No markdown headings, bullet lists or code fences. Do not open",
       'with "Sure" or "Here is", and do not sign your name.',
       "",
-      "Reserve this for entries that plainly call for no response at all \u2014 an acknowledgement, a",
-      "thank-you, or something already fully answered: reply with exactly NOTHING TO ADD."
+      /**
+       * ★ ABSTAINING IS NOT OFFERED FOR A QUESTION ADDRESSED TO THIS AGENT BY NAME.
+       *
+       * MEASURED in a live channel: somebody typed `@agent Claude Desktop do you have any memories
+       * about our lightspeed work?`, the ask landed as entry #20 with `iep:addressedTo` inside the
+       * signed region, and the host was running and had said so 69 seconds earlier — and nothing was
+       * ever written. The brief already told it the entry was addressed to it and to do what was
+       * asked, and then, four lines later, handed it a way to say nothing. A model that looked,
+       * found no memory of "lightspeed", and concluded there was nothing to ADD took the exit it had
+       * been given.
+       *
+       * That is the wrong shape for a direct question. "I have no memory of that" IS the answer, and
+       * somebody who addressed an agent by name and got silence cannot tell refusal from absence
+       * from breakage. Abstention exists for the OPEN FLOOR — an acknowledgement, a thank-you,
+       * chatter that calls for no reply — and there it stays.
+       */
+      ...brief.addressed ? [
+        "You were asked this DIRECTLY, so answer it. If you do not know, or the record holds",
+        'nothing about it, say so \u2014 "I have no memory of that here" is a complete answer and is far',
+        "better than silence, which the person cannot tell apart from a refusal or a fault.",
+        "Never reply NOTHING TO ADD to something addressed to you."
+      ] : [
+        "Reserve this for entries that plainly call for no response at all \u2014 an acknowledgement, a",
+        "thank-you, or something already fully answered: reply with exactly NOTHING TO ADD."
+      ]
     ].join("\n");
   }
   var NOTHING_TO_ADD = "NOTHING TO ADD";
@@ -4778,7 +4801,7 @@ var WSPC = (() => {
     if (!whole) {
       return { ok: false, why: "The model returned nothing. An empty entry is still a permanent record, so none is written." };
     }
-    const abstain = "Your agent read the channel and judged there was nothing worth adding. Nothing was written.";
+    const abstain = args.addressed === true ? "Your agent was asked something directly and chose not to answer it. Nothing was written. That is not the same as having nothing to add \u2014 a question addressed to it by name is one it was asked to answer, even if the answer is that it does not know." : "Your agent read the channel and judged there was nothing worth adding. Nothing was written.";
     if (whole.toUpperCase() === NOTHING_TO_ADD) return { ok: false, why: abstain };
     const nl = whole.indexOf("\n");
     const first = (nl < 0 ? whole : whole.slice(0, nl)).trim();

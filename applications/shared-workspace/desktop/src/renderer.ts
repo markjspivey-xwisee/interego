@@ -2086,6 +2086,34 @@ async function loadBodies(rows: readonly ChainRow[]): Promise<void> {
   void agentConsider();
 }
 
+/**
+ * The drawing in an entry, if it holds one this shell is willing to display.
+ *
+ * ★ THE SAME REFUSALS THE CHANNEL APPLIES, so a drawing this app declines to show is the same one
+ * Discord declines to post. Script, event handlers, references to anything OUTSIDE the document,
+ * entity expansion and oversize — all refused. The markup is written by a model in answer to text
+ * other people typed, and here it is about to be rendered inside the shell that holds the session.
+ *
+ * Returns the markup, or null when there is none or it is refused. Null means the body renders as
+ * text exactly as it always did, which is the honest fallback: the record says what it says.
+ */
+function drawnSvg(body: string): string | null {
+  const m = /<svg[\s\S]*?<\/svg>/i.exec(body);
+  if (!m) return null;
+  const svg = m[0];
+  if (svg.length > 60_000) return null;
+  const forbidden = [
+    /<script[\s>]/i,
+    /<foreignObject[\s>]/i,
+    /\son\w+\s*=/i,
+    /(?:xlink:)?href\s*=\s*["']\s*(?:https?:|\/\/)/i,
+    /url\(\s*["']?\s*(?:https?:|\/\/)/i,
+    /<!ENTITY/i,
+  ];
+  for (const rx of forbidden) if (rx.test(svg)) return null;
+  return svg;
+}
+
 function renderStream(): void {
   const wrap = $('stream');
   const scroller = $('streamwrap');
@@ -2198,6 +2226,34 @@ function renderStream(): void {
     else if (b.note) { t.className = 'body unread'; t.textContent = b.note; }
     else if (b.body === null) { t.className = 'body absent'; t.textContent = 'This record was read and carries no dct:description.'; }
     else if (b.body === '') { t.className = 'body absent'; t.textContent = 'This record carries a dct:description, and it is empty.'; }
+    else if (drawnSvg(b.body)) {
+      /**
+       * ★ AN AGENT THAT DREW SOMETHING IS SHOWN THE DRAWING, NOT THE MARKUP.
+       *
+       * A delegate can answer with an SVG — that is its own words, and it lands in
+       * `dct:description` like any other answer. Discord rasterises it; here the renderer IS a
+       * browser, so the markup can be shown as what it is with nothing to convert.
+       *
+       * ★ SET AS AN `<img>` WITH A DATA URL, NEVER AS innerHTML. Inlining somebody else's markup
+       * into this document would put it in the same DOM as the session, the pod list and every
+       * control on the page — a script or an event handler in it would be running inside the
+       * shell. An `<img>` renders SVG in an isolated context where script does not execute and
+       * external references are not fetched, so the drawing is displayed without the document
+       * that drew it ever becoming part of this one.
+       *
+       * The same refusals as the Discord side are applied first, so a drawing this app declines
+       * to show is the same drawing that channel declines to post.
+       */
+      const svg = drawnSvg(b.body) as string;
+      t.className = 'body';
+      const img = document.createElement('img');
+      img.className = 'drawn';
+      img.alt = 'a drawing this agent produced';
+      img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)));
+      t.appendChild(img);
+      const rest = b.body.replace(svg, '').trim();
+      if (rest) t.appendChild(el('div', 'mmeta', rest));
+    }
     else t.textContent = b.body;
     right.appendChild(t);
 
@@ -3682,7 +3738,7 @@ async function agentConsider(): Promise<void> {
   // The principal a for-you footing would name is supplied HERE and never by the model: it chooses
   // WHICH footing, this chooses WHO — a model that could name the party would be a model that could
   // write a delegation for somebody who never granted one.
-  const draft = checkDraft(turn.text, { principal: S.viewer.webId });
+  const draft = checkDraft(turn.text, { principal: S.viewer.webId, addressed: decision.brief.addressed });
   if (!draft.ok) {
     A.phase = 'watching';
     say('agentresult', 'pending', 'Nothing was drafted', draft.why);
