@@ -183,13 +183,17 @@ describe('an agent can offer several skills', () => {
     const legacy = capabilityTurtle({ ...base, route: { kind: 'hosted', target: TARGET } });
     expect(legacy).toContain('<' + IRI + '>\n  a iep:Affordance, hydra:Operation ;');
     expect(legacy).not.toContain('iep:offers');
-    expect(legacy).not.toContain('iep:CapabilityDocument');
+    expect(legacy).not.toContain('iep:AffordanceManifest');
   });
 
   it('names each offer at its own fragment, and lists them on the document', () => {
     const t = capabilityTurtle({ ...base, offers: two });
-    expect(t).toContain('a iep:CapabilityDocument');
-    expect(t).toContain('iep:offers <' + IRI + '#teach>, <' + IRI + '#review>');
+    // ★ NO MINTED TERM. `iep:AffordanceManifest` already means this, and `iep:offers` already
+    // exists with `rdfs:domain iep:Agent` — so it hangs off the AGENT, which is also the truer
+    // statement. The owned-namespace gate caught the synonym before it shipped.
+    expect(t).toContain('a iep:AffordanceManifest');
+    expect(t).not.toContain('iep:CapabilityDocument');
+    expect(t).toContain('<' + AGENT + '> iep:offers <' + IRI + '#teach>, <' + IRI + '#review>');
     expect(t).toContain('<' + IRI + '#teach>\n  a iep:Affordance, hydra:Operation ;');
     expect(t).toContain('<' + IRI + '#review>\n  a iep:Affordance, hydra:Operation ;');
   });

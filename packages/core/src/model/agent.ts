@@ -925,12 +925,25 @@ export function capabilityTurtle(draft: CapabilityDraft): string {
     seen.add(frag);
     return { offer: o, subject: iriRef(draft.iri + '#' + frag, 'an offer IRI') };
   });
+  /**
+   * ★ NO NEW TERMS. The first version of this minted `iep:CapabilityDocument`, and the
+   * owned-namespace gate refused it — correctly, and for a better reason than "undeclared":
+   * `iep:AffordanceManifest` already means exactly this, "a document enumerating the
+   * iep:Affordance instances a deployment offers, with the input contract of each". Minting a
+   * synonym would make every reader learn two words for one thing.
+   *
+   * ★ AND `iep:offers` HANGS OFF THE AGENT, NOT THE DOCUMENT, because its declared
+   * `rdfs:domain` is `iep:Agent`. That is also the truer statement: the AGENT offers the skills,
+   * and the document is a description of the agent. Asserting it about the agent is legitimate
+   * here in a way it would not be anywhere else — this document lives on that agent's own pod and
+   * is signed by that agent's own key, so it is the agent describing itself.
+   */
   return prefixes
     + self + '\n'
-    + '  a iep:CapabilityDocument ;\n'
+    + '  a iep:AffordanceManifest ;\n'
     + '  iep:capabilityOf ' + agent + ' ;\n'
-    + '  iep:offers ' + fragments.map((f) => f.subject).join(', ') + ' ;\n'
     + '  dct:created "' + created + '"^^xsd:dateTime .\n\n'
+    + agent + ' iep:offers ' + fragments.map((f) => f.subject).join(', ') + ' .\n\n'
     + fragments.map((f) => offerBlock(f.offer, f.subject)).join('\n');
 }
 

@@ -3144,7 +3144,7 @@ var WSPC = (() => {
       seen.add(frag);
       return { offer: o, subject: iriRef(draft.iri + "#" + frag, "an offer IRI") };
     });
-    return prefixes + self + "\n  a iep:CapabilityDocument ;\n  iep:capabilityOf " + agent + " ;\n  iep:offers " + fragments.map((f) => f.subject).join(", ") + ' ;\n  dct:created "' + created2 + '"^^xsd:dateTime .\n\n' + fragments.map((f) => offerBlock(f.offer, f.subject)).join("\n");
+    return prefixes + self + "\n  a iep:AffordanceManifest ;\n  iep:capabilityOf " + agent + ' ;\n  dct:created "' + created2 + '"^^xsd:dateTime .\n\n' + agent + " iep:offers " + fragments.map((f) => f.subject).join(", ") + " .\n\n" + fragments.map((f) => offerBlock(f.offer, f.subject)).join("\n");
   }
   async function publishCapability(port, args) {
     const iri = capabilitiesIri(args.relay, args.agentId);
