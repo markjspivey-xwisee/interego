@@ -197,7 +197,10 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // pins the two things `MESSAGE_CREATE` carried and the bot discarded: the reply reference, so a
 // person can address an agent the way Discord means it, and the attachment names, so posting a
 // picture stops writing nothing and saying nothing.
-export const MIN_TEST_MODULES = 237;
+// 237 -> 238: `applications/shared-workspace/discord/tests/mentions.test.ts`, which pins the form
+// of addressing Discord actually has — `@agent <name>`, carried by a role that grants nothing and
+// contains nobody.
+export const MIN_TEST_MODULES = 238;
 export const FLOOR_ALLOWANCE = 10;
 
 /**

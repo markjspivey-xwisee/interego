@@ -292,11 +292,14 @@ describe('dispatch', () => {
 });
 
 describe('the command tree', () => {
-  it('declares the five subcommands the bot routes, and only those', () => {
+  it('declares exactly the subcommands the bot routes, and only those', () => {
+    // ★ THE LIST IS PINNED SO A COMMAND CANNOT BE REGISTERED WITHOUT A ROUTE, or routed without
+    // being registered. `mentions` was added in the round that made agents @mentionable, and this
+    // is the check that noticed — which is the point of writing the names out rather than counting.
     const tree = COMMANDS[0];
     expect(tree.name).toBe('workspace');
     const names = tree.options.map((o) => o.name).sort();
-    expect(names).toEqual(['ask', 'link', 'link-confirm', 'show', 'start', 'unlink', 'who']);
+    expect(names).toEqual(['ask', 'link', 'link-confirm', 'mentions', 'show', 'start', 'unlink', 'who']);
     const confirm = tree.options.find((o) => o.name === 'link-confirm') as { options?: readonly { name: string; required?: boolean }[] };
     expect(confirm.options?.[0]?.name).toBe('pod');
     expect(confirm.options?.[0]?.required).toBe(true);

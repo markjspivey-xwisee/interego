@@ -94,6 +94,23 @@ export interface GatewayMessage {
    * bot simply was not reading the field.
    */
   readonly attachments: readonly GatewayAttachment[];
+  /** The guild this was posted in, or null in a DM. Roles are per-guild, so a mention needs it. */
+  readonly guildId: string | null;
+  /**
+   * Role ids this message mentions.
+   *
+   * ★ THIS IS DISCORD'S OWN WAY TO ADDRESS SOMEBODY, and it was the one form the bot could not
+   * read at all. A reply and a context menu act on a MESSAGE; typing a name at the start of a
+   * sentence is a text heuristic. A mention is the gesture people actually reach for — it
+   * autocompletes, it renders as a chip, and it carries an unambiguous ID instead of a string
+   * somebody has to spell correctly.
+   *
+   * Only users and ROLES are mentionable — a webhook post shows a name and cannot be mentioned —
+   * so an agent is given a permissionless, memberless, mentionable role and this is how the
+   * message says which one was named. Discord resolves it before the bot ever sees it, so there
+   * is no parsing to get wrong and no prose that can accidentally look like an address.
+   */
+  readonly mentionedRoleIds: readonly string[];
 }
 
 export interface GatewayInteraction {
@@ -112,6 +129,8 @@ export interface GatewayInteraction {
    * thing that says what it was invoked about.
    */
   readonly targetMessageId: string | null;
+  /** The guild this ran in, or null in a DM. Roles are per-guild, so `mentions` needs it. */
+  readonly guildId: string | null;
 }
 
 /**
@@ -405,6 +424,9 @@ export class DiscordGateway {
           const ref = p['message_reference'] as { message_id?: unknown } | undefined;
           return typeof ref?.message_id === 'string' ? ref.message_id : null;
         })(),
+        guildId: typeof p['guild_id'] === 'string' ? p['guild_id'] : null,
+        mentionedRoleIds: (Array.isArray(p['mention_roles']) ? p['mention_roles'] : [])
+          .filter((r): r is string => typeof r === 'string'),
         attachments: (Array.isArray(p['attachments']) ? p['attachments'] : [])
           .map((raw) => raw as { filename?: unknown; url?: unknown; content_type?: unknown; size?: unknown })
           .filter((a) => typeof a?.filename === 'string' && a.filename.length > 0
@@ -519,6 +541,7 @@ export class DiscordGateway {
         targetMessageId: typeof (data as { target_id?: unknown }).target_id === 'string'
           ? (data as { target_id: string }).target_id
           : null,
+        guildId: typeof p['guild_id'] === 'string' ? p['guild_id'] : null,
       });
     }
   }
@@ -680,6 +703,38 @@ export class DiscordRest {
     return this.call('POST', '/channels/' + channelId + '/messages', { content, allowed_mentions: { parse: [], users: pingUserIds.slice(0, 1) } });
   }
 
+  /**
+   * The guild's roles. Needs no special permission — every member can see them.
+   *
+   * ★ ROLES ARE HOW AN AGENT BECOMES MENTIONABLE. Discord's `@` autocomplete offers users and
+   * roles and nothing else; a webhook post shows a name and cannot be mentioned. So the only way
+   * `@Claude Desktop` can be a real mention — autocompleting, rendering as a chip, arriving as an
+   * unambiguous id rather than a string somebody spelled — is for a role to carry that name.
+   */
+  listRoles(guildId: string): Promise<Record<string, unknown>[]> {
+    return this.call('GET', '/guilds/' + guildId + '/roles') as Promise<Record<string, unknown>[]>;
+  }
+
+  /**
+   * Create a mentionable role that grants nothing and contains nobody.
+   *
+   * ★ EVERY FIELD HERE IS A REFUSAL TO GRANT ANYTHING.
+   *
+   *   permissions "0"   the role conveys NO permission. A handle, not an authority — and an agent
+   *                     is authorised by its delegator's pod, never by a Discord object.
+   *   hoist false       it does not add a section to the member sidebar of somebody's server.
+   *   mentionable true  the whole point: without it the name does not autocomplete.
+   *
+   * ★ AND NOBODY IS EVER ADDED TO IT, which is what makes `@Claude Desktop` safe to type. A role
+   * ping notifies its members; this one has none, so it notifies no human. It exists to be a
+   * NAME Discord will resolve, and nothing else.
+   */
+  createRole(guildId: string, name: string): Promise<Record<string, unknown>> {
+    return this.call('POST', '/guilds/' + guildId + '/roles', {
+      name, permissions: '0', hoist: false, mentionable: true,
+    });
+  }
+
   /** Webhooks that already exist on a channel. Needs MANAGE_WEBHOOKS. */
   listWebhooks(channelId: string): Promise<Record<string, unknown>[]> {
     return this.call('GET', '/channels/' + channelId + '/webhooks') as Promise<Record<string, unknown>[]>;
@@ -766,6 +821,10 @@ export const COMMANDS = [
         options: [{ type: 3, name: 'pod', description: 'Your pod identifier, e.g. u-eth-0123456789ab', required: true }],
       },
       { type: 1, name: 'unlink', description: 'Make this bot forget your pod (this does NOT revoke the delegation)' },
+      {
+        type: 1, name: 'mentions',
+        description: 'Make every agent here @mentionable, by giving each a role that grants nothing',
+      },
       { type: 1, name: 'show', description: 'The composed view of this thread\'s workspace, and the IRI anyone can follow' },
       {
         type: 1, name: 'who', description: 'Every agent that could be asked something here, and what its own pod says about it',
