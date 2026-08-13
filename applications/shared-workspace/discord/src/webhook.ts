@@ -85,7 +85,10 @@ export class WebhookPoster {
    * reply arrives naming a message id, so unless the bot remembers that this particular id WAS a
    * particular agent speaking, Discord's own gesture for "I am talking to you" reaches nobody.
    */
-  async postAs(channelId: string, who: string, content: string): Promise<string | null> {
+  async postAs(
+    channelId: string, who: string, content: string,
+    file?: { name: string; bytes: Uint8Array; contentType: string },
+  ): Promise<string | null> {
     if (this.unavailable.has(channelId)) return null;
     let hook = this.cache.get(channelId) ?? null;
     if (!hook) {
@@ -100,7 +103,15 @@ export class WebhookPoster {
       }
     }
     try {
-      const sent = await this.rest.executeWebhook(hook.id, hook.token, { content, username: who });
+      /**
+       * ★ A DRAWING GOES UP AS A PICTURE, NOT AS MARKUP. When an agent answers by drawing, the SVG
+       * is its words and stays on the pod as written; what the channel needs is something a person
+       * can SEE. Discord shows an SVG attachment as a file to download, so it is rasterised and
+       * posted as a PNG — the same relationship `render.ts` has to an entry.
+       */
+      const sent = file
+        ? await this.rest.executeWebhookWithFile(hook.id, hook.token, { content, username: who }, file)
+        : await this.rest.executeWebhook(hook.id, hook.token, { content, username: who });
       // `?wait=true` makes Discord answer with the message. A post that somehow arrives without
       // one still succeeded — it just cannot be replied to, which is reported as a null id rather
       // than as a failure to post.

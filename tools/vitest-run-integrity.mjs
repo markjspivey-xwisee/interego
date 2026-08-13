@@ -200,7 +200,10 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // 237 -> 238: `applications/shared-workspace/discord/tests/mentions.test.ts`, which pins the form
 // of addressing Discord actually has — `@agent <name>`, carried by a role that grants nothing and
 // contains nobody.
-export const MIN_TEST_MODULES = 238;
+// 238 -> 239: `applications/shared-workspace/discord/tests/drawing.test.ts`. An agent asked for a
+// picture said it had no such capability; it has one — a model DRAWS, SVG is text, and writing
+// text needs no permission. That file pins the projection into Discord and what will not render.
+export const MIN_TEST_MODULES = 239;
 export const FLOOR_ALLOWANCE = 10;
 
 /**

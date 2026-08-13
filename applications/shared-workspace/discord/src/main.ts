@@ -53,6 +53,7 @@ import { ChannelWatcher, watchVia } from './watch.js';
 import { WebhookPoster } from './webhook.js';
 import { SpokenBy } from './spoken-by.js';
 import { mentionedAgentName, roleRows, syncAgentRoles } from './mentions.js';
+import { findProduced, renderPng } from './drawing.js';
 import {
   renderAsk, renderChallenge, renderConfirm, renderMentions, renderNews, renderRecord, renderShow, renderStart,
   renderUnlink, renderWho, type Message, type NewsPost,
@@ -268,7 +269,47 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
     await queue.run('say:' + channelId, async () => {
       for (const p of posts) {
         if (p.kind === 'agent') {
-          const sent = await webhooks.postAs(channelId, p.who, p.content);
+          /**
+           * ★ IF THE AGENT PRODUCED A FILE, IT GOES UP AS AN ATTACHMENT.
+           *
+           * A file is text with a name, so this needs no capability the agent did not already
+           * have — writing text is the one thing a delegate requires no permission for. The
+           * content stays on the pod as the agent's own words, covered by the same signature;
+           * this is a projection into Discord, the same relationship `render.ts` has to an entry.
+           *
+           * An `<svg>` is rasterised on the way out because Discord shows an SVG attachment as a
+           * file to download rather than as a picture, and a picture somebody has to download is
+           * not a picture in the channel.
+           *
+           * ★ EVERY FAILURE STILL POSTS THE WORDS. A refused file, a deployment with no
+           * rasteriser, a renderer that threw — each posts the answer with a line saying the
+           * attachment was not produced and that the original is on the record. An answer that
+           * vanished because its attachment could not be built would be the worst outcome here.
+           */
+          let file: { name: string; bytes: Uint8Array; contentType: string } | undefined;
+          let content = p.content;
+          const made = findProduced(p.content);
+          if (made.kind === 'refused') {
+            content = p.content + '\n\n_(an attachment was not produced: ' + made.why
+              + ' What the agent wrote is on the record.)_';
+          } else if (made.kind === 'file') {
+            if (made.rasterise) {
+              const png = await renderPng(made.text);
+              if (png.ok) {
+                file = { name: made.name, bytes: png.png, contentType: 'image/png' };
+                content = made.rest;
+              } else {
+                out('discord: could not render a drawing — ' + png.why);
+                content = made.rest + '\n\n_(a drawing could not be rendered here. It is on the record as written.)_';
+              }
+            } else {
+              file = { name: made.name, bytes: new TextEncoder().encode(made.text), contentType: made.contentType };
+              content = made.rest;
+            }
+          }
+          // Discord refuses an empty message with no attachment; with one, empty content is fine.
+          if (!content.trim() && !file) content = p.content;
+          const sent = await webhooks.postAs(channelId, p.who, content, file);
           if (sent) { spokenBy.remember(sent, p.agentId); continue; }
           // Fall back to the bot's voice, and NAME the agent in it — the display was the only
           // thing lost, and dropping the attribution with it would be the real failure.

@@ -756,6 +756,42 @@ export class DiscordRest {
    * `allowed_mentions` is empty for the same reason every other post here is: this renders text
    * that came off somebody else's pod, and a body containing `@everyone` must be text.
    */
+  /**
+   * Post as a name, WITH a file.
+   *
+   * ★ MULTIPART, WHICH IS WHY THIS DOES NOT GO THROUGH `call()`. That helper sends JSON, and an
+   * attachment cannot travel as JSON — the payload rides in a `payload_json` part beside the
+   * bytes. Written out here rather than generalised into `call()` because this is the only route
+   * in this bot that uploads anything, and a multipart branch in the shared helper would be a
+   * second code path through every other request.
+   *
+   * ★ AND `?wait=true` IS KEPT, for the same reason the JSON path keeps it: without it Discord
+   * answers 204 and the post has no id, so an agent's drawing could not afterwards be replied to.
+   */
+  async executeWebhookWithFile(
+    webhookId: string, webhookToken: string,
+    body: { content: string; username: string },
+    file: { name: string; bytes: Uint8Array; contentType: string },
+  ): Promise<Record<string, unknown>> {
+    const form = new FormData();
+    form.append('payload_json', JSON.stringify({
+      ...body,
+      allowed_mentions: { parse: [], users: [] },
+      attachments: [{ id: 0, filename: file.name }],
+    }));
+    // A copy into a plain ArrayBuffer: a Uint8Array view over a larger buffer would upload the
+    // whole backing store, and a renderer is free to hand back exactly that.
+    const bytes = new Uint8Array(file.bytes.byteLength);
+    bytes.set(file.bytes);
+    form.append('files[0]', new Blob([bytes], { type: file.contentType }), file.name);
+    const res = await this.fetchImpl(API + '/webhooks/' + webhookId + '/' + webhookToken + '?wait=true', {
+      method: 'POST', body: form,
+    });
+    const text = await res.text();
+    if (!res.ok) throw new Error('Discord webhook upload -> HTTP ' + res.status + ' ' + text.slice(0, 300));
+    try { return JSON.parse(text) as Record<string, unknown>; } catch { return {}; }
+  }
+
   executeWebhook(
     webhookId: string, webhookToken: string,
     body: { content: string; username: string; avatar_url?: string },

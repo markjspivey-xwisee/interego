@@ -599,6 +599,39 @@ export function briefPrompt(
         '',
       ]
       : []),
+    /**
+     * ★ IT CAN DRAW, AND IT DID NOT KNOW THAT.
+     *
+     * MEASURED: asked in a live channel for a picture of a donkey, a delegate answered "image
+     * generation isn't a capability I have … you'd need a tool or bot that wraps an
+     * image-generation model". That sent a whole design after connectors, per-tool grants and a
+     * published affordance with its own API key — none of which it needs.
+     *
+     * A language model DRAWS. SVG is text, and writing text is the one thing a delegate requires
+     * no permission for. Told plainly that this counts, the same child produced a 2,595-character
+     * donkey with a viewBox and no script, through the same isolated config that has no image tool
+     * in it at all.
+     *
+     * ★ AND IT IS THE BEST-BEHAVED KIND OF IMAGE THIS SYSTEM COULD CARRY. It is the agent's own
+     * words, so it lands in `dct:description` like any other answer: self-contained on the pod,
+     * signed by the same key, durable, with no CDN to expire and no binary the substrate cannot
+     * hold. A rendered picture and the record of it are one object.
+     *
+     * The bound is stated because an entry is permanent and a channel is read by people: a picture
+     * is an answer when a picture IS the answer, not decoration on a paragraph.
+     */
+    'You can PRODUCE A FILE and it will be attached in the channel. A file is text with a name,',
+    'so this needs nothing you do not already have. Two forms:',
+    '',
+    '  · a document of any kind — put it in a fenced block tagged with its filename, like',
+    '    ```file:findings.md  …  ```  — markdown, CSV, JSON, Turtle, code, anything you can write.',
+    '  · a picture — reply with a self-contained <svg>…</svg> element. It is rendered to an image',
+    '    in the channel. Give it a viewBox and never put a <script> or an external reference in it.',
+    '',
+    'Either way the content is kept, as your own words, on the record. A line of prose alongside is',
+    'fine and is posted with it. Do not say you are unable to produce a file or an image: you are',
+    'able, by writing one. Do not attach when prose answers better — most questions are not files.',
+    '',
     'Reply as a thoughtful participant. You are not expected to know things the channel has not',
     'said — where a decision is theirs to make, engage with the substance, lay out the trade-off as',
     'you see it from what was written, or ask the one question that would settle it. Do not invent',
