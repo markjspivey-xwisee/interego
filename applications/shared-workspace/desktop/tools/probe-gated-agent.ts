@@ -20,11 +20,11 @@
  */
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { childEnv, resolveClaudeCli } from '../src/modelprovider.js';
 import { gateSettings, writeGateConfig, type GateConfig } from '../src/gate.js';
-import type { Grant } from '../src/permission.js';
+import { forbiddenPath, type Grant } from '../src/permission.js';
 
 let bad = 0;
 const check = (ok: boolean, what: string, detail?: string): void => {
@@ -37,11 +37,32 @@ function main(): void {
   if (!cli?.path) { process.stdout.write('no claude CLI on this machine\n'); process.exit(1); }
 
   const root = mkdtempSync(join(tmpdir(), 'interego-gated-'));
-  const workspace = join(root, 'workspace');
+  /**
+   * ★★ THE WORKSPACE IS THE REAL ONE, NOT A TEMP DIRECTORY, AND THAT DISTINCTION WAS A CRITICAL BUG.
+   *
+   * This probe used to build its workspace under the OS temp dir. Every check passed — while in the
+   * installed app the delegate could not Read or Write in its own workspace AT ALL, because the
+   * real workspace lives under `AppData/Roaming/@interego/…` and the never-list held that whole
+   * prefix. Hard denials run before anything can allow, so the agent's own directory was refused as
+   * "a path holding credentials".
+   *
+   * A probe that constructs a convenient location verifies that location. The one thing this had to
+   * prove was that a normal agent can work where it actually lives, so it now works there.
+   */
+  const userData = process.platform === 'win32'
+    ? join(process.env['APPDATA'] ?? homedir(), '@interego', 'workspace-desktop')
+    : join(homedir(), '.config', '@interego', 'workspace-desktop');
+  const workspace = join(userData, 'agent-workspaces', 'probe-gated-agent');
   const outside = join(root, 'outside');
   mkdirSync(workspace, { recursive: true });
   mkdirSync(outside, { recursive: true });
   writeFileSync(join(outside, 'notes.txt'), 'OUTSIDE-CONTENT', 'utf8');
+
+  // ★ Stated before anything is spawned, because a probe whose own ground is forbidden would
+  // report a string of confusing refusals rather than the one fact that explains them.
+  check(!forbiddenPath(workspace),
+    '★ the agent\'s REAL workspace is not itself on the never-list — the bug this probe missed',
+    workspace);
 
   /**
    * ★ THE GATE IS BUNDLED TO REAL JS, NOT REGISTERED THROUGH tsx.

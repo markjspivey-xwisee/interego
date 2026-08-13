@@ -3883,7 +3883,7 @@ async function heartbeat(): Promise<void> {
 async function wake(): Promise<void> {
   const speaker = speakingDelegate();
   if (!A.on || A.busy || !speaker || !S.workspace) return;
-  let verdicts: RequestVerdict[] = [];
+  const verdicts: RequestVerdict[] = [];
   try {
     // ★ THE DELEGATE'S OWN SESSION, WHICH IS THE ONLY INBOX IT CAN READ. Measured: the relay
     // answers `read_inbox: forbidden — you may only read your own inbox` for any other pod. So the
@@ -4108,6 +4108,107 @@ area('composer').addEventListener('keydown', (e) => {
 area('composer').addEventListener('input', () => {
   if (A.drafted && area('composer').value !== A.drafted.text) { A.drafted = null; renderAgent(); }
 });
+
+/**
+ * ── WHAT THE AGENTS ASKED FOR ────────────────────────────────────────────────
+ *
+ * The gate refuses anything outside an agent's own workspace and writes down what it wanted. This
+ * panel is the other half: without it a refusal is just a refusal, and the agent's "I've asked
+ * whether I may" is a sentence pointing at nothing.
+ *
+ * ★ EVERY REQUEST IS SHOWN WITH WHO CAUSED IT. "Claude Desktop wants to read D:/work/notes.txt" is
+ * not answerable; "…because goldenfleece asked it to, in #house" is. The approval then attaches to
+ * a message on the record rather than to a dialog that appeared while somebody was making coffee —
+ * and a request whose asker you do not recognise is the one you turn down.
+ */
+async function renderPermissions(): Promise<void> {
+  let state: Awaited<ReturnType<typeof window.interego.permissionList>>;
+  try { state = await window.interego.permissionList(); }
+  catch (e) { clear($('permpending')).appendChild(errBox(e, 'The pending requests could not be read.')); return; }
+
+  const { pending, nominated, grants } = state;
+  $('permnote').textContent = pending.length === 0 ? 'Nothing waiting.'
+    : String(pending.length) + (pending.length === 1 ? ' request waiting' : ' requests waiting');
+
+  const box = clear($('permpending'));
+  for (const r of pending) {
+    const card = el('div', 'panel warn');
+    card.appendChild(el('h4', undefined, r.agentName + ' wants to ' + r.what));
+    // ★ The rule, verbatim, because it is what an approval actually grants — and it is COARSER
+    // than the request. Approving `Bash(npm test …)` permits every `npm test`, not this one, and
+    // hiding that would make the panel a misleading account of what the button does.
+    card.appendChild(el('div', 'note', 'Approving permits: ' + r.rule));
+    card.appendChild(el('div', 'note', 'Asked by ' + r.askedBy + ' in ' + r.channel + ' · ' + r.atIso.slice(0, 16).replace('T', ' ')));
+    const row = el('div', 'row');
+    const yes = el('button', 'sm', 'Allow this from now on') as HTMLButtonElement;
+    const no = el('button', 'danger sm', 'No') as HTMLButtonElement;
+    const answer = (approve: boolean): void => {
+      yes.disabled = true; no.disabled = true;
+      void window.interego.permissionAnswer(r.id, approve)
+        .then((res) => { say('permresult', res.ok ? 'ok' : 'warn', res.why); return renderPermissions(); })
+        .catch((e: unknown) => { clear($('permresult')).appendChild(errBox(e, 'That answer was not recorded.')); });
+    };
+    yes.addEventListener('click', () => { answer(true); });
+    no.addEventListener('click', () => { answer(false); });
+    row.appendChild(yes); row.appendChild(no);
+    card.appendChild(row);
+    box.appendChild(card);
+  }
+
+  const where = clear($('permwhere'));
+  where.appendChild(el('div', 'note', nominated.length === 0
+    ? 'Agents can only work in their own workspace folder. Nominate a project and they can work there too, without asking.'
+    : 'Agents may also work in:'));
+  for (const dir of nominated) {
+    const row = el('div', 'row');
+    row.appendChild(el('span', 'note', dir));
+    const off = el('button', 'danger sm', 'Stop') as HTMLButtonElement;
+    off.addEventListener('click', () => {
+      off.disabled = true;
+      void window.interego.permissionUnnominate(dir)
+        .then((res) => { say('permresult', 'ok', res.why); return renderPermissions(); })
+        .catch((e: unknown) => { clear($('permresult')).appendChild(errBox(e, 'That directory was not removed.')); });
+    });
+    row.appendChild(off);
+    where.appendChild(row);
+  }
+
+  // ★ STANDING GRANTS ARE LISTED AND REVOCABLE. A permission you cannot see is one you cannot
+  // remember giving, and "approve once, forever, invisibly" is how a boundary erodes without
+  // anybody deciding to erode it.
+  const g = clear($('permgrants'));
+  if (grants.length > 0) {
+    g.appendChild(el('div', 'note', 'Already allowed, so they no longer ask:'));
+    for (const grant of grants) {
+      const row = el('div', 'row');
+      row.appendChild(el('span', 'note', grant.rule + ' · since ' + grant.grantedIso.slice(0, 10)));
+      const off = el('button', 'danger sm', 'Withdraw') as HTMLButtonElement;
+      off.addEventListener('click', () => {
+        off.disabled = true;
+        void window.interego.permissionRevoke(grant.rule)
+          .then((res) => { say('permresult', 'ok', res.why); return renderPermissions(); })
+          .catch((e: unknown) => { clear($('permresult')).appendChild(errBox(e, 'That grant was not withdrawn.')); });
+      });
+      row.appendChild(off);
+      g.appendChild(row);
+    }
+  }
+}
+
+btn('permnominate').addEventListener('click', () => {
+  void window.interego.permissionNominate()
+    .then((res) => { if (res.why) say('permresult', res.ok ? 'ok' : 'warn', res.why); return renderPermissions(); })
+    .catch((e: unknown) => { clear($('permresult')).appendChild(errBox(e, 'That directory was not nominated.')); });
+});
+
+/**
+ * ★ POLLED, BECAUSE THE WRITER IS ANOTHER PROCESS. The gate is a fresh subprocess per tool call
+ * with no way back into this window, so nothing pushes here — a request arriving while the app is
+ * open would otherwise sit unseen until the next restart, which for an agent waiting on an answer
+ * is the same as never. Ten seconds is far below the time anybody takes to notice and answer.
+ */
+void renderPermissions();
+setInterval(() => { void renderPermissions(); }, 10_000);
 btn('save').addEventListener('click', () => { void doSave(false); });
 btn('stalesave').addEventListener('click', () => { void doSave(true); });
 btn('modelrecheck').addEventListener('click', () => { providerRead = false; renderModelCard(); void loadProviders(); });
@@ -4144,3 +4245,18 @@ window.addEventListener('beforeunload', () => { S.watches.forEach((u) => { try {
 void describe().catch((e: unknown) => {
   clear($('signinnote')).appendChild(errBox(e, 'This client failed while starting up, so nothing below was read.'));
 });
+
+/**
+ * ★ THE LAST LINE, AND THE ONLY EVIDENCE THAT EVERY LINE ABOVE IT RAN.
+ *
+ * `did-finish-load` fires whether or not this script threw — an uncaught exception in a renderer
+ * is not a crash, not a failed load, and not `render-process-gone`. So the launch smoke could
+ * watch the page load perfectly while the renderer had died on its second statement, and CI would
+ * be green over a window showing a half-built screen.
+ *
+ * That is not hypothetical for this file: `$` THROWS on an element it cannot find, and the wiring
+ * at the bottom looks up a dozen ids by hand. Rename one in `index.html` and everything after it
+ * silently stops existing. The smoke reads this marker, so "the renderer ran to the end" becomes a
+ * fact CI can check rather than an assumption it makes.
+ */
+(window as unknown as { __interegoBooted?: boolean }).__interegoBooted = true;

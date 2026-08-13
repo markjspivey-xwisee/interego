@@ -192,6 +192,39 @@ export interface WorkspaceBridge {
    * it for real.
    */
   delegateCall(address: string, name: string, input: Record<string, unknown>): Promise<{ ok: true; payload: unknown } | { ok: false; error: BridgeFailure }>;
+
+  /**
+   * What the agents asked permission for, what they have been given, and where they may work.
+   *
+   * ★ AN ANSWER NAMES A REQUEST, NOT A PERMISSION. `permissionAnswer` takes the id of something an
+   * agent actually asked for and nothing else — there is no call here that grants an arbitrary
+   * rule. Otherwise this bridge would be a way around the boundary rather than the way through it.
+   */
+  permissionList(): Promise<{ pending: readonly PendingRequest[]; nominated: readonly string[]; grants: readonly StandingGrant[] }>;
+  permissionAnswer(id: string, approve: boolean): Promise<{ ok: boolean; why: string }>;
+  permissionRevoke(rule: string): Promise<{ ok: boolean; why: string }>;
+  /** Opens the OS directory picker. A boundary is widened with a hand on the mouse, not a string. */
+  permissionNominate(): Promise<{ ok: boolean; why: string }>;
+  permissionUnnominate(dir: string): Promise<{ ok: boolean; why: string }>;
+}
+
+/** One thing an agent tried to do, was refused, and asked about. */
+export interface PendingRequest {
+  readonly id: string;
+  readonly rule: string;
+  readonly what: string;
+  readonly tool: string;
+  readonly agentName: string;
+  readonly askedBy: string;
+  readonly channel: string;
+  readonly atIso: string;
+}
+
+/** Something a person already approved, which is why the agent no longer asks. */
+export interface StandingGrant {
+  readonly rule: string;
+  readonly what: string;
+  readonly grantedIso: string;
 }
 
 const bridge: WorkspaceBridge = {
@@ -217,6 +250,11 @@ const bridge: WorkspaceBridge = {
   delegateImport: (privateKey) => ipcRenderer.invoke('delegate:import', privateKey),
   delegateForget: (address) => ipcRenderer.invoke('delegate:forget', address),
   delegateCall: (address, name, input) => ipcRenderer.invoke('delegate:call', address, name, input),
+  permissionList: () => ipcRenderer.invoke('permission:list'),
+  permissionAnswer: (id, approve) => ipcRenderer.invoke('permission:answer', id, approve),
+  permissionRevoke: (rule) => ipcRenderer.invoke('permission:revoke', rule),
+  permissionNominate: () => ipcRenderer.invoke('permission:nominate'),
+  permissionUnnominate: (dir) => ipcRenderer.invoke('permission:unnominate', dir),
 };
 
 contextBridge.exposeInMainWorld('interego', bridge);

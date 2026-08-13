@@ -71,9 +71,23 @@ function audit(cfg: GateConfig, line: Record<string, unknown>): void {
 export function gateDecision(raw: string, cfg: GateConfig, nowIso: string): string {
   let call: ToolCall;
   try {
-    const parsed = JSON.parse(raw) as { tool_name?: unknown; tool_input?: unknown };
+    const parsed = JSON.parse(raw) as { tool_name?: unknown; tool_input?: unknown; cwd?: unknown };
     if (typeof parsed.tool_name !== 'string') throw new Error('no tool_name');
-    call = { tool: parsed.tool_name, input: (parsed.tool_input ?? {}) as Record<string, unknown> };
+    /**
+     * ★ `cwd` IS CARRIED THROUGH, AND DISCARDING IT WAS A HOLE YOU COULD WALK OUT OF.
+     *
+     * MEASURED against this gate: `cd .. && cd .. && cd Users && cd markj && cd .claude && cat
+     * .credentials.json` was ALLOWED. No segment named an absolute path and no `..` was followed by
+     * a separator, so the scanner concluded the command named nothing outside the workspace — while
+     * it walked to the user's Claude credential store one segment at a time. A relative path is
+     * meaningless without the directory it is relative to, and the payload has always carried one
+     * (`tools/probe-hook-payload.ts` dumps a real payload: session_id, transcript_path, cwd, …).
+     */
+    call = {
+      tool: parsed.tool_name,
+      input: (parsed.tool_input ?? {}) as Record<string, unknown>,
+      ...(typeof parsed.cwd === 'string' ? { cwd: parsed.cwd } : {}),
+    };
   } catch (e) {
     // ★ FAIL CLOSED. A payload this cannot read is a call it cannot judge.
     return answer('deny', 'the permission gate could not read this tool call ('
