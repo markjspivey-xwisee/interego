@@ -276,11 +276,84 @@ const EGRESS = /\b(curl|wget|nc|ncat|telnet|ssh|scp|sftp|rsync|ftp|Invoke-WebReq
  * The difference between refused and allowed was two characters. Order matters: UNC (`\\`) must be
  * tried before the single leading backslash, or it matches as drive-relative and loses the host.
  */
-const PATHISH = /(?:\\\\[^\s'"|;&<>()]+|[A-Za-z]:[\\/]|[\\/]|\.\.[\\/])[^\s'"|;&<>()]*/g;
-
 /** A UNC path names another machine. It is not inside anything, whatever the roots are. */
 function isUnc(p: string): boolean {
   return /^\\\\[^\\]/.test(p) || /^\/\/[^/]/.test(p);
+}
+
+/**
+ * ── ★★ WHY PATHS ARE NOT FOUND WITH A REGEX SCAN ─────────────────────────────
+ *
+ * This used to scan for path-shaped text with one global regex:
+ *
+ *     /(?:\\\\[^\s'"|;&<>()]+|[A-Za-z]:[\\/]|[\\/]|\.\.[\\/])[^\s'"|;&<>()]* /g
+ *
+ * It is unanchored, so it matches from the first separator INSIDE a word and
+ * throws the prefix away: `src/index.ts` produces the match `/index.ts`, which `isAbsolute` calls
+ * true on Windows and resolves to `C:\index.ts` — outside every root. MEASURED against the shipped
+ * gate, with a workspace policy and no grants, all of these came back `ask`:
+ *
+ *     cat src/index.ts        ls src/components      mkdir -p a/b       node src/index.js
+ *     head -20 src/x.ts       ./scripts/build.sh     type src\index.ts  python scripts\run.py
+ *     echo "a\nb" > out.txt   grep -E "\d+" log.txt  git commit -m "escape \d in regex"
+ *
+ * An agent that cannot read a file in a subdirectory, make a nested directory, or use a regex
+ * containing `\d` is not usable. The forward-slash half was there from the first version and the
+ * live probe never caught it, because the probe's one ordinary command was
+ * `echo INSIDE > made.txt` — no separator in it. Adding a backslash alternative to fix
+ * drive-relative paths then extended the same fault to every backslash escape in a quoted string.
+ *
+ * So paths are found by TOKENISING and classifying whole tokens. A token is judged as a unit, and
+ * the classification says which of the five things it is — which is what the regex could not do.
+ */
+
+/** Split a segment into arguments, remembering which were quoted. */
+function tokensOf(segment: string): readonly { readonly text: string; readonly quoted: boolean }[] {
+  const out: { text: string; quoted: boolean }[] = [];
+  for (const m of segment.matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g)) {
+    if (m[1] !== undefined) out.push({ text: m[1], quoted: true });
+    else if (m[2] !== undefined) out.push({ text: m[2], quoted: true });
+    else out.push({ text: m[3] ?? '', quoted: false });
+  }
+  return out;
+}
+
+type PathKind = 'unc' | 'absolute' | 'home' | 'relative' | 'none';
+
+/**
+ * What kind of path a single token is, if any.
+ *
+ * ★ A LEADING BACKSLASH NEEDS A SECOND SEPARATOR TO COUNT. `\Users\me\.ssh\id_rsa` is a
+ * drive-relative path and must be caught; `\d+` and `\bfoo\b` are a regex somebody passed to grep.
+ * Both start with a backslash, and the only thing separating them is whether the token goes on to
+ * look like a path. Requiring the second separator keeps the real one and drops the regex.
+ */
+function pathKind(token: string, quoted = false): PathKind {
+  const t = token.replace(/^[<>&|]+/, '');
+  if (!t) return 'none';
+  if (isUnc(t)) return 'unc';
+  if (/^[A-Za-z]:[\\/]/.test(t)) return 'absolute';
+  if (/^~($|[\\/])/.test(t)) return 'home';
+  if (t.startsWith('/')) return 'absolute';
+  if (t.startsWith('\\')) {
+    /**
+     * ★ AND INSIDE QUOTES, A LEADING BACKSLASH IS A REGEX, NOT A PATH. The second-separator rule
+     * below is too weak on its own: `\bfoo\b` has two backslashes and was therefore classified as
+     * drive-relative, so `grep -rn "\bfoo\b" src` — an entirely ordinary command — resolved to
+     * `C:\bfoo\b`, landed outside every root, and came back `ask`. A quoted drive-relative path is
+     * a rarity; a quoted regex is what agents type all day. Credential paths spelled with
+     * backslashes are still caught by the never-name scan in `decide`, which reads the raw command.
+     */
+    if (quoted) return 'none';
+    return /[\\/].*[\\/]/.test(t) ? 'absolute' : 'none';
+  }
+  if (/[\\/]/.test(t)) return 'relative';
+  return 'none';
+}
+
+/** The token with any redirect punctuation stripped, ready to resolve. */
+function pathText(token: string): string {
+  return token.replace(/^[<>&|]+/, '');
 }
 
 /**
@@ -302,11 +375,43 @@ function segments(command: string): readonly string[] {
   return command.split(/&&|\|\||;|\||\n/g).map((s) => s.trim()).filter(Boolean);
 }
 
-/** A directory change, and where it is going. `null` when the segment does not change directory. */
+/**
+ * A directory change, and where it is going.
+ *
+ * `null` when the segment does not change directory. The string `'?'` when it changes to somewhere
+ * this cannot work out — which is treated as leaving the boundary, because a walk that has lost
+ * track of where the shell is standing must not go on answering questions about it.
+ *
+ * ★★ EVERY SPELLING OF "GO HOME", BECAUSE MISSING THEM REOPENED THE HOLE THE cwd WORK CLOSED.
+ * MEASURED against the shipped gate, workspace policy, no grants:
+ *
+ *     cd ~ && cat notes.txt                              → ALLOW
+ *     cd ~/Documents && cat taxes.txt                    → ALLOW
+ *     cd $HOME && cd Documents && cat taxes.txt          → ALLOW
+ *     cd && cd Documents && cat taxes.txt                → ALLOW
+ *     cd ~ && cd .claude && echo x > settings.json       → ALLOW
+ *
+ * `~` was resolved as an ordinary child of the current directory — `<workspace>/~` — which IS
+ * inside a root, so the walk set `here` to a fake-inside location and judged every later segment
+ * from there while the real shell stood in the user's home. That last line writes a settings file
+ * the person's OWN interactive sessions read. Worse, it was a REGRESSION: before the `cd` branch
+ * existed, `cd ~/Documents && …` matched `/Documents` and came back `ask`.
+ */
 function chdirTarget(segment: string): string | null {
-  const m = /^(?:cd|chdir|pushd|Set-Location|sl)\s+(?:\/d\s+)?(.+)$/i.exec(segment.trim());
+  const m = /^(?:cd|chdir|pushd|popd|Set-Location|sl)\b\s*(?:\/d\s+)?(.*)$/i.exec(segment.trim());
   if (!m) return null;
-  return (m[1] ?? '').trim().replace(/^["']|["']$/g, '') || null;
+  const raw = (m[1] ?? '').trim().replace(/^["']|["']$/g, '');
+
+  // `cd` with nothing after it is HOME in every shell that matters here.
+  if (!raw) return homedir();
+  if (/^~($|[\\/])/.test(raw)) return join(homedir(), raw.slice(1));
+  if (/^(?:\$HOME|\$\{HOME\}|%USERPROFILE%|\$env:USERPROFILE)($|[\\/])/i.test(raw)) {
+    return join(homedir(), raw.replace(/^(?:\$HOME|\$\{HOME\}|%USERPROFILE%|\$env:USERPROFILE)/i, ''));
+  }
+  // ★ Anything still holding a variable, a substitution or a wildcard is a destination this cannot
+  // compute. `popd` is the same: where it returns to depends on a stack this does not model.
+  if (/[$%*?]|`|\$\(/.test(raw) || /^popd\b/i.test(segment.trim())) return '?';
+  return raw;
 }
 
 /**
@@ -346,52 +451,111 @@ export function bashStaysInside(command: string, roots: readonly string[], cwd?:
 function walkCommand(command: string, roots: readonly string[], cwd?: string): {
   readonly staysInside: boolean;
   readonly touched: readonly string[];
+  /**
+   * Each segment with its own verdict, in order.
+   *
+   * ★★ ONE WALK, NOT ONE WALK PER SEGMENT — AND THE DIFFERENCE WAS A CRITICAL HOLE. `decide`
+   * used to re-run this function on each segment separately to find which one needed approving,
+   * and every one of those runs started from the ORIGINAL cwd. So with a single grant for
+   * `Bash(cd .. …)` — which is a request the gate itself raises, and an innocuous-looking one:
+   *
+   *     cd .. && cat secret.txt              → GRANTED
+   *     cd .. && echo pwned > planted.txt    → GRANTED
+   *
+   * The `cd ..` was covered by the grant, and `cat secret.txt` was then judged from the workspace
+   * it had already left. The directory has to be carried forward through the same pass that
+   * decides, or the two disagree about where the shell is standing.
+   */
+  readonly perSegment: readonly { readonly text: string; readonly ok: boolean }[];
 } {
   let here = cwd && isAbsolute(cwd) ? cwd : (roots[0] ?? process.cwd());
   const touched: string[] = [];
+  const perSegment: { text: string; ok: boolean }[] = [];
   let staysInside = true;
 
   for (const segment of segments(command)) {
-    if (EGRESS.test(segment)) staysInside = false;
+    const before = touched.length;
+    let segOk = true;
+    const fail = (): void => { segOk = false; staysInside = false; };
+    void before;
+    if (EGRESS.test(segment)) fail();
 
     // Where a `cd` lands decides how every LATER segment's relative paths resolve, so it is
     // followed rather than merely inspected — and a landing outside the roots is refused instead
     // of quietly becoming the anchor for the rest of the line.
     const target = chdirTarget(segment);
     if (target !== null) {
-      if (isUnc(target)) { staysInside = false; continue; }
+      // A destination this cannot compute is treated as having left: carrying on from a directory
+      // the walk has guessed at would be answering questions it can no longer answer.
+      if (target === '?' || isUnc(target)) { fail(); perSegment.push({ text: segment, ok: false }); continue; }
       const to = isAbsolute(target) ? target : resolve(here, target);
       touched.push(to);
-      if (!roots.some((r) => inside(r, to))) staysInside = false;
+      if (!roots.some((r) => inside(r, to))) fail();
       // ★ The walk CONTINUES past a `cd` that left the roots rather than returning early, because
       // where it went next is the thing worth knowing. Stopping at the first step out is what let
       // the credential read above be classified as merely "outside".
       here = to;
+      perSegment.push({ text: segment, ok: segOk });
       continue;
     }
 
-    for (const raw of segment.match(PATHISH) ?? []) {
-      const p = raw.replace(/["']/g, '');
-      if (p.length < 2) continue;
-      // A UNC path is another machine's disk; no root contains it, and resolving it locally would
-      // turn `\\host\share` into something that looks like a local absolute path.
-      if (isUnc(p)) { staysInside = false; continue; }
-      const abs = isAbsolute(p) ? p : resolve(here, p);
-      touched.push(abs);
-      if (!roots.some((r) => inside(r, abs))) staysInside = false;
-    }
+    const tokens = tokensOf(segment);
+    /**
+     * ★ A REDIRECT TARGET IS A PATH EVEN WHEN IT IS A BARE WORD. MEASURED: with a grant covering
+     * `cd ..`, the segment `echo pwned > planted.txt` was judged clean — `planted.txt` has no
+     * separator, and `echo` is not one of the file commands the bare-word rule looks at. So the
+     * agent could WRITE outside its workspace while the walk saw nothing but an echo.
+     */
+    let expectPath = false;
+    for (let i = 0; i < tokens.length; i++) {
+      const tok = tokens[i];
+      if (!tok) continue;
+      if (!tok.quoted && /^\d*(?:>>?|<)$/.test(tok.text)) { expectPath = true; continue; }
+      const redirected = expectPath || /^\d*>>?[^>]/.test(tok.text);
+      expectPath = false;
+      const kind = pathKind(tok.text, tok.quoted);
+      if (redirected && kind === 'none') {
+        const abs = resolve(here, pathText(tok.text));
+        touched.push(abs);
+        if (!roots.some((r) => inside(r, abs))) fail();
+        continue;
+      }
 
-    // A bare word after a reading or copying command is a filename too — `cat .credentials.json`
-    // names a path that matches no path-shaped pattern at all, because it has no separator in it.
-    const bare = /^(?:cat|type|more|less|head|tail|cp|copy|mv|move|rm|del|tar|zip|Get-Content|gc)\s+(?:[-/][^\s]+\s+)*(?:["']?)([^\s"'|;&<>()]+)/i.exec(segment.trim());
-    const named = bare?.[1];
-    if (named && !/^[-/]/.test(named)) {
-      const abs = isAbsolute(named) ? named : resolve(here, named);
-      touched.push(abs);
-      if (!roots.some((r) => inside(r, abs))) staysInside = false;
+      // A quoted argument is usually a message, a pattern or a regex — `grep -E "\d+"`,
+      // `git commit -m "escape \d"`. It is only treated as a path when it is unmistakably one.
+      if (tok.quoted && (kind === 'none' || kind === 'relative')) continue;
+
+      if (kind === 'unc') { fail(); continue; }
+      if (kind === 'home') {
+        const abs = join(homedir(), pathText(tok.text).slice(1));
+        touched.push(abs);
+        if (!roots.some((r) => inside(r, abs))) fail();
+        continue;
+      }
+      if (kind === 'absolute' || kind === 'relative') {
+        const p = pathText(tok.text);
+        const abs = isAbsolute(p) ? p : resolve(here, p);
+        touched.push(abs);
+        if (!roots.some((r) => inside(r, abs))) fail();
+        continue;
+      }
+
+      /**
+       * A bare word with no separator is a filename when it follows a command that reads or moves
+       * files: `cat .credentials.json` names a path that no path-shaped test can see. It is
+       * resolved against `here`, which is what turns the round-one `cd .. && … && cat
+       * .credentials.json` walk into something `decide` can refuse outright rather than ask about.
+       */
+      if (i > 0 && !tok.text.startsWith('-')
+        && /^(?:cat|type|more|less|head|tail|cp|copy|mv|move|rm|del|tar|zip|unzip|Get-Content|gc)$/i.test(tokens[0]?.text ?? '')) {
+        const abs = resolve(here, pathText(tok.text));
+        touched.push(abs);
+        if (!roots.some((r) => inside(r, abs))) fail();
+      }
     }
+    perSegment.push({ text: segment, ok: segOk });
   }
-  return { staysInside, touched };
+  return { staysInside, touched, perSegment };
 }
 
 /**
@@ -503,7 +667,8 @@ export function decide(call: ToolCall, policy: Policy): Decision {
   // 2 · inside its own workspace, or somewhere its human nominated.
   if (call.tool === 'Bash') {
     const cmd = String(call.input['command'] ?? '');
-    if (bashStaysInside(cmd, roots, cwd)) {
+    const walk = walkCommand(cmd, roots, cwd);
+    if (walk.staysInside) {
       return { kind: 'allow', why: 'it names nothing outside its workspace and does not reach the network' };
     }
     /**
@@ -514,19 +679,37 @@ export function decide(call: ToolCall, policy: Policy): Decision {
      * was matched against the first two words of the WHOLE line and the rest was never read. Every
      * grant anybody had given was arbitrary command execution with ` && ` and a space.
      */
-    for (const segment of segments(cmd)) {
-      if (bashStaysInside(segment, roots, cwd)) continue;
-      const segRule = ruleForSegment(segment);
+    /**
+     * ★★ THE VERDICTS COME FROM THE ONE WALK ABOVE, NOT FROM RE-WALKING EACH SEGMENT.
+     *
+     * Re-running the walk per segment restarted it at the original cwd every time, so a grant for
+     * an early `cd ..` left every later segment judged from a workspace the shell had already
+     * left. MEASURED, with one grant for `Bash(cd .. …)`:
+     *
+     *     cd .. && cat secret.txt            → GRANTED
+     *     cd .. && echo pwned > planted.txt  → GRANTED
+     *
+     * And `Bash(cd .. …)` is a request the gate raises by itself, so it is exactly the sort of
+     * harmless-looking thing a person clicks Allow on. Now the directory is carried forward by the
+     * same pass that produced these verdicts, and a grant covers its own segment only.
+     */
+    for (const seg of walk.perSegment) {
+      if (seg.ok) continue;
+      const segRule = ruleForSegment(seg.text);
       if (policy.grants.some((g) => g.rule === segRule)) continue;
       return {
         kind: 'ask',
         why: 'part of that command goes outside its workspace and you have not approved it',
         rule: segRule,
-        what: 'run `' + segment.slice(0, 160) + '`',
+        what: 'run `' + seg.text.slice(0, 160) + '`',
       };
     }
     // Every segment either stays inside or is separately covered by a grant the person gave.
-    return { kind: 'granted', why: 'each part is either inside its workspace or one you approved', rule: ruleForSegment(segments(cmd)[0] ?? cmd) };
+    return {
+      kind: 'granted',
+      why: 'each part is either inside its workspace or one you approved',
+      rule: ruleForSegment(walk.perSegment.find((s) => !s.ok)?.text ?? cmd),
+    };
   }
   if (argAbs && roots.some((r) => inside(r, argAbs))) {
     return { kind: 'allow', why: 'inside ' + (inside(policy.workspace, argAbs) ? 'its own workspace' : 'a directory you nominated') };
