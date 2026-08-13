@@ -427,9 +427,9 @@ async function main(): Promise<void> {
   }
 
   head('11 · the SECOND delegate: a sibling, and the loop guard between them');
+  const speaking2: SpeakingDelegate = { agentId: d2Id, name: 'Codex side', scope: 'PublishOnly' };
   // ★ ONE DUPLICATE REPLY IS THE FAILURE THIS PREVENTS. Two delegates of one person both
   // answering the same question would put two permanent records in one log saying the same thing.
-  const speaking2: SpeakingDelegate = { agentId: d2Id, name: 'Codex side', scope: 'PublishOnly' };
   const sibling = decideTurn({ ...turnArgs, delegate: speaking2, entries: read.entries, unreadable: read.unreadable, answeredHere: [] });
   check('delegate #2 refuses because its SIBLING has already spoken', sibling.kind === 'already-answered',
     sibling.kind + ' — ' + (sibling.kind === 'already-answered' ? sibling.why : ''));
@@ -462,6 +462,66 @@ async function main(): Promise<void> {
   read = await awaitEntry(A, fold.seats, byPod, (e) => e.author.kind === 'delegate' && e.author.agentId === d2Id);
   const names = new Set(read.entries.filter((e) => e.pod === A.viewer.podName).map((e) => authorshipLine(e.author)));
   check('★ one log, three distinguishable authors', names.size >= 3, [...names].join(' | '));
+
+  head('11b · ADDRESSING, across two real pods');
+  /**
+   * ★ THE ONE MULTIPLAYER PROPERTY NOTHING HAD EVER EXERCISED LIVE.
+   *
+   * Everything above proves a delegate answers a channel. None of it proves it answers the RIGHT
+   * person: every entry this driver wrote was unaddressed, so `iep:addressedTo` — the predicate
+   * that decides which of two agents a question is for — had never been written by one pod and
+   * read by another in a live run. The selection rules were exercised only against fixtures, on
+   * one machine, by the person who wrote them.
+   *
+   * Three entries from B, in order, and each is a rule:
+   *
+   *   1. addressed to delegate #1 — the direct ask
+   *   2. addressed to delegate #2 — belongs to the sibling, and #1 must not take it
+   *   3. addressed to nobody      — ordinary chatter, which must not outrank a direct ask
+   *
+   * The chatter is posted LAST on purpose. "Most recent thing said" is the obvious selection rule
+   * and it is the wrong one: it would answer the chatter and leave the question that named this
+   * delegate sitting unanswered on a permanent log.
+   *
+   * ★ AND IT RUNS AFTER THE SIBLING PHASE, NOT BEFORE. Placed earlier it left an ask addressed to
+   * delegate #2 sitting in the channel, so phase 11's "the sibling refuses because #1 already
+   * spoke" was answered by the direct ask instead and failed — a real ordering dependency between
+   * two phases that share one live channel, discovered by running it.
+   */
+  const askForOne = 'Claude side — what would re-tiling cost against patching, roughly?';
+  const askForTwo = 'Codex side — separately, can you check whether the permit is still valid?';
+  const chatter = 'Anyway, the gutters need doing at some point too.';
+  for (const [body, to] of [
+    [askForOne, [d1Id]], [askForTwo, [d2Id]], [chatter, []],
+  ] as const) {
+    const out = await postEntry(B.client, {
+      podName: B.viewer.podName, streamIri: bStream, workspace, body, entryShape,
+      author: { kind: 'principal', webId: B.viewer.webId },
+      ...(to.length ? { addressedTo: [...to] } : {}),
+    });
+    check('B posted "' + body.slice(0, 28) + '…"', out.kind === 'accepted', JSON.stringify(out).slice(0, 120));
+  }
+
+  read = await awaitEntry(A, fold.seats, byPod, (e) => (e.body ?? '').includes('gutters'));
+  check('all three of B\'s entries are readable from A\'s side', read.unreadable === 0);
+  // ★ READ BACK OUT OF THE SIGNED REGION. `addressedTo` lives inside it precisely so a relay or a
+  // notification cannot change who an ask was for; a driver that trusted its own memory of what it
+  // posted would be proving nothing about what a peer can actually verify.
+  const addressedRows = read.entries.filter((e) => e.addressedTo.length > 0);
+  check('two of them carry iep:addressedTo, read off B\'s pod', addressedRows.length === 2,
+    addressedRows.map((e) => e.addressedTo.join('+')).join(' | '));
+
+  const forOne = decideTurn({ ...turnArgs, delegate: speaking1, entries: read.entries, unreadable: read.unreadable, answeredHere: [] });
+  check('delegate #1 takes the ask ADDRESSED TO IT, not the newer unaddressed chatter',
+    forOne.kind === 'answer' && (forOne.answering.body ?? '').includes('re-tiling cost'),
+    forOne.kind === 'answer' ? (forOne.answering.body ?? '').slice(0, 70) : forOne.kind + ' — ' + forOne.why);
+  check('and it does NOT take the one addressed to its sibling',
+    !(forOne.kind === 'answer' && (forOne.answering.body ?? '').includes('permit is still valid')));
+
+  const forTwo = decideTurn({ ...turnArgs, delegate: speaking2, entries: read.entries, unreadable: read.unreadable, answeredHere: [] });
+  check('delegate #2 takes ITS OWN ask, from the same three entries',
+    forTwo.kind === 'answer' && (forTwo.answering.body ?? '').includes('permit is still valid'),
+    forTwo.kind === 'answer' ? (forTwo.answering.body ?? '').slice(0, 70) : forTwo.kind + ' — ' + forTwo.why);
 
   head('12 · revocation is unilateral, and the delegate refuses afterwards');
   const revoked = await revokeDelegation(delegatePort(A.client), { agentId: d1Id, podName: A.viewer.podName });
