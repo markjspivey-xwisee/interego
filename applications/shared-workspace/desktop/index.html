@@ -444,6 +444,30 @@
         looking at it.</div>
     </div>
     <div class="pane-body" id="roster"><div class="note">Reading the roster…</div></div>
+    <!--
+      ★ WHAT YOUR AGENTS ASKED PERMISSION FOR, AND WHERE THEY MAY WORK.
+
+      An agent here is an ordinary Claude Code session with ordinary tools, behind a gate that
+      refuses anything outside its own workspace. A refusal is not the end of it: the gate writes
+      down what was wanted and WHO caused it, and this is where that gets answered. Approving
+      writes a standing grant, so the next attempt goes straight through — the permission outlives
+      the turn, which is the difference between a control and a nag.
+
+      It sits under the roster because it is about the members: which of them asked for what.
+    -->
+    <div class="pane-head" style="border-top:1px solid var(--line)">
+      <div class="label">Permissions</div>
+      <div class="note" id="permnote">Nothing waiting.</div>
+    </div>
+    <div class="pane-body" id="permbody">
+      <div id="permpending"></div>
+      <div class="row" style="margin-top:.5rem">
+        <button class="sm" id="permnominate">Let agents work in a project…</button>
+      </div>
+      <div id="permwhere"></div>
+      <div id="permgrants"></div>
+      <div id="permresult"></div>
+    </div>
   </section>
 
   <section class="pane mid" aria-label="Messages">

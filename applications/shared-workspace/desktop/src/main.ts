@@ -20,11 +20,11 @@
  * deliberately small surface (`auth:*`, `substrate:call`, `identity:*`, `session:*`).
  */
 
-import { app, BrowserWindow, ipcMain, shell, type WebContents } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, shell, type WebContents } from 'electron';
 import { join } from 'node:path';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { gateSettings, writeGateConfig } from './gate.js';
-import { readPolicy } from './permission.js';
+import { clearPending, nominate, readPending, readPolicy, readSettings, requestsDir, revokeGrant, writeGrant } from './permission.js';
 import { Wallet } from 'ethers';
 import {
   DELEGATE_SURFACE, RelayMcpTransport, WorkspaceClient, type RelayOAuthBearer,
@@ -844,7 +844,7 @@ function composeGate(args: {
 
   const cfgPath = writeGateConfig(dir, {
     policy,
-    requestsDir: join(userData, 'agent-requests'),
+    requestsDir: requestsDir(userData),
     auditPath: join(userData, 'agent-audit.jsonl'),
     context: { agentName: args.agentName, askedBy: args.askedBy, channel: args.channel },
   });
@@ -1024,6 +1024,64 @@ function composeGate(args: {
     return { flagged, killed };
   });
 
+  /**
+   * ── ANSWERING WHAT AN AGENT ASKED FOR ──────────────────────────────────────
+   *
+   * The gate refuses and records; this is where a person answers. Everything below is deliberately
+   * a THIN wrapper over `permission.ts`, because the renderer must not be able to describe a
+   * permission in its own terms — it can only approve a rule the gate already wrote down.
+   *
+   * ★ THE RULE IS TAKEN FROM THE PENDING FILE, NOT FROM THE RENDERER. A handler that granted
+   * whatever string arrived would make the approval UI itself the way past the boundary: anything
+   * able to send an IPC message could grant `Bash(curl …)` without an agent ever asking. So the
+   * argument is an id, it is looked up, and a request nobody made cannot be approved.
+   */
+  // ★ `readSettings`, NOT `readPolicy` — see its comment. `readPolicy` mkdirs a workspace for the
+  // agent id it is given, and this handler has no agent: it is a person looking at a list.
+  ipcMain.handle('permission:list', () => ({
+    pending: readPending(app.getPath('userData')),
+    ...readSettings(app.getPath('userData')),
+  }));
+
+  ipcMain.handle('permission:answer', (_e, id: string, approve: boolean) => {
+    const userData = app.getPath('userData');
+    const req = readPending(userData).find((r) => r.id === id);
+    if (!req) return { ok: false, why: 'that request is no longer waiting — it may already have been answered' };
+    if (approve) writeGrant(userData, { rule: req.rule, what: req.what, grantedIso: new Date().toISOString() });
+    clearPending(userData, req.rule);
+    return {
+      ok: true,
+      why: approve
+        ? 'approved — ' + req.agentName + ' may now ' + req.what + ' without asking again'
+        : 'turned down — ' + req.agentName + ' will be refused if it tries again',
+    };
+  });
+
+  ipcMain.handle('permission:revoke', (_e, rule: string) => {
+    revokeGrant(app.getPath('userData'), rule);
+    return { ok: true, why: 'withdrawn — that goes back to being asked about' };
+  });
+
+  /**
+   * Nominate a project directory, chosen through the OS picker.
+   *
+   * ★ THROUGH THE PICKER, NOT A TYPED PATH. A directory arriving as a string is a directory some
+   * other code could send; one arriving from `showOpenDialog` was pointed at by the person sitting
+   * in front of the machine. Widening an agent's boundary is exactly the operation that should
+   * require a hand on the mouse.
+   */
+  ipcMain.handle('permission:nominate', async () => {
+    const picked = await dialog.showOpenDialog({
+      title: 'Choose a project your agents may work in',
+      properties: ['openDirectory'],
+    });
+    const dir = picked.filePaths[0];
+    if (picked.canceled || !dir) return { ok: false, why: '' };
+    return nominate(app.getPath('userData'), dir, true);
+  });
+
+  ipcMain.handle('permission:unnominate', (_e, dir: string) => nominate(app.getPath('userData'), dir, false));
+
   const bootWindow = createWindow();
   // ★ CI LAUNCH SMOKE TEST — only when the workflow sets INTEREGO_DESKTOP_SMOKE=1. See runLaunchSmoke.
   if (process.env['INTEREGO_DESKTOP_SMOKE'] === '1') runLaunchSmoke(bootWindow);
@@ -1093,6 +1151,22 @@ function runLaunchSmoke(win: BrowserWindow): void {
     clearTimeout(timer);
     if (win.isDestroyed()) { done(1, 'the window was destroyed before it finished loading'); return; }
     const open = BrowserWindow.getAllWindows().length;
+    // ★ DID THE RENDERER ACTUALLY RUN TO THE END? `did-finish-load` says the PAGE loaded, and says
+    // nothing about whether its script threw — an uncaught exception in a renderer is not a crash,
+    // not a failed load, and not `render-process-gone`. Without this the smoke passes over a
+    // window that finished loading and then died on `missing element #whatever`.
+    void win.webContents.executeJavaScript('window.__interegoBooted === true')
+      .then((booted: unknown) => {
+        if (booted !== true) {
+          done(1, 'the page loaded but the renderer did not run to the end — it threw partway '
+            + 'through (most often a missing element id), so the window is half-built');
+          return;
+        }
+        finish(open);
+      })
+      .catch((e: unknown) => { done(1, 'could not ask the renderer whether it booted: ' + String(e)); });
+  };
+  const finish = (open: number): void => {
     // ★ THE TEARDOWN, EXERCISED. `close()` runs the real `close`/`closed` path — the same one a
     // person triggers with the window's X — and the `uncaughtException` handler above is what
     // turns a throw in any listener on it into a failure. The pass is deferred a tick past the

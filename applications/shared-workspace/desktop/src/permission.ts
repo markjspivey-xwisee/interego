@@ -45,6 +45,35 @@
  * ★ REFUSING NOW AND ASKING ANYWAY IS THE WHOLE TRICK. It is what lets the permission outlive the
  * turn. The agent gets a refusal it can explain — "I asked Mark whether I may run that" — instead
  * of a timeout, which is what a person actually saw when the old blanket denial met a real task.
+ *
+ * ── ★★ WHAT THIS IS NOT: IT IS A GUARDRAIL, NOT A SANDBOX ────────────────────
+ *
+ * MEASURED against the built gate, and it decides how far anything here may be trusted:
+ *
+ *   deny   `cat ~/.ssh/id_rsa`                          — named outright
+ *   ALLOW  `node steal.js`, from a script it just wrote in its own workspace
+ *
+ * The second line is the whole limitation. This judges what a command NAMES; a child process it
+ * starts is not a tool call, reaches no hook, and inherits the user's full rights. Writing a file
+ * into its own workspace is ordinary and allowed — it has to be, or the agent cannot convert an
+ * image or run a build — and executing one is the same. So anything able to get the agent to write
+ * and run code is past every rule in this file.
+ *
+ * ★ AND TWO OTHER PROBE CASES WERE REFUSED FOR THE WRONG REASON, which is why the line above is
+ * stated so flatly. A `node -e` that assembled a credential path at runtime was denied — because
+ * the word `ssh` appeared inside a quoted string and tripped {@link EGRESS}. An exfiltrating
+ * `fetch` was denied because `//example.com` looked path-shaped. Neither refusal came from
+ * reasoning about reach, and a check that passes for the wrong reason is evidence for nothing.
+ *
+ * So the honest claim is the narrow one: this stops an agent being STEERED, in plain terms, into
+ * doing something out of bounds — the realistic failure when a stranger in a channel can type at
+ * it. It does not contain an agent that is trying, or one that has been manipulated into
+ * assembling its own way out. Containing that needs the OS: a restricted token, a separate
+ * low-privilege account, or a container — none of which is here.
+ *
+ * Do not add a rule to this file and conclude the escape is closed. The escape is structural, and
+ * the tests in `tests/workspace-desktop-permission.test.ts` PIN it open on purpose so that nobody
+ * reads a growing list of clever regexes as a boundary it never was.
  */
 
 import { createHash } from 'node:crypto';
@@ -284,19 +313,32 @@ export function grantsPath(userData: string): string {
   return join(userData, 'interego-agent-grants.json');
 }
 
-export function readPolicy(userData: string, agentId: string): Policy {
-  const workspace = join(userData, 'agent-workspaces', agentId.replace(/[^a-zA-Z0-9-]/g, '_'));
-  mkdirSync(workspace, { recursive: true });
-  let stored: { nominated?: string[]; grants?: Grant[] } = {};
+/**
+ * The stored half of the policy — what a person nominated and approved — with no agent involved.
+ *
+ * ★ SEPARATE FROM {@link readPolicy} BECAUSE THAT ONE CREATES A DIRECTORY. It takes an agent id
+ * and mkdirs that agent's workspace, which is right when a turn is starting and wrong everywhere
+ * else. MEASURED: the permission panel called it with the id `'listing'` to show what had been
+ * granted, and produced `agent-workspaces/listing/` — a folder named after a UI action, appearing
+ * among the real agents' workspaces, recreated every ten seconds by a poll. Reading what you
+ * permitted should not invent an agent.
+ */
+export function readSettings(userData: string): { readonly nominated: readonly string[]; readonly grants: readonly Grant[] } {
   const p = grantsPath(userData);
+  let stored: { nominated?: string[]; grants?: Grant[] } = {};
   if (existsSync(p)) {
     try { stored = JSON.parse(readFileSync(p, 'utf8')) as typeof stored; } catch { stored = {}; }
   }
   return {
-    workspace,
     nominated: (stored.nominated ?? []).filter((d) => typeof d === 'string'),
     grants: (stored.grants ?? []).filter((g) => typeof g?.rule === 'string'),
   };
+}
+
+export function readPolicy(userData: string, agentId: string): Policy {
+  const workspace = join(userData, 'agent-workspaces', agentId.replace(/[^a-zA-Z0-9-]/g, '_'));
+  mkdirSync(workspace, { recursive: true });
+  return { workspace, ...readSettings(userData) };
 }
 
 export function writeGrant(userData: string, grant: Grant): void {
@@ -313,4 +355,119 @@ export function writeGrant(userData: string, grant: Grant): void {
 /** A stable id for one pending request, so the app and the hook name the same thing. */
 export function requestId(call: ToolCall): string {
   return createHash('sha256').update(call.tool + '' + JSON.stringify(call.input)).digest('hex').slice(0, 16);
+}
+
+/** Withdraw a standing grant. What was permitted goes back to being asked about. */
+export function revokeGrant(userData: string, rule: string): void {
+  const p = grantsPath(userData);
+  if (!existsSync(p)) return;
+  let stored: { nominated?: string[]; grants?: Grant[] } = {};
+  try { stored = JSON.parse(readFileSync(p, 'utf8')) as typeof stored; } catch { return; }
+  writeFileSync(p, JSON.stringify({ ...stored, grants: (stored.grants ?? []).filter((g) => g.rule !== rule) }, null, 2),
+    { mode: 0o600, encoding: 'utf8' });
+}
+
+/**
+ * Add or remove a directory the agent may work in as freely as its own workspace.
+ *
+ * ★ A NOMINATION IS CHECKED AGAINST THE NEVER LIST TOO. Otherwise the answer to "no agent reaches
+ * `.ssh`" is "nominate `~` and it does" — a boundary with a documented way through it is a
+ * suggestion. This is the one place a person could widen the policy far enough to matter, so the
+ * hard denials outrank it here exactly as they do in {@link decide}.
+ */
+export function nominate(userData: string, dir: string, on: boolean): { readonly ok: boolean; readonly why: string } {
+  const abs = resolve(dir);
+  if (on && forbiddenPath(abs)) {
+    return { ok: false, why: 'that directory holds credentials or this app\'s own configuration, so it cannot be nominated' };
+  }
+  if (on && (abs === resolve(homedir()) || abs.split(sep).filter(Boolean).length <= 1)) {
+    // ★ A whole drive or an entire home directory is not a nomination, it is a bypass: everything
+    // on the never list lives inside one. Nominating a PROJECT is the intent; this keeps it so.
+    return { ok: false, why: 'nominate a project directory rather than your whole home folder or a drive root' };
+  }
+  const p = grantsPath(userData);
+  let stored: { nominated?: string[]; grants?: Grant[] } = {};
+  if (existsSync(p)) {
+    try { stored = JSON.parse(readFileSync(p, 'utf8')) as typeof stored; } catch { stored = {}; }
+  }
+  const rest = (stored.nominated ?? []).filter((d) => resolve(d) !== abs);
+  writeFileSync(p, JSON.stringify({ ...stored, nominated: on ? [...rest, abs] : rest }, null, 2),
+    { mode: 0o600, encoding: 'utf8' });
+  return { ok: true, why: on ? 'the agent may now work in ' + abs : 'no longer nominated' };
+}
+
+// ── what is waiting on a person ──────────────────────────────────────────────
+
+/** One thing an agent was refused and asked about, waiting to be answered. */
+export interface PendingRequest {
+  readonly id: string;
+  readonly rule: string;
+  readonly what: string;
+  readonly tool: string;
+  readonly agentName: string;
+  readonly askedBy: string;
+  readonly channel: string;
+  readonly atIso: string;
+}
+
+/**
+ * ★ ONE DEFINITION, USED BY BOTH SIDES. The gate writes requests and the app reads them, and they
+ * are different processes that never speak — so the only thing joining them is this path. Written
+ * out twice, a change to one is a panel that silently shows nothing forever while agents go on
+ * asking: no error, no empty-state, just a boundary nobody can answer. `composeGate` takes the
+ * directory from here rather than composing its own.
+ */
+export function requestsDir(userData: string): string {
+  return join(userData, 'agent-requests');
+}
+
+export function requestsPath(userData: string): string {
+  return join(requestsDir(userData), 'pending.jsonl');
+}
+
+/**
+ * What is waiting to be answered, newest first, ONE PER RULE.
+ *
+ * ★ DEDUPED BY RULE RATHER THAN BY REQUEST, because an agent that is refused asks again — on the
+ * next turn, and the turn after that. Listing every attempt buries the person under twenty copies
+ * of one question, and the thing they are actually answering IS the rule: that is what a grant is
+ * written against, so twenty attempts are one decision.
+ *
+ * ★ AND A LINE THAT WILL NOT PARSE IS SKIPPED, NOT FATAL. A separate process appends to this file
+ * per tool call with no locking, so a torn final line is ordinary rather than exceptional, and it
+ * must not stop a person seeing the requests above it.
+ */
+export function readPending(userData: string): readonly PendingRequest[] {
+  const p = requestsPath(userData);
+  if (!existsSync(p)) return [];
+  let raw = '';
+  try { raw = readFileSync(p, 'utf8'); } catch { return []; }
+  const byRule = new Map<string, PendingRequest>();
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const r = JSON.parse(line) as PendingRequest;
+      if (typeof r?.rule === 'string' && typeof r?.id === 'string') byRule.set(r.rule, r);
+    } catch { /* a partial write is not a reason to show nothing */ }
+  }
+  return [...byRule.values()].sort((a, b) => String(b.atIso ?? '').localeCompare(String(a.atIso ?? '')));
+}
+
+/**
+ * Forget a request, once it has been approved or turned down.
+ *
+ * The rewrite races the gate's appends, and it is benign in the only direction that matters: a
+ * request that survives is asked again, and one that is lost reappears the next time the agent
+ * tries. Neither outcome can grant anything.
+ */
+export function clearPending(userData: string, rule: string): void {
+  const p = requestsPath(userData);
+  if (!existsSync(p)) return;
+  try {
+    const kept = readFileSync(p, 'utf8').split('\n').filter((line) => {
+      if (!line.trim()) return false;
+      try { return (JSON.parse(line) as PendingRequest).rule !== rule; } catch { return false; }
+    });
+    writeFileSync(p, kept.length ? kept.join('\n') + '\n' : '', { mode: 0o600, encoding: 'utf8' });
+  } catch { /* leaving it is survivable — the person can turn it down again */ }
 }
