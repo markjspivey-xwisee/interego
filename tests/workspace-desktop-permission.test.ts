@@ -293,6 +293,114 @@ describe('★★ what the adversarial review found', () => {
   });
 });
 
+/**
+ * ★★ THE TEST WHOSE ABSENCE LET A CATASTROPHIC REGRESSION SHIP.
+ *
+ * A second adversarial round — pointed at the FIXES from the first — found that `cat src/index.ts`,
+ * `mkdir -p a/b` and `./scripts/build.sh` all returned `ask`. The path scanner was an unanchored
+ * regex, so `src/index.ts` matched from the `/` and `isAbsolute('/index.ts')` is true on Windows:
+ * every relative path with a separator in it resolved to the drive root. An agent that cannot read
+ * a file in a subdirectory is not usable, which is the exact failure this whole design started
+ * from — and none of the 43 tests noticed, because they all check what must be REFUSED.
+ *
+ * A boundary has two failure directions and only one of them was tested. This is the other one.
+ */
+describe('★★ ordinary work stays ordinary', () => {
+  const ws = mkdtempSync(join(tmpdir(), 'iego-ord-'));
+  const p = policy({ workspace: ws });
+  const kindOf = (command: string): string => decide({ tool: 'Bash', input: { command }, cwd: ws }, p).kind;
+
+  // What a coding agent actually runs, minute to minute. Each of these must be `allow` — no
+  // approval, no request queued, no person interrupted.
+  for (const command of [
+    'git status', 'npm ci', 'npm test', 'ls -la', 'mkdir sub', 'cat package.json',
+    'echo hi > out.txt', 'node index.js', 'npx tsc -p tsconfig.json',
+    // ★ Everything below here returned `ask` before this was written.
+    'cat src/index.ts', 'ls src/components', 'mkdir -p a/b', 'node src/index.js',
+    'head -20 src/x.ts', './scripts/build.sh', 'type src\\index.ts', 'python scripts\\run.py',
+    'echo "a\\nb" > out.txt', 'grep -E "\\d+" log.txt', 'git commit -m "escape \\d in regex"',
+    'npm run build && npm test', 'cd sub && npm test',
+  ]) {
+    it('allows `' + command + '`', () => { expect(kindOf(command)).toBe('allow'); });
+  }
+});
+
+/**
+ * ★★ WHAT THE SECOND ROUND FOUND IN THE FIRST ROUND'S FIXES.
+ *
+ * Five distinct defects, each reproduced against the real `decide()` before anything changed. Two
+ * were holes the fixes OPENED, two were regressions the fixes CAUSED, one was a hole a fix missed.
+ * That ratio is the argument for reviewing a fix as hard as the thing it fixed.
+ */
+describe('★★ what the second review round found', () => {
+  it('★ CRITICAL · `cd ~` re-anchored the whole line INSIDE the workspace', () => {
+    // `~` was resolved as an ordinary child of the current directory — `<workspace>/~` — which IS
+    // inside a root. So the walk set its position to a fake-inside place and judged everything
+    // after it from there, while the real shell stood in the user's home. Measured:
+    //   cd ~ && cat notes.txt                          → ALLOW
+    //   cd ~ && cd .claude && echo x > settings.json   → ALLOW   (writes the PERSON's own settings)
+    // And it was a regression: before the `cd` branch existed, `cd ~/Documents && …` matched
+    // `/Documents` and came back ask.
+    const ws = tmp();
+    const p = policy({ workspace: ws });
+    for (const command of [
+      'cd ~ && cat notes.txt',
+      'cd ~/Documents && cat taxes.txt',
+      'cd $HOME && cd Documents && cat taxes.txt',
+      'cd && cd Documents && cat taxes.txt',            // bare `cd` is HOME in every shell here
+      'cd %USERPROFILE% && cat notes.txt',
+      'cd ~ && cd .claude && echo x > settings.json',
+    ]) {
+      expect(decide(call('Bash', { command }), p).kind).toBe('ask');
+    }
+    // ★ And a destination the walk cannot compute counts as having left, rather than being
+    // guessed at: carrying on from a directory it has lost track of is how the above happened.
+    expect(decide(call('Bash', { command: 'cd $SOMETHING_ELSE && cat x.txt' }), p).kind).toBe('ask');
+    rmSync(ws, { recursive: true, force: true });
+  });
+
+  it('★★ CRITICAL · one grant for `cd ..` was arbitrary read and write outside', () => {
+    // `decide` re-ran the walk on each segment to find which needed approving, and every run
+    // started from the ORIGINAL cwd — so a grant covering `cd ..` left every later segment judged
+    // from a workspace the shell had already left. Measured, with that single grant:
+    //   cd .. && cat secret.txt             → GRANTED
+    //   cd .. && echo pwned > planted.txt   → GRANTED
+    // `Bash(cd .. …)` is a request the gate raises by itself, so it is exactly what somebody
+    // clicks Allow on.
+    const ws = tmp();
+    const granted = policy({
+      workspace: ws,
+      grants: [{ rule: 'Bash(cd .. …)', what: 'step up one directory', grantedIso: '2026-08-13T00:00:00Z' }],
+    });
+    expect(decide(call('Bash', { command: 'cd ..' }), granted).kind).toBe('granted');
+    expect(decide(call('Bash', { command: 'cd .. && cat secret.txt' }), granted).kind).toBe('ask');
+    expect(decide(call('Bash', { command: 'cd .. && cd .. && cat anything.txt' }), granted).kind).toBe('ask');
+    expect(decide(call('Bash', { command: 'cd .. && echo pwned > planted.txt' }), granted).kind).toBe('ask');
+    rmSync(ws, { recursive: true, force: true });
+  });
+
+  it('★ a redirect target is a path even when it is a bare word', () => {
+    // `echo pwned > planted.txt` was judged clean: no separator in the filename, and `echo` is not
+    // one of the file commands the bare-word rule inspects. The agent could WRITE outside while
+    // the walk saw nothing but an echo.
+    const ws = tmp();
+    const p = policy({ workspace: ws });
+    expect(decide(call('Bash', { command: 'echo x > out.txt' }), p).kind).toBe('allow');
+    expect(decide(call('Bash', { command: 'echo x > ../out.txt' }), p).kind).toBe('ask');
+    rmSync(ws, { recursive: true, force: true });
+  });
+
+  it('★ a quoted regex is not a path, but a quoted absolute path still is', () => {
+    // The two have to be told apart by more than "starts with a backslash": `\d+` is a pattern and
+    // `\Users\me\.ssh\id_rsa` is a drive-relative path. The second separator is what separates them.
+    const ws = tmp();
+    const p = policy({ workspace: ws });
+    expect(decide(call('Bash', { command: 'grep -rn "\\bfoo\\b" src' }), p).kind).toBe('allow');
+    expect(decide(call('Bash', { command: 'cat "' + join(homedir(), 'Documents', 'taxes.txt') + '"' }), p).kind).toBe('ask');
+    rmSync(ws, { recursive: true, force: true });
+  });
+});
+
 describe('the rule an approval is written against', () => {
   it('★ is never the bare tool name — one yes to `ls` must not become yes to every command', () => {
     expect(ruleFor(call('Bash', { command: 'npm test -- --watch' }))).toBe('Bash(npm test …)');
