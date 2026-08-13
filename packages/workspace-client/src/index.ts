@@ -52,7 +52,7 @@ export { notifyAsk, type AskNotice } from './ask.js';
 
 export {
   entryTurtle, preconditionLine, entryShapeAnswer, postEntry,
-  type PostOutcome, type EntryAuthor,
+  type PostOutcome, type EntryAuthor, type EntryAttachment,
 } from './entry.js';
 
 export {

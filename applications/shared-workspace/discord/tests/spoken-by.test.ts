@@ -80,37 +80,61 @@ describe('a reply arrives with the message it answers', () => {
   });
 });
 
-describe('an attachment is visible to the bot, so it can say what it did not keep', () => {
-  it('★ a picture with no caption is no longer an empty message with nothing to show for it', () => {
-    // The defect: `content: ""` reaches `recordMessage`, which answers `{ kind: 'empty' }`, which
-    // `renderRecord` renders as null. Posting an image wrote nothing to the pod AND said nothing
-    // in the channel — indistinguishable, from the person's side, from a bot that had crashed.
+describe('an attachment is a thing that was posted, and now reaches the record', () => {
+  it('★ a picture with no caption used to write nothing and say nothing', () => {
+    // `content: ""` reached `recordMessage`, which answered `{ kind: 'empty' }`, which
+    // `renderRecord` rendered as null. Correct about the words and wrong about the event: the
+    // person posted something and the pod said they had not. `EntryDraft.body` is optional in the
+    // substrate for exactly this case.
     const [msg] = messagesFrom({
       ...BASE, content: '',
-      attachments: [{ filename: 'floorplan.png', url: 'https://cdn.discordapp.com/x/floorplan.png' }],
+      attachments: [{ filename: 'floorplan.png', url: 'https://cdn.discordapp.com/x/floorplan.png?ex=1', content_type: 'image/png', size: 40518 }],
     });
     expect(msg?.content).toBe('');
-    expect(msg?.attachmentNames).toEqual(['floorplan.png']);
+    expect(msg?.attachments).toEqual([{
+      name: 'floorplan.png',
+      url: 'https://cdn.discordapp.com/x/floorplan.png?ex=1',
+      mediaType: 'image/png',
+      bytes: 40518,
+    }]);
   });
 
   it('an ordinary message reports no attachments rather than undefined', () => {
-    expect(messagesFrom(BASE)[0]?.attachmentNames).toEqual([]);
+    expect(messagesFrom(BASE)[0]?.attachments).toEqual([]);
   });
 
-  it('keeps every name when several are posted at once', () => {
+  it('keeps every file when several are posted at once', () => {
     const [msg] = messagesFrom({
       ...BASE,
-      attachments: [{ filename: 'a.png' }, { filename: 'b.pdf' }, { filename: 'c.csv' }],
+      attachments: [
+        { filename: 'a.png', url: 'https://cdn/a' },
+        { filename: 'b.pdf', url: 'https://cdn/b' },
+        { filename: 'c.csv', url: 'https://cdn/c' },
+      ],
     });
-    expect(msg?.attachmentNames).toEqual(['a.png', 'b.pdf', 'c.csv']);
+    expect(msg?.attachments.map((a) => a.name)).toEqual(['a.png', 'b.pdf', 'c.csv']);
   });
 
-  it('drops a malformed entry instead of putting undefined in the list', () => {
+  it('★ reports a missing type or size as null rather than inventing one', () => {
+    // A record that guessed `application/octet-stream` would be asserting something Discord did
+    // not say, on a descriptor that cannot afterwards be corrected.
+    const [msg] = messagesFrom({ ...BASE, attachments: [{ filename: 'x.bin', url: 'https://cdn/x' }] });
+    expect(msg?.attachments[0]?.mediaType).toBeNull();
+    expect(msg?.attachments[0]?.bytes).toBeNull();
+  });
+
+  it('drops an entry with no name or no location instead of half-recording it', () => {
     const [msg] = messagesFrom({
       ...BASE,
-      attachments: [{ filename: 'good.png' }, { url: 'no-filename' }, { filename: '' }, null],
+      attachments: [
+        { filename: 'good.png', url: 'https://cdn/good' },
+        { url: 'https://cdn/nameless' },
+        { filename: 'no-url.png' },
+        { filename: '', url: 'https://cdn/empty' },
+        null,
+      ],
     });
-    expect(msg?.attachmentNames).toEqual(['good.png']);
+    expect(msg?.attachments.map((a) => a.name)).toEqual(['good.png']);
   });
 });
 

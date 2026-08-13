@@ -19,7 +19,7 @@ import {
   qualifiedName, readAuthorship, readDelegates, readEntryAuthorship, readInt, readIri, readIriAll, readLiteral,
   verifiedSigner,
   readMember, sendInvite, toChainRow,
-  type AuthorshipReading, type DelegateRoster, type EntryAuthorship, type PostOutcome,
+  type AuthorshipReading, type DelegateRoster, type EntryAttachment, type EntryAuthorship, type PostOutcome,
   type WorkspaceClient,
   delegatePort,
 } from '@interego/workspace-client';
@@ -344,6 +344,14 @@ export async function recordMessage(
      * predicate inside the signed region.
      */
     readonly addressedTo?: readonly string[];
+    /**
+     * Files posted with the message.
+     *
+     * ★ THEY MAKE AN OTHERWISE-EMPTY MESSAGE RECORDABLE. A picture with no caption arrives with
+     * `text: ""`, and this used to answer `{ kind: 'empty' }` — correct about the words and wrong
+     * about the event, because the person posted something and the pod said they had not.
+     */
+    readonly attachments?: readonly EntryAttachment[];
   },
 ): Promise<RecordOut> {
   const binding = deps.store.threadOf(args.threadId);
@@ -351,7 +359,9 @@ export async function recordMessage(
   const link = deps.store.linkOf(args.discordUserId);
   if (!link) return { kind: 'unlinked', discordUserId: args.discordUserId };
   const body = args.text.trim();
-  if (!body) return { kind: 'empty' };
+  // ★ EMPTY MEANS NOTHING WAS POSTED, NOT MERELY THAT NOTHING WAS TYPED. An attachment IS
+  // something posted, and `EntryDraft.body` is optional in the substrate for exactly this reason.
+  if (!body && !args.attachments?.length) return { kind: 'empty' };
 
   try {
     // ★ ASKED BEFORE EVERY WRITE, AND THE RELAY'S OWN GATE IS NOT THE BOUNDARY. Measured
@@ -381,6 +391,7 @@ export async function recordMessage(
     const outcome = await postEntry(deps.client, {
       podName: member.podName, streamIri, workspace: binding.workspace,
       body, entryShape: frame.record.entryShape,
+      ...(args.attachments?.length ? { attachments: args.attachments } : {}),
       ...(args.addressedTo === undefined ? {} : { addressedTo: args.addressedTo }),
       /**
        * ★ THE PERSON, NOT THIS BOT, AND THAT IS NOT AN OVERSIGHT.

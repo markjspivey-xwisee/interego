@@ -3384,7 +3384,12 @@ var WSPC = (() => {
     const footing = a.kind === "delegate" ? footingTurtle({ entryIri, agentId: a.agentId, footing: a.footing, iri, endedIso: created2 }) : null;
     const addressed = [...new Set(args.addressedTo ?? [])];
     const addressedLine = addressed.length ? "  iep:addressedTo " + addressed.map((t) => iri(t, "an agent this entry is addressed to")).join(", ") + " ;\n" : "";
-    return "@prefix wsp: <" + WSP + "> .\n@prefix iep: <" + IEP + "> .\n@prefix prov: <" + PROV + "> .\n@prefix dct: <http://purl.org/dc/terms/> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n" + subject + "\n  a wsp:Entry ;\n  wsp:workspace " + workspace + ' ;\n  wsp:seq "' + args.seq + '"^^xsd:nonNegativeInteger ;\n' + (prior ? "  iep:supersedes " + prior + " ;\n" : "") + "  prov:wasAttributedTo " + author + " ;\n" + addressedLine + (args.derivedFrom ? "  prov:wasDerivedFrom " + iri(args.derivedFrom, "the record this entry answers") + " ;\n" : "") + (footing ? footing.generatedBy : "") + '  dct:created "' + created2 + '"^^xsd:dateTime ;\n  dct:description "' + escapeTurtleLiteral2(args.body) + '" .\n' + (footing ? footing.blocks : "");
+    const attachmentBlocks = (args.attachments ?? []).map((_att, i) => "  wsp:attachment _:att" + args.seq + "x" + i + " ;\n").join("");
+    const attachmentNodes = (args.attachments ?? []).map((att, i) => {
+      const node = "_:att" + args.seq + "x" + i;
+      return node + '\n  a wsp:Attachment ;\n  dct:title "' + escapeTurtleLiteral2(att.name) + '" ;\n' + (att.mediaType ? '  dct:format "' + escapeTurtleLiteral2(att.mediaType) + '" ;\n' : "") + (typeof att.bytes === "number" ? '  wsp:byteSize "' + Math.max(0, Math.trunc(att.bytes)) + '"^^xsd:nonNegativeInteger ;\n' : "") + '  wsp:attachmentSource "' + escapeTurtleLiteral2(att.url) + '" .\n';
+    }).join("");
+    return "@prefix wsp: <" + WSP + "> .\n@prefix iep: <" + IEP + "> .\n@prefix prov: <" + PROV + "> .\n@prefix dct: <http://purl.org/dc/terms/> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n" + subject + "\n  a wsp:Entry ;\n  wsp:workspace " + workspace + ' ;\n  wsp:seq "' + args.seq + '"^^xsd:nonNegativeInteger ;\n' + (prior ? "  iep:supersedes " + prior + " ;\n" : "") + "  prov:wasAttributedTo " + author + " ;\n" + addressedLine + (args.derivedFrom ? "  prov:wasDerivedFrom " + iri(args.derivedFrom, "the record this entry answers") + " ;\n" : "") + (footing ? footing.generatedBy : "") + attachmentBlocks + '  dct:created "' + created2 + '"^^xsd:dateTime ;\n  dct:description "' + escapeTurtleLiteral2(args.body) + '" .\n' + attachmentNodes + (footing ? footing.blocks : "");
   }
   function preconditionLine(pc, sent, sentKind) {
     if (pc && typeof pc === "object") {
@@ -3443,6 +3448,7 @@ var WSPC = (() => {
           body: args.body,
           prior: prior ? prior.url : null,
           author: args.author,
+          ...args.attachments?.length ? { attachments: args.attachments } : {},
           ...args.addressedTo === void 0 ? {} : { addressedTo: args.addressedTo },
           ...args.derivedFrom === void 0 ? {} : { derivedFrom: args.derivedFrom }
         }),
