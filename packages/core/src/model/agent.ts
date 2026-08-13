@@ -684,6 +684,25 @@ export interface CapabilityDraft {
   /** The `iep:action` a client names when invoking. Dereferenceable, per the URL-identifier rule. */
   readonly action: string;
   readonly route: CapabilityRoute;
+  /**
+   * A published SHACL shape the request body must satisfy, or absent for an action taking none.
+   *
+   * ★ THIS IS WHAT LETS AN ASK NAME *WHAT* RATHER THAN ONLY *WHO*. Without it an affordance is a
+   * verb with no arguments: a caller learns an agent can be invoked and learns nothing about what
+   * to send, so every cross-vertical composition degrades to prose in a channel with a human
+   * reading it. With it, a Foxxi skill and a workspace agent are reached the same way — resolve
+   * the shape, build a conforming body, invoke — because the contract is published data rather
+   * than something each caller has to know out of band.
+   *
+   * `hydra:expects` and not a minted term: Hydra already means exactly this, and declaring input
+   * under our own predicate would make every non-Interego client learn a synonym for a word it has.
+   *
+   * ★ A DECLARATION, NOT AN ENFORCEMENT POINT — the same rule as `requiresSignedRequest` below.
+   * The gate is at the exposing end, where the endpoint validates what it actually received. A
+   * caller treating the ABSENCE of a shape as "anything is acceptable" would be reading absence
+   * as evidence.
+   */
+  readonly expects?: string;
   /** What a reader shows on the control. Read from here, never composed by the page. */
   readonly title: string;
   readonly description: string;
@@ -703,7 +722,7 @@ export interface CapabilityDraft {
 
 /** Why this draft cannot be published, or null when it can. */
 export function capabilityProblem(draft: {
-  readonly action?: unknown; readonly route?: unknown;
+  readonly action?: unknown; readonly route?: unknown; readonly expects?: unknown;
 }): string | null {
   if (typeof draft.action !== 'string' || !draft.action) {
     return 'a capability names no iep:action, so there is nothing for a caller to invoke and nothing for a reader to dereference';
@@ -719,6 +738,24 @@ export function capabilityProblem(draft: {
   }
   if (r.kind === 'hosted' && !r.target) return 'a hosted capability names no hydra:target';
   if (r.kind === 'ask' && !r.askVia) return 'an ask-routed capability names no iep:askVia';
+  /**
+   * ★ THE SAME RULE AS `action`, BECAUSE A SHAPE NOBODY CAN FETCH IS NOT A CONTRACT.
+   *
+   * The whole value of declaring input is that a caller it has never met can resolve the shape and
+   * build a conforming body. An opaque token here would advertise a contract while withholding it,
+   * which is worse than declaring nothing — a caller would believe terms exist and be unable to
+   * read them. Absent is fine and means "this document says nothing about input"; present and
+   * unfetchable is refused.
+   */
+  if (draft.expects !== undefined) {
+    if (typeof draft.expects !== 'string' || !draft.expects) {
+      return 'a capability declares a hydra:expects that is not a string, so the shape a caller would have to satisfy is not named';
+    }
+    if (!/^https?:\/\//.test(draft.expects)) {
+      return 'a capability\'s hydra:expects must be a dereferenceable http(s) URL, for the same reason iep:action must be: a '
+        + 'caller has to be able to FETCH the shape to build a body that satisfies it. `' + draft.expects + '` is not one.';
+    }
+  }
   return null;
 }
 
@@ -739,6 +776,9 @@ export function capabilityTurtle(draft: CapabilityDraft): string {
     ? '  hydra:target ' + iriRef(draft.route.target, 'the hydra:target, which comes from this deployment\'s own configuration') + ' ;\n'
       + '  hydra:method "POST" ;\n'
     : '  iep:askVia ' + iriRef(draft.route.askVia, 'the iep:askVia route') + ' ;\n';
+  const expects = draft.expects
+    ? '  hydra:expects ' + iriRef(draft.expects, 'the hydra:expects shape IRI') + ' ;\n'
+    : '';
   const created = draft.createdIso ?? new Date().toISOString();
   return '@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .\n'
     + '@prefix hydra: <http://www.w3.org/ns/hydra/core#> .\n'
@@ -749,6 +789,7 @@ export function capabilityTurtle(draft: CapabilityDraft): string {
     + '  iep:capabilityOf ' + agent + ' ;\n'
     + '  iep:action ' + action + ' ;\n'
     + route
+    + expects
     + (draft.requiresSignedRequest ? '  iep:requiresSignedRequest true ;\n' : '')
     + '  hydra:title "' + escapeTurtleLiteral(draft.title) + '" ;\n'
     + '  dct:description "' + escapeTurtleLiteral(draft.description) + '" ;\n'
@@ -827,6 +868,14 @@ export type CapabilityRead =
       readonly iri: string;
       readonly action: string;
       readonly route: CapabilityRoute;
+      /**
+       * The published shape a request body must satisfy, when the document declared one.
+       *
+       * Optional because absence is a real answer and a different one from "takes nothing": the
+       * document said nothing, so the caller knows nothing, and a reader that reported an empty
+       * contract would be inventing the agent's terms for it.
+       */
+      readonly expects?: string;
       readonly title: string | null;
       readonly description: string | null;
       /** What the document DECLARES about a signing gate. Absence is not "no gate" — see the draft. */
@@ -908,6 +957,7 @@ export async function readCapabilities(
     return { kind: 'unreadable', agentId: args.agentId, iri, why: 'that capability document\'s signed region names ' + (about.length > 1 ? about.length + ' different agents' : (about[0] ?? 'no agent at all')) + ' as the agent it is about, and it was asked for ' + args.agentId + '. The document name is not an assertion; the region is.' };
   }
   const action = readIri(region, 'iep:action');
+  const expects = readIri(region, 'hydra:expects');
   const target = readIri(region, 'hydra:target');
   const askVia = readIri(region, 'iep:askVia');
   if (!action) return { kind: 'unreadable', agentId: args.agentId, iri, why: 'that capability document names no iep:action, so there is nothing in it a caller could invoke' };
@@ -920,6 +970,10 @@ export async function readCapabilities(
   return {
     kind: 'advertised', agentId: args.agentId, iri, action,
     route: target ? { kind: 'hosted', target } : { kind: 'ask', askVia: askVia as string },
+    // ★ ABSENT STAYS ABSENT. Defaulting this would report that the agent accepts anything, which
+    // is a claim its document did not make — the same absence-is-not-evidence rule the rest of
+    // this reader is built on.
+    ...(expects ? { expects } : {}),
     title: readLiteral(region, 'hydra:title'),
     description: readLiteral(region, 'dct:description'),
     requiresSignedRequest: substrateReaders.hasTrue(region, 'iep:requiresSignedRequest'),

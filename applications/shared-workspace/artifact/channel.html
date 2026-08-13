@@ -3087,6 +3087,14 @@ var WSPC = (() => {
       return "a hosted capability names no hydra:target";
     if (r.kind === "ask" && !r.askVia)
       return "an ask-routed capability names no iep:askVia";
+    if (draft.expects !== void 0) {
+      if (typeof draft.expects !== "string" || !draft.expects) {
+        return "a capability declares a hydra:expects that is not a string, so the shape a caller would have to satisfy is not named";
+      }
+      if (!/^https?:\/\//.test(draft.expects)) {
+        return "a capability's hydra:expects must be a dereferenceable http(s) URL, for the same reason iep:action must be: a caller has to be able to FETCH the shape to build a body that satisfies it. `" + draft.expects + "` is not one.";
+      }
+    }
     return null;
   }
   function capabilityTurtle(draft) {
@@ -3097,8 +3105,9 @@ var WSPC = (() => {
     const agent = iriRef(draft.agentId, "the agent this capability document is about");
     const action = iriRef(draft.action, "the action IRI");
     const route = draft.route.kind === "hosted" ? "  hydra:target " + iriRef(draft.route.target, "the hydra:target, which comes from this deployment's own configuration") + ' ;\n  hydra:method "POST" ;\n' : "  iep:askVia " + iriRef(draft.route.askVia, "the iep:askVia route") + " ;\n";
+    const expects = draft.expects ? "  hydra:expects " + iriRef(draft.expects, "the hydra:expects shape IRI") + " ;\n" : "";
     const created2 = draft.createdIso ?? (/* @__PURE__ */ new Date()).toISOString();
-    return "@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .\n@prefix hydra: <http://www.w3.org/ns/hydra/core#> .\n@prefix dct: <http://purl.org/dc/terms/> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n" + self + "\n  a iep:Affordance, hydra:Operation ;\n  iep:capabilityOf " + agent + " ;\n  iep:action " + action + " ;\n" + route + (draft.requiresSignedRequest ? "  iep:requiresSignedRequest true ;\n" : "") + '  hydra:title "' + escapeTurtleLiteral(draft.title) + '" ;\n  dct:description "' + escapeTurtleLiteral(draft.description) + '" ;\n  dct:created "' + created2 + '"^^xsd:dateTime .\n';
+    return "@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .\n@prefix hydra: <http://www.w3.org/ns/hydra/core#> .\n@prefix dct: <http://purl.org/dc/terms/> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n" + self + "\n  a iep:Affordance, hydra:Operation ;\n  iep:capabilityOf " + agent + " ;\n  iep:action " + action + " ;\n" + route + expects + (draft.requiresSignedRequest ? "  iep:requiresSignedRequest true ;\n" : "") + '  hydra:title "' + escapeTurtleLiteral(draft.title) + '" ;\n  dct:description "' + escapeTurtleLiteral(draft.description) + '" ;\n  dct:created "' + created2 + '"^^xsd:dateTime .\n';
   }
   async function publishCapability(port, args) {
     const iri = capabilitiesIri(args.relay, args.agentId);
@@ -3192,6 +3201,7 @@ var WSPC = (() => {
       return { kind: "unreadable", agentId: args.agentId, iri, why: "that capability document's signed region names " + (about.length > 1 ? about.length + " different agents" : about[0] ?? "no agent at all") + " as the agent it is about, and it was asked for " + args.agentId + ". The document name is not an assertion; the region is." };
     }
     const action = readIri2(region, "iep:action");
+    const expects = readIri2(region, "hydra:expects");
     const target = readIri2(region, "hydra:target");
     const askVia = readIri2(region, "iep:askVia");
     if (!action)
@@ -3208,6 +3218,10 @@ var WSPC = (() => {
       iri,
       action,
       route: target ? { kind: "hosted", target } : { kind: "ask", askVia },
+      // ★ ABSENT STAYS ABSENT. Defaulting this would report that the agent accepts anything, which
+      // is a claim its document did not make — the same absence-is-not-evidence rule the rest of
+      // this reader is built on.
+      ...expects ? { expects } : {},
       title: readLiteral2(region, "hydra:title"),
       description: readLiteral2(region, "dct:description"),
       requiresSignedRequest: substrateReaders.hasTrue(region, "iep:requiresSignedRequest"),

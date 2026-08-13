@@ -89,6 +89,59 @@ describe('a hosted agent', () => {
   });
 });
 
+/**
+ * WHAT AN AFFORDANCE EXPECTS — THE DIFFERENCE BETWEEN NAMING *WHO* AND NAMING *WHAT*.
+ *
+ * Without a declared input shape an affordance is a verb with no arguments: a caller learns that
+ * an agent can be invoked and learns nothing about what to send it. Every cross-vertical
+ * composition then degrades into prose in a channel with a human reading it, because the contract
+ * lives out of band. `hydra:expects` puts it in the document, so a Foxxi skill and a workspace
+ * agent are reached the same way — resolve the shape, build a conforming body, invoke.
+ *
+ * Hydra's own term, not a minted one: an operation declaring input under an Interego predicate
+ * would make every non-Interego client learn a synonym for a word it already has.
+ */
+describe('an affordance can say what it expects', () => {
+  const SHAPE = 'https://relay.interego.xwisee.com/ns/' + POD + '/teach-shape';
+
+  it('publishes hydra:expects when a shape is declared', () => {
+    const t = capabilityTurtle({ ...base, route: { kind: 'hosted', target: TARGET }, expects: SHAPE });
+    expect(t).toContain('hydra:expects <' + SHAPE + '>');
+  });
+
+  it('★ says nothing at all when none is declared, rather than an empty contract', () => {
+    // Absence is a real answer and a different one from "takes nothing". A document that emitted
+    // an empty shape would be asserting the agent's terms on its behalf.
+    const t = capabilityTurtle({ ...base, route: { kind: 'hosted', target: TARGET } });
+    expect(t).not.toContain('hydra:expects');
+  });
+
+  it('★ refuses a shape a caller could not fetch, for the same reason iep:action must be one', () => {
+    // A contract that is advertised and unreadable is worse than no contract: the caller believes
+    // terms exist and cannot read them.
+    expect(capabilityProblem({ action: RESPOND_AS_MEMBER, route: { kind: 'hosted', target: TARGET }, expects: 'urn:shape:teach' }))
+      .toMatch(/dereferenceable http\(s\) URL/);
+    expect(capabilityProblem({ action: RESPOND_AS_MEMBER, route: { kind: 'hosted', target: TARGET }, expects: '' }))
+      .toMatch(/not a string|is not named/);
+    // Absent is fine — it means the document says nothing about input.
+    expect(capabilityProblem({ action: RESPOND_AS_MEMBER, route: { kind: 'hosted', target: TARGET } })).toBeNull();
+    expect(capabilityProblem({ action: RESPOND_AS_MEMBER, route: { kind: 'hosted', target: TARGET }, expects: SHAPE })).toBeNull();
+  });
+
+  it('carries it on an ask-routed affordance too, which is where composition needs it most', () => {
+    // An agent with no endpoint is reached by putting a record on the channel. Knowing the shape
+    // of that record is exactly what a caller from another vertical does not otherwise have.
+    const t = capabilityTurtle({ ...base, route: { kind: 'ask', askVia: RELAY + '/ns/' + POD + '/inbox' }, expects: SHAPE });
+    expect(t).toContain('hydra:expects <' + SHAPE + '>');
+    expect(t).toContain('iep:askVia');
+  });
+
+  it('guards the shape IRI the same way every other interpolated IRI is guarded', () => {
+    expect(() => capabilityTurtle({ ...base, route: { kind: 'hosted', target: TARGET }, expects: 'https://x.example/a> ; iep:capabilityOf <http://evil' }))
+      .toThrow();
+  });
+});
+
 describe('an agent with no endpoint', () => {
   it('publishes iep:askVia and NO target, so a reader cannot mistake it for callable', () => {
     const t = capabilityTurtle({ ...base, route: { kind: 'ask', askVia: RELAY + '/ns/' + POD + '/inbox' } });
@@ -138,6 +191,52 @@ describe('what is refused rather than resolved', () => {
     expect(read.kind).toBe('unreadable');
     if (read.kind !== 'unreadable') throw new Error('narrowed above');
     expect(read.why).toContain('BOTH');
+  });
+
+  it('★ round-trips hydra:expects out of the SIGNED region, so a caller learns the contract', async () => {
+    // Writing it proves nothing on its own. What a caller acts on is what the READER returns, out
+    // of bytes the agent's own key signed — so the shape has to survive that path or the whole
+    // point of publishing it is lost.
+    const SHAPE = 'https://relay.interego.xwisee.com/ns/' + POD + '/teach-shape';
+    const t = capabilityTurtle({ ...base, route: { kind: 'hosted', target: TARGET }, expects: SHAPE });
+    const port: AgentPort = {
+      async tool(name: string): Promise<unknown> {
+        if (name === 'discover_context') return { entries: [{ descriptorUrl: 'https://pod/c.ttl' }] };
+        throw new Error('unexpected ' + name);
+      },
+      async descriptor(): Promise<Record<string, unknown>> {
+        return {
+          authorship: { authorshipVerified: true, signedBy: AGENT, contentBinding: 'bound' },
+          graph: { content: '<' + IRI + '> {\n' + t + '\n}' },
+        };
+      },
+    };
+    const read = await readCapabilities(port, { relay: RELAY, agentId: AGENT });
+    expect(read.kind).toBe('advertised');
+    if (read.kind !== 'advertised') throw new Error('narrowed above');
+    expect(read.expects).toBe(SHAPE);
+  });
+
+  it('reports NO expects rather than an empty one when the document declared none', async () => {
+    const t = capabilityTurtle({ ...base, route: { kind: 'hosted', target: TARGET } });
+    const port: AgentPort = {
+      async tool(name: string): Promise<unknown> {
+        if (name === 'discover_context') return { entries: [{ descriptorUrl: 'https://pod/c.ttl' }] };
+        throw new Error('unexpected ' + name);
+      },
+      async descriptor(): Promise<Record<string, unknown>> {
+        return {
+          authorship: { authorshipVerified: true, signedBy: AGENT, contentBinding: 'bound' },
+          graph: { content: '<' + IRI + '> {\n' + t + '\n}' },
+        };
+      },
+    };
+    const read = await readCapabilities(port, { relay: RELAY, agentId: AGENT });
+    expect(read.kind).toBe('advertised');
+    if (read.kind !== 'advertised') throw new Error('narrowed above');
+    // Undefined, not ''. A caller must be able to tell "said nothing" from "declared an empty
+    // contract", because only the second means the agent takes no arguments.
+    expect(read.expects).toBeUndefined();
   });
 
   it('refuses to read a capability document signed by somebody other than its subject', async () => {
