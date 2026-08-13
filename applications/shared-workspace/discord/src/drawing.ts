@@ -1,0 +1,212 @@
+/**
+ * WHEN AN AGENT DRAWS, THE CHANNEL SHOWS A PICTURE.
+ *
+ * ── WHY THIS IS NOT A CAPABILITY GRANT ───────────────────────────────────────
+ *
+ * Asked in a live channel for a picture, a delegate replied that image generation was not a
+ * capability it had and that somebody would need to wrap an image model and give it write access.
+ * That sent a design after connectors, per-tool grants and a published affordance holding its own
+ * API key. None of it was needed.
+ *
+ * ★ A LANGUAGE MODEL DRAWS. SVG is text, and writing text is the one thing a delegate needs no
+ * permission for. Measured through the delegate's own isolated config — the relay as its only MCP
+ * server, every built-in denied, no image tool anywhere — the same child produced a
+ * 2,595-character donkey with a viewBox and no script. The capability was never missing; the agent
+ * had simply never been told that drawing counts, and the channel had no way to show it.
+ *
+ * ★ AND IT IS THE BEST-BEHAVED IMAGE THIS SYSTEM COULD CARRY. The SVG is the agent's own words, so
+ * it lands in `dct:description` like any other answer — self-contained on the pod, covered by the
+ * same signature, durable, with no CDN to expire and no binary the substrate cannot hold. Nothing
+ * here changes the record. This file is a PROJECTION of it into Discord and nothing more.
+ *
+ * ── WHY IT IS RASTERISED ─────────────────────────────────────────────────────
+ *
+ * Discord does not render an SVG attachment as an image — it shows a file to download. A picture
+ * the person has to download is not a picture in the channel, so the markup is rasterised to PNG
+ * here and posted as one. The SVG stays on the pod as the authoritative thing; the PNG is a view
+ * of it, exactly as `render.ts` is a view of an entry.
+ *
+ * ── WHAT IS REFUSED, AND WHY EACH ────────────────────────────────────────────
+ *
+ * The input is markup written by a model, in answer to text other people typed. It is not hostile
+ * in the injection sense — it is never eval'd — but it is untrusted, and it is about to be handed
+ * to a native renderer.
+ *
+ *   · `<script>` — refused outright. resvg does not execute it, but an SVG carrying script is not
+ *     something to store, forward or hand to any other renderer, and a person may well open the
+ *     original from the pod in a browser that DOES.
+ *   · external references — `<image href="http…">`, `xlink:href`, `<use href="http…">`. A renderer
+ *     that fetched them would make the bot issue an outbound request to an address the model
+ *     chose, from inside the deployment. That is an SSRF the substrate spends real effort refusing
+ *     elsewhere, and it must not arrive through a picture.
+ *   · oversize — a bound on bytes before anything is parsed at all.
+ */
+
+const SVG_MAX = 60_000;
+
+/** How big the rendered PNG may be. Discord's own free-tier attachment ceiling is far above this. */
+const RENDER_WIDTH = 768;
+
+/** Everything that would make a renderer reach outside the document, or run code. */
+const FORBIDDEN = [
+  /<script[\s>]/i,
+  /<foreignObject[\s>]/i,
+  /\son\w+\s*=/i,                       // onload=, onclick=, …
+  /(?:xlink:)?href\s*=\s*["']\s*(?:https?:|\/\/)/i,
+  /url\(\s*["']?\s*(?:https?:|\/\/)/i,
+  /<!ENTITY/i,                          // entity expansion
+];
+
+/**
+ * What the agent produced, ready to attach.
+ *
+ * ★ A FILE IS TEXT WITH A NAME, WHICH IS WHY THIS NEEDS NO CAPABILITY. The agent already writes
+ * text; naming it and attaching it is the whole feature. `drawing` is the one special case, because
+ * Discord shows an SVG attachment as a file to download rather than as a picture, so markup that
+ * IS an image gets rasterised on the way out.
+ */
+export type Produced =
+  | { readonly kind: 'none' }
+  | { readonly kind: 'refused'; readonly why: string }
+  | {
+      readonly kind: 'file';
+      readonly name: string;
+      readonly text: string;
+      readonly contentType: string;
+      /** True when this came from an <svg> and should be rasterised before posting. */
+      readonly rasterise: boolean;
+      /** Whatever the agent said around it, kept and posted alongside. */
+      readonly rest: string;
+    };
+
+/** Discord's own bound on an attachment name, and a floor on what is worth attaching. */
+const NAME_MAX = 64;
+const TEXT_MAX = 200_000;
+
+/** A filename that cannot escape a directory or hide what it is. */
+export function safeFileName(raw: string): string | null {
+  const base = raw.trim().replace(/[\\/]+/g, '').replace(/^\.+/, '');
+  if (!base || base.length > NAME_MAX) return null;
+  /**
+   * ★ NO CONTROL CHARACTERS AND NOTHING A FILESYSTEM REFUSES. The name is chosen by a model in
+   * answer to text other people wrote, and it becomes a filename on somebody's machine the moment
+   * they click it.
+   *
+   * The set is written out because the first version was a RANGE from space to `<`, which is a
+   * different rule from the one intended and refused `my notes.md`. A space in a filename is
+   * ordinary and is allowed; the characters below are the ones Windows and POSIX actually reject,
+   * plus the control range.
+   */
+  /**
+   * ★ THE RANGE IS BUILT FROM CHARACTER CODES, NOT TYPED. Writing `` through a script put a
+   * RAW NUL in this file — git then treats the whole source as binary, so it lands as
+   * `Bin 0 -> N bytes` with no reviewable diff and greps as "Binary file … matches".
+   * `tests/line-endings-are-normalised.test.ts` exists for exactly that and caught it here.
+   * `String.fromCharCode` says which code point is meant and cannot become one.
+   */
+  const ILLEGAL = new Set([...Array(32).keys()].map((n) => String.fromCharCode(n)).concat(['<', '>', ':', '"', '|', '?', '*']));
+  if ([...base].some((ch) => ILLEGAL.has(ch))) return null;
+  return base;
+}
+
+const TYPES: Readonly<Record<string, string>> = {
+  md: 'text/markdown', txt: 'text/plain', csv: 'text/csv', json: 'application/json',
+  ttl: 'text/turtle', svg: 'image/svg+xml', html: 'text/html', xml: 'application/xml',
+  yaml: 'text/yaml', yml: 'text/yaml', js: 'text/javascript', ts: 'text/plain',
+  py: 'text/x-python', sh: 'text/x-shellscript', sql: 'application/sql',
+};
+
+export function contentTypeFor(name: string): string {
+  const ext = /\.([a-z0-9]+)$/i.exec(name)?.[1]?.toLowerCase() ?? '';
+  return TYPES[ext] ?? 'text/plain';
+}
+
+/** Why this SVG will not be rendered, or null. Shared by both forms above. */
+function svgProblem(svg: string): string | null {
+  if (svg.length > SVG_MAX) {
+    return 'the drawing is ' + svg.length + ' characters, over the ' + SVG_MAX + ' this bot will render';
+  }
+  for (const rx of FORBIDDEN) {
+    if (rx.test(svg)) {
+      return 'the drawing contains script, an event handler, or a reference to something outside '
+        + 'itself. It is kept on the record exactly as written and is not rendered here.';
+    }
+  }
+  return null;
+}
+
+/**
+ * The file an agent produced, and whatever it said around it.
+ *
+ * ★ TWO FORMS, BECAUSE ONE OF THEM IS A PICTURE. A fenced block tagged with a filename is the
+ * general case and covers anything a model can write — markdown, CSV, JSON, Turtle, code. A bare
+ * `<svg>` is recognised on its own because a drawing IS an image, and an image posted as a file
+ * that Discord will not preview is not a picture in the channel.
+ *
+ * `rest` is kept and posted. An agent that attaches a table and explains it in a sentence has said
+ * both things, and dropping the sentence to show the file would be this bot editing an answer that
+ * is already on somebody's permanent record.
+ */
+export function findProduced(body: string): Produced {
+  // ── the general form: ```file:name.ext … ```
+  const fenced = /```file:([^\s`]+)\s*\n([\s\S]*?)```/i.exec(body);
+  if (fenced) {
+    const name = safeFileName(fenced[1] as string);
+    if (!name) {
+      return { kind: 'refused', why: 'the file name it chose cannot be used as one (a path, a control character, or too long)' };
+    }
+    const text = (fenced[2] ?? '').replace(/\n$/, '');
+    if (!text.trim()) return { kind: 'refused', why: 'the file it named has no content' };
+    if (text.length > TEXT_MAX) {
+      return { kind: 'refused', why: 'the file is ' + text.length + ' characters, over the ' + TEXT_MAX + ' this bot will attach' };
+    }
+    // An SVG delivered by name still needs rasterising to be seen.
+    const isSvg = /\.svg$/i.test(name) || /^\s*<svg[\s>]/i.test(text);
+    const rest = (body.slice(0, fenced.index) + body.slice(fenced.index + fenced[0].length)).trim();
+    if (isSvg) {
+      const bad = svgProblem(text);
+      if (bad) return { kind: 'refused', why: bad };
+      return { kind: 'file', name: name.replace(/\.svg$/i, '.png'), text, contentType: 'image/png', rasterise: true, rest };
+    }
+    return { kind: 'file', name, text, contentType: contentTypeFor(name), rasterise: false, rest };
+  }
+
+  // ── the drawing form: a bare <svg> in the answer
+  const m = /<svg[\s\S]*?<\/svg>/i.exec(body);
+  if (!m) return { kind: 'none' };
+  const svg = m[0];
+  const bad = svgProblem(svg);
+  if (bad) return { kind: 'refused', why: bad };
+  const rest = (body.slice(0, m.index) + body.slice(m.index + svg.length))
+    .replace(/```(?:svg|xml|html)?\s*```/gi, '').replace(/```/g, '').trim();
+  return { kind: 'file', name: 'drawing.png', text: svg, contentType: 'image/png', rasterise: true, rest };
+}
+
+/**
+ * Render to PNG, or say why not.
+ *
+ * ★ THE RASTERISER IS LOADED LAZILY AND ITS ABSENCE IS SURVIVABLE. `@resvg/resvg-js` is a native
+ * module with per-platform binaries; a deployment whose architecture has none must still run the
+ * bot, and every other thing it does is unaffected by not being able to draw. So a missing
+ * renderer is an answer — the words still post — rather than a boot failure.
+ */
+export async function renderPng(svg: string): Promise<{ ok: true; png: Uint8Array } | { ok: false; why: string }> {
+  let Resvg: new (s: string, o?: unknown) => { render(): { asPng(): Uint8Array } };
+  try {
+    ({ Resvg } = await import('@resvg/resvg-js') as { Resvg: typeof Resvg });
+  } catch (e) {
+    return { ok: false, why: 'this deployment has no SVG renderer (' + ((e as Error)?.message ?? String(e)) + ')' };
+  }
+  try {
+    const out = new Resvg(svg, {
+      fitTo: { mode: 'width', value: RENDER_WIDTH },
+      // ★ NO SYSTEM FONTS LOADED. Scanning the host's font directory is a filesystem read this
+      // process has no reason to make on behalf of markup a model wrote, and a drawing that needs
+      // a particular font is a drawing that renders differently on every deployment anyway.
+      font: { loadSystemFonts: false },
+    }).render().asPng();
+    return { ok: true, png: out };
+  } catch (e) {
+    return { ok: false, why: 'that drawing could not be rendered (' + ((e as Error)?.message ?? String(e)) + ')' };
+  }
+}
