@@ -11,6 +11,7 @@
 import { describeSpan, isPresent, presenceLine, shortRef, type Check, type EntryAuthorship } from '@interego/workspace-client';
 import type { ConfirmOut, LinkChallengeOut, RecordOut, ShowOut, StartOut, UnlinkOut } from './workspace.js';
 import type { AskOut, AskTarget, CandidatesOut } from './ask.js';
+import { AGENT_ROLE_PREFIX, type MentionSync } from './mentions.js';
 import type { WatchNews } from './watch.js';
 import { displayName } from './webhook.js';
 
@@ -447,6 +448,43 @@ const targetLine = (t: AskTarget, nowMs: number): string =>
  * else's pod and a notice into somebody else's inbox; a reader who cannot tell from the reply which
  * of those happened has to go and look, which is the state this bot exists to remove.
  */
+/**
+ * What `/workspace mentions` did to the server.
+ *
+ * ★ IT SAYS WHAT THE ROLE IS NOT. Somebody watching new roles appear in their server is owed the
+ * fact that these grant nothing and contain nobody — the reasonable reading of "the bot made some
+ * roles" is otherwise that it gave something permissions.
+ */
+export function renderMentions(out: MentionSync): Message {
+  switch (out.kind) {
+    case 'no-permission':
+      return body(['**No mentionable names were created.** ' + out.why], true);
+    case 'error':
+      return body(['**No mentionable names were created.** ' + ((out.error as Error)?.message ?? String(out.error))], true);
+    case 'synced': {
+      if (!out.created.length && !out.already.length) {
+        return body(['**Nothing to do.** No agent here has a name to mention.'], true);
+      }
+      const named = (n: string): string => '`@' + AGENT_ROLE_PREFIX + n + '`';
+      return body([
+        out.created.length
+          ? '**' + out.created.length + ' agent' + (out.created.length === 1 ? ' is' : 's are')
+            + ' now @mentionable:** ' + out.created.map(named).join(', ')
+          : '**Already set up.**',
+        ...(out.already.length ? ['Already had a name: ' + out.already.map(named).join(', ')] : []),
+        '',
+        'Type `@' + AGENT_ROLE_PREFIX + '` and Discord will offer them. Mentioning one asks it, exactly as `/workspace ask` does.',
+        '',
+        '★ These roles grant **nothing** and contain **nobody** — pinging one notifies no human. They exist only '
+        + 'so Discord has a name to resolve. What an agent may do is what its delegator authorises on their own '
+        + 'pod, which no Discord object can add to or take away.',
+        '★ A role left behind after a delegation is revoked resolves to no agent and the ask is refused. The name '
+        + 'outliving the authority costs nothing, because the name never carried any.',
+      ], false);
+    }
+  }
+}
+
 export function renderAsk(out: AskOut, nowMs = Date.now()): Message {
   switch (out.kind) {
     case 'not-a-workspace': return body(['**Nothing was asked.** This thread is not a workspace. `/workspace start` makes it one.'], true);

@@ -52,8 +52,9 @@ import { addressedText } from './address.js';
 import { ChannelWatcher, watchVia } from './watch.js';
 import { WebhookPoster } from './webhook.js';
 import { SpokenBy } from './spoken-by.js';
+import { mentionedAgentName, roleRows, syncAgentRoles } from './mentions.js';
 import {
-  renderAsk, renderChallenge, renderConfirm, renderNews, renderRecord, renderShow, renderStart,
+  renderAsk, renderChallenge, renderConfirm, renderMentions, renderNews, renderRecord, renderShow, renderStart,
   renderUnlink, renderWho, type Message, type NewsPost,
 } from './render.js';
 
@@ -404,6 +405,36 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
         case 'workspace unlink':
           m = renderUnlink(unlink(deps(session.current.client), i.userId));
           break;
+        case 'workspace mentions': {
+          /**
+           * ★ THE ONE COMMAND THAT TOUCHES THE SERVER RATHER THAN A POD, and it is opt-in for
+           * exactly that reason. Creating roles needs MANAGE_ROLES and shows up in a server's
+           * settings, so nothing here happens on its own — a person runs it because they want
+           * `@Claude Desktop` to autocomplete.
+           *
+           * The names come from the SAME live roster the picker reads, so a role is only ever made
+           * for an agent some seated pod actually authorises right now.
+           */
+          if (!i.guildId) { m = { content: '**Nothing was created.** Mentions need a server — roles do not exist in a DM.', ephemeral: true }; break; }
+          const cands = await session.call((c) => askCandidates(deps(c), { threadId: i.channelId, discordUserId: i.userId as string }));
+          // Anything other than a real candidate list is reported by the reader that already
+          // explains each case — not-a-workspace, unreadable, error — rather than restated here.
+          if (cands.kind !== 'candidates') { m = renderWho(cands); break; }
+          const names = cands.targets
+            .map((t) => t.name)
+            .filter((n): n is string => typeof n === 'string' && n.trim() !== '');
+          if (!names.length) {
+            m = {
+              content: '**Nothing was created.** No agent here has a name to mention — an agent is named by its '
+                + 'delegator in their own registry, and this bot will not invent one. `/workspace who` says what each pod reports.',
+              ephemeral: true,
+            };
+            break;
+          }
+          const sync = await syncAgentRoles(rest, { guildId: i.guildId, agentNames: names });
+          m = renderMentions(sync);
+          break;
+        }
         case 'workspace start':
           m = renderStart(await session.call((c) => startWorkspace(deps(c), {
             threadId: i.channelId, threadName: i.channelName ?? '', discordUserId: i.userId as string,
@@ -650,9 +681,36 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
        * about being a reply grants anything: it supplies a candidate, and the delegator's own pod
        * remains the only thing that decides.
        */
+      /**
+       * ★ A MENTION IS THE MOST DIRECT FORM OF ADDRESSING AND SO IT OUTRANKS THE OTHER TWO.
+       *
+       * Someone who typed `@agent Claude Desktop` picked that name out of Discord's own
+       * autocomplete and can SEE the chip in their message. Reading anything else over that —
+       * a name parsed out of the prose, or the message they happened to be replying to — would be
+       * the bot overruling the one signal the person deliberately produced.
+       *
+       * The precedence is therefore: mention, then a typed name, then the reply. Each is more
+       * explicit than the one after it.
+       *
+       * ★ AND IT YIELDS A NAME, NOT AN AGENT. The role's name goes to the same `ask()` as every
+       * other path, which resolves it against the live roster on the pods. A role left over from
+       * a revoked delegation matches nothing and is refused; the Discord object cannot outlive the
+       * authority because it never carried any.
+       */
+      let mentioned: string | null = null;
+      if (msg.mentionedRoleIds.length && msg.guildId) {
+        try { mentioned = mentionedAgentName(msg.mentionedRoleIds, roleRows(await rest.listRoles(msg.guildId))); }
+        catch (e) {
+          // Reading roles is not something this bot needs permission for, so a failure here is a
+          // real outage rather than a configuration choice — said once, and the message is still
+          // recorded by the ordinary path below.
+          out('discord: could not read roles in guild ' + msg.guildId + ' — ' + ((e as Error)?.message ?? String(e)));
+        }
+      }
       const typed = addressedText(msg.content);
-      const repliedTo = typed.spec ? null : spokenBy.agentFor(msg.replyToId);
-      const addressed = typed.spec ? typed : { spec: repliedTo, rest: msg.content };
+      // Mention, then a typed name, then the reply — most explicit first.
+      const spec = mentioned ?? typed.spec ?? spokenBy.agentFor(msg.replyToId);
+      const addressed = { spec, rest: typed.spec ? typed.rest : msg.content };
       if (addressed.spec) {
         const out = await session.call((c) => ask(deps(c), {
           threadId: msg.channelId, discordUserId: msg.authorId,
