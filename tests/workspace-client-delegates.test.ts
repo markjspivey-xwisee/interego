@@ -14,6 +14,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { Parser } from 'n3';
 import {
   DELEGATE_LABEL_PREFIX, DELEGATE_NAME_MAX, DELEGATE_SURFACE,
   authorshipLine, delegateAgentId, delegateCeiling, delegateLabel, delegateNameProblem,
@@ -31,6 +32,8 @@ const OTHER = 'https://identity.interego.xwisee.com/users/u-eth-bbbbbbbbbbbb/pro
 const D1 = 'did:web:identity.interego.xwisee.com:agents:interego-delegate-u-eth-111111111111';
 const D2 = 'did:web:identity.interego.xwisee.com:agents:interego-delegate-u-eth-222222222222';
 const WS = RELAY + '/ns/' + POD + '/room';
+/** The `wsp:` prefix the entry writer emits, so a parsed predicate can be named in full. */
+const WSP_NS = 'https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#';
 const ROLE = WS + '-roles#Contributor';
 const STREAM = RELAY + '/ns/' + POD + '/' + POD + '--room-stream';
 
@@ -212,6 +215,86 @@ describe('a delegate cannot do what its delegator withheld from it', () => {
     const v = delegateCeiling({ roles: roles(), role: WS + '-roles#Invented', scope: 'ReadWrite', delegateName: 'Claude side' });
     expect(v.ok).toBe(false);
     expect(v.why).toMatch(/cannot exceed it/);
+  });
+});
+
+/**
+ * WHAT A PERSON POSTED, WHEN WHAT THEY POSTED WAS A FILE.
+ *
+ * An attachment-only message reached `dct:description ""` and was refused as empty — correct
+ * about the words and wrong about the event. `EntryDraft.body` is optional in the substrate for
+ * exactly this case, and `wsp-shapes` is deliberately NOT `sh:closed`, so an entry may carry a
+ * vertical's own terms. Nothing here needed a substrate change; the field was simply unread.
+ */
+describe('an entry records the files posted with it', () => {
+  const base = { streamIri: STREAM, workspace: WS, seq: 4, body: 'plan attached', prior: null, createdIso: '2026-08-12T00:00:00.000Z', author: { kind: 'principal', webId: WEBID } as const };
+  const PNG = { name: 'floorplan.png', url: 'https://cdn.discordapp.com/a/floorplan.png?ex=1', mediaType: 'image/png', bytes: 40518 };
+
+  it('names the file, its type and its size as facts about the post', () => {
+    const t = entryTurtle({ ...base, attachments: [PNG] });
+    expect(t).toContain('wsp:attachment _:att4x0');
+    expect(t).toContain('a wsp:Attachment');
+    expect(t).toContain('dct:title "floorplan.png"');
+    expect(t).toContain('dct:format "image/png"');
+    expect(t).toContain('wsp:byteSize "40518"^^xsd:nonNegativeInteger');
+  });
+
+  it('★ carries the location under a name that says it is where the bytes WERE', () => {
+    // Discord's CDN links are signed and expiring. A descriptor is immutable and there is no
+    // retraction verb, so writing one under a durable-sounding predicate would put a claim on a
+    // permanent record that is certain to stop being true.
+    const t = entryTurtle({ ...base, attachments: [PNG] });
+    expect(t).toContain('wsp:attachmentSource "' + PNG.url + '"');
+    // Not any of the predicates a reader would follow as an address.
+    expect(t).not.toContain('wsp:attachmentSource <');
+    expect(t).not.toContain('prov:wasDerivedFrom <' + PNG.url);
+  });
+
+  it('an entry with no attachments is byte-for-byte what it always was', () => {
+    // The whole feature must be invisible when unused: every existing entry on every pod was
+    // written by the path without it, and a stray empty block would change what they hash to.
+    expect(entryTurtle({ ...base })).toBe(entryTurtle({ ...base, attachments: [] }));
+    expect(entryTurtle({ ...base })).not.toContain('wsp:attachment');
+  });
+
+  it('keeps several distinct, with one node each', () => {
+    const t = entryTurtle({ ...base, attachments: [PNG, { name: 'notes.pdf', url: 'https://cdn/n', mediaType: null, bytes: null }] });
+    expect(t).toContain('wsp:attachment _:att4x0');
+    expect(t).toContain('wsp:attachment _:att4x1');
+    expect(t).toContain('dct:title "notes.pdf"');
+    // An absent type or size is written as nothing, never guessed into the record.
+    expect((t.match(/dct:format/g) ?? []).length).toBe(1);
+    expect((t.match(/wsp:byteSize/g) ?? []).length).toBe(1);
+  });
+
+  it('★ escapes a filename somebody chose, so it cannot close the literal', () => {
+    // The name comes off a file a person named. A bare `"` would end the literal and everything
+    // after it would parse as further triples, under this entry's own signature.
+    const t = entryTurtle({ ...base, attachments: [{ name: 'a" ; wsp:workspace <http://evil> ; dct:title "b', url: 'https://cdn/x', mediaType: null, bytes: null }] });
+    /**
+     * ★ PARSED, NOT PATTERN-MATCHED, AND TWO SUBSTRING VERSIONS OF THIS FAILED AGAINST CORRECT
+     * CODE BEFORE THIS ONE. Escaped text stays in the document as text, so both "the payload is
+     * absent" and "no `; wsp:workspace <evil>` appears" are false of a document that is perfectly
+     * safe — the bytes are there, inert, inside a literal. No amount of regex distinguishes
+     * literal content from a triple. The graph does.
+     */
+    expect(t).toContain('\\"');
+    const quads = new Parser().parse(t);
+    const ws = quads.filter((q) => q.predicate.value === WSP_NS + 'workspace');
+    expect(ws).toHaveLength(1);
+    expect(ws[0]?.object.value).toBe(WS);
+    // The payload survives as the title it was typed as, and as nothing else.
+    const titles = quads.filter((q) => q.predicate.value === 'http://purl.org/dc/terms/title');
+    expect(titles).toHaveLength(1);
+    expect(titles[0]?.object.value).toContain('wsp:workspace <http://evil>');
+    expect(quads.some((q) => q.object.value === 'http://evil')).toBe(false);
+  });
+
+  it('never writes a negative or fractional byte count', () => {
+    const t = entryTurtle({ ...base, attachments: [{ name: 'x', url: 'https://cdn/x', mediaType: null, bytes: -5 }] });
+    expect(t).toContain('wsp:byteSize "0"');
+    const f = entryTurtle({ ...base, attachments: [{ name: 'x', url: 'https://cdn/x', mediaType: null, bytes: 12.7 }] });
+    expect(f).toContain('wsp:byteSize "12"');
   });
 });
 

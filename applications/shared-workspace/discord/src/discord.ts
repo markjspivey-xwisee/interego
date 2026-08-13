@@ -38,6 +38,27 @@ export const INTENTS = (1 << 0) | (1 << 9) | (1 << 15);
 /** An interaction response that only the invoker sees. */
 export const EPHEMERAL = 64;
 
+/**
+ * A file posted with a message.
+ *
+ * ★ WHAT IS RECORDABLE AND WHAT IS NOT, STATED. The name, media type and size are facts about the
+ * post and go on the record as literals. The `url` is a Discord CDN link, and since 2023 those are
+ * SIGNED AND EXPIRING — so it is carried as what it is, a place the bytes were, not as a durable
+ * identifier. A descriptor is immutable and there is no retraction verb, so writing a link that
+ * will certainly rot as though it were an address would be putting a known-false claim on a
+ * permanent record.
+ *
+ * Durable hosting would mean the bytes landing on the person's own pod, and no relay tool writes
+ * a non-graph resource — all fifty are Turtle-oriented. That is a real capability that does not
+ * exist yet, rather than a line of code missing here.
+ */
+export interface GatewayAttachment {
+  readonly name: string;
+  readonly url: string;
+  readonly mediaType: string | null;
+  readonly bytes: number | null;
+}
+
 export interface GatewayMessage {
   readonly id: string;
   readonly channelId: string;
@@ -65,11 +86,14 @@ export interface GatewayMessage {
    * so posting a picture wrote nothing to the pod AND said nothing in the channel. From the
    * person's side that is indistinguishable from a bot that has crashed.
    *
-   * Names only, deliberately. A `wsp:Entry` holds text and its shape is `sh:closed`, so carrying
-   * a file would mean new predicates and a republished shape — a substrate decision, not one this
-   * bot may take on its own. What it can do is stop being silent about the gap.
+   * ★ AN EARLIER VERSION OF THIS COMMENT SAID THE ENTRY SHAPE WAS `sh:closed` AND THAT WAS WRONG.
+   * `wsp-shapes` is deliberately NOT closed — `stream.ts` says so in as many words — and
+   * `EntryDraft` already carries `extraTriples` and `references` precisely so a vertical can put
+   * its own terms on an entry. `body` is optional there too, so an attachment-only entry is legal
+   * at the model level. Nothing about recording an attachment needed a substrate decision; the
+   * bot simply was not reading the field.
    */
-  readonly attachmentNames: readonly string[];
+  readonly attachments: readonly GatewayAttachment[];
 }
 
 export interface GatewayInteraction {
@@ -354,9 +378,16 @@ export class DiscordGateway {
           const ref = p['message_reference'] as { message_id?: unknown } | undefined;
           return typeof ref?.message_id === 'string' ? ref.message_id : null;
         })(),
-        attachmentNames: (Array.isArray(p['attachments']) ? p['attachments'] : [])
-          .map((a) => (a as { filename?: unknown })?.filename)
-          .filter((n): n is string => typeof n === 'string' && n.length > 0),
+        attachments: (Array.isArray(p['attachments']) ? p['attachments'] : [])
+          .map((raw) => raw as { filename?: unknown; url?: unknown; content_type?: unknown; size?: unknown })
+          .filter((a) => typeof a?.filename === 'string' && a.filename.length > 0
+            && typeof a?.url === 'string' && a.url.length > 0)
+          .map((a) => ({
+            name: a.filename as string,
+            url: a.url as string,
+            mediaType: typeof a.content_type === 'string' ? a.content_type : null,
+            bytes: typeof a.size === 'number' ? a.size : null,
+          })),
       });
       return;
     }

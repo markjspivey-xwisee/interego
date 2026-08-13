@@ -560,6 +560,7 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
       }
       const res = await session.call((c) => recordMessage(deps(c), {
         threadId: msg.channelId, discordUserId: msg.authorId, text: msg.content,
+        ...(msg.attachments.length ? { attachments: msg.attachments } : {}),
       }));
       /**
        * ★ AN ATTACHMENT WITH NO CAPTION WROTE NOTHING AND SAID NOTHING.
@@ -576,19 +577,16 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
        * version, and it is what lets a person decide to type a sentence instead of assuming the
        * image landed.
        */
-      const attached = msg.attachmentNames;
-      if (attached.length) {
-        const names = attached.slice(0, 5).join(', ') + (attached.length > 5 ? ` and ${attached.length - 5} more` : '');
+      const attached = msg.attachments;
+      if (attached.length && res.kind === 'recorded') {
+        const names = attached.slice(0, 5).map((a) => a.name).join(', ')
+          + (attached.length > 5 ? ` and ${attached.length - 5} more` : '');
         await say(msg.channelId, {
-          // Not ephemeral: the channel is the record's shop window, and a note saying an entry
-          // does NOT hold what somebody just posted is exactly the kind of thing every reader of
-          // the thread needs, not only the person who posted it.
+          // Not ephemeral: a note about what the record does and does not hold is for everyone
+          // reading the thread, not only the person who posted.
           ephemeral: false,
-          content: res.kind === 'empty'
-            ? `**Nothing was recorded.** You attached ${names}, with no message. This workspace records what people *write*: an entry holds text, and its published shape does not admit a file, so there was nothing here to put on your pod. Type a line with it and the line is recorded.`
-            : `**Your message was recorded. ${attached.length === 1 ? 'The attachment was' : 'The attachments were'} not** — ${names} stayed in Discord. An entry holds text, so an agent reading this channel sees your words and not the file.`,
+          content: `**${attached.length === 1 ? 'The attachment is' : 'The attachments are'} on the record as ${attached.length === 1 ? 'a file' : 'files'}** — ${names} — with ${attached.length === 1 ? 'its name, type and size' : 'their names, types and sizes'}. **The bytes are not.** They stay in Discord, and Discord's links expire, so an agent reading this channel learns what you posted and cannot be promised it can still fetch it.`,
         });
-        if (res.kind === 'empty') return;
       }
       await say(msg.channelId, renderRecord(res));
     }).catch((e: unknown) => { out('recording failed for message ' + msg.id + ': ' + ((e as Error)?.stack ?? String(e))); });

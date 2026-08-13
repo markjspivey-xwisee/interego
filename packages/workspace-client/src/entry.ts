@@ -44,6 +44,21 @@ export type EntryAuthor =
   | { readonly kind: 'delegate'; readonly agentId: string; readonly footing: StatedFooting };
 
 /**
+ * A file posted alongside an entry's words.
+ *
+ * ★ FACTS ABOUT THE POST, PLUS WHERE THE BYTES WERE. `source` is not an address and is not named
+ * like one: the CDN links these come from are signed and expiring, and a descriptor is immutable
+ * with no retraction verb, so a rotting URL under a durable-sounding predicate would be a
+ * permanent record of something that is about to stop being true.
+ */
+export interface EntryAttachment {
+  readonly name: string;
+  readonly url: string;
+  readonly mediaType: string | null;
+  readonly bytes: number | null;
+}
+
+/**
  * The Turtle for one entry.
  *
  * ★ EVERY INTERPOLATED IRI IS GUARDED AND EVERY LITERAL IS ESCAPED. An IRI reference ends at
@@ -68,6 +83,8 @@ export function entryTurtle(args: {
   readonly body: string;
   readonly prior: string | null;
   readonly author: EntryAuthor;
+  /** Files posted with this entry. Recorded as metadata — see {@link EntryAttachment}. */
+  readonly attachments?: readonly EntryAttachment[];
   /**
    * The agents this entry is a request TO, if any.
    *
@@ -130,6 +147,39 @@ export function entryTurtle(args: {
   const addressedLine = addressed.length
     ? '  iep:addressedTo ' + addressed.map((t) => iri(t, 'an agent this entry is addressed to')).join(', ') + ' ;\n'
     : '';
+  /**
+   * ★ WHAT WAS POSTED ALONGSIDE THE WORDS, AND WHY IT IS METADATA RATHER THAN A LINK.
+   *
+   * A person who posts a picture has posted something, and until this existed the record said
+   * they had posted nothing — an attachment-only message reached `dct:description ""` and was
+   * refused as empty, so the channel showed a file and the pod showed silence.
+   *
+   * The name, media type and size are FACTS ABOUT THE POST and go on the record as literals.
+   * The location is deliberately NOT `prov:wasDerivedFrom` or any other predicate that reads as
+   * an address: Discord's CDN links have been signed and expiring since 2023, a descriptor is
+   * immutable, and there is no retraction verb — so writing one as though it were durable would
+   * put a claim on a permanent record that is certain to become false. It goes in as
+   * `wsp:attachmentSource`, whose whole meaning is "where the bytes were when this was written".
+   *
+   * Durable hosting means the bytes on the person's own pod, and no relay tool writes a non-graph
+   * resource — all fifty are graph-oriented. That is a capability that does not exist rather than
+   * a line missing here, and inventing a half of it by storing a rotting URL under a durable name
+   * would be worse than saying so.
+   *
+   * Every field is escaped: these come from a filename somebody chose.
+   */
+  const attachmentBlocks = (args.attachments ?? []).map((_att, i) =>
+    '  wsp:attachment _:att' + args.seq + 'x' + i + ' ;\n').join('');
+  const attachmentNodes = (args.attachments ?? []).map((att, i) => {
+    const node = '_:att' + args.seq + 'x' + i;
+    return node + '\n'
+      + '  a wsp:Attachment ;\n'
+      + '  dct:title "' + escapeTurtleLiteral(att.name) + '" ;\n'
+      + (att.mediaType ? '  dct:format "' + escapeTurtleLiteral(att.mediaType) + '" ;\n' : '')
+      + (typeof att.bytes === 'number' ? '  wsp:byteSize "' + Math.max(0, Math.trunc(att.bytes)) + '"^^xsd:nonNegativeInteger ;\n' : '')
+      + '  wsp:attachmentSource "' + escapeTurtleLiteral(att.url) + '" .\n';
+  }).join('');
+
   return '@prefix wsp: <' + WSP + '> .\n'
     + '@prefix iep: <' + IEP + '> .\n'
     + '@prefix prov: <' + PROV + '> .\n'
@@ -144,8 +194,10 @@ export function entryTurtle(args: {
     + addressedLine
     + (args.derivedFrom ? '  prov:wasDerivedFrom ' + iri(args.derivedFrom, 'the record this entry answers') + ' ;\n' : '')
     + (footing ? footing.generatedBy : '')
+    + attachmentBlocks
     + '  dct:created "' + created + '"^^xsd:dateTime ;\n'
     + '  dct:description "' + escapeTurtleLiteral(args.body) + '" .\n'
+    + attachmentNodes
     + (footing ? footing.blocks : '');
 }
 
@@ -252,6 +304,8 @@ export async function postEntry(
     readonly workspace: string;
     readonly body: string;
     readonly author: EntryAuthor;
+    /** Files posted with this entry. Recorded as metadata — see {@link EntryAttachment}. */
+    readonly attachments?: readonly EntryAttachment[];
     /** Agents this entry is a request to. Written inside the signed region — see `entryTurtle`. */
     readonly addressedTo?: readonly string[];
     /** The record this entry answers, so a restarted host does not answer it twice. */
@@ -290,6 +344,7 @@ export async function postEntry(
       graph_content: entryTurtle({
         streamIri: args.streamIri, workspace: args.workspace, seq, body: args.body,
         prior: prior ? prior.url : null, author: args.author,
+        ...(args.attachments?.length ? { attachments: args.attachments } : {}),
         ...(args.addressedTo === undefined ? {} : { addressedTo: args.addressedTo }),
         ...(args.derivedFrom === undefined ? {} : { derivedFrom: args.derivedFrom }),
       }),
