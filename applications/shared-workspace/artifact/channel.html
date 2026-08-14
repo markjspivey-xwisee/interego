@@ -4533,7 +4533,7 @@ var WSPC = (() => {
 
   // packages/workspace-client/src/localagent.ts
   var BRIEF_ENTRIES = 24;
-  var DRAFT_MAX = 4e3;
+  var DRAFT_MAX = 16e3;
   var line = (e, input) => {
     const body = e.body ?? "(this entry carried no readable body)";
     if (e.pod !== input.mePod) return e.pod + " \xB7 " + authorshipLine(e.author) + ": " + body;
@@ -4772,6 +4772,29 @@ var WSPC = (() => {
       "",
       "Plain prose, a few sentences. No markdown headings, bullet lists or code fences. Do not open",
       'with "Sure" or "Here is", and do not sign your name.',
+      "",
+      /**
+       * ★★ THE LIMIT IS STATED, BECAUSE IT IS ENFORCED.
+       *
+       * MEASURED in a live channel: a delegate wrote 4,739 characters and the whole turn was thrown
+       * away — "Nothing was drafted … over the 4000-character limit". The brief spent nine lines on
+       * how to declare a footing and said NOTHING about length, so the agent had no way to comply
+       * with a rule it was never told. The tokens were spent, the answer was lost, and the next turn
+       * would have done exactly the same thing, because each one starts fresh.
+       *
+       * Enforcing an undisclosed constraint is the app's fault, not the model's. `checkDraft` still
+       * refuses rather than truncates — half a sentence recorded permanently is worse than none —
+       * but a refusal should now be a rarity rather than the predictable outcome of a long answer.
+       *
+       * ★ AND THERE IS NO ESCAPE HATCH, WHICH THIS ALMOST CLAIMED THERE WAS. The obvious advice is
+       * "put the long part in a file block" — and it is WRONG here. A produced file is part of the
+       * entry body (`findProduced` reads that body), so it lands inside the same budget: the 2,595
+       * character donkey fit, a long document would not. Telling the agent otherwise would trade a
+       * refusal it could not have predicted for one it was actively misled into.
+       */
+      "HARD LIMIT: your whole reply must be under " + DRAFT_MAX + " characters \u2014 INCLUDING any file or",
+      "SVG you produce, which is counted as part of it. Over that it is REFUSED, not shortened: the",
+      "answer is lost and nothing is posted at all. Say the useful thing and stop.",
       "",
       /**
        * ★ ABSTAINING IS NOT OFFERED FOR A QUESTION ADDRESSED TO THIS AGENT BY NAME.
