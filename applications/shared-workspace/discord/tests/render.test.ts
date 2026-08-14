@@ -394,19 +394,49 @@ describe('renderNews: who appears to be speaking', () => {
     footing: { kind: 'own-account' },
   };
 
-  it('★ posts a delegate\'s entry under its own name, with the provenance still on it', () => {
+  /**
+   * ★★ WHEN EVERYTHING CHECKS OUT, THE MESSAGE CARRIES NOTHING BUT THE MESSAGE.
+   *
+   * This used to assert the three claims appeared on every post. They did, and the person reading
+   * the channel called it noise — twice. The first fix put them behind a `||spoiler||`, which is
+   * still DISPLAYED: three fat grey blocks under every message, arguably louder than the small
+   * grey text they replaced. "Behind a click" and "not shown" are different things and the ask was
+   * the second.
+   *
+   * Nothing is lost by dropping them. The authorship is a property of the entry on the pod, which
+   * is where it is authoritative; this line was only ever a rendering of it, and the desktop client
+   * still shows it per message. What must never be dropped is a FINDING — see the test below.
+   */
+  it('★★ posts a delegate\'s entry under its own name, and adds NOTHING when it all checks out', () => {
     const posts = renderNews(news([entry(DELEGATE_AUTHOR)])) ?? [];
     expect(posts).toHaveLength(1);
     const p = posts[0] as { kind: string; who?: string; content?: string };
     expect(p.kind).toBe('agent');
     expect(p.who).toBe('Claude Desktop');
     expect(p.content).toContain('the quote looks high');
-    // The three claims that can disagree, none of them traded for the nicer frame.
+    expect(p.content).not.toContain('its own key signed these bytes');
+    expect(p.content).not.toContain('not something Discord can verify');
+    // ★ And no spoiler markers, which is the thing that was actually visible on screen.
+    expect(p.content).not.toContain('||');
+  });
+
+  it('★★ but an agent its delegator does NOT authorise still says so, in plain text', () => {
+    // This is the case the footer exists for, and the one the reassurance was drowning out. It
+    // must not be hidden, spoilered, or dropped — a finding behind a click is a finding nobody
+    // reads, and a finding nobody prints is worse.
+    const unlisted = { ...DELEGATE_AUTHOR, authorised: false as const };
+    const posts = renderNews(news([entry(unlisted)])) ?? [];
+    const p = posts[0] as { kind: string; content?: string };
     expect(p.content).toContain('its own key signed these bytes');
-    expect(p.content).toContain('for itself');
-    expect(p.content).toContain('PublishOnly');
-    // And the one thing the frame itself cannot establish is said outright.
-    expect(p.content).toContain('not something Discord can verify');
+    expect(p.content).toContain('does NOT list it');
+    expect(p.content).not.toContain('||');
+  });
+
+  it('★ and so does one that stated no footing', () => {
+    const noFooting = { ...DELEGATE_AUTHOR, footing: { kind: 'unstated' as const, why: 'none given' } };
+    const posts = renderNews(news([entry(noFooting)])) ?? [];
+    const p = posts[0] as { kind: string; content?: string };
+    expect(p.content).toContain('footing not stated');
   });
 
   it.each([

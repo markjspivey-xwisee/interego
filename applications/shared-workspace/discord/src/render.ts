@@ -205,22 +205,29 @@ export function agentFooter(a: Extract<EntryAuthorship, { kind: 'delegate' }>, p
       : 'standing not checked here';
 
   /**
-   * ★ THE GOOD NEWS IS HIDDEN; A FINDING IS NOT.
+   * ★★ THE GOOD NEWS IS NOT SHOWN AT ALL; A FINDING IS SHOWN IN FULL.
    *
-   * Every message used to carry all three claims in full, and the reason it read as noise is that
-   * they were almost always the SAME three claims: signed, authorised, footing stated. Behind a
-   * click they are still here, still attached to the message they are about, and still one gesture
-   * away — which is what "available on request" has to mean for something this load-bearing.
+   * Every message used to carry all three claims in plain text, and the reason it read as noise is
+   * that they were almost always the SAME three claims: signed, authorised, footing stated. The
+   * first attempt at "available on request" put them behind a `||spoiler||` — and REPORTED BY THE
+   * PERSON READING THE CHANNEL, twice: a spoiler is still displayed. It renders as three fat grey
+   * blocks under every single message, which is arguably louder than the small grey text it
+   * replaced. "Hidden behind a click" and "not displayed" are different things, and the ask was
+   * the second one.
    *
-   * But an agent its delegator does not authorise, or one that stated no footing, is a thing a
-   * reader should act on, and a finding behind a spoiler is a finding nobody reads. Either of
-   * those keeps the whole footer in plain text.
+   * So when there is nothing to act on, the footer is EMPTY. Nothing is lost: the authorship is a
+   * property of the entry on the pod, which is where it is authoritative — this line was only ever
+   * a rendering of it — and the desktop client shows it per message. A reader who wants to know
+   * can ask the agent, which can read its own record.
+   *
+   * ★ AND A FINDING STILL PRINTS, IN PLAIN TEXT. An agent its delegator does not authorise, or one
+   * that stated no footing, is a thing a reader must act on. That is the case this footer exists
+   * for, and it was the case being drowned out by the reassurance around it.
    */
   const reassuring = a.authorised === true && footingOk;
+  if (reassuring) return '';
   const detail = [footing, standing, 'this display name is chosen by the bot and is not something Discord can verify'];
-  return reassuring
-    ? '-# ⎔ ' + quiet(['its own key signed these bytes', ...detail])
-    : '-# ⎔ its own key signed these bytes · ' + detail.join(' · ');
+  return '-# ⎔ its own key signed these bytes · ' + detail.join(' · ');
 }
 
 /**

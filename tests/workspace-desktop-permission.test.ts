@@ -704,6 +704,78 @@ describe('★★ what the fourth review round found', () => {
   });
 });
 
+/**
+ * ★★ WHAT THE FIFTH REVIEW ROUND FOUND — INCLUDING THAT ROUND FOUR'S FIX DID NOTHING.
+ *
+ * Rounds 1-5: 10, 5, 5, 8 and 4 defects. The worst of round five is not a missing rule but a rule
+ * that could not reach its caller: round four's "not understanding a command is a reason to ask"
+ * seeded `staysInside` from the parser's confidence, and `decide` asks about SEGMENTS — so an
+ * unparsed command, which has no failing segment, fell past the loop to `granted` and the gate
+ * answered ALLOW. Shipped, tested, CI-green, and inert.
+ */
+describe('★★ what the fifth review round found', () => {
+  const ws = mkdtempSync(join(tmpdir(), 'iego-r5-'));
+  const p = policy({ workspace: ws });
+  const k = (command: string): string => decide({ tool: 'Bash', input: { command }, cwd: ws }, p).kind;
+  const LF = String.fromCharCode(10);
+  const BS = String.fromCharCode(92);
+  const SQ = String.fromCharCode(39);
+
+  it('★★ CRITICAL · an unparseable command ASKS — it is never "granted"', () => {
+    // MEASURED before the fix, with ZERO grants in the policy:
+    //   echo 'a\' && cd .. && cd .. && cat taxes.txt   → granted → gate answers ALLOW
+    // and the audit line read "each part is either inside its workspace or one you approved",
+    // which was false in both halves. A fabricated grant is worse than a missing rule.
+    const derail = 'echo ' + SQ + 'a' + BS + SQ + ' && cd .. && cd .. && cat taxes.txt';
+    expect(k(derail)).toBe('ask');
+    expect(k('echo ' + SQ + 'a' + BS + SQ + ' && cd .. && echo pwned > planted.txt')).toBe('ask');
+    // An apostrophe in an ordinary comment derails the scanner the same way.
+    expect(k('echo hi   # we don' + SQ + 't need this' + LF + 'cd ..' + LF + 'cat taxes.txt')).toBe('ask');
+    /**
+     * ★ AND THE QUESTION NAMES THE REAL REASON.
+     *
+     * Note which command this uses. The three above no longer reach the unparsed path at all —
+     * once a backslash inside single quotes is treated as literal, `echo 'a\'` closes its quote
+     * and they are refused on their merits, with the rule naming the segment that actually leaves.
+     * That is the better answer, and it is why this assertion needs a command that is genuinely
+     * unreadable: a double quote that never closes.
+     */
+    const unreadable = 'echo "never closed && cd .. && cat taxes.txt';
+    const d = decide({ tool: 'Bash', input: { command: unreadable }, cwd: ws }, p);
+    expect(d.kind).toBe('ask');
+    expect(d.kind === 'ask' && d.rule).toBe('Bash(unparsed)');
+    expect(d.kind === 'ask' && d.why).toContain('could not read that command');
+  });
+
+  it('★ a backslash inside SINGLE quotes is literal, so this stays ordinary work', () => {
+    // POSIX says `'a\'` is a complete string containing a backslash, and bash runs it. Treating
+    // the backslash as an escape made the quote look unterminated — which was half the bypass
+    // above, and would have become a stream of spurious questions once the other half was fixed.
+    expect(k('grep ' + SQ + 'a' + BS + SQ + ' f.txt')).toBe('allow');
+  });
+
+  it('★ HIGH · a QUOTED here-doc tag is still a here-doc', () => {
+    // `heredocTag` blanked quoted characters and then matched the tag against the BLANKED text, so
+    // `<<'EOF'` became `<<'   '` and matched nothing: the body was walked as commands. Quoting the
+    // tag is the documented way to stop a here-doc expanding variables, so this hit the careful
+    // spelling and left the sloppy one working.
+    expect(k('cat > README.md <<' + SQ + 'EOF' + SQ + LF + '# Notes' + LF + 'Config lives in /etc/app.conf' + LF + 'EOF')).toBe('allow');
+    expect(k('cat > run.sh <<' + SQ + 'EOF' + SQ + LF + 'cd /tmp' + LF + 'echo hi' + LF + 'EOF')).toBe('allow');
+    // ★ And a real walk-out AFTER a here-doc is still caught — the body is inert, the rest is not.
+    expect(k('cat > r.md <<' + SQ + 'EOF' + SQ + LF + 'hello' + LF + 'EOF' + LF + 'cd .. && cat secret.txt')).toBe('ask');
+  });
+
+  it('★ MEDIUM · a filesystem-root glob is not "inside the workspace"', () => {
+    // `fixedPrefix` conflated "the separator is at index 0" with "no separator found", so `/*`
+    // became `.` — the agent's own directory. `grep -rn secret /*` is a whole-filesystem read
+    // whose output goes back into the channel.
+    expect(k('grep -rn secret /*')).toBe('ask');
+    expect(k('cat /*')).toBe('ask');
+    // The ordinary glob the round-four fix exists for is untouched.
+    expect(k('ls src/*.ts')).toBe('allow');
+  });
+});
+
 describe('the rule an approval is written against', () => {
   it('★ is never the bare tool name — one yes to `ls` must not become yes to every command', () => {
     expect(ruleFor(call('Bash', { command: 'npm test -- --watch' }))).toBe('Bash(npm test …)');
