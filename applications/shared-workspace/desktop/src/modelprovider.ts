@@ -139,6 +139,10 @@ interface Ran { readonly code: number | null; readonly stdout: string; readonly 
  * A delegate answers from the CHANNEL it was given and the substrate it can reach. Anything the
  * filesystem contributes is contamination, and on somebody else's machine it is contamination
  * nobody can see in the record afterwards.
+ *
+ * ★★ AND WHEN THERE IS A GATE, THE AGENT'S OWN WORKSPACE IS THE NEUTRAL DIRECTORY — see
+ * {@link turnCwd}. A shared temp directory is neutral in the sense this comment meant, and wrong
+ * in a way that was not discovered until a third adversarial review.
  */
 export function neutralCwd(): string {
   const dir = join(tmpdir(), 'interego-turn');
@@ -146,13 +150,40 @@ export function neutralCwd(): string {
   return dir;
 }
 
-function run(bin: string, args: readonly string[], opts: { readonly env: NodeJS.ProcessEnv; readonly timeoutMs: number; readonly stdin?: string; readonly onChild?: (kill: () => void) => void }): Promise<Ran> {
+/**
+ * Where a turn actually runs.
+ *
+ * ★★ THE GATE'S POLICY IS ANCHORED ON THE WORKSPACE, SO THE AGENT HAS TO BE STANDING IN IT.
+ *
+ * MEASURED against the shipped app: the CLI was spawned in {@link neutralCwd} — a shared temp
+ * directory — while the gate's only permitted root was `<userData>/agent-workspaces/<id>`. Every
+ * relative path in every tool call therefore resolved into the temp directory, which is inside no
+ * root, so in the INSTALLED app:
+ *
+ *     echo INSIDE > made.txt      → ask        (the module header's own example of ordinary work)
+ *     cat package.json            → ask
+ *     Write { file_path: 'notes.txt' } → ask
+ *
+ * The delegate could barely do anything without queuing a request. Three probes and 69 tests
+ * missed it because every one of them passed the workspace AS the cwd — the configuration
+ * production does not use. That is the third time a convenient test fixture hid a production
+ * truth in this work.
+ *
+ * The workspace is neutral in the sense the comment above cares about: it is a directory this app
+ * created, holding nothing of the person's, with no `CLAUDE.md` and no `.claude/` to leak in. It
+ * is simply also the right one.
+ */
+export function turnCwd(gate?: TurnGate): string {
+  return gate?.workspace ?? neutralCwd();
+}
+
+function run(bin: string, args: readonly string[], opts: { readonly env: NodeJS.ProcessEnv; readonly timeoutMs: number; readonly stdin?: string; readonly onChild?: (kill: () => void) => void; readonly cwd?: string }): Promise<Ran> {
   return new Promise((resolve) => {
     let cp;
     try {
       // shell:false, always. A shell would re-expand arguments, and the text flowing through here
       // is written by other members of a workspace.
-      cp = spawn(bin, [...args], { env: opts.env, cwd: neutralCwd(), shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+      cp = spawn(bin, [...args], { env: opts.env, cwd: opts.cwd ?? neutralCwd(), shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     } catch (e) {
       resolve({ code: null, stdout: '', stderr: '', spawnError: (e as Error).message, timedOut: false });
       return;
@@ -487,6 +518,10 @@ export async function runClaude(args: {
   const argv = turnArgv(args);
   const r = await run(args.binary, argv, {
     env: args.env ?? childEnv(),
+    // ★ The agent stands in its OWN workspace when it has a gate — see `turnCwd`. Spawning it in
+    // a shared temp directory made every relative path in every tool call land outside the only
+    // permitted root, so ordinary work was refused in the installed app.
+    cwd: turnCwd(args.gate),
     /**
      * ★ 120 s WAS SET BEFORE A DELEGATE HAD TOOLS, and it started killing real turns.
      *

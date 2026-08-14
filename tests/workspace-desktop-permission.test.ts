@@ -26,6 +26,7 @@ import {
   type Policy, type ToolCall,
 } from '../applications/shared-workspace/desktop/src/permission.js';
 import { gateDecision, gateSettings, type GateConfig } from '../applications/shared-workspace/desktop/src/gate.js';
+import { turnCwd } from '../applications/shared-workspace/desktop/src/modelprovider.js';
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'iego-perm-'));
 const policy = (over: Partial<Policy> = {}): Policy =>
@@ -397,6 +398,117 @@ describe('★★ what the second review round found', () => {
     const p = policy({ workspace: ws });
     expect(decide(call('Bash', { command: 'grep -rn "\\bfoo\\b" src' }), p).kind).toBe('allow');
     expect(decide(call('Bash', { command: 'cat "' + join(homedir(), 'Documents', 'taxes.txt') + '"' }), p).kind).toBe('ask');
+    rmSync(ws, { recursive: true, force: true });
+  });
+});
+
+/**
+ * ★★ WHAT THE THIRD REVIEW ROUND FOUND — INCLUDING WHERE PRODUCTION STANDS THE AGENT.
+ *
+ * Round one: 10 defects. Round two: 5 more, in round one's fixes. Round three: 5 more again, and
+ * the worst of them had been true since the gate shipped. Each was reproduced against the real
+ * `decide()` before anything changed.
+ */
+describe('★★ what the third review round found', () => {
+  it('★★ CRITICAL · the agent must STAND IN its workspace, or nothing relative is inside it', () => {
+    /**
+     * The gate's only permitted root is the workspace, and the CLI was spawned in a shared temp
+     * directory (`neutralCwd`). So every relative path in every tool call resolved somewhere
+     * outside the boundary, and in the INSTALLED app:
+     *
+     *     echo INSIDE > made.txt            → ask     (this file's own example of ordinary work)
+     *     cat package.json                  → ask
+     *     Write { file_path: 'notes.txt' }  → ask
+     *
+     * ★ Three probes and 69 tests missed it because every one of them passed the workspace AS the
+     * cwd — the configuration production does not use. That is the third time in this work that a
+     * convenient fixture hid a production truth, so this test asserts on `turnCwd` itself rather
+     * than on a cwd the test chose.
+     */
+    const ws = tmp();
+    const spawnCwd = turnCwd({ settingsPath: join(ws, 'settings.json'), workspace: ws });
+    expect(spawnCwd).toBe(ws);
+    const p = policy({ workspace: ws });
+    for (const command of ['echo INSIDE > made.txt', 'cat package.json', 'cat src/index.ts']) {
+      expect(decide({ tool: 'Bash', input: { command }, cwd: spawnCwd }, p).kind).toBe('allow');
+    }
+    expect(decide({ tool: 'Write', input: { file_path: 'notes.txt' }, cwd: spawnCwd }, p).kind).toBe('allow');
+    // Without a gate there is no workspace to stand in, and the neutral directory is still right.
+    expect(turnCwd()).not.toBe(ws);
+    rmSync(ws, { recursive: true, force: true });
+  });
+
+  it('★ CRITICAL · two quote characters were the whole bypass', () => {
+    // Quoted tokens classified `relative` were skipped entirely, so they were never resolved and
+    // never failed. `cat "../../../secrets.txt"` → allow, while the unquoted twin → ask.
+    const ws = tmp();
+    const p = policy({ workspace: ws });
+    for (const command of [
+      'cat "../../../secrets.txt"',
+      'echo x > "../../../planted.txt"',
+      'cp -r "../../../../Documents" ./out',
+    ]) {
+      expect(decide({ tool: 'Bash', input: { command }, cwd: ws }, p).kind).toBe('ask');
+    }
+    // And the regex case that motivated the skip is still fine — `pathKind` handles it.
+    expect(decide({ tool: 'Bash', input: { command: 'grep -rn "\\bfoo\\b" src' }, cwd: ws }, p).kind).toBe('allow');
+    rmSync(ws, { recursive: true, force: true });
+  });
+
+  it('★ CRITICAL · an unexpanded $HOME resolved INSIDE the workspace', () => {
+    // The same defect round two fixed for `cd ~`, reachable with no `cd` at all: `$HOME/…` was
+    // classified relative and resolved to `<workspace>/$HOME/…`, so it was allowed — and the shell
+    // then expanded it. The first line writes the person's own Claude settings, where a hook runs
+    // arbitrary code in their interactive sessions.
+    const ws = tmp();
+    const p = policy({ workspace: ws });
+    for (const command of [
+      'echo x > $HOME/.claude/settings.json',
+      'cat $HOME/Documents/taxes.txt',
+      'type %USERPROFILE%\\Documents\\taxes.txt',
+    ]) {
+      expect(decide({ tool: 'Bash', input: { command }, cwd: ws }, p).kind).toBe('ask');
+    }
+    // A bare `$1` is not a path — an awk program must not become a permission request.
+    expect(decide({ tool: 'Bash', input: { command: "awk '{print $1}' log.txt" }, cwd: ws }, p).kind).toBe('allow');
+    rmSync(ws, { recursive: true, force: true });
+  });
+
+  it('★ REGRESSION · `> /dev/null` is a discard, not a write outside the workspace', () => {
+    // `/dev/null` resolved to `C:\dev\null`, outside every root. Meanwhile `2>/dev/null` was
+    // ALLOWED, because the leading digit stopped the redirect strip — two spellings of the same
+    // discard with opposite answers, and the commoner one refused.
+    const ws = tmp();
+    const p = policy({ workspace: ws });
+    for (const command of [
+      'npm test > /dev/null', 'npm test >/dev/null 2>&1', 'command -v rg > /dev/null && echo have-rg',
+    ]) {
+      expect(decide({ tool: 'Bash', input: { command }, cwd: ws }, p).kind).toBe('allow');
+    }
+    rmSync(ws, { recursive: true, force: true });
+  });
+
+  it('★ REGRESSION · a here-doc body is data being written, not commands being run', () => {
+    // Splitting on newlines with no here-doc awareness made every body line a segment, so writing
+    // a README that mentions a path was refused — on the CONTENT of a file the gate had already
+    // agreed the agent could write. A body line `cd /etc` also moved the walk's position, so the
+    // segments after the here-doc were judged from the wrong directory.
+    const ws = tmp();
+    const p = policy({ workspace: ws });
+    expect(decide({ tool: 'Bash', input: { command: 'cat > s.md <<EOF\nSee /usr/share/doc for details\nEOF' }, cwd: ws }, p).kind).toBe('allow');
+    expect(decide({ tool: 'Bash', input: { command: 'cat > s.sh <<EOF\ncd /etc\nEOF' }, cwd: ws }, p).kind).toBe('allow');
+    // ★ But the introducing line still names a real write target, which is still checked.
+    expect(decide({ tool: 'Bash', input: { command: 'cat > ../outside.md <<EOF\nhello\nEOF' }, cwd: ws }, p).kind).toBe('ask');
+    rmSync(ws, { recursive: true, force: true });
+  });
+
+  it('★ splitting a command respects quotes', () => {
+    // `sed -i 's|a/b|c/d|g' f.txt` is one command; a plain split on `|` tears it into three
+    // fragments and judges each as if it were a command of its own.
+    const ws = tmp();
+    const p = policy({ workspace: ws });
+    expect(decide({ tool: 'Bash', input: { command: "sed -i 's|a/b|c/d|g' f.txt" }, cwd: ws }, p).kind).toBe('allow');
+    expect(decide({ tool: 'Bash', input: { command: 'echo "a; b" > out.txt' }, cwd: ws }, p).kind).toBe('allow');
     rmSync(ws, { recursive: true, force: true });
   });
 });
