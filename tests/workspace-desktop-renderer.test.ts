@@ -34,6 +34,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { build } from 'esbuild';
+import { DRAFT_MAX } from '@interego/workspace-client';
 // The label prefix comes from the substrate, never a literal: a fixture that spells it out is
 // exactly the drift the constant exists to prevent, and it hid a real change once already.
 import { delegateLabel } from '@interego/core/delegate';
@@ -2016,7 +2017,12 @@ describe('the local agent is off, visible, and stoppable', () => {
   it('★ an over-long draft is refused rather than truncated', async () => {
     const o = await open({
       setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'hello', '2026-08-07T10:00:00.000Z')); },
-      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: BEHALF + 'x'.repeat(5000), why: 'ok', ms: 900 }) },
+      // ★ DERIVED FROM THE CAP, NOT A LITERAL. This said `repeat(5000)`, which was over the limit
+      // when the limit was 4,000 and under it the moment the cap moved to 16,000 — so the test
+      // would have gone quietly green while testing nothing. Its sibling in
+      // workspace-client-localagent.test.ts derives from DRAFT_MAX and moved correctly; this one
+      // did not, which is the whole argument against writing the number twice.
+      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: BEHALF + 'x'.repeat(DRAFT_MAX + 1), why: 'ok', ms: 900 }) },
     });
     await signInAndSpeak(o);
     click(o.doc, 'agenttoggle');

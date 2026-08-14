@@ -540,6 +540,31 @@ describe('checkDraft: what may be appended to a permanent public log', () => {
     if (!v.ok) expect(v.why).toContain('refused rather than truncated');
     expect(checkDraft(OWN + 'x'.repeat(DRAFT_MAX), PRINCIPAL).ok).toBe(true);
   });
+
+  /**
+   * ★★ THE LIMIT IS ENFORCED, SO THE LIMIT MUST BE DISCLOSED.
+   *
+   * MEASURED in a live channel: a delegate wrote 4,739 characters and the whole turn was thrown
+   * away. The brief spent nine lines on how to declare a footing and said NOTHING about length, so
+   * the agent had no way to comply with a rule it was never told — and each turn starts fresh, so
+   * it would have done the same thing again. Enforcing an undisclosed constraint is the app's
+   * fault, not the model's.
+   *
+   * Asserted against `DRAFT_MAX` rather than a literal, because the failure this guards is the two
+   * drifting apart: a brief that keeps announcing 4,000 after the cap moves is worse than silence,
+   * since the agent would then trust a number that is wrong.
+   */
+  it('★★ and the brief TELLS the agent that limit, in the number actually enforced', () => {
+    const p = briefPrompt(
+      { workspace: WS, slug: 'room', answering: THEM + ': the question', transcript: [THEM + ': the question'], omitted: 0, addressed: false, tools: false },
+      { displayName: 'Mark', delegateName: 'Claude Desktop' });
+    expect(p).toContain(String(DRAFT_MAX));
+    expect(p).toContain('REFUSED');
+    // ★ It must not promise an escape hatch that does not exist: a produced file is part of the
+    // entry body, so it is counted inside the same budget. Saying otherwise would trade a refusal
+    // the agent could not predict for one it was actively misled into.
+    expect(p).toContain('INCLUDING any file');
+  });
 });
 
 /**
