@@ -318,7 +318,21 @@ function tokensOf(segment: string): readonly { readonly text: string; readonly q
   return out;
 }
 
-type PathKind = 'unc' | 'absolute' | 'home' | 'relative' | 'none';
+type PathKind = 'unc' | 'absolute' | 'home' | 'relative' | 'device' | 'unresolvable' | 'none';
+
+/**
+ * Shell devices, which are not filesystem locations at all.
+ *
+ * ★ `> /dev/null` IS HOW EVERY SHELL DISCARDS OUTPUT, and it was being resolved as an absolute
+ * path — `C:\dev\null` on Windows — landing outside every root. MEASURED: `npm test > /dev/null`
+ * and `command -v rg > /dev/null && echo have-rg` both came back `ask`, while `npm test
+ * 2>/dev/null` came back `allow` because the leading digit stopped the redirect strip. Two
+ * spellings of the same discard, opposite answers, and the commoner one refused.
+ */
+const DEVICES = /^(?:\/dev\/(?:null|zero|tty|stdin|stdout|stderr|fd\/\d+)|NUL|CON)$/i;
+
+/** A token still holding a variable or a wildcard cannot be resolved, so it is not treated as inside. */
+const UNEXPANDED = /\$[A-Za-z_{(]|%[A-Za-z_][A-Za-z0-9_]*%|\*|\?/;
 
 /**
  * What kind of path a single token is, if any.
@@ -329,9 +343,20 @@ type PathKind = 'unc' | 'absolute' | 'home' | 'relative' | 'none';
  * look like a path. Requiring the second separator keeps the real one and drops the regex.
  */
 function pathKind(token: string, quoted = false): PathKind {
-  const t = token.replace(/^[<>&|]+/, '');
+  // The leading digit of `2>/dev/null` is part of the redirect, not of the path.
+  const t = token.replace(/^\d*[<>&|]+/, '');
   if (!t) return 'none';
+  if (DEVICES.test(t)) return 'device';
   if (isUnc(t)) return 'unc';
+  /**
+   * ★ AN UNEXPANDED VARIABLE IS NOT A RELATIVE PATH, AND TREATING IT AS ONE REOPENED THE `cd ~`
+   * HOLE WITHOUT NEEDING A `cd`. MEASURED: `echo x > $HOME/.claude/settings.json` was classified
+   * `relative`, resolved to `<workspace>/$HOME/.claude/settings.json` — inside — and ALLOWED.
+   * The shell then expanded it and wrote the person's own Claude settings, where a hook runs
+   * arbitrary code in their interactive sessions. `chdirTarget` had learned this lesson; the
+   * general token loop had not.
+   */
+  if (UNEXPANDED.test(t) && /[\\/]/.test(t)) return 'unresolvable';
   if (/^[A-Za-z]:[\\/]/.test(t)) return 'absolute';
   if (/^~($|[\\/])/.test(t)) return 'home';
   if (t.startsWith('/')) return 'absolute';
@@ -372,7 +397,57 @@ function pathText(token: string): string {
  * segment's grant permits that segment and nothing else.
  */
 function segments(command: string): readonly string[] {
-  return command.split(/&&|\|\||;|\||\n/g).map((s) => s.trim()).filter(Boolean);
+  const out: string[] = [];
+  let cur = '';
+  let quote: string | null = null;
+  const src = stripHeredocs(command);
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i] as string;
+    // ★ SPLITTING MUST RESPECT QUOTES. `sed -i 's|a/b|c/d|g' f.txt` is one command, and a plain
+    // `split(/\|/)` tears it into three fragments that are then judged as if they were commands.
+    if (quote) { cur += c; if (c === quote) quote = null; continue; }
+    if (c === '"' || c === "'") { quote = c; cur += c; continue; }
+    const two = src.slice(i, i + 2);
+    if (two === '&&' || two === '||') { out.push(cur); cur = ''; i++; continue; }
+    if (c === ';' || c === '|' || c === '\n') { out.push(cur); cur = ''; continue; }
+    cur += c;
+  }
+  out.push(cur);
+  return out.map((s) => s.trim()).filter(Boolean);
+}
+
+/**
+ * Remove here-document BODIES before anything is parsed as a command.
+ *
+ * ★ A HERE-DOC BODY IS DATA THE AGENT IS WRITING, NOT WORK IT IS DOING. MEASURED: because
+ * `segments` split on newlines with no awareness of them, every line of a `<<EOF` body became a
+ * segment and was walked as a command —
+ *
+ *     cat > s.md <<EOF          → ask, because the PROSE mentions /usr/share/doc
+ *     See /usr/share/doc …
+ *     EOF
+ *
+ * The file being written is inside the workspace and already permitted; refusing on its CONTENT is
+ * refusing to let the agent write a README that mentions a path. Worse for correctness, a body
+ * line reading `cd /etc` MOVED the walk's idea of where the shell was standing, so the segments
+ * after the here-doc were judged from the wrong directory — in both directions.
+ *
+ * The introducing line is kept: `cat > s.md <<EOF` still names `s.md`, which is a real write.
+ */
+function stripHeredocs(command: string): string {
+  if (!command.includes('<<')) return command;
+  const lines = command.split('\n');
+  const kept: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? '';
+    kept.push(line);
+    const m = /<<-?\s*(["']?)([A-Za-z_][A-Za-z0-9_]*)\1/.exec(line);
+    if (!m) continue;
+    const terminator = m[2];
+    i++;
+    while (i < lines.length && (lines[i] ?? '').trim() !== terminator) i++;
+  }
+  return kept.join('\n');
 }
 
 /**
@@ -521,11 +596,21 @@ function walkCommand(command: string, roots: readonly string[], cwd?: string): {
         continue;
       }
 
-      // A quoted argument is usually a message, a pattern or a regex — `grep -E "\d+"`,
-      // `git commit -m "escape \d"`. It is only treated as a path when it is unmistakably one.
-      if (tok.quoted && (kind === 'none' || kind === 'relative')) continue;
+      /**
+       * A quoted argument is often a message or a pattern rather than a path.
+       *
+       * ★ BUT ONLY `none` IS SKIPPED, NOT `relative` — SKIPPING BOTH WAS A CRITICAL HOLE.
+       * MEASURED: `cat "../../../secrets.txt"` returned ALLOW while the unquoted twin returned
+       * ask. Two quote characters were the entire bypass, including for redirect targets:
+       * `echo x > "../../../planted.txt"` and a copy into the Startup folder both went through.
+       * A quoted relative path is still a path; it resolves against `here` like any other, and
+       * the regex case that motivated the skip is already handled in `pathKind`, which returns
+       * `none` for a quoted leading-backslash token.
+       */
+      if (tok.quoted && kind === 'none') continue;
 
-      if (kind === 'unc') { fail(); continue; }
+      if (kind === 'device') continue;
+      if (kind === 'unc' || kind === 'unresolvable') { fail(); continue; }
       if (kind === 'home') {
         const abs = join(homedir(), pathText(tok.text).slice(1));
         touched.push(abs);
