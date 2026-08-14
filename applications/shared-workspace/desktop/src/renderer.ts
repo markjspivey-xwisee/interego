@@ -1981,7 +1981,10 @@ function openStreams(): void {
         }));
       renderStream();
       void loadBodies(cur.rows);
-    }, { refetchInterval: 45000 }) ?? null;
+      // ★ NO INTERVAL PINNED HERE. `pollingWatch` owns the cadence now — a quiet ceiling and a
+      // fast cadence while a conversation is live — and a number written here would freeze this
+      // reader at one speed while the other reader of the same channel adapted.
+    }) ?? null;
     // ★ NULL IS THE ANSWER HERE, NOT A THROW. A registration that failed means no update will
     // EVER arrive on its own, so the row is marked and a one-shot read is attempted rather than
     // leaving "reading…" up forever.
