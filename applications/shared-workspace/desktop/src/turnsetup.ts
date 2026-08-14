@@ -143,6 +143,8 @@ export function composeGate(args: {
   readonly agentName: string;
   readonly askedBy: string;
   readonly channel: string;
+  /** Stamped onto every audit line so a turn's cost and its tool calls can be joined exactly. */
+  readonly turnId?: string;
 }): TurnGate {
   const policy = readPolicy(args.userData, args.agentId);
   const dir = join(args.userData, 'agent-gate', args.agentId.replace(/[^a-zA-Z0-9-]/g, '_'));
@@ -152,7 +154,10 @@ export function composeGate(args: {
     policy,
     requestsDir: requestsDir(args.userData),
     auditPath: join(args.userData, 'agent-audit.jsonl'),
-    context: { agentName: args.agentName, askedBy: args.askedBy, channel: args.channel },
+    context: {
+      agentName: args.agentName, askedBy: args.askedBy, channel: args.channel,
+      ...(args.turnId ? { turnId: args.turnId } : {}),
+    },
   });
 
   /**

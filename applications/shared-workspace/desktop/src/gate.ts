@@ -36,7 +36,16 @@ export interface GateConfig {
   /** Directory the gate appends pending requests to, one JSON line each. */
   readonly requestsDir: string;
   /** Who is being acted for, and what prompted it — so an approval is attributable. */
-  readonly context: { readonly agentName: string; readonly askedBy: string; readonly channel: string };
+  readonly context: {
+    readonly agentName: string; readonly askedBy: string; readonly channel: string;
+    /**
+     * ★ THE JOIN KEY BETWEEN A TURN'S COST AND WHAT IT DID. The CLI reports tokens; this gate
+     * reports tool calls; they run in different processes that never speak. Stamping each audit
+     * line with the turn's id makes the join exact — a time window would bill one delegate for
+     * another's tool calls whenever two answer at once, which is the ordinary case here.
+     */
+    readonly turnId?: string;
+  };
   /**
    * Every decision, appended one JSON line each.
    *
@@ -95,7 +104,7 @@ export function gateDecision(raw: string, cfg: GateConfig, nowIso: string): stri
   }
 
   const d = decide(call, cfg.policy);
-  audit(cfg, { atIso: nowIso, tool: call.tool, decision: d.kind, why: d.why, input: call.input });
+  audit(cfg, { atIso: nowIso, turnId: cfg.context.turnId ?? '', tool: call.tool, decision: d.kind, why: d.why, input: call.input });
   if (d.kind === 'allow' || d.kind === 'granted') return answer('allow', d.why);
   if (d.kind === 'deny') return answer('deny', d.why);
 

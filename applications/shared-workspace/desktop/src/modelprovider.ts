@@ -349,6 +349,17 @@ export interface ModelRun {
   readonly text: string | null;
   readonly why: string;
   readonly ms: number;
+  /**
+   * The CLI's own reply, verbatim, for whatever wants to read more of it than `text`.
+   *
+   * ★ MEASURED (`tools/probe-turn-usage.ts`): the reply already carries usage.input_tokens,
+   * output_tokens, cache_read_input_tokens, cache_creation_input_tokens, num_turns,
+   * total_cost_usd, duration_ms, ttft_ms, session_id and a per-model breakdown. All of it was
+   * being parsed and thrown away because only `result` was read — so "we have no telemetry" was a
+   * reporting gap rather than a measurement problem. Kept whole rather than picked apart here, so
+   * that `telemetry.ts` owns the interpretation and this file stays about running the child.
+   */
+  readonly reply?: Record<string, unknown>;
 }
 
 /**
@@ -555,5 +566,5 @@ export async function runClaude(args: {
   if (text === null) {
     return { ok: false, text: null, ms, why: 'Claude Code reported success but returned no text, so there is nothing to post.' };
   }
-  return { ok: true, text, ms, why: 'Answered in ' + (ms / 1000).toFixed(1) + 's on your own credential.' };
+  return { ok: true, text, ms, reply: j, why: 'Answered in ' + (ms / 1000).toFixed(1) + 's on your own credential.' };
 }

@@ -206,6 +206,37 @@ export interface WorkspaceBridge {
   /** Opens the OS directory picker. A boundary is widened with a hand on the mouse, not a string. */
   permissionNominate(): Promise<{ ok: boolean; why: string }>;
   permissionUnnominate(dir: string): Promise<{ ok: boolean; why: string }>;
+
+  /**
+   * What the agents cost — tokens, turns, tool calls, and who caused each one.
+   *
+   * ★ EVERY NUMBER IS COPIED FROM A TOOL THAT REPORTED IT: the CLI's own `usage`, `num_turns` and
+   * `total_cost_usd`, and the permission gate's audit trail. Nothing is estimated, and nothing
+   * leaves this machine.
+   */
+  telemetryRead(limit?: number): Promise<{ turns: readonly TurnRecord[]; totals: TelemetryTotals }>;
+}
+
+/** One turn, as recorded. */
+export interface TurnRecord {
+  readonly turnId: string; readonly atIso: string;
+  readonly agentId: string; readonly agentName: string;
+  readonly askedBy: string; readonly channel: string;
+  readonly ok: boolean; readonly ms: number;
+  readonly inputTokens: number; readonly outputTokens: number;
+  readonly cacheReadTokens: number; readonly cacheCreationTokens: number;
+  readonly numTurns: number; readonly costUsd: number; readonly ttftMs: number;
+  readonly sessionId: string; readonly models: Readonly<Record<string, number>>;
+  readonly toolCalls: number; readonly allowed: number; readonly asked: number; readonly denied: number;
+  readonly tools: Readonly<Record<string, number>>;
+}
+
+export interface TelemetryTotals {
+  readonly turns: number; readonly inputTokens: number; readonly outputTokens: number;
+  readonly cacheReadTokens: number; readonly cacheCreationTokens: number;
+  readonly costUsd: number; readonly toolCalls: number; readonly asked: number; readonly denied: number;
+  readonly byAgent: Readonly<Record<string, number>>;
+  readonly byAsker: Readonly<Record<string, number>>;
 }
 
 /** One thing an agent tried to do, was refused, and asked about. */
@@ -255,6 +286,7 @@ const bridge: WorkspaceBridge = {
   permissionRevoke: (rule) => ipcRenderer.invoke('permission:revoke', rule),
   permissionNominate: () => ipcRenderer.invoke('permission:nominate'),
   permissionUnnominate: (dir) => ipcRenderer.invoke('permission:unnominate', dir),
+  telemetryRead: (limit) => ipcRenderer.invoke('telemetry:read', limit),
 };
 
 contextBridge.exposeInMainWorld('interego', bridge);

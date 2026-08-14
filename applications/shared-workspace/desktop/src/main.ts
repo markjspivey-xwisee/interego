@@ -21,9 +21,11 @@
  */
 
 import { app, BrowserWindow, dialog, ipcMain, Notification, shell, type WebContents } from 'electron';
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { clearPending, nominate, readPending, readSettings, revokeGrant, writeGrant } from './permission.js';
 import { composeGate } from './turnsetup.js';
+import { readTurns, recordTurn, totals, toolsInTurn, usageFrom } from './telemetry.js';
 import { Wallet } from 'ethers';
 import {
   DELEGATE_SURFACE, RelayMcpTransport, WorkspaceClient, type RelayOAuthBearer,
@@ -809,6 +811,13 @@ app.whenReady().then(() => {
      */
     const turn: Turn = { cancelled: false, kill: null };
     thinking.add(turn);
+    /**
+     * ★ MINTED BEFORE ANYTHING RUNS, so the gate's very first audit line already carries it. It is
+     * the join between what a turn COST (the CLI's reply) and what it DID (the gate's trail) —
+     * two processes that never speak to each other. Random rather than sequential because two
+     * delegates can be answering at the same moment.
+     */
+    const turnId = randomUUID();
     try {
       // The probe's own child is registered too — see `probeClaude`. Without it a cancel during
       // the probe was recorded and not effected, and the turn sailed on for up to 20 seconds.
@@ -870,6 +879,7 @@ app.whenReady().then(() => {
             agentName: context?.agentName ?? asDelegate,
             askedBy: context?.askedBy ?? 'somebody in the channel',
             channel: context?.channel ?? 'this channel',
+            turnId,
           });
           run = await withAgentTools({ relay: RELAY, bearer, delegatePod }, (tools) => spawnTurn(tools, gate));
         } else {
@@ -895,6 +905,28 @@ app.whenReady().then(() => {
         run = await spawnTurn();
       }
       if (turn.cancelled) return { ok: false, text: null, ms: run.ms, why: 'You turned your agent off while it was thinking. Its answer was discarded and nothing was written.' };
+
+      /**
+       * ★ WHAT THE TURN COST, RECORDED FROM WHAT THE TOOLS ALREADY REPORTED.
+       *
+       * Nothing here is estimated. The token counts, turn count, cost and session id are copied
+       * out of the CLI's own reply — which the app was parsing and discarding — and the tool calls
+       * are counted from the gate's audit trail, joined by `turnId` rather than by a time window,
+       * because two delegates answering at once is the ordinary case in a shared workspace.
+       *
+       * Written after the cancellation check, so a turn the person stopped is not billed to them.
+       */
+      try {
+        const u = usageFrom(run.reply);
+        const t = toolsInTurn(app.getPath('userData'), turnId);
+        recordTurn(app.getPath('userData'), {
+          turnId, atIso: new Date().toISOString(),
+          agentId: asDelegate ?? 'self',
+          agentName: context?.agentName ?? asDelegate ?? 'this client',
+          askedBy: context?.askedBy ?? '', channel: context?.channel ?? '',
+          ok: run.ok, ms: run.ms, ...u, ...t,
+        });
+      } catch { /* a record nobody can write must not fail the turn it describes */ }
       return run;
     } finally {
       // ★ `delete`, NOT `clear`. The set exists because a turn being cancelled and one starting
@@ -934,6 +966,17 @@ app.whenReady().then(() => {
    */
   // ★ `readSettings`, NOT `readPolicy` — see its comment. `readPolicy` mkdirs a workspace for the
   // agent id it is given, and this handler has no agent: it is a person looking at a list.
+  /**
+   * What the agents have cost, and who caused it.
+   *
+   * ★ READ-ONLY AND LOCAL. Nothing here sends anything anywhere; it reads two files this app
+   * already writes, in the same directory as the audit trail and the grants.
+   */
+  ipcMain.handle('telemetry:read', (_e, limit?: number) => {
+    const turns = readTurns(app.getPath('userData'), typeof limit === 'number' ? limit : 200);
+    return { turns, totals: totals(turns) };
+  });
+
   ipcMain.handle('permission:list', () => ({
     pending: readPending(app.getPath('userData')),
     ...readSettings(app.getPath('userData')),

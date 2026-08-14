@@ -558,7 +558,7 @@ const BASELINE = {};
 // tool un-pins a terminal FAILURE by itself, but the case that matters on the fleet's stateful
 // singleton is a deploy Railway calls SUCCESS whose new code is wrong anyway, and undoing that
 // means naming the previous sha — held by Railway alone, in a field nobody printed first.
-export const MIN_FILES = 419;
+export const MIN_FILES = 421;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.
