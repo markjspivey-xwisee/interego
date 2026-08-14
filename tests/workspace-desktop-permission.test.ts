@@ -27,6 +27,7 @@ import {
 } from '../applications/shared-workspace/desktop/src/permission.js';
 import { gateDecision, gateSettings, type GateConfig } from '../applications/shared-workspace/desktop/src/gate.js';
 import { turnCwd } from '../applications/shared-workspace/desktop/src/modelprovider.js';
+import { composeGate } from '../applications/shared-workspace/desktop/src/turnsetup.js';
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'iego-perm-'));
 const policy = (over: Partial<Policy> = {}): Policy =>
@@ -510,6 +511,78 @@ describe('★★ what the third review round found', () => {
     expect(decide({ tool: 'Bash', input: { command: "sed -i 's|a/b|c/d|g' f.txt" }, cwd: ws }, p).kind).toBe('allow');
     expect(decide({ tool: 'Bash', input: { command: 'echo "a; b" > out.txt' }, cwd: ws }, p).kind).toBe('allow');
     rmSync(ws, { recursive: true, force: true });
+  });
+});
+
+/**
+ * ★★ THE PRODUCTION WIRING, EXERCISED — NOT A TEST'S IDEA OF IT.
+ *
+ * Three adversarial reviews found three defects with one shape: the TEST built one configuration
+ * and PRODUCTION used another. The never-list swallowed the real workspace (tests used a temp
+ * dir); the path scanner refused `cat src/index.ts` (the probe's one command had no separator);
+ * the CLI was spawned in a temp directory while the only permitted root was the workspace (all
+ * three probes and all 69 tests passed the workspace AS the cwd). Every one was live in the
+ * installed app, and every one was found by a person reading code rather than by a test.
+ *
+ * The common cause was that the wiring deciding all three lived in `main.ts` behind an `electron`
+ * import, so nothing could reach it and every test invented its own version. It is now
+ * `turnsetup.ts`, and this composes a REAL gate from it — real userData layout, the workspace
+ * `readPolicy` computes, the cwd `turnCwd` returns — and asks whether ordinary work is permitted.
+ *
+ * If a future change breaks the agent in the installed app again, this is the test that should go
+ * red first.
+ */
+describe('★★ a gate composed the way production composes it', () => {
+  const userData = mkdtempSync(join(tmpdir(), 'iego-prod-'));
+  // `dist/gate.mjs` is what the app copies out of its bundle; the build produces it.
+  const bundleDir = join(__dirname, '..', 'applications', 'shared-workspace', 'desktop', 'dist');
+
+  it('★ produces a workspace that is not itself forbidden, and a cwd inside it', () => {
+    const gate = composeGate({
+      userData, bundleDir, agentId: 'claude-desktop',
+      agentName: 'Claude Desktop', askedBy: 'goldenfleece', channel: '#house',
+    });
+    expect(forbiddenPath(gate.workspace)).toBe(false);
+    // ★ The agent stands in its workspace. This is the assertion whose absence made the
+    // spawn-in-a-temp-directory defect invisible to 69 tests.
+    expect(turnCwd(gate)).toBe(gate.workspace);
+    expect(existsSync(gate.settingsPath)).toBe(true);
+  });
+
+  it('★★ and under exactly those values, ordinary work is permitted', () => {
+    const gate = composeGate({
+      userData, bundleDir, agentId: 'claude-desktop',
+      agentName: 'Claude Desktop', askedBy: 'goldenfleece', channel: '#house',
+    });
+    // Read back the same policy the gate was given, rather than constructing one.
+    const p = readPolicy(userData, 'claude-desktop');
+    const cwd = turnCwd(gate);
+    for (const command of ['echo INSIDE > made.txt', 'cat package.json', 'cat src/index.ts', 'npm test']) {
+      expect(decide({ tool: 'Bash', input: { command }, cwd }, p).kind).toBe('allow');
+    }
+    expect(decide({ tool: 'Write', input: { file_path: 'notes.txt' }, cwd }, p).kind).toBe('allow');
+    // And the boundary still holds from there.
+    expect(decide({ tool: 'Bash', input: { command: 'cat ../../secrets.txt' }, cwd }, p).kind).toBe('ask');
+    expect(decide({ tool: 'Read', input: { file_path: join(homedir(), '.ssh', 'id_rsa') }, cwd }, p).kind).toBe('deny');
+  });
+
+  it('★ the gate config it wrote points at the same requests file the app reads', () => {
+    // Two processes that never speak, joined only by this path. Written out twice, a change to one
+    // is a panel silently showing nothing while agents go on asking.
+    composeGate({
+      userData, bundleDir, agentId: 'claude-desktop',
+      agentName: 'Claude Desktop', askedBy: 'goldenfleece', channel: '#house',
+    });
+    const cfg = JSON.parse(readFileSync(join(userData, 'agent-gate', 'claude-desktop', 'gate-config.json'), 'utf8')) as
+      { requestsDir: string };
+    expect(cfg.requestsDir).toBe(requestsDir(userData));
+  });
+
+  it('★ a gate that cannot be prepared THROWS, so the turn gets no tools rather than ungated ones', () => {
+    expect(() => composeGate({
+      userData, bundleDir: join(userData, 'no-such-bundle'), agentId: 'claude-desktop',
+      agentName: 'Claude Desktop', askedBy: 'goldenfleece', channel: '#house',
+    })).toThrow(/not being given tools/);
   });
 });
 

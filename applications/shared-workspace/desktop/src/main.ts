@@ -22,9 +22,8 @@
 
 import { app, BrowserWindow, dialog, ipcMain, Notification, shell, type WebContents } from 'electron';
 import { join } from 'node:path';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { gateSettings, writeGateConfig } from './gate.js';
-import { clearPending, nominate, readPending, readPolicy, readSettings, requestsDir, revokeGrant, writeGrant } from './permission.js';
+import { clearPending, nominate, readPending, readSettings, revokeGrant, writeGrant } from './permission.js';
+import { composeGate } from './turnsetup.js';
 import { Wallet } from 'ethers';
 import {
   DELEGATE_SURFACE, RelayMcpTransport, WorkspaceClient, type RelayOAuthBearer,
@@ -782,111 +781,6 @@ app.whenReady().then(() => {
    * from the call — a renderer that could pass an executable path would be able to make this
    * process run anything, and the renderer is the half that renders bytes other people wrote.
    */
-/**
- * A launcher for the hook, because the runtime that is certainly present is Electron.
- *
- * ★ THE HOOK CANNOT SIMPLY BE `node gate.mjs`. A person running a packaged desktop app has no
- * guarantee of `node` on their PATH, and most do not have one. The runtime certainly present is
- * the binary already executing — but Electron only behaves as plain Node when
- * `ELECTRON_RUN_AS_NODE` is set, and `childEnv()` deliberately STRIPS that from the model child
- * (footgun 3), which the hook inherits. So the variable has to be set at the moment the hook runs.
- *
- * ★ AND IT CANNOT BE SET INLINE IN THE COMMAND. `VAR=1 prog` is shell syntax POSIX understands and
- * `cmd.exe` does not, and the hook command is run by whatever shell the CLI picks. A tiny script
- * per platform is the one form that works on both and can be read by somebody wondering what the
- * app just put on their disk.
- *
- * ★ IF THIS IS WRONG THE GATE DOES NOT RUN, so `probe-gated-agent.ts` includes a case where the
- * hook is deliberately broken — a permission system whose failure mode is "allow" is decoration,
- * and that must be measured rather than hoped for.
- */
-function writeGateLauncher(dir: string, gateScript: string, cfgPath: string): string {
-  const exe = process.execPath;
-  if (process.platform === 'win32') {
-    const p = join(dir, 'gate.cmd');
-    writeFileSync(p, [
-      '@echo off',
-      'set ELECTRON_RUN_AS_NODE=1',
-      '"' + exe + '" "' + gateScript + '" "' + cfgPath + '"',
-    ].join('\r\n'), { mode: 0o700, encoding: 'utf8' });
-    return p;
-  }
-  const p = join(dir, 'gate.sh');
-  writeFileSync(p, [
-    '#!/bin/sh',
-    'ELECTRON_RUN_AS_NODE=1 exec ' + JSON.stringify(exe) + ' ' + JSON.stringify(gateScript) + ' ' + JSON.stringify(cfgPath),
-  ].join('\n'), { mode: 0o700, encoding: 'utf8' });
-  return p;
-}
-
-/**
- * Compose the permission gate for one turn.
- *
- * ★ PER TURN, NOT PER SESSION, because the CONTEXT changes every time. A grant is answered by a
- * person looking at "Claude Desktop wants to run `npm install` — because goldenfleece asked X in
- * #house". That last clause is what makes the request answerable rather than an anonymous dialog,
- * and it is different for every ask.
- *
- * The grants and the nominated directories are read fresh here too, so an approval given a moment
- * ago is in force on the next turn without restarting anything — which is the whole point of a
- * permission that outlives the turn.
- */
-function composeGate(args: {
-  readonly agentId: string;
-  readonly agentName: string;
-  readonly askedBy: string;
-  readonly channel: string;
-}): TurnGate {
-  const userData = app.getPath('userData');
-  const policy = readPolicy(userData, args.agentId);
-  const dir = join(userData, 'agent-gate', args.agentId.replace(/[^a-zA-Z0-9-]/g, '_'));
-  mkdirSync(dir, { recursive: true });
-
-  const cfgPath = writeGateConfig(dir, {
-    policy,
-    requestsDir: requestsDir(userData),
-    auditPath: join(userData, 'agent-audit.jsonl'),
-    context: { agentName: args.agentName, askedBy: args.askedBy, channel: args.channel },
-  });
-
-  /**
-   * ★ THE HOOK RUNS AS A BARE PROCESS AND SO NEEDS A BARE FILE. It is not part of this app: the
-   * CLI spawns it per tool call with no Electron, no bundler and no TypeScript. `dist/gate.mjs` is
-   * built alongside `dist/main.js` by the package script for exactly this.
-   *
-   * ★ AND IT IS RUN BY THIS PROCESS'S OWN BINARY, WITH `ELECTRON_RUN_AS_NODE`. There is no
-   * guarantee a person running a packaged desktop app has `node` on their PATH — most do not — so
-   * the runtime that is certainly present is the one already executing. Electron only behaves as
-   * plain Node when that variable is set, which is the same flag `childEnv` strips from the MODEL
-   * child for the opposite reason.
-   */
-  /**
-   * ★ THE GATE IS COPIED OUT OF THE BUNDLE BEFORE IT IS RUN.
-   *
-   * `__dirname` in a packaged app is inside `app.asar`. Electron patches `fs` so its own code can
-   * read from there — but the launcher runs Electron with `ELECTRON_RUN_AS_NODE=1`, which is plain
-   * Node, and plain Node has never heard of an asar. The hook would fail to start on a packaged
-   * install while working perfectly from source, which is the worst shape a bug can have.
-   *
-   * Copied to `userData` — a real directory on a real filesystem — and refreshed whenever the
-   * bundled one differs, so an app update cannot leave an old gate enforcing an old policy.
-   */
-  const bundled = join(__dirname, 'gate.mjs');
-  const gateScript = join(dir, 'gate.mjs');
-  try {
-    const want = readFileSync(bundled, 'utf8');
-    const have = existsSync(gateScript) ? readFileSync(gateScript, 'utf8') : '';
-    if (want !== have) writeFileSync(gateScript, want, { mode: 0o700, encoding: 'utf8' });
-  } catch (e) {
-    // ★ AND IF IT CANNOT BE PLACED, THE TURN GETS NO TOOLS RATHER THAN UNGATED ONES.
-    throw new Error('the permission gate could not be prepared (' + ((e as Error)?.message ?? String(e))
-      + '), so this delegate is not being given tools this turn');
-  }
-  const launcher = writeGateLauncher(dir, gateScript, cfgPath);
-  const settingsPath = join(dir, 'settings.json');
-  writeFileSync(settingsPath, gateSettings(launcher), { mode: 0o600, encoding: 'utf8' });
-  return { settingsPath, workspace: policy.workspace };
-}
 
   ipcMain.handle('agent:think', async (
     _e,
@@ -970,6 +864,8 @@ function composeGate(args: {
            * in. Capabilities follow identity here, not the other way round.
            */
           const gate = composeGate({
+            userData: app.getPath('userData'),
+            bundleDir: __dirname,
             agentId: asDelegate,
             agentName: context?.agentName ?? asDelegate,
             askedBy: context?.askedBy ?? 'somebody in the channel',
