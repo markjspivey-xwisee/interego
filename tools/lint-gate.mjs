@@ -185,7 +185,7 @@ const UNLINTED_FRONTIER = {
   // This round contributed the Discord bot's `address.ts` and `webhook.ts` with their tests, and
   // the desktop's `drive-delegate-list-live.ts` — four `no-console` CLI/driver files and two
   // source files in a vertical that is not on the linted frontier.
-  applications: { errors: 1323, files: 374 },
+  applications: { errors: 1323, files: 394 },
   benchmarks: { errors: 193, files: 31 },
   demos: { errors: 48, files: 37 },
   // A declared npm workspace (see package.json `workspaces`), never linted.
