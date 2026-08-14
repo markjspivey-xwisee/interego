@@ -2032,6 +2032,45 @@ describe('the local agent is off, visible, and stoppable', () => {
   });
 
   /**
+   * ★★ A REFUSAL IS RECORDED, SO THE SAME QUESTION IS NOT ANSWERED FOREVER.
+   *
+   * REPORTED FROM A LIVE CHANNEL: "the agent keeps responding to things it's already responded to
+   * every time I log in and enable the agent." The loop had no exit:
+   *
+   *   1. a draft is refused — over the cap, no footing, empty
+   *   2. the refusal path returned WITHOUT recording anything. `A.answered` is only added to once
+   *      a draft EXISTS, and `prov:wasDerivedFrom` only exists once an entry is WRITTEN
+   *   3. so the entry was still unanswered by both halves of the dedupe
+   *   4. `decideTurn` picks the OLDEST unanswered entry addressed to this agent — that one
+   *   5. the same input produced the same refusal, every poll and every restart, each one a real
+   *      model turn on the person's own subscription
+   *
+   * Two attempts, then it stops and SAYS it stopped: an agent that quietly gives up looks exactly
+   * like one that is broken, which is the complaint this panel exists to answer.
+   */
+  it('★★ stops re-answering an entry it cannot draft for, and says so', async () => {
+    const o = await open({
+      setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'hello', '2026-08-07T10:00:00.000Z')); },
+      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: BEHALF + 'x'.repeat(DRAFT_MAX + 1), why: 'ok', ms: 900 }) },
+    });
+    await signInAndSpeak(o);
+
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    // First refusal: it will try once more, because a model can simply have a bad turn.
+    expect(text(o.doc, '#agentresult')).toContain('try once more');
+
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    // Second: it stops, names the reason, and points at what would make it a new question.
+    expect(text(o.doc, '#agentresult')).toContain('stop trying this one');
+    // ★ Nothing was written for it — giving up is not the same as having answered.
+    expect((o.doc.getElementById('composer') as HTMLTextAreaElement).value).toBe('');
+  });
+
+  /**
    * ★ THE FOUR BELOW ARE DEFECTS AN ADVERSARIAL REVIEWER FOUND IN THE FIRST VERSION OF THIS
    * FEATURE, after every test above was already green. Each was reachable, each was silent, and
    * two of them wrote to somebody's permanent public log. They are pinned here in the shape that
