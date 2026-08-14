@@ -201,8 +201,35 @@ export type TurnDecision =
  */
 export const BRIEF_ENTRIES = 24;
 
-/** The longest draft that may be posted. See {@link checkDraft} for why there is a limit at all. */
-export const DRAFT_MAX = 4000;
+/**
+ * The longest draft that may be posted. See {@link checkDraft} for why there is a limit at all.
+ *
+ * ── ★★ WHY 16,000, AND WHY IT WAS 4,000 ─────────────────────────────────────
+ *
+ * 4,000 was arbitrary. It arrived with this file and NO recorded reason: the docstring pointed at
+ * `checkDraft` for "why there is a limit at all", and `checkDraft` only ever explained why it
+ * REFUSES rather than truncates. Asked where the number came from, every candidate was checked and
+ * none of them is it:
+ *
+ *   · the `wsp:Entry` shape has no `sh:maxLength` on `dct:description`, or anywhere else
+ *   · the relay's workspace append path has no size cap at all
+ *   · the relay's caps are elsewhere and far larger — 64 KB for an AMEP act, 1 MB for an
+ *     engagement record
+ *   · Discord's own limit is 2,000, which 4,000 already exceeded; `render.ts` splits long entries
+ *     with "(continued)", so delivery was never the constraint either
+ *
+ * ★ AND IT HAD BECOME ACTIVELY WRONG, because the drawing capability post-dates it. A delegate
+ * that answers with a picture writes the SVG into the entry: the donkey it drew in a live channel
+ * was 2,595 characters, leaving 1,405 for the sentence explaining it. MEASURED, in that same
+ * channel: a 4,739-character reply was refused and the whole turn was lost.
+ *
+ * ★ A CAP STILL EXISTS, AND THAT IS DELIBERATE. An entry is permanent, public and uneditable, so
+ * "no limit" means a runaway model can write a novel into somebody's log with no way to take it
+ * back. 16,000 fits an illustration plus real prose, or a long researched answer, and still bounds
+ * the damage. The agent is TOLD this number — see `briefPrompt` — because the failure this
+ * replaces was enforcing a constraint that had never been disclosed.
+ */
+export const DRAFT_MAX = 16000;
 
 /**
  * One transcript line, attributed.
@@ -645,6 +672,29 @@ export function briefPrompt(
     '',
     'Plain prose, a few sentences. No markdown headings, bullet lists or code fences. Do not open',
     'with "Sure" or "Here is", and do not sign your name.',
+    '',
+    /**
+     * ★★ THE LIMIT IS STATED, BECAUSE IT IS ENFORCED.
+     *
+     * MEASURED in a live channel: a delegate wrote 4,739 characters and the whole turn was thrown
+     * away — "Nothing was drafted … over the 4000-character limit". The brief spent nine lines on
+     * how to declare a footing and said NOTHING about length, so the agent had no way to comply
+     * with a rule it was never told. The tokens were spent, the answer was lost, and the next turn
+     * would have done exactly the same thing, because each one starts fresh.
+     *
+     * Enforcing an undisclosed constraint is the app's fault, not the model's. `checkDraft` still
+     * refuses rather than truncates — half a sentence recorded permanently is worse than none —
+     * but a refusal should now be a rarity rather than the predictable outcome of a long answer.
+     *
+     * ★ AND THERE IS NO ESCAPE HATCH, WHICH THIS ALMOST CLAIMED THERE WAS. The obvious advice is
+     * "put the long part in a file block" — and it is WRONG here. A produced file is part of the
+     * entry body (`findProduced` reads that body), so it lands inside the same budget: the 2,595
+     * character donkey fit, a long document would not. Telling the agent otherwise would trade a
+     * refusal it could not have predicted for one it was actively misled into.
+     */
+    'HARD LIMIT: your whole reply must be under ' + DRAFT_MAX + ' characters — INCLUDING any file or',
+    'SVG you produce, which is counted as part of it. Over that it is REFUSED, not shortened: the',
+    'answer is lost and nothing is posted at all. Say the useful thing and stop.',
     '',
     /**
      * ★ ABSTAINING IS NOT OFFERED FOR A QUESTION ADDRESSED TO THIS AGENT BY NAME.
