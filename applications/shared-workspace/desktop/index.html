@@ -468,6 +468,24 @@
       <div id="permgrants"></div>
       <div id="permresult"></div>
     </div>
+    <!--
+      ★ WHAT THE AGENTS COST, FROM WHAT THE TOOLS ALREADY REPORTED.
+
+      Every number here is copied out of something that measured it: the CLI's own reply carries
+      token counts, turn count and cost for each turn, and the permission gate has been writing one
+      line per tool call since it shipped. None of it is estimated, and none of it leaves this
+      machine — it reads two files in the same folder as the audit trail and the grants.
+    -->
+    <div class="pane-head" style="border-top:1px solid var(--line)">
+      <div class="label">What your agents cost</div>
+      <div class="note" id="telnote">No turns recorded yet.</div>
+    </div>
+    <div class="pane-body" id="telbody">
+      <div id="telsummary"></div>
+      <div id="telwho"></div>
+      <div id="telrecent"></div>
+      <div class="row"><button class="sm" id="telrefresh">Refresh</button></div>
+    </div>
   </section>
 
   <section class="pane mid" aria-label="Messages">

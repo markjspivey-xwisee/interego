@@ -185,7 +185,7 @@ const UNLINTED_FRONTIER = {
   // This round contributed the Discord bot's `address.ts` and `webhook.ts` with their tests, and
   // the desktop's `drive-delegate-list-live.ts` — four `no-console` CLI/driver files and two
   // source files in a vertical that is not on the linted frontier.
-  applications: { errors: 1323, files: 374 },
+  applications: { errors: 1323, files: 394 },
   benchmarks: { errors: 193, files: 31 },
   demos: { errors: 48, files: 37 },
   // A declared npm workspace (see package.json `workspaces`), never linted.
@@ -558,7 +558,7 @@ const BASELINE = {};
 // tool un-pins a terminal FAILURE by itself, but the case that matters on the fleet's stateful
 // singleton is a deploy Railway calls SUCCESS whose new code is wrong anyway, and undoing that
 // means naming the previous sha — held by Railway alone, in a field nobody printed first.
-export const MIN_FILES = 419;
+export const MIN_FILES = 420;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.

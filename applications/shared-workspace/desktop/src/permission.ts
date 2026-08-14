@@ -386,7 +386,14 @@ function fixedPrefix(p: string): string {
   const at = p.search(WILDCARD);
   if (at < 0) return p;
   const cut = Math.max(p.lastIndexOf('/', at), p.lastIndexOf('\\', at));
-  return cut <= 0 ? '.' : p.slice(0, cut);
+  /**
+   * ★ `cut === 0` IS THE FILESYSTEM ROOT, NOT "no separator found". Conflating the two mapped `/*`
+   * to `.`, which resolves to the agent's own directory — so MEASURED, `grep -rn secret /*` and
+   * `cat /*` were ALLOWED: a whole-filesystem read whose output goes straight back into the
+   * channel, reachable with one command and no script.
+   */
+  if (cut === 0) return p.slice(0, 1);
+  return cut < 0 ? '.' : p.slice(0, cut);
 }
 
 /**
@@ -498,8 +505,17 @@ function scanSegments(command: string): { readonly parts: readonly string[]; rea
   let quote: string | null = null;
   for (let i = 0; i < text.length; i++) {
     const c = text[i] as string;
-    // A backslash escapes the next character, so `echo \"` does not open a quoted region.
-    if (c === '\\' && i + 1 < text.length) { cur += c + (text[i + 1] as string); i++; continue; }
+    /**
+     * A backslash escapes the next character, so `echo \"` does not open a quoted region.
+     *
+     * ★★ EXCEPT INSIDE SINGLE QUOTES, WHERE POSIX SAYS IT IS LITERAL. Treating it as an escape
+     * there made `echo 'a\'` — a complete, valid string bash runs happily — scan as an
+     * unterminated quote, collapsing the whole line into one segment. That was half of a critical
+     * bypass: `echo 'a\' && cd .. && cd .. && cat taxes.txt` derailed the scanner, and `decide`
+     * then answered `granted` to what it had just failed to read. Both halves are fixed; either
+     * alone would have left a hole or a stream of spurious questions.
+     */
+    if (c === '\\' && quote !== "'" && i + 1 < text.length) { cur += c + (text[i + 1] as string); i++; continue; }
     // ★ SPLITTING MUST RESPECT QUOTES. `sed -i 's|a/b|c/d|g' f.txt` is one command, and a plain
     // `split(/\|/)` tears it into three fragments that are then judged as if they were commands.
     if (quote) { cur += c; if (c === quote) quote = null; continue; }
@@ -577,23 +593,34 @@ function stripHeredocs(command: string): { readonly text: string; readonly confi
  *                               terminator never matched and everything after it was eaten
  */
 function heredocTag(line: string): string | null {
-  // Blank out quoted regions so a `<<` inside them is not an operator.
+  /**
+   * The mask exists ONLY to find where an unquoted `<<` is; the TAG is then read from the original
+   * text at that position.
+   *
+   * ★★ MATCHING THE TAG AGAINST THE MASK WAS A BUG, AND IT BROKE THE FORM AGENTS ARE TOLD TO
+   * PREFER. Blanking quoted characters turns `<<'EOF'` into `<<'   '`, which no tag pattern can
+   * match — so `stripHeredocs` stripped nothing and every line of the body was walked as a
+   * command. MEASURED: `cat > README.md <<'EOF'` whose body mentioned `/etc/app.conf` came back
+   * `ask`, while the identical command with an unquoted tag was allowed. Quoting the tag is the
+   * documented way to stop a here-doc expanding variables, so this hit the careful spelling.
+   */
   let masked = '';
   let quote: string | null = null;
   for (let i = 0; i < line.length; i++) {
     const c = line[i] as string;
-    if (c === '\\' && i + 1 < line.length) { masked += '  '; i++; continue; }
+    if (c === '\\' && quote !== "'" && i + 1 < line.length) { masked += '  '; i++; continue; }
     if (quote) { masked += c === quote ? (quote = null, c) : ' '; continue; }
     if (c === '"' || c === "'") { quote = c; masked += c; continue; }
     masked += c;
   }
-  // `<<` but not `<<<`, then an optional dash, then the tag — which may hold dashes and dots.
-  const m = /(?:^|[^<])<<-?\s*(["']?)([A-Za-z_][\w.-]*)\1(?!<)/.exec(masked);
-  if (!m) return null;
-  // A here-string is `<<<`; the negative lookahead above misses the case where the third `<`
-  // precedes the tag, so it is checked directly.
+  // A here-string reads one line and opens nothing, so it is not a here-doc at all.
   if (/<<</.test(masked)) return null;
-  return m[2] ?? null;
+  const at = /(?:^|[^<])(<<-?)/.exec(masked);
+  if (!at || at.index === undefined) return null;
+  const from = at.index + at[0].length - (at[1] as string).length;
+  // Read the tag from the ORIGINAL line, where its quotes and characters are still intact.
+  const tag = /^<<-?\s*(["']?)([A-Za-z_][\w.-]*)\1/.exec(line.slice(from));
+  return tag?.[2] ?? null;
 }
 
 /**
@@ -690,6 +717,21 @@ function walkCommand(command: string, roots: readonly string[], cwd?: string): {
    * decides, or the two disagree about where the shell is standing.
    */
   readonly perSegment: readonly { readonly text: string; readonly ok: boolean }[];
+  /**
+   * ★★ REPORTED SEPARATELY FROM `staysInside`, BECAUSE FOLDING THEM MADE THE WHOLE RULE INERT.
+   *
+   * Round four added "not understanding a command is itself a reason to ask" by seeding
+   * `staysInside` from the scanner's confidence. But `decide` asks about SEGMENTS whose own `ok`
+   * is false, and an unparsed command has no such segment — so the loop found nothing, fell
+   * through to the unconditional `granted`, and the gate answered ALLOW. MEASURED:
+   *
+   *     echo 'a' && cd .. && cd .. && cat taxes.txt        → granted → allow
+   *
+   * With zero grants in the policy, and an audit line reading "each part is either inside its
+   * workspace or one you approved", which was false in both halves. A rule that cannot express
+   * itself to its only caller is not a rule.
+   */
+  readonly understood: boolean;
 } {
   let here = cwd && isAbsolute(cwd) ? cwd : (roots[0] ?? process.cwd());
   const touched: string[] = [];
@@ -790,7 +832,7 @@ function walkCommand(command: string, roots: readonly string[], cwd?: string): {
     }
     perSegment.push({ text: segment, ok: segOk });
   }
-  return { staysInside, touched, perSegment };
+  return { staysInside, touched, perSegment, understood: scan.confident };
 }
 
 /**
@@ -924,6 +966,26 @@ export function decide(call: ToolCall, policy: Policy): Decision {
     const walk = walkCommand(cmd, roots, cwd);
     if (walk.staysInside) {
       return { kind: 'allow', why: 'it names nothing outside its workspace and does not reach the network' };
+    }
+
+    /**
+     * ★★ A COMMAND THIS COULD NOT READ IS A QUESTION, AND IT HAS TO BE ASKED HERE.
+     *
+     * Checked BEFORE the per-segment loop, because an unparsed command has no failing segment for
+     * that loop to find — which is exactly how round four's rule came to do nothing at all. It
+     * fell past the loop to the `granted` below and the gate answered ALLOW, on a policy holding
+     * no grants, with an audit line claiming the person had approved it.
+     *
+     * It is also not askable per-segment: when the scanner has lost the thread there is no
+     * trustworthy segment to name, so the whole command is put to the person as one thing.
+     */
+    if (!walk.understood) {
+      return {
+        kind: 'ask',
+        why: 'this app could not read that command with enough confidence to judge it — an unbalanced quote or an unterminated here-document',
+        rule: 'Bash(unparsed)',
+        what: 'run `' + cmd.slice(0, 160) + '`',
+      };
     }
     /**
      * ★ EVERY SEGMENT IS JUDGED, AND A GRANT COVERS ONE SEGMENT ONLY.

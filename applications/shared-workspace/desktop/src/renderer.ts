@@ -4195,6 +4195,74 @@ async function renderPermissions(): Promise<void> {
   }
 }
 
+/**
+ * ── WHAT THE AGENTS COST ─────────────────────────────────────────────────────
+ *
+ * ★ EVERY FIGURE IS COPIED FROM SOMETHING THAT MEASURED IT. The CLI reports `usage`, `num_turns`
+ * and `total_cost_usd` for each turn; the permission gate records one line per tool call. Both
+ * were already being produced — the tokens were parsed and thrown away, and the tool calls were
+ * never joined to a turn. So nothing here is an estimate, and where a number is missing it shows
+ * as zero rather than as a guess.
+ */
+function fmt(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'k';
+  return String(Math.round(n));
+}
+
+async function renderTelemetry(): Promise<void> {
+  let state: Awaited<ReturnType<typeof window.interego.telemetryRead>>;
+  try { state = await window.interego.telemetryRead(200); }
+  catch (e) { clear($('telsummary')).appendChild(errBox(e, 'The turn records could not be read.')); return; }
+
+  const { turns, totals: t } = state;
+  $('telnote').textContent = t.turns === 0
+    ? 'No turns recorded yet — this fills in as your agents answer.'
+    : t.turns + (t.turns === 1 ? ' turn recorded' : ' turns recorded') + ' on this machine';
+
+  const box = clear($('telsummary'));
+  if (t.turns === 0) { clear($('telwho')); clear($('telrecent')); return; }
+  box.appendChild(kvPair([
+    ['tokens in', fmt(t.inputTokens)],
+    ['tokens out', fmt(t.outputTokens)],
+    // Cache reads are shown separately because they are most of the volume and a fraction of the
+    // price — folding them into "tokens in" would make every number look alarming and wrong.
+    ['cache read', fmt(t.cacheReadTokens)],
+    ['cache write', fmt(t.cacheCreationTokens)],
+    ['tool calls', String(t.toolCalls)],
+    ['asked / denied', t.asked + ' / ' + t.denied],
+    ['cost', '$' + t.costUsd.toFixed(4)],
+  ]));
+
+  const who = clear($('telwho'));
+  const rank = (label: string, m: Readonly<Record<string, number>>): void => {
+    const rows = Object.entries(m).sort((a, b) => b[1] - a[1]).slice(0, 5);
+    if (!rows.length) return;
+    who.appendChild(el('div', 'note', label));
+    who.appendChild(kvPair(rows.map(([k, v]) => [k, fmt(v) + ' tokens'] as const)));
+  };
+  rank('by agent', t.byAgent);
+  // ★ Who ASKED, not only which agent answered. A bill nobody can attribute to a person is a
+  // number; attributed, it is a conversation about who is driving the machine and how hard.
+  rank('by who asked', t.byAsker);
+
+  const recent = clear($('telrecent'));
+  recent.appendChild(el('div', 'note', 'most recent turns'));
+  for (const r of turns.slice(0, 8)) {
+    const line = el('div', 'step ' + (r.ok ? 'done' : 'err'));
+    line.appendChild(el('span', 'mark', r.ok ? '✓' : '×'));
+    const txt = el('span', 'txt', r.atIso.slice(5, 16).replace('T', ' ') + '  ' + r.agentName
+      + '  ' + fmt(r.inputTokens + r.outputTokens) + ' tok'
+      + '  ' + r.toolCalls + ' tools'
+      + (r.asked ? '  ' + r.asked + ' asked' : '')
+      + (r.askedBy ? '  · ' + r.askedBy : ''));
+    line.appendChild(txt);
+    recent.appendChild(line);
+  }
+}
+
+btn('telrefresh').addEventListener('click', () => { void renderTelemetry(); });
+
 btn('permnominate').addEventListener('click', () => {
   void window.interego.permissionNominate()
     .then((res) => { if (res.why) say('permresult', res.ok ? 'ok' : 'warn', res.why); return renderPermissions(); })
@@ -4208,7 +4276,8 @@ btn('permnominate').addEventListener('click', () => {
  * is the same as never. Ten seconds is far below the time anybody takes to notice and answer.
  */
 void renderPermissions();
-setInterval(() => { void renderPermissions(); }, 10_000);
+void renderTelemetry();
+setInterval(() => { void renderPermissions(); void renderTelemetry(); }, 10_000);
 btn('save').addEventListener('click', () => { void doSave(false); });
 btn('stalesave').addEventListener('click', () => { void doSave(true); });
 btn('modelrecheck').addEventListener('click', () => { providerRead = false; renderModelCard(); void loadProviders(); });
