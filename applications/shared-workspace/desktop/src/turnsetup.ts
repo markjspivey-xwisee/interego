@@ -56,7 +56,22 @@ import type { TurnGate } from './modelprovider.js';
  * with the same policy. If the choice is ever wrong the hook fails to start, and a hook that
  * cannot start already denies — see the fail-closed case in `probe-gated-agent.ts`.
  */
+let cachedRuntime: string | null = null;
+
 export function gateRuntime(): string {
+  /**
+   * ★★ PROBED ONCE PER PROCESS, NOT ONCE PER TURN — AND CI IS WHAT NOTICED.
+   *
+   * This spawns candidate runtimes to check they answer, which is the right way to avoid trusting
+   * a broken `node` on the PATH. But it was called from `writeGateLauncher`, which is called from
+   * `composeGate`, which runs on EVERY TURN — so the thing added to cut per-tool-call startup cost
+   * was itself paying a process spawn per turn, and on a cold Linux runner enough of them to blow
+   * a 5-second test timeout (5054 ms, first call only; every later one was 30 ms).
+   *
+   * Which runtime exists does not change while the app is running, so the answer is cached. If it
+   * is ever wrong the hook fails to start, and a hook that cannot start already denies.
+   */
+  if (cachedRuntime !== null) return cachedRuntime;
   const probe = (exe: string): boolean => {
     try {
       const r = spawnSync(exe, ['-e', 'process.stdout.write("ok")'], { encoding: 'utf8', timeout: 5_000 });
@@ -82,10 +97,14 @@ export function gateRuntime(): string {
     : ['/usr/local/bin/node', '/usr/bin/node', '/opt/homebrew/bin/node'];
   const onPath = (process.env['PATH'] ?? '').split(delimiter).filter(Boolean).map((d) => join(d, name));
   for (const c of [...known, ...onPath]) {
-    if (c && isAbsolute(c) && existsSync(c) && probe(c)) return c;
+    if (c && isAbsolute(c) && existsSync(c) && probe(c)) { cachedRuntime = c; return c; }
   }
-  return process.execPath;
+  cachedRuntime = process.execPath;
+  return cachedRuntime;
 }
+
+/** Forget the cached runtime. For tests that need the probe to run again. */
+export function resetGateRuntime(): void { cachedRuntime = null; }
 
 /**
  * Write the little script that runs the hook.
