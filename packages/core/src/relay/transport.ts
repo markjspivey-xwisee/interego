@@ -224,21 +224,63 @@ export function pollingWatch(
   onEvent: (ev: WatchEvent) => void,
   opts?: { refetchInterval?: number },
 ): Unsubscribe {
-  const every = opts?.refetchInterval ?? 45000;
+  /**
+   * ── ★★ ADAPTIVE, BECAUSE THE FIXED CADENCE WAS MOST OF WHAT A USER FELT ─────
+   *
+   * This polled every 45 s, flat, and both readers of a workspace use it — the desktop client and
+   * the Discord bot. So the wall-clock of a conversation was dominated by waiting, not by thinking:
+   *
+   *     you type in Discord → gateway → pod          fast (a websocket)
+   *     the desktop notices                          0–45 s   ← this poll
+   *     the model turn                               3–30 s
+   *     the desktop posts → pod                      fast
+   *     the bot notices                              0–45 s   ← this poll again
+   *     the bot posts → Discord                      fast
+   *
+   * ~45 s of dead time on average and up to 90 s, on top of the answer. An agent that replies in
+   * four seconds and lands a minute later reads as broken.
+   *
+   * ★ AND POLLING IS NOT A CHOICE HERE. See the note further down: the per-pod notification
+   * channel is unreachable on this deployment in both directions, and `GET /sse` re-sends the same
+   * five entries every 2 s with no graph IRI — measured. There is nothing to subscribe to.
+   *
+   * So the cadence follows the conversation. A change snaps it to {@link ACTIVE_MS}; quiet ticks
+   * back it off by doubling until it reaches the caller's interval, which is now the CEILING
+   * rather than the fixed rate. Every existing call site keeps its number and its meaning — "the
+   * slowest this should ever be" — and gets a live channel that moves in seconds.
+   *
+   * ★ THE IDLE COST IS UNCHANGED, which is what makes this safe to do everywhere. A quiet channel
+   * settles back to 45 s within about a minute; only a channel somebody is actually using polls
+   * fast, and that is exactly when the reads are worth paying for.
+   */
+  const ceiling = opts?.refetchInterval ?? 45000;
+  const ACTIVE_MS = Math.min(2000, ceiling);
   let stopped = false;
   let last: string | null = null;
+  let every = ACTIVE_MS;
+  let timer: ReturnType<typeof setTimeout> | null = null;
   const tick = async (): Promise<void> => {
     if (stopped) return;
     try {
       const payload = await read(name, input);
       if (stopped) return;
       const now = JSON.stringify(payload) ?? 'undefined';
-      if (now === last) return;
+      if (now === last) {
+        // Nothing moved. Ease off, up to the caller's ceiling.
+        every = Math.min(ceiling, every * 2);
+        return;
+      }
       last = now;
+      // Something moved, so something else probably will: a reply, an answer, a correction.
+      every = ACTIVE_MS;
       onEvent({ type: 'data', result: { payload } });
     } catch (e) {
       if (stopped) return;
       const err = e as { code?: string; message?: string };
+      // ★ AN ERROR BACKS OFF TO THE CEILING rather than retrying in two seconds. A relay that is
+      // failing does not need this hammering it twenty times a minute, and the fast cadence exists
+      // for a live conversation — which this is not.
+      every = ceiling;
       // Reset, so a recovery after an error is delivered even if the payload is byte-identical
       // to the last good one — otherwise a consumer showing "this failed" would never be told
       // it stopped failing.
@@ -246,11 +288,23 @@ export function pollingWatch(
       onEvent({ type: 'error', error: { code: err.code ?? 'upstream_error', message: err.message ?? String(e) } });
     }
   };
-  // The first read is immediate and unawaited: registration is synchronous by contract, and a
-  // consumer that had to wait `every` ms for its first rows would show an empty log until then.
-  void tick();
-  const timer = setInterval(() => { void tick(); }, every);
-  return () => { stopped = true; clearInterval(timer); };
+  /**
+   * ★ setTimeout, RESCHEDULED — NOT setInterval. The cadence changes between ticks now, and an
+   * interval fixes its period at creation. It also means the next read is scheduled AFTER the
+   * previous one finishes, so a slow relay can no longer stack overlapping reads on top of each
+   * other, which a fixed interval would do the moment a call took longer than the period.
+   */
+  const loop = (): void => {
+    if (stopped) return;
+    void tick().finally(() => {
+      if (stopped) return;
+      timer = setTimeout(loop, every);
+    });
+  };
+  // The first read is immediate: registration is synchronous by contract, and a consumer that had
+  // to wait for the first tick would show an empty log until then.
+  loop();
+  return () => { stopped = true; if (timer) clearTimeout(timer); };
 }
 
 /** What a live watch reports. Shaped after the connector contract, which is the stricter one. */

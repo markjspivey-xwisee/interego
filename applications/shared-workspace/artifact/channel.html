@@ -2079,9 +2079,12 @@ var WSPC = (() => {
   }
   var CACHE_KEY_SEP = "\0";
   function pollingWatch(read, name, input, onEvent, opts) {
-    const every = opts?.refetchInterval ?? 45e3;
+    const ceiling = opts?.refetchInterval ?? 45e3;
+    const ACTIVE_MS = Math.min(2e3, ceiling);
     let stopped = false;
     let last = null;
+    let every = ACTIVE_MS;
+    let timer = null;
     const tick = async () => {
       if (stopped)
         return;
@@ -2090,25 +2093,36 @@ var WSPC = (() => {
         if (stopped)
           return;
         const now = JSON.stringify(payload) ?? "undefined";
-        if (now === last)
+        if (now === last) {
+          every = Math.min(ceiling, every * 2);
           return;
+        }
         last = now;
+        every = ACTIVE_MS;
         onEvent({ type: "data", result: { payload } });
       } catch (e) {
         if (stopped)
           return;
         const err = e;
+        every = ceiling;
         last = null;
         onEvent({ type: "error", error: { code: err.code ?? "upstream_error", message: err.message ?? String(e) } });
       }
     };
-    void tick();
-    const timer = setInterval(() => {
-      void tick();
-    }, every);
+    const loop = () => {
+      if (stopped)
+        return;
+      void tick().finally(() => {
+        if (stopped)
+          return;
+        timer = setTimeout(loop, every);
+      });
+    };
+    loop();
     return () => {
       stopped = true;
-      clearInterval(timer);
+      if (timer)
+        clearTimeout(timer);
     };
   }
   var RPC_ACCEPT = "application/json, text/event-stream";
