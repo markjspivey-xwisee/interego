@@ -25,11 +25,67 @@
  * function and asserts ordinary work is permitted under the values PRODUCTION computes.
  */
 
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { delimiter, isAbsolute, join } from 'node:path';
 import { gateSettings, writeGateConfig } from './gate.js';
 import { readPolicy, requestsDir } from './permission.js';
 import type { TurnGate } from './modelprovider.js';
+
+/**
+ * Which runtime the hook is started with — `node` if this machine has a working one, else this
+ * app's own Electron binary.
+ *
+ * ★★ THE HOOK RUNS ONCE PER TOOL CALL, SO ITS STARTUP COST IS MULTIPLIED BY EVERY TOOL AN AGENT
+ * USES. MEASURED with `tools/probe-gate-cost.ts` on this machine:
+ *
+ *     plain node                        115 ms per call   →  4.6 s across a 40-call turn
+ *     this app's Electron binary        209 ms per call   →  8.4 s across a 40-call turn
+ *     (that binary is 180 MB on disk)
+ *
+ * Nearly two seconds of every ten spent starting a browser engine to answer a yes/no question. The
+ * Electron path has to stay, because a packaged desktop app genuinely cannot assume `node` is on
+ * the PATH — but where one exists it is half the cost and a fraction of the image.
+ *
+ * ★ AND THE CANDIDATE IS RUN BEFORE IT IS TRUSTED. A `node` on the PATH might be a shim, a wrapper,
+ * or a broken install; discovering that per tool call, inside a hook whose failure means the turn
+ * gets no tools, would be a bad place to find out. So it is executed once here and only used if it
+ * answers. That check costs one process per TURN, against saving one per tool call.
+ *
+ * ★ THIS IS AN OPTIMISATION, NOT A SAFETY CHANGE. Whichever runtime is chosen runs the same gate
+ * with the same policy. If the choice is ever wrong the hook fails to start, and a hook that
+ * cannot start already denies — see the fail-closed case in `probe-gated-agent.ts`.
+ */
+export function gateRuntime(): string {
+  const probe = (exe: string): boolean => {
+    try {
+      const r = spawnSync(exe, ['-e', 'process.stdout.write("ok")'], { encoding: 'utf8', timeout: 5_000 });
+      return String(r.stdout ?? '').trim() === 'ok';
+    } catch { return false; }
+  };
+  /**
+   * ★★ AN ABSOLUTE PATH, NEVER A BARE NAME — AND THE FIRST VERSION OF THIS RETURNED `node.exe`.
+   *
+   * That resolved fine when probed from a terminal and would have been written into the launcher
+   * as a bare name, leaving `cmd.exe` to find it through PATH AT HOOK TIME. A GUI-launched app
+   * does not inherit the PATH a terminal has — this repository already documents that footgun for
+   * the CLI resolver, where a Finder-launched bundle gets a minimal one. The failure would have
+   * appeared only on a packaged install started from the Start Menu, as a gate that cannot start,
+   * which fails closed and leaves the agent with no tools. Working here and broken when installed
+   * is the shape of bug this work has shipped three times already.
+   */
+  const win = process.platform === 'win32';
+  const name = win ? 'node.exe' : 'node';
+  const known = win
+    ? [join(process.env['ProgramFiles'] ?? '', 'nodejs', name),
+       join(process.env['LOCALAPPDATA'] ?? '', 'Programs', 'nodejs', name)]
+    : ['/usr/local/bin/node', '/usr/bin/node', '/opt/homebrew/bin/node'];
+  const onPath = (process.env['PATH'] ?? '').split(delimiter).filter(Boolean).map((d) => join(d, name));
+  for (const c of [...known, ...onPath]) {
+    if (c && isAbsolute(c) && existsSync(c) && probe(c)) return c;
+  }
+  return process.execPath;
+}
 
 /**
  * Write the little script that runs the hook.
@@ -49,7 +105,7 @@ import type { TurnGate } from './modelprovider.js';
  * ★ IF THIS IS WRONG THE GATE DOES NOT RUN, so `probe-gated-agent.ts` includes a case where the
  * hook is deliberately broken — a permission system whose failure mode is "allow" is decoration.
  */
-export function writeGateLauncher(dir: string, gateScript: string, cfgPath: string, exe = process.execPath): string {
+export function writeGateLauncher(dir: string, gateScript: string, cfgPath: string, exe = gateRuntime()): string {
   if (process.platform === 'win32') {
     const p = join(dir, 'gate.cmd');
     writeFileSync(p, [
