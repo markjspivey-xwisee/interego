@@ -534,8 +534,19 @@ describe('★★ what the third review round found', () => {
  */
 describe('★★ a gate composed the way production composes it', () => {
   const userData = mkdtempSync(join(tmpdir(), 'iego-prod-'));
-  // `dist/gate.mjs` is what the app copies out of its bundle; the build produces it.
-  const bundleDir = join(__dirname, '..', 'applications', 'shared-workspace', 'desktop', 'dist');
+  /**
+   * ★ THE BUNDLE IS A STUB, AND ONLY THE BUNDLE. `composeGate` copies `gate.mjs` out of wherever
+   * the app was built to; pointing this at the real `dist/` made the test depend on a BUILD
+   * ARTIFACT, and CI does not build the desktop app before running the suite — so it passed here
+   * and failed there with ENOENT.
+   *
+   * What is under test is the WIRING — the workspace, the cwd, the config the gate is handed — and
+   * none of that reads the bundle's contents. The real `gate.mjs` is exercised where it belongs:
+   * `probe-gated-agent.ts` builds it with esbuild and runs the actual CLI against it, and the
+   * packaged app runs it for every tool call.
+   */
+  const bundleDir = mkdtempSync(join(tmpdir(), 'iego-bundle-'));
+  writeFileSync(join(bundleDir, 'gate.mjs'), '// stand-in: this test asserts on the wiring, not on the gate\n', 'utf8');
 
   it('★ produces a workspace that is not itself forbidden, and a cwd inside it', () => {
     const gate = composeGate({
