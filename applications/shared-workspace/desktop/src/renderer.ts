@@ -1463,6 +1463,14 @@ function teardownWorkspace(): void {
   const hadDraft = A.phase === 'drafted';
   A.on = false; A.auto = false; A.busy = false; A.phase = 'off'; A.why = '';
   A.answered.clear();
+  /**
+   * ★ THE GIVE-UP COUNTS ARE RELOADED, NOT CLEARED. `A.answered` is per-run on purpose — it is
+   * the "I drafted this already" memory and a new channel deserves a fresh one. The attempt counts
+   * are the opposite: they exist BECAUSE a restart forgets, and clearing them here would restore
+   * the loop the moment somebody switched workspace and back. Reloaded per workspace, since they
+   * are keyed that way.
+   */
+  A.attempts = loadAttempts();
   // The delegate whose draft was in the box is forgotten with the draft. A stale `drafted` would
   // let the next Send attribute text to a delegate that did not write it.
   A.drafted = null;
@@ -3329,6 +3337,48 @@ async function forgetDelegateByAddress(address: string): Promise<void> {
  * would silently convert a delegate's words into the person's. `renderAgent` draws both and says
  * which is which.
  */
+/**
+ * How many times this client will try to answer one entry before leaving it alone.
+ *
+ * Two, not one: a model can simply have a bad turn, and one retry is cheap. Deterministic
+ * refusals — over the length cap, no footing, an empty answer — produce the same result every
+ * time, and each attempt is a real model turn on the person's own subscription.
+ */
+const ATTEMPT_LIMIT = 2;
+
+/** The entries this client has stopped trying to answer, because trying again produced the same refusal. */
+function givenUp(): readonly string[] {
+  return [...A.attempts.entries()].filter(([, n]) => n >= ATTEMPT_LIMIT).map(([url]) => url);
+}
+
+/**
+ * ★ THE GIVE-UP COUNTS, KEPT ACROSS RESTARTS. See `A.attempts` for why this has to outlive the
+ * process: the in-run set is cleared on purpose, and the durable half of the dedupe can only
+ * record answers that were WRITTEN — so a draft that is refused leaves no trace anywhere, and the
+ * same question is picked again on the next launch, forever.
+ *
+ * Keyed per workspace so one channel's stuck entry cannot silence another's.
+ */
+function attemptsKey(): string {
+  return 'wsp:attempts:' + (S.workspace ?? 'none');
+}
+
+function loadAttempts(): Map<string, number> {
+  try {
+    const raw = localStorage.getItem(attemptsKey());
+    if (!raw) return new Map();
+    const o = JSON.parse(raw) as Record<string, number>;
+    return new Map(Object.entries(o).filter(([, v]) => typeof v === 'number'));
+  } catch { return new Map(); }
+}
+
+function saveAttempts(m: Map<string, number>): void {
+  // ★ BOUNDED. This is keyed by descriptor URL and would otherwise grow for the life of the
+  // install; a channel that has run for a year should not carry every entry it ever skipped.
+  const entries = [...m.entries()].slice(-200);
+  try { localStorage.setItem(attemptsKey(), JSON.stringify(Object.fromEntries(entries))); } catch { /* storage may be denied */ }
+}
+
 const A = {
   on: false,
   /** Post without asking. Opt-in, never remembered across a restart, never on by default. */
@@ -3344,6 +3394,31 @@ const A = {
    * number the entry's own author chose. See `TurnInput.answeredHere`.
    */
   answered: new Set<string>(),
+  /**
+   * ★★ ENTRIES THIS CLIENT TRIED TO ANSWER AND COULD NOT — COUNTED, AND KEPT ACROSS RESTARTS.
+   *
+   * REPORTED FROM A LIVE CHANNEL: "the agent keeps responding to things it's already responded to
+   * every time I log in and enable the agent." The cause is a loop with no exit:
+   *
+   *   1. a draft is refused — over the length cap, no footing declared, empty
+   *   2. the refusal path returns WITHOUT recording anything: `A.answered` is only added to once a
+   *      draft exists, and `prov:wasDerivedFrom` only exists once an entry is written
+   *   3. so the question is still "unanswered", by both halves of the dedupe
+   *   4. `decideTurn` picks the OLDEST unanswered entry addressed to this agent, which is that one
+   *   5. the same input produces the same over-long answer, which is refused again
+   *
+   * Deterministic refusals cannot be fixed by trying again, and each attempt costs a real model
+   * turn on the person's own subscription. So an attempt is counted here and the count SURVIVES a
+   * restart — `A.answered` deliberately does not, and the durable half of the dedupe can only
+   * record answers that were actually written.
+   *
+   * ★ COUNTED RATHER THAN BANNED, because not every refusal is permanent: the model may simply
+   * have had a bad turn, and one retry is cheap. Two is where it stops.
+   *
+   * ★ AND GIVING UP IS SHOWN, NEVER SILENT. An agent that quietly stops answering somebody looks
+   * exactly like one that is broken — which is the complaint this whole panel exists to answer.
+   */
+  attempts: new Map<string, number>(),
   /**
    * The delegate whose draft is sitting in the composer, and the exact text it wrote.
    *
@@ -3685,7 +3760,10 @@ async function agentConsider(): Promise<void> {
     workspace: S.workspace, slug: S.slug, mePod: S.viewer.podName,
     delegate: speaking,
     seats: S.seats, roles: S.roles.roles ? S.roles : null,
-    entries: read.entries, unreadable: read.unreadable, answeredHere: [...A.answered],
+    // ★ The given-up entries ride in on `answeredHere`, which is exactly what it is for: "do not
+    // draft an answer to this again". They are not claimed to have been ANSWERED anywhere on the
+    // record — nothing was written, and the panel says so below.
+    entries: read.entries, unreadable: read.unreadable, answeredHere: [...A.answered, ...givenUp()],
     // This shell runs the turn with the Interego MCP under the delegate's own bearer
     // whenever it can open that delegate's session — which it can whenever a delegate is
     // selected, since selection already requires a key on this machine.
@@ -3752,8 +3830,28 @@ async function agentConsider(): Promise<void> {
   // write a delegation for somebody who never granted one.
   const draft = checkDraft(turn.text, { principal: S.viewer.webId, addressed: decision.brief.addressed });
   if (!draft.ok) {
+    /**
+     * ★★ THE ATTEMPT IS RECORDED EVEN THOUGH NOTHING WAS WRITTEN. Without this the entry stays
+     * "unanswered" by both halves of the dedupe and `decideTurn` picks it again — the same input,
+     * the same refusal, every poll and every restart, each one a real model turn on the person's
+     * own subscription.
+     */
+    const url = decision.answering.descriptorUrl;
+    const tried = (A.attempts.get(url) ?? 0) + 1;
+    A.attempts.set(url, tried);
+    saveAttempts(A.attempts);
+    if (tried >= ATTEMPT_LIMIT) A.answered.add(url);
     A.phase = 'watching';
-    say('agentresult', 'pending', 'Nothing was drafted', draft.why);
+    say('agentresult', 'pending', 'Nothing was drafted',
+      draft.why + (tried >= ATTEMPT_LIMIT
+        // ★ SAID OUT LOUD. An agent that quietly stops answering somebody looks exactly like one
+        // that is broken, which is the complaint this panel exists to answer. It also names what
+        // to do about it, because "gave up" with no remedy is just a nicer silence.
+        ? ' This is attempt ' + tried + ', so your delegate will stop trying this one — the same input '
+          + 'produces the same refusal, and each attempt is a real turn on your subscription. Nothing '
+          + 'has been written for it. Say it again in the channel, in a way that avoids the problem above, '
+          + 'and it will be treated as a new question.'
+        : ' It will try once more.'));
     renderAgent();
     return;
   }
@@ -3899,7 +3997,7 @@ async function wake(): Promise<void> {
       if (woken.has(n.about) || A.answered.has(n.about)) continue;
       verdicts.push(await verifyRequest(port, n, {
         heldAgentIds: [speaker.agentId],
-        answeredHere: [...A.answered],
+        answeredHere: [...A.answered, ...givenUp()],
         // Every entry this shell has read that declares what it was derived from. Survives a
         // restart, which the in-run set above does not.
         derivedFromOnMyPod: derivedFromOnMyPod(),
