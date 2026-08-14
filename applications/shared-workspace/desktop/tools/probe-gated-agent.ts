@@ -24,6 +24,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { childEnv, resolveClaudeCli } from '../src/modelprovider.js';
 import { gateSettings, writeGateConfig, type GateConfig } from '../src/gate.js';
+import { writeGateLauncher } from '../src/turnsetup.js';
 import { forbiddenPath, type Grant } from '../src/permission.js';
 
 let bad = 0;
@@ -91,13 +92,14 @@ function main(): void {
     };
     const cfgPath = writeGateConfig(root, cfg);
     const settings = join(root, 'settings.json');
-    const launcher = join(root, process.platform === 'win32' ? 'gate.cmd' : 'gate.sh');
-    const CRLF = String.fromCharCode(13, 10);
-    const LF = String.fromCharCode(10);
-    writeFileSync(launcher, process.platform === 'win32'
-      ? ['@echo off', '"' + process.execPath + '" "' + gateScript + '" "' + cfgPath + '"'].join(CRLF)
-      : ['#!/bin/sh', 'exec ' + JSON.stringify(process.execPath) + ' ' + JSON.stringify(gateScript) + ' ' + JSON.stringify(cfgPath)].join(LF),
-      { mode: 0o700, encoding: 'utf8' });
+    /**
+     * ★ THE PRODUCTION LAUNCHER, NOT A COPY OF IT. This wrote its own two-line script, so the
+     * thing the app actually ships — `writeGateLauncher`, including which runtime it chooses and
+     * whether that path is absolute — was never exercised by the only check that runs the real
+     * CLI. A probe that reimplements the code under test verifies the reimplementation. That
+     * mistake has produced three separate production defects in this work already.
+     */
+    const launcher = writeGateLauncher(root, gateScript, cfgPath);
     writeFileSync(settings, gateSettings(broken ? join(root, 'does-not-exist.cmd') : launcher), 'utf8');
     const r = spawnSync(cli.path as string, [
       '-p', '--model', 'sonnet',

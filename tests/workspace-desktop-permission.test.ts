@@ -19,7 +19,7 @@
 import { describe, it, expect } from 'vitest';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import {
   bashStaysInside, clearPending, decide, describeCall, forbiddenPath, inside, nominate,
   readPending, readPolicy, readSettings, requestsDir, requestsPath, revokeGrant, ruleFor, writeGrant,
@@ -27,7 +27,7 @@ import {
 } from '../applications/shared-workspace/desktop/src/permission.js';
 import { gateDecision, gateSettings, type GateConfig } from '../applications/shared-workspace/desktop/src/gate.js';
 import { turnCwd } from '../applications/shared-workspace/desktop/src/modelprovider.js';
-import { composeGate } from '../applications/shared-workspace/desktop/src/turnsetup.js';
+import { composeGate, gateRuntime, writeGateLauncher } from '../applications/shared-workspace/desktop/src/turnsetup.js';
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'iego-perm-'));
 const policy = (over: Partial<Policy> = {}): Policy =>
@@ -587,6 +587,32 @@ describe('★★ a gate composed the way production composes it', () => {
     const cfg = JSON.parse(readFileSync(join(userData, 'agent-gate', 'claude-desktop', 'gate-config.json'), 'utf8')) as
       { requestsDir: string };
     expect(cfg.requestsDir).toBe(requestsDir(userData));
+  });
+
+  /**
+   * ★★ THE HOOK RUNS ONCE PER TOOL CALL, SO ITS STARTUP COST IS MULTIPLIED BY EVERYTHING THE AGENT
+   * DOES. Measured with `tools/probe-gate-cost.ts`: 209 ms per call through this app's 180 MB
+   * Electron binary, against 115 ms through plain node — 8.4 s versus 4.6 s across a forty-call
+   * turn, spent starting a browser engine to answer a yes/no question.
+   */
+  it('★ the gate runtime is an ABSOLUTE path, or a GUI launch cannot find it', () => {
+    const exe = gateRuntime();
+    // The first version returned the bare name `node.exe`, which resolves fine from a terminal and
+    // leaves `cmd.exe` to search PATH at HOOK time. A GUI-launched app does not inherit a
+    // terminal's PATH — the same footgun this repo already documents for the CLI resolver — so it
+    // would have worked here and failed on a packaged install, as a gate that cannot start.
+    expect(isAbsolute(exe)).toBe(true);
+    expect(existsSync(exe)).toBe(true);
+  });
+
+  it('★ and the launcher embeds that absolute path rather than a name to be looked up', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'iego-launch-'));
+    const p = writeGateLauncher(dir, join(dir, 'gate.mjs'), join(dir, 'cfg.json'));
+    const text = readFileSync(p, 'utf8');
+    expect(text).toContain(gateRuntime());
+    // ELECTRON_RUN_AS_NODE is set either way: harmless to node, essential to the Electron path.
+    expect(text).toContain('ELECTRON_RUN_AS_NODE=1');
+    rmSync(dir, { recursive: true, force: true });
   });
 
   it('★ a gate that cannot be prepared THROWS, so the turn gets no tools rather than ungated ones', () => {
