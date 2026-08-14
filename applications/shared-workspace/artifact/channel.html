@@ -2078,12 +2078,13 @@ var WSPC = (() => {
     return refusal(env.payload);
   }
   var CACHE_KEY_SEP = "\0";
+  var QUIET_MS = 1e4;
   function pollingWatch(read, name, input, onEvent, opts) {
-    const ceiling = opts?.refetchInterval ?? 45e3;
+    const ceiling = opts?.refetchInterval ?? QUIET_MS;
     const ACTIVE_MS = Math.min(2e3, ceiling);
     let stopped = false;
     let last = null;
-    let every = ACTIVE_MS;
+    let every = ceiling;
     let timer = null;
     const tick = async () => {
       if (stopped)
@@ -2097,8 +2098,10 @@ var WSPC = (() => {
           every = Math.min(ceiling, every * 2);
           return;
         }
+        const priming = last === null;
         last = now;
-        every = ACTIVE_MS;
+        if (!priming)
+          every = ACTIVE_MS;
         onEvent({ type: "data", result: { payload } });
       } catch (e) {
         if (stopped)
@@ -2109,20 +2112,28 @@ var WSPC = (() => {
         onEvent({ type: "error", error: { code: err.code ?? "upstream_error", message: err.message ?? String(e) } });
       }
     };
-    const loop = () => {
-      if (stopped)
+    let inFlight = false;
+    let running = every;
+    const fire = () => {
+      if (stopped || inFlight)
         return;
+      inFlight = true;
       void tick().finally(() => {
-        if (stopped)
+        inFlight = false;
+        if (stopped || every === running)
           return;
-        timer = setTimeout(loop, every);
+        if (timer)
+          clearInterval(timer);
+        running = every;
+        timer = setInterval(fire, running);
       });
     };
-    loop();
+    fire();
+    timer = setInterval(fire, running);
     return () => {
       stopped = true;
       if (timer)
-        clearTimeout(timer);
+        clearInterval(timer);
     };
   }
   var RPC_ACCEPT = "application/json, text/event-stream";

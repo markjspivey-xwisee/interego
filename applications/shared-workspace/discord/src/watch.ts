@@ -36,7 +36,17 @@ import type { LinkStore, ThreadBinding } from './links.js';
 import { showWorkspace, type Deps, type ShowOut, type ShownEntry } from './workspace.js';
 import { askCandidates, type CandidatesOut } from './ask.js';
 
-/** The watch cadence, matched to the desktop's so two readers of one channel see the same news. */
+/**
+ * The watch cadence, matched to the desktop's so two readers of one channel see the same news.
+ *
+ * ★ THIS IS NOW THE SWEEP CADENCE, NOT THE READ CADENCE. `pollingWatch` owns how often a channel
+ * is READ — a quiet ceiling that drops to seconds while a conversation is live — because a number
+ * pinned here would freeze the bot at one speed while the desktop adapted, and the two ends of a
+ * conversation polling at different rates is how one of them looks broken.
+ *
+ * What this still governs is `adopt()`: how often the bot looks for THREADS it should be watching
+ * at all, which is a different question and does not need to be fast.
+ */
 export const WATCH_INTERVAL_MS = 45_000;
 
 /**
@@ -481,5 +491,6 @@ export const watchVia = (client: WorkspaceClient | (() => WorkspaceClient)) =>
         if (ev.type === 'data') onChange();
         else onError?.(ev.error?.message ?? ev.error?.code ?? 'no reason reported');
       },
-      { refetchInterval: WATCH_INTERVAL_MS },
+      // ★ The shared default owns the read cadence — see WATCH_INTERVAL_MS above. Pinning the
+      // sweep interval here froze the bot at 45 s while the desktop adapted.
     );

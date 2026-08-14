@@ -217,6 +217,23 @@ export type Unsubscribe = () => void;
  * condition the consumer has to keep showing, and suppressing the repeat would let a consumer
  * that recovered its rendering forget it is still failing.
  */
+/**
+ * ★★ THE QUIET CADENCE, LOWERED FROM 45 s — AND THIS COSTS SOMETHING, WHICH IS THE POINT.
+ *
+ * Adaptive polling alone does not fix the thing users feel. A channel that has gone quiet sits at
+ * its ceiling, and the FIRST message after a silence is the one somebody is waiting on — change
+ * detection cannot speed that up, because the change is what it is waiting to see. Measured
+ * against the first version of this: with a 45 s ceiling a live exchange still took ~45 s to get
+ * started, and only then dropped to 2 s.
+ *
+ * So the floor on responsiveness is this number, and it is a real trade: each watcher now reads
+ * six times a minute while idle instead of about one and a third. Two watchers on a channel — the
+ * desktop client and the Discord bot — is roughly twelve reads a minute against three. That is
+ * affordable on this fleet and it is what "responsive" costs when there is nothing to subscribe
+ * to; see the measurement below for why there is not.
+ */
+const QUIET_MS = 10_000;
+
 export function pollingWatch(
   read: (name: string, input: Record<string, unknown>) => Promise<unknown>,
   name: string,
@@ -253,12 +270,23 @@ export function pollingWatch(
    * settles back to 45 s within about a minute; only a channel somebody is actually using polls
    * fast, and that is exactly when the reads are worth paying for.
    */
-  const ceiling = opts?.refetchInterval ?? 45000;
+  const ceiling = opts?.refetchInterval ?? QUIET_MS;
   const ACTIVE_MS = Math.min(2000, ceiling);
   let stopped = false;
   let last: string | null = null;
-  let every = ACTIVE_MS;
-  let timer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * ★ STARTS AT THE CEILING, AND THE FIRST READ DOES NOT COUNT AS ACTIVITY.
+   *
+   * The first version started fast and treated the priming read — the one where `last` is still
+   * null — as a change, so EVERY watch dropped to a 2 s cadence the moment it was created, whether
+   * or not anything was happening. CI found it: a dozen renderer tests timed out, because a watch
+   * that polls every 2 s forever never lets a page go quiet.
+   *
+   * Priming is not activity. A channel opens at its quiet cadence and only speeds up when it sees
+   * something it did not have before, which is the whole point.
+   */
+  let every = ceiling;
+  let timer: ReturnType<typeof setInterval> | null = null;
   const tick = async (): Promise<void> => {
     if (stopped) return;
     try {
@@ -270,9 +298,11 @@ export function pollingWatch(
         every = Math.min(ceiling, every * 2);
         return;
       }
+      const priming = last === null;
       last = now;
-      // Something moved, so something else probably will: a reply, an answer, a correction.
-      every = ACTIVE_MS;
+      // Something moved, so something else probably will: a reply, an answer, a correction. The
+      // FIRST read is excluded — it is the initial load, not somebody speaking.
+      if (!priming) every = ACTIVE_MS;
       onEvent({ type: 'data', result: { payload } });
     } catch (e) {
       if (stopped) return;
@@ -289,22 +319,44 @@ export function pollingWatch(
     }
   };
   /**
-   * ★ setTimeout, RESCHEDULED — NOT setInterval. The cadence changes between ticks now, and an
-   * interval fixes its period at creation. It also means the next read is scheduled AFTER the
-   * previous one finishes, so a slow relay can no longer stack overlapping reads on top of each
-   * other, which a fixed interval would do the moment a call took longer than the period.
+   * ── ★★ setInterval, RE-CREATED WHEN THE PERIOD CHANGES ──────────────────────
+   *
+   * The obvious implementation of a variable cadence is a self-rescheduling `setTimeout`, and it
+   * was the first one written here. It is wrong in this codebase for a reason worth recording,
+   * because nothing about it is visible from this file:
+   *
+   * ★ `tests/workspace-desktop-renderer.test.ts` CLAMPS `window.setTimeout` TO 1 ms. Deliberately
+   * — its own comment says the clamp exists so timers cannot "run continuously and stop `settle()`
+   * from ever seeing the shell go quiet". `setInterval` is not clamped. So a chained `setTimeout`
+   * poller fires every millisecond under test, issues relay calls without pause, and `settle()`
+   * never sees six quiet passes: 112 tests timed out in a 584-second run.
+   *
+   * So the period lives in an interval, and the interval is replaced when the period changes.
+   *
+   * ★ AND AN IN-FLIGHT GUARD KEEPS THE PROPERTY THE CHAINED VERSION HAD FOR FREE. An interval does
+   * not wait for the previous read, so a relay slower than the period would stack overlapping
+   * calls — at the 2 s active cadence that is a real possibility. A tick that arrives while one is
+   * still running is dropped rather than queued.
    */
-  const loop = (): void => {
-    if (stopped) return;
+  let inFlight = false;
+  let running = every;
+  const fire = (): void => {
+    if (stopped || inFlight) return;
+    inFlight = true;
     void tick().finally(() => {
-      if (stopped) return;
-      timer = setTimeout(loop, every);
+      inFlight = false;
+      if (stopped || every === running) return;
+      // The cadence moved — swap the interval for one at the new period.
+      if (timer) clearInterval(timer);
+      running = every;
+      timer = setInterval(fire, running);
     });
   };
   // The first read is immediate: registration is synchronous by contract, and a consumer that had
   // to wait for the first tick would show an empty log until then.
-  loop();
-  return () => { stopped = true; if (timer) clearTimeout(timer); };
+  fire();
+  timer = setInterval(fire, running);
+  return () => { stopped = true; if (timer) clearInterval(timer); };
 }
 
 /** What a live watch reports. Shaped after the connector contract, which is the stricter one. */

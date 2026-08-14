@@ -16,10 +16,17 @@
  * re-sends the same five entries every 2 s with no graph IRI — both measured, both documented in
  * `transport.ts`.
  *
- * ★ SO THE CADENCE FOLLOWS THE CONVERSATION, and these tests pin the three properties that make
- * that safe: it goes fast when something moved, it settles back when nothing does, and a failing
- * relay is not hammered. A cadence regression is silent — everything still works, just slowly —
- * which is exactly the kind of thing nobody notices until a user says "why is it so slow".
+ * ── ★★ WHY BOTH HALVES ARE NEEDED, AND WHAT THEY COST ────────────────────────
+ *
+ * The first attempt used change-detection alone: snap to 2 s when something moves, decay back to a
+ * 45 s ceiling when it does not. That is not enough, and the test below is what showed it — a
+ * quiet channel sits at its ceiling, and THE FIRST MESSAGE AFTER A SILENCE IS THE ONE SOMEBODY IS
+ * WAITING ON. Change detection cannot shorten that wait, because the change is the thing it is
+ * waiting to see. Measured against that version: a live exchange still took ~45 s to get going.
+ *
+ * So the ceiling came down to 10 s as well, and THAT IS A REAL COST, not a free win: each watcher
+ * reads six times a minute while idle instead of about one and a third. Two watchers on a channel
+ * is roughly twelve reads a minute against three. These tests pin both halves and the price.
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
@@ -27,8 +34,11 @@ import { pollingWatch } from '../packages/core/src/relay/transport.js';
 
 afterEach(() => { vi.useRealTimers(); });
 
+/** The shared quiet ceiling, restated here so a change to it fails these tests loudly. */
+const QUIET_MS = 10_000;
+
 /** Drive the watcher's timers deterministically, and count the reads it makes. */
-async function run(payloads: readonly unknown[], forMs: number, ceiling = 45_000): Promise<number> {
+async function run(payloads: readonly unknown[], forMs: number, ceiling = QUIET_MS): Promise<number> {
   vi.useFakeTimers();
   let i = 0;
   let reads = 0;
@@ -44,41 +54,45 @@ async function run(payloads: readonly unknown[], forMs: number, ceiling = 45_000
 }
 
 describe('the cadence follows the conversation', () => {
-  it('★★ a channel that keeps changing is read within seconds, not within a minute', async () => {
+  it('★★ a live channel is read every couple of seconds, not every 45', async () => {
     // Every read returns something new, which is what a live conversation looks like. At the old
-    // flat 45 s this would be 3 reads in two minutes; the point is that it is now many more.
-    const changing = Array.from({ length: 200 }, (_, n) => ({ entry: n }));
-    const reads = await run(changing, 60_000);
-    // 60 s at the 2 s active cadence is ~30 reads. Asserted as a floor rather than a number, so
-    // this does not fail on scheduler jitter — what matters is the ORDER OF MAGNITUDE change.
+    // flat 45 s this was ~1 read in 60 s; what matters here is the order of magnitude.
+    const reads = await run(Array.from({ length: 400 }, (_, n) => ({ entry: n })), 60_000);
     expect(reads).toBeGreaterThan(20);
   });
 
-  it('★ a quiet channel settles back to the ceiling, so idle cost is unchanged', async () => {
-    // Same payload every time: nothing is happening. The interval doubles 2 → 4 → 8 → 16 → 32 → 45
-    // and stays there, so a channel nobody is using costs what it always did.
+  it('★★ and a QUIET channel is still read within the ceiling, which is what the first message needs', async () => {
+    /**
+     * The half that change-detection cannot provide. Nothing is moving, so the watcher sits at its
+     * ceiling — and the next thing to happen is somebody speaking into a silent channel, which is
+     * precisely the message a person is waiting on. 300 s of silence at a 10 s ceiling is ~30
+     * reads; at the old 45 s it was ~7, and that difference IS the responsiveness.
+     */
     const reads = await run([{ same: true }], 300_000);
-    // 300 s of silence: about 6 backoff steps then ~45 s apart — well under twenty reads. At the
-    // active cadence it would be 150.
-    expect(reads).toBeLessThan(20);
-    // And it never stops entirely: a channel that went silent must still notice when it wakes.
-    expect(reads).toBeGreaterThan(5);
+    expect(reads).toBeGreaterThan(20);
+    expect(reads).toBeLessThan(40);
   });
 
-  it('★ a failing relay is backed off, not hammered twenty times a minute', async () => {
+  it('★ the price of that is stated rather than hidden: ~6 reads a minute per watcher when idle', async () => {
+    // Written down as a test so the cost cannot drift without somebody deciding to change it.
+    const reads = await run([{ same: true }], 60_000);
+    expect(reads).toBeGreaterThanOrEqual(4);
+    expect(reads).toBeLessThanOrEqual(8);
+  });
+
+  it('★ a failing relay is backed off to the ceiling, not retried every two seconds', async () => {
     vi.useFakeTimers();
     let reads = 0;
     const stop = pollingWatch(
       async () => { reads++; throw new Error('relay is down'); },
       'read_channel', {}, () => { /* the error event itself is not under test */ },
-      { refetchInterval: 45_000 },
+      { refetchInterval: QUIET_MS },
     );
     for (let t = 0; t < 60_000; t += 250) await vi.advanceTimersByTimeAsync(250);
     stop();
-    // An error goes straight to the ceiling rather than retrying in two seconds: the fast cadence
-    // exists for a live conversation, and a relay returning errors is not one.
-    expect(reads).toBeLessThan(5);
-    stop();
+    // At the ceiling, not the active cadence: a relay returning errors is not a live conversation,
+    // and 30 failed reads a minute helps nobody.
+    expect(reads).toBeLessThanOrEqual(8);
   });
 
   it('★ stopping actually stops it', async () => {
@@ -87,7 +101,7 @@ describe('the cadence follows the conversation', () => {
     const stop = pollingWatch(
       async () => { reads++; return { n: reads }; },
       'read_channel', {}, () => { /* ignored */ },
-      { refetchInterval: 45_000 },
+      { refetchInterval: QUIET_MS },
     );
     for (let t = 0; t < 10_000; t += 250) await vi.advanceTimersByTimeAsync(250);
     const atStop = reads;
@@ -100,7 +114,7 @@ describe('the cadence follows the conversation', () => {
   });
 
   it('★ a ceiling below the active cadence is respected rather than inverted', async () => {
-    // A caller asking for 1 s must not be given 2 s because the floor is written down here.
+    // A caller asking for 1 s must not be given 2 s because the active floor is written down here.
     const reads = await run(Array.from({ length: 200 }, (_, n) => ({ n })), 10_000, 1_000);
     expect(reads).toBeGreaterThan(5);
   });
