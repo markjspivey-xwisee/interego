@@ -583,7 +583,13 @@ export interface GrantVerdict {
    * establishes the seat, rather than re-fetched by each writer and possibly answered differently.
    * This is exactly how `entryShape` already travels.
    */
-  readonly visibility?: 'public' | 'private';
+  /**
+   * ★★ `'unknown'` IS ONE OF THE ANSWERS, and carrying it is the point. It means the record could
+   * not be READ here — no key, or this key not in that envelope. Collapsing it to `'public'` is
+   * what made a member who cannot open a private channel the one member who would post plaintext
+   * into it; `recipientsFor` refuses it rather than guessing.
+   */
+  readonly visibility?: 'public' | 'private' | 'unknown';
   readonly grantAuthorship?: unknown;
 }
 

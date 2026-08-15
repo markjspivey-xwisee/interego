@@ -1367,7 +1367,9 @@ async function invite(): Promise<void> {
   const out = await sendInvite(S.client, {
     viewer: S.viewer, workspace: S.workspace, workspaceTitle: S.record?.title || (S.slug ?? ''),
     handle, role, entryShape: S.record?.entryShape ?? null,
-    visibility: S.record?.visibility ?? 'public',
+    // The value `recipientsFor` RESOLVED and vouched for — not a second read of the record,
+    // which could answer differently and cannot answer 'unknown' safely.
+    visibility: inviteAudience.visibility,
     ...(inviteAudience.shareWith ? { shareWith: inviteAudience.shareWith } : {}),
     onState: (s, d) => { if (!set) set = writeLine(log, 'grant on your pod'); set(s, d); },
   });
@@ -2500,7 +2502,7 @@ async function post(as?: {
      * entry into a private workspace — a 200, and a permanent hole in a conversation everything
      * else about it says is sealed.
      */
-    visibility: S.record?.visibility ?? 'public',
+    visibility: audience.visibility,
     // ★ THE FOOTING IS CARRIED FROM THE DRAFT, NOT DECIDED HERE. It is the delegate's own answer,
     // taken from what its model declared and shown on its Send button before this ran — so the
     // record states what the agent said it was doing, and the person saw it first.
@@ -2809,7 +2811,7 @@ async function doSave(useStale: boolean): Promise<void> {
     body: area('canvas').value, ifMatch, previousCid: S.canvas.head,
     // The workspace's own policy, from the record this view was built from — same reasoning as
     // the entry post above. A plaintext canvas in a private workspace is the same hole.
-    visibility: S.record?.visibility ?? 'public',
+    visibility: canvasAudience.visibility,
     ...(canvasAudience.shareWith ? { shareWith: canvasAudience.shareWith } : {}),
   });
   const reopen = (): void => { b.disabled = !!S.writeBlocked; };
@@ -2903,7 +2905,7 @@ async function doMerge(): Promise<void> {
   const out = await mergeForward(S.client, {
     canvasIri: S.canvas.iri, podName: S.viewer.podName, workspace: S.workspace, slug: S.slug,
     body: area('canvas').value,
-    visibility: S.record?.visibility ?? 'public',
+    visibility: mergeAudience.visibility,
     ...(mergeAudience.shareWith ? { shareWith: mergeAudience.shareWith } : {}),
   });
   if (out.kind === 'no-head') { say('canvasresult', 'refused', 'No single head to merge onto', out.why); return; }

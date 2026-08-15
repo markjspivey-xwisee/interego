@@ -70,7 +70,7 @@ export interface WorkspaceRecord {
    * arranged. Nothing validates this value at publish time, so the reader is the only place the
    * question is settled.
    */
-  readonly visibility: 'public' | 'private';
+  readonly visibility: 'public' | 'private' | 'unknown';
   readonly convener: string | null;
   readonly roleProfile: string | null;
   readonly entryShape: string | null;
@@ -278,8 +278,23 @@ export class WorkspaceClient extends RelayClient {
          * `encrypted` flag alone would hide a workspace from the very member who can read it.
          */
         withheld: graph?.encrypted === true && typeof graph?.content !== 'string',
-        // Absent, or anything this reader does not recognise, is public. See the field's note.
-        visibility: readLiteral(region, 'wsp:visibility') === 'private' ? 'private' : 'public',
+        /**
+         * ★★ "I COULD NOT READ IT" IS NOT "IT IS PUBLIC", AND THEY WERE THE SAME VALUE.
+         *
+         * `region` is null in exactly the case `withheld` is true, and `readLiteral(null, …)`
+         * answers null, which fell through to `'public'`. So a member who is seated but cannot
+         * open the record — a client with no key, or one whose key was not in that envelope —
+         * read a PRIVATE workspace as public, and every fail-closed guard downstream keys on
+         * `=== 'private'`: they would post PLAINTEXT into the sealed channel, with `acl:Read` for
+         * `foaf:Agent`, and other members' folds would show it. The one thing the guards exist to
+         * prevent, reached by the reader that most needed them.
+         *
+         * Absent-but-readable still means public — that is the compatibility rule every workspace
+         * written before `wsp:visibility` existed depends on, and it is decided by `regionFound`,
+         * not by the literal.
+         */
+        visibility: region === null ? 'unknown'
+          : readLiteral(region, 'wsp:visibility') === 'private' ? 'private' : 'public',
         convener,
         roleProfile: readIri(region, 'wsp:roleProfile'),
         // ★ THE CONFORMANCE CONTRACT, READ RATHER THAN CHOSEN. A client that held one shape

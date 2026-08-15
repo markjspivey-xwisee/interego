@@ -113,10 +113,31 @@ export function recipientsFromRoster(args: {
  * writers only send `share_with` when they are actually encrypting.
  */
 export function recipientsFor(
-  visibility: 'public' | 'private' | undefined,
+  visibility: 'public' | 'private' | 'unknown' | undefined,
   roster: { readonly seats: readonly Seat[]; readonly grantsFound: number; readonly grantsRead: number } | null,
-): { readonly ok: true; readonly shareWith: readonly string[] | undefined } | { readonly ok: false; readonly why: string } {
-  if (visibility !== 'private') return { ok: true, shareWith: undefined };
+): { readonly ok: true; readonly visibility: 'public' | 'private'; readonly shareWith: readonly string[] | undefined }
+  | { readonly ok: false; readonly why: string } {
+  /**
+   * ★★ REFUSED, BECAUSE THE ALTERNATIVE IS PUBLISHING IN THE CLEAR. `'unknown'` means the record
+   * could not be READ — the reader has no key, or is not in that envelope. It used to arrive here
+   * as `'public'`, indistinguishable from a workspace that genuinely is, and every guard
+   * downstream keys on `=== 'private'`. So the member who could not read the channel was the one
+   * member who would post plaintext into it.
+   *
+   * This is the same shape as the truncated-roster refusal below: when the answer is not
+   * established, nothing is written.
+   */
+  if (visibility === 'unknown') {
+    return {
+      ok: false,
+      why: 'this workspace\'s record could not be read here, so whether it is private is not established '
+        + '— and writing under a guess would publish in the clear if the guess is wrong. Open the workspace '
+        + 'in a client signed in with your own key. Nothing was written.',
+    };
+  }
+  // ★ The resolved value is RETURNED rather than left for the caller to re-derive: a caller that
+  // asked here and then read `record.visibility` again for the write could get two answers.
+  if (visibility !== 'private') return { ok: true, visibility: 'public', shareWith: undefined };
   if (!roster) {
     return {
       ok: false,
@@ -125,7 +146,7 @@ export function recipientsFor(
     };
   }
   const plan = recipientsFromRoster(roster);
-  return plan.ok ? { ok: true, shareWith: plan.shareWith } : { ok: false, why: plan.why };
+  return plan.ok ? { ok: true, visibility: 'private', shareWith: plan.shareWith } : { ok: false, why: plan.why };
 }
 
 /**

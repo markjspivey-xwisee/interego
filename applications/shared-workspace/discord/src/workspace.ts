@@ -276,15 +276,30 @@ async function frameOf(deps: Deps, binding: ThreadBinding): Promise<Frame | { re
  * roster, and encrypting to the part of it that was read would lock out the members it missed,
  * permanently and with nothing to show for it.
  */
-async function privateRoster(deps: Deps, frame: Frame): Promise<readonly string[]> {
+async function audienceFor(deps: Deps, frame: Frame): Promise<{ visibility: 'public' | 'private'; shareWith?: readonly string[] }> {
+  /**
+   * ★ PUBLIC COSTS NOTHING. The roster is two round trips per grant — far too much to spend on
+   * every message in a public channel, and a public workspace has no recipients to compute.
+   */
+  if (frame.record.visibility !== 'private') {
+    const plain = recipientsFor(frame.record.visibility, null);
+    if (!plain.ok) throw new Error(plain.why);
+    return { visibility: plain.visibility };
+  }
   const iriOwner = podOfNsIri(frame.binding.workspace) ?? frame.convenerPod;
   const roster = await foldRoster(deps.client, {
     workspace: frame.binding.workspace, iriOwner, slug: frame.binding.slug,
     convener: frame.record.convener, convenerPod: frame.convenerPod,
   });
   const audience = recipientsFor('private', roster);
+  /**
+   * ★ THROWS RATHER THAN RETURNING A SHORT LIST. `recipientsFor` refuses a truncated roster and a
+   * record this client could not read; encrypting to the part it managed to read would lock out
+   * the members it missed, permanently, and writing under a guessed visibility would publish in
+   * the clear. Both are worse than a message that did not send.
+   */
   if (!audience.ok) throw new Error(audience.why);
-  return audience.shareWith ?? [];
+  return { visibility: audience.visibility, ...(audience.shareWith ? { shareWith: audience.shareWith } : {}) };
 }
 
 /**
@@ -335,8 +350,7 @@ async function seat(deps: Deps, frame: Frame, member: Viewer): Promise<{ readonl
      * the new member cannot read the record, cannot verify the grant just written for them, and
      * cannot accept. `sendInvite` adds the invitee; this is the roster it already had.
      */
-    visibility: frame.record.visibility,
-    ...(frame.record.visibility === 'private' ? { shareWith: await privateRoster(deps, frame) } : {}),
+    ...(await audienceFor(deps, frame)),
   });
   if (invited.kind !== 'invited') {
     const why = invited.kind === 'blocked' ? (invited.resolution.blocked ?? 'the invitee could not be resolved to a pod a grant would seat')
@@ -438,11 +452,9 @@ export async function recordMessage(
      * too much to spend on every message in a public channel — and a public workspace has no
      * recipients to compute.
      */
-    let shareWith: readonly string[] | undefined;
-    if (frame.record.visibility === 'private') {
-      try { shareWith = await privateRoster(deps, frame); }
-      catch (e) { return { kind: 'unseated', pod: link.pod, why: (e as Error).message, seating: [] }; }
-    }
+    let audience: { visibility: 'public' | 'private'; shareWith?: readonly string[] };
+    try { audience = await audienceFor(deps, frame); }
+    catch (e) { return { kind: 'unseated', pod: link.pod, why: (e as Error).message, seating: [] }; }
 
     // Composed, not read: the two names a member writes under are derived from the workspace's
     // own pod and slug, which is what every reader of this workspace looks for.
@@ -461,8 +473,7 @@ export async function recordMessage(
        * in a Discord channel is a different layer with a different audience; it does not change
        * who the record on the pod is written for.
        */
-      visibility: frame.record.visibility,
-      ...(shareWith ? { shareWith } : {}),
+      ...audience,
       ...(args.attachments?.length ? { attachments: args.attachments } : {}),
       ...(args.addressedTo === undefined ? {} : { addressedTo: args.addressedTo }),
       /**
