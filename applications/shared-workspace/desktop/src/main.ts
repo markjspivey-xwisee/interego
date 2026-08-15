@@ -39,6 +39,7 @@ import {
   listDelegateKeys, putSecret, secretStoreAvailable, WALLET_KEY,
 } from './secrets.js';
 import { checkPrivateKey } from './privatekey.js';
+import { encryptionKeyFor, openGraph } from './e2e.js';
 import {
   CODEX_UNSUPPORTED, probeClaude, runClaude,
   type ModelRun, type ProviderStatus, type TurnTools,
@@ -173,6 +174,10 @@ async function delegateSession(address: string): Promise<HostedDelegate> {
   // without one would ask somebody to authorise an empty name, and every write it then made would
   // be attributed to nothing while looking like a delegate that worked.
   if (!pod || !agentId) throw new Error('The relay signed this delegate key in and reported no ' + (pod ? 'sessionAgent' : 'pod') + ', so it has no identity to be authorised under. Nothing was done.');
+  // ★ A delegate holds its OWN encryption key, derived from its OWN wallet. That is what stops an
+  // agent's reach from silently becoming its human's: being seated in a private workspace is a
+  // separate grant, and this key is what makes it a separate one in fact and not just on paper.
+  await installEncryption(client, pk, agentId);
   const next: HostedDelegate = { address: key, agentId, pod, client, bearer };
   hosted.set(key, next);
   return next;
@@ -267,7 +272,7 @@ async function signInWithAccountKey(privateKey: string): Promise<{ pod: string; 
   let who;
   try {
     const got = await signInWithWallet(RELAY, IDENTITY, wallet.address, (m) => wallet.signMessage(m), recv.redirectUri);
-    who = await adopt(got, 'wallet');
+    who = await adopt(got, 'wallet', privateKey);
   } finally {
     // The wallet path never uses the listener — it posts the proof itself — but the relay requires
     // a registered redirect_uri, and leaving a socket open because it went unused is how a desktop
@@ -279,6 +284,48 @@ async function signInWithAccountKey(privateKey: string): Promise<{ pod: string; 
   putSecret(ACCOUNT_POD(wallet.address), who.pod);
   putSecret(ACTIVE_ACCOUNT, wallet.address.toLowerCase());
   return { ...who, address: wallet.address };
+}
+
+/**
+ * GIVE A CLIENT THE KEY IT READS PRIVATE WORKSPACES WITH.
+ *
+ * ── ★★ THE HALF THAT MAKES THE WORD "END-TO-END" TRUE ───────────────────────
+ *
+ * The relay keeps a public key an agent supplies and hands back sealed envelopes without opening
+ * them. Both are useless until something on this side actually HOLDS a secret: until now no member
+ * held a key at all, so "encrypted to its members" meant encrypted to one keypair the relay owns.
+ * This registers the public half and installs the opener that uses the private half.
+ *
+ * ── ★ THE DERIVATION TAKES NO PRINCIPAL, DELIBERATELY ───────────────────────
+ *
+ * `encryptionKeyFor` accepts one so a delegate need not share a key with its human, but a delegate
+ * here already HAS its own wallet — `DELEGATE_KEY` — so passing anything would only make the key
+ * depend on a second input. That matters more than it looks: the derivation must be STABLE for the
+ * lifetime of the identity, because content encrypted to a key is unreadable the moment the key
+ * changes. Scoping it by, say, the session agent DID would silently re-key on some future sign-in
+ * and quietly orphan every private message the person had already received.
+ *
+ * ★ AND A FAILURE HERE MUST NOT STOP THE SIGN-IN. Registration is a nicety on a pod that may
+ * already carry the key; the opener is worth installing either way, because reading is what this
+ * key is for and reading does not depend on the registry.
+ */
+async function installEncryption(target: WorkspaceClient, privateKeyHex: string | null, agentId: string | null): Promise<void> {
+  if (!privateKeyHex) return;   // browser sign-in: no key on this machine, so it reads what it can
+  const key = encryptionKeyFor(privateKeyHex);
+  if (agentId) {
+    try {
+      await target.tool('register_agent', {
+        agent_id: agentId, scope: 'ReadWrite', encryption_public_key: key.publicKey,
+      });
+    } catch { /* see above: the opener is still worth having */ }
+  }
+  target.setGraphOpener((sealed) => {
+    const opened = openGraph(sealed, key);
+    // ★ null means NOT ADDRESSED TO ME, and nothing else. `unreadable` is a fault and is reported
+    // as one by leaving the record withheld — never by handing back a substitute string, which
+    // would land in a workspace document as if somebody had published it.
+    return opened.kind === 'opened' || opened.kind === 'plaintext' ? opened.content : null;
+  });
 }
 
 const listeners = new Set<WebContents>();
@@ -332,7 +379,7 @@ function createWindow(): BrowserWindow {
 }
 
 /** Resolve which pod the freshly minted session actually writes to, and cache the client. */
-async function adopt(next: RelayOAuthBearer, method: AuthMethod): Promise<{ pod: string; displayName: string | null; method: AuthMethod }> {
+async function adopt(next: RelayOAuthBearer, method: AuthMethod, accountKey?: string): Promise<{ pod: string; displayName: string | null; method: AuthMethod }> {
   bearer = next;
   transport = new RelayMcpTransport(RELAY, next);
   client = new WorkspaceClient(RELAY, transport);
@@ -344,6 +391,10 @@ async function adopt(next: RelayOAuthBearer, method: AuthMethod): Promise<{ pod:
   // and that reads back as an EMPTY LOG rather than as an error.
   const pod = podUrl.replace(/\/$/, '').split('/').pop() ?? '';
   if (!pod) throw new Error('get_pod_status answered without a pod URL this client could turn into a pod name, so there is no address to write to.');
+  // The key this machine reads private workspaces with, registered against the agent the relay
+  // says this session IS. A browser sign-in passes no key and simply reads less.
+  const sessionAgent = status['sessionAgent'] as { did?: string; id?: string } | undefined;
+  await installEncryption(client, accountKey ?? null, sessionAgent?.did ?? sessionAgent?.id ?? null);
   signedInAs = { method, pod };
   setSession({
     state: 'live', pod, method, expiresAt: next.expiresAt,

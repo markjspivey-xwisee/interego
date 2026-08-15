@@ -31,6 +31,17 @@ export const REQUIRED_TOOLS = [
  */
 export const PROBE_TOOL = 'get_pod_status';
 
+/**
+ * Turns the sealed payload `get_encrypted_graph` returns into plaintext, or `null` if it is not
+ * for this holder.
+ *
+ * ★ THE HOST IMPLEMENTS THIS, AND THE HOST KEEPS THE KEY. Returning `null` must mean "not
+ * addressed to me" and never "something went wrong" — the readers render an unopened record as a
+ * permission, and a fault reported that way would tell somebody they had not been invited to a
+ * workspace they are seated in.
+ */
+export type GraphOpener = (sealed: unknown) => string | null;
+
 /** A workspace record, as far as it could be read. Every field says how it was obtained. */
 export interface WorkspaceRecord {
   readonly head: Extract<HeadResult, { url: string }>;
@@ -97,6 +108,71 @@ export class WorkspaceClient extends RelayClient {
   }
 
   /**
+   * Opens sealed bytes. Supplied by the HOST, because the host is what holds the secret.
+   *
+   * ★ THIS PACKAGE NEVER SEES A PRIVATE KEY. The desktop app derives one in its main process from
+   * the account key in the OS secret store and installs this; a published artifact installs
+   * nothing and simply reads less. The split is deliberate — a shared client that took key
+   * material would put it wherever the client runs, including a browser.
+   */
+  private opener: GraphOpener | null = null;
+
+  /** Install (or clear) the local opener. See {@link GraphOpener}. */
+  setGraphOpener(opener: GraphOpener | null): void { this.opener = opener; }
+
+  /** Whether this client can open sealed content at all — what the UI should say "private" means here. */
+  get canOpenSealed(): boolean { return this.opener !== null; }
+
+  /**
+   * `get_descriptor`, and — when this client holds a key — the sealed read behind it.
+   *
+   * ── ★★ WHY THE OPENING HAPPENS HERE AND NOT AT THE SEVEN CALL SITES ────────
+   *
+   * Every reader in this package (workspace record, canvas, seats, acceptances, presence, the
+   * entry chain) turns a descriptor URL into bytes through this one method. Opening here means a
+   * private workspace is READ everywhere it is read today, with no site aware of encryption.
+   * Handling it per-site would have been six chances to miss one, and a missed site does not
+   * error — it silently reports an empty or malformed record for content that is merely sealed.
+   *
+   * ── ★ IT DEGRADES RATHER THAN FAILS ────────────────────────────────────────
+   *
+   * `get_encrypted_graph` is deliberately NOT in `REQUIRED_TOOLS`: adding a twelfth tool would
+   * invalidate every grant already issued against the eleven, and a connector that has not been
+   * re-granted would stop connecting entirely rather than read a little less. So a relay or grant
+   * without it leaves the record exactly as withheld as it is today.
+   *
+   * ★ AND IT NEVER TURNS A REFUSAL INTO PLAINTEXT. If the envelope does not name this key the
+   * opener returns null and the content stays absent — which the readers already render as
+   * "encrypted to its members, and you are not one of them".
+   */
+  override async descriptor(url: string): Promise<Record<string, unknown>> {
+    const d = await super.descriptor(url);
+    const graph = d['graph'] as { content?: string | null; encrypted?: boolean } | undefined;
+    // Nothing to do when there is no key here, the payload is not sealed, or the relay already
+    // answered in the clear (which it does for the caller's own pod).
+    if (!this.opener || graph?.encrypted !== true || typeof graph?.content === 'string') return d;
+
+    let sealed: unknown;
+    try {
+      sealed = await this.tool('get_encrypted_graph', { url });
+    } catch (e) {
+      // An ungranted or absent tool is not a fault in the record. Say which it was, rather than
+      // leaving a private workspace looking broken for a reason nothing states.
+      return { ...d, sealedReadFailed: (e as Error)?.message ?? String(e) };
+    }
+    const plain = this.opener(sealed);
+    if (plain === null) return d;
+    return {
+      ...d,
+      graph: { ...graph, content: plain },
+      // ★ Evidence, not decoration: this content was decrypted HERE, with a key the relay does
+      // not hold. A reader that could not tell this from ordinary plaintext could not honestly
+      // tell anyone their workspace is end-to-end encrypted.
+      openedWithOwnKey: true,
+    };
+  }
+
+  /**
    * A member document under either naming form, qualified first.
    *
    * Which one answered is carried back, because a member seated under the old name is seated
@@ -159,8 +235,15 @@ export class WorkspaceClient extends RelayClient {
         // `null` and `''` are different answers and were being collapsed. Only `null` means
         // not found, so only `null` is tested for.
         regionFound: region !== null,
-        // Withheld, not missing. See the field's own note.
-        withheld: graph?.encrypted === true,
+        /**
+         * Withheld, not missing. See the field's own note.
+         *
+         * ★ ENCRYPTED IS NOT THE SAME AS UNREADABLE. When this client holds the key, `descriptor`
+         * has already opened the payload and `content` is a string — the record is sealed on the
+         * pod and perfectly readable here. Reporting it as withheld on the strength of the
+         * `encrypted` flag alone would hide a workspace from the very member who can read it.
+         */
+        withheld: graph?.encrypted === true && typeof graph?.content !== 'string',
         // Absent, or anything this reader does not recognise, is public. See the field's note.
         visibility: readLiteral(region, 'wsp:visibility') === 'private' ? 'private' : 'public',
         convener,

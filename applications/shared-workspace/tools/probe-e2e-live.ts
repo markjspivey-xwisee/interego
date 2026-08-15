@@ -28,8 +28,21 @@
  * ★ It runs entirely on a throwaway wallet's own pod: one publish, to a pod that did not exist a
  * second earlier, naming no other pod and no other person.
  *
- * Run from the repo root:
- *   npx tsx applications/shared-workspace/tools/probe-e2e-live.ts
+ * ── RUNNING IT ──────────────────────────────────────────────────────────────
+ *
+ * Bundled first, unlike its `npx tsx` siblings, and that is forced rather than chosen: it imports
+ * the desktop app's real `openGraph` — testing the SHIPPING opener rather than a copy of it is the
+ * whole point — and the desktop package is CommonJS. Under tsx that makes it `require()`
+ * `@interego/core`, whose exports map is import-only, and the run dies before it starts. esbuild
+ * to CJS is also what the desktop itself does, so this exercises the same composition the app has.
+ * (Bundling to ESM instead fails differently: tweetnacl needs a real `require('crypto')`.)
+ *
+ * From the repo root:
+ *   npx esbuild applications/shared-workspace/tools/probe-e2e-live.ts \
+ *     --bundle --format=cjs --platform=node --target=es2022 --outfile=/tmp/probe-e2e.cjs
+ *   node /tmp/probe-e2e.cjs
+ *
+ * `PROBE_DEBUG=1` additionally dumps the publish response and the descriptor it wrote.
  */
 import { Wallet } from 'ethers';
 import { deriveEncryptionKeyPair } from '@interego/core';
@@ -42,7 +55,9 @@ const IDENTITY = process.env['INTEREGO_IDENTITY'] ?? 'https://identity.interego.
 let bad = 0;
 const check = (ok: boolean, what: string, detail?: string): void => {
   if (!ok) bad++;
-  process.stdout.write((ok ? '  PASS  ' : '  FAIL  ') + what + (detail ? '\n        ' + detail : '') + '\n');
+  // Detail is the evidence for a FAILURE. Printing it under a pass reads as a complaint about a
+  // check that succeeded — the marker assertion did exactly that.
+  process.stdout.write((ok ? '  PASS  ' : '  FAIL  ') + what + (!ok && detail ? '\n        ' + detail : '') + '\n');
 };
 
 /** One MCP call, unwrapping the SSE framing the relay answers with. */
@@ -100,7 +115,7 @@ async function main(): Promise<void> {
     visibility: 'shared',
     context_summary: 'end-to-end encryption probe',
   }) as { descriptorUrl?: string; error?: string; message?: string };
-  process.stdout.write('  published: ' + JSON.stringify(published).slice(0, 400) + '\n');
+  if (process.env['PROBE_DEBUG']) process.stdout.write('  published: ' + JSON.stringify(published).slice(0, 400) + '\n');
 
   if (!published.descriptorUrl) {
     check(false, '★ a sealed graph was published to the throwaway pod',
