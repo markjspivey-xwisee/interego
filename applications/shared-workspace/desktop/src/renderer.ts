@@ -1335,9 +1335,23 @@ async function invite(): Promise<void> {
   const p = say('sendresult', 'pending', 'Resolving ' + handle);
   const log = el('div'); p.appendChild(log);
   let set: ((s: string, d: string) => void) | null = null;
+  /**
+   * ★★ A PRIVATE WORKSPACE'S RECORD IS RE-SEALED AS PART OF INVITING. It was written when the
+   * convener was the only member, so it is encrypted to them alone and the invitee cannot read
+   * it — which means they cannot verify their own grant and cannot accept. `sendInvite` handles
+   * that, given the roster to re-seal to; it adds the invitee itself.
+   */
+  const inviteAudience = recipientsFor(S.record?.visibility, S.fold);
+  if (!inviteAudience.ok) {
+    clear($('sendresult')).appendChild(errBox(new Error(inviteAudience.why), 'Nothing was published and nobody was notified.'));
+    b.disabled = false;
+    return;
+  }
   const out = await sendInvite(S.client, {
     viewer: S.viewer, workspace: S.workspace, workspaceTitle: S.record?.title || (S.slug ?? ''),
     handle, role, entryShape: S.record?.entryShape ?? null,
+    visibility: S.record?.visibility ?? 'public',
+    ...(inviteAudience.shareWith ? { shareWith: inviteAudience.shareWith } : {}),
     onState: (s, d) => { if (!set) set = writeLine(log, 'grant on your pod'); set(s, d); },
   });
   b.disabled = false;

@@ -268,6 +268,26 @@ async function frameOf(deps: Deps, binding: ThreadBinding): Promise<Frame | { re
 }
 
 /**
+ * Every seated member's WebID, for a private workspace.
+ *
+ * ★ FOLDED ON DEMAND AND ONLY WHEN PRIVATE. The roster costs two round trips per grant, far too
+ * much to spend on every message in a public channel — and a public workspace has no recipients to
+ * compute. It THROWS rather than returning a short list: `recipientsFor` refuses a truncated
+ * roster, and encrypting to the part of it that was read would lock out the members it missed,
+ * permanently and with nothing to show for it.
+ */
+async function privateRoster(deps: Deps, frame: Frame): Promise<readonly string[]> {
+  const iriOwner = podOfNsIri(frame.binding.workspace) ?? frame.convenerPod;
+  const roster = await foldRoster(deps.client, {
+    workspace: frame.binding.workspace, iriOwner, slug: frame.binding.slug,
+    convener: frame.record.convener, convenerPod: frame.convenerPod,
+  });
+  const audience = recipientsFor('private', roster);
+  if (!audience.ok) throw new Error(audience.why);
+  return audience.shareWith ?? [];
+}
+
+/**
  * Seat a participant who is not seated: the convener's grant, then their own acceptance.
  *
  * ★ TWO PODS, TWO DELEGATIONS, AND NEITHER HALF IS MANUFACTURED. The grant is published on the
@@ -309,6 +329,14 @@ async function seat(deps: Deps, frame: Frame, member: Viewer): Promise<{ readonl
     // WebFinger, which is the one step that establishes the pod and the WebID agree.
     handle: 'acct:' + member.podName + '@' + new URL(deps.relay).host,
     role, entryShape: frame.record.entryShape,
+    /**
+     * ★★ SEATING SOMEBODY IN A PRIVATE WORKSPACE MEANS RE-SEALING ITS RECORD TO THEM. Written when
+     * the convener was its only member, it is encrypted to the convener alone — so without this
+     * the new member cannot read the record, cannot verify the grant just written for them, and
+     * cannot accept. `sendInvite` adds the invitee; this is the roster it already had.
+     */
+    visibility: frame.record.visibility,
+    ...(frame.record.visibility === 'private' ? { shareWith: await privateRoster(deps, frame) } : {}),
   });
   if (invited.kind !== 'invited') {
     const why = invited.kind === 'blocked' ? (invited.resolution.blocked ?? 'the invitee could not be resolved to a pod a grant would seat')
@@ -412,16 +440,8 @@ export async function recordMessage(
      */
     let shareWith: readonly string[] | undefined;
     if (frame.record.visibility === 'private') {
-      // The pod named INSIDE the IRI, which is not always the convener's — `foldRoster` wants
-      // both and reconciles them. `frameOf` already proved this parses.
-      const iriOwner = podOfNsIri(binding.workspace) ?? frame.convenerPod;
-      const roster = await foldRoster(deps.client, {
-        workspace: binding.workspace, iriOwner, slug: binding.slug,
-        convener: frame.record.convener, convenerPod: frame.convenerPod,
-      });
-      const audience = recipientsFor('private', roster);
-      if (!audience.ok) return { kind: 'unseated', pod: link.pod, why: audience.why, seating: [] };
-      shareWith = audience.shareWith;
+      try { shareWith = await privateRoster(deps, frame); }
+      catch (e) { return { kind: 'unseated', pod: link.pod, why: (e as Error).message, seating: [] }; }
     }
 
     // Composed, not read: the two names a member writes under are derived from the workspace's

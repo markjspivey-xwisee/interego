@@ -23,8 +23,10 @@
  *
  * ── WHAT IT WRITES ──────────────────────────────────────────────────────────
  *
- * Three throwaway wallets, each with a pod that did not exist a minute earlier. A creates a
- * private workspace, invites B, B accepts, A posts. Nobody else's pod is named or touched.
+ * Four throwaway wallets, each with a pod that did not exist a minute earlier: a convener, two
+ * invitees, and a stranger who is invited to nothing. A creates a private workspace, invites B, B
+ * accepts, A invites C — which must not evict B — and A posts. Nobody else's pod is named or
+ * touched.
  *
  * From the repo root (bundled, not `tsx` — see `probe-e2e-live.ts` for why):
  *   npx esbuild applications/shared-workspace/tools/drive-private-workspace-live.ts \
@@ -37,7 +39,7 @@ import { deriveEncryptionKeyPair } from '@interego/core';
 import {
   RelayMcpTransport, WorkspaceClient, acceptGrant, composedHandle, createWorkspace, foldRoster,
   nsIri, orderChain, parseRoleProfile, postEntry, qualifiedName, readInbox, readViewer,
-  recipientsFor, toChainRow, unreachedRecipients, verifyInvitation, sendInvite, graphRegion, readLiteral,
+  recipientsFor, toChainRow, unreachedRecipients, verifyInvitation, sendInvite,
   type Viewer,
 } from '@interego/workspace-client';
 import { openerFor } from '@interego/workspace-client/opener';
@@ -81,12 +83,14 @@ async function party(label: string, wallet: Signer & { privateKey: string }): Pr
 }
 
 async function run(): Promise<number> {
-  head('three throwaway identities, each holding its own key');
-  const aw = Wallet.createRandom(); const bw = Wallet.createRandom(); const cw = Wallet.createRandom();
+  head('throwaway identities, each holding its own key');
+  const aw = Wallet.createRandom(); const bw = Wallet.createRandom(); const sw = Wallet.createRandom();
   const A = await party('A (convener)', aw);
   const B = await party('B (invited)  ', bw);
-  // C is never seated and never invited. It exists to be refused.
-  const strangerOpener = openerFor(cw.privateKey);
+  // The stranger: never invited, never seated, named by nothing. It exists to be refused. (C,
+  // minted later, IS invited — a second member is a different test, and conflating the two would
+  // make the refusal below pass for the wrong reason.)
+  const strangerOpener = openerFor(sw.privateKey);
 
   head('A creates a PRIVATE workspace');
   const slug = 'priv-' + Date.now().toString(36);
@@ -154,6 +158,42 @@ async function run(): Promise<number> {
   must('the invitation was found in B\'s inbox', accepted, 'nothing verified against ' + inv.grantIri);
   if (!accepted) return 1;
 
+  /**
+   * ── ★★ THE HAZARD RE-SEALING INTRODUCES, AND THE ONE THING THAT GUARDS IT ──
+   *
+   * Re-sealing REPLACES the record's recipient set. Invite a second member with a list that has
+   * gone stale — or short, because the roster read was truncated — and the members left out are
+   * evicted from a workspace they are still seated in, silently, by an operation whose whole
+   * purpose was to let somebody IN. Nothing errors: the record publishes, the roster still lists
+   * them, and their client simply stops being able to open it.
+   *
+   * The guard is that callers build the list with `recipientsFor`, which refuses a truncated
+   * roster rather than returning the part it read. This proves the guard holds where it matters:
+   * after a SECOND invite, the FIRST invitee must still be able to read the record.
+   */
+  head('★★ a second invite must not evict the first member');
+  const cw2 = Wallet.createRandom();
+  const C = await party('C (second)  ', cw2);
+  const foldBefore = await foldRoster(A.client, {
+    workspace, iriOwner: A.viewer.podName, slug,
+    convener: rec.record.convener, convenerPod: rec.record.convenerPod,
+  });
+  const beforeAudience = recipientsFor('private', foldBefore);
+  must('the existing roster resolved', beforeAudience.ok, beforeAudience.ok ? '' : beforeAudience.why);
+  if (!beforeAudience.ok) return 1;
+  const inv2 = await sendInvite(A.client, {
+    viewer: A.viewer, workspace, workspaceTitle: 'Private drive ' + slug,
+    handle: C.handle, role: contributor, entryShape,
+    visibility: 'private',
+    ...(beforeAudience.shareWith ? { shareWith: beforeAudience.shareWith } : {}),
+  });
+  must('C was invited', inv2.kind === 'invited', JSON.stringify(inv2).slice(0, 240));
+
+  const bStillSees = await B.client.readWorkspaceRecord(workspace, A.viewer.podName);
+  must('★★ B can STILL read the record after it was re-sealed for C',
+    bStillSees.kind === 'record' && !bStillSees.record.withheld,
+    bStillSees.kind === 'record' ? 'withheld — the re-seal evicted a seated member' : bStillSees.kind);
+
   head('A posts, encrypted to the roster');
   const fold = await foldRoster(A.client, {
     workspace, iriOwner: A.viewer.podName, slug,
@@ -210,8 +250,10 @@ async function run(): Promise<number> {
   // path every reader in the app takes, not a special one for this driver.
   const bRead = await B.client.descriptor(last.url);
   const bGraph = bRead['graph'] as { content?: string | null } | undefined;
-  const bBody = readLiteral(graphRegion(bGraph?.content ?? '', last.url.replace(/\.ttl$/, '')) ?? bGraph?.content ?? '', 'iep:body')
-    ?? (bGraph?.content ?? '');
+  // The entry's words are `dct:description` — `entryTurtle` is the only writer of this document,
+  // and that is the term it emits. Falling back to the whole payload keeps the assertion honest if
+  // the region cannot be located: the secret is either in what B got back, or it is not.
+  const bBody = bGraph?.content ?? '';
   must('★★ B OPENED A\'S ENTRY — this is the whole claim', bBody.includes(secret),
     bRead['openedWithOwnKey'] ? 'decrypted, but the words are not there: ' + String(bGraph?.content).slice(0, 200)
       : 'not decrypted at all: ' + String(bGraph?.content).slice(0, 200));
@@ -221,7 +263,7 @@ async function run(): Promise<number> {
   head('★ and a stranger, seated in nothing, must be refused');
   // Fetched as sealed bytes and offered to C's key. C is not on the roster and never was.
   const sealed = await B.client.tool('get_encrypted_graph', { url: last.url });
-  must('★★ C cannot open it', strangerOpener(sealed) === null,
+  must('★★ the stranger cannot open it', strangerOpener(sealed) === null,
     'an unrelated key opened this entry, so the envelope is not addressed to anybody in particular');
 
   return bad;
