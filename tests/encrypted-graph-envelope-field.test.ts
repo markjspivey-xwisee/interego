@@ -77,6 +77,36 @@ describe('get_encrypted_graph reads a field the descriptor emits', () => {
     for (const f of claimed) expect(emitted, 'claims `' + f + '`, which the descriptor response does not emit').toContain(f);
   });
 
+  it('★★ every caller-supplied URL it dials goes through the screened fetch', () => {
+    /**
+     * ── THE RULE THIS FILE'S SUBJECT BROKE ──────────────────────────────────
+     *
+     * `AUTH_REQUIRED_TOOLS`'s own comment states it: "the question is not 'is it a pure read' — it
+     * is 'does every caller-supplied URL it touches go through `guardedInvokeFetch`'. A read that
+     * dials an address of the caller's choosing is not a pure read."
+     *
+     * `get_encrypted_graph` is unauthenticated and takes a descriptor URL. It read the descriptor
+     * through the screened path and then re-fetched the `dcat:accessURL` out of it with
+     * `solidFetch` — the global UNSCREENED pool. Host a descriptor whose distribution names
+     * `169.254.169.254` or an internal service and the relay fetched it and returned the body as
+     * `envelope`. The guard was one line above and this stepped around it, which is the same shape
+     * as the 2026-08-04 `discover_context` finding.
+     */
+    const body = sealedReadBody();
+    expect(body, 'the sealed read no longer fetches anything — check this guard still means something')
+      .toMatch(/await\s+guardedInvokeFetch\(/);
+    expect(body, 'solidFetch is the UNSCREENED pool; a caller-supplied URL must not go through it')
+      .not.toMatch(/\bsolidFetch\s*\(/);
+  });
+
+  it('★ and it does not echo the upstream status back, which would be a port-scan oracle', () => {
+    // The same reasoning `handleGetDescriptor` states for its own generic refusal: on an anonymous
+    // tool, a distinguishable "connection refused" vs "404" turns the guard's remaining surface
+    // into a scanner.
+    const body = sealedReadBody();
+    expect(body).not.toMatch(/envelope_fetch_failed[\s\S]{0,200}resp\.status/);
+  });
+
   it('★ the tool is still declared, since a handler nothing advertises is a tool that does not exist', () => {
     // This shipped wrong once too: handler and dispatch entry landed without the declaration, so
     // no client could discover it. Both halves are asserted rather than assumed.

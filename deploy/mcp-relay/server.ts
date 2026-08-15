@@ -4267,9 +4267,25 @@ async function handleGetEncryptedGraph(args: ToolArgs): Promise<string> {
       message: 'This descriptor names no distribution to fetch, so there is no envelope to hand back.',
     });
   }
-  const resp = await solidFetch(envelopeUrl, { headers: { 'Accept': 'application/jose+json, application/json' } });
+  /**
+   * ── ★★ `guardedInvokeFetch`, BECAUSE THIS URL IS THE CALLER'S ───────────────
+   *
+   * `envelopeUrl` is the `dcat:accessURL` parsed out of a descriptor at a URL the caller supplied,
+   * so it is caller-controlled at one remove. This used `solidFetch` — the global unscreened pool
+   * — on an UNAUTHENTICATED tool: serve a descriptor whose distribution names `169.254.169.254` or
+   * an internal service, and the relay fetches it and hands the body back as `envelope`. The
+   * descriptor read one line above is screened, so the guard was there and this stepped around it.
+   *
+   * This is the same class as the 2026-08-04 finding on `discover_context`, and the rule the
+   * AUTH_REQUIRED_TOOLS comment states in as many words: "the question is not 'is it a pure read'
+   * — it is 'does every caller-supplied URL it touches go through guardedInvokeFetch'." It did
+   * not. The pinned CSS origin still passes, which is the only address this legitimately dials.
+   */
+  const resp = await guardedInvokeFetch(envelopeUrl, { headers: { 'Accept': 'application/jose+json, application/json' } });
   if (!resp.ok) {
-    return JSON.stringify({ error: 'envelope_fetch_failed', message: `${resp.status} ${resp.statusText}`, envelopeUrl });
+    // Generic, like the descriptor read above: echoing upstream status for a caller-supplied URL
+    // is an internal port-scan oracle on an anonymous tool.
+    return JSON.stringify({ error: 'envelope_fetch_failed', message: 'the envelope could not be retrieved' });
   }
   const body = await resp.text();
   return JSON.stringify({
