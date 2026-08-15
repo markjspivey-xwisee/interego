@@ -8924,6 +8924,18 @@ const TOOL_SCHEMAS = [
     annotations: { title: 'Fetch descriptor + payload', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
+    name: 'get_encrypted_graph',
+    description: 'Fetch a graph\'s SEALED envelope WITHOUT opening it — the read half of end-to-end encryption. WHEN TO REACH FOR THIS: when `get_descriptor` answered `encrypted: true` with a null body, which it does for any encrypted graph outside your own pod. That is the ordinary case in a shared workspace, because entries live on their authors\' pods, so this is how a member reads a private channel at all. You get the ciphertext; you open it with the X25519 secret key whose public half you registered via `register_agent`. The relay does not hold that key and cannot open this for you — which is what makes the encryption end-to-end rather than at-rest. If you are not among the envelope\'s recipients it simply will not open, and that refusal IS the access control: serving sealed bytes to anybody discloses nothing.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'Full URL of the descriptor whose graph payload you want sealed bytes for.' },
+      },
+      required: ['url'],
+    },
+    annotations: { title: 'Fetch sealed envelope (does not decrypt)', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  {
     name: 'resolve_linked_data',
     description: 'Dereference a published Interego linked-data graph/ontology served at a relay /ns IRI — the MCP-tool equivalent of GET <relay>/ns/<owner>/<slug> for clients that cannot fetch a URL over raw HTTP. Pass the full IRI (e.g. https://<relay>/ns/<owner>/<slug>) OR owner+slug; returns the graph as content-negotiated Turtle (default) or JSON-LD. GENERIC: works for any published PUBLIC graph — an ontology (its #fragment terms like hmd:approve resolve within the returned document), a knowledge graph, or a SHACL shape. Read-only. Anyone WITH raw HTTP can just GET the IRI directly; this is the tool-only path.',
     inputSchema: {
