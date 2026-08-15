@@ -4209,6 +4209,66 @@ async function handleDiscoverContext(args: ToolArgs): Promise<string> {
   return JSON.stringify({ pod: podUrl, entries, registry });
 }
 
+/**
+ * Hand back a graph's ENCRYPTED ENVELOPE, unopened, to anybody who asks for it.
+ *
+ * ── ★★ WHY SERVING CIPHERTEXT TO ANYONE IS NOT A DISCLOSURE ─────────────────
+ *
+ * This is the tool that makes end-to-end encryption possible on this fleet, and it works by
+ * REFUSING to do the thing every other read path does. `get_descriptor` decrypts with the relay's
+ * own key and only for the caller's own pod, which has two consequences:
+ *
+ *   · a member cannot read a workspace entry on ANOTHER member's pod, even when the envelope names
+ *     them as a recipient — and a workspace is cross-pod by construction, since entries live on
+ *     their authors' pods. Encrypted workspaces were therefore unreadable by exactly the people
+ *     they were encrypted for.
+ *   · the relay must hold a key that opens everything, which is the opposite of end-to-end
+ *
+ * Both dissolve if the relay stops being the reader. An envelope is opaque without a private key
+ * the relay does not have to hold, so handing the BYTES to any authenticated caller discloses
+ * nothing: only a named recipient can open them. That is the whole point of encrypting to
+ * recipients rather than access-controlling plaintext, and it is why this route needs no
+ * membership predicate — one that had to be invented, and could be wrong, and would be the thing
+ * standing between a member and their own conversation.
+ *
+ * ★ IT IS DELIBERATELY NOT A DECRYPT. There is no branch here that opens anything, so it cannot
+ * become the oracle `/render` was: that route decrypted a caller-named URL with the relay's key,
+ * behind a recipient check that was vacuous because the relay is a recipient of everything.
+ *
+ * ★ AND IT DOES NOT REACH ARBITRARY HOSTS. The URL is normalised to the fleet's internal CSS host
+ * and fetched with `solidFetch`, the same as every other descriptor read.
+ */
+async function handleGetEncryptedGraph(args: ToolArgs): Promise<string> {
+  const url = normalizeCssUrl(String(args['url'] ?? ''));
+  if (!url) return JSON.stringify({ error: 'get_encrypted_graph requires a descriptor url' });
+  const gd = JSON.parse(await handleGetDescriptor({ url } as ToolArgs)) as Record<string, unknown>;
+  if (gd['error']) return JSON.stringify({ error: String(gd['error']) });
+
+  const graph = gd['graph'] as { content?: string | null; encrypted?: boolean; accessURL?: string } | undefined;
+  // Already plaintext for this caller — hand it back rather than making them ask twice.
+  if (typeof graph?.content === 'string') {
+    return JSON.stringify({ url, encrypted: false, content: graph.content });
+  }
+  const envelopeUrl = normalizeCssUrl(String(graph?.accessURL ?? ''));
+  if (!envelopeUrl) {
+    return JSON.stringify({
+      error: 'no_envelope_url',
+      message: 'This descriptor names no distribution to fetch, so there is no envelope to hand back.',
+    });
+  }
+  const resp = await solidFetch(envelopeUrl, { headers: { 'Accept': 'application/jose+json, application/json' } });
+  if (!resp.ok) {
+    return JSON.stringify({ error: 'envelope_fetch_failed', message: `${resp.status} ${resp.statusText}`, envelopeUrl });
+  }
+  const body = await resp.text();
+  return JSON.stringify({
+    url, encrypted: true, envelope: body,
+    hint: 'This is the sealed envelope. Open it with your own X25519 secret key — the relay does not '
+      + 'open it for you, which is what makes this end-to-end. If you are not among its recipients, '
+      + 'it will not open, and that is the access control.',
+  });
+}
+
 async function handleGetDescriptor(args: ToolArgs): Promise<string> {
   // Translate legacy public-host CSS URLs at the handler boundary so the
   // distribution-link parsing / response-body URLs see the canonical
@@ -7865,6 +7925,7 @@ const TOOLS: Record<string, ToolEntry> = gateRequiredArgs({
   get_current_head: { description: 'Resolve the current chain head (descriptorUrl + content-CID) for a urn:graph:* on a pod — used as the read half of CAS supersession', handler: handleGetCurrentHead },
   discover_context: { description: 'Discover descriptors on a pod', handler: handleDiscoverContext },
   get_descriptor: { description: 'Fetch a descriptor\'s Turtle', handler: handleGetDescriptor },
+  get_encrypted_graph: { description: 'Fetch a graph\'s SEALED envelope without opening it — the read half of end-to-end encryption, for a recipient holding their own key', handler: handleGetEncryptedGraph },
   render_hmd: { description: 'Open a note in the interactive HyperMarkdown viewer', handler: handleRenderHmd },
   get_pod_status: { description: 'Check pod status', handler: handleGetPodStatus },
   subscribe_to_pod: { description: 'Subscribe to pod notifications', handler: handleSubscribeToPod },
