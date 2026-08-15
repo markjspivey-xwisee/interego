@@ -293,6 +293,31 @@ check('…and that refusal is actually wired to the key lookup',
   keyAt > 0 && guardAt > keyAt && guardAt < unwrapAt,
   `lookup at ${keyAt}, guard at ${guardAt}, unwrap at ${unwrapAt}`);
 
+console.log('\n11b. get_encrypted_graph hands back the SEALED envelope and never opens it');
+/**
+ * ★★ THIS TOOL IS SAFE FOR THE OPPOSITE REASON TO EVERY OTHER READ PATH: it does not decrypt.
+ *
+ * An envelope is opaque without a private key the relay does not hold, so serving the BYTES to any
+ * authenticated caller discloses nothing — only a named recipient can open them. That is what lets
+ * a member read a workspace entry on ANOTHER member's pod, which `get_descriptor` cannot do and a
+ * cross-pod workspace needs.
+ *
+ * The danger is that somebody later "helpfully" adds a decrypt to it, at which point it becomes
+ * exactly the oracle `/render` was: a caller-named URL opened with the relay's key, behind a
+ * recipient check that is vacuous because the relay is a recipient of everything. So the absence
+ * of an unwrap in this handler is a security property and is pinned as one.
+ */
+{
+  const start = SERVER.indexOf('async function handleGetEncryptedGraph');
+  const end = SERVER.indexOf('async function handleGetDescriptor', start);
+  const body = start > 0 && end > start ? SERVER.slice(start, end) : '';
+  check('the handler exists and is bounded', body.length > 0);
+  check('it NEVER calls openEncryptedEnvelope — serving ciphertext is not disclosing plaintext',
+    body.length > 0 && !body.includes('openEncryptedEnvelope'));
+  check('and it never reaches for the relay key',
+    body.length > 0 && !body.includes('relayAgentKey'));
+}
+
 console.log('\n12. R6 — the federated inbox gate is not a header-presence check');
 // `-H 'Signature: x'` satisfied the previous gate in one curl flag.
 check('no header-presence signature shortcut remains',
