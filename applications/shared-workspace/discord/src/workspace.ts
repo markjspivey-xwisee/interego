@@ -243,7 +243,13 @@ async function frameOf(deps: Deps, binding: ThreadBinding): Promise<Frame | { re
   const read = await deps.client.readWorkspaceRecord(binding.workspace, iriOwner);
   if (read.kind === 'forked') return { problem: 'the workspace record has ' + read.heads.length + ' unresolved heads, so which record governs here is not decided. Nothing was written.' };
   if (read.kind === 'missing') return { problem: 'the workspace record could not be read: ' + read.message };
-  if (!read.record.regionFound) return { problem: 'the workspace record\'s signed region could not be located, so nothing was read from bytes anybody signed.' };
+  if (!read.record.regionFound) {
+    // ★ Withheld, not malformed — see `WorkspaceRecord.withheld`. A bot that told a channel
+    // somebody's private record was unsigned would be turning a permission into an accusation.
+    return { problem: read.record.withheld
+      ? 'this workspace is private and its record is encrypted to its members. This bot is not one of them, so it cannot mirror it here.'
+      : 'the workspace record\'s signed region could not be located, so nothing was read from bytes anybody signed.' };
+  }
   return {
     binding, record: read.record,
     // The pod grants live on is the one the RECORD names, not the one in the IRI — the module's

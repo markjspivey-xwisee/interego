@@ -36,6 +36,18 @@ export interface WorkspaceRecord {
   readonly head: Extract<HeadResult, { url: string }>;
   /** `graphRegion` returned a string. `''` counts — see the note on `graphRegion`. */
   readonly regionFound: boolean;
+  /**
+   * True when the region is absent because the payload is ENCRYPTED and this reader is not
+   * entitled to it — as opposed to absent because nothing was found.
+   *
+   * ★★ THE TWO ARE OPPOSITE CLAIMS AND WERE BEING COLLAPSED INTO ONE SENTENCE. "The signed region
+   * could not be located" says a record is malformed — that somebody published bytes nobody
+   * signed. Said about a perfectly good encrypted record, it is an accusation this vertical has no
+   * business making, in a system whose whole argument is that it does not assert what it has not
+   * established. `get_descriptor` already answers `{ content: null, encrypted: true }`; the flag
+   * was read on the way in and dropped on the way to the reader.
+   */
+  readonly withheld: boolean;
   readonly convener: string | null;
   readonly roleProfile: string | null;
   readonly entryShape: string | null;
@@ -125,7 +137,7 @@ export class WorkspaceClient extends RelayClient {
     // truthiness test does not narrow the union and `message` stays `string | null`.
     if (h.url === null) return { kind: 'missing', unreadable: 'unreadable' in h, message: h.message };
     const d = await this.descriptor(h.url);
-    const graph = d['graph'] as { content?: string } | undefined;
+    const graph = d['graph'] as { content?: string; encrypted?: boolean } | undefined;
     const region = graphRegion(graph?.content ?? '', workspaceIri);
     const convener = readIri(region, 'wsp:convener');
     return {
@@ -135,6 +147,8 @@ export class WorkspaceClient extends RelayClient {
         // `null` and `''` are different answers and were being collapsed. Only `null` means
         // not found, so only `null` is tested for.
         regionFound: region !== null,
+        // Withheld, not missing. See the field's own note.
+        withheld: graph?.encrypted === true,
         convener,
         roleProfile: readIri(region, 'wsp:roleProfile'),
         // ★ THE CONFORMANCE CONTRACT, READ RATHER THAN CHOSEN. A client that held one shape
