@@ -204,6 +204,14 @@ export async function createWorkspace(
      * same decision is made on the reading side.
      */
     readonly visibility?: 'public' | 'private';
+    /**
+     * The convener's own X25519 public key, published in their founding acceptance.
+     *
+     * ★ WITHOUT IT THE CONVENER IS PERMANENTLY `keysMissing`, and because a missing key withholds
+     * the WHOLE key list, nobody in the workspace could ever seal anything. The founder is the one
+     * member who cannot be invited later, so this is the only chance to record theirs.
+     */
+    readonly encryptionKey?: string;
     readonly onStep?: (s: CreateStep) => void;
   },
 ): Promise<CreateOutcome> {
@@ -274,7 +282,10 @@ export async function createWorkspace(
   const grantCid = head && !head.forked ? head.cid : null;
 
   step = await publish('your acceptance', acceptanceIri,
-    acceptanceTurtle({ acceptance: acceptanceIri, workspace, memberWebId: me, grant: grantIri, grantCid, stream: streamIri }), [shapeIri], 'acceptance');
+    acceptanceTurtle({
+      acceptance: acceptanceIri, workspace, memberWebId: me, grant: grantIri, grantCid, stream: streamIri,
+      ...(args.encryptionKey ? { encryptionKey: args.encryptionKey } : {}),
+    }), [shapeIri], 'acceptance');
   if (!step.ok) return step.out;
 
   return {
@@ -772,6 +783,23 @@ export async function acceptGrant(
     readonly relay: string;
     readonly viewer: Viewer;
     readonly verdict: GrantVerdict;
+    /**
+     * This member's X25519 PUBLIC key, published inside their own acceptance.
+     *
+     * ── ★★ ACCEPTING IS THE RIGHT MOMENT AND THE ONLY GOOD ONE ─────────────────
+     *
+     * A publisher sealing to the roster needs every member's key, and it must not learn them from
+     * anything the relay can rewrite — see `Seat.encryptionKey`. The acceptance is the document a
+     * member writes about themselves, on their own pod, in a signed CAS-chained region, and it is
+     * PUBLIC-ALWAYS, so it is readable by somebody who does not yet hold a key. Publishing the key
+     * anywhere else would need a second write that most people would never make.
+     *
+     * ★ OPTIONAL, BECAUSE A HOST MAY GENUINELY HOLD NO KEY. The browser artifact is the case: it
+     * cannot seal and has nowhere safe to keep a secret. Such a member is seated and readable-from
+     * on the relay-sealed path, and `recipientsFromRoster` names them as missing rather than
+     * sealing to a subset.
+     */
+    readonly encryptionKey?: string;
     readonly onState?: (state: string, detail: string) => void;
   },
 ): Promise<AcceptOutcome> {
@@ -787,6 +815,7 @@ export async function acceptGrant(
     graph_content: acceptanceTurtle({
       acceptance: acceptanceIri, workspace, memberWebId: args.viewer.webId,
       grant: v.grantIri, grantCid: v.grantCid ?? null, stream: streamIri,
+      ...(args.encryptionKey ? { encryptionKey: args.encryptionKey } : {}),
     }),
     visibility: 'public', auto_supersede_prior: true, sign_authorship: true,
   };

@@ -4161,7 +4161,15 @@ var WSPC = (() => {
     step = await publish(
       "your acceptance",
       acceptanceIri,
-      acceptanceTurtle({ acceptance: acceptanceIri, workspace, memberWebId: me, grant: grantIri, grantCid, stream: streamIri }),
+      acceptanceTurtle({
+        acceptance: acceptanceIri,
+        workspace,
+        memberWebId: me,
+        grant: grantIri,
+        grantCid,
+        stream: streamIri,
+        ...args.encryptionKey ? { encryptionKey: args.encryptionKey } : {}
+      }),
       [shapeIri],
       "acceptance"
     );
@@ -4441,7 +4449,8 @@ var WSPC = (() => {
         memberWebId: args.viewer.webId,
         grant: v.grantIri,
         grantCid: v.grantCid ?? null,
-        stream: streamIri
+        stream: streamIri,
+        ...args.encryptionKey ? { encryptionKey: args.encryptionKey } : {}
       }),
       visibility: "public",
       auto_supersede_prior: true,

@@ -37,6 +37,14 @@ export interface SessionInfo {
    * it the choice is a trap that returns 200.
    */
   readonly sealedReads: boolean;
+  /**
+   * The PUBLIC half of this account's encryption key, or null when this sign-in holds none.
+   *
+   * ★ THE PUBLIC HALF ONLY. It is what other members seal TO — world-readable by construction, and
+   * destined for a document on a public pod. The secret never crosses this bridge; that is why the
+   * renderer is sandboxed and the opening happens in the main process.
+   */
+  readonly encryptionPublicKey: string | null;
 }
 
 /**

@@ -119,8 +119,10 @@ interface Session {
    * word promises, and it returns 200. The renderer disables the choice on this.
    */
   readonly sealedReads: boolean;
+  /** The PUBLIC half of this account's encryption key, for publishing in an acceptance. */
+  readonly encryptionPublicKey: string | null;
 }
-let session: Session = { state: 'signed-out', pod: null, method: null, expiresAt: null, renewable: false, why: null, sealedReads: false };
+let session: Session = { state: 'signed-out', pod: null, method: null, expiresAt: null, renewable: false, why: null, sealedReads: false, encryptionPublicKey: null };
 
 /**
  * One model turn in flight.
@@ -326,9 +328,20 @@ async function signInWithAccountKey(privateKey: string): Promise<{ pod: string; 
  * already carry the key; the opener is worth installing either way, because reading is what this
  * key is for and reading does not depend on the registry.
  */
+/**
+ * The PUBLIC half of the account's encryption key, for the renderer to publish in an acceptance.
+ *
+ * ★★ THE PUBLIC HALF ONLY, AND IT LEAVES THIS PROCESS BY DESIGN. That is what a recipient list is
+ * made of — it is meant to be world-readable, and it goes into a document on a public pod. The
+ * SECRET stays here and is never exposed on the bridge, which is the entire reason the renderer is
+ * sandboxed and the reads are opened up here rather than there.
+ */
+let accountEncryptionPublicKey: string | null = null;
+
 async function installEncryption(target: WorkspaceClient, privateKeyHex: string | null, agentId: string | null): Promise<void> {
   if (!privateKeyHex) return;   // browser sign-in: no key on this machine, so it reads what it can
   const key = encryptionKeyFor(privateKeyHex);
+  accountEncryptionPublicKey = key.publicKey;
   if (agentId) {
     try {
       await target.tool('register_agent', {
@@ -414,6 +427,9 @@ async function adopt(next: RelayOAuthBearer, method: AuthMethod, accountKey?: st
     // Measured from the client, not inferred from the sign-in method: the opener is installed
     // only if a key was actually found and derived.
     sealedReads: client.canOpenSealed,
+    // The address other members seal to. Null for a browser sign-in, which holds no key — such a
+    // member is still seated, and `recipientsFromRoster` names them rather than sealing to a subset.
+    encryptionPublicKey: accountEncryptionPublicKey,
   });
   scheduleRenewal();
   return { pod, displayName: (status['displayName'] as string) ?? null, method };
@@ -634,7 +650,7 @@ app.whenReady().then(() => {
     // bearer — but they were opened during this person's run, and leaving them live would let the
     // next identity's window drive delegates the previous one switched on.
     hosted.clear();
-    setSession({ state: 'signed-out', pod: null, method: null, expiresAt: null, renewable: false, why: null, sealedReads: false });
+    setSession({ state: 'signed-out', pod: null, method: null, expiresAt: null, renewable: false, why: null, sealedReads: false, encryptionPublicKey: null });
     return { accounts: accountSlots() };
   });
 

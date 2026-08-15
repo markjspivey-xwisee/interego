@@ -321,6 +321,8 @@ const S = {
    * Held here because the session update and the connect happen in either order, and both need it.
    */
   sealedReads: false,
+  /** The address other members seal to, from the main process. Null when this sign-in holds no key. */
+  encryptionPublicKey: null as string | null,
   roles: { roles: null, caps: null } as RoleTable,
   profileFrom: null as { from: string; hops: number } | null,
   profileError: null as unknown,
@@ -481,6 +483,7 @@ function renderSession(s: SessionInfo): void {
   // Remembered so a client created later can be told, and so a client created earlier can be told
   // now — the session and the connect happen in either order.
   S.sealedReads = s.sealedReads;
+  S.encryptionPublicKey = s.encryptionPublicKey;
   if (s.sealedReads) S.client?.declareSealedReadsUpstream();
 
   const priv = document.getElementById('wsvis-private') as HTMLInputElement | null;
@@ -1264,6 +1267,12 @@ async function create(): Promise<void> {
     // Read from the control rather than defaulted here: `createWorkspace` treats an omitted value
     // as public, and two places deciding the same thing is how they come to disagree.
     visibility: (document.getElementById('wsvis-private') as HTMLInputElement | null)?.checked ? 'private' : 'public',
+    /**
+     * ★ THE CONVENER'S OWN KEY, RECORDED AT THE ONLY MOMENT THERE IS. A founder cannot be invited
+     * later, so their acceptance is written exactly once — and because a missing key withholds the
+     * WHOLE key list, a workspace founded without one could never seal anything.
+     */
+    ...(S.encryptionPublicKey ? { encryptionKey: S.encryptionPublicKey } : {}),
     onStep: (s) => {
       let set = setters.get(s.label);
       if (!set) { set = writeLine(log, s.label); setters.set(s.label, set); }
@@ -1466,6 +1475,13 @@ async function accept(v: GrantVerdict, b: HTMLButtonElement): Promise<void> {
   let set: ((s: string, d: string) => void) | null = null;
   const out = await acceptGrant(S.client, {
     relay: S.relay, viewer: S.viewer, verdict: v,
+    /**
+     * ★ THE KEY GOES IN THE MEMBER'S OWN ACCEPTANCE, WHICH IS THE POINT. It is the one document
+     * about this member that the relay cannot rewrite — on their pod, in a signed CAS-chained
+     * region — so a publisher can read it and seal to them without trusting the relay's registry,
+     * where `encryptionKeyToRecord` substitutes the relay's own key as a placeholder.
+     */
+    ...(S.encryptionPublicKey ? { encryptionKey: S.encryptionPublicKey } : {}),
     onState: (s, d) => { if (!set) set = writeLine(log, 'acceptance on your pod'); set(s, d); },
   });
   b.disabled = false;
