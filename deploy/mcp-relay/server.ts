@@ -2736,7 +2736,7 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
           isSoftwareAgent: true,
           scope: 'ReadWrite',
           validFrom: new Date().toISOString(),
-          encryptionPublicKey: relayAgentKey.publicKey,
+          encryptionPublicKey: encryptionKeyToRecord(args['encryption_public_key']),
         });
         // Mint a SIGNED VC so downstream verifiers can cryptographically
         // walk the chain (the unsigned form forces a SelfAsserted trust
@@ -2762,13 +2762,13 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
         relayProfileCache.delete(podUrl);
         registeredOk = true;
         await credentialWrite;
-      } else if (me.encryptionPublicKey !== relayAgentKey.publicKey) {
+      } else if (me.encryptionPublicKey !== encryptionKeyToRecord(undefined, me.encryptionPublicKey)) {
         const updated = {
           ...profile,
           authorizedAgents: Object.freeze(
             profile.authorizedAgents.map(a =>
               a.agentId === agentId && !a.revoked
-                ? { ...a, encryptionPublicKey: relayAgentKey.publicKey }
+                ? { ...a, encryptionPublicKey: encryptionKeyToRecord(undefined, a.encryptionPublicKey) }
                 : a,
             ),
           ),
@@ -5220,11 +5220,17 @@ async function handleRegisterAgent(args: ToolArgs): Promise<string> {
       scope: (requestedScope as 'ReadWrite' | undefined) ?? 'ReadWrite',
       capabilities,
       validFrom: new Date().toISOString(),
-      // The relay registers its own X25519 public key alongside the agent
-      // so content encrypted to "this agent" lands decryptable here. Clients
-      // that call register_agent explicitly get the same wiring they'd get
-      // from the auto-registration path in publish_context.
-      encryptionPublicKey: relayAgentKey.publicKey,
+      /**
+       * The agent's OWN key when it supplied one, else the relay's.
+       *
+       * ★ THIS IS THE ONE PLACE A CLIENT EXPLICITLY ASKS, so it is the one that most needs to
+       * honour the answer. Supplying a key here is how an agent opts into genuine end-to-end:
+       * content shared with it is sealed to a key the relay does not hold, and it reads the
+       * ciphertext with `get_encrypted_graph` and opens it locally. Omitting one keeps the
+       * historical wiring, where the relay's key rides along so it can decrypt on the caller's
+       * behalf — see `encryptionKeyToRecord` for what each choice costs.
+       */
+      encryptionPublicKey: encryptionKeyToRecord(args['encryption_public_key']),
     });
   } catch (err) {
     if (/already authorized/i.test((err as Error).message)) {
@@ -5255,7 +5261,7 @@ async function handleRegisterAgent(args: ToolArgs): Promise<string> {
                   ...a,
                   scope: requestedScope as 'ReadWrite',
                   ...(args.label ? { label: args.label as string } : {}),
-                  encryptionPublicKey: relayAgentKey.publicKey,
+                  encryptionPublicKey: encryptionKeyToRecord(args['encryption_public_key']),
                 }
               : a,
           )),
@@ -5896,6 +5902,38 @@ function injectRestVerifiedIdentity(
  *
  * Fail-closed: no proven pod ⇒ no key ⇒ no plaintext.
  */
+/**
+ * The encryption public key to record for an agent.
+ *
+ * ── ★★ WHY THE RELAY MINTING EVERY AGENT'S KEY IS NOT END-TO-END ────────────
+ *
+ * `relayAgentKey` is ONE process-wide X25519 keypair, and every registration site stamped its
+ * public half as the agent's `encryptionPublicKey`. So every "recipient" on this fleet resolved to
+ * the same bytes: encrypting a workspace "to its members" encrypted it to one key the relay holds,
+ * and the relay could read everything. That is server-side encryption at rest wearing the name of
+ * end-to-end, and no member held a key at all.
+ *
+ * A caller may now supply its OWN public key, and one that is set is never overwritten.
+ *
+ * ★ WHAT THAT COSTS, STATED PLAINLY: content encrypted to an agent's own key CANNOT be read by
+ * the relay. Its plaintext-side conveniences — own-pod `get_descriptor` decryption, the `/render`
+ * projection — stop working for that agent's private graphs, because they were only ever working
+ * by holding everybody's key. That is not a regression; it is the property being asked for. The
+ * client reads ciphertext through `get_encrypted_graph` and opens it locally.
+ *
+ * ★ AND IT IS OPT-IN, which is why the old behaviour is still the default. An agent that supplies
+ * nothing gets the relay's key exactly as before, so every existing pod, memory and workspace
+ * keeps working untouched.
+ */
+function encryptionKeyToRecord(supplied: unknown, existing?: string | null): string {
+  const given = typeof supplied === 'string' ? supplied.trim() : '';
+  // Base64 X25519 public keys are 32 bytes -> 44 chars with padding. Anything else is refused
+  // rather than recorded: an unusable key recorded as usable would encrypt to nobody, silently.
+  if (given && /^[A-Za-z0-9+/]{43}=$/.test(given)) return given;
+  if (existing && existing !== relayAgentKey.publicKey) return existing;
+  return relayAgentKey.publicKey;
+}
+
 async function recipientKeyFor(args: ToolArgs, targetUrl: string | undefined): Promise<typeof relayAgentKey | undefined> {
   if (!targetUrl) return undefined;
   const own = await callerOwnPod(args);
@@ -8932,6 +8970,7 @@ const TOOL_SCHEMAS = [
       type: 'object',
       properties: {
         agent_id: { type: 'string', description: 'Agent IRI, e.g. urn:agent:anthropic:claude-mobile:markj' },
+        encryption_public_key: { type: 'string', description: 'OPTIONAL base64 X25519 public key this agent holds the secret half of. Supply one to make encryption genuinely end-to-end: content shared with this agent is then sealed to a key THE RELAY DOES NOT HOLD, and only this agent can open it — read the ciphertext with get_encrypted_graph and decrypt locally. Omit it and the relay records its own key, which is the historical behaviour and lets the relay decrypt on your behalf.' },
         pod_name: { type: 'string', description: 'Pod name (default: authenticated user\'s pod)' },
         owner_webid: { type: 'string', description: 'Owner WebID (default: authenticated user)' },
         owner_name: { type: 'string', description: 'Owner display name' },
@@ -11474,7 +11513,7 @@ async function bootstrapPod(params: {
           authorizedAgents: Object.freeze(
             profile.authorizedAgents.map(a =>
               a.agentId === surfaceAgentIri && !a.revoked
-                ? { ...a, encryptionPublicKey: relayAgentKey.publicKey, ...(labelChanged ? { label: agentLabel } : {}) }
+                ? { ...a, encryptionPublicKey: encryptionKeyToRecord(undefined, a.encryptionPublicKey), ...(labelChanged ? { label: agentLabel } : {}) }
                 : a,
             ),
           ),
@@ -11486,7 +11525,7 @@ async function bootstrapPod(params: {
           isSoftwareAgent: true,
           scope: 'ReadWrite',
           validFrom: new Date().toISOString(),
-          encryptionPublicKey: relayAgentKey.publicKey,
+          encryptionPublicKey: encryptionKeyToRecord(undefined),
         });
 
     if (firstTouch) {
