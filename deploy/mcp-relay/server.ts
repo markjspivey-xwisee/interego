@@ -4244,12 +4244,23 @@ async function handleGetEncryptedGraph(args: ToolArgs): Promise<string> {
   const gd = JSON.parse(await handleGetDescriptor({ url } as ToolArgs)) as Record<string, unknown>;
   if (gd['error']) return JSON.stringify({ error: String(gd['error']) });
 
-  const graph = gd['graph'] as { content?: string | null; encrypted?: boolean; accessURL?: string } | undefined;
+  /**
+   * ★★ THE FIELD IS `url`. `handleGetDescriptor` builds this object as
+   * `{ url, mediaType, encrypted, content }` — the declared output schema says the same — and it
+   * has no `accessURL` at any point. Reading `accessURL` meant `envelopeUrl` was ALWAYS empty, so
+   * this tool answered `no_envelope_url` for every encrypted graph it was ever asked for: the one
+   * case it exists to serve. It shipped advertised and inert, and nothing caught it, because the
+   * refusal reads like a descriptor that genuinely names no distribution.
+   *
+   * `dcat:accessURL` is what the Turtle calls it, which is where the wrong name came from; the
+   * parsed link is `link.accessURL`, but the response field it lands in is `url`.
+   */
+  const graph = gd['graph'] as { content?: string | null; encrypted?: boolean; url?: string } | undefined;
   // Already plaintext for this caller — hand it back rather than making them ask twice.
   if (typeof graph?.content === 'string') {
     return JSON.stringify({ url, encrypted: false, content: graph.content });
   }
-  const envelopeUrl = normalizeCssUrl(String(graph?.accessURL ?? ''));
+  const envelopeUrl = normalizeCssUrl(String(graph?.url ?? ''));
   if (!envelopeUrl) {
     return JSON.stringify({
       error: 'no_envelope_url',
