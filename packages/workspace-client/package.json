@@ -1,7 +1,7 @@
 {
   "name": "@interego/workspace-client",
   "version": "0.1.0",
-  "description": "Transport-agnostic client for the shared-workspace vertical: hardened Turtle/TriG readers, the member-document naming scheme, the seat fold, the supersession chain walk and the compare-and-swap append. The ONE copy of this logic — the published artifact's script is generated from it and gated against drift, and the desktop shell imports it directly.",
+  "description": "Transport-agnostic client for the shared-workspace vertical: hardened Turtle/TriG readers, the member-document naming scheme, the seat fold, the supersession chain walk and the compare-and-swap append. The ONE copy of this logic \u2014 the published artifact's script is generated from it and gated against drift, and the desktop shell imports it directly.",
   "author": "Mark Spivey",
   "license": "MIT",
   "type": "module",
@@ -16,13 +16,29 @@
     "./opener": {
       "import": "./dist/opener.js",
       "types": "./dist/opener.d.ts"
+    },
+    "./sealer": {
+      "import": "./dist/sealer.js",
+      "types": "./dist/sealer.d.ts"
     }
   },
-  "files": ["dist/", "src/", "README.md"],
-  "scripts": { "build": "tsc", "watch": "tsc --watch", "clean": "rm -rf dist/" },
-  "engines": { "node": ">=20.0.0" },
+  "files": [
+    "dist/",
+    "src/",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "clean": "rm -rf dist/"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "dependencies": {
-    "@interego/core": "*"
+    "@interego/core": "*",
+    "@interego/solid": "*",
+    "@interego/privacy": "*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

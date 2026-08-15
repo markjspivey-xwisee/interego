@@ -343,6 +343,7 @@ import { resolveInteropPrincipal } from './interop-principal.js';
 import { NotificationLog } from './notification-log.js';
 import { POD_STATUS_ENTRY_BUDGET_BYTES, podStatusEntryPage } from './pod-status-page.js';
 import { ENFORCED_REQUIRED_ARGS, requiredArgsRefusal } from './required-args.js';
+import { parseSealedPayload, type SealedPayload } from './sealed-payload.js';
 import {
   resolvePodSubject, podNameOf, POD_URL_INJECTED, POD_NAME_INJECTED,
   type PodSubject,
@@ -2304,6 +2305,23 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     const refusal = requiredArgsRefusal('publish_context', args);
     if (refusal) return JSON.stringify(refusal);
   }
+
+  /**
+   * ── ★★ DID THE PUBLISHER ALREADY SEAL THIS? ─────────────────────────────────
+   *
+   * Absent, this is byte-identical to every publish that came before — `parseSealedPayload`
+   * answers `absent` and nothing below changes. Present, the relay is handling ciphertext it
+   * cannot read, and four things it used to do with the plaintext have to be skipped or taken on
+   * trust: the sensitivity screen, the SHACL gate, the cleartext mirror, and the content digest.
+   * Each is marked at its own site.
+   *
+   * The refusals live in that module rather than here — chiefly `relay_is_a_recipient`, which is
+   * the one check only this process can make and the one the whole arrangement rests on.
+   */
+  const sealedParse = parseSealedPayload(args, relayAgentKey.publicKey);
+  if (sealedParse.kind === 'refused') return JSON.stringify(sealedParse.body);
+  const sealed: SealedPayload | null = sealedParse.kind === 'sealed' ? sealedParse.sealed : null;
+
   const podName = (args.pod_name as string) ?? 'default';
   const podUrl = `${CSS_URL}${podName}/`;
   const agentId = callerAgentId(args) ?? 'urn:agent:remote:unknown';
@@ -2365,7 +2383,13 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   // We always WARN. We don't block automatically — the calling agent
   // decides. Warning is appended to the response so any LLM in the
   // loop sees it. See docs://interego/playbook §2 for guidance.
-  const sensitivityFlags = screenForSensitiveContent((args.graph_content as string | undefined) ?? '');
+  /**
+   * ★ FOR A SEALED PAYLOAD THIS SCREENS THE MIRROR, WHICH IS ALL THERE IS TO SCREEN. Running it
+   * over ciphertext would be theatre — it would find nothing, every time, and report a clean bill
+   * of health for content it never saw. The publisher runs the same screen over the plaintext
+   * before sealing (`sealForRoster`), which is the only place it can still be meaningful.
+   */
+  const sensitivityFlags = screenForSensitiveContent(sealed ? sealed.mirror : ((args.graph_content as string | undefined) ?? ''));
   const sensitivityWarning = formatSensitivityWarning(sensitivityFlags);
 
   // L1 protocol preprocessing — modal-truth consistency + cleartext
@@ -2376,7 +2400,14 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   const preprocessed = normalizePublishInputs({
     modalStatus: args.modal_status as 'Asserted' | 'Hypothetical' | 'Counterfactual' | undefined,
     confidence: args.confidence as number | undefined,
-    graphContent: args.graph_content as string | undefined,
+    /**
+     * ★★ THE MIRROR, AND THIS ONE LINE KEEPS THE ENTRY CHAIN ALIVE. This lifts `iep:supersedes`
+     * out of the payload into the descriptor. Hand it ciphertext and it finds nothing — so every
+     * entry declares no predecessor, every entry is a head, and `orderChain` reports a fork. No
+     * error anywhere; the channel simply stops being a chain. The publisher ran this same
+     * function over its plaintext and sent the result as `cleartext_mirror`.
+     */
+    graphContent: sealed ? sealed.mirror : (args.graph_content as string | undefined),
   });
 
   // Auto-supersede: when republishing a graph_iri (typically because
@@ -2963,7 +2994,14 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   // share_with resolution when visibility is (or defaults to) 'shared' —
   // computePublishRecipients ignores them for 'public'/'private' but
   // skipping the I/O saves a round-trip.
-  const willShare = (rawVisibility === undefined || rawVisibility === 'shared');
+  /**
+   * ★★ A SEALED PUBLISH RESOLVES NO RECIPIENTS, BECAUSE THE PUBLISHER ALREADY CHOSE THEM. Reading
+   * the registry here and computing a list would be worse than pointless: the envelope is already
+   * built, so the list could not affect it — but `authorEncryptionKey` (this relay's own key) is
+   * unconditionally pushed into whatever comes out, and that value is what the response reports.
+   * The relay would announce itself as a recipient of an envelope it is provably not in.
+   */
+  const willShare = !sealed && (rawVisibility === undefined || rawVisibility === 'shared');
   const currentProfile = willShare
     ? await getCachedRelayProfile(podUrl).catch(() => null)
     : null;
@@ -3058,7 +3096,21 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
       // shapes reaching it were plain valid Turtle (`'''…'''` literals, SPARQL `PREFIX`);
       // those are fixed in the tokeniser, and the rest of the class is now NAMED instead,
       // both in the log and in the publish response, so an operator can act on it.
-      const digestResult = canonicalGraphDigestResult(String(args.graph_content ?? ''));
+      /**
+       * ★★ FOR A SEALED PAYLOAD THE DIGEST IS THE PUBLISHER'S WORD. Hashing the ciphertext would
+       * produce a value no reader could reproduce — every content binding would read `mismatched`,
+       * i.e. the system telling members their own messages had been tampered with. So the digest
+       * of the PLAINTEXT is supplied, and `parseSealedPayload` refuses to sign at all without one
+       * rather than mint a proof labelled `unbound`, which already means something else.
+       *
+       * The signature's meaning changes accordingly: from "I hashed these bytes" to "the agent I
+       * authenticated asserted this digest". It is recovered on the reading side, where a
+       * recipient recomputes over what it opened — a publisher who lies is caught by every
+       * entitled reader, lazily rather than never.
+       */
+      const digestResult = sealed
+        ? { digest: sealed.contentDigest, reason: null as string | null }
+        : canonicalGraphDigestResult(String(args.graph_content ?? ''));
       const contentHash = digestResult.digest ?? undefined;
       if (digestResult.digest === null) {
         contentBindingRefusal = digestResult.reason;
@@ -3099,7 +3151,32 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   const casHeadsOpt = casHeads
     ? { currentHeads: casHeads, normalizeHeadUrl: normalizeCssUrl }
     : {};
-  const publishOptions: Parameters<typeof publish>[3] = recipients.length > 0
+  /**
+   * ── ★★ THREE ARMS NOW, AND THE SEALED ONE COMES FIRST ───────────────────────
+   *
+   * `sealedPayload` hands `publish()` the bytes to store and nothing to encrypt. It deliberately
+   * carries NO `conformsToShapes`: `validateAgainstShape` over ciphertext does not fail to find
+   * violations, it fails to PARSE — `sh:DataGraphParseFailure`, a hard 422 on every honest sealed
+   * write. The contract is not abandoned, it moves: the publisher validated before sealing and
+   * every reader holding a key validates again after opening. What is genuinely gone is the
+   * SERVER-side guarantee, which no server that cannot read the content could ever have offered.
+   *
+   * It is first because `recipients.length > 0` is false for a sealed publish — the relay resolved
+   * none on purpose — so the old ternary would have sent it down the plaintext arm.
+   */
+  const publishOptions: Parameters<typeof publish>[3] = sealed
+    ? {
+        fetch: solidFetch,
+        sealedPayload: { body: sealed.body, recipientCount: sealed.recipientCount },
+        visibility,
+        ...(publishRelayBase ? { relayBaseUrl: publishRelayBase } : {}),
+        ...(authorshipProof ? { authorshipProof } : {}),
+        ...(ifMatchSupersedes ? { ifMatchSupersedes } : {}),
+        ...(ifMatchCid ? { ifMatchCid } : {}),
+        ...manifestHeadCidLookupOpt,
+        ...casHeadsOpt,
+      }
+    : recipients.length > 0
     ? {
         fetch: solidFetch,
         encrypt: { recipients, senderKeyPair: relayAgentKey },
@@ -3202,11 +3279,26 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   // It cannot be solved the same way (making every publish synchronous is the latency
   // this whole path exists to avoid) and it does not need to be: nothing in the response
   // is a verdict about pod state, so there is nothing to invalidate by deciding later.
+  /**
+   * ★★ `!!sealed` ON BOTH OF THESE, AND OMITTING EITHER SHIPS A BROKEN URL.
+   *
+   * `willEncrypt` decides the predicted graph URL. A sealed publish has `recipients.length === 0`
+   * — the relay resolved none, deliberately — so without the `|| !!sealed` it predicts
+   * `…-graph.trig` while `publish()` actually writes `…-graph.envelope.jose.json`, and the 202
+   * reports `encrypted: false` for an envelope. Every deferred reader then follows a URL that is
+   * not there.
+   *
+   * `syncRequired` matters for the same reason from the other side: `postEntry` omits `if_match`
+   * on the FIRST entry of every chain and on `createWorkspace`, so the deferred branch is exactly
+   * the one real sealed writes take. Forcing the write synchronous keeps the prediction and the
+   * write in the same decision rather than two that can disagree.
+   */
   const syncRequired =
     args.compliance === true ||
     args.sync === true ||
-    ifMatch !== undefined;
-  const willEncrypt = recipients.length > 0;
+    ifMatch !== undefined ||
+    !!sealed;
+  const willEncrypt = recipients.length > 0 || !!sealed;
   const predictedGraphUrl = predictGraphUrl(podUrl, descriptor.id, { encrypted: willEncrypt });
   const predictedManifestUrl = predictManifestUrl(podUrl);
 

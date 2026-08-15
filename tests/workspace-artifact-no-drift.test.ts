@@ -40,6 +40,30 @@ describe('the published artifact is generated from @interego/workspace-client', 
     expect(html.indexOf(BEGIN)).toBeLessThan(html.indexOf(END));
   });
 
+  it('★★ carries no sealer, because the browser cannot hold a key and must not appear to', () => {
+    /**
+     * ── WHAT WOULD BREAK, IN TWO DIFFERENT WAYS ───────────────────────────────
+     *
+     * `sealer.ts` reaches `@interego/core`'s crypto, which imports `node:crypto` at module scope.
+     * Reachable from `index.ts`, it fails this bundle outright — which is the GOOD outcome, and
+     * the reason `opener.ts` was already a separate entry point.
+     *
+     * The bad outcome is the one this pins: a future polyfill, shim or `--platform=neutral` making
+     * the import succeed. A browser artifact that can call `sealForRoster` would seal with a key
+     * it has no safe place to hold, in a context where the page's own origin can read it. The
+     * artifact's honest position is that it CANNOT seal, and refuses private writes; a bundle
+     * containing the function contradicts that no matter what the UI says.
+     */
+    const html = artifact();
+    for (const name of ['sealForRoster', 'mirrorTurtleFor', 'createEncryptedEnvelope']) {
+      expect(html, name + ' reached the browser bundle — see the note above').not.toContain(name);
+    }
+    // Non-vacuity: the generated region really is in there and really does contain the client, so
+    // the absences above are absences and not an empty read.
+    expect(html.length).toBeGreaterThan(100_000);
+    expect(html).toContain('recipientsFor');
+  });
+
   it('matches a fresh build of the package, byte for byte', () => {
     // The builder is invoked as a child process rather than imported, because that is how CI
     // and a developer both run it — a test that imported the module could pass while the
