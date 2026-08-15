@@ -129,7 +129,7 @@ function world(w: World): { client: WorkspaceClient; calls: { name: string; args
       return { iri: RELAY + '/ns/' + memberPod + '/' + MARK + '--' + SLUG + '-acceptance', naming: 'qualified', found: true, head: { url: 'https://css.internal/' + memberPod + '/acc.ttl', cid: 'a1' }, forked: null, error: null };
     },
     async readWorkspaceRecord(): Promise<unknown> {
-      return { kind: 'record', record: { head: { url: 'u', cid: 'c' }, regionFound: true, convener: webid(MARK), roleProfile: null, entryShape: null, grantCapability: null, title: 'Roof decision', authorship: null, convenerPod: MARK, servedFrom: MARK } };
+      return { kind: 'record', record: { head: { url: 'u', cid: 'c' }, regionFound: true, withheld: false, convener: webid(MARK), roleProfile: null, entryShape: null, grantCapability: null, title: 'Roof decision', authorship: null, convenerPod: MARK, servedFrom: MARK } };
     },
   } as unknown as WorkspaceClient;
   return { client, calls };

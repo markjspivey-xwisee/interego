@@ -165,6 +165,63 @@ const grantDoc = (iri: string, grantee: string, extra = ''): { cid: string; url:
     + '  wsp:grantedTo <' + grantee + '> ; wsp:role <' + ROLES + '#Contributor> .' + extra),
 });
 
+/**
+ * ★★ "WITHHELD" AND "MALFORMED" ARE OPPOSITE CLAIMS, AND THIS CLIENT USED TO MAKE THE WRONG ONE.
+ *
+ * `get_descriptor` answers `{ content: null, encrypted: true }` for a payload the caller is not
+ * entitled to. The flag was read on the way in and dropped on the way to the reader, so every
+ * client in this vertical rendered an ENCRYPTED record as "the signed region could not be
+ * located" — which says the author published bytes nobody signed. It is an accusation, about a
+ * record that is perfectly well formed and simply not yours, in a system whose entire argument is
+ * that it does not assert what it has not established.
+ *
+ * This has to hold BEFORE any private byte exists, which is why it ships ahead of the workspace
+ * visibility choice rather than with it.
+ */
+describe('★★ an encrypted record is withheld, not malformed', () => {
+  /**
+   * A pod that serves the GRANT normally and withholds only the WORKSPACE RECORD — which is the
+   * real shape of a private workspace. The grant is what tells you a workspace exists and that you
+   * were invited; the record is what is encrypted to its members. A fixture that withheld both
+   * would fail earlier, on reading the grant, and never reach the line under test.
+   */
+  const withheldRecord = (docs: Record<string, { cid: string; url: string; content: string }>) =>
+    (): Record<string, (i: Record<string, unknown>) => unknown> => {
+      const base = podWith(docs);
+      return {
+        ...base,
+        get_descriptor: (i) => (String(i['url']) === WS_DOC.url
+          ? { graph: { content: null, encrypted: true }, authorship: null }
+          : (base['get_descriptor'] as (x: Record<string, unknown>) => unknown)(i)),
+      };
+    };
+
+  it('★ says the record is private and not yours, rather than accusing it of being unsigned', async () => {
+    const pod = withheldRecord({ [WS]: WS_DOC, [GRANT]: grantDoc(GRANT, WEBID(OTHER)) })();
+    const v = await verifyGrantIri(client(pod), { relay: RELAY, viewer: viewer(OTHER), grantIri: GRANT });
+    expect(v.ok).toBe(false);
+    if (!v.ok) {
+      expect(v.why).toContain('private');
+      expect(v.why).toContain('not yours to read');
+      // ★ The accusation must be gone, not merely accompanied by a nicer sentence.
+      expect(v.why).not.toContain('could not be located');
+    }
+  });
+
+  it('★ and a genuinely malformed record still says so — the two must not collapse the other way', async () => {
+    // Regression guard in the opposite direction: it would be just as wrong to start telling
+    // people their broken records are "private", which is what a careless fix would do.
+    const broken = { ...WS_DOC, content: 'this is not the graph you are looking for' };
+    const v = await verifyGrantIri(client(podWith({ [WS]: broken, [GRANT]: grantDoc(GRANT, WEBID(OTHER)) })),
+      { relay: RELAY, viewer: viewer(OTHER), grantIri: GRANT });
+    expect(v.ok).toBe(false);
+    if (!v.ok) {
+      expect(v.why).toContain('could not be located');
+      expect(v.why).not.toContain('private');
+    }
+  });
+});
+
 describe('★ an inbox item is a claim: verifyGrantIri is what turns one into a seat, or refuses', () => {
   it('verifies a grant that names this viewer, on the convener\'s own pod', async () => {
     const c = client(podWith({ [WS]: WS_DOC, [GRANT]: grantDoc(GRANT, WEBID(OTHER)) }));

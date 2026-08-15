@@ -2677,6 +2677,8 @@ var WSPC = (() => {
           // `null` and `''` are different answers and were being collapsed. Only `null` means
           // not found, so only `null` is tested for.
           regionFound: region !== null,
+          // Withheld, not missing. See the field's own note.
+          withheld: graph?.encrypted === true,
           convener,
           roleProfile: readIri(region, "wsp:roleProfile"),
           // ★ THE CONFORMANCE CONTRACT, READ RATHER THAN CHOSEN. A client that held one shape
@@ -4103,7 +4105,9 @@ var WSPC = (() => {
     if (rec.kind === "forked") return no("the workspace record at " + workspace + " has " + rec.heads.length + " unresolved heads, so it has no single current head", withWs);
     if (rec.kind === "missing") return no("the workspace record at " + workspace + " could not be read: " + rec.message, withWs);
     if (rec.kind === "error") return no("the workspace record could not be read: " + (rec.error?.message ?? String(rec.error)), withWs);
-    if (!rec.record.regionFound) return no("the workspace record's signed region could not be located", withWs);
+    if (!rec.record.regionFound) {
+      return no(rec.record.withheld ? "this workspace is private and its record is encrypted to its members, and you are not one of them. Nothing is wrong with the record; it is not yours to read." : "the workspace record's signed region could not be located", withWs);
+    }
     const full = {
       ...withWs,
       title: rec.record.title,

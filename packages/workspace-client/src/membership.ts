@@ -543,7 +543,18 @@ export async function verifyGrantIri(
   if (rec.kind === 'forked') return no('the workspace record at ' + workspace + ' has ' + rec.heads.length + ' unresolved heads, so it has no single current head', withWs);
   if (rec.kind === 'missing') return no('the workspace record at ' + workspace + ' could not be read: ' + rec.message, withWs);
   if (rec.kind === 'error') return no('the workspace record could not be read: ' + ((rec.error as Error)?.message ?? String(rec.error)), withWs);
-  if (!rec.record.regionFound) return no('the workspace record\'s signed region could not be located', withWs);
+  if (!rec.record.regionFound) {
+    /**
+     * ★ WITHHELD AND MALFORMED ARE OPPOSITE CLAIMS. Saying "the signed region could not be
+     * located" about an encrypted record accuses its author of publishing bytes nobody signed —
+     * about a record that is perfectly well formed and simply not this reader's to open. See
+     * `WorkspaceRecord.withheld`.
+     */
+    return no(rec.record.withheld
+      ? 'this workspace is private and its record is encrypted to its members, and you are not one of '
+        + 'them. Nothing is wrong with the record; it is not yours to read.'
+      : 'the workspace record\'s signed region could not be located', withWs);
+  }
   const full: Partial<GrantVerdict> = {
     ...withWs, title: rec.record.title, convener: rec.record.convener,
     roleProfile: rec.record.roleProfile, entryShape: rec.record.entryShape,
