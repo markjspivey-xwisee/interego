@@ -144,3 +144,4 @@ export {
   type RequestNotice, type RequestVerdict, type AdmissionPredicate,
 } from './request.js';
 export { visibilityFor, alwaysPublic, type WorkspaceDoc, type WorkspaceVisibility } from './visibility.js';
+export { recipientsFromRoster, unreachedRecipients, type RecipientPlan } from './recipients.js';
