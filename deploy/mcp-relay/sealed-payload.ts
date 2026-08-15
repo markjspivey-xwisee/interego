@@ -25,7 +25,14 @@
  */
 
 /** The envelope shape `createEncryptedEnvelope` produces. Validated structurally, never opened. */
-interface WrappedKey { recipientPublicKey?: unknown; wrapped?: unknown; nonce?: unknown }
+/**
+ * ★ THE FIELD IS `wrappedKey`, NOT `wrapped`. Named to match `@interego/core`'s `WrappedKey`
+ * exactly — an invented name here validates nothing and rejects every honest envelope, which is
+ * what the first version did: the live probe's perfectly good envelope came back 422
+ * `sealed_payload_malformed`. The check is deliberately strict, so getting the shape wrong is
+ * loud rather than permissive.
+ */
+interface WrappedKey { recipientPublicKey?: unknown; wrappedKey?: unknown; nonce?: unknown; senderPublicKey?: unknown }
 interface Envelope {
   version?: unknown;
   algorithm?: unknown;
@@ -109,10 +116,10 @@ export function parseSealedPayload(
       + 'with a ciphertext, a nonce and at least one wrapped key. Nothing was written.');
   }
   for (const k of keys) {
-    if (!str(k?.recipientPublicKey) || !str(k?.wrapped) || !str(k?.nonce)) {
+    if (!str(k?.recipientPublicKey) || !str(k?.wrappedKey) || !str(k?.nonce) || !str(k?.senderPublicKey)) {
       return refuse(422, 'sealed_payload_malformed',
-        'one of the wrappedKeys entries is missing its recipientPublicKey, wrapped key or nonce, so this '
-        + 'envelope would be unopenable by somebody it names. Nothing was written.');
+        'one of the wrappedKeys entries is missing its recipientPublicKey, wrappedKey, nonce or '
+        + 'senderPublicKey, so this envelope would be unopenable by somebody it names. Nothing was written.');
     }
   }
 

@@ -25,7 +25,13 @@ const RELAY_KEY = 'RXRg5b/FlX8yix14MJDW/cyIqWzmwKfEU01T7KEKUSk=';
 const MEMBER_A = 'AAAAb0N/9B5HAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
 const MEMBER_B = 'BBBBQuKvuL56tBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=';
 
-const wrapped = (to: string): Record<string, string> => ({ recipientPublicKey: to, wrapped: 'w', nonce: 'n' });
+/**
+ * ★ THE REAL FIELD NAMES, FROM `@interego/core`'s `WrappedKey`. A fixture with invented names would
+ * have made the malformed-envelope tests pass against a parser that rejects every honest envelope
+ * — which is exactly what shipped, until the live probe's own envelope came back 422.
+ */
+const wrapped = (to: string): Record<string, string> =>
+  ({ recipientPublicKey: to, wrappedKey: 'w', nonce: 'n', senderPublicKey: 's' });
 const envelope = (recipients: readonly string[]): string => JSON.stringify({
   version: 1,
   algorithm: 'X25519-XSalsa20-Poly1305',
@@ -115,7 +121,7 @@ describe('what is not an envelope', () => {
     const broken = JSON.stringify({
       version: 1, algorithm: 'X25519-XSalsa20-Poly1305',
       content: { ciphertext: 'c', nonce: 'n' },
-      wrappedKeys: [{ recipientPublicKey: MEMBER_A }],
+      wrappedKeys: [{ recipientPublicKey: MEMBER_A }],   // no wrappedKey, no nonce, no sender
     });
     const out = parseSealedPayload(sealedArgs({ graph_content: broken }), RELAY_KEY);
     expect(out.kind).toBe('refused');

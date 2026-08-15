@@ -19,8 +19,10 @@
  * They do not disappear because the relay went blind; each has to happen somewhere. Three move
  * here, and one is genuinely lost:
  *
- *   1. SENSITIVITY SCREENING — moves here. `screenForSensitiveContent` is an ordinary importable
- *      package, so this is a relocation and not a casualty.
+ *   1. SENSITIVITY SCREENING — moves here, and stays a WARNING. `screenForSensitiveContent` is an
+ *      ordinary importable package, so this is a relocation and not a casualty — but a relocated
+ *      check must not quietly change severity. The relay appends a warning and publishes anyway;
+ *      so does this, returning the flags for the host to surface.
  *   2. SHAPE CONFORMANCE — moves here, and this is the real cost. The relay's guarantee was
  *      "everything in this container conforms"; a server that cannot read the content cannot offer
  *      that, and nothing can give it back. What remains is a publisher that checks before sealing
@@ -58,8 +60,20 @@ export type SealResult =
       readonly contentDigest: string;
       readonly cleartextMirror: string;
       readonly recipientCount: number;
+      /**
+       * What the sensitivity screen noticed, for the host to surface.
+       *
+       * ★★ A WARNING, BECAUSE THAT IS WHAT THE RELAY DID. `handlePublishContext` appends
+       * `formatSensitivityWarning` to its response and publishes anyway — the human decides. An
+       * earlier version of this file REFUSED instead, on the reasoning that there is nobody
+       * downstream left to warn once the relay is blind. That reasoning was wrong twice: the
+       * caller is downstream and can be told, and relocating a check must not quietly make it
+       * stricter. It was caught by the live probe, whose own marker tripped the phone-number
+       * heuristic and could not publish at all.
+       */
+      readonly sensitivity: readonly unknown[];
     }
-  | { readonly ok: false; readonly why: string; readonly code: 'shape_violation' | 'sensitive_content' | 'no_recipients' | 'unmirrorable' };
+  | { readonly ok: false; readonly why: string; readonly code: 'shape_violation' | 'no_recipients' | 'unmirrorable' };
 
 /**
  * The descriptor-layer statements the relay would have lifted out of the plaintext.
@@ -148,16 +162,8 @@ export function sealForRoster(args: {
     return { ok: false, code: 'no_recipients', why: 'no recipient keys were supplied, so this would be sealed to nobody and readable by nobody, including its author. Nothing was written.' };
   }
 
-  // 1 · the screen the relay used to run. Relocated, not lost.
-  const flags = screenForSensitiveContent(args.payloadTurtle);
-  if (flags.length > 0) {
-    return {
-      ok: false, code: 'sensitive_content',
-      why: 'this payload looks like it contains ' + flags.map((f) => String((f as { kind?: string }).kind ?? f)).join(', ')
-        + '. The relay used to screen for this and can no longer see the content, so the check runs here — '
-        + 'and it refuses rather than warns, because there is nobody downstream left to warn.',
-    };
-  }
+  // 1 · the screen the relay used to run. Relocated with its SEVERITY intact — see `sensitivity`.
+  const sensitivity = screenForSensitiveContent(args.payloadTurtle);
 
   // 2 · the conformance gate the relay can no longer run
   if (args.shape) {
@@ -194,5 +200,6 @@ export function sealForRoster(args: {
     contentDigest: digest ?? '',
     cleartextMirror: mirror.turtle,
     recipientCount: args.recipientKeys.length,
+    sensitivity,
   };
 }
