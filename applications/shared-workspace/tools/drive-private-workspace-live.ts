@@ -159,6 +159,32 @@ async function run(): Promise<number> {
   if (!accepted) return 1;
 
   /**
+   * ── ★★ THE FOLD THAT WAS NEVER RUN, AND WHAT IT HID ─────────────────────────
+   *
+   * Every roster read in this driver used to be `A.client` — the convener's own. That is the ONE
+   * client for which a private workspace always looks correct, because everything in it was sealed
+   * by A and A can open all of it. Reading the roster as B is a different question and it had a
+   * different answer: `createWorkspace` published the convener's own grant and acceptance through
+   * a helper that defaulted them to ENCRYPTED, so B could not open them, `foldRoster` called them
+   * malformed, and A came back NOT SEATED — vanishing from B's roster and from every recipient
+   * list B computed, with no error anywhere.
+   */
+  head('★★ what the OTHER member sees when they fold the roster');
+  const bFold = await foldRoster(B.client, {
+    workspace, iriOwner: A.viewer.podName, slug,
+    convener: rec.record.convener, convenerPod: rec.record.convenerPod,
+  });
+  for (const s of bFold.seats) log('    ' + (s.seated ? 'SEATED' : 'not   ') + ' ' + s.pod + (s.seated ? '' : ' · ' + String(s.why)));
+  must('★★ B sees the CONVENER as seated — a sealed founding grant unseats them in every other client',
+    bFold.seats.some((s) => s.seated && s.pod === A.viewer.podName),
+    'A is not seated in B\'s fold, so B would never encrypt to A and would read A\'s channel as empty');
+  must('★ and B sees themselves seated', bFold.seats.some((s) => s.seated && s.pod === B.viewer.podName), '');
+  const bAudience = recipientsFor('private', bFold);
+  must('★★ B\'s recipient list names the convener, so a reply is readable by them',
+    bAudience.ok && (bAudience.shareWith ?? []).includes(A.viewer.webId),
+    bAudience.ok ? 'B would encrypt to: ' + (bAudience.shareWith ?? []).join(', ') : bAudience.why);
+
+  /**
    * ── ★★ THE HAZARD RE-SEALING INTRODUCES, AND THE ONE THING THAT GUARDS IT ──
    *
    * Re-sealing REPLACES the record's recipient set. Invite a second member with a list that has
@@ -260,9 +286,36 @@ async function run(): Promise<number> {
   must('★ and it says so — the content was decrypted here, not served in the clear',
     bRead['openedWithOwnKey'] === true, 'the relay handed back plaintext, so this is at-rest and not end-to-end');
 
-  head('★ and a stranger, seated in nothing, must be refused');
-  // Fetched as sealed bytes and offered to C's key. C is not on the roster and never was.
+  /**
+   * ── ★★ WHO IS ACTUALLY IN THE ENVELOPE ──────────────────────────────────────
+   *
+   * Every assertion above passes if the relay is ALSO a recipient. "B can open it" and "a stranger
+   * cannot" are both true of an envelope that the relay can read too — so neither of them, nor
+   * both together, establishes the word "end-to-end". The only thing that does is counting the
+   * recipients and recognising every one of them.
+   *
+   * This is the check that was missing when this was first called verified.
+   */
+  head('★★ is the relay a recipient? — the check that decides whether "end-to-end" is the word');
   const sealed = await B.client.tool('get_encrypted_graph', { url: last.url });
+  const envelope = JSON.parse((sealed as { envelope: string }).envelope) as {
+    wrappedKeys?: { recipientPublicKey?: string }[];
+  };
+  const inEnvelope = (envelope.wrappedKeys ?? []).map((w) => String(w.recipientPublicKey));
+  const aKey = deriveEncryptionKeyPair(aw.privateKey).publicKey;
+  const bKey = deriveEncryptionKeyPair(bw.privateKey).publicKey;
+  const known = new Map([[aKey, 'A'], [bKey, 'B']]);
+  const strangers = inEnvelope.filter((k) => !known.has(k));
+  log('    recipients: ' + inEnvelope.map((k) => (known.get(k) ?? 'UNKNOWN') + ' ' + k.slice(0, 12) + '…').join(', '));
+  must('★★ every recipient of this entry is a member — nobody else is in the envelope',
+    strangers.length === 0,
+    strangers.length + ' key(s) in this envelope belong to neither member: ' + strangers.join(', ')
+      + ' — if one of these is the relay\'s own key then this is encryption AT REST performed by the '
+      + 'relay, not end-to-end encryption between members, and the relay can read every private '
+      + 'workspace on the fleet.');
+
+  head('★ and a stranger, seated in nothing, must be refused');
+  // The same sealed bytes fetched above, offered to a key that is on no roster and never was.
   must('★★ the stranger cannot open it', strangerOpener(sealed) === null,
     'an unrelated key opened this entry, so the envelope is not addressed to anybody in particular');
 

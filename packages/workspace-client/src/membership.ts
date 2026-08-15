@@ -258,15 +258,23 @@ export async function createWorkspace(
   if (!step.ok) return step.out;
   if (!step.readable) return { kind: 'stalled', at: 'workspace record', why: step.why ?? '', done: done.slice() };
 
+  /**
+   * ★★ `'grant'`, NOT THE DEFAULT `'record'`. These two call sites took the default docClass, so in
+   * a private workspace they published as `'shared'` — sealed to the convener alone — and every
+   * other member's fold then reported the convener as NOT SEATED, with "the signed region of this
+   * grant could not be located". Measured live: B's roster showed one seat, its pod `null`.
+   * `visibilityFor` maps grants and acceptances to public for exactly this reason; it only gets to
+   * apply if it is told what kind of document this is.
+   */
   step = await publish('your own grant', grantIri,
-    grantTurtle({ grant: grantIri, workspace, granteeWebId: me, role: rolesIri + '#Convener' }), [shapeIri]);
+    grantTurtle({ grant: grantIri, workspace, granteeWebId: me, role: rolesIri + '#Convener' }), [shapeIri], 'grant');
   if (!step.ok) return step.out;
   if (!step.readable) return { kind: 'stalled', at: 'your own grant', why: step.why ?? '', done: done.slice() };
   const head = step.head;
   const grantCid = head && !head.forked ? head.cid : null;
 
   step = await publish('your acceptance', acceptanceIri,
-    acceptanceTurtle({ acceptance: acceptanceIri, workspace, memberWebId: me, grant: grantIri, grantCid, stream: streamIri }), [shapeIri]);
+    acceptanceTurtle({ acceptance: acceptanceIri, workspace, memberWebId: me, grant: grantIri, grantCid, stream: streamIri }), [shapeIri], 'acceptance');
   if (!step.ok) return step.out;
 
   return {

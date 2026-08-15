@@ -2871,9 +2871,23 @@ async function doSave(useStale: boolean): Promise<void> {
 async function doMerge(): Promise<void> {
   if (!S.client || !S.viewer || !S.canvas.iri || !S.workspace || !S.slug) return;
   say('canvasresult', 'pending', 'Following the retryHint', 'get_current_head { urn, pod_name } — one read, then a resend with the cid it returns.');
+  /**
+   * ★★ A MERGE IS A SAVE AND CARRIES THE SAME POLICY. This was the one canvas write that did not:
+   * `mergeForward` could not forward a visibility, so a merge in a PRIVATE workspace republished
+   * the whole document as world-readable plaintext, superseded the sealed head, and painted green.
+   * "Merge forward" is offered after any 412 — the ordinary case for a shared document — so it was
+   * one click away at all times, and there is no unpublish.
+   */
+  const mergeAudience = recipientsFor(S.record?.visibility, S.fold);
+  if (!mergeAudience.ok) {
+    clear($('canvasresult')).appendChild(errBox(new Error(mergeAudience.why), 'Nothing was written.'));
+    return;
+  }
   const out = await mergeForward(S.client, {
     canvasIri: S.canvas.iri, podName: S.viewer.podName, workspace: S.workspace, slug: S.slug,
     body: area('canvas').value,
+    visibility: S.record?.visibility ?? 'public',
+    ...(mergeAudience.shareWith ? { shareWith: mergeAudience.shareWith } : {}),
   });
   if (out.kind === 'no-head') { say('canvasresult', 'refused', 'No single head to merge onto', out.why); return; }
   S.canvas.head = out.onto;

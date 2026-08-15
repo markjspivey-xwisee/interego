@@ -19,6 +19,14 @@
  * per-call-site `visibility:` literal is exactly how one of them eventually gets flipped by
  * somebody doing a careful global replace.
  *
+ * ── ★★ AND SO ARE GRANTS AND ACCEPTANCES, FOR A DIFFERENT REASON ────────────
+ *
+ * The roster is how a member discovers who to encrypt TO. A roster readable only by people who can
+ * already decrypt is circular, and sealing it unseats the very members it describes — see the note
+ * on the branch below, and the defect it documents. `sendInvite`, `acceptGrant` and `revokeGrant`
+ * already hardcoded `'public'`; this function disagreed with them, and only `createWorkspace`'s
+ * founding pair went through here to find out.
+ *
  * ── ★ AND OMITTING THE ARGUMENT MEANS ENCRYPT, WHICH IS THE TRAP ────────────
  *
  * `computePublishRecipients` treats any value that is not `public`/`private`/`shared` — INCLUDING
@@ -58,6 +66,34 @@ export type WorkspaceVisibility = 'public' | 'private';
  */
 export function visibilityFor(doc: WorkspaceDoc, workspace: WorkspaceVisibility): 'public' | 'shared' {
   if (doc === 'shape' || doc === 'roles') return 'public';
+  /**
+   * ── ★★ GRANTS AND ACCEPTANCES ARE PUBLIC-ALWAYS TOO, AND THIS WAS WRONG ─────
+   *
+   * This mapped them to `'shared'`, which disagreed with the code that actually writes them:
+   * `sendInvite`, `acceptGrant` and `revokeGrant` all hardcode `visibility: 'public'`. Only
+   * `createWorkspace`'s founding pair went through this function — so in a PRIVATE workspace the
+   * convener's own grant and acceptance were sealed to the convener alone, and every other
+   * member's client then:
+   *
+   *   · read them, could not open them, and `foldRoster` reported "the signed region of this
+   *     grant could not be located" — the accusation-of-unsignedness this vertical forbids making
+   *     about a merely-encrypted record;
+   *   · marked the convener NOT SEATED, so the convener vanished from everyone else's roster and
+   *     their stream was never read — the channel looked empty;
+   *   · and `recipientsFromRoster` filters on `seated` BEFORE it checks `grantedTo`, so the
+   *     convener was dropped from every recipient list without landing in `missing` and without
+   *     any refusal. Nobody encrypted to them, and `unreached` was empty because they were never
+   *     named.
+   *
+   * Only the convener's own screen looked correct.
+   *
+   * ★ AND PUBLIC IS THE RIGHT ANSWER, not merely the consistent one. The roster is how a member
+   * discovers who to encrypt to; a roster readable only by people who can already decrypt is
+   * circular. `wsp:visibility` says in as many words that private hides the WORDS and not the
+   * membership, the timestamps, or who wrote when — and `recipients.ts` builds its whole recipient
+   * list out of these documents' `grantedTo` WebIDs.
+   */
+  if (doc === 'grant' || doc === 'acceptance') return 'public';
   return workspace === 'private' ? 'shared' : 'public';
 }
 

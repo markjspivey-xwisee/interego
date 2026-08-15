@@ -3538,6 +3538,7 @@ var WSPC = (() => {
   // packages/workspace-client/src/visibility.ts
   function visibilityFor(doc, workspace) {
     if (doc === "shape" || doc === "roles") return "public";
+    if (doc === "grant" || doc === "acceptance") return "public";
     return workspace === "private" ? "shared" : "public";
   }
   function alwaysPublic(doc) {
@@ -4083,7 +4084,8 @@ var WSPC = (() => {
       "your own grant",
       grantIri,
       grantTurtle({ grant: grantIri, workspace, granteeWebId: me, role: rolesIri + "#Convener" }),
-      [shapeIri]
+      [shapeIri],
+      "grant"
     );
     if (!step.ok) return step.out;
     if (!step.readable) return { kind: "stalled", at: "your own grant", why: step.why ?? "", done: done.slice() };
@@ -4093,7 +4095,8 @@ var WSPC = (() => {
       "your acceptance",
       acceptanceIri,
       acceptanceTurtle({ acceptance: acceptanceIri, workspace, memberWebId: me, grant: grantIri, grantCid, stream: streamIri }),
-      [shapeIri]
+      [shapeIri],
+      "acceptance"
     );
     if (!step.ok) return step.out;
     return {
@@ -4729,6 +4732,9 @@ var WSPC = (() => {
       body: args.body,
       ifMatch: h.cid,
       previousCid: h.cid,
+      // Forwarded, never defaulted: a merge is a save, and it is written under the same policy.
+      ...args.visibility === void 0 ? {} : { visibility: args.visibility },
+      ...args.shareWith === void 0 ? {} : { shareWith: args.shareWith },
       ...args.awaitTries === void 0 ? {} : { awaitTries: args.awaitTries },
       ...args.sleep === void 0 ? {} : { sleep: args.sleep }
     });

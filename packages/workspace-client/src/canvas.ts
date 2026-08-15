@@ -263,6 +263,23 @@ export async function mergeForward(
     readonly workspace: string;
     readonly slug: string;
     readonly body: string;
+    /**
+     * ── ★★ WITHOUT THESE, MERGING FORWARD DECLASSIFIES THE CANVAS ─────────────
+     *
+     * This wrapper is a `saveCanvas` like any other, and it was the ONE canvas write path that
+     * could not carry the workspace's policy: the argument type did not declare these, so no
+     * caller could pass them and `args.visibility` arrived at `saveCanvas` as `undefined`. The
+     * fail-closed guard tests `=== 'private'` and never fired; `visibilityFor('canvas', undefined
+     * ?? 'public')` computed `'public'`; and `auto_supersede_prior` made the result the HEAD.
+     *
+     * So one click on "Merge forward" — offered after any 412, which is the ordinary case for a
+     * shared document — republished the whole canvas as world-readable plaintext with
+     * `acl:Read` for `foaf:Agent`, superseding the sealed revision, and reported success in
+     * green. There is no unpublish: that revision stays at its URL permanently, and a later
+     * ordinary save re-encrypting the NEXT revision does not retract it.
+     */
+    readonly visibility?: 'public' | 'private';
+    readonly shareWith?: readonly string[];
     readonly awaitTries?: number;
     readonly sleep?: (ms: number) => Promise<void>;
   },
@@ -274,6 +291,9 @@ export async function mergeForward(
   const save = await saveCanvas(client, {
     canvasIri: args.canvasIri, podName: args.podName, workspace: args.workspace, slug: args.slug,
     body: args.body, ifMatch: h.cid, previousCid: h.cid,
+    // Forwarded, never defaulted: a merge is a save, and it is written under the same policy.
+    ...(args.visibility === undefined ? {} : { visibility: args.visibility }),
+    ...(args.shareWith === undefined ? {} : { shareWith: args.shareWith }),
     ...(args.awaitTries === undefined ? {} : { awaitTries: args.awaitTries }),
     ...(args.sleep === undefined ? {} : { sleep: args.sleep }),
   });
