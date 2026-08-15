@@ -21,6 +21,7 @@
  * a member.
  */
 
+import { visibilityFor, type WorkspaceDoc } from './visibility.js';
 import { acceptanceTurtle, grantTurtle, rolesTurtle, shapesTurtle, workspaceTurtle } from './documents.js';
 import type { Check } from '@interego/core/delegate';
 import {
@@ -195,6 +196,14 @@ export async function createWorkspace(
     readonly viewer: Viewer;
     readonly title: string;
     readonly slug: string;
+    /**
+     * Public (the default) or encrypted to this workspace's seated members.
+     *
+     * ★ DEFAULTS TO PUBLIC AND IS NOT INFERRED. A caller that omits this gets the behaviour every
+     * existing workspace has, which is the only safe reading — see `wsp:visibility`, where the
+     * same decision is made on the reading side.
+     */
+    readonly visibility?: 'public' | 'private';
     readonly onStep?: (s: CreateStep) => void;
   },
 ): Promise<CreateOutcome> {
@@ -216,10 +225,10 @@ export async function createWorkspace(
 
   const done: string[] = [];
   const publish = async (
-    label: string, iri: string, content: string, shapes?: readonly string[],
+    label: string, iri: string, content: string, shapes?: readonly string[], docClass: WorkspaceDoc = 'record',
   ): Promise<{ readonly ok: true; readonly readable: boolean; readonly why: string | null; readonly head: HeadResult | undefined } | { readonly ok: false; readonly out: CreateOutcome }> => {
     const publishArgs: Record<string, unknown> = {
-      graph_iri: iri, graph_content: content, visibility: 'public',
+      graph_iri: iri, graph_content: content, visibility: visibilityFor(docClass, args.visibility ?? 'public'),
       auto_supersede_prior: true, sign_authorship: true,
     };
     if (shapes) publishArgs['conforms_to_shapes'] = shapes.slice();
@@ -232,19 +241,20 @@ export async function createWorkspace(
     return { ok: true, readable: !!res.readable, why: res.why ?? null, head: res.head };
   };
 
-  let step = await publish('shape contract', shapeIri, shapesTurtle(shapeIri));
+  let step = await publish('shape contract', shapeIri, shapesTurtle(shapeIri), undefined, 'shape');
   if (!step.ok) return step.out;
   if (!step.readable) {
     return { kind: 'stalled', at: 'shape contract', done: done.slice(),
       why: (step.why ?? '') + ' Everything after this names it, and a name that does not resolve makes the relay refuse the write rather than publish it unvalidated.' };
   }
 
-  step = await publish('role table', rolesIri, rolesTurtle(rolesIri));
+  step = await publish('role table', rolesIri, rolesTurtle(rolesIri), undefined, 'roles');
   if (!step.ok) return step.out;
   if (!step.readable) return { kind: 'stalled', at: 'role table', why: step.why ?? '', done: done.slice() };
 
   step = await publish('workspace record', workspace,
-    workspaceTurtle({ workspace, title: args.title, convenerWebId: me, rolesIri, shapeIri }), [shapeIri]);
+    workspaceTurtle({ workspace, title: args.title, convenerWebId: me, rolesIri, shapeIri,
+      ...(args.visibility === 'private' ? { visibility: 'private' as const } : {}) }), [shapeIri], 'record');
   if (!step.ok) return step.out;
   if (!step.readable) return { kind: 'stalled', at: 'workspace record', why: step.why ?? '', done: done.slice() };
 

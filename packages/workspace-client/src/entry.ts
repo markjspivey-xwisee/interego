@@ -5,6 +5,7 @@
  * the same assertions and report the same outcomes. What is left to a shell is drawing them.
  */
 
+import { visibilityFor } from './visibility.js';
 import { footingTurtle, type StatedFooting } from '@interego/core/delegate';
 import { escapeTurtleLiteral, IEP, PROV, WSP } from './turtle.js';
 import { shortRef } from './format.js';
@@ -311,6 +312,14 @@ export async function postEntry(
     /** The record this entry answers, so a restarted host does not answer it twice. */
     readonly derivedFrom?: string | null;
     readonly entryShape: string | null;
+    /**
+     * The workspace's own policy, carried from the verdict that seated this writer.
+     *
+     * ★ NOT DECIDED HERE AND NOT RE-FETCHED. `GrantVerdict.visibility` is read on the same read
+     * that establishes the seat; a writer that looked it up again could answer differently from
+     * the seat it is writing under. Defaults to public, like every other reader of this field.
+     */
+    readonly visibility?: 'public' | 'private';
     readonly onAttempt?: (attempt: number) => void;
   },
 ): Promise<PostOutcome> {
@@ -348,7 +357,9 @@ export async function postEntry(
         ...(args.addressedTo === undefined ? {} : { addressedTo: args.addressedTo }),
         ...(args.derivedFrom === undefined ? {} : { derivedFrom: args.derivedFrom }),
       }),
-      visibility: 'public',
+      // ★ The workspace's own policy, carried on the verdict that seated this writer — never
+      // decided here. See `visibilityFor`; omitting this argument would silently ENCRYPT.
+      visibility: visibilityFor('entry', args.visibility ?? 'public'),
       auto_supersede_prior: false,
       sign_authorship: true,
     };

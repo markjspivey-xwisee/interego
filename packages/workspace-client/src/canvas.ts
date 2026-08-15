@@ -14,6 +14,7 @@
  * two shells each polling a CID.
  */
 
+import { visibilityFor } from './visibility.js';
 import { canvasTurtle } from './documents.js';
 import { graphRegion, readLiteral } from './turtle.js';
 import { refusal } from './transport.js';
@@ -167,6 +168,14 @@ export async function saveCanvas(
     readonly body: string;
     readonly ifMatch: string | null;
     readonly previousCid: string | null;
+    /**
+     * The workspace's own policy, carried from the verdict that seated this writer.
+     *
+     * ★ NOT DECIDED HERE AND NOT RE-FETCHED. `GrantVerdict.visibility` is read on the same read
+     * that establishes the seat; a writer that looked it up again could answer differently from
+     * the seat it is writing under. Defaults to public, like every other reader of this field.
+     */
+    readonly visibility?: 'public' | 'private';
     readonly awaitTries?: number;
     readonly sleep?: (ms: number) => Promise<void>;
   },
@@ -174,7 +183,8 @@ export async function saveCanvas(
   const publishArgs: Record<string, unknown> = {
     graph_iri: args.canvasIri,
     graph_content: canvasTurtle({ canvas: args.canvasIri, workspace: args.workspace, slug: args.slug, body: args.body }),
-    visibility: 'public',
+    // ★ The workspace's own policy — see `visibilityFor`. Omitting this would silently ENCRYPT.
+    visibility: visibilityFor('canvas', args.visibility ?? 'public'),
     auto_supersede_prior: true,
     sign_authorship: true,
   };

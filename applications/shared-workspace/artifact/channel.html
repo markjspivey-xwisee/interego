@@ -898,6 +898,7 @@ var WSPC = (() => {
     agentNsIri: () => agentNsIri,
     agentPodOf: () => agentPodOf,
     agentPort: () => agentPort,
+    alwaysPublic: () => alwaysPublic,
     asRefusal: () => asRefusal,
     assertPod: () => assertPod,
     assignPodMarks: () => assignPodMarks,
@@ -1020,6 +1021,7 @@ var WSPC = (() => {
     verifyInvitation: () => verifyInvitation,
     verifyRequest: () => verifyRequest,
     verifyWorkspaceEntry: () => verifyWorkspaceEntry,
+    visibilityFor: () => visibilityFor,
     workspaceTurtle: () => workspaceTurtle
   });
 
@@ -3460,6 +3462,15 @@ var WSPC = (() => {
     };
   }
 
+  // packages/workspace-client/src/visibility.ts
+  function visibilityFor(doc, workspace) {
+    if (doc === "shape" || doc === "roles") return "public";
+    return workspace === "private" ? "shared" : "public";
+  }
+  function alwaysPublic(doc) {
+    return visibilityFor(doc, "private") === "public";
+  }
+
   // packages/workspace-client/src/entry.ts
   function entryTurtle(args) {
     const iri = (u, what) => {
@@ -3546,7 +3557,9 @@ var WSPC = (() => {
           ...args.addressedTo === void 0 ? {} : { addressedTo: args.addressedTo },
           ...args.derivedFrom === void 0 ? {} : { derivedFrom: args.derivedFrom }
         }),
-        visibility: "public",
+        // ★ The workspace's own policy, carried on the verdict that seated this writer — never
+        // decided here. See `visibilityFor`; omitting this argument would silently ENCRYPT.
+        visibility: visibilityFor("entry", args.visibility ?? "public"),
         auto_supersede_prior: false,
         sign_authorship: true
       };
@@ -3886,11 +3899,11 @@ var WSPC = (() => {
     const acceptanceIri = nsIri(args.relay, pod, qualifiedName(pod, args.slug, "acceptance"));
     const streamIri = nsIri(args.relay, pod, qualifiedName(pod, args.slug, "stream"));
     const done = [];
-    const publish = async (label, iri, content, shapes) => {
+    const publish = async (label, iri, content, shapes, docClass = "record") => {
       const publishArgs = {
         graph_iri: iri,
         graph_content: content,
-        visibility: "public",
+        visibility: visibilityFor(docClass, args.visibility ?? "public"),
         auto_supersede_prior: true,
         sign_authorship: true
       };
@@ -3903,7 +3916,7 @@ var WSPC = (() => {
       done.push(label);
       return { ok: true, readable: !!res.readable, why: res.why ?? null, head: res.head };
     };
-    let step = await publish("shape contract", shapeIri, shapesTurtle(shapeIri));
+    let step = await publish("shape contract", shapeIri, shapesTurtle(shapeIri), void 0, "shape");
     if (!step.ok) return step.out;
     if (!step.readable) {
       return {
@@ -3913,14 +3926,22 @@ var WSPC = (() => {
         why: (step.why ?? "") + " Everything after this names it, and a name that does not resolve makes the relay refuse the write rather than publish it unvalidated."
       };
     }
-    step = await publish("role table", rolesIri, rolesTurtle(rolesIri));
+    step = await publish("role table", rolesIri, rolesTurtle(rolesIri), void 0, "roles");
     if (!step.ok) return step.out;
     if (!step.readable) return { kind: "stalled", at: "role table", why: step.why ?? "", done: done.slice() };
     step = await publish(
       "workspace record",
       workspace,
-      workspaceTurtle({ workspace, title: args.title, convenerWebId: me, rolesIri, shapeIri }),
-      [shapeIri]
+      workspaceTurtle({
+        workspace,
+        title: args.title,
+        convenerWebId: me,
+        rolesIri,
+        shapeIri,
+        ...args.visibility === "private" ? { visibility: "private" } : {}
+      }),
+      [shapeIri],
+      "record"
     );
     if (!step.ok) return step.out;
     if (!step.readable) return { kind: "stalled", at: "workspace record", why: step.why ?? "", done: done.slice() };
@@ -4439,7 +4460,8 @@ var WSPC = (() => {
     const publishArgs = {
       graph_iri: args.canvasIri,
       graph_content: canvasTurtle({ canvas: args.canvasIri, workspace: args.workspace, slug: args.slug, body: args.body }),
-      visibility: "public",
+      // ★ The workspace's own policy — see `visibilityFor`. Omitting this would silently ENCRYPT.
+      visibility: visibilityFor("canvas", args.visibility ?? "public"),
       auto_supersede_prior: true,
       sign_authorship: true
     };
