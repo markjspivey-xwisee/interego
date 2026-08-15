@@ -3544,6 +3544,50 @@ var WSPC = (() => {
     return visibilityFor(doc, "private") === "public";
   }
 
+  // packages/workspace-client/src/recipients.ts
+  function recipientsFromRoster(args) {
+    if (args.grantsFound > args.grantsRead) {
+      return {
+        ok: false,
+        why: "this workspace has " + args.grantsFound + " grants and only " + args.grantsRead + " were read, so the roster is incomplete. Encrypting to an incomplete roster would lock the members it missed out of a conversation they are seated in, with nothing to show for it. Nothing was written."
+      };
+    }
+    const seated = args.seats.filter((s) => s.seated && !s.revoked);
+    const handles = [];
+    const missing = [];
+    for (const s of seated) {
+      if (s.grantedTo) {
+        if (!handles.includes(s.grantedTo)) handles.push(s.grantedTo);
+      } else missing.push(s.pod ?? s.graph);
+    }
+    if (missing.length > 0) {
+      return {
+        ok: false,
+        why: missing.length + " seated member" + (missing.length === 1 ? "" : "s") + " (" + missing.join(", ") + ") carry no WebID this reader can resolve, so there is no address to encrypt to for them. A private workspace that silently skipped them would read as empty on their side forever. Nothing was written."
+      };
+    }
+    if (handles.length === 0) {
+      return { ok: false, why: "no seated member of this workspace resolves to an encryption address, so a private write would be readable by nobody. Nothing was written." };
+    }
+    return { ok: true, shareWith: handles, seats: seated.length };
+  }
+  function recipientsFor(visibility, roster) {
+    if (visibility !== "private") return { ok: true, shareWith: void 0 };
+    if (!roster) {
+      return {
+        ok: false,
+        why: "this workspace is private and its roster has not been read here, so there is no way to tell who this should be encrypted to. Open the workspace and let the members list load first. Nothing was written."
+      };
+    }
+    const plan = recipientsFromRoster(roster);
+    return plan.ok ? { ok: true, shareWith: plan.shareWith } : { ok: false, why: plan.why };
+  }
+  function unreachedRecipients(publishResponse) {
+    const r = publishResponse ?? {};
+    if (!Array.isArray(r.sharedWith)) return [];
+    return r.sharedWith.filter((x) => (x?.agentCount ?? 0) === 0).map((x) => String(x?.handle ?? "an unnamed handle"));
+  }
+
   // packages/workspace-client/src/entry.ts
   function entryTurtle(args) {
     const iri = (u, what) => {
@@ -3675,7 +3719,11 @@ var WSPC = (() => {
         shapeSent: args.entryShape,
         ifMatch: publishArgs["if_match"] ?? null,
         ifMatchKind,
-        response: res
+        response: res,
+        // Read here rather than left to each caller: a signal nobody reads is the same as no
+        // signal, and this one is the only evidence that an encrypted entry reached fewer people
+        // than it named. See the field.
+        unreached: unreachedRecipients(res)
       };
     }
     return { kind: "refused", code: 412, body: { error: "precondition_failed" } };
@@ -5147,50 +5195,6 @@ var WSPC = (() => {
       }
       return "the key that signed that record, " + signedBy + ", resolves to no seat in this workspace: it is not a seated member's own WebID, its own pod is not a seated pod, and no seated pod's delegation registry lists it" + (unread.length ? ". " + unread.length + " of " + pods.length + " seated pods' registries could not be read here (" + unread.join(", ") + "), so this is a refusal for lack of an answer rather than a finding that they do not list it." : ". Seating is a grant on the convener's pod and an acceptance on theirs \u2014 two documents, neither of them this notice.");
     };
-  }
-
-  // packages/workspace-client/src/recipients.ts
-  function recipientsFromRoster(args) {
-    if (args.grantsFound > args.grantsRead) {
-      return {
-        ok: false,
-        why: "this workspace has " + args.grantsFound + " grants and only " + args.grantsRead + " were read, so the roster is incomplete. Encrypting to an incomplete roster would lock the members it missed out of a conversation they are seated in, with nothing to show for it. Nothing was written."
-      };
-    }
-    const seated = args.seats.filter((s) => s.seated && !s.revoked);
-    const handles = [];
-    const missing = [];
-    for (const s of seated) {
-      if (s.grantedTo) {
-        if (!handles.includes(s.grantedTo)) handles.push(s.grantedTo);
-      } else missing.push(s.pod ?? s.graph);
-    }
-    if (missing.length > 0) {
-      return {
-        ok: false,
-        why: missing.length + " seated member" + (missing.length === 1 ? "" : "s") + " (" + missing.join(", ") + ") carry no WebID this reader can resolve, so there is no address to encrypt to for them. A private workspace that silently skipped them would read as empty on their side forever. Nothing was written."
-      };
-    }
-    if (handles.length === 0) {
-      return { ok: false, why: "no seated member of this workspace resolves to an encryption address, so a private write would be readable by nobody. Nothing was written." };
-    }
-    return { ok: true, shareWith: handles, seats: seated.length };
-  }
-  function recipientsFor(visibility, roster) {
-    if (visibility !== "private") return { ok: true, shareWith: void 0 };
-    if (!roster) {
-      return {
-        ok: false,
-        why: "this workspace is private and its roster has not been read here, so there is no way to tell who this should be encrypted to. Open the workspace and let the members list load first. Nothing was written."
-      };
-    }
-    const plan = recipientsFromRoster(roster);
-    return plan.ok ? { ok: true, shareWith: plan.shareWith } : { ok: false, why: plan.why };
-  }
-  function unreachedRecipients(publishResponse) {
-    const r = publishResponse ?? {};
-    if (!Array.isArray(r.sharedWith)) return [];
-    return r.sharedWith.filter((x) => (x?.agentCount ?? 0) === 0).map((x) => String(x?.handle ?? "an unnamed handle"));
   }
   return __toCommonJS(index_exports);
 })();

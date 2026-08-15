@@ -148,7 +148,7 @@ describe('the record notice', () => {
     outcome: {
       kind: 'accepted', descriptorUrl: 'http://css.railway.internal:3456/' + POD + '/context-graphs/1.ttl',
       committed: true, seq: 3, shapeSent: 'https://relay.interego.xwisee.com/ns/' + POD + '/x-shapes',
-      ifMatch: 'bafkreiabc', ifMatchKind: "the prior entry's content CID", response: {},
+      ifMatch: 'bafkreiabc', ifMatchKind: "the prior entry's content CID", response: {}, unreached: [],
     },
     authorship: {
       present: true, signerAgent: AGENT, verificationMethod: RELAY_KEY, contentBinding: 'bound-at-signing',
@@ -168,7 +168,7 @@ describe('the record notice', () => {
   });
 
   it('says nothing validated an entry when the workspace names no shape', () => {
-    const m = renderRecord(accepted({ outcome: { kind: 'accepted', descriptorUrl: null, committed: true, seq: 0, shapeSent: null, ifMatch: null, ifMatchKind: null, response: {} } }));
+    const m = renderRecord(accepted({ outcome: { kind: 'accepted', descriptorUrl: null, committed: true, seq: 0, shapeSent: null, ifMatch: null, ifMatchKind: null, response: {}, unreached: [] } }));
     expect(m?.content).toContain('Nothing validated this entry');
     expect(m?.content).toContain('First entry in this log');
   });

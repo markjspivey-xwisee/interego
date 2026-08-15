@@ -82,6 +82,26 @@ export function recipientsFromRoster(args: {
 }
 
 /**
+ * ── ★ WHAT REVOCATION DOES AND DOES NOT TAKE BACK, AND WHY THAT IS THE ANSWER ─
+ *
+ * `recipientsFromRoster` skips revoked and unseated rows, so from the moment somebody is revoked
+ * they are not a recipient of any NEW entry or canvas revision. That is the part that matters, and
+ * it is automatic — every write recomputes the list.
+ *
+ * Two things it deliberately does NOT do:
+ *
+ *   · It cannot un-send what was already written. An envelope's recipients are fixed when it is
+ *     sealed, and a revoked member keeps whatever they could already open. That is inherent to
+ *     encrypting to recipients rather than to a server that can be told to stop answering — it is
+ *     the property being bought, not a gap in the implementation.
+ *   · The workspace RECORD is not re-sealed on revoke, so a revoked member can still read later
+ *     revisions of it. Considered and left: the record carries the title, convener, role profile
+ *     and entry shape, and the membership GRANT that names them is published PUBLIC — so nothing
+ *     in it is withheld from them by any other means either. Re-sealing it would suggest a
+ *     confidentiality the surrounding documents do not have.
+ */
+
+/**
  * The `shareWith` to pass a writer, for a workspace of this visibility.
  *
  * ★ THE ONE PLACE THE TWO QUESTIONS ARE JOINED. "Is this workspace private" and "who are its

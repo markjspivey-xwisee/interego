@@ -2531,6 +2531,21 @@ async function post(as?: {
   const p = say('postresult', 'ok', out.committed
     ? (as ? 'Your delegate posted to your pod' : 'Posted to your pod')
     : (as ? 'Accepted — your delegate\'s entry is landing on your pod' : 'Accepted — landing on your pod'));
+  /**
+   * ★★ SAID OUT LOUD, BECAUSE IT CANNOT BE UNDONE. A member whose pod registers no encryption key
+   * — somebody who has only ever opened this workspace in the browser artifact — resolves to no
+   * recipient at all, and the relay publishes anyway rather than erroring. This entry is already
+   * written and its recipients are already sealed into it, so the only thing left is to say who
+   * will never be able to read it, in time for the next message to wait for them.
+   */
+  if (out.unreached.length > 0) {
+    p.className = 'panel pending';
+    p.appendChild(el('div', 'note', 'This entry is encrypted, and ' + out.unreached.length + ' member'
+      + (out.unreached.length === 1 ? '' : 's') + ' could not be reached with a key: ' + out.unreached.join(', ')
+      + '. They will see that this entry exists and will not be able to open it, and that cannot be changed '
+      + 'afterwards — an envelope\'s recipients are fixed when it is written. They need to sign in once with '
+      + 'their own key; everything written after that will reach them.'));
+  }
   p.appendChild(kvPair([
     ['pod', S.viewer.podName],
     // ★ THE TRIPLES, NAMED. Not "you" and not the pod: what the record will actually say, so the

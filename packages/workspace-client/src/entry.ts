@@ -12,6 +12,7 @@ import { shortRef } from './format.js';
 import { type ChainRow, orderChain, toChainRow } from './chain.js';
 import type { WorkspaceClient, WorkspaceRecord } from './substrate.js';
 import { refusal } from './transport.js';
+import { unreachedRecipients } from './recipients.js';
 
 /**
  * WHO COMPOSED THIS ENTRY, AND — SEPARATELY — WHAT FOOTING THEY WERE ON.
@@ -279,6 +280,20 @@ export type PostOutcome =
       readonly ifMatch: string | null;
       readonly ifMatchKind: string | null;
       readonly response: Record<string, unknown>;
+      /**
+       * Members the relay could NOT reach with a key, on an encrypted write.
+       *
+       * ★★ THE ONE SIGNAL THAT AN ENCRYPTED ENTRY IS UNREADABLE BY SOMEBODY IT NAMES.
+       * `resolveRecipient` returns an EMPTY key list rather than an error when a handle does not
+       * resolve or when a member's pod registers no encryption key — someone who has only ever
+       * used the browser artifact, for instance. The publish then SUCCEEDS, encrypted to fewer
+       * people than were asked for, and looks identical to one that reached everybody.
+       *
+       * It cannot be undone here: by the time this is known, the entry is written and its
+       * recipients are sealed into it. So it is REPORTED, and the surfaces say who missed it —
+       * which at least lets somebody be told to sign in with a key before the next message.
+       */
+      readonly unreached: readonly string[];
     };
 
 /**
@@ -435,6 +450,10 @@ export async function postEntry(
       ifMatch: (publishArgs['if_match'] as string) ?? null,
       ifMatchKind,
       response: res,
+      // Read here rather than left to each caller: a signal nobody reads is the same as no
+      // signal, and this one is the only evidence that an encrypted entry reached fewer people
+      // than it named. See the field.
+      unreached: unreachedRecipients(res),
     };
   }
   /* istanbul ignore next — the loop returns on every path; this satisfies the compiler. */

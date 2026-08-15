@@ -107,6 +107,51 @@ describe('what actually reaches the relay', () => {
   });
 });
 
+describe('★★ a member the relay could not reach is REPORTED, since it cannot be undone', () => {
+  /**
+   * `resolveRecipient` returns an empty key list rather than an error when a handle does not
+   * resolve or a member's pod registers no encryption key — somebody who has only ever opened the
+   * workspace in the browser artifact, for instance. The publish SUCCEEDS, encrypted to fewer
+   * people than it named, and is indistinguishable from one that reached everybody.
+   *
+   * By the time this is known the entry is written and its recipients are sealed into it, so
+   * reporting is the only move left — but a signal nothing reads is the same as no signal, which
+   * is why `postEntry` reads it rather than leaving it to each caller.
+   */
+  function clientAnswering(sharedWith: unknown): WorkspaceClient {
+    const tx = {
+      callTool: (name: string) => Promise.resolve(name === 'discover_context'
+        ? { pod: 'u-a', entries: [] }
+        : { published: true, descriptorUrl: 'https://css.example/u-a/x.ttl', status: 'committed', sharedWith }),
+    };
+    return new WorkspaceClient('https://relay.example', tx as never);
+  }
+
+  it('names the member whose pod resolved to no key', async () => {
+    const out = await postEntry(clientAnswering([
+      { handle: WEBID('u-a'), agentCount: 2 },
+      { handle: WEBID('u-b'), agentCount: 0 },
+    ]), { ...ENTRY, visibility: 'private', shareWith: [WEBID('u-a'), WEBID('u-b')] });
+    expect(out.kind).toBe('accepted');
+    if (out.kind === 'accepted') expect(out.unreached).toEqual([WEBID('u-b')]);
+  });
+
+  it('★ and says nothing when everybody was reached', async () => {
+    const out = await postEntry(clientAnswering([{ handle: WEBID('u-a'), agentCount: 1 }]),
+      { ...ENTRY, visibility: 'private', shareWith: [WEBID('u-a')] });
+    expect(out.kind).toBe('accepted');
+    if (out.kind === 'accepted') expect(out.unreached).toEqual([]);
+  });
+
+  it('★ a PUBLIC post carries no sharedWith, and that is not "everybody unreachable"', async () => {
+    // Reading an absent field as total failure would put a warning on every ordinary write in the
+    // system — the exact over-reading `unreachedRecipients` was written to avoid.
+    const out = await postEntry(clientAnswering(undefined), { ...ENTRY, visibility: 'public' });
+    expect(out.kind).toBe('accepted');
+    if (out.kind === 'accepted') expect(out.unreached).toEqual([]);
+  });
+});
+
 describe('recipientsFor joins "is it private" to "who is in it"', () => {
   const roster = { seats: [seat('u-a'), seat('u-b')], grantsFound: 2, grantsRead: 2 };
 
