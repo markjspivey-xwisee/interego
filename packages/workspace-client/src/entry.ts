@@ -264,6 +264,18 @@ export function entryShapeAnswer(
 }
 
 /** Every way an append can end, kept apart because each licenses a different next move. */
+/**
+ * Seals one payload for a fixed recipient list. Supplied by the host; see `postEntry`'s `seal`.
+ *
+ * Returning `{ok:false}` is a refusal the caller must surface, not a reason to fall back to
+ * letting the relay do it — falling back would answer "I could not encrypt this to your members"
+ * by sending it to the relay in the clear.
+ */
+export type EntrySealer = (payloadTurtle: string, graphIri: string) => Promise<
+  | { readonly ok: true; readonly graphContent: string; readonly contentDigest: string; readonly cleartextMirror: string; readonly recipientCount: number }
+  | { readonly ok: false; readonly why: string }
+>;
+
 export type PostOutcome =
   | { readonly kind: 'read-failed'; readonly error: unknown }
   /** Not one head. Picking one would be guessing which append survived, so nothing is posted. */
@@ -350,6 +362,21 @@ export async function postEntry(
      * encrypting to the part of it that was read.
      */
     readonly shareWith?: readonly string[];
+    /**
+     * Seals the payload before it leaves, when supplied.
+     *
+     * ── ★★ INJECTED FOR THE SAME REASON `GraphOpener` IS ────────────────────────
+     *
+     * This package must never hold key material: it is bundled into a browser artifact, and the
+     * sealer reaches `node:crypto`. So the HOST seals — the desktop in its main process behind the
+     * IPC bridge, the Discord conduit with its own wallet — and this function only decides WHEN.
+     *
+     * ★ WITH IT, THE RELAY NEVER SEES THE WORDS. Without it, a private entry still publishes: the
+     * relay encrypts it, and puts its own key in the envelope. Both paths exist because they must
+     * coexist — an envelope's recipients are fixed at write time, so nothing already written can
+     * move across, and a member whose acceptance carries no key can only be reached the old way.
+     */
+    readonly seal?: EntrySealer;
     readonly onAttempt?: (attempt: number) => void;
   },
 ): Promise<PostOutcome> {
@@ -359,7 +386,13 @@ export async function postEntry(
    * later — not by the convener, not by the author. Refusing costs a message; publishing costs
    * the record. This is the same reason `recipientsFromRoster` refuses a partial roster.
    */
-  if (args.visibility === 'private' && !(args.shareWith && args.shareWith.length > 0)) {
+  /**
+   * ★ A SEALED WRITE CARRIES ITS RECIPIENTS INSIDE THE ENVELOPE, so it legitimately has no
+   * `shareWith` — the host already chose who could open it, and `sealForRoster` refuses an empty
+   * list itself. The guard still fires for an UNSEALED private write, where an absent list means
+   * the relay would seal to the author's own pod alone.
+   */
+  if (args.visibility === 'private' && !args.seal && !(args.shareWith && args.shareWith.length > 0)) {
     return {
       kind: 'refused', code: null,
       body: {
@@ -386,6 +419,34 @@ export async function postEntry(
     }
     const prior = ch.ordered.length ? ch.ordered[ch.ordered.length - 1] as ChainRow : null;
     const seq = ch.ordered.length;
+    const payloadTurtle = entryTurtle({
+      streamIri: args.streamIri, workspace: args.workspace, seq, body: args.body,
+      prior: prior ? prior.url : null, author: args.author,
+      ...(args.attachments?.length ? { attachments: args.attachments } : {}),
+      ...(args.addressedTo === undefined ? {} : { addressedTo: args.addressedTo }),
+      ...(args.derivedFrom === undefined ? {} : { derivedFrom: args.derivedFrom }),
+    });
+
+    /**
+     * ── ★★ SEAL FIRST, IF THIS HOST CAN ────────────────────────────────────────
+     *
+     * With a sealer, the relay receives ciphertext and is not a recipient. Without one, a private
+     * entry still publishes — the relay encrypts it and puts its own key in the envelope, which is
+     * the arrangement being replaced but which cannot be switched off while unsealed history and
+     * keyless members exist.
+     *
+     * ★ A REFUSAL IS NOT A REASON TO FALL BACK. If the host cannot seal to these members, sending
+     * the words to the relay in the clear instead answers "I could not encrypt this to your
+     * members" by doing the one thing the person was trying to avoid.
+     */
+    let sealed: Awaited<ReturnType<EntrySealer>> | null = null;
+    if (args.visibility === 'private' && args.seal) {
+      sealed = await args.seal(payloadTurtle, args.streamIri);
+      if (!sealed.ok) {
+        return { kind: 'refused', code: null, body: { error: 'seal_failed', message: sealed.why } };
+      }
+    }
+
     const publishArgs: Record<string, unknown> = {
       // ★ THE APPEND LANDS ON THE POD THE CHAIN WAS READ FROM. `podName` used to drive only the
       // manifest read above; the publish named no pod and the relay filled it from the session.
@@ -397,26 +458,41 @@ export async function postEntry(
       // reported the append accepted.
       pod_name: args.podName,
       graph_iri: args.streamIri,
-      graph_content: entryTurtle({
-        streamIri: args.streamIri, workspace: args.workspace, seq, body: args.body,
-        prior: prior ? prior.url : null, author: args.author,
-        ...(args.attachments?.length ? { attachments: args.attachments } : {}),
-        ...(args.addressedTo === undefined ? {} : { addressedTo: args.addressedTo }),
-        ...(args.derivedFrom === undefined ? {} : { derivedFrom: args.derivedFrom }),
-      }),
+      // ★ THE ENVELOPE WHEN SEALED, AND THIS IS THE LINE THE WHOLE FEATURE COMES DOWN TO. Leaving
+      // the plaintext here while setting `sealed_payload` would send the words to the relay AND
+      // tell it they were sealed — every assertion about flags would pass and the content would be
+      // in the clear. Pinned by a test that searches the entire request for the body text.
+      graph_content: sealed?.ok ? sealed.graphContent : payloadTurtle,
       // ★ The workspace's own policy, carried on the verdict that seated this writer — never
       // decided here. See `visibilityFor`; omitting this argument would silently ENCRYPT.
       visibility: visibilityFor('entry', args.visibility ?? 'public'),
-      // Only under 'shared'. The relay drops it with a warning under 'public', and sending it
-      // there would suggest an audience the plaintext does not have.
-      ...(args.visibility === 'private' && args.shareWith?.length ? { share_with: args.shareWith } : {}),
+      /**
+       * ★ SEALED AND SHARE_WITH ARE MUTUALLY EXCLUSIVE. `share_with` asks the RELAY to resolve
+       * handles to keys and seal to them; the envelope is already built, so the list could not
+       * affect it — but the relay would compute a recipient set including its own key and report
+       * that, announcing itself as a recipient of an envelope it is provably not in.
+       */
+      ...(sealed?.ok
+        ? {
+            sealed_payload: true,
+            content_digest: sealed.contentDigest,
+            cleartext_mirror: sealed.cleartextMirror,
+          }
+        : (args.visibility === 'private' && args.shareWith?.length ? { share_with: args.shareWith } : {})),
       auto_supersede_prior: false,
       sign_authorship: true,
     };
     // ★ THE SHAPE IS THE WORKSPACE'S, NOT THIS CLIENT'S. A workspace that names none gets no
     // shape sent, and the caller says the post was not validated against anything rather than
     // implying it was.
-    if (args.entryShape) publishArgs['conforms_to_shapes'] = [args.entryShape];
+    /**
+     * ★★ NOT FOR A SEALED PAYLOAD. `validateAgainstShape` over ciphertext does not fail to find
+     * violations — it fails to PARSE, and returns a hard 422 on every honest sealed write. The
+     * publisher validates before sealing (`sealForRoster`) and every reader holding a key
+     * validates again after opening; the SERVER-side guarantee is what is genuinely lost, and no
+     * server that cannot read the content could have offered it.
+     */
+    if (args.entryShape && !sealed?.ok) publishArgs['conforms_to_shapes'] = [args.entryShape];
     // What is asserted may be the prior entry's content CID or, when the manifest reported
     // none for it, its descriptor URL. Which one it is gets recorded rather than described as
     // "that revision's content CID" either way — they are not the same assertion.

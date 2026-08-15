@@ -3705,7 +3705,7 @@ var WSPC = (() => {
     return "this workspace's record was read and names no wsp:entryShape, so nothing validated this entry";
   }
   async function postEntry(client, args) {
-    if (args.visibility === "private" && !(args.shareWith && args.shareWith.length > 0)) {
+    if (args.visibility === "private" && !args.seal && !(args.shareWith && args.shareWith.length > 0)) {
       return {
         kind: "refused",
         code: null,
@@ -3729,6 +3729,24 @@ var WSPC = (() => {
       }
       const prior = ch.ordered.length ? ch.ordered[ch.ordered.length - 1] : null;
       const seq = ch.ordered.length;
+      const payloadTurtle = entryTurtle({
+        streamIri: args.streamIri,
+        workspace: args.workspace,
+        seq,
+        body: args.body,
+        prior: prior ? prior.url : null,
+        author: args.author,
+        ...args.attachments?.length ? { attachments: args.attachments } : {},
+        ...args.addressedTo === void 0 ? {} : { addressedTo: args.addressedTo },
+        ...args.derivedFrom === void 0 ? {} : { derivedFrom: args.derivedFrom }
+      });
+      let sealed = null;
+      if (args.visibility === "private" && args.seal) {
+        sealed = await args.seal(payloadTurtle, args.streamIri);
+        if (!sealed.ok) {
+          return { kind: "refused", code: null, body: { error: "seal_failed", message: sealed.why } };
+        }
+      }
       const publishArgs = {
         // ★ THE APPEND LANDS ON THE POD THE CHAIN WAS READ FROM. `podName` used to drive only the
         // manifest read above; the publish named no pod and the relay filled it from the session.
@@ -3740,27 +3758,29 @@ var WSPC = (() => {
         // reported the append accepted.
         pod_name: args.podName,
         graph_iri: args.streamIri,
-        graph_content: entryTurtle({
-          streamIri: args.streamIri,
-          workspace: args.workspace,
-          seq,
-          body: args.body,
-          prior: prior ? prior.url : null,
-          author: args.author,
-          ...args.attachments?.length ? { attachments: args.attachments } : {},
-          ...args.addressedTo === void 0 ? {} : { addressedTo: args.addressedTo },
-          ...args.derivedFrom === void 0 ? {} : { derivedFrom: args.derivedFrom }
-        }),
+        // ★ THE ENVELOPE WHEN SEALED, AND THIS IS THE LINE THE WHOLE FEATURE COMES DOWN TO. Leaving
+        // the plaintext here while setting `sealed_payload` would send the words to the relay AND
+        // tell it they were sealed — every assertion about flags would pass and the content would be
+        // in the clear. Pinned by a test that searches the entire request for the body text.
+        graph_content: sealed?.ok ? sealed.graphContent : payloadTurtle,
         // ★ The workspace's own policy, carried on the verdict that seated this writer — never
         // decided here. See `visibilityFor`; omitting this argument would silently ENCRYPT.
         visibility: visibilityFor("entry", args.visibility ?? "public"),
-        // Only under 'shared'. The relay drops it with a warning under 'public', and sending it
-        // there would suggest an audience the plaintext does not have.
-        ...args.visibility === "private" && args.shareWith?.length ? { share_with: args.shareWith } : {},
+        /**
+         * ★ SEALED AND SHARE_WITH ARE MUTUALLY EXCLUSIVE. `share_with` asks the RELAY to resolve
+         * handles to keys and seal to them; the envelope is already built, so the list could not
+         * affect it — but the relay would compute a recipient set including its own key and report
+         * that, announcing itself as a recipient of an envelope it is provably not in.
+         */
+        ...sealed?.ok ? {
+          sealed_payload: true,
+          content_digest: sealed.contentDigest,
+          cleartext_mirror: sealed.cleartextMirror
+        } : args.visibility === "private" && args.shareWith?.length ? { share_with: args.shareWith } : {},
         auto_supersede_prior: false,
         sign_authorship: true
       };
-      if (args.entryShape) publishArgs["conforms_to_shapes"] = [args.entryShape];
+      if (args.entryShape && !sealed?.ok) publishArgs["conforms_to_shapes"] = [args.entryShape];
       let ifMatchKind = null;
       if (prior) {
         publishArgs["if_match"] = prior.cid ?? prior.url;

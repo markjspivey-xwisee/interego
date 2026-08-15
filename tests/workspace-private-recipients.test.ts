@@ -152,6 +152,76 @@ describe('★★ a member the relay could not reach is REPORTED, since it cannot
   });
 });
 
+describe('★★ when the host can seal, the relay never gets the words', () => {
+  const SEALED_ENVELOPE = '{"algorithm":"X25519-XSalsa20-Poly1305","content":{"ciphertext":"OPAQUE","nonce":"n"},"wrappedKeys":[{"recipientPublicKey":"K","wrapped":"w","nonce":"n"}]}';
+  const sealer = async (): Promise<{ ok: true; graphContent: string; contentDigest: string; cleartextMirror: string; recipientCount: number }> => ({
+    ok: true, graphContent: SEALED_ENVELOPE, contentDigest: 'bafydigest',
+    cleartextMirror: '@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .', recipientCount: 1,
+  });
+
+  it('sends the envelope and the sealed flag, not the plaintext', async () => {
+    const { client, published } = recordingClient();
+    const out = await postEntry(client, { ...ENTRY, visibility: 'private', seal: sealer });
+    expect(out.kind).toBe('accepted');
+    expect(published[0]?.['graph_content']).toBe(SEALED_ENVELOPE);
+    expect(published[0]?.['sealed_payload']).toBe(true);
+    expect(published[0]?.['content_digest']).toBe('bafydigest');
+    expect(published[0]?.['cleartext_mirror']).toContain('iep:');
+  });
+
+  it('★★ the words themselves reach the relay nowhere in the request', async () => {
+    // The whole claim, stated as the only thing that can verify it: search everything sent.
+    const { client, published } = recordingClient();
+    await postEntry(client, { ...ENTRY, body: 'MARKER-secret-words', visibility: 'private', seal: sealer });
+    expect(JSON.stringify(published)).not.toContain('MARKER-secret-words');
+  });
+
+  it('★★ no share_with, because the relay would answer with itself in the recipient set', async () => {
+    /**
+     * `share_with` asks the RELAY to resolve handles to keys and seal to them. The envelope is
+     * already built so the list cannot affect it — but the relay would still compute a recipient
+     * set including its own key and report that, announcing itself as a recipient of an envelope
+     * it is provably not in.
+     */
+    const { client, published } = recordingClient();
+    await postEntry(client, { ...ENTRY, visibility: 'private', shareWith: [WEBID('u-b')], seal: sealer });
+    expect(published[0]).not.toHaveProperty('share_with');
+  });
+
+  it('★★ no conforms_to_shapes, because validating ciphertext is a hard 422', async () => {
+    // `validateAgainstShape` over an envelope does not fail to find violations — it fails to
+    // PARSE. Sending the shape would refuse every honest sealed write.
+    const { client, published } = recordingClient();
+    await postEntry(client, { ...ENTRY, entryShape: 'urn:shape:entry', visibility: 'private', seal: sealer });
+    expect(published[0]).not.toHaveProperty('conforms_to_shapes');
+  });
+
+  it('★★ a seal that REFUSES does not fall back to sending plaintext', async () => {
+    /**
+     * The most tempting wrong behaviour in the whole feature. "I could not encrypt this to your
+     * members, so I sent it in the clear instead" answers the problem by doing the exact thing the
+     * person was avoiding — and it would look like a successful post.
+     */
+    const { client, published } = recordingClient();
+    const out = await postEntry(client, {
+      ...ENTRY, body: 'MARKER-secret-words', visibility: 'private',
+      seal: async () => ({ ok: false as const, why: 'one member published no key' }),
+    });
+    expect(out.kind).toBe('refused');
+    if (out.kind === 'refused') expect(String(out.body['message'])).toContain('no key');
+    expect(published, 'nothing may reach the relay after a refused seal').toHaveLength(0);
+  });
+
+  it('★ a PUBLIC workspace does not seal even when a sealer is available', async () => {
+    // Public means published in the clear; sealing it would make it unreadable to the audience it
+    // was chosen for.
+    const { client, published } = recordingClient();
+    await postEntry(client, { ...ENTRY, visibility: 'public', seal: sealer });
+    expect(published[0]?.['visibility']).toBe('public');
+    expect(published[0]).not.toHaveProperty('sealed_payload');
+  });
+});
+
 describe('recipientsFor joins "is it private" to "who is in it"', () => {
   const roster = { seats: [seat('u-a'), seat('u-b')], grantsFound: 2, grantsRead: 2 };
 
