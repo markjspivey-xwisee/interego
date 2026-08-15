@@ -120,8 +120,25 @@ export class WorkspaceClient extends RelayClient {
   /** Install (or clear) the local opener. See {@link GraphOpener}. */
   setGraphOpener(opener: GraphOpener | null): void { this.opener = opener; }
 
-  /** Whether this client can open sealed content at all — what the UI should say "private" means here. */
-  get canOpenSealed(): boolean { return this.opener !== null; }
+  /**
+   * Sealed payloads are opened BEFORE they reach this client, by whatever it is talking to.
+   *
+   * ★★ THE DESKTOP RENDERER IS THIS CASE, AND WITHOUT IT THE APP LIES ABOUT ITSELF. The renderer
+   * is sandboxed and holds no key on purpose; its reads go over an IPC bridge to the main process,
+   * which opens them there. So it has no opener and never will — but its reads DO come back
+   * readable, and a client reporting `canOpenSealed: false` makes `verifyGrantIri` tell a member
+   * "this client holds no key to open them" while it is looking at the decrypted record.
+   *
+   * This is deliberately NOT `setGraphOpener(() => …)`: there is no key here, nothing to open with,
+   * and pretending otherwise would put a stub on the one path that must stay honest.
+   */
+  private sealedUpstream = false;
+
+  /** Declare that this client's transport returns sealed payloads already opened. */
+  declareSealedReadsUpstream(): void { this.sealedUpstream = true; }
+
+  /** Whether sealed content is readable through this client at all — what the UI may say "private" means here. */
+  get canOpenSealed(): boolean { return this.opener !== null || this.sealedUpstream; }
 
   /**
    * `get_descriptor`, and — when this client holds a key — the sealed read behind it.
@@ -146,7 +163,24 @@ export class WorkspaceClient extends RelayClient {
    * "encrypted to its members, and you are not one of them".
    */
   override async descriptor(url: string): Promise<Record<string, unknown>> {
-    const d = await super.descriptor(url);
+    return this.openSealedDescriptor(await super.descriptor(url), url);
+  }
+
+  /**
+   * The opening step, on a `get_descriptor` response somebody else already fetched.
+   *
+   * ★★ SEPARATE FROM `descriptor()` BECAUSE THE DESKTOP'S READS DO NOT GO THROUGH IT. The renderer
+   * is sandboxed and holds no key, so it builds its own client over an IPC bridge whose
+   * `substrate:call` is a raw `client.tool(name, input)` passthrough — it never calls
+   * `descriptor()`, so the main process's override, and the opener inside it, were dead code for
+   * every read the app actually makes. The whole feature was unreachable from the UI while every
+   * test and live driver passed, because they all drive `WorkspaceClient` directly.
+   *
+   * Exposing the step lets the bridge apply it to the raw response WITHOUT losing the caller's
+   * other arguments — `bypass_cache` among them, which `descriptor(url)` cannot carry and which
+   * the renderer needs after a write.
+   */
+  async openSealedDescriptor(d: Record<string, unknown>, url: string): Promise<Record<string, unknown>> {
     const graph = d['graph'] as { content?: string | null; encrypted?: boolean } | undefined;
     // Nothing to do when there is no key here, the payload is not sealed, or the relay already
     // answered in the clear (which it does for the caller's own pod).

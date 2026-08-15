@@ -2641,6 +2641,19 @@ var WSPC = (() => {
        * material would put it wherever the client runs, including a browser.
        */
       __publicField(this, "opener", null);
+      /**
+       * Sealed payloads are opened BEFORE they reach this client, by whatever it is talking to.
+       *
+       * ★★ THE DESKTOP RENDERER IS THIS CASE, AND WITHOUT IT THE APP LIES ABOUT ITSELF. The renderer
+       * is sandboxed and holds no key on purpose; its reads go over an IPC bridge to the main process,
+       * which opens them there. So it has no opener and never will — but its reads DO come back
+       * readable, and a client reporting `canOpenSealed: false` makes `verifyGrantIri` tell a member
+       * "this client holds no key to open them" while it is looking at the decrypted record.
+       *
+       * This is deliberately NOT `setGraphOpener(() => …)`: there is no key here, nothing to open with,
+       * and pretending otherwise would put a stub on the one path that must stay honest.
+       */
+      __publicField(this, "sealedUpstream", false);
     }
     /**
      * The eleven tools, bound. The base takes the list because it has no opinion about which tools
@@ -2653,9 +2666,13 @@ var WSPC = (() => {
     setGraphOpener(opener) {
       this.opener = opener;
     }
-    /** Whether this client can open sealed content at all — what the UI should say "private" means here. */
+    /** Declare that this client's transport returns sealed payloads already opened. */
+    declareSealedReadsUpstream() {
+      this.sealedUpstream = true;
+    }
+    /** Whether sealed content is readable through this client at all — what the UI may say "private" means here. */
     get canOpenSealed() {
-      return this.opener !== null;
+      return this.opener !== null || this.sealedUpstream;
     }
     /**
      * `get_descriptor`, and — when this client holds a key — the sealed read behind it.
@@ -2680,7 +2697,23 @@ var WSPC = (() => {
      * "encrypted to its members, and you are not one of them".
      */
     async descriptor(url) {
-      const d = await super.descriptor(url);
+      return this.openSealedDescriptor(await super.descriptor(url), url);
+    }
+    /**
+     * The opening step, on a `get_descriptor` response somebody else already fetched.
+     *
+     * ★★ SEPARATE FROM `descriptor()` BECAUSE THE DESKTOP'S READS DO NOT GO THROUGH IT. The renderer
+     * is sandboxed and holds no key, so it builds its own client over an IPC bridge whose
+     * `substrate:call` is a raw `client.tool(name, input)` passthrough — it never calls
+     * `descriptor()`, so the main process's override, and the opener inside it, were dead code for
+     * every read the app actually makes. The whole feature was unreachable from the UI while every
+     * test and live driver passed, because they all drive `WorkspaceClient` directly.
+     *
+     * Exposing the step lets the bridge apply it to the raw response WITHOUT losing the caller's
+     * other arguments — `bypass_cache` among them, which `descriptor(url)` cannot carry and which
+     * the renderer needs after a write.
+     */
+    async openSealedDescriptor(d, url) {
       const graph = d["graph"];
       if (!this.opener || graph?.encrypted !== true || typeof graph?.content === "string") return d;
       let sealed;

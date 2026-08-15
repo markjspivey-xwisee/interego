@@ -316,6 +316,11 @@ const S = {
   slug: null as string | null,
   recordResult: null as Awaited<ReturnType<WorkspaceClient['readWorkspaceRecord']>> | { kind: 'error'; error: unknown } | null,
   record: null as WorkspaceRecord | null,
+  /**
+   * What the main process last reported about whether sealed content is readable through it.
+   * Held here because the session update and the connect happen in either order, and both need it.
+   */
+  sealedReads: false,
   roles: { roles: null, caps: null } as RoleTable,
   profileFrom: null as { from: string; hops: number } | null,
   profileError: null as unknown,
@@ -473,6 +478,11 @@ function renderSession(s: SessionInfo): void {
    * relay can. It returns 200 and looks like it worked. Disabling the control is the only place
    * that fact can be told before it is true.
    */
+  // Remembered so a client created later can be told, and so a client created earlier can be told
+  // now — the session and the connect happen in either order.
+  S.sealedReads = s.sealedReads;
+  if (s.sealedReads) S.client?.declareSealedReadsUpstream();
+
   const priv = document.getElementById('wsvis-private') as HTMLInputElement | null;
   const pub = document.getElementById('wsvis-public') as HTMLInputElement | null;
   if (priv && pub) {
@@ -769,6 +779,13 @@ async function boot(): Promise<void> {
     return;
   }
   S.client = client;
+  /**
+   * ★★ THIS CLIENT HOLDS NO KEY AND NEVER WILL — the renderer is sandboxed on purpose. Its reads
+   * go over the IPC bridge, and the MAIN process opens sealed payloads there before they arrive.
+   * Saying so is what stops `verifyGrantIri` telling a member "this client holds no key to open
+   * them" about a record it is displaying in the clear.
+   */
+  if (S.sealedReads) client.declareSealedReadsUpstream();
   step('connect', 'Tool surface reachable', 'done');
 
   step('identity', 'Resolving which pod you write to', 'wait');

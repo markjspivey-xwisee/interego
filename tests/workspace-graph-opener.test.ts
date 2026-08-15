@@ -114,6 +114,57 @@ describe('a client holding a key opens what the relay would not', () => {
   });
 });
 
+describe('★★ a client whose transport opens for it', () => {
+  /**
+   * ── THE DEFECT THIS PINS ────────────────────────────────────────────────────
+   *
+   * The desktop renderer is sandboxed and holds no key, deliberately — the account secret stays in
+   * the main process. So it builds its own `WorkspaceClient` over an IPC bridge, and every read it
+   * makes arrives in main as a RAW tool call. Main's `descriptor()` override, and the opener inside
+   * it, were therefore never reached by anything the app actually does: the whole feature was
+   * unreachable from the UI while every test and every live driver passed, because they all drive
+   * `WorkspaceClient` directly.
+   *
+   * Two halves fix it, and both are asserted here: main applies the opening step to the raw
+   * response (`openSealedDescriptor`), and the renderer's client says so (`declareSealedReadsUpstream`)
+   * rather than reporting itself keyless while displaying decrypted text.
+   */
+  it('★★ openSealedDescriptor opens a response somebody else fetched', async () => {
+    const { tx, asked } = transportOf({ get_encrypted_graph: { encrypted: true, envelope: '{"sealed":true}' } });
+    const main = new WorkspaceClient('https://relay.example', tx);
+    main.setGraphOpener(() => '<urn:g> <p> "opened" .');
+
+    // Exactly what the IPC bridge does: a raw tool result, handed back for opening.
+    const opened = await main.openSealedDescriptor(SEALED as unknown as Record<string, unknown>, URL_);
+    expect((opened['graph'] as { content?: string }).content).toBe('<urn:g> <p> "opened" .');
+    expect(opened['openedWithOwnKey']).toBe(true);
+    expect(asked).toEqual(['get_encrypted_graph']);
+  });
+
+  it('★★ a client told its transport opens upstream reports canOpenSealed, without any key', async () => {
+    const { tx } = transportOf({ get_descriptor: SEALED });
+    const renderer = new WorkspaceClient('https://relay.example', tx);
+    expect(renderer.canOpenSealed).toBe(false);
+
+    renderer.declareSealedReadsUpstream();
+    expect(renderer.canOpenSealed).toBe(true);
+  });
+
+  it('★ and it still does not reach for the sealed read itself, because it has nothing to open with', async () => {
+    /**
+     * The declaration must not turn into a pretend opener. This client has no key; calling
+     * `get_encrypted_graph` here would spend a round trip and then have nothing to do with the
+     * bytes — and if its grant lacks the tool it would report a broken workspace.
+     */
+    const { tx, asked } = transportOf({ get_descriptor: SEALED });
+    const renderer = new WorkspaceClient('https://relay.example', tx);
+    renderer.declareSealedReadsUpstream();
+
+    await renderer.descriptor(URL_);
+    expect(asked).toEqual(['get_descriptor']);
+  });
+});
+
 describe('what the workspace record says about a payload it could open', () => {
   it('★★ is NOT withheld once this client has decrypted it', async () => {
     /**

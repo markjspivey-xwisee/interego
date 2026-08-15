@@ -659,7 +659,30 @@ app.whenReady().then(() => {
   ipcMain.handle('substrate:call', async (_e, name: string, input: Record<string, unknown>) => {
     if (!client) throw new Error('not signed in yet');
     if (typeof name !== 'string' || !name) throw new Error('a tool call needs a tool name');
-    const once = async (): Promise<{ ok: true; payload: unknown }> => ({ ok: true, payload: await client!.tool(name, input ?? {}) });
+    /**
+     * ★★ THE ONE CALL THIS BRIDGE MAY NOT PASS STRAIGHT THROUGH.
+     *
+     * The renderer is sandboxed and holds no key, by design — the account secret stays in this
+     * process. But that means every read it makes arrives here as a raw tool call, and a raw
+     * `get_descriptor` returns a SEALED payload that the renderer can do nothing with. The
+     * opener installed on this client only ran inside `descriptor()`, which nothing on this path
+     * calls, so it was dead code: the app could create a private workspace and then show it as
+     * withheld to the very person who created it.
+     *
+     * Opening it here keeps the secret in the privileged process and hands the renderer plaintext
+     * it is entitled to — and `input` is passed through untouched, so `bypass_cache` and anything
+     * else the caller sent still applies.
+     */
+    const once = async (): Promise<{ ok: true; payload: unknown }> => {
+      const payload = await client!.tool(name, input ?? {});
+      if (name === 'get_descriptor' && payload && typeof payload === 'object') {
+        return {
+          ok: true,
+          payload: await client!.openSealedDescriptor(payload as Record<string, unknown>, String((input ?? {})['url'] ?? '')),
+        };
+      }
+      return { ok: true, payload };
+    };
     try {
       return await once();
     } catch (err) {
