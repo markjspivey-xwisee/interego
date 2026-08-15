@@ -15,7 +15,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { canonicalGraphDigest, deriveEncryptionKeyPair, normalizePublishInputs, openEncryptedEnvelope, type EncryptedEnvelope } from '@interego/core';
-import { extractNamedGraphTurtle, wrapAsTriG } from '@interego/solid';
+import { extractNamedGraphTurtle } from '@interego/solid';
 import { mirrorTurtleFor, sealForRoster } from '../packages/workspace-client/src/sealer.js';
 
 const A = deriveEncryptionKeyPair('0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d');

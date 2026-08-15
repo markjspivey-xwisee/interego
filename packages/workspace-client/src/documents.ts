@@ -57,7 +57,15 @@ export function shapesTurtle(shapeIri: string): string {
   return '@prefix sh: <' + SHACL + '> .\n'
     + '@prefix wsp: <' + WSP + '> .\n'
     + '@prefix prov: <' + PROV + '> .\n'
-    + '@prefix dct: <' + DCT + '> .\n\n'
+    + '@prefix dct: <' + DCT + '> .\n'
+    /**
+     * ★★ DECLARED BECAUSE THE ACCEPTANCE SHAPE BELOW USES `xsd:string`, AND AN UNDECLARED PREFIX
+     * HERE IS NOT A TYPO — IT IS A LOCKOUT. This document is fetched by the relay and parsed to run
+     * the conformance gate; a shape that does not parse is a shape nothing conforms to, the gate
+     * fails closed, and every subsequent write to the workspace is a 422 with no way back, because
+     * the fix would itself be a write. Same chain `visibility.ts` documents for encrypting it.
+     */
+    + '@prefix xsd: <' + XSD + '> .\n\n'
     + '<' + s + '#EntryShape>\n'
     + '  a sh:NodeShape ; sh:targetClass wsp:Entry ;\n'
     + '  sh:property [ sh:path wsp:workspace ; sh:minCount 1 ; sh:nodeKind sh:IRI ] ;\n'
@@ -84,7 +92,15 @@ export function shapesTurtle(shapeIri: string): string {
     + '  sh:property [ sh:path wsp:workspace ; sh:minCount 1 ; sh:nodeKind sh:IRI ] ;\n'
     + '  sh:property [ sh:path wsp:member ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;\n'
     + '  sh:property [ sh:path wsp:accepts ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;\n'
-    + '  sh:property [ sh:path wsp:stream ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] .\n';
+    + '  sh:property [ sh:path wsp:stream ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;\n'
+    /**
+     * ★ OPTIONAL, AND THIS SHAPE IS NOT `sh:closed`, WHICH MAKES IT COMPATIBLE BOTH WAYS. Every
+     * acceptance written before this term existed still conforms (no `sh:minCount`), and an
+     * acceptance carrying it still conforms to the OLD shape already published on pods that will
+     * never be re-created — nothing is closed, so an unknown predicate is not a violation. Adding
+     * `sh:closed` here would 422 every existing member the moment they wrote anything.
+     */
+    + '  sh:property [ sh:path wsp:encryptionKey ; sh:maxCount 1 ; sh:datatype xsd:string ] .\n';
 }
 
 /**
