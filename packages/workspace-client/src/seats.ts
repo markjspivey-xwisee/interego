@@ -49,6 +49,17 @@ export interface Seat {
   accepts?: string | null;
   acceptsCid?: string | null;
   stream?: string | null;
+  /**
+   * This member's X25519 public key, read from THEIR OWN acceptance's signed region.
+   *
+   * ★★ THE ONLY SOURCE A SEALING PUBLISHER MAY USE. The alternative — each pod's agent registry —
+   * is rewritable by the relay, and `encryptionKeyToRecord` already substitutes the relay's own key
+   * there as a placeholder for an agent that registered none. Sealing to a key read from the
+   * registry can therefore seal to the relay while the publisher believes the opposite. Read from
+   * the same signed region as `wsp:stream` and `wsp:accepts`, so a substituted key means a new
+   * head that visibly supersedes an honest one.
+   */
+  encryptionKey?: string | null;
   streamPod?: string | null;
   podServed?: string | null;
   podBase?: string | null;
@@ -266,6 +277,8 @@ export async function foldRoster(
       m.podServed = podOfDescriptorUrl(found.head.url);
       m.podBase = podBaseOfDescriptorUrl(found.head.url);
       m.stream = readIri(region, 'wsp:stream');
+      // Same region, same read as everything else the acceptance asserts about itself.
+      m.encryptionKey = readLiteral(region, 'wsp:encryptionKey');
       m.accepts = readIri(region, 'wsp:accepts');
       m.acceptsCid = readLiteral(region, 'wsp:acceptsCid');
       const auth = ad['authorship'] as { signedBy?: string; authorshipVerified?: boolean } | undefined;

@@ -3603,7 +3603,12 @@ var WSPC = (() => {
     const seated = args.seats.filter((s) => s.seated && !s.revoked);
     const handles = [];
     const missing = [];
+    const keys = [];
+    const keysMissing = [];
     for (const s of seated) {
+      if (s.encryptionKey) {
+        if (!keys.includes(s.encryptionKey)) keys.push(s.encryptionKey);
+      } else keysMissing.push(s.pod ?? s.graph);
       if (s.grantedTo) {
         if (!handles.includes(s.grantedTo)) handles.push(s.grantedTo);
       } else missing.push(s.pod ?? s.graph);
@@ -3617,7 +3622,15 @@ var WSPC = (() => {
     if (handles.length === 0) {
       return { ok: false, why: "no seated member of this workspace resolves to an encryption address, so a private write would be readable by nobody. Nothing was written." };
     }
-    return { ok: true, shareWith: handles, seats: seated.length };
+    return {
+      ok: true,
+      shareWith: handles,
+      seats: seated.length,
+      // ★ ALL OR NOTHING. A partial key list is the silent lockout this whole file exists to refuse,
+      // so the caller gets an empty list plus the names, and decides in the open.
+      keys: keysMissing.length > 0 ? [] : keys,
+      keysMissing
+    };
   }
   function recipientsFor(visibility, roster) {
     if (visibility === "unknown") {
@@ -3626,7 +3639,7 @@ var WSPC = (() => {
         why: "this workspace's record could not be read here, so whether it is private is not established \u2014 and writing under a guess would publish in the clear if the guess is wrong. Open the workspace in a client signed in with your own key. Nothing was written."
       };
     }
-    if (visibility !== "private") return { ok: true, visibility: "public", shareWith: void 0 };
+    if (visibility !== "private") return { ok: true, visibility: "public", shareWith: void 0, keys: [], keysMissing: [] };
     if (!roster) {
       return {
         ok: false,
@@ -3634,7 +3647,7 @@ var WSPC = (() => {
       };
     }
     const plan = recipientsFromRoster(roster);
-    return plan.ok ? { ok: true, visibility: "private", shareWith: plan.shareWith } : { ok: false, why: plan.why };
+    return plan.ok ? { ok: true, visibility: "private", shareWith: plan.shareWith, keys: plan.keys, keysMissing: plan.keysMissing } : { ok: false, why: plan.why };
   }
   function unreachedRecipients(publishResponse) {
     const r = publishResponse ?? {};
@@ -3891,6 +3904,7 @@ var WSPC = (() => {
         m.podServed = podOfDescriptorUrl(found.head.url);
         m.podBase = podBaseOfDescriptorUrl(found.head.url);
         m.stream = readIri(region, "wsp:stream");
+        m.encryptionKey = readLiteral(region, "wsp:encryptionKey");
         m.accepts = readIri(region, "wsp:accepts");
         m.acceptsCid = readLiteral(region, "wsp:acceptsCid");
         const auth = ad["authorship"];

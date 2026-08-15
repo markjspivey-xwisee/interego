@@ -30,7 +30,34 @@ import type { Seat } from './seats.js';
 
 /** What to publish with, or why nothing may be published. */
 export type RecipientPlan =
-  | { readonly ok: true; readonly shareWith: readonly string[]; readonly seats: number }
+  | {
+      readonly ok: true;
+      readonly shareWith: readonly string[];
+      readonly seats: number;
+      /**
+       * Each seated member's X25519 public key, from their OWN acceptance — for a client that
+       * seals before sending.
+       *
+       * ── ★★ WHY THIS IS SEPARATE FROM `shareWith` AND NOT A REPLACEMENT ────────
+       *
+       * `shareWith` is a list of WebIDs handed to the RELAY, which resolves each one to a pod and
+       * reads that pod's agent registry for keys. That path cannot be end-to-end: the relay is
+       * choosing the keys, and it adds its own besides. `keys` is the list a publisher seals to
+       * ITSELF, so the relay never chooses and never appears.
+       *
+       * Both exist because the two publish paths coexist for the rest of these workspaces' lives —
+       * an envelope's recipients are fixed at write time, so nothing already written can be moved
+       * across, and a client talking to a relay that predates the sealed path still needs the old
+       * one.
+       *
+       * ★ EMPTY WHEN ANY SEATED MEMBER PUBLISHED NO KEY. Not "the subset that has one": sealing to
+       * a subset locks out the rest permanently and silently, which is the failure this file was
+       * written for. `keysMissing` names them so a caller can say who, and refuse.
+       */
+      readonly keys: readonly string[];
+      /** Seated members whose acceptance carries no key. Non-empty means `keys` is unusable. */
+      readonly keysMissing: readonly string[];
+    }
   | { readonly ok: false; readonly why: string };
 
 /**
@@ -57,7 +84,13 @@ export function recipientsFromRoster(args: {
   const seated = args.seats.filter((s) => s.seated && !s.revoked);
   const handles: string[] = [];
   const missing: string[] = [];
+  const keys: string[] = [];
+  const keysMissing: string[] = [];
   for (const s of seated) {
+    // Collected alongside the WebID, from the same seat, so the two lists cannot describe
+    // different populations. See `RecipientPlan.keys` for why both exist.
+    if (s.encryptionKey) { if (!keys.includes(s.encryptionKey)) keys.push(s.encryptionKey); }
+    else keysMissing.push(s.pod ?? s.graph);
     /**
      * ★ THE WebID, NEVER THE COMPOSED HANDLE. See the header: the handle the invite flow teaches
      * resolves to zero recipients without erroring.
@@ -78,7 +111,13 @@ export function recipientsFromRoster(args: {
   if (handles.length === 0) {
     return { ok: false, why: 'no seated member of this workspace resolves to an encryption address, so a private write would be readable by nobody. Nothing was written.' };
   }
-  return { ok: true, shareWith: handles, seats: seated.length };
+  return {
+    ok: true, shareWith: handles, seats: seated.length,
+    // ★ ALL OR NOTHING. A partial key list is the silent lockout this whole file exists to refuse,
+    // so the caller gets an empty list plus the names, and decides in the open.
+    keys: keysMissing.length > 0 ? [] : keys,
+    keysMissing,
+  };
 }
 
 /**
@@ -115,7 +154,8 @@ export function recipientsFromRoster(args: {
 export function recipientsFor(
   visibility: 'public' | 'private' | 'unknown' | undefined,
   roster: { readonly seats: readonly Seat[]; readonly grantsFound: number; readonly grantsRead: number } | null,
-): { readonly ok: true; readonly visibility: 'public' | 'private'; readonly shareWith: readonly string[] | undefined }
+): { readonly ok: true; readonly visibility: 'public' | 'private'; readonly shareWith: readonly string[] | undefined;
+      readonly keys: readonly string[]; readonly keysMissing: readonly string[] }
   | { readonly ok: false; readonly why: string } {
   /**
    * ★★ REFUSED, BECAUSE THE ALTERNATIVE IS PUBLISHING IN THE CLEAR. `'unknown'` means the record
@@ -137,7 +177,8 @@ export function recipientsFor(
   }
   // ★ The resolved value is RETURNED rather than left for the caller to re-derive: a caller that
   // asked here and then read `record.visibility` again for the write could get two answers.
-  if (visibility !== 'private') return { ok: true, visibility: 'public', shareWith: undefined };
+  // A public workspace seals nothing, so it has no recipients of either kind.
+  if (visibility !== 'private') return { ok: true, visibility: 'public', shareWith: undefined, keys: [], keysMissing: [] };
   if (!roster) {
     return {
       ok: false,
@@ -146,7 +187,9 @@ export function recipientsFor(
     };
   }
   const plan = recipientsFromRoster(roster);
-  return plan.ok ? { ok: true, visibility: 'private', shareWith: plan.shareWith } : { ok: false, why: plan.why };
+  return plan.ok
+    ? { ok: true, visibility: 'private', shareWith: plan.shareWith, keys: plan.keys, keysMissing: plan.keysMissing }
+    : { ok: false, why: plan.why };
 }
 
 /**

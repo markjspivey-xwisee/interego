@@ -62,6 +62,61 @@ describe('recipients come from the roster', () => {
   });
 });
 
+describe('★★ the keys a client seals to itself', () => {
+  /**
+   * ── WHY THESE ARE NOT JUST `shareWith` BY ANOTHER NAME ──────────────────────
+   *
+   * `shareWith` is WebIDs handed to the RELAY, which resolves each to a pod and reads that pod's
+   * agent registry for keys. That path cannot be end-to-end — the relay chooses the keys, and adds
+   * its own besides. `keys` is what a publisher seals to ITSELF, read from each member's own
+   * acceptance, so the relay neither chooses nor appears.
+   */
+  const withKey = (pod: string, key: string | null): Seat =>
+    seat(pod, key === null ? {} : { encryptionKey: key } as Partial<Seat>);
+
+  it('collects each seated member\'s key from their own acceptance', () => {
+    const plan = recipientsFromRoster({
+      seats: [withKey('u-a', 'KEY-A'), withKey('u-b', 'KEY-B')], grantsFound: 2, grantsRead: 2,
+    });
+    expect(plan.ok).toBe(true);
+    if (plan.ok) {
+      expect(plan.keys).toEqual(['KEY-A', 'KEY-B']);
+      expect(plan.keysMissing).toEqual([]);
+    }
+  });
+
+  it('★★ withholds the WHOLE list when any seated member published no key', () => {
+    /**
+     * Not "the subset that has one". Sealing to a subset locks the rest out permanently and
+     * silently — the failure this file exists for — so the caller gets nothing to seal with and
+     * the names of who is missing, and has to decide in the open.
+     */
+    const plan = recipientsFromRoster({
+      seats: [withKey('u-a', 'KEY-A'), withKey('u-b', null)], grantsFound: 2, grantsRead: 2,
+    });
+    expect(plan.ok).toBe(true);
+    if (plan.ok) {
+      expect(plan.keys, 'a partial key list is the silent lockout').toEqual([]);
+      expect(plan.keysMissing).toEqual(['u-b']);
+      // ★ And `shareWith` is UNAFFECTED: the relay-sealed path still works for this roster, which
+      // is what a workspace whose members have not all upgraded still runs on.
+      expect(plan.shareWith).toHaveLength(2);
+    }
+  });
+
+  it('★ a revoked member contributes no key, exactly as they contribute no WebID', () => {
+    const plan = recipientsFromRoster({
+      seats: [withKey('u-a', 'KEY-A'), seat('u-b', { revoked: true, encryptionKey: 'KEY-B' } as Partial<Seat>)],
+      grantsFound: 2, grantsRead: 2,
+    });
+    expect(plan.ok).toBe(true);
+    if (plan.ok) {
+      expect(plan.keys).toEqual(['KEY-A']);
+      expect(plan.keysMissing).toEqual([]);
+    }
+  });
+});
+
 describe('★★ what the relay actually reached', () => {
   it('reports a handle that resolved to zero recipients', () => {
     /**
