@@ -251,8 +251,47 @@ check('get_descriptor decrypts only via recipientKeyFor',
   /handleGetDescriptor[\s\S]{0,3000}recipientKeyPair: await recipientKeyFor\(args, url\)/.test(SERVER));
 check('the followed dcat:accessURL is scoped too',
   /recipientKeyPair: await recipientKeyFor\(args, link\.accessURL\)/.test(SERVER));
-check('/render binds decryption to the token-verified identity',
-  /recipientKeyFor\(\{ _session_user_id: auth\.userId \}/.test(SERVER));
+/**
+ * ★★ THIS CHECK PASSED WHILE THE HOLE IT NAMES WAS WIDE OPEN.
+ *
+ * `/render/:descriptorIri` has TWO branches. The `urn:` one passed `recipientKeyFor` and satisfied
+ * the regex below; the `https://` one took `descriptorUrl` straight from the caller and never went
+ * near it. One `.test()` against the whole file cannot tell "both branches are gated" from "one
+ * is" — so the gate reported green over a route where any holder of any valid bearer could read
+ * any pod's private plaintext by naming its URL.
+ *
+ * The recipient-set check further down does not save it: it asks whether the RELAY'S key is in
+ * `wrappedKeys`, and it always is — every `encryptionPublicKey` the relay registers is
+ * `relayAgentKey.publicKey`, at all six registration sites. The check is vacuous by construction.
+ *
+ * So this now counts the gates instead of finding one, and separately asserts that the envelope
+ * unwrap is preceded by an own-pod refusal.
+ */
+const renderGates = (SERVER.match(/recipientKeyFor\(\s*\{ _session_user_id: auth\.userId \}/g) ?? []).length;
+check('/render gates BOTH branches — the urn: one and the caller-supplied https:// one',
+  renderGates >= 2, `found ${renderGates} own-pod gate(s) on /render; the https branch was the unguarded one`);
+/**
+ * ★ ORDER BY INDEX, NOT BY A DISTANCE-BOUNDED REGEX. This file already records that bounding the
+ * gap between two tokens fails on unchanged code the moment a comment between them grows — it
+ * happened to the egress checks below. What matters here is only that the refusal comes FIRST.
+ */
+const refusalAt = SERVER.indexOf('urn:iep:error:NotYourPod');
+const unwrapAt = SERVER.indexOf('openEncryptedEnvelope(envelope, relayAgentKey)');
+check('the envelope unwrap is preceded by an own-pod refusal',
+  refusalAt > 0 && unwrapAt > 0 && refusalAt < unwrapAt,
+  `refusal at ${refusalAt}, unwrap at ${unwrapAt}`);
+/**
+ * ★★ AND THE GUARD ITSELF, NOT JUST ITS ERROR MESSAGE.
+ *
+ * MEASURED: with only the check above, replacing `if (!ownPodKey) {` with `if (false) {` left every
+ * assertion green — the error string is still in the file, still before the unwrap, and the route
+ * is wide open again. Asserting a message is asserting that somebody wrote a message.
+ */
+const keyAt = SERVER.indexOf('const ownPodKey = await recipientKeyFor(');
+const guardAt = SERVER.indexOf('if (!ownPodKey) {');
+check('…and that refusal is actually wired to the key lookup',
+  keyAt > 0 && guardAt > keyAt && guardAt < unwrapAt,
+  `lookup at ${keyAt}, guard at ${guardAt}, unwrap at ${unwrapAt}`);
 
 console.log('\n12. R6 — the federated inbox gate is not a header-presence check');
 // `-H 'Signature: x'` satisfied the previous gate in one curl flag.
