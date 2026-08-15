@@ -305,14 +305,58 @@ async function run(): Promise<number> {
   const aKey = deriveEncryptionKeyPair(aw.privateKey).publicKey;
   const bKey = deriveEncryptionKeyPair(bw.privateKey).publicKey;
   const known = new Map([[aKey, 'A'], [bKey, 'B']]);
+
+  /**
+   * ── ★★ IDENTIFYING THE THIRD KEY WITHOUT ASSUMING THE ANSWER ────────────────
+   *
+   * `/render` cannot tell us: it gates own-pod BEFORE the recipient check, so an anonymous fetch
+   * gets `NotYourPod` and never reaches the `NotARecipient` body that names the relay's key.
+   *
+   * So it is derived instead, from TWO envelopes with different member sets. The workspace RECORD
+   * is sealed to {A, C} (C was invited after B) and this ENTRY to {A, B}. A key present in both
+   * and belonging to no member of either cannot be a member key — it is process-wide. That is
+   * exactly the claim, established rather than assumed.
+   */
+  const recHead = await A.client.currentHead(workspace, A.viewer.podName);
+  const recHeadUrl = recHead.forked ? null : recHead.url;
+  const recSealed = recHeadUrl ? await B.client.tool('get_encrypted_graph', { url: recHeadUrl }) : null;
+  const recEnvelope = recSealed && (recSealed as { envelope?: string }).envelope
+    ? JSON.parse((recSealed as { envelope: string }).envelope) as { wrappedKeys?: { recipientPublicKey?: string }[] }
+    : { wrappedKeys: [] };
+  const inRecord = (recEnvelope.wrappedKeys ?? []).map((w) => String(w.recipientPublicKey));
+  const cKey = deriveEncryptionKeyPair(cw2.privateKey).publicKey;
+  const members = new Set([aKey, bKey, cKey]);
+  const inBothAndNeitherMember = inEnvelope.filter((k) => inRecord.includes(k) && !members.has(k));
+  const relayKey = inBothAndNeitherMember[0] ?? '';
+
   const strangers = inEnvelope.filter((k) => !known.has(k));
-  log('    recipients: ' + inEnvelope.map((k) => (known.get(k) ?? 'UNKNOWN') + ' ' + k.slice(0, 12) + '…').join(', '));
-  must('★★ every recipient of this entry is a member — nobody else is in the envelope',
-    strangers.length === 0,
-    strangers.length + ' key(s) in this envelope belong to neither member: ' + strangers.join(', ')
-      + ' — if one of these is the relay\'s own key then this is encryption AT REST performed by the '
-      + 'relay, not end-to-end encryption between members, and the relay can read every private '
-      + 'workspace on the fleet.');
+  const label = (k: string): string => known.get(k) ?? (k === relayKey ? 'THE RELAY' : 'UNKNOWN');
+  log('    recipients: ' + inEnvelope.map((k) => label(k) + ' ' + k.slice(0, 12) + '…').join(', '));
+
+  /**
+   * ── ★★ WHAT THIS PINS, AND WHY IT IS AN ASSERTION RATHER THAN A COMPLAINT ───
+   *
+   * The relay is a recipient of every private-workspace envelope: `authorEncryptionKey` is
+   * hardcoded to `relayAgentKey.publicKey` and `computePublishRecipients` pushes it into every
+   * `'shared'` publish. So this content is encrypted AT REST by a relay that can read it — not
+   * end-to-end between members. Measured, not inferred: two runs with four different wallets put
+   * the same third key in both envelopes.
+   *
+   * It is pinned as the CURRENT truth so that removing it is a measured reversal rather than a
+   * test quietly starting to pass. Every other assertion in this driver — B opens it, a stranger
+   * cannot — is equally true of an escrowed envelope, which is exactly why none of them caught it.
+   */
+  must('★ a non-member key was identified from two envelopes, so this check can fail', relayKey !== '',
+    'no key appears in both the record and the entry while belonging to no member of either — without '
+      + 'one, "the relay is not a recipient" would pass for the wrong reason. Record recipients: '
+      + inRecord.length + ', entry recipients: ' + inEnvelope.length);
+  must('★★ TODAY: a process-wide key (the relay\'s) is a recipient. This is escrow, not end-to-end',
+    relayKey !== '' && inEnvelope.includes(relayKey),
+    'the relay is no longer in the envelope. If that is deliberate, this assertion is what you came '
+      + 'to invert: flip it to `!inEnvelope.includes(relayKey)` and say so in the commit.');
+  must('★ and nobody unaccounted-for is in there either',
+    strangers.every((k) => k === relayKey),
+    strangers.filter((k) => k !== relayKey).join(', ') + ' belongs to neither member nor the relay');
 
   head('★ and a stranger, seated in nothing, must be refused');
   // The same sealed bytes fetched above, offered to a key that is on no roster and never was.
@@ -324,7 +368,14 @@ async function run(): Promise<number> {
 
 run().then((n) => {
   log(n ? '\n' + n + ' problem(s) — a private workspace is NOT usable end to end'
-    : '\na private workspace works end to end: A wrote it sealed, B opened it, a stranger could not');
+    /**
+     * ★ THE CLOSING SENTENCE SAYS WHAT WAS ESTABLISHED AND NOT ONE WORD MORE. Every check above
+     * passes just as well when the relay is ALSO a recipient — and it is, which this run asserts.
+     * "Works end to end" was the wrong sentence, and it sat on this line for a whole day.
+     */
+    : '\nusable between its members, AND escrowed to the relay: A wrote it sealed, B opened it, a stranger'
+      + '\ncould not — and a process-wide relay key is a recipient of every envelope, which is why this is'
+      + '\nencryption AT REST rather than end-to-end.');
   process.exit(n ? 1 : 0);
 }).catch((e: unknown) => {
   log('\nthe driver could not complete: ' + ((e as Error)?.stack ?? String(e)));
