@@ -37,6 +37,8 @@ import {
  * outcome; the bad one would have been a polyfill quietly satisfying it.
  */
 import { encryptionKeyFor, openerFor } from '@interego/workspace-client/opener';
+// The sealer is node-only for the same reason the opener is; see its header.
+import { sealForRoster } from '@interego/workspace-client/sealer';
 import {
   beginAuthorization, exchangeCode, refreshBearer, signInWithWallet, startLoopbackReceiver,
   type AuthMethod,
@@ -338,10 +340,21 @@ async function signInWithAccountKey(privateKey: string): Promise<{ pod: string; 
  */
 let accountEncryptionPublicKey: string | null = null;
 
+/**
+ * This account's FULL encryption keypair, held in the privileged process only.
+ *
+ * ★★ THE SECRET LIVES HERE AND NOWHERE ELSE. The renderer is sandboxed precisely so that a page
+ * rendering bytes other people wrote can never reach it. That is also why sealing happens on this
+ * side: the renderer asks for a payload to be sealed, this process seals it, and the ciphertext
+ * goes back — the plaintext crosses the bridge in one direction and the key crosses in neither.
+ */
+let accountEncryptionPair: ReturnType<typeof encryptionKeyFor> | null = null;
+
 async function installEncryption(target: WorkspaceClient, privateKeyHex: string | null, agentId: string | null): Promise<void> {
   if (!privateKeyHex) return;   // browser sign-in: no key on this machine, so it reads what it can
   const key = encryptionKeyFor(privateKeyHex);
   accountEncryptionPublicKey = key.publicKey;
+  accountEncryptionPair = key;
   if (agentId) {
     try {
       await target.tool('register_agent', {
@@ -672,6 +685,35 @@ app.whenReady().then(() => {
    * The ONLY way the renderer reaches the substrate. Name and arguments in, parsed payload
    * out; the bearer stays here.
    */
+  /**
+   * SEAL A PAYLOAD, IN THE PROCESS THAT HOLDS THE KEY.
+   *
+   * ── ★★ WHY THE RENDERER CANNOT DO THIS ITSELF ───────────────────────────────
+   *
+   * It is sandboxed and holds no secret, deliberately — a page whose whole job is rendering bytes
+   * other people wrote is the last place to keep one. So the plaintext crosses INTO this process,
+   * the ciphertext crosses back, and the key crosses in neither direction.
+   *
+   * ★ AND THE RECIPIENT LIST IS THE CALLER'S. This process does not decide who a workspace's
+   * members are — the renderer read that from the roster, out of each member's own acceptance.
+   * Adding a recipient here would be exactly the move the relay was making.
+   */
+  ipcMain.handle('substrate:seal', async (_e, req: { graphIri: string; payloadTurtle: string; recipientKeys: readonly string[]; shape?: { iri: string; turtle: string } }) => {
+    if (!accountEncryptionPair) {
+      return { ok: false as const, why: 'this session holds no encryption key, so nothing can be sealed here. Sign in with a wallet key.' };
+    }
+    const out = sealForRoster({
+      graphIri: String(req?.graphIri ?? ''),
+      payloadTurtle: String(req?.payloadTurtle ?? ''),
+      recipientKeys: Array.isArray(req?.recipientKeys) ? req.recipientKeys.map(String) : [],
+      sender: accountEncryptionPair,
+      ...(req?.shape ? { shape: req.shape } : {}),
+    });
+    return out.ok
+      ? { ok: true as const, graphContent: out.graphContent, contentDigest: out.contentDigest, cleartextMirror: out.cleartextMirror, recipientCount: out.recipientCount }
+      : { ok: false as const, why: out.why };
+  });
+
   ipcMain.handle('substrate:call', async (_e, name: string, input: Record<string, unknown>) => {
     if (!client) throw new Error('not signed in yet');
     if (typeof name !== 'string' || !name) throw new Error('a tool call needs a tool name');

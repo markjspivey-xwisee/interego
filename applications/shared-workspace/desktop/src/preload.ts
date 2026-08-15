@@ -151,6 +151,24 @@ export interface WorkspaceBridge {
   /** Drop the session and keep every key. Signing out is not forgetting. */
   signOut(): Promise<{ accounts: readonly AccountKeyInfo[] }>;
   call(name: string, input: Record<string, unknown>): Promise<{ ok: true; payload: unknown } | { ok: false; error: BridgeFailure }>;
+  /**
+   * Seal a payload for a workspace's members, in the process that holds the key.
+   *
+   * ★★ THE PLAINTEXT GOES IN AND CIPHERTEXT COMES BACK; THE KEY CROSSES NEITHER WAY. This renderer
+   * is sandboxed because its job is displaying bytes other people wrote, which is the last place to
+   * keep a secret. The recipient list is the RENDERER's — read from each member's own acceptance —
+   * because deciding who a workspace's members are is not the privileged side's business, and a
+   * process that added a recipient here would be making exactly the move the relay was making.
+   */
+  seal(req: {
+    graphIri: string;
+    payloadTurtle: string;
+    recipientKeys: readonly string[];
+    shape?: { iri: string; turtle: string };
+  }): Promise<
+    | { ok: true; graphContent: string; contentDigest: string; cleartextMirror: string; recipientCount: number }
+    | { ok: false; why: string }
+  >;
   sessionStatus(): Promise<SessionInfo>;
   renewSession(): Promise<{ ok: boolean; session: SessionInfo }>;
   /** Push, so a lapse reaches the window without the renderer polling for one. */
@@ -282,6 +300,7 @@ const bridge: WorkspaceBridge = {
   accountForget: (address) => ipcRenderer.invoke('account:forget', address),
   signOut: () => ipcRenderer.invoke('auth:signout'),
   call: (name, input) => ipcRenderer.invoke('substrate:call', name, input),
+  seal: (req) => ipcRenderer.invoke('substrate:seal', req),
   sessionStatus: () => ipcRenderer.invoke('session:status'),
   renewSession: () => ipcRenderer.invoke('session:renew'),
   // The listener is wrapped rather than handed `ipcRenderer.on` directly: the event object
