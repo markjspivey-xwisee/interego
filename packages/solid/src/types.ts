@@ -215,6 +215,32 @@ export interface PublishOptions {
   };
 
   /**
+   * An envelope the PUBLISHER already sealed. Stored verbatim; never opened, never re-wrapped.
+   *
+   * ── ★★ WHY THIS IS NOT `encrypt` WITH DIFFERENT ARGUMENTS ───────────────────
+   *
+   * `encrypt` means "this process holds the plaintext and will seal it". Everything reachable from
+   * it — the recipient list, the sender keypair, the `wrapAsTriG` call — happens HERE, which means
+   * whoever runs this code has read the content. When that is the relay, the content is not
+   * end-to-end encrypted no matter how the recipients are chosen, and the relay's own key ends up
+   * in the envelope besides.
+   *
+   * `sealedPayload` is the other arrangement: the bytes arrive already sealed and this code's only
+   * job is to put them somewhere and describe them. It is mutually exclusive with `encrypt` — a
+   * caller supplying both has not decided who is doing the sealing, and guessing would silently
+   * re-wrap an envelope inside another one.
+   *
+   * ★ `wrapAsTriG` IS NOT CALLED FOR IT. The publisher already wrapped what it sealed; wrapping
+   * again would put a TriG document around ciphertext and no reader could invert it.
+   */
+  readonly sealedPayload?: {
+    /** The serialized envelope, exactly as the publisher produced it. */
+    readonly body: string;
+    /** How many recipients the publisher sealed to. Reported, never recomputed — it cannot be. */
+    readonly recipientCount: number;
+  };
+
+  /**
    * Audience class of the published payload. Affects the distribution
    * block (`iep:visibility`, `iep:encrypted`) and is intended to be paired
    * with an ACL writer at the caller for `public`.

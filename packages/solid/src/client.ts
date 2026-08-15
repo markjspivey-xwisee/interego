@@ -2296,7 +2296,15 @@ export async function publish(
   // .well-known/container-shape declaration), run each one against the
   // inbound graphContent BEFORE any pod write. On violation throw 422
   // semantics — the descriptor + payload never land on the pod.
-  if (options.conformsToShapes && options.conformsToShapes.length > 0) {
+  /**
+   * ★★ A SEALED PAYLOAD CANNOT BE VALIDATED HERE, AND PRETENDING OTHERWISE IS A HARD 422. Running
+   * `validateAgainstShape` over ciphertext does not "fail to find violations" — it fails to PARSE,
+   * reports `sh:DataGraphParseFailure`, and refuses every honest sealed write. The contract has not
+   * been abandoned: the publisher validated before sealing, and every reader holding a key
+   * validates again after opening. What is genuinely gone is the SERVER-side guarantee, which no
+   * server that cannot read the content could ever have offered.
+   */
+  if (!options.sealedPayload && options.conformsToShapes && options.conformsToShapes.length > 0) {
     for (const { shapeIri, shapeTurtle } of options.conformsToShapes) {
       const report = validateAgainstShape(graphContent, shapeTurtle, { entailment: 'rdfs' });
       if (!report.conforms) {
@@ -2476,7 +2484,33 @@ export async function publish(
   let graphBody: string;
   let graphContentType: string;
   let encryptedFlag = false;
-  if (options.encrypt) {
+  if (options.sealedPayload) {
+    /**
+     * ── ★★ STORED VERBATIM, AND THAT IS THE ENTIRE POINT ──────────────────────
+     *
+     * The publisher sealed these bytes; this process never saw the plaintext and cannot. So there
+     * is nothing to wrap, nothing to encrypt, and nothing to validate against a shape — every one
+     * of those needs the cleartext, and the absence of the cleartext here is the property being
+     * bought, not a limitation to work around.
+     *
+     * ★ MUTUALLY EXCLUSIVE WITH `encrypt`, LOUDLY. A caller supplying both has not decided who is
+     * sealing. Picking one silently would either re-wrap an envelope inside another envelope
+     * (unopenable by anyone) or drop the caller's own sealing on the floor and substitute ours —
+     * and the second failure produces content the relay CAN read while the caller believes
+     * otherwise, which is the exact confusion this option exists to end.
+     */
+    if (options.encrypt) {
+      throw new Error(
+        'publish: `encrypt` and `sealedPayload` were both supplied, so who is doing the sealing is not '
+        + 'decided. `sealedPayload` means the bytes arrived already sealed; `encrypt` means this process '
+        + 'should seal them. Nothing was written.',
+      );
+    }
+    graphUrl = `${container}${graphSlug}.envelope.jose.json`;
+    graphBody = options.sealedPayload.body;
+    graphContentType = ENVELOPE_CONTENT_TYPE;
+    encryptedFlag = true;
+  } else if (options.encrypt) {
     const envelope = createEncryptedEnvelope(
       wrapAsTriG(descriptorTurtle, graphContent, primaryGraph),
       options.encrypt.recipients,
@@ -2535,10 +2569,14 @@ export async function publish(
     graphContentType,
     encrypted: encryptedFlag,
     encryptionAlgorithm: encryptedFlag ? 'X25519-XSalsa20-Poly1305' : undefined,
-    recipientCount: options.encrypt?.recipients.length,
+    recipientCount: options.encrypt?.recipients.length ?? options.sealedPayload?.recipientCount,
     visibility: options.visibility,
     descriptorId: descriptor.id,
     relayBaseUrl: options.relayBaseUrl,
+    // Recorded in the descriptor so a reader can tell which side of the escrow boundary a record
+    // is on WITHOUT opening it — a workspace is a mixed channel across the change, and "this one
+    // the relay can read, that one it cannot" has to be answerable per record.
+    sealedByPublisher: !!options.sealedPayload,
   });
   // Optional authorship-proof block. When the caller minted a signed
   // authorship proof for THIS publish (typically via `sign_authorship:
@@ -2985,6 +3023,8 @@ function buildDistributionBlock(d: {
   visibility?: 'public' | 'shared' | 'private';
   descriptorId?: string;
   relayBaseUrl?: string;
+  /** The PUBLISHER sealed this, so the relay is not a recipient and cannot project it. */
+  sealedByPublisher?: boolean;
 }): string {
   const actionIRI = d.encrypted ? 'iep:canDecrypt' : 'iep:canFetchPayload';
   const returnsClass = d.encrypted ? 'iep:EncryptedGraphEnvelope' : 'iep:GraphPayload';
@@ -3015,6 +3055,13 @@ function buildDistributionBlock(d: {
   if (d.visibility === 'public' || d.visibility === 'private') {
     lines.push(`    ; iep:visibility "${d.visibility}"`);
   }
+  /**
+   * ★ SAID IN THE DESCRIPTOR, WHICH IS THE PART EVERYONE CAN READ. Whether the relay can open a
+   * payload is a fact about that payload, and after the change to publisher-sealing a workspace
+   * contains records on both sides of the line for the rest of its life. A reader must be able to
+   * answer "can the operator read this one?" per record, from metadata, without holding a key.
+   */
+  if (d.sealedByPublisher) lines.push(`    ; iep:sealedByPublisher true`);
   lines.push(`] .`);
 
   // Second affordance: iep:renderView. Server-side plaintext projection
@@ -3024,7 +3071,15 @@ function buildDistributionBlock(d: {
   // point at. iep:canDecrypt above remains the point-of-fetch path for
   // clients holding a recipient key; iep:renderView is the asymmetric
   // counterpart for thin clients. See cg.ttl `iep:renderView`.
-  if (d.encrypted && d.relayBaseUrl && d.descriptorId) {
+  /**
+   * ★★ NOT ADVERTISED FOR A PUBLISHER-SEALED PAYLOAD, BECAUSE NOBODY COULD HONOUR IT. `/render` is
+   * the relay unwrapping an envelope with its own key — it works today only because the relay puts
+   * that key in every envelope it seals. A payload the publisher sealed does not name the relay, so
+   * `/render` answers 403 `NotARecipient`. A descriptor that offered the affordance anyway would be
+   * a document promising a capability that is guaranteed to fail, which is worse than silence: a
+   * client following its nose would read the 403 as a permissions problem with its own bearer.
+   */
+  if (d.encrypted && !d.sealedByPublisher && d.relayBaseUrl && d.descriptorId) {
     const relayBase = d.relayBaseUrl.replace(/\/$/, '');
     const renderTarget = `${relayBase}/render/${encodeURIComponent(d.descriptorId)}`;
     lines.push('');

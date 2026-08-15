@@ -829,6 +829,13 @@ iep:encrypted a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:range xsd:boolean ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
 
+iep:sealedByPublisher a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "sealed by publisher" ;
+    rdfs:comment "Whether the PUBLISHER produced this distribution's envelope, rather than the relay sealing plaintext on its behalf. When true the relay is not among the envelope's recipients and cannot read the payload: it received ciphertext, stored it verbatim, and iep:renderView is therefore NOT advertised because no server-side projection is possible. When absent or false the payload was sealed by the relay, whose own key is a recipient — so the operator can read it. This is a statement about who can read a record, not about how it was transported, and it is per-record on purpose: a workspace that changes over to publisher-sealing contains records on both sides of that line permanently, because an envelope's recipient set is fixed when it is written and re-sealing would require the very key being removed." ;
+    rdfs:domain dcat:Distribution ;
+    rdfs:range xsd:boolean ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
 iep:encryptionAlgorithm a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "encryption algorithm" ;
     rdfs:comment "The envelope's KDF + AEAD suite, e.g. 'X25519-XSalsa20-Poly1305'. Identifies the crypto-primitive combination so clients know which library/mode to use." ;
