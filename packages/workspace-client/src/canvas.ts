@@ -15,6 +15,7 @@
  */
 
 import { visibilityFor } from './visibility.js';
+import type { EntrySealer } from './entry.js';
 import { canvasTurtle } from './documents.js';
 import { graphRegion, readLiteral } from './turtle.js';
 import { refusal } from './transport.js';
@@ -186,12 +187,19 @@ export async function saveCanvas(
      * `recipientsFromRoster`.
      */
     readonly shareWith?: readonly string[];
+    /**
+     * Seals the canvas before it leaves, when the host can. See `postEntry`'s `seal` — same
+     * contract, same reason it is injected rather than done here, and the same rule that a refusal
+     * is never answered by sending the document in the clear instead.
+     */
+    readonly seal?: EntrySealer;
     readonly awaitTries?: number;
     readonly sleep?: (ms: number) => Promise<void>;
   },
 ): Promise<CanvasSave> {
   // Fail closed — see `postEntry`, and see the note above for why the canvas is worse.
-  if (args.visibility === 'private' && !(args.shareWith && args.shareWith.length > 0)) {
+  // A sealed write carries its recipients inside the envelope — see `postEntry`'s guard.
+  if (args.visibility === 'private' && !args.seal && !(args.shareWith && args.shareWith.length > 0)) {
     return {
       kind: 'refused', code: null,
       body: {
@@ -202,13 +210,26 @@ export async function saveCanvas(
       },
     };
   }
+  const payloadTurtle = canvasTurtle({ canvas: args.canvasIri, workspace: args.workspace, slug: args.slug, body: args.body });
+
+  // Seal first, if this host can. A refusal is a refusal — never a fallback to plaintext.
+  let sealed: Awaited<ReturnType<EntrySealer>> | null = null;
+  if (args.visibility === 'private' && args.seal) {
+    sealed = await args.seal(payloadTurtle, args.canvasIri);
+    if (!sealed.ok) return { kind: 'refused', code: null, body: { error: 'seal_failed', message: sealed.why } };
+  }
+
   const publishArgs: Record<string, unknown> = {
     graph_iri: args.canvasIri,
-    graph_content: canvasTurtle({ canvas: args.canvasIri, workspace: args.workspace, slug: args.slug, body: args.body }),
+    // The envelope when sealed. Leaving the plaintext here while flagging it sealed would send the
+    // document to the relay AND tell it the document was hidden from it.
+    graph_content: sealed?.ok ? sealed.graphContent : payloadTurtle,
     // ★ The workspace's own policy — see `visibilityFor`. Omitting this would silently ENCRYPT.
     visibility: visibilityFor('canvas', args.visibility ?? 'public'),
-    // Only under 'shared' — the relay drops it with a warning under 'public'.
-    ...(args.visibility === 'private' && args.shareWith?.length ? { share_with: args.shareWith } : {}),
+    // Sealed and share_with are mutually exclusive — see `postEntry`.
+    ...(sealed?.ok
+      ? { sealed_payload: true, content_digest: sealed.contentDigest, cleartext_mirror: sealed.cleartextMirror }
+      : (args.visibility === 'private' && args.shareWith?.length ? { share_with: args.shareWith } : {})),
     auto_supersede_prior: true,
     sign_authorship: true,
   };
@@ -280,6 +301,12 @@ export async function mergeForward(
      */
     readonly visibility?: 'public' | 'private';
     readonly shareWith?: readonly string[];
+    /**
+     * ★ FORWARDED FOR THE SAME REASON `visibility` IS. This wrapper already declassified a private
+     * canvas once by not carrying the policy; a wrapper that carries the policy but not the SEALER
+     * would send the document to the relay in the clear while every visibility assertion passed.
+     */
+    readonly seal?: EntrySealer;
     readonly awaitTries?: number;
     readonly sleep?: (ms: number) => Promise<void>;
   },
@@ -294,6 +321,7 @@ export async function mergeForward(
     // Forwarded, never defaulted: a merge is a save, and it is written under the same policy.
     ...(args.visibility === undefined ? {} : { visibility: args.visibility }),
     ...(args.shareWith === undefined ? {} : { shareWith: args.shareWith }),
+    ...(args.seal === undefined ? {} : { seal: args.seal }),
     ...(args.awaitTries === undefined ? {} : { awaitTries: args.awaitTries }),
     ...(args.sleep === undefined ? {} : { sleep: args.sleep }),
   });

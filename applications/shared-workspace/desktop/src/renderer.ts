@@ -2510,6 +2510,21 @@ async function post(as?: {
     podName: S.viewer.podName, streamIri, workspace: S.workspace, body,
     ...(audience.shareWith ? { shareWith: audience.shareWith } : {}),
     /**
+     * ── ★★ SEAL HERE WHEN EVERY MEMBER HAS PUBLISHED A KEY ─────────────────────
+     *
+     * With a sealer the relay receives ciphertext and is not a recipient. Without one the entry
+     * still publishes, relay-sealed and relay-readable — which is the old arrangement, kept
+     * because it cannot be switched off: an envelope's recipients are fixed at write time, so
+     * unsealed history stays unsealed, and a member whose acceptance carries no key can only be
+     * reached that way.
+     *
+     * ★ `keysMissing` DECIDES, NOT "do we have any keys". Sealing to the members who happen to
+     * have published one locks out the rest permanently and silently, so `recipientsFromRoster`
+     * hands back an EMPTY key list the moment anybody is missing — and then this does not seal at
+     * all, rather than sealing to a subset.
+     */
+    ...(sealerFor(audience.keys)),
+    /**
      * ★★ THE WORKSPACE'S OWN POLICY, READ FROM THE RECORD THIS VIEW IS ALREADY SHOWING.
      *
      * Not re-fetched and not decided here: the record on screen is what the roster, the roles and
@@ -2829,6 +2844,8 @@ async function doSave(useStale: boolean): Promise<void> {
     // the entry post above. A plaintext canvas in a private workspace is the same hole.
     visibility: canvasAudience.visibility,
     ...(canvasAudience.shareWith ? { shareWith: canvasAudience.shareWith } : {}),
+    // Sealed here when every member has published a key — see `sealerFor`.
+    ...(sealerFor(canvasAudience.keys)),
   });
   const reopen = (): void => { b.disabled = !!S.writeBlocked; };
   if (out.kind === 'error') {
@@ -2903,6 +2920,24 @@ async function doSave(useStale: boolean): Promise<void> {
   reopen();
 }
 
+/**
+ * The seal step for a write, or nothing.
+ *
+ * ★★ THE SECRET IS NOT HERE AND CANNOT BE. This renderer is sandboxed because its job is drawing
+ * bytes other people wrote; it hands the plaintext to the main process, which holds the key, and
+ * gets ciphertext back. Returning `{}` — no sealer at all — is how a write falls back to the
+ * relay-sealed path, which is a real arrangement and not a failure: it is what a workspace with a
+ * keyless member still runs on.
+ */
+function sealerFor(keys: readonly string[]): { seal?: (payloadTurtle: string, graphIri: string) => Promise<
+  | { ok: true; graphContent: string; contentDigest: string; cleartextMirror: string; recipientCount: number }
+  | { ok: false; why: string }> } {
+  if (keys.length === 0) return {};
+  return {
+    seal: (payloadTurtle, graphIri) => window.interego.seal({ graphIri, payloadTurtle, recipientKeys: keys }),
+  };
+}
+
 async function doMerge(): Promise<void> {
   if (!S.client || !S.viewer || !S.canvas.iri || !S.workspace || !S.slug) return;
   say('canvasresult', 'pending', 'Following the retryHint', 'get_current_head { urn, pod_name } — one read, then a resend with the cid it returns.');
@@ -2923,6 +2958,8 @@ async function doMerge(): Promise<void> {
     body: area('canvas').value,
     visibility: mergeAudience.visibility,
     ...(mergeAudience.shareWith ? { shareWith: mergeAudience.shareWith } : {}),
+    // Sealed here when every member has published a key — see `sealerFor`.
+    ...(sealerFor(mergeAudience.keys)),
   });
   if (out.kind === 'no-head') { say('canvasresult', 'refused', 'No single head to merge onto', out.why); return; }
   S.canvas.head = out.onto;

@@ -4760,7 +4760,7 @@ var WSPC = (() => {
     };
   }
   async function saveCanvas(client, args) {
-    if (args.visibility === "private" && !(args.shareWith && args.shareWith.length > 0)) {
+    if (args.visibility === "private" && !args.seal && !(args.shareWith && args.shareWith.length > 0)) {
       return {
         kind: "refused",
         code: null,
@@ -4770,13 +4770,21 @@ var WSPC = (() => {
         }
       };
     }
+    const payloadTurtle = canvasTurtle({ canvas: args.canvasIri, workspace: args.workspace, slug: args.slug, body: args.body });
+    let sealed = null;
+    if (args.visibility === "private" && args.seal) {
+      sealed = await args.seal(payloadTurtle, args.canvasIri);
+      if (!sealed.ok) return { kind: "refused", code: null, body: { error: "seal_failed", message: sealed.why } };
+    }
     const publishArgs = {
       graph_iri: args.canvasIri,
-      graph_content: canvasTurtle({ canvas: args.canvasIri, workspace: args.workspace, slug: args.slug, body: args.body }),
+      // The envelope when sealed. Leaving the plaintext here while flagging it sealed would send the
+      // document to the relay AND tell it the document was hidden from it.
+      graph_content: sealed?.ok ? sealed.graphContent : payloadTurtle,
       // ★ The workspace's own policy — see `visibilityFor`. Omitting this would silently ENCRYPT.
       visibility: visibilityFor("canvas", args.visibility ?? "public"),
-      // Only under 'shared' — the relay drops it with a warning under 'public'.
-      ...args.visibility === "private" && args.shareWith?.length ? { share_with: args.shareWith } : {},
+      // Sealed and share_with are mutually exclusive — see `postEntry`.
+      ...sealed?.ok ? { sealed_payload: true, content_digest: sealed.contentDigest, cleartext_mirror: sealed.cleartextMirror } : args.visibility === "private" && args.shareWith?.length ? { share_with: args.shareWith } : {},
       auto_supersede_prior: true,
       sign_authorship: true
     };
@@ -4831,6 +4839,7 @@ var WSPC = (() => {
       // Forwarded, never defaulted: a merge is a save, and it is written under the same policy.
       ...args.visibility === void 0 ? {} : { visibility: args.visibility },
       ...args.shareWith === void 0 ? {} : { shareWith: args.shareWith },
+      ...args.seal === void 0 ? {} : { seal: args.seal },
       ...args.awaitTries === void 0 ? {} : { awaitTries: args.awaitTries },
       ...args.sleep === void 0 ? {} : { sleep: args.sleep }
     });
