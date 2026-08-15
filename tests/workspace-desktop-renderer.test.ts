@@ -1272,6 +1272,66 @@ describe('a lapsed session is painted over the window, never over nothing', () =
 
 });
 
+describe('★★ "private" is only offered to a session that could read one back', () => {
+  /**
+   * ── WHAT GOES WRONG WITHOUT THIS ────────────────────────────────────────────
+   *
+   * A browser sign-in leaves no key on this machine. Creating a private workspace under one still
+   * PUBLISHES: the payload is sealed to whatever keys the pod's registry holds, which without a
+   * member key is the relay's own. The person ends up owning a workspace THEY cannot read and the
+   * relay can — the exact inversion of what the word promises — and it returns 200 and looks like
+   * it worked. It is unrepairable afterwards, because an envelope's recipients are fixed when it
+   * is written.
+   *
+   * So the control is gated on `sealedReads`, which the main process MEASURES from the client
+   * (`WorkspaceClient.canOpenSealed`) rather than inferring from the sign-in method.
+   */
+  it('disables the private option, and says why, when this session holds no key', async () => {
+    const o = await open();
+    await signInAndSettle(o);
+    o.pushSession({ state: 'live', pod: POD_A, method: 'browser', expiresAt: null, renewable: true, why: null, sealedReads: false });
+
+    const priv = o.doc.getElementById('wsvis-private') as HTMLInputElement;
+    expect(priv, 'the private control is missing from index.html').toBeTruthy();
+    expect(priv.disabled).toBe(true);
+    const hint = text(o.doc, '#wsvishint');
+    expect(hint).toContain('needs a key on this machine');
+    // The consequence, not just the refusal: what would actually happen if it were allowed.
+    expect(hint).toContain('sealed to the relay rather than to you');
+  });
+
+  it('★ offers it to a wallet session, and states what private does NOT hide', async () => {
+    const o = await open();
+    await signInAndSettle(o);
+    o.pushSession({ state: 'live', pod: POD_A, method: 'wallet', expiresAt: null, renewable: true, why: null, sealedReads: true });
+
+    expect((o.doc.getElementById('wsvis-private') as HTMLInputElement).disabled).toBe(false);
+    const hint = text(o.doc, '#wsvishint');
+    // Both of the things people get wrong about this setting.
+    expect(hint).toContain('roster');
+    expect(hint).toContain('cannot be changed later');
+  });
+
+  it('★★ un-ticks a private box that was already ticked when the key goes away', async () => {
+    /**
+     * The state that would otherwise submit `private` from a control nobody can see is active:
+     * tick it under a wallet session, then switch to a keyless one. Disabling alone does not
+     * clear `checked`, and the create handler reads `.checked` — so the form would still say
+     * private while the UI said it was unavailable.
+     */
+    const o = await open();
+    await signInAndSettle(o);
+    o.pushSession({ state: 'live', pod: POD_A, method: 'wallet', expiresAt: null, renewable: true, why: null, sealedReads: true });
+    const priv = o.doc.getElementById('wsvis-private') as HTMLInputElement;
+    const pub = o.doc.getElementById('wsvis-public') as HTMLInputElement;
+    priv.checked = true; pub.checked = false;
+
+    o.pushSession({ state: 'live', pod: POD_A, method: 'browser', expiresAt: null, renewable: true, why: null, sealedReads: false });
+    expect(priv.checked, 'a disabled box left ticked still reads as private to the create handler').toBe(false);
+    expect(pub.checked).toBe(true);
+  });
+});
+
 describe('write eligibility is a relay verdict, and it withdraws the controls', () => {
   it('★ offers nothing to write when the relay says the agent is not write-eligible', async () => {
     const o = await open({ setup: (s) => { s.writeEligible = false; } });
