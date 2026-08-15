@@ -13731,6 +13731,40 @@ app.get('/render/:descriptorIri', async (req, res) => {
       return;
     }
 
+    /**
+     * ★★ THE CALLER MUST OWN THE POD THIS ENVELOPE LIVES ON.
+     *
+     * Without this, `GET /render/<https url>` is an unauthenticated-in-effect plaintext oracle for
+     * every private graph on the fleet. The chain:
+     *
+     *   1. the `https://` branch above takes `descriptorUrl` STRAIGHT FROM THE CALLER, while the
+     *      `urn:` branch beside it passes `recipientKeyFor` — its own comment records that this
+     *      route "previously decrypted ANY pod's payload for any bearer holder"
+     *   2. the recipient-set check below asks whether the RELAY'S key is in `wrappedKeys`, and it
+     *      always is: every `encryptionPublicKey` the relay registers is `relayAgentKey.publicKey`,
+     *      at all six registration sites
+     *   3. so the check passes for every envelope in existence, and the unwrap hands the caller
+     *      somebody else's plaintext
+     *
+     * Any holder of any valid bearer could read any pod's private graphs by URL — including the
+     * `encrypted-private` agent memories `create_memory` writes. `recipientKeyFor` returns a key
+     * only for a URL under the caller's OWN proven pod, which is exactly the predicate needed, and
+     * is the same one guarding `get_descriptor`.
+     */
+    const ownPodKey = await recipientKeyFor(
+      { _session_user_id: auth.userId } as ToolArgs,
+      dist.accessURL,
+    );
+    if (!ownPodKey) {
+      res.status(403).type('application/ld+json').json({
+        '@context': KERNEL_JSONLD_CONTEXT,
+        '@type': ['hydra:Status', 'urn:iep:error:NotYourPod'],
+        error: 'This graph is encrypted and lives on another pod. This route decrypts only graphs '
+          + 'on the caller\'s own pod — being able to name a URL is not being a recipient.',
+      });
+      return;
+    }
+
     // Fetch the envelope and server-side unwrap.
     const envResp = await solidFetch(dist.accessURL, {
       headers: { 'Accept': 'application/jose+json, application/json' },
