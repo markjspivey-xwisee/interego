@@ -320,9 +320,41 @@ export async function postEntry(
      * the seat it is writing under. Defaults to public, like every other reader of this field.
      */
     readonly visibility?: 'public' | 'private';
+    /**
+     * The other members this entry must be readable by. Required when `visibility` is private.
+     *
+     * ── ★★ WITHOUT IT A PRIVATE WORKSPACE IS N SILOS ────────────────────────
+     *
+     * Entries live on their AUTHOR's pod, and `'shared'` seals a payload to that pod's own
+     * registered agents unioned with `share_with`. Omit the list and the union is just the author:
+     * every entry is encrypted to the person who wrote it and to nobody else. The channel is not
+     * private — it is one conversation per member, each invisible to all the others, and it looks
+     * completely normal from the writing side.
+     *
+     * Build it with `recipientsFromRoster`, which refuses a TRUNCATED roster rather than
+     * encrypting to the part of it that was read.
+     */
+    readonly shareWith?: readonly string[];
     readonly onAttempt?: (attempt: number) => void;
   },
 ): Promise<PostOutcome> {
+  /**
+   * ★ FAIL CLOSED, BECAUSE THE FAILURE IS INVISIBLE AND PERMANENT. An envelope's recipients are
+   * fixed when it is written, so an entry sealed to nobody but its author cannot be opened up
+   * later — not by the convener, not by the author. Refusing costs a message; publishing costs
+   * the record. This is the same reason `recipientsFromRoster` refuses a partial roster.
+   */
+  if (args.visibility === 'private' && !(args.shareWith && args.shareWith.length > 0)) {
+    return {
+      kind: 'refused', code: null,
+      body: {
+        error: 'no_recipients',
+        message: 'This workspace is private, so this entry would be encrypted — and no other member was '
+          + 'named as a recipient, which would seal it to you alone. Everyone else in the channel would '
+          + 'see an entry they cannot open, permanently. Nothing was written.',
+      },
+    };
+  }
   for (let attempt = 1; attempt <= 2; attempt++) {
     args.onAttempt?.(attempt);
     let rows: readonly ChainRow[];
@@ -360,6 +392,9 @@ export async function postEntry(
       // ★ The workspace's own policy, carried on the verdict that seated this writer — never
       // decided here. See `visibilityFor`; omitting this argument would silently ENCRYPT.
       visibility: visibilityFor('entry', args.visibility ?? 'public'),
+      // Only under 'shared'. The relay drops it with a warning under 'public', and sending it
+      // there would suggest an audience the plaintext does not have.
+      ...(args.visibility === 'private' && args.shareWith?.length ? { share_with: args.shareWith } : {}),
       auto_supersede_prior: false,
       sign_authorship: true,
     };

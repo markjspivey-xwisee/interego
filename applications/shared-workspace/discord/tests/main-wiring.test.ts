@@ -469,7 +469,10 @@ describe('a slash command, from gateway frame to Discord reply', () => {
     expect(deps['client']).toBe(CLIENT);
     expect((deps['store'] as LinkStore).file).toBe(path);
     // The channel is the thread, and the channel NAME becomes the workspace title.
-    expect(args).toEqual({ threadId: THREAD, threadName: 'garden', discordUserId: USER });
+    // ★ `visibility` is here because an unticked `private:` box must arrive as an explicit
+    // "public" rather than as an absent field — the router decides it, not `startWorkspace`, so
+    // this is where it can be seen to have been decided.
+    expect(args).toEqual({ threadId: THREAD, threadName: 'garden', discordUserId: USER, visibility: 'public' });
   });
 
   it('routes each of the five commands to its own substrate function', async () => {

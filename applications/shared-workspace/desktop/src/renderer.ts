@@ -29,7 +29,7 @@ import {
   foldRoster, graphRegion, grantPodFor, hasType, listWorkspaces, mergeForward, nsIri, orderChain,
   parseRoleProfile, parseWorkspaceIri, podClaimVsServed, podOfDescriptorUrl, pollingWatch, postEntry, verifiedSigner,
   preconditionLine, publishDelegation, readCanvas, readInbox, readInt, readIri, readIriAll, readLiteral,
-  readPresence, readViewer, revokeDelegation, revokeGrant,
+  readPresence, readViewer, recipientsFor, revokeDelegation, revokeGrant,
   agentPodOf, notifyAsk, presenceLine, type Presence,
   roleKnown, roleName, roleWhy, saveCanvas, sendInvite, shortRef, slugProblem, verifyInvitation,
   verifyWorkspaceEntry,
@@ -2444,8 +2444,22 @@ async function post(as?: {
       return;
     }
   }
+  /**
+   * ★★ WHO THIS IS ENCRYPTED TO, WHEN IT IS ENCRYPTED AT ALL. Entries live on their author's pod
+   * and seal to that pod's own agents unless the other members are named — so without this a
+   * private channel is one conversation per person, each invisible to everybody else, with the
+   * writing side looking completely normal. `recipientsFor` refuses rather than guesses when the
+   * roster is partial, and a refusal here costs a message where a guess costs the record.
+   */
+  const audience = recipientsFor(S.record?.visibility, S.fold);
+  if (!audience.ok) {
+    clear($('postresult')).appendChild(errBox(new Error(audience.why), 'Nothing was written.'));
+    send.disabled = !!S.writeBlocked; ta.disabled = !!S.writeBlocked; renderAgent();
+    return;
+  }
   const out = await postEntry(writer, {
     podName: S.viewer.podName, streamIri, workspace: S.workspace, body,
+    ...(audience.shareWith ? { shareWith: audience.shareWith } : {}),
     /**
      * ★★ THE WORKSPACE'S OWN POLICY, READ FROM THE RECORD THIS VIEW IS ALREADY SHOWING.
      *
@@ -2736,12 +2750,21 @@ async function doSave(useStale: boolean): Promise<void> {
   const b = useStale ? btn('stalesave') : btn('save');
   b.disabled = true;
   const ifMatch = useStale ? S.canvas.loaded : S.canvas.head;
+  // See the entry post: the canvas is one document everybody supersedes in turn, so saving it
+  // sealed to yourself hands the next member a head they cannot read.
+  const canvasAudience = recipientsFor(S.record?.visibility, S.fold);
+  if (!canvasAudience.ok) {
+    clear($('canvasresult')).appendChild(errBox(new Error(canvasAudience.why), 'Nothing was written.'));
+    b.disabled = !!S.writeBlocked;
+    return;
+  }
   const out = await saveCanvas(S.client, {
     canvasIri: S.canvas.iri, podName: S.viewer.podName, workspace: S.workspace, slug: S.slug,
     body: area('canvas').value, ifMatch, previousCid: S.canvas.head,
     // The workspace's own policy, from the record this view was built from — same reasoning as
     // the entry post above. A plaintext canvas in a private workspace is the same hole.
     visibility: S.record?.visibility ?? 'public',
+    ...(canvasAudience.shareWith ? { shareWith: canvasAudience.shareWith } : {}),
   });
   const reopen = (): void => { b.disabled = !!S.writeBlocked; };
   if (out.kind === 'error') {

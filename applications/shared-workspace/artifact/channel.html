@@ -994,6 +994,7 @@ var WSPC = (() => {
     readPresence: () => readPresence,
     readRequests: () => readRequests,
     readViewer: () => readViewer,
+    recipientsFor: () => recipientsFor,
     recipientsFromRoster: () => recipientsFromRoster,
     refusal: () => refusal,
     resolveInvitee: () => resolveInvitee,
@@ -3593,6 +3594,16 @@ var WSPC = (() => {
     return "this workspace's record was read and names no wsp:entryShape, so nothing validated this entry";
   }
   async function postEntry(client, args) {
+    if (args.visibility === "private" && !(args.shareWith && args.shareWith.length > 0)) {
+      return {
+        kind: "refused",
+        code: null,
+        body: {
+          error: "no_recipients",
+          message: "This workspace is private, so this entry would be encrypted \u2014 and no other member was named as a recipient, which would seal it to you alone. Everyone else in the channel would see an entry they cannot open, permanently. Nothing was written."
+        }
+      };
+    }
     for (let attempt = 1; attempt <= 2; attempt++) {
       args.onAttempt?.(attempt);
       let rows;
@@ -3632,6 +3643,9 @@ var WSPC = (() => {
         // ★ The workspace's own policy, carried on the verdict that seated this writer — never
         // decided here. See `visibilityFor`; omitting this argument would silently ENCRYPT.
         visibility: visibilityFor("entry", args.visibility ?? "public"),
+        // Only under 'shared'. The relay drops it with a warning under 'public', and sending it
+        // there would suggest an audience the plaintext does not have.
+        ...args.visibility === "private" && args.shareWith?.length ? { share_with: args.shareWith } : {},
         auto_supersede_prior: false,
         sign_authorship: true
       };
@@ -4087,6 +4101,65 @@ var WSPC = (() => {
     }
     return { handle, checks, pod, podUrl, webId, inbox: inbox?.href ?? null, agents: rows.length, blocked };
   }
+  async function resealRecord(client, args) {
+    if (args.shareWith.length === 0) {
+      return {
+        kind: "error",
+        resolution: args.resolution,
+        error: new Error("this workspace is private and no members were named to re-seal its record to, so the invitee would not be able to read it and could not accept. Nothing was written.")
+      };
+    }
+    const owner = podOfNsIri(args.workspace);
+    if (!owner) {
+      return {
+        kind: "error",
+        resolution: args.resolution,
+        error: new Error("the workspace IRI names no pod this client can read a record from, so its record cannot be re-sealed. Nothing was written.")
+      };
+    }
+    const rec = await client.readWorkspaceRecord(args.workspace, owner);
+    if (rec.kind !== "record" || !rec.record.regionFound || !rec.record.convener) {
+      return {
+        kind: "error",
+        resolution: args.resolution,
+        error: new Error("this workspace is private and its record could not be read here" + (rec.kind === "record" && rec.record.withheld ? " \u2014 it is encrypted and this identity is not among its recipients" : "") + ", so it cannot be re-sealed to include the invitee. Nothing was written.")
+      };
+    }
+    const rolesIri = rec.record.roleProfile;
+    const shapeIri = rec.record.entryShape ?? args.entryShape;
+    if (!rolesIri || !shapeIri) {
+      return {
+        kind: "error",
+        resolution: args.resolution,
+        error: new Error("the workspace record names no " + (rolesIri ? "entry shape" : "role profile") + ", so re-publishing it would drop a term the workspace depends on. Nothing was written.")
+      };
+    }
+    const publishArgs = {
+      graph_iri: args.workspace,
+      graph_content: workspaceTurtle({
+        workspace: args.workspace,
+        title: rec.record.title,
+        convenerWebId: rec.record.convener,
+        rolesIri,
+        shapeIri,
+        visibility: "private"
+      }),
+      visibility: visibilityFor("record", "private"),
+      share_with: args.shareWith.slice(),
+      conforms_to_shapes: [shapeIri],
+      auto_supersede_prior: true,
+      sign_authorship: true
+    };
+    const out = await client.publishAndConfirm(
+      publishArgs,
+      args.viewer.podName,
+      args.workspace,
+      (state, detail) => args.onState?.("re-sealing the record \xB7 " + state, detail)
+    );
+    if (out.error) return { kind: "error", error: out.error, resolution: args.resolution };
+    if (out.refusal) return { kind: "refused", refusal: out.refusal, resolution: args.resolution };
+    return null;
+  }
   async function sendInvite(client, args) {
     let who;
     try {
@@ -4095,6 +4168,17 @@ var WSPC = (() => {
       return { kind: "resolve-failed", error: e };
     }
     if (who.blocked) return { kind: "blocked", resolution: who };
+    if (args.visibility === "private") {
+      const resealed = await resealRecord(client, {
+        workspace: args.workspace,
+        viewer: args.viewer,
+        entryShape: args.entryShape,
+        shareWith: [.../* @__PURE__ */ new Set([...args.shareWith ?? [], who.webId])].filter(Boolean),
+        resolution: who,
+        onState: args.onState
+      });
+      if (resealed) return resealed;
+    }
     const grantIri = args.workspace + "-grant-" + who.pod;
     const publishArgs = {
       graph_iri: grantIri,
@@ -4529,11 +4613,23 @@ var WSPC = (() => {
     };
   }
   async function saveCanvas(client, args) {
+    if (args.visibility === "private" && !(args.shareWith && args.shareWith.length > 0)) {
+      return {
+        kind: "refused",
+        code: null,
+        body: {
+          error: "no_recipients",
+          message: "This workspace is private, so the canvas would be encrypted \u2014 and no other member was named as a recipient, which would seal it to you alone. The next member to open it would find a head they cannot read and nothing to merge forward from. Nothing was written."
+        }
+      };
+    }
     const publishArgs = {
       graph_iri: args.canvasIri,
       graph_content: canvasTurtle({ canvas: args.canvasIri, workspace: args.workspace, slug: args.slug, body: args.body }),
       // ★ The workspace's own policy — see `visibilityFor`. Omitting this would silently ENCRYPT.
       visibility: visibilityFor("canvas", args.visibility ?? "public"),
+      // Only under 'shared' — the relay drops it with a warning under 'public'.
+      ...args.visibility === "private" && args.shareWith?.length ? { share_with: args.shareWith } : {},
       auto_supersede_prior: true,
       sign_authorship: true
     };
@@ -5079,6 +5175,17 @@ var WSPC = (() => {
       return { ok: false, why: "no seated member of this workspace resolves to an encryption address, so a private write would be readable by nobody. Nothing was written." };
     }
     return { ok: true, shareWith: handles, seats: seated.length };
+  }
+  function recipientsFor(visibility, roster) {
+    if (visibility !== "private") return { ok: true, shareWith: void 0 };
+    if (!roster) {
+      return {
+        ok: false,
+        why: "this workspace is private and its roster has not been read here, so there is no way to tell who this should be encrypted to. Open the workspace and let the members list load first. Nothing was written."
+      };
+    }
+    const plan = recipientsFromRoster(roster);
+    return plan.ok ? { ok: true, shareWith: plan.shareWith } : { ok: false, why: plan.why };
   }
   function unreachedRecipients(publishResponse) {
     const r = publishResponse ?? {};

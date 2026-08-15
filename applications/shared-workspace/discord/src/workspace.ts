@@ -17,6 +17,7 @@ import {
   POD_RX, acceptGrant, checkDelegation, checkRoleForWorkspace, createWorkspace, errorCopy,
   findSeat, foldRoster, graphRegion, nsIri, orderChain, parseRoleProfile, podOfNsIri, postEntry,
   qualifiedName, readAuthorship, readDelegates, readEntryAuthorship, readInt, readIri, readIriAll, readLiteral,
+  recipientsFor,
   verifiedSigner,
   readMember, sendInvite, toChainRow,
   type AuthorshipReading, type DelegateRoster, type EntryAttachment, type EntryAuthorship, type PostOutcome,
@@ -397,6 +398,32 @@ export async function recordMessage(
       seated = 'just-now';
     }
 
+    /**
+     * ★★ WHO THIS ENTRY IS ENCRYPTED TO, IN A PRIVATE WORKSPACE.
+     *
+     * Entries live on their AUTHOR's pod and seal to that pod's own agents unless the other
+     * members are named. Without this a private channel becomes one conversation per member, each
+     * invisible to all the others — and from Discord it would look like everyone was talking
+     * normally while nobody could read anybody.
+     *
+     * ★ FOLDED ONLY WHEN IT IS NEEDED. The roster costs two round trips per grant, which is far
+     * too much to spend on every message in a public channel — and a public workspace has no
+     * recipients to compute.
+     */
+    let shareWith: readonly string[] | undefined;
+    if (frame.record.visibility === 'private') {
+      // The pod named INSIDE the IRI, which is not always the convener's — `foldRoster` wants
+      // both and reconciles them. `frameOf` already proved this parses.
+      const iriOwner = podOfNsIri(binding.workspace) ?? frame.convenerPod;
+      const roster = await foldRoster(deps.client, {
+        workspace: binding.workspace, iriOwner, slug: binding.slug,
+        convener: frame.record.convener, convenerPod: frame.convenerPod,
+      });
+      const audience = recipientsFor('private', roster);
+      if (!audience.ok) return { kind: 'unseated', pod: link.pod, why: audience.why, seating: [] };
+      shareWith = audience.shareWith;
+    }
+
     // Composed, not read: the two names a member writes under are derived from the workspace's
     // own pod and slug, which is what every reader of this workspace looks for.
     const streamIri = nsIri(deps.relay, member.podName, qualifiedName(frame.convenerPod, binding.slug, 'stream'));
@@ -415,6 +442,7 @@ export async function recordMessage(
        * who the record on the pod is written for.
        */
       visibility: frame.record.visibility,
+      ...(shareWith ? { shareWith } : {}),
       ...(args.attachments?.length ? { attachments: args.attachments } : {}),
       ...(args.addressedTo === undefined ? {} : { addressedTo: args.addressedTo }),
       /**

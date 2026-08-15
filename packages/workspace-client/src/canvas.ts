@@ -176,15 +176,39 @@ export async function saveCanvas(
      * the seat it is writing under. Defaults to public, like every other reader of this field.
      */
     readonly visibility?: 'public' | 'private';
+    /**
+     * The other members this canvas must stay readable by. Required when `visibility` is private.
+     *
+     * ★★ THE CANVAS IS THE WORST PLACE TO GET THIS WRONG. It is ONE document the whole workspace
+     * supersedes in turn, so an author who saves it sealed to themselves does not just hide their
+     * own revision — they hand the next member a head they cannot read, and the merge-forward path
+     * that everyone else depends on has nothing to merge from. Build it with
+     * `recipientsFromRoster`.
+     */
+    readonly shareWith?: readonly string[];
     readonly awaitTries?: number;
     readonly sleep?: (ms: number) => Promise<void>;
   },
 ): Promise<CanvasSave> {
+  // Fail closed — see `postEntry`, and see the note above for why the canvas is worse.
+  if (args.visibility === 'private' && !(args.shareWith && args.shareWith.length > 0)) {
+    return {
+      kind: 'refused', code: null,
+      body: {
+        error: 'no_recipients',
+        message: 'This workspace is private, so the canvas would be encrypted — and no other member was '
+          + 'named as a recipient, which would seal it to you alone. The next member to open it would '
+          + 'find a head they cannot read and nothing to merge forward from. Nothing was written.',
+      },
+    };
+  }
   const publishArgs: Record<string, unknown> = {
     graph_iri: args.canvasIri,
     graph_content: canvasTurtle({ canvas: args.canvasIri, workspace: args.workspace, slug: args.slug, body: args.body }),
     // ★ The workspace's own policy — see `visibilityFor`. Omitting this would silently ENCRYPT.
     visibility: visibilityFor('canvas', args.visibility ?? 'public'),
+    // Only under 'shared' — the relay drops it with a warning under 'public'.
+    ...(args.visibility === 'private' && args.shareWith?.length ? { share_with: args.shareWith } : {}),
     auto_supersede_prior: true,
     sign_authorship: true,
   };

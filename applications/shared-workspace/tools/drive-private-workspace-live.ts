@@ -1,0 +1,237 @@
+/**
+ * A PRIVATE WORKSPACE, TWO REAL IDENTITIES, TWO REAL PODS — DOES THE OTHER MEMBER GET IN?
+ *
+ * ── ★★ THE ONE QUESTION THE UNIT TESTS CANNOT ANSWER ────────────────────────
+ *
+ * Everything about private workspaces is verifiable in isolation: the visibility mapping, the
+ * recipient list, the fail-closed writers, the opener. All of it can be right and the feature
+ * still be useless, because the thing that decides it happens on the relay, between two pods:
+ *
+ *   Does B — a different person, on a different pod, holding a different key — actually OPEN an
+ *   entry that A wrote?
+ *
+ * If the recipient resolution silently produces an empty key set (which it does, without erroring,
+ * for a handle that does not resolve or a pod that registers no key), A's publish still returns
+ * 200 and the channel still looks normal from A's side. The failure is only visible from B's, and
+ * only in production. So this is measured there.
+ *
+ * ── ★ AND THE NEGATIVE MATTERS AS MUCH AS THE POSITIVE ──────────────────────
+ *
+ * An envelope every key opens would pass every "B can read it" assertion ever written. So a third
+ * identity, seated in nothing, must be REFUSED — and refused as a permission, not reported as a
+ * damaged record.
+ *
+ * ── WHAT IT WRITES ──────────────────────────────────────────────────────────
+ *
+ * Three throwaway wallets, each with a pod that did not exist a minute earlier. A creates a
+ * private workspace, invites B, B accepts, A posts. Nobody else's pod is named or touched.
+ *
+ * From the repo root (bundled, not `tsx` — see `probe-e2e-live.ts` for why):
+ *   npx esbuild applications/shared-workspace/tools/drive-private-workspace-live.ts \
+ *     --bundle --format=cjs --platform=node --target=es2022 --outfile=/tmp/drive-private.cjs
+ *   node /tmp/drive-private.cjs
+ */
+
+import { Wallet } from 'ethers';
+import { deriveEncryptionKeyPair } from '@interego/core';
+import {
+  RelayMcpTransport, WorkspaceClient, acceptGrant, composedHandle, createWorkspace, foldRoster,
+  nsIri, orderChain, parseRoleProfile, postEntry, qualifiedName, readInbox, readViewer,
+  recipientsFor, toChainRow, unreachedRecipients, verifyInvitation, sendInvite, graphRegion, readLiteral,
+  type Viewer,
+} from '@interego/workspace-client';
+import { openerFor } from '@interego/workspace-client/opener';
+import { mintBearer, type Signer } from './live-identity.js';
+
+const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
+const IDENTITY = process.env['INTEREGO_IDENTITY'] ?? 'https://identity.interego.xwisee.com';
+
+let bad = 0;
+const log = (...a: unknown[]): void => { process.stdout.write(a.join(' ') + '\n'); };
+const head = (t: string): void => { log('\n── ' + t + ' ' + '─'.repeat(Math.max(0, 74 - t.length))); };
+const must = (what: string, ok: boolean, detail = ''): void => {
+  if (!ok) bad++;
+  log((ok ? '  PASS  ' : '  FAIL  ') + what + (!ok && detail ? '\n        ' + detail : ''));
+};
+
+interface Party { readonly client: WorkspaceClient; readonly viewer: Viewer; readonly handle: string }
+
+/**
+ * ★ EACH PARTY INSTALLS ITS OWN KEY, exactly as its host does — the desktop from the OS secret
+ * store, the bot from its environment. A driver that shared one key between the parties would
+ * prove nothing about whether B can read A's writing.
+ */
+async function party(label: string, wallet: Signer & { privateKey: string }): Promise<Party> {
+  const bearer = await mintBearer(RELAY, IDENTITY, wallet);
+  const client = new WorkspaceClient(RELAY, new RelayMcpTransport(RELAY, bearer));
+  await client.connect();
+  const viewer = await readViewer(client);
+
+  const key = deriveEncryptionKeyPair(wallet.privateKey);
+  // Registered against the agent the relay says this session IS — the same call the desktop and
+  // the bot make at sign-in. Without it this party contributes no recipient key to its own pod,
+  // and anything "shared" with it resolves to nobody.
+  await client.tool('register_agent', {
+    agent_id: viewer.agentDid, scope: 'ReadWrite', encryption_public_key: key.publicKey,
+  });
+  client.setGraphOpener(openerFor(wallet.privateKey));
+
+  log('  ' + label + ' pod ' + viewer.podName + ' · key ' + key.publicKey.slice(0, 12) + '…');
+  return { client, viewer, handle: composedHandle(RELAY, viewer.podName) };
+}
+
+async function run(): Promise<number> {
+  head('three throwaway identities, each holding its own key');
+  const aw = Wallet.createRandom(); const bw = Wallet.createRandom(); const cw = Wallet.createRandom();
+  const A = await party('A (convener)', aw);
+  const B = await party('B (invited)  ', bw);
+  // C is never seated and never invited. It exists to be refused.
+  const strangerOpener = openerFor(cw.privateKey);
+
+  head('A creates a PRIVATE workspace');
+  const slug = 'priv-' + Date.now().toString(36);
+  const created = await createWorkspace(A.client, {
+    relay: RELAY, viewer: A.viewer, title: 'Private drive ' + slug, slug,
+    visibility: 'private',
+    onStep: (s) => { if (s.state !== 'sending') log('    ' + s.label + ' · ' + s.state); },
+  });
+  must('all five documents published and A is seated', created.kind === 'created' && created.seated,
+    JSON.stringify(created).slice(0, 300));
+  if (created.kind !== 'created') return 1;
+  const workspace = created.workspace;
+  const entryShape = created.shapeIri;
+
+  head('★ the record reads back as private — and the shape did NOT get encrypted');
+  const rec = await A.client.readWorkspaceRecord(workspace, A.viewer.podName);
+  must('the record reads', rec.kind === 'record', rec.kind);
+  if (rec.kind !== 'record') return 1;
+  must('★★ it declares itself private', rec.record.visibility === 'private', rec.record.visibility);
+  must('★★ and A can read it, so it is not withheld from its own convener', !rec.record.withheld, 'withheld');
+  /**
+   * ★★ THE LOCKOUT THIS WOULD BE. The relay fetches the shape's body by plain GET on its /ns IRI
+   * and `/ns` answers 409 for an encrypted graph; the conformance gate fails closed. So the first
+   * encrypted shape makes every later write to this workspace a 422 with no way back — the fix
+   * would itself be a write. `visibilityFor` keeps shape and roles public-always; this is that
+   * decision, measured against the live relay rather than asserted in a comment.
+   */
+  const shapeResp = await fetch(entryShape, { headers: { 'Accept': 'text/turtle' } });
+  must('★★ the SHACL shape is still fetchable — an encrypted one locks the workspace out of itself forever',
+    shapeResp.ok, 'GET ' + entryShape + ' → ' + shapeResp.status);
+  const profile = await A.client.fetchProfileTurtle(created.rolesIri);
+  const table = parseRoleProfile(profile.turtle);
+  must('★ and the role profile still resolves, for the same reason', table.roles.size === 3, String(table.roles.size));
+  const contributor = [...table.roles.keys()].find((r) => r.endsWith('#Contributor'));
+  if (!contributor) { must('a Contributor role exists', false, ''); return 1; }
+
+  head('A invites B; B verifies the claim and accepts');
+  const inv = await sendInvite(A.client, {
+    viewer: A.viewer, workspace, workspaceTitle: 'Private drive ' + slug,
+    handle: B.handle, role: contributor, entryShape,
+    // ★ The record has to be re-sealed to include B before B can verify their own grant — see
+    // `resealRecord`. A is the only member so far, so A is the whole existing roster.
+    visibility: 'private', shareWith: [A.viewer.webId],
+    onState: (st, d) => { if (st.startsWith('re-sealing')) log('    ' + st + ' · ' + d); },
+  });
+  must('the grant was written', inv.kind === 'invited', JSON.stringify(inv).slice(0, 260));
+  if (inv.kind !== 'invited') return 1;
+
+  const inbox = await readInbox(B.client);
+  log('    offers in B\'s inbox: ' + inbox.invitations.length);
+  let accepted = false;
+  for (const item of inbox.invitations) {
+    await verifyInvitation(B.client, RELAY, B.viewer, item);
+    const v = item.verdict;
+    log('    · ' + (v?.grantIri ?? 'no grant iri') + ' → ' + (v?.ok ? 'VERIFIED' : 'refused: ' + (v?.why ?? 'no verdict')));
+    if (!v?.ok || v.grantIri !== inv.grantIri) continue;
+    // ★ B reads the workspace record to verify the grant — which means B decrypted it. A private
+    // workspace whose record B cannot open cannot be joined at all.
+    must('★★ B could read the PRIVATE workspace record well enough to verify the grant', v.ok, v.why ?? '');
+    must('★ and B sees it as private too', v.visibility === 'private', String(v.visibility));
+    const out = await acceptGrant(B.client, { relay: RELAY, viewer: B.viewer, verdict: v });
+    accepted = out.kind === 'accepted' && out.readable;
+    must('B\'s acceptance is readable on B\'s own pod', accepted, JSON.stringify(out).slice(0, 240));
+  }
+  must('the invitation was found in B\'s inbox', accepted, 'nothing verified against ' + inv.grantIri);
+  if (!accepted) return 1;
+
+  head('A posts, encrypted to the roster');
+  const fold = await foldRoster(A.client, {
+    workspace, iriOwner: A.viewer.podName, slug,
+    convener: rec.record.convener, convenerPod: rec.record.convenerPod,
+  });
+  must('both are seated', fold.seats.filter((s) => s.seated).length === 2,
+    fold.seats.map((s) => s.pod + '=' + s.seated).join(' '));
+  const audience = recipientsFor('private', fold);
+  must('a recipient list was produced', audience.ok, audience.ok ? '' : audience.why);
+  if (!audience.ok) return 1;
+  log('    encrypting to: ' + (audience.shareWith ?? []).join(', '));
+
+  const secret = 'the-secret-' + Date.now().toString(36);
+  const streamIri = fold.seats.find((s) => s.pod === A.viewer.podName)?.stream
+    ?? nsIri(RELAY, A.viewer.podName, qualifiedName(A.viewer.podName, slug, 'stream'));
+  const posted = await postEntry(A.client, {
+    podName: A.viewer.podName, streamIri, workspace, entryShape,
+    body: secret,
+    author: { kind: 'principal', webId: A.viewer.webId },
+    visibility: 'private',
+    ...(audience.shareWith ? { shareWith: audience.shareWith } : {}),
+  });
+  must('the entry was accepted', posted.kind === 'accepted', JSON.stringify(posted).slice(0, 300));
+  if (posted.kind !== 'accepted') return 1;
+
+  /**
+   * ★★ THE SILENT FAILURE THAT LOOKS LIKE SUCCESS. `resolveRecipient` returns an EMPTY key list
+   * rather than an error when a handle does not resolve or a pod registers no encryption key, so
+   * an entry encrypted to NOBODY is a 200 with a well-formed descriptor. `agentCount` is the only
+   * evidence it ever happened.
+   */
+  const unreached = unreachedRecipients(posted.response ?? null);
+  must('★★ every named recipient resolved to at least one key', unreached.length === 0,
+    'reached nobody: ' + unreached.join(', '));
+
+  head('★★ can B — a different person, on a different pod — actually read it?');
+  /**
+   * ★ THE PUBLISH IS DEFERRED. It answers `status: "pending"` and the pod write commits after the
+   * tool call returns, so an immediate read from the other side finds an empty stream — which
+   * looks exactly like "B cannot see A's entries" and is really just a race. Waited for, and said
+   * so if it never arrives, rather than blamed on the encryption.
+   */
+  let bRows: ReturnType<typeof toChainRow>[] = [];
+  for (const deadline = Date.now() + 60_000; ;) {
+    bRows = (await B.client.manifest(A.viewer.podName, streamIri)).map(toChainRow);
+    if (bRows.length > 0 || Date.now() > deadline) break;
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  const bChain = orderChain(bRows);
+  must('B can see the entry in A\'s stream', bChain.ordered.length > 0, 'the chain read empty');
+  const last = bChain.ordered[bChain.ordered.length - 1];
+  if (!last) return 1;
+  // Through `client.descriptor`, which is where the sealed read and the opening happen — the same
+  // path every reader in the app takes, not a special one for this driver.
+  const bRead = await B.client.descriptor(last.url);
+  const bGraph = bRead['graph'] as { content?: string | null } | undefined;
+  const bBody = readLiteral(graphRegion(bGraph?.content ?? '', last.url.replace(/\.ttl$/, '')) ?? bGraph?.content ?? '', 'iep:body')
+    ?? (bGraph?.content ?? '');
+  must('★★ B OPENED A\'S ENTRY — this is the whole claim', bBody.includes(secret),
+    bRead['openedWithOwnKey'] ? 'decrypted, but the words are not there: ' + String(bGraph?.content).slice(0, 200)
+      : 'not decrypted at all: ' + String(bGraph?.content).slice(0, 200));
+  must('★ and it says so — the content was decrypted here, not served in the clear',
+    bRead['openedWithOwnKey'] === true, 'the relay handed back plaintext, so this is at-rest and not end-to-end');
+
+  head('★ and a stranger, seated in nothing, must be refused');
+  // Fetched as sealed bytes and offered to C's key. C is not on the roster and never was.
+  const sealed = await B.client.tool('get_encrypted_graph', { url: last.url });
+  must('★★ C cannot open it', strangerOpener(sealed) === null,
+    'an unrelated key opened this entry, so the envelope is not addressed to anybody in particular');
+
+  return bad;
+}
+
+run().then((n) => {
+  log(n ? '\n' + n + ' problem(s) — a private workspace is NOT usable end to end'
+    : '\na private workspace works end to end: A wrote it sealed, B opened it, a stranger could not');
+  process.exit(n ? 1 : 0);
+}).catch((e: unknown) => {
+  log('\nthe driver could not complete: ' + ((e as Error)?.stack ?? String(e)));
+  process.exit(1);
+});

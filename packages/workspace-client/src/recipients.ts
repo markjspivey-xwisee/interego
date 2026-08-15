@@ -82,6 +82,33 @@ export function recipientsFromRoster(args: {
 }
 
 /**
+ * The `shareWith` to pass a writer, for a workspace of this visibility.
+ *
+ * ★ THE ONE PLACE THE TWO QUESTIONS ARE JOINED. "Is this workspace private" and "who are its
+ * members" are answered in different files from different reads, and every write site needs both.
+ * Three call sites each doing the join themselves is three chances to check the first and forget
+ * the second — which publishes an entry sealed to its author alone, silently and permanently.
+ *
+ * A public workspace gets `undefined`, which is not a recipient list and is not an empty one: the
+ * writers only send `share_with` when they are actually encrypting.
+ */
+export function recipientsFor(
+  visibility: 'public' | 'private' | undefined,
+  roster: { readonly seats: readonly Seat[]; readonly grantsFound: number; readonly grantsRead: number } | null,
+): { readonly ok: true; readonly shareWith: readonly string[] | undefined } | { readonly ok: false; readonly why: string } {
+  if (visibility !== 'private') return { ok: true, shareWith: undefined };
+  if (!roster) {
+    return {
+      ok: false,
+      why: 'this workspace is private and its roster has not been read here, so there is no way to tell who '
+        + 'this should be encrypted to. Open the workspace and let the members list load first. Nothing was written.',
+    };
+  }
+  const plan = recipientsFromRoster(roster);
+  return plan.ok ? { ok: true, shareWith: plan.shareWith } : { ok: false, why: plan.why };
+}
+
+/**
  * Check what the relay actually resolved, from the publish response.
  *
  * ★★ THE ONLY EVIDENCE THAT A RECIPIENT WAS REACHED. `resolveRecipient` returns an entry with an

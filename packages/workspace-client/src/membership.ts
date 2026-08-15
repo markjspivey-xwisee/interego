@@ -383,6 +383,76 @@ export type InviteOutcome =
  * notice is only a pointer to it, and this reports the two separately because a failed notice
  * does not un-publish a grant.
  */
+/**
+ * Re-publish a private workspace's record so a named set of members can read it.
+ *
+ * ★ THE CONTENT IS REBUILT FROM WHAT THE RECORD SAYS, NOT COPIED. `workspaceTurtle` is the only
+ * thing that has ever written this document, so rebuilding it from the fields just read reproduces
+ * it — and rebuilding is what lets this run at all, since the point is to write the same statements
+ * to a different audience. If the record could not be READ here, nothing is written: re-sealing a
+ * record this client cannot see would replace it with a reconstruction of a document it never
+ * examined.
+ *
+ * Returns an outcome ONLY on failure; `null` means the record is now readable by everyone named.
+ */
+async function resealRecord(
+  client: WorkspaceClient,
+  args: {
+    readonly workspace: string;
+    readonly viewer: Viewer;
+    readonly entryShape: string | null;
+    readonly shareWith: readonly string[];
+    /**
+     * The invitee, carried only so a failure here reports the same shape every other invite
+     * failure does. ★ NOT a `null` cast: a caller reading `out.resolution.checks` off an error
+     * would throw, and an invite that fails is exactly when a caller wants those checks.
+     */
+    readonly resolution: InviteeResolution;
+    readonly onState?: (state: string, detail: string) => void;
+  },
+): Promise<InviteOutcome | null> {
+  if (args.shareWith.length === 0) {
+    return { kind: 'error', resolution: args.resolution,
+      error: new Error('this workspace is private and no members were named to re-seal its record to, so '
+        + 'the invitee would not be able to read it and could not accept. Nothing was written.') };
+  }
+  const owner = podOfNsIri(args.workspace);
+  if (!owner) {
+    return { kind: 'error', resolution: args.resolution,
+      error: new Error('the workspace IRI names no pod this client can read a record from, so its record cannot be re-sealed. Nothing was written.') };
+  }
+  const rec = await client.readWorkspaceRecord(args.workspace, owner);
+  if (rec.kind !== 'record' || !rec.record.regionFound || !rec.record.convener) {
+    return { kind: 'error', resolution: args.resolution,
+      error: new Error('this workspace is private and its record could not be read here'
+        + (rec.kind === 'record' && rec.record.withheld ? ' — it is encrypted and this identity is not among its recipients' : '')
+        + ', so it cannot be re-sealed to include the invitee. Nothing was written.') };
+  }
+  const rolesIri = rec.record.roleProfile;
+  const shapeIri = rec.record.entryShape ?? args.entryShape;
+  if (!rolesIri || !shapeIri) {
+    return { kind: 'error', resolution: args.resolution,
+      error: new Error('the workspace record names no ' + (rolesIri ? 'entry shape' : 'role profile')
+        + ', so re-publishing it would drop a term the workspace depends on. Nothing was written.') };
+  }
+  const publishArgs: Record<string, unknown> = {
+    graph_iri: args.workspace,
+    graph_content: workspaceTurtle({
+      workspace: args.workspace, title: rec.record.title, convenerWebId: rec.record.convener,
+      rolesIri, shapeIri, visibility: 'private',
+    }),
+    visibility: visibilityFor('record', 'private'),
+    share_with: args.shareWith.slice(),
+    conforms_to_shapes: [shapeIri],
+    auto_supersede_prior: true, sign_authorship: true,
+  };
+  const out = await client.publishAndConfirm(publishArgs, args.viewer.podName, args.workspace,
+    (state, detail) => args.onState?.('re-sealing the record · ' + state, detail));
+  if (out.error) return { kind: 'error', error: out.error, resolution: args.resolution };
+  if (out.refusal) return { kind: 'refused', refusal: out.refusal as Record<string, unknown>, resolution: args.resolution };
+  return null;
+}
+
 export async function sendInvite(
   client: WorkspaceClient,
   args: {
@@ -392,6 +462,16 @@ export async function sendInvite(
     readonly handle: string;
     readonly role: string;
     readonly entryShape: string | null;
+    /** The workspace's own policy, from the record this caller already read. */
+    readonly visibility?: 'public' | 'private';
+    /**
+     * Every seated member's WebID, for a PRIVATE workspace. The invitee is added here — the
+     * caller does not need to.
+     *
+     * ★★ WITHOUT THIS A PRIVATE WORKSPACE CAN ADMIT NOBODY, and the measurement is in
+     * `drive-private-workspace-live.ts`. See {@link sendInvite}'s note on re-sealing.
+     */
+    readonly shareWith?: readonly string[];
     readonly onState?: (state: string, detail: string) => void;
   },
 ): Promise<InviteOutcome> {
@@ -399,6 +479,34 @@ export async function sendInvite(
   try { who = await resolveInvitee(client, args.handle); }
   catch (e) { return { kind: 'resolve-failed', error: e }; }
   if (who.blocked) return { kind: 'blocked', resolution: who };
+
+  /**
+   * ── ★★ A PRIVATE WORKSPACE MUST BE RE-SEALED BEFORE ANYBODY CAN JOIN IT ────
+   *
+   * An envelope's recipients are fixed when it is written. The workspace RECORD was written at
+   * creation, when the only member was its convener — so it is encrypted to the convener alone,
+   * and an invitee cannot read it. That is not a cosmetic problem: `verifyGrantIri` reads the
+   * record to establish that the grant is on the convener's own pod and names a role the
+   * workspace declares. An invitee who cannot read it cannot verify their own grant, cannot
+   * accept, and therefore cannot join. Measured live: B's inbox showed the offer and refused it
+   * with "this workspace is private and this identity is not among them" — about a grant written
+   * FOR B, seconds earlier.
+   *
+   * So the record is re-published, superseding itself, with the invitee among its recipients.
+   *
+   * ★ AND IT HAPPENS BEFORE THE GRANT, so the worse failure cannot occur. Re-seal then grant: if
+   * the grant fails, one extra person can read a record that seats them in nothing. Grant then
+   * re-seal: if the re-seal fails, somebody holds a grant they cannot use and nothing says so.
+   */
+  if (args.visibility === 'private') {
+    const resealed = await resealRecord(client, {
+      workspace: args.workspace, viewer: args.viewer, entryShape: args.entryShape,
+      shareWith: [...new Set([...(args.shareWith ?? []), who.webId])].filter(Boolean),
+      resolution: who,
+      onState: args.onState,
+    });
+    if (resealed) return resealed;
+  }
 
   const grantIri = args.workspace + '-grant-' + who.pod;
   const publishArgs: Record<string, unknown> = {
