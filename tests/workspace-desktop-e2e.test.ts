@@ -17,7 +17,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { createEncryptedEnvelope, type EncryptedEnvelope } from '@interego/core';
-import { encryptionKeyFor, openGraph } from '../applications/shared-workspace/desktop/src/e2e.js';
+import { encryptionKeyFor, openGraph } from '../packages/workspace-client/src/opener.js';
 
 // Two ordinary secp256k1 private keys. Fixed, so these tests are deterministic.
 const ALICE = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d';

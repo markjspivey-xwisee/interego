@@ -181,6 +181,47 @@ describe('dispatch', () => {
     h.gw.stop();
   });
 
+  it('★★ carries a BOOLEAN option, which was being dropped on the floor', () => {
+    /**
+     * Discord's option type 5 arrives as a real `boolean`. The collector accepted `string` and
+     * `number` only, so a checkbox would render in the client, be ticked by the user, and simply
+     * not arrive — the handler reading `undefined`, taking its default, and doing the OPPOSITE of
+     * what was asked with nothing reporting a problem.
+     *
+     * `/workspace start private:true` is the first such option, and the default it would have
+     * silently fallen back to is "public" — a workspace published in the clear for somebody who
+     * asked for it to be encrypted. Pinned so the next boolean option cannot rediscover this.
+     */
+    const h = harness();
+    h.gw.connect(); h.frame(HELLO);
+    h.frame({
+      op: 0, t: 'INTERACTION_CREATE', s: 1,
+      d: {
+        id: 'i', token: 't', type: 2, channel_id: 'c', member: { user: { id: 'u1' } },
+        data: { name: 'workspace', options: [{ type: 1, name: 'start', options: [{ type: 5, name: 'private', value: true }] }] },
+      },
+    });
+    expect(h.interactions[0]?.name).toBe('workspace start');
+    expect(h.interactions[0]?.options['private']).toBe('true');
+    h.gw.stop();
+  });
+
+  it('★ and a boolean left FALSE arrives as false, not as absent', () => {
+    // The two are read differently downstream — absent means "not chosen", false means "chosen
+    // not to". Collapsing them would be the same bug wearing the opposite sign.
+    const h = harness();
+    h.gw.connect(); h.frame(HELLO);
+    h.frame({
+      op: 0, t: 'INTERACTION_CREATE', s: 1,
+      d: {
+        id: 'i', token: 't', type: 2, channel_id: 'c', member: { user: { id: 'u1' } },
+        data: { name: 'workspace', options: [{ type: 1, name: 'start', options: [{ type: 5, name: 'private', value: false }] }] },
+      },
+    });
+    expect(h.interactions[0]?.options['private']).toBe('false');
+    h.gw.stop();
+  });
+
   it('delivers an autocomplete, flattened, with the FOCUSED option and not the subcommand', () => {
     // ★ TYPE 4 WAS DROPPED ON THE FLOOR AND `ask` IS BUILT AROUND IT. The flattening matters twice
     // here: without it `data.options[0]` is the SUBCOMMAND, so the focused option would never be

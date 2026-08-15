@@ -479,6 +479,9 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
         case 'workspace start':
           m = renderStart(await session.call((c) => startWorkspace(deps(c), {
             threadId: i.channelId, threadName: i.channelName ?? '', discordUserId: i.userId as string,
+            // Absent is PUBLIC — the same reading every other surface makes, and the only safe one:
+            // an unticked box must never promise a privacy nobody arranged.
+            visibility: i.options['private'] === 'true' ? 'private' : 'public',
           })));
           break;
         case 'workspace show':

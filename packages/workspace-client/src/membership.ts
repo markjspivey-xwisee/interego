@@ -570,9 +570,21 @@ export async function verifyGrantIri(
      * about a record that is perfectly well formed and simply not this reader's to open. See
      * `WorkspaceRecord.withheld`.
      */
+    /**
+     * ★★ AND "NOT A MEMBER" IS A THIRD CLAIM AGAIN, WHICH THIS COULD NOT TELL APART. A client with
+     * no key installed — the published artifact, which runs in a browser, and any browser sign-in
+     * — cannot open ANY sealed record, including one addressed to the person reading it. Telling a
+     * seated member "you are not one of them" on that evidence is a false statement about their
+     * membership, made by a client that never even attempted the decryption. Which of the two it
+     * is, is known exactly: `canOpenSealed`.
+     */
     return no(rec.record.withheld
-      ? 'this workspace is private and its record is encrypted to its members, and you are not one of '
-        + 'them. Nothing is wrong with the record; it is not yours to read.'
+      ? (client.canOpenSealed
+        ? 'this workspace is private and its record is encrypted to its members, and this identity is not '
+          + 'among them. Nothing is wrong with the record; it is not yours to read.'
+        : 'this workspace is private and its records are encrypted, and this client holds no key to open '
+          + 'them — so whether you are a member of it is not something this read can answer either way. '
+          + 'Open it in a client signed in with your own key.')
       : 'the workspace record\'s signed region could not be located', withWs);
   }
   const full: Partial<GrantVerdict> = {

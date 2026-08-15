@@ -247,12 +247,37 @@ describe('★★ an encrypted record is withheld, not malformed', () => {
 
   it('★ says the record is private and not yours, rather than accusing it of being unsigned', async () => {
     const pod = withheldRecord({ [WS]: WS_DOC, [GRANT]: grantDoc(GRANT, WEBID(OTHER)) })();
-    const v = await verifyGrantIri(client(pod), { relay: RELAY, viewer: viewer(OTHER), grantIri: GRANT });
+    const c = client(pod);
+    // ★ WITH A KEY INSTALLED, because that is what makes "not yours" a finding rather than a
+    // guess: this client tried the envelope and was not among its recipients. See the next test
+    // for the client that could not try at all.
+    c.setGraphOpener(() => null);
+    const v = await verifyGrantIri(c, { relay: RELAY, viewer: viewer(OTHER), grantIri: GRANT });
     expect(v.ok).toBe(false);
     if (!v.ok) {
       expect(v.why).toContain('private');
       expect(v.why).toContain('not yours to read');
       // ★ The accusation must be gone, not merely accompanied by a nicer sentence.
+      expect(v.why).not.toContain('could not be located');
+    }
+  });
+
+  it('★★ but a client with NO key says it cannot tell, instead of denying the reader\'s membership', async () => {
+    /**
+     * The published artifact runs in a browser and installs no opener; so does a browser sign-in.
+     * Such a client cannot open ANY sealed record — including one addressed to the person reading
+     * it. "You are not one of its members" is then a false claim about their membership, produced
+     * by a client that never attempted the decryption. Which case it is, is known exactly, so it
+     * is said exactly.
+     */
+    const pod = withheldRecord({ [WS]: WS_DOC, [GRANT]: grantDoc(GRANT, WEBID(OTHER)) })();
+    const v = await verifyGrantIri(client(pod), { relay: RELAY, viewer: viewer(OTHER), grantIri: GRANT });
+    expect(v.ok).toBe(false);
+    if (!v.ok) {
+      expect(v.why).toContain('private');
+      expect(v.why).toContain('holds no key');
+      // Neither of the two claims it is not entitled to make.
+      expect(v.why).not.toContain('not yours to read');
       expect(v.why).not.toContain('could not be located');
     }
   });

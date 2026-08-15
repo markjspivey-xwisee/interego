@@ -46,7 +46,7 @@
  */
 import { Wallet } from 'ethers';
 import { deriveEncryptionKeyPair } from '@interego/core';
-import { openGraph } from '../desktop/src/e2e.js';
+import { openGraph } from '../../../packages/workspace-client/src/opener.js';
 import { mintBearer } from './live-identity.js';
 
 const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';

@@ -31,6 +31,12 @@ export interface SessionInfo {
   readonly expiresAt: number | null;
   readonly renewable: boolean;
   readonly why: string | null;
+  /**
+   * Whether this session holds an encryption key, and so whether creating a PRIVATE workspace is
+   * something this sign-in could read back. See the main process's `Session.sealedReads`: without
+   * it the choice is a trap that returns 200.
+   */
+  readonly sealedReads: boolean;
 }
 
 /**

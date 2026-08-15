@@ -463,6 +463,33 @@ function renderSession(s: SessionInfo): void {
         : 'the grant did not report an expiry, so no renewal is scheduled; a rejected token is recovered when one is met rather than on a guessed clock');
   }
   btn('renewbtn').hidden = !s.renewable;
+
+  /**
+   * ★★ "PRIVATE" IS ONLY OFFERED WHEN THIS SESSION COULD READ ONE BACK.
+   *
+   * A browser sign-in holds no key on this machine. A private workspace created under it would
+   * still publish — sealed to whatever keys the pod's registry carries, which without a member key
+   * is the relay's own — so the person would end up with a workspace THEY cannot read and the
+   * relay can. It returns 200 and looks like it worked. Disabling the control is the only place
+   * that fact can be told before it is true.
+   */
+  const priv = document.getElementById('wsvis-private') as HTMLInputElement | null;
+  const pub = document.getElementById('wsvis-public') as HTMLInputElement | null;
+  if (priv && pub) {
+    priv.disabled = !s.sealedReads;
+    // A control that was already ticked before the session changed must not silently stay ticked
+    // while disabled — the form would still read `private` from a box nobody can see is active.
+    if (!s.sealedReads && priv.checked) { priv.checked = false; pub.checked = true; }
+    const hint = document.getElementById('wsvishint');
+    if (hint) {
+      hint.textContent = s.sealedReads
+        ? 'Private hides the words, not the fact: the roster, the timestamps and who wrote when stay '
+          + 'readable. It cannot be changed later.'
+        : 'Private needs a key on this machine, and this session signed in through the browser, which '
+          + 'holds none. A private workspace created now would be sealed to the relay rather than to '
+          + 'you. Sign in with a wallet key to make it available.';
+    }
+  }
 }
 
 // ── sign in ──────────────────────────────────────────────────────────────────
@@ -1217,6 +1244,9 @@ async function create(): Promise<void> {
   const setters = new Map<string, (s: string, d: string) => void>();
   const out = await createWorkspace(S.client, {
     relay: S.relay, viewer: S.viewer, title: inp('wstitleIn').value.trim(), slug,
+    // Read from the control rather than defaulted here: `createWorkspace` treats an omitted value
+    // as public, and two places deciding the same thing is how they come to disagree.
+    visibility: (document.getElementById('wsvis-private') as HTMLInputElement | null)?.checked ? 'private' : 'public',
     onStep: (s) => {
       let set = setters.get(s.label);
       if (!set) { set = writeLine(log, s.label); setters.set(s.label, set); }
@@ -2416,6 +2446,16 @@ async function post(as?: {
   }
   const out = await postEntry(writer, {
     podName: S.viewer.podName, streamIri, workspace: S.workspace, body,
+    /**
+     * ★★ THE WORKSPACE'S OWN POLICY, READ FROM THE RECORD THIS VIEW IS ALREADY SHOWING.
+     *
+     * Not re-fetched and not decided here: the record on screen is what the roster, the roles and
+     * every other statement in this panel were read from, so the entry is written under the same
+     * reading of the workspace the person is looking at. Omitting it would publish a plaintext
+     * entry into a private workspace — a 200, and a permanent hole in a conversation everything
+     * else about it says is sealed.
+     */
+    visibility: S.record?.visibility ?? 'public',
     // ★ THE FOOTING IS CARRIED FROM THE DRAFT, NOT DECIDED HERE. It is the delegate's own answer,
     // taken from what its model declared and shown on its Send button before this ran — so the
     // record states what the agent said it was doing, and the person saw it first.
@@ -2699,6 +2739,9 @@ async function doSave(useStale: boolean): Promise<void> {
   const out = await saveCanvas(S.client, {
     canvasIri: S.canvas.iri, podName: S.viewer.podName, workspace: S.workspace, slug: S.slug,
     body: area('canvas').value, ifMatch, previousCid: S.canvas.head,
+    // The workspace's own policy, from the record this view was built from — same reasoning as
+    // the entry post above. A plaintext canvas in a private workspace is the same hole.
+    visibility: S.record?.visibility ?? 'public',
   });
   const reopen = (): void => { b.disabled = !!S.writeBlocked; };
   if (out.kind === 'error') {

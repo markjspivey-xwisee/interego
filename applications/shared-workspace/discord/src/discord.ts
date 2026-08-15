@@ -524,7 +524,16 @@ export class DiscordGateway {
       const sub = first && first.type === 1 ? first : null;
       const options: Record<string, string> = {};
       for (const o of (sub ? sub.options : data.options) ?? []) {
-        if (o?.name && (typeof o.value === 'string' || typeof o.value === 'number')) options[o.name] = String(o.value);
+        /**
+         * ★ BOOLEANS TOO, AND THEY WERE BEING DROPPED. Discord's option type 5 arrives as a real
+         * `boolean`, which is neither of the two types this accepted — so a checkbox option
+         * declared in COMMANDS would render in the client, be ticked by the user, and simply not
+         * be here. The handler would read `undefined`, take its default, and do the opposite of
+         * what was asked with nothing anywhere reporting a problem.
+         */
+        if (o?.name && (typeof o.value === 'string' || typeof o.value === 'number' || typeof o.value === 'boolean')) {
+          options[o.name] = String(o.value);
+        }
       }
       this.handlers.onInteraction({
         id: p['id'], token: p['token'], channelId: p['channel_id'],
@@ -850,7 +859,15 @@ export const COMMANDS = [
     name: 'workspace',
     description: 'Turn this thread into a record on the participants\' own pods',
     options: [
-      { type: 1, name: 'start', description: 'Create a workspace convened by your pod, named after this thread' },
+      {
+        type: 1, name: 'start', description: 'Create a workspace convened by your pod, named after this thread',
+        options: [{
+          type: 5, name: 'private',
+          // ★ The consequence, in the space Discord gives: it is fixed at creation, and it is not a
+          // statement about this Discord channel — which stays as visible as it was.
+          description: 'Encrypt each record to the workspace\'s members. Cannot be changed later. Does not hide this Discord thread.',
+        }],
+      },
       { type: 1, name: 'link', description: 'Get a one-time code to bind your own Interego pod to this Discord account' },
       {
         type: 1, name: 'link-confirm', description: 'Finish linking, once you have published the delegation on your pod',

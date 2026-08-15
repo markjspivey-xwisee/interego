@@ -178,7 +178,13 @@ export type StartOut =
  */
 export async function startWorkspace(
   deps: Deps,
-  args: { readonly threadId: string; readonly threadName: string; readonly discordUserId: string },
+  args: {
+    readonly threadId: string;
+    readonly threadName: string;
+    readonly discordUserId: string;
+    /** The workspace's audience, chosen once. Omitted is public — see the option's description. */
+    readonly visibility?: 'public' | 'private';
+  },
 ): Promise<StartOut> {
   const link = deps.store.linkOf(args.discordUserId);
   if (!link) return { kind: 'not-linked' };
@@ -195,7 +201,7 @@ export async function startWorkspace(
   } catch (e) { return { kind: 'error', error: e }; }
 
   const title = args.threadName.trim() || 'Discord thread ' + args.threadId;
-  const out = await createWorkspace(deps.client, { relay: deps.relay, viewer: member, title, slug });
+  const out = await createWorkspace(deps.client, { relay: deps.relay, viewer: member, title, slug, visibility: args.visibility ?? 'public' });
   if (out.kind === 'invalid') return { kind: 'create-failed', detail: out.why, done: [] };
   if (out.kind === 'error') return { kind: 'create-failed', detail: 'at "' + out.at + '": ' + errorCopy(out.error).t + ' — ' + errorCopy(out.error).d, done: out.done };
   if (out.kind === 'refused') return { kind: 'create-failed', detail: 'at "' + out.at + '" the relay refused: ' + JSON.stringify(out.refusal).slice(0, 300), done: out.done };
@@ -397,6 +403,18 @@ export async function recordMessage(
     const outcome = await postEntry(deps.client, {
       podName: member.podName, streamIri, workspace: binding.workspace,
       body, entryShape: frame.record.entryShape,
+      /**
+       * ★★ THE WORKSPACE'S OWN POLICY, FROM THE RECORD THIS FRAME WAS BUILT FROM.
+       *
+       * Omitting it publishes a plaintext entry into a private workspace: a 200, and a permanent
+       * hole in a conversation every other record of which is sealed. Nothing would report it —
+       * the entry reads perfectly well, which is the problem.
+       *
+       * ★ AND IT IS DECIDED BY THE WORKSPACE, NOT BY DISCORD. Whether these words are also visible
+       * in a Discord channel is a different layer with a different audience; it does not change
+       * who the record on the pod is written for.
+       */
+      visibility: frame.record.visibility,
       ...(args.attachments?.length ? { attachments: args.attachments } : {}),
       ...(args.addressedTo === undefined ? {} : { addressedTo: args.addressedTo }),
       /**

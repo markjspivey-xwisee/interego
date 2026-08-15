@@ -30,6 +30,13 @@ import { Wallet } from 'ethers';
 import {
   DELEGATE_SURFACE, RelayMcpTransport, WorkspaceClient, type RelayOAuthBearer,
 } from '@interego/workspace-client';
+/**
+ * ★ A SEPARATE ENTRY POINT, AND NOT FOR TIDINESS. The opener reaches `@interego/core`'s crypto,
+ * which imports `node:crypto`. Exported from the package index it followed every consumer of the
+ * index into the BROWSER artifact bundle, and that build fails outright — which is the good
+ * outcome; the bad one would have been a polyfill quietly satisfying it.
+ */
+import { encryptionKeyFor, openerFor } from '@interego/workspace-client/opener';
 import {
   beginAuthorization, exchangeCode, refreshBearer, signInWithWallet, startLoopbackReceiver,
   type AuthMethod,
@@ -39,7 +46,6 @@ import {
   listDelegateKeys, putSecret, secretStoreAvailable, WALLET_KEY,
 } from './secrets.js';
 import { checkPrivateKey } from './privatekey.js';
-import { encryptionKeyFor, openGraph } from './e2e.js';
 import {
   CODEX_UNSUPPORTED, probeClaude, runClaude,
   type ModelRun, type ProviderStatus, type TurnTools,
@@ -102,8 +108,19 @@ interface Session {
   readonly renewable: boolean;
   /** Why the session is not live. Null when it is. */
   readonly why: string | null;
+  /**
+   * Whether this session holds an encryption key, and so whether a PRIVATE workspace is a thing
+   * this person can create here.
+   *
+   * ★★ WITHOUT IT, "PRIVATE" IS A TRAP RATHER THAN A SETTING. A browser sign-in leaves no key on
+   * this machine. Publishing privately anyway still succeeds — the payload is sealed to whatever
+   * keys the pod's registry holds, which in that case is the relay's own — so the person would
+   * create a workspace THEY cannot read and the relay can. That is the exact inversion of what the
+   * word promises, and it returns 200. The renderer disables the choice on this.
+   */
+  readonly sealedReads: boolean;
 }
-let session: Session = { state: 'signed-out', pod: null, method: null, expiresAt: null, renewable: false, why: null };
+let session: Session = { state: 'signed-out', pod: null, method: null, expiresAt: null, renewable: false, why: null, sealedReads: false };
 
 /**
  * One model turn in flight.
@@ -319,13 +336,7 @@ async function installEncryption(target: WorkspaceClient, privateKeyHex: string 
       });
     } catch { /* see above: the opener is still worth having */ }
   }
-  target.setGraphOpener((sealed) => {
-    const opened = openGraph(sealed, key);
-    // ★ null means NOT ADDRESSED TO ME, and nothing else. `unreadable` is a fault and is reported
-    // as one by leaving the record withheld — never by handing back a substitute string, which
-    // would land in a workspace document as if somebody had published it.
-    return opened.kind === 'opened' || opened.kind === 'plaintext' ? opened.content : null;
-  });
+  target.setGraphOpener(openerFor(privateKeyHex));
 }
 
 const listeners = new Set<WebContents>();
@@ -400,6 +411,9 @@ async function adopt(next: RelayOAuthBearer, method: AuthMethod, accountKey?: st
     state: 'live', pod, method, expiresAt: next.expiresAt,
     renewable: !!(next.refreshToken && next.clientId),
     why: null,
+    // Measured from the client, not inferred from the sign-in method: the opener is installed
+    // only if a key was actually found and derived.
+    sealedReads: client.canOpenSealed,
   });
   scheduleRenewal();
   return { pod, displayName: (status['displayName'] as string) ?? null, method };
@@ -620,7 +634,7 @@ app.whenReady().then(() => {
     // bearer — but they were opened during this person's run, and leaving them live would let the
     // next identity's window drive delegates the previous one switched on.
     hosted.clear();
-    setSession({ state: 'signed-out', pod: null, method: null, expiresAt: null, renewable: false, why: null });
+    setSession({ state: 'signed-out', pod: null, method: null, expiresAt: null, renewable: false, why: null, sealedReads: false });
     return { accounts: accountSlots() };
   });
 

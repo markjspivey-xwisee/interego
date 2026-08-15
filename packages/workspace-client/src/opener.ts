@@ -1,5 +1,16 @@
 /**
- * THE KEY THIS MACHINE HOLDS, AND THE RELAY DOES NOT.
+ * THE KEY A HOST HOLDS, AND THE RELAY DOES NOT.
+ *
+ * ★ IT LIVES IN THE SHARED CLIENT BECAUSE EVERY HOST NEEDS THE SAME ANSWER. It began in the
+ * desktop app, and the Discord conduit needs it too — it holds a wallet of its own and cannot read
+ * a private workspace without one. Two copies of "may this identity read these bytes" is two
+ * places for that question to be answered differently, which is the one kind of drift this package
+ * cannot tolerate: the disagreement would show up as a workspace that is readable in one client
+ * and reported corrupt in another.
+ *
+ * The SECRET still belongs to the host. Nothing here stores a key, and `WorkspaceClient` takes the
+ * opener as a function rather than key material precisely so that this package can be bundled into
+ * a browser artifact without ever being handed one.
  *
  * ── ★★ WHAT MAKES THE ENCRYPTION END-TO-END RATHER THAN AT-REST ─────────────
  *
@@ -87,4 +98,24 @@ export function openGraph(payload: unknown, key: EncryptionKeyPair): Opened {
     return { kind: 'unreadable', why: 'this identity is named as a recipient but the envelope would not open, so the key material or the ciphertext is damaged' };
   }
   return { kind: 'opened', content: plain };
+}
+
+/**
+ * The opener to hand {@link WorkspaceClient.setGraphOpener}, from a private key.
+ *
+ * ★★ THE COLLAPSE FROM FOUR ANSWERS TO TWO HAPPENS EXACTLY ONCE, HERE. `openGraph` distinguishes
+ * "not addressed to me" from "damaged" because a reader must be able to say which; the client's
+ * opener contract is narrower — a string or `null`, where `null` means NOT MINE. Each host writing
+ * that reduction itself is how one of them eventually maps `unreadable` to a placeholder string
+ * and lands "could not decrypt" in a workspace document as though somebody had published it.
+ *
+ * A damaged envelope therefore reads as withheld. That is the conservative direction: it says
+ * less than is known rather than more, and the record stays exactly as unread as it truly is.
+ */
+export function openerFor(privateKeyHex: string, principal?: string): (sealed: unknown) => string | null {
+  const key = encryptionKeyFor(privateKeyHex, principal);
+  return (sealed) => {
+    const opened = openGraph(sealed, key);
+    return opened.kind === 'opened' || opened.kind === 'plaintext' ? opened.content : null;
+  };
 }

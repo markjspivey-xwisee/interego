@@ -315,6 +315,26 @@
         <input id="wsslug" type="text" spellcheck="false" autocomplete="off" placeholder="family-room">
         <div class="hint" id="slughint"></div>
       </div>
+      <!--
+        ★ THE CHOICE IS MADE ONCE, HERE, AND CANNOT BE CHANGED AFTERWARDS. A workspace's audience
+        is fixed at the moment each record is written: an envelope's recipients are sealed into it,
+        so turning a public workspace private later would encrypt only what is written from then
+        on, and turning a private one public cannot un-seal what is already on the pods. Saying so
+        at the point of choosing is the only honest place to say it.
+      -->
+      <div class="field">
+        <label>Who can read what is written here</label>
+        <label class="note" for="wsvis-public">
+          <input type="radio" name="wsvis" id="wsvis-public" value="public" checked>
+          Anyone who has the link. Records are published in the clear.
+        </label>
+        <label class="note" for="wsvis-private">
+          <input type="radio" name="wsvis" id="wsvis-private" value="private">
+          Only its members. Each record is encrypted to the members seated at the time it is written.
+        </label>
+        <div class="hint" id="wsvishint">Private hides the words, not the fact: the roster, the
+          timestamps and who wrote when stay readable. It cannot be changed later.</div>
+      </div>
       <div class="row"><button class="primary" id="createbtn" disabled>Create it on my pod</button></div>
       <div id="createresult"></div>
     </div>

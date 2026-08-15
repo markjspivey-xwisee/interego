@@ -4201,7 +4201,7 @@ var WSPC = (() => {
     if (rec.kind === "missing") return no("the workspace record at " + workspace + " could not be read: " + rec.message, withWs);
     if (rec.kind === "error") return no("the workspace record could not be read: " + (rec.error?.message ?? String(rec.error)), withWs);
     if (!rec.record.regionFound) {
-      return no(rec.record.withheld ? "this workspace is private and its record is encrypted to its members, and you are not one of them. Nothing is wrong with the record; it is not yours to read." : "the workspace record's signed region could not be located", withWs);
+      return no(rec.record.withheld ? client.canOpenSealed ? "this workspace is private and its record is encrypted to its members, and this identity is not among them. Nothing is wrong with the record; it is not yours to read." : "this workspace is private and its records are encrypted, and this client holds no key to open them \u2014 so whether you are a member of it is not something this read can answer either way. Open it in a client signed in with your own key." : "the workspace record's signed region could not be located", withWs);
     }
     const full = {
       ...withWs,

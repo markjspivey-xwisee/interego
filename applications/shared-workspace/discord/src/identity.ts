@@ -20,6 +20,9 @@
 
 import { Wallet } from 'ethers';
 import { RelayMcpTransport, WorkspaceClient, type RelayOAuthBearer } from '@interego/workspace-client';
+// A separate entry point because it reaches node:crypto — see the note in the desktop's main.ts.
+import { openerFor } from '@interego/workspace-client/opener';
+import { deriveEncryptionKeyPair, type EncryptionKeyPair } from '@interego/core';
 // ★ IMPORTED, NOT REPEATED. This SIWE ceremony already exists twice — `desktop/src/auth.ts` and
 // this driver helper — and `tests/workspace-live-identity-parity.test.ts` pins the two message
 // bodies against each other precisely because a third spelling of the same message is a bot that
@@ -72,6 +75,15 @@ export class BotSession {
   private readonly relay: string;
   private readonly identityServer: string;
   private readonly wallet: Signer;
+  /**
+   * This bot's own X25519 keypair and the opener built from it, derived ONCE at construction.
+   *
+   * ★ DERIVED HERE RATHER THAN IN `open()` so the raw private key is not kept as a second field
+   * for the life of the process. `wallet` already holds it because signing needs it; nothing else
+   * should.
+   */
+  private readonly encryption: EncryptionKeyPair;
+  private readonly opener: (sealed: unknown) => string | null;
   private transport: RelayMcpTransport | null = null;
   private bearer: RelayOAuthBearer | null = null;
   private identity: BotIdentity | null = null;
@@ -87,6 +99,8 @@ export class BotSession {
     this.relay = relay.replace(/\/$/, '');
     this.identityServer = identityServer.replace(/\/$/, '');
     this.wallet = new Wallet(privateKey);
+    this.encryption = deriveEncryptionKeyPair(privateKey);
+    this.opener = openerFor(privateKey);
     this.fetchImpl = fetchImpl ?? ((...a) => fetch(...a));
   }
 
@@ -113,6 +127,30 @@ export class BotSession {
     // would hand out a link instruction naming an empty agent, and every delegation made from it
     // would authorise nothing while looking exactly like a delegation that worked.
     if (!agentId) throw new Error('get_pod_status reported no sessionAgent, so this bot has no agent identifier to ask anybody to delegate. Nothing was started.');
+
+    /**
+     * ★★ THE KEY THAT LETS THIS CONDUIT SEE A PRIVATE WORKSPACE AT ALL.
+     *
+     * Without it the bot cannot even read the workspace RECORD of a private workspace — the
+     * eligibility check reads it, finds it withheld, and refuses with "this workspace is private
+     * and you are not one of its members". So every private workspace was simply unusable from
+     * Discord, which is not a policy anybody chose; it is what happens when no member of the pod
+     * holds a key.
+     *
+     * ★ AND IT DOES NOT MAKE THE BOT A MEMBER. This registers a key against the bot's OWN agent,
+     * so it can read what is encrypted TO that agent. Whether the bot may act in a workspace is
+     * still decided by the delegation rows on each person's pod, exactly as before — a key is what
+     * you read with, not what you are allowed to do.
+     */
+    try {
+      await client.tool('register_agent', {
+        agent_id: agentId, scope: 'ReadWrite', encryption_public_key: this.encryption.publicKey,
+      });
+    } catch {
+      // A registry write that did not land is not a reason to refuse to start: the opener below
+      // is what reading depends on, and the pod may already carry this key from a previous run.
+    }
+    client.setGraphOpener(this.opener);
     this.identity = { client, agentId, pod, address: this.wallet.address };
     return this.identity;
   }
