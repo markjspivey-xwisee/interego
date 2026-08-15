@@ -854,6 +854,16 @@ export class DiscordRest {
  * two halves happen minutes apart in a different application, and an optional argument on one
  * command reads as though supplying it were the normal path.
  */
+/**
+ * Discord's hard limit on a command or option description.
+ *
+ * ★★ EXCEEDING IT IS FATAL AT BOOT, NOT COSMETIC. Registration is a single PUT of the entire
+ * command tree, so ONE over-long description makes Discord reject the whole thing with a 400 and
+ * the bot exits — every command gone, not just the one. Measured: a 107-character option
+ * description crash-looped the deployed bot until it was shortened.
+ */
+export const COMMAND_TEXT_MAX = 100;
+
 export const COMMANDS = [
   {
     name: 'workspace',
@@ -863,9 +873,17 @@ export const COMMANDS = [
         type: 1, name: 'start', description: 'Create a workspace convened by your pod, named after this thread',
         options: [{
           type: 5, name: 'private',
-          // ★ The consequence, in the space Discord gives: it is fixed at creation, and it is not a
-          // statement about this Discord channel — which stays as visible as it was.
-          description: 'Encrypt each record to the workspace\'s members. Cannot be changed later. Does not hide this Discord thread.',
+          /**
+           * ★★ 100 CHARACTERS, AND DISCORD ENFORCES IT WITH A FATAL 400 AT BOOT. The first version
+           * of this line was 107 and the bot crash-looped on startup: command registration is a
+           * PUT of the whole tree, so one over-long description takes the whole bot down rather
+           * than disabling one option. `COMMAND_TEXT_MAX` and the test that walks this tree exist
+           * because of it.
+           *
+           * The consequence still has to fit: it is fixed at creation, and it is not a statement
+           * about this Discord channel, which stays as visible as it was.
+           */
+          description: 'Encrypt records to its members. Cannot be changed later; does not hide this Discord thread.',
         }],
       },
       { type: 1, name: 'link', description: 'Get a one-time code to bind your own Interego pod to this Discord account' },
