@@ -143,3 +143,4 @@ export {
   REQUEST_INBOX_LIMIT, readRequests, verifyRequest, admitAnyVerifiedSigner, admitSeatedIn, agentInbox,
   type RequestNotice, type RequestVerdict, type AdmissionPredicate,
 } from './request.js';
+export { visibilityFor, alwaysPublic, type WorkspaceDoc, type WorkspaceVisibility } from './visibility.js';
