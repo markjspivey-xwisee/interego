@@ -48,6 +48,18 @@ export interface WorkspaceRecord {
    * was read on the way in and dropped on the way to the reader.
    */
   readonly withheld: boolean;
+  /**
+   * Whether this workspace's documents are published in the clear or encrypted to its members.
+   *
+   * ★★ ABSENT MEANS PUBLIC, AND THAT IS A DECISION RATHER THAN A DEFAULT. Every workspace
+   * published before `wsp:visibility` existed carries no value, and a reader that read missing as
+   * private would hide records that are not hidden — telling members a public conversation was
+   * secret. The other direction is the one to be careful about, and it is why an UNRECOGNISED
+   * value is also treated as public: a typo must not silently promise a privacy the writer never
+   * arranged. Nothing validates this value at publish time, so the reader is the only place the
+   * question is settled.
+   */
+  readonly visibility: 'public' | 'private';
   readonly convener: string | null;
   readonly roleProfile: string | null;
   readonly entryShape: string | null;
@@ -149,6 +161,8 @@ export class WorkspaceClient extends RelayClient {
         regionFound: region !== null,
         // Withheld, not missing. See the field's own note.
         withheld: graph?.encrypted === true,
+        // Absent, or anything this reader does not recognise, is public. See the field's note.
+        visibility: readLiteral(region, 'wsp:visibility') === 'private' ? 'private' : 'public',
         convener,
         roleProfile: readIri(region, 'wsp:roleProfile'),
         // ★ THE CONFORMANCE CONTRACT, READ RATHER THAN CHOSEN. A client that held one shape

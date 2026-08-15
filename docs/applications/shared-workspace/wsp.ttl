@@ -90,6 +90,13 @@ wsp:convener a owl:ObjectProperty ;
   rdfs:domain wsp:Workspace ; rdfs:range foaf:Agent ;
   rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp> .
 
+wsp:visibility a owl:DatatypeProperty ;
+  rdfs:label "visibility" ;
+  rdfs:comment
+    "Whether this workspace's documents are published in the clear ('public') or encrypted to its seated members ('private'). ABSENT MEANS PUBLIC: every workspace published before this term existed is public, and a reader that treated a missing value as private would hide records that are not hidden. Deliberately NOT iep:visibility, whose published rdfs:domain is dcat:Distribution and which states a fact about one distribution rather than a policy for a whole workspace — this is the policy, and each write derives its own distribution's visibility from it. Three documents are exempt and stay public whatever this says, because encrypting them locks the workspace out of itself: the SHACL shape contract and the role profile are fetched by the relay over plain HTTP while validating every write, and /ns answers 409 for an encrypted graph. Note also what 'private' does NOT hide: only the graph payload is enveloped, so the graph IRIs — which encode the convener's pod, the slug and every member's pod — along with timestamps, supersession chains and entry counts remain readable by anyone. A private workspace hides its words, not its roster or its activity." ;
+  rdfs:domain wsp:Workspace ; rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp> .
+
 wsp:roleProfile a owl:ObjectProperty ;
   rdfs:label "role profile" ;
   rdfs:comment

@@ -122,6 +122,16 @@ export function workspaceTurtle(args: {
   readonly rolesIri: string;
   readonly shapeIri: string;
   readonly createdIso?: string;
+  /**
+   * Whether this workspace's documents are published in the clear or encrypted to its members.
+   *
+   * ★ OMITTED MEANS PUBLIC, AND THE FIELD IS ONLY WRITTEN WHEN IT IS 'private'. Every workspace
+   * published before this term existed carries no value, so absent must read as public — a reader
+   * that treated missing as private would hide records that are not hidden. Writing `"public"`
+   * explicitly would be harmless but would make the old records look different from new ones that
+   * mean exactly the same thing.
+   */
+  readonly visibility?: 'public' | 'private';
 }): string {
   const ws = turtleIri(args.workspace, 'the workspace IRI');
   const conv = turtleIri(args.convenerWebId, 'the convener WebID');
@@ -137,6 +147,7 @@ export function workspaceTurtle(args: {
     + '  wsp:roleProfile ' + roles + ' ;\n'
     + '  wsp:entryShape ' + shape + ' ;\n'
     + '  wsp:grantCapability <' + args.rolesIri + '#Convene> ;\n'
+    + (args.visibility === 'private' ? '  wsp:visibility "private" ;\n' : '')
     + '  dct:created ' + created(args.createdIso) + ' .\n';
 }
 

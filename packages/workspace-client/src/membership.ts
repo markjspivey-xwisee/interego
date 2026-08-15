@@ -448,6 +448,16 @@ export interface GrantVerdict {
   readonly convener?: string | null;
   readonly roleProfile?: string | null;
   readonly entryShape?: string | null;
+  /**
+   * Whether the workspace this grant seats you into is public or encrypted to its members.
+   *
+   * ★ CARRIED FROM THE RECORD RATHER THAN DECIDED BY THE WRITER. Every document a member later
+   * publishes into this workspace has to match the workspace's own policy, and the only honest
+   * source for that is the workspace record itself — read once here, on the same read that
+   * establishes the seat, rather than re-fetched by each writer and possibly answered differently.
+   * This is exactly how `entryShape` already travels.
+   */
+  readonly visibility?: 'public' | 'private';
   readonly grantAuthorship?: unknown;
 }
 
@@ -558,6 +568,7 @@ export async function verifyGrantIri(
   const full: Partial<GrantVerdict> = {
     ...withWs, title: rec.record.title, convener: rec.record.convener,
     roleProfile: rec.record.roleProfile, entryShape: rec.record.entryShape,
+    visibility: rec.record.visibility,
   };
   const cp = rec.record.convenerPod;
   if (!cp) return no('the workspace names no convener this reader can resolve to a pod', full);
