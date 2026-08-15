@@ -47,7 +47,7 @@ const byTheAgent = (n: number, over: Partial<ShownEntry> = {}): ShownEntry => en
 
 const view = (entries: readonly ShownEntry[], streams: { pod: string; why: string | null }[] = []): ShowOut => ({
   kind: 'view', binding, entries,
-  record: { head: { url: 'u', cid: null } as never, regionFound: true, withheld: false, convener: null, roleProfile: null, entryShape: null, grantCapability: null, title: 'Roof decision', authorship: null, convenerPod: POD, servedFrom: POD },
+  record: { head: { url: 'u', cid: null } as never, regionFound: true, withheld: false, visibility: 'public' as const, convener: null, roleProfile: null, entryShape: null, grantCapability: null, title: 'Roof decision', authorship: null, convenerPod: POD, servedFrom: POD },
   fold: {
     seats: [{ graph: WORKSPACE, grantUrl: null, grantCid: null, role: null, grantedTo: null, pod: POD, seated: true, why: null, stream: RELAY + '/ns/' + POD + '/s' }],
     grantPod: POD, grantPodDerivedFrom: null, grantsFound: 1, grantsRead: 1, grantReadCap: 25,

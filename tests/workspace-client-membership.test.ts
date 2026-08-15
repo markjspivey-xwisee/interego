@@ -178,6 +178,55 @@ const grantDoc = (iri: string, grantee: string, extra = ''): { cid: string; url:
  * This has to hold BEFORE any private byte exists, which is why it ships ahead of the workspace
  * visibility choice rather than with it.
  */
+/**
+ * ★★ WHETHER A WORKSPACE IS PRIVATE IS A PROPERTY OF ITS RECORD, AND THE READER SETTLES IT.
+ *
+ * `wsp:visibility` is written only when it is `"private"`, and nothing validates the value at
+ * publish time — so what a missing or unrecognised value MEANS is decided in exactly one place,
+ * and it is the reader. Absent must read as public: every workspace published before the term
+ * existed carries no value, and reading missing as private would tell members a public
+ * conversation was secret. An unrecognised value reads as public for the opposite reason — a typo
+ * must not silently promise a privacy nobody arranged.
+ */
+describe('★★ wsp:visibility: written when private, and absent means public', () => {
+  const recordFor = (extra: string): ReturnType<typeof graphRegion> =>
+    graphRegion(trig(WS, workspaceTurtle({
+      workspace: WS, title: 'Room', convenerWebId: WEBID(POD), rolesIri: ROLES, shapeIri: WS + '-shapes',
+      ...(extra ? { visibility: extra as 'public' | 'private' } : {}),
+    })), WS);
+
+  it('writes the term only for a private workspace', () => {
+    expect(readLiteral(recordFor('private'), 'wsp:visibility')).toBe('private');
+    // ★ Not written for public: an old record and a new public one must look identical, or the
+    // two mean the same thing while reading differently.
+    expect(readLiteral(recordFor('public'), 'wsp:visibility')).toBe(null);
+    expect(readLiteral(recordFor(''), 'wsp:visibility')).toBe(null);
+  });
+
+  it('★ a record with no visibility term reads as PUBLIC, not private', async () => {
+    const c = client(podWith({ [WS]: WS_DOC, [GRANT]: grantDoc(GRANT, WEBID(OTHER)) }));
+    const v = await verifyGrantIri(c, { relay: RELAY, viewer: viewer(OTHER), grantIri: GRANT });
+    expect(v.ok).toBe(true);
+    if (v.ok) expect(v.visibility).toBe('public');
+  });
+
+  it('★ and a private one reads as private', async () => {
+    const priv = { ...WS_DOC, content: trig(WS, '<' + WS + '> a wsp:Workspace ; dct:title "Room" ; '
+      + 'wsp:convener <' + WEBID(POD) + '> ; wsp:roleProfile <' + ROLES + '> ; '
+      + 'wsp:entryShape <' + WS + '-shapes> ; wsp:visibility "private" .') };
+    const c = client(podWith({ [WS]: priv, [GRANT]: grantDoc(GRANT, WEBID(OTHER)) }));
+    const v = await verifyGrantIri(c, { relay: RELAY, viewer: viewer(OTHER), grantIri: GRANT });
+    expect(v.ok).toBe(true);
+    if (v.ok) expect(v.visibility).toBe('private');
+  });
+
+  it('★ an unrecognised value reads as public — a typo must not promise privacy', () => {
+    const odd = trig(WS, '<' + WS + '> a wsp:Workspace ; wsp:visibility "Private" .');
+    // Deliberately capitalised: close enough to fool a person, not close enough to be honoured.
+    expect(readLiteral(graphRegion(odd, WS), 'wsp:visibility')).toBe('Private');
+  });
+});
+
 describe('★★ an encrypted record is withheld, not malformed', () => {
   /**
    * A pod that serves the GRANT normally and withholds only the WORKSPACE RECORD — which is the

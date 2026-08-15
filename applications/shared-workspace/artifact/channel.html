@@ -2679,6 +2679,8 @@ var WSPC = (() => {
           regionFound: region !== null,
           // Withheld, not missing. See the field's own note.
           withheld: graph?.encrypted === true,
+          // Absent, or anything this reader does not recognise, is public. See the field's note.
+          visibility: readLiteral(region, "wsp:visibility") === "private" ? "private" : "public",
           convener,
           roleProfile: readIri(region, "wsp:roleProfile"),
           // ★ THE CONFORMANCE CONTRACT, READ RATHER THAN CHOSEN. A client that held one shape
@@ -3779,7 +3781,7 @@ var WSPC = (() => {
     const conv = turtleIri(args.convenerWebId, "the convener WebID");
     const roles = turtleIri(args.rolesIri, "the role profile IRI");
     const shape = turtleIri(args.shapeIri, "the shape IRI");
-    return "@prefix wsp: <" + WSP + "> .\n@prefix dct: <" + DCT + "> .\n@prefix xsd: <" + XSD + "> .\n\n" + ws + '\n  a wsp:Workspace ;\n  dct:title "' + escapeTurtleLiteral2(args.title) + '" ;\n  wsp:convener ' + conv + " ;\n  wsp:roleProfile " + roles + " ;\n  wsp:entryShape " + shape + " ;\n  wsp:grantCapability <" + args.rolesIri + "#Convene> ;\n  dct:created " + created(args.createdIso) + " .\n";
+    return "@prefix wsp: <" + WSP + "> .\n@prefix dct: <" + DCT + "> .\n@prefix xsd: <" + XSD + "> .\n\n" + ws + '\n  a wsp:Workspace ;\n  dct:title "' + escapeTurtleLiteral2(args.title) + '" ;\n  wsp:convener ' + conv + " ;\n  wsp:roleProfile " + roles + " ;\n  wsp:entryShape " + shape + " ;\n  wsp:grantCapability <" + args.rolesIri + "#Convene> ;\n" + (args.visibility === "private" ? '  wsp:visibility "private" ;\n' : "") + "  dct:created " + created(args.createdIso) + " .\n";
   }
   function grantTurtle(args) {
     const g = turtleIri(args.grant, "the grant IRI");
@@ -4113,7 +4115,8 @@ var WSPC = (() => {
       title: rec.record.title,
       convener: rec.record.convener,
       roleProfile: rec.record.roleProfile,
-      entryShape: rec.record.entryShape
+      entryShape: rec.record.entryShape,
+      visibility: rec.record.visibility
     };
     const cp = rec.record.convenerPod;
     if (!cp) return no("the workspace names no convener this reader can resolve to a pod", full);
