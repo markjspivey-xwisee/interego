@@ -4826,6 +4826,9 @@ var WSPC = (() => {
       precondition: res["precondition"],
       supersededCount: Array.isArray(superseded) ? superseded.length : null,
       response: res,
+      // Read here rather than left to each caller: a signal nobody reads is the same as no signal,
+      // and this one is the only evidence an encrypted save reached fewer people than it named.
+      unreached: unreachedRecipients(res),
       settled
     };
   }

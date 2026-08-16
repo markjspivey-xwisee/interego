@@ -16,6 +16,7 @@
 
 import { visibilityFor } from './visibility.js';
 import type { EntrySealer } from './entry.js';
+import { unreachedRecipients } from './recipients.js';
 import { canvasTurtle } from './documents.js';
 import { graphRegion, readLiteral } from './turtle.js';
 import { refusal } from './transport.js';
@@ -142,6 +143,17 @@ export type CanvasSave =
       readonly committed: boolean;
       readonly status: string | null;
       readonly ifMatch: string | null;
+      /**
+       * Members the relay could not reach with a key, on an encrypted save.
+       *
+       * ★★ THE CANVAS IS THE WORST PLACE FOR THIS TO GO UNSAID. It is ONE document the whole
+       * workspace supersedes in turn, so a member the save could not reach does not just miss one
+       * revision — they find a head they cannot decrypt with nothing to merge forward from, and
+       * the chain stops being usable for them. `postEntry` has reported this since it existed;
+       * this did not, even though it already carried the raw `response` the answer is computed
+       * from, and `unreachedRecipients` was already exported.
+       */
+      readonly unreached: readonly string[];
       readonly precondition: unknown;
       readonly supersededCount: number | null;
       readonly response: Record<string, unknown>;
@@ -265,6 +277,9 @@ export async function saveCanvas(
     precondition: res['precondition'],
     supersededCount: Array.isArray(superseded) ? superseded.length : null,
     response: res,
+    // Read here rather than left to each caller: a signal nobody reads is the same as no signal,
+    // and this one is the only evidence an encrypted save reached fewer people than it named.
+    unreached: unreachedRecipients(res),
     settled,
   };
 }

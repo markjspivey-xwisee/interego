@@ -375,6 +375,26 @@ export function renderRecord(out: RecordOut): Message | null {
         // exists before they ever meet the other case.
         'Attributed to you: the entry carries `prov:wasAttributedTo <your WebID>`. This bot relayed what you typed — it did not write it, and nothing here claims it did.',
       ].filter(Boolean);
+      /**
+       * ★★ WHO WILL NEVER BE ABLE TO READ THIS, SAID IN THE CHANNEL WHERE IT WAS TYPED.
+       *
+       * `resolveRecipient` returns an EMPTY key list rather than erroring when a handle does not
+       * resolve or a member's pod registers no key — one 502 from the identity server on a cold
+       * start is enough. The publish succeeds, `agentCount` is 0 for that member, and the entry is
+       * encrypted to fewer people than it named. `postEntry` has reported this since it existed
+       * and this renderer read everything on the outcome EXCEPT that: the desktop turned amber and
+       * named the member, Discord said "Recorded" with no caveat.
+       *
+       * It cannot be undone — an envelope's recipients are fixed when it is written — so saying it
+       * now, in time for the next message to wait, is the only move left.
+       */
+      if (o.unreached.length > 0) {
+        lines.push('');
+        lines.push('⚠ Encrypted, and ' + o.unreached.length + ' member' + (o.unreached.length === 1 ? '' : 's')
+          + ' could not be reached with a key: ' + o.unreached.join(', ')
+          + '. They will see this entry exists and will not be able to open it, and that cannot be changed '
+          + 'afterwards. They need to sign in once with their own key.');
+      }
       if (out.authorship) {
         lines.push('');
         for (const p of out.authorship.proves) lines.push('✓ ' + p);

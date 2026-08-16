@@ -2892,6 +2892,18 @@ async function doSave(useStale: boolean): Promise<void> {
     ['supersedes', out.supersededCount === null ? 'not reported by the response' : out.supersededCount + ' prior revision(s)'],
   ]));
   const h4 = p.querySelector('h4') as HTMLElement;
+  /**
+   * ★★ WHO THIS REVISION WILL NOT OPEN FOR, SAID BEFORE THE NEXT ONE IS WRITTEN. The canvas is ONE
+   * document the whole workspace supersedes in turn, so a member the save could not reach does not
+   * miss a message — they find a head they cannot decrypt with nothing to merge forward from. It
+   * cannot be repaired afterwards: an envelope's recipients are fixed when it is written.
+   */
+  if (out.unreached.length > 0) {
+    p.appendChild(el('div', 'note', 'This revision is encrypted, and ' + out.unreached.length + ' member'
+      + (out.unreached.length === 1 ? '' : 's') + ' could not be reached with a key: ' + out.unreached.join(', ')
+      + '. They will find a head they cannot open, and nothing to merge forward from. They need to sign '
+      + 'in once with their own key; everything saved after that will reach them.'));
+  }
   const keep = S.canvas.loaded;
   // ★ "SAVED" ONLY WHEN THE HEAD IS *YOURS*. A concurrent writer satisfies "the head moved".
   if (out.settled.kind === 'mine') {

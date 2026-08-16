@@ -167,6 +167,33 @@ describe('the record notice', () => {
     expect(m?.content).not.toMatch(/signed by you|your signature/i);
   });
 
+  it('★★ names the members an encrypted entry could not reach', () => {
+    /**
+     * `resolveRecipient` returns an EMPTY key list rather than erroring when a member's pod
+     * registers no key — one 502 from the identity server on a cold start is enough. The publish
+     * succeeds and the entry is encrypted to fewer people than it named. This renderer read every
+     * field on the outcome EXCEPT that one, so the desktop turned amber and named the member while
+     * Discord said "Recorded" with no caveat. It cannot be undone afterwards, which is why it has
+     * to be said now.
+     */
+    const m = renderRecord(accepted({
+      outcome: {
+        kind: 'accepted', descriptorUrl: 'u', committed: true, seq: 4, shapeSent: null,
+        ifMatch: null, ifMatchKind: null, response: {},
+        unreached: ['https://identity.interego.xwisee.com/users/u-eth-bbbb/profile#me'],
+      },
+    }));
+    expect(m?.content).toContain('could not be reached with a key');
+    expect(m?.content).toContain('u-eth-bbbb');
+    // And it says the part that decides what to do about it.
+    expect(m?.content).toContain('cannot be changed');
+  });
+
+  it('★ and says nothing of the sort when everybody was reached', () => {
+    // The opposite failure: a caveat on every ordinary message would train people to ignore it.
+    expect(renderRecord(accepted())?.content).not.toContain('could not be reached');
+  });
+
   it('says nothing validated an entry when the workspace names no shape', () => {
     const m = renderRecord(accepted({ outcome: { kind: 'accepted', descriptorUrl: null, committed: true, seq: 0, shapeSent: null, ifMatch: null, ifMatchKind: null, response: {}, unreached: [] } }));
     expect(m?.content).toContain('Nothing validated this entry');
