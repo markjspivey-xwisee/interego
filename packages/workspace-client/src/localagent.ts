@@ -861,7 +861,12 @@ export function readFootingLine(line: string): 'behalf' | 'own' | 'ambiguous' | 
 }
 
 export type DraftVerdict =
-  | { readonly ok: false; readonly why: string }
+  /**
+   * `saw` is a short quote of what the host actually read, for a refusal a person has to diagnose.
+   * ★ LOCAL ONLY. `why` is published as `ieh:outcomeReason`; `saw` must never travel with it — the
+   * turn record carries no reply text, and a test asserts that.
+   */
+  | { readonly ok: false; readonly why: string; readonly saw?: string }
   | { readonly ok: true; readonly body: string; readonly footing: StatedFooting };
 
 /**
@@ -924,6 +929,7 @@ export function checkDraft(
   while (at < lines.length && (lines[at] ?? '').trim() === '') at++;
   const first = (lines[at] ?? '').trim();
   const declared = readFootingLine(first);
+  const bodyLines = lines.slice(at + 1);
 
   if (declared === 'ambiguous') {
     return {
@@ -949,10 +955,24 @@ export function checkDraft(
         + 'delegate writes has to say whether it is speaking FOR you — in which case you share responsibility for it '
         + '— or on its OWN account, in which case it alone does. An entry that states neither would be a permanent '
         + 'record nobody can read that off, and defaulting to either one is exactly what this refuses to do.',
+      /**
+       * ── ★★ WHAT IT ACTUALLY WROTE, SO THE NEXT ONE IS DIAGNOSABLE ─────────────
+       *
+       * This refusal happened live, twice, and could not be investigated either time: the reply is
+       * deliberately stored nowhere, and `claude -p` persists only a session title, so the one fact
+       * needed to tell "forgot the line" from "wrote it in a form the parser missed" did not exist
+       * anywhere on the machine. A rule that can discard a paid-for answer has to say what it saw.
+       *
+       * ★ SEPARATE FROM `why` BECAUSE `why` IS PUBLISHED. `why` becomes `ieh:outcomeReason` on a
+       * world-readable graph, and the turn record carries no reply text by design — there is a test
+       * that asserts it. This field is for the local panel and the local log ONLY, and is capped
+       * because a diagnosis needs the opening, not the essay.
+       */
+      saw: first.slice(0, 120),
     };
   }
   const kind = declared === 'behalf' ? 'ON THEIR BEHALF' : 'MY OWN ACCOUNT';
-  const body = lines.slice(at + 1).join('\n').trim();
+  const body = bodyLines.join('\n').trim();
   if (!body) {
     return { ok: false, why: 'Your agent declared a footing and then wrote nothing under it. An empty entry is still a permanent record, so none is written.' };
   }

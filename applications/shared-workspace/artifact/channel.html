@@ -5296,6 +5296,7 @@ var WSPC = (() => {
     while (at < lines.length && (lines[at] ?? "").trim() === "") at++;
     const first = (lines[at] ?? "").trim();
     const declared = readFootingLine(first);
+    const bodyLines = lines.slice(at + 1);
     if (declared === "ambiguous") {
       return {
         ok: false,
@@ -5311,11 +5312,25 @@ var WSPC = (() => {
     if (declared === null) {
       return {
         ok: false,
-        why: "Your agent did not declare which footing it was speaking on, so nothing was written. Every entry a delegate writes has to say whether it is speaking FOR you \u2014 in which case you share responsibility for it \u2014 or on its OWN account, in which case it alone does. An entry that states neither would be a permanent record nobody can read that off, and defaulting to either one is exactly what this refuses to do."
+        why: "Your agent did not declare which footing it was speaking on, so nothing was written. Every entry a delegate writes has to say whether it is speaking FOR you \u2014 in which case you share responsibility for it \u2014 or on its OWN account, in which case it alone does. An entry that states neither would be a permanent record nobody can read that off, and defaulting to either one is exactly what this refuses to do.",
+        /**
+         * ── ★★ WHAT IT ACTUALLY WROTE, SO THE NEXT ONE IS DIAGNOSABLE ─────────────
+         *
+         * This refusal happened live, twice, and could not be investigated either time: the reply is
+         * deliberately stored nowhere, and `claude -p` persists only a session title, so the one fact
+         * needed to tell "forgot the line" from "wrote it in a form the parser missed" did not exist
+         * anywhere on the machine. A rule that can discard a paid-for answer has to say what it saw.
+         *
+         * ★ SEPARATE FROM `why` BECAUSE `why` IS PUBLISHED. `why` becomes `ieh:outcomeReason` on a
+         * world-readable graph, and the turn record carries no reply text by design — there is a test
+         * that asserts it. This field is for the local panel and the local log ONLY, and is capped
+         * because a diagnosis needs the opening, not the essay.
+         */
+        saw: first.slice(0, 120)
       };
     }
     const kind = declared === "behalf" ? "ON THEIR BEHALF" : "MY OWN ACCOUNT";
-    const body = lines.slice(at + 1).join("\n").trim();
+    const body = bodyLines.join("\n").trim();
     if (!body) {
       return { ok: false, why: "Your agent declared a footing and then wrote nothing under it. An empty entry is still a permanent record, so none is written." };
     }

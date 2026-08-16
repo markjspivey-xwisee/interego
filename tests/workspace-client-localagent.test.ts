@@ -459,6 +459,25 @@ describe('checkDraft: what may be appended to a permanent public log', () => {
   const BEHALF = 'FOOTING: ON THEIR BEHALF\n';
   const OWN = 'FOOTING: MY OWN ACCOUNT\n';
 
+  it('★★ a refusal quotes what it actually saw, so it can be diagnosed', () => {
+    /**
+     * This refusal happened live twice and could not be investigated either time: the reply is
+     * stored nowhere by design, and `claude -p` persists only a session title. Without the quote
+     * there is no way to tell a model that forgot the line from one that wrote it somewhere the
+     * host did not look — which is exactly the question that had to be answered.
+     */
+    const v = checkDraft('Here is what I found in the substrate:\n\nA long answer.', PRINCIPAL);
+    expect(v.ok).toBe(false);
+    if (!v.ok) {
+      expect(v.saw).toBe('Here is what I found in the substrate:');
+      // ★ AND IT IS BOUNDED. A diagnosis needs the opening, not the essay.
+      const long = checkDraft('x'.repeat(500) + '\nmore', PRINCIPAL);
+      if (!long.ok) expect(long.saw?.length).toBe(120);
+      // ★ AND IT IS NOT IN `why`, which is published to a world-readable graph as ieh:outcomeReason.
+      expect(v.why).not.toContain('Here is what I found');
+    }
+  });
+
   it('accepts ordinary prose, trims it, and strips the declaration off the body', () => {
     const v = checkDraft(BEHALF + '  A considered reply.  ', PRINCIPAL);
     expect(v.ok).toBe(true);

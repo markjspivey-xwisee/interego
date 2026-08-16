@@ -4169,7 +4169,14 @@ async function agentConsider(): Promise<void> {
       // ★ THE TURN'S OWN ID, NOT AN EMPTY STRING. Main measured this turn under it — tokens, cost,
       // tool calls — and the verdict is only decided here. `''` published an outcome with no
       // numbers and no way to find them: two records of one turn that could never be put together.
-      turnId: turn.turnId, channel: S.slug ?? '', outcome: 'refused: ' + draft.why.slice(0, 160),
+      turnId: turn.turnId, channel: S.slug ?? '',
+      /**
+       * ★★ `saw` GOES IN THE LOCAL LINE AND NOWHERE ELSE. It is a quote of what the model wrote,
+       * which is the one fact that makes this refusal diagnosable — and `reason` below is published
+       * to a world-readable graph as `ieh:outcomeReason`. The turn record carries no reply text by
+       * design, so the quote travels only as far as this machine's own log.
+       */
+      outcome: 'refused: ' + draft.why.slice(0, 160) + (draft.saw ? ' | it began: ' + draft.saw : ''),
       kind: draft.why.includes('nothing worth adding') || draft.why.includes('chose not to answer') ? 'Abstained' : 'Refused',
       reason: draft.why,
       ...(speaker?.agentId ? { agentId: speaker.agentId } : {}),
@@ -4178,7 +4185,12 @@ async function agentConsider(): Promise<void> {
       ...(channelIsPrivate() ? { channelPrivate: true } : {}),
     });
     say('agentresult', 'pending', 'Nothing was drafted',
-      draft.why + (tried >= ATTEMPT_LIMIT
+      draft.why
+      // ★ WHAT IT ACTUALLY WROTE, on the screen of the person being told it was discarded. Without
+      // it "did not declare a footing" is unanswerable — there is no way to tell a model that
+      // forgot the line from one that wrote it somewhere the host did not look.
+      + (draft.saw ? ' Its reply began: “' + draft.saw + '”.' : '')
+      + (tried >= ATTEMPT_LIMIT
         // ★ SAID OUT LOUD. An agent that quietly stops answering somebody looks exactly like one
         // that is broken, which is the complaint this panel exists to answer. It also names what
         // to do about it, because "gave up" with no remedy is just a nicer silence.
