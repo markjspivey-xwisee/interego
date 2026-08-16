@@ -2444,6 +2444,17 @@ async function delegateClient(address: string): Promise<WorkspaceClient> {
  * DELEGATE'S. Same button, same writer, same readback. Omitted, the person is the author; given,
  * the delegate is the author and the person is who it acted for.
  */
+/**
+ * Whether this channel's turn magnitudes may be published to a world-readable graph.
+ *
+ * ★ FAIL-CLOSED ON `'unknown'`. A visibility this client could not read is not a licence to
+ * publish token counts about the channel — the same rule `recipientsFor` applies when it refuses
+ * to guess an audience rather than seal to the wrong one.
+ */
+function channelIsPrivate(): boolean {
+  return S.record?.visibility !== 'public';
+}
+
 async function post(as?: {
   readonly address: string;
   readonly agentId: string;
@@ -2457,21 +2468,62 @@ async function post(as?: {
    * thing. A person pressing Post is not looping and is not asked to declare anything.
    */
   readonly answering?: string | null;
+  /**
+   * The turn this draft came out of, when a delegate is posting one.
+   *
+   * ★★ THE OUTCOME IS PUBLISHED FROM HERE BECAUSE THIS IS WHERE IT BECOMES KNOWN. Every other
+   * candidate site is guessing: the drafting code knows only that text exists, and in review mode
+   * the person may never send it. `ieh:Posted` claims a record was written, on an append-only
+   * public graph that cannot be corrected — so it is asserted at the one point where that is a
+   * fact rather than an expectation.
+   */
+  readonly turnId?: string | null;
 }): Promise<void> {
-  if (!S.client || !S.viewer || !S.workspace) return;
+  /**
+   * What became of the delegate's turn, published once, from whichever branch below ends the post.
+   *
+   * ★ THE CONCEPTS ARE USED AS THE PUBLISHED VOCABULARY DEFINES THEM, not as they read in English.
+   * `ieh:Refused` is "the HOST declined to write what the model produced" — which is what every
+   * failure in this function is, including the ones that are somebody else's fault. `ieh:Failed` is
+   * reserved for "the turn did not complete: the provider errored, the process died, or the person
+   * cancelled it", none of which can happen down here: by this point the model has already run.
+   *
+   * ★ AND NOTHING IS PUBLISHED FOR A PERSON'S OWN POST. `as` is absent when a human presses Send;
+   * there is no turn, no model ran, and no telemetry is owed.
+   */
+  const reportTurn = (kind: 'Posted' | 'Refused', reason: string): void => {
+    if (!as?.turnId) return;
+    void window.interego.draftOutcome({
+      turnId: as.turnId, channel: S.slug ?? '', kind,
+      outcome: (kind === 'Posted' ? 'posted' : 'not written') + ': ' + reason.slice(0, 160),
+      reason,
+      agentId: as.agentId,
+      ...(S.viewer?.webId ? { answeredFor: S.viewer.webId } : {}),
+      ...(S.workspace ? { channelIri: S.workspace } : {}),
+      ...(channelIsPrivate() ? { channelPrivate: true } : {}),
+    });
+  };
+  if (!S.client || !S.viewer || !S.workspace) {
+    reportTurn('Refused', 'This client was not signed in to a workspace when the entry was sent, so nothing was written.');
+    return;
+  }
   const ta = area('composer');
   const body = ta.value.trim();
-  if (!body) return;
+  if (!body) {
+    reportTurn('Refused', 'The composer was empty when the send ran, so there was nothing to write.');
+    return;
+  }
   const send = btn('send');
   send.disabled = true;
   ta.disabled = true;                     // locked, not emptied, until it is confirmed readable
   const seat = S.seats.find((m) => m.seated && m.pod === S.viewer?.podName && m.stream);
   const streamIri = seat?.stream ?? S.streamIri;
-  if (!streamIri) { say('postresult', 'refused', 'No log to write to', 'This client could not resolve which document your entries go in.'); send.disabled = false; ta.disabled = false; return; }
+  if (!streamIri) { reportTurn('Refused', 'This client could not resolve which document entries go in, so nothing was written.'); say('postresult', 'refused', 'No log to write to', 'This client could not resolve which document your entries go in.'); send.disabled = false; ta.disabled = false; return; }
   // ★ NO WEBID, NO ENTRY. Every entry now states who composed it, and for a person's own post
   // that statement IS their WebID. Writing one without it would put an entry on the pod whose
   // author is unstated — which readers must render as "not stated", not as the pod's owner.
   if (!S.viewer.webId) {
+    reportTurn('Refused', 'No WebID was registered for this pod, so the entry could not state its author and nothing was written.');
     say('postresult', 'refused', 'Nothing was written: this client cannot name you',
       'get_pod_status returned no registry owner for your pod, so there is no WebID to attribute this entry to. '
       + 'Every entry states its author; one that could not would be a permanent record nobody can be read out of.');
@@ -2488,6 +2540,8 @@ async function post(as?: {
   if (as) {
     try { writer = await delegateClient(as.address); }
     catch (e) {
+      reportTurn('Refused', 'This delegate\'s own session could not be opened, so nothing was written: '
+        + ((e as Error)?.message ?? String(e)));
       clear($('postresult')).appendChild(errBox(e, 'Your delegate\'s own session could not be opened, so nothing was '
         + 'written. This app holds its key or it does not — and a delegate\'s entry is written under the delegate\'s '
         + 'own session, not yours, so it is not falling back to writing this as you.'));
@@ -2504,6 +2558,7 @@ async function post(as?: {
    */
   const audience = recipientsFor(S.record?.visibility, S.fold);
   if (!audience.ok) {
+    reportTurn('Refused', audience.why);
     clear($('postresult')).appendChild(errBox(new Error(audience.why), 'Nothing was written.'));
     send.disabled = !!S.writeBlocked; ta.disabled = !!S.writeBlocked; renderAgent();
     return;
@@ -2561,10 +2616,13 @@ async function post(as?: {
   const reopen = (): void => { send.disabled = !!S.writeBlocked; ta.disabled = !!S.writeBlocked; renderAgent(); };
 
   if (out.kind === 'read-failed') {
+    reportTurn('Refused', 'The log could not be read, so no position could be derived and nothing was written.');
     clear($('postresult')).appendChild(errBox(out.error, 'Your own log could not be read, so no position could be derived. Nothing was written.'));
     reopen(); return;
   }
   if (out.kind === 'forked') {
+    reportTurn('Refused', 'The log has ' + out.heads + ' entries that nothing supersedes, so no position could be '
+      + 'derived without guessing which append survived. Nothing was written.');
     say('postresult', 'refused', 'Your log has ' + out.heads + ' entries that nothing supersedes', out.anyLinks
       ? 'Some entries here do declare supersession and these still do not resolve to one head, which is what a missed '
         + 'compare-and-swap looks like. Picking one would be guessing which append survived, so this posts nothing.'
@@ -2573,13 +2631,35 @@ async function post(as?: {
     reopen(); return;
   }
   if (out.kind === 'unreachable') {
+    /**
+     * ★★ THE ONE BRANCH THAT PUBLISHES NOTHING, AND THE REASON IS THE SAME ONE THIS PANEL GIVES.
+     *
+     * When the relay did not answer, whether the write ran is UNKNOWN — the code immediately below
+     * says exactly that, and refuses to retry on the strength of it. None of the four outcome
+     * concepts means "unknown": `Refused` would assert the host declined to write, and `Posted`
+     * would assert a record exists. Publishing either would put a guess on an append-only public
+     * graph that cannot be corrected, which is worse than the gap. The local drafts log still
+     * records the attempt, so nothing is lost that a person on this machine can read.
+     */
+    if (out.relayAnswered) {
+      reportTurn('Refused', 'The relay answered and reported the write failed, so nothing was written.');
+    }
     clear($('postresult')).appendChild(errBox(out.error, out.relayAnswered
       ? 'The relay answered and reported this failure, so nothing here is a guess about whether it ran. Re-read the channel before posting again.'
       : 'The relay did not answer, so whether this write ran is UNKNOWN. A write whose outcome is unknown must not be repeated automatically — re-read the channel before posting again.'));
     reopen(); return;
   }
-  if (out.kind === 'refused') { refusalPanel('postresult', out.body, 'Your entry'); reopen(); return; }
+  if (out.kind === 'refused') {
+    reportTurn('Refused', 'The relay refused the write, so nothing was written.');
+    refusalPanel('postresult', out.body, 'Your entry'); reopen(); return;
+  }
 
+  // ★ THE ONLY PLACE `Posted` IS ASSERTED, and it is past every branch that could have prevented a
+  // write. `out.committed` distinguishes "durably on the pod" from "accepted and landing"; both
+  // mean the channel gained the entry, which is what the concept claims.
+  reportTurn('Posted', out.committed
+    ? 'The entry was written to the pod.'
+    : 'The entry was accepted by the relay and is landing on the pod.');
   const p = say('postresult', 'ok', out.committed
     ? (as ? 'Your delegate posted to your pod' : 'Posted to your pod')
     : (as ? 'Accepted — your delegate\'s entry is landing on your pod' : 'Accepted — landing on your pod'));
@@ -3629,6 +3709,14 @@ const A = {
   drafted: null as {
     address: string; agentId: string; name: string | null; text: string;
     /**
+     * ★★ THE TURN THIS DRAFT CAME OUT OF, HELD UNTIL ITS FATE IS KNOWN.
+     *
+     * A draft in the composer has not been posted — in review mode the person may never send it —
+     * so the outcome cannot be published here. It is carried to `post()`, which is the only place
+     * that learns whether a record was actually written, and published from there against this id.
+     */
+    turnId: string;
+    /**
      * ★ WHICH FOOTING THE DELEGATE CHOSE, HELD BESIDE THE TEXT SO THE PERSON SEES IT BEFORE IT
      * SPEAKS. The agent declares this itself — see `briefPrompt` and `checkDraft` — and the Send
      * button below spells it out, because the difference between "speaking for you" and "speaking
@@ -4026,7 +4114,24 @@ async function agentConsider(): Promise<void> {
   // off from the moment it is pressed, not from the end of whatever was already running.
   if (!A.on) { A.phase = 'stopped'; say('agentresult', 'refused', 'Stopped', 'You stopped this delegate while it was thinking. Its answer was discarded and nothing was written.'); renderAgent(); return; }
   if (!turn.ok || turn.text === null) {
+    /**
+     * ── ★★ THE OUTCOME THAT NOTHING EMITTED ─────────────────────────────────────
+     *
+     * `ieh:Failed` is defined as "the turn did not complete: the provider errored, the process
+     * died, or the person cancelled it" — this branch, exactly. It published nothing at all, so
+     * every failed turn was silently absent from the series and a provider that had stopped working
+     * was indistinguishable from an agent with nothing to say. That is the same defect the whole
+     * vocabulary was added to close, surviving in the one place it mattered most.
+     */
     A.phase = 'watching';
+    void window.interego.draftOutcome({
+      turnId: turn.turnId, channel: S.slug ?? '', outcome: 'failed: ' + turn.why.slice(0, 160),
+      kind: 'Failed', reason: turn.why,
+      ...(speaker?.agentId ? { agentId: speaker.agentId } : {}),
+      ...(S.viewer?.webId ? { answeredFor: S.viewer.webId } : {}),
+      ...(S.workspace ? { channelIri: S.workspace } : {}),
+      ...(channelIsPrivate() ? { channelPrivate: true } : {}),
+    });
     say('agentresult', 'refused', (speaker.name ?? 'Your delegate') + ' did not answer', turn.why);
     renderAgent();
     return;
@@ -4061,12 +4166,16 @@ async function agentConsider(): Promise<void> {
      * working" with prose that has to be parsed.
      */
     void window.interego.draftOutcome({
-      turnId: '', channel: S.slug ?? '', outcome: 'refused: ' + draft.why.slice(0, 160),
+      // ★ THE TURN'S OWN ID, NOT AN EMPTY STRING. Main measured this turn under it — tokens, cost,
+      // tool calls — and the verdict is only decided here. `''` published an outcome with no
+      // numbers and no way to find them: two records of one turn that could never be put together.
+      turnId: turn.turnId, channel: S.slug ?? '', outcome: 'refused: ' + draft.why.slice(0, 160),
       kind: draft.why.includes('nothing worth adding') || draft.why.includes('chose not to answer') ? 'Abstained' : 'Refused',
       reason: draft.why,
       ...(speaker?.agentId ? { agentId: speaker.agentId } : {}),
       ...(S.viewer?.webId ? { answeredFor: S.viewer.webId } : {}),
       ...(S.workspace ? { channelIri: S.workspace } : {}),
+      ...(channelIsPrivate() ? { channelPrivate: true } : {}),
     });
     say('agentresult', 'pending', 'Nothing was drafted',
       draft.why + (tried >= ATTEMPT_LIMIT
@@ -4094,20 +4203,36 @@ async function agentConsider(): Promise<void> {
   // one button along.
   A.drafted = {
     address: speaker.address, agentId: speaker.agentId, name: speaker.name, text: draft.body,
-    footing: draft.footing, answering: decision.answering.descriptorUrl,
+    footing: draft.footing, answering: decision.answering.descriptorUrl, turnId: turn.turnId,
   };
   // Recorded the moment the draft exists, not when it posts: a draft the user discards was still
   // an answer this run produced, and re-producing it on the next poll is the loop, not a feature.
   A.answered.add(decision.answering.descriptorUrl);
-  // The other half of the record: a draft that SURVIVED. Without both, the log cannot answer "is
-  // this agent working" — only "did the model run", which is a different question.
+  /**
+   * ── ★★ THE LOCAL HALF ONLY. NO OUTCOME IS PUBLISHED HERE ────────────────────
+   *
+   * This line used to send `kind: 'Posted'`, and `ieh:Posted` is defined as "the draft passed every
+   * check and A RECORD WAS WRITTEN — the only outcome under which the channel gained anything."
+   * Nothing has been written at this point. In the default mode `A.auto` is false, so the draft is
+   * sitting in the composer awaiting review and the panel printed six lines below says so in
+   * as many words: "NOTHING has been written yet". The person may edit the box, which drops the
+   * draft, or never press Send at all — and the turn graph is append-only with
+   * `auto_supersede_prior: false`, so the falsehood could never be corrected afterwards.
+   *
+   * Omitting `kind` is the whole fix: main writes the local JSONL line unconditionally and returns
+   * BEFORE `publishTurn` when no `kind` is supplied. So the local log still answers "did this run
+   * produce a draft", and the pod is told nothing until `post()` — the one place that learns
+   * whether a record was actually written — reports what happened.
+   */
   void window.interego.draftOutcome({
-    turnId: '', channel: S.slug ?? '',
-    outcome: 'drafted (' + draft.body.length + ' chars, ' + draft.footing + ')' + (A.auto ? ' · auto-posting' : ' · awaiting review'),
-    kind: 'Posted',
-    agentId: speaker.agentId,
-    ...(S.viewer?.webId ? { answeredFor: S.viewer.webId } : {}),
-    ...(S.workspace ? { channelIri: S.workspace } : {}),
+    turnId: turn.turnId, channel: S.slug ?? '',
+    /**
+     * ★ `.kind`, NOT THE OBJECT. `StatedFooting` is a discriminated union, so string concatenation
+     * writes "[object Object]" — which is what the first record of a working turn actually said.
+     * The one field this line exists to capture is which footing was declared, and that is the one
+     * field it managed to lose.
+     */
+    outcome: 'drafted (' + draft.body.length + ' chars, ' + draft.footing.kind + ')' + (A.auto ? ' · auto-posting' : ' · awaiting review'),
   });
   A.phase = 'drafted';
   renderAgent();
@@ -4134,7 +4259,7 @@ async function agentConsider(): Promise<void> {
   ]));
   p.appendChild(el('div', 'note', 'The Post button below sends as YOU. To send this as ' + (speaker.name ?? 'your delegate')
     + ', use its own button in this panel — the same text sent by the two makes two different records, and only one of them is true.'));
-  if (A.auto) await post({ address: speaker.address, agentId: speaker.agentId, footing: draft.footing, answering: decision.answering.descriptorUrl });
+  if (A.auto) await post({ address: speaker.address, agentId: speaker.agentId, footing: draft.footing, answering: decision.answering.descriptorUrl, turnId: turn.turnId });
 }
 
 // ── the host loop: present while running, wakeable when not ──────────────────
@@ -4634,7 +4759,7 @@ inp('agentauto').addEventListener('change', () => {
 });
 // ★ THE DELEGATE'S OWN SEND. `post(as)` — same writer, same readback, different author.
 btn('agentsend').addEventListener('click', () => {
-  if (A.drafted) void post({ address: A.drafted.address, agentId: A.drafted.agentId, footing: A.drafted.footing, answering: A.drafted.answering });
+  if (A.drafted) void post({ address: A.drafted.address, agentId: A.drafted.agentId, footing: A.drafted.footing, answering: A.drafted.answering, turnId: A.drafted.turnId });
 });
 inp('delegatename').addEventListener('input', renderDelegatePlan);
 inp('delegateagent').addEventListener('input', renderDelegatePlan);

@@ -35,13 +35,24 @@
  * a tool name, not a transcript.
  */
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync } from 'node:fs';
 import { join } from 'node:path';
 
 /** One turn, as it will be written to disk. Every field comes from a tool that reported it. */
 export interface TurnRecord {
   readonly turnId: string;
+  /** When the record was WRITTEN, which is after the turn finished. */
   readonly atIso: string;
+  /**
+   * When the turn STARTED, stamped before anything ran.
+   *
+   * ★ A DURATION NEEDS A TIME AXIS THAT AGREES WITH IT. The published graph carries
+   * `prov:startedAtTime` and `ieh:elapsedMs`, and `atIso` is written after the run — so using it
+   * as the start put the beginning of the turn after its own end. Optional because records written
+   * before this existed have no honest value for it, and inventing one from `atIso - ms` would be
+   * a derived number wearing a measurement's clothes.
+   */
+  readonly startedIso?: string;
   /** The delegate that answered — its DID where known, else the id the app knows it by. */
   readonly agentId: string;
   readonly agentName: string;
@@ -214,6 +225,156 @@ export function readTurns(userData: string, limit = 500): readonly TurnRecord[] 
     } catch { /* a partial append is ordinary here */ }
   }
   return out;
+}
+
+/**
+ * How much of the tail of the log to read when looking one turn up.
+ *
+ * ★★ A BOUND ON THE READ, NOT JUST ON THE PARSE. `readTurns` caps how many lines it PARSES but
+ * still pulls the whole file into memory first — tolerable for a panel a person opens, and a fault
+ * waiting for a busy week when it runs on the Electron main process after every single turn. At
+ * roughly 300 bytes a record this window still covers the last several thousand turns, which is
+ * far more than the seconds-old record a lookup is actually after.
+ */
+const TAIL_BYTES = 512 * 1024;
+
+/** The last `bytes` of a file, starting at a line boundary. Never throws; '' on any failure. */
+function readTail(p: string, bytes: number): string {
+  let fd = -1;
+  try {
+    fd = openSync(p, 'r');
+    const size = fstatSync(fd).size;
+    const start = size > bytes ? size - bytes : 0;
+    const len = size - start;
+    if (len <= 0) return '';
+    const buf = Buffer.alloc(len);
+    readSync(fd, buf, 0, len, start);
+    const s = buf.toString('utf8');
+    // A window that starts mid-file starts mid-line — and possibly mid-UTF-8-sequence. Dropping
+    // everything before the first newline handles both, at the cost of one record nobody wanted.
+    return start > 0 ? s.slice(s.indexOf('\n') + 1) : s;
+  } catch {
+    return '';
+  } finally {
+    if (fd >= 0) { try { closeSync(fd); } catch { /* a descriptor that will not close is not this function's problem */ } }
+  }
+}
+
+/**
+ * The turn's start time, if the record carries a usable one.
+ *
+ * ★ VALIDATED BECAUSE IT IS PUBLISHED. This is parsed from a file another process appends to with
+ * no locking, and it goes straight into `prov:startedAtTime` as an `xsd:dateTime`. An empty string
+ * survives `??` (which only rejects null and undefined) and would produce `""^^xsd:dateTime` — an
+ * ill-typed literal that the relay's shape check refuses, losing the whole record.
+ */
+export function startedAt(rec: TurnRecord | null | undefined): string | null {
+  const v = rec?.startedIso;
+  if (typeof v !== 'string' || !v) return null;
+  return Number.isFinite(Date.parse(v)) ? v : null;
+}
+
+/**
+ * One turn by id, or null.
+ *
+ * ── ★★ THE JOIN THAT WAS MISSING ────────────────────────────────────────────
+ *
+ * `agent:think` records what a turn COST. The renderer decides what became of the DRAFT, and the
+ * published turn graph is written from there. Nothing carried the cost across, so the first live
+ * `ieh:AgentTurn` on the pod said who ran, when, and what became of it — and not one number. The
+ * half of the question that started this ("what is this costing me") was missing from the record
+ * built to answer it.
+ *
+ * ★ AN EMPTY ID MATCHES NOTHING. The renderer sent `''` before this existed, and a lenient lookup
+ * would have attached the newest turn's cost to whatever asked — a real number under the wrong
+ * turn, which is worse than none.
+ *
+ * Bounded exactly like {@link readTurns}, and newest-first because the turn being looked up was
+ * written seconds ago by the same process.
+ */
+export function findTurn(userData: string, turnId: string, limit = 500): TurnRecord | null {
+  if (!turnId) return null;
+  const p = turnsPath(userData);
+  if (!existsSync(p)) return null;
+  const raw = readTail(p, TAIL_BYTES);
+  const lines = raw.split('\n').filter((l) => l.trim());
+  for (let i = lines.length - 1, seen = 0; i >= 0 && seen < limit; i--, seen++) {
+    const line = lines[i] as string;
+    if (!line.includes(turnId)) continue;
+    try {
+      const r = JSON.parse(line) as TurnRecord;
+      if (r?.turnId === turnId) return r;
+    } catch { /* a partial append is ordinary here */ }
+  }
+  return null;
+}
+
+/** The measured part of a turn, named as the published `ieh:AgentTurn` vocabulary names it. */
+export interface MeasuredTurn {
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
+  readonly cacheReadTokens?: number;
+  readonly cacheCreationTokens?: number;
+  readonly costUsd?: number;
+  readonly elapsedMs?: number;
+  readonly providerTurns?: number;
+  readonly toolCallCount?: number;
+  readonly models?: readonly string[];
+}
+
+/**
+ * A local turn record, as the fields a published turn graph carries.
+ *
+ * ── ★★ A ZERO FROM THE CLI IS "NOT REPORTED"; A ZERO FROM THE GATE IS "NONE" ─
+ *
+ * `usageFrom` collapses an absent field to `0` on purpose — it parses another program's output and
+ * must not throw — so on this side of the file the two are indistinguishable. Publishing that zero
+ * would assert that a turn which demonstrably ran cost nothing, and a total summed over the series
+ * would be wrong in the one direction nobody checks. So a zero from the CLI is OMITTED here, and
+ * the published record says nothing rather than something false. (No real turn reports zero input
+ * tokens, which is what makes the collapse safe to read this way.)
+ *
+ * `toolCallCount` is not treated the same, because it has a different provenance: it is counted
+ * BY US over audit lines we read, and a turn that called no tools really did call none. Erasing
+ * that would hide the case worth seeing — an agent thinking expensively and touching nothing.
+ *
+ * `elapsedMs` follows the CLI rule: the app writes `ms: 0` for a turn that never spawned a child,
+ * so a zero here means nothing was timed, not that it took no time.
+ */
+export function measuredFacts(rec: TurnRecord | null | undefined): MeasuredTurn {
+  if (!rec) return {};
+  const reported = (v: unknown): number | undefined =>
+    (typeof v === 'number' && Number.isFinite(v) && v > 0) ? v : undefined;
+  const put = <K extends keyof MeasuredTurn>(k: K, v: MeasuredTurn[K]): MeasuredTurn =>
+    (v === undefined ? {} : { [k]: v } as MeasuredTurn);
+  /**
+   * ★ THE SHAPE OF THIS IS NOT GUARANTEED. It comes from `JSON.parse` of a line another process
+   * appended, cast to `TurnRecord` with no validation, and every key becomes a published
+   * `ieh:turnModel`. `Object.keys('haiku')` is `['0','1','2','3','4']` — five model names that
+   * never existed, permanently, on a public graph.
+   */
+  const raw: unknown = rec.models;
+  const models = (raw && typeof raw === 'object' && !Array.isArray(raw)) ? Object.keys(raw) : [];
+  return {
+    ...put('inputTokens', reported(rec.inputTokens)),
+    ...put('outputTokens', reported(rec.outputTokens)),
+    ...put('cacheReadTokens', reported(rec.cacheReadTokens)),
+    ...put('cacheCreationTokens', reported(rec.cacheCreationTokens)),
+    ...put('costUsd', reported(rec.costUsd)),
+    /**
+     * ★★ A DURATION ONLY WHERE THERE IS A START IT COMPOSES WITH. When a record has no usable
+     * `startedIso` — every record written before that field existed — the publisher falls back to
+     * "now" for `prov:startedAtTime`, and a real `ieh:elapsedMs` beside a fabricated start
+     * reproduces the exact "finished before it began" graph this was written to remove. The
+     * duration is still in the local log; it is only the incoherent PAIR that is not published.
+     */
+    ...put('elapsedMs', startedAt(rec) ? reported(rec.ms) : undefined),
+    ...put('providerTurns', reported(rec.numTurns)),
+    // Counted here, not reported to us: zero is a measurement and is published as one.
+    ...(typeof rec.toolCalls === 'number' && Number.isFinite(rec.toolCalls) && rec.toolCalls >= 0
+      ? { toolCallCount: rec.toolCalls } : {}),
+    ...(models.length ? { models } : {}),
+  };
 }
 
 /** Totals over a set of turns, for the summary a person actually looks at. */

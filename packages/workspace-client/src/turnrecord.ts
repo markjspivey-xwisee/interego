@@ -71,6 +71,34 @@ export function turnIri(relay: string, podName: string, turnId: string): string 
 }
 
 /**
+ * A number as an `xsd:decimal` LEXICAL FORM.
+ *
+ * ── ★★ WHY THIS IS NOT `String(v)` ──────────────────────────────────────────
+ *
+ * `String(0.0000001)` is `"1e-7"`, and xsd:decimal's lexical space has NO exponent notation — that
+ * is xsd:double. The literal is ill-formed, `sh:datatype xsd:decimal` rejects it, and because the
+ * relay validates `conforms_to_shapes` BEFORE the pod write, the ENTIRE turn record is refused, not
+ * just the cost. A very cheap cached turn is exactly when a sub-microdollar cost occurs, so the
+ * records most likely to be lost are the ordinary ones.
+ *
+ * JS's own shortest round-trip form is kept whenever it is already plain; only the exponent form is
+ * expanded, so no spurious precision is invented (`(0.1).toFixed(20)` would add sixteen digits that
+ * were never measured).
+ */
+export function decimalLiteral(v: number): string {
+  const s = String(v);
+  const m = /^(-?)(\d+)(?:\.(\d+))?e([+-]?\d+)$/i.exec(s);
+  if (!m) return s;
+  const sign = m[1] ?? '';
+  const digits = (m[2] ?? '') + (m[3] ?? '');
+  // Where the point lands once the exponent is applied, counted from the left of `digits`.
+  const pointAt = (m[2] ?? '').length + Number(m[4]);
+  if (pointAt <= 0) return sign + '0.' + '0'.repeat(-pointAt) + digits;
+  if (pointAt >= digits.length) return sign + digits + '0'.repeat(pointAt - digits.length);
+  return sign + digits.slice(0, pointAt) + '.' + digits.slice(pointAt);
+}
+
+/**
  * The Turtle for one turn.
  *
  * ★ EVERY IRI GUARDED AND EVERY LITERAL ESCAPED, through the same helpers the workspace writers
@@ -88,7 +116,7 @@ export function turnTurtle(relay: string, podName: string, f: AgentTurnFacts): s
 
   const num = (p: string, v: number | null | undefined, kind: 'integer' | 'decimal'): string =>
     (typeof v === 'number' && Number.isFinite(v) && v >= 0)
-      ? '  ieh:' + p + ' "' + (kind === 'integer' ? Math.round(v) : v) + '"^^xsd:' + kind + ' ;\n'
+      ? '  ieh:' + p + ' "' + (kind === 'integer' ? Math.round(v) : decimalLiteral(v)) + '"^^xsd:' + kind + ' ;\n'
       : '';
 
   const iri = (p: string, v: string | null | undefined, what: string): string =>

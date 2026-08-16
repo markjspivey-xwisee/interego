@@ -74,6 +74,18 @@ export interface ModelTurn {
   readonly text: string | null;
   readonly why: string;
   readonly ms: number;
+  /**
+   * ★★ THE ID THIS TURN WAS MEASURED UNDER, so the renderer's verdict can be joined to it.
+   *
+   * Main mints it before the turn runs and stamps it into the gate's config and the local turn
+   * record. The renderer is the only place that knows what became of the DRAFT — so without the id
+   * coming back, the published turn graph was minting a fresh random one and could never be joined
+   * to what the turn cost or which tools it called.
+   *
+   * It is an opaque local correlator: it names no person, grants nothing, and is meaningless off
+   * this machine except as the last segment of the turn's own IRI.
+   */
+  readonly turnId: string;
 }
 
 /**
@@ -174,6 +186,21 @@ export interface WorkspaceBridge {
     agentId?: string;
     answeredFor?: string;
     channelIri?: string;
+    /**
+     * ★★ THE CHANNEL IS NOT KNOWN TO BE PUBLIC, SO ITS MAGNITUDES MUST NOT BE.
+     *
+     * A turn graph is published world-readable. The outcome, the time and the channel IRI were
+     * already public and are unchanged by this flag — but token counts and cost are
+     * CONTENT-CORRELATED: `inputTokens` tracks the size of the transcript the delegate was fed and
+     * `outputTokens` approximates the length of a reply that is otherwise sealed. Publishing those
+     * beside `ieh:inChannel <a private workspace>` turns an encrypted channel's traffic volume into
+     * public metadata, which is a disclosure nobody agreed to by turning a delegate on.
+     *
+     * Set whenever the workspace is not KNOWN public — `'unknown'` counts as private here, because
+     * a visibility this client could not read is not a licence to publish magnitudes about it. The
+     * full numbers are still recorded locally in `agent-turns.jsonl`.
+     */
+    channelPrivate?: boolean;
   }): Promise<void>;
   seal(req: {
     graphIri: string;

@@ -25,7 +25,9 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { clearPending, nominate, readPending, readSettings, revokeGrant, writeGrant } from './permission.js';
 import { composeGate } from './turnsetup.js';
-import { readTurns, recordDraft, recordTurn, totals, toolsInTurn, usageFrom } from './telemetry.js';
+import {
+  findTurn, measuredFacts, readTurns, recordDraft, recordTurn, startedAt, totals, toolsInTurn, usageFrom,
+} from './telemetry.js';
 import { Wallet } from 'ethers';
 import {
   DELEGATE_SURFACE, RelayMcpTransport, WorkspaceClient, publishTurn,
@@ -57,6 +59,10 @@ import {
 // see agent-tools.ts.
 import { withAgentTools } from './agent-tools.js';
 import type { TurnGate } from './modelprovider.js';
+// Type-only, so nothing from the preload bundle is loaded here — it runs `exposeInMainWorld` at
+// import time and belongs to a different process. The shape of what crosses the wire is one
+// declaration, and this is the side that has to satisfy it.
+import type { ModelTurn } from './preload.js';
 
 const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
 const IDENTITY = process.env['INTEREGO_IDENTITY'] ?? 'https://identity.interego.xwisee.com';
@@ -965,6 +971,19 @@ app.whenReady().then(() => {
      * delegates can be answering at the same moment.
      */
     const turnId = randomUUID();
+    // ★ AND THE START TIME WITH IT, for the same reason: the record is written when the turn ENDS,
+    // so `prov:startedAtTime` taken from that put the beginning of a turn after its own end — and
+    // the graph publishes a duration next to it.
+    const startedIso = new Date().toISOString();
+    /**
+     * ★★ THE ID IS ATTACHED IN ONE PLACE, so no return path can forget it.
+     *
+     * `ipcMain.handle` erases its handler's return type — the boundary is untyped — so a fifth
+     * early return added later would compile, ship, and publish a turn record under a fresh random
+     * id that matches nothing. Routing every exit through one typed constructor is what makes the
+     * contract enforced rather than remembered.
+     */
+    const asTurn = (r: Omit<ModelTurn, 'turnId'>): ModelTurn => ({ ...r, turnId });
     try {
       // The probe's own child is registered too — see `probeClaude`. Without it a cancel during
       // the probe was recorded and not effected, and the turn sailed on for up to 20 seconds.
@@ -972,8 +991,11 @@ app.whenReady().then(() => {
         turn.kill = kill;
         if (turn.cancelled) kill();
       });
-      if (turn.cancelled) return { ok: false, text: null, ms: 0, why: 'You turned your agent off before it started. Nothing was written.' };
-      if (!status.usable || !status.path) return { ok: false, text: null, ms: 0, why: status.why };
+      // ★ EVERY PATH CARRIES THE ID, including the ones that never ran a model. The renderer joins
+      // its verdict to it, and a refusal returned without one is published under a fresh random id
+      // — a permanent record of a turn that cannot be matched to the turn it describes.
+      if (turn.cancelled) return asTurn({ ok: false, text: null, ms: 0, why: 'You turned your agent off before it started. Nothing was written.' });
+      if (!status.usable || !status.path) return asTurn({ ok: false, text: null, ms: 0, why: status.why });
       const spawnTurn = (tools?: TurnTools, gate?: TurnGate): Promise<ModelRun> => runClaude({
         binary: status.path as string,
         prompt,
@@ -1051,7 +1073,7 @@ app.whenReady().then(() => {
       } else {
         run = await spawnTurn();
       }
-      if (turn.cancelled) return { ok: false, text: null, ms: run.ms, why: 'You turned your agent off while it was thinking. Its answer was discarded and nothing was written.' };
+      if (turn.cancelled) return asTurn({ ok: false, text: null, ms: run.ms, why: 'You turned your agent off while it was thinking. Its answer was discarded and nothing was written.' });
 
       /**
        * ★ WHAT THE TURN COST, RECORDED FROM WHAT THE TOOLS ALREADY REPORTED.
@@ -1067,14 +1089,14 @@ app.whenReady().then(() => {
         const u = usageFrom(run.reply);
         const t = toolsInTurn(app.getPath('userData'), turnId);
         recordTurn(app.getPath('userData'), {
-          turnId, atIso: new Date().toISOString(),
+          turnId, atIso: new Date().toISOString(), startedIso,
           agentId: asDelegate ?? 'self',
           agentName: context?.agentName ?? asDelegate ?? 'this client',
           askedBy: context?.askedBy ?? '', channel: context?.channel ?? '',
           ok: run.ok, ms: run.ms, ...u, ...t,
         });
       } catch { /* a record nobody can write must not fail the turn it describes */ }
-      return run;
+      return asTurn(run);
     } finally {
       // ★ `delete`, NOT `clear`. The set exists because a turn being cancelled and one starting
       // can overlap; clearing it on every completion orphaned the other one's child permanently,
@@ -1095,6 +1117,7 @@ app.whenReady().then(() => {
   ipcMain.handle('agent:draftOutcome', async (_e, rec: {
     turnId?: string; channel?: string; outcome?: string;
     kind?: TurnOutcome; reason?: string; agentId?: string; answeredFor?: string; channelIri?: string;
+    channelPrivate?: boolean;
   }) => {
     /**
      * ── ★★ THE SAME FACT, TWICE, ON PURPOSE ────────────────────────────────────
@@ -1121,16 +1144,54 @@ app.whenReady().then(() => {
      * not a capability anybody had to grant.
      */
     if (!client || !signedInAs?.pod || !rec?.agentId || !rec?.kind) return;
+
+    /**
+     * ── ★★ WHAT IT COST, JOINED BACK ON THE WAY OUT ────────────────────────────
+     *
+     * The cost was measured in `agent:think` and written to `agent-turns.jsonl`; the OUTCOME is
+     * decided in the renderer, which is where this arrives from. Both halves are keyed by the same
+     * `turnId`, so the record published here is the two joined — and the join is exact rather than
+     * "the most recent turn", because two delegates answering at once is the ordinary case.
+     *
+     * ★ A MISSING JOIN PUBLISHES THE OUTCOME ANYWAY. An agent that wrote nothing is the fact worth
+     * having; dropping the record because the cost could not be looked up would lose the important
+     * half to protect the cheap one.
+     */
+    const joined = findTurn(app.getPath('userData'), String(rec?.turnId ?? ''));
+    /**
+     * ★★ AND NOT FOR A CHANNEL THAT IS NOT KNOWN TO BE PUBLIC.
+     *
+     * The turn graph is world-readable. The outcome and the channel IRI were already on it; token
+     * counts are different in kind, because they are CONTENT-CORRELATED — `inputTokens` tracks how
+     * much transcript the delegate was fed and `outputTokens` approximates the length of a reply
+     * that is otherwise sealed. Joining those to `ieh:inChannel <a private workspace>` would let an
+     * anonymous reader price and size a conversation they cannot read, which is a disclosure this
+     * change would have introduced by itself. The numbers stay in `agent-turns.jsonl`, on the
+     * machine that spent them, where the person who paid can read them.
+     */
+    const measured = rec?.channelPrivate ? {} : measuredFacts(joined);
     const out = await publishTurn(client, {
       relay: RELAY, podName: signedInAs.pod,
       facts: {
+        // ★ THE SAME ID THE COST WAS RECORDED UNDER, so the graph and the local log name one turn.
+        // The fallback exists for a renderer too old to send one, and is deliberately random: an
+        // unjoinable record is honest about being unjoinable, where reusing another turn's id would
+        // silently merge two.
         turnId: String(rec.turnId || randomUUID()),
         agentId: String(rec.agentId),
-        atIso: new Date().toISOString(),
+        /**
+         * ★ WHEN THE TURN STARTED, NOT WHEN THIS ARRIVED. `prov:startedAtTime` is a claim about the
+         * activity, and this handler runs after the model has finished and the renderer has judged
+         * the draft — so the clock reading here is the END, and publishing it beside `ieh:elapsedMs`
+         * described a turn that finished before it began. The fallback is only for a turn with no
+         * joinable record, where the least-wrong available answer is "about now".
+         */
+        atIso: startedAt(joined) ?? new Date().toISOString(),
         outcome: rec.kind,
         ...(rec.reason ? { outcomeReason: rec.reason.slice(0, 400) } : {}),
         ...(rec.answeredFor ? { answeredFor: rec.answeredFor } : {}),
         ...(rec.channelIri ? { inChannel: rec.channelIri } : {}),
+        ...measured,
       },
     });
     // Reported into the local log rather than thrown: the turn it describes has already happened,

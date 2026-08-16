@@ -5408,10 +5408,21 @@ var WSPC = (() => {
   function turnIri(relay, podName, turnId) {
     return turnsGraphIri(relay, podName) + "/t/" + encodeURIComponent(turnId);
   }
+  function decimalLiteral(v) {
+    const s = String(v);
+    const m = /^(-?)(\d+)(?:\.(\d+))?e([+-]?\d+)$/i.exec(s);
+    if (!m) return s;
+    const sign = m[1] ?? "";
+    const digits = (m[2] ?? "") + (m[3] ?? "");
+    const pointAt = (m[2] ?? "").length + Number(m[4]);
+    if (pointAt <= 0) return sign + "0." + "0".repeat(-pointAt) + digits;
+    if (pointAt >= digits.length) return sign + digits + "0".repeat(pointAt - digits.length);
+    return sign + digits.slice(0, pointAt) + "." + digits.slice(pointAt);
+  }
   function turnTurtle(relay, podName, f) {
     const self = turtleIri(turnIri(relay, podName, f.turnId), "the turn IRI");
     const agent = turtleIri(f.agentId, "the agent id this turn is attributed to");
-    const num = (p, v, kind) => typeof v === "number" && Number.isFinite(v) && v >= 0 ? "  ieh:" + p + ' "' + (kind === "integer" ? Math.round(v) : v) + '"^^xsd:' + kind + " ;\n" : "";
+    const num = (p, v, kind) => typeof v === "number" && Number.isFinite(v) && v >= 0 ? "  ieh:" + p + ' "' + (kind === "integer" ? Math.round(v) : decimalLiteral(v)) + '"^^xsd:' + kind + " ;\n" : "";
     const iri = (p, v, what) => v ? "  " + p + " " + turtleIri(v, what) + " ;\n" : "";
     return "@prefix ieh: <" + IEH + "> .\n@prefix iep: <" + IEP + "> .\n@prefix prov: <" + PROV + "> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n" + self + "\n  a ieh:AgentTurn ;\n  prov:wasAssociatedWith " + agent + ' ;\n  prov:startedAtTime "' + escapeTurtleLiteral2(f.atIso) + '"^^xsd:dateTime ;\n  ieh:turnOutcome ieh:' + f.outcome + " ;\n" + (f.outcomeReason ? '  ieh:outcomeReason "' + escapeTurtleLiteral2(f.outcomeReason) + '" ;\n' : "") + iri("ieh:answeredFor", f.answeredFor, "the WebID this turn was run for") + iri("ieh:inChannel", f.inChannel, "the channel IRI this turn ran in") + num("inputTokens", f.inputTokens, "integer") + num("outputTokens", f.outputTokens, "integer") + num("cacheReadTokens", f.cacheReadTokens, "integer") + num("cacheCreationTokens", f.cacheCreationTokens, "integer") + num("costUsd", f.costUsd, "decimal") + num("elapsedMs", f.elapsedMs, "integer") + num("providerTurns", f.providerTurns, "integer") + num("toolCallCount", f.toolCallCount, "integer") + (f.models ?? []).map((m) => '  ieh:turnModel "' + escapeTurtleLiteral2(m) + '" ;\n').join("") + '  iep:modalStatus "Asserted" .\n';
   }
