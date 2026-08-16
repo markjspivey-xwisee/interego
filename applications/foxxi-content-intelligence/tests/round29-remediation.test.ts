@@ -40,11 +40,14 @@ describe('round-29 — guardedFetchFn re-guards the manifest/graph hops; safeFet
     expect(r.status).toBe(200);
   });
 
+  // ★ HITS A REAL RESOLVER: `ssrf-guard.ts` calls node:dns `lookup` on the hostname to decide
+  // whether it is private, so this case's runtime is bounded by the machine's DNS, not by the
+  // mocked fetch. See round27 for the CI timeout that made this class visible.
   it('safeFetch REFUSES to follow a redirect on a POST (no body/cred replay to a new host)', async () => {
     const base = (async (url: string) => {
       if (url === 'https://lrs.example/statements') return mockResp(308, 'http://css.railway.internal/statements');
       return mockResp(200);
     }) as never;
     await expect(safeFetch('https://lrs.example/statements', { method: 'POST', body: '{}' }, base)).rejects.toThrow(/redirect on a POST/);
-  });
+  }, 30_000);
 });

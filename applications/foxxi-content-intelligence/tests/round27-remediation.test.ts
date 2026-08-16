@@ -23,6 +23,22 @@ function mockResp(status: number, location?: string) {
 }
 
 describe('round-27 — safeFetch re-guards redirects + refuses auto-follow', () => {
+  /**
+   * ★ THE ONLY CASE HERE THAT TOUCHES A REAL RESOLVER, AND THE TIMEOUT SAYS SO.
+   *
+   * `fetchFn` is mocked, so nothing reaches the network — but the guard under test is not mocked,
+   * and `ssrf-guard.ts` calls `lookup` from `node:dns/promises` to decide whether a host is
+   * private. This case is the only one that passes HOSTNAMES (`pod.example`, `other.example`); the
+   * other two use IP literals and resolve nothing. So its runtime is bounded by however long the
+   * machine's resolver takes to answer for a name that does not exist.
+   *
+   * MEASURED: green on eight consecutive commits, then "Test timed out in 5000ms" on a CI run
+   * where the suite took 313 s — two NXDOMAIN lookups on a loaded runner, against vitest's 5 s
+   * default. It reproduces nowhere locally, because a developer's resolver answers immediately.
+   *
+   * The timeout is raised rather than the lookup stubbed: stubbing would leave the DNS branch of
+   * an SSRF guard untested, which is the branch the whole file exists to cover.
+   */
   it('follows a redirect to a PUBLIC host (re-guarded) and returns the final 200', async () => {
     const calls: Array<{ url: string; redirect?: string }> = [];
     const fetchFn = (async (url: string, init?: Init) => {
@@ -35,7 +51,7 @@ describe('round-27 — safeFetch re-guards redirects + refuses auto-follow', () 
     // Both hops used redirect:'manual' (never auto-follow).
     expect(calls.every(c => c.redirect === 'manual')).toBe(true);
     expect(calls.map(c => c.url)).toEqual(['https://pod.example/desc.ttl', 'https://other.example/real.ttl']);
-  });
+  }, 30_000);
 
   it('REJECTS a redirect whose Location is an internal address (the SSRF bypass)', async () => {
     const fetchFn = (async (url: string, init?: Init) => {

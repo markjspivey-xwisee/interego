@@ -24,13 +24,16 @@ function mockResp(status: number, location?: string) {
 }
 
 describe('round-33 — void-credential DELETE + delegation-read redirects are re-guarded', () => {
+  // ★ HITS A REAL RESOLVER: `ssrf-guard.ts` calls node:dns `lookup` on the hostname to decide
+  // whether it is private, so this case's runtime is bounded by the machine's DNS, not by the
+  // mocked fetch. See round27 for the CI timeout that made this class visible.
   it('safeFetch REFUSES to follow a redirect on a DELETE (void-credential delete cannot hit a redirected internal host)', async () => {
     const base = (async (url: string) => {
       if (url === 'https://pod.example/eth-self/creds/x.ttl') return mockResp(302, 'http://169.254.169.254/x');
       return mockResp(204);
     }) as never;
     await expect(safeFetch('https://pod.example/eth-self/creds/x.ttl', { method: 'DELETE' }, base)).rejects.toThrow(/redirect on a DELETE/);
-  });
+  }, 30_000);
 
   it('guardedFetchFn (used for the delegation reads) rejects a redirect to an internal host', async () => {
     const base = (async (url: string) => {
