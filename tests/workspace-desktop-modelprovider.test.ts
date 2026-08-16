@@ -17,7 +17,9 @@ import { describe, it, expect } from 'vitest';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { DENIED_BUILTINS, childEnv, neutralCwd, resolveClaudeCli, turnArgv } from '../applications/shared-workspace/desktop/src/modelprovider.js';
+import {
+  DENIED_BUILTINS, TURN_EFFORT, TURN_MODEL, childEnv, neutralCwd, resolveClaudeCli, turnArgv,
+} from '../applications/shared-workspace/desktop/src/modelprovider.js';
 
 const WIN = process.platform === 'win32';
 
@@ -117,9 +119,34 @@ describe('the arguments a turn is run with', () => {
   });
 
   it('defaults the model rather than leaving the CLI to choose, and honours an override', () => {
-    expect(turnArgv({})[turnArgv({}).indexOf('--model') + 1]).toBe('sonnet');
+    /**
+     * ★ THE FULL NAME, NOT THE `opus` ALIAS. A delegate writes permanent, public, signed entries,
+     * and the model that wrote each one is recorded in its `ieh:AgentTurn` graph. An alias would
+     * re-point that record at a different model on a CLI upgrade with nothing in the log showing
+     * the day it changed.
+     */
+    expect(turnArgv({})[turnArgv({}).indexOf('--model') + 1]).toBe(TURN_MODEL);
+    expect(TURN_MODEL).toBe('claude-opus-5');
     const o = turnArgv({ model: 'opus' });
     expect(o[o.indexOf('--model') + 1]).toBe('opus');
+  });
+
+  it('★ states the effort rather than inheriting whatever this machine defaults to', () => {
+    /**
+     * `high` is the API's own default — the regular setting, equivalent to omitting the parameter.
+     * Stated explicitly because the CLI's default is `xhigh`, so leaving the flag off would make a
+     * delegate's turns depend on the machine it happens to run on. Thinking needs no flag: it is
+     * adaptive on this model and on by default.
+     */
+    expect(turnArgv({})[turnArgv({}).indexOf('--effort') + 1]).toBe(TURN_EFFORT);
+    expect(TURN_EFFORT).toBe('high');
+    const e = turnArgv({ effort: 'low' });
+    expect(e[e.indexOf('--effort') + 1]).toBe('low');
+    // Every level the CLI documents survives the builder unchanged.
+    for (const level of ['low', 'medium', 'high', 'xhigh', 'max']) {
+      const a = turnArgv({ effort: level });
+      expect(a[a.indexOf('--effort') + 1]).toBe(level);
+    }
   });
 
   it('★ passes a system prompt as its own argument, never concatenated into the user prompt', () => {

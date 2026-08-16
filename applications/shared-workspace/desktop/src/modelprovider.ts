@@ -425,8 +425,40 @@ export interface TurnGate {
   readonly workspace: string;
 }
 
+/**
+ * What a delegate's turn runs on.
+ *
+ * ── ★ NAMED IN FULL, NOT AS AN ALIAS ────────────────────────────────────────
+ *
+ * `--model` accepts `opus`, which resolves to whatever the CLI currently calls the latest Opus.
+ * That is the right default for a person at a terminal and the wrong one here: a delegate writes
+ * PERMANENT, PUBLIC, SIGNED entries under somebody's name, and the model that wrote each one is
+ * recorded in its `ieh:AgentTurn` graph. An alias would silently re-point that record at a
+ * different model on a CLI upgrade, and nothing in the log would show the day it changed.
+ *
+ * ★ VERIFIED LIVE, not assumed: `claude -p --model claude-opus-5 --effort high` returned
+ * `is_error: false` and reported `claude-opus-5` in its own `modelUsage`. A wrong string here
+ * fails every turn, so it is checked against the CLI rather than against memory.
+ */
+export const TURN_MODEL = 'claude-opus-5';
+
+/**
+ * How hard it thinks.
+ *
+ * ★ `high` IS THE REGULAR SETTING — the API's own default, equivalent to omitting the parameter.
+ * It is stated explicitly rather than left off so the turn does not silently inherit whatever this
+ * machine's CLI defaults to (Claude Code's own default is `xhigh`, which is not what a delegate
+ * answering a chat message needs). `low`/`medium` below it, `xhigh`/`max` above.
+ *
+ * Thinking itself needs no flag: it is adaptive on this model and on by default in the CLI, so
+ * there is nothing here to turn on and nothing to budget.
+ */
+export const TURN_EFFORT = 'high';
+
 export function turnArgv(args: {
   readonly model?: string;
+  /** One of low | medium | high | xhigh | max. Defaults to {@link TURN_EFFORT}. */
+  readonly effort?: string;
   readonly systemPrompt?: string;
   /** Omitted: the turn writes a sentence and can reach nothing, which is the old behaviour. */
   readonly tools?: TurnTools;
@@ -435,7 +467,8 @@ export function turnArgv(args: {
 }): string[] {
   return [
     '-p',
-    '--model', args.model ?? 'sonnet',
+    '--model', args.model ?? TURN_MODEL,
+    '--effort', args.effort ?? TURN_EFFORT,
     // NEVER add the flag that makes the CLI read only an API key — see footgun 1 in the header.
     // It disables OAuth, which is the entire credential this feature runs on.
     ...(args.tools
