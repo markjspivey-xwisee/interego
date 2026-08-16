@@ -410,6 +410,13 @@ interface Opened {
   settle: () => Promise<void>;
   /** Push a session change the way the main process does, through the listener the shell installed. */
   pushSession: (s: Record<string, unknown>) => void;
+  /**
+   * Push a live turn-progress event, the way the main process does while a turn runs.
+   *
+   * Null when the shell never registered for one — which is itself worth asserting, since the
+   * registration happens once at startup and a renderer that skipped it would show a dead clock.
+   */
+  turnProgress: ((p: Record<string, unknown>) => void) | null;
 }
 
 /**
@@ -473,8 +480,15 @@ const PK = (n: string): string => '0x' + n.repeat(64).slice(0, 64);
 interface AgentScript {
   providers?: readonly Record<string, unknown>[];
   unsupported?: readonly { id: string; label: string; why: string }[];
-  /** What one model turn answers with. */
-  think?: (prompt: string) => { ok: boolean; text: string | null; why: string; ms: number };
+  /**
+   * What one model turn answers with.
+   *
+   * ★ MAY RETURN A PROMISE, because the real one always does and a turn takes about a minute. A
+   * fake that can only answer instantly cannot express the state the app spends nearly all its
+   * time in — the turn IN FLIGHT — so nothing could test what the person looks at while waiting.
+   */
+  think?: (prompt: string) => { ok: boolean; text: string | null; why: string; ms: number }
+    | Promise<{ ok: boolean; text: string | null; why: string; ms: number; turnId?: string }>;
   /** Every prompt the renderer sent, so a test can assert what the agent was ASKED. */
   prompts: string[];
   cancels: number;
@@ -548,6 +562,7 @@ async function open(opts: {
     return accounts.confirm;
   };
   let sessionListener: ((x: unknown) => void) | null = null;
+  let progressListener: ((x: unknown) => void) | null = null;
   /** A live session, announced through the listener the shell installed, as the main process does. */
   const live = (pod: string): void => {
     sessionListener?.({ state: 'live', pod, method: 'wallet', expiresAt: Date.now() + 3600_000, renewable: true, why: null });
@@ -639,6 +654,7 @@ async function open(opts: {
     sessionStatus: async () => ({ state: 'live', pod: viewer, method: 'wallet', expiresAt: null, renewable: true, why: null }),
     renewSession: async () => ({ ok: true, session: { state: 'live', pod: viewer, method: 'wallet', expiresAt: null, renewable: true, why: null } }),
     onSessionChanged: (fn: (x: unknown) => void) => { sessionListener = fn; },
+    onTurnProgress: (fn: (x: unknown) => void) => { progressListener = fn; },
     agentProbe: async () => {
       if (agent.probeThrows) throw new Error('the probe blew up');
       return { providers: agent.providers ?? [CLAUDE_READY], unsupported: agent.unsupported ?? [] };
@@ -713,6 +729,7 @@ async function open(opts: {
   return {
     doc: dom.window.document, win, s, agent, accounts, settle,
     pushSession: (next) => { sessionListener?.(next); },
+    turnProgress: progressListener ? (p) => { progressListener?.(p); } : null,
   };
 }
 
@@ -1741,6 +1758,59 @@ describe('the local agent is off, visible, and stoppable', () => {
     // Once one IS chosen, the off state says what it says.
     await speakAs(o, D1);
     expect(text(o.doc, '#agentwhy')).toContain('It reads nothing and writes nothing');
+  });
+
+  it('★★ while it thinks, the panel says what it is doing — and stops the moment the turn ends', async () => {
+    /**
+     * ── WHY THIS IS WORTH A TEST ────────────────────────────────────────────────
+     *
+     * A turn takes about a minute (56 s measured on Sonnet, ~70 s on Opus 5) and used to look
+     * identical for every second of it. "I can't tell if it's working" is the complaint this
+     * vertical keeps producing, and it is not a speed problem — the three real latency wins found
+     * by audit come to a few seconds against seventy.
+     *
+     * Two failure modes are pinned here, and the second is the one that bites: a clock that keeps
+     * ticking after the turn ends REWRITES THE SAME PANEL every second, erasing the outcome the
+     * person is trying to read.
+     */
+    let release: ((v: unknown) => void) | null = null;
+    const o = await open({
+      setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'What did we decide about the roof?', '2026-08-07T10:00:00.000Z')); },
+      agent: {
+        prompts: [], cancels: 0, drafts: [],
+        think: () => new Promise((r) => { release = r as (v: unknown) => void; }),
+      },
+    });
+    await signInAndSpeak(o);
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+
+    // ★ A CLOCK, so a still screen is distinguishable from a stuck one.
+    expect(text(o.doc, '#agentresult')).toMatch(/is reading the channel — \d+s/);
+    expect(text(o.doc, '#agentresult')).toContain('has not needed a tool yet');
+
+    // ★ WHAT IT REACHED FOR, from the gate's own audit trail — no new measurement.
+    o.turnProgress?.({ turnId: 't1', tools: { 'mcp__interego__resolve_linked_data': 2, ToolSearch: 1 }, toolCalls: 3, asked: 0 });
+    expect(text(o.doc, '#agentresult')).toContain('resolve_linked_data x2');
+    expect(text(o.doc, '#agentresult')).toContain('ToolSearch');
+
+    /**
+     * ★★ AND THE ONE CASE THAT REALLY IS STUCK, NAMED. A turn blocked on a permission nobody has
+     * answered looked exactly like a slow one, and waiting longer never fixes it.
+     */
+    o.turnProgress?.({ turnId: 't1', tools: { Bash: 1 }, toolCalls: 1, asked: 1 });
+    expect(text(o.doc, '#agentresult')).toContain('stopped for your permission');
+
+    (release as unknown as (v: unknown) => void)({ ok: true, text: BEHALF + 'We agreed to re-tile in spring.', why: 'ok', ms: 900, turnId: 't1' });
+    await o.settle();
+
+    // The outcome is on screen...
+    expect(text(o.doc, '#agentresult')).toContain('NOTHING has been written yet');
+    // ...and a late progress event must NOT repaint over it. Without the `finally` that stops the
+    // watch, the next clock tick would replace this panel with "reading the channel — 61s".
+    const settled = text(o.doc, '#agentresult');
+    o.turnProgress?.({ turnId: 't1', tools: { Bash: 9 }, toolCalls: 9, asked: 0 });
+    expect(text(o.doc, '#agentresult')).toBe(settled);
   });
 
   it('★ a draft goes in the composer and NOTHING is published until the person sends it', async () => {

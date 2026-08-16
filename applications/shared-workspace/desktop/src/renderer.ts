@@ -60,7 +60,7 @@ import { discordLinkPlan } from '@interego/workspace-discord/src/link-plan.js';
  * One function so the two answers cannot differ.
  */
 import { checkPrivateKey } from './privatekey.js';
-import type { AccountKeyInfo, BridgeFailure, HostedDelegateInfo, ProviderInfo, SessionInfo, WorkspaceBridge } from './preload.js';
+import type { AccountKeyInfo, BridgeFailure, HostedDelegateInfo, ProviderInfo, SessionInfo, TurnProgress, WorkspaceBridge } from './preload.js';
 
 declare global {
   interface Window { interego: WorkspaceBridge }
@@ -521,6 +521,9 @@ async function describe(): Promise<void> {
   renderAccounts();
   renderSession(d.session);
   window.interego.onSessionChanged(renderSession);
+  // ★ ONCE. See `activeWatch` — this is `ipcRenderer.on`, so registering per turn would leak a
+  // listener each time and let finished turns paint over the running one.
+  window.interego.onTurnProgress((p) => { activeWatch?.onProgress(p); });
 }
 
 /**
@@ -4055,6 +4058,79 @@ function agentEntries(): { entries: SeenEntry[]; unreadable: number } {
   return { entries, unreadable };
 }
 
+/**
+ * ── ★★ A MINUTE OF SILENCE, MADE INTO VISIBLE WORK ──────────────────────────
+ *
+ * A turn takes about a minute — 56 s measured on Sonnet, ~70 s on Opus 5 — and every second of it
+ * used to look identical: one static panel, no clock, no sign of activity. That is the complaint
+ * this vertical keeps producing, and it is NOT a speed problem. The three real latency wins found
+ * by audit come to a few seconds against seventy; what changes the experience is showing that
+ * something is happening.
+ *
+ * ★ THE CLOCK IS COUNTED HERE, NOT PUSHED. A second-by-second IPC message would be chatter for a
+ * number this side can work out on its own. Main pushes only what it alone knows — the tool calls
+ * the permission gate has logged — every couple of seconds.
+ *
+ * ★ AND IT NAMES WHAT THE GATE IS WAITING ON. `asked` is the count the gate stopped to put in front
+ * of a human. A turn blocked on an unanswered permission request is the one case that genuinely is
+ * stuck, and it looked exactly like a slow one.
+ */
+interface TurnWatch { readonly stop: () => void }
+
+/**
+ * The turn currently being watched, if any.
+ *
+ * ★ ONE IPC LISTENER FOR THE PROCESS, NOT ONE PER TURN. `onTurnProgress` is `ipcRenderer.on`, which
+ * APPENDS — registering inside `startTurnWatch` would leak a listener every turn and, worse, leave
+ * every finished turn's closure still painting over the live one. Registration happens once at
+ * startup and dispatches to whichever watch is open.
+ */
+let activeWatch: { readonly onProgress: (p: TurnProgress) => void } | null = null;
+
+function startTurnWatch(title: string, preamble: string): TurnWatch {
+  const startedAt = Date.now();
+  let tools: Readonly<Record<string, number>> = {};
+  let asked = 0;
+  let stopped = false;
+
+  const paint = (): void => {
+    if (stopped) return;
+    const secs = Math.round((Date.now() - startedAt) / 1000);
+    const names = Object.entries(tools)
+      // The gate records the fully-qualified MCP name; the tail is what a person recognises.
+      .map(([n, c]) => (n.split('__').pop() ?? n) + (c > 1 ? ' x' + c : ''))
+      .join(', ');
+    const doing = names
+      ? ' It has used: ' + names + '.'
+      : ' It has not needed a tool yet.';
+    const blocked = asked > 0
+      ? ' ' + asked + ' tool call' + (asked === 1 ? '' : 's') + ' stopped for your permission — check Permissions, '
+        + 'because this turn cannot finish until you answer.'
+      : '';
+    say('agentresult', 'pending', title + ' — ' + secs + 's', preamble + doing + blocked);
+  };
+
+  paint();
+  const clock = setInterval(paint, 1000);
+  const watch = {
+    onProgress: (p: TurnProgress): void => {
+      if (stopped) return;
+      tools = p.tools; asked = p.asked;
+      paint();
+    },
+  };
+  activeWatch = watch;
+  return {
+    stop: (): void => {
+      stopped = true;
+      clearInterval(clock);
+      // Only clear the slot if it is still OURS. A turn that finishes after the next one has
+      // started must not silence the live one.
+      if (activeWatch === watch) activeWatch = null;
+    },
+  };
+}
+
 async function agentConsider(): Promise<void> {
   if (!A.on || A.busy || !S.client || !S.viewer || !S.workspace || !S.slug) return;
   const provider = usableProvider();
@@ -4103,8 +4179,10 @@ async function agentConsider(): Promise<void> {
   A.phase = 'thinking';
   A.why = '';
   renderAgent();
-  say('agentresult', 'pending', (speaker.name ?? 'Your delegate') + ' is reading the channel',
-    'Running on ' + provider.label + ' under ' + (provider.account ?? 'your own account') + '. Nothing has been written.');
+  const watching = startTurnWatch(
+    (speaker.name ?? 'Your delegate') + ' is reading the channel',
+    'Running on ' + provider.label + ' under ' + (provider.account ?? 'your own account') + '. Nothing has been written.',
+  );
   let turn;
   try {
     /**
@@ -4134,6 +4212,12 @@ async function agentConsider(): Promise<void> {
     clear($('agentresult')).appendChild(errBox(e, 'Your delegate could not be run, so nothing was drafted and nothing was written.'));
     renderAgent();
     return;
+  } finally {
+    // ★ IN `finally`, and BEFORE any panel below is written. The clock ticks once a second and
+    // rewrites the same panel every tick, so a watch left running would erase whatever the outcome
+    // wrote and leave the count climbing on a turn that ended — the opposite of the honesty this
+    // was added for. `finally` runs before the catch's own `return` propagates, so both paths stop.
+    watching.stop();
   }
   A.busy = false;
   // Turned off while it was thinking. The answer is discarded rather than used: "off" has to mean

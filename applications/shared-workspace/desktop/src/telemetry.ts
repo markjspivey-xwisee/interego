@@ -156,8 +156,13 @@ export function toolsInTurn(userData: string, turnId: string): {
   const empty = { toolCalls: 0, allowed: 0, asked: 0, denied: 0, tools: {} as Record<string, number> };
   const p = join(userData, 'agent-audit.jsonl');
   if (!existsSync(p)) return empty;
-  let raw = '';
-  try { raw = readFileSync(p, 'utf8'); } catch { return empty; }
+  /**
+   * ★ A BOUNDED TAIL, because this is now called REPEATEDLY DURING A TURN, not once after it.
+   * The live progress push reads it every couple of seconds for a minute or more, on the Electron
+   * main process, and the audit trail only grows. A turn's own lines were written seconds ago, so
+   * they are always inside the window; anything older belongs to a turn nobody is asking about.
+   */
+  const raw = readTail(p, TAIL_BYTES);
 
   const tools: Record<string, number> = {};
   let toolCalls = 0, allowed = 0, asked = 0, denied = 0;

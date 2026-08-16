@@ -152,6 +152,17 @@ interface Turn { cancelled: boolean; kill: (() => void) | null }
 const thinking = new Set<Turn>();
 
 /**
+ * How often a running turn reports what it has reached for.
+ *
+ * ★ SLOW ENOUGH TO BE FREE, FAST ENOUGH TO LOOK ALIVE. Each tick reads a bounded tail of the gate's
+ * audit trail on the main process; at two seconds that is ~35 reads across a 70-second turn, which
+ * is nothing, and no tool call stays invisible for longer than a blink. The ELAPSED CLOCK is not
+ * driven from here — the renderer counts its own seconds, so the number on screen ticks smoothly
+ * without an IPC message per second.
+ */
+const TURN_PROGRESS_MS = 2000;
+
+/**
  * A DELEGATE THIS APP IS CURRENTLY HOSTING.
  *
  * ★ HOSTING, NOT OWNING, AND THE DIFFERENCE IS THE WHOLE POINT. A delegate is a keypair plus a
@@ -984,6 +995,35 @@ app.whenReady().then(() => {
      * contract enforced rather than remembered.
      */
     const asTurn = (r: Omit<ModelTurn, 'turnId'>): ModelTurn => ({ ...r, turnId });
+
+    /**
+     * ── ★★ PROOF OF LIFE, BECAUSE A MINUTE OF SILENCE READS AS BROKEN ───────────
+     *
+     * MEASURED: a turn takes ~56 s on Sonnet and ~70 s on Opus 5, and for all of it the person saw
+     * one static panel. That is the complaint this whole vertical keeps producing — "I can't tell
+     * if it's working" — and it is not a speed problem. Shaving round trips elsewhere buys a few
+     * seconds off seventy; saying what the agent is DOING changes the minute from silence into
+     * visible work, which is the thing a person actually wants.
+     *
+     * ★ NOTHING NEW IS MEASURED TO DO THIS. The permission gate already writes one audit line per
+     * tool call, stamped with this turn's id — that is how `toolsInTurn` bills a turn afterwards.
+     * Reading the same trail WHILE the turn runs is the identical join, asked earlier. No hook, no
+     * streaming parser, no change to how the child is spawned or how its reply is read: the parts
+     * of this that were hard to get right are untouched.
+     *
+     * ★ AND THE TOOL NAMES ONLY, NEVER THE MODEL'S TEXT. A draft that has not been through
+     * `checkDraft` has not declared a footing and may never be written at all; previewing it would
+     * put unvalidated words on screen as though they were an answer.
+     */
+    const progress = setInterval(() => {
+      let t: ReturnType<typeof toolsInTurn>;
+      try { t = toolsInTurn(app.getPath('userData'), turnId); } catch { return; }
+      for (const wc of listeners) {
+        // A window closed mid-turn is ordinary, not a failure — same rule as `session:changed`.
+        if (!wc.isDestroyed()) wc.send('agent:turn-progress', { turnId, tools: t.tools, toolCalls: t.toolCalls, asked: t.asked });
+      }
+    }, TURN_PROGRESS_MS);
+
     try {
       // The probe's own child is registered too — see `probeClaude`. Without it a cancel during
       // the probe was recorded and not effected, and the turn sailed on for up to 20 seconds.
@@ -1098,6 +1138,10 @@ app.whenReady().then(() => {
       } catch { /* a record nobody can write must not fail the turn it describes */ }
       return asTurn(run);
     } finally {
+      // ★ IN `finally`, so a throw, a cancel and an early return all stop it. A progress timer that
+      // outlived its turn would keep reading the audit trail forever and keep a dead turn's tool
+      // list on screen — telemetry that misreports the thing it measures.
+      clearInterval(progress);
       // ★ `delete`, NOT `clear`. The set exists because a turn being cancelled and one starting
       // can overlap; clearing it on every completion orphaned the other one's child permanently,
       // which is the exact failure the set was introduced to prevent.

@@ -69,6 +69,17 @@ export interface ProviderInfo {
   readonly usable: boolean;
 }
 
+/** What a turn has done so far, pushed while it runs. See {@link InteregoApi.onTurnProgress}. */
+export interface TurnProgress {
+  /** Which turn this describes. The renderer ignores anything that is not the one it is watching. */
+  readonly turnId: string;
+  /** Tool name to call count, exactly as the gate's audit trail recorded them for this turn. */
+  readonly tools: Readonly<Record<string, number>>;
+  readonly toolCalls: number;
+  /** How many of those the gate stopped to ask a human about — the reason a turn can look stuck. */
+  readonly asked: number;
+}
+
 export interface ModelTurn {
   readonly ok: boolean;
   readonly text: string | null;
@@ -216,6 +227,20 @@ export interface WorkspaceBridge {
   /** Push, so a lapse reaches the window without the renderer polling for one. */
   onSessionChanged(fn: (s: SessionInfo) => void): void;
 
+  /**
+   * What a turn has reached for, while it is still running.
+   *
+   * ★★ THE ANSWER TO "IS IT WORKING", WHICH IS NOT A SPEED PROBLEM. A turn takes about a minute,
+   * and for all of it the person saw one unchanging panel. This carries the tool calls the
+   * permission gate has already logged for the turn in flight — no new measurement, the same audit
+   * trail the turn is billed from afterwards, read earlier.
+   *
+   * ★ TOOL NAMES ONLY, NEVER THE MODEL'S TEXT. A draft that has not passed `checkDraft` has not
+   * declared a footing and may never be written; showing it would put unvalidated words on screen
+   * as though they were an answer.
+   */
+  onTurnProgress(fn: (p: TurnProgress) => void): void;
+
   /** What this machine can run the user's agent on, asked fresh every time. */
   agentProbe(): Promise<{ providers: readonly ProviderInfo[]; unsupported: readonly { id: string; label: string; why: string }[] }>;
   /**
@@ -349,6 +374,7 @@ const bridge: WorkspaceBridge = {
   // The listener is wrapped rather than handed `ipcRenderer.on` directly: the event object
   // carries a `sender` the renderer has no business holding.
   onSessionChanged: (fn) => { ipcRenderer.on('session:changed', (_e, s: SessionInfo) => { fn(s); }); },
+  onTurnProgress: (fn) => { ipcRenderer.on('agent:turn-progress', (_e, p: TurnProgress) => { fn(p); }); },
   agentProbe: () => ipcRenderer.invoke('agent:probe'),
   agentThink: (prompt, systemPrompt, asDelegate, context) => ipcRenderer.invoke('agent:think', prompt, systemPrompt, asDelegate, context),
   agentCancel: () => ipcRenderer.invoke('agent:cancel'),
