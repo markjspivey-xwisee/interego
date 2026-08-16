@@ -137,21 +137,52 @@ async function main(): Promise<number> {
   if (!envelopeJson) return bad;
 
   /**
-   * ★★ THE RELAY'S KEY FROM A SOURCE THAT IS NOT THIS ENVELOPE. `/render` answers 403
-   * `NotARecipient` and names `relayAgentPublicKey` — a refusal it can only give for an envelope it
-   * is genuinely absent from, so the response supplies the key AND corroborates the claim. An empty
-   * lookup is failed explicitly: otherwise "the relay is not in the list" passes identically when
-   * there was no key to look for.
+   * ── ★★ A CONTROLLED COMPARISON, IN ONE RUN, BY THE SAME IDENTITY ────────────
+   *
+   * "The relay is not a recipient" needs the relay's key from somewhere that is not this envelope,
+   * or "absent" and "we looked for nothing" produce the same green tick.
+   *
+   * `/render` was the intended source — its `NotARecipient` refusal names `relayAgentPublicKey` —
+   * but it answers 401 to a plain bearer, so that lookup yields nothing and the assertion below
+   * would have failed vacuously. (It failed loudly instead, which is the guard working.)
+   *
+   * So the same identity publishes a second graph the OLD way, unsealed, minutes later. The relay
+   * seals THAT one and puts its own key in it, so whichever recipient of the control is not me IS
+   * the relay's key — established rather than assumed. The claim then becomes a comparison rather
+   * than a lookup: present when the relay seals, absent when the publisher does, same identity,
+   * same pod, same run. It doubles as the "nothing else moved" check on the legacy path.
    */
-  const renderResp = await fetch(RELAY + '/render/' + encodeURIComponent(res.descriptorUrl), {
-    headers: { 'Accept': 'application/ld+json', 'Authorization': 'Bearer ' + bearer.accessToken },
+  head('★★ the control: publish the OLD way and watch the relay put itself in');
+  const controlIri = 'urn:graph:sealedprobe:control:' + Date.now();
+  const control = await callTool(bearer.accessToken, 'publish_context', {
+    graph_iri: controlIri,
+    graph_content: '@prefix dct: <http://purl.org/dc/terms/> .\n<' + controlIri + '> dct:title "control" .',
+    visibility: 'shared',
+    context_summary: 'unsealed control for the sealed-path probe',
   });
-  const renderBody = await renderResp.json().catch(() => ({})) as { relayAgentPublicKey?: string; '@type'?: unknown };
-  const relayKey = String(renderBody.relayAgentPublicKey ?? '');
-  must('★ /render named the relay\'s own key, so this check can fail', relayKey !== '',
-    'GET /render answered ' + renderResp.status + ' without relayAgentPublicKey: ' + JSON.stringify(renderBody).slice(0, 200));
-  must('★★ /render REFUSED — the relay cannot project what it cannot read', renderResp.status === 403,
-    'it answered ' + renderResp.status + ', so it opened the envelope');
+  const controlRes = control.result as { descriptorUrl?: string };
+  must('the legacy unsealed path still works', !!controlRes.descriptorUrl, JSON.stringify(controlRes).slice(0, 200));
+
+  let controlEnvelope = '';
+  if (controlRes.descriptorUrl) {
+    for (const deadline = Date.now() + 60_000; ;) {
+      const got = await callTool(bearer.accessToken, 'get_encrypted_graph', { url: controlRes.descriptorUrl });
+      const g = got.result as { envelope?: string };
+      if (g.envelope) { controlEnvelope = g.envelope; break; }
+      if (Date.now() > deadline) break;
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
+  const controlRecipients = controlEnvelope
+    ? (JSON.parse(controlEnvelope) as EncryptedEnvelope).wrappedKeys.map((k) => k.recipientPublicKey)
+    : [];
+  const notMe = controlRecipients.filter((k) => k !== me.publicKey);
+  log('    control recipients: ' + controlRecipients.length + ' · not mine: ' + notMe.length);
+  must('★ the control named somebody who is not me, so there IS a key to look for',
+    notMe.length > 0,
+    'the unsealed control had no third-party recipient, so "the relay is absent from the sealed one" '
+      + 'would pass for the wrong reason. Nothing can be concluded from this run.');
+  const relayKey = notMe[0] ?? '';
 
   const envelope = JSON.parse(envelopeJson) as EncryptedEnvelope;
   const recipients = envelope.wrappedKeys.map((k) => k.recipientPublicKey);
