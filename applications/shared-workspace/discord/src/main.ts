@@ -55,6 +55,7 @@ import { SpokenBy } from './spoken-by.js';
 import { mentionedAgentName, roleRows, syncAgentRoles } from './mentions.js';
 import { findProduced, renderPng } from './drawing.js';
 import {
+  bodyParts,
   renderAsk, renderChallenge, renderConfirm, renderMentions, renderNews, renderRecord, renderShow, renderStart,
   renderUnlink, renderWho, type Message, type NewsPost,
 } from './render.js';
@@ -309,8 +310,51 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
           }
           // Discord refuses an empty message with no attachment; with one, empty content is fine.
           if (!content.trim() && !file) content = p.content;
-          const sent = await webhooks.postAs(channelId, p.who, content, file);
-          if (sent) { spokenBy.remember(sent, p.agentId); continue; }
+          /**
+           * ── ★★ SPLIT, BECAUSE DISCORD REFUSES 2001 CHARACTERS OUTRIGHT ──────────────
+           *
+           * MEASURED, live: a delegate answered a question asked FROM Discord, its 2,722-character
+           * reply landed on the pod, and Discord rejected the relay with
+           * `50035 BASE_TYPE_MAX_LENGTH: Must be 2000 or fewer in length` — twice, because the
+           * fallback below posted the same over-long body and earned the same 400. The person who
+           * asked saw nothing at all and reasonably concluded their agent had not answered. It had;
+           * the answer is permanent on the pod and was simply undeliverable here.
+           *
+           * The workspace allows an entry up to `DRAFT_MAX` (16,000), so EVERY reply between 2,001
+           * and 16,000 characters was silently lost on this leg. Not rare — the delegate had
+           * already written 2,722 on its second real question.
+           *
+           * ★ `bodyParts` IS THE SPLITTER THIS FILE ALREADY OWNS, not a new one. It packs whole
+           * elements, marks each part `(k/n)` so a reader can see a followup is missing, and cuts
+           * inside a single over-long element only as a last resort with "(continued)". Writing a
+           * second splitter here is how the two would come to disagree about where a seam goes.
+           *
+           * ★ THE ATTACHMENT RIDES THE LAST PART, so a drawing still appears after the text it
+           * belongs to — the order a single message would have produced.
+           */
+          const personaParts = bodyParts(content.split('\n'), false);
+          let sent: string | null = null;
+          let failedPart = 0;
+          for (let k = 0; k < personaParts.length; k++) {
+            const last = k === personaParts.length - 1;
+            const got = await webhooks.postAs(channelId, p.who, (personaParts[k] as Message).content, last ? file : undefined);
+            if (!got) { failedPart = k + 1; break; }
+            // ★ THE FIRST PART IS THE ONE A REPLY SHOULD ATTACH TO: it is the message a person sees
+            // as "the agent said this", and addressing an agent is done by replying to it.
+            if (k === 0) sent = got;
+          }
+          if (sent && !failedPart) { spokenBy.remember(sent, p.agentId); continue; }
+          if (sent && failedPart) {
+            // Part of it landed. Say which part did not, in the channel, rather than leaving a
+            // reader to believe a truncated answer was the whole one.
+            spokenBy.remember(sent, p.agentId);
+            try {
+              await rest.post(channelId, '? Part ' + failedPart + ' of ' + personaParts.length + ' of '
+                + p.who + '\'s entry could not be sent, so what is above is incomplete. '
+                + '`/workspace show` reads the whole thing again from the pod that holds it.', []);
+            } catch { /* the (k/n) marker on the parts that DID land already shows the gap */ }
+            continue;
+          }
           // Fall back to the bot's voice, and NAME the agent in it — the display was the only
           // thing lost, and dropping the attribution with it would be the real failure.
           //
@@ -318,11 +362,38 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
           // it is how a person addresses an agent. A channel without MANAGE_WEBHOOKS would
           // otherwise lose the gesture as well as the avatar, which is a much bigger loss than
           // the one the fallback exists to absorb.
+          /**
+           * ★ SPLIT HERE TOO. This fallback posted the same whole body and earned the same
+           * `BASE_TYPE_MAX_LENGTH` 400 the webhook had just failed on — so an over-long entry hit
+           * the limit twice and reached the channel zero times. A fallback that reproduces the
+           * failure it is catching is not a fallback.
+           */
           try {
-            const posted = await rest.post(channelId, '**' + p.who + '** —\n' + p.content, []);
-            if (typeof posted['id'] === 'string') spokenBy.remember(posted['id'], p.agentId);
+            const plain = bodyParts(('**' + p.who + '** —\n' + p.content).split('\n'), false);
+            for (let k = 0; k < plain.length; k++) {
+              const posted = await rest.post(channelId, (plain[k] as Message).content, []);
+              if (k === 0 && typeof posted['id'] === 'string') spokenBy.remember(posted['id'], p.agentId);
+            }
           }
-          catch (e) { out('discord: could not post ' + p.who + '\'s entry to ' + channelId + ' — ' + ((e as Error).message)); }
+          catch (e) {
+            out('discord: could not post ' + p.who + '\'s entry to ' + channelId + ' — ' + ((e as Error).message));
+            /**
+             * ── ★★ SILENCE IS THE WORST ANSWER, AND IT WAS THE ONE BEING GIVEN ──────────
+             *
+             * Both delivery paths just failed, and until now that produced a line in a log the
+             * person cannot read and NOTHING in the channel. Measured: somebody asked their
+             * delegate a question from Discord, it answered in 91 seconds at a cost of $0.93, the
+             * answer is permanent on the pod — and they concluded it had not responded, because
+             * from where they were sitting there was no difference.
+             *
+             * A delegate that answered and could not be relayed is a DELIVERY failure, and saying
+             * so costs one short message that is nowhere near any limit.
+             */
+            try {
+              await rest.post(channelId, '? ' + p.who + ' answered, and it could not be delivered here — '
+                + 'the reply is on the pod and is not lost. `/workspace show` reads it from the pod that holds it.', []);
+            } catch { /* if even this cannot be posted, the channel is not reachable at all */ }
+          }
           continue;
         }
         try { await rest.post(channelId, p.message.content, []); }

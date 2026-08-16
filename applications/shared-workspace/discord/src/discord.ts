@@ -577,6 +577,23 @@ export class DiscordGateway {
  * then cannot say so in the thread, the record is right and the person does not know it — so the
  * caller is told, and it goes to the operator's log rather than nowhere.
  */
+/**
+ * A request path with any webhook token taken out of it.
+ *
+ * ── ★★ A CREDENTIAL WAS BEING WRITTEN INTO THE LOGS ─────────────────────────
+ *
+ * `POST /webhooks/<id>/<token>` carries the token IN THE PATH, and every failure threw an Error
+ * whose message was that path verbatim. Found live: a 400 on an over-long message printed the
+ * complete webhook URL, token included, into the deployment log. That token is enough to post
+ * into the channel AS ANY PERSONA — the exact impersonation this bot's authorship rules exist to
+ * prevent — and it lands somewhere with a different, wider audience than the bot's own secrets.
+ *
+ * The id is kept because it identifies WHICH webhook failed and grants nothing on its own.
+ */
+export function safePath(path: string): string {
+  return path.replace(/(\/webhooks\/\d+\/)[^/?]+/g, '$1<token>');
+}
+
 export class DiscordRest {
   private readonly token: string;
   private readonly fetchImpl: typeof fetch;
@@ -602,13 +619,13 @@ export class DiscordRest {
         // being rate limited once by a bot that does not retry, and it hid the fact that the
         // backoff had already been spent. An operator reading that line needs to know whether
         // waiting longer is the fix.
-        if (attempt > 0) throw new Error('Discord ' + method + ' ' + path + ' was rate limited twice in a row (HTTP 429): ' + text.slice(0, 200));
+        if (attempt > 0) throw new Error('Discord ' + method + ' ' + safePath(path) + ' was rate limited twice in a row (HTTP 429): ' + text.slice(0, 200));
         let after = 1;
         try { after = Number((JSON.parse(text) as { retry_after?: number }).retry_after ?? 1); } catch { /* a body this client cannot parse gets the one-second default */ }
         await new Promise((r) => setTimeout(r, Math.min(Math.max(after, 0) * 1000 + 250, 30_000)));
         continue;
       }
-      if (!res.ok) throw new Error('Discord ' + method + ' ' + path + ' -> HTTP ' + res.status + ' ' + text.slice(0, 300));
+      if (!res.ok) throw new Error('Discord ' + method + ' ' + safePath(path) + ' -> HTTP ' + res.status + ' ' + text.slice(0, 300));
       if (!text) return {} as T;
       try { return JSON.parse(text) as T; } catch { return {} as T; }
     }

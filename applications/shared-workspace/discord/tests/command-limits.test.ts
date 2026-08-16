@@ -26,7 +26,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { COMMANDS, COMMAND_TEXT_MAX } from '../src/discord.js';
+import { COMMANDS, COMMAND_TEXT_MAX, safePath } from '../src/discord.js';
 
 interface Node { name?: string; description?: string; options?: readonly Node[]; type?: number }
 
@@ -112,6 +112,34 @@ describe("Discord's own limits on the tree this bot registers", () => {
       const needsOne = x.depth === 0 || x.node.type === 1 || x.node.type === 2;
       if (!needsOne) continue;
       expect(typeof x.node.description, x.path + ' is a command or subcommand with no description').toBe('string');
+    }
+  });
+});
+
+describe('★★ a webhook token never reaches a log line', () => {
+  /**
+   * FOUND LIVE, in a deployment log: a 400 on an over-long message printed
+   * `POST /webhooks/<id>/<token>?wait=true` verbatim, because the error message was the request
+   * path. A webhook token is enough to post into the channel AS ANY PERSONA — the exact
+   * impersonation this bot's authorship rules exist to prevent — and a log has a different and
+   * wider audience than the bot's own secrets.
+   */
+  it('redacts the token out of a webhook path, and keeps the id', () => {
+    expect(safePath('/webhooks/1537078937832792094/WpZm8RiJEwwpyhJWOpE8XdPb65K')).
+      toBe('/webhooks/1537078937832792094/<token>');
+    // The query string is where `?wait=true` lives and must survive; the token before it must not.
+    const q = safePath('/webhooks/123/SECRETTOKEN?wait=true');
+    expect(q).toBe('/webhooks/123/<token>?wait=true');
+    expect(q).not.toContain('SECRETTOKEN');
+    // A message edit addresses a message UNDER the token, so the token is mid-path, not trailing.
+    expect(safePath('/webhooks/123/SECRETTOKEN/messages/@original'))
+      .toBe('/webhooks/123/<token>/messages/@original');
+  });
+
+  it('★ leaves every other path exactly as it was', () => {
+    // A redactor that mangled ordinary paths would make every other failure harder to read.
+    for (const p of ['/channels/999/messages', '/applications/1/commands', '/users/@me']) {
+      expect(safePath(p)).toBe(p);
     }
   });
 });

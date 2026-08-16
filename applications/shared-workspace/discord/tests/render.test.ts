@@ -52,6 +52,33 @@ describe('body', () => {
  * element is one record's attribution and the words that attribution is about.
  */
 describe('bodyParts', () => {
+  it('★★ the live case: a 2,722-character delegate reply, which Discord rejected outright', () => {
+    /**
+     * MEASURED, from a real channel. A delegate answered a question asked FROM Discord; the reply
+     * landed on the pod at 2,722 characters and Discord refused the relay with
+     * `50035 BASE_TYPE_MAX_LENGTH: Must be 2000 or fewer in length` — twice, because the fallback
+     * posted the same over-long body. The person saw nothing and concluded their agent had not
+     * answered. It had, in 91 seconds, for $0.93.
+     *
+     * The persona path was posting the body WHOLE while this splitter sat unused in the same file.
+     * `DRAFT_MAX` is 16,000, so every reply between 2,001 and 16,000 characters was lost on that
+     * leg — and the delegate had already written 2,722 on its second real question.
+     */
+    const reply = 'Not as things stand, and I went and checked rather than guessing. '
+      + Array.from({ length: 30 }, (_, i) => 'Paragraph ' + i + ': ' + 'w'.repeat(80)).join('\n\n');
+    expect(reply.length).toBeGreaterThan(DISCORD_LIMIT);
+    const parts = bodyParts(reply.split('\n'), false);
+    expect(parts.length).toBeGreaterThan(1);
+    // ★ THE PROPERTY DISCORD ENFORCES, asserted on every part rather than on the total.
+    for (const p of parts) expect(p.content.length).toBeLessThanOrEqual(DISCORD_LIMIT);
+    // ★ AND NOTHING IS LOST — the failure this replaces delivered zero characters, and a splitter
+    // that quietly dropped the tail would be a worse version of the same lie.
+    const rejoined = whole(parts);
+    for (const line of reply.split('\n').filter((l) => l.trim())) expect(rejoined).toContain(line);
+    // Each part says which it is, so a reader can see a missing followup rather than infer one.
+    expect(parts[0]?.content).toContain('(1/' + parts.length + ')');
+  });
+
   it('never exceeds the limit and never drops a line', () => {
     const lines = Array.from({ length: 40 }, (_, i) => 'line ' + i + ' ' + 'y'.repeat(200));
     const parts = bodyParts(lines, false);
