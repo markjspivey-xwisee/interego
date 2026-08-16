@@ -360,8 +360,17 @@ async function run(): Promise<number> {
 
   head('★ and a stranger, seated in nothing, must be refused');
   // The same sealed bytes fetched above, offered to a key that is on no roster and never was.
-  must('★★ the stranger cannot open it', strangerOpener(sealed) === null,
-    'an unrelated key opened this entry, so the envelope is not addressed to anybody in particular');
+  /**
+   * ★ `not-for-you`, NOT MERELY "did not open". The opener has three answers now, and the
+   * difference is the whole point: a stranger must be REFUSED as a permission, not reported as
+   * damage. `=== null` used to say this and stopped being true when the third answer was added —
+   * it failed loudly rather than passing, which is what a comparison against a changed type should
+   * do.
+   */
+  const strangerSees = strangerOpener(sealed);
+  must('★★ the stranger cannot open it', strangerSees.kind === 'not-for-you',
+    'answered ' + strangerSees.kind + '; an unrelated key must be refused as a permission, and if it '
+      + 'OPENED this then the envelope is not addressed to anybody in particular');
 
   return bad;
 }
