@@ -516,6 +516,65 @@ describe('checkDraft: what may be appended to a permanent public log', () => {
     }
   });
 
+  it('★★ accepts the ways a model actually writes that line', () => {
+    /**
+     * ── WHAT THIS COST BEFORE ───────────────────────
+     *
+     * The line had to match anchored, so `**FOOTING: MY OWN ACCOUNT**` or a trailing full stop was
+     * rejected — a real answer to a real question thrown away over presentation, retried, rejected
+     * identically, then abandoned. The person saw a lecture about footing instead of a reply.
+     * Formatting is not the thing being guarded.
+     */
+    for (const good of [
+      '**FOOTING: MY OWN ACCOUNT**\nbody',
+      '*FOOTING: ON THEIR BEHALF*\nbody',
+      '`FOOTING: MY OWN ACCOUNT`\nbody',
+      '> FOOTING: MY OWN ACCOUNT\nbody',
+      '## FOOTING: ON THEIR BEHALF\nbody',
+      'FOOTING: MY OWN ACCOUNT.\nbody',
+      'FOOTING: ON THEIR BEHALF —\nbody',
+      '\n\nFOOTING: MY OWN ACCOUNT\nbody',
+      'FOOTING : MY OWN ACCOUNT\nbody',
+    ]) {
+      expect(checkDraft(good, PRINCIPAL).ok, JSON.stringify(good)).toBe(true);
+    }
+  });
+
+  it('★★ still refuses a line that declares BOTH, because that declares neither', () => {
+    // Taking the first would attribute a position to somebody on the strength of word order.
+    const v = checkDraft('FOOTING: ON THEIR BEHALF or MY OWN ACCOUNT, I am not sure\nbody', PRINCIPAL);
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.why).toContain('BOTH');
+  });
+
+  it('★★ refuses substantive text on the declaration line rather than silently dropping it', () => {
+    /**
+     * Both wrong ways out are rejected: discarding it loses a sentence somebody wrote, permanently
+     * and without saying so; promoting it to the body records the brief's own instructions as
+     * though the agent had written them. Nothing can tell a gloss from an answer by looking, so it
+     * refuses and says where the reply goes.
+     */
+    const v = checkDraft('FOOTING: MY OWN ACCOUNT I think we should patch it.\nbody', PRINCIPAL);
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.why).toContain('line of its own');
+  });
+
+  it('★★ and the ONE property the tolerance must not cost: a body echo is not a declaration', () => {
+    /**
+     * The channel transcript goes into the prompt. Another member typing "my own account" there
+     * could otherwise have the model echo it and land an entry claiming a footing the agent never
+     * chose — somebody else deciding a delegate's voice. Only a line the model OPENED with
+     * `FOOTING:` is read, so an echo anywhere else reaches nothing.
+     */
+    for (const bad of [
+      'I think, FOOTING: MY OWN ACCOUNT, that we should patch it.',
+      'MY OWN ACCOUNT\nbody',
+      'Reply mentioning my own account in passing\nFOOTING: MY OWN ACCOUNT',
+    ]) {
+      expect(checkDraft(bad, PRINCIPAL).ok, JSON.stringify(bad)).toBe(false);
+    }
+  });
+
   it('accepts the declaration case-insensitively but not loosely', () => {
     expect(checkDraft('footing: my own account\nbody', PRINCIPAL).ok).toBe(true);
     expect(checkDraft('  FOOTING:   MY OWN ACCOUNT  \nbody', PRINCIPAL).ok).toBe(true);

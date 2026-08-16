@@ -5063,14 +5063,25 @@ var WSPC = (() => {
       // about which way to lean: relaying a decision or a position that is THEIRS is speaking for
       // them; reasoning, judging or disagreeing is the agent's own, and claiming their backing for it
       // is the failure this exists to prevent.
-      "BEFORE your reply, on a line of its own, declare which footing you are speaking on. Exactly",
-      "one of these two lines, verbatim:",
+      /**
+       * ★★ THE TWO LINES ARE SHOWN BARE, AND THE EXPLANATION IS KEPT OFF THEM. They used to be
+       * printed with an em-dash gloss trailing each one, directly under the word "verbatim" — so a
+       * model copying them verbatim copied the gloss, the parser rejected the line, and a real answer
+       * to a real question was thrown away. Instructions that contradict themselves are not obeyed;
+       * they are guessed at.
+       */
+      "BEFORE your reply, output ONE of these two lines, exactly as written, with nothing else on",
+      "the line. Your reply then starts on the NEXT line.",
       "",
-      "  FOOTING: ON THEIR BEHALF   \u2014 you are relaying or representing " + who + ": conveying a",
-      "                               decision, preference or commitment that is THEIRS, which they",
-      "                               would recognise as their own. They share responsibility for it.",
-      "  FOOTING: MY OWN ACCOUNT    \u2014 this is your reasoning, your reading, your position or your",
-      "                               question. YOU are answerable for it and " + who + " is not.",
+      "FOOTING: ON THEIR BEHALF",
+      "FOOTING: MY OWN ACCOUNT",
+      "",
+      "Which one:",
+      "  ON THEIR BEHALF \u2014 you are relaying or representing " + who + ": conveying a decision,",
+      "    preference or commitment that is THEIRS, which they would recognise as their own. They",
+      "    share responsibility for it.",
+      "  MY OWN ACCOUNT \u2014 this is your reasoning, your reading, your position or your question.",
+      "    YOU are answerable for it and " + who + " is not.",
       "",
       "If you are weighing a trade-off, offering an opinion, or asking something they have not asked,",
       "that is MY OWN ACCOUNT. Do not claim their backing for a view they have not expressed.",
@@ -5214,7 +5225,21 @@ var WSPC = (() => {
     ].join("\n");
   }
   var NOTHING_TO_ADD = "NOTHING TO ADD";
-  var FOOTING_LINE = /^FOOTING:[ \t]*(ON THEIR BEHALF|MY OWN ACCOUNT)[ \t]*$/i;
+  var FOOTING_PREFIX = /^[\s>*_`#]*FOOTING[\s*_`]*:/i;
+  var SAYS_BEHALF = /ON\s+THEIR\s+BEHALF/i;
+  var SAYS_OWN = /MY\s+OWN\s+ACCOUNT/i;
+  var FOOTING_NOISE = /^[\s*_`~"'.,;:()[\]—–-]*$/;
+  function readFootingLine(line2) {
+    if (!FOOTING_PREFIX.test(line2)) return null;
+    const after = line2.slice(line2.indexOf(":") + 1);
+    const behalf = SAYS_BEHALF.test(after);
+    const own = SAYS_OWN.test(after);
+    if (behalf && own) return "ambiguous";
+    if (!behalf && !own) return null;
+    const rest = after.replace(behalf ? SAYS_BEHALF : SAYS_OWN, "");
+    if (!FOOTING_NOISE.test(rest)) return "trailing";
+    return behalf ? "behalf" : "own";
+  }
   function checkDraft(raw, args) {
     const whole = raw.trim();
     if (!whole) {
@@ -5222,17 +5247,31 @@ var WSPC = (() => {
     }
     const abstain = args.addressed === true ? "Your agent was asked something directly and chose not to answer it. Nothing was written. That is not the same as having nothing to add \u2014 a question addressed to it by name is one it was asked to answer, even if the answer is that it does not know." : "Your agent read the channel and judged there was nothing worth adding. Nothing was written.";
     if (whole.toUpperCase() === NOTHING_TO_ADD) return { ok: false, why: abstain };
-    const nl = whole.indexOf("\n");
-    const first = (nl < 0 ? whole : whole.slice(0, nl)).trim();
-    const m = FOOTING_LINE.exec(first);
-    if (!m) {
+    const lines = whole.split("\n");
+    let at = 0;
+    while (at < lines.length && (lines[at] ?? "").trim() === "") at++;
+    const first = (lines[at] ?? "").trim();
+    const declared = readFootingLine(first);
+    if (declared === "ambiguous") {
+      return {
+        ok: false,
+        why: "Your agent named BOTH footings on one line, so it has declared neither. Speaking for you and speaking on its own account are different claims about who is answerable, and taking whichever it typed first would attribute a position to somebody on the strength of word order. Nothing was written."
+      };
+    }
+    if (declared === "trailing") {
+      return {
+        ok: false,
+        why: "Your agent declared a footing and then continued on the same line. The declaration has to be a line of its own, with the reply starting on the next one \u2014 otherwise there is no way to tell where the declaration ends and the entry begins, and guessing would either drop a sentence or record the instructions as though your agent had written them. Nothing was written."
+      };
+    }
+    if (declared === null) {
       return {
         ok: false,
         why: "Your agent did not declare which footing it was speaking on, so nothing was written. Every entry a delegate writes has to say whether it is speaking FOR you \u2014 in which case you share responsibility for it \u2014 or on its OWN account, in which case it alone does. An entry that states neither would be a permanent record nobody can read that off, and defaulting to either one is exactly what this refuses to do."
       };
     }
-    const kind = m[1].toUpperCase();
-    const body = (nl < 0 ? "" : whole.slice(nl + 1)).trim();
+    const kind = declared === "behalf" ? "ON THEIR BEHALF" : "MY OWN ACCOUNT";
+    const body = lines.slice(at + 1).join("\n").trim();
     if (!body) {
       return { ok: false, why: "Your agent declared a footing and then wrote nothing under it. An empty entry is still a permanent record, so none is written." };
     }

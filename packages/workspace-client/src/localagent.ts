@@ -569,14 +569,25 @@ export function briefPrompt(
     // about which way to lean: relaying a decision or a position that is THEIRS is speaking for
     // them; reasoning, judging or disagreeing is the agent's own, and claiming their backing for it
     // is the failure this exists to prevent.
-    'BEFORE your reply, on a line of its own, declare which footing you are speaking on. Exactly',
-    'one of these two lines, verbatim:',
+    /**
+     * ★★ THE TWO LINES ARE SHOWN BARE, AND THE EXPLANATION IS KEPT OFF THEM. They used to be
+     * printed with an em-dash gloss trailing each one, directly under the word "verbatim" — so a
+     * model copying them verbatim copied the gloss, the parser rejected the line, and a real answer
+     * to a real question was thrown away. Instructions that contradict themselves are not obeyed;
+     * they are guessed at.
+     */
+    'BEFORE your reply, output ONE of these two lines, exactly as written, with nothing else on',
+    'the line. Your reply then starts on the NEXT line.',
     '',
-    '  FOOTING: ON THEIR BEHALF   — you are relaying or representing ' + who + ': conveying a',
-    '                               decision, preference or commitment that is THEIRS, which they',
-    '                               would recognise as their own. They share responsibility for it.',
-    '  FOOTING: MY OWN ACCOUNT    — this is your reasoning, your reading, your position or your',
-    '                               question. YOU are answerable for it and ' + who + ' is not.',
+    'FOOTING: ON THEIR BEHALF',
+    'FOOTING: MY OWN ACCOUNT',
+    '',
+    'Which one:',
+    '  ON THEIR BEHALF — you are relaying or representing ' + who + ': conveying a decision,',
+    '    preference or commitment that is THEIRS, which they would recognise as their own. They',
+    '    share responsibility for it.',
+    '  MY OWN ACCOUNT — this is your reasoning, your reading, your position or your question.',
+    '    YOU are answerable for it and ' + who + ' is not.',
     '',
     'If you are weighing a trade-off, offering an opinion, or asking something they have not asked,',
     'that is MY OWN ACCOUNT. Do not claim their backing for a view they have not expressed.',
@@ -732,13 +743,63 @@ export const NOTHING_TO_ADD = 'NOTHING TO ADD';
 /**
  * The two footing declarations {@link briefPrompt} asks for, and {@link checkDraft} accepts.
  *
- * ★ MATCHED EXACTLY, ANCHORED, AND CASE-FOLDED — AND NOTHING ELSE IS ACCEPTED. A loose match
- * ("does the reply mention 'own account' anywhere") would let another member decide a delegate's
- * footing by typing the phrase into the channel: the transcript goes into the prompt, the model
- * echoes it, and the entry lands claiming a footing the agent never chose. The declaration has to
- * be the whole of the first line or it is not a declaration.
+ * ★ THE LINE MUST OPEN WITH `FOOTING:` — THAT is what makes it a declaration, and it is what keeps
+ * another member from choosing a delegate's footing for it. A loose match ("does the reply mention
+ * 'own account' anywhere") would let somebody type the phrase into the channel, have the transcript
+ * carry it into the prompt, and see the model echo it into an entry claiming a footing the agent
+ * never chose. An echo in the BODY reaches nothing, because only the opening line is read.
  */
-const FOOTING_LINE = /^FOOTING:[ \t]*(ON THEIR BEHALF|MY OWN ACCOUNT)[ \t]*$/i;
+
+/**
+ * ── ★★ THE LINE MUST OPEN WITH `FOOTING:`, AND THAT IS WHERE THE STRICTNESS BELONGS ─────────
+ *
+ * The anchored form above rejected real answers over presentation: `**FOOTING: ON THEIR BEHALF**`,
+ * a trailing full stop, or the em-dash gloss the BRIEF ITSELF prints beside each option under the
+ * word "verbatim". Measured in use — a delegate answered a direct question, the answer was thrown
+ * away, it retried, produced the same shape and stopped. Somebody asked their agent something and
+ * got a lecture about footing instead of an answer.
+ *
+ * ★ WHAT IS TOLERATED IS HOW IT IS WRITTEN. What is not tolerated is leaving it unsaid, or saying
+ * both. The PREFIX test is what keeps the original property whole: another member can type "my own
+ * account" into the channel, the transcript goes into the prompt, and the model may echo it — but
+ * an echo in the BODY cannot reach this, because only a line the model deliberately opened with
+ * `FOOTING:` is read as a declaration at all.
+ *
+ * ★ AND AMBIGUITY IS A REFUSAL, NOT A COIN FLIP. A line naming both footings has declared nothing;
+ * taking the first would attribute a position to whichever the model happened to type sooner.
+ */
+const FOOTING_PREFIX = /^[\s>*_`#]*FOOTING[\s*_`]*:/i;
+const SAYS_BEHALF = /ON\s+THEIR\s+BEHALF/i;
+const SAYS_OWN = /MY\s+OWN\s+ACCOUNT/i;
+
+/**
+ * Everything a declaration line may carry BESIDES the declaration: markdown emphasis, a trailing
+ * stop, a dash left over from the brief's own layout. Anything outside this set is words, and words
+ * on this line are treated as content — see `readFootingLine`.
+ */
+const FOOTING_NOISE = /^[\s*_`~"'.,;:()[\]—–-]*$/;
+
+/** What an opening line declared, or why it does not count as a declaration. */
+export function readFootingLine(line: string): 'behalf' | 'own' | 'ambiguous' | 'trailing' | null {
+  if (!FOOTING_PREFIX.test(line)) return null;
+  const after = line.slice(line.indexOf(':') + 1);
+  const behalf = SAYS_BEHALF.test(after);
+  const own = SAYS_OWN.test(after);
+  if (behalf && own) return 'ambiguous';
+  if (!behalf && !own) return null;
+
+  /**
+   * ★★ SUBSTANTIVE TEXT AFTER THE PHRASE IS REFUSED, NOT DISCARDED, AND NOT PROMOTED TO BODY.
+   *
+   * Discarding it loses a sentence somebody wrote, silently and permanently. Promoting it to the
+   * body puts the brief's own explanatory gloss into the record as though the agent had said it.
+   * Neither is acceptable, and there is no way to tell a gloss from an answer by looking — so the
+   * draft is refused and the message says exactly where the reply goes.
+   */
+  const rest = after.replace(behalf ? SAYS_BEHALF : SAYS_OWN, '');
+  if (!FOOTING_NOISE.test(rest)) return 'trailing';
+  return behalf ? 'behalf' : 'own';
+}
 
 export type DraftVerdict =
   | { readonly ok: false; readonly why: string }
@@ -794,10 +855,35 @@ export function checkDraft(
     : 'Your agent read the channel and judged there was nothing worth adding. Nothing was written.';
   if (whole.toUpperCase() === NOTHING_TO_ADD) return { ok: false, why: abstain };
 
-  const nl = whole.indexOf('\n');
-  const first = (nl < 0 ? whole : whole.slice(0, nl)).trim();
-  const m = FOOTING_LINE.exec(first);
-  if (!m) {
+  /**
+   * ★ THE FIRST NON-EMPTY LINE, not literally the first. A leading blank line is presentation, and
+   * discarding an answer over one is the same class of mistake as discarding it over a pair of
+   * asterisks.
+   */
+  const lines = whole.split('\n');
+  let at = 0;
+  while (at < lines.length && (lines[at] ?? '').trim() === '') at++;
+  const first = (lines[at] ?? '').trim();
+  const declared = readFootingLine(first);
+
+  if (declared === 'ambiguous') {
+    return {
+      ok: false,
+      why: 'Your agent named BOTH footings on one line, so it has declared neither. Speaking for you and '
+        + 'speaking on its own account are different claims about who is answerable, and taking whichever it '
+        + 'typed first would attribute a position to somebody on the strength of word order. Nothing was written.',
+    };
+  }
+  if (declared === 'trailing') {
+    return {
+      ok: false,
+      why: 'Your agent declared a footing and then continued on the same line. The declaration has to be a '
+        + 'line of its own, with the reply starting on the next one — otherwise there is no way to tell where '
+        + 'the declaration ends and the entry begins, and guessing would either drop a sentence or record the '
+        + 'instructions as though your agent had written them. Nothing was written.',
+    };
+  }
+  if (declared === null) {
     return {
       ok: false,
       why: 'Your agent did not declare which footing it was speaking on, so nothing was written. Every entry a '
@@ -806,8 +892,8 @@ export function checkDraft(
         + 'record nobody can read that off, and defaulting to either one is exactly what this refuses to do.',
     };
   }
-  const kind = (m[1] as string).toUpperCase();
-  const body = (nl < 0 ? '' : whole.slice(nl + 1)).trim();
+  const kind = declared === 'behalf' ? 'ON THEIR BEHALF' : 'MY OWN ACCOUNT';
+  const body = lines.slice(at + 1).join('\n').trim();
   if (!body) {
     return { ok: false, why: 'Your agent declared a footing and then wrote nothing under it. An empty entry is still a permanent record, so none is written.' };
   }
