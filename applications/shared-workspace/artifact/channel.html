@@ -5196,29 +5196,6 @@ var WSPC = (() => {
       'FOOTING line, do not open with "Sure" or "Here is", and do not sign your name.',
       "",
       /**
-       * ── ★★ THE FORMAT REQUIREMENT IS RESTATED LAST, WHERE IT IS ACTUALLY READ ───
-       *
-       * MEASURED, from a live channel: a delegate ran three turns, cost real money, and wrote
-       * nothing three times — the person asked "prove it to me" twice and got silence, because every
-       * draft was refused for having no FOOTING line. The requirement was stated ~80 lines earlier,
-       * before the transcript, the tool guidance and the drawing guidance; and the LAST thing the
-       * model read about how to open a reply was "do not open with Sure or Here is", which does not
-       * mention the footing at all. Two instructions about the opening, and the nearer one won.
-       *
-       * This is an agentic loop — the reply is generated after tool calls, further still from the
-       * top of the brief. A rule that decides whether the work is kept has to be the last thing said,
-       * and it has to be consistent with the other rule about openings rather than competing with it.
-       */
-      "LAST, AND IT DECIDES WHETHER ANY OF THIS IS KEPT: the very first line of your reply must be",
-      "exactly one of these, alone on the line, before any prose:",
-      "",
-      "FOOTING: ON THEIR BEHALF",
-      "FOOTING: MY OWN ACCOUNT",
-      "",
-      "A reply without that line is discarded unread and nothing is recorded \u2014 the channel cannot",
-      "accept an entry that does not say whose voice it is in.",
-      "",
-      /**
        * ★★ THE LIMIT IS STATED, BECAUSE IT IS ENFORCED.
        *
        * MEASURED in a live channel: a delegate wrote 4,739 characters and the whole turn was thrown
@@ -5265,7 +5242,45 @@ var WSPC = (() => {
       ] : [
         "Reserve this for entries that plainly call for no response at all \u2014 an acknowledgement, a",
         "thank-you, or something already fully answered: reply with exactly NOTHING TO ADD."
-      ]
+      ],
+      "",
+      /**
+       * ── ★★ THE FORMAT REQUIREMENT IS RESTATED LAST, WHERE IT IS ACTUALLY READ ───
+       *
+       * MEASURED, from a live channel: a delegate ran three turns, cost real money, and wrote
+       * nothing three times — the person asked "prove it to me" twice and got silence, because every
+       * draft was refused for having no FOOTING line. The requirement was stated ~80 lines earlier,
+       * before the transcript, the tool guidance and the drawing guidance; and the LAST thing the
+       * model read about how to open a reply was "do not open with Sure or Here is", which does not
+       * mention the footing at all. Two instructions about the opening, and the nearer one won.
+       *
+       * This is an agentic loop — the reply is generated after tool calls, further still from the
+       * top of the brief. A rule that decides whether the work is kept has to be the last thing said,
+       * and it has to be consistent with the other rule about openings rather than competing with it.
+       *
+       * ── ★★ AND IT DRIFTED BACK INTO THE MIDDLE BY ACCRETION ─────────────────────
+       *
+       * MEASURED AGAIN, and this is the same defect a second time. After the fix above, two more
+       * blocks were appended BELOW this one — the HARD LIMIT, and the addressed/abstain branch — so
+       * "last" quietly became "third from last". For an entry addressed to the agent by name, the
+       * genuinely final line the model read became `"I have no memory of that here" is a complete
+       * answer`: an example OPENING SENTENCE, which is not a footing line. Two instructions about
+       * the opening, and the nearer one won — again. Live cost: a turn that spent $0.18 and 2,146
+       * output tokens and was discarded unread.
+       *
+       * ★ SO POSITION IS NOW ENFORCED RATHER THAN INTENDED. `briefPrompt: the footing rule is the
+       * last thing the model reads` asserts it against the rendered prompt for BOTH branches, so the
+       * next block appended to this array fails a test instead of costing somebody a turn. A comment
+       * saying "keep this last" is not a mechanism; it had already been ignored once.
+       */
+      "LAST, AND IT DECIDES WHETHER ANY OF THIS IS KEPT: the very first line of your reply must be",
+      "exactly one of these, alone on the line, before any prose:",
+      "",
+      "FOOTING: ON THEIR BEHALF",
+      "FOOTING: MY OWN ACCOUNT",
+      "",
+      "A reply without that line is discarded unread and nothing is recorded \u2014 the channel cannot",
+      "accept an entry that does not say whose voice it is in."
     ].join("\n");
   }
   var NOTHING_TO_ADD = "NOTHING TO ADD";

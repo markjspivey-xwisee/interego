@@ -417,6 +417,63 @@ describe('briefPrompt: what the agent is asked, and what it is never handed', ()
  * "I have no memory of that" IS the answer. A person who addressed an agent by name and got
  * silence cannot tell refusal from absence from breakage.
  */
+describe('★★ briefPrompt: the footing rule is the last thing the model reads', () => {
+  /**
+   * ── WHY THIS IS A TEST AND NOT A COMMENT ────────────────────────────────────
+   *
+   * This exact defect has now happened TWICE. The first time, the footing requirement sat ~80
+   * lines up and the last thing the model read about openings was "do not open with Sure or Here
+   * is" — three turns, real money, nothing written. It was moved to the end with a comment saying
+   * a rule that decides whether the work is kept has to be the last thing said.
+   *
+   * Then two more blocks were appended below it — the HARD LIMIT and the addressed/abstain branch
+   * — and "last" became "third from last". For an addressed entry the final line became
+   * `"I have no memory of that here" is a complete answer`: an example OPENING, competing with the
+   * rule at closer range. Live cost: a turn that spent $0.18 and 2,146 output tokens, discarded.
+   *
+   * A comment asking future edits to preserve an ordering is not a mechanism. This is.
+   */
+  const brief = (addressed: boolean): string => briefPrompt(
+    {
+      workspace: WS, slug: 'room', mePod: ME, transcript: ['them: tell me about your telemetry'],
+      addressed, entries: [], seats: [], roles: roles(),
+    } as unknown as Parameters<typeof briefPrompt>[0],
+    { displayName: 'Mark', delegateName: 'Claude side' },
+  );
+
+  for (const addressed of [true, false]) {
+    it('ends with the declaration block — addressed: ' + addressed, () => {
+      const lines = brief(addressed).split('\n').filter((l) => l.trim() !== '');
+      const tail = lines.slice(-4).join('\n');
+      expect(tail).toContain('FOOTING: ON THEIR BEHALF');
+      expect(tail).toContain('FOOTING: MY OWN ACCOUNT');
+      // ★ AND NOTHING ABOUT HOW TO OPEN A REPLY MAY COME AFTER IT. That is the competing
+      // instruction that won twice; the rule only holds if it is the nearest one.
+      const last = lines[lines.length - 1] ?? '';
+      expect(last).toContain('whose voice it is in');
+    });
+  }
+
+  it('★ the requirement itself is still stated, not merely positioned', () => {
+    // A move that lost the text would pass a position check and fail every turn.
+    for (const addressed of [true, false]) {
+      const p = brief(addressed);
+      expect(p).toContain('the very first line of your reply must be');
+      expect(p).toContain('discarded unread');
+      // Stated ONCE at the end, so there is no earlier copy to be the "nearer" instruction.
+      expect(p.split('FOOTING: MY OWN ACCOUNT').length - 1).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it('★ and the other opening rules still precede it', () => {
+    // `do not open with "Sure" or "Here is"` is the instruction that beat it the first time.
+    const p = brief(true);
+    expect(p.indexOf('do not open with')).toBeLessThan(p.indexOf('LAST, AND IT DECIDES'));
+    expect(p.indexOf('HARD LIMIT')).toBeLessThan(p.indexOf('LAST, AND IT DECIDES'));
+    expect(p.indexOf('asked this DIRECTLY')).toBeLessThan(p.indexOf('LAST, AND IT DECIDES'));
+  });
+});
+
 describe('a direct ask is answered, not abstained from', () => {
   const addressed = (b: boolean): string => briefPrompt({
     workspace: 'https://relay.example/ns/p/room', slug: 'room', me: 'Claude Desktop',
