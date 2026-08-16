@@ -251,10 +251,30 @@ async function frameOf(deps: Deps, binding: ThreadBinding): Promise<Frame | { re
   if (read.kind === 'forked') return { problem: 'the workspace record has ' + read.heads.length + ' unresolved heads, so which record governs here is not decided. Nothing was written.' };
   if (read.kind === 'missing') return { problem: 'the workspace record could not be read: ' + read.message };
   if (!read.record.regionFound) {
-    // ★ Withheld, not malformed — see `WorkspaceRecord.withheld`. A bot that told a channel
-    // somebody's private record was unsigned would be turning a permission into an accusation.
+    /**
+     * ★ Withheld, not malformed — see `WorkspaceRecord.withheld`. A bot that told a channel
+     * somebody's private record was unsigned would be turning a permission into an accusation.
+     *
+     * ★★ AND A FAILED READ IS NEITHER OF THOSE. `sealedReadFailed` means the bytes could not be
+     * fetched or opened — a CSS blip, a damaged envelope. Reporting that as "this bot is not a
+     * member" makes a claim about membership out of a network error, and sends somebody off to fix
+     * permissions that were never the problem.
+     *
+     * ★★ THE REFUSAL NAMES THE WAY OUT, because there is one and it is not obvious. This bot is a
+     * conduit and is never seated, so nobody encrypts to it — its own key sits in its own registry,
+     * which no publisher reads. But it HAS a pod, so it can be invited exactly like a person, and
+     * then it is a member by the ordinary rules: on the roster, in the recipient list, revocable.
+     * That is the difference between a dead end and a decision, and it needs no new machinery.
+     */
     return { problem: read.record.withheld
-      ? 'this workspace is private and its record is encrypted to its members. This bot is not one of them, so it cannot mirror it here.'
+      ? (read.record.sealedReadFailed
+        ? 'this workspace is private and its record could not be READ: ' + read.record.sealedReadFailed
+          + '. That is a failure to fetch or open the bytes, not a statement about who this bot is, so '
+          + 'nothing follows from it about membership. Try again.'
+        : 'this workspace is private and its record is encrypted to its members. This bot is not one of '
+          + 'them — it is a conduit, and nobody encrypts to a conduit by default. If you want it to mirror '
+          + 'a private workspace, invite it as a member like anybody else. Until then it can carry your '
+          + 'messages INTO the workspace but cannot read them back out.')
       : 'the workspace record\'s signed region could not be located, so nothing was read from bytes anybody signed.' };
   }
   return {

@@ -129,18 +129,24 @@ export class BotSession {
     if (!agentId) throw new Error('get_pod_status reported no sessionAgent, so this bot has no agent identifier to ask anybody to delegate. Nothing was started.');
 
     /**
-     * ★★ THE KEY THAT LETS THIS CONDUIT SEE A PRIVATE WORKSPACE AT ALL.
+     * ── ★★ THIS KEY DOES NOT LET THE BOT READ A PRIVATE WORKSPACE, AND SAYING SO MATTERS ────
      *
-     * Without it the bot cannot even read the workspace RECORD of a private workspace — the
-     * eligibility check reads it, finds it withheld, and refuses with "this workspace is private
-     * and you are not one of its members". So every private workspace was simply unusable from
-     * Discord, which is not a policy anybody chose; it is what happens when no member of the pod
-     * holds a key.
+     * An earlier version of this comment claimed it did. It does not, and the reason is worth
+     * writing down because it is not obvious from here: `register_agent` is own-pod gated, so this
+     * lands in the BOT's registry — and no publisher reads that. Recipients come from the target
+     * pod's own registry unioned with `share_with`, and `share_with` is built from the seated
+     * members' acceptances. The bot is a conduit and is never seated, so its pod is never
+     * consulted by anybody deciding who to encrypt to.
      *
-     * ★ AND IT DOES NOT MAKE THE BOT A MEMBER. This registers a key against the bot's OWN agent,
-     * so it can read what is encrypted TO that agent. Whether the bot may act in a workspace is
-     * still decided by the delegation rows on each person's pod, exactly as before — a key is what
-     * you read with, not what you are allowed to do.
+     * ★ WHAT IT IS ACTUALLY FOR: the bot can read content sealed to it as an ordinary identity —
+     * which happens when somebody DELIBERATELY makes it one. That is the honest route and it needs
+     * no new machinery: this bot has its own pod, so a convener can invite it exactly like a
+     * person, it accepts with this key in its own acceptance, and from then on it is a member by
+     * the same rules as everybody else — on the roster, in the recipient list, and revocable.
+     *
+     * ★ WHICH IS WHY IT IS NOT A SPECIAL CASE. A conduit that could read every private workspace
+     * without being seated in any of them would be a second escrow with a different holder — the
+     * exact arrangement the sealed path was built to remove from the relay.
      */
     try {
       await client.tool('register_agent', {
