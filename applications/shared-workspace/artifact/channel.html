@@ -863,6 +863,7 @@ var WSPC = (() => {
     DRAFT_MAX: () => DRAFT_MAX,
     GRANT_IRI_RX: () => GRANT_IRI_RX,
     GRANT_READ_CAP: () => GRANT_READ_CAP,
+    IEH: () => IEH,
     IEP: () => IEP,
     INBOX_LIMIT: () => INBOX_LIMIT,
     MODAL_RETRACTED: () => MODAL_RETRACTED,
@@ -977,6 +978,7 @@ var WSPC = (() => {
     publishCapability: () => publishCapability,
     publishDelegation: () => publishDelegation,
     publishPresence: () => publishPresence,
+    publishTurn: () => publishTurn,
     qualifiedName: () => qualifiedName,
     readAuthorship: () => readAuthorship,
     readCanvas: () => readCanvas,
@@ -1016,6 +1018,9 @@ var WSPC = (() => {
     slugProblem: () => slugProblem,
     staleDetail: () => staleDetail,
     toChainRow: () => toChainRow,
+    turnIri: () => turnIri,
+    turnTurtle: () => turnTurtle,
+    turnsGraphIri: () => turnsGraphIri,
     turtleIri: () => turtleIri,
     unescapeLiteral: () => unescapeLiteral,
     unreachedRecipients: () => unreachedRecipients,
@@ -5035,6 +5040,7 @@ var WSPC = (() => {
         answering: line(newest, input),
         addressed: forMe(newest),
         tools: input.tools === true,
+        ...input.ownRecord ? { ownRecord: input.ownRecord } : {},
         transcript: window.map((e) => line(e, input)),
         omitted: Math.max(0, ordered.length - window.length)
       }
@@ -5125,7 +5131,22 @@ var WSPC = (() => {
         "",
         "Prefer a narrow read to a broad one. Some of these answers are very large, and a whole",
         "pod index is rarely the question.",
-        ""
+        "",
+        /**
+         * ★★ IT CAN LOOK AT ITS OWN WORK, AND NOTHING WAS ADDED TO LET IT. The turns are graphs on
+         * this delegate's own pod, so the tools it already holds reach them. Said only when the
+         * record exists and only when there are tools to read it with — a brief that named an
+         * address the turn could not fetch would be the "claims tools it does not have" failure in
+         * a new costume.
+         */
+        ...brief.ownRecord ? [
+          "Your own record of work is published at " + brief.ownRecord + " \u2014 one graph, one entry per",
+          "turn you have run: what it cost, which tools you reached for, and whether what you produced",
+          "was kept or refused. It is yours and it is readable with the tools above. If somebody asks",
+          "how you have been doing, what you have spent, or why an earlier answer never appeared, read",
+          "it rather than guessing \u2014 and if it says a turn was Refused, the reason is recorded verbatim.",
+          ""
+        ] : []
       ] : [],
       /**
        * ★ IT CAN DRAW, AND IT DID NOT KNOW THAT.
@@ -5377,6 +5398,42 @@ var WSPC = (() => {
       }
       return "the key that signed that record, " + signedBy + ", resolves to no seat in this workspace: it is not a seated member's own WebID, its own pod is not a seated pod, and no seated pod's delegation registry lists it" + (unread.length ? ". " + unread.length + " of " + pods.length + " seated pods' registries could not be read here (" + unread.join(", ") + "), so this is a refusal for lack of an answer rather than a finding that they do not list it." : ". Seating is a grant on the convener's pod and an acceptance on theirs \u2014 two documents, neither of them this notice.");
     };
+  }
+
+  // packages/workspace-client/src/turnrecord.ts
+  var IEH = "https://markjspivey-xwisee.github.io/interego/ns/harness#";
+  function turnsGraphIri(relay, podName) {
+    return relay.replace(/\/$/, "") + "/ns/" + podName + "/agent-turns";
+  }
+  function turnIri(relay, podName, turnId) {
+    return turnsGraphIri(relay, podName) + "/t/" + encodeURIComponent(turnId);
+  }
+  function turnTurtle(relay, podName, f) {
+    const self = turtleIri(turnIri(relay, podName, f.turnId), "the turn IRI");
+    const agent = turtleIri(f.agentId, "the agent id this turn is attributed to");
+    const num = (p, v, kind) => typeof v === "number" && Number.isFinite(v) && v >= 0 ? "  ieh:" + p + ' "' + (kind === "integer" ? Math.round(v) : v) + '"^^xsd:' + kind + " ;\n" : "";
+    const iri = (p, v, what) => v ? "  " + p + " " + turtleIri(v, what) + " ;\n" : "";
+    return "@prefix ieh: <" + IEH + "> .\n@prefix iep: <" + IEP + "> .\n@prefix prov: <" + PROV + "> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n" + self + "\n  a ieh:AgentTurn ;\n  prov:wasAssociatedWith " + agent + ' ;\n  prov:startedAtTime "' + escapeTurtleLiteral2(f.atIso) + '"^^xsd:dateTime ;\n  ieh:turnOutcome ieh:' + f.outcome + " ;\n" + (f.outcomeReason ? '  ieh:outcomeReason "' + escapeTurtleLiteral2(f.outcomeReason) + '" ;\n' : "") + iri("ieh:answeredFor", f.answeredFor, "the WebID this turn was run for") + iri("ieh:inChannel", f.inChannel, "the channel IRI this turn ran in") + num("inputTokens", f.inputTokens, "integer") + num("outputTokens", f.outputTokens, "integer") + num("cacheReadTokens", f.cacheReadTokens, "integer") + num("cacheCreationTokens", f.cacheCreationTokens, "integer") + num("costUsd", f.costUsd, "decimal") + num("elapsedMs", f.elapsedMs, "integer") + num("providerTurns", f.providerTurns, "integer") + num("toolCallCount", f.toolCallCount, "integer") + (f.models ?? []).map((m) => '  ieh:turnModel "' + escapeTurtleLiteral2(m) + '" ;\n').join("") + '  iep:modalStatus "Asserted" .\n';
+  }
+  async function publishTurn(client, args) {
+    try {
+      const res = await client.tool("publish_context", {
+        pod_name: args.podName,
+        graph_iri: turnsGraphIri(args.relay, args.podName),
+        graph_content: turnTurtle(args.relay, args.podName, args.facts),
+        visibility: "public",
+        conforms_to_shapes: [IEH.replace(/#$/, "")],
+        // ★ APPEND, NEVER SUPERSEDE. A turn is a thing that happened; a later one does not correct
+        // it. Superseding would make the series a single current value, which answers nothing.
+        auto_supersede_prior: false,
+        sign_authorship: true,
+        context_summary: "agent turn \xB7 " + args.facts.outcome
+      });
+      if (res?.error) return { ok: false, why: String(res.message ?? res.error) };
+      return { ok: true, descriptorUrl: res?.descriptorUrl ?? null };
+    } catch (e) {
+      return { ok: false, why: e?.message ?? String(e) };
+    }
   }
   return __toCommonJS(index_exports);
 })();

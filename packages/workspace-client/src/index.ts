@@ -145,3 +145,7 @@ export {
 } from './request.js';
 export { visibilityFor, alwaysPublic, type WorkspaceDoc, type WorkspaceVisibility } from './visibility.js';
 export { recipientsFromRoster, recipientsFor, unreachedRecipients, type RecipientPlan } from './recipients.js';
+export {
+  IEH, turnsGraphIri, turnIri, turnTurtle, publishTurn,
+  type AgentTurnFacts, type TurnOutcome, type TurnPublish,
+} from './turnrecord.js';

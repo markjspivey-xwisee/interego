@@ -298,6 +298,159 @@ ieh:TracedAffordance a owl:Class ;
     rdfs:comment "A DecoratedAffordance whose execution will produce a ProvTrace. Returned by the harness when an agent requests an action wrapped with tracing." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
 
+# ── An agent's own record of its work ──────────────────────────
+#
+# ★★ WHY THIS EXTENDS ProvTrace RATHER THAN MINTING A VOCABULARY. A model turn IS a harness
+# operation: this ontology already states that each harness operation produces a PROV-O trace, and
+# the gate that decides each tool call already has a class here (ieh:PolicyDecision). A second,
+# parallel set of terms for the same events would leave two answers to "what did this agent do" —
+# the one question an audit trail exists to settle.
+#
+# ★ AND IT IS THE AGENT'S OWN RECORD, ON THE AGENT'S OWN POD. Turns are published as ordinary
+# graphs, so they are discoverable, dereferenceable and queryable by exactly the means everything
+# else here is: no telemetry endpoint, no separate store, no privileged reader. That is what makes
+# self-reflection cost nothing to add — an agent reading its own record is an agent reading a
+# graph, which it can already do.
+
+ieh:AgentTurn a owl:Class ;
+    rdfs:subClassOf prov:Activity ;
+    rdfs:label "Agent Turn" ;
+    rdfs:seeAlso ieh:ProvTrace ;
+    rdfs:comment "One invocation of a model on an agent's behalf: what it was asked, what it cost, which tools it reached for, and — separately — whether anything it produced was kept. A turn that ran successfully and wrote nothing is an ordinary case and must be representable: 'the model answered' and 'the channel gained an entry' are different facts, and a record that conflates them cannot answer whether an agent is working. ★ SUBCLASS OF prov:Activity AND NOT OF ieh:ProvTrace, THOUGH IT IS PLAINLY THE SAME KIND OF THING: ieh:ProvTraceShape requires an ieh:agentAAT, and under the RDFS entailment this substrate validates with, that constraint would descend to every subclass — so every turn a desktop delegate published would fail its own shape, because a delegate authorised on somebody's pod has no Abstract Agent Type. The kinship is recorded with rdfs:seeAlso rather than asserted as subsumption it cannot satisfy." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
+ieh:turnModel a owl:DatatypeProperty ;
+    rdfs:label "turn model" ;
+    rdfs:comment "A model identifier the provider reported for this turn, e.g. 'claude-sonnet-4-6'. Repeatable: one turn routinely spans more than one model, and recording only the largest would misstate what did the work." ;
+    rdfs:domain ieh:AgentTurn ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
+ieh:inputTokens a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "input tokens" ;
+    rdfs:comment "Tokens the provider billed as input, as the provider reported them. Never estimated — an estimate recorded in the same field as a measurement makes the series unusable for the question it exists to answer." ;
+    rdfs:domain ieh:AgentTurn ;
+    rdfs:range xsd:integer ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
+ieh:outputTokens a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "output tokens" ;
+    rdfs:comment "Tokens the provider billed as output, as reported." ;
+    rdfs:domain ieh:AgentTurn ;
+    rdfs:range xsd:integer ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
+ieh:cacheReadTokens a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "cache read tokens" ;
+    rdfs:comment "Tokens served from the provider's prompt cache. Recorded separately because on a long-running channel they dominate the count and are priced differently — folded into inputTokens they would make a cheap turn look expensive." ;
+    rdfs:domain ieh:AgentTurn ;
+    rdfs:range xsd:integer ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
+ieh:cacheCreationTokens a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "cache creation tokens" ;
+    rdfs:comment "Tokens this turn wrote into the provider's prompt cache." ;
+    rdfs:domain ieh:AgentTurn ;
+    rdfs:range xsd:integer ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
+ieh:costUsd a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "cost (USD)" ;
+    rdfs:comment "What the provider said this turn cost. Present only when the provider reported it: absent means unknown, never zero, because a missing cost recorded as 0 understates a total silently." ;
+    rdfs:domain ieh:AgentTurn ;
+    rdfs:range xsd:decimal ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
+ieh:elapsedMs a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "elapsed (ms)" ;
+    rdfs:comment "Wall-clock milliseconds the HOST measured around the turn. Not a provider figure, and it includes time the provider does not bill for." ;
+    rdfs:domain ieh:AgentTurn ;
+    rdfs:range xsd:integer ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
+ieh:providerTurns a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "provider turns" ;
+    rdfs:comment "How many request/response rounds the provider took inside this one agent turn. Greater than one means an agentic loop with tool calls between rounds — which is also why a format instruction stated once at the top of a brief may not survive to the reply." ;
+    rdfs:domain ieh:AgentTurn ;
+    rdfs:range xsd:integer ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
+ieh:answeredFor a owl:ObjectProperty ;
+    rdfs:label "answered for" ;
+    rdfs:comment "Who this turn was run on behalf of. Distinct from prov:wasAssociatedWith, which names the AGENT that ran. An agent acting for somebody and an agent acting on its own account is the distinction this substrate refuses to collapse, and a trace recording only one of them could not tell them apart afterwards." ;
+    rdfs:domain ieh:AgentTurn ;
+    rdfs:range prov:Agent ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
+ieh:inChannel a owl:ObjectProperty ;
+    rdfs:label "in channel" ;
+    rdfs:comment "The workspace or channel this turn ran in, as an IRI that dereferences. A trace whose location is a display name cannot be joined to anything." ;
+    rdfs:domain ieh:AgentTurn ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
+# ── What became of the draft: the fact that was missing ────────
+
+ieh:TurnOutcome a owl:Class , skos:ConceptScheme ;
+    rdfs:label "Turn Outcome" ;
+    rdfs:comment "What happened to what the model produced. A SKOS scheme rather than a boolean, because 'nothing was written' has genuinely different causes calling for different responses: a record that flattened them would say an abstaining agent and a malfunctioning one were the same." ;
+    skos:hasTopConcept ieh:Posted , ieh:Abstained , ieh:Refused , ieh:Failed ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
+ieh:Posted a skos:Concept , ieh:TurnOutcome ;
+    skos:inScheme ieh:TurnOutcome ;
+    skos:prefLabel "Posted" ;
+    skos:definition "The draft passed every check and a record was written. The only outcome under which the channel gained anything." .
+
+ieh:Abstained a skos:Concept , ieh:TurnOutcome ;
+    skos:inScheme ieh:TurnOutcome ;
+    skos:prefLabel "Abstained" ;
+    skos:definition "The agent judged there was nothing worth adding, and said so. A decision rather than a fault — and not the same as being unable to answer, which is why the two are separate concepts here." .
+
+ieh:Refused a skos:Concept , ieh:TurnOutcome ;
+    skos:inScheme ieh:TurnOutcome ;
+    skos:prefLabel "Refused" ;
+    skos:definition "The host declined to write what the model produced — an undeclared footing, an over-long body, no recipients for an encrypted channel. The model ran and was billed; nothing was kept. This is the outcome that was previously invisible: in every log it looked identical to success." .
+
+ieh:Failed a skos:Concept , ieh:TurnOutcome ;
+    skos:inScheme ieh:TurnOutcome ;
+    skos:prefLabel "Failed" ;
+    skos:definition "The turn did not complete: the provider errored, the process died, or the person cancelled it." .
+
+ieh:turnOutcome a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "turn outcome" ;
+    rdfs:comment "Which of the four outcomes this turn reached. Required by the shape: a turn record omitting it asserts that a model ran and says nothing about whether that mattered, which is exactly the gap this class was added to close." ;
+    rdfs:domain ieh:AgentTurn ;
+    rdfs:range ieh:TurnOutcome ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
+ieh:outcomeReason a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "outcome reason" ;
+    rdfs:comment "The host's own sentence for a refusal, in the words it showed a person. Kept verbatim rather than coded: these reasons are prose written to be read, and a code would need decoding back into the sentence it replaced." ;
+    rdfs:domain ieh:AgentTurn ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
+ieh:toolCallCount a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "tool call count" ;
+    rdfs:comment "How many tool calls this turn made. The individual decisions are ieh:PolicyDecision records reached through ieh:gatedCall; this is the count, so the shape of a turn is legible without dereferencing each one." ;
+    rdfs:domain ieh:AgentTurn ;
+    rdfs:range xsd:integer ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
+ieh:gatedCall a owl:ObjectProperty ;
+    rdfs:label "gated call" ;
+    rdfs:comment "A tool call this turn made, and what the permission gate decided about it. Reuses ieh:PolicyDecision because that is precisely what the gate is — a policy engine answering permit, deny, or a duty to ask — so the host's audit trail and this ontology's model are one thing described once." ;
+    rdfs:domain ieh:AgentTurn ;
+    rdfs:range ieh:PolicyDecision ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
+ieh:toolName a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "tool name" ;
+    rdfs:comment "The tool the gate was asked about, by the name the agent used to call it." ;
+    rdfs:domain ieh:PolicyDecision ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
 ieh:agentAAT a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "agent AAT" ;
     rdfs:comment "The AAT under which the agent was acting when the trace was produced. Functional — an agent acts under exactly one AAT per operation." ;

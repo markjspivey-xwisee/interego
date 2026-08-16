@@ -544,3 +544,106 @@ ieh:ConversationMessageShape a sh:NodeShape ;
         sh:maxCount 1 ;
         sh:name "timestamp"
     ] .
+
+# ── An agent's own record of its work ──────────────────────────
+#
+# ★★ WHAT THIS SHAPE IS ACTUALLY FOR. A turn record is published to the agent's own pod and is
+# then permanent, so the fields that make it MEAN anything have to be present at write time — there
+# is no editing a descriptor afterwards. The two that matter most are the outcome and who the turn
+# was for, and both were absent from the JSONL this replaces: `ok: true` meant the model ran, and
+# nothing anywhere said whether a word of it survived.
+
+ieh:AgentTurnShape a sh:NodeShape ;
+    sh:targetClass ieh:AgentTurn ;
+    rdfs:comment "A turn record must name the agent that ran, when it ran, and what became of what it produced. Cost and token counts are optional because a provider that reports none is a fact about the provider, and a zero recorded in place of an unknown would understate every total silently." ;
+
+    sh:property [
+        sh:path prov:wasAssociatedWith ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:name "wasAssociatedWith" ;
+        sh:message "Every turn must name the agent that ran it, as an IRI. A turn attributed to nobody cannot be read back as evidence about anybody."
+    ] ;
+
+    sh:property [
+        sh:path prov:startedAtTime ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:dateTime ;
+        sh:name "startedAtTime" ;
+        sh:message "Every turn must say when it ran. A cost series with no time axis answers no question worth asking."
+    ] ;
+
+    sh:property [
+        sh:path ieh:turnOutcome ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:in ( ieh:Posted ieh:Abstained ieh:Refused ieh:Failed ) ;
+        sh:name "turnOutcome" ;
+        sh:message "Every turn must say what became of it: Posted, Abstained, Refused or Failed. This is the field whose absence made a delegate that wrote nothing for an hour indistinguishable from one that was working."
+    ] ;
+
+    sh:property [
+        sh:path ieh:outcomeReason ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:string ;
+        sh:name "outcomeReason"
+    ] ;
+
+    sh:property [
+        sh:path ieh:answeredFor ;
+        sh:maxCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:name "answeredFor" ;
+        sh:message "Who the turn was run for, when there was somebody: an IRI, never a display name, or it cannot be joined to the roster it came from."
+    ] ;
+
+    sh:property [
+        sh:path ieh:inChannel ;
+        sh:maxCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:name "inChannel"
+    ] ;
+
+    sh:property [
+        sh:path ieh:inputTokens ;
+        sh:maxCount 1 ; sh:datatype xsd:integer ; sh:minInclusive 0 ; sh:name "inputTokens"
+    ] ;
+    sh:property [
+        sh:path ieh:outputTokens ;
+        sh:maxCount 1 ; sh:datatype xsd:integer ; sh:minInclusive 0 ; sh:name "outputTokens"
+    ] ;
+    sh:property [
+        sh:path ieh:cacheReadTokens ;
+        sh:maxCount 1 ; sh:datatype xsd:integer ; sh:minInclusive 0 ; sh:name "cacheReadTokens"
+    ] ;
+    sh:property [
+        sh:path ieh:cacheCreationTokens ;
+        sh:maxCount 1 ; sh:datatype xsd:integer ; sh:minInclusive 0 ; sh:name "cacheCreationTokens"
+    ] ;
+    sh:property [
+        sh:path ieh:costUsd ;
+        sh:maxCount 1 ; sh:datatype xsd:decimal ; sh:minInclusive 0 ; sh:name "costUsd" ;
+        sh:message "Cost must be a non-negative decimal when present. Absent means the provider reported none — which is not the same as free."
+    ] ;
+    sh:property [
+        sh:path ieh:elapsedMs ;
+        sh:maxCount 1 ; sh:datatype xsd:integer ; sh:minInclusive 0 ; sh:name "elapsedMs"
+    ] ;
+    sh:property [
+        sh:path ieh:providerTurns ;
+        sh:maxCount 1 ; sh:datatype xsd:integer ; sh:minInclusive 0 ; sh:name "providerTurns"
+    ] ;
+    sh:property [
+        sh:path ieh:toolCallCount ;
+        sh:maxCount 1 ; sh:datatype xsd:integer ; sh:minInclusive 0 ; sh:name "toolCallCount"
+    ] ;
+    sh:property [
+        sh:path ieh:turnModel ;
+        sh:datatype xsd:string ; sh:name "turnModel"
+    ] ;
+    sh:property [
+        sh:path ieh:gatedCall ;
+        sh:nodeKind sh:IRI ; sh:name "gatedCall"
+    ] .

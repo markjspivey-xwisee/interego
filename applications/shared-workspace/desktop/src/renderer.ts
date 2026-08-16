@@ -29,7 +29,7 @@ import {
   foldRoster, graphRegion, grantPodFor, hasType, listWorkspaces, mergeForward, nsIri, orderChain,
   parseRoleProfile, parseWorkspaceIri, podClaimVsServed, podOfDescriptorUrl, pollingWatch, postEntry, verifiedSigner,
   preconditionLine, publishDelegation, readCanvas, readInbox, readInt, readIri, readIriAll, readLiteral,
-  readPresence, readViewer, recipientsFor, revokeDelegation, revokeGrant,
+  readPresence, readViewer, recipientsFor, revokeDelegation, revokeGrant, turnsGraphIri,
   agentPodOf, notifyAsk, presenceLine, type Presence,
   roleKnown, roleName, roleWhy, saveCanvas, sendInvite, shortRef, slugProblem, verifyInvitation,
   verifyWorkspaceEntry,
@@ -3966,6 +3966,14 @@ async function agentConsider(): Promise<void> {
     // whenever it can open that delegate's session — which it can whenever a delegate is
     // selected, since selection already requires a key on this machine.
     tools: true,
+    /**
+     * ★★ WHERE ITS OWN WORK IS RECORDED. Every turn this delegate runs is published to the pod as
+     * an `ieh:AgentTurn` graph, so it can read its own history with the tools it already holds —
+     * no telemetry endpoint, nothing added to the relay. Naming the address is the entire
+     * mechanism: the capability was implied by the tools, and this turns the implication into
+     * something the agent can act on.
+     */
+    ownRecord: turnsGraphIri(S.relay, S.viewer.podName),
   });
   if (decision.kind !== 'answer') {
     A.why = decision.why;
@@ -4046,7 +4054,20 @@ async function agentConsider(): Promise<void> {
      * turn, write nothing, and leave no evidence anywhere of why. Diagnosing it meant asking the
      * person to read their own screen aloud.
      */
-    void window.interego.draftOutcome({ turnId: '', channel: S.slug ?? '', outcome: 'refused: ' + draft.why.slice(0, 160) });
+    /**
+     * ★ CLASSIFIED, NOT JUST DESCRIBED. `kind` is the SKOS concept the published graph carries;
+     * `outcome` is the sentence a person reads in the local log. An abstention is a decision and a
+     * refusal is a fault, and a record that made them the same string would answer "is this agent
+     * working" with prose that has to be parsed.
+     */
+    void window.interego.draftOutcome({
+      turnId: '', channel: S.slug ?? '', outcome: 'refused: ' + draft.why.slice(0, 160),
+      kind: draft.why.includes('nothing worth adding') || draft.why.includes('chose not to answer') ? 'Abstained' : 'Refused',
+      reason: draft.why,
+      ...(speaker?.agentId ? { agentId: speaker.agentId } : {}),
+      ...(S.viewer?.webId ? { answeredFor: S.viewer.webId } : {}),
+      ...(S.workspace ? { channelIri: S.workspace } : {}),
+    });
     say('agentresult', 'pending', 'Nothing was drafted',
       draft.why + (tried >= ATTEMPT_LIMIT
         // ★ SAID OUT LOUD. An agent that quietly stops answering somebody looks exactly like one
@@ -4083,6 +4104,10 @@ async function agentConsider(): Promise<void> {
   void window.interego.draftOutcome({
     turnId: '', channel: S.slug ?? '',
     outcome: 'drafted (' + draft.body.length + ' chars, ' + draft.footing + ')' + (A.auto ? ' · auto-posting' : ' · awaiting review'),
+    kind: 'Posted',
+    agentId: speaker.agentId,
+    ...(S.viewer?.webId ? { answeredFor: S.viewer.webId } : {}),
+    ...(S.workspace ? { channelIri: S.workspace } : {}),
   });
   A.phase = 'drafted';
   renderAgent();

@@ -161,7 +161,20 @@ export interface WorkspaceBridge {
    * process that added a recipient here would be making exactly the move the relay was making.
    */
   /** Record what became of a draft — the verdict is the renderer's, the log is main's. */
-  draftOutcome(rec: { turnId: string; channel: string; outcome: string }): Promise<void>;
+  draftOutcome(rec: {
+    turnId: string; channel: string; outcome: string;
+    /**
+     * The outcome as one of the four `ieh:TurnOutcome` concepts, when the renderer can say which.
+     * Supplied SEPARATELY from the prose `outcome` because the prose is for a person reading a log
+     * and this is for a shape: collapsing them would mean parsing English to answer "did this
+     * agent write anything", which is the question the whole record exists for.
+     */
+    kind?: 'Posted' | 'Abstained' | 'Refused' | 'Failed';
+    reason?: string;
+    agentId?: string;
+    answeredFor?: string;
+    channelIri?: string;
+  }): Promise<void>;
   seal(req: {
     graphIri: string;
     payloadTurtle: string;

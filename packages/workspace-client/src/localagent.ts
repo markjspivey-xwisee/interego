@@ -147,6 +147,22 @@ export interface TurnInput {
    * gets a brief that claims nothing.
    */
   readonly tools?: boolean;
+  /**
+   * Where this agent's OWN record of its work is published, when it has one.
+   *
+   * ── ★★ SELF-REFLECTION AS AN EMERGENT AFFORDANCE, NOT A FEATURE ────────────
+   *
+   * Every turn this delegate runs is published to its pod as an `ieh:AgentTurn` graph: what it
+   * cost, which tools the gate was asked about, and — the fact that used to exist nowhere — whether
+   * anything it produced was actually kept. That is ordinary substrate, so reading it needs no new
+   * tool, no telemetry endpoint and no privileged access. An agent examining its own history is an
+   * agent reading a graph.
+   *
+   * What it DOES need is to know the graph is there. Naming the IRI here is the whole of the
+   * mechanism: the capability was already implied by the tools it holds, and stating the address
+   * is what turns an implication into something it can act on.
+   */
+  readonly ownRecord?: string | null;
 }
 
 /** What a model is given. Text only — no IRIs to fetch, no tools, no credential. */
@@ -178,6 +194,8 @@ export interface ChannelBrief {
    * confident paragraph of general knowledge instead of a read.
    */
   readonly tools: boolean;
+  /** Where this agent's own turn record lives, when it has one. See `TurnInput.ownRecord`. */
+  readonly ownRecord?: string | null;
 }
 
 export type TurnDecision =
@@ -530,6 +548,7 @@ export function decideTurn(input: TurnInput): TurnDecision {
       answering: line(newest, input),
       addressed: forMe(newest),
       tools: input.tools === true,
+      ...(input.ownRecord ? { ownRecord: input.ownRecord } : {}),
       transcript: window.map((e) => line(e, input)),
       omitted: Math.max(0, ordered.length - window.length),
     },
@@ -635,6 +654,23 @@ export function briefPrompt(
         'Prefer a narrow read to a broad one. Some of these answers are very large, and a whole',
         'pod index is rarely the question.',
         '',
+        /**
+         * ★★ IT CAN LOOK AT ITS OWN WORK, AND NOTHING WAS ADDED TO LET IT. The turns are graphs on
+         * this delegate's own pod, so the tools it already holds reach them. Said only when the
+         * record exists and only when there are tools to read it with — a brief that named an
+         * address the turn could not fetch would be the "claims tools it does not have" failure in
+         * a new costume.
+         */
+        ...(brief.ownRecord
+          ? [
+            'Your own record of work is published at ' + brief.ownRecord + ' — one graph, one entry per',
+            'turn you have run: what it cost, which tools you reached for, and whether what you produced',
+            'was kept or refused. It is yours and it is readable with the tools above. If somebody asks',
+            'how you have been doing, what you have spent, or why an earlier answer never appeared, read',
+            'it rather than guessing — and if it says a turn was Refused, the reason is recorded verbatim.',
+            '',
+          ]
+          : []),
       ]
       : []),
     /**

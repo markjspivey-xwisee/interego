@@ -28,7 +28,8 @@ import { composeGate } from './turnsetup.js';
 import { readTurns, recordDraft, recordTurn, totals, toolsInTurn, usageFrom } from './telemetry.js';
 import { Wallet } from 'ethers';
 import {
-  DELEGATE_SURFACE, RelayMcpTransport, WorkspaceClient, type RelayOAuthBearer,
+  DELEGATE_SURFACE, RelayMcpTransport, WorkspaceClient, publishTurn,
+  type RelayOAuthBearer, type TurnOutcome,
 } from '@interego/workspace-client';
 /**
  * ★ A SEPARATE ENTRY POINT, AND NOT FOR TIDINESS. The opener reaches `@interego/core`'s crypto,
@@ -1091,11 +1092,55 @@ app.whenReady().then(() => {
    * `ok: true`, about $0.27 spent, nothing written, and the reason readable only by the person
    * looking at the screen — so working out why meant asking them to transcribe their own UI.
    */
-  ipcMain.handle('agent:draftOutcome', (_e, rec: { turnId?: string; channel?: string; outcome?: string }) => {
+  ipcMain.handle('agent:draftOutcome', async (_e, rec: {
+    turnId?: string; channel?: string; outcome?: string;
+    kind?: TurnOutcome; reason?: string; agentId?: string; answeredFor?: string; channelIri?: string;
+  }) => {
+    /**
+     * ── ★★ THE SAME FACT, TWICE, ON PURPOSE ────────────────────────────────────
+     *
+     * The JSONL is the local truth: it survives a relay outage, needs no network, and is what a
+     * person can read on their own machine when nothing else works. The published graph is the
+     * DURABLE and SHARED one: addressable, joinable to the channel it describes, shape-validated,
+     * and — the point of the exercise — readable by the agent it is about.
+     *
+     * ★ THE LOCAL WRITE HAPPENS FIRST AND UNCONDITIONALLY. A pod that is down must not cost the
+     * person the only record they had; telemetry that can lose the thing it measures is worse than
+     * none.
+     */
     recordDraft(app.getPath('userData'), {
       turnId: String(rec?.turnId ?? ''), atIso: new Date().toISOString(),
       channel: String(rec?.channel ?? ''), outcome: String(rec?.outcome ?? 'unknown'),
     });
+
+    /**
+     * ★★ AND PUBLISHED AS A GRAPH THE AGENT CAN READ ABOUT ITSELF. Nothing was added to the relay
+     * to make this possible: a turn is an ordinary `publish_context` to the agent's own pod under
+     * the harness vocabulary, so discovering it is `discover_context` and reading it is
+     * `get_descriptor`. Self-reflection is an EMERGENT affordance of the substrate already there,
+     * not a capability anybody had to grant.
+     */
+    if (!client || !signedInAs?.pod || !rec?.agentId || !rec?.kind) return;
+    const out = await publishTurn(client, {
+      relay: RELAY, podName: signedInAs.pod,
+      facts: {
+        turnId: String(rec.turnId || randomUUID()),
+        agentId: String(rec.agentId),
+        atIso: new Date().toISOString(),
+        outcome: rec.kind,
+        ...(rec.reason ? { outcomeReason: rec.reason.slice(0, 400) } : {}),
+        ...(rec.answeredFor ? { answeredFor: rec.answeredFor } : {}),
+        ...(rec.channelIri ? { inChannel: rec.channelIri } : {}),
+      },
+    });
+    // Reported into the local log rather than thrown: the turn it describes has already happened,
+    // and a record that could fail the work is the thing this is trying to prevent.
+    if (!out.ok) {
+      recordDraft(app.getPath('userData'), {
+        turnId: String(rec?.turnId ?? ''), atIso: new Date().toISOString(),
+        channel: String(rec?.channel ?? ''), outcome: 'turn-graph-unpublished: ' + out.why.slice(0, 160),
+      });
+    }
   });
 
   ipcMain.handle('agent:cancel', () => {
