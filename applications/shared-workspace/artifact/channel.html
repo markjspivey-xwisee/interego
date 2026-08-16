@@ -2722,11 +2722,12 @@ var WSPC = (() => {
       } catch (e) {
         return { ...d, sealedReadFailed: e?.message ?? String(e) };
       }
-      const plain = this.opener(sealed);
-      if (plain === null) return d;
+      const opened = this.opener(sealed);
+      if (opened.kind === "unreadable") return { ...d, sealedReadFailed: opened.why };
+      if (opened.kind !== "opened") return d;
       return {
         ...d,
-        graph: { ...graph, content: plain },
+        graph: { ...graph, content: opened.content },
         // ★ Evidence, not decoration: this content was decrypted HERE, with a key the relay does
         // not hold. A reader that could not tell this from ordinary plaintext could not honestly
         // tell anyone their workspace is end-to-end encrypted.
@@ -2787,6 +2788,7 @@ var WSPC = (() => {
            * `encrypted` flag alone would hide a workspace from the very member who can read it.
            */
           withheld: graph?.encrypted === true && typeof graph?.content !== "string",
+          sealedReadFailed: typeof d["sealedReadFailed"] === "string" ? d["sealedReadFailed"] : null,
           /**
            * ★★ "I COULD NOT READ IT" IS NOT "IT IS PUBLIC", AND THEY WERE THE SAME VALUE.
            *
@@ -3601,6 +3603,7 @@ var WSPC = (() => {
       };
     }
     const seated = args.seats.filter((s) => s.seated && !s.revoked);
+    const pendingWebIds = args.seats.filter((s) => !s.seated && !s.revoked && s.pending && s.grantedTo).map((s) => s.grantedTo);
     const handles = [];
     const missing = [];
     const keys = [];
@@ -3629,7 +3632,8 @@ var WSPC = (() => {
       // ★ ALL OR NOTHING. A partial key list is the silent lockout this whole file exists to refuse,
       // so the caller gets an empty list plus the names, and decides in the open.
       keys: keysMissing.length > 0 ? [] : keys,
-      keysMissing
+      keysMissing,
+      pendingWebIds: [...new Set(pendingWebIds)]
     };
   }
   function recipientsFor(visibility, roster) {
@@ -3639,7 +3643,7 @@ var WSPC = (() => {
         why: "this workspace's record could not be read here, so whether it is private is not established \u2014 and writing under a guess would publish in the clear if the guess is wrong. Open the workspace in a client signed in with your own key. Nothing was written."
       };
     }
-    if (visibility !== "private") return { ok: true, visibility: "public", shareWith: void 0, keys: [], keysMissing: [] };
+    if (visibility !== "private") return { ok: true, visibility: "public", shareWith: void 0, keys: [], keysMissing: [], pendingWebIds: [] };
     if (!roster) {
       return {
         ok: false,
@@ -3647,7 +3651,7 @@ var WSPC = (() => {
       };
     }
     const plan = recipientsFromRoster(roster);
-    return plan.ok ? { ok: true, visibility: "private", shareWith: plan.shareWith, keys: plan.keys, keysMissing: plan.keysMissing } : { ok: false, why: plan.why };
+    return plan.ok ? { ok: true, visibility: "private", shareWith: plan.shareWith, keys: plan.keys, keysMissing: plan.keysMissing, pendingWebIds: plan.pendingWebIds } : { ok: false, why: plan.why };
   }
   function unreachedRecipients(publishResponse) {
     const r = publishResponse ?? {};
@@ -4319,7 +4323,9 @@ var WSPC = (() => {
         workspace: args.workspace,
         viewer: args.viewer,
         entryShape: args.entryShape,
-        shareWith: [.../* @__PURE__ */ new Set([...args.shareWith ?? [], who.webId])].filter(Boolean),
+        // Seated members, everyone with an outstanding invitation, and the person being invited now.
+        // Dropping any of the three locks somebody out of a record they need in order to join.
+        shareWith: [.../* @__PURE__ */ new Set([...args.shareWith ?? [], ...args.pendingWebIds ?? [], who.webId])].filter(Boolean),
         resolution: who,
         onState: args.onState
       });
@@ -4431,7 +4437,7 @@ var WSPC = (() => {
     if (rec.kind === "missing") return no("the workspace record at " + workspace + " could not be read: " + rec.message, withWs);
     if (rec.kind === "error") return no("the workspace record could not be read: " + (rec.error?.message ?? String(rec.error)), withWs);
     if (!rec.record.regionFound) {
-      return no(rec.record.withheld ? client.canOpenSealed ? "this workspace is private and its record is encrypted to its members, and this identity is not among them. Nothing is wrong with the record; it is not yours to read." : "this workspace is private and its records are encrypted, and this client holds no key to open them \u2014 so whether you are a member of it is not something this read can answer either way. Open it in a client signed in with your own key." : "the workspace record's signed region could not be located", withWs);
+      return no(rec.record.withheld ? rec.record.sealedReadFailed ? "this workspace is private and its record could not be READ here \u2014 " + rec.record.sealedReadFailed + ". That is a failure to fetch or open the bytes, not an answer about whether you are a member of it, so nothing is concluded either way. Try again." : client.canOpenSealed ? "this workspace is private and its record is encrypted to its members, and this identity is not among them. Nothing is wrong with the record; it is not yours to read." : "this workspace is private and its records are encrypted, and this client holds no key to open them \u2014 so whether you are a member of it is not something this read can answer either way. Open it in a client signed in with your own key." : "the workspace record's signed region could not be located", withWs);
     }
     const full = {
       ...withWs,

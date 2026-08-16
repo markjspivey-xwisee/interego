@@ -53,6 +53,17 @@ export function encryptionKeyFor(privateKeyHex: string, principal?: string): Enc
   return deriveEncryptionKeyPair(privateKeyHex, principal);
 }
 
+/**
+ * What an opener answers. Three outcomes, and collapsing any two of them tells somebody something
+ * untrue — see `openerFor` for the one that shipped collapsed and what it said.
+ */
+export type OpenedGraph =
+  | { readonly kind: 'opened'; readonly content: string }
+  /** Genuinely not a recipient. A permission, not a fault. */
+  | { readonly kind: 'not-for-you' }
+  /** The bytes could not be got or could not be opened. A fault, and NOT evidence about membership. */
+  | { readonly kind: 'unreadable'; readonly why: string };
+
 /** What came back from `get_encrypted_graph`, and what this reader could make of it. */
 export type Opened =
   | { readonly kind: 'plaintext'; readonly content: string }
@@ -103,19 +114,33 @@ export function openGraph(payload: unknown, key: EncryptionKeyPair): Opened {
 /**
  * The opener to hand {@link WorkspaceClient.setGraphOpener}, from a private key.
  *
- * ★★ THE COLLAPSE FROM FOUR ANSWERS TO TWO HAPPENS EXACTLY ONCE, HERE. `openGraph` distinguishes
- * "not addressed to me" from "damaged" because a reader must be able to say which; the client's
- * opener contract is narrower — a string or `null`, where `null` means NOT MINE. Each host writing
- * that reduction itself is how one of them eventually maps `unreadable` to a placeholder string
- * and lands "could not decrypt" in a workspace document as though somebody had published it.
+ * ★★ THE REDUCTION FROM FOUR ANSWERS TO THREE HAPPENS EXACTLY ONCE, HERE — and it used to be a
+ * reduction to TWO, which is what made it wrong. `openGraph`'s `plaintext` and `opened` are the
+ * same thing to a caller, so they merge. `not-for-you` and `unreadable` are NOT, and merging them
+ * turned every transport failure into a statement about somebody's membership.
  *
- * A damaged envelope therefore reads as withheld. That is the conservative direction: it says
- * less than is known rather than more, and the record stays exactly as unread as it truly is.
+ * Doing the reduction here rather than in each host is what stops one of them mapping `unreadable`
+ * to a placeholder string and landing "could not decrypt" in a workspace document as though
+ * somebody had published it.
  */
-export function openerFor(privateKeyHex: string, principal?: string): (sealed: unknown) => string | null {
+export function openerFor(privateKeyHex: string, principal?: string): (sealed: unknown) => OpenedGraph {
   const key = encryptionKeyFor(privateKeyHex, principal);
   return (sealed) => {
     const opened = openGraph(sealed, key);
-    return opened.kind === 'opened' || opened.kind === 'plaintext' ? opened.content : null;
+    if (opened.kind === 'opened' || opened.kind === 'plaintext') return { kind: 'opened', content: opened.content };
+    /**
+     * ★★ THE THIRD ANSWER, WHICH USED TO BE COLLAPSED INTO THE SECOND. This returned `null` for
+     * BOTH "not addressed to me" and "the read failed" — violating the contract written on
+     * `GraphOpener` itself, which says null must mean the former and never the latter.
+     *
+     * The cost was a false statement about somebody's membership. A CSS 502 during a redeploy, a
+     * damaged envelope, a `no_envelope_url` — any of them produced `unreadable`, became `null`,
+     * became `withheld`, and `verifyGrantIri` then refused a member's own Accept with "this
+     * workspace is private and this identity is not among them". That is verbatim the sentence
+     * re-sealing was introduced to stop anybody seeing, said this time to somebody who IS a
+     * recipient, because a transport hiccup was reported as a permission.
+     */
+    if (opened.kind === 'unreadable') return { kind: 'unreadable', why: opened.why };
+    return { kind: 'not-for-you' };
   };
 }

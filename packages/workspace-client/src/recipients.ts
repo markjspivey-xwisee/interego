@@ -57,6 +57,24 @@ export type RecipientPlan =
       readonly keys: readonly string[];
       /** Seated members whose acceptance carries no key. Non-empty means `keys` is unusable. */
       readonly keysMissing: readonly string[];
+      /**
+       * WebIDs of people who hold a grant but have not accepted it yet.
+       *
+       * ── ★★ THEY BELONG IN A RESEAL AND NOWHERE ELSE ─────────────────────────
+       *
+       * `shareWith` deliberately excludes them: an entry is for the people IN the conversation, and
+       * somebody who has not accepted is not one yet.
+       *
+       * But re-sealing the workspace RECORD is the opposite case, and getting it wrong is what
+       * makes an invitation impossible to accept. `verifyGrantIri` reads the record to check the
+       * grant; a pending invitee who cannot read it cannot verify their own grant and cannot
+       * accept. Since a reseal REPLACES the recipient set, inviting a second person while the first
+       * is still pending would evict the first — silently, by the very operation meant to let
+       * somebody in, and with the roster still showing them as "granted, not accepted".
+       *
+       * With N outstanding invitations only the most recent could ever be accepted, one at a time.
+       */
+      readonly pendingWebIds: readonly string[];
     }
   | { readonly ok: false; readonly why: string };
 
@@ -82,6 +100,10 @@ export function recipientsFromRoster(args: {
   }
 
   const seated = args.seats.filter((s) => s.seated && !s.revoked);
+  // Granted but not yet accepted. Excluded from `shareWith`, included in a reseal — see the field.
+  const pendingWebIds = args.seats
+    .filter((s) => !s.seated && !s.revoked && s.pending && s.grantedTo)
+    .map((s) => s.grantedTo as string);
   const handles: string[] = [];
   const missing: string[] = [];
   const keys: string[] = [];
@@ -117,6 +139,7 @@ export function recipientsFromRoster(args: {
     // so the caller gets an empty list plus the names, and decides in the open.
     keys: keysMissing.length > 0 ? [] : keys,
     keysMissing,
+    pendingWebIds: [...new Set(pendingWebIds)],
   };
 }
 
@@ -155,7 +178,7 @@ export function recipientsFor(
   visibility: 'public' | 'private' | 'unknown' | undefined,
   roster: { readonly seats: readonly Seat[]; readonly grantsFound: number; readonly grantsRead: number } | null,
 ): { readonly ok: true; readonly visibility: 'public' | 'private'; readonly shareWith: readonly string[] | undefined;
-      readonly keys: readonly string[]; readonly keysMissing: readonly string[] }
+      readonly keys: readonly string[]; readonly keysMissing: readonly string[]; readonly pendingWebIds: readonly string[] }
   | { readonly ok: false; readonly why: string } {
   /**
    * ★★ REFUSED, BECAUSE THE ALTERNATIVE IS PUBLISHING IN THE CLEAR. `'unknown'` means the record
@@ -178,7 +201,7 @@ export function recipientsFor(
   // ★ The resolved value is RETURNED rather than left for the caller to re-derive: a caller that
   // asked here and then read `record.visibility` again for the write could get two answers.
   // A public workspace seals nothing, so it has no recipients of either kind.
-  if (visibility !== 'private') return { ok: true, visibility: 'public', shareWith: undefined, keys: [], keysMissing: [] };
+  if (visibility !== 'private') return { ok: true, visibility: 'public', shareWith: undefined, keys: [], keysMissing: [], pendingWebIds: [] };
   if (!roster) {
     return {
       ok: false,
@@ -188,7 +211,7 @@ export function recipientsFor(
   }
   const plan = recipientsFromRoster(roster);
   return plan.ok
-    ? { ok: true, visibility: 'private', shareWith: plan.shareWith, keys: plan.keys, keysMissing: plan.keysMissing }
+    ? { ok: true, visibility: 'private', shareWith: plan.shareWith, keys: plan.keys, keysMissing: plan.keysMissing, pendingWebIds: plan.pendingWebIds }
     : { ok: false, why: plan.why };
 }
 

@@ -83,7 +83,7 @@ export class BotSession {
    * should.
    */
   private readonly encryption: EncryptionKeyPair;
-  private readonly opener: (sealed: unknown) => string | null;
+  private readonly opener: ReturnType<typeof openerFor>;
   private transport: RelayMcpTransport | null = null;
   private bearer: RelayOAuthBearer | null = null;
   private identity: BotIdentity | null = null;

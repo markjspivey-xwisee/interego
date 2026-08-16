@@ -117,6 +117,55 @@ describe('★★ the keys a client seals to itself', () => {
   });
 });
 
+describe('★★ people who hold a grant but have not accepted yet', () => {
+  /**
+   * ── THE EVICTION THIS PREVENTS ──────────────────────────────────────────────
+   *
+   * Re-sealing the workspace record REPLACES its recipient set. Invite B, then invite C before B
+   * has opened their client, and a recipient list built only from SEATED members re-seals to
+   * {A, C} — dropping B from the record they must read in order to verify the grant written for
+   * them. Nothing warns: the roster still shows B as "granted, not accepted", every named
+   * recipient resolves, and B's client then refuses B's own invitation with "this identity is not
+   * among them". With N outstanding invitations only the most recent could ever be accepted.
+   */
+  const pendingSeat = (pod: string): Seat =>
+    seat(pod, { seated: false, pending: true, why: 'granted, but no acceptance published on their pod yet' } as Partial<Seat>);
+
+  it('are reported separately from the seated ones', () => {
+    const plan = recipientsFromRoster({
+      seats: [seat('u-a'), pendingSeat('u-b')], grantsFound: 2, grantsRead: 2,
+    });
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    // ★ NOT in shareWith: an entry is for the people IN the conversation, and somebody who has not
+    // accepted is not one of them yet.
+    expect(plan.shareWith).toEqual([WEBID('u-a')]);
+    // ★ But named, so a RESEAL can include them.
+    expect(plan.pendingWebIds).toEqual([WEBID('u-b')]);
+  });
+
+  it('★ a revoked grantee is not pending, they are gone', () => {
+    const plan = recipientsFromRoster({
+      seats: [seat('u-a'), seat('u-b', { seated: false, pending: true, revoked: true } as Partial<Seat>)],
+      grantsFound: 2, grantsRead: 2,
+    });
+    expect(plan.ok).toBe(true);
+    if (plan.ok) expect(plan.pendingWebIds).toEqual([]);
+  });
+
+  it('★ and an unseated row that is NOT pending is not either — it never got a grant it could accept', () => {
+    // `pending` is set only when the acceptance was genuinely absent, never when the read FAILED.
+    // A row whose acceptance could not be resolved is unknown, not waiting, and re-sealing to
+    // somebody on the strength of a failed read would be guessing.
+    const plan = recipientsFromRoster({
+      seats: [seat('u-a'), seat('u-b', { seated: false, why: 'their acceptance could not be resolved: 502' } as Partial<Seat>)],
+      grantsFound: 2, grantsRead: 2,
+    });
+    expect(plan.ok).toBe(true);
+    if (plan.ok) expect(plan.pendingWebIds).toEqual([]);
+  });
+});
+
 describe('★★ what the relay actually reached', () => {
   it('reports a handle that resolved to zero recipients', () => {
     /**

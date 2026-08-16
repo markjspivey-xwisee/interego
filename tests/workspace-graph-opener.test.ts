@@ -44,7 +44,7 @@ describe('a client holding a key opens what the relay would not', () => {
     client.setGraphOpener((sealed) => {
       // The host's opener sees exactly what the tool returned, and nothing else.
       expect((sealed as { envelope?: string }).envelope).toBe('{"sealed":true}');
-      return '<urn:g> <p> "o" .';
+      return { kind: 'opened', content: '<urn:g> <p> "o" .' };
     });
 
     const d = await client.descriptor(URL_);
@@ -61,7 +61,7 @@ describe('a client holding a key opens what the relay would not', () => {
       get_encrypted_graph: { encrypted: true, envelope: '{"sealed":true}' },
     });
     const client = new WorkspaceClient('https://relay.example', tx);
-    client.setGraphOpener(() => null);   // not for you — a permission, not a fault
+    client.setGraphOpener(() => ({ kind: 'not-for-you' }));   // a permission, not a fault
 
     const d = await client.descriptor(URL_);
     expect((d['graph'] as { content?: string | null }).content).toBeNull();
@@ -90,7 +90,7 @@ describe('a client holding a key opens what the relay would not', () => {
       get_descriptor: { url: URL_, graph: { url: URL_, encrypted: false, content: '<urn:g> <p> "plain" .' } },
     });
     const client = new WorkspaceClient('https://relay.example', tx);
-    client.setGraphOpener(() => 'SHOULD NOT BE CALLED');
+    client.setGraphOpener(() => ({ kind: 'opened', content: 'SHOULD NOT BE CALLED' }));
 
     const d = await client.descriptor(URL_);
     expect(asked).toEqual(['get_descriptor']);
@@ -106,11 +106,53 @@ describe('a client holding a key opens what the relay would not', () => {
      */
     const { tx } = transportOf({ get_descriptor: SEALED });   // the sealed read is not granted
     const client = new WorkspaceClient('https://relay.example', tx);
-    client.setGraphOpener(() => 'SHOULD NOT BE REACHED');
+    client.setGraphOpener(() => ({ kind: 'opened', content: 'SHOULD NOT BE REACHED' }));
 
     const d = await client.descriptor(URL_);
     expect((d['graph'] as { content?: string | null }).content).toBeNull();
     expect(String(d['sealedReadFailed'])).toContain('get_encrypted_graph');
+  });
+});
+
+describe('★★ a read that FAILED is not a statement about membership', () => {
+  /**
+   * ── WHAT THIS COST BEFORE THERE WERE THREE ANSWERS ──────────────────────────
+   *
+   * `openerFor` returned `null` for BOTH "not addressed to me" and "the bytes could not be
+   * opened", violating the contract written on `GraphOpener` itself. So a CSS 502 during a
+   * redeploy, a damaged envelope, or a descriptor naming no distribution all became `withheld`,
+   * and `verifyGrantIri` refused a member's own Accept with "this workspace is private and this
+   * identity is not among them" — the exact sentence re-sealing was introduced to stop anybody
+   * seeing, said to somebody who IS a recipient, because a transport hiccup was reported as a
+   * permission.
+   */
+  it('records WHY, instead of leaving it indistinguishable from a refusal', async () => {
+    const { tx } = transportOf({
+      get_descriptor: SEALED,
+      get_encrypted_graph: { error: 'envelope_fetch_failed', message: 'the envelope could not be retrieved' },
+    });
+    const client = new WorkspaceClient('https://relay.example', tx);
+    // The real opener's behaviour for that payload: `openGraph` answers `unreadable`.
+    client.setGraphOpener(() => ({ kind: 'unreadable', why: 'the envelope could not be retrieved' }));
+
+    const d = await client.descriptor(URL_);
+    expect((d['graph'] as { content?: string | null }).content).toBeNull();
+    expect(String(d['sealedReadFailed'])).toContain('could not be retrieved');
+  });
+
+  it('★ and a genuine refusal still records NOTHING, so the two stay distinguishable', () => {
+    // The whole point of three answers. If both set `sealedReadFailed`, the reader is back to one
+    // sentence for two situations.
+    return (async (): Promise<void> => {
+      const { tx } = transportOf({
+        get_descriptor: SEALED,
+        get_encrypted_graph: { encrypted: true, envelope: '{"sealed":true}' },
+      });
+      const client = new WorkspaceClient('https://relay.example', tx);
+      client.setGraphOpener(() => ({ kind: 'not-for-you' }));
+      const d = await client.descriptor(URL_);
+      expect(d['sealedReadFailed']).toBeUndefined();
+    })();
   });
 });
 
@@ -132,7 +174,7 @@ describe('★★ a client whose transport opens for it', () => {
   it('★★ openSealedDescriptor opens a response somebody else fetched', async () => {
     const { tx, asked } = transportOf({ get_encrypted_graph: { encrypted: true, envelope: '{"sealed":true}' } });
     const main = new WorkspaceClient('https://relay.example', tx);
-    main.setGraphOpener(() => '<urn:g> <p> "opened" .');
+    main.setGraphOpener(() => ({ kind: 'opened', content: '<urn:g> <p> "opened" .' }));
 
     // Exactly what the IPC bridge does: a raw tool result, handed back for opening.
     const opened = await main.openSealedDescriptor(SEALED as unknown as Record<string, unknown>, URL_);
@@ -182,7 +224,7 @@ describe('what the workspace record says about a payload it could open', () => {
       get_encrypted_graph: { encrypted: true, envelope: '{}' },
     });
     const client = new WorkspaceClient('https://relay.example', tx);
-    client.setGraphOpener(() => region);
+    client.setGraphOpener(() => ({ kind: 'opened', content: region }));
 
     const r = await client.readWorkspaceRecord(iri, 'u-a');
     expect(r.kind).toBe('record');

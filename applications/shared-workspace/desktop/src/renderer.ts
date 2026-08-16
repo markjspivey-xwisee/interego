@@ -1380,6 +1380,8 @@ async function invite(): Promise<void> {
     // which could answer differently and cannot answer 'unknown' safely.
     visibility: inviteAudience.visibility,
     ...(inviteAudience.shareWith ? { shareWith: inviteAudience.shareWith } : {}),
+    // Anyone with an outstanding invitation, or this reseal evicts them — see `sendInvite`.
+    pendingWebIds: inviteAudience.pendingWebIds,
     onState: (s, d) => { if (!set) set = writeLine(log, 'grant on your pod'); set(s, d); },
   });
   b.disabled = false;

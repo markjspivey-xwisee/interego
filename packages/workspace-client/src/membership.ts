@@ -491,6 +491,20 @@ export async function sendInvite(
      * `drive-private-workspace-live.ts`. See {@link sendInvite}'s note on re-sealing.
      */
     readonly shareWith?: readonly string[];
+    /**
+     * People who hold a grant but have not accepted yet, from `recipientsFor().pendingWebIds`.
+     *
+     * ── ★★ OMIT THEM AND A SECOND INVITE EVICTS THE FIRST ─────────────────────
+     *
+     * A reseal REPLACES the record's recipient set. Invite B, then invite C before B has opened
+     * their client, and a recipient list built only from SEATED members re-seals to {A, C} — B is
+     * dropped from a record they must read in order to verify the grant written for them. Nothing
+     * warns: the roster still shows B as "granted, not accepted", every named recipient resolved,
+     * and B's client then refuses B's own invitation with "this identity is not among them".
+     *
+     * With N outstanding invitations only the most recent could ever be accepted, one at a time.
+     */
+    readonly pendingWebIds?: readonly string[];
     readonly onState?: (state: string, detail: string) => void;
   },
 ): Promise<InviteOutcome> {
@@ -520,7 +534,9 @@ export async function sendInvite(
   if (args.visibility === 'private') {
     const resealed = await resealRecord(client, {
       workspace: args.workspace, viewer: args.viewer, entryShape: args.entryShape,
-      shareWith: [...new Set([...(args.shareWith ?? []), who.webId])].filter(Boolean),
+      // Seated members, everyone with an outstanding invitation, and the person being invited now.
+      // Dropping any of the three locks somebody out of a record they need in order to join.
+      shareWith: [...new Set([...(args.shareWith ?? []), ...(args.pendingWebIds ?? []), who.webId])].filter(Boolean),
       resolution: who,
       onState: args.onState,
     });
@@ -711,13 +727,25 @@ export async function verifyGrantIri(
      * membership, made by a client that never even attempted the decryption. Which of the two it
      * is, is known exactly: `canOpenSealed`.
      */
+    /**
+     * ★★ AND A FAILED READ IS A FOURTH, WHICH IS NOT ABOUT MEMBERSHIP AT ALL. A CSS 502 during a
+     * redeploy, a damaged envelope, a descriptor naming no distribution — the bytes could not be
+     * got. That used to arrive here as the first branch, because the opener returned `null` for
+     * both "not addressed to me" and "the read failed": so a transport hiccup told a seated member
+     * they were not among their own workspace's members, in the very sentence re-sealing was
+     * introduced to stop anybody seeing.
+     */
     return no(rec.record.withheld
-      ? (client.canOpenSealed
-        ? 'this workspace is private and its record is encrypted to its members, and this identity is not '
-          + 'among them. Nothing is wrong with the record; it is not yours to read.'
-        : 'this workspace is private and its records are encrypted, and this client holds no key to open '
-          + 'them — so whether you are a member of it is not something this read can answer either way. '
-          + 'Open it in a client signed in with your own key.')
+      ? (rec.record.sealedReadFailed
+        ? 'this workspace is private and its record could not be READ here — ' + rec.record.sealedReadFailed
+          + '. That is a failure to fetch or open the bytes, not an answer about whether you are a member '
+          + 'of it, so nothing is concluded either way. Try again.'
+        : client.canOpenSealed
+          ? 'this workspace is private and its record is encrypted to its members, and this identity is not '
+            + 'among them. Nothing is wrong with the record; it is not yours to read.'
+          : 'this workspace is private and its records are encrypted, and this client holds no key to open '
+            + 'them — so whether you are a member of it is not something this read can answer either way. '
+            + 'Open it in a client signed in with your own key.')
       : 'the workspace record\'s signed region could not be located', withWs);
   }
   const full: Partial<GrantVerdict> = {

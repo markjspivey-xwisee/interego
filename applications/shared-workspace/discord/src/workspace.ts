@@ -276,7 +276,7 @@ async function frameOf(deps: Deps, binding: ThreadBinding): Promise<Frame | { re
  * roster, and encrypting to the part of it that was read would lock out the members it missed,
  * permanently and with nothing to show for it.
  */
-async function audienceFor(deps: Deps, frame: Frame): Promise<{ visibility: 'public' | 'private'; shareWith?: readonly string[] }> {
+async function audienceFor(deps: Deps, frame: Frame): Promise<{ visibility: 'public' | 'private'; shareWith?: readonly string[]; pendingWebIds?: readonly string[] }> {
   /**
    * ★ PUBLIC COSTS NOTHING. The roster is two round trips per grant — far too much to spend on
    * every message in a public channel, and a public workspace has no recipients to compute.
@@ -299,7 +299,13 @@ async function audienceFor(deps: Deps, frame: Frame): Promise<{ visibility: 'pub
    * the clear. Both are worse than a message that did not send.
    */
   if (!audience.ok) throw new Error(audience.why);
-  return { visibility: audience.visibility, ...(audience.shareWith ? { shareWith: audience.shareWith } : {}) };
+  return {
+    visibility: audience.visibility,
+    ...(audience.shareWith ? { shareWith: audience.shareWith } : {}),
+    // Only meaningful to `sendInvite`'s reseal; `postEntry` ignores it. Carried here so the seat
+    // path cannot forget it — omitting it evicts anybody with an outstanding invitation.
+    pendingWebIds: audience.pendingWebIds,
+  };
 }
 
 /**

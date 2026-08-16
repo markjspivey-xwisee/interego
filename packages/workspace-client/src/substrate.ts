@@ -15,6 +15,8 @@
  */
 
 import { RelayClient, type HeadResult } from '@interego/core/relay';
+// The three answers an opener may give. Type-only, so the browser bundle is unaffected.
+import type { OpenedGraph } from './opener.js';
 import { graphRegion, readIri, readLiteral } from './turtle.js';
 import { memberDocIris, type MemberDocKind, type Naming, podOfDescriptorUrl, podOfWebid } from './naming.js';
 
@@ -35,12 +37,13 @@ export const PROBE_TOOL = 'get_pod_status';
  * Turns the sealed payload `get_encrypted_graph` returns into plaintext, or `null` if it is not
  * for this holder.
  *
- * ★ THE HOST IMPLEMENTS THIS, AND THE HOST KEEPS THE KEY. Returning `null` must mean "not
- * addressed to me" and never "something went wrong" — the readers render an unopened record as a
- * permission, and a fault reported that way would tell somebody they had not been invited to a
- * workspace they are seated in.
+ * ★★ THE HOST IMPLEMENTS THIS, AND THE HOST KEEPS THE KEY. Three answers, and the reason there are
+ * three is that this used to have two: `not-for-you` and `unreadable` were both `null`, so a CSS
+ * 502 during a redeploy became "you are not among this workspace's members" — said to somebody who
+ * is one. A fault must never be reported as a permission; the readers render an unopened record as
+ * a permission, so anything collapsed into that answer becomes an accusation about membership.
  */
-export type GraphOpener = (sealed: unknown) => string | null;
+export type GraphOpener = (sealed: unknown) => OpenedGraph;
 
 /** A workspace record, as far as it could be read. Every field says how it was obtained. */
 export interface WorkspaceRecord {
@@ -59,6 +62,14 @@ export interface WorkspaceRecord {
    * was read on the way in and dropped on the way to the reader.
    */
   readonly withheld: boolean;
+  /**
+   * Set when the sealed read FAILED rather than being refused — see `GraphOpener`.
+   *
+   * ★ `withheld` is still true, because the content is still absent; what this adds is WHY. A
+   * reader that only had `withheld` could not tell "not yours" from "we could not fetch it", and
+   * every caller therefore said the first.
+   */
+  readonly sealedReadFailed: string | null;
   /**
    * Whether this workspace's documents are published in the clear or encrypted to its members.
    *
@@ -194,11 +205,18 @@ export class WorkspaceClient extends RelayClient {
       // leaving a private workspace looking broken for a reason nothing states.
       return { ...d, sealedReadFailed: (e as Error)?.message ?? String(e) };
     }
-    const plain = this.opener(sealed);
-    if (plain === null) return d;
+    const opened = this.opener(sealed);
+    /**
+     * ★★ A FAILED READ IS NOT A PERMISSION, AND IT IS RECORDED AS SUCH. `unreadable` means the
+     * bytes could not be got or could not be opened — a CSS 502 during a redeploy, a damaged
+     * envelope, an absent distribution. Reporting it as `not-for-you` is what let a transport
+     * hiccup become "you are not a member of this workspace", said to somebody who is.
+     */
+    if (opened.kind === 'unreadable') return { ...d, sealedReadFailed: opened.why };
+    if (opened.kind !== 'opened') return d;
     return {
       ...d,
-      graph: { ...graph, content: plain },
+      graph: { ...graph, content: opened.content },
       // ★ Evidence, not decoration: this content was decrypted HERE, with a key the relay does
       // not hold. A reader that could not tell this from ordinary plaintext could not honestly
       // tell anyone their workspace is end-to-end encrypted.
@@ -278,6 +296,7 @@ export class WorkspaceClient extends RelayClient {
          * `encrypted` flag alone would hide a workspace from the very member who can read it.
          */
         withheld: graph?.encrypted === true && typeof graph?.content !== 'string',
+        sealedReadFailed: typeof d['sealedReadFailed'] === 'string' ? d['sealedReadFailed'] : null,
         /**
          * ★★ "I COULD NOT READ IT" IS NOT "IT IS PUBLIC", AND THEY WERE THE SAME VALUE.
          *

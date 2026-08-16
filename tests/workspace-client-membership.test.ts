@@ -242,6 +242,13 @@ describe('★★ an encrypted record is withheld, not malformed', () => {
         get_descriptor: (i) => (String(i['url']) === WS_DOC.url
           ? { graph: { content: null, encrypted: true }, authorship: null }
           : (base['get_descriptor'] as (x: Record<string, unknown>) => unknown)(i)),
+        /**
+         * ★ THE SEALED READ MUST SUCCEED FOR THE OPENER TO GET A SAY. Without this the tool call
+         * throws, `sealedReadFailed` is set, and the verdict correctly reports "the record could
+         * not be READ" — a different, also-true sentence that is not the one under test. Scripting
+         * it makes the distinction the test is about actually reachable.
+         */
+        get_encrypted_graph: () => ({ encrypted: true, envelope: '{"wrappedKeys":[]}' }),
       };
     };
 
@@ -251,7 +258,7 @@ describe('★★ an encrypted record is withheld, not malformed', () => {
     // ★ WITH A KEY INSTALLED, because that is what makes "not yours" a finding rather than a
     // guess: this client tried the envelope and was not among its recipients. See the next test
     // for the client that could not try at all.
-    c.setGraphOpener(() => null);
+    c.setGraphOpener(() => ({ kind: 'not-for-you' }));
     const v = await verifyGrantIri(c, { relay: RELAY, viewer: viewer(OTHER), grantIri: GRANT });
     expect(v.ok).toBe(false);
     if (!v.ok) {
