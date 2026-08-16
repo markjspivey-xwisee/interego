@@ -49,6 +49,22 @@ export interface TurnRecord {
   readonly askedBy: string;
   readonly channel: string;
   readonly ok: boolean;
+  /**
+   * What happened to the DRAFT after the model produced it, when that is known.
+   *
+   * ── ★★ WITHOUT THIS, "THE TURN SUCCEEDED" AND "SOMETHING WAS WRITTEN" LOOK IDENTICAL ────
+   *
+   * `ok` means the model ran. It says nothing about whether the reply survived `checkDraft`, and
+   * those come apart constantly — a missing footing line, an over-long body, an abstention. Live:
+   * a delegate ran three turns, every one recorded `ok: true`, cost about $0.27 between them, and
+   * wrote nothing at all, while the person who had asked twice sat looking at silence. The reason
+   * existed only as text in a panel on their screen, so diagnosing it meant asking them to read
+   * their own UI aloud.
+   *
+   * `posted` for a written entry, or the refusal's own short reason. Absent on turns from before
+   * this existed — which is why it is optional rather than defaulted to something cheerful.
+   */
+  readonly draft?: string;
   /** Milliseconds the app measured around the child process. */
   readonly ms: number;
 
@@ -150,6 +166,25 @@ export function toolsInTurn(userData: string, turnId: string): {
 }
 
 /** Append one turn. Never throws: a report nobody can write must not fail the turn it describes. */
+/**
+ * What became of a draft, in its own file.
+ *
+ * ★★ SEPARATE FROM THE AUDIT TRAIL ON PURPOSE. `toolsInTurn` counts every line in
+ * `agent-audit.jsonl` that carries the turn's id, so a verdict written there would be counted as a
+ * tool call and quietly inflate what every turn appears to have done. A file that measures
+ * something must not be appended to by something it does not measure.
+ *
+ * ★ AND IT IS WRITTEN EVEN WHEN THE DRAFT WAS REFUSED — especially then. A refusal is the case
+ * nobody can currently see: `ok: true` in the turn log means the model ran, and says nothing about
+ * whether a word of it survived.
+ */
+export function recordDraft(userData: string, rec: { turnId: string; atIso: string; channel: string; outcome: string }): void {
+  try {
+    mkdirSync(userData, { recursive: true });
+    appendFileSync(join(userData, 'agent-drafts.jsonl'), JSON.stringify(rec) + '\n', 'utf8');
+  } catch { /* telemetry is not worth breaking the thing it measures */ }
+}
+
 export function recordTurn(userData: string, rec: TurnRecord): void {
   try {
     mkdirSync(userData, { recursive: true });

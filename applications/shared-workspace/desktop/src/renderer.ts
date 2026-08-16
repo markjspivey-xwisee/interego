@@ -4040,6 +4040,13 @@ async function agentConsider(): Promise<void> {
     saveAttempts(A.attempts);
     if (tried >= ATTEMPT_LIMIT) A.answered.add(url);
     A.phase = 'watching';
+    /**
+     * ★ THE REFUSAL IS RECORDED, NOT ONLY DISPLAYED. Until this line the ONLY trace of a discarded
+     * draft was the panel below — so a delegate could run for an hour, spend real money on every
+     * turn, write nothing, and leave no evidence anywhere of why. Diagnosing it meant asking the
+     * person to read their own screen aloud.
+     */
+    void window.interego.draftOutcome({ turnId: '', channel: S.slug ?? '', outcome: 'refused: ' + draft.why.slice(0, 160) });
     say('agentresult', 'pending', 'Nothing was drafted',
       draft.why + (tried >= ATTEMPT_LIMIT
         // ★ SAID OUT LOUD. An agent that quietly stops answering somebody looks exactly like one
@@ -4071,6 +4078,12 @@ async function agentConsider(): Promise<void> {
   // Recorded the moment the draft exists, not when it posts: a draft the user discards was still
   // an answer this run produced, and re-producing it on the next poll is the loop, not a feature.
   A.answered.add(decision.answering.descriptorUrl);
+  // The other half of the record: a draft that SURVIVED. Without both, the log cannot answer "is
+  // this agent working" — only "did the model run", which is a different question.
+  void window.interego.draftOutcome({
+    turnId: '', channel: S.slug ?? '',
+    outcome: 'drafted (' + draft.body.length + ' chars, ' + draft.footing + ')' + (A.auto ? ' · auto-posting' : ' · awaiting review'),
+  });
   A.phase = 'drafted';
   renderAgent();
   const p = say('agentresult', 'ok',

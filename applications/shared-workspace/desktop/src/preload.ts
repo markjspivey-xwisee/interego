@@ -160,6 +160,8 @@ export interface WorkspaceBridge {
    * because deciding who a workspace's members are is not the privileged side's business, and a
    * process that added a recipient here would be making exactly the move the relay was making.
    */
+  /** Record what became of a draft — the verdict is the renderer's, the log is main's. */
+  draftOutcome(rec: { turnId: string; channel: string; outcome: string }): Promise<void>;
   seal(req: {
     graphIri: string;
     payloadTurtle: string;
@@ -301,6 +303,7 @@ const bridge: WorkspaceBridge = {
   signOut: () => ipcRenderer.invoke('auth:signout'),
   call: (name, input) => ipcRenderer.invoke('substrate:call', name, input),
   seal: (req) => ipcRenderer.invoke('substrate:seal', req),
+  draftOutcome: (rec) => ipcRenderer.invoke('agent:draftOutcome', rec),
   sessionStatus: () => ipcRenderer.invoke('session:status'),
   renewSession: () => ipcRenderer.invoke('session:renew'),
   // The listener is wrapped rather than handed `ipcRenderer.on` directly: the event object

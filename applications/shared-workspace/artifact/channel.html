@@ -5171,8 +5171,31 @@ var WSPC = (() => {
       "you see it from what was written, or ask the one question that would settle it. Do not invent",
       "facts, commitments or history that are not in the entries above.",
       "",
-      "Plain prose, a few sentences. No markdown headings, bullet lists or code fences. Do not open",
-      'with "Sure" or "Here is", and do not sign your name.',
+      "Plain prose, a few sentences. No markdown headings, bullet lists or code fences. After the",
+      'FOOTING line, do not open with "Sure" or "Here is", and do not sign your name.',
+      "",
+      /**
+       * ── ★★ THE FORMAT REQUIREMENT IS RESTATED LAST, WHERE IT IS ACTUALLY READ ───
+       *
+       * MEASURED, from a live channel: a delegate ran three turns, cost real money, and wrote
+       * nothing three times — the person asked "prove it to me" twice and got silence, because every
+       * draft was refused for having no FOOTING line. The requirement was stated ~80 lines earlier,
+       * before the transcript, the tool guidance and the drawing guidance; and the LAST thing the
+       * model read about how to open a reply was "do not open with Sure or Here is", which does not
+       * mention the footing at all. Two instructions about the opening, and the nearer one won.
+       *
+       * This is an agentic loop — the reply is generated after tool calls, further still from the
+       * top of the brief. A rule that decides whether the work is kept has to be the last thing said,
+       * and it has to be consistent with the other rule about openings rather than competing with it.
+       */
+      "LAST, AND IT DECIDES WHETHER ANY OF THIS IS KEPT: the very first line of your reply must be",
+      "exactly one of these, alone on the line, before any prose:",
+      "",
+      "FOOTING: ON THEIR BEHALF",
+      "FOOTING: MY OWN ACCOUNT",
+      "",
+      "A reply without that line is discarded unread and nothing is recorded \u2014 the channel cannot",
+      "accept an entry that does not say whose voice it is in.",
       "",
       /**
        * ★★ THE LIMIT IS STATED, BECAUSE IT IS ENFORCED.

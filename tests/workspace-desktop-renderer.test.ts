@@ -478,6 +478,8 @@ interface AgentScript {
   /** Every prompt the renderer sent, so a test can assert what the agent was ASKED. */
   prompts: string[];
   cancels: number;
+  /** Every draft verdict the renderer reported — refusals included, which is the point. */
+  drafts: string[];
   probeThrows?: boolean;
 }
 
@@ -507,7 +509,7 @@ async function open(opts: {
    * A fixed viewer would have let a shell that ignored the switch pass.
    */
   let viewer = opts.viewer ?? POD_A;
-  const agent: AgentScript = { prompts: [], cancels: 0, ...opts.agent };
+  const agent: AgentScript = { prompts: [], cancels: 0, drafts: [], ...opts.agent };
   const accounts: AccountScript = {
     pods: new Map(), keys: [], importPk: [], switched: [], forgotten: [], signOuts: 0,
     confirm: true, confirms: [], ...opts.accounts,
@@ -646,6 +648,14 @@ async function open(opts: {
       return agent.think ? agent.think(prompt) : { ok: true, text: BEHALF + 'A drafted reply.', why: 'ok', ms: 1200 };
     },
     agentCancel: async () => { agent.cancels++; return { stopped: 0 }; },
+    /**
+     * ★ RECORDED, AND THE HARNESS KEEPS IT. A draft's verdict is the renderer's to decide and
+     * main's to log; without it in this fake, every path that reports one throws and eight cases
+     * fail with an unrelated-looking message. Keeping the calls lets a test assert what the app
+     * would have written to `agent-drafts.jsonl`, which is the only durable record that a delegate
+     * ran and produced nothing.
+     */
+    draftOutcome: async (rec: { turnId: string; channel: string; outcome: string }) => { agent.drafts.push(rec.outcome); },
     /**
      * ★ THE KEYRING, WHICH IS NOT THE ROSTER. This answers "which delegates can this machine
      * DRIVE"; the pod's own delegation registry answers "which has this person AUTHORISED". The
@@ -1572,7 +1582,7 @@ describe('the model the agent runs on is the user\'s own, or it is absent', () =
     // tool is not installed, so whether this person has a Claude subscription is not something the
     // app has ANY evidence about. Rendering `loggedIn: null` as "no" would be a statement about
     // somebody's account made from a filesystem check that never looked at their account.
-    const o = await open({ agent: { prompts: [], cancels: 0, providers: [CLAUDE_ABSENT] } });
+    const o = await open({ agent: { prompts: [], cancels: 0, drafts: [], providers: [CLAUDE_ABSENT] } });
     await signInAndSettle(o);
     const body = text(o.doc, '#modelbody');
     expect(body).toContain('not established');
@@ -1581,13 +1591,13 @@ describe('the model the agent runs on is the user\'s own, or it is absent', () =
   });
 
   it('★ says Codex is unsupported here rather than offering it', async () => {
-    const o = await open({ agent: { prompts: [], cancels: 0, unsupported: [{ id: 'codex', label: 'OpenAI Codex', why: 'Not supported by this app. Only Claude Code has been measured end to end.' }] } });
+    const o = await open({ agent: { prompts: [], cancels: 0, drafts: [], unsupported: [{ id: 'codex', label: 'OpenAI Codex', why: 'Not supported by this app. Only Claude Code has been measured end to end.' }] } });
     await signInAndSettle(o);
     expect(text(o.doc, '#modelbody')).toContain('Only Claude Code has been measured end to end');
   });
 
   it('★ a probe that throws does not leave a claim about the machine on screen', async () => {
-    const o = await open({ agent: { prompts: [], cancels: 0, probeThrows: true } });
+    const o = await open({ agent: { prompts: [], cancels: 0, drafts: [], probeThrows: true } });
     await signInAndSettle(o);
     expect(text(o.doc, '#modelresult')).toContain('nothing is being claimed about it either way');
     // And with no provider established, the agent cannot be switched on at all.
@@ -1738,7 +1748,7 @@ describe('the local agent is off, visible, and stoppable', () => {
     // it is not a feature, so the draft lands where their own typing would and stops there.
     const o = await open({
       setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'What did we decide about the roof?', '2026-08-07T10:00:00.000Z')); },
-      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: BEHALF + 'We agreed to re-tile in spring.', why: 'ok', ms: 900 }) },
+      agent: { prompts: [], cancels: 0, drafts: [], think: () => ({ ok: true, text: BEHALF + 'We agreed to re-tile in spring.', why: 'ok', ms: 900 }) },
     });
     await signInAndSpeak(o);
     click(o.doc, 'agenttoggle');
@@ -1761,7 +1771,7 @@ describe('the local agent is off, visible, and stoppable', () => {
   it('★ a delegate speaking on its OWN account says so on the button, before it is sent', async () => {
     const o = await open({
       setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'What did we decide about the roof?', '2026-08-07T10:00:00.000Z')); },
-      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: OWN + 'My own read: patching is the weaker option.', why: 'ok', ms: 900 }) },
+      agent: { prompts: [], cancels: 0, drafts: [], think: () => ({ ok: true, text: OWN + 'My own read: patching is the weaker option.', why: 'ok', ms: 900 }) },
     });
     await signInAndSpeak(o);
     click(o.doc, 'agenttoggle');
@@ -1785,7 +1795,7 @@ describe('the local agent is off, visible, and stoppable', () => {
   it('★ a draft with no footing declaration is refused, and nothing is published', async () => {
     const o = await open({
       setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'What did we decide about the roof?', '2026-08-07T10:00:00.000Z')); },
-      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: 'We agreed to re-tile in spring.', why: 'ok', ms: 900 }) },
+      agent: { prompts: [], cancels: 0, drafts: [], think: () => ({ ok: true, text: 'We agreed to re-tile in spring.', why: 'ok', ms: 900 }) },
     });
     await signInAndSpeak(o);
     click(o.doc, 'agenttoggle');
@@ -1794,6 +1804,16 @@ describe('the local agent is off, visible, and stoppable', () => {
     expect((o.doc.getElementById('composer') as HTMLTextAreaElement).value).toBe('');
     expect((o.doc.getElementById('agentsend') as HTMLButtonElement).hasAttribute('hidden')).toBe(true);
     expect(entryPublishes(o)).toHaveLength(0);
+    /**
+     * ★★ AND IT IS RECORDED, NOT ONLY SHOWN. This is the case that cost an evening: a delegate ran
+     * three turns, each logged `ok: true` and each cost real money, wrote nothing, and the only
+     * trace of WHY was the sentence in the panel above. Working it out meant asking the person to
+     * read their own screen aloud. A refusal that leaves no evidence is indistinguishable from an
+     * agent that is simply broken.
+     */
+    expect(o.agent.drafts, 'the refusal must reach agent-drafts.jsonl').toHaveLength(1);
+    expect(o.agent.drafts[0]).toContain('refused');
+    expect(o.agent.drafts[0]).toContain('footing');
   });
 
   /**
@@ -1806,7 +1826,7 @@ describe('the local agent is off, visible, and stoppable', () => {
   it('★ switching a delegate on publishes a SHORT lease, on the AGENT\'s own pod, with its own key', async () => {
     const o = await open({
       setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'What did we decide about the roof?', '2026-08-07T10:00:00.000Z')); },
-      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: OWN + 'A reply.', why: 'ok', ms: 900 }) },
+      agent: { prompts: [], cancels: 0, drafts: [], think: () => ({ ok: true, text: OWN + 'A reply.', why: 'ok', ms: 900 }) },
     });
     await signInAndSpeak(o);
     click(o.doc, 'agenttoggle');
@@ -1845,7 +1865,7 @@ describe('the local agent is off, visible, and stoppable', () => {
   it('★ also publishes what it can be asked, with iep:askVia and NO endpoint to call', async () => {
     const o = await open({
       setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'What did we decide?', '2026-08-07T10:00:00.000Z')); },
-      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: OWN + 'A reply.', why: 'ok', ms: 900 }) },
+      agent: { prompts: [], cancels: 0, drafts: [], think: () => ({ ok: true, text: OWN + 'A reply.', why: 'ok', ms: 900 }) },
     });
     await signInAndSpeak(o);
     click(o.doc, 'agenttoggle');
@@ -1880,7 +1900,7 @@ describe('the local agent is off, visible, and stoppable', () => {
         (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'What did we decide?', '2026-08-07T10:00:00.000Z'));
         s.fail.set('read_inbox', () => ({ count: 0, items: [] }));
       },
-      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: OWN + 'A reply.', why: 'ok', ms: 900 }) },
+      agent: { prompts: [], cancels: 0, drafts: [], think: () => ({ ok: true, text: OWN + 'A reply.', why: 'ok', ms: 900 }) },
     });
     await signInAndSpeak(o);
     click(o.doc, 'agenttoggle');
@@ -1894,7 +1914,7 @@ describe('the local agent is off, visible, and stoppable', () => {
   it('does not republish the capability on every heartbeat — it does not change every 90s', async () => {
     const o = await open({
       setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'What did we decide?', '2026-08-07T10:00:00.000Z')); },
-      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: OWN + 'A reply.', why: 'ok', ms: 900 }) },
+      agent: { prompts: [], cancels: 0, drafts: [], think: () => ({ ok: true, text: OWN + 'A reply.', why: 'ok', ms: 900 }) },
     });
     await signInAndSpeak(o);
     click(o.doc, 'agenttoggle');
@@ -1917,7 +1937,7 @@ describe('the local agent is off, visible, and stoppable', () => {
   it('★ a delegate\'s answer DECLARES the ask it answers, so a restart cannot answer it twice', async () => {
     const o = await open({
       setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'What did we decide about the roof?', '2026-08-07T10:00:00.000Z')); },
-      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: OWN + 'Patching buys a year.', why: 'ok', ms: 900 }) },
+      agent: { prompts: [], cancels: 0, drafts: [], think: () => ({ ok: true, text: OWN + 'Patching buys a year.', why: 'ok', ms: 900 }) },
     });
     await signInAndSpeak(o);
     click(o.doc, 'agenttoggle');
@@ -1979,7 +1999,7 @@ describe('the local agent is off, visible, and stoppable', () => {
     // power cut, which is why it is the one that can be trusted.
     const o = await open({
       setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'What did we decide?', '2026-08-07T10:00:00.000Z')); },
-      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: OWN + 'A reply.', why: 'ok', ms: 900 }) },
+      agent: { prompts: [], cancels: 0, drafts: [], think: () => ({ ok: true, text: OWN + 'A reply.', why: 'ok', ms: 900 }) },
     });
     await signInAndSpeak(o);
     click(o.doc, 'agenttoggle');
@@ -2052,7 +2072,7 @@ describe('the local agent is off, visible, and stoppable', () => {
   it('★ posts nothing when the model returns the nothing-to-add sentinel', async () => {
     const o = await open({
       setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'ok', '2026-08-07T10:00:00.000Z')); },
-      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: 'NOTHING TO ADD', why: 'ok', ms: 300 }) },
+      agent: { prompts: [], cancels: 0, drafts: [], think: () => ({ ok: true, text: 'NOTHING TO ADD', why: 'ok', ms: 300 }) },
     });
     await signInAndSpeak(o);
     click(o.doc, 'agenttoggle');
@@ -2065,7 +2085,7 @@ describe('the local agent is off, visible, and stoppable', () => {
   it('★ a model that refuses is reported, and nothing is drafted from it', async () => {
     const o = await open({
       setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'hello', '2026-08-07T10:00:00.000Z')); },
-      agent: { prompts: [], cancels: 0, think: () => ({ ok: false, text: null, why: 'Claude Code refused this turn: Not logged in · Please run /login. Nothing was written.', ms: 1200 }) },
+      agent: { prompts: [], cancels: 0, drafts: [], think: () => ({ ok: false, text: null, why: 'Claude Code refused this turn: Not logged in · Please run /login. Nothing was written.', ms: 1200 }) },
     });
     await signInAndSpeak(o);
     click(o.doc, 'agenttoggle');
@@ -2082,7 +2102,7 @@ describe('the local agent is off, visible, and stoppable', () => {
       // would have gone quietly green while testing nothing. Its sibling in
       // workspace-client-localagent.test.ts derives from DRAFT_MAX and moved correctly; this one
       // did not, which is the whole argument against writing the number twice.
-      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: BEHALF + 'x'.repeat(DRAFT_MAX + 1), why: 'ok', ms: 900 }) },
+      agent: { prompts: [], cancels: 0, drafts: [], think: () => ({ ok: true, text: BEHALF + 'x'.repeat(DRAFT_MAX + 1), why: 'ok', ms: 900 }) },
     });
     await signInAndSpeak(o);
     click(o.doc, 'agenttoggle');
@@ -2111,7 +2131,7 @@ describe('the local agent is off, visible, and stoppable', () => {
   it('★★ stops re-answering an entry it cannot draft for, and says so', async () => {
     const o = await open({
       setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'hello', '2026-08-07T10:00:00.000Z')); },
-      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: BEHALF + 'x'.repeat(DRAFT_MAX + 1), why: 'ok', ms: 900 }) },
+      agent: { prompts: [], cancels: 0, drafts: [], think: () => ({ ok: true, text: BEHALF + 'x'.repeat(DRAFT_MAX + 1), why: 'ok', ms: 900 }) },
     });
     await signInAndSpeak(o);
 
@@ -2179,7 +2199,7 @@ describe('the local agent is off, visible, and stoppable', () => {
   });
 
   it('★ a probe that threw is not rendered as "nothing is installed on this machine"', async () => {
-    const o = await open({ agent: { prompts: [], cancels: 0, probeThrows: true } });
+    const o = await open({ agent: { prompts: [], cancels: 0, drafts: [], probeThrows: true } });
     await signInAndSettle(o);
     const steps = text(o.doc, '#setupsteps');
     expect(steps).toContain('not established');
@@ -2192,7 +2212,7 @@ describe('the local agent is off, visible, and stoppable', () => {
   it('★ a CLI that is absent is "not established", not a finding that you are signed out', async () => {
     // `loggedIn: null` means the tool was never there to ask. Only `loggedIn === false` is the
     // tool having answered no, and only that may be drawn as a finding against.
-    const o = await open({ agent: { prompts: [], cancels: 0, providers: [CLAUDE_ABSENT] } });
+    const o = await open({ agent: { prompts: [], cancels: 0, drafts: [], providers: [CLAUDE_ABSENT] } });
     await signInAndSettle(o);
     const unknown = [...o.doc.querySelectorAll('#setupsteps .q')].map((n) => n.textContent ?? '');
     expect(unknown.some((t) => t.startsWith('2. Your agent\'s model'))).toBe(true);
@@ -2202,7 +2222,7 @@ describe('the local agent is off, visible, and stoppable', () => {
   it('an installed CLI that answered "not signed in" IS a finding against', async () => {
     // The other side of the same rule: here the tool was asked and answered, so understating it
     // as unknown would hide a real blocker behind a shrug.
-    const o = await open({ agent: { prompts: [], cancels: 0, providers: [{
+    const o = await open({ agent: { prompts: [], cancels: 0, drafts: [], providers: [{
       ...CLAUDE_ABSENT, installed: true, path: 'C:\\claude.exe', loggedIn: false,
       why: 'Claude Code is installed but not signed in. Run `claude auth login`.',
     }] } });
@@ -2276,7 +2296,7 @@ describe('delegates: separate identities, plural, and visible as such', () => {
   it('★ the delegate\'s entry names the DELEGATE, and the person\'s names the person', async () => {
     const o = await open({
       setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'What about the roof?', '2026-08-07T10:00:00.000Z')); },
-      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: BEHALF + 'Patching buys a year.', why: 'ok', ms: 900 }) },
+      agent: { prompts: [], cancels: 0, drafts: [], think: () => ({ ok: true, text: BEHALF + 'Patching buys a year.', why: 'ok', ms: 900 }) },
     });
     await signInAndSpeak(o);
     click(o.doc, 'agenttoggle');
@@ -2317,7 +2337,7 @@ describe('delegates: separate identities, plural, and visible as such', () => {
     // one-click way to publish an agent's prose under a person's name.
     const o = await open({
       setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'A question', '2026-08-07T10:00:00.000Z')); },
-      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: BEHALF + 'A drafted reply.', why: 'ok', ms: 900 }) },
+      agent: { prompts: [], cancels: 0, drafts: [], think: () => ({ ok: true, text: BEHALF + 'A drafted reply.', why: 'ok', ms: 900 }) },
     });
     await signInAndSpeak(o);
     click(o.doc, 'agenttoggle');
@@ -2533,7 +2553,7 @@ describe('delegates: separate identities, plural, and visible as such', () => {
     // every pod and every agent. Only the issuer distinguishes them.
     const o = await open({
       setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'A question', '2026-08-07T10:00:00.000Z')); },
-      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: BEHALF + 'A drafted reply.', why: 'ok', ms: 900 }) },
+      agent: { prompts: [], cancels: 0, drafts: [], think: () => ({ ok: true, text: BEHALF + 'A drafted reply.', why: 'ok', ms: 900 }) },
     });
     await signInAndSpeak(o);
     click(o.doc, 'agenttoggle');
@@ -2550,7 +2570,7 @@ describe('delegates: separate identities, plural, and visible as such', () => {
   it('★ the model provider is named as the engine, never as the identity', async () => {
     const o = await open({
       setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'A question', '2026-08-07T10:00:00.000Z')); },
-      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: BEHALF + 'A drafted reply.', why: 'ok', ms: 900 }) },
+      agent: { prompts: [], cancels: 0, drafts: [], think: () => ({ ok: true, text: BEHALF + 'A drafted reply.', why: 'ok', ms: 900 }) },
     });
     await signInAndSpeak(o);
     click(o.doc, 'agenttoggle');

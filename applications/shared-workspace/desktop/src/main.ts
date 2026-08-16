@@ -25,7 +25,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { clearPending, nominate, readPending, readSettings, revokeGrant, writeGrant } from './permission.js';
 import { composeGate } from './turnsetup.js';
-import { readTurns, recordTurn, totals, toolsInTurn, usageFrom } from './telemetry.js';
+import { readTurns, recordDraft, recordTurn, totals, toolsInTurn, usageFrom } from './telemetry.js';
 import { Wallet } from 'ethers';
 import {
   DELEGATE_SURFACE, RelayMcpTransport, WorkspaceClient, type RelayOAuthBearer,
@@ -1083,6 +1083,21 @@ app.whenReady().then(() => {
   });
 
   /** Stop any turn in flight. The user turning the agent off has to reach a running child. */
+  /**
+   * What the renderer decided about a draft. The verdict lives THERE — `checkDraft` runs in the
+   * renderer — so main cannot record it at the same moment it records the turn.
+   *
+   * ★ WITHOUT THIS THE ONLY RECORD OF A REFUSAL IS TEXT IN A PANEL. Live: three turns, all
+   * `ok: true`, about $0.27 spent, nothing written, and the reason readable only by the person
+   * looking at the screen — so working out why meant asking them to transcribe their own UI.
+   */
+  ipcMain.handle('agent:draftOutcome', (_e, rec: { turnId?: string; channel?: string; outcome?: string }) => {
+    recordDraft(app.getPath('userData'), {
+      turnId: String(rec?.turnId ?? ''), atIso: new Date().toISOString(),
+      channel: String(rec?.channel ?? ''), outcome: String(rec?.outcome ?? 'unknown'),
+    });
+  });
+
   ipcMain.handle('agent:cancel', () => {
     let killed = 0;
     const flagged = thinking.size;
