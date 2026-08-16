@@ -558,7 +558,12 @@ const BASELINE = {};
 // tool un-pins a terminal FAILURE by itself, but the case that matters on the fleet's stateful
 // singleton is a deploy Railway calls SUCCESS whose new code is wrong anyway, and undoing that
 // means naming the previous sha — held by Railway alone, in a field nobody printed first.
-export const MIN_FILES = 424;
+// `packages/workspace-client/src/turnrecord.ts` + `tests/agent-turn-record.test.ts` — an agent's
+// turns published as `ieh:AgentTurn` graphs on its own pod, so the record is addressable,
+// shape-validated and readable by the agent it is about. Raised to CI's number, not this
+// machine's: a local tree carries scratch files and stale `dist/`, and a floor set from it drifts
+// below reality in the direction that stops it being a floor.
+export const MIN_FILES = 426;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.
