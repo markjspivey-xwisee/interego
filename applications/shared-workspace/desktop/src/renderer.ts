@@ -2741,6 +2741,32 @@ async function post(as?: {
     A.drafted = null;
     A.phase = A.on ? 'watching' : 'off';
     /**
+     * ── ★★ CONSIDER THE ENTRY NOW, NOT AT THE NEXT TICK ─────────────────────────
+     *
+     * MEASURED, live: 12 s between a person posting and their delegate starting to think, and
+     * almost all of it was an empty timer. `agentConsider` runs from exactly one place — the end of
+     * `loadBodies` — and the readback loop above DOES reach it, but it bails on "you have unsent
+     * text in the box" because the composer is cleared four lines up from here, after that check
+     * has already run. Nothing calls it again, so the next chance is the watch tick, which is
+     * sitting at its 10 s ceiling precisely because the channel was quiet before this post. That
+     * tick then finds nothing new to fetch — `readOnce` already cached the body — so the whole gap
+     * was waiting, with the work already done.
+     *
+     * ★ NO EXTRA RELAY CALLS. Every body `decideTurn` reads is already in `S.bodies` from the
+     * readback, and every refusal it can reach still runs unchanged. This buys back the timer, not
+     * the checks.
+     *
+     * ★ `!as` — A DELEGATE MUST NOT RE-CONSIDER ITS OWN POST. That is the loop this whole file is
+     * built to prevent, and `A.answered` is not the thing standing between us and it here.
+     *
+     * ★★ AND THE INVARIANT THIS RELIES ON: `agentConsider` sets `A.busy` SYNCHRONOUSLY after its
+     * own busy guard, with no await in between — that is the only reason a second call overlapping
+     * a watch-tick call cannot dispatch two model turns for one entry. If anything asynchronous is
+     * ever inserted between that guard and `A.busy = true`, this line becomes a way to spend two
+     * turns on one message.
+     */
+    if (!as) void agentConsider();
+    /**
      * ★ THE POINTER GOES ONLY AFTER THE RECORD IS CONFIRMED READABLE, WHICH IS THE ORDERING THAT
      * MATTERS. The ask IS the entry; the notice is an accelerant for a host that is not running.
      * Sending it earlier would risk a notice pointing at a record that never landed — and a
