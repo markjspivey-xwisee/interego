@@ -1110,6 +1110,46 @@ async function persistEnrolmentUnsafe(row: MeshEnrolmentRow): Promise<boolean> {
 /** Serializes register writes; see persistEnrolment. */
 let enrolmentWriteQueue: Promise<void> = Promise.resolve();
 
+
+/**
+ * Consecutive cycles in which a pod's manifest was ABSENT (not merely unreachable).
+ *
+ * ── ★★ A ROW WHOSE OWNER CANNOT WITHDRAW IT NEEDS SOMEONE ELSE TO ─────────────────────────
+ *
+ * Withdrawal is self-bound, which is right — and it means a pod enrolled by a key that no longer
+ * exists is unremovable by design. That is not hypothetical: the live authority test minted fresh
+ * wallets, enrolled them for real, and discarded the keys, leaving fifteen dead pods on a live
+ * register, each fetched every sixty seconds forever and each consuming a slot against the cap. The
+ * user found them before I did.
+ *
+ * ★ ABSENT, NOT UNREACHABLE — the same distinction that has already been wrong twice today in both
+ * directions. A 502, a timeout or a DNS blip means UNKNOWN and resets nothing; only "this pod has no
+ * manifest" counts, and only after MESH_DEAD_CYCLES consecutive cycles, so a CSS restart cannot
+ * un-enrol a fleet. Erring toward keeping a row costs one wasted fetch a minute; erring the other
+ * way silently stops reading a real agent's evidence, which is the failure this whole path exists to
+ * remove.
+ */
+const meshAbsentStreak = new Map<string, number>();
+const MESH_DEAD_CYCLES = Number(process.env.FOXXI_MESH_DEAD_CYCLES ?? 10);
+
+/**
+ * After a sweep, retire durable rows for pods that have been ABSENT for long enough to be dead.
+ * Configured seeds are never pruned — an operator put those there deliberately.
+ */
+async function pruneDeadEnrolments(absentThisCycle: Set<string>, seenThisCycle: Set<string>): Promise<void> {
+  for (const pod of seenThisCycle) {
+    if (!absentThisCycle.has(pod)) { meshAbsentStreak.delete(podKey(pod)); continue; }
+    if (CONFIGURED_MESH_PODS.some((p) => podKey(p) === podKey(pod))) continue;
+    const streak = (meshAbsentStreak.get(podKey(pod)) ?? 0) + 1;
+    meshAbsentStreak.set(podKey(pod), streak);
+    if (streak < MESH_DEAD_CYCLES) continue;
+    const removed = await withdrawEnrolment(pod);
+    sessionEnrolled.delete(pod);
+    meshAbsentStreak.delete(podKey(pod));
+    console.log(`[foxxi-bridge][mesh] retired ${pod} — no manifest for ${streak} consecutive cycles (durable row removed: ${removed}). It can re-enrol itself at any time.`);
+  }
+}
+
 /** Remove one pod's durable row. Serialized on the same queue as writes, for the same reason. */
 async function withdrawEnrolment(pod: string): Promise<boolean> {
   const run = enrolmentWriteQueue.then(() => withdrawEnrolmentUnsafe(pod), () => withdrawEnrolmentUnsafe(pod));
@@ -1400,11 +1440,24 @@ async function runMeshProjectionCycle(): Promise<{ pods: number; projected: numb
   if (pods.length === 0) { meshProjectionRunning = false; return { pods: 0, projected: 0, agents: 0 }; }
   const events: ProjectedMeshEvent[] = [];
   const stepsByAgent = new Map<string, TrajectoryStepInput[]>();
+  // Which pods this cycle actually looked at, and which had no manifest at all — the inputs to
+  // retiring rows whose owner can no longer withdraw them (see pruneDeadEnrolments).
+  const seenThisCycle = new Set<string>();
+  const absentThisCycle = new Set<string>();
   try {
     for (const pod of pods) {
       let entries;
+      seenThisCycle.add(pod);
       try { entries = await discover(pod); }
-      catch (err) { console.error(`[foxxi-bridge][mesh] discover(${pod}) failed:`, (err as Error).message); continue; }
+      catch (err) {
+        // ★ ABSENT vs UNREACHABLE, AGAIN. Only "there is no pod here" counts toward retirement; a
+        // 5xx, a timeout or a DNS failure is UNKNOWN and must not un-enrol a real agent whose pod is
+        // briefly down. Same discipline as isSectionAbsentError, and the same reason.
+        const msg = (err as Error).message ?? '';
+        if (/\b404\b|not found|no manifest|ENOTFOUND|does not exist/i.test(msg)) absentThisCycle.add(pod);
+        console.error(`[foxxi-bridge][mesh] discover(${pod}) failed:`, msg);
+        continue;
+      }
       for (const e of entries as unknown as MeshDiscoverEntry[]) {
         // Durable Foxxi artifacts (foxxi:RecordedPerformance = the agent's OWN
         // persisted xAPI Statements with result; foxxi:ScormCourse = authored
@@ -1432,6 +1485,11 @@ async function runMeshProjectionCycle(): Promise<{ pods: number; projected: numb
     }
     return { pods: pods.length, projected: landed, agents: stepsByAgent.size };
   } finally {
+    // Retire rows whose pod has been ABSENT long enough to be dead. In `finally` so a mid-sweep
+    // throw cannot leave a streak half-counted, and awaited so a prune cannot race the next cycle's
+    // register read.
+    try { await pruneDeadEnrolments(absentThisCycle, seenThisCycle); }
+    catch (err) { console.error('[foxxi-bridge][mesh] prune failed:', (err as Error).message); }
     meshProjectionRunning = false;
   }
 }
@@ -4601,6 +4659,13 @@ const REVIEW_RECORD_AFFORDANCE: Affordance = {
   targetTemplate: '{base}/agent/review-record',
   mediaType: 'application/json',
   inputs: [
+    /**
+     * ★ THE PROJECTION IS ADVERTISED, because a parameter a caller cannot see does not exist. A
+     * delegate hit a 1.2 MB response, looked for a narrower view, found nothing in hydra:expects
+     * beyond the two envelope fields, and correctly reported that as the blocker. The response is
+     * bounded by default now; the way to widen or page it belongs where the caller is already
+     * reading.
+     */
     { name: '_signed_payload', type: 'string', required: true, description: "JSON.stringify({ agent_id: 'did:ethr:<addr>', timestamp: <ISO 8601, within ±60s>, subject_did?, subject_pod_url?, subject_name?, actor_kind?, include_clr? })" },
     { name: '_signature', type: 'string', required: true, description: 'secp256k1 signature over the canonical message sha256:<hex(sha256(_signed_payload))>, signed with the wallet matching agent_id.' },
   ],
@@ -5132,6 +5197,58 @@ app.post('/agent/review-record', async (req, res) => {
       try { clr = await exportClr({ learnerPodUrl: subjectPodUrl, learnerDid: subjectDid, ...(issuerKeySeed ? { issuerSeed: issuerKeySeed } : {}) }); }
       catch (err) { clr = { error: `wallet read failed: ${(err as Error).message}` }; }
     }
+
+    /**
+     * ── ★★ A RECORD AN AGENT CANNOT READ IS BARELY BETTER THAN AN EMPTY ONE ─────────────────
+     *
+     * MEASURED, live: a delegate called this and got 1,228,985 characters — more than any context it
+     * can bring to the task. It could report that the review now answers and could NOT report what it
+     * said, and there was no narrower projection advertised anywhere on the affordance to fall back
+     * to. It tried `include_clr: false` and saved 106 bytes.
+     *
+     * ★ THE BULK IS STRUCTURAL, NOT INCIDENTAL. `experiences` and `performanceRecords` carry one
+     * entry per xAPI statement at roughly half a kilobyte each, with no bound — so the response grows
+     * linearly with the subject's whole history, forever. 33 statements is 17 KB; ~2,300 is 1.2 MB.
+     * An endpoint whose response size is unbounded in the data is not "large", it is unusable by
+     * construction, and it gets worse every cycle the projector runs.
+     *
+     * ★ SO THE DEFAULT IS BOUNDED AND SAYS SO. The record now returns the summary (counts,
+     * competencies, credentials — the decision-shaped part, already computed) plus the most recent
+     * page of evidence, with the true totals and a dereferenceable way to get the rest. `full` is
+     * still available by asking for it. Changing a default is not something to do lightly, but the
+     * previous default could not be relied on by any caller at any size, and silence about
+     * truncation is the failure this whole session has been about — so every truncated array reports
+     * what it dropped and how to page through it.
+     */
+    /**
+     * ── ★★ THE FIX FOR THE 1.2 MB RESPONSE DOES NOT BELONG IN THIS FILE ─────────────────────
+     *
+     * A bespoke {items, returned, total, offset, next} pager was written here and then removed. Two
+     * things were wrong with it, and both are worth leaving recorded because the pull toward each is
+     * strong when you are looking at one endpoint:
+     *
+     *   1. WRONG ANSWER. Paging is still copying, just in instalments. An agent should navigate and
+     *      query a record, not download it in chunks. The evidence is ALREADY addressed — every
+     *      competency carries `…/xapi/statements?statementId=…` and every experience a
+     *      rawDataLocation — so the bodies in this response are duplicates of data that has a URL.
+     *      The reason they get copied is that the URL 401s for a signed-envelope caller: the LRS
+     *      accepts Basic/cmi5/session/OAuth, and an agent holds none of those. An address the holder
+     *      cannot dereference is not an address, it is decoration — and once addresses are
+     *      decoration, copying is the only thing left. That is the actual defect.
+     *
+     *   2. WRONG LAYER. "Representations are bounded and self-describing", "an identifier is
+     *      dereferenceable BY ITS HOLDER", and "read your own data, self-scoped" are Interego
+     *      properties, not L&D ones. Every vertical needs them; solving it in this bridge would have
+     *      left the same hole everywhere else and made Foxxi the accidental owner of a substrate
+     *      concern. iep.ttl ALREADY states the principle for pod manifests
+     *      (iep:ManifestArchive rdfs:subClassOf hydra:PartialCollectionView, "the fact is in the
+     *      data, never in a reader's configuration") — it was simply never carried beyond that one
+     *      class, which is how an unbounded response shape survived review here for months.
+     *
+     * So this handler keeps returning what it assembles, and the bound arrives when the substrate
+     * offers a self-scoped dereference and a standard bounded-collection projection for every
+     * vertical to compose.
+     */
     // Read the live enrolled set ONCE for the whyEmpty block below. All three fields that report it
     // — the list, the boolean and the remedy — must describe the SAME set: an agent can now enrol
     // itself mid-flight, so re-reading per field could answer "not enrolled" beside a list that

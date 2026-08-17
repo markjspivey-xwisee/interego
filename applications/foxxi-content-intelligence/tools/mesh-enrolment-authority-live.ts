@@ -30,6 +30,20 @@ const norm = (u: string): string => String(u ?? '').replace(/\/+$/, '').toLowerC
 const ownPodOf = (w: ethers.HDNodeWallet, origin: string): string =>
   `${origin}/eth-${w.address.slice(2, 14).toLowerCase()}/`;
 
+/**
+ * Every wallet this run enrols, so step [10] can withdraw them.
+ *
+ * ★ A LIST, NOT A HABIT. Durable enrolment means a forgotten wallet is an unremovable row on a live
+ * register — the key is gone, and withdrawal is self-bound by design. Registering each wallet at the
+ * point it is created is the only version of this that survives someone adding a case later.
+ */
+const enrolledHere: ethers.HDNodeWallet[] = [];
+const newWallet = (): ethers.HDNodeWallet => {
+  const w = ethers.Wallet.createRandom();
+  enrolledHere.push(w);
+  return w;
+};
+
 async function envelope(w: ethers.HDNodeWallet, args: Record<string, unknown>, timestamp?: string) {
   const payload = { ...args, agent_id: `did:ethr:${w.address.toLowerCase()}`, timestamp: timestamp ?? new Date().toISOString() };
   const sp = JSON.stringify(payload);
@@ -110,8 +124,8 @@ async function main(): Promise<void> {
   })();
   console.log(`      pod origin in use: ${origin}`);
 
-  const A = ethers.Wallet.createRandom();
-  const B = ethers.Wallet.createRandom();
+  const A = newWallet();
+  const B = newWallet();
   const podA = ownPodOf(A, origin);
   const podB = ownPodOf(B, origin);
   console.log(`\n      A=${A.address.toLowerCase()} → ${podA}`);
@@ -143,13 +157,13 @@ async function main(): Promise<void> {
     const m = /iep:store\s+<(https?:\/\/[^>]+)>/.exec(reg0.text.split('iep:enrolled')[1] ?? '');
     return m?.[1] ?? '';
   })();
-  const C = ethers.Wallet.createRandom();
+  const C = newWallet();
   const podC = ownPodOf(C, origin);
   const e3 = await post('/agent/mesh/enrolment', await envelope(C, { pod_url: victim }));
   ok('enrolled C\'s own pod, not the configured victim', norm(e3.body?.enrolled) === norm(podC), `named ${victim} → got ${e3.body?.enrolled}`);
 
   console.log('\n[4] the cross-origin look-alike (round-26 shape: same segment, attacker host)');
-  const D = ethers.Wallet.createRandom();
+  const D = newWallet();
   const podD = ownPodOf(D, origin);
   // Same pod SEGMENT as D's own pod, different host — the override that passed the actor check on
   // its own and needed the origin bound to it as well.
@@ -173,7 +187,7 @@ async function main(): Promise<void> {
   const stale = new Date(Date.now() - 10 * 60 * 1000).toISOString();
   const u2 = await post('/agent/mesh/enrolment', await envelope(ethers.Wallet.createRandom(), {}, stale));
   ok('a 10-minute-old envelope refused 401', u2.status === 401, `HTTP ${u2.status}`);
-  const E = ethers.Wallet.createRandom();
+  const E = newWallet();
   const tampered = await envelope(E, {});
   tampered._signed_payload = JSON.stringify({ ...JSON.parse(tampered._signed_payload), pod_url: victim });
   const u3 = await post('/agent/mesh/enrolment', tampered);
@@ -198,7 +212,7 @@ async function main(): Promise<void> {
    * the same endpoint's answer? Both halves, in order, against the deployed service.
    */
   console.log('\n[8] an empty review teaches the remedy — and the remedy works, unassisted');
-  const F = ethers.Wallet.createRandom();
+  const F = newWallet();
   const podF = ownPodOf(F, origin);
   const r1 = await post('/agent/review-record', await envelope(F, { include_clr: false }));
   ok('review of an unenrolled agent answers 200', r1.status === 200 && r1.body?.ok === true, `HTTP ${r1.status}`);
@@ -230,13 +244,13 @@ async function main(): Promise<void> {
    * the same one: naming someone else's pod must remove YOURS, not theirs.
    */
   console.log('\n[9] an agent withdraws its own pod, and cannot withdraw anyone else\'s');
-  const W = ethers.Wallet.createRandom();
+  const W = newWallet();
   const podW = ownPodOf(W, origin);
   const eW = await post('/agent/mesh/enrolment', await envelope(W, {}));
   ok('W is enrolled to begin with', eW.body?.ok === true && norm(eW.body?.enrolled) === norm(podW), eW.body?.enrolled);
 
   // The abuse case first, while W is still enrolled: V names W's pod.
-  const V = ethers.Wallet.createRandom();
+  const V = newWallet();
   const podV = ownPodOf(V, origin);
   await post('/agent/mesh/enrolment', await envelope(V, {}));
   const abuse = await del('/agent/mesh/enrolment', await envelope(V, { pod_url: podW }));
@@ -251,6 +265,34 @@ async function main(): Promise<void> {
   const after = await get('/agent/mesh/enrolment');
   ok('★ the pod is gone from the register', !after.text.toLowerCase().includes(norm(podW)), podW);
   ok('unsigned withdrawal refused 401', (await del('/agent/mesh/enrolment', { pod_url: podW })).status === 401);
+
+  /**
+   * ── ★★ THE TEST MUST CLEAN UP AFTER ITSELF, AND THIS ONE DID NOT ────────────────────────────
+   *
+   * Enrolment used to be session-scoped, so junk from a test run vanished at the next restart.
+   * Making it DURABLE — correctly — turned every run of this file into permanent pollution: each
+   * case mints a fresh random wallet, enrols its pod for real, and then discards the key. Nobody can
+   * ever withdraw those rows, because withdrawal is self-bound and their owner does not exist. The
+   * user found the result before I did: nineteen pods in their register, most of them mine, each one
+   * fetched by the projector every sixty seconds forever and each one counting against the cap.
+   *
+   * ★ THE LESSON IS NOT "REMEMBER TO CLEAN UP" — it is that a test which writes durable state has to
+   * be written as a transaction. Every wallet this file enrols is withdrawn here with the key that
+   * is still in scope, and the last case deliberately leaves ONE pod behind (reported below) because
+   * the durability proof needs a survivor across a restart.
+   */
+  console.log('\n[10] the test withdraws everything it enrolled, except the one durability witness');
+  const keep = podKey(ownPodOf(A, origin));
+  let cleaned = 0, stuck = 0;
+  for (const w of enrolledHere) {
+    if (podKey(ownPodOf(w, origin)) === keep) continue;
+    const r = await del('/agent/mesh/enrolment', await envelope(w, {}));
+    if (r.status === 200 && r.body?.ok === true) cleaned++; else stuck++;
+  }
+  ok('every test pod but the witness was withdrawn', stuck === 0, `${cleaned} withdrawn, ${stuck} stuck`);
+  const finalReg = await get('/agent/mesh/enrolment');
+  const leftovers = [...finalReg.text.matchAll(/iep:store\s+<([^>]+)>/g)].map(m => norm(m[1] ?? ''));
+  ok('the register is not growing run over run', leftovers.length <= 12, `${leftovers.length} pods remain`);
 
   console.log(`\nRESULT: ${pass} passed, ${fail} failed`);
   // Emitted for the restart half of the durability proof: redeploy, then re-run with
