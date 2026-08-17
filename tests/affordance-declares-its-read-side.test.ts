@@ -62,6 +62,7 @@ const PREFIXES = [
   '@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .',
   '@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .',
   '@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .',
+  '@prefix dct:   <http://purl.org/dc/terms/> .',
 ].join('\n') + '\n\n';
 
 const conforms = (ttl: string): { ok: boolean; why: string } => {
@@ -122,6 +123,62 @@ describe('★★ the serializer emits the read side', () => {
     });
     expect(ttl).toContain('iep:populatedBy');
     expect(conforms(ttl).ok, conforms(ttl).why).toBe(true);
+  });
+});
+
+describe('★★ the read side is visible to a DCAT client, not only to this vocabulary', () => {
+  /**
+   * ── WHY THIS MATTERS AND WHY IT WAS MISSING ─────────────────────────────────
+   *
+   * `iep:reads` was added because nothing said what an affordance must FIND. It was added WITHOUT
+   * alignment, which reproduced a smaller version of the same fault one layer up: a DCAT or DPROD
+   * client reading the descriptor would see opaque blank nodes, understand none of them, and be as
+   * unable to answer "where does this answer come from" as the agent had been.
+   *
+   * A term only this vocabulary understands is not self-description; it is a private note. So the
+   * test is not "does alignment.ttl contain the right triples" — it is "does a reader who knows
+   * ONLY DCAT get a handle on our evidence source". That has to be answered by entailment, not by
+   * grepping the alignment file.
+   */
+  const ALIGNED = SHAPES + '\n' + readFileSync(join(ROOT, 'docs/ns/alignment.ttl'), 'utf8');
+
+  /** A shape written by someone who has never heard of iep: — it targets dcat:Dataset only. */
+  const DCAT_ONLY_SHAPE = `
+@prefix sh:   <http://www.w3.org/ns/shacl#> .
+@prefix dcat: <http://www.w3.org/ns/dcat#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+_:datasetNeedsAccess a sh:NodeShape ;
+    sh:targetClass dcat:Dataset ;
+    sh:property [
+        sh:path dcat:accessURL ;
+        sh:minCount 1 ;
+        sh:message "a dcat:Dataset a DCAT client can see must carry dcat:accessURL"
+    ] .
+`;
+
+  it('★★ an iep:EvidenceSource IS a dcat:Dataset under entailment, and its store IS a dcat:accessURL', () => {
+    const ttl = affordanceToTurtle(base({ reads: [SOURCE] }), BASE);
+    // The DCAT-only shape targets dcat:Dataset. It can only see our source at all if
+    // `iep:EvidenceSource rdfs:subClassOf dcat:Dataset` is entailed, and can only satisfy its
+    // accessURL requirement if `iep:store rdfs:subPropertyOf dcat:accessURL` is too.
+    const r = validateAgainstShape(PREFIXES + ttl, ALIGNED + DCAT_ONLY_SHAPE, { entailment: 'rdfs' });
+    expect(r.conforms, r.results.map((x) => String(x.message)).join('; ')).toBe(true);
+  });
+
+  it('★★ and it is the ALIGNMENT doing the work — without it, the DCAT reader sees nothing', () => {
+    /**
+     * The control that makes the case above mean something. Validated WITHOUT alignment.ttl, the
+     * DCAT-only shape finds no dcat:Dataset to target — so it passes VACUOUSLY, which is exactly
+     * how an unaligned term looks to a standards client: not wrong, invisible.
+     */
+    const ttl = affordanceToTurtle(base({ reads: [SOURCE] }), BASE);
+    const unaligned = validateAgainstShape(PREFIXES + ttl, SHAPES + DCAT_ONLY_SHAPE, { entailment: 'rdfs' });
+    // It conforms either way; the difference is whether anything was CHECKED. Prove the shape has
+    // teeth by giving it a dataset with no access URL and watching it fail.
+    const probe = PREFIXES + '<https://x.example/d> a <http://www.w3.org/ns/dcat#Dataset> .\n';
+    const teeth = validateAgainstShape(probe, SHAPES + DCAT_ONLY_SHAPE, { entailment: 'rdfs' });
+    expect(teeth.conforms, 'the DCAT-only shape must be capable of failing, or the case above is vacuous').toBe(false);
+    expect(unaligned.conforms).toBe(true);
   });
 });
 

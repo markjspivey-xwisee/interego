@@ -66,8 +66,14 @@ const NGINX_IMAGES = [
 /** The four that share one real config file rather than an escaped printf. */
 const SHARED_CONF = 'deploy/nginx-spa.conf';
 
-/** The build matrix: the one place a deployed image must be registered or it is never built. */
-const BUILD_MATRIX = '.github/workflows/build-ghcr.yml';
+/**
+ * The build legs: the one place a deployed image must be registered or it is never built.
+ *
+ * ★ THEY MOVED OUT OF build-ghcr.yml. Three readers regex-scraped that YAML — the workflow's own
+ * validator, tools/deploy-bundle-scope.ts, and this file — and a comment claiming they read from
+ * one place "so the check cannot drift" was written when there were two of them.
+ */
+const BUILD_LEGS = 'deploy/images.json';
 
 /**
  * The `location { … }` blocks of an nginx config, comment lines removed FIRST.
@@ -87,10 +93,20 @@ const locationBlocks = (conf: string): string[] =>
     .join('\n')
     .match(/location[^{]*\{[^}]*\}/g) ?? [];
 
-/** Read `- { image: X, dockerfile: Y }` out of the build matrix. */
+/**
+ * The images the fleet builds, and the Dockerfile each one uses.
+ *
+ * ★ READ FROM deploy/images.json, WHICH IS WHERE THE LEGS LIVE. They were an inline list in
+ * build-ghcr.yml, regex-parsed by three separate readers — the workflow's own validator,
+ * tools/deploy-bundle-scope.ts, and this. Moving them to data broke the other two, because a
+ * comment in the workflow said to read the names from one place "so the check cannot drift" and
+ * that was true of two readers while being silent about the rest. One file, parsed not scraped.
+ */
 function builtImages(): { image: string; dockerfile: string }[] {
-  const re = /^\s*- \{\s*image:\s*([a-z0-9-]+),\s*dockerfile:\s*([^\s,}]+)/gm;
-  return [...read(BUILD_MATRIX).matchAll(re)].map((m) => ({ image: m[1]!, dockerfile: m[2]! }));
+  const manifest = JSON.parse(read(BUILD_LEGS)) as { images?: { image?: string; dockerfile?: string }[] };
+  return (manifest.images ?? [])
+    .filter((r): r is { image: string; dockerfile: string } => Boolean(r?.image && r?.dockerfile))
+    .map((r) => ({ image: r.image, dockerfile: r.dockerfile }));
 }
 
 describe('nginx images are validated at build time', () => {

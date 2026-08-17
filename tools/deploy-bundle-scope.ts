@@ -191,7 +191,14 @@ const DOCKERIGNORE_REL = '.dockerignore';
  * scoped path. The file's own header shows these rules get edited.
  */
 const GITATTRIBUTES_REL = '.gitattributes';
-const WORKFLOW = join(ROOT, WORKFLOW_REL);
+/**
+ * Where the fleet's build legs live, since they stopped being an inline list in the workflow.
+ *
+ * ★ RELATIVE, because it is read BOTH from the working tree and at git HEAD — see
+ * `legsFromManifest`. A path constant that only worked one of those ways is how a comparison ends
+ * up mixing two trees.
+ */
+const IMAGES_REL = 'deploy/images.json';
 
 export interface BundleScope {
   /** False whenever anything could not be resolved. A caller MUST treat this as "affected". */
@@ -243,14 +250,68 @@ export interface MatrixLeg {
 }
 
 /**
- * image name → its matrix leg, read out of the build matrix.
+ * The fleet's legs, from the file that defines them.
  *
- * Deliberately the same file `validate-input` reads its list of legal image names from,
- * and for the same reason given there: "Read the names out of this file so the check
- * cannot drift from the matrix."
+ * ★ ONE READER OF ONE FILE. `deploy/images.json` is what the build workflow computes its matrix
+ * from and what this resolves scope against, so the two cannot disagree about which Dockerfile
+ * builds an image — the property the old sed-parses-its-own-YAML arrangement was reaching for.
+ */
+export function fleetLegs(): Map<string, MatrixLeg> {
+  return legsFromManifest(readFileSync(join(ROOT, IMAGES_REL), 'utf8'));
+}
+
+/**
+ * The legs in a `deploy/images.json` TEXT.
+ *
+ * ★ TEXT IN, NOT A PATH, so a caller can hand it content read AT GIT HEAD. `bundlePathsFor` must:
+ * reading the manifest from the working tree while comparing a Dockerfile at HEAD mixes two trees,
+ * and doing that once turned a BEHIND relay into `equivalent` in an adversarial review. The same
+ * discipline the YAML path already had has to survive the move to JSON.
+ */
+export function legsFromManifest(jsonText: string): Map<string, MatrixLeg> {
+  let manifest: { images?: { image?: string; dockerfile?: string; prebuild?: string }[] };
+  try {
+    manifest = JSON.parse(jsonText) as typeof manifest;
+  } catch (e) {
+    // Refused rather than answered empty: an empty fleet would silently pass every scope check.
+    throw new Error(IMAGES_REL + ' is not readable JSON, so the fleet\'s build legs are unknown: '
+      + ((e as Error)?.message ?? String(e)));
+  }
+  const out = new Map<string, MatrixLeg>();
+  for (const row of manifest.images ?? []) {
+    if (!row?.image || !row?.dockerfile) continue;
+    out.set(row.image, row.prebuild ? { dockerfile: row.dockerfile, prebuild: row.prebuild } : { dockerfile: row.dockerfile });
+  }
+  if (!out.size) throw new Error(IMAGES_REL + ' lists no usable image legs');
+  return out;
+}
+
+/**
+ * image name → its matrix leg.
+ *
+ * ── ★★ THE FLEET'S LEGS NOW COME FROM deploy/images.json ────────────────────
+ *
+ * They used to be an inline list in build-ghcr.yml, and THREE readers regex-parsed that YAML: the
+ * workflow's own `validate-input` (with sed), this function, and nothing else — until a fourth
+ * consumer was needed and the list moved to data.
+ *
+ * Reading JSON deletes an entire class of bug rather than guarding against it. Every hard-won note
+ * below — commented-out legs winning because a /g scan lets the LAST match set the Map, a live leg
+ * with a trailing `} # prebuild: pgsl-store was here` handing the relay another image's recipe, a
+ * parser that depended on key order — describes a way regex-over-YAML went wrong in production.
+ * None of them can happen to a parsed object.
+ *
+ * ★ THE YAML PARSER IS KEPT, AND ONLY FOR EXPLICIT TEXT. Those cases are the record of what went
+ * wrong; deleting them would delete the evidence. Callers that pass `workflowText` still exercise
+ * it, and MOVING the fleet's real answer to JSON is what stops the fleet depending on it.
+ *
+ * ★ AND THIS FUNCTION IS WHY THE MOVE WAS NOT FREE. Relocating the list broke every test in this
+ * file — a second reader nobody had listed. The workflow's own comment said to read the names from
+ * one place "so the check cannot drift"; that was true of two readers and silent about the third.
  */
 export function matrixLegs(workflowText?: string): Map<string, MatrixLeg> {
-  const text = workflowText ?? readFileSync(WORKFLOW, 'utf8');
+  if (workflowText === undefined) return fleetLegs();
+  const text = workflowText;
   const out = new Map<string, MatrixLeg>();
   // Matches a matrix leg: `- { image: interego-relay, dockerfile: deploy/Dockerfile.relay ... }`
   // The `dockerfile:` value runs to the next comma or the closing brace, so legs carrying
@@ -967,12 +1028,14 @@ export function bundlePathsFor(service: string, root = ROOT): BundleScope {
     // Dockerfile it names from another would silently mix two trees. And at HEAD, not off
     // the working tree — deleting a `COPY packages/ ./packages/` line locally, with git
     // untouched, turned a BEHIND relay into `equivalent` in an adversarial review.
+    // The workflow is still read — it is part of every image's bundle (a change to the build
+    // recipe changes the image) — but the LEGS now come from the manifest, also at HEAD.
     workflowText = readAtHead(WORKFLOW_REL, root);
-    leg = matrixLegs(workflowText).get(image);
+    leg = legsFromManifest(readAtHead(IMAGES_REL, root)).get(image);
   } catch (e) {
     return { confident: false, paths: [], reason: `could not read the build matrix: ${(e as Error).message}` };
   }
-  if (!leg) return { confident: false, paths: [], reason: `no build-ghcr.yml matrix leg builds "${image}"` };
+  if (!leg) return { confident: false, paths: [], reason: `no ${IMAGES_REL} leg builds "${image}"` };
   const dockerfile = leg.dockerfile;
 
   let dockerfileText: string;
@@ -983,12 +1046,18 @@ export function bundlePathsFor(service: string, root = ROOT): BundleScope {
   const scope = copySources(dockerfileText);
   if (!scope.confident) return scope;
 
-  // ★ THE THREE FILES NO COPY LINE CAN NAME — see the header. The Dockerfile decides the
-  // base image and every RUN (acme-id's entire nginx config is a `RUN printf` inside it);
+  // ★ THE FILES NO COPY LINE CAN NAME — see the header. The Dockerfile decides the base
+  // image and every RUN (acme-id's entire nginx config is a `RUN printf` inside it);
   // build-ghcr.yml carries the `build_args` that compile a runtime URL into three Vite
   // SPAs; .dockerignore decides what reaches a `context: .` build at all. Each was proven
   // to wave a real commit through as `equivalent` before they were added here.
-  scope.paths.push(dockerfile, WORKFLOW_REL, DOCKERIGNORE_REL, GITATTRIBUTES_REL);
+  //
+  // ★ AND deploy/images.json, ADDED WITH THE MOVE THAT CREATED IT. It now decides WHICH
+  // DOCKERFILE BUILDS THIS IMAGE and whether the leg carries a prebuild recipe — both of which
+  // were build-affecting facts inside build-ghcr.yml a moment ago. Leaving it out would mean
+  // repointing an image at a different Dockerfile registered as `equivalent`, which is exactly
+  // the class of miss the three files above are here to prevent.
+  scope.paths.push(dockerfile, WORKFLOW_REL, IMAGES_REL, DOCKERIGNORE_REL, GITATTRIBUTES_REL);
 
   // ★ THE RECIPE IS READ WHENEVER THE LEG DECLARES ONE — see `prebuildInputs`. Making this
   // conditional on an untracked COPY (the first version) means the day the artifact becomes

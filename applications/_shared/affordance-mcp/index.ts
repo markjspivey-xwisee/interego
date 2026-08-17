@@ -425,12 +425,29 @@ export function affordanceToMcpToolSchema(affordance: Affordance): McpToolSchema
 function readsBlock(affordance: Affordance): string {
   const sources = affordance.reads ?? [];
   if (!sources.length) return '';
+  /**
+   * ★★ MULTI-TYPED AND DOUBLE-STATED, SO A DCAT CLIENT NEEDS NO REASONER.
+   *
+   * `alignment.ttl` says an iep:EvidenceSource IS a dcat:Dataset and an iep:store IS a
+   * dcat:accessURL. Both are true, and neither helps a reader that does not run RDFS entailment —
+   * MEASURED: a shape targeting `dcat:Dataset` found the source (class entailment worked) and then
+   * failed on the missing `dcat:accessURL`, because property entailment was not expanded.
+   *
+   * Requiring inference to read a self-description is the same defect as not publishing one, in a
+   * politer form. So the standard terms are stated OUTRIGHT — exactly as the affordance subject
+   * above types itself `iep:Affordance, ieh:Affordance, hydra:Operation, dcat:Distribution` rather
+   * than leaving three of the four to be derived. The alignment stays for semantics; these triples
+   * are what make the descriptor usable by a client that only speaks DCAT.
+   */
   const blocks = sources.map((s) => `        [
-            a iep:EvidenceSource ;
+            a iep:EvidenceSource, dcat:Dataset ;
             rdfs:label "${escapeLit(s.label)}" ;
             iep:store <${s.store}> ;
-            iep:populatedBy <${s.populatedBy}>${s.admits ? ` ;
-            iep:admits "${escapeLit(s.admits)}"` : ''}${s.enrolmentRegister ? ` ;
+            dcat:accessURL <${s.store}> ;
+            iep:populatedBy <${s.populatedBy}> ;
+            dcat:accessService <${s.populatedBy}>${s.admits ? ` ;
+            iep:admits "${escapeLit(s.admits)}" ;
+            dct:description "${escapeLit(s.admits)}"` : ''}${s.enrolmentRegister ? ` ;
             iep:enrolmentRegister <${s.enrolmentRegister}>` : ''}
         ]`).join(' ,\n');
   return `    iep:reads\n${blocks} ;\n`;
@@ -488,7 +505,11 @@ export function affordancesManifestTurtle(
 @prefix hydra: <http://www.w3.org/ns/hydra/core#> .
 @prefix dcat:  <http://www.w3.org/ns/dcat#> .
 @prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
-@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .`;
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+# Dublin Core, for the DCAT-native reading of an evidence source's description. Added with the
+# read-side terms: a document that emits dct: without declaring it is unparseable, and this
+# manifest is served to strangers.
+@prefix dct:   <http://purl.org/dc/terms/> .`;
 
   const manifestBlock = `<${manifestIri}> a hydra:Collection ;
     rdfs:label "${escapeLit(options?.verticalLabel ?? 'Vertical capability manifest')}" ;

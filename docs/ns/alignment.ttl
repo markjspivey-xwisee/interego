@@ -727,3 +727,44 @@ align:CghToHarnessMigration a align:VersionMigration ;
         align:mappingRelation align:Renamed
     ] ;
     rdfs:comment "Writers emit ns/harness# terms; readers accept both. The source namespace never dereferenced (no cgh.ttl was published), which made every emitted ieh: IRI a dead link until this migration." .
+
+# ── The READ SIDE of a contract, mapped to DCAT / DPROD / Hydra ──────────────
+#
+# ★★ WHY THIS BLOCK EXISTS, AND WHY IT WAS MISSING. `iep:reads` and `iep:EvidenceSource` were
+# added because `hydra:expects` says what a caller must SEND and nothing said what an affordance
+# must FIND — a real gap that cost an agent four turns and a human a night. But they were added
+# WITHOUT alignment, which reproduced a smaller version of the same fault one layer up: a DCAT or
+# DPROD client reading the descriptor would see three opaque blank nodes, understand none of them,
+# and be exactly as unable to answer "where does this answer come from" as the agent had been.
+#
+# A term that only this vocabulary understands is not self-description; it is a private note.
+#
+# ★ `rdfs:seeAlso` FOR THE PORT TERMS, NOT `rdfs:subPropertyOf`. `dprod:inputPort` has
+# `dprod:DataProduct` as its domain, and an affordance is not a data product — asserting the
+# subsumption would license an entailment that is simply false, exactly as `ieh:AgentTurn` records
+# kinship with `ieh:ProvTrace` via seeAlso rather than subclassing a shape it cannot satisfy. Same
+# reasoning `hyprcat:inputPort` already applies to the same two DPROD terms.
+#
+# ★ AND `rdfs:subClassOf dcat:Dataset` IS ASSERTED, because that one is true without qualification:
+# an evidence source IS a dataset that something reads. It also inherits the alignment already made
+# for `iep:DataProduct`, so a DCAT client gets a handle on it for free.
+
+iep:EvidenceSource rdfs:subClassOf dcat:Dataset ;
+    rdfs:seeAlso dprod:DataProduct .
+
+# The store an affordance CONSUMES FROM, which is the same relation DPROD calls an input port —
+# read from the affordance's side rather than the product's.
+iep:reads rdfs:seeAlso dprod:inputPort , hyprcat:inputPort .
+
+# How a store is FILLED. From the store's own side this is its input port; a caller follows it to
+# find the thing to invoke, which is why it is an IRI and not prose.
+iep:populatedBy rdfs:seeAlso dprod:inputPort , hydra:operation .
+
+# The store's dereferenceable address. `dcat:accessURL` is exactly this relation, and a subproperty
+# is honest here: every iep:store IS an access URL for the dataset it identifies.
+iep:store rdfs:subPropertyOf dcat:accessURL .
+
+# A register listing which subjects a source admits is a catalog of them, and each listing is a
+# dataset in that catalog — so `dcat:catalog`/`dcat:dataset` are the right relations to point at.
+iep:enrolmentRegister rdfs:seeAlso dcat:catalog .
+iep:enrolled rdfs:subPropertyOf dcat:dataset .
