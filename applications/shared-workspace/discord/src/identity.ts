@@ -95,6 +95,16 @@ export class BotSession {
    */
   private readonly fetchImpl: typeof fetch;
 
+  /**
+   * Where operational notices go. Null until the host sets it.
+   *
+   * ★ A SILENT RECOVERY IS STILL SOMETHING AN OPERATOR NEEDS TO SEE. Re-authenticating after a
+   * relay redeploy is the right behaviour, but a bot that does it without saying so turns "the
+   * relay was replaced under us" into an invisible event — and the next person debugging a
+   * different problem has no idea the session changed underneath them.
+   */
+  out: ((m: string) => void) | null = null;
+
   constructor(relay: string, identityServer: string, privateKey: string, fetchImpl?: typeof fetch) {
     this.relay = relay.replace(/\/$/, '');
     this.identityServer = identityServer.replace(/\/$/, '');
@@ -114,6 +124,21 @@ export class BotSession {
     const bearer = await mintBearer(this.relay, this.identityServer, this.wallet, DISCORD_CLIENT_NAME, this.fetchImpl);
     this.bearer = bearer;
     this.transport = new RelayMcpTransport(this.relay, bearer, this.fetchImpl);
+    /**
+     * ── ★★ RE-MINT ON 401 RATHER THAN WAIT FOR A HUMAN TO RESTART THIS PROCESS ──
+     *
+     * MEASURED: a relay redeploy invalidates every bearer the previous revision issued — the 401
+     * body says so itself. This bot then held a dead token and answered a person who had asked
+     * their agent a question with "the delegation registry could not be read", which reads as a
+     * substrate fault and was in fact a process that needed restarting. It holds its own key and
+     * can mint another in about two seconds; there was never a reason for a person to be involved.
+     */
+    this.transport.setReauthorizer(async () => {
+      const fresh = await mintBearer(this.relay, this.identityServer, this.wallet, DISCORD_CLIENT_NAME, this.fetchImpl);
+      this.bearer = fresh;
+      this.out?.('relay: session token was rejected; re-authenticated with a fresh one');
+      return fresh;
+    });
     const client = new WorkspaceClient(this.relay, this.transport);
     await client.connect();
     const status = await client.podStatus();

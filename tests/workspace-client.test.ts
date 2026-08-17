@@ -264,6 +264,82 @@ describe('the transport declares which credential drives it', () => {
   it('couples the relay HTTP transport to a relay OAuth bearer', () => {
     expect(new RelayMcpTransport(RELAY, bearer).accepts).toBe('relay-oauth-bearer');
   });
+
+  describe('★★ a 401 re-authenticates instead of waiting for a human to restart the process', () => {
+    /**
+     * ── WHAT THIS COST BEFORE IT EXISTED ────────────────────────────────────────
+     *
+     * Redeploying the relay invalidates every bearer the previous revision issued — the 401 body
+     * says exactly that. Every client then held a dead token until somebody restarted it. Live: a
+     * person asked their agent a question and the Discord bot answered "the delegation registry
+     * could not be read", which reads as the substrate refusing the agent. It was a process that
+     * needed restarting, and it held its own key the whole time.
+     */
+    const ok = { jsonrpc: '2.0', id: 1, result: { content: [{ text: '{"ok":true}' }] } };
+    const fresh: RelayOAuthBearer = { ...bearer, accessToken: 'FRESH' };
+
+    const transportWith = (statuses: readonly number[]): {
+      t: RelayMcpTransport; sent: string[]; calls: () => number;
+    } => {
+      const sent: string[] = [];
+      let i = 0;
+      const fetchImpl = (async (_u: string, init?: RequestInit) => {
+        const h = (init?.headers ?? {}) as Record<string, string>;
+        sent.push(String(h['Authorization'] ?? ''));
+        const status = statuses[Math.min(i++, statuses.length - 1)] as number;
+        return {
+          status,
+          text: async () => (status === 401 ? '{"error":"invalid_token"}' : JSON.stringify(ok)),
+        } as unknown as Response;
+      }) as unknown as typeof fetch;
+      return { t: new RelayMcpTransport(RELAY, bearer, fetchImpl), sent, calls: () => i };
+    };
+
+    it('re-mints once and retries, and the retry carries the NEW token', async () => {
+      const { t, sent } = transportWith([401, 200]);
+      let minted = 0;
+      t.setReauthorizer(async () => { minted++; return fresh; });
+      await t.callTool('get_pod_status', {});
+      expect(minted).toBe(1);
+      expect(sent).toEqual(['Bearer t', 'Bearer FRESH']);
+    });
+
+    it('★ gives up after ONE retry — a relay that 401s a fresh token must not loop', async () => {
+      const { t, calls } = transportWith([401, 401]);
+      let minted = 0;
+      t.setReauthorizer(async () => { minted++; return fresh; });
+      await expect(t.callTool('get_pod_status', {})).rejects.toThrow(/401/);
+      expect(minted).toBe(1);
+      expect(calls()).toBe(2);
+    });
+
+    it('★ without a reauthorizer it reports needs_reauth exactly as before', async () => {
+      // The behaviour every existing caller was written against; recovery is opt-in per host,
+      // because only a host that holds the KEY can honestly offer it.
+      const { t, calls } = transportWith([401]);
+      await expect(t.callTool('get_pod_status', {})).rejects.toThrow(/401/);
+      expect(calls()).toBe(1);
+    });
+
+    it('★ a failed re-mint surfaces the 401, not the sign-in error', async () => {
+      // Renaming the problem to "sign-in failed" would send somebody to the wrong system.
+      const { t } = transportWith([401, 200]);
+      t.setReauthorizer(async () => { throw new Error('identity server down'); });
+      await expect(t.callTool('get_pod_status', {})).rejects.toThrow(/401/);
+    });
+
+    it('★★ concurrent calls share ONE re-mint — a redeploy 401s a whole fold at once', async () => {
+      const { t } = transportWith([401, 401, 401, 200, 200, 200]);
+      let minted = 0;
+      t.setReauthorizer(async () => {
+        minted++;
+        await new Promise((r) => { setTimeout(r, 5); });
+        return fresh;
+      });
+      await Promise.all([t.callTool('a', {}), t.callTool('b', {}), t.callTool('c', {})]);
+      expect(minted, 'three 401s must not start three sign-in ceremonies').toBe(1);
+    });
+  });
   it('couples the connector transport to a connector grant', () => {
     const noop = new ConnectorTransport({ listTools: async () => ({ servers: [] }), callTool: async () => ({}) });
     expect(noop.accepts).toBe('connector-grant');

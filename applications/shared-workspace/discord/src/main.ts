@@ -177,6 +177,8 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
   }
 
   const session: SessionLike = boot.session ?? new BotSession(RELAY, IDENTITY, key as string);
+  // Set BEFORE `open()`, so a re-mint during the very first call is still reported.
+  if ('out' in session) (session as { out: ((m: string) => void) | null }).out = out;
   const identity = await session.open();
   out('relay: signed in as pod ' + identity.pod + ' · wallet ' + identity.address);
   out('relay: this bot\'s agent id — the string participants delegate — is ' + identity.agentId);

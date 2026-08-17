@@ -466,7 +466,61 @@ export class RelayMcpTransport implements Transport<'relay-oauth-bearer'> {
     this.cache.clear();
   }
 
-  private async rpc(method: string, params: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
+  /**
+   * How to obtain a FRESH bearer when the relay stops recognising this one.
+   *
+   * ── ★★ WHY THIS IS A CALLBACK AND NOT SOMETHING THIS CLASS DOES ─────────────
+   *
+   * This transport holds a BEARER, never a key — that separation is deliberate and is why a
+   * renderer can drive it without being able to name a credential. So it cannot re-authenticate
+   * itself; only the host that holds the key can. This is the seam: the host supplies "mint me
+   * another one", and the transport decides WHEN it is needed.
+   *
+   * ★ MEASURED, and it took a person down for ten minutes. Redeploying the relay invalidates every
+   * bearer the previous revision issued — the relay says so in its own 401 body ("may have been
+   * issued by a prior relay revision; re-authenticate to obtain a fresh token"). Every client then
+   * held a dead token until somebody restarted it by hand. A Discord bot that had been running
+   * fine reported "the delegation registry could not be read" to a person who had asked their
+   * agent a question, and the honest refusal it produced looked like a substrate fault.
+   *
+   * Each of those clients holds its own key and could have re-minted in under two seconds.
+   */
+  setReauthorizer(fn: () => Promise<RelayOAuthBearer>): void {
+    this.reauthorize = fn;
+  }
+
+  private reauthorize: (() => Promise<RelayOAuthBearer>) | null = null;
+  /** One re-mint in flight at a time — see {@link remint}. */
+  private reminting: Promise<boolean> | null = null;
+
+  /**
+   * Re-mint once, and only once, however many calls hit 401 together.
+   *
+   * ★ THE DEDUPE IS THE POINT. A relay redeploy 401s EVERY in-flight call at once — a channel fold
+   * is dozens — and without this each would start its own sign-in ceremony against a relay that is
+   * already cold. They share the first one instead.
+   */
+  private async remint(): Promise<boolean> {
+    const fn = this.reauthorize;
+    if (!fn) return false;
+    if (!this.reminting) {
+      const p = (async (): Promise<boolean> => {
+        // ★ A FAILED RE-MINT IS `false`, NOT A THROW. The caller's own 401 is the honest error to
+        // report; a sign-in failure raised in its place would rename the problem.
+        try { this.setCredential(await fn()); return true; } catch { return false; }
+      })();
+      this.reminting = p;
+      const clear = (): void => { if (this.reminting === p) this.reminting = null; };
+      void p.then(clear, clear);
+    }
+    return this.reminting;
+  }
+
+  private async rpc(
+    method: string, params: Record<string, unknown>, signal?: AbortSignal,
+    /** Set on the one retry a re-mint earns, so a relay that 401s a fresh token cannot loop. */
+    retried = false,
+  ): Promise<Record<string, unknown>> {
     let res: Response;
     try {
       res = await this.fetchImpl(this.relay + '/mcp', {
@@ -486,6 +540,13 @@ export class RelayMcpTransport implements Transport<'relay-oauth-bearer'> {
     }
     const raw = await res.text();
     if (res.status === 401) {
+      /**
+       * ★ ONE RE-MINT, THEN THE HONEST ERROR. A host that supplied a reauthorizer holds the key
+       * and can get a fresh bearer in about two seconds; making a person restart a process for
+       * that is not a policy, it is a gap. If the retry 401s as well the token is not the problem,
+       * and `needs_reauth` is still the right thing to say.
+       */
+      if (!retried && await this.remint()) return this.rpc(method, params, signal, true);
       throw new ToolCallError('needs_reauth', 'The relay rejected this session token (HTTP 401). ' + raw.slice(0, 200));
     }
     const j = parseRpcBody(raw);

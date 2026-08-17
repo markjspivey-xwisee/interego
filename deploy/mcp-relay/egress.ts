@@ -180,8 +180,28 @@ export function createEgress(config: EgressConfig): Egress {
     // riding far past the ACA ingress timeout and surfacing as an opaque 502. An abort
     // here is non-transient (AbortError doesn't match the retry matcher), so it fails
     // fast to a bounded, correctly-classified error instead of a multi-minute hang.
+    /**
+     * ── ★★ A READ'S DEADLINE IS NOT AN INVOCATION'S DEADLINE ────────────────────
+     *
+     * The 15 s below is right for what it was written for: a CSS host that accepts the socket and
+     * then stalls. It is WRONG for `invoke_affordance`, which calls into another service to do
+     * real work, and it silently capped every vertical capability at fifteen seconds.
+     *
+     * MEASURED, live: a Foxxi performance review answers in 40 s (HTTP 200, a full IEEE-LER). Via
+     * the relay it died at 15,179 ms with "This operation was aborted" — no status, no body, no
+     * mention of a deadline. A delegate tried four times, correctly deduced "something between me
+     * and it gives up sooner", and could get no further because nothing told it what.
+     *
+     * So the ceiling now depends on WHAT is being fetched, and an invocation gets its own,
+     * separately tunable. The stall protection is unchanged for reads, which is the case it exists
+     * for — this does not relax it, it stops applying it to a different kind of call.
+     */
+    const isInvoke = (init as { interegoInvoke?: boolean } | undefined)?.interegoInvoke === true;
+    const deadlineMs = isInvoke
+      ? Number(process.env['NS_INVOKE_TIMEOUT_MS'] ?? 120_000)
+      : Number(process.env['NS_FETCH_TIMEOUT_MS'] ?? 15_000);
     const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), Number(process.env['NS_FETCH_TIMEOUT_MS'] ?? 15_000));
+    const timer = setTimeout(() => ac.abort(), deadlineMs);
     try {
       // ★ `...init` IS PART OF THE SSRF WIRING, not just header plumbing. This spread
       // is how `dispatcher` reaches `fetch` — `guardedInvokeFetchLanded` puts it in
@@ -225,6 +245,27 @@ export function createEgress(config: EgressConfig): Egress {
         text: () => resp.text(),
         json: () => resp.json(),
       };
+    } catch (e) {
+      /**
+       * ── ★★ SAY THAT IT WAS OUR DEADLINE, AND WHAT IT WAS ────────────────────────
+       *
+       * An abort surfaced as bare "This operation was aborted": no URL, no duration, no hint that
+       * the ceiling was OURS rather than the far end refusing. A delegate hit it four times, could
+       * not tell a timeout from a rejection, and reported to its human that the capability did not
+       * exist — a wrong conclusion drawn from an error that gave it nothing to reason with.
+       *
+       * The far end being slow and this client giving up are different facts, and only one of them
+       * is about the far end.
+       */
+      if (ac.signal.aborted) {
+        throw new Error(
+          'this relay stopped waiting for ' + target + ' after ' + deadlineMs + ' ms. '
+          + 'That deadline is the RELAY\'s, not a refusal by the far end — it may still be working. '
+          + 'Raise ' + (isInvoke ? 'NS_INVOKE_TIMEOUT_MS' : 'NS_FETCH_TIMEOUT_MS') + ' if this target '
+          + 'is legitimately slower than that.',
+        );
+      }
+      throw e;
     } finally {
       clearTimeout(timer);
     }
@@ -396,6 +437,10 @@ export function createEgress(config: EgressConfig): Egress {
       const r = await solidFetch(target, {
         ...(init as Record<string, unknown>),
         redirect: 'manual',
+        // ★ MARKS THIS AS AN INVOCATION, so `solidFetch` applies the invoke deadline rather than
+        // the read deadline. A vertical doing real work is not a stalled CSS host, and capping it
+        // at 15 s silently made every capability slower than that unreachable through the relay.
+        interegoInvoke: true,
         // `screenAddresses` gates the ADDRESS half only, and defaults off — see
         // `EgressConfig.screenAddresses` for the two outages that made it a flag and for
         // the one measurement that will settle it. `mode` still decides which pool a

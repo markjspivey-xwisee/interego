@@ -201,7 +201,27 @@ async function delegateSession(address: string): Promise<HostedDelegate> {
   try {
     bearer = await signInWithWallet(RELAY, IDENTITY, wallet.address, (m) => wallet.signMessage(m), recv.redirectUri, DELEGATE_SURFACE);
   } finally { recv.close(); }
-  const client = new WorkspaceClient(RELAY, new RelayMcpTransport(RELAY, bearer));
+  const delegateTransport = new RelayMcpTransport(RELAY, bearer);
+  /**
+   * ── ★★ A DELEGATE RE-AUTHENTICATES ITSELF ───────────────────────────────────
+   *
+   * MEASURED: a relay redeploy invalidates every bearer the previous revision issued, and this
+   * process then held a dead one until somebody restarted the app. The turn that hit it reported
+   * "the delegation registry could not be read", which reads as the substrate refusing the agent
+   * rather than as a token that needed re-minting.
+   *
+   * The key never leaves this process either way — the ceremony below is the SAME one that opened
+   * the session, run again. What changes is that a person is no longer the retry mechanism.
+   */
+  delegateTransport.setReauthorizer(async () => {
+    const again = await startLoopbackReceiver();
+    try {
+      return await signInWithWallet(
+        RELAY, IDENTITY, wallet.address, (m) => wallet.signMessage(m), again.redirectUri, DELEGATE_SURFACE,
+      );
+    } finally { again.close(); }
+  });
+  const client = new WorkspaceClient(RELAY, delegateTransport);
   await client.connect();
   const status = await client.podStatus();
   const podUrl = String(status['pod'] ?? status['podUrl'] ?? '');
@@ -437,6 +457,25 @@ function createWindow(): BrowserWindow {
 async function adopt(next: RelayOAuthBearer, method: AuthMethod, accountKey?: string): Promise<{ pod: string; displayName: string | null; method: AuthMethod }> {
   bearer = next;
   transport = new RelayMcpTransport(RELAY, next);
+  /**
+   * ★ ONLY WHEN THIS PROCESS HOLDS THE KEY. A wallet sign-in can be repeated silently because the
+   * key is here; a BROWSER sign-in cannot — repeating it means putting a window in front of
+   * somebody, and doing that unprompted because a token expired would be worse than the honest
+   * "needs_reauth" the transport reports instead. So the account session recovers by itself for
+   * the one method where recovering is not a decision on the person's behalf.
+   */
+  if (accountKey) {
+    const key = accountKey;
+    transport.setReauthorizer(async () => {
+      const w = new Wallet(key);
+      const again = await startLoopbackReceiver();
+      try {
+        const fresh = await signInWithWallet(RELAY, IDENTITY, w.address, (m) => w.signMessage(m), again.redirectUri);
+        bearer = fresh;
+        return fresh;
+      } finally { again.close(); }
+    });
+  }
   client = new WorkspaceClient(RELAY, transport);
   await client.connect();
   const status = await client.podStatus();
