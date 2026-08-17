@@ -150,7 +150,9 @@ async function findEntry(
   // Pick the most recent by validFrom; if absent, fall back to first
   // entry order in the manifest.
   matching.sort((a, b) => (b.validFrom ?? '').localeCompare(a.validFrom ?? ''));
-  return matching[0];
+  // `?? null` rather than a non-null assertion: the length check above already proves this is
+  // present, and under noUncheckedIndexedAccess the honest spelling costs nothing.
+  return matching[0] ?? null;
 }
 
 /**
@@ -203,9 +205,9 @@ async function fetchBundleJson(
 function extractDistributionTarget(descTurtle: string): string | null {
   // Look for `hydra:target <url>` first (substrate writes this).
   const targetMatch = descTurtle.match(/hydra:target\s+<([^>]+)>/);
-  if (targetMatch) return targetMatch[1];
+  if (targetMatch?.[1]) return targetMatch[1];
   const accessMatch = descTurtle.match(/dcat:accessURL\s+<([^>]+)>/);
-  if (accessMatch) return accessMatch[1];
+  if (accessMatch?.[1]) return accessMatch[1];
   return null;
 }
 
@@ -220,7 +222,7 @@ function extractBundleJson(trig: string): unknown {
   // the bridge-served foxxi vocab IRI), so match `#bundleJson` regardless of namespace,
   // the same migration-tolerance findEntry() uses for conformsTo.
   const m = trig.match(/<[^>]*#bundleJson>\s+"([A-Za-z0-9+/=\s]+)"/);
-  if (!m) {
+  if (!m?.[1]) {
     throw new Error('Graph body has no #bundleJson literal — not a tenant-publisher artifact?');
   }
   const b64 = m[1].replace(/\s+/g, '');
@@ -239,6 +241,33 @@ function extractBundleJson(trig: string): unknown {
 
 // ── Public API ────────────────────────────────────────────────
 
+/**
+ * The message prefix `fetchSection` uses to signal a section that has NEVER BEEN PUBLISHED, as
+ * opposed to one it could not read. Exported with `isSectionAbsentError` so the distinction has ONE
+ * definition; it was previously a regex literal inlined at its single call site.
+ */
+export const SECTION_ABSENT_PREFIX = 'No descriptor with conformsTo=';
+
+/**
+ * Is this rejection "the section is not there" rather than "I could not read it"?
+ *
+ * ── ★★ ABSENT AND UNREADABLE MUST NOT BE THE SAME ANSWER, IN EITHER DIRECTION ───────────────
+ *
+ * `fetchSection` THROWS for a never-published section, so a caller that treats every rejection as
+ * empty will happily overwrite a section it merely failed to read — for a whole-array section, that
+ * erases every row. A caller that treats every rejection as a failure has the opposite bug: it can
+ * never create the section in the first place, which is a bootstrap deadlock that looks exactly like
+ * a permissions problem. Both were live here within one deploy of each other.
+ *
+ * Conservative on purpose: ONLY the explicit not-found shape counts as absent. An encrypted section
+ * with no key, a 502, a timeout and a parse error all mean "unknown", and callers that write must
+ * treat unknown as a refusal.
+ */
+export function isSectionAbsentError(err: unknown): boolean {
+  const msg = String((err as Error)?.message ?? err ?? '');
+  return msg.startsWith(SECTION_ABSENT_PREFIX);
+}
+
 export async function fetchSection(
   typeIri: IRI,
   config: TenantFetchConfig,
@@ -248,7 +277,7 @@ export async function fetchSection(
   if (hit !== null) return hit;
   const entry = await findEntry(config, typeIri);
   if (!entry) {
-    throw new Error(`No descriptor with conformsTo=${typeIri} found in pod ${config.podUrl}. Tenant publish required first.`);
+    throw new Error(`${SECTION_ABSENT_PREFIX}${typeIri} found in pod ${config.podUrl}. Tenant publish required first.`);
   }
   const payload = await fetchBundleJson(entry, config);
   setCached(key, payload);
@@ -327,8 +356,7 @@ export async function fetchAdminPayload(config: TenantFetchConfig): Promise<unkn
     ? true
     // Only the explicit "no descriptor found" rejection means genuinely absent;
     // any other failure (encrypted-no-key, fetch error) is treated as present.
-    : !/No descriptor with conformsTo=.*found/i.test(
-        String((directorySettled.reason as Error)?.message ?? directorySettled.reason ?? ''));
+    : !isSectionAbsentError(directorySettled.reason);
   const closed = Boolean(config.forceClosed) || directoryPresent;
   const effectiveUsers = closed ? dirUsers : memUsers;
   // Policies resolve the same way: a CLOSED tenant uses its (encrypted)
@@ -383,7 +411,9 @@ export async function fetchCoursePackage(
     throw new Error(`No course package with id=${courseId} found in pod ${config.podUrl}`);
   }
   matching.sort((a, b) => (b.validFrom ?? '').localeCompare(a.validFrom ?? ''));
-  const payload = await fetchBundleJson(matching[0], config);
+  const newest = matching[0];
+  if (!newest) throw new Error(`No course package with id=${courseId} found in pod ${config.podUrl}`);
+  const payload = await fetchBundleJson(newest, config);
   setCached(key, payload);
   return payload;
 }

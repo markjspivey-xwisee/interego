@@ -111,6 +111,7 @@ import {
   fetchCoursePackage,
   fetchSection,
   invalidateTenantCache,
+  isSectionAbsentError,
 } from '../src/tenant-fetcher.js';
 import {
   issueCourseCompletionCredential,
@@ -664,6 +665,13 @@ async function readSectionArrayOrFail(podUrl: string, typeIri: IRI): Promise<{ o
     if (!Array.isArray(v)) return { ok: false, reason: `section ${typeIri} is present but not an array` };
     return { ok: true, rows: v as Array<Record<string, unknown>> };
   } catch (err) {
+    // ★★ A SECTION THAT HAS NEVER BEEN PUBLISHED IS EMPTY, NOT UNREADABLE. fetchSection THROWS for
+    // it, and treating that as a failure was a bootstrap deadlock of exactly the kind this function
+    // was written to prevent, in the other direction: the first enrolment refused to write "because
+    // the register could not be read", so the register was never created and every enrolment fell
+    // back to session scope while honestly reporting it had. Measured live, one deploy after the
+    // wipe fix. Only the explicit not-found shape counts — see isSectionAbsentError.
+    if (isSectionAbsentError(err)) return { ok: true, rows: [] };
     return { ok: false, reason: (err as Error).message };
   }
 }
