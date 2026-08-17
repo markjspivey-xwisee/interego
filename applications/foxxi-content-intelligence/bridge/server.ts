@@ -7986,7 +7986,7 @@ app.post('/agent/scorm/submit', async (req, res) => {
 // generatedAtTime?, success?, scoreScaled?, actorKind?, contextKind?, verb?, originPod }.
 // Trajectory/disposition refresh on the next
 // PULL cycle; the push gives instant LRS + dashboard visibility.
-app.post('/agent/mesh-event', (req, res) => {
+app.post('/agent/mesh-event', async (req, res) => {
   try {
     const b = (req.body ?? {}) as Record<string, unknown>;
     // AUTH: a mesh event lands an attacker-controllable outcome (Asserted/success/score) into an
