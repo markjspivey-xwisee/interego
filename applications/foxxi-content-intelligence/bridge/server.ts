@@ -4895,6 +4895,21 @@ app.get('/agent/mesh/enrolment', (_req, res) => {
     # to be" in the same document.
     hydra:operation [
         a hydra:Operation, iep:Affordance, ieh:Affordance ;
+        #
+        # ── ★★ iep:action IS WHAT MAKES THIS FOLLOWABLE, NOT THE hydra:target ────────
+        #
+        # The control was published with a method and a target and NO iep:action, which reads as
+        # complete and is not: the substrate's follow engine locates an affordance inside a
+        # descriptor by matching iep:action against the requested action IRI, so a control without
+        # one is invisible to invoke_affordance — the standard way an agent acts on a published
+        # capability. It could be reached only by the act verb with a hand-assembled raw target, i.e.
+        # by a caller that already knew what to do. A control advertised to something that cannot act
+        # on it is this whole path's failure mode wearing hypermedia clothing.
+        #
+        # Found by READING the follow engine rather than inferring from the shape: the first guess
+        # was "give the blank node a subject IRI", which would have changed nothing, because the
+        # engine never looks at the subject.
+        iep:action <https://relay.interego.xwisee.com/ns/iep/action/foxxi/mesh-enrol> ;
         hydra:method "POST" ;
         hydra:title "Enrol your own pod" ;
         rdfs:comment "Enrol the pod you can prove is yours. Authority is structural rather than checked: the caller's own pod is resolved from the signature, and an explicit pod_url is honoured only when it resolves to the same actor and origin — so naming another agent's pod enrols yours instead. The enrolment is recorded on the tenant pod and survives a restart; if that write fails it is held for this process only and the response and the entry above both say so. No operator action is needed either way." ;
@@ -4927,6 +4942,7 @@ app.get('/agent/mesh/enrolment', (_req, res) => {
     # you can prove is yours — so it needs no new trust decision, only a control to say it with.
     hydra:operation [
         a hydra:Operation, iep:Affordance, ieh:Affordance ;
+        iep:action <https://relay.interego.xwisee.com/ns/iep/action/foxxi/mesh-withdraw> ;
         hydra:method "DELETE" ;
         hydra:title "Withdraw your own pod" ;
         rdfs:comment "Stop the projector reading the pod you can prove is yours, and free its slot. Same envelope and same structural authority as enrolling: the pod is resolved from your signature, so you can only ever withdraw your own. A pod ALSO seeded from deployment configuration cannot be withdrawn at runtime, and the response says so rather than reporting a success the projector will not honour." ;

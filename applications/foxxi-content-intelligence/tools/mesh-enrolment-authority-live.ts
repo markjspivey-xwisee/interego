@@ -90,6 +90,12 @@ async function main(): Promise<void> {
   // regression it exists to catch.
   ok('durable entries are marked durable', /Durable: (seeded from this deployment|enrolled at )/.test(reg0.text));
   ok('the register advertises BOTH a way in and a way out', /hydra:method\s+"POST"/.test(reg0.text) && /hydra:method\s+"DELETE"/.test(reg0.text));
+  // ★ THE PROPERTY THAT MAKES A CONTROL FOLLOWABLE. The substrate's follow engine locates an
+  // affordance by matching `iep:action == action_iri`; a control with a method and a target but no
+  // iep:action looks complete and is invisible to invoke_affordance — reachable only by a caller
+  // that already knew the raw target, which is not discovery.
+  ok('★ both controls carry an iep:action, so invoke_affordance can find them',
+    /iep:action\s+<[^>]*mesh-enrol>/.test(reg0.text) && /iep:action\s+<[^>]*mesh-withdraw>/.test(reg0.text));
 
   // The gate origin the deployment actually uses, taken from a durable entry rather than assumed —
   // asserting against a hardcoded host would pass for the wrong reason on a re-pointed deployment.
