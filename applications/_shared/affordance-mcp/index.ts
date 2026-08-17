@@ -141,6 +141,27 @@ export interface OutputSchemaProperty {
 }
 
 /** A capability the vertical exposes. */
+/**
+ * One store an affordance reads, and the four things a caller needs to know about it.
+ *
+ * ★ EACH FIELD ANSWERS A QUESTION AN AGENT ACTUALLY ASKED. Which store did you read (`store`);
+ * what puts data in it (`populatedBy`); what will it accept (`admits`); and where is the set of
+ * subjects it will admit published (`enrolmentRegister`) — that last one being the fact that lived
+ * in an env var and cost a night to find.
+ */
+export interface AffordanceEvidenceSource {
+  /** Dereferenceable identifier of the store actually read. */
+  readonly store: string;
+  /** Human-readable name, for a caller reading a tool list rather than Turtle. */
+  readonly label: string;
+  /** What fills it, dereferenceable where one exists — an affordance IRI, a projector, a route. */
+  readonly populatedBy: string;
+  /** What it will accept, in one sentence a caller can act on. */
+  readonly admits?: string;
+  /** Where the set of subjects this store admits is PUBLISHED, when membership is a precondition. */
+  readonly enrolmentRegister?: string;
+}
+
 export interface Affordance {
   /** Canonical action IRI (urn:iep:action:<vertical>:<verb>). */
   readonly action: IRI;
@@ -158,6 +179,31 @@ export interface Affordance {
   readonly targetTemplate: string;
   /** Input parameters. */
   readonly inputs: ReadonlyArray<AffordanceInput>;
+  /**
+   * The stores this affordance READS to compose its answer.
+   *
+   * ── ★★ THE OTHER HALF OF THE CONTRACT, WHICH WAS NEVER WRITTEN ──────────────
+   *
+   * `inputs` says what a caller must SEND. Until this existed, nothing anywhere said what an
+   * affordance must FIND — and `affordanceToTurtle` proved it: it emitted `iep:action`,
+   * `hydra:method`, `hydra:target`, `hydra:returns` and a fully expanded `hydra:expects`, and
+   * stopped.
+   *
+   * MEASURED, live, over four turns and about $3 of model spend: a delegate signed a valid
+   * envelope, dereferenced an affordance whose input side was documented exhaustively, invoked it
+   * correctly, and got an empty answer. It could not distinguish "you have done nothing" from
+   * "your evidence is not in the store I read". Nothing it could dereference named the store, what
+   * fills it, or whether it was enrolled — the answer was an environment variable, and a HUMAN had
+   * to read deployment config to find it.
+   *
+   * ★ WHEN AN ANSWER IS ASSEMBLED FROM DATA THE CALLER NEITHER SENT NOR CAN SEE, AN EMPTY ANSWER
+   * AND A CORRECT ANSWER ARE THE SAME BYTES. A descriptor that cannot distinguish them is
+   * unfalsifiable, and an agent reasoning against it is guessing however well it reasons.
+   *
+   * ★ OPTIONAL, AND ITS ABSENCE STATES NOTHING — the rule everywhere in this vocabulary. An
+   * affordance that declares no source has not declared that it reads none.
+   */
+  readonly reads?: ReadonlyArray<AffordanceEvidenceSource>;
   /** Optional description of the handler's return payload — translated
    *  into an MCP `outputSchema` by affordanceToMcpToolSchema. Omit for a
    *  permissive generic object schema. */
@@ -368,6 +414,28 @@ export function affordanceToMcpToolSchema(affordance: Affordance): McpToolSchema
  * The {base} placeholder in targetTemplate is substituted with the
  * caller-supplied deploymentUrl.
  */
+/**
+ * The `iep:reads` blocks, or nothing at all.
+ *
+ * ★ EMITTED HERE RATHER THAN AT ONE CALL SITE, so an affordance in ANY vertical that declares its
+ * read side gets it on the wire. The failure this closes was not specific to one endpoint: the
+ * serializer described every affordance's input exhaustively and none of their read sides, so the
+ * gap was uniform across the fleet.
+ */
+function readsBlock(affordance: Affordance): string {
+  const sources = affordance.reads ?? [];
+  if (!sources.length) return '';
+  const blocks = sources.map((s) => `        [
+            a iep:EvidenceSource ;
+            rdfs:label "${escapeLit(s.label)}" ;
+            iep:store <${s.store}> ;
+            iep:populatedBy <${s.populatedBy}>${s.admits ? ` ;
+            iep:admits "${escapeLit(s.admits)}"` : ''}${s.enrolmentRegister ? ` ;
+            iep:enrolmentRegister <${s.enrolmentRegister}>` : ''}
+        ]`).join(' ,\n');
+  return `    iep:reads\n${blocks} ;\n`;
+}
+
 export function affordanceToTurtle(affordance: Affordance, deploymentUrl: string): string {
   const target = affordance.targetTemplate.replace('{base}', deploymentUrl);
   // The action's canonical identity is a dereferenceable URL now. Emit the URL form as the
@@ -405,7 +473,7 @@ export function affordanceToTurtle(affordance: Affordance, deploymentUrl: string
 ${inputProps}`
       : ''}
     ] ;
-    iep:encrypted false .`;
+${readsBlock(affordance)}    iep:encrypted false .`;
 }
 
 /** Multi-affordance turtle document with prefixes and a common manifest IRI. */

@@ -328,3 +328,49 @@ iep:AuthorshipProofShape a sh:NodeShape ;
         sh:maxCount 1 ;
         sh:message "iep:agentDid is optional but MUST be at most one when present."
     ] .
+
+# ── An evidence source must be usable, not merely mentioned ──────────────────
+#
+# ★★ WHY THIS SHAPE EXISTS. `iep:reads` was added because a contract had two sides and only one
+# was ever written: `hydra:expects` said what a caller must SEND, and nothing said what an
+# affordance must FIND. Measured, live: a delegate signed correctly, invoked correctly, and got an
+# empty answer it could not explain — the deciding fact (whether its pod was enrolled in the
+# projector that fills the store being read) was an environment variable, and a human had to read
+# deployment config to find it.
+#
+# A half-declared source would reproduce that failure while LOOKING declared, which is worse than
+# silence: an agent would dereference a source, find no `iep:populatedBy`, and be exactly as stuck
+# with the added belief that it had checked. So the two fields that make a source actionable are
+# required, and the two that are situational are bounded rather than demanded.
+iep:EvidenceSourceShape a sh:NodeShape ;
+    sh:targetClass iep:EvidenceSource ;
+    rdfs:comment "An iep:EvidenceSource is a promise that a caller can find out where an answer came from. It must name the store and what fills it; a source that names neither is decoration." ;
+
+    sh:property [
+        sh:path iep:store ;
+        sh:nodeKind sh:IRI ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "An iep:EvidenceSource MUST name the store it stands for, as a dereferenceable IRI. 'Some store' is not an answer a caller can act on."
+    ] ;
+
+    sh:property [
+        sh:path iep:populatedBy ;
+        sh:nodeKind sh:IRI ;
+        sh:minCount 1 ;
+        sh:message "An iep:EvidenceSource MUST say what PUTS DATA IN IT. This is the field whose absence cost the incident this shape comes from: an agent that knows a store was empty still cannot act, and an agent that knows what fills it can. Multi-valued, because a store may be filled more than one way."
+    ] ;
+
+    sh:property [
+        sh:path iep:admits ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:message "iep:admits is optional but MUST be at most one — one sentence a caller can act on, not a list to be reconciled."
+    ] ;
+
+    sh:property [
+        sh:path iep:enrolmentRegister ;
+        sh:nodeKind sh:IRI ;
+        sh:maxCount 1 ;
+        sh:message "iep:enrolmentRegister is optional — its ABSENCE states nothing, exactly as everywhere else in this vocabulary, and MUST NOT be read as 'no enrolment is required'. When present it MUST be a dereferenceable IRI: a register a caller cannot GET is the environment variable this term replaces."
+    ] .

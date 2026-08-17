@@ -4250,9 +4250,99 @@ const REVIEW_RECORD_AFFORDANCE: Affordance = {
     { name: '_signed_payload', type: 'string', required: true, description: "JSON.stringify({ agent_id: 'did:ethr:<addr>', timestamp: <ISO 8601, within ±60s>, subject_did?, subject_pod_url?, subject_name?, actor_kind?, include_clr? })" },
     { name: '_signature', type: 'string', required: true, description: 'secp256k1 signature over the canonical message sha256:<hex(sha256(_signed_payload))>, signed with the wallet matching agent_id.' },
   ],
+  /**
+   * ── ★★ THE THREE STORES THIS ANSWERS FROM, DECLARED ─────────────────────────
+   *
+   * This handler reads three (server.ts, the lattice/lens/durable trio below) and the descriptor
+   * described none of them. Live: a delegate signed correctly, invoked correctly, and got an empty
+   * record; it could not tell "you have done nothing" from "your evidence is not in the store I
+   * read", because the deciding fact — whether its pod was enrolled in the projector that fills the
+   * lens — was an environment variable. Four turns and ~$3 of model spend later a HUMAN read
+   * deployment config to find it.
+   *
+   * The `whyEmpty` block on an empty response is the other half of this. Declaring it HERE is what
+   * lets a caller find out BEFORE spending a signature; reporting it THERE is what tells a caller
+   * who already spent one.
+   */
+  reads: [
+    {
+      store: 'https://relay.interego.xwisee.com/ns/iep/store/foxxi/mesh-lens',
+      label: 'the subject\'s per-agent mesh lens (lens:<agent>)',
+      populatedBy: 'https://foxxi-bridge.interego.xwisee.com/agent/mesh-event',
+      admits: 'Trajectory steps swept from ENROLLED pods, or pushed directly to /agent/mesh-event. A step whose modal status is Hypothetical is an intention and is not evidence of performance.',
+      // ★ THE FACT THAT LIVED IN AN ENV VAR, now a resource an agent can GET and read for itself.
+      enrolmentRegister: 'https://foxxi-bridge.interego.xwisee.com/agent/mesh/enrolment',
+    },
+    {
+      store: 'https://relay.interego.xwisee.com/ns/iep/store/foxxi/shared-lattice',
+      label: 'the shared PGSL lattice, cold-loaded from the subject\'s pod',
+      populatedBy: 'https://foxxi-bridge.interego.xwisee.com/xapi/statements',
+      admits: 'xAPI statement content atoms resident for this subject.',
+    },
+    {
+      store: 'https://relay.interego.xwisee.com/ns/iep/store/foxxi/durable-pod-record',
+      label: 'durable xAPI statements recorded on the subject\'s own pod',
+      populatedBy: 'https://foxxi-bridge.interego.xwisee.com/xapi/statements',
+      admits: 'Statements durably written to the subject pod, readable without any enrolment.',
+    },
+  ],
 };
 
 // GET the followable affordance turtle for the review-record capability.
+/**
+ * ── ★★ THE ENROLMENT REGISTER, AS A DEREFERENCEABLE RESOURCE ────────────────
+ *
+ * The set of pods whose evidence the mesh projector reads decided whether an agent's record could
+ * be reviewed at all — and it lived in `FOXXI_MESH_PODS`, an environment variable. Not addressable,
+ * not linkable, invisible to every reader including the agents it governs.
+ *
+ * MEASURED COST: a delegate wrote correct, signed, content-bound trajectory steps to its own pod for
+ * hours. Nothing read them, because its pod was not on that list. It invoked the review four times,
+ * reasoned correctly that "the evidence is not in the store the reviewer reads", and could get no
+ * further — the deciding fact was not published anywhere. A human read Railway config to find it.
+ *
+ * ★ "EVERY IDENTIFIER IS A DEREFERENCEABLE URL" IS THE RULE THIS SUBSTRATE IS BUILT ON, and a
+ * register in an env var is the same violation as a `urn:` — with a measured bill attached. This
+ * serves it as Turtle at a stable IRI so an agent can answer "am I enrolled?" itself.
+ *
+ * ★ READ-ONLY, DELIBERATELY. Publishing the register is a discovery fix and needs no new authority.
+ * Letting an agent ENROL ITSELF is a different question — who may enrol whom, and whether a pod
+ * owner enrolling their own pod is self-evidently fine or a way to put unreviewed evidence in front
+ * of a reviewer — and inventing an answer to that at 3am would be the sort of unilateral security
+ * decision this codebase is careful never to make. The affordance to request enrolment is named
+ * here as `iep:askVia` so the path exists; the write side is a decision for the maintainer.
+ */
+app.get('/agent/mesh/enrolment', (_req, res) => {
+  const base = (process.env.BRIDGE_DEPLOYMENT_URL ?? `http://localhost:${PORT}`).replace(/\/$/, '');
+  const self = `${base}/agent/mesh/enrolment`;
+  const lit = (s: string): string => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const rows = MESH_PODS.map((pod) => {
+    const seg = (() => { try { return new URL(pod).pathname.split('/').filter(Boolean)[0] ?? ''; } catch { return ''; } })();
+    const label = MESH_ACTOR_LABELS[seg] ?? seg;
+    return `    iep:enrolled [
+        a iep:EvidenceSource ;
+        rdfs:label "${lit(label)}" ;
+        iep:store <${pod}> ;
+        iep:populatedBy <${base}/agent/mesh-event>
+    ] ;`;
+  }).join('\n');
+  res.type('text/turtle').send(`@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix dct:   <http://purl.org/dc/terms/> .
+
+<${self}> a iep:EvidenceSource ;
+    rdfs:label "Foxxi mesh projector — enrolled pods" ;
+    rdfs:comment "The pods whose TRAJECTORY STEPS the Foxxi mesh projector sweeps into per-agent lens:<agent> views. A pod NOT listed here has its steps read by nothing, so writing more of them cannot change a review of that subject. Every ${MESH_PROJECT_INTERVAL_MS}ms." ;
+    iep:store <${self}> ;
+    iep:populatedBy <${base}/agent/mesh-event> ;
+    iep:admits "Trajectory steps from an enrolled pod, or pushed directly to /agent/mesh-event. A step whose modal status is Hypothetical is an intention, not evidence of performance." ;
+    iep:askVia <${base}/agent/mesh-event> ;
+    dct:modified "${new Date().toISOString()}" ;
+${rows}
+    rdfs:seeAlso <${base}/agent/review-record/affordance> .
+`);
+});
+
 app.get('/agent/review-record/affordance', (_req, res) => {
   const base = (process.env.BRIDGE_DEPLOYMENT_URL ?? `http://localhost:${PORT}`).replace(/\/$/, '');
   res.type('text/turtle').send(
@@ -4460,6 +4550,55 @@ app.post('/agent/review-record', async (req, res) => {
       subject: { did: subjectDid, podUrl: subjectPodUrl, label: subjectLabel, kind: subjectKind, lensTenant: lensTenantFor(subjectLabel), statementCount: statements.length, statementSource, latticeStatements: latticeStmts.length },
       elr,
       ...(clr !== undefined ? { clr } : {}),
+      /**
+       * ── ★★ AN EMPTY REVIEW MUST SAY WHY IT IS EMPTY ─────────────────────────────
+       *
+       * MEASURED, live, over four turns and about $3 of model spend: a delegate signed a valid
+       * envelope, dereferenced this affordance, invoked it correctly, and got `statementCount: 0`.
+       * It could not tell "this agent has done nothing" from "this agent's evidence is not in the
+       * store I read", and no amount of re-reading the descriptor would have told it — because the
+       * answer was an ENVIRONMENT VARIABLE. Its pod was not in FOXXI_MESH_PODS, so the projector
+       * that fills `lens:<agent>` never read the trajectory steps it had been carefully writing.
+       *
+       * A human had to ask a developer, who read Railway config. That does not scale to a fleet of
+       * agents, and the agent's reasoning was never the weak link: it had already framed the fault
+       * correctly as "the evidence is not in the store the reviewer reads".
+       *
+       * ★ SO THE ANSWER CARRIES ITS OWN PRECONDITION, and only when it is empty — a healthy review
+       * does not need a paragraph about plumbing. Every field is a fact this process already holds:
+       * which store was read, what fills it, whether THIS subject is enrolled, and what to do. No
+       * new endpoint, no new vocabulary, no discovery step that could itself fail.
+       */
+      ...(statements.length === 0
+        ? {
+          whyEmpty: {
+            read: {
+              lensTenant: lensTenantFor(subjectLabel),
+              durablePod: subjectPodUrl,
+              note: 'A review reads the subject\'s lens view plus durable statements recorded on its pod. Both were empty.',
+            },
+            lensPopulatedBy: {
+              what: 'the Foxxi mesh projector, which reads TRAJECTORY STEPS from enrolled pods and rebuilds each agent\'s trajectory under lens:<agent>',
+              everyMs: MESH_PROJECT_INTERVAL_MS,
+              enrolledPods: MESH_PODS,
+              // ★ THE REGISTER AS A URL, not only as a value copied into this response. A caller
+              // that can dereference it can check enrolment BEFORE spending a signature, and can
+              // re-check later without asking anyone.
+              enrolmentRegister: (process.env.BRIDGE_DEPLOYMENT_URL ?? '').replace(/\/$/, '') + '/agent/mesh/enrolment',
+              pushAffordance: 'POST /agent/mesh-event — push a step directly instead of waiting to be swept',
+            },
+            // ★ THE ONE FACT THE AGENT COULD NOT SEE. Computed here rather than described, because
+            // "check whether you are enrolled" is not an answer a caller can act on.
+            subjectEnrolled: MESH_PODS.some((p) => {
+              const norm = (u: string): string => u.replace(/\/+$/, '').toLowerCase();
+              return norm(p) === norm(subjectPodUrl);
+            }),
+            remedy: MESH_PODS.some((p) => p.replace(/\/+$/, '').toLowerCase() === subjectPodUrl.replace(/\/+$/, '').toLowerCase())
+              ? 'This pod IS enrolled, so the projector reads it. Either it holds no trajectory steps yet, or the steps it holds are not Asserted — a Hypothetical step is an intention and is not evidence of performance.'
+              : 'This pod is NOT enrolled, so nothing reads the trajectory steps it holds. Writing more of them will not change this review. Ask the operator to add ' + subjectPodUrl + ' to the projector\'s enrolled pods, or push steps directly with POST /agent/mesh-event.',
+          },
+        }
+        : {}),
     });
   } catch (err) {
     sendServerError(res, err, 'route-handler');

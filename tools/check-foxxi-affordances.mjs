@@ -54,6 +54,12 @@ const ALLOWLIST = [
   '/agent/lattice/:label/interrogate',
   // Per-route GET /affordance descriptor endpoints (the canonical manifest now
   // lives in affordances.ts; these hand-coded descriptors stay as-is).
+  // ★ THE ENROLMENT REGISTER IS A DESCRIPTOR, NOT A CAPABILITY. It is the read-only publication of
+  // which pods the mesh projector sweeps — the fact that decided whether an agent's evidence could
+  // be reviewed at all, and which lived in an environment variable until an agent spent four turns
+  // failing to discover it. Serving it is discovery, not a new thing an agent can DO; the write
+  // side (`/agent/mesh-event`, already allowlisted) is where doing happens.
+  '/agent/mesh/enrolment',
   '/agent/review-record/affordance',
   '/agent/issue-credential/affordance',
   '/agent/verify-extension/affordance',

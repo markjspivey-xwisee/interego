@@ -2276,6 +2276,50 @@ iep:requiresSignedRequest a owl:DatatypeProperty ;
     rdfs:range xsd:boolean ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
+iep:EvidenceSource a owl:Class ;
+    rdfs:label "Evidence Source"@en ;
+    rdfs:comment "A store an affordance READS to compose its answer, declared so a caller can learn of it before spending a call. ── ★★ WHY THIS EXISTS, MEASURED. A contract has two sides and only one was ever written: `hydra:expects` says what the caller must SEND, and nothing anywhere said what the affordance must FIND. Live, over four turns and about $3 of model spend, a delegate signed a valid envelope, dereferenced an affordance whose input was documented exhaustively — required fields, canonical message, clock skew, signing key — invoked it correctly, and received an empty answer. It could not distinguish 'you have done nothing' from 'your evidence is not in the store I read', because nothing it could dereference named the store, what fills it, or whether it was enrolled. The answer was an environment variable. A HUMAN had to read deployment config to find it. ★ WHEN AN ANSWER IS ASSEMBLED FROM DATA THE CALLER NEITHER SENT NOR CAN SEE, AN EMPTY ANSWER AND A CORRECT ANSWER ARE THE SAME BYTES — and a descriptor that cannot distinguish them is unfalsifiable. This is the same argument `iep:requiresSignedRequest` already makes about a gate; the read side simply never got its term. ★ AND ITS ABSENCE STATES NOTHING, as everywhere else: an affordance that declares no source has not declared that it reads none."@en ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:reads a owl:ObjectProperty ;
+    rdfs:label "reads"@en ;
+    rdfs:comment "A store this affordance reads to answer. MULTI-VALUED ON PURPOSE: one answer is routinely assembled from several stores with different fill mechanisms and different preconditions, and collapsing them to one hides which of them was empty. A declaration and not an enforcement point — the affordance still reads what it reads; this is what lets a caller find out first."@en ;
+    rdfs:domain iep:Affordance ;
+    rdfs:range iep:EvidenceSource ;
+    rdfs:seeAlso iep:requiresSignedRequest ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:enrolled a owl:ObjectProperty ;
+    rdfs:label "enrolled"@en ;
+    rdfs:comment "A subject whose evidence an iep:EvidenceSource will admit, listed on the register itself so membership is dereferenceable rather than deployment configuration. ★ AND THE LIST IS THE POINT, NOT A COUNT. An agent needs to know whether IT is on it — a register that said only how many were enrolled would leave the same question unanswered as the environment variable it replaces. ★ ABSENCE FROM A REGISTER IS A STATED FACT ABOUT A READABLE LIST, which is different from absence of a register: the first says 'not enrolled', the second says nothing at all."@en ;
+    rdfs:domain iep:EvidenceSource ;
+    rdfs:range iep:EvidenceSource ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:store a owl:ObjectProperty ;
+    rdfs:label "store"@en ;
+    rdfs:comment "The dereferenceable identifier of the store an iep:EvidenceSource stands for. Separate from the source node itself so one description can carry a label, what fills it, what it admits and where its enrolment is published, without any of those being mistaken for the store's identity."@en ;
+    rdfs:domain iep:EvidenceSource ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:populatedBy a owl:ObjectProperty ;
+    rdfs:label "populated by"@en ;
+    rdfs:comment "The mechanism that puts data into an iep:EvidenceSource, as something dereferenceable. ★ THE FIELD THAT WOULD HAVE ANSWERED IT. An agent that knows a store was empty still cannot act; an agent that knows WHAT FILLS THAT STORE can. Live: a delegate had been writing correct, signed, content-bound evidence to its own pod for hours while the projector that fills the reviewed view was reading a list its pod was not on — so writing better evidence could never have changed the answer, and nothing told it that."@en ;
+    rdfs:domain iep:EvidenceSource ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:enrolmentRegister a owl:ObjectProperty ;
+    rdfs:label "enrolment register"@en ;
+    rdfs:comment "Where the set of subjects an iep:EvidenceSource will admit is PUBLISHED, so membership is a fact a caller can dereference rather than deployment configuration nobody outside the process can see. ★ A FACT THAT DECIDES WHOSE EVIDENCE IS READABLE IS ITSELF EVIDENCE, and an environment variable is not a place evidence can live: it is not addressable, not linkable, and invisible to every reader. That is not a style preference here — 'every identifier is a dereferenceable URL' is the rule this substrate is built on, and a register in an env var is the same violation as a `urn:`, with a measured cost attached."@en ;
+    rdfs:domain iep:EvidenceSource ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:admits a owl:DatatypeProperty ;
+    rdfs:label "admits"@en ;
+    rdfs:comment "What an iep:EvidenceSource will accept, in one sentence a caller can act on — the shape, class or modal status required. ★ BECAUSE 'THE STORE IS EMPTY' AND 'THE STORE REFUSED WHAT YOU WROTE' ARE DIFFERENT FAILURES. Live: an agent recorded a step with modal status Hypothetical — an intention — and then reasoned about it as though it were performance. It caught that itself, which is more than the store did: a source that admits only asserted evidence should say so."@en ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
 iep:addressedTo a owl:ObjectProperty ;
     rdfs:label "addressed to"@en ;
     rdfs:comment "The agent or agents a record is a request TO, stated inside the record's own signed region. ★ IT IS HERE AND NOT IN A VERTICAL'S VOCABULARY BECAUSE ADDRESSING AN AGENT IS NOT SOMETHING A ROOM INVENTED: a workspace entry, a Foxxi record and a bare script's record must all spell it identically, or an agent that reads two of them gets two answers to one question — and an agent that belongs to no room could not be addressed at all. ★ AND IT IS IN THE SIGNED REGION RATHER THAN IN THE NOTIFICATION THAT ANNOUNCES IT BECAUSE AN INBOX IS WORLD-WRITABLE. A notification is a POINTER and never the request: it carries no task text, because text that travelled by inbox is text a forger could write. What makes the pointer safe to follow is that the record it names is signed and content-bound, and that its recipient checks the party that delivered the pointer IS the party that signed the record. A reader MUST NOT treat its own absence as anything: a record addressed to nobody is a record, not a request."@en ;
