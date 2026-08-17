@@ -6598,7 +6598,31 @@ async function handleSignRequest(args: ToolArgs): Promise<string> {
       _signed_payload: signedPayload,
       signed_as: agentId,
       anchor: `did:ethr:${signerAddress}`,
-      hint: 'Pass this object as the `payload` of `act` on a rev-196 signed-request affordance (e.g. iep:action urn:iep:action:foxxi:review-record). The endpoint verifies your delegation on your own pod — no key material leaves the relay.',
+      /**
+       * ── ★★ THE HINT NAMED AN IDENTIFIER THAT NO LONGER EXISTS ──────────────────
+       *
+       * This said `urn:iep:action:foxxi:review-record`. The published affordance uses
+       * `https://relay.interego.xwisee.com/ns/iep/action/foxxi/review-record` — the urn→URL
+       * migration moved it, and this line was not moved with it.
+       *
+       * MEASURED, live: a delegate asked to evaluate itself, read this hint, invoked the URN, and
+       * got "no affordance with that action in the descriptor". It then reported to its human that
+       * Foxxi was unreachable. It had done exactly what the relay told it to do, and the relay was
+       * wrong — a stale identifier in a hint is not cosmetic when the reader is an agent that
+       * cannot tell a typo from a fact.
+       *
+       * ★ AND IT NOW NAMES WHERE THE AFFORDANCE IS DECLARED, not only the action. The other half
+       * of that delegate's failure was invoking against a pod graph that declares no affordance
+       * blocks at all; an action IRI with no descriptor to find it in is unusable, so the hint
+       * hands over both. Both are URLs you can dereference — which is the point of the migration
+       * and the reason a `urn:` here was a defect and not a style.
+       */
+      hint: 'Pass this object as the `payload` of `act` on a rev-196 signed-request affordance. '
+        + 'Foxxi performance review, for example, declares one at '
+        + 'https://foxxi-bridge.interego.xwisee.com/agent/review-record/affordance with '
+        + 'iep:action https://relay.interego.xwisee.com/ns/iep/action/foxxi/review-record — '
+        + 'dereference the descriptor to read the action rather than composing an identifier by hand. '
+        + 'The endpoint verifies your delegation on your own pod — no key material leaves the relay.',
     });
   } catch (err) {
     return JSON.stringify({ error: `sign_request: signing failed: ${(err as Error).message}` });
