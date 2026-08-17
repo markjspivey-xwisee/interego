@@ -676,8 +676,55 @@ function firstPathSegment(reqUrl) {
   }
 }
 
+/**
+ * WHO IS CALLING, counted per minute per caller.
+ *
+ * ── ★★ THIS GATE LOGGED NOTHING FOR A READ, AND IT COST A NIGHT ─────────────
+ *
+ * The gate went unresponsive twice with 700+ requests queued behind its upstream pool, and there
+ * was NO WAY TO SEE WHO WAS SENDING THEM. Reads pass through anonymously by design, so a caller
+ * could saturate the pool without leaving a single line. Two hypotheses died for lack of this data
+ * — a connection leak (real, fixed, and not the cause) and pool sizing (raising 16→96 changed
+ * nothing) — while the actual source stayed invisible.
+ *
+ * ★ AGGREGATED, NOT PER-REQUEST. A line per read would be its own denial of service at 45 req/s
+ * and would bury the signal. One summary a minute names the top callers and paths, which is what
+ * "who is sweeping the pod directory" actually needs.
+ *
+ * ★ AND IT RECORDS THE FORWARDED CLIENT ADDRESS. Behind Railway's proxy `socket.remoteAddress` is
+ * the proxy, so `x-forwarded-for` is the only thing that distinguishes one caller from another.
+ */
+const callers = new Map();
+const paths = new Map();
+let windowStart = Date.now();
+
+function noteCaller(req) {
+  const fwd = String(req.headers['x-forwarded-for'] ?? '').split(',')[0]?.trim();
+  const who = (fwd || req.socket?.remoteAddress || 'unknown')
+    + ' · ' + String(req.headers['user-agent'] ?? 'no-ua').slice(0, 60);
+  callers.set(who, (callers.get(who) ?? 0) + 1);
+  // The pod segment only — the rest of a path is noise for "which pods is it walking".
+  const seg = String(req.url ?? '/').split('/').filter(Boolean)[0] ?? '/';
+  const kind = String(req.url ?? '').includes('/agents') ? 'agents'
+    : String(req.url ?? '').includes('.well-known') ? 'well-known' : 'other';
+  paths.set(kind, (paths.get(kind) ?? 0) + 1);
+  void seg;
+
+  const elapsed = Date.now() - windowStart;
+  if (elapsed < 60_000) return;
+  const total = [...callers.values()].reduce((a, b) => a + b, 0);
+  const top = [...callers].sort((a, b) => b[1] - a[1]).slice(0, 5);
+  console.log(`[css-gate][callers] ${total} request(s) in ${Math.round(elapsed / 1000)}s `
+    + `(${Math.round(total / (elapsed / 1000))}/s) · by kind ${JSON.stringify(Object.fromEntries(paths))}`);
+  for (const [who, n] of top) console.log(`[css-gate][callers]   ${String(n).padStart(6)}  ${who}`);
+  callers.clear();
+  paths.clear();
+  windowStart = Date.now();
+}
+
 const server = createServer(async (req, res) => {
   const method = (req.method ?? 'GET').toUpperCase();
+  try { noteCaller(req); } catch { /* accounting must never fail a request */ }
 
   // ★ HSTS on every response, set once here rather than added to each writeHead.
   //
