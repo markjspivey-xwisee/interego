@@ -2314,6 +2314,12 @@ iep:enrolmentRegister a owl:ObjectProperty ;
     rdfs:domain iep:EvidenceSource ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
+iep:enrolmentDurability a owl:DatatypeProperty ;
+    rdfs:label "enrolment durability"@en ;
+    rdfs:comment "Whether an entry on an enrolment register survives a restart of the service that reads it: \"durable\" (recorded in a store, or seeded from the deployment's configuration) or \"session\" (held only in the reading process). ★ BECAUSE AN ENROLMENT THAT LAPSES SILENTLY IS WORSE THAN ONE THAT WAS REFUSED. A register that listed a session-scoped entry indistinguishably from a persisted one would tell an agent it is being read and then stop being true at the next deploy, with no event anywhere marking the change — the same invisible state the register itself exists to remove, rebuilt one layer along. ★ AND IT IS REPORTED, NOT PROMISED: the value is derived from re-reading the store after the write, so \"durable\" means the entry was found, never that persisting it was attempted."@en ;
+    rdfs:domain iep:EvidenceSource ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
 iep:admits a owl:DatatypeProperty ;
     rdfs:label "admits"@en ;
     rdfs:comment "What an iep:EvidenceSource will accept, in one sentence a caller can act on — the shape, class or modal status required. ★ BECAUSE 'THE STORE IS EMPTY' AND 'THE STORE REFUSED WHAT YOU WROTE' ARE DIFFERENT FAILURES. Live: an agent recorded a step with modal status Hypothetical — an intention — and then reasoned about it as though it were performance. It caught that itself, which is more than the store did: a source that admits only asserted evidence should say so."@en ;

@@ -71,6 +71,28 @@ export const TENANT_TYPES = {
    * ingest upserts the existing CourseCatalog section directly.
    */
   TenantAssignments: `${FXS}TenantAssignments` as IRI,
+  /**
+   * PUBLIC register of the pods whose trajectory steps the mesh projector reads.
+   *
+   * ── ★★ DURABLE ENROLMENT IS NOT A CONFIG EDIT ────────────────────────────────
+   *
+   * This started as an environment variable (FOXXI_MESH_PODS), which made "whose evidence does a
+   * reviewer read" answerable only by a human with deployment access — and a fleet of agents cannot
+   * scale through a person editing config. Runtime enrolment fixed the answer but not its lifetime:
+   * an in-memory set is cleared by any restart, so an agent's enrolment silently lapses on the next
+   * deploy. Both failures are the same one — state the system acts on that its subjects can neither
+   * see nor change.
+   *
+   * So the register is a PUBLIC section on the pod, like TenantMembership: no PII (a pod URL, an
+   * enrolling identity, a timestamp), unencrypted so any bridge reads it via the substrate with no
+   * admin key, and dereferenceable rather than trapped in a process. The env var remains only as a
+   * bootstrap SEED for a fresh deployment.
+   *
+   * ★ Authority does not widen by persisting: the pod written into a row can only ever be the
+   * caller's own (selfBoundPod), and every field is derived from the proven identity — there is no
+   * caller-supplied text in a row.
+   */
+  MeshEnrolmentRegister: `${FXA}MeshEnrolmentRegister` as IRI,
   ConnectorRegistry: `${FXS}ConnectorRegistry` as IRI,
   EnrollmentEventStream: `${FXA}EnrollmentEventStream` as IRI,
   AuditLogStream: `${FXA}AuditLogStream` as IRI,
@@ -294,6 +316,23 @@ export async function publishTenantAssignments(policies: unknown, config: Tenant
     slug: 'tenant-assignments',
     graphIri: `urn:foxxi:tenant:${slugSourceDid(config.authoritativeSource)}:assignments` as IRI,
     typeIri: TENANT_TYPES.TenantAssignments,
+    payload: list,
+  });
+}
+
+/**
+ * Publish the PUBLIC mesh enrolment register (see TENANT_TYPES.MeshEnrolmentRegister).
+ * Rows are `{ pod_url, enrolled_by, enrolled_at }` — the pods whose trajectory steps the projector
+ * sweeps. Unencrypted on purpose: an agent must be able to dereference it and see for itself whether
+ * its evidence is being read.
+ */
+export async function publishMeshEnrolmentRegister(rows: unknown, config: TenantPublishConfig): Promise<PublishResult> {
+  const list = Array.isArray(rows) ? rows : [];
+  return publishSection({
+    config,
+    slug: 'mesh-enrolment-register',
+    graphIri: `urn:foxxi:tenant:${slugSourceDid(config.authoritativeSource)}:mesh-enrolment-register` as IRI,
+    typeIri: TENANT_TYPES.MeshEnrolmentRegister,
     payload: list,
   });
 }

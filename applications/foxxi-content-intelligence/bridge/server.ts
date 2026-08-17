@@ -329,7 +329,7 @@ import {
   type CallerContext,
   type AccessDecisionTrace,
 } from '../src/policy.js';
-import { deriveAdminKeyPair, publishTenantMembership, publishCourseCatalog, publishTenantAssignments, publishCoursePackage, TENANT_TYPES, type TenantPublishConfig } from '../src/tenant-publisher.js';
+import { deriveAdminKeyPair, publishTenantMembership, publishCourseCatalog, publishTenantAssignments, publishCoursePackage, publishMeshEnrolmentRegister, TENANT_TYPES, type TenantPublishConfig } from '../src/tenant-publisher.js';
 import { attachXapiLrsRoutes, listStoredStatements, storeStatementInternal, getStatementStore } from '../src/xapi-lrs.js';
 import type { StoredStatement } from '../src/statement-store.js';
 import { attachCmi5LmsRoutes, cmi5BearerTenant, observeCmi5Statement } from '../src/cmi5-lms.js';
@@ -957,24 +957,119 @@ const CONFIGURED_MESH_PODS: string[] = (process.env.FOXXI_MESH_PODS ?? '')
  * There is no parameter here to abuse, which is a stronger guarantee than any check I could write:
  * enrolling a pod you cannot prove you are is not rejected, it is unrepresentable.
  *
- * ★ SESSION-SCOPED, AND THE REGISTER SAYS SO. These are held in memory and are gone on restart.
- * That is a real limitation and exactly the kind of invisible state that caused the incident this
- * whole path comes from — so the register marks them, and `whyEmpty` reports enrolment from the
- * live set. An agent can therefore SEE that its enrolment is session-scoped rather than discover it
- * after a deploy. Durable enrolment means writing to a pod and is the next step, not this one.
+ * ★ THIS MAP IS NOW THE FALLBACK, NOT THE STORE. Enrolment persists to a PUBLIC section on the pod
+ * (TENANT_TYPES.MeshEnrolmentRegister), so it survives a restart without anyone editing config. An
+ * in-memory-only enrolment silently lapsed on the next deploy — the same invisible state one layer
+ * along. Rows land here too, as a write-through cache and as the honest fallback when the pod write
+ * fails: in that case the response says session-scoped, because claiming durability we did not
+ * achieve is the exact failure this path exists to remove.
  */
 const sessionEnrolled = new Map<string, { at: string; by: string }>();
 
 /**
- * Every pod the projector reads: configured plus runtime-enrolled.
+ * The durable register, read from the pod and refreshed on write.
+ *
+ * ★ CACHED RATHER THAN RE-READ PER CALL, because `meshPods()` is called on every projector cycle,
+ * every review, every register GET and every course hydration — a pod fetch on each would put a
+ * network round-trip inside a hot synchronous path. It is hydrated at boot and updated write-through,
+ * and re-read on each projector cycle so a SIBLING replica's enrolment is picked up within a cycle.
+ */
+const durableEnrolled = new Map<string, { at: string; by: string }>();
+
+/** A row as it is stored on the pod. Every field is derived from a proven identity — no caller text. */
+interface MeshEnrolmentRow { pod_url: string; enrolled_by: string; enrolled_at: string }
+
+/**
+ * A hard cap on durable rows, because enrolment is reachable by anyone holding any wallet.
+ *
+ * ★ EVERY ENROLLED POD IS FETCHED ONCE PER PROJECTOR CYCLE, so the enrolled set is not just memory —
+ * it is recurring outbound work and a growing pod section. Rate limiting bounds the RATE per IP but
+ * nothing bounded the TOTAL, so a wallet-cycling caller could grow the sweep set without limit and
+ * degrade the projector for every real agent. At the cap, enrolment REFUSES with 503 and says so
+ * rather than accepting and quietly not sweeping.
+ */
+const MESH_ENROLMENT_CAP = Number(process.env.FOXXI_MESH_ENROLMENT_CAP ?? 200);
+
+/** Normalized pod key — one row per pod regardless of trailing-slash/case spelling. */
+const podKey = (u: string): string => u.replace(/\/+$/, '').toLowerCase();
+
+/** Load the durable register from the pod into the cache. Absent/unreadable → empty, never throws. */
+async function hydrateDurableEnrolment(): Promise<number> {
+  if (!tenantPodUrl) return 0;
+  const rows = await readSectionArray(tenantPodUrl, TENANT_TYPES.MeshEnrolmentRegister);
+  durableEnrolled.clear();
+  for (const r of rows) {
+    const pod = typeof r.pod_url === 'string' ? r.pod_url : '';
+    // ★ A ROW IS ONLY HONOURED IF IT IS STILL A PLAUSIBLE POD URL. The register is public; treating
+    // whatever it holds as a fetch target would make a pod-write elsewhere into an SSRF sink for the
+    // projector. safePublicUrlOrUndefined is the same choke point the resolver uses.
+    if (!pod || !safePublicUrlOrUndefined(pod)) continue;
+    durableEnrolled.set(pod, {
+      at: typeof r.enrolled_at === 'string' ? r.enrolled_at : '(unknown)',
+      by: typeof r.enrolled_by === 'string' ? r.enrolled_by : '(unknown)',
+    });
+  }
+  return durableEnrolled.size;
+}
+
+/**
+ * Persist one enrolment. Returns whether the pod now durably holds it.
+ *
+ * ★ RE-READS BEFORE WRITING so two replicas (or two concurrent callers) cannot clobber each other's
+ * rows — the section is a whole-array publish, so a blind write of the local cache would drop any row
+ * added since hydration.
+ */
+async function persistEnrolment(row: MeshEnrolmentRow): Promise<boolean> {
+  if (!tenantPodUrl) return false;
+  try {
+    const current = await readSectionArray(tenantPodUrl, TENANT_TYPES.MeshEnrolmentRegister);
+    const kept = current.filter((r) => typeof r.pod_url === 'string' && podKey(r.pod_url) !== podKey(row.pod_url));
+    if (kept.length + 1 > MESH_ENROLMENT_CAP) return false;
+    const next = [...kept, row as unknown as Record<string, unknown>];
+    await publishMeshEnrolmentRegister(next, publishConfigFor(tenantPodUrl, sourceForPod(tenantPodUrl)));
+    invalidateTenantCache(tenantPodUrl);
+    await hydrateDurableEnrolment();
+    return durableEnrolled.has(row.pod_url);
+  } catch (err) {
+    console.error(`[foxxi-bridge][mesh] durable enrolment write failed for ${row.pod_url}: ${(err as Error).message}`);
+    return false;
+  }
+}
+
+/**
+ * Every pod the projector reads: seeded by config, plus durably enrolled on the pod, plus this
+ * process's session fallback.
  *
  * ★ ONE READER FOR NINE CALL SITES. `MESH_PODS` was referenced directly by the projector, the
  * course hydrator, the register, the boot log and the review's `whyEmpty` — and an enrolment that
  * reached only some of them would be the worst of both worlds: an agent told it was enrolled whose
  * steps some paths still ignored.
+ *
+ * ★ DEDUPED ON THE NORMALIZED KEY, because the same pod can now arrive from three provenances with
+ * different trailing-slash/case spellings — and a duplicate is not cosmetic here: it is one extra
+ * pod fetch per projector cycle, forever, and it would make the register report a pod twice.
  */
 function meshPods(): string[] {
-  return [...CONFIGURED_MESH_PODS, ...sessionEnrolled.keys()];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const pod of [...CONFIGURED_MESH_PODS, ...durableEnrolled.keys(), ...sessionEnrolled.keys()]) {
+    const k = podKey(pod);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(pod);
+  }
+  return out;
+}
+
+/** How a pod came to be read — reported per entry so an agent can tell what will survive a restart. */
+function enrolmentProvenance(pod: string): { kind: 'configured' | 'durable' | 'session'; at?: string; by?: string } {
+  const k = podKey(pod);
+  if (CONFIGURED_MESH_PODS.some((p) => podKey(p) === k)) return { kind: 'configured' };
+  const d = durableEnrolled.get(pod) ?? [...durableEnrolled.entries()].find(([p]) => podKey(p) === k)?.[1];
+  if (d) return { kind: 'durable', at: d.at, by: d.by };
+  const s = sessionEnrolled.get(pod) ?? [...sessionEnrolled.entries()].find(([p]) => podKey(p) === k)?.[1];
+  if (s) return { kind: 'session', at: s.at, by: s.by };
+  return { kind: 'session' };
 }
 
 /** Kept as a name for the CONFIGURED set only, so a reader cannot mistake it for the live one. */
@@ -1118,8 +1213,15 @@ async function landMeshBatch(events: ProjectedMeshEvent[]): Promise<number> {
 
 /** PULL cycle: discover every mesh pod, project, land sequentially, refresh trajectories. */
 async function runMeshProjectionCycle(): Promise<{ pods: number; projected: number; agents: number }> {
+  if (meshProjectionRunning) return { pods: 0, projected: 0, agents: 0 };
+  // ★ RE-READ THE DURABLE REGISTER EACH CYCLE, before deciding there is nothing to do. Enrolment is
+  // now a pod write, so a SIBLING replica (or a restart of this one) can enrol a pod this process has
+  // never seen — reading only a boot-time snapshot would mean an agent enrolled successfully against
+  // one replica and swept by none of the others. Checked before the empty-set early return, or a
+  // deployment that starts with nothing configured would never notice its first enrolment.
+  await hydrateDurableEnrolment().catch(() => 0);
   const pods = meshPods();
-  if (pods.length === 0 || meshProjectionRunning) return { pods: 0, projected: 0, agents: 0 };
+  if (pods.length === 0) return { pods: 0, projected: 0, agents: 0 };
   meshProjectionRunning = true;
   const events: ProjectedMeshEvent[] = [];
   const stepsByAgent = new Map<string, TrajectoryStepInput[]>();
@@ -4436,8 +4538,32 @@ app.post('/agent/mesh/enrolment', async (req, res) => {
     // ★ THE AUTHORITY CHECK. Not "is the requested pod mine" — the resolver simply cannot return a
     // pod that is not. An explicit `pod_url` is honoured only when it IS the caller's own.
     const pod = selfBoundPod(bound.callerDid, typeof b.pod_url === 'string' ? b.pod_url : undefined);
-    const already = meshPods().some((p) => p.replace(/\/+$/, '').toLowerCase() === pod.replace(/\/+$/, '').toLowerCase());
-    if (!already) sessionEnrolled.set(pod, { at: new Date().toISOString(), by: bound.callerDid });
+    const already = meshPods().some((p) => podKey(p) === podKey(pod));
+
+    // ★ THE CAP IS A REFUSAL, NOT A SILENT DROP. Every enrolled pod costs one outbound fetch per
+    // projector cycle forever, so an unbounded set degrades the projector for every real agent.
+    // Accepting past the cap and not sweeping would be precisely the lie this path exists to remove.
+    if (!already && meshPods().length >= MESH_ENROLMENT_CAP) {
+      res.status(503).json({
+        ok: false,
+        error: `enrolment register is at its cap of ${MESH_ENROLMENT_CAP} pods — this pod was NOT enrolled and its steps are not being read`,
+        detail: 'Every enrolled pod is swept each projector cycle, so the register is bounded. Ask the operator to raise FOXXI_MESH_ENROLMENT_CAP or to retire stale entries.',
+        register: `${(process.env.BRIDGE_DEPLOYMENT_URL ?? `http://localhost:${PORT}`).replace(/\/$/, '')}/agent/mesh/enrolment`,
+      });
+      return;
+    }
+
+    const at = new Date().toISOString();
+    // ★★ PERSIST FIRST, THEN REPORT WHAT ACTUALLY HAPPENED. The session map is the FALLBACK for a
+    // failed pod write, not the store — so an agent is never told "durable" on the strength of a
+    // write we did not verify. persistEnrolment re-reads before publishing (whole-array section) and
+    // confirms the row is present afterwards.
+    let durable = false;
+    if (!already) {
+      durable = await persistEnrolment({ pod_url: pod, enrolled_by: bound.callerDid, enrolled_at: at });
+      if (!durable) sessionEnrolled.set(pod, { at, by: bound.callerDid });
+    }
+    const provenance = enrolmentProvenance(pod);
 
     const base = (process.env.BRIDGE_DEPLOYMENT_URL ?? `http://localhost:${PORT}`).replace(/\/$/, '');
     res.json({
@@ -4448,12 +4574,16 @@ app.post('/agent/mesh/enrolment', async (req, res) => {
       // relay's key, so reporting the signer alone would name the wrong party.
       enrolledAs: bound.callerDid,
       authMode: bound.authMode,
-      // ★ SAID PLAINLY, because an enrolment that quietly lapses is the invisible state this whole
-      // path was built to remove. A restart clears the session set; the register marks which is
-      // which, and a review's `whyEmpty` reports enrolment from the live set either way.
-      durability: already
-        ? 'this pod was already enrolled — see the register for whether that is configured or session-scoped'
-        : 'SESSION-SCOPED: held in memory and cleared when this service restarts. Re-enrol after a deploy, or ask the operator to add it to FOXXI_MESH_PODS for a durable one.',
+      // ★★ THE DURABILITY ACTUALLY ACHIEVED, never the one intended. The pod write is verified by
+      // re-reading the register, so `durable` means the row is there — and when it is not, this says
+      // session-scoped instead of claiming a persistence that would silently lapse on the next
+      // deploy. That gap between claimed and real state is the whole reason this path exists.
+      durable: provenance.kind !== 'session',
+      durability: provenance.kind === 'configured'
+        ? 'DURABLE: this pod is seeded from deployment configuration and survives a restart.'
+        : provenance.kind === 'durable'
+          ? 'DURABLE: recorded on the tenant pod, so it survives a restart of this service. No operator action needed.'
+          : 'SESSION-SCOPED: the durable write to the pod did not succeed, so this is held only in this process and is cleared when the service restarts. Your steps ARE being swept now; re-enrol later to retry making it durable.',
       sweptEveryMs: MESH_PROJECT_INTERVAL_MS,
       register: `${base}/agent/mesh/enrolment`,
       pods: meshPods(),
@@ -4471,12 +4601,16 @@ app.get('/agent/mesh/enrolment', (_req, res) => {
     const seg = (() => { try { return new URL(pod).pathname.split('/').filter(Boolean)[0] ?? ''; } catch { return ''; } })();
     const label = MESH_ACTOR_LABELS[seg] ?? seg;
     /**
-     * ★ DURABLE OR SESSION-SCOPED, STATED PER ENTRY. An agent that enrolled itself is read exactly
-     * like a configured pod until this service restarts, at which point it silently is not — and a
-     * register that hid that difference would be the same invisible state, one layer along. A
-     * reader can now see which of its two answers it is getting.
+     * ★ HOW IT WAS ENROLLED, STATED PER ENTRY. A register that hid the difference between an entry
+     * that survives a restart and one that does not would be the same invisible state, one layer
+     * along — an agent would read "enrolled" and be silently wrong after the next deploy.
      */
-    const session = sessionEnrolled.get(pod);
+    const prov = enrolmentProvenance(pod);
+    const description = prov.kind === 'configured'
+      ? 'Durable: seeded from this deployment\'s configuration, so it survives a restart.'
+      : prov.kind === 'durable'
+        ? `Durable: enrolled at ${prov.at} by ${lit(String(prov.by))} and recorded on the pod, so it survives a restart.`
+        : `SESSION-SCOPED: enrolled at ${prov.at} by ${lit(String(prov.by))}, held only in this process because the durable write did not succeed — it is cleared when this service restarts. Re-enrol to retry.`;
     return `    iep:enrolled [
         a iep:EvidenceSource, dcat:Dataset ;
         rdfs:label "${lit(label)}" ;
@@ -4484,10 +4618,8 @@ app.get('/agent/mesh/enrolment', (_req, res) => {
         dcat:accessURL <${pod}> ;
         iep:populatedBy <${base}/agent/mesh-event> ;
         dcat:accessService <${base}/agent/mesh-event> ;
-        dct:description "${session
-      ? 'SESSION-SCOPED: enrolled at ' + session.at + ' by ' + lit(session.by)
-        + ' and cleared when this service restarts. Re-enrol after a deploy, or ask the operator for a durable entry.'
-      : 'Durable: configured for this deployment, so it survives a restart.'}"
+        iep:enrolmentDurability "${prov.kind === 'session' ? 'session' : 'durable'}" ;
+        dct:description "${description}"
     ] ;`;
   }).join('\n');
   res.type('text/turtle').send(`@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
@@ -4521,7 +4653,7 @@ app.get('/agent/mesh/enrolment', (_req, res) => {
         a hydra:Operation, iep:Affordance, ieh:Affordance ;
         hydra:method "POST" ;
         hydra:title "Enrol your own pod" ;
-        rdfs:comment "Enrol the pod you can prove is yours. Authority is structural rather than checked: the caller's own pod is resolved from the signature, and an explicit pod_url is honoured only when it resolves to the same actor and origin — so naming another agent's pod enrols yours instead. Session-scoped: cleared on restart, and each entry above says which it is." ;
+        rdfs:comment "Enrol the pod you can prove is yours. Authority is structural rather than checked: the caller's own pod is resolved from the signature, and an explicit pod_url is honoured only when it resolves to the same actor and origin — so naming another agent's pod enrols yours instead. The enrolment is recorded on the tenant pod and survives a restart; if that write fails it is held for this process only and the response and the entry above both say so. No operator action is needed either way." ;
         hydra:target <${self}> ;
         dcat:accessURL <${self}> ;
         iep:requiresSignedRequest true ;
@@ -7705,10 +7837,16 @@ app.listen(PORT, () => {
    * immediately when the live set is empty, so an idle poller costs one comparison a minute.
    */
   const configured = MESH_PODS.length;
-  console.log(configured > 0
-    ? `[foxxi-bridge][mesh] virtualizing ${configured} configured agent pod(s) every ${MESH_PROJECT_INTERVAL_MS}ms into per-agent lens:<agent> views (on-read, never written back to the agent pod); agents may enrol their own pod at POST /agent/mesh/enrolment`
-    : `[foxxi-bridge][mesh] no FOXXI_MESH_PODS configured — the poller is running anyway, so a pod enrolled at POST /agent/mesh/enrolment is swept without a restart`);
-  void runMeshProjectionCycle().catch(e => console.error('[foxxi-bridge][mesh] initial cycle:', (e as Error).message));
+  // ★ HYDRATE THE DURABLE REGISTER BEFORE THE FIRST CYCLE, so an enrolment made before this restart
+  // is honoured immediately rather than a cycle later — and so the boot log reports the set the
+  // projector will actually read, not just the configured seed.
+  void hydrateDurableEnrolment()
+    .catch((e) => { console.error('[foxxi-bridge][mesh] durable register hydrate failed:', (e as Error).message); return 0; })
+    .then((durable) => {
+      console.log(`[foxxi-bridge][mesh] sweeping ${meshPods().length} pod(s) every ${MESH_PROJECT_INTERVAL_MS}ms into per-agent lens:<agent> views (on-read, never written back to the agent pod) — ${configured} seeded from config, ${durable} durably enrolled on the pod; agents enrol their own pod at POST /agent/mesh/enrolment (cap ${MESH_ENROLMENT_CAP})`);
+      return runMeshProjectionCycle();
+    })
+    .catch(e => console.error('[foxxi-bridge][mesh] initial cycle:', (e as Error).message));
   setInterval(() => {
     void runMeshProjectionCycle().catch(e => console.error('[foxxi-bridge][mesh] cycle:', (e as Error).message));
   }, MESH_PROJECT_INTERVAL_MS);

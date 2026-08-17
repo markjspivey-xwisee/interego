@@ -45,7 +45,35 @@ async function get(path: string, accept = 'text/turtle'): Promise<{ status: numb
   return { status: r.status, text: await r.text().catch(() => '') };
 }
 
+/**
+ * ★★ THE ONLY HONEST TEST OF "IT SURVIVES A RESTART" IS A RESTART.
+ *
+ * Run with `--expect-enrolled <podUrl>` AFTER redeploying the service: it asserts the pod is still in
+ * the register and still marked durable. Asserting durability from the write path alone would be
+ * exactly the sin this whole path exists to remove — believing a claim about persistence without
+ * checking the thing persisted.
+ */
+async function expectEnrolled(pod: string): Promise<never> {
+  console.log(`bridge=${BRIDGE}\nasserting ${pod} survived the restart\n`);
+  const reg = await get('/agent/mesh/enrolment');
+  ok('register readable after restart', reg.status === 200, `HTTP ${reg.status}`);
+  ok('★ the pod is STILL enrolled after a full service restart', reg.text.toLowerCase().includes(norm(pod)), pod);
+  const block = reg.text.split('iep:enrolled').find((b) => b.toLowerCase().includes(norm(pod))) ?? '';
+  ok('and it is still marked durable', /iep:enrolmentDurability\s+"durable"/.test(block));
+  // Distinguishes a genuinely persisted row from one that merely happens to be in FOXXI_MESH_PODS —
+  // otherwise this test would pass for an operator config edit and prove nothing about durability.
+  ok('recorded on the pod, not merely seeded from config', /recorded on the pod/.test(block));
+  console.log(`\nRESULT: ${pass} passed, ${fail} failed`);
+  process.exit(fail === 0 ? 0 : 1);
+}
+
 async function main(): Promise<void> {
+  const expectIdx = process.argv.indexOf('--expect-enrolled');
+  if (expectIdx !== -1) {
+    const pod = process.argv[expectIdx + 1];
+    if (!pod) { console.error('--expect-enrolled needs a pod URL'); process.exit(2); }
+    await expectEnrolled(pod);
+  }
   console.log(`bridge=${BRIDGE}\n`);
 
   console.log('[0] the register is dereferenceable and advertises its own write control');
@@ -78,7 +106,11 @@ async function main(): Promise<void> {
   ok('enrolment accepted', e1.status === 200 && e1.body?.ok === true, `HTTP ${e1.status}`);
   ok('enrolled the caller\'s own derived pod', norm(e1.body?.enrolled) === norm(podA), e1.body?.enrolled);
   ok('reported as a new enrolment', e1.body?.alreadyEnrolled === false);
-  ok('says plainly that it is session-scoped', /SESSION-SCOPED/.test(String(e1.body?.durability)), String(e1.body?.durability).slice(0, 60) + '…');
+  // ★ DURABILITY IS A VERIFIED FACT, NOT AN INTENTION. The handler re-reads the register after
+  // publishing and only then reports `durable` — so this asserts the row is really there.
+  ok('★ enrolment is DURABLE, needing no operator action', e1.body?.durable === true, String(e1.body?.durability).slice(0, 70) + '…');
+  ok('the durability copy says it survives a restart', /survives a restart/i.test(String(e1.body?.durability)));
+  ok('and it does NOT tell the agent to ask an operator', !/ask the operator/i.test(String(e1.body?.durability)));
   ok('answers with the live enrolled set, including the new pod',
     Array.isArray(e1.body?.pods) && e1.body.pods.some((p: string) => norm(p) === norm(podA)), `${e1.body?.pods?.length} pods`);
   ok('names the register as a URL', typeof e1.body?.register === 'string' && e1.body.register.endsWith('/agent/mesh/enrolment'));
@@ -131,14 +163,16 @@ async function main(): Promise<void> {
   const u3 = await post('/agent/mesh/enrolment', tampered);
   ok('a payload edited after signing refused 401', u3.status === 401, `HTTP ${u3.status}`);
 
-  console.log('\n[7] the register now REPORTS the runtime enrolments, marked as session-scoped');
+  console.log('\n[7] the register REPORTS the runtime enrolments, each marked with how it will survive');
   const reg1 = await get('/agent/mesh/enrolment');
   ok('A appears in the register', reg1.text.toLowerCase().includes(norm(podA)), podA);
   ok('B appears in the register', reg1.text.toLowerCase().includes(norm(podB)), podB);
-  ok('runtime entries are marked session-scoped, not durable', /Session-scoped/i.test(reg1.text));
+  ok('runtime entries are marked DURABLE, recorded on the pod', /Durable: enrolled at .* and recorded on the pod/.test(reg1.text));
+  ok('durability is machine-readable per entry, not only prose', /iep:enrolmentDurability\s+"durable"/.test(reg1.text));
   ok('each runtime entry records when and by whom', /enrolled at \d{4}-\d\d-\d\dT[^ ]+ by did:ethr:/i.test(reg1.text));
-  ok('durable entries are still marked durable', /Durable: configured for this deployment/.test(reg1.text));
+  ok('config-seeded entries are still marked durable', /Durable: seeded from this deployment/.test(reg1.text));
   ok('no attacker-origin entry leaked into the register', !reg1.text.includes('evil.example'));
+  ok('nothing is left claiming session scope', !/iep:enrolmentDurability\s+"session"/.test(reg1.text));
 
   /**
    * ★★ THE LOOP THAT CLOSES. The incident this whole path comes from was an agent getting an empty
@@ -174,6 +208,9 @@ async function main(): Promise<void> {
     String(r2.body?.whyEmpty?.remedy ?? '').slice(0, 90) + '…');
 
   console.log(`\nRESULT: ${pass} passed, ${fail} failed`);
+  // Emitted for the restart half of the durability proof: redeploy, then re-run with
+  //   --expect-enrolled <this pod>
+  console.log(`\nTO PROVE DURABILITY: redeploy the bridge, then run\n  npx tsx ${process.argv[1]} --expect-enrolled ${ownPodOf(A, origin)}`);
   process.exit(fail === 0 ? 0 : 1);
 }
 main().catch(e => { console.error('mesh-enrolment-authority-live error:', e); process.exit(2); });
