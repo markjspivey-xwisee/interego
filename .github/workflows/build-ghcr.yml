@@ -85,6 +85,23 @@ jobs:
   build:
     name: ${{ matrix.image }}
     needs: validate-input
+    # ── ★★ THE SKIP HAS TO BE HERE, NOT IN A STEP ─────────────────────────────
+    #
+    # `Should this matrix leg run?` below already skips the BUILD for an unrequested image, and it
+    # works — but it is too late to matter. GitHub downloads every action a job references during
+    # "Set up job", BEFORE any step (and therefore any step-level `if:`) runs. So a dispatch for one
+    # image still started thirteen runners and pulled `docker/setup-buildx-action` thirteen times,
+    # then skipped twelve builds.
+    #
+    # MEASURED, and it took five image builds down: repeated single-image dispatches in one session
+    # earned `429 Too Many Requests` from codeload on that action, failing
+    # interego-foxxi-bridge, interego-identity, interego-wsp-bridge, interego-pgsl-browser and
+    # interego-foxxi-dashboard — none of which had anything wrong with them. Thirteen legs per
+    # dispatch is thirteen times the rate-limit budget for a build of one thing.
+    #
+    # A job-level `if:` skips the leg entirely: no runner, no setup, no download. The step-level
+    # gate stays as it is — harmless when the job runs, and it keeps the outputs later steps read.
+    if: inputs.image == '' || inputs.image == matrix.image
     runs-on: ubuntu-latest
     permissions:
       contents: read
