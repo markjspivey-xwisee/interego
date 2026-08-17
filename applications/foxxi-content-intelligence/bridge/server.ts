@@ -375,6 +375,7 @@ import { attachOauthTokenRoute, oauthPublicKeyFrom } from '../src/xapi-oauth.js'
 import { attachHypermediaRoutes } from '../src/hypermedia-resources.js';
 import { callerIsOperator } from '../src/operator-auth.js';
 import { assertSafeFetchTarget, safePublicUrlOrUndefined, safeFetch, guardedFetchFn } from '../src/ssrf-guard.js';
+import { resolveSubjectPodUrlPure } from '../src/subject-pod-url.js';
 import { bindPerformanceToEvidence, EVIDENCE_BINDING_EXT, EVIDENCE_SHAPE_EXT } from '../src/performance-evidence.js';
 import type {
   IRI,
@@ -572,6 +573,18 @@ function samePod(a?: string, b?: string): boolean {
  * where assign_audience published a "<undefined>" policy to the wrong pod).
  * Returns the recovered signer, or null when no envelope is present. Throws on a
  * present-but-invalid envelope.
+ *
+ * ── ★★ WHICH OF THE TWO IDENTITY HELPERS TO REACH FOR ───────────────────────────────────────
+ *
+ * This one returns a recovered ADDRESS and deliberately ignores the claimed `agent_id`: every caller
+ * derives authority from the KEY (an ownership check on the target pod, or an actor comparison), so
+ * a forged `agent_id` buys nothing. Correct for "prove you hold the key that owns this pod".
+ *
+ * Use `bindSignedCaller` instead whenever the answer must be WHICH AGENT is calling. Relay-mediated
+ * agents hold no key — the relay signs for them — so the recovered address is the RELAY's, and an
+ * address is not a DID. The enrolment route reached for this helper and got both wrong at once: a
+ * bare address resolved to the shared tenant pod, and delegated agents (most of a fleet) could not
+ * enrol themselves at all while being told they had.
  */
 function mergeSignedEnvelope(args: Record<string, unknown>): string | null {
   if (typeof args._signature !== 'string' || typeof args._signed_payload !== 'string') return null;
@@ -977,53 +990,13 @@ function lensTenantFor(agent: string): TenantId { return ('lens:' + agent) as Te
  *  the same host as the tenant pod); falls back to the tenant pod only if
  *  nothing resolves. */
 function resolveSubjectPodUrl(didOrWebId: string | undefined, explicit?: string): string {
-  // SSRF choke point: an explicit caller-supplied pod URL is honored ONLY when it is a
-  // public http(s) target. A loopback/link-local/private literal (127.0.0.1, 169.254.169.254,
-  // 10.*, internal hosts) is IGNORED — we fall through to deriving the pod from the DID —
-  // so a caller cannot steer any server-side pod fetch at an internal address. (A public
-  // hostname that DNS-resolves to a private IP is additionally caught by assertSafeFetchTarget
-  // right before each delegation/credential fetch.)
-  if (explicit) {
-    const safe = safePublicUrlOrUndefined(explicit);
-    if (safe) {
-      // Canonicalize to a SINGLE-SEGMENT pod root <origin>/<firstSeg>/ — a pod is exactly one
-      // segment under its origin. Returning a multi-segment override verbatim let a caller pass
-      // the selfBoundPod last-segment actor check (…/eth-victim/eth-CALLER/) while a first-segment
-      // consumer (void-credential's ownership check, the encryption-key write path) acted on a
-      // DIFFERENT segment (eth-victim) — a cross-agent write/delete. Collapsing to the first
-      // segment makes last==first, so the actor comparison and the consumers agree.
-      try {
-        const u = new URL(safe);
-        const seg = u.pathname.split('/').filter(Boolean)[0];
-        if (seg) return `${u.origin}/${seg}/`;
-      } catch { /* fall through to identity derivation below */ }
-    }
-    // else: unsafe explicit target — ignore it and derive from the identity below.
-  }
-  const id = (didOrWebId ?? '').trim();
-  if (!id) return tenantPodUrl;
-  const tenantOrigin = (() => { try { return new URL(tenantPodUrl).origin; } catch { return ''; } })();
-  // An agent pod id (u-pk-/u-did-/eth-) embedded in ANY identity form — a
-  // did:web (…:agents:codex-u-pk-<id>), a bare id, or a WebID path — resolves to
-  // that agent's OWN CSS pod. WITHOUT this, did:web/u-pk agents (e.g. a Codex
-  // agent like boozer) fell through to the tenant pod, so their self-sovereign
-  // records (performance, course completions, SCORM outcomes) misrouted to
-  // …/foxxi/ instead of …/<id>/ — the writer-side analogue of the WebID
-  // inbox-routing defect. Checked FIRST so an identity-service WebID
-  // (…/users/<id>/profile) maps to <id>, not its first path segment ("users").
-  const idm = id.match(/(u-pk-|u-did-|u-eth-|eth-)[0-9a-z]+/i);
-  if (idm && tenantOrigin) return `${tenantOrigin}/${idm[0].toLowerCase()}/`;
-  if (/^https?:\/\//.test(id)) {
-    try {
-      const u = new URL(id);
-      const seg = u.pathname.split('/').filter(Boolean)[0];
-      if (seg) return `${u.origin}/${seg}/`;
-    } catch { /* fall through */ }
-  }
-  const m = /^did:ethr:(?:0x)?([0-9a-fA-F]{40})\b/.exec(id);
-  if (m && tenantOrigin) return `${tenantOrigin}/eth-${m[1].slice(0, 12).toLowerCase()}/`;
-  return tenantPodUrl;
+  // ★ ONE IMPLEMENTATION, IN A MODULE WITH TESTS. This decides whose pod every self-sovereign read
+  // and write touches, and it was private to this file — so nothing could unit-test the branch that
+  // silently returned the SHARED tenant pod for an identity form it did not recognize. See
+  // src/subject-pod-url.ts for the measured failure that moved it.
+  return resolveSubjectPodUrlPure({ tenantPodUrl, identity: didOrWebId, explicit, safeUrl: safePublicUrlOrUndefined });
 }
+
 const MESH_PROJECT_INTERVAL_MS = Number(process.env.FOXXI_MESH_PROJECT_INTERVAL_MS ?? 60_000);
 // Config-injected pod-segment → friendly actor name map (NO application roster
 // baked into the projector). Format: FOXXI_MESH_ACTOR_LABELS="seg=name,seg2=name2".
@@ -1056,6 +1029,66 @@ function selfBoundPod(callerDid: string, explicit?: string): string {
   const sameActor = actorForPod(override, MESH_ACTOR_LABELS) === actorForPod(derived, MESH_ACTOR_LABELS);
   const sameOrigin = (() => { try { return new URL(override).origin === new URL(derived).origin; } catch { return false; } })();
   return (sameActor && sameOrigin) ? override : derived;
+}
+
+/**
+ * ── ★★ WHO IS CALLING, FOR THE TWO KINDS OF AGENT THERE ACTUALLY ARE ────────────────────────
+ *
+ * DIRECT — the signer IS the agent: `agent_id` embeds the recovered address (the maintainer, any
+ * external wallet-holding identity).
+ *
+ * DELEGATED — a relay-mediated agent has NO key of its own, so the relay signs on its behalf via
+ * `sign_request`. We verify the agent's delegation on ITS OWN pod is CryptographicallyVerified and
+ * that the request signer is that credential's anchor key — so the relay can sign only for agents it
+ * has actually been delegated to, and the VC (read from the agent's pod, never from the envelope)
+ * cannot be forged. No relay vouching secret either way.
+ *
+ * ★ EXTRACTED BECAUSE THE SECOND CALLER GOT IT WRONG. This lived inline in /agent/review-record.
+ * The enrolment route, written later, reached for `mergeSignedEnvelope` instead — which returns the
+ * recovered ADDRESS and ignores `agent_id` entirely. Two consequences, both measured live: a bare
+ * address resolved to the shared tenant pod (fixed in resolveSubjectPodUrl), and DELEGATED agents
+ * could not enrol themselves AT ALL — the relay signs, so the pod resolved from the signature is the
+ * RELAY's, and the agent would be told it was enrolled while its own pod stayed unread. Since
+ * relay-mediated agents are most of a fleet, "self-enrolment" would have shipped working only for
+ * the one class of agent that already had a human able to edit config for it.
+ *
+ * ★ AND THE DELEGATION READ IS PRE-AUTHORIZATION, so every hop is SSRF-guarded and the pod is
+ * derived from the agent id — never a caller-supplied override, which was delegation-source
+ * confusion plus an unguarded fetch sink (round-32).
+ */
+type BoundCaller =
+  | { ok: true; callerDid: string; authMode: 'direct' | 'delegated'; signer: string; payload: Record<string, unknown> }
+  | { ok: false; status: number; error: string; hint?: string };
+
+async function bindSignedCaller(body: unknown, opts: { hint?: string } = {}): Promise<BoundCaller> {
+  const rec = recoverSignedRequest(body);
+  if (!rec.ok) {
+    return {
+      ok: false, status: 401, error: `agent signature required: ${rec.reason}`,
+      ...(opts.hint ? { hint: opts.hint } : {}),
+    };
+  }
+  const claimedAddr = rec.agentId.toLowerCase().match(/0x[0-9a-f]{40}/)?.[0];
+  if (claimedAddr && claimedAddr === rec.signer.toLowerCase()) {
+    return { ok: true, callerDid: `did:ethr:${rec.signer}`, authMode: 'direct', signer: rec.signer, payload: rec.payload };
+  }
+  const delegationPod = resolveSubjectPodUrl(rec.agentId);
+  let del;
+  try {
+    await assertSafeFetchTarget(delegationPod);
+    del = await verifyAgentDelegation(rec.agentId as unknown as IRI, delegationPod, { verifier: makeWalletDelegationVerifier(), fetch: guardedFetchFn(globalThis.fetch) as never });
+  } catch (err) {
+    return { ok: false, status: 401, error: `delegation verification failed for ${rec.agentId} on ${delegationPod}: ${(err as Error).message}` };
+  }
+  if (!del.valid || del.trustLevel !== 'CryptographicallyVerified') {
+    return { ok: false, status: 401, error: `agent ${rec.agentId} has no cryptographically-verified delegation on ${delegationPod}: ${del.reason ?? del.trustLevel ?? 'unverified'}` };
+  }
+  const vc = await readDelegationCredential(delegationPod, rec.agentId as unknown as IRI, { fetch: guardedFetchFn(globalThis.fetch) as never }).catch(() => null);
+  const anchor = vc?.proof?.signerAddress;
+  if (!anchor || anchor.toLowerCase() !== rec.signer.toLowerCase()) {
+    return { ok: false, status: 401, error: `request signer ${rec.signer} is not the delegation anchor key${anchor ? ` (${anchor})` : ''} — only the key that anchors the agent's delegation may sign for them` };
+  }
+  return { ok: true, callerDid: rec.agentId, authMode: 'delegated', signer: rec.signer, payload: rec.payload };
 }
 
 /** Land one projected mesh event into its agent's OWN derived-view tenant
@@ -4377,40 +4410,44 @@ const REVIEW_RECORD_AFFORDANCE: Affordance = {
  * in it" — returning the list means one round trip instead of two, and means the answer cannot
  * disagree with what a subsequent GET would say.
  */
-app.post('/agent/mesh/enrolment', (req, res) => {
+app.post('/agent/mesh/enrolment', async (req, res) => {
   try {
-    const b = (req.body ?? {}) as Record<string, unknown>;
-    let signer: string | null;
-    try { signer = mergeSignedEnvelope(b); }
-    catch { res.status(401).json({ ok: false, error: 'enrolment requires a valid rev-196 signed-request envelope' }); return; }
-    if (!signer) {
-      res.status(401).json({
-        ok: false,
-        error: 'enrolment requires a signed-request envelope ({ _signature, _signed_payload })',
-        detail: 'Enrolment decides whose evidence a reviewer reads, so it is bound to a caller who can prove which pod is theirs. Sign with the wallet whose pod you are enrolling; the relay tool sign_request produces the envelope.',
-      });
-      return;
-    }
-    // Same shape of limit as the mesh-event push: enrolment is cheap but unbounded churn from a
-    // fresh wallet is still churn on a projector cycle.
+    // Same shape of limit as the mesh-event push: enrolment is cheap, but unbounded churn from a
+    // fresh wallet is still churn on a projector cycle — and the DELEGATED path below does network
+    // reads, so the limit is taken BEFORE the signature work rather than after it.
     const xff = req.headers['x-forwarded-for'];
     const ip = typeof xff === 'string' ? xff.split(',').at(-1)?.trim() ?? 'unknown'
       : Array.isArray(xff) ? xff.at(-1)?.trim() ?? 'unknown' : req.ip ?? 'unknown';
     const rl = checkAgenticRateLimit(ip);
     if (!rl.ok) { res.status(429).json({ ok: false, error: `rate limit — retry in ${rl.retryAfterSeconds}s` }); return; }
 
+    // ★ THE SAME IDENTITY BINDING A REVIEW USES, so a relay-mediated agent can enrol itself too.
+    // Enrolment decides whose evidence a reviewer reads, so it is bound to a caller who can prove
+    // which pod is theirs — and `agent_id` is verified against the signature rather than trusted.
+    const bound = await bindSignedCaller(req.body, {
+      hint: 'Enrolment decides whose evidence a reviewer reads, so it is bound to a caller who can prove which pod is theirs. POST { _signature, _signed_payload: JSON.stringify({ agent_id, timestamp, pod_url? }) }. Wallet-holding agents sign locally; relay-mediated agents get the envelope from the relay `sign_request` tool.',
+    });
+    if (!bound.ok) {
+      res.status(bound.status).json({ ok: false, error: bound.error, ...(bound.hint ? { hint: bound.hint } : {}) });
+      return;
+    }
+    const b = bound.payload;
+
     // ★ THE AUTHORITY CHECK. Not "is the requested pod mine" — the resolver simply cannot return a
     // pod that is not. An explicit `pod_url` is honoured only when it IS the caller's own.
-    const pod = selfBoundPod(signer, typeof b.pod_url === 'string' ? b.pod_url : undefined);
+    const pod = selfBoundPod(bound.callerDid, typeof b.pod_url === 'string' ? b.pod_url : undefined);
     const already = meshPods().some((p) => p.replace(/\/+$/, '').toLowerCase() === pod.replace(/\/+$/, '').toLowerCase());
-    if (!already) sessionEnrolled.set(pod, { at: new Date().toISOString(), by: signer });
+    if (!already) sessionEnrolled.set(pod, { at: new Date().toISOString(), by: bound.callerDid });
 
     const base = (process.env.BRIDGE_DEPLOYMENT_URL ?? `http://localhost:${PORT}`).replace(/\/$/, '');
     res.json({
       ok: true,
       enrolled: pod,
       alreadyEnrolled: already,
-      enrolledAs: signer,
+      // The AGENT that is now enrolled, plus how it proved that — a delegated caller's signer is the
+      // relay's key, so reporting the signer alone would name the wrong party.
+      enrolledAs: bound.callerDid,
+      authMode: bound.authMode,
       // ★ SAID PLAINLY, because an enrolment that quietly lapses is the invisible state this whole
       // path was built to remove. A restart clears the session set; the register marks which is
       // which, and a review's `whyEmpty` reports enrolment from the live set either way.
@@ -4608,52 +4645,20 @@ app.post('/agent/review-record', async (req, res) => {
     //     credential's anchor key — so the relay can sign only for agents it has
     //     actually been delegated to, and the VC (read from the agent's pod, NOT
     //     the envelope) cannot be forged. No relay vouching secret either way.
-    const rec = recoverSignedRequest(req.body);
-    if (!rec.ok) {
-      res.status(401).json({
-        error: `agent signature required: ${rec.reason}`,
-        hint: `POST a rev-196 signed envelope { _signature, _signed_payload: JSON.stringify({ ...args, agent_id, timestamp }) }. Wallet-holding agents sign locally; relay-mediated agents get the envelope from the relay \`sign_request\` tool, then act the published iep:Affordance dereferenceable at ${bridgeBaseUrl}/agent/review-record/affordance.`,
-      });
+    // Recover the rev-196 signature and bind identity in DIRECT or DELEGATED mode — see
+    // bindSignedCaller. Shared with POST /agent/mesh/enrolment so the two cannot drift: enrolment
+    // decides whose evidence THIS handler reads, and it would be incoherent for the two ends of that
+    // to disagree about who a caller is.
+    const bound = await bindSignedCaller(req.body, {
+      hint: `POST a rev-196 signed envelope { _signature, _signed_payload: JSON.stringify({ ...args, agent_id, timestamp }) }. Wallet-holding agents sign locally; relay-mediated agents get the envelope from the relay \`sign_request\` tool, then act the published iep:Affordance dereferenceable at ${bridgeBaseUrl}/agent/review-record/affordance.`,
+    });
+    if (!bound.ok) {
+      res.status(bound.status).json({ error: bound.error, ...(bound.hint ? { hint: bound.hint } : {}) });
       return;
     }
-    const p = rec.payload;
-    const claimedAddr = rec.agentId.toLowerCase().match(/0x[0-9a-f]{40}/)?.[0];
-    let callerDid: string;
-    let authMode: 'direct' | 'delegated';
-    if (claimedAddr && claimedAddr === rec.signer.toLowerCase()) {
-      // DIRECT: the signer is the agent itself.
-      callerDid = `did:ethr:${rec.signer}`;
-      authMode = 'direct';
-    } else {
-      // DELEGATED: verify the agent's on-pod delegation + that the request signer
-      // is its anchor key. verifyAgentDelegation reads the signed VC from the
-      // agent's pod, checks registry membership/revocation, and walks the chain.
-      // The delegation VC is read from the AGENT'S OWN derived pod — NEVER a caller-supplied
-  // subject_pod_url. Honoring the override let a caller point the delegation-source read at
-  // an attacker-controlled pod (delegation-source confusion) AND was an unguarded SSRF sink.
-  const delegationPod = resolveSubjectPodUrl(rec.agentId);
-      let del;
-      try {
-        // SSRF guard before the pre-authorization delegation fetch (see verifyDelegatedCaller).
-        await assertSafeFetchTarget(delegationPod);
-        del = await verifyAgentDelegation(rec.agentId as unknown as IRI, delegationPod, { verifier: makeWalletDelegationVerifier(), fetch: guardedFetchFn(globalThis.fetch) as never }); // delegation read: re-guard every redirect hop (round-32 pre-auth SSRF)
-      } catch (err) {
-        res.status(401).json({ error: `delegation verification failed for ${rec.agentId} on ${delegationPod}: ${(err as Error).message}` });
-        return;
-      }
-      if (!del.valid || del.trustLevel !== 'CryptographicallyVerified') {
-        res.status(401).json({ error: `agent ${rec.agentId} has no cryptographically-verified delegation on ${delegationPod}: ${del.reason ?? del.trustLevel ?? 'unverified'}` });
-        return;
-      }
-      const vc = await readDelegationCredential(delegationPod, rec.agentId as unknown as IRI, { fetch: guardedFetchFn(globalThis.fetch) as never }).catch(() => null);
-      const anchor = vc?.proof?.signerAddress;
-      if (!anchor || anchor.toLowerCase() !== rec.signer.toLowerCase()) {
-        res.status(401).json({ error: `request signer ${rec.signer} is not the delegation anchor key${anchor ? ` (${anchor})` : ''} — only the key that anchors the agent's delegation may sign for them` });
-        return;
-      }
-      callerDid = rec.agentId;
-      authMode = 'delegated';
-    }
+    const p = bound.payload;
+    const callerDid = bound.callerDid;
+    const authMode = bound.authMode;
     // Self-sovereign: default to the caller's OWN record. A different subject_did
     // is honored only because agent-capability records are discoverable.
     const subjectDid = (typeof p.subject_did === 'string' && p.subject_did.trim()) ? p.subject_did.trim() : callerDid;
@@ -4710,6 +4715,15 @@ app.post('/agent/review-record', async (req, res) => {
       try { clr = await exportClr({ learnerPodUrl: subjectPodUrl, learnerDid: subjectDid, ...(issuerKeySeed ? { issuerSeed: issuerKeySeed } : {}) }); }
       catch (err) { clr = { error: `wallet read failed: ${(err as Error).message}` }; }
     }
+    // Read the live enrolled set ONCE for the whyEmpty block below. All three fields that report it
+    // — the list, the boolean and the remedy — must describe the SAME set: an agent can now enrol
+    // itself mid-flight, so re-reading per field could answer "not enrolled" beside a list that
+    // contains you.
+    const enrolledSnapshot = meshPods();
+    const subjectIsEnrolled = ((): boolean => {
+      const norm = (u: string): string => u.replace(/\/+$/, '').toLowerCase();
+      return enrolledSnapshot.some((pod) => norm(pod) === norm(subjectPodUrl));
+    })();
     res.json({
       ok: true,
       reviewedAs: callerDid,
@@ -4748,7 +4762,7 @@ app.post('/agent/review-record', async (req, res) => {
             lensPopulatedBy: {
               what: 'the Foxxi mesh projector, which reads TRAJECTORY STEPS from enrolled pods and rebuilds each agent\'s trajectory under lens:<agent>',
               everyMs: MESH_PROJECT_INTERVAL_MS,
-              enrolledPods: meshPods(),
+              enrolledPods: enrolledSnapshot,
               // ★ THE REGISTER AS A URL, not only as a value copied into this response. A caller
               // that can dereference it can check enrolment BEFORE spending a signature, and can
               // re-check later without asking anyone.
@@ -4757,13 +4771,19 @@ app.post('/agent/review-record', async (req, res) => {
             },
             // ★ THE ONE FACT THE AGENT COULD NOT SEE. Computed here rather than described, because
             // "check whether you are enrolled" is not an answer a caller can act on.
-            subjectEnrolled: meshPods().some((p) => {
-              const norm = (u: string): string => u.replace(/\/+$/, '').toLowerCase();
-              return norm(p) === norm(subjectPodUrl);
-            }),
-            remedy: meshPods().some((p) => p.replace(/\/+$/, '').toLowerCase() === subjectPodUrl.replace(/\/+$/, '').toLowerCase())
+            //
+            // ★ ONE COMPARISON, TWO FIELDS. `subjectEnrolled` and `remedy` answered the same question
+            // twice with two different normalizations — the sort of pair that agrees until an operator
+            // adds a pod without a trailing slash and then reports "not enrolled" beside a remedy for
+            // the enrolled case. They now read one boolean.
+            subjectEnrolled: subjectIsEnrolled,
+            // ★★ AND THE REMEDY NO LONGER SENDS THE AGENT TO A HUMAN. It used to say "ask the
+            // operator" — the exact bottleneck this whole path exists to remove, and it would have
+            // stayed true-sounding and wrong the moment self-enrolment shipped. A stale remedy is
+            // worse than none: it is a confident instruction to go do the thing that does not scale.
+            remedy: subjectIsEnrolled
               ? 'This pod IS enrolled, so the projector reads it. Either it holds no trajectory steps yet, or the steps it holds are not Asserted — a Hypothetical step is an intention and is not evidence of performance.'
-              : 'This pod is NOT enrolled, so nothing reads the trajectory steps it holds. Writing more of them will not change this review. Ask the operator to add ' + subjectPodUrl + ' to the projector\'s enrolled pods, or push steps directly with POST /agent/mesh-event.',
+              : `This pod is NOT enrolled, so nothing reads the trajectory steps it holds; writing more of them will not change this review. If ${subjectPodUrl} is YOUR pod, enrol it yourself: POST a signed envelope to the enrolmentRegister above (it publishes its own hydra:Operation with the expected payload). Authority is structural — the pod is resolved from your signature, so you can only ever enrol your own. Or push steps directly with POST /agent/mesh-event.`,
           },
         }
         : {}),
