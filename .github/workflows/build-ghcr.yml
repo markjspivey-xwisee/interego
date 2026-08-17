@@ -51,36 +51,58 @@ jobs:
   validate-input:
     name: "Requested image must exist (a no-op build must not report success)"
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
-      - name: Check the requested image against the matrix
-        # Through the environment, not `${{ }}` interpolated into the script body.
-        # The dispatch input is arbitrary text; pasted straight into `req='…'` a value
-        # containing a single quote closes the string and the rest runs as shell.
+      - name: Check the requested image, and compute the legs to run
+        # ── ★★ ONE JOB DECIDES BOTH, FROM ONE FILE ────────────────────────────
+        #
+        # This used to only VALIDATE, reading the names back out of this workflow with sed while
+        # the matrix sat inline below. Two separate faults came out of that arrangement:
+        #
+        #   1. A single-image dispatch still started EVERY leg. The per-leg skip was a step-level
+        #      `if:`, and GitHub downloads a job's actions during "Set up job" — before any step
+        #      runs. So one requested image spun up sixteen runners and pulled
+        #      docker/setup-buildx-action sixteen times, then skipped fifteen builds. Repeated
+        #      single-service deploys in one session earned 429 Too Many Requests from codeload and
+        #      failed five builds that had nothing wrong with them.
+        #   2. A job-level `if:` cannot fix it — the `matrix` context is not available there, and
+        #      trying it made the whole workflow unparseable (HTTP 422 on the next dispatch).
+        #
+        # Emitting the matrix here is the pattern that works: a dispatch for one image expands to
+        # ONE leg, so no other runner starts and no other download happens. The list lives in
+        # deploy/images.json, read by this step and by nothing else — the validator and the matrix
+        # cannot disagree, which is the property the sed parsing existed to protect.
+        id: plan
+        # Through the environment, not `${{ }}` interpolated into the script body. The dispatch
+        # input is arbitrary text; pasted into a script a value containing a quote runs as code.
         env:
           REQ: ${{ inputs.image }}
         run: |
           req="$REQ"
-          [ -z "$req" ] && { echo "no image requested — building all"; exit 0; }
-          # Read the names out of this file so the check cannot drift from the matrix.
-          # sed, not `grep -oP`: PCRE mode aborts under a non-UTF-8 locale, and a
-          # guard that errors out is a guard that silently stops guarding.
-          known=$(sed -n 's/^[[:space:]]*- {[[:space:]]*image:[[:space:]]*\([a-z0-9-]*\).*/\1/p' .github/workflows/build-ghcr.yml)
-          [ -n "$known" ] || { echo "::error::could not read the image matrix"; exit 1; }
-          # -F, because without it this guard did not hold. `grep -qx "$req"` treats the
-          # request as a REGULAR EXPRESSION, so `-f image='.*'` matched every line of the
-          # list and passed validation — and the per-leg gate below is a literal `!=`
-          # string comparison, so all fourteen legs then skipped and the run went green
-          # having built nothing. That is precisely the failure this job was added to
-          # prevent, reintroduced by the matcher underneath it. The request must be
-          # compared as the literal image name it is.
-          if printf '%s\n' "$known" | grep -qxF "$req"; then
-            echo "ok — '$req' is a known image"
-          else
-            echo "::error::unknown image '$req' — nothing would be built. Valid images:"
-            printf '  %s\n' $known
-            exit 1
-          fi
+          legs=$(REQ="$req" node -e '
+            const all = require("./deploy/images.json").images;
+            const req = process.env.REQ || "";
+            if (!req) { process.stdout.write(JSON.stringify(all)); process.exit(0); }
+            const hit = all.filter((i) => i.image === req);
+            if (!hit.length) {
+              process.stderr.write("::error::unknown image '" + req + "' — nothing would be built. Valid images:
+"
+                + all.map((i) => "  " + i.image).join("
+") + "
+");
+              process.exit(1);
+            }
+            process.stdout.write(JSON.stringify(hit));
+          ') || exit 1
+          count=$(printf '%s' "$legs" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>console.log(JSON.parse(d).length))')
+          # ★ A DISPATCH THAT WOULD BUILD NOTHING MUST FAIL, not go green having built nothing —
+          # the original reason this job exists. An unknown name already exited above; this is the
+          # backstop for a file that somehow yielded an empty list.
+          [ "$count" -gt 0 ] || { echo "::error::no legs to build"; exit 1; }
+          echo "building $count image(s)"
+          echo "matrix=$legs" >> "$GITHUB_OUTPUT"
 
   build:
     name: ${{ matrix.image }}
@@ -91,64 +113,10 @@ jobs:
       packages: write
     strategy:
       fail-fast: false
+      # ★ FROM deploy/images.json VIA validate-input — see the note there. An inline list here
+      # would be a second copy of the same facts, and the dispatch filter could not shrink it.
       matrix:
-        include:
-          # `build_args` (optional): the Vite SPAs bake their bridge's PUBLIC URL
-          # at build time via a REQUIRED build-arg (the Dockerfile `test -n` guards
-          # it), so a build with no arg hard-fails. The retired deploy-azure.yml
-          # resolved these from Azure; now the custom domains are stable, so they
-          # are pinned here. They are public browser-facing URLs, not secrets.
-          - { image: interego-relay,              dockerfile: deploy/Dockerfile.relay }
-          - { image: interego-identity,           dockerfile: deploy/Dockerfile.identity }
-          - { image: interego-css-gate,           dockerfile: deploy/Dockerfile.css-gate }
-          - { image: interego-foxxi-bridge,       dockerfile: deploy/Dockerfile.foxxi-bridge }
-          - { image: interego-wsp-bridge,         dockerfile: deploy/Dockerfile.wsp-bridge }
-          - { image: interego-bridge,             dockerfile: deploy/Dockerfile.interego-bridge }
-          - { image: interego-dashboard,          dockerfile: deploy/Dockerfile.dashboard }
-          - { image: interego-pgsl-browser,       dockerfile: deploy/Dockerfile.pgsl-browser }
-          - { image: interego-microsite,          dockerfile: deploy/Dockerfile.interego-microsite, build_args: "VITE_INTEREGO_BRIDGE_URL=https://bridge.interego.xwisee.com" }
-          - { image: interego-main,               dockerfile: deploy/Dockerfile.interego-main }
-          - { image: interego-acme-id,            dockerfile: deploy/Dockerfile.acme-id }
-          - { image: interego-foxxi-dashboard,    dockerfile: deploy/Dockerfile.foxxi-dashboard, build_args: "VITE_FOXXI_BRIDGE_URL=https://foxxi-bridge.interego.xwisee.com" }
-          - { image: interego-foxxi-microsite,    dockerfile: deploy/Dockerfile.foxxi-microsite, build_args: "VITE_FOXXI_BRIDGE_URL=https://foxxi-bridge.interego.xwisee.com" }
-          - { image: interego-foxxi-scorm-player, dockerfile: deploy/Dockerfile.foxxi-scorm-player }
-          # The shared-workspace Discord bot. A worker, not a server — it dials out to the
-          # Discord gateway and the relay and holds no inbound port, so its Railway service has
-          # no public domain and `tools/railway-services.mjs` records `health: null` for it.
-          - { image: interego-discord,            dockerfile: deploy/Dockerfile.discord }
-          # ★ THE ONE SERVICE THAT HAD NO BUILD PATH AT ALL.
-          #
-          # CSS ran `interego-css-pgsl:redis6` — a genuinely mutable tag. It was
-          # "managed out-of-band", which in practice meant no sha-tagged image of it
-          # had ever been built by anything, so the running code was identified by a
-          # name that could be repointed and a rollback had nothing to roll back TO.
-          # Every other service in the fleet was pinned to an immutable sha; this one
-          # was pinned to a promise. This leg is what ended that, and css was pinned to
-          # a commit sha on 2026-08-03 — the live pin is Railway's to state, so ask
-          # `node tools/railway-pins.mjs` rather than believing this comment.
-          #
-          # The image name is `interego-css-pgsl`, NOT `interego-css`, while the Railway
-          # service is named `css`. tools/railway-redeploy.mjs used to derive
-          # `interego-${service}` and so could not deploy this service at all; the
-          # mapping is now enumerated in tools/railway-services.mjs and `css` redeploys
-          # like anything else. Renaming the IMAGE to match the service would orphan the
-          # package that is actually deployed, so the names stay different on purpose.
-          #
-          # ★ A SKIPPED LEG REPORTS SUCCESS, AND FOR THIS IMAGE THAT WAS THE ONLY SIGNAL
-          # ANYONE HAD. The first attempt to pin css to a sha failed because the tag had
-          # never been pushed — the run it was taken from had been dispatched with
-          # `-f image=interego-relay`, so the gate below skipped this leg in a step-level
-          # `if` and the job still went green. Railway then failed the deploy in two
-          # seconds with empty logs, which reads like a broken image rather than a
-          # missing one. Before pinning ANY service, check that its leg actually built:
-          # seconds of runtime means it skipped.
-          #
-          # `prebuild` names a workspace artifact the Dockerfile expects to ALREADY
-          # EXIST in the build context: it COPYs `packages/pgsl-store/dist`, which is
-          # gitignored and therefore absent from a fresh checkout. Without the step
-          # below the COPY fails and the leg is red — loudly, which is the point.
-          - { image: interego-css-pgsl,           dockerfile: integrations/pgsl-css-accessor/Dockerfile, prebuild: pgsl-store }
-
+        include: ${{ fromJSON(needs.validate-input.outputs.matrix) }}
     steps:
       - name: Should this matrix leg run?
         id: gate

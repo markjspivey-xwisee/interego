@@ -1,0 +1,43 @@
+{
+  "_note": [
+    "THE IMAGE MATRIX, AS DATA. Read by .github/workflows/build-ghcr.yml — both by the",
+    "input validator and by the plan job that builds the matrix for a dispatch.",
+    "",
+    "★★ WHY IT LEFT THE YAML. The matrix used to live inline, and the validator read it back",
+    "out of the workflow file with sed. Two consequences, both observed:",
+    "",
+    "  1. A single-image dispatch still started EVERY leg. The per-leg skip was a step-level",
+    "     `if:`, and GitHub downloads a job's actions during 'Set up job' — before any step",
+    "     runs. So `-f image=interego-foxxi-bridge` spun up sixteen runners and pulled",
+    "     docker/setup-buildx-action sixteen times, then skipped fifteen builds. Repeated",
+    "     single-service deploys in one session earned 429 Too Many Requests from codeload and",
+    "     failed five builds that had nothing wrong with them.",
+    "  2. A job-level `if:` cannot fix it: the `matrix` context is not available there, and",
+    "     trying it made the workflow unparseable (HTTP 422, caught on the next dispatch).",
+    "",
+    "A matrix computed from THIS file by a plan job is the pattern that works: a dispatch for",
+    "one image expands to one leg, so no other runner starts and no other download happens.",
+    "",
+    "★ AND ONE FILE RATHER THAN TWO COPIES. The validator's whole purpose is that a dispatch",
+    "which would build nothing must fail rather than go green; that only holds while it and the",
+    "matrix cannot disagree. Same file, same list, no sed parsing of YAML."
+  ],
+  "images": [
+    { "image": "interego-relay", "dockerfile": "deploy/Dockerfile.relay" },
+    { "image": "interego-identity", "dockerfile": "deploy/Dockerfile.identity" },
+    { "image": "interego-css-gate", "dockerfile": "deploy/Dockerfile.css-gate" },
+    { "image": "interego-foxxi-bridge", "dockerfile": "deploy/Dockerfile.foxxi-bridge" },
+    { "image": "interego-wsp-bridge", "dockerfile": "deploy/Dockerfile.wsp-bridge" },
+    { "image": "interego-bridge", "dockerfile": "deploy/Dockerfile.interego-bridge" },
+    { "image": "interego-dashboard", "dockerfile": "deploy/Dockerfile.dashboard" },
+    { "image": "interego-pgsl-browser", "dockerfile": "deploy/Dockerfile.pgsl-browser" },
+    { "image": "interego-microsite", "dockerfile": "deploy/Dockerfile.interego-microsite", "build_args": "VITE_INTEREGO_BRIDGE_URL=https://bridge.interego.xwisee.com" },
+    { "image": "interego-main", "dockerfile": "deploy/Dockerfile.interego-main" },
+    { "image": "interego-acme-id", "dockerfile": "deploy/Dockerfile.acme-id" },
+    { "image": "interego-foxxi-dashboard", "dockerfile": "deploy/Dockerfile.foxxi-dashboard", "build_args": "VITE_FOXXI_BRIDGE_URL=https://foxxi-bridge.interego.xwisee.com" },
+    { "image": "interego-foxxi-microsite", "dockerfile": "deploy/Dockerfile.foxxi-microsite", "build_args": "VITE_FOXXI_BRIDGE_URL=https://foxxi-bridge.interego.xwisee.com" },
+    { "image": "interego-foxxi-scorm-player", "dockerfile": "deploy/Dockerfile.foxxi-scorm-player" },
+    { "image": "interego-discord", "dockerfile": "deploy/Dockerfile.discord" },
+    { "image": "interego-css-pgsl", "dockerfile": "integrations/pgsl-css-accessor/Dockerfile", "prebuild": "pgsl-store" }
+  ]
+}
