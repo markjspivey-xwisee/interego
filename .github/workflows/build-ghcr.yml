@@ -52,56 +52,34 @@ jobs:
     name: "Requested image must exist (a no-op build must not report success)"
     runs-on: ubuntu-latest
     outputs:
+      # ★ THE LEGS TO RUN, not just a yes/no. See the note on the step below.
       matrix: ${{ steps.plan.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
       - name: Check the requested image, and compute the legs to run
-        # ── ★★ ONE JOB DECIDES BOTH, FROM ONE FILE ────────────────────────────
+        # ── ★★ WHY THIS EMITS A MATRIX AND NOT ONLY A VERDICT ──────────────────
         #
-        # This used to only VALIDATE, reading the names back out of this workflow with sed while
-        # the matrix sat inline below. Two separate faults came out of that arrangement:
+        # The per-leg skip further down is a step-level `if:`, and GitHub downloads a job's actions
+        # during "Set up job" — BEFORE any step runs. So a dispatch for ONE image still started
+        # sixteen runners and pulled docker/setup-buildx-action sixteen times, then skipped fifteen
+        # builds. MEASURED: repeated single-service deploys in one session earned 429 Too Many
+        # Requests from codeload and failed five builds that had nothing wrong with them.
         #
-        #   1. A single-image dispatch still started EVERY leg. The per-leg skip was a step-level
-        #      `if:`, and GitHub downloads a job's actions during "Set up job" — before any step
-        #      runs. So one requested image spun up sixteen runners and pulled
-        #      docker/setup-buildx-action sixteen times, then skipped fifteen builds. Repeated
-        #      single-service deploys in one session earned 429 Too Many Requests from codeload and
-        #      failed five builds that had nothing wrong with them.
-        #   2. A job-level `if:` cannot fix it — the `matrix` context is not available there, and
-        #      trying it made the whole workflow unparseable (HTTP 422 on the next dispatch).
+        # A job-level `if:` cannot fix it — the `matrix` context is not available there, and trying
+        # made the workflow unparseable. Computing the matrix here is what works: one requested
+        # image expands to ONE leg, so no other runner starts and no other download happens.
         #
-        # Emitting the matrix here is the pattern that works: a dispatch for one image expands to
-        # ONE leg, so no other runner starts and no other download happens. The list lives in
-        # deploy/images.json, read by this step and by nothing else — the validator and the matrix
-        # cannot disagree, which is the property the sed parsing existed to protect.
+        # ★ AND THE LIST LIVES IN deploy/images.json, read by one script. This step used to parse
+        # THIS FILE with sed to check a name against the matrix below it — a guard whose own
+        # matcher had already failed once (an unanchored grep let `.*` validate and every leg then
+        # skipped, green, having built nothing). One file, one reader, nothing to drift.
         id: plan
-        # Through the environment, not `${{ }}` interpolated into the script body. The dispatch
-        # input is arbitrary text; pasted into a script a value containing a quote runs as code.
+        # Through the environment and then as a single argv, never interpolated into a script body:
+        # the dispatch input is arbitrary text.
         env:
           REQ: ${{ inputs.image }}
         run: |
-          req="$REQ"
-          legs=$(REQ="$req" node -e '
-            const all = require("./deploy/images.json").images;
-            const req = process.env.REQ || "";
-            if (!req) { process.stdout.write(JSON.stringify(all)); process.exit(0); }
-            const hit = all.filter((i) => i.image === req);
-            if (!hit.length) {
-              process.stderr.write("::error::unknown image '" + req + "' — nothing would be built. Valid images:
-"
-                + all.map((i) => "  " + i.image).join("
-") + "
-");
-              process.exit(1);
-            }
-            process.stdout.write(JSON.stringify(hit));
-          ') || exit 1
-          count=$(printf '%s' "$legs" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>console.log(JSON.parse(d).length))')
-          # ★ A DISPATCH THAT WOULD BUILD NOTHING MUST FAIL, not go green having built nothing —
-          # the original reason this job exists. An unknown name already exited above; this is the
-          # backstop for a file that somehow yielded an empty list.
-          [ "$count" -gt 0 ] || { echo "::error::no legs to build"; exit 1; }
-          echo "building $count image(s)"
+          legs=$(node tools/ci-image-matrix.mjs "$REQ") || exit 1
           echo "matrix=$legs" >> "$GITHUB_OUTPUT"
 
   build:
@@ -114,7 +92,7 @@ jobs:
     strategy:
       fail-fast: false
       # ★ FROM deploy/images.json VIA validate-input — see the note there. An inline list here
-      # would be a second copy of the same facts, and the dispatch filter could not shrink it.
+      # would be a second copy of the same facts, and a dispatch filter could not shrink it.
       matrix:
         include: ${{ fromJSON(needs.validate-input.outputs.matrix) }}
     steps:
