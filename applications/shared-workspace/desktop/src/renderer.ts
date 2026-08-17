@@ -4103,9 +4103,21 @@ function startTurnWatch(title: string, preamble: string): TurnWatch {
     const doing = names
       ? ' It has used: ' + names + '.'
       : ' It has not needed a tool yet.';
+    /**
+     * ★★ "REFUSED", NOT "BLOCKED" — AND THIS LINE SAID THE WRONG ONE.
+     *
+     * It read "this turn cannot finish until you answer", which is false. The gate's `ask` branch
+     * returns `answer('deny', …)`: it refuses THAT tool, records the request, and tells the model
+     * to say plainly that it asked and what for. The turn carries on and finishes. Verified live —
+     * a Grep was refused at 22:06:46 and the turn posted at 22:07:49, 62 seconds later.
+     *
+     * Telling somebody a turn is stuck on them when it is not is the same class of defect as
+     * telling them nothing: both send them to the wrong place. What approving actually buys is the
+     * NEXT turn, and that is what this now says.
+     */
     const blocked = asked > 0
-      ? ' ' + asked + ' tool call' + (asked === 1 ? '' : 's') + ' stopped for your permission — check Permissions, '
-        + 'because this turn cannot finish until you answer.'
+      ? ' ' + asked + ' tool call' + (asked === 1 ? ' was' : 's were') + ' refused pending your permission — it '
+        + 'carries on without ' + (asked === 1 ? 'it' : 'them') + ', and approving in Permissions lets the next turn through.'
       : '';
     say('agentresult', 'pending', title + ' — ' + secs + 's', preamble + doing + blocked);
   };

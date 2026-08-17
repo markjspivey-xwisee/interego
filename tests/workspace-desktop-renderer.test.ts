@@ -1795,11 +1795,17 @@ describe('the local agent is off, visible, and stoppable', () => {
     expect(text(o.doc, '#agentresult')).toContain('ToolSearch');
 
     /**
-     * ★★ AND THE ONE CASE THAT REALLY IS STUCK, NAMED. A turn blocked on a permission nobody has
-     * answered looked exactly like a slow one, and waiting longer never fixes it.
+     * ★★ A REFUSED TOOL IS NAMED — AND NOT AS A BLOCKER, WHICH IS WHAT THIS FIRST SAID.
+     *
+     * The gate's `ask` branch returns `answer('deny', …)`: it refuses that one tool, records the
+     * request, and the turn carries on. Verified live — a Grep refused at 22:06:46, the turn posted
+     * at 22:07:49. The first version of this panel told the person "this turn cannot finish until
+     * you answer", which sends them to the wrong place as surely as saying nothing would.
      */
     o.turnProgress?.({ turnId: 't1', tools: { Bash: 1 }, toolCalls: 1, asked: 1 });
-    expect(text(o.doc, '#agentresult')).toContain('stopped for your permission');
+    expect(text(o.doc, '#agentresult')).toContain('refused pending your permission');
+    expect(text(o.doc, '#agentresult')).toContain('carries on without it');
+    expect(text(o.doc, '#agentresult')).not.toContain('cannot finish');
 
     (release as unknown as (v: unknown) => void)({ ok: true, text: BEHALF + 'We agreed to re-tile in spring.', why: 'ok', ms: 900, turnId: 't1' });
     await o.settle();
