@@ -2173,6 +2173,9 @@ var WSPC = (() => {
       __publicField(this, "fetchImpl");
       /** name+input -> {at, payload}. Honours `opts.cache.staleTime` the way the connector does. */
       __publicField(this, "cache", /* @__PURE__ */ new Map());
+      __publicField(this, "reauthorize", null);
+      /** One re-mint in flight at a time — see {@link remint}. */
+      __publicField(this, "reminting", null);
       this.relay = relay.replace(/\/$/, "");
       this.credential = credential;
       this.label = "Interego relay at " + new URL(this.relay).host;
@@ -2183,7 +2186,58 @@ var WSPC = (() => {
       this.credential = c;
       this.cache.clear();
     }
-    async rpc(method, params, signal) {
+    /**
+     * How to obtain a FRESH bearer when the relay stops recognising this one.
+     *
+     * ── ★★ WHY THIS IS A CALLBACK AND NOT SOMETHING THIS CLASS DOES ─────────────
+     *
+     * This transport holds a BEARER, never a key — that separation is deliberate and is why a
+     * renderer can drive it without being able to name a credential. So it cannot re-authenticate
+     * itself; only the host that holds the key can. This is the seam: the host supplies "mint me
+     * another one", and the transport decides WHEN it is needed.
+     *
+     * ★ MEASURED, and it took a person down for ten minutes. Redeploying the relay invalidates every
+     * bearer the previous revision issued — the relay says so in its own 401 body ("may have been
+     * issued by a prior relay revision; re-authenticate to obtain a fresh token"). Every client then
+     * held a dead token until somebody restarted it by hand. A Discord bot that had been running
+     * fine reported "the delegation registry could not be read" to a person who had asked their
+     * agent a question, and the honest refusal it produced looked like a substrate fault.
+     *
+     * Each of those clients holds its own key and could have re-minted in under two seconds.
+     */
+    setReauthorizer(fn) {
+      this.reauthorize = fn;
+    }
+    /**
+     * Re-mint once, and only once, however many calls hit 401 together.
+     *
+     * ★ THE DEDUPE IS THE POINT. A relay redeploy 401s EVERY in-flight call at once — a channel fold
+     * is dozens — and without this each would start its own sign-in ceremony against a relay that is
+     * already cold. They share the first one instead.
+     */
+    async remint() {
+      const fn = this.reauthorize;
+      if (!fn)
+        return false;
+      if (!this.reminting) {
+        const p = (async () => {
+          try {
+            this.setCredential(await fn());
+            return true;
+          } catch {
+            return false;
+          }
+        })();
+        this.reminting = p;
+        const clear = () => {
+          if (this.reminting === p)
+            this.reminting = null;
+        };
+        void p.then(clear, clear);
+      }
+      return this.reminting;
+    }
+    async rpc(method, params, signal, retried = false) {
       let res;
       try {
         res = await this.fetchImpl(this.relay + "/mcp", {
@@ -2201,6 +2255,8 @@ var WSPC = (() => {
       }
       const raw = await res.text();
       if (res.status === 401) {
+        if (!retried && await this.remint())
+          return this.rpc(method, params, signal, true);
         throw new ToolCallError("needs_reauth", "The relay rejected this session token (HTTP 401). " + raw.slice(0, 200));
       }
       const j = parseRpcBody(raw);
