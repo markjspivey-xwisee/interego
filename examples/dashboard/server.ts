@@ -930,8 +930,45 @@ server.listen(DASH_PORT, async () => {
   await pollPods().catch(err => log(`Initial poll failed: ${(err as Error).message}`));
 
   // Start polling loop
+  /**
+   * ── ★★ ONE SWEEP AT A TIME. THIS TOOK DOWN THE FLEET'S STORAGE GATE ─────────
+   *
+   * `setInterval` fires on a clock, not on completion. A full sweep is every pod × two documents
+   * at POLL_CONCURRENCY 2, so once the pod count grew past what fits in POLL_INTERVAL, each tick
+   * started a sweep while the previous one was still running. They stack — and it is
+   * self-reinforcing: more overlap makes every request slower, which makes each sweep longer,
+   * which stacks more.
+   *
+   * MEASURED, live: this dashboard was sending 68 requests/second at css-gate, whose upstream pool
+   * is 16 connections. 668 requests were queued behind them and the gate stopped answering
+   * ENTIRELY — it accepted TLS and never replied. Every Foxxi capability reads pods through that
+   * gate, so a performance review that answers in 40 s could not run at all, and the agent asked
+   * to run it concluded — reasonably, from what it could see — that the capability did not exist.
+   *
+   * Restarting this service dropped the gate from 68/s to 4/s, its queue from 668 to 0, and its
+   * proxy latency from a 20 s timeout to 1.1 s. That is what identified the cause.
+   *
+   * ★ AND A SKIPPED TICK IS REPORTED. A sweep that cannot finish inside its own interval is a
+   * fact about this deployment — it means POLL_INTERVAL is too short for the number of pods — and
+   * silently coalescing it would hide the thing that made the pile-up possible.
+   */
+  let pollInFlight = false;
+  let skipped = 0;
   pollTimer = setInterval(() => {
-    pollPods().catch(err => log(`Poll error: ${(err as Error).message}`));
+    if (pollInFlight) {
+      skipped += 1;
+      // Every tick would be its own noise; the first and then every tenth is enough to see it.
+      if (skipped === 1 || skipped % 10 === 0) {
+        log(`previous poll still running — skipped ${skipped} tick(s). `
+          + `A sweep is taking longer than POLL_INTERVAL (${POLL_INTERVAL}ms); raise it or raise POLL_CONCURRENCY.`);
+      }
+      return;
+    }
+    pollInFlight = true;
+    if (skipped > 0) { log(`resuming after skipping ${skipped} tick(s)`); skipped = 0; }
+    pollPods()
+      .catch(err => log(`Poll error: ${(err as Error).message}`))
+      .finally(() => { pollInFlight = false; });
   }, POLL_INTERVAL);
 
   broadcast({
