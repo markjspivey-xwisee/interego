@@ -16,6 +16,28 @@
  * bare 0x address resolves exactly the way its did:ethr spelling does.
  */
 
+/**
+ * Does this string contain a C0 control character, DEL, or a Unicode line/paragraph separator?
+ *
+ * ── ★ THE ONE PLACE THAT KNOWS WHAT "A SINGLE LINE OF PRINTABLE TEXT" MEANS ─────────────────
+ *
+ * Caller-supplied identity strings reach a Turtle literal on a PUBLIC register, a persisted pod row,
+ * and pod-URL derivation. A raw newline inside a Turtle short-string literal is a syntax error, so
+ * one unvalidated identity makes an entire register unreadable to every consumer — and once such a
+ * row is durable, it stays broken across restarts with no in-band way to remove it.
+ *
+ * ★ WRITTEN AS CODE-POINT ARITHMETIC, NOT A CHARACTER-CLASS REGEX, on purpose: a regex for this
+ * needs escapes that are easy to mangle into the very control characters it is meant to reject, and
+ * a guard containing a literal NUL is worse than no guard. This form is unambiguous in review.
+ */
+export function hasControlChars(s: string): boolean {
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 0x20 || c === 0x7f || c === 0x2028 || c === 0x2029) return true;
+  }
+  return false;
+}
+
 /** Signature of the SSRF choke point (src/ssrf-guard.ts) — injected so this module stays pure. */
 export type SafeUrlFn = (rawUrl: string) => string | undefined;
 

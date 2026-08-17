@@ -375,7 +375,7 @@ import { attachOauthTokenRoute, oauthPublicKeyFrom } from '../src/xapi-oauth.js'
 import { attachHypermediaRoutes } from '../src/hypermedia-resources.js';
 import { callerIsOperator } from '../src/operator-auth.js';
 import { assertSafeFetchTarget, safePublicUrlOrUndefined, safeFetch, guardedFetchFn } from '../src/ssrf-guard.js';
-import { resolveSubjectPodUrlPure } from '../src/subject-pod-url.js';
+import { resolveSubjectPodUrlPure, hasControlChars } from '../src/subject-pod-url.js';
 import { bindPerformanceToEvidence, EVIDENCE_BINDING_EXT, EVIDENCE_SHAPE_EXT } from '../src/performance-evidence.js';
 import type {
   IRI,
@@ -638,6 +638,34 @@ async function readSectionArray(podUrl: string, typeIri: IRI): Promise<Array<Rec
     const v = await fetchSection(typeIri, { ...fetcherConfig(), podUrl });
     return Array.isArray(v) ? v as Array<Record<string, unknown>> : [];
   } catch { return []; }
+}
+
+/**
+ * The same read, but "I could not read it" is DISTINGUISHABLE from "it is empty".
+ *
+ * ── ★★ FAILING OPEN TO [] IS SAFE TO DISPLAY AND CATASTROPHIC TO WRITE FROM ─────────────────
+ *
+ * `readSectionArray` swallows every error and answers `[]`, which is fine for a read-only join — a
+ * transiently missing catalog shows as no courses. It is NOT fine underneath a whole-array
+ * republish: one 502 from the pod turns the next enrolment's read-modify-write into a full-register
+ * REPLACEMENT that silently un-enrols every other agent, durably, with nothing recording that it
+ * happened. Nor under a cache refresh: clearing the live set on a failed read makes the register
+ * report enrolled agents as not enrolled, and the projector then stops sweeping them.
+ *
+ * Both are the same mistake — treating absence of evidence as evidence of absence — and both are the
+ * exact silent-lapse failure the enrolment work exists to remove.
+ */
+async function readSectionArrayOrFail(podUrl: string, typeIri: IRI): Promise<{ ok: true; rows: Array<Record<string, unknown>> } | { ok: false; reason: string }> {
+  try {
+    const v = await fetchSection(typeIri, { ...fetcherConfig(), podUrl });
+    // A section that has never been published reads as undefined/null — genuinely empty, not a
+    // failure. Anything non-array-but-present is a shape we must not overwrite blindly.
+    if (v === undefined || v === null) return { ok: true, rows: [] };
+    if (!Array.isArray(v)) return { ok: false, reason: `section ${typeIri} is present but not an array` };
+    return { ok: true, rows: v as Array<Record<string, unknown>> };
+  } catch (err) {
+    return { ok: false, reason: (err as Error).message };
+  }
 }
 
 /** Upsert a CourseCatalog row (keyed by course_id) into a pod's PUBLIC catalog,
@@ -993,23 +1021,37 @@ const MESH_ENROLMENT_CAP = Number(process.env.FOXXI_MESH_ENROLMENT_CAP ?? 200);
 /** Normalized pod key — one row per pod regardless of trailing-slash/case spelling. */
 const podKey = (u: string): string => u.replace(/\/+$/, '').toLowerCase();
 
-/** Load the durable register from the pod into the cache. Absent/unreadable → empty, never throws. */
-async function hydrateDurableEnrolment(): Promise<number> {
-  if (!tenantPodUrl) return 0;
-  const rows = await readSectionArray(tenantPodUrl, TENANT_TYPES.MeshEnrolmentRegister);
-  durableEnrolled.clear();
-  for (const r of rows) {
+/**
+ * Load the durable register from the pod into the cache.
+ *
+ * ★ A FAILED READ LEAVES THE PREVIOUS SET IN PLACE, and says so. Clearing it would turn one 5xx from
+ * the pod into "nobody is enrolled": the projector would stop sweeping every durably enrolled agent,
+ * the register would omit them, and a review would answer `subjectEnrolled: false` with a remedy
+ * telling them to enrol again — driving traffic into the very write path whose read is failing.
+ */
+async function hydrateDurableEnrolment(): Promise<{ count: number; stale: boolean }> {
+  if (!tenantPodUrl) return { count: 0, stale: false };
+  const read = await readSectionArrayOrFail(tenantPodUrl, TENANT_TYPES.MeshEnrolmentRegister);
+  if (!read.ok) {
+    console.error(`[foxxi-bridge][mesh] durable register unreadable (${read.reason}) — keeping the ${durableEnrolled.size} entr(ies) already loaded rather than reporting nobody is enrolled`);
+    return { count: durableEnrolled.size, stale: true };
+  }
+  const next = new Map<string, { at: string; by: string }>();
+  for (const r of read.rows) {
     const pod = typeof r.pod_url === 'string' ? r.pod_url : '';
-    // ★ A ROW IS ONLY HONOURED IF IT IS STILL A PLAUSIBLE POD URL. The register is public; treating
-    // whatever it holds as a fetch target would make a pod-write elsewhere into an SSRF sink for the
-    // projector. safePublicUrlOrUndefined is the same choke point the resolver uses.
+    // ★ A ROW IS ONLY HONOURED IF IT IS STILL A PLAUSIBLE POD URL, AND ON THE TRUSTED ORIGIN. The
+    // register is public and its contents BECOME fetch targets each cycle, so a row written by any
+    // other path would otherwise be a standing SSRF primitive for the projector.
     if (!pod || !safePublicUrlOrUndefined(pod)) continue;
-    durableEnrolled.set(pod, {
+    if ('error' in enrolmentOriginCheck(pod)) continue;
+    next.set(pod, {
       at: typeof r.enrolled_at === 'string' ? r.enrolled_at : '(unknown)',
       by: typeof r.enrolled_by === 'string' ? r.enrolled_by : '(unknown)',
     });
   }
-  return durableEnrolled.size;
+  durableEnrolled.clear();
+  for (const [k, v] of next) durableEnrolled.set(k, v);
+  return { count: durableEnrolled.size, stale: false };
 }
 
 /**
@@ -1020,18 +1062,71 @@ async function hydrateDurableEnrolment(): Promise<number> {
  * added since hydration.
  */
 async function persistEnrolment(row: MeshEnrolmentRow): Promise<boolean> {
+  // ★★ SERIALIZED, BECAUSE THE SECTION IS A WHOLE-ARRAY PUBLISH. Two agents enrolling at the same
+  // moment both read the pre-write array, and the second publish drops the first's row — while BOTH
+  // were answered `durable: true`, because each verified before the other wrote. A fleet booting and
+  // self-enrolling together is the stated workload for this feature, so the race is the normal case,
+  // not the edge one. This chain makes read-modify-write atomic within the process.
+  const run = enrolmentWriteQueue.then(() => persistEnrolmentUnsafe(row), () => persistEnrolmentUnsafe(row));
+  enrolmentWriteQueue = run.then(() => undefined, () => undefined);
+  return run;
+}
+
+async function persistEnrolmentUnsafe(row: MeshEnrolmentRow): Promise<boolean> {
   if (!tenantPodUrl) return false;
   try {
-    const current = await readSectionArray(tenantPodUrl, TENANT_TYPES.MeshEnrolmentRegister);
-    const kept = current.filter((r) => typeof r.pod_url === 'string' && podKey(r.pod_url) !== podKey(row.pod_url));
+    // ★★ AN UNREADABLE REGISTER MUST ABORT THE WRITE, NEVER SEED IT. `readSectionArray` answers []
+    // for a 502 exactly as it does for "never published", and a whole-array republish built on that
+    // [] would erase every other agent's durable row — telling this caller `durable: true` while
+    // silently un-enrolling everyone else. That is the worst outcome this endpoint can produce.
+    const read = await readSectionArrayOrFail(tenantPodUrl, TENANT_TYPES.MeshEnrolmentRegister);
+    if (!read.ok) {
+      console.error(`[foxxi-bridge][mesh] refusing to write the register: could not read it first (${read.reason}) — a blind write would drop every other row`);
+      return false;
+    }
+    const kept = read.rows.filter((r) => typeof r.pod_url === 'string' && podKey(r.pod_url) !== podKey(row.pod_url));
     if (kept.length + 1 > MESH_ENROLMENT_CAP) return false;
     const next = [...kept, row as unknown as Record<string, unknown>];
     await publishMeshEnrolmentRegister(next, publishConfigFor(tenantPodUrl, sourceForPod(tenantPodUrl)));
+    // Drop the read-through cache before verifying, or the check below is served the pre-write value
+    // and reports success for a write that never landed.
     invalidateTenantCache(tenantPodUrl);
-    await hydrateDurableEnrolment();
-    return durableEnrolled.has(row.pod_url);
+    const after = await hydrateDurableEnrolment();
+    if (after.stale) return false;
+    return [...durableEnrolled.keys()].some((p) => podKey(p) === podKey(row.pod_url));
   } catch (err) {
     console.error(`[foxxi-bridge][mesh] durable enrolment write failed for ${row.pod_url}: ${(err as Error).message}`);
+    return false;
+  }
+}
+/** Serializes register writes; see persistEnrolment. */
+let enrolmentWriteQueue: Promise<void> = Promise.resolve();
+
+/** Remove one pod's durable row. Serialized on the same queue as writes, for the same reason. */
+async function withdrawEnrolment(pod: string): Promise<boolean> {
+  const run = enrolmentWriteQueue.then(() => withdrawEnrolmentUnsafe(pod), () => withdrawEnrolmentUnsafe(pod));
+  enrolmentWriteQueue = run.then(() => undefined, () => undefined);
+  return run;
+}
+
+async function withdrawEnrolmentUnsafe(pod: string): Promise<boolean> {
+  if (!tenantPodUrl) return false;
+  try {
+    const read = await readSectionArrayOrFail(tenantPodUrl, TENANT_TYPES.MeshEnrolmentRegister);
+    // Same rule as the write: an unreadable register must not become the basis of a republish.
+    if (!read.ok) {
+      console.error(`[foxxi-bridge][mesh] refusing to rewrite the register for a withdrawal: could not read it first (${read.reason})`);
+      return false;
+    }
+    const kept = read.rows.filter((r) => typeof r.pod_url === 'string' && podKey(r.pod_url) !== podKey(pod));
+    if (kept.length === read.rows.length) return false; // nothing to remove — not an error
+    await publishMeshEnrolmentRegister(kept, publishConfigFor(tenantPodUrl, sourceForPod(tenantPodUrl)));
+    invalidateTenantCache(tenantPodUrl);
+    const after = await hydrateDurableEnrolment();
+    if (after.stale) return false;
+    return ![...durableEnrolled.keys()].some((p) => podKey(p) === podKey(pod));
+  } catch (err) {
+    console.error(`[foxxi-bridge][mesh] withdrawal failed for ${pod}: ${(err as Error).message}`);
     return false;
   }
 }
@@ -1103,6 +1198,54 @@ const MESH_ACTOR_LABELS: Record<string, string> = Object.fromEntries(
 );
 let meshProjectionRunning = false;
 
+/**
+ * The pod a caller may enrol into the projector — or null, with the reason.
+ *
+ * ── ★★ selfBoundPod ALONE IS NOT STRUCTURAL FOR EVERY IDENTITY FORM ─────────────────────────
+ *
+ * Found by an adversarial review of the enrolment path, independently by four lenses, and it is a
+ * genuine cross-agent evidence-forgery route that the live abuse test could NOT see because that test
+ * only ever signs `agent_id: did:ethr:<own address>` — DIRECT mode.
+ *
+ * `selfBoundPod` binds an explicit `pod_url` override to the origin of the DERIVED pod. But in
+ * DELEGATED mode `bindSignedCaller` returns `callerDid = rec.agentId`, a caller-chosen string, and
+ * `resolveSubjectPodUrlPure` maps an http(s) identity to `<that identity's own origin>/<its first
+ * segment>/`. So the derived origin is itself attacker-chosen, and the override guard — comparing a
+ * caller-chosen value against another caller-chosen value — holds nothing down. Three consequences,
+ * each sufficient on its own:
+ *
+ *   1. The delegation check becomes CIRCULAR: the VC is read from the pod derived from the same
+ *      string, so an attacker serving their own registry and self-signed credential verifies.
+ *   2. The projector then fetches that host every cycle, forever.
+ *   3. `actorForPod` keys the destination lens on the pod's LAST PATH SEGMENT, so the attacker picks
+ *      the lens — landing fabricated "Asserted" steps in a real agent's performance record.
+ *
+ * ★ SO THE POD IS PINNED TO THE ORIGIN THIS DEPLOYMENT TRUSTS. The projector reads pods in its own
+ * substrate; an identity that resolves anywhere else is not enrollable, whatever it proves. This is
+ * the constraint that makes the delegation check mean something again: on the trusted origin, the
+ * derived pod really is the named agent's, so a forged VC would have to be written to a pod the
+ * attacker does not control. It also restores the property the PUSH path (/agent/mesh-event) already
+ * had by binding to the recovered address rather than to `agent_id`.
+ */
+function enrolmentPodFor(callerDid: string, explicit?: string): { pod: string } | { error: string } {
+  const pod = selfBoundPod(callerDid, explicit);
+  const check = enrolmentOriginCheck(pod);
+  return 'error' in check ? check : { pod };
+}
+
+/** Is this pod in the pod space this deployment trusts? Shared by the write path and the reload, so
+ *  a row that could not be enrolled today cannot be honoured tomorrow by having been written before
+ *  the rule existed. */
+function enrolmentOriginCheck(pod: string): { ok: true } | { error: string } {
+  const trusted = (() => { try { return new URL(tenantPodUrl).origin; } catch { return ''; } })();
+  if (!trusted) return { error: 'this deployment has no tenant pod configured, so it cannot resolve which pod space to trust' };
+  const podOrigin = (() => { try { return new URL(pod).origin; } catch { return ''; } })();
+  if (podOrigin !== trusted) {
+    return { error: `the projector only reads pods on ${trusted}, and this resolves to ${podOrigin || 'an unparseable origin'} — enrol an identity whose pod is in this deployment's pod space, or push steps directly to /agent/mesh-event` };
+  }
+  return { ok: true };
+}
+
 /** Resolve a SELF-SOVEREIGN caller's OWN pod. An explicit subject_pod_url override is
  *  honored ONLY when it resolves to the SAME actor label as the caller's derived pod —
  *  so a self-record (record-performance / record-course-completion / scorm launch) cannot
@@ -1163,6 +1306,23 @@ async function bindSignedCaller(body: unknown, opts: { hint?: string } = {}): Pr
       ...(opts.hint ? { hint: opts.hint } : {}),
     };
   }
+  /**
+   * ── ★★ agent_id IS CALLER TEXT, AND IN DELEGATED MODE IT BECOMES callerDid ──────────────────
+   *
+   * A signature proves who holds a key; it proves NOTHING about the string signed alongside it. In
+   * DELEGATED mode this value is returned as `callerDid` and then flows into a Turtle literal on a
+   * PUBLIC register, into a persisted pod row, and into pod-URL derivation — so one unvalidated
+   * control character makes the register unparseable for every reader, and (now that rows are
+   * durable) does so permanently, with no in-band way to remove it. Reject it at the ONE boundary
+   * every caller crosses, rather than escaping at each of the sinks — escaping-per-sink is the
+   * arrangement that has already been wrong here more than once.
+   */
+  if (hasControlChars(rec.agentId)) {
+    return { ok: false, status: 400, error: 'agent_id contains a control character — an identity must be a single line of printable text' };
+  }
+  if (rec.agentId.length > 512) {
+    return { ok: false, status: 400, error: `agent_id is ${rec.agentId.length} characters — the limit is 512` };
+  }
   const claimedAddr = rec.agentId.toLowerCase().match(/0x[0-9a-f]{40}/)?.[0];
   if (claimedAddr && claimedAddr === rec.signer.toLowerCase()) {
     return { ok: true, callerDid: `did:ethr:${rec.signer}`, authMode: 'direct', signer: rec.signer, payload: rec.payload };
@@ -1214,15 +1374,22 @@ async function landMeshBatch(events: ProjectedMeshEvent[]): Promise<number> {
 /** PULL cycle: discover every mesh pod, project, land sequentially, refresh trajectories. */
 async function runMeshProjectionCycle(): Promise<{ pods: number; projected: number; agents: number }> {
   if (meshProjectionRunning) return { pods: 0, projected: 0, agents: 0 };
-  // ★ RE-READ THE DURABLE REGISTER EACH CYCLE, before deciding there is nothing to do. Enrolment is
-  // now a pod write, so a SIBLING replica (or a restart of this one) can enrol a pod this process has
-  // never seen — reading only a boot-time snapshot would mean an agent enrolled successfully against
-  // one replica and swept by none of the others. Checked before the empty-set early return, or a
-  // deployment that starts with nothing configured would never notice its first enrolment.
-  await hydrateDurableEnrolment().catch(() => 0);
-  const pods = meshPods();
-  if (pods.length === 0) return { pods: 0, projected: 0, agents: 0 };
+  // ★★ CLAIM THE FLAG BEFORE THE FIRST await, NOT AFTER IT. Putting the register read between the
+  // check and the assignment broke single-flight: every tick passed the check (nobody had set the
+  // flag yet) and parked on the read, so a stalled pod queued one whole sweep per minute and they
+  // all ran at once when it recovered — a thundering herd aimed at the service that just came back.
+  // A guard with an await between its test and its set is not a guard.
   meshProjectionRunning = true;
+  try {
+    // ★ RE-READ THE DURABLE REGISTER EACH CYCLE, before deciding there is nothing to do. Enrolment is
+    // a pod write now, so a SIBLING replica (or a restart of this one) can enrol a pod this process
+    // has never seen — a boot-time snapshot would mean an agent enrolled against one replica and
+    // swept by none of the others. Before the empty-set return, or a deployment that starts with
+    // nothing configured would never notice its first enrolment.
+    await hydrateDurableEnrolment();
+  } catch { /* keep the set we already have; hydrate already logs */ }
+  const pods = meshPods();
+  if (pods.length === 0) { meshProjectionRunning = false; return { pods: 0, projected: 0, agents: 0 }; }
   const events: ProjectedMeshEvent[] = [];
   const stepsByAgent = new Map<string, TrajectoryStepInput[]>();
   try {
@@ -4484,12 +4651,10 @@ const REVIEW_RECORD_AFFORDANCE: Affordance = {
  * register in an env var is the same violation as a `urn:` — with a measured bill attached. This
  * serves it as Turtle at a stable IRI so an agent can answer "am I enrolled?" itself.
  *
- * ★ READ-ONLY, DELIBERATELY. Publishing the register is a discovery fix and needs no new authority.
- * Letting an agent ENROL ITSELF is a different question — who may enrol whom, and whether a pod
- * owner enrolling their own pod is self-evidently fine or a way to put unreviewed evidence in front
- * of a reviewer — and inventing an answer to that at 3am would be the sort of unilateral security
- * decision this codebase is careful never to make. The affordance to request enrolment is named
- * here as `iep:askVia` so the path exists; the write side is a decision for the maintainer.
+ * ★ IT IS NO LONGER READ-ONLY. Publishing the register closed the discovery gap; the write side —
+ * who may enrol whom — was left open deliberately rather than invented. It is answered now, and the
+ * answer is structural: a caller may enrol the pod it can PROVE is its own, on the origin this
+ * deployment trusts, and nothing else. See the POST and DELETE handlers below.
  */
 /**
  * ── ★★ AN AGENT ENROLS ITS OWN POD, BY PROVING IT IS THAT POD ───────────────
@@ -4537,7 +4702,12 @@ app.post('/agent/mesh/enrolment', async (req, res) => {
 
     // ★ THE AUTHORITY CHECK. Not "is the requested pod mine" — the resolver simply cannot return a
     // pod that is not. An explicit `pod_url` is honoured only when it IS the caller's own.
-    const pod = selfBoundPod(bound.callerDid, typeof b.pod_url === 'string' ? b.pod_url : undefined);
+    const resolved = enrolmentPodFor(bound.callerDid, typeof b.pod_url === 'string' ? b.pod_url : undefined);
+    if ('error' in resolved) {
+      res.status(403).json({ ok: false, error: resolved.error, enrolledAs: bound.callerDid, authMode: bound.authMode });
+      return;
+    }
+    const pod = resolved.pod;
     const already = meshPods().some((p) => podKey(p) === podKey(pod));
 
     // ★ THE CAP IS A REFUSAL, NOT A SILENT DROP. Every enrolled pod costs one outbound fetch per
@@ -4547,21 +4717,28 @@ app.post('/agent/mesh/enrolment', async (req, res) => {
       res.status(503).json({
         ok: false,
         error: `enrolment register is at its cap of ${MESH_ENROLMENT_CAP} pods — this pod was NOT enrolled and its steps are not being read`,
-        detail: 'Every enrolled pod is swept each projector cycle, so the register is bounded. Ask the operator to raise FOXXI_MESH_ENROLMENT_CAP or to retire stale entries.',
+        detail: `Every enrolled pod is swept each projector cycle, so the register is bounded. An enrolled agent that no longer needs to be read can free a slot itself with DELETE on this register (same signed envelope, same self-bound authority); raising FOXXI_MESH_ENROLMENT_CAP beyond ${MESH_ENROLMENT_CAP} is an operator action.`,
         register: `${(process.env.BRIDGE_DEPLOYMENT_URL ?? `http://localhost:${PORT}`).replace(/\/$/, '')}/agent/mesh/enrolment`,
       });
       return;
     }
 
     const at = new Date().toISOString();
-    // ★★ PERSIST FIRST, THEN REPORT WHAT ACTUALLY HAPPENED. The session map is the FALLBACK for a
-    // failed pod write, not the store — so an agent is never told "durable" on the strength of a
-    // write we did not verify. persistEnrolment re-reads before publishing (whole-array section) and
-    // confirms the row is present afterwards.
+    // ★★ PERSIST, THEN REPORT WHAT ACTUALLY HAPPENED. The session map is the FALLBACK for a failed
+    // pod write, not the store — so an agent is never told "durable" on the strength of a write we
+    // did not verify. persistEnrolment re-reads before publishing and confirms the row afterwards.
+    //
+    // ★★ AND A SESSION-HELD POD RETRIES. `already` includes the session set, so short-circuiting on
+    // it made the response's own advice — "re-enrol later to retry making it durable" — a permanent
+    // no-op: every retry took the already-branch, never attempted the write, and repeated the same
+    // instruction. An instruction that looks like a fix and cannot work is worse than none, and the
+    // enrolment still lapses at the next deploy.
+    const heldOnlyInSession = enrolmentProvenance(pod).kind === 'session';
     let durable = false;
-    if (!already) {
+    if (!already || heldOnlyInSession) {
       durable = await persistEnrolment({ pod_url: pod, enrolled_by: bound.callerDid, enrolled_at: at });
-      if (!durable) sessionEnrolled.set(pod, { at, by: bound.callerDid });
+      if (durable) sessionEnrolled.delete(pod);
+      else sessionEnrolled.set(pod, { at, by: bound.callerDid });
     }
     const provenance = enrolmentProvenance(pod);
 
@@ -4593,10 +4770,69 @@ app.post('/agent/mesh/enrolment', async (req, res) => {
   }
 });
 
+/**
+ * ── ★★ WITHDRAW: AN ENROLMENT YOU CANNOT UNDO IS A ONE-WAY DOOR ─────────────────────────────
+ *
+ * Durable rows had no retirement path at all — no un-enrol, no TTL, no eviction — so filling the cap
+ * denied enrolment to every real agent PERMANENTLY, across restarts, and the 503's own advice ("ask
+ * the operator to retire stale entries") named an action with no implementation. That is the
+ * deployment-config bottleneck reinstated in a worse form: previously a restart cleared it.
+ *
+ * ★ SAME AUTHORITY, SAME SHAPE: you may withdraw the pod you can prove is yours. There is no
+ * parameter naming someone else's row, so a mass un-enrol is unrepresentable rather than merely
+ * refused — and an agent that no longer wants Foxxi reading its pod can say so itself, which is the
+ * self-sovereign half of enrolment that only having a write path would have left missing.
+ */
+app.delete('/agent/mesh/enrolment', async (req, res) => {
+  try {
+    const xff = req.headers['x-forwarded-for'];
+    const ip = typeof xff === 'string' ? xff.split(',').at(-1)?.trim() ?? 'unknown'
+      : Array.isArray(xff) ? xff.at(-1)?.trim() ?? 'unknown' : req.ip ?? 'unknown';
+    const rl = checkAgenticRateLimit(ip);
+    if (!rl.ok) { res.status(429).json({ ok: false, error: `rate limit — retry in ${rl.retryAfterSeconds}s` }); return; }
+
+    const bound = await bindSignedCaller(req.body, {
+      hint: 'Withdrawal is bound to the pod you can prove is yours. POST-style signed envelope, DELETE method: { _signature, _signed_payload: JSON.stringify({ agent_id, timestamp }) }.',
+    });
+    if (!bound.ok) { res.status(bound.status).json({ ok: false, error: bound.error, ...(bound.hint ? { hint: bound.hint } : {}) }); return; }
+
+    const resolved = enrolmentPodFor(bound.callerDid, typeof (bound.payload.pod_url) === 'string' ? bound.payload.pod_url as string : undefined);
+    if ('error' in resolved) { res.status(403).json({ ok: false, error: resolved.error }); return; }
+    const pod = resolved.pod;
+
+    const wasConfigured = CONFIGURED_MESH_PODS.some((p) => podKey(p) === podKey(pod));
+    const removedSession = sessionEnrolled.delete(pod);
+    const removedDurable = await withdrawEnrolment(pod);
+    const base = (process.env.BRIDGE_DEPLOYMENT_URL ?? `http://localhost:${PORT}`).replace(/\/$/, '');
+    res.json({
+      ok: true,
+      withdrew: pod,
+      removedDurable,
+      removedSession,
+      // ★ A CONFIG SEED CANNOT BE WITHDRAWN AT RUNTIME, AND SAYING SO IS THE POINT. Reporting success
+      // while the projector kept reading the pod would be the same lie in the opposite direction.
+      ...(wasConfigured
+        ? { stillEnrolled: true, note: 'This pod is ALSO seeded from deployment configuration, so the projector still reads it. Runtime withdrawal cannot remove a configured seed — that one needs an operator.' }
+        : { stillEnrolled: meshPods().some((p) => podKey(p) === podKey(pod)) }),
+      register: `${base}/agent/mesh/enrolment`,
+      pods: meshPods(),
+    });
+  } catch (err) {
+    sendServerError(res, err, 'mesh-enrolment-withdraw');
+  }
+});
+
 app.get('/agent/mesh/enrolment', (_req, res) => {
   const base = (process.env.BRIDGE_DEPLOYMENT_URL ?? `http://localhost:${PORT}`).replace(/\/$/, '');
   const self = `${base}/agent/mesh/enrolment`;
-  const lit = (s: string): string => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  // ★ DEFENCE IN DEPTH BEHIND THE BOUNDARY CHECK. bindSignedCaller already refuses a control
+  // character in an identity, so nothing should reach here with one — but this literal is on a PUBLIC
+  // register, a raw newline inside a Turtle short string is a syntax error that breaks the document
+  // for EVERY reader, and durable rows read back from the pod were not all written by this build.
+  // Escaping the characters Turtle actually forbids costs nothing and does not rely on that.
+  const lit = (s: string): string => s
+    .replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+    .replace(/\r/g, '\\r').replace(/\n/g, '\\n').replace(/\t/g, '\\t');
   const rows = meshPods().map((pod) => {
     const seg = (() => { try { return new URL(pod).pathname.split('/').filter(Boolean)[0] ?? ''; } catch { return ''; } })();
     const label = MESH_ACTOR_LABELS[seg] ?? seg;
@@ -4672,6 +4908,31 @@ app.get('/agent/mesh/enrolment', (_req, res) => {
                 hydra:property [ a rdf:Property ; rdfs:label "_signature" ] ;
                 hydra:required true ;
                 rdfs:comment "secp256k1 signature over sha256:<hex(sha256(_signed_payload))>, signed with the wallet whose pod is being enrolled."
+            ]
+        ]
+    ] ;
+    #
+    # ── ★★ AND THE WAY BACK OUT, ADVERTISED BESIDE THE WAY IN ───────────────────
+    #
+    # A register you can join and cannot leave is a one-way door: it fills, and then it refuses every
+    # real agent for good. Withdrawal carries the same authority as enrolment — you may remove the pod
+    # you can prove is yours — so it needs no new trust decision, only a control to say it with.
+    hydra:operation [
+        a hydra:Operation, iep:Affordance, ieh:Affordance ;
+        hydra:method "DELETE" ;
+        hydra:title "Withdraw your own pod" ;
+        rdfs:comment "Stop the projector reading the pod you can prove is yours, and free its slot. Same envelope and same structural authority as enrolling: the pod is resolved from your signature, so you can only ever withdraw your own. A pod ALSO seeded from deployment configuration cannot be withdrawn at runtime, and the response says so rather than reporting a success the projector will not honour." ;
+        hydra:target <${self}> ;
+        dcat:accessURL <${self}> ;
+        iep:requiresSignedRequest true ;
+        hydra:expects [
+            a hydra:Class ;
+            rdfs:label "mesh-withdrawal-input" ;
+            hydra:supportedProperty [
+                a hydra:SupportedProperty ;
+                hydra:property [ a rdf:Property ; rdfs:label "_signed_payload" ] ;
+                hydra:required true ;
+                rdfs:comment "JSON.stringify({ agent_id: 'did:ethr:<addr>', timestamp: <ISO 8601, within ±60s> })"
             ]
         ]
     ] ;
@@ -7732,10 +7993,22 @@ app.post('/agent/mesh-event', (req, res) => {
     // agent's calibration-feeding lens, so it must be SIGNED — an anonymous caller could otherwise
     // inject fabricated outcomes attributable to any named agent. Require a rev-196 signed envelope;
     // reject an unsigned or invalid one. (mergeSignedEnvelope merges the recovered payload into b.)
-    let signer: string | null;
-    try { signer = mergeSignedEnvelope(b); }
-    catch { res.status(401).json({ ok: false, error: 'mesh-event requires a valid signed-request envelope' }); return; }
-    if (!signer) { res.status(401).json({ ok: false, error: 'mesh-event requires a signed-request envelope ({ _signature, _signed_payload })' }); return; }
+    /**
+     * ★★ THE SAME BINDING AS ENROLMENT AND REVIEW, so a DELEGATED agent can push at all.
+     *
+     * This used `mergeSignedEnvelope`, which authenticates the KEY and ignores `agent_id` — correct
+     * for "prove you own this pod", but relay-mediated agents hold no key, so the recovered signer is
+     * the RELAY's and the actor check below rejected them. That made the whyEmpty remedy's fallback
+     * ("push steps directly with POST /agent/mesh-event") unreachable for exactly the agents the
+     * enrolment work was written to serve: the identity defect fixed at one endpoint, left standing
+     * one endpoint along, and advertised as the workaround for it.
+     */
+    const boundME = await bindSignedCaller(req.body, {
+      hint: 'A mesh event is attributed to the agent of originPod, so it is bound to a caller who can prove which pod is theirs. Wallet-holding agents sign locally; relay-mediated agents get the envelope from the relay `sign_request` tool.',
+    });
+    if (!boundME.ok) { res.status(boundME.status).json({ ok: false, error: boundME.error, ...(boundME.hint ? { hint: boundME.hint } : {}) }); return; }
+    // Downstream reads take the SIGNED values, exactly as mergeSignedEnvelope's merge provided.
+    Object.assign(b, boundME.payload);
     // Rate-limit: each event lands a fresh id into the (now-capped) statement store +
     // calibration lens; a fresh wallet looping distinct-id envelopes is a write-DoS
     // vector, so bound throughput per-IP (round-36; the store cap bounds memory).
@@ -7776,8 +8049,13 @@ app.post('/agent/mesh-event', (req, res) => {
     // of originPod (actorForPod), so the SIGNER must be that same agent — otherwise any wallet
     // could sign an envelope with originPod set to a VICTIM's pod and land a fabricated outcome
     // into the victim's calibration-feeding lens. Bind the attributed agent to the recovered signer.
-    const signerPod = resolveSubjectPodUrl(`did:ethr:${signer}`);
-    if (actorForPod(originPod, MESH_ACTOR_LABELS) !== actorForPod(signerPod, MESH_ACTOR_LABELS)) {
+    // ★ Bound to the CALLER's own pod (direct: their wallet; delegated: the agent the relay proved a
+    // delegation for), and pinned to the trusted origin — otherwise a URL-shaped agent_id would let a
+    // caller derive a pod on their own host whose last path segment picks any victim's lens, which is
+    // the same forgery route the enrolment path was just closed against.
+    const callerPodME = enrolmentPodFor(boundME.callerDid);
+    if ('error' in callerPodME) { res.status(403).json({ ok: false, error: callerPodME.error }); return; }
+    if (actorForPod(originPod, MESH_ACTOR_LABELS) !== actorForPod(callerPodME.pod, MESH_ACTOR_LABELS)) {
       res.status(403).json({ ok: false, error: 'signer is not the agent of originPod — a mesh event may only be pushed for your own pod' });
       return;
     }
@@ -7841,9 +8119,9 @@ app.listen(PORT, () => {
   // is honoured immediately rather than a cycle later — and so the boot log reports the set the
   // projector will actually read, not just the configured seed.
   void hydrateDurableEnrolment()
-    .catch((e) => { console.error('[foxxi-bridge][mesh] durable register hydrate failed:', (e as Error).message); return 0; })
+    .catch((e) => { console.error('[foxxi-bridge][mesh] durable register hydrate failed:', (e as Error).message); return { count: 0, stale: true }; })
     .then((durable) => {
-      console.log(`[foxxi-bridge][mesh] sweeping ${meshPods().length} pod(s) every ${MESH_PROJECT_INTERVAL_MS}ms into per-agent lens:<agent> views (on-read, never written back to the agent pod) — ${configured} seeded from config, ${durable} durably enrolled on the pod; agents enrol their own pod at POST /agent/mesh/enrolment (cap ${MESH_ENROLMENT_CAP})`);
+      console.log(`[foxxi-bridge][mesh] sweeping ${meshPods().length} pod(s) every ${MESH_PROJECT_INTERVAL_MS}ms into per-agent lens:<agent> views (on-read, never written back to the agent pod) — ${configured} seeded from config, ${durable.count} durably enrolled on the pod${durable.stale ? ' (REGISTER UNREADABLE at boot — durable enrolments are missing until a later cycle reads it)' : ''}; agents enrol their own pod at POST /agent/mesh/enrolment (cap ${MESH_ENROLMENT_CAP})`);
       return runMeshProjectionCycle();
     })
     .catch(e => console.error('[foxxi-bridge][mesh] initial cycle:', (e as Error).message));

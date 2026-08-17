@@ -84,7 +84,12 @@ async function main(): Promise<void> {
   ok('carries a hydra:Operation write control', /hydra:operation\s*\[/.test(reg0.text) && /hydra:method\s+"POST"/.test(reg0.text));
   ok('the control states it needs a signed request', /iep:requiresSignedRequest\s+true/.test(reg0.text));
   ok('the control documents the expected payload', /hydra:expects/.test(reg0.text) && /_signed_payload/.test(reg0.text) && /_signature/.test(reg0.text));
-  ok('durable entries are marked durable', /Durable: configured for this deployment/.test(reg0.text));
+  // Matches BOTH durable spellings — seeded-from-config and recorded-on-the-pod. Asserting only the
+  // config wording made this step red by construction the moment durable enrolment shipped, which is
+  // the worst state for the one gate this feature has: a permanently-failing check hides the real
+  // regression it exists to catch.
+  ok('durable entries are marked durable', /Durable: (seeded from this deployment|enrolled at )/.test(reg0.text));
+  ok('the register advertises BOTH a way in and a way out', /hydra:method\s+"POST"/.test(reg0.text) && /hydra:method\s+"DELETE"/.test(reg0.text));
 
   // The gate origin the deployment actually uses, taken from a durable entry rather than assumed —
   // asserting against a hardcoded host would pass for the wrong reason on a re-pointed deployment.

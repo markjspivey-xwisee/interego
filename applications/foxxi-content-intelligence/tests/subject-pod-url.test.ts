@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { resolveSubjectPodUrlPure } from '../src/subject-pod-url.js';
+import { resolveSubjectPodUrlPure, hasControlChars } from '../src/subject-pod-url.js';
 import { safePublicUrlOrUndefined } from '../src/ssrf-guard.js';
 
 const TENANT = 'https://gate.example.test/foxxi/';
@@ -65,6 +65,48 @@ describe('subject pod resolution — the identity forms that must NOT land on th
     expect(resolve('   ')).toBe(TENANT);
     // Too short to be an address, no pod id, not a URL — nothing to derive from.
     expect(resolve('0xdeadbeef')).toBe(TENANT);
+  });
+});
+
+describe('identity strings must be a single line of printable text', () => {
+  /**
+   * ★ WHY A BOUNDARY CHECK AND NOT PER-SINK ESCAPING. In DELEGATED mode the caller-supplied
+   * `agent_id` becomes `callerDid`, which is interpolated into a Turtle literal on a PUBLIC register
+   * AND persisted as a pod row. A raw newline inside a Turtle short-string literal is a syntax error,
+   * so one such identity makes the whole register unparseable for every consumer — and once the row
+   * is durable it stays broken across restarts, with no in-band way to remove it.
+   *
+   * Characters are built by code point rather than written as literals: a source file containing a
+   * raw NUL is itself a hazard (tooling treats it as binary), and a hand-typed escape for exactly
+   * this class is easy to get silently wrong — which is how it was got wrong while writing this.
+   */
+  const ch = (code: number): string => String.fromCharCode(code);
+
+  it('accepts the identity forms the system actually issues', () => {
+    for (const id of [
+      'did:ethr:0x2c3ec2978973680f890c0609c6a8cee382f3c80c',
+      'did:web:example.test:agents:codex-u-pk-b03a054d6915',
+      'https://id.example.test/jliu/profile#me',
+      'u-pk-00181cd5dbee',
+    ]) expect(hasControlChars(id)).toBe(false);
+  });
+
+  it('★ rejects the characters that would break a Turtle literal', () => {
+    expect(hasControlChars(`eth-abc123def456${ch(0x0a)}X`)).toBe(true); // LF — terminates the literal
+    expect(hasControlChars(`eth-abc123def456${ch(0x0d)}X`)).toBe(true); // CR — same
+    expect(hasControlChars(`eth-abc${ch(0x09)}def`)).toBe(true);        // TAB
+    expect(hasControlChars(`eth-abc${ch(0x00)}def`)).toBe(true);        // NUL
+    expect(hasControlChars(`eth-abc${ch(0x7f)}def`)).toBe(true);        // DEL
+  });
+
+  it('rejects Unicode line and paragraph separators, which a plain newline check misses', () => {
+    expect(hasControlChars(`eth-abc${ch(0x2028)}def`)).toBe(true);
+    expect(hasControlChars(`eth-abc${ch(0x2029)}def`)).toBe(true);
+  });
+
+  it('does not reject ordinary non-ASCII text — this is a control-character check, not an ASCII one', () => {
+    expect(hasControlChars('did:web:xn--exmple-cua.test:agents:agent')).toBe(false);
+    expect(hasControlChars(`did:web:ex${ch(0xe4)}mple.test`)).toBe(false);
   });
 });
 
