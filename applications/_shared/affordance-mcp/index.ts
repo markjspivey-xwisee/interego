@@ -438,14 +438,27 @@ function readsBlock(affordance: Affordance): string {
    * above types itself `iep:Affordance, ieh:Affordance, hydra:Operation, dcat:Distribution` rather
    * than leaving three of the four to be derived. The alignment stays for semantics; these triples
    * are what make the descriptor usable by a client that only speaks DCAT.
+   *
+   * ── ★★ AND NO dcat:accessService HERE, DELIBERATELY ─────────────────────────────────────
+   *
+   * It was emitted as `dcat:accessService <populatedBy>` and that inverted the ONE DCAT term that
+   * encodes the zero-copy distinction. `dcat:accessService` means "a DataService you QUERY";
+   * `populatedBy` is the store's WRITE port. On the live review-record descriptor it therefore
+   * pointed a DCAT-literate agent at a POST-only endpoint that answers 404 to a GET — so the caller
+   * followed the zero-copy handle, found nothing, and fell back to the only other read available:
+   * the 1.2 MB bulk copy. An advertisement for a service that does not exist is worse than silence,
+   * because it is the one a conforming client trusts first.
+   *
+   * ★ IT COMES BACK WHEN THERE IS SOMETHING TRUE TO POINT AT — a queryable, self-scoped read of the
+   * store. Until then this stays absent, and the absence is honest: no query service is offered
+   * because none is implemented.
    */
   const blocks = sources.map((s) => `        [
             a iep:EvidenceSource, dcat:Dataset ;
             rdfs:label "${escapeLit(s.label)}" ;
             iep:store <${s.store}> ;
             dcat:accessURL <${s.store}> ;
-            iep:populatedBy <${s.populatedBy}> ;
-            dcat:accessService <${s.populatedBy}>${s.admits ? ` ;
+            iep:populatedBy <${s.populatedBy}>${s.admits ? ` ;
             iep:admits "${escapeLit(s.admits)}" ;
             dct:description "${escapeLit(s.admits)}"` : ''}${s.enrolmentRegister ? ` ;
             iep:enrolmentRegister <${s.enrolmentRegister}>` : ''}

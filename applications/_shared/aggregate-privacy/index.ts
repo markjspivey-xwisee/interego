@@ -474,12 +474,34 @@ export function verifySignedBounds(args: {
   } catch (err) {
     return { valid: false, reason: `signature recovery failed: ${(err as Error).message}` };
   }
+  /**
+   * ── ★★ CONTAINMENT IS NOT A BINDING ─────────────────────────────────────────────────────
+   *
+   * This was `didLower.includes(recoveredLower)`, and the whole point of this attestation — stated
+   * in its own doc comment below — is to catch impersonation. A substring test does not: an attacker
+   * signing with their OWN key can set `contributorDid` to any text that merely CONTAINS their
+   * address, including another party's identifier with their own appended
+   * ("did:ethr:0x<victim>-attested-by-0x<attacker>"), and the attestation records valid: true. It
+   * also admits Turtle-injection payloads into a field that is later serialized.
+   *
+   * ★ THE CORRECT SHAPE ALREADY EXISTS IN THIS REPO and had already been fixed in a vertical:
+   * verifyAgentSignedRequest extracts the embedded address and compares it for EQUALITY, refusing an
+   * identifier that embeds none. Shared code kept the weaker check, which is the worse direction for
+   * this class to survive in — every vertical composing this inherits it.
+   */
   const recoveredLower = recovered.toLowerCase();
-  const didLower = args.attestation.contributorDid.toLowerCase();
-  if (!didLower.includes(recoveredLower)) {
+  const claimed = args.attestation.contributorDid.toLowerCase().match(/0x[0-9a-f]{40}/)?.[0];
+  if (!claimed) {
     return {
       valid: false,
-      reason: `recovered address ${recovered} not present in contributorDid ${args.attestation.contributorDid}`,
+      reason: `contributorDid ${args.attestation.contributorDid} embeds no Ethereum address, so the signature cannot be bound to it`,
+      recoveredAddress: recovered,
+    };
+  }
+  if (claimed !== recoveredLower) {
+    return {
+      valid: false,
+      reason: `signature recovered ${recovered} but contributorDid claims ${claimed}`,
       recoveredAddress: recovered,
     };
   }

@@ -505,7 +505,55 @@ describe('aggregate-privacy v3.1: signed-bounds attestations', () => {
       attestation: { contributorDid: decoyDid, signature },
     });
     expect(r.valid).toBe(false);
-    expect(r.reason).toMatch(/not present in contributorDid/);
+    expect(r.reason).toMatch(/contributorDid claims/);
+  });
+
+  /**
+   * ★★ THE ATTACK THE OLD CHECK ALLOWED, AND THE TEST DID NOT COVER.
+   *
+   * The binding was `contributorDid.includes(recoveredAddress)`. The test above only exercised a DID
+   * containing NO address at all, which containment also rejects — so it passed for a reason weaker
+   * than the property it was named for. An attacker signing with their OWN key needed only to put
+   * their address SOMEWHERE in a DID that names somebody else, and the attestation — whose stated
+   * purpose is to catch impersonation — recorded valid: true.
+   */
+  it('★ REJECTS a DID that merely CONTAINS the signer address while naming another party', async () => {
+    const attacker = EthersWallet.createRandom();
+    const victim = '0x1111111111111111111111111111111111111111';
+    // Reads as the victim to anything that parses the first address; contains the attacker's, so a
+    // containment test passes it.
+    const spoofed = `did:ethr:${victim}-attested-by-${attacker.address}` as IRI;
+    const contrib = buildCommittedContribution({
+      contributorPodUrl: 'https://a.example/', value: 25n, bounds,
+      blindingSeed: 'a', blindingLabel: 'l',
+    });
+    const signature = await attacker.signMessage(signedBoundsMessage({
+      commitment: contrib.commitment, bounds, contributorDid: spoofed,
+    }));
+    const r = verifySignedBounds({
+      commitment: contrib.commitment, bounds,
+      attestation: { contributorDid: spoofed, signature },
+    });
+    expect(r.valid).toBe(false);
+    expect(r.reason).toMatch(/contributorDid claims/);
+  });
+
+  it('accepts the honest case — the DID embeds exactly the signing address', async () => {
+    const honest = EthersWallet.createRandom();
+    const did = `did:ethr:${honest.address}` as IRI;
+    const contrib = buildCommittedContribution({
+      contributorPodUrl: 'https://h.example/', value: 25n, bounds,
+      blindingSeed: 'h', blindingLabel: 'l',
+    });
+    const signature = await honest.signMessage(signedBoundsMessage({
+      commitment: contrib.commitment, bounds, contributorDid: did,
+    }));
+    const r = verifySignedBounds({
+      commitment: contrib.commitment, bounds,
+      attestation: { contributorDid: did, signature },
+    });
+    expect(r.valid).toBe(true);
+    expect(r.recoveredAddress?.toLowerCase()).toBe(honest.address.toLowerCase());
   });
 
   it('requireSignedBounds mode REJECTS contributions without an attestation', async () => {
