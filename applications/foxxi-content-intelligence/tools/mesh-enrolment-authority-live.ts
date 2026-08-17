@@ -40,6 +40,11 @@ async function post(path: string, body: unknown): Promise<{ status: number; body
   let b: any = null; try { b = await r.json(); } catch { b = await r.text().catch(() => null); }
   return { status: r.status, body: b };
 }
+async function del(path: string, body: unknown): Promise<{ status: number; body: any }> {
+  const r = await fetch(`${BRIDGE}${path}`, { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  let b: any = null; try { b = await r.json(); } catch { b = await r.text().catch(() => null); }
+  return { status: r.status, body: b };
+}
 async function get(path: string, accept = 'text/turtle'): Promise<{ status: number; text: string }> {
   const r = await fetch(`${BRIDGE}${path}`, { headers: { accept } });
   return { status: r.status, text: await r.text().catch(() => '') };
@@ -217,6 +222,35 @@ async function main(): Promise<void> {
   ok('the SAME review now reports it enrolled', r2.body?.whyEmpty?.subjectEnrolled === true);
   ok('and the remedy has changed to the enrolled explanation', /IS enrolled/.test(String(r2.body?.whyEmpty?.remedy)),
     String(r2.body?.whyEmpty?.remedy ?? '').slice(0, 90) + '…');
+
+  /**
+   * ★★ THE WAY BACK OUT, EXERCISED. A register you can join and cannot leave fills up and then
+   * refuses every real agent permanently — and unlike the old in-memory set, a restart no longer
+   * clears it. Withdrawal carries the same structural authority as enrolling, so the abuse case is
+   * the same one: naming someone else's pod must remove YOURS, not theirs.
+   */
+  console.log('\n[9] an agent withdraws its own pod, and cannot withdraw anyone else\'s');
+  const W = ethers.Wallet.createRandom();
+  const podW = ownPodOf(W, origin);
+  const eW = await post('/agent/mesh/enrolment', await envelope(W, {}));
+  ok('W is enrolled to begin with', eW.body?.ok === true && norm(eW.body?.enrolled) === norm(podW), eW.body?.enrolled);
+
+  // The abuse case first, while W is still enrolled: V names W's pod.
+  const V = ethers.Wallet.createRandom();
+  const podV = ownPodOf(V, origin);
+  await post('/agent/mesh/enrolment', await envelope(V, {}));
+  const abuse = await del('/agent/mesh/enrolment', await envelope(V, { pod_url: podW }));
+  ok('naming another agent\'s pod withdraws your OWN, not theirs', norm(abuse.body?.withdrew) === norm(podV), `named ${podW} → withdrew ${abuse.body?.withdrew}`);
+  const stillThere = await get('/agent/mesh/enrolment');
+  ok('★ the victim is STILL enrolled after the attempt', stillThere.text.toLowerCase().includes(norm(podW)), podW);
+
+  const wd = await del('/agent/mesh/enrolment', await envelope(W, {}));
+  ok('withdrawal accepted', wd.status === 200 && wd.body?.ok === true, `HTTP ${wd.status}`);
+  ok('it removed the durable row', wd.body?.removedDurable === true);
+  ok('and reports the pod is no longer read', wd.body?.stillEnrolled === false);
+  const after = await get('/agent/mesh/enrolment');
+  ok('★ the pod is gone from the register', !after.text.toLowerCase().includes(norm(podW)), podW);
+  ok('unsigned withdrawal refused 401', (await del('/agent/mesh/enrolment', { pod_url: podW })).status === 401);
 
   console.log(`\nRESULT: ${pass} passed, ${fail} failed`);
   // Emitted for the restart half of the durability proof: redeploy, then re-run with
