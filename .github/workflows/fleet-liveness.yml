@@ -1,0 +1,55 @@
+name: Fleet liveness
+
+# Does each public surface ANSWER? Not "is it deployed" — answer.
+#
+# ── ★★ THE OUTAGE THIS EXISTS FOR ────────────────────────────────────────────
+#
+# `css-gate` hung twice in one night. It accepted TCP, completed TLS, and then never sent
+# a byte. Throughout: Railway said SUCCESS, the gate's own /healthz answered 200 (it does
+# not proxy, so it cannot fail), and CSS behind it served requests the entire time.
+#
+# Nothing noticed. It was found because an AGENT was asked to evaluate itself, could reach
+# nothing, and reported that the capability did not exist — and was believed. Three wrong
+# diagnoses came out of that before anyone looked at the dependency.
+#
+# ── WHY IT IS A SCHEDULE AND NOT A DEPLOY GATE ───────────────────────────────
+#
+# Same reasoning as `railway-fleet-audit.yml`, and the same lesson underneath it: a check
+# wired into a rollout fails the wrong person for somebody else's fault, and a check that
+# is red by design stops being read. This one is red ONLY when a surface did not answer,
+# which is never normal. A slow-but-answering surface is a WARNING and stays green — the
+# gate degraded to 19 s before it wedged, and that window is worth seeing without training
+# anyone to ignore a red run.
+#
+# ── WHAT A RED RUN MEANS ─────────────────────────────────────────────────────
+#
+# Something is accepting connections and not answering, or is failing outright. For the
+# gate specifically, the known cause is an undici pool whose connections were never
+# released — see `deploy/css-gate/tests/pool-release.test.mjs`. A restart clears it; the
+# fix is to stop leaking.
+
+on:
+  schedule:
+    # Every 15 minutes. GitHub's scheduler is best-effort and drifts under load, which is
+    # fine: this is a watchdog for an outage that lasted hours, not a latency SLO.
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  # A backlog of overdue runs proves nothing that the newest one does not.
+  group: fleet-liveness
+  cancel-in-progress: true
+
+jobs:
+  answer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # No install: the script uses only built-in fetch, on purpose. A watchdog that needs
+      # a dependency tree is one more thing that can be broken when you need it most.
+      - name: Does every surface answer?
+        run: node tools/fleet-liveness.mjs

@@ -365,6 +365,18 @@ async function probeVerifySource(url, token, opts = {}) {
       method: 'POST',
       headers,
       body: JSON.stringify({ token }),
+      // ★★ BOUNDED, BECAUSE AN UNBOUNDED ONE PINS A REQUEST HANDLER FOREVER.
+      //
+      // This awaits the identity server or the relay. Neither is guaranteed to answer: MEASURED,
+      // a relay redeploy leaves it unreachable for ~45 s, and a hung host completes TLS and then
+      // says nothing at all — which is exactly what this gate itself did twice tonight. Without a
+      // deadline every write arriving during that window parks here, and each one holds its slot
+      // until the process is restarted.
+      //
+      // A verify that cannot answer in ten seconds is not going to; `probeVerifySource` already
+      // treats a transport failure as "unknown" and lets the next source weigh in, so the timeout
+      // lands on a path that is designed for it.
+      signal: AbortSignal.timeout(Number(process.env.VERIFY_TIMEOUT_MS ?? 10_000)),
     });
   } catch (err) {
     return { kind: 'transport', reason: `${url} unreachable: ${err.message}` };
@@ -694,9 +706,36 @@ const server = createServer(async (req, res) => {
 
   // Health: anyone can hit /healthz on the gate itself (does NOT proxy).
   if (req.url === '/healthz') {
+    /**
+     * ── ★★ AND IT REPORTS THE POOL, BECAUSE 200 HERE MEANT NOTHING ──────────────
+     *
+     * This endpoint answered 200 throughout two separate incidents in which the gate accepted TLS
+     * and never replied to a single proxied request. It does not touch the upstream, so it cannot
+     * be wrong — and it cannot be useful either. "SUCCESS in Railway, healthy on /healthz, dead
+     * for everything that matters" is how this went unnoticed until an agent was blamed for it.
+     *
+     * The pool's own counters are the fact that distinguishes the two states. `queued` climbing
+     * with `running` pinned at the pool size IS the wedge, and it is visible from outside without
+     * proxying anything.
+     */
+    const stats = (() => {
+      try {
+        const p = upstreamPools.get(new URL(CSS_INTERNAL_URL).origin);
+        const s = p?.stats;
+        return s ? { size: s.size, connected: s.connected, pending: s.pending, running: s.running, queued: s.queued } : null;
+      } catch { return null; }
+    })();
+    // Saturated AND backing up. Either alone is ordinary under load; together, for any length of
+    // time, is the shape of a leak.
+    const saturated = Boolean(stats && stats.running >= UPSTREAM_POOL_CONNECTIONS && stats.queued > 0);
     res.writeHead(200, { 'Content-Type': 'application/json', ...corsHeaders });
     res.end(JSON.stringify({
       ok: true,
+      upstreamPool: stats,
+      saturated,
+      ...(saturated
+        ? { warning: 'every upstream connection is busy and requests are queuing — proxied requests may be hanging even though this endpoint answers' }
+        : {}),
       gating: 'writes-only',
       upstream: CSS_INTERNAL_URL,
       perUserBearers: Boolean(IDENTITY_URL) || Boolean(RELAY_VERIFY_URL && RELAY_INTROSPECTION_SECRET),
@@ -828,12 +867,35 @@ const server = createServer(async (req, res) => {
       // upstream 4xx/5xx — the response object simply carries that
       // statusCode — so we forward those bodies through naturally.
       maxRedirections: 0,
+      /**
+       * ★★ A BOUND ON WAITING FOR A POOL SLOT, NOT ONLY ON THE UPSTREAM.
+       *
+       * `headersTimeout` and `bodyTimeout` govern a request that HAS a connection. Neither
+       * applies while one is queued waiting for a free slot, and the queue is unbounded — so a
+       * saturated pool does not degrade, it silently stops answering. That is how a leak of
+       * sixteen connections turned into a gate that accepted TLS and never replied.
+       *
+       * With a deadline the same failure becomes a fast, loud 502 that names the cause, and the
+       * watchdog and the logs both see it. Defence in depth: the leak above is the fix, this is
+       * what keeps the NEXT one from being invisible.
+       */
+      signal: AbortSignal.timeout(Number(process.env.UPSTREAM_QUEUE_TIMEOUT_MS ?? 90_000)),
     });
   } catch (err) {
-    console.error('[css-gate] upstream request failed:', err.message);
+    // ★ AN ABORT HERE IS OUR OWN DEADLINE, NOT CSS REFUSING — and saying "upstream CSS
+    // unreachable" for it sends the next person to the wrong service, which is precisely the
+    // mistake this gate's own failure caused three times over tonight.
+    const ourDeadline = err?.name === 'TimeoutError' || err?.name === 'AbortError';
+    console.error('[css-gate] upstream request failed:', err.message, ourDeadline ? '(our deadline)' : '');
     if (!res.headersSent) {
       res.writeHead(502, { 'Content-Type': 'application/json', ...corsHeaders });
-      res.end(JSON.stringify({ error: 'upstream CSS unreachable', detail: err.message }));
+      res.end(JSON.stringify(ourDeadline
+        ? {
+          error: 'gate gave up waiting for a connection to CSS',
+          detail: 'This gate\'s own deadline, not a refusal by CSS — its pool may be saturated. '
+            + 'Check for leaked upstream connections before blaming CSS.',
+        }
+        : { error: 'upstream CSS unreachable', detail: err.message }));
     } else {
       res.end();
     }
@@ -848,6 +910,30 @@ const server = createServer(async (req, res) => {
     upstreamRes.body.on('error', (err) => {
       console.error('[css-gate] upstream response stream error:', err.message);
       if (!res.writableEnded) res.end();
+    });
+    /**
+     * ── ★★ THE LEAK THAT WEDGED THIS GATE TWICE IN ONE NIGHT ────────────────────
+     *
+     * An undici Pool connection is returned only when its response body is CONSUMED. If the
+     * client goes away mid-stream, `pipe` stops and nothing drains the rest — so that connection
+     * is never released. The pool is `connections: 16` with no queue deadline, so the seventeenth
+     * request after sixteen such leaks does not fail: it QUEUES, forever. The gate then accepts
+     * TCP, completes TLS, and never answers.
+     *
+     * MEASURED: exactly that, twice in three hours, while CSS behind it was healthy and serving
+     * requests throughout — which is what made it look like a Foxxi fault, then a relay fault,
+     * then an agent's fault. A restart cleared it every time and it came back.
+     *
+     * Destroying the body on client close hands the connection back immediately. A client
+     * disconnecting is ordinary — a page closed, a poll cancelled, an agent timing out — and it
+     * must cost this process nothing.
+     */
+    const release = () => {
+      if (!upstreamRes.body.destroyed) upstreamRes.body.destroy();
+    };
+    res.on('close', () => {
+      // `writableEnded` false at close means the client left before we finished writing.
+      if (!res.writableEnded) release();
     });
     upstreamRes.body.pipe(res);
   } else {
