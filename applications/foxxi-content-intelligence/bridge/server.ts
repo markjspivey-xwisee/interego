@@ -1511,6 +1511,26 @@ async function runMeshProjectionCycle(): Promise<{ pods: number; projected: numb
         console.error(`[foxxi-bridge][mesh] discover(${pod}) failed:`, msg);
         continue;
       }
+      /**
+       * ── ★★ A DEAD POD DOES NOT THROW — IT RETURNS NOTHING ───────────────────────────────
+       *
+       * The catch above was the whole absence detector, and it never ran: `discover()` swallows the
+       * manifest 404 and answers with an empty list, so a pod that does not exist is indistinguishable
+       * from a pod with no descriptors. MEASURED from the live logs — nineteen pods swept every cycle,
+       * fifteen of them long dead, and not one "discover failed" line in the whole run while the
+       * retirement code sat there reading as correct.
+       *
+       * ★ SO ABSENCE IS PROBED, NOT INFERRED, and only for the pods that came back empty: a real pod
+       * with descriptors is never probed at all. A 404 on the manifest is the one signal that means
+       * "there is no pod here"; anything else — a 5xx, a timeout, a refusal — is UNKNOWN and resets
+       * nothing, because retiring a live agent's pod is far worse than sweeping a dead one.
+       */
+      if ((entries as unknown[]).length === 0) {
+        try {
+          const probe = await safeFetch(`${pod.replace(/\/+$/, '')}/.well-known/context-graphs`, { method: 'GET' });
+          if (probe.status === 404 || probe.status === 410) absentThisCycle.add(pod);
+        } catch { /* unreachable is UNKNOWN, not absent */ }
+      }
       for (const e of entries as unknown as MeshDiscoverEntry[]) {
         // Durable Foxxi artifacts (foxxi:RecordedPerformance = the agent's OWN
         // persisted xAPI Statements with result; foxxi:ScormCourse = authored
