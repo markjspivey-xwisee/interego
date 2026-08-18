@@ -1113,3 +1113,35 @@ export interface PaymentReceipt {
   readonly payer: string;                // agent/wallet that paid
   readonly payee: string;               // pod owner who received
 }
+
+/**
+ * ONE page of a collection, and the one name every layer uses for partialness.
+ *
+ * ── ★★ WHY THIS LIVES IN CORE AND NOT IN EACH CALLER ────────────────────────────────────────
+ *
+ * A system-wide audit found 51 response surfaces inlining a collection that grows with stored data,
+ * across the substrate, the relay and every vertical — because nothing offered a shared way to say
+ * "here is part of it, and here is the rest". Each caller that noticed invented its own shape, and
+ * this repo has already resolved that exact situation once: `mcpOutputSchema`/`toStructuredContent`
+ * existed in three copies, two inverted against the spec, and the fix was to move the implementation
+ * into this package. A fourth spelling of partialness would be the same defect.
+ *
+ * ★ A CURSOR, NOT AN OFFSET. `nextCursor` is opaque to the caller and derived from the last item —
+ * over an append-ordered store an offset both SKIPS and DUPLICATES while the walk is in progress,
+ * and this substrate's stores are append-ordered (statements, entries, manifest rows).
+ *
+ * ★ AND NO `returned`, `omitted` OR `more`. `totalItems` minus `items.length` is the same number,
+ * and this codebase already refuses a mirrored total elsewhere for the reason that decides it: a
+ * second place for one fact is a place for the two to disagree. `nextCursor === null` is the
+ * complete statement that there is no more.
+ *
+ * `totalItems` is optional because an exact count is sometimes itself an unbounded scan — omitting
+ * it is honest; guessing it is not.
+ */
+export interface Page<T> {
+  readonly items: readonly T[];
+  /** Opaque continuation, or null when this page is the last. */
+  readonly nextCursor: string | null;
+  /** Exact count in the store — omitted when counting would itself be unbounded. */
+  readonly totalItems?: number;
+}

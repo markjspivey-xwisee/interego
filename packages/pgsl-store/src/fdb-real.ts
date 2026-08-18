@@ -108,10 +108,19 @@ export async function openRealFdb(opts: FdbRealOptions = {}): Promise<FdbLike> {
     },
     clear: (key) => { tn.clear(toBuf(key)); },
     clearRange: (begin, end) => { tn.clearRange(toBuf(begin), toBuf(end)); },
-    getRange: async (begin, end) => {
+    getRange: async (begin, end, opts) => {
+      // ★ BOUNDED AFTER THE FETCH HERE, AND THAT IS A KNOWN COMPROMISE. `getRangeAll` is used
+      // deliberately (see the note above: the iterator-returning `getRange` was a live hazard), and
+      // it takes no limit, so this trims the materialised array. The bound is therefore honoured for
+      // the CALLER — pages are correct and the cursor works — while the range scan itself is not
+      // narrowed. Fixing that means moving to the binding's limited iterator with the streaming
+      // guarantees re-established; not worth doing blind, and this backend is not the deployed one.
       const arr: FdbKeyValue[] = await tn.getRangeAll(toBuf(begin), toBuf(end));
+      const lim = opts?.limit;
+      const bounded = (typeof lim === 'number' && Number.isFinite(lim) && lim > 0)
+        ? arr.slice(0, Math.floor(lim)) : arr;
       const out: KeyValue[] = [];
-      for (const kv of arr) {
+      for (const kv of bounded) {
         // The binding may yield [key, value] tuples or {key, value} objects.
         const k = Array.isArray(kv) ? kv[0] : kv.key;
         const val = Array.isArray(kv) ? kv[1] : kv.value;

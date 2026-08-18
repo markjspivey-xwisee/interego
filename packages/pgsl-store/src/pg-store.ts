@@ -167,11 +167,17 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
             clearRange: (begin: Key, end: Key) => {
               pending.push(client.query(`DELETE FROM ${table} WHERE k >= $1 AND k < $2`, [buf(begin), buf(end)]));
             },
-            getRange: async (begin: Key, end: Key): Promise<KeyValue[]> => {
+            getRange: async (begin: Key, end: Key, opts?: { readonly limit?: number }): Promise<KeyValue[]> => {
               await flush();
+              // ★ THE BOUND GOES IN THE SQL, not around the result. Fetching every row and slicing
+              // in the client bounds the RESPONSE and not the query — the scan, the transfer and the
+              // memory are all still linear in the range, which is most of what makes an unbounded
+              // read expensive at this layer.
+              const lim = opts?.limit;
+              const bounded = typeof lim === 'number' && Number.isFinite(lim) && lim > 0;
               const r = await client.query<{ k: Buffer; v: Buffer }>(
-                `SELECT k, v FROM ${table} WHERE k >= $1 AND k < $2 ORDER BY k`,
-                [buf(begin), buf(end)],
+                `SELECT k, v FROM ${table} WHERE k >= $1 AND k < $2 ORDER BY k${bounded ? ' LIMIT $3' : ''}`,
+                bounded ? [buf(begin), buf(end), Math.floor(lim)] : [buf(begin), buf(end)],
               );
               return r.rows.map(row => ({
                 key: new Uint8Array(row.k),

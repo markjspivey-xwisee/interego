@@ -90,7 +90,7 @@ export class InMemoryFdb implements FdbLike {
           for (const h of this.data.keys()) if (h >= b && h < e) writes.set(h, null);
           for (const h of writes.keys()) if (h >= b && h < e) writes.set(h, null);
         },
-        getRange: async (begin, end) => {
+        getRange: async (begin, end, opts) => {
           const b = toHex(begin);
           const e = toHex(end);
           const merged = new Map<string, Value | null>();
@@ -99,7 +99,10 @@ export class InMemoryFdb implements FdbLike {
           const rows: KeyValue[] = [];
           for (const [h, v] of merged) if (v !== null) rows.push({ key: hexToBytes(h), value: v });
           rows.sort((x, y) => (toHex(x.key) < toHex(y.key) ? -1 : toHex(x.key) > toHex(y.key) ? 1 : 0));
-          return rows;
+          // Sliced AFTER the sort, so a page is the first N in bytewise key order and the last key
+          // returned is a usable cursor. Slicing before would page an arbitrary subset.
+          const lim = opts?.limit;
+          return (typeof lim === 'number' && Number.isFinite(lim) && lim > 0) ? rows.slice(0, Math.floor(lim)) : rows;
         },
       };
 

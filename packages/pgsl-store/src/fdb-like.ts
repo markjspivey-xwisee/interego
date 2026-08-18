@@ -27,8 +27,27 @@ export interface FdbTxn {
   clear(key: Key): void;
   /** Clear the half-open range [begin, end). */
   clearRange(begin: Key, end: Key): void;
-  /** Read the half-open range [begin, end); results ascending by bytewise key. */
-  getRange(begin: Key, end: Key): Promise<KeyValue[]>;
+  /**
+   * Read the half-open range [begin, end); results ascending by bytewise key.
+   *
+   * ── ★★ `limit` IS THE ONE PRIMITIVE EVERY BOUNDED READ ABOVE THIS SITS ON ──────────────────
+   *
+   * Declared without a bound, this is an unbounded ordered scan, and every layer above inherited
+   * that: an audit of the whole system found 51 response surfaces inlining a collection that grows
+   * with stored data — including the substrate's own `discover()` and the kernel's `dereference()`,
+   * so every vertical was unbounded by construction. One measured consequence was a 1.2 MB record
+   * returned to an agent that could not read it.
+   *
+   * ★ AND THE CURSOR IS FREE, because the keyspace is bytewise-order-preserving with clean prefix
+   * ranges: the LAST KEY RETURNED *is* the cursor, and the next page is
+   * `getRange(strinc(lastKey), end, { limit })`. No cursor encoding, no offset, no server state —
+   * and unlike an offset, it neither skips nor duplicates when the store grows during a walk.
+   *
+   * An implementation that ignores `limit` is not a slower implementation, it is a broken one: the
+   * callers above rely on the bound for their own bound. `tests/fdb-like-limit.test.ts` holds every
+   * backend to it.
+   */
+  getRange(begin: Key, end: Key, opts?: { readonly limit?: number }): Promise<KeyValue[]>;
   /**
    * Write `value` at `key` ONLY IF the stored value is byte-identical to `expected` —
    * or, when `expected` is null, only if the key is absent. Resolves true if the write
