@@ -282,10 +282,15 @@ async function main(): Promise<void> {
    * the durability proof needs a survivor across a restart.
    */
   console.log('\n[10] the test withdraws everything it enrolled, except the one durability witness');
-  const keep = podKey(ownPodOf(A, origin));
+  // `norm`, not the server's `podKey` — that helper lives in the bridge and is not in scope here.
+  // Referencing it threw at runtime AFTER every enrolment had happened, so the cleanup never ran and
+  // each run left another ten unremovable rows on a live register. Which is how this file put the
+  // bridge into an OOM loop: a cleanup step that cannot execute is worse than none, because it reads
+  // as handled.
+  const keep = norm(ownPodOf(A, origin));
   let cleaned = 0, stuck = 0;
   for (const w of enrolledHere) {
-    if (podKey(ownPodOf(w, origin)) === keep) continue;
+    if (norm(ownPodOf(w, origin)) === keep) continue;
     const r = await del('/agent/mesh/enrolment', await envelope(w, {}));
     if (r.status === 200 && r.body?.ok === true) cleaned++; else stuck++;
   }
