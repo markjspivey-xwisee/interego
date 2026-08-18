@@ -77,14 +77,24 @@ async function main(): Promise<void> {
    */
   const full = await fetch(`${BRIDGE}/agent/review-record`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(await envelope(w, { include_clr: false, projection: 'full' })),
+    body: JSON.stringify(await envelope(w, { include_clr: false, projection: 'inline' })),
   });
   const fullText = await full.text();
+  const linksRes = await fetch(`${BRIDGE}/agent/review-record`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(await envelope(w, { include_clr: false, projection: 'links' })),
+  });
+  const linksText = await linksRes.text();
   console.log(`\nPROJECTIONS`);
-  console.log(`  summary (default): ${text.length.toLocaleString()} chars`);
-  console.log(`  full (opt-in)    : ${fullText.length.toLocaleString()} chars`);
-  const ratio = fullText.length > 0 ? (text.length / fullText.length) : 1;
-  console.log(`  default is ${(ratio * 100).toFixed(1)}% of full`);
+  console.log(`  inline (default): ${fullText.length.toLocaleString()} chars`);
+  console.log(`  links  (opt-in) : ${linksText.length.toLocaleString()} chars`);
+  const ratio = fullText.length > 0 ? (linksText.length / fullText.length) : 1;
+  console.log(`  links is ${(ratio * 100).toFixed(1)}% of inline`);
+  try {
+    const lj = JSON.parse(linksText) as { elr?: { experiences?: Record<string, unknown> } };
+    const c = lj.elr?.experiences;
+    console.log(`  experiences -> ${String(c?.['@type'])} totalItems=${String(c?.['hydra:totalItems'])}`);
+  } catch { /* the size line above already reports whether it answered */ }
 
   /**
    * ★★ ONE AGENT MUST SEE ONLY ITS OWN. The three stores a review reads are each keyed by the
@@ -111,12 +121,19 @@ async function main(): Promise<void> {
   if (foreign.length === 0) console.log('  ✓ every identifier in the record is the subject');
   else console.log(`  ✗ FOREIGN IDENTIFIERS PRESENT (${foreign.length}): ${foreign.slice(0, 8).join(', ')}`);
 
-  const ev = (j.elr as Record<string, unknown> | undefined)?.experiences as Record<string, unknown> | undefined;
-  if (ev && typeof ev === 'object' && 'total' in ev) {
-    console.log(`\nPAGING (experiences): returned=${ev.returned} of total=${ev.total} offset=${ev.offset} more=${ev.more}`);
-    console.log(`  next advertised: ${ev.next ? 'yes' : 'n/a (last page)'}`);
+  /**
+   * ★ THE LINKS PROJECTION MUST CARRY A FOLLOWABLE ADDRESS, not just a smaller payload. A collection
+   * reference with no `hydra:view` is a truncation that hid itself, which is the failure this whole
+   * refactor is about wearing the opposite mask.
+   */
+  const linksElr = (JSON.parse(linksText) as { elr?: Record<string, unknown> }).elr ?? {};
+  const coll = linksElr.experiences as Record<string, unknown> | undefined;
+  if (coll && coll['@type'] === 'hydra:Collection') {
+    const view = coll['hydra:view'] as Record<string, unknown> | undefined;
+    console.log(`\nLINKS (experiences): totalItems=${String(coll['hydra:totalItems'])}`);
+    console.log(`  followable address: ${view ? `${String(view.method)} ${String(view.target)}` : '✗ MISSING — a reference with no view is a hidden truncation'}`);
   } else {
-    console.log('\n✗ experiences is not paged — the summary projection did not apply');
+    console.log('\n✗ experiences is not a hydra:Collection — the links projection did not apply');
   }
 }
 main().catch(e => { console.error('review-record-weight error:', e); process.exit(2); });

@@ -1110,6 +1110,55 @@ async function persistEnrolmentUnsafe(row: MeshEnrolmentRow): Promise<boolean> {
 /** Serializes register writes; see persistEnrolment. */
 let enrolmentWriteQueue: Promise<void> = Promise.resolve();
 
+/**
+ * Replace an ELR's unbounded evidence arrays with Hydra collection REFERENCES.
+ *
+ * ── ★★ THE SHAPE IS HYDRA'S, NOT ONE INVENTED HERE ──────────────────────────────────────────
+ *
+ * A bespoke pager was written into this file once and removed: `{items, returned, total, offset,
+ * more}` — four fields, three of them things the codebase had already decided not to mint, because
+ * `hydra:totalItems` minus the page length is the same fact and a mirrored total is a second place
+ * for one number to disagree with itself. `docs/ns/iep.ttl` already declares
+ * `iep:ManifestArchive rdfs:subClassOf hydra:PartialCollectionView` and states the principle in
+ * full — it had simply never been carried past that one class.
+ *
+ * ★ AND THE DEFAULT STILL SHIPS THE BODIES. This is opt-in for one release: an agent that asks for
+ * links gets them; every existing consumer keeps the shape it was written against. The flip is one
+ * line, and it should follow evidence that the self-scoped read is being used, not precede it.
+ */
+function elrAsLinks(elr: unknown, subjectDid: string, base: string): unknown {
+  if (!elr || typeof elr !== 'object') return elr;
+  const src = elr as Record<string, unknown>;
+  const collectionFor = (key: string): unknown => {
+    const arr = src[key];
+    if (!Array.isArray(arr)) return arr;
+    return {
+      '@type': 'hydra:Collection',
+      'hydra:totalItems': arr.length,
+      /**
+       * ★ THE ADDRESS IS ONE THE HOLDER CAN FOLLOW. Every per-item evidence IRI this bridge mints
+       * 401s for a signed-envelope caller — the LRS takes Basic/cmi5/session/OAuth and an agent
+       * holds none — so pointing at those would be the write-port mistake again in a new place.
+       * This points at the self-scoped read, which is bound to the signature the caller already has.
+       */
+      'hydra:view': {
+        '@type': 'hydra:PartialCollectionView',
+        target: `${base}/agent/lattice/self`,
+        method: 'POST',
+        note: 'Self-scoped: send the same rev-196 envelope. The lattice read is the one your signature resolves to, so there is no parameter naming anyone else.',
+      },
+    };
+  };
+  return {
+    ...src,
+    experiences: collectionFor('experiences'),
+    performanceRecords: collectionFor('performanceRecords'),
+    // Said on the record itself, because "why is this shorter than last time" must be answerable
+    // from the response alone.
+    projectionNote: `LINKS projection: the judgement in full (competencies, credentials, counts — bounded by vocabulary, not by history), with evidence as hydra:Collection references carrying hydra:totalItems. Nothing here grows with ${subjectDid}'s history. Omit projection, or pass "inline", for every entry embedded — that is the shape measured at over 1.2 MB.`,
+  };
+}
+
 
 /**
  * Consecutive cycles in which a pod's manifest was ABSENT (not merely unreachable).
@@ -4666,7 +4715,9 @@ const REVIEW_RECORD_AFFORDANCE: Affordance = {
      * bounded by default now; the way to widen or page it belongs where the caller is already
      * reading.
      */
-    { name: '_signed_payload', type: 'string', required: true, description: "JSON.stringify({ agent_id: 'did:ethr:<addr>', timestamp: <ISO 8601, within ±60s>, subject_did?, subject_pod_url?, subject_name?, actor_kind?, include_clr? })" },
+    // ★ THE PROJECTION IS ADVERTISED, because a parameter a caller cannot see does not exist — the
+    // same failure as a read-side declared in a descriptor and dropped before any caller saw it.
+    { name: '_signed_payload', type: 'string', required: true, description: "JSON.stringify({ agent_id: 'did:ethr:<addr>', timestamp: <ISO 8601, within ±60s>, subject_did?, subject_pod_url?, subject_name?, actor_kind?, include_clr?, projection?: 'inline'|'links' }). DEFAULT 'inline' embeds every experience and performance record — that grows without bound with the subject's history and has been measured over 1.2 MB. 'links' returns the JUDGEMENT (competencies, credentials, counts) with evidence as hydra:Collection references carrying hydra:totalItems and a self-scoped address you can dereference with this same envelope." },
     { name: '_signature', type: 'string', required: true, description: 'secp256k1 signature over the canonical message sha256:<hex(sha256(_signed_payload))>, signed with the wallet matching agent_id.' },
   ],
   /**
@@ -5245,10 +5296,19 @@ app.post('/agent/review-record', async (req, res) => {
      *      data, never in a reader's configuration") — it was simply never carried beyond that one
      *      class, which is how an unbounded response shape survived review here for months.
      *
-     * So this handler keeps returning what it assembles, and the bound arrives when the substrate
-     * offers a self-scoped dereference and a standard bounded-collection projection for every
-     * vertical to compose.
+     * ★★ AND NOW THE PRECONDITION IS MET, SO THE PROJECTION IS HERE — as an OPT-IN, with the
+     * default unchanged. `POST /agent/lattice/self` gives a signed-envelope caller an address it can
+     * actually dereference, which is what makes returning links an improvement rather than a
+     * downgrade: handing an agent addresses it cannot follow replaces an unreadable response with an
+     * unusable one, and that is exactly the damage the write-port `dcat:accessService` did.
+     *
+     * `projection:"links"` returns the JUDGEMENT — competencies, credentials, counts, all bounded by
+     * vocabulary rather than history — plus a Hydra collection reference per evidence array carrying
+     * `hydra:totalItems` and the address to follow. Nothing that grows with the subject's history
+     * crosses the wire. The default stays `inline` for one release so no existing consumer breaks on
+     * a shape change it did not ask for; flipping it is a one-line change afterwards.
      */
+    const projectionMode = p.projection === 'links' ? 'links' : 'inline';
     // Read the live enrolled set ONCE for the whyEmpty block below. All three fields that report it
     // — the list, the boolean and the remedy — must describe the SAME set: an agent can now enrol
     // itself mid-flight, so re-reading per field could answer "not enrolled" beside a list that
@@ -5264,7 +5324,8 @@ app.post('/agent/review-record', async (req, res) => {
       authMode,
       self: isSelf,
       subject: { did: subjectDid, podUrl: subjectPodUrl, label: subjectLabel, kind: subjectKind, lensTenant: lensTenantFor(subjectLabel), statementCount: statements.length, statementSource, latticeStatements: latticeStmts.length },
-      elr,
+      projection: projectionMode,
+      elr: projectionMode === 'links' ? elrAsLinks(elr, subjectDid, bridgeBaseUrl) : elr,
       ...(clr !== undefined ? { clr } : {}),
       /**
        * ── ★★ AN EMPTY REVIEW MUST SAY WHY IT IS EMPTY ─────────────────────────────
