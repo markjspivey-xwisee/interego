@@ -131,7 +131,7 @@
 
 import {
   supersessionFrontier, classifyIfMatch, classifyCasRequest, casRefusal,
-  priorVersionsFor, reDecidedSupersedes, casSelfOverwriteRefusal,
+  priorVersionsFor, reDecidedSupersedes, linearSupersedesFor, casSelfOverwriteRefusal,
   foreignDescriptorOverwriteRefusal, descriptorWriteCollisionRefusal, type FrontierEntry,
 } from '../supersession-frontier.js';
 import { normalizeCssUrl } from '../url-rewrite.js';
@@ -511,7 +511,10 @@ function main(): void {
     { descriptorUrl: d(0), describes: [G] },
     { descriptorUrl: d(1), describes: [G], supersedes: [d(0)] },
   ];
-  const frozenSnapshot = priorVersionsFor(atReadTime, G, d(3));
+  // The frozen list is what the REQUEST thread decided, and that is `linearSupersedesFor` —
+  // building the fixture with `priorVersionsFor` would model a request thread the relay no
+  // longer has, and the re-decide would look like a change on every uncontended write.
+  const frozenSnapshot = linearSupersedesFor(atReadTime, G, d(3), normalizeCssUrl);
   // While our write sat in the queue, another writer landed v2 on top of v1.
   const atWriteTime: FrontierEntry[] = [
     ...atReadTime,
@@ -613,7 +616,7 @@ function main(): void {
     { descriptorUrl: d(1), describes: [G], supersedes: [d(0)] },
   ];
   const orderB: FrontierEntry[] = [orderA[1]!, orderA[0]!];
-  const frozenInOrderA = priorVersionsFor(orderA, G, d(5), normalizeCssUrl);
+  const frozenInOrderA = linearSupersedesFor(orderA, G, d(5), normalizeCssUrl);
   ok(
     reDecidedSupersedes(frozenInOrderA, [], orderB, G, d(5), normalizeCssUrl) === null,
     '★ the same targets in a different order is NOT a change — the 202 CID stays valid',
@@ -623,7 +626,7 @@ function main(): void {
     'and a genuinely new prior, reordered or not, still forces the re-decide',
   );
   ok(
-    reDecidedSupersedes([...frozenInOrderA, d(0)], [], orderA, G, d(5), normalizeCssUrl) === null,
+    reDecidedSupersedes([...frozenInOrderA, frozenInOrderA[0]!], [], orderA, G, d(5), normalizeCssUrl) === null,
     'a frozen list carrying a duplicate compares equal and is written unchanged, not tidied',
   );
 
@@ -951,6 +954,105 @@ function main(): void {
       writes > 0 && gates >= writes,
       `★★ ${name}: every publish() is preceded by the collision gate `
       + `(${writes} write${writes === 1 ? '' : 's'}, ${gates} gate call${gates === 1 ? '' : 's'})`,
+    );
+  }
+
+  // eslint-disable-next-line no-console
+  console.log('\nthe chain is LINEAR — a scheduled republisher must not write O(N²) bytes');
+
+  // ★★ MEASURED IN PRODUCTION, AND THE FIRST REPAIR WAS A NO-OP. `auto_supersede_prior` linked
+  // each new version to EVERY prior one. The desktop host renews an agent presence lease every
+  // 90 seconds against one `graph_iri`, so pod `u-eth-03f52e15b9df` reached 3,363 refs on its
+  // newest row, ~355 KB per row, a 26–33 MB hot manifest, and a ~1 GB parse for any reader —
+  // which is what repeatedly exhausted the Foxxi projector's heap.
+  //
+  // The first fix changed only the REQUEST-thread decision. Presence publishes take the
+  // DEFERRED path, where `reDecidedSupersedes` recomputed the full closure and wrote it straight
+  // back. The manifest went on growing by exactly one ref per renewal with the repair deployed
+  // and verified live — which is why the assertion below is on the deferred call specifically.
+  {
+    const chain: FrontierEntry[] = [{ descriptorUrl: d(0), describes: [G] }];
+    let frozen: readonly string[] = [];
+    // Simulate 40 lease renewals through the path presence actually takes.
+    for (let v = 1; v <= 40; v++) {
+      const self = d(v);
+      frozen = linearSupersedesFor(chain, G, self, normalizeCssUrl);
+      const merged = reDecidedSupersedes(frozen, [], chain, G, self, normalizeCssUrl) ?? frozen;
+      chain.push({ descriptorUrl: self, describes: [G], supersedes: [...merged] });
+    }
+    const widest = Math.max(...chain.map(e => (e.supersedes ?? []).length));
+    ok(
+      widest === 1,
+      `★★ forty renewals through the DEFERRED path leave every row with ONE prior link `
+      + `(widest row: ${widest}) — the closure would have made the last row 39`,
+    );
+    ok(
+      supersessionFrontier(chain, G, { normalize: normalizeCssUrl }).heads.length === 1,
+      'and the chain still has exactly one head, so a CAS still has a single value to assert',
+    );
+    // ★ LINEAR IS ONLY ACCEPTABLE IF THE LINEAGE IS STILL REACHABLE. Walk it: one link per hop
+    // from the head must reach every version. That is the property the closure was buying, and
+    // it is the property that makes storing the closure redundant rather than merely wasteful.
+    const byUrl = new Map(chain.map(e => [e.descriptorUrl, e]));
+    const walked = new Set<string>();
+    let cursor: string | undefined = supersessionFrontier(chain, G, { normalize: normalizeCssUrl }).heads[0];
+    while (cursor && !walked.has(cursor)) {
+      walked.add(cursor);
+      cursor = byUrl.get(cursor)?.supersedes?.[0];
+    }
+    ok(
+      walked.size === chain.length,
+      `★ and every one of the ${chain.length} versions is still reachable by walking one link `
+      + `per hop (reached ${walked.size}) — the closure stored a derivable fact N times over`,
+    );
+  }
+
+  // ★ A GENUINE FORK IS THE ONE CASE WHERE LINKING SEVERAL PRIORS IS CORRECT. Converging it is
+  // exactly what more than one head means, so the linear rule must not collapse it to one.
+  {
+    const forked: FrontierEntry[] = [
+      { descriptorUrl: d(0), describes: [G] },
+      { descriptorUrl: d(1), describes: [G], supersedes: [d(0)] },
+      { descriptorUrl: d(2), describes: [G], supersedes: [d(0)] },
+    ];
+    const converge = linearSupersedesFor(forked, G, d(3), normalizeCssUrl);
+    ok(
+      converge.length === 2 && converge.includes(d(1)) && converge.includes(d(2)),
+      '★ two heads are BOTH linked — a fork is converged, not silently resolved to one branch',
+    );
+  }
+
+  // ★ AND NEITHER PUBLISH PATH MAY REACH FOR THE CLOSURE AGAIN. The defect was two code paths
+  // holding separate opinions about one rule, so this is asserted on the SOURCE: the shared
+  // helper is what decides, and `priorVersionsFor` — which returns the whole history — must not
+  // be what either path feeds into a supersedes list. Counting call sites is the only check
+  // available here; server.ts starts an HTTP listener on import and cannot be exercised.
+  {
+    const frontierSrc = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '..', 'supersession-frontier.ts'), 'utf8',
+    );
+    const lines = (src: string, re: RegExp): string[] =>
+      src.split('\n').filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l) && re.test(l));
+    // In server.ts `priorVersionsFor` may only feed the `priorVersions` bookkeeping list (used
+    // for logging and the if_match comparison), never a `supersedes` decision.
+    const serverUses = lines(serverSrc, /priorVersionsFor\s*\(/);
+    ok(
+      serverUses.length <= 1,
+      `★★ server.ts reaches for the full prior list at most once, for bookkeeping only `
+      + `(${serverUses.length} site${serverUses.length === 1 ? '' : 's'})`,
+    );
+    ok(
+      lines(serverSrc, /linearSupersedesFor\s*\(/).length >= 1,
+      '★★ and the request thread decides its supersedes list through the shared helper',
+    );
+    // Inside the frontier module, exactly one function may call `priorVersionsFor` as part of
+    // deciding a link: `linearSupersedesFor` itself, as its no-head fallback.
+    const decidedInFrontier = lines(frontierSrc, /\.\.\.priorVersionsFor\s*\(|return priorVersionsFor\s*\(/);
+    ok(
+      decidedInFrontier.length === 1,
+      `★★ exactly one place in the frontier module turns priors into links, and it is the `
+      + `shared helper (${decidedInFrontier.length} site(s)) — the deferred re-decide no longer `
+      + 'recomputes the closure',
     );
   }
 

@@ -119,6 +119,23 @@ const MANIFEST_HOT_LIMIT = 100;
 // over the next 50 publishes rather than firing on every write once the hot doc sits at the
 // boundary.
 const MANIFEST_HOT_KEEP = Math.floor(MANIFEST_HOT_LIMIT / 2);
+// ★ A COUNT IS NOT A BOUND. The entry cap above was the ONLY roll-over trigger, and it is a
+// bound on rows, not on bytes — so it silently permits an index of any size at all as long as
+// the rows are few. That is not hypothetical: a presence lease republished every 90s under
+// `auto_supersede_prior` grew each row's `iep:supersedes` list by one ref per renewal, and a
+// live pod reached a 32.7 MB hot document holding NINETY-THREE entries — 301,806 of its 303,226
+// lines were supersedes refs. Ninety-three is under a hundred, so roll-over never once fired
+// while the document grew past thirty megabytes. The reader that then had to parse it is what
+// exhausted a 3 GB heap.
+//
+// The row-shape defect is fixed at the writer (supersession links the frontier head, not every
+// prior). This is the second half: the index bounds what it actually costs a reader to hold,
+// so no future row shape can reproduce the same failure through a different predicate.
+// 1 MiB is ~10x the largest healthy hot document observed across the fleet and still parses in
+// well under a second.
+const MANIFEST_HOT_MAX_BYTES = 1024 * 1024;
+/** UTF-8 byte length — `.length` counts UTF-16 units and undercounts every non-ASCII IRI. */
+const byteLength = (s: string): number => Buffer.byteLength(s, 'utf8');
 // Archive segments are siblings of the manifest INSIDE `.well-known/`, and that placement is
 // load-bearing twice over. (a) `listDescriptorUrls` — the scan behind `rebuild_manifest` —
 // already excludes `.well-known/` via NON_DESCRIPTOR_CONTAINERS, so recovery cannot mistake an
@@ -1023,15 +1040,24 @@ export function parseManifestArchiveUrls(turtle: string, baseUrl: string): strin
 export async function fetchManifestChain(
   manifestUrl: string,
   fetchFn: FetchFn,
-  options: { maxSegments?: number } = {},
+  options: { maxSegments?: number; stopAfterEntries?: number; stopAfterBytes?: number } = {},
 ): Promise<{
   hotBody: string | null;
   hotStatus: number;
   archives: Array<{ url: string; body: string }>;
   unreachable: string[];
   complete: boolean;
+  /**
+   * True when the walk stopped early because `stopAfterEntries` was satisfied — segments were
+   * left deliberately unread. Distinct from `complete: false`, which means the walk WANTED the
+   * rest and could not get it. A caller that asked for a window must not be told its own bound
+   * is a failure.
+   */
+  bounded: boolean;
 }> {
   const maxSegments = options.maxSegments ?? MANIFEST_ARCHIVE_MAX_SEGMENTS;
+  const stopAfter = options.stopAfterEntries;
+  const stopBytes = options.stopAfterBytes;
   // 5xx RESPONSES are promoted to throws inside the lambda so `withTransientRetry` actually
   // retries them — a cold-cache 503 arrives as a returned response, not a thrown error, and
   // would otherwise escape the retry loop.
@@ -1050,7 +1076,7 @@ export async function fetchManifestChain(
   }, { maxAttempts: 6, baseMs: 500 });
 
   if (!hotResp.ok) {
-    return { hotBody: null, hotStatus: hotResp.status, archives: [], unreachable: [], complete: hotResp.status === 404 };
+    return { hotBody: null, hotStatus: hotResp.status, archives: [], unreachable: [], complete: hotResp.status === 404, bounded: false };
   }
   const hotBody = await hotResp.text();
 
@@ -1068,10 +1094,82 @@ export async function fetchManifestChain(
     }
     return { ok, bad };
   };
+  /**
+   * Read one archive segment, or `null` if it could not be read.
+   *
+   * ★ ONE COPY, USED BY BOTH WALKS. The 5xx-as-throw promotion the hot GET uses matters just as
+   * much here: a cold-cache 503 on a segment must be RETRIED, not recorded as "unreachable" —
+   * that verdict makes `complete` false and, in `discover`, turns a blip into a refusal. When the
+   * bounded walk was added it copied this block, and two copies of a retry policy is one policy
+   * that will eventually disagree with itself about what counts as a hole in the index.
+   */
+  const fetchSegment = async (url: string): Promise<string | null> => {
+    try {
+      const r = await withTransientRetry(async () => {
+        const resp = await fetchFn(url, { method: 'GET', headers: { 'Accept': TURTLE_CONTENT_TYPE } });
+        if (resp.status >= 500) throw new Error(`archive GET <${url}> failed: ${resp.status} ${resp.statusText}`);
+        return resp;
+      }, { maxAttempts: 4, baseMs: 300 });
+      return r.ok ? await r.text() : null;
+    } catch { return null; }
+  };
+
   const first = targets(hotBody, manifestUrl);
   unreachable.push(...first.bad);
   let frontier = first.ok.filter(u => !visited.has(u));
   let truncated = false;
+
+  // ─── BOUNDED WALK ────────────────────────────────────────────────────────────────────────
+  // A caller that only wants the N newest rows should not have to hold the whole pod to get
+  // them. The unbounded walk below fetches EVERY segment in parallel and keeps every body
+  // resident; on a pod with 95 one-megabyte segments that is ~95 MB of live strings before a
+  // single entry is filtered, which is the shape that exhausted the projector's heap.
+  //
+  // Segments are chronological — a manifest links them oldest-first (newest last) and each
+  // carries `hydra:previous` — so the newest rows are the hot document plus the TAIL of the
+  // link list. Walking that tail backwards one segment at a time, and stopping the moment the
+  // window is filled, costs what the window costs instead of what the pod costs.
+  if (stopAfter !== undefined || stopBytes !== undefined) {
+    let count = parseManifest(hotBody).length;
+    // ★ AND A BUDGET IN BYTES, BECAUSE A WINDOW IN ROWS IS NOT A BOUND EITHER — the same
+    // mistake as the roll-over trigger, one layer up. A row is not a fixed size: on the pod
+    // that caused all of this, rows ran to ~355 KB, so a 750-row window is 260 MB of Turtle.
+    // Whichever bound trips first ends the walk.
+    let bytes = byteLength(hotBody);
+    const pending = [...frontier].reverse(); // newest segment first
+    let leftUnread = false;
+    const filled = (): boolean =>
+      (stopAfter !== undefined && count >= stopAfter)
+      || (stopBytes !== undefined && bytes >= stopBytes);
+    while (pending.length > 0) {
+      if (filled()) { leftUnread = true; break; }
+      if (visited.size >= maxSegments) { truncated = true; break; }
+      const url = pending.shift()!;
+      if (visited.has(url)) continue;
+      visited.add(url);
+      const body = await fetchSegment(url);
+      if (body === null) { unreachable.push(url); continue; }
+      archives.push({ url, body });
+      count += parseManifest(body).length;
+      bytes += byteLength(body);
+      const onward = targets(body, url);
+      unreachable.push(...onward.bad);
+      // Newly discovered links are older than what we are walking, so they go to the BACK.
+      for (const link of onward.ok) if (!visited.has(link) && !pending.includes(link)) pending.push(link);
+    }
+    if (pending.length > 0) leftUnread = true;
+    return {
+      hotBody,
+      hotStatus: hotResp.status,
+      archives,
+      unreachable,
+      // `complete` keeps its exact meaning: we read everything the index advertises. A bounded
+      // walk that stopped early did not, and says so through `bounded` rather than by
+      // pretending either way.
+      complete: unreachable.length === 0 && !truncated && !leftUnread,
+      bounded: leftUnread,
+    };
+  }
   while (frontier.length > 0) {
     if (visited.size + frontier.length > maxSegments) {
       // Refuse to keep walking, and SAY the view is partial rather than return a silently
@@ -1080,20 +1178,7 @@ export async function fetchManifestChain(
       frontier = frontier.slice(0, Math.max(0, maxSegments - visited.size));
     }
     for (const u of frontier) visited.add(u);
-    const fetched = await Promise.all(frontier.map(async (url) => {
-      try {
-        // Same 5xx-as-throw promotion the hot GET uses: a cold-cache 503 on a segment must
-        // be retried, not counted as "this segment is unreachable" — that verdict makes
-        // `complete` false and (in discover) turns a blip into a refusal.
-        const r = await withTransientRetry(async () => {
-          const resp = await fetchFn(url, { method: 'GET', headers: { 'Accept': TURTLE_CONTENT_TYPE } });
-          if (resp.status >= 500) throw new Error(`archive GET <${url}> failed: ${resp.status} ${resp.statusText}`);
-          return resp;
-        }, { maxAttempts: 4, baseMs: 300 });
-        if (!r.ok) return { url, body: null };
-        return { url, body: await r.text() };
-      } catch { return { url, body: null }; }
-    }));
+    const fetched = await Promise.all(frontier.map(async (url) => ({ url, body: await fetchSegment(url) })));
     const next: string[] = [];
     for (const f of fetched) {
       if (f.body === null) { unreachable.push(f.url); continue; }
@@ -1114,6 +1199,7 @@ export async function fetchManifestChain(
     archives,
     unreachable,
     complete: unreachable.length === 0 && !truncated,
+    bounded: false,
   };
 }
 
@@ -1127,13 +1213,15 @@ export async function fetchManifestChain(
 export async function fetchAllManifestEntries(
   manifestUrl: string,
   fetchFn: FetchFn,
-  options: { maxSegments?: number } = {},
+  options: { maxSegments?: number; stopAfterEntries?: number; stopAfterBytes?: number } = {},
 ): Promise<{
   entries: ManifestEntry[];
   complete: boolean;
   archivesFollowed: number;
   archivesUnreachable: string[];
   hotStatus: number;
+  /** The walk stopped early at the caller's request; see `fetchManifestChain`. */
+  bounded: boolean;
 }> {
   const chain = await fetchManifestChain(manifestUrl, fetchFn, options);
   const absolutize = (u: string): string => {
@@ -1165,6 +1253,7 @@ export async function fetchAllManifestEntries(
     archivesFollowed: chain.archives.length,
     archivesUnreachable: chain.unreachable,
     hotStatus: chain.hotStatus,
+    bounded: chain.bounded,
   };
 }
 
@@ -1206,7 +1295,9 @@ async function rollOverManifest(
   pinnedDescriptorUrl?: string,
 ): Promise<{ body: string; archiveUrls: string[]; segmentsWritten: string[] } | null> {
   const { head, entries } = splitManifestDocument(hotBody);
-  if (entries.length <= MANIFEST_HOT_LIMIT) return null;
+  // EITHER bound trips a roll-over. See MANIFEST_HOT_MAX_BYTES: the count alone let a 93-entry
+  // document reach 32.7 MB without ever rolling.
+  if (entries.length <= MANIFEST_HOT_LIMIT && byteLength(hotBody) <= MANIFEST_HOT_MAX_BYTES) return null;
   const manifestUrlForHead = `${pod}${MANIFEST_PATH}`;
   // Segments the document already links, in document order — the last is the newest, which is
   // what a fresh segment's `hydra:previous` must point at.
@@ -1230,8 +1321,30 @@ async function rollOverManifest(
     && block.trimStart().startsWith(`<${pinnedDescriptorUrl}>`);
   const pinned = ordered.filter(isPinned);
   const rest = ordered.filter(b => !isPinned(b));
-  const keep = [...pinned, ...rest.slice(0, Math.max(0, MANIFEST_HOT_KEEP - pinned.length))];
-  const evict = rest.slice(Math.max(0, MANIFEST_HOT_KEEP - pinned.length)).reverse(); // oldest first, so segments read chronologically
+  // The keep-set must satisfy BOTH bounds, so take rows newest-first while a running byte total
+  // still fits. The pinned row is admitted unconditionally and its bytes are charged first: a
+  // publish must never archive the entry it is adding (the post-PUT verify-GET would miss it and
+  // the CAS loop would read that as a concurrent clobber), so if one row is somehow larger than
+  // the whole budget the correct outcome is an over-budget hot document containing exactly that
+  // row — not a refused write.
+  const headroom = MANIFEST_HOT_MAX_BYTES - byteLength(head);
+  let used = pinned.reduce((n, b) => n + byteLength(b) + 2, 0);
+  const keepRest: string[] = [];
+  for (const block of rest) {
+    if (keepRest.length + pinned.length >= MANIFEST_HOT_KEEP) break;
+    const cost = byteLength(block) + 2;
+    // ★ NO "KEEP AT LEAST ONE" EXCEPTION. It is tempting, and it silently reintroduces the
+    // defect: a single row larger than the whole budget would be retained forever and the hot
+    // document would be as unbounded as it ever was. An index whose rows all rolled is a valid,
+    // cheap document — every row stays reachable through the links it advertises — so the
+    // budget is hard for everything except the pinned row above, which is the one row that
+    // cannot be archived without failing the publish that is writing it.
+    if (used + cost > headroom) break;
+    used += cost;
+    keepRest.push(block);
+  }
+  const keep = [...pinned, ...keepRest];
+  const evict = rest.slice(keepRest.length).reverse(); // oldest first, so segments read chronologically
 
   const manifestUrl = manifestUrlForHead;
   const prefixes = turtlePrefixes(['iep', 'xsd', 'hydra', 'dcat', 'dprod', 'dct']);
@@ -1245,8 +1358,23 @@ async function rollOverManifest(
   }
   let previous = existingArchiveUrls.length > 0 ? existingArchiveUrls[existingArchiveUrls.length - 1]! : null;
   const written: string[] = [];
-  for (let i = 0; i < evict.length; i += MANIFEST_HOT_LIMIT) {
-    const chunk = evict.slice(i, i + MANIFEST_HOT_LIMIT);
+  // Chunks are bounded by entries AND bytes for the same reason the hot document is: a segment
+  // is something a reader fetches whole, so a 100-row chunk of multi-hundred-KB rows just moves
+  // the unbounded document rather than removing it.
+  const chunks: string[][] = [];
+  {
+    let cur: string[] = [];
+    let curBytes = 0;
+    for (const block of evict) {
+      const cost = byteLength(block) + 2;
+      if (cur.length > 0 && (cur.length >= MANIFEST_HOT_LIMIT || curBytes + cost > MANIFEST_HOT_MAX_BYTES)) {
+        chunks.push(cur); cur = []; curBytes = 0;
+      }
+      cur.push(block); curBytes += cost;
+    }
+    if (cur.length > 0) chunks.push(cur);
+  }
+  for (const chunk of chunks) {
     const url = manifestArchiveUrl(pod, nextIndex++);
     const body = `${prefixes}\n\n${manifestArchiveHeaderTurtle(url, manifestUrl, previous)}\n\n${chunk.join('\n\n')}\n`;
     const resp = await withTransientRetry(async () => {
@@ -3314,6 +3442,34 @@ export async function discover(
   filter?: DiscoverFilter,
   options: DiscoverOptions = {},
 ): Promise<ManifestEntry[]> {
+  return (await discoverPage(podUrl, filter, options)).entries;
+}
+
+/**
+ * `discover()`, but the caller may cap what is READ rather than only what is returned — and is
+ * told when that cap bit.
+ *
+ * ★ WHY THIS EXISTS: `filter.limit` bounds the ANSWER, not the WORK. `discover()` reads the hot
+ * document and every archive segment the chain advertises, parses all of it, and only then
+ * filters, sorts and slices. On a pod whose index has grown to ~95 segments that is the entire
+ * index resident in memory to answer "what are the 750 newest rows", and it is what exhausted
+ * the Foxxi projector's heap on a five-minute timer.
+ *
+ * Pass `readWindow` and the chain walk stops as soon as that many raw rows are in hand, newest
+ * end first. The cost becomes the window's, not the pod's.
+ *
+ * ★ AND IT DOES NOT PRETEND. `bounded: true` means segments were left deliberately unread, so
+ * more rows exist than were considered. That matters when a `filter` is also supplied: the
+ * window is applied to RAW rows before filtering, so a selective filter over a small window can
+ * return fewer matches than the pod holds. A caller that needs "all matches" must either omit
+ * `readWindow` or widen it until `bounded` comes back false — the honest options, rather than a
+ * short list that looks complete.
+ */
+export async function discoverPage(
+  podUrl: string,
+  filter?: DiscoverFilter,
+  options: DiscoverOptions & { readWindow?: number; readBudgetBytes?: number } = {},
+): Promise<{ entries: ManifestEntry[]; bounded: boolean; archivesFollowed: number }> {
   const fetchFn = options.fetch ?? getDefaultFetch();
   const pod = ensureTrailingSlash(podUrl);
   const manifestUrl = `${pod}${MANIFEST_PATH}`;
@@ -3332,14 +3488,26 @@ export async function discover(
   // publish_context handler. The thrown message keeps its exact wording — callers and the
   // suite match on `Failed to fetch manifest from` — and embeds the status digits so the
   // helper's TRANSIENT_PATTERN (/5\d\d/) matches.
-  const all = await fetchAllManifestEntries(manifestUrl, fetchFn);
+  const all = await fetchAllManifestEntries(manifestUrl, fetchFn, {
+    ...(options.readWindow !== undefined && options.readWindow >= 0
+      ? { stopAfterEntries: options.readWindow }
+      : {}),
+    ...(options.readBudgetBytes !== undefined && options.readBudgetBytes >= 0
+      ? { stopAfterBytes: options.readBudgetBytes }
+      : {}),
+  });
 
   if (all.hotStatus !== 200 && all.hotStatus !== 404) {
     throw new Error(
       `Failed to fetch manifest from ${manifestUrl}: ${all.hotStatus} (after transient retries)`,
     );
   }
-  if (!all.complete) {
+  // A deliberately bounded walk is incomplete BY REQUEST and must not be raised as a failure —
+  // only an incompleteness we did not CHOOSE is. Unreachable segments are always the latter,
+  // even during a bounded walk: a segment we tried to read and could not is a hole in the
+  // answer, not a row beyond the window. Testing `bounded` alone would let a bounded caller
+  // silently absorb exactly the failure this refusal exists to surface.
+  if (all.archivesUnreachable.length > 0 || (!all.complete && !all.bounded)) {
     // A manifest that SAYS it has archives, and archives we could not read, is a pod whose
     // size we do not know. Returning the hot slice would be a smaller pod reported as the
     // pod — silently, with no way for the caller to notice. Throwing is the honest failure.
@@ -3390,10 +3558,11 @@ export async function discover(
     sorted = copy;
   }
 
+  const shape = { bounded: all.bounded, archivesFollowed: all.archivesFollowed };
   if (filter?.limit !== undefined && filter.limit >= 0) {
-    return sorted.slice(0, filter.limit);
+    return { entries: sorted.slice(0, filter.limit), ...shape };
   }
-  return sorted;
+  return { entries: sorted, ...shape };
 }
 
 // ═════════════════════════════════════════════════════════════

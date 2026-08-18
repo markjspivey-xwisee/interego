@@ -563,7 +563,7 @@ const BASELINE = {};
 // shape-validated and readable by the agent it is about. Raised to CI's number, not this
 // machine's: a local tree carries scratch files and stale `dist/`, and a floor set from it drifts
 // below reality in the direction that stops it being a floor.
-export const MIN_FILES = 443;
+export const MIN_FILES = 454;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.

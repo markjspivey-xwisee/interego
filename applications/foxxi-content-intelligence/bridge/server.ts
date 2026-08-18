@@ -256,6 +256,7 @@ import { buildPassedSessionTrace } from '../src/cmi5.js';
 import { pushFrameworkToCass } from '../src/cass-connector.js';
 import {
   discover,
+  discoverPage,
   publish,
   fetchGraphContent,
   resolveDid,
@@ -1294,6 +1295,19 @@ const MESH_PROJECT_INTERVAL_MS = Number(process.env.FOXXI_MESH_PROJECT_INTERVAL_
  * steps per pass than any real agent produces in a cycle. Raise it only with a heap line to read.
  */
 const MESH_SWEEP_PAGE = Number(process.env.FOXXI_MESH_SWEEP_PAGE ?? 750);
+/**
+ * Bytes of index read per pod per sweep — the bound that actually holds.
+ *
+ * ★★ A ROW COUNT IS NOT A SIZE, AND THAT IS THE WHOLE BUG TWICE OVER. The pod that took this
+ * service down carried ~355 KB per manifest row, so the 750-row window above is 260 MB of Turtle
+ * on its own — a window that bounds nothing. The same mistake sat one layer down in the index
+ * itself, whose roll-over triggered on rows and let a 93-row document reach 32.7 MB.
+ *
+ * Whichever bound trips first ends the walk, so a healthy pod is still read a page at a time by
+ * rows, and a pathological one is stopped by bytes. 8 MiB of Turtle parses to a few hundred MB of
+ * live objects — the transient the 3 GB cap can actually absorb beside a ~1.5 GB baseline.
+ */
+const MESH_SWEEP_BYTES = Number(process.env.FOXXI_MESH_SWEEP_BYTES ?? 8 * 1024 * 1024);
 // Config-injected pod-segment → friendly actor name map (NO application roster
 // baked into the projector). Format: FOXXI_MESH_ACTOR_LABELS="seg=name,seg2=name2".
 // Absent a mapping, the projector falls back to the pod segment (domain-agnostic).
@@ -1545,7 +1559,26 @@ async function runMeshProjectionCycle(): Promise<{ pods: number; projected: numb
        * re-lands a resident id). After a restart the store is empty and the backfill takes a few
        * cycles rather than one — self-healing, and far better than not being up at all.
        */
-      try { entries = await discover(pod, { limit: MESH_SWEEP_PAGE, sort: 'newest-first' }); }
+      // ★ `readWindow`, NOT JUST `limit`. `limit` bounds the answer; the walk still fetched and
+      // parsed the hot document plus EVERY archive segment before slicing, so the page size did
+      // nothing for the transient it was added to cut. `readWindow` stops the chain walk once
+      // the window is filled, newest end first — the cost is the window's, not the pod's.
+      try {
+        const page = await discoverPage(
+          pod,
+          { limit: MESH_SWEEP_PAGE, sort: 'newest-first' },
+          { readWindow: MESH_SWEEP_PAGE, readBudgetBytes: MESH_SWEEP_BYTES },
+        );
+        entries = page.entries;
+        // Said out loud rather than inferred from a short list: a partial view is the correct
+        // outcome here (the sweep re-runs, and resident ids are skipped), but a pod that is
+        // ALWAYS partial is a pod whose older rows this projector will never reach, and that
+        // should be visible in the log rather than discovered later from a gap in the data.
+        if (page.bounded) {
+          console.log(`[foxxi-bridge][mesh] ${pod}: read window filled (${entries.length} row(s), `
+            + `${page.archivesFollowed} segment(s)) — older rows were not read this cycle`);
+        }
+      }
       catch (err) {
         // ★ ABSENT vs UNREACHABLE, AGAIN. Only "there is no pod here" counts toward retirement; a
         // 5xx, a timeout or a DNS failure is UNKNOWN and must not un-enrol a real agent whose pod is

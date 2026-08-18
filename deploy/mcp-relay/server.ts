@@ -333,7 +333,7 @@ import {
 } from './shape-body.js';
 import {
   supersessionFrontier, classifyCasRequest, casRefusal,
-  priorVersionsFor, reDecidedSupersedes,
+  priorVersionsFor, reDecidedSupersedes, linearSupersedesFor,
   // `casSelfOverwriteRefusal` and `foreignDescriptorOverwriteRefusal` are deliberately NOT
   // imported here. They have different trigger conditions over the same predicted URL, and
   // reaching one without the other is the shape of the defect that let a publish overwrite
@@ -2918,11 +2918,16 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
    * Explicit `supersedes` values a caller passed are kept in full: those are the caller's own
    * assertions about what this version replaces, and are not this function's to trim.
    */
-  const frontierNow = (manifestEntriesForLookup && args.graph_iri)
-    ? supersessionFrontier(manifestEntriesForLookup, args.graph_iri as string, { normalize: normalizeCssUrl })
-    : undefined;
-  const immediatePrior: IRI[] = frontierNow && frontierNow.heads.length > 0
-    ? (frontierNow.heads as readonly string[]).filter(h => normalizeCssUrl(h) !== normalizeCssUrl(predictedDescriptorUrl)) as IRI[]
+  // ★ THE SAME FUNCTION THE DEFERRED WRITER CALLS. Both paths decide this list, and when only
+  // this one was fixed the deferred re-decide wrote the full closure straight back over it —
+  // measured live, +1 ref per 90s renewal with the repair deployed. See `linearSupersedesFor`.
+  const immediatePrior: IRI[] = (manifestEntriesForLookup && args.graph_iri)
+    ? linearSupersedesFor(
+      manifestEntriesForLookup,
+      args.graph_iri as string,
+      predictedDescriptorUrl,
+      normalizeCssUrl,
+    ) as IRI[]
     : (priorVersions.length > 0 ? [priorVersions[0]!] : []);
   const allSupersedes = [...new Set([...preprocessed.supersedes, ...immediatePrior])];
   if (allSupersedes.length > 0) {

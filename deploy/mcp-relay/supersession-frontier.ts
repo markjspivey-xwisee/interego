@@ -306,6 +306,53 @@ export function priorVersionsFor(
 }
 
 /**
+ * The priors a new version should actually LINK: the frontier heads, not the whole history.
+ *
+ * ── ★★ THE ONE PLACE BOTH PUBLISH PATHS ASK, BECAUSE THEY DRIFTED AND IT COST A SERVICE ──
+ *
+ * `auto_supersede_prior` linked every new version to EVERY prior descriptor of the same graph.
+ * Against anything that republishes on a schedule that is O(N²): version N carries N-1 links.
+ * The desktop host renews an agent presence lease every 90 seconds — a lease must be renewed —
+ * so the pod `u-eth-03f52e15b9df` reached 3,363 refs on its newest row, ~355 KB per row, and a
+ * 26–33 MB hot manifest. Parsing that costs a reader ~1 GB, which is what repeatedly exhausted
+ * the Foxxi projector's heap.
+ *
+ * ★ AND THE CLOSURE WAS ALWAYS REDUNDANT. Supersession is a CHAIN: link each version to its
+ * immediate predecessor and the whole lineage is reachable by walking, which this codebase's
+ * walker already does by default ("shortest" mode follows one link per hop). Writing the
+ * transitive closure stored a derivable fact N times over.
+ *
+ * ★ THE PREDECESSOR IS THE FRONTIER HEAD, NOT `priorVersionsFor(...)[0]`. That function returns
+ * MANIFEST ORDER, so index 0 is whatever the document happened to list first; linking it would
+ * fork the chain at random. The frontier is the entries nothing else supersedes — exactly the
+ * right answer — and a genuine FORK reports several heads, which is the one case where linking
+ * more than one prior is correct rather than redundant: it converges the fork.
+ *
+ * ★ WHY IT IS A SHARED FUNCTION AND NOT A RULE APPLIED TWICE. The relay decides this list on the
+ * request thread AND re-decides it in the deferred writer. Fixing only the first is what made the
+ * original repair a no-op in production: presence publishes take the deferred path, so every
+ * ninety seconds `reDecidedSupersedes` recomputed the full closure and wrote it back over the
+ * linear list. The manifest kept growing by exactly one ref per renewal with the "fix" deployed
+ * and verified live. One function, two callers, no rule to re-apply.
+ */
+export function linearSupersedesFor(
+  entries: readonly FrontierEntry[],
+  graphIri: string,
+  selfDescriptorUrl: string,
+  normalize?: (url: string) => string,
+): readonly string[] {
+  const norm = normalize ?? ((u: string) => u);
+  const self = norm(selfDescriptorUrl);
+  const frontier = supersessionFrontier(entries, graphIri, normalize ? { normalize } : {});
+  const heads = (frontier.heads as readonly string[]).filter(h => norm(h) !== self);
+  if (heads.length > 0) return heads;
+  // No head that is not us: either this graph has no prior version at all (nothing to link) or
+  // every describing entry is superseded by another, which is a cycle no linear choice repairs.
+  // Fall back to a SINGLE prior so the chain still has an edge, rather than to all of them.
+  return priorVersionsFor(entries, graphIri, selfDescriptorUrl, normalize).slice(0, 1);
+}
+
+/**
  * The `supersedes` a DEFERRED publish should actually write — or `null` for "unchanged".
  *
  * ★ A DEFAULT PUBLISH DECIDES ITS SUPERSEDES LIST IN ONE CRITICAL SECTION AND WRITES IT IN
@@ -357,7 +404,11 @@ export function reDecidedSupersedes(
   const merged = [
     ...new Set([
       ...contentSupersedes,
-      ...priorVersionsFor(freshEntries, graphIri, selfDescriptorUrl, normalize),
+      // The FRONTIER, not the whole history — see `linearSupersedesFor`. Re-deciding is about
+      // linking whatever landed while this write was queued, and the heads at write time are
+      // precisely that; recomputing the closure here is what silently undid the linear chain on
+      // every deferred publish.
+      ...linearSupersedesFor(freshEntries, graphIri, selfDescriptorUrl, normalize),
     ]),
   ];
   // `merged` is already de-duplicated (it is built from a Set), so comparing its length

@@ -1,5 +1,9 @@
 export {
   publish, discover, subscribe, parseManifest,
+  // `discover()` bounds the ANSWER; this one can also bound the READ, and reports whether it
+  // did. See its doc comment — a limit that still parses the whole index is what took the
+  // Foxxi projector's heap out.
+  discoverPage,
   rebuildManifestFromPod,
   // ★ THE BOUNDED-MANIFEST READ PRIMITIVE, EXPORTED BECAUSE ELEVEN CONSUMERS DO RAW MANIFEST
   // GETS. A pod past the write bound keeps only its most recent rows in
