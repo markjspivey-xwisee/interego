@@ -5302,6 +5302,19 @@ app.post('/agent/review-record', async (req, res) => {
               // re-check later without asking anyone.
               enrolmentRegister: (process.env.BRIDGE_DEPLOYMENT_URL ?? '').replace(/\/$/, '') + '/agent/mesh/enrolment',
               pushAffordance: 'POST /agent/mesh-event — push a step directly instead of waiting to be swept',
+              /**
+               * ★★ AN ADDRESS THIS CALLER CAN ACTUALLY FOLLOW. Every evidence IRI this bridge hands
+               * back is a real URL and every one of them 401s for a signed-envelope caller — the
+               * LRS takes Basic/cmi5/session/OAuth and an agent holds none of those. An address its
+               * recipient cannot dereference is decoration, and once addresses are decoration the
+               * only way to convey evidence is to copy it into the response, which is how a review
+               * reached 1.2 MB. This one is bound to the same signature the caller already made.
+               */
+              readYourOwn: {
+                target: (process.env.BRIDGE_DEPLOYMENT_URL ?? '').replace(/\/$/, '') + '/agent/lattice/self',
+                method: 'POST',
+                note: 'Your own lattice, self-scoped: the label comes from your signature, so there is no parameter naming someone else\'s. Send the same rev-196 envelope; add `uri` to dereference one holon instead of listing the namespace.',
+              },
             },
             // ★ THE ONE FACT THE AGENT COULD NOT SEE. Computed here rather than described, because
             // "check whether you are enrolled" is not an answer a caller can act on.
@@ -6168,6 +6181,70 @@ async function serveLatticeNode(kind: 'atom' | 'fragment', req: import('express'
 // literals, and a template-interpolated path is invisible to it.
 app.get('/agent/lattice/atom/:hash', (req, res) => { void serveLatticeNode('atom', req, res); });
 app.get('/agent/lattice/fragment/:hash', (req, res) => { void serveLatticeNode('fragment', req, res); });
+
+/**
+ * ── ★★ AN AGENT DEREFERENCES ITS OWN LATTICE — THE MISSING HALF OF "EVERY IDENTIFIER IS A URL" ──
+ *
+ * The six `/agent/lattice/*` reads are the substrate's content-addressed, queryable surface — the
+ * right shape, and rightly PUBLIC-ONLY: a per-agent lattice holds xAPI statements and learner PII,
+ * and the rehydrate below decrypts with the bridge's own key, so an unauthenticated caller naming a
+ * private label would have the bridge fetch, decrypt and serve it (round-24, live-verified).
+ *
+ * What never existed is the authenticated counterpart. An agent holding a valid signed envelope,
+ * asking about its OWN lens, got the same 404 as a stranger. So every evidence IRI a review handed
+ * back — `…/xapi/statements?statementId=…`, and these lattice addresses — was undereferenceable BY
+ * ITS HOLDER, and an address the recipient cannot follow is not an address, it is decoration. Once
+ * addresses are decoration, copying the bodies into the response is the only thing left. That is the
+ * mechanism behind the 1.2 MB record, one level below the missing bound.
+ *
+ * ★ THE LABEL IS DERIVED FROM THE SIGNATURE, NEVER FROM THE PATH. There is no parameter naming a
+ * lattice, so reading someone else's is unrepresentable rather than refused — the same structural
+ * authority as enrolment, and the same reason: a comparison I could write wrong is weaker than an
+ * argument that does not exist. It is pinned to the deployment's own pod origin for good measure,
+ * since a caller-shaped identity could otherwise derive a label off-origin.
+ */
+app.post('/agent/lattice/self', async (req, res) => {
+  try {
+    const xff = req.headers['x-forwarded-for'];
+    const ip = typeof xff === 'string' ? xff.split(',').at(-1)?.trim() ?? 'unknown'
+      : Array.isArray(xff) ? xff.at(-1)?.trim() ?? 'unknown' : req.ip ?? 'unknown';
+    const rl = checkAgenticRateLimit(ip);
+    if (!rl.ok) { res.status(429).json({ ok: false, error: `rate limit — retry in ${rl.retryAfterSeconds}s` }); return; }
+
+    const bound = await bindSignedCaller(req.body, {
+      hint: 'Reading your own lattice is bound to a caller who can prove which pod is theirs. POST { _signature, _signed_payload: JSON.stringify({ agent_id, timestamp, uri? }) }. There is no label parameter: the lattice read is the one your signature resolves to.',
+    });
+    if (!bound.ok) { res.status(bound.status).json({ ok: false, error: bound.error, ...(bound.hint ? { hint: bound.hint } : {}) }); return; }
+
+    const own = enrolmentPodFor(bound.callerDid);
+    if ('error' in own) { res.status(403).json({ ok: false, error: own.error }); return; }
+    const label = actorForPod(own.pod, MESH_ACTOR_LABELS);
+
+    if (!isResident(label)) {
+      try { await ensureResident(own.pod, bound.callerDid, label); } catch { /* best-effort */ }
+    }
+    if (!isResident(label)) {
+      res.json({
+        ok: true, label, subject: bound.callerDid, authMode: bound.authMode, resident: false,
+        // Says WHY it is empty, for the same reason a review does: "you have composed nothing" and
+        // "your lattice could not be loaded" are different facts and only one is actionable.
+        note: 'No resident lattice for you yet — compose an artifact first (record-performance, scorm-author, issue-credential), or the pod read failed.',
+      });
+      return;
+    }
+
+    const uri = typeof bound.payload.uri === 'string' ? bound.payload.uri : '';
+    if (uri) {
+      const turtle = projectAs(label, uri, 'rdf');
+      if (typeof turtle !== 'string') { res.status(404).json({ ok: false, error: 'holon not found in your lattice', label }); return; }
+      res.json({ ok: true, label, subject: bound.callerDid, authMode: bound.authMode, uri, representation: turtle, contentType: 'text/turtle' });
+      return;
+    }
+    res.json({ ok: true, label, subject: bound.callerDid, authMode: bound.authMode, ...latticeNamespaceView(label) });
+  } catch (err) {
+    sendServerError(res, err, 'lattice-self');
+  }
+});
 
 app.get('/agent/lattice/:label', (req, res) => {
   // Only PUBLIC lattices (ns-foxxi / spec-ontology / public-memories) are

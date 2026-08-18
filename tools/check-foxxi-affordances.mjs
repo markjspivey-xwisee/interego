@@ -48,6 +48,11 @@ const ALLOWLIST = [
   // private node 404s exactly like an absent one.
   '/agent/lattice/atom/:hash',
   '/agent/lattice/fragment/:hash',
+  // The AUTHENTICATED sibling of the public lattice reads: an agent dereferencing its OWN lattice,
+  // label derived from the signature rather than the path. Read infra like the rest of this family —
+  // it is reached by FOLLOWING an evidence address a capability already handed you, not by browsing
+  // a catalog, which is the whole point of making those addresses dereferenceable by their holder.
+  '/agent/lattice/self',
   '/agent/lattice/:label',
   '/agent/lattice/:label/term',
   '/agent/lattice/:label/holon',

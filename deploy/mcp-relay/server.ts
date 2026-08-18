@@ -7687,6 +7687,20 @@ async function handleKernelDereference(args: ToolArgs): Promise<string> {
   // `urn:pgsl:*`) pass through unchanged.
   const iri = normalizeCssUrl(String(args['iri'] ?? ''));
   const decorateManifest = args['decorate_manifest'] !== false;
+  /**
+   * How many manifest entries this relay will return, unless the caller says otherwise.
+   *
+   * ★ AN EXPLICIT 0 IS "NO BOUND", NOT "NO ENTRIES", both here and in the kernel — so the escape
+   * hatch is a config change rather than a rebuild. A caller-supplied `limit` wins over the
+   * deployment default, because a caller asking for fewer is always safe and a caller asking for
+   * more is bounded by whatever the pod actually holds.
+   */
+  const dereferenceEntryLimit = (a: Record<string, unknown>): number | undefined => {
+    const asked = Number(a['limit']);
+    if (Number.isFinite(asked) && asked > 0) return Math.floor(asked);
+    const configured = Number(process.env.RELAY_DEREFERENCE_MAX_ENTRIES ?? '200');
+    return Number.isFinite(configured) && configured > 0 ? Math.floor(configured) : undefined;
+  };
   // Pass `recipientKeyPair` so envelopes addressed to the relay's agent
   // round-trip to plaintext for the calling user — mirrors the existing
   // handleGetDescriptor pattern. Without this, every encrypted target
@@ -7709,6 +7723,20 @@ async function handleKernelDereference(args: ToolArgs): Promise<string> {
     fetch: guardedInvokeFetch,
     decorateManifest,
     recipientKeyPair: await recipientKeyFor(args, iri),
+    /**
+     * ── ★★ THE BOUND IS APPLIED AT THE EDGE, NOT IN THE KERNEL DEFAULT ────────────────────
+     *
+     * Dereferencing a manifest expands every archive segment and then fetches each entry's
+     * descriptor SEQUENTIALLY — the single read most of the audited unbounded surfaces stand on.
+     * The kernel now accepts a `limit`, and deliberately still defaults to unbounded: every
+     * consumer that has learned what a dereference returns is calibrated to that shape, and
+     * changing it under them is a breaking change disguised as a fix.
+     *
+     * So the relay chooses the bound for ITS callers. An explicit caller `limit` wins; otherwise
+     * RELAY_DEREFERENCE_MAX_ENTRIES applies, and setting it to 0 restores the old behaviour in one
+     * deploy with no rebuild — which is the property that makes this safe to turn on at all.
+     */
+    ...(dereferenceEntryLimit(args) !== undefined ? { limit: dereferenceEntryLimit(args) } : {}),
     ...(podHint ? { podHint } : {}),
     ...(knownPodUrls.length > 0 ? { knownPods: knownPodUrls } : {}),
   });
@@ -8690,12 +8718,16 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'dereference',
-    description: 'Kernel verb — Peircean Secondness: resolve an IRI to its representation, affordances, and provenance. Manifests return entry lists decorated with affordances. Encrypted envelopes return status: encrypted-no-key when no key supplied.',
+    description: 'Kernel verb — Peircean Secondness: resolve an IRI to its representation, affordances, and provenance. Manifests return entry lists decorated with affordances, BOUNDED — see `limit`; when the pod holds more, the result carries manifestPartial:true and manifestTotalEntries. Encrypted envelopes return status: encrypted-no-key when no key supplied.',
     inputSchema: {
       type: 'object',
       properties: {
         iri: { type: 'string', description: 'IRI to resolve.' },
-        decorate_manifest: { type: 'boolean', description: 'Decorate manifest entries with affordances (default true).' },
+        decorate_manifest: { type: 'boolean', description: 'Decorate manifest entries with affordances (default true). Each decorated entry costs a descriptor fetch, so `false` makes this one HTTP request total.' },
+        // ★ ADVERTISED, because a parameter a caller cannot see does not exist — the same reason a
+        // read-side declared in a descriptor and dropped by the extractor left callers with no
+        // option but the bulk copy.
+        limit: { type: 'integer', description: 'Maximum manifest entries to return (deployment default 200). The bound is applied BEFORE decoration, so it cuts the per-entry fetches too. A partial result says so: manifestPartial:true with manifestTotalEntries.' },
       },
       required: ['iri'],
     },

@@ -294,6 +294,34 @@ async function main(): Promise<void> {
   const leftovers = [...finalReg.text.matchAll(/iep:store\s+<([^>]+)>/g)].map(m => norm(m[1] ?? ''));
   ok('the register is not growing run over run', leftovers.length <= 12, `${leftovers.length} pods remain`);
 
+  /**
+   * ── ★★ AN ADDRESS ITS HOLDER CAN FOLLOW ─────────────────────────────────────────────────────
+   *
+   * The whole reason a review shipped 1.2 MB: every evidence IRI it handed back was a real URL that
+   * 401s for a signed-envelope caller, and an address the recipient cannot dereference is
+   * decoration — after which copying the bodies in is the only way to convey them. This is the
+   * authenticated self-scoped read that makes those addresses real, so it is tested the same way
+   * enrolment is: does it work, and is reading somebody else's UNREPRESENTABLE rather than refused.
+   */
+  console.log('\n[11] an agent dereferences its OWN lattice, and cannot name anyone else\'s');
+  const L = newWallet();
+  const podL = ownPodOf(L, origin);
+  const selfRead = await post('/agent/lattice/self', await envelope(L, {}));
+  ok('a signed caller is answered 200, not 404', selfRead.status === 200 && selfRead.body?.ok === true, `HTTP ${selfRead.status}`);
+  ok('the label came from the signature, not a parameter',
+    String(selfRead.body?.label ?? '').toLowerCase() === norm(podL).split('/').pop(), `label=${selfRead.body?.label}`);
+  ok('bound to the caller', String(selfRead.body?.subject ?? '').toLowerCase().includes(L.address.slice(2, 14).toLowerCase()));
+  ok('an empty lattice says WHY, rather than 404-ing like a stranger',
+    selfRead.body?.resident === true || /compose an artifact first|pod read failed/i.test(String(selfRead.body?.note ?? '')));
+
+  // ★ THE ABUSE CASE. There is no label parameter, so naming another agent cannot be expressed —
+  // a payload field that does not exist is a stronger guarantee than a comparison.
+  const victimLabel = 'u-pk-00181cd5dbee';
+  const named = await post('/agent/lattice/self', await envelope(L, { label: victimLabel, uri: 'urn:pgsl:atom:x' }));
+  ok('a label in the payload is ignored — you still read your own',
+    named.status !== 200 || String(named.body?.label ?? '') !== victimLabel, `label=${named.body?.label}`);
+  ok('unsigned self-read refused 401', (await post('/agent/lattice/self', {})).status === 401);
+
   console.log(`\nRESULT: ${pass} passed, ${fail} failed`);
   // Emitted for the restart half of the durability proof: redeploy, then re-run with
   //   --expect-enrolled <this pod>
