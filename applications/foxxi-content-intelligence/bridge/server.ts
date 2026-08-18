@@ -1458,6 +1458,26 @@ async function landMeshBatch(events: ProjectedMeshEvent[]): Promise<number> {
     const id = String((ev.statement as Record<string, unknown>).id);
     try {
       const store = getStatementStore(lensTenantFor(ev.agent));
+      /**
+       * ── ★★ RE-LANDING AN UNCHANGED STATEMENT IS PURE CHURN ──────────────────────────────
+       *
+       * MEASURED against the running process: heap sawtooths 1.5 GB → 2.4 GB every cycle with a FLAT
+       * event count (~3,000), against a 3 GB cap — roughly 900 MB of transient allocation per cycle
+       * and a peak with almost no margin, which is why it OOMed eleven times in one deployment while
+       * looking like a leak. It is not a leak; it is a steady state that allocates too much per pass.
+       *
+       * The projector re-projects the SAME statements every 60s because the sweep is a full re-read.
+       * Landing them again spreads a fresh object per statement per cycle and evicts nothing, so the
+       * work is quadratic in cycles for a corpus that has not changed. A statement is identified by
+       * its id and its content is derived from the pod, so if the id is already resident there is
+       * nothing to write.
+       *
+       * ★ AND THE OLD CODE COULD NOT HAVE SKIPPED, because it stamped a NEW `stored` timestamp on
+       * every pass — making each re-land a genuinely different record and defeating any dedup a
+       * store might have done for it. The timestamp now only moves when the statement is first seen,
+       * which is also what `stored` is supposed to mean.
+       */
+      if (await store.get(id)) continue;
       const storedAt = new Date().toISOString();
       await store.put({ id, statement: { ...ev.statement, stored: storedAt }, stored: storedAt, voided: false } as StoredStatement);
       landed++;
