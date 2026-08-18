@@ -1503,7 +1503,11 @@ async function runMeshProjectionCycle(): Promise<{ pods: number; projected: numb
         // 5xx, a timeout or a DNS failure is UNKNOWN and must not un-enrol a real agent whose pod is
         // briefly down. Same discipline as isSectionAbsentError, and the same reason.
         const msg = (err as Error).message ?? '';
-        if (/\b404\b|not found|no manifest|ENOTFOUND|does not exist/i.test(msg)) absentThisCycle.add(pod);
+        // ★ MATCHED AGAINST WHAT CSS ACTUALLY SAYS, not what a 404 is assumed to look like. A missing
+        // pod answers `{"name":"NotFoundHttpError","statusCode":404,"errorCode":"H404"}` — one word,
+        // no space — so a `not found` pattern alone would never fire and dead rows would accumulate
+        // forever while the retirement code looked correct. Measured against the live gate.
+        if (/\b404\b|not\s*found|H404|no manifest|ENOTFOUND|does not exist/i.test(msg)) absentThisCycle.add(pod);
         console.error(`[foxxi-bridge][mesh] discover(${pod}) failed:`, msg);
         continue;
       }
