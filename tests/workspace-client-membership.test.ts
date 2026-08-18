@@ -18,7 +18,7 @@ import {
   acceptanceTurtle, canvasTurtle, entryTurtle, grantTurtle, rolesTurtle, shapesTurtle, turtleIri,
   workspaceTurtle, graphRegion, readIri, readLiteral, hasTrue, parseRoleProfile,
   roleKnown, roleName, roleWhy, checkRoleForWorkspace, staleDetail, awaitHead, readCanvas,
-  verifyGrantIri, findSeat, listWorkspaces, WorkspaceClient,
+  verifyGrantIri, findSeat, listWorkspaces, WorkspaceClient, WSPR,
   type RoleTable, type Viewer, type AnyTransport,
 } from '@interego/workspace-client';
 
@@ -111,7 +111,8 @@ describe('the five documents a create publishes are readable by this package\'s 
     expect(readLiteral(r, 'dct:title')).toBe('Family room');
     expect(readIri(r, 'wsp:convener')).toBe(WEBID(POD));
     expect(readIri(r, 'wsp:entryShape')).toBe(WS + '-shapes');
-    expect(readIri(r, 'wsp:grantCapability')).toBe(ROLES + '#Convene');
+    // The published capability term, not a per-workspace mint — see the role-table test below.
+    expect(readIri(r, 'wsp:grantCapability')).toBe(WSPR + 'grant');
   });
   it('round-trips a grant and its revocation', () => {
     const live = graphRegion(trig(GRANT, grantTurtle({ grant: GRANT, workspace: WS, granteeWebId: WEBID(OTHER), role: ROLES + '#Contributor' })), GRANT);
@@ -129,11 +130,19 @@ describe('the five documents a create publishes are readable by this package\'s 
     expect(readIri(r, 'wsp:accepts')).toBe(GRANT);
     expect(readLiteral(r, 'wsp:acceptsCid')).toBe('bafkreiabc');
   });
-  it('emits a role table this package can parse back into roles and capabilities', () => {
+  it('emits a role table this package can parse back into roles permitting PUBLISHED capabilities', () => {
     const parsed = parseRoleProfile(rolesTurtle(ROLES));
     expect([...parsed.roles.values()].map((r) => r.label).sort()).toEqual(['Contributor', 'Convener', 'Reader']);
-    expect(parsed.caps.size).toBe(3);
-    expect(parsed.roles.get(ROLES + '#Reader')?.permits).toEqual([ROLES + '#Read']);
+    /**
+     * ★ THE ROLES ARE THIS WORKSPACE'S; THE CAPABILITIES ARE NOT. This asserted `caps.size === 3`
+     * and `Reader permits <ROLES#Read>` — i.e. it pinned the client MINTING its own capability
+     * vocabulary under the workspace IRI. That is exactly what made `role.permits ∩ scope` empty for
+     * every member ever seated, because the scope side names the published wsp-roles-default terms.
+     * The role table now declares no capabilities of its own and permits the published ones; see
+     * tests/workspace-capability-namespaces-agree.test.ts for the property that actually matters.
+     */
+    expect(parsed.caps.size).toBe(0);
+    expect(parsed.roles.get(ROLES + '#Reader')?.permits).toEqual([WSPR + 'read']);
   });
 });
 

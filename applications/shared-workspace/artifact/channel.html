@@ -884,6 +884,7 @@ var WSPC = (() => {
     ToolCallError: () => ToolCallError,
     WRITE_ELIGIBLE_SCOPES: () => WRITE_ELIGIBLE_SCOPES,
     WSP: () => WSP,
+    WSPR: () => WSPR,
     WorkspaceClient: () => WorkspaceClient,
     acceptGrant: () => acceptGrant,
     acceptanceTurtle: () => acceptanceTurtle,
@@ -1414,6 +1415,7 @@ var WSPC = (() => {
 
   // packages/workspace-client/src/turtle.ts
   var WSP = "https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#";
+  var WSPR = "https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp-roles-default#";
   var nsOf = (term) => nsFrom({ ...SUBSTRATE_NS, "wsp:": WSP }, term);
   var R = makeTurtleReaders(nsOf);
   var readLiteral = R.readLiteral;
@@ -4072,16 +4074,15 @@ var WSPC = (() => {
   }
   function rolesTurtle(iri) {
     turtleIri(iri, "the role profile IRI");
-    const cap = (frag, label, comment) => "<" + iri + "#" + frag + '> a wsp:Capability ; rdfs:label "' + escapeTurtleLiteral2(label) + '" ; rdfs:comment "' + escapeTurtleLiteral2(comment) + '" .\n';
-    const role = (frag, label, comment, permits) => "<" + iri + "#" + frag + '> a wsp:Role ; rdfs:label "' + escapeTurtleLiteral2(label) + '" ; rdfs:comment "' + escapeTurtleLiteral2(comment) + '" ;\n  wsp:permits ' + permits.map((p) => "<" + iri + "#" + p + ">").join(", ") + " .\n";
-    return "@prefix wsp: <" + WSP + "> .\n@prefix rdfs: <" + RDFS + "> .\n\n" + cap("Read", "Read the channel", "Fold every member's log into one view.") + cap("Post", "Post to the channel", "Append an entry to your own log in this workspace.") + cap("Convene", "Invite and revoke", "Publish and withdraw membership grants for this workspace. Only the convener's pod holds grants a reader will count, so only the convener can exercise this.") + "\n" + role("Convener", "Convener", "Holds the pod the grants are read from. Can invite, can revoke, and writes to their own log like anybody else.", ["Read", "Post", "Convene"]) + role("Contributor", "Contributor", "Reads the channel and writes to their own log. Cannot seat or unseat anyone.", ["Read", "Post"]) + role("Reader", "Reader", "Reads the channel. Publishes nothing to it.", ["Read"]);
+    const role = (frag, label, comment, permits) => "<" + iri + "#" + frag + '> a wsp:Role ; rdfs:label "' + escapeTurtleLiteral2(label) + '" ; rdfs:comment "' + escapeTurtleLiteral2(comment) + '" ;\n  wsp:permits ' + permits.map((p) => "<" + WSPR + p + ">").join(", ") + " .\n";
+    return "@prefix wsp: <" + WSP + "> .\n@prefix rdfs: <" + RDFS + "> .\n\n" + role("Convener", "Convener", "Holds the pod the grants are read from. Can invite, can revoke, and writes to their own log like anybody else.", ["read", "append", "grant", "revoke", "admit", "assign"]) + role("Contributor", "Contributor", "Reads the channel and writes to their own log. Cannot seat or unseat anyone.", ["read", "append"]) + role("Reader", "Reader", "Reads the channel. Publishes nothing to it.", ["read"]);
   }
   function workspaceTurtle(args) {
     const ws = turtleIri(args.workspace, "the workspace IRI");
     const conv = turtleIri(args.convenerWebId, "the convener WebID");
     const roles = turtleIri(args.rolesIri, "the role profile IRI");
     const shape = turtleIri(args.shapeIri, "the shape IRI");
-    return "@prefix wsp: <" + WSP + "> .\n@prefix dct: <" + DCT + "> .\n@prefix xsd: <" + XSD + "> .\n\n" + ws + '\n  a wsp:Workspace ;\n  dct:title "' + escapeTurtleLiteral2(args.title) + '" ;\n  wsp:convener ' + conv + " ;\n  wsp:roleProfile " + roles + " ;\n  wsp:entryShape " + shape + " ;\n  wsp:grantCapability <" + args.rolesIri + "#Convene> ;\n" + (args.visibility === "private" ? '  wsp:visibility "private" ;\n' : "") + "  dct:created " + created(args.createdIso) + " .\n";
+    return "@prefix wsp: <" + WSP + "> .\n@prefix dct: <" + DCT + "> .\n@prefix xsd: <" + XSD + "> .\n\n" + ws + '\n  a wsp:Workspace ;\n  dct:title "' + escapeTurtleLiteral2(args.title) + '" ;\n  wsp:convener ' + conv + " ;\n  wsp:roleProfile " + roles + " ;\n  wsp:entryShape " + shape + " ;\n  wsp:grantCapability <" + WSPR + "grant> ;\n" + (args.visibility === "private" ? '  wsp:visibility "private" ;\n' : "") + "  dct:created " + created(args.createdIso) + " .\n";
   }
   function grantTurtle(args) {
     const g = turtleIri(args.grant, "the grant IRI");

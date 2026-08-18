@@ -17,7 +17,7 @@
  * pod, under the convener's signature. Refusal is the only correct handling, so these throw.
  */
 
-import { escapeTurtleLiteral, PROV, WSP } from './turtle.js';
+import { escapeTurtleLiteral, PROV, WSP, WSPR } from './turtle.js';
 
 /**
  * One IRI reference, or a throw naming which argument was not serialisable.
@@ -112,22 +112,20 @@ export function shapesTurtle(shapeIri: string): string {
  */
 export function rolesTurtle(iri: string): string {
   turtleIri(iri, 'the role profile IRI');
-  const cap = (frag: string, label: string, comment: string): string =>
-    '<' + iri + '#' + frag + '> a wsp:Capability ; rdfs:label "' + escapeTurtleLiteral(label)
-    + '" ; rdfs:comment "' + escapeTurtleLiteral(comment) + '" .\n';
+  /**
+   * ★ PERMITS PUBLISHED CAPABILITY TERMS, MINTS NONE. See WSPR in turtle.ts: minting
+   * `<rolesIri>#Read` here while the fold's scope side resolves to `wsp-roles-default#read` made
+   * `role.permits ∩ scope` empty for every member of every workspace this client created.
+   */
   const role = (frag: string, label: string, comment: string, permits: readonly string[]): string =>
     '<' + iri + '#' + frag + '> a wsp:Role ; rdfs:label "' + escapeTurtleLiteral(label)
     + '" ; rdfs:comment "' + escapeTurtleLiteral(comment) + '" ;\n  wsp:permits '
-    + permits.map((p) => '<' + iri + '#' + p + '>').join(', ') + ' .\n';
+    + permits.map((p) => '<' + WSPR + p + '>').join(', ') + ' .\n';
   return '@prefix wsp: <' + WSP + '> .\n'
     + '@prefix rdfs: <' + RDFS + '> .\n\n'
-    + cap('Read', 'Read the channel', 'Fold every member\'s log into one view.')
-    + cap('Post', 'Post to the channel', 'Append an entry to your own log in this workspace.')
-    + cap('Convene', 'Invite and revoke', 'Publish and withdraw membership grants for this workspace. Only the convener\'s pod holds grants a reader will count, so only the convener can exercise this.')
-    + '\n'
-    + role('Convener', 'Convener', 'Holds the pod the grants are read from. Can invite, can revoke, and writes to their own log like anybody else.', ['Read', 'Post', 'Convene'])
-    + role('Contributor', 'Contributor', 'Reads the channel and writes to their own log. Cannot seat or unseat anyone.', ['Read', 'Post'])
-    + role('Reader', 'Reader', 'Reads the channel. Publishes nothing to it.', ['Read']);
+    + role('Convener', 'Convener', 'Holds the pod the grants are read from. Can invite, can revoke, and writes to their own log like anybody else.', ['read', 'append', 'grant', 'revoke', 'admit', 'assign'])
+    + role('Contributor', 'Contributor', 'Reads the channel and writes to their own log. Cannot seat or unseat anyone.', ['read', 'append'])
+    + role('Reader', 'Reader', 'Reads the channel. Publishes nothing to it.', ['read']);
 }
 
 /** The workspace record: what a reader holding only the workspace IRI can find everything from. */
@@ -162,7 +160,9 @@ export function workspaceTurtle(args: {
     + '  wsp:convener ' + conv + ' ;\n'
     + '  wsp:roleProfile ' + roles + ' ;\n'
     + '  wsp:entryShape ' + shape + ' ;\n'
-    + '  wsp:grantCapability <' + args.rolesIri + '#Convene> ;\n'
+    // The published capability term, for the same reason rolesTurtle permits published terms: a
+    // per-workspace `#Convene` matched nothing on the scope side of the fold.
+    + '  wsp:grantCapability <' + WSPR + 'grant> ;\n'
     + (args.visibility === 'private' ? '  wsp:visibility "private" ;\n' : '')
     + '  dct:created ' + created(args.createdIso) + ' .\n';
 }

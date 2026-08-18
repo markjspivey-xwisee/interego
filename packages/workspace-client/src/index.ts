@@ -14,7 +14,7 @@
  */
 
 export {
-  BAD_IRI, WSP, IEP, PROV,
+  BAD_IRI, WSP, WSPR, IEP, PROV,
   scanTurtle, maskFill, masked, maskComments, literalAt, unescapeLiteral,
   forms, nsOf, readLiteral, readIri, readIriAll, readIriList, readInt, hasTrue, hasType,
   graphRegion, escapeTurtleLiteral, parseRoleProfile,

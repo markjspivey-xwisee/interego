@@ -37,6 +37,28 @@ export {
 export const WSP = 'https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#';
 
 /**
+ * The PUBLISHED capability terms a workspace's roles permit.
+ *
+ * ── ★★ CAPABILITIES ARE VOCABULARY; ROLES ARE GOVERNANCE ────────────────────────────────────
+ *
+ * A role table is per-workspace and rightly so — "roles are DATA, a workspace that wants different
+ * governance publishes a different profile". A CAPABILITY is not: `read`, `append`, `grant` are
+ * terms in a published vocabulary that the reader, the fold and every other workspace share.
+ *
+ * ★ MINTING THEM PER WORKSPACE MADE EVERY MEMBER POWERLESS. The client emitted `<rolesIri>#Read`,
+ * `#Post`, `#Convene`; the fold computes `effective = role.permits ∩ principal's scope` and the
+ * scope side resolves to the published `wsp-roles-default#read|append|grant|…`. The intersection is
+ * a literal IRI comparison, so it was EMPTY for every member of every workspace this client has
+ * ever created — a Convener with a full ReadWrite delegation held no capability at all. The failure
+ * is silent by construction: an empty effective set reads exactly like a correctly-restricted one.
+ *
+ * So the client stops asserting its own capability vocabulary under the workspace's name and
+ * permits the published terms instead. The role IRIs stay per-workspace, which is the half that
+ * genuinely is that workspace's business.
+ */
+export const WSPR = 'https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp-roles-default#';
+
+/**
  * Prefix -> namespace, for the prefixes a workspace document uses.
  *
  * ★ COMPOSED FROM THE SUBSTRATE'S TABLE, NOT WRITTEN OUT BESIDE IT. A second spelling of `iep:`
