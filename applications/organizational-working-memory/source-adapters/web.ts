@@ -11,6 +11,7 @@
  * own quirk handlers.
  */
 
+import { assertSafeFetchTarget, guardedFetchFn } from '@interego/core';
 import type { SourceAdapter, NavigationVerb, NavigateArgs } from './index.js';
 
 const MAX_BYTES = 100_000;
@@ -36,9 +37,29 @@ async function cat(args: NavigateArgs): Promise<unknown> {
   if (!/^https?:\/\//.test(uri)) {
     return { ok: false, reason: 'web.cat requires an http(s) URI' };
   }
+  /**
+   * ── ★★ THIS FETCH HAD NO SSRF SCREEN AT ALL ─────────────────────────────────────────────
+   *
+   * `uri` is caller-supplied and this fetches it server-side, so without a screen it is a blind
+   * SSRF primitive: an internal service, or the cloud metadata endpoint at 169.254.169.254, is one
+   * argument away — and this adapter RETURNS THE BODY to the caller, so it is not even blind.
+   *
+   * The scheme test above is not a screen. `http://169.254.169.254/latest/meta-data/` passes it.
+   *
+   * ★ The screen is the substrate's now (it was previously implemented inside one vertical and
+   * re-implemented at the relay, while this one had neither). `assertSafeFetchTarget` resolves the
+   * hostname before allowing the request, so a public name that resolves into private space is
+   * caught too — and `guardedFetchFn` re-screens every redirect hop, which matters here because
+   * this call follows redirects.
+   */
+  try {
+    await assertSafeFetchTarget(uri);
+  } catch (e) {
+    return { ok: false, reason: `refused: ${(e as Error).message}` };
+  }
   let res: Response;
   try {
-    res = await fetch(uri, {
+    res = await guardedFetchFn(globalThis.fetch)(uri, {
       redirect: 'follow',
       headers: { Accept: 'text/html, text/plain, application/xhtml+xml; q=0.9, */*; q=0.1' },
       signal: AbortSignal.timeout(15_000),

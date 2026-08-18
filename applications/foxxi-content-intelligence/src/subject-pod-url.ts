@@ -16,6 +16,8 @@
  * bare 0x address resolves exactly the way its did:ethr spelling does.
  */
 
+import { ownPodSegment } from '@interego/core';
+
 /**
  * Does this string contain a C0 control character, DEL, or a Unicode line/paragraph separator?
  *
@@ -92,20 +94,23 @@ export function resolveSubjectPodUrlPure(opts: SubjectPodUrlOptions): string {
   // misrouted to …/foxxi/ instead of …/<id>/ — the writer-side analogue of the WebID inbox-routing
   // defect. Checked FIRST so an identity-service WebID (…/users/<id>/profile) maps to <id>, not its
   // first path segment ("users").
-  const idm = id.match(/(u-pk-|u-did-|u-eth-|eth-)[0-9a-z]+/i);
-  if (idm && tenantOrigin) return `${tenantOrigin}/${idm[0].toLowerCase()}/`;
+  /**
+   * ★ THE DERIVATION IS THE SUBSTRATE'S NOW. It was written out here, twice in the relay, and once
+   * more in a relay lookalike — copies that agreed on canonical `did:ethr:0x<40 hex>` and diverged
+   * on the spellings the signature layer actually emits (a bare address, a did:ethr without the 0x,
+   * an identity with an embedded pod id). `ownPodSegment` covers all of them in one place.
+   *
+   * What stays HERE is the part that is genuinely this deployment's: which origin pods live on, and
+   * the fail-closed tenant-pod default.
+   */
+  const seg = ownPodSegment(id);
+  if (seg && tenantOrigin) return `${tenantOrigin}/${seg}/`;
   if (/^https?:\/\//.test(id)) {
     try {
       const u = new URL(id);
-      const seg = u.pathname.split('/').filter(Boolean)[0];
-      if (seg) return `${u.origin}/${seg}/`;
+      const first = u.pathname.split('/').filter(Boolean)[0];
+      if (first) return `${u.origin}/${first}/`;
     } catch { /* fall through */ }
   }
-  // A did:ethr identity, or — ★★ — a BARE 0x address, which is what the signature layer actually
-  // returns. Falling through to the shared tenant pod is the defect described at the top of this
-  // file, so both spellings resolve through one branch and cannot diverge again.
-  const addrHex = /^did:ethr:(?:0x)?([0-9a-fA-F]{40})\b/.exec(id)?.[1]
-    ?? /^(?:0x)?([0-9a-fA-F]{40})$/.exec(id)?.[1];
-  if (addrHex && tenantOrigin) return `${tenantOrigin}/eth-${addrHex.slice(0, 12).toLowerCase()}/`;
   return tenantPodUrl;
 }

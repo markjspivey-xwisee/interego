@@ -207,6 +207,7 @@ import {
   HMD_PROFILE_IRI,
   HMD_PROFILE_LINK_HEADER,
   sameAction,
+  ownPodSegment,
   type ShaclResult,
 } from '@interego/core';
 import {
@@ -5989,7 +5990,12 @@ function injectRestVerifiedIdentity(
     // A signed caller owns exactly the pod its address derives — the only pod on which
     // requireOwnPod will let it write. This is BOTH the pod_name default AND the
     // server-authoritative `_session_user_id` the ownership gates compare against.
-    const ownPod = `eth-${addr.slice(2, 14)}`;
+    // ★ ONE DERIVATION, SHARED. `eth-${addr.slice(2, 14)}` is correct only for a 0x-prefixed,
+    // lowercased address and nothing here enforced either. The substrate now owns this fact — it was
+    // written out in four places that agreed on the canonical spelling and diverged on the ones the
+    // signature layer actually emits. Falls back to the inline form only if the address is
+    // unresolvable, which for a recovered signer it cannot be.
+    const ownPod = ownPodSegment(addr) ?? `eth-${addr.slice(2, 14)}`;
     if (!target.pod_name) { target.pod_name = ownPod; target[POD_NAME_INJECTED] = true; }
     if (!target.owner_webid) target.owner_webid = auth.recoveredDid;
     target._session_user_id = ownPod;
@@ -14408,8 +14414,10 @@ app.post('/tool/:name', toolInvokeLimiter, async (req, res) => {
     unwrapSignedPayloadInto(req.body);
     if (sig.authenticated && sig.recoveredDid) {
       req.body.agent_id = sig.recoveredDid;
-      const addr = sig.recoveredDid.slice('did:ethr:'.length).toLowerCase();
-      if (!req.body.pod_name) { req.body.pod_name = `eth-${addr.slice(2, 14)}`; req.body[POD_NAME_INJECTED] = true; }
+      // Derived from the DID itself rather than a hand-sliced address — same shared fact as the
+      // signed-tool path above. See ownPodSegment for why the four copies of this diverged.
+      const ownPodHere = ownPodSegment(sig.recoveredDid);
+      if (!req.body.pod_name && ownPodHere) { req.body.pod_name = ownPodHere; req.body[POD_NAME_INJECTED] = true; }
       if (!req.body.owner_webid) req.body.owner_webid = sig.recoveredDid;
     }
   }

@@ -871,3 +871,18 @@ export { canonicalJson } from './canonical-json.js';
 // used to accept any value and the mistake only surfaced later, inside compose(), as a
 // raw `facets is not iterable` TypeError with no hint of what was expected.
 export { descriptorProblem, assertDescriptor } from './model/descriptor-shape.js';
+
+/**
+ * The SSRF screen for caller-supplied URLs, shared by every surface that fetches one.
+ *
+ * ★ It lived inside one vertical while a second re-implemented it and a third had none — which is
+ * the direction this class of defect always travels, because each application only notices the hole
+ * it already fell into. See net/guarded-fetch.ts for why the relay's superset stays where it is.
+ */
+export {
+  isPrivateHostname, assertSafeFetchTarget, safePublicUrlOrUndefined, safeFetch, guardedFetchFn,
+} from './net/guarded-fetch.js';
+
+/** Which pod segment an identity's OWN pod lives at — see identity/own-pod.ts for the four copies
+ *  this replaces and the one lookalike it deliberately leaves alone. */
+export { ownPodSegment, ownPodSegmentForAddress } from './identity/own-pod.js';

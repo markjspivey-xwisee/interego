@@ -850,18 +850,39 @@ export function executeSparqlString(store: TripleStore, queryString: string): Sp
   return executeSparql(store, query);
 }
 
-// Cache triple stores per PGSL instance
-const tripleStoreCache = new WeakMap<PGSLInstance, TripleStore>();
+/**
+ * Cached materialization per PGSL instance, WITH the version it was built from.
+ *
+ * ── ★★ THE CACHE HAD NO INVALIDATION AT ALL ─────────────────────────────────────────────────
+ *
+ * It was `WeakMap<PGSLInstance, TripleStore>` populated on first query and never cleared, so every
+ * `mintAtom` / `ingest` / `promote` after the first query was invisible for the life of the
+ * process. Locally that is a confusing staleness bug; the reason it is worse than that is what this
+ * function was about to become — the plan to "just expose SPARQL at the relay" would have served a
+ * snapshot of the lattice as it stood at the first query, forever, over HTTP, to every agent, while
+ * looking entirely healthy.
+ *
+ * ★ SIZE IS A SOUND VERSION HERE, and only here, because all three registries are APPEND-ONLY maps:
+ * mint and ingest add entries, nothing rewrites or removes them. So a changed total means a changed
+ * lattice, and an unchanged total means an unchanged one. If any of these ever gains a delete or an
+ * in-place rewrite, this signature stops being valid and must become a real counter — which is why
+ * the reasoning is written down rather than left as `sizeOf(...)`.
+ */
+const tripleStoreCache = new WeakMap<PGSLInstance, { readonly store: TripleStore; readonly version: number }>();
+
+/** Cheap version of an append-only PGSL instance: total registered entries. */
+function latticeVersion(pgsl: PGSLInstance): number {
+  return pgsl.atoms.size + pgsl.fragments.size + pgsl.nodes.size;
+}
 
 /**
  * Execute a SPARQL query against a PGSL instance.
- * Materializes the triple store on first call, caches for subsequent queries.
+ * Materializes the triple store on first call and re-materializes whenever the lattice has changed.
  */
 export function sparqlQueryPGSL(pgsl: PGSLInstance, queryString: string): SparqlResult {
-  let store = tripleStoreCache.get(pgsl);
-  if (!store) {
-    store = materializeTriples(pgsl);
-    tripleStoreCache.set(pgsl, store);
-  }
+  const version = latticeVersion(pgsl);
+  const hit = tripleStoreCache.get(pgsl);
+  const store = (hit && hit.version === version) ? hit.store : materializeTriples(pgsl);
+  if (!hit || hit.version !== version) tripleStoreCache.set(pgsl, { store, version });
   return executeSparqlString(store, queryString);
 }
