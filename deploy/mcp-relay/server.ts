@@ -2888,9 +2888,48 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   // Thread cleartext-mirror relationships from content → descriptor,
   // unioned with any auto-detected prior versions for this graph_iri.
   // Keeps federation-queryable links out of the encrypted payload.
-  const allSupersedes = [...new Set([...preprocessed.supersedes, ...priorVersions])];
+  /**
+   * ── ★★ THE AUTO-SUPERSEDE CHAIN IS LINEAR, NOT QUADRATIC ────────────────────────────────
+   *
+   * `auto_supersede_prior` (default ON) used to link a new version to EVERY prior descriptor for
+   * the same graph_iri. Combined with anything that republishes on a schedule, that is O(N²):
+   * version N carries N-1 links.
+   *
+   * MEASURED on a live pod, and it took the Foxxi bridge down. The desktop host renews an agent
+   * PRESENCE LEASE every 90s — by design, a lease must be renewed — republishing the same graph_iri
+   * each time. After a week: 3,284 renewals, each superseding all of its predecessors, giving
+   * ~5.4 MILLION supersedes triples and a 32 MB hot manifest holding 95 rows at ~352 KB each,
+   * growing another ~352 KB per renewal. Any consumer that parses that manifest allocates roughly a
+   * gigabyte doing it — which is exactly the transient that OOMed the projector every few cycles.
+   *
+   * ★ AND THE FULL CLOSURE WAS ALWAYS REDUNDANT. Supersession is a CHAIN: if each version links to
+   * its immediate predecessor, the whole lineage is reachable by walking, and this codebase already
+   * has a walker whose DEFAULT mode ("shortest") follows exactly one link per hop. Writing the
+   * transitive closure stored a derivable fact N times over — the same "second place for one fact"
+   * this repo refuses elsewhere, except here it costs O(N²) bytes rather than a disagreement.
+   *
+   * ★ THE PREDECESSOR IS THE FRONTIER HEAD, NOT priorVersions[0]. `priorVersionsFor` returns
+   * MANIFEST ORDER, so index 0 is whatever the document happened to list first — linking to that
+   * would fork the chain at random. `supersessionFrontier` already computes exactly the right
+   * answer: the entries nothing else supersedes. A FORK (more than one head) is reported by that
+   * function and never silently resolved, so in that case all heads are linked — converging a fork
+   * is the one time linking several priors is correct rather than redundant.
+   *
+   * Explicit `supersedes` values a caller passed are kept in full: those are the caller's own
+   * assertions about what this version replaces, and are not this function's to trim.
+   */
+  const frontierNow = (manifestEntriesForLookup && args.graph_iri)
+    ? supersessionFrontier(manifestEntriesForLookup, args.graph_iri as string, { normalize: normalizeCssUrl })
+    : undefined;
+  const immediatePrior: IRI[] = frontierNow && frontierNow.heads.length > 0
+    ? (frontierNow.heads as readonly string[]).filter(h => normalizeCssUrl(h) !== normalizeCssUrl(predictedDescriptorUrl)) as IRI[]
+    : (priorVersions.length > 0 ? [priorVersions[0]!] : []);
+  const allSupersedes = [...new Set([...preprocessed.supersedes, ...immediatePrior])];
   if (allSupersedes.length > 0) {
     builder.supersedes(...allSupersedes);
+  }
+  if (priorVersions.length > 1) {
+    log(`[publish] linear supersession: ${descId} -> ${priorVersions[0]} (${priorVersions.length - 1} older version(s) reachable by walking, not inlined)`);
   }
   if (preprocessed.conformsTo.length > 0) {
     builder.conformsTo(...preprocessed.conformsTo);

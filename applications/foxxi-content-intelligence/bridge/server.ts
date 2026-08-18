@@ -1285,6 +1285,15 @@ function resolveSubjectPodUrl(didOrWebId: string | undefined, explicit?: string)
 }
 
 const MESH_PROJECT_INTERVAL_MS = Number(process.env.FOXXI_MESH_PROJECT_INTERVAL_MS ?? 60_000);
+/**
+ * Manifest entries read per pod per sweep, newest first.
+ *
+ * ★ SIZED FROM THE MEASUREMENT, not chosen: ~3,000 entries cost ~1.1 GB of transient per cycle
+ * against a 3 GB cap with a ~1.5 GB baseline, so the mid-cycle peak was the OOM. 750 puts the
+ * transient near 280 MB and the peak comfortably under 2 GB, while still covering far more new
+ * steps per pass than any real agent produces in a cycle. Raise it only with a heap line to read.
+ */
+const MESH_SWEEP_PAGE = Number(process.env.FOXXI_MESH_SWEEP_PAGE ?? 750);
 // Config-injected pod-segment → friendly actor name map (NO application roster
 // baked into the projector). Format: FOXXI_MESH_ACTOR_LABELS="seg=name,seg2=name2".
 // Absent a mapping, the projector falls back to the pod segment (domain-agnostic).
@@ -1517,7 +1526,26 @@ async function runMeshProjectionCycle(): Promise<{ pods: number; projected: numb
     for (const pod of pods) {
       let entries;
       seenThisCycle.add(pod);
-      try { entries = await discover(pod); }
+      /**
+       * ── ★★ THE SWEEP IS BOUNDED, NEWEST-FIRST — THIS IS THE OOM ─────────────────────────
+       *
+       * MEASURED on the running process: heap goes 1442MB → 2548MB in ONE cycle for ~3,000 entries.
+       * That is ~1.1 GB of transient per pass, on a ~1.5 GB baseline, against a 3 GB cap — so the
+       * MID-cycle peak blows the limit even though the number logged after the cycle looks fine at
+       * 2.5 GB. Ten fatal exhaustions and nine boots in a single deployment; it survives exactly one
+       * steady cycle each time.
+       *
+       * ★ AND `discover` HAS ALWAYS TAKEN A LIMIT. It filters, sorts newest-first, then slices —
+       * the projector simply never passed one, so every cycle re-read the entire manifest of every
+       * enrolled pod forever. Composing the API's own bound is the fix; chunking after the call
+       * could not help, because by then the whole array is already allocated.
+       *
+       * ★ NEWEST-FIRST IS WHAT MAKES A BOUND SAFE HERE. New steps are always in the first page, and
+       * anything older was landed by an earlier cycle and is skipped now (`landMeshBatch` no longer
+       * re-lands a resident id). After a restart the store is empty and the backfill takes a few
+       * cycles rather than one — self-healing, and far better than not being up at all.
+       */
+      try { entries = await discover(pod, { limit: MESH_SWEEP_PAGE, sort: 'newest-first' }); }
       catch (err) {
         // ★ ABSENT vs UNREACHABLE, AGAIN. Only "there is no pod here" counts toward retirement; a
         // 5xx, a timeout or a DNS failure is UNKNOWN and must not un-enrol a real agent whose pod is
