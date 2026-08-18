@@ -1554,7 +1554,22 @@ async function runMeshProjectionCycle(): Promise<{ pods: number; projected: numb
       agentTrajectoriesByTenant.for(lensTenantFor(agent)).set(agent, buildTrajectory(agent, agent, steps));
     }
     if (events.length > 0) {
-      console.log(`[foxxi-bridge][mesh] projected ${events.length} event(s) (landed ${landed}) from ${pods.length} pod(s) across ${stepsByAgent.size} agent(s) -> per-agent lens:<agent> views`);
+      /**
+       * ★★ HEAP PER CYCLE, BECAUSE THE PROCESS IS OOMing AND I HAVE BEEN GUESSING WHY.
+       *
+       * Measured: 11 fatal heap exhaustions and 11 boots inside one deployment, roughly every seven
+       * cycles, while the projected-event count stayed flat at ~2,900 — so it is not the statement
+       * count, and reasoning from the code has produced three wrong candidates in a row. A number
+       * per cycle turns "something leaks" into a rate, and a rate is diagnosable: if RSS climbs
+       * monotonically with a flat event count, the growth is per-CYCLE work being retained, not per
+       * statement.
+       *
+       * Deliberately one line on an existing log, not a metrics endpoint: the question is whether
+       * memory grows, and the cheapest honest instrument that answers it is the one that ships now.
+       */
+      const mu = process.memoryUsage();
+      const mb = (n: number): string => `${Math.round(n / 1048576)}MB`;
+      console.log(`[foxxi-bridge][mesh] projected ${events.length} event(s) (landed ${landed}) from ${pods.length} pod(s) across ${stepsByAgent.size} agent(s) -> per-agent lens:<agent> views · heap ${mb(mu.heapUsed)}/${mb(mu.heapTotal)} rss ${mb(mu.rss)} ext ${mb(mu.external)}`);
     }
     return { pods: pods.length, projected: landed, agents: stepsByAgent.size };
   } finally {
