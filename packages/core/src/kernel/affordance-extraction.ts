@@ -29,8 +29,8 @@ import {
   readStringValue,
   type ParsedSubject,
 } from '../rdf/turtle-parser.js';
-import { CG, IEH, CGH_LEGACY, HYDRA, DCAT } from '../rdf/namespaces.js';
-import type { Affordance, ShapeField } from './types.js';
+import { CG, IEH, CGH_LEGACY, HYDRA, DCAT, RDFS } from '../rdf/namespaces.js';
+import type { Affordance, EvidenceSourceRef, ShapeField } from './types.js';
 
 const SHACL = 'http://www.w3.org/ns/shacl#';
 const SH_PROPERTY = `${SHACL}property` as IRI;
@@ -61,6 +61,33 @@ const DCAT_MEDIA_TYPE = `${DCAT}mediaType` as IRI;
 const HYDRA_EXPECTS = `${HYDRA}expects` as IRI;
 const HYDRA_RETURNS = `${HYDRA}returns` as IRI;
 const CG_INPUT_SHAPE = `${CG}inputShape` as IRI;
+/**
+ * ── ★★ THE READ SIDE OF A CAPABILITY, WHICH NOTHING COULD SEE ───────────────────────────────
+ *
+ * `dereference()` and the relay tools built on it are the only generic way an agent learns what an
+ * affordance offers. This extractor read action/target/method/mediaType/expects/returns/fields and
+ * stopped — it never read `iep:reads`, `dcat:accessService` or `dcat:accessURL`. Meanwhile the
+ * shared affordance emitter puts a read-side block on EVERY affordance in the fleet: three emit
+ * sites, zero read sites, verified by grep.
+ *
+ * So a caller saw exactly one thing it could do — POST the invoke target and take whatever came
+ * back. That is the structural cause of the 1.2 MB exemplar: the descriptor declared where the
+ * evidence lives, and the substrate's own read verb discarded it before any caller saw it. The
+ * published rationale for `iep:reads` is "so a caller can learn of it before spending a call", and
+ * the substrate made that impossible.
+ *
+ * ★ dcat:accessService IS THE ZERO-COPY TERM. In DCAT it means "a DataService you QUERY", as opposed
+ * to accessURL/downloadURL, which are where you fetch a copy. Surfacing it is what lets a caller
+ * choose to query instead of transfer.
+ */
+const DCAT_ACCESS_SERVICE = `${DCAT}accessService` as IRI;
+const DCAT_ACCESS_URL = `${DCAT}accessURL` as IRI;
+const CG_READS = `${CG}reads` as IRI;
+const CG_STORE = `${CG}store` as IRI;
+const CG_POPULATED_BY = `${CG}populatedBy` as IRI;
+const CG_ADMITS = `${CG}admits` as IRI;
+const CG_ENROLMENT_REGISTER = `${CG}enrolmentRegister` as IRI;
+const RDFS_LABEL = `${RDFS}label` as IRI;
 
 const VALID_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -152,6 +179,8 @@ export function extractAffordancesFromTurtle(
     if (expects) aff.expects = expects;
     if (returns) aff.returns = returns;
     if (fields) aff.fields = fields;
+    const reads = evidenceSourcesFor(byKey, subject, sourceDescriptor);
+    if (reads) aff.reads = reads;
     if (sourceDescriptor) aff.fromDescriptor = sourceDescriptor;
     if (!key.startsWith('_:')) aff.subjectIri = key;
     out.push(aff);
@@ -174,6 +203,47 @@ function resolveFragment(iri: string | undefined, base?: string): string | undef
  *  Returns undefined when the shape isn't defined here (then the `expects` IRI is
  *  the caller's only handle, exactly as before). Best-effort: a malformed field
  *  is skipped, never thrown. */
+/**
+ * The `iep:reads` evidence sources declared on an affordance, resolved through the same by-key
+ * indirection `shapeFieldsFor` uses — the blocks are blank nodes in every emitter in this repo.
+ *
+ * ★ SILENT ON ABSENCE, NEVER INVENTED. A descriptor with no read side yields `undefined`, not an
+ * empty array: "this affordance declares nothing about where its answer comes from" and "it reads
+ * nothing" are different facts, and the whole point of surfacing this is to stop a caller guessing.
+ */
+function evidenceSourcesFor(
+  byKey: Map<string, ParsedSubject>,
+  subject: ParsedSubject,
+  base?: string,
+): EvidenceSourceRef[] | undefined {
+  const terms = subject.properties.get(CG_READS);
+  if (!terms || terms.length === 0) return undefined;
+  const out: EvidenceSourceRef[] = [];
+  for (const term of terms) {
+    const key = term.kind === 'iri' ? term.iri : term.kind === 'bnode' ? `_:${term.id}` : undefined;
+    if (!key) continue;
+    const ps = byKey.get(key);
+    if (!ps) continue;
+    const src: { -readonly [K in keyof EvidenceSourceRef]: EvidenceSourceRef[K] } = {};
+    // iep:store and dcat:accessURL are the same fact double-stated so a DCAT-only client needs no
+    // reasoner; read either, prefer the iep: spelling since that is what the shape validates.
+    const store = readIriValue(ps, CG_STORE) ?? readIriValue(ps, DCAT_ACCESS_URL);
+    if (store) src.store = resolveFragment(store, base) ?? store;
+    const svc = readIriValue(ps, DCAT_ACCESS_SERVICE);
+    if (svc) src.accessService = resolveFragment(svc, base) ?? svc;
+    const pop = readIriValue(ps, CG_POPULATED_BY);
+    if (pop) src.populatedBy = resolveFragment(pop, base) ?? pop;
+    const adm = readStringValue(ps, CG_ADMITS);
+    if (adm) src.admits = adm;
+    const reg = readIriValue(ps, CG_ENROLMENT_REGISTER);
+    if (reg) src.enrolmentRegister = resolveFragment(reg, base) ?? reg;
+    const label = readStringValue(ps, RDFS_LABEL);
+    if (label) src.label = label;
+    if (Object.keys(src).length > 0) out.push(src);
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 function shapeFieldsFor(
   byKey: Map<string, ParsedSubject>,
   shapeIri: string,

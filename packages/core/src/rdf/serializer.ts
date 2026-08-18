@@ -254,11 +254,14 @@ function serializeFederationFacet(f: FederationFacetData): string {
   if (f.lastSynced) props.push(`iep:lastSynced ${dateTimeLit(f.lastSynced)}`);
 
   if (f.distribution) {
+    // Turtle and JSON-LD emit the same set — see serializeFederationFacet in jsonld.ts. An
+    // unconditional accessURL would write `<undefined>` into the graph now that it is optional.
     const distProps: string[] = [
       'a dcat:Distribution',
       `dcat:mediaType ${q(f.distribution.mediaType)}`,
-      `dcat:accessURL ${iri(f.distribution.accessURL)}`,
     ];
+    if (f.distribution.accessURL) distProps.push(`dcat:accessURL ${iri(f.distribution.accessURL)}`);
+    if (f.distribution.accessService) distProps.push(`dcat:accessService ${iri(f.distribution.accessService)}`);
     props.push(`dcat:distribution ${bnode(distProps)}`);
   }
 

@@ -135,6 +135,40 @@ export interface Affordance {
    * agents that index affordances by IRI.
    */
   readonly subjectIri?: string;
+  /**
+   * The evidence sources this affordance READS, when the descriptor declares them.
+   *
+   * ── ★★ THE HALF A CALLER COULD NEVER SEE ────────────────────────────────────────────────
+   *
+   * An affordance's `hydra:target` says where to INVOKE it. `iep:reads` says which stores its
+   * answer comes FROM — and, per source, whether there is a queryable service or only a copy. The
+   * extractor read the invoke half and dropped this one, so every caller's only option was to POST
+   * and take whatever came back, however large. That is why a 1.2 MB record shipped: not because
+   * the descriptor was silent, but because nothing surfaced what it said.
+   */
+  readonly reads?: readonly EvidenceSourceRef[];
+}
+
+/**
+ * One store an affordance answers from, as its descriptor declares it.
+ *
+ * ★ `accessService` IS THE ZERO-COPY HANDLE — DCAT's term for a service you QUERY, distinct from
+ * `accessURL`, which is where a copy is fetched. A caller that can see an access service can ask a
+ * narrow question instead of transferring a corpus; one that cannot has no choice but the copy.
+ */
+export interface EvidenceSourceRef {
+  /** `iep:store` / `dcat:accessURL` — where the data lives. */
+  readonly store?: string;
+  /** `dcat:accessService` — a queryable DataService over this store, when one exists. */
+  readonly accessService?: string;
+  /** `iep:populatedBy` — the endpoint that WRITES this store (never a read handle). */
+  readonly populatedBy?: string;
+  /** `iep:admits` — what the store accepts, in one sentence a caller can act on. */
+  readonly admits?: string;
+  /** `iep:enrolmentRegister` — where membership of this source is published, when applicable. */
+  readonly enrolmentRegister?: string;
+  /** `rdfs:label`, when declared. */
+  readonly label?: string;
 }
 
 // ── Composition operator (re-export for ergonomics) ──────────

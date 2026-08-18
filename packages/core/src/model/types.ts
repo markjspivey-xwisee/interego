@@ -360,7 +360,27 @@ export interface ProofReference {
  */
 export interface Distribution {
   readonly mediaType: string;
-  readonly accessURL: IRI;
+  /**
+   * Where a COPY of this distribution is fetched from.
+   *
+   * Optional since `accessService` became expressible — exactly one of the two should be present.
+   * Left optional rather than modelled as a union because `Distribution` ships in a published
+   * package, and a discriminated union breaks every consumer that destructures `.accessURL`.
+   */
+  readonly accessURL?: IRI;
+  /**
+   * ── ★★ THE HALF DCAT HAS AND THIS SUBSTRATE COULD NOT SAY ─────────────────────────────────
+   *
+   * DCAT already encodes the zero-copy distinction: `dcat:accessService` is a DataService you
+   * QUERY; `accessURL`/`downloadURL` are where you fetch the bytes. The substrate implemented only
+   * the copy half, so a descriptor built through this model could only ever tell a caller where to
+   * transfer from — and any vertical wanting to publish "here is the service, ask it a question"
+   * had to hand-write Turtle outside the model, which two of them did.
+   *
+   * A caller that can see an access service can ask a narrow question instead of pulling a corpus.
+   * That is the whole mechanism behind "virtual and zero-copy" at the representation layer.
+   */
+  readonly accessService?: IRI;
 }
 
 /**

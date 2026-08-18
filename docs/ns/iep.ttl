@@ -167,7 +167,7 @@ iep:FederationFacet a owl:Class ;
     rdfs:subClassOf iep:ContextFacet ;
     rdfs:label "Federation Facet" ;
     rdfs:comment "Federation and distribution metadata aligned with DCAT 3, LDP, and Solid Protocol. Declares where the context is stored, sync protocol, replication sources, and distribution endpoints." ;
-    rdfs:seeAlso solid:StorageDescription, dcat:Distribution ;
+    rdfs:seeAlso solid:StorageDescription, dcat:Distribution, dcat:DataService ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
 
 # ── Manifest & Federation ─────────────────────────────────────

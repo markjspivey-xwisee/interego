@@ -203,11 +203,17 @@ function serializeFederationFacet(f: FederationFacetData): Record<string, unknow
   if (f.lastSynced) result.lastSynced = f.lastSynced;
 
   if (f.distribution) {
-    result['dcat:distribution'] = {
+    // ★ EMIT ONLY WHAT IS DECLARED. An `accessURL: undefined` written out unconditionally becomes a
+    // null in the JSON-LD and a reader cannot tell "no copy endpoint" from "the field exists and is
+    // empty" — and a `dcat:accessService` is the whole point of the distinction, so it must survive
+    // serialization rather than being dropped for not having existed when this was written.
+    const dist: Record<string, unknown> = {
       '@type': 'dcat:Distribution',
       'dcat:mediaType': f.distribution.mediaType,
-      'dcat:accessURL': f.distribution.accessURL,
     };
+    if (f.distribution.accessURL) dist['dcat:accessURL'] = f.distribution.accessURL;
+    if (f.distribution.accessService) dist['dcat:accessService'] = { '@id': f.distribution.accessService };
+    result['dcat:distribution'] = dist;
   }
 
   return result;
