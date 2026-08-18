@@ -28,6 +28,12 @@ export {
 } from './store.js';
 export * from './attributes.js';
 export { clearancePdp, type Pdp, type Verdict } from './abac-pdp.js';
+/**
+ * The bounded, access-scoped read over the keyspace indices — the thing an agent can ASK instead of
+ * downloading a corpus and filtering locally. See query.ts for why it is index-backed rather than a
+ * mounted SPARQL endpoint.
+ */
+export { PgslQuery, type QueryPrincipal, type QueryOptions } from './query.js';
 export {
   projectHolonFor,
   type ProjectedHolon,

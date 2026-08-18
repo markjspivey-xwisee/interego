@@ -2143,9 +2143,36 @@ iep:paradigm a owl:ObjectProperty ;
 
 iep:contextComplete a owl:DatatypeProperty ;
     rdfs:label "contextComplete"@en ;
-    rdfs:comment "False when the served iep:context and iep:paradigm were computed from a partially-hydrated view — a cold replica answering from a point read. The identity facets (iep:hash, iep:value, iep:items) are always exact; only the derived reuse facets are eventually consistent, and this term says so in-band rather than letting a consumer over-trust them."@en ;
+    rdfs:comment "False when the served iep:context and iep:paradigm are not the whole neighbourhood — either because a cold replica answered from a point read, or because the fan-out was CAPPED. The identity facets (iep:hash, iep:value, iep:items) are always exact; only the derived reuse facets are partial, and this term says so in-band rather than letting a consumer over-trust them. ★ IT USED TO MEAN ONLY THE FIRST OF THOSE, and the description it qualifies has always been capped: a node reused 20,000 times served its first 200 containers stamped complete, because the describe function returned no totals and its consumer had nothing to judge by. A completeness flag that cannot see the cap is worse than none — it converts a known limit into a false assurance. Read it beside iep:contextTotals."@en ;
     rdfs:domain iep:Holon ;
     rdfs:range xsd:boolean ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:contextTotals a owl:ObjectProperty ;
+    rdfs:label "context totals"@en ;
+    rdfs:comment "How many neighbours EXIST for this holon, whether or not the served description listed them all. Present so a truncated description can be acted on rather than merely distrusted: a consumer comparing a total against what it received knows both that there is more and how much, which is the difference between paging deliberately and guessing. Counts are exact — they are accumulated during the same scan that builds the description, outside the cap."@en ;
+    rdfs:domain iep:Holon ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:containers a owl:DatatypeProperty ;
+    rdfs:label "containers"@en ;
+    rdfs:comment "The number of fragments that reuse this holon — its total upward context, independent of how many were listed. On an iep:contextTotals block."@en ;
+    rdfs:domain iep:Holon ;
+    rdfs:range xsd:nonNegativeInteger ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:sourceOptions a owl:DatatypeProperty ;
+    rdfs:label "source options"@en ;
+    rdfs:comment "The number of DISTINCT holons observed immediately before this one across every fragment containing it — the size of its left paradigm class. Counted past the cap, so it does not under-report in exactly the reused case the cap exists for."@en ;
+    rdfs:domain iep:Holon ;
+    rdfs:range xsd:nonNegativeInteger ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:targetOptions a owl:DatatypeProperty ;
+    rdfs:label "target options"@en ;
+    rdfs:comment "The number of DISTINCT holons observed immediately after this one across every fragment containing it — the size of its right paradigm class. Counted past the cap, for the same reason as iep:sourceOptions."@en ;
+    rdfs:domain iep:Holon ;
+    rdfs:range xsd:nonNegativeInteger ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
 iep:publishedBy a owl:ObjectProperty ;

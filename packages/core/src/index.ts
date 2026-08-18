@@ -253,6 +253,8 @@ export type {
   // Payment (§11)
   PaymentRequirement,
   PaymentReceipt,
+  /** One page of a collection — the substrate's single name for partialness. See model/types.ts. */
+  Page,
 } from './model/index.js';
 
 export type { CounterfactualResult } from './model/causality.js';

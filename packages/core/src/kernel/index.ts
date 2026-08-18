@@ -413,6 +413,28 @@ export interface DereferenceOptions {
    * is cached for subsequent dereferences.
    */
   readonly knownPods?: readonly string[];
+  /**
+   * Cap how many manifest entries a dereference returns.
+   *
+   * ── ★★ THE MOST-INHERITED UNBOUNDED READ IN THE SYSTEM ──────────────────────────────────────
+   *
+   * `dereference()` on a pod manifest expands every `iep:ManifestArchive` segment — deliberately
+   * un-bounding an index the substrate went to trouble to bound — and then, with `decorateManifest`
+   * on by default, does a SEQUENTIAL per-entry fetch of each descriptor and inlines the result. On a
+   * pod with a few hundred descriptors that is a few hundred serial round-trips returning every
+   * affordance the pod has. An audit found 51 unbounded response surfaces; this is the one most of
+   * them are standing on.
+   *
+   * ★ THE DEFAULT IS DELIBERATELY UNCHANGED. Omitting `limit` behaves exactly as before, because
+   * every existing consumer — the relay, the desktop shell, every agent that has learned what a
+   * dereference returns — is calibrated to the current shape, and silently changing it would be a
+   * breaking change disguised as a fix. The bound is opt-in HERE and passed from the edge, where it
+   * can be tuned or turned off in one deploy.
+   *
+   * When set, `manifestEntries` holds at most `limit` entries and `manifestPartial` is true if more
+   * exist. Decoration cost falls with it: capped entries are never fetched.
+   */
+  readonly limit?: number;
 }
 
 const MANIFEST_PATHS = ['/.well-known/context-graphs', '/.well-known/interego', '.well-known/context-graphs'];
@@ -777,7 +799,7 @@ export async function dereference(iri: string, options?: DereferenceOptions): Pr
 
   // Manifest path — walk the pod and surface affordances per entry.
   if (looksLikeManifest(iri)) {
-    return dereferenceManifest(iri, fetchImpl, options?.decorateManifest !== false, options?.recipientKeyPair);
+    return dereferenceManifest(iri, fetchImpl, options?.decorateManifest !== false, options?.recipientKeyPair, options?.limit);
   }
 
   // Generic graph / descriptor / envelope path.
@@ -846,11 +868,18 @@ export async function dereference(iri: string, options?: DereferenceOptions): Pr
   }
 }
 
+/** Normalize a caller's `limit`: a non-positive or non-finite value means "no bound", as before. */
+function allEntriesLimit(limit: number | undefined): number | undefined {
+  if (typeof limit !== 'number' || !Number.isFinite(limit) || limit <= 0) return undefined;
+  return Math.floor(limit);
+}
+
 async function dereferenceManifest(
   manifestUrl: string,
   fetchImpl: FetchFn,
   decorate: boolean,
   recipientKeyPair?: EncryptionKeyPair,
+  limitOpt?: number,
 ): Promise<DereferenceResult> {
   const response = await withTransientRetry(() => fetchImpl(manifestUrl, {
     method: 'GET',
@@ -886,14 +915,31 @@ async function dereferenceManifest(
   // IRI serves", and it does — while `manifestEntries` is the resolved index the archive
   // links point at.
   const read = await fetchAllManifestEntries(manifestUrl, fetchImpl);
-  const entries = read.entries;
+  /**
+   * ★ THE BOUND IS APPLIED BEFORE DECORATION, which is where the cost is. Each retained entry
+   * costs a sequential descriptor fetch below, so capping after that loop would bound the RESPONSE
+   * and not the WORK — the same distinction that made a client-side slice the wrong fix for the
+   * unbounded range read underneath all of this.
+   *
+   * Truncating here also sets `manifestPartial`, reusing the flag that already means "the index you
+   * were handed is not the whole index". A caller cannot tell WHY it is partial from that flag alone
+   * — an unreachable archive segment sets it too — but both mean the same thing to the only decision
+   * it drives: do not treat this as the complete set.
+   */
+  const limit = allEntriesLimit(limitOpt);
+  const truncated = limit !== undefined && read.entries.length > limit;
+  const entries = truncated ? read.entries.slice(0, limit) : read.entries;
   const contentType = response.headers?.get('content-type') ?? 'text/turtle';
   // Surfaced, not just used: a caller that must not act on a partial index (a compliance
   // sweep, a supersession walk) needs to SEE that a segment was unreadable. Absent when the
   // read was whole, so the flag's presence is itself the signal.
-  const completeness = read.complete
+  const completeness = (read.complete && !truncated)
     ? {}
-    : { manifestPartial: true as const, manifestArchivesUnreachable: read.archivesUnreachable };
+    : {
+      manifestPartial: true as const,
+      ...(read.complete ? {} : { manifestArchivesUnreachable: read.archivesUnreachable }),
+      ...(truncated ? { manifestTotalEntries: read.entries.length } : {}),
+    };
 
   if (!decorate) {
     return {

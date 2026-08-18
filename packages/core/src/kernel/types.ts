@@ -225,6 +225,13 @@ export interface DereferenceResult {
    * absence of the field is the affirmative "this is everything".
    */
   readonly manifestPartial?: true;
+  /**
+   * How many entries the manifest actually holds, when a `limit` truncated the returned set.
+   *
+   * ★ Present only for truncation, not for an unreachable archive segment — there the total is
+   * genuinely unknown, and inventing one would be worse than omitting it.
+   */
+  readonly manifestTotalEntries?: number;
   /** The archive segment IRIs that would not load, when `manifestPartial` is set. */
   readonly manifestArchivesUnreachable?: readonly string[];
   /**

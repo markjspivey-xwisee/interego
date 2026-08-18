@@ -299,7 +299,21 @@ export async function resolvePublished(iri: string, base: string): Promise<Resol
         'iep:paradigm': d._paradigm,
         // Identity facets are exact and immutable; the reuse/paradigm facets are
         // eventually consistent across replicas, bounded by REHYDRATE_TTL_MS.
-        'iep:contextComplete': contextComplete,
+        //
+        // ★★ AND NOW ALSO FALSE WHEN THE CAP CLIPPED THE NEIGHBOURHOOD. This read `contextComplete`
+        // alone, which only ever went false after a cold point-fill — so a capped description was
+        // published as complete, and a node reused 20,000 times advertised its first 200 containers
+        // as the whole story. `describeNode` computes `truncated` from real counts now.
+        //
+        // Expect published bodies to flip from true to false for heavily-reused atoms. Any consumer
+        // treating `contextComplete: true` as "I hold the whole neighbourhood" was already wrong;
+        // this is where it stops being invisible.
+        'iep:contextComplete': contextComplete && !d.truncated,
+        'iep:contextTotals': {
+          'iep:containers': d._context.totalContainers,
+          'iep:sourceOptions': d._paradigm.totalSourceOptions,
+          'iep:targetOptions': d._paradigm.totalTargetOptions,
+        },
         'iep:affordances': [
           { 'iep:action': act('dereference'), 'iep:target': iri, 'iep:method': 'GET' },
           { 'iep:action': act('promote'), 'iep:target': iri },

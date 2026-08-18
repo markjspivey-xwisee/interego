@@ -75,12 +75,26 @@ export interface NodeDescription {
   readonly _context: {
     containers: Array<NodeRef & { position: number; totalItems: number }>;
     annotations: Array<ContainmentAnnotation & { parentResolved: string }>;
+    /** How many containers EXIST, whether or not the cap let them all be listed. */
+    totalContainers: number;
   };
   /** The PARADIGM at this position — substitution classes from usage. */
   readonly _paradigm: {
     sourceOptions: NodeRef[];   // what appears BEFORE this node
     targetOptions: NodeRef[];   // what appears AFTER this node
+    /** Distinct counts, independent of the cap — see `truncated`. */
+    totalSourceOptions: number;
+    totalTargetOptions: number;
   };
+  /**
+   * Whether the cap clipped any of the arrays above.
+   *
+   * ★ DERIVED, NOT ASSERTED. A description with no way to say "there is more" forces its consumer to
+   * guess, and the one in this repo guessed COMPLETE: it published `iep:contextComplete: true` on
+   * every capped result, so a node reused 20,000 times advertised 200 neighbours as the whole
+   * neighbourhood.
+   */
+  readonly truncated: boolean;
 }
 
 export interface DescribeNodeOptions {
@@ -123,20 +137,42 @@ export function describeNode(pgsl: PGSLInstance, uri: IRI, opts: DescribeNodeOpt
   const targetOptions: NodeRef[] = [];
   const seenLeft = new Set<string>();
   const seenRight = new Set<string>();
+  // True counts, accumulated regardless of the cap — see the note in the scan below.
+  let totalContainers = 0;
+  let totalSourceOptions = 0;
+  let totalTargetOptions = 0;
   for (const [fUri, fNode] of pgsl.nodes) {
     if (fNode.kind !== 'Fragment') continue;
     const pos = fNode.items.indexOf(uri);
     if (pos < 0) continue;
+    /**
+     * ── ★★ COUNT EVERYTHING, RETURN A PAGE ─────────────────────────────────────────────────
+     *
+     * The totals are accumulated OUTSIDE the cap so a truncated description can say how much it
+     * truncated. Without them the consumer stamped `iep:contextComplete: true` on a capped result —
+     * a node reused 20,000 times returned 200 containers marked complete — because nothing
+     * downstream could tell a full neighbourhood from a clipped one. A count is cheap; the scan is
+     * already happening.
+     */
+    totalContainers++;
     if (containers.length < cap) {
       containers.push({ ...refTo(pgsl, fUri as IRI, hrefFor), position: pos, totalItems: fNode.items.length });
     }
     if (pos > 0) {
       const lu = fNode.items[pos - 1]!;
-      if (!seenLeft.has(lu) && sourceOptions.length < cap) { seenLeft.add(lu); sourceOptions.push(refTo(pgsl, lu, hrefFor)); }
+      if (!seenLeft.has(lu)) {
+        seenLeft.add(lu);
+        totalSourceOptions++;
+        if (sourceOptions.length < cap) sourceOptions.push(refTo(pgsl, lu, hrefFor));
+      }
     }
     if (pos < fNode.items.length - 1) {
       const ru = fNode.items[pos + 1]!;
-      if (!seenRight.has(ru) && targetOptions.length < cap) { seenRight.add(ru); targetOptions.push(refTo(pgsl, ru, hrefFor)); }
+      if (!seenRight.has(ru)) {
+        seenRight.add(ru);
+        totalTargetOptions++;
+        if (targetOptions.length < cap) targetOptions.push(refTo(pgsl, ru, hrefFor));
+      }
     }
   }
 
@@ -151,7 +187,16 @@ export function describeNode(pgsl: PGSLInstance, uri: IRI, opts: DescribeNodeOpt
     ...(node.kind === 'Fragment' ? { height: node.height } : {}),
     provenance: node.provenance,
     _structure: structure,
-    _context: { containers, annotations },
-    _paradigm: { sourceOptions, targetOptions },
+    _context: { containers, annotations, totalContainers },
+    _paradigm: { sourceOptions, targetOptions, totalSourceOptions, totalTargetOptions },
+    /**
+     * ★ WHETHER THIS DESCRIPTION IS THE WHOLE NEIGHBOURHOOD. Computed from the counts rather than
+     * asserted: `truncated` is true exactly when the cap clipped something. A consumer previously
+     * had to guess, and guessed `complete` — see resolvePublished, which stamped
+     * `iep:contextComplete: true` on every capped result.
+     */
+    truncated: totalContainers > containers.length
+      || totalSourceOptions > sourceOptions.length
+      || totalTargetOptions > targetOptions.length,
   };
 }
