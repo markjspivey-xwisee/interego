@@ -5042,7 +5042,26 @@ const REVIEW_RECORD_AFFORDANCE: Affordance = {
   action: 'urn:iep:action:foxxi:review-record' as Affordance['action'],
   toolName: 'review_foxxi_record',
   title: 'Review your Foxxi performance record',
-  description: 'Review your IEEE P2997 Enterprise Learner Record + 1EdTech CLR 2.0 credential wallet, virtualized by Foxxi entirely over your OWN pod. Authenticate with a rev-196 signed-request envelope — Foxxi verifies your own signature and binds identity to the recovered did:ethr (no relay, no separate login). Defaults to your own record; pass subject_did for a discoverable agent-capability record.',
+  /**
+   * ★★ THE JUDGEMENT RULE IS PUBLISHED HERE BECAUSE A READER WHO DID EVERYTHING THIS DESCRIPTOR
+   * SAID STILL HAD TO ASK A PERSON.
+   *
+   * A live delegate accumulated 750 records, read this affordance, followed every `iep:reads` block,
+   * and could not find out why its judgement was empty. The three blocks published one exclusion
+   * (the Hypothetical sentence) while the code applies two more, so the document read as complete
+   * and was not. It learned the reason from a colleague in a channel — which is precisely the
+   * failure a self-describing affordance exists to prevent, and worse than an obviously missing
+   * sentence, because nothing signalled that anything was missing.
+   *
+   * ★ AND THE `subject_did` CLAIM IS NOW SCOPED RATHER THAN DELETED. It is true of this bridge —
+   * cross-pod agent reads work when called directly — and false on the relay route, because
+   * `sign_request` stamps `subject_pod_url` from the caller's own session, so the read target cannot
+   * name anybody else. Saying which is true where beats both deleting a real capability and
+   * advertising one the common route cannot express.
+   */
+  description: 'Review your IEEE P2997 Enterprise Learner Record + 1EdTech CLR 2.0 credential wallet, virtualized by Foxxi entirely over your OWN pod. Authenticate with a rev-196 signed-request envelope — Foxxi verifies your own signature and binds identity to the recovered did:ethr (no relay, no separate login). Defaults to your own record. '
+    + 'HOW A COMPETENCY IS EARNED, so an empty judgement is readable before you spend a signature: a performance record counts toward a competency only if it carries a DOMAIN activity type, or asserts an outcome (success true/false). A record whose only type is a protocol envelope — AssertedContext, ProductionTask, SignedAuthorship, any *Facet — declares no skill, and auto-projected trajectory steps carry exactly that and no outcome, so any number of them yields zero competencies by design rather than by fault. The other two routes are a mastery-verb learning experience, and an alignment on a verified credential. Competence is a judgement about work; volume of work is not one. '
+    + 'CROSS-POD READS: pass subject_did for a discoverable agent-capability record. That works when this bridge is called directly. It does NOT work through the relay, because sign_request stamps subject_pod_url from your own session, so on that route the read target is always your own pod whatever subject_did says.',
   method: 'POST',
   targetTemplate: '{base}/agent/review-record',
   mediaType: 'application/json',
@@ -5078,7 +5097,7 @@ const REVIEW_RECORD_AFFORDANCE: Affordance = {
       store: 'https://relay.interego.xwisee.com/ns/iep/store/foxxi/mesh-lens',
       label: 'the subject\'s per-agent mesh lens (lens:<agent>)',
       populatedBy: 'https://foxxi-bridge.interego.xwisee.com/agent/mesh-event',
-      admits: 'Trajectory steps swept from ENROLLED pods, or pushed directly to /agent/mesh-event. A step whose modal status is Hypothetical is an intention and is not evidence of performance.',
+      admits: 'Trajectory steps swept from ENROLLED pods, or pushed directly to /agent/mesh-event. A step whose modal status is Hypothetical is an intention and is not evidence of performance. ADMITTED IS NOT COUNTED: a step enters this store and still earns no competency unless it carries a domain activity type or an asserted outcome — see the judgement rule in this affordance\'s description. An auto-projected step carries neither, so a long trajectory can produce a full performance record and an empty judgement.',
       // ★ THE FACT THAT LIVED IN AN ENV VAR, now a resource an agent can GET and read for itself.
       enrolmentRegister: 'https://foxxi-bridge.interego.xwisee.com/agent/mesh/enrolment',
     },
@@ -5336,7 +5355,7 @@ app.get('/agent/mesh/enrolment', (_req, res) => {
     dcat:accessURL <${self}> ;
     iep:populatedBy <${base}/agent/mesh-event> ;
     dcat:accessService <${base}/agent/mesh-event> ;
-    iep:admits "Trajectory steps from an enrolled pod, or pushed directly to /agent/mesh-event. A step whose modal status is Hypothetical is an intention, not evidence of performance." ;
+    iep:admits "Trajectory steps from an enrolled pod, or pushed directly to /agent/mesh-event. A step whose modal status is Hypothetical is an intention, not evidence of performance. ADMITTED IS NOT COUNTED: a step is swept into the lens and still earns no competency unless it carries a domain activity type or asserts an outcome. Auto-projected steps carry neither, so enrolment makes a subject's work VISIBLE without making any of it competence — the two are separate questions and this register only answers the first." ;
     iep:askVia <${self}> ;
     dct:modified "${new Date().toISOString()}" ;
     #
