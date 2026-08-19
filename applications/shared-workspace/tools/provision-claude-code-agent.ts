@@ -87,9 +87,30 @@ const viewer = await readViewer(client);
 log('pod      :', viewer.podName);
 log('webId    :', viewer.webId);
 
-// The agent id is the DID the delegator will authorise, and the one every address derives from.
-const agentId = `did:web:${new URL(IDENTITY).host}:agents:${CLIENT_NAME}-${viewer.podName}`;
-log('agent id :', agentId);
+/**
+ * ★★ READ THE DID THE RELAY ASSIGNED — DO NOT COMPOSE IT. This line used to be
+ * `` `did:web:${host}:agents:${CLIENT_NAME}-${viewer.podName}` ``, which looks obviously right and
+ * is wrong: the relay NORMALISES the client name when it mints the agent identity, stripping the
+ * `interego-` prefix, so a client registering as `interego-claude-code` is seated as
+ * `claude-code-<pod>`.
+ *
+ * Everything downstream keys on this string. The presence and capability documents live at
+ * addresses derived from it (`agentDocIri` hashes the DID), and the relay's publish scope gate looks
+ * the caller up in the delegator's registry BY IT. Composing it produced a coherent-looking agent
+ * whose documents sat at addresses nobody would ever query and whose delegation row authorised an
+ * identity that does not exist — every step reported success and the whole thing was inert. The
+ * first symptom was a `scope_violation: agent is not registered on this pod` for a row plainly
+ * present on that pod.
+ *
+ * The relay already publishes this fact about itself. Ask it.
+ */
+const sessionAgent = (await client.podStatus())['sessionAgent'] as { did?: string } | undefined;
+const agentId = sessionAgent?.did;
+if (!agentId) {
+  log('the relay reported no sessionAgent.did for this bearer, so there is no identity to publish under');
+  process.exit(1);
+}
+log('agent id :', agentId, '(read from the relay, not composed)');
 
 // ── 3. Its two documents, on its own pod ─────────────────────────────────────────────────────
 head('publishing the agent documents on its OWN pod');
