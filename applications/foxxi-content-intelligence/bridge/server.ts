@@ -1902,10 +1902,25 @@ function subjectKindFromOwnEvidence(
     const k = ext?.[PERF_EXT.actorKind];
     if (typeof k !== 'string') continue;
     const actorName = (st?.actor as { account?: { name?: unknown } } | undefined)?.account?.name;
-    if (typeof actorName !== 'string') continue;
-    // `ownPodSegment` returns null for an identity form it does not recognise, so an
-    // unattributable statement is skipped rather than counted.
-    if (subject === null || podPrincipalKey(ownPodSegment(actorName)) !== subject) continue;
+    if (typeof actorName !== 'string' || subject === null) continue;
+    /**
+     * ★★ TWO WRITERS, TWO ACTOR CONVENTIONS, AND ASSUMING ONE OF THEM TOOK EVERY AGENT RECORD
+     * PRIVATE.
+     *
+     * `record_performance` writes `actor.account.name` as the performer's DID. The mesh projector
+     * writes `actorForPod(originPod, labels)` — a friendly LABEL like "claude-desktop". This check
+     * originally only understood the DID form, so `ownPodSegment` returned null for every
+     * projected trajectory step, no statement counted, and a subject with 731 of them classified
+     * `human`. Agent capability records are supposed to be public; they all went private, and the
+     * only symptom was a 403 that reads exactly like the gate working correctly.
+     *
+     * So both forms are accepted, and both are still ATTRIBUTION CHECKS rather than a way back to
+     * counting everything: the label is derived from the pod by the same function used here, so a
+     * statement carrying another pod's label still does not count toward this subject.
+     */
+    const byDid = podPrincipalKey(ownPodSegment(actorName)) === subject;
+    const byLabel = actorName === actorForPod(subjectPodUrl, MESH_ACTOR_LABELS);
+    if (!byDid && !byLabel) continue;
     declared.add(k);
   }
   return declared.has('agent') && !declared.has('human') ? 'agent' : 'human';
