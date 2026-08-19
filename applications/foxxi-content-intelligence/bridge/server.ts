@@ -385,6 +385,52 @@ import type {
 } from '@interego/core';
 
 const tenantPodUrl = process.env.FOXXI_TENANT_POD_URL ?? '';
+
+/**
+ * The origins that are the SAME store in this deployment, spelled two ways.
+ *
+ * ── ★★ ONE STORE, TWO NAMES, AND FOUR BUGS SO FAR ────────────────────────────────────────────
+ *
+ * `sign_request` stamps a caller's pod as `http://css.railway.internal:3456/u-eth-…/` — the address
+ * the relay reaches CSS at — while everything public names the same pod
+ * `https://gate.interego.xwisee.com/u-eth-…/`. Any comparison treating those as different origins
+ * is wrong about a pod being its owner's, and the four it has been wrong in are: the SSRF guard on
+ * the CLR wallet read, the classifier's `eth-`/`u-eth-` fold, `readIsSelf` (which 403'd every
+ * self-read), and — the only one that fails SILENTLY — `selfBoundPod`, where a caller passing its
+ * own pod as the relay writes it fails the origin test and is quietly handed the derived pod
+ * instead, with no error and no log. That one was found by a delegate reading the published
+ * comment, not by any test in this repository.
+ *
+ * ★ AN ALLOW-LIST OF EXACT ORIGINS, NOT A PATTERN, AND THAT IS THE ENTIRE SAFETY ARGUMENT.
+ * The origin check exists because `https://gate.interego.xwisee.com.<attacker>/eth-<caller12>/`
+ * shares the caller's last path segment, so without it the override was honoured and the write went
+ * to an attacker host — an SSRF that also leaked the write bearer. A substring or suffix test would
+ * re-open precisely that. Two literal origins compared by equality match nothing else; the attacker
+ * host above is neither of them.
+ *
+ * Configured, not hardcoded. `FOXXI_CSS_INTERNAL_URL` names the deployment's internal spelling, and
+ * its absence just means the store has one name — the position of any deployment that has not split
+ * public from internal ingress.
+ */
+const SAME_STORE_ORIGINS: ReadonlySet<string> = new Set(
+  [tenantPodUrl, process.env.FOXXI_CSS_INTERNAL_URL ?? 'http://css.railway.internal:3456/']
+    .map((u) => { try { return new URL(u).origin; } catch { return ''; } })
+    .filter((o) => o !== ''),
+);
+
+/**
+ * Are these two URLs the same store? True when the origins are equal, or when BOTH are known
+ * spellings of this deployment's own store. Never true for an origin outside the allow-list.
+ */
+function sameStore(a: string, b: string): boolean {
+  const originOf = (u: string): string => { try { return new URL(u).origin; } catch { return ''; } };
+  const oa = originOf(a);
+  const ob = originOf(b);
+  if (!oa || !ob) return false;
+  if (oa === ob) return true;
+  return SAME_STORE_ORIGINS.has(oa) && SAME_STORE_ORIGINS.has(ob);
+}
+
 /**
  * Who vouches for the records this bridge publishes.
  *
@@ -1360,7 +1406,10 @@ function enrolmentOriginCheck(pod: string): { ok: true } | { error: string } {
   const trusted = (() => { try { return new URL(tenantPodUrl).origin; } catch { return ''; } })();
   if (!trusted) return { error: 'this deployment has no tenant pod configured, so it cannot resolve which pod space to trust' };
   const podOrigin = (() => { try { return new URL(pod).origin; } catch { return ''; } })();
-  if (podOrigin !== trusted) {
+  // ★ Both spellings of this deployment's own store are the same pod space — see
+  // SAME_STORE_ORIGINS. Comparing raw origins refused an identity whose pod was named the way the
+  // relay itself writes it, which is the form a delegated caller actually has.
+  if (!sameStore(pod, tenantPodUrl)) {
     return { error: `the projector only reads pods on ${trusted}, and this resolves to ${podOrigin || 'an unparseable origin'} — enrol an identity whose pod is in this deployment's pod space, or push steps directly to /agent/mesh-event` };
   }
   return { ok: true };
@@ -1385,8 +1434,24 @@ function selfBoundPod(callerDid: string, explicit?: string): string {
   // FOXXI_POD_WRITE_SECRET (round-26 blocker). Binding origin too means the
   // override can only ever be the caller's own pod.
   const sameActor = actorForPod(override, MESH_ACTOR_LABELS) === actorForPod(derived, MESH_ACTOR_LABELS);
-  const sameOrigin = (() => { try { return new URL(override).origin === new URL(derived).origin; } catch { return false; } })();
-  return (sameActor && sameOrigin) ? override : derived;
+  // ★ `sameStore`, NOT raw origin equality — see SAME_STORE_ORIGINS. A caller passing its OWN pod
+  // exactly as `sign_request` writes it (the internal spelling) failed a bare origin comparison
+  // against the derived pod (the public one), and was silently handed `derived`. The SSRF guard this
+  // check exists for is unaffected: an attacker origin is in neither allow-listed spelling.
+  const sameOrigin = sameStore(override, derived);
+  if (sameActor && sameOrigin) return override;
+  /**
+   * ★ SAY SO. This fell back silently, which is why the twin-spelling case survived here after being
+   * found and fixed at three other sites: the caller asked for its own pod, got its own pod, and had
+   * no way to learn that its argument had been discarded on the way. A fallback that is right is
+   * still a fallback the caller should be able to see.
+   */
+  if (explicit) {
+    console.warn(`[foxxi-bridge] pod override ignored for ${callerDid}: `
+      + `${explicit} did not resolve to the caller's own pod `
+      + `(sameActor=${sameActor}, sameStore=${sameOrigin}); using ${derived}`);
+  }
+  return derived;
 }
 
 /**
