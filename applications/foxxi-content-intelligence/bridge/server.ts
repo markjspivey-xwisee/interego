@@ -377,7 +377,8 @@ import { attachOauthTokenRoute, oauthPublicKeyFrom } from '../src/xapi-oauth.js'
 import { attachHypermediaRoutes } from '../src/hypermedia-resources.js';
 import { callerIsOperator } from '../src/operator-auth.js';
 import { assertSafeFetchTarget, safePublicUrlOrUndefined, safeFetch, guardedFetchFn } from '../src/ssrf-guard.js';
-import { resolveSubjectPodUrlPure, hasControlChars } from '../src/subject-pod-url.js';
+import { resolveSubjectPodUrlPure, explicitPodRoot, hasControlChars } from '../src/subject-pod-url.js';
+import { resolveReadTarget, type ReadTargetDecision } from '../src/read-target.js';
 import { bindPerformanceToEvidence, EVIDENCE_BINDING_EXT, EVIDENCE_SHAPE_EXT } from '../src/performance-evidence.js';
 import type {
   IRI,
@@ -2017,6 +2018,12 @@ function subjectKindFromOwnEvidence(
 /**
  * Is the record being read the CALLER'S OWN? Decided from the pod the read will actually touch.
  *
+ * ★ THE DECISION MOVED HERE, THE PROPERTY DID NOT. This was `readIsSelf`, which derived the
+ * caller's pod itself and compared it against a pod somebody else had already chosen — fine while
+ * there was one read shape, and a second opinion the moment the read target got its own resolver.
+ * `readTargetFor` now supplies both sides, so exactly one place decides which pod a read touches
+ * and this decides only whether the two are the same principal.
+ *
  * ── ★★ THE BYPASS THIS CLOSES, MEASURED LIVE ─────────────────────────────────────────────────
  *
  * `isSelf` used to be `subjectDid === callerDid`, where `subjectDid` DEFAULTS to the caller when
@@ -2043,9 +2050,7 @@ function subjectKindFromOwnEvidence(
  * that a caller supplies independently; any check that keeps them as two inputs has to keep them in
  * agreement, and the failure above is exactly what "they disagreed and nobody noticed" looks like.
  */
-function readIsSelf(opts: { readonly callerDid: string; readonly subjectPodUrl: string }): boolean {
-  // The caller's own pod, resolved from the identity the signature proved — never from the request.
-  const ownPod = resolveSubjectPodUrl(opts.callerDid, undefined);
+function samePodPrincipal(a: string, b: string): boolean {
   /**
    * ★★ COMPARED BY POD, NOT BY URL — AND THE FIRST VERSION OF THIS COMPARED URLs AND BROKE EVERY
    * SELF-READ.
@@ -2066,10 +2071,56 @@ function readIsSelf(opts: { readonly callerDid: string; readonly subjectPodUrl: 
    * spelling has now broken two things. `podPrincipalKey` takes the last path segment and folds the
    * `u-` prefix, which is the only part of either URL that identifies anybody.
    */
-  const own = podPrincipalKey(ownPod);
-  const subject = podPrincipalKey(opts.subjectPodUrl);
+  const own = podPrincipalKey(a);
+  const subject = podPrincipalKey(b);
   // Fail closed: if either side cannot be reduced to a pod, this is not a demonstrated self-read.
   return own !== null && subject !== null && own === subject;
+}
+
+/** The pod this deployment ALREADY READS for that principal — see ReadTargetInput.knownPodForPrincipal. */
+function enrolledPodForPrincipal(podUrl: string): string | undefined {
+  const want = podPrincipalKey(podUrl);
+  if (!want) return undefined;
+  return meshPods().find((p) => podPrincipalKey(p) === want);
+}
+
+/**
+ * WHOSE RECORD AM I ASKING FOR — the impure half of src/read-target.ts.
+ *
+ * ★ THE STAMPED POD IS THE CALLER, NOT THE TARGET. `sign_request` overwrites `subject_pod_url` with
+ * the caller's own pod, which is right for every write and was silently deciding every read: on the
+ * relay route the read target was always the caller's own pod however `subject_did` was set, so the
+ * handler answered with the caller's records under another subject's name. The stamp is used here
+ * for exactly one thing — establishing WHO IS ASKING — and the target is resolved separately.
+ */
+function readTargetFor(opts: {
+  readonly callerDid: string;
+  /** `subject_pod_url` as it arrived. Relay-stamped; honoured only as the caller's own pod. */
+  readonly stampedPodUrl?: string | undefined;
+  /** `subject_did` / `learner_did` — the subject the caller named, if it named one. */
+  readonly subjectIdentity?: string | undefined;
+  /** A pod the caller named as the read target. Untrusted; bounded by this deployment's pod space. */
+  readonly namedPodUrl?: string | undefined;
+}): ReadTargetDecision {
+  // selfBoundPod keeps today's self-read behaviour EXACTLY: the stamped pod is used when it is the
+  // caller's own (in either spelling of this store), and otherwise the pod is derived from the DID.
+  const callerPodUrl = selfBoundPod(opts.callerDid, opts.stampedPodUrl);
+  const subjectIdentity = (opts.subjectIdentity ?? '').trim();
+  const namedAs = (opts.namedPodUrl ?? '').trim() || undefined;
+  return resolveReadTarget({
+    callerPodUrl,
+    subjectIdentityGiven: subjectIdentity !== '',
+    // Derived from the identity ALONE — no caller-supplied pod anywhere in this value.
+    subjectPodUrl: subjectIdentity ? resolveSubjectPodUrl(subjectIdentity) : callerPodUrl,
+    namedAs,
+    // undefined when the name is not a safe public target (or not a pod root at all), which
+    // resolveReadTarget REFUSES rather than silently replacing — see its header.
+    namedPodUrl: namedAs ? explicitPodRoot(namedAs, safePublicUrlOrUndefined) : undefined,
+    tenantPodUrl,
+    inPodSpace: (pod) => sameStore(pod, tenantPodUrl),
+    samePrincipal: samePodPrincipal,
+    knownPodForPrincipal: enrolledPodForPrincipal,
+  });
 }
 
 function classifySubjectKind(opts: {
@@ -2502,11 +2553,21 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // the subject's self-sovereign pod (wallet/credentials, via exportClr inside
     // assembleEnterpriseLearnerRecord) and their OWN derived LRS view
     // (lens:<agent>, already subject-scoped), never the Foxxi tenant pod/store.
-    const subjectPodUrl = resolveSubjectPodUrl(requestedLearnerDid, (args.learner_pod_url ?? args.subject_pod_url ?? args.tenant_pod_url) as string | undefined);
+    // ★ A NAMED POD IS A REQUEST, NOT AN AUTHORITY — see src/read-target.ts. `learner_pod_url` used
+    // to beat the identity outright and be honoured anywhere it was a safe public URL; it now
+    // selects among pods this deployment already reads, and a pod outside that space is refused with
+    // the reason rather than quietly swapped for a derived one.
+    const target = readTargetFor({
+      callerDid: ctx.webId,
+      subjectIdentity: typeof args.learner_did === 'string' ? args.learner_did : undefined,
+      namedPodUrl: (args.learner_pod_url ?? args.subject_pod_url ?? args.tenant_pod_url) as string | undefined,
+    });
+    if (!target.ok) return { error: target.error };
+    const subjectPodUrl = target.podUrl;
     // ★ FROM THE POD, AFTER IT IS RESOLVED — see readIsSelf. `learner_did` defaults to the caller
     // while `learner_pod_url` names the pod, so comparing DIDs let a caller read another pod under
     // a self-read that skips the privacy gate entirely.
-    const isSelf = readIsSelf({ callerDid: ctx.webId, subjectPodUrl });
+    const isSelf = target.isSelf;
     const subjectLabel = actorForPod(subjectPodUrl, MESH_ACTOR_LABELS);
     // The lens is an in-memory derived view; the durable records on the
     // subject's OWN pod are the system of record. Union them (deduped by id) so
@@ -5053,15 +5114,22 @@ const REVIEW_RECORD_AFFORDANCE: Affordance = {
    * failure a self-describing affordance exists to prevent, and worse than an obviously missing
    * sentence, because nothing signalled that anything was missing.
    *
-   * ★ AND THE `subject_did` CLAIM IS NOW SCOPED RATHER THAN DELETED. It is true of this bridge —
-   * cross-pod agent reads work when called directly — and false on the relay route, because
-   * `sign_request` stamps `subject_pod_url` from the caller's own session, so the read target cannot
-   * name anybody else. Saying which is true where beats both deleting a real capability and
-   * advertising one the common route cannot express.
+   * ★★ AND THE `subject_did` CLAIM WAS SCOPED FOR EXACTLY ONE DEPLOY, THEN FIXED.
+   *
+   * The scoped version said cross-pod reads work when this bridge is called directly and NOT
+   * through the relay, because `sign_request` stamps `subject_pod_url` from the caller's session.
+   * True, and the right thing to publish while it was true — but writing the limitation down made
+   * it obvious that it was a defect, not a boundary: the stamp answers "whose pod am I", and a read
+   * was consulting it for "whose record am I asking for". Two questions, one field. See
+   * src/read-target.ts; they are separate now and the claim is unconditional again.
+   *
+   * ★ WORTH RECORDING AS A METHOD. The sentence that documents a limitation honestly is often one
+   * edit away from the sentence that removes it, and you cannot get to the second without writing
+   * the first. Both halves shipped, in that order, within a day.
    */
   description: 'Review your IEEE P2997 Enterprise Learner Record + 1EdTech CLR 2.0 credential wallet, virtualized by Foxxi entirely over your OWN pod. Authenticate with a rev-196 signed-request envelope — Foxxi verifies your own signature and binds identity to the recovered did:ethr (no relay, no separate login). Defaults to your own record. '
     + 'HOW A COMPETENCY IS EARNED, so an empty judgement is readable before you spend a signature: a performance record counts toward a competency only if it carries a DOMAIN activity type, or asserts an outcome (success true/false). A record whose only type is a protocol envelope — AssertedContext, ProductionTask, SignedAuthorship, any *Facet — declares no skill, and auto-projected trajectory steps carry exactly that and no outcome, so any number of them yields zero competencies by design rather than by fault. The other two routes are a mastery-verb learning experience, and an alignment on a verified credential. Competence is a judgement about work; volume of work is not one. '
-    + 'CROSS-POD READS: pass subject_did for a discoverable agent-capability record. That works when this bridge is called directly. It does NOT work through the relay, because sign_request stamps subject_pod_url from your own session, so on that route the read target is always your own pod whatever subject_did says.',
+    + 'CROSS-POD READS: pass subject_did to read another subject\'s discoverable agent-capability record — on every route, including through the relay. Two fields that used to be one: subject_pod_url answers WHOSE POD AM I (stamped from your session by sign_request, and never a read target), while the record you are asking for is resolved from subject_did and, when that subject has enrolled, from the pod the enrolment register says it actually writes to. If the subject holds a pod here that its identity does not resolve to, name it with read_pod_url — that carries no authority, only selects among pods this deployment already reads, and is refused with the reason if it names anything else. Every answer reports subject.podChosenBy so you can tell which pod was read and why. A HUMAN learner record stays private to its holder; agent capability records are public.',
   method: 'POST',
   targetTemplate: '{base}/agent/review-record',
   mediaType: 'application/json',
@@ -5075,7 +5143,11 @@ const REVIEW_RECORD_AFFORDANCE: Affordance = {
      */
     // ★ THE PROJECTION IS ADVERTISED, because a parameter a caller cannot see does not exist — the
     // same failure as a read-side declared in a descriptor and dropped before any caller saw it.
-    { name: '_signed_payload', type: 'string', required: true, description: "JSON.stringify({ agent_id: 'did:ethr:<addr>', timestamp: <ISO 8601, within ±60s>, subject_did?, subject_pod_url?, subject_name?, actor_kind?, include_clr?, projection?: 'inline'|'links' }). DEFAULT 'links' returns the JUDGEMENT (competencies, credentials, counts — bounded by vocabulary, not by history) with evidence as hydra:Collection references carrying hydra:totalItems and a self-scoped address you can dereference with this same envelope. Pass 'inline' to embed every experience and performance record instead — that grows without bound with the subject's history and has been measured over 1.2 MB." },
+    { name: '_signed_payload', type: 'string', required: true, description: "JSON.stringify({ agent_id: 'did:ethr:<addr>', timestamp: <ISO 8601, within ±60s>, subject_did?, read_pod_url?, subject_pod_url?, subject_name?, actor_kind?, include_clr?, projection?: 'inline'|'links' }). DEFAULT 'links' returns the JUDGEMENT (competencies, credentials, counts — bounded by vocabulary, not by history) with evidence as hydra:Collection references carrying hydra:totalItems and a self-scoped address you can dereference with this same envelope. Pass 'inline' to embed every experience and performance record instead — that grows without bound with the subject's history and has been measured over 1.2 MB." },
+    // ★ NAMED AS ITS OWN INPUT because the two questions it separates were indistinguishable while
+    // one field answered both, and a caller reading `subject_pod_url?` in the line above has no way
+    // to learn that the field is stamped over on the relay route.
+    { name: 'read_pod_url', type: 'string', required: false, description: 'WHOSE RECORD AM I ASKING FOR, when the subject holds a pod that its identity does not resolve to (one wallet has both an eth-<hex> pod and a relay-mediated u-eth-<hex> one). Untrusted: it carries no authority, selects only among pods this deployment already reads, and a pod outside that space is REFUSED with the reason rather than silently swapped for a derived one. Usually unnecessary — an enrolled subject is found from subject_did alone, via the enrolment register. Distinct from subject_pod_url, which answers WHOSE POD AM I, is stamped from your session by sign_request, and is never a read target.' },
     { name: '_signature', type: 'string', required: true, description: 'secp256k1 signature over the canonical message sha256:<hex(sha256(_signed_payload))>, signed with the wallet matching agent_id.' },
   ],
   /**
@@ -5553,11 +5625,25 @@ app.post('/agent/review-record', async (req, res) => {
     // Self-sovereign: default to the caller's OWN record. A different subject_did
     // is honored only because agent-capability records are discoverable.
     const subjectDid = (typeof p.subject_did === 'string' && p.subject_did.trim()) ? p.subject_did.trim() : callerDid;
-    // Virtualize over the SUBJECT'S OWN pod + their own lens view.
-    const subjectPodUrl = resolveSubjectPodUrl(subjectDid, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
+    /**
+     * Virtualize over the SUBJECT'S OWN pod + their own lens view.
+     *
+     * ★ WHOSE RECORD, decided separately from WHOSE POD AM I — see src/read-target.ts. This used to
+     * pass the relay-stamped `subject_pod_url` as the read target, so on the relay route the target
+     * was always the caller's own pod whatever `subject_did` said: the answer named one subject and
+     * carried another's data. The stamp still binds the caller; it no longer chooses the pod.
+     */
+    const target = readTargetFor({
+      callerDid,
+      stampedPodUrl: typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined,
+      subjectIdentity: typeof p.subject_did === 'string' ? p.subject_did : undefined,
+      namedPodUrl: typeof p.read_pod_url === 'string' ? p.read_pod_url : undefined,
+    });
+    if (!target.ok) { res.status(400).json({ error: target.error }); return; }
+    const subjectPodUrl = target.podUrl;
     // ★ AFTER the pod is resolved, and FROM it — see readIsSelf. Deciding this from `subjectDid`
     // (which defaults to the caller) while the data came from `subject_pod_url` is the bypass.
-    const isSelf = readIsSelf({ callerDid, subjectPodUrl });
+    const isSelf = target.isSelf;
     const subjectLabel = actorForPod(subjectPodUrl, MESH_ACTOR_LABELS);
     // Classify FAIL-CLOSED: default to 'human' (private) and treat the subject as an 'agent'
     // (public capability record) ONLY when the caller explicitly says so AND the subject is a
@@ -5690,7 +5776,12 @@ app.post('/agent/review-record', async (req, res) => {
       reviewedAs: callerDid,
       authMode,
       self: isSelf,
-      subject: { did: subjectDid, podUrl: subjectPodUrl, label: subjectLabel, kind: subjectKind, lensTenant: lensTenantFor(subjectLabel), statementCount: statements.length, statementSource, latticeStatements: latticeStmts.length },
+      // ★ `podChosenBy` because a read of the wrong pod returns a well-formed EMPTY record, which
+      // is the same bytes as "this subject has done nothing". Saying which pod was read and HOW it
+      // was arrived at is the difference between an answer a caller can check and one it can only
+      // believe: 'caller' = your own, 'subject-identity' = derived from the DID you named (snapped
+      // to the enrolled spelling), 'named-pod' = the pod you named, inside this deployment's space.
+      subject: { did: subjectDid, podUrl: subjectPodUrl, podChosenBy: target.basis, label: subjectLabel, kind: subjectKind, lensTenant: lensTenantFor(subjectLabel), statementCount: statements.length, statementSource, latticeStatements: latticeStmts.length },
       projection: projectionMode,
       elr: projectionMode === 'links' ? elrAsLinks(elr, subjectDid, bridgeBaseUrl) : elr,
       ...(clr !== undefined ? { clr } : {}),
@@ -6017,7 +6108,17 @@ app.post('/agent/verify-extension', async (req, res) => {
 
     // 1. Re-read the SUBJECT'S OWN authoritative records — PGSL lattice (canonical)
     //    first, then lens + durable hand-authored RDF (legacy fallback).
-    const subjectPodUrl = resolveSubjectPodUrl(subjectDid, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
+    // ★ Same split as /agent/review-record, and this route needs it MORE: due diligence before
+    // issuing a credential is BY DEFINITION about somebody else, and the relay-stamped pod pointed
+    // it at the caller — so an issuer verifying a subject was re-reading its own records.
+    const target = readTargetFor({
+      callerDid: auth.callerDid,
+      stampedPodUrl: typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined,
+      subjectIdentity: subjectDid,
+      namedPodUrl: typeof p.read_pod_url === 'string' ? p.read_pod_url : undefined,
+    });
+    if (!target.ok) { res.status(400).json({ error: target.error }); return; }
+    const subjectPodUrl = target.podUrl;
     const subjectLabel = actorForPod(subjectPodUrl, MESH_ACTOR_LABELS);
     // PII gate (round-49) — mirror the /agent/review-record + foxxi.assemble_learner_record
     // twin: a HUMAN learner's graded score + xAPI evidence is private, so a signed caller may
@@ -6026,7 +6127,7 @@ app.post('/agent/verify-extension', async (req, res) => {
     // the subject is a wallet DID. Without this the delegated path (any signed wallet, no
     // directory membership) disclosed any subject's score + xAPI evidence to any caller.
     // ★ From the pod actually read, not from a DID the caller supplies alongside it. See readIsSelf.
-    const isSelf = readIsSelf({ callerDid: auth.callerDid, subjectPodUrl });
+    const isSelf = target.isSelf;
     // subjectKind is derived from the SUBJECT own evidence, below, once the
     // statements have been read — never from p.actor_kind. See
     // subjectKindFromOwnEvidence for why the request field cannot be trusted here.
@@ -8532,10 +8633,19 @@ app.post('/agent/scorm/launch', async (req, res) => {
       if (owner && owner !== callerDid) {
         course = (await resolveCourseForRead(courseId, owner)) ?? undefined;
       } else {
-        const authorDid = (typeof p.author_did === 'string' && p.author_did) ? p.author_did : callerDid;
+        // ★ THE STAMPED POD IS THE CALLER'S, SO IT CANNOT STAND IN FOR AN AUTHOR'S. `author_did`
+        // names whose pod holds the course, and passing the relay-stamped `subject_pod_url` as the
+        // override made it lose to the caller's own pod — so a learner launching somebody else's
+        // course looked for it on its own pod and got the 404 below. Same shape as the read-target
+        // split (src/read-target.ts): a field that answers "whose pod am I" was deciding "whose pod
+        // holds the thing I want". The self case is unchanged and still honours the stamp.
+        const authorNamed = (typeof p.author_did === 'string' && p.author_did) ? p.author_did : '';
+        const authorDid = authorNamed || callerDid;
         const rawCoursePod = (typeof p.course_pod === 'string' && p.course_pod) ? p.course_pod : '';
         const coursePod = (rawCoursePod && safePublicUrlOrUndefined(rawCoursePod))
-          || resolveSubjectPodUrl(authorDid, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
+          || (authorNamed
+            ? resolveSubjectPodUrl(authorNamed)
+            : selfBoundPod(callerDid, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined));
         // SSRF: coursePod is fetched by loadScormCourse->discover() (not lattice-guarded).
         try { await assertSafeFetchTarget(coursePod); } catch { res.status(400).json({ error: 'course_pod rejected: not a public host' }); return; }
         // Foundation-first: load the full course from the author's PGSL lattice

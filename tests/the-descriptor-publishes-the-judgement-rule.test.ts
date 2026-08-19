@@ -68,11 +68,15 @@ describe('★ and the descriptor publishes it, so a reader need not ask a person
     expect(server, "the register's own comment must say it too").toMatch(/ADMITTED IS NOT COUNTED/);
   });
 
-  it('and does not leave "pass subject_did" as an unqualified promise', () => {
-    // True of the bridge called directly, false through the relay, which stamps subject_pod_url
-    // from the caller's session. It was invisible while everything 403'd.
-    const claim = /pass subject_did/i.test(affordance);
-    expect(claim, 'the capability is still advertised').toBe(true);
-    expect(affordance, 'and the route where it does not hold is named').toMatch(/relay|sign_request/);
+  it('and "pass subject_did" is a promise the common route actually keeps', () => {
+    // ★ THIS ASSERTION CHANGED ONE DEPLOY AFTER IT WAS WRITTEN, and the sequence is the point.
+    // It first required the claim to be SCOPED — true called directly, false through the relay,
+    // where sign_request stamps subject_pod_url over the read target. Writing that limitation down
+    // honestly is what made it obvious it was a defect and not a boundary, and it was fixed the
+    // same day (src/read-target.ts). So the assertion is now the opposite: the claim must NOT be
+    // scoped, because a descriptor that under-promises is as wrong as one that over-promises.
+    expect(/pass subject_did/i.test(affordance), 'the capability is still advertised').toBe(true);
+    expect(affordance, 'the two questions must be distinguished').toMatch(/WHOSE POD AM I/);
+    expect(affordance, 'and the limitation must be gone, not re-scoped').not.toMatch(/does NOT work through the relay/i);
   });
 });

@@ -42,15 +42,15 @@ function body(name: string): string {
 }
 
 describe('a self-read is decided on the pod, not on the spelling of its URL', () => {
-  it('readIsSelf reduces both sides to a pod principal before comparing', () => {
-    const fn = body('function readIsSelf');
+  it('samePodPrincipal reduces both sides to a pod principal before comparing', () => {
+    const fn = body('function samePodPrincipal');
     expect(fn, 'must fold both sides through podPrincipalKey').toMatch(/podPrincipalKey\([\s\S]*podPrincipalKey\(/);
     // The regression, exactly: two URLs compared after nothing but a trailing-slash/case tidy.
     expect(fn, 'must not compare whole URLs').not.toMatch(/norm\(ownPod\)\s*===\s*norm\(/);
   });
 
   it('and fails closed when either side is not reducible to a pod', () => {
-    const fn = body('function readIsSelf');
+    const fn = body('function samePodPrincipal');
     // A URL that names no pod must not compare equal to another that names no pod — otherwise two
     // unreadable identities would "match" and every such read would be treated as a self-read.
     expect(fn).toMatch(/!==\s*null/);
@@ -65,10 +65,15 @@ describe('a self-read is decided on the pod, not on the spelling of its URL', ()
     expect(fn, "must fold the 'u-' prefix").toMatch(/replace\(\/\^u-\/, ''\)/);
   });
 
-  it('the caller side is derived from the proved identity, never from the request', () => {
-    const fn = body('function readIsSelf');
-    // The whole point of the original fix: a caller-supplied field must not decide an authority
-    // outcome. Folding spellings must not smuggle the request back into the caller's side.
-    expect(fn).toMatch(/resolveSubjectPodUrl\(opts\.callerDid, undefined\)/);
+  it('the caller side is bound to the proved identity, never taken from the request', () => {
+    // ★ THE DECIDER MOVED. `readIsSelf` derived the caller's pod itself; now `readTargetFor`
+    // supplies both sides, so this property has to be checked where it actually lives — a test
+    // still asserting on the old function would have gone on passing about nothing.
+    const fn = body('function readTargetFor');
+    // selfBoundPod honours a caller-supplied pod ONLY when it resolves to the caller's own, so the
+    // request cannot smuggle a different principal into the side that decides `self`.
+    expect(fn).toMatch(/selfBoundPod\(opts\.callerDid, opts\.stampedPodUrl\)/);
+    // And the subject side never sees a caller-supplied pod at all.
+    expect(fn).toMatch(/resolveSubjectPodUrl\(subjectIdentity\)/);
   });
 });

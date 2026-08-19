@@ -54,6 +54,36 @@ export interface SubjectPodUrlOptions {
 }
 
 /**
+ * A caller-supplied pod URL reduced to a pod root — or undefined when it is not one we may fetch.
+ *
+ * ★ EXPORTED SO THERE IS ONE COPY. Two rules live in here and both are security-relevant: the SSRF
+ * choke point, and the collapse to a single path segment. A second caller needs the same answer (is
+ * this named pod usable, and what is it exactly?) and a second copy of these two rules is precisely
+ * how the pair drifts apart — the multi-segment case below is a bug we already shipped once.
+ *
+ * SSRF choke point: honoured ONLY when it is a public http(s) target. A loopback/link-local/private
+ * literal (127.0.0.1, 169.254.169.254, 10.*, internal hosts) yields undefined, so a caller cannot
+ * steer a server-side pod fetch at an internal address. (A public hostname that DNS-resolves to a
+ * private IP is additionally caught by assertSafeFetchTarget right before each fetch.)
+ *
+ * Canonicalize to a SINGLE-SEGMENT pod root <origin>/<firstSeg>/ — a pod is exactly one segment
+ * under its origin. Returning a multi-segment override verbatim let a caller pass the selfBoundPod
+ * last-segment actor check (…/eth-victim/eth-CALLER/) while a first-segment consumer
+ * (void-credential's ownership check, the encryption-key write path) acted on a DIFFERENT segment
+ * (eth-victim) — a cross-agent write/delete. Collapsing to the first segment makes last==first, so
+ * the actor comparison and the consumers agree.
+ */
+export function explicitPodRoot(explicit: string, safeUrl: SafeUrlFn): string | undefined {
+  const safe = safeUrl(explicit);
+  if (!safe) return undefined;
+  try {
+    const u = new URL(safe);
+    const seg = u.pathname.split('/').filter(Boolean)[0];
+    return seg ? `${u.origin}/${seg}/` : undefined;
+  } catch { return undefined; }
+}
+
+/**
  * Resolve the pod that IS this identity's own.
  *
  * Precedence: a safe explicit override (canonicalized to a single-segment pod root) → an embedded
@@ -61,28 +91,15 @@ export interface SubjectPodUrlOptions {
  */
 export function resolveSubjectPodUrlPure(opts: SubjectPodUrlOptions): string {
   const { tenantPodUrl, identity, explicit, safeUrl } = opts;
-  // SSRF choke point: an explicit caller-supplied pod URL is honored ONLY when it is a public
-  // http(s) target. A loopback/link-local/private literal (127.0.0.1, 169.254.169.254, 10.*,
-  // internal hosts) is IGNORED — we fall through to deriving the pod from the identity — so a caller
-  // cannot steer any server-side pod fetch at an internal address. (A public hostname that
-  // DNS-resolves to a private IP is additionally caught by assertSafeFetchTarget right before each
-  // delegation/credential fetch.)
+  // The SSRF choke point and the pod-root collapse both live in explicitPodRoot; an override it
+  // cannot vouch for is IGNORED here and the pod is derived from the identity instead. NOTE that
+  // "ignored" is the right answer for a resolver whose job is "whose pod is this identity's" and the
+  // WRONG one for a caller asking to READ a named pod — see src/read-target.ts, which asks
+  // explicitPodRoot directly so it can refuse out loud instead of answering about someone else.
   if (explicit) {
-    const safe = safeUrl(explicit);
-    if (safe) {
-      // Canonicalize to a SINGLE-SEGMENT pod root <origin>/<firstSeg>/ — a pod is exactly one
-      // segment under its origin. Returning a multi-segment override verbatim let a caller pass the
-      // selfBoundPod last-segment actor check (…/eth-victim/eth-CALLER/) while a first-segment
-      // consumer (void-credential's ownership check, the encryption-key write path) acted on a
-      // DIFFERENT segment (eth-victim) — a cross-agent write/delete. Collapsing to the first segment
-      // makes last==first, so the actor comparison and the consumers agree.
-      try {
-        const u = new URL(safe);
-        const seg = u.pathname.split('/').filter(Boolean)[0];
-        if (seg) return `${u.origin}/${seg}/`;
-      } catch { /* fall through to identity derivation below */ }
-    }
-    // else: unsafe explicit target — ignore it and derive from the identity below.
+    const root = explicitPodRoot(explicit, safeUrl);
+    if (root) return root;
+    // else: unsafe or unusable explicit target — ignore it and derive from the identity below.
   }
   const id = (identity ?? '').trim();
   if (!id) return tenantPodUrl;
