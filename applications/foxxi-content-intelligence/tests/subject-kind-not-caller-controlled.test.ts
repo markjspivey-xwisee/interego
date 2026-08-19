@@ -62,9 +62,34 @@ describe('subject classification is not caller-controlled', () => {
   });
 
   it('every privacy gate uses the shared classifier', () => {
-    const uses = server.match(/subjectKindFromOwnEvidence\(/g) ?? [];
-    // one definition + three call sites
-    expect(uses.length, `found ${uses.length}`).toBeGreaterThanOrEqual(4);
+    /**
+     * ★ THIS USED TO COUNT `subjectKindFromOwnEvidence(` CALL SITES AND EXPECT FOUR — one
+     * definition plus three gates. That was a PROXY for "every gate shares the decision", and the
+     * proxy broke the moment the decision genuinely became shared: the three gates now call
+     * `classifySubjectKind`, which calls `subjectKindFromOwnEvidence` once, so the count fell to two
+     * while the property it stood for got strictly stronger.
+     *
+     * The count was also never the property. Three call sites can each read the same helper and
+     * still disagree about what to do with the answer — which is exactly what happened:
+     * `assemble_learner_record` honoured `actor_kind` for a SELF review while the other two
+     * hard-coded `isSelf ? 'human'`, so a delegate reviewing itself was filed as a human whatever
+     * its own evidence said. A live delegate reported it. Every site called the helper; the counter
+     * was green throughout.
+     *
+     * So assert the property: each gate goes through the ONE classifier, and that classifier is the
+     * only thing that consults the raw evidence reader.
+     */
+    const codeLines = server.split('\n').filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l));
+
+    const assignments = codeLines.filter(l => /const subjectKind\s*=/.test(l));
+    expect(assignments.length, `expected the three privacy gates, found ${assignments.length}`)
+      .toBeGreaterThanOrEqual(3);
+    for (const line of assignments) expect(line).toMatch(/classifySubjectKind\(/);
+
+    // Exactly one reader of the raw evidence helper: the shared classifier itself.
+    const rawReads = codeLines.filter(l => /subjectKindFromOwnEvidence\(/.test(l) && !/^function /.test(l.trim()));
+    expect(rawReads.length, `raw evidence reader called from ${rawReads.length} place(s); expected only the shared classifier`)
+      .toBe(1);
   });
 
   it('all three routes still refuse a non-self human record', () => {

@@ -1864,6 +1864,40 @@ function subjectKindFromOwnEvidence(statements: ReadonlyArray<{ statement?: Reco
   return declared.has('agent') && !declared.has('human') ? 'agent' : 'human';
 }
 
+/**
+ * What the subject IS — decided once, for every surface that has to ask.
+ *
+ * ★★ TWO ENDPOINTS ANSWERED THIS DIFFERENTLY AND ONE OF THEM WAS WRONG.
+ * `foxxi.assemble_learner_record` derived it properly; `POST /agent/review-record` hard-coded
+ * `isSelf ? 'human'`, so a delegate reviewing ITSELF was reported as a human no matter what its own
+ * signed evidence said and no matter what `actor_kind` it passed. A live delegate noticed and said
+ * so: "subjectKind and kind still say human for a delegate agent … advisory options really are
+ * advisory." It is not cosmetic — `kind` is what downstream routing reads, and a misfiled agent gets
+ * the human treatment (see the regime router, which gap-analyses humans).
+ *
+ * A rule applied in two places is a rule that will disagree with itself. One function now.
+ *
+ * ★ THE SECURITY PROPERTY IS UNCHANGED, and it is the reason this is not just `args.actor_kind`:
+ * for ANOTHER subject the classification comes only from that subject's OWN signed statements
+ * (`PERF_EXT.actorKind`, written at record_performance time from the performer's authenticated
+ * call). A caller-supplied field must never decide an authority outcome about someone else — agent
+ * records are public, human records are private, so trusting the hint let any signed wallet declare
+ * a human to be an agent and read them. Fail closed: no evidence at all means human, i.e. private.
+ *
+ * For your OWN record the hint is harmless — it is your data on either path — so `self` may use it,
+ * but own evidence still wins when it positively says `agent`.
+ */
+function classifySubjectKind(opts: {
+  readonly isSelf: boolean;
+  readonly statements: ReadonlyArray<{ statement?: Record<string, unknown> }>;
+  readonly actorKindHint?: unknown;
+}): 'human' | 'agent' {
+  const fromEvidence = subjectKindFromOwnEvidence(opts.statements);
+  if (!opts.isSelf) return fromEvidence;
+  if (fromEvidence === 'agent') return 'agent';
+  return opts.actorKindHint === 'agent' ? 'agent' : 'human';
+}
+
 const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknown>> = {
   // ── Emergent standards-extension (agp layer re-integrated) ──────────
   // Afforded by the agentic-performance layer composing Foxxi's standards;
@@ -2323,11 +2357,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // own authenticated call). Read that instead. Fail closed: 'agent' only when the
     // subject's own evidence says agent and none of it says human — no evidence at
     // all means private, because an unknown DID's record is not public by default.
-    const subjectDeclaresAgent = subjectKindFromOwnEvidence(learnerStatements) === 'agent';
-    const subjectKind: 'human' | 'agent' = isSelf
-      // For your own record the hint is harmless — it is your own data either way.
-      ? ((args.actor_kind as string) === 'agent' ? 'agent' : 'human')
-      : (subjectDeclaresAgent ? 'agent' : 'human');
+    const subjectKind = classifySubjectKind({ isSelf, statements: learnerStatements, actorKindHint: args.actor_kind });
 
     // Human records are private (self/admin only). Agent capability records are
     // discoverable, like a public registry. The gate runs AFTER the read because
@@ -5346,7 +5376,7 @@ app.post('/agent/review-record', async (req, res) => {
     // is their OWN. Agent capability records stay discoverable. The classification comes
     // from the subject own signed statements: reading it off p.actor_kind let any signed
     // wallet declare a human to be an agent and take the public path.
-    const subjectKind: 'human' | 'agent' = isSelf ? 'human' : subjectKindFromOwnEvidence(statements);
+    const subjectKind = classifySubjectKind({ isSelf, statements, actorKindHint: p.actor_kind });
     if (subjectKind === 'human' && !isSelf) {
       res.status(403).json({
         error: 'forbidden — a human learner record is private; you may only review your own (set subject_did to your own DID). Agent capability records are public.',
@@ -5794,9 +5824,9 @@ app.post('/agent/verify-extension', async (req, res) => {
     const durableStatements = await readDurableRecordedStatements({ podUrl: subjectPodUrl });
     const statements = mergeStatementsById([...latticeStatements(subjectLabel), ...lensStatements], durableStatements);
 
-    // Same gate, same reason as /agent/review-record: the subject own statements decide
-    // whether this record is public, not a field the caller supplies.
-    const subjectKind: 'human' | 'agent' = isSelf ? 'human' : subjectKindFromOwnEvidence(statements);
+    // Same gate, same reason as /agent/review-record — and now literally the same function, so
+    // "same reason" is enforced rather than asserted in a comment.
+    const subjectKind = classifySubjectKind({ isSelf, statements, actorKindHint: p.actor_kind });
     if (subjectKind === 'human' && !isSelf) {
       res.status(403).json({
         error: 'forbidden — a human learner record is private; you may only verify your own (set subject_did to your own DID). Agent capability records are public.',
