@@ -203,7 +203,7 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // 238 -> 239: `applications/shared-workspace/discord/tests/drawing.test.ts`. An agent asked for a
 // picture said it had no such capability; it has one — a model DRAWS, SVG is text, and writing
 // text needs no permission. That file pins the projection into Discord and what will not render.
-export const MIN_TEST_MODULES = 279;
+export const MIN_TEST_MODULES = 280;
 export const FLOOR_ALLOWANCE = 10;
 
 /**

@@ -1964,10 +1964,32 @@ function subjectKindFromOwnEvidence(
  * agreement, and the failure above is exactly what "they disagreed and nobody noticed" looks like.
  */
 function readIsSelf(opts: { readonly callerDid: string; readonly subjectPodUrl: string }): boolean {
-  const norm = (u: string): string => u.replace(/\/+$/, '').toLowerCase();
   // The caller's own pod, resolved from the identity the signature proved — never from the request.
   const ownPod = resolveSubjectPodUrl(opts.callerDid, undefined);
-  return norm(ownPod) === norm(opts.subjectPodUrl);
+  /**
+   * ★★ COMPARED BY POD, NOT BY URL — AND THE FIRST VERSION OF THIS COMPARED URLs AND BROKE EVERY
+   * SELF-READ.
+   *
+   * One pod has two spellings. `sign_request` overwrites `subject_pod_url` from the session and
+   * writes the CSS-internal host, `http://css.railway.internal:3456/u-eth-…/`, while everything
+   * derived from an identity yields the public one, `https://gate.interego.xwisee.com/u-eth-…/`.
+   * A string comparison therefore said "not your record" about a caller reading its own, `isSelf`
+   * came out false, the privacy gate ran, the subject classified human, and the caller got a 403
+   * instructing it to do the exact thing it had just done.
+   *
+   * Reported by a live delegate that ran it four ways — its own pod with and without `subject_did`,
+   * another pod, and a DID that does not exist — and got four byte-identical 403s. That a
+   * NON-EXISTENT subject answers the same as a real one is the tell: the refusal was happening
+   * before anything about the subject mattered.
+   *
+   * ★ It is the same mismatch that tripped the SSRF guard on the CLR wallet read, so the internal
+   * spelling has now broken two things. `podPrincipalKey` takes the last path segment and folds the
+   * `u-` prefix, which is the only part of either URL that identifies anybody.
+   */
+  const own = podPrincipalKey(ownPod);
+  const subject = podPrincipalKey(opts.subjectPodUrl);
+  // Fail closed: if either side cannot be reduced to a pod, this is not a demonstrated self-read.
+  return own !== null && subject !== null && own === subject;
 }
 
 function classifySubjectKind(opts: {
