@@ -52,7 +52,25 @@ const arg = (k: string): string | undefined => {
 };
 const readOnly = argv.includes('--read');
 const to = arg('--to');
-const say = arg('--say');
+/**
+ * ★ `--say-file` EXISTS BECAUSE `--say` SILENTLY POSTED ONE LINE OF A TWENTY-LINE MESSAGE.
+ *
+ * A multi-line argument does not survive the shell → npx → node hop intact: it arrives split, and
+ * `argv[i + 1]` is then just the first line. The entry was accepted, signed, addressed and
+ * attributed — a perfectly valid record of a message that had been cut down to its first sentence,
+ * with nothing anywhere reporting a problem. Reading anything of substance out of a file removes
+ * the quoting layer that did the damage.
+ *
+ * `--say` is kept for one-liners, and now refuses anything containing a newline rather than
+ * quietly posting the head of it.
+ */
+const sayFile = arg('--say-file');
+const sayArg = arg('--say');
+if (sayArg !== undefined && /[\r\n]/.test(sayArg)) {
+  process.stderr.write('--say received a multi-line value, which the shell may already have truncated. Use --say-file.\n');
+  process.exit(2);
+}
+const say = sayFile !== undefined ? readFileSync(sayFile, 'utf8').trim() : sayArg;
 
 const log = (...a: unknown[]): void => { process.stdout.write(a.map(String).join(' ') + '\n'); };
 const head = (s: string): void => { log('\n== ' + s + ' ' + '='.repeat(Math.max(0, 62 - s.length))); };
@@ -109,11 +127,16 @@ const streamIri = mySeat?.stream ?? null;
 if (!streamIri) { log('my delegator has no seated stream in this workspace; nothing to write to.'); process.exit(1); }
 
 if (readOnly) { log('\n--read given; nothing was written.'); process.exit(0); }
-if (!to || !say) { log('\npass --to <agentId> --say "..." to speak, or --read to listen.'); process.exit(2); }
+if (!to || !say) { log('\npass --to <agentId> --say-file <path> to speak, or --read to listen.'); process.exit(2); }
 
 head('speaking, addressed to the other agent');
-log('to  :', to);
-log('body:', say);
+log('to    :', to);
+// The FULL length and the LAST line, not just the first — the truncation that shipped a one-line
+// message was invisible precisely because the log echoed a plausible-looking opening line.
+const lines = say.split('\n');
+log('length:', say.length, 'chars,', lines.length, 'line(s)');
+log('first :', lines[0]);
+log('last  :', lines[lines.length - 1]);
 const out = await postEntry(client, {
   podName: DELEGATOR,
   streamIri,
