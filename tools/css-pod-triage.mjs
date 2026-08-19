@@ -72,6 +72,9 @@ function keepReasons(e) {
   if (SEEDS.has(pod)) r.push('seed');
   if (repoNames.has(pod.toLowerCase())) r.push('repo');
   if ((e.nsPublished ?? []).length > 0) r.push(`ns(${e.nsPublished.length})`);
+  // Participating in SOMEONE ELSE'S namespace — the member half of a two-sided workspace
+  // membership. Deleting it leaves the convener holding a membership nothing can verify.
+  if ((e.nsForeign ?? []).length > 0) r.push(`ns-foreign(${e.nsForeign.length})`);
   if ((e.notes ?? []).some(n => /ontologies\//.test(n))) r.push('ns-fallback');
   if ((e.inboxCount ?? 0) > 0) r.push(`inbox(${e.inboxCount})`);
   if ((e.credentialCount ?? 0) > 0) r.push(`credential(${e.credentialCount})`);

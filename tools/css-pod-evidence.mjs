@@ -83,7 +83,7 @@ async function evidenceFor(pod) {
     hasProfile: false, hasAuthMethods: false, hasAgents: false,
     inboxCount: -1, credentialCount: -1, descriptorCount: -1,
     manifestStatus: 0, manifestBytes: 0, manifestEntries: -1,
-    newestActivity: '', nsPublished: [], agentClients: [], notes: [],
+    newestActivity: '', nsPublished: [], nsForeign: [], agentClients: [], notes: [],
   };
 
   const root = await req(base);
@@ -147,9 +147,18 @@ async function evidenceFor(pod) {
         e.manifestEntries = (b.match(/a iep:ManifestEntry/g) ?? []).length;
         const stamps = [...b.matchAll(/iep:validFrom\s+"([^"]+)"/g)].map(m => m[1]).sort();
         e.newestActivity = stamps.length ? stamps[stamps.length - 1] : '';
+        const described = [...new Set([...b.matchAll(/iep:describes\s+<([^>]+)>/g)].map(m => m[1]))];
         const needle = `${NS_ROOT}/${pod}/`;
-        e.nsPublished = [...new Set([...b.matchAll(/iep:describes\s+<([^>]+)>/g)]
-          .map(m => m[1]).filter(u => u.startsWith(needle)))].slice(0, 10);
+        e.nsPublished = described.filter(u => u.startsWith(needle)).slice(0, 10);
+        // ★ AND THE GRAPHS IT DESCRIBES UNDER SOMEONE ELSE'S NAMESPACE. Membership in this system is
+        // TWO-SIDED: a workspace lives under the convener's `/ns/<convener>/wsp-…` and the member's
+        // own pod holds the other half (`roster.ts` — "The other half, from the member's own pod").
+        // A rule that only asks "does this pod publish under ITS OWN segment" sees a participant in
+        // somebody else's workspace as publishing nothing at all, and deleting it silently removes
+        // the half that makes the other party's membership verifiable.
+        e.nsForeign = described
+          .filter(u => u.startsWith(`${NS_ROOT}/`) && !u.startsWith(needle))
+          .slice(0, 10);
         if (/ontologies\//.test(b)) e.notes.push('references an ontologies/ container (the /ns fallback path)');
       } else e.notes.push(`manifest GET -> ${r.status}`);
     }
