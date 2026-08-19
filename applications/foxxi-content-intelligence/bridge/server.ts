@@ -1156,7 +1156,7 @@ function elrAsLinks(elr: unknown, subjectDid: string, base: string): unknown {
     performanceRecords: collectionFor('performanceRecords'),
     // Said on the record itself, because "why is this shorter than last time" must be answerable
     // from the response alone.
-    projectionNote: `LINKS projection: the judgement in full (competencies, credentials, counts — bounded by vocabulary, not by history), with evidence as hydra:Collection references carrying hydra:totalItems. Nothing here grows with ${subjectDid}'s history. Omit projection, or pass "inline", for every entry embedded — that is the shape measured at over 1.2 MB.`,
+    projectionNote: `LINKS projection (the DEFAULT): the judgement in full (competencies, credentials, counts — bounded by vocabulary, not by history), with evidence as hydra:Collection references carrying hydra:totalItems. Nothing here grows with ${subjectDid}'s history. Pass "inline" to embed every entry instead — that is the shape measured at over 1.2 MB.`,
   };
 }
 
@@ -4837,7 +4837,7 @@ const REVIEW_RECORD_AFFORDANCE: Affordance = {
      */
     // ★ THE PROJECTION IS ADVERTISED, because a parameter a caller cannot see does not exist — the
     // same failure as a read-side declared in a descriptor and dropped before any caller saw it.
-    { name: '_signed_payload', type: 'string', required: true, description: "JSON.stringify({ agent_id: 'did:ethr:<addr>', timestamp: <ISO 8601, within ±60s>, subject_did?, subject_pod_url?, subject_name?, actor_kind?, include_clr?, projection?: 'inline'|'links' }). DEFAULT 'inline' embeds every experience and performance record — that grows without bound with the subject's history and has been measured over 1.2 MB. 'links' returns the JUDGEMENT (competencies, credentials, counts) with evidence as hydra:Collection references carrying hydra:totalItems and a self-scoped address you can dereference with this same envelope." },
+    { name: '_signed_payload', type: 'string', required: true, description: "JSON.stringify({ agent_id: 'did:ethr:<addr>', timestamp: <ISO 8601, within ±60s>, subject_did?, subject_pod_url?, subject_name?, actor_kind?, include_clr?, projection?: 'inline'|'links' }). DEFAULT 'links' returns the JUDGEMENT (competencies, credentials, counts — bounded by vocabulary, not by history) with evidence as hydra:Collection references carrying hydra:totalItems and a self-scoped address you can dereference with this same envelope. Pass 'inline' to embed every experience and performance record instead — that grows without bound with the subject's history and has been measured over 1.2 MB." },
     { name: '_signature', type: 'string', required: true, description: 'secp256k1 signature over the canonical message sha256:<hex(sha256(_signed_payload))>, signed with the wallet matching agent_id.' },
   ],
   /**
@@ -5425,10 +5425,17 @@ app.post('/agent/review-record', async (req, res) => {
      * `projection:"links"` returns the JUDGEMENT — competencies, credentials, counts, all bounded by
      * vocabulary rather than history — plus a Hydra collection reference per evidence array carrying
      * `hydra:totalItems` and the address to follow. Nothing that grows with the subject's history
-     * crosses the wire. The default stays `inline` for one release so no existing consumer breaks on
-     * a shape change it did not ask for; flipping it is a one-line change afterwards.
+     * crosses the wire.
+     *
+     * ★★ THE DEFAULT IS NOW `links`. It shipped opt-in for one release so no existing consumer broke
+     * on a shape change it did not ask for. That release has soaked, and leaving the default as
+     * `inline` would have meant the safe shape was the one you had to know to ask for — which is the
+     * same failure as an unreadable address: a property the system HAS but does not exhibit unless
+     * you already knew to request it. A caller that genuinely wants every entry embedded says
+     * `projection:"inline"` and gets exactly what it got before; nothing is removed, the burden of
+     * knowing just moved to the party asking for the unbounded shape.
      */
-    const projectionMode = p.projection === 'links' ? 'links' : 'inline';
+    const projectionMode = p.projection === 'inline' ? 'inline' : 'links';
     // Read the live enrolled set ONCE for the whyEmpty block below. All three fields that report it
     // — the list, the boolean and the remedy — must describe the SAME set: an agent can now enrol
     // itself mid-flight, so re-reading per field could answer "not enrolled" beside a list that
