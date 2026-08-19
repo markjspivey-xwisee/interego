@@ -1887,6 +1887,42 @@ function subjectKindFromOwnEvidence(statements: ReadonlyArray<{ statement?: Reco
  * For your OWN record the hint is harmless — it is your data on either path — so `self` may use it,
  * but own evidence still wins when it positively says `agent`.
  */
+/**
+ * Is the record being read the CALLER'S OWN? Decided from the pod the read will actually touch.
+ *
+ * ── ★★ THE BYPASS THIS CLOSES, MEASURED LIVE ─────────────────────────────────────────────────
+ *
+ * `isSelf` used to be `subjectDid === callerDid`, where `subjectDid` DEFAULTS to the caller when
+ * `subject_did` is omitted — while the DATA was read from `subject_pod_url`, a separate
+ * caller-supplied field checked only for being a safe URL. Two different inputs, one of them
+ * deciding authority and the other deciding what gets read.
+ *
+ * So: omit `subject_did`, pass somebody else's `subject_pod_url`, and the handler reads THEIR pod
+ * while believing it is a self-read. The privacy gate is `subjectKind === 'human' && !isSelf`, so a
+ * read that thinks it is self never reaches the gate at all — any signed wallet could read any pod,
+ * including a human's private learner record.
+ *
+ * Proven against the deployed bridge with a freshly minted agent holding NOTHING of its own:
+ *     its own record          ->  0 statements
+ *     naming another's pod    ->  696 statements, `self: true`
+ *
+ * Same class as the credential-forgery fix and as the `actor_kind` fix above it: a caller-supplied
+ * field deciding an authority outcome about someone else. The repair is the same shape too — bind
+ * the decision to the thing that is actually happening. The pod being READ is that thing, so
+ * `isSelf` is now a fact about it, and the caller's own pod is DERIVED from its authenticated DID
+ * rather than accepted from the request.
+ *
+ * ★ Comparing DIDs cannot be made safe here by validating harder. A DID and a pod are two names
+ * that a caller supplies independently; any check that keeps them as two inputs has to keep them in
+ * agreement, and the failure above is exactly what "they disagreed and nobody noticed" looks like.
+ */
+function readIsSelf(opts: { readonly callerDid: string; readonly subjectPodUrl: string }): boolean {
+  const norm = (u: string): string => u.replace(/\/+$/, '').toLowerCase();
+  // The caller's own pod, resolved from the identity the signature proved — never from the request.
+  const ownPod = resolveSubjectPodUrl(opts.callerDid, undefined);
+  return norm(ownPod) === norm(opts.subjectPodUrl);
+}
+
 function classifySubjectKind(opts: {
   readonly isSelf: boolean;
   readonly statements: ReadonlyArray<{ statement?: Record<string, unknown> }>;
@@ -2312,12 +2348,15 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     if ('error' in resolved) return { error: resolved.error };
     const { ctx } = resolved;
     const requestedLearnerDid = (args.learner_did as string) || ctx.webId;
-    const isSelf = requestedLearnerDid === ctx.webId;
     // VIRTUALIZE over the SUBJECT'S OWN pod — Foxxi is a lens, not a store. Read
     // the subject's self-sovereign pod (wallet/credentials, via exportClr inside
     // assembleEnterpriseLearnerRecord) and their OWN derived LRS view
     // (lens:<agent>, already subject-scoped), never the Foxxi tenant pod/store.
     const subjectPodUrl = resolveSubjectPodUrl(requestedLearnerDid, (args.learner_pod_url ?? args.subject_pod_url ?? args.tenant_pod_url) as string | undefined);
+    // ★ FROM THE POD, AFTER IT IS RESOLVED — see readIsSelf. `learner_did` defaults to the caller
+    // while `learner_pod_url` names the pod, so comparing DIDs let a caller read another pod under
+    // a self-read that skips the privacy gate entirely.
+    const isSelf = readIsSelf({ callerDid: ctx.webId, subjectPodUrl });
     const subjectLabel = actorForPod(subjectPodUrl, MESH_ACTOR_LABELS);
     // The lens is an in-memory derived view; the durable records on the
     // subject's OWN pod are the system of record. Union them (deduped by id) so
@@ -5345,9 +5384,11 @@ app.post('/agent/review-record', async (req, res) => {
     // Self-sovereign: default to the caller's OWN record. A different subject_did
     // is honored only because agent-capability records are discoverable.
     const subjectDid = (typeof p.subject_did === 'string' && p.subject_did.trim()) ? p.subject_did.trim() : callerDid;
-    const isSelf = subjectDid === callerDid;
     // Virtualize over the SUBJECT'S OWN pod + their own lens view.
     const subjectPodUrl = resolveSubjectPodUrl(subjectDid, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
+    // ★ AFTER the pod is resolved, and FROM it — see readIsSelf. Deciding this from `subjectDid`
+    // (which defaults to the caller) while the data came from `subject_pod_url` is the bypass.
+    const isSelf = readIsSelf({ callerDid, subjectPodUrl });
     const subjectLabel = actorForPod(subjectPodUrl, MESH_ACTOR_LABELS);
     // Classify FAIL-CLOSED: default to 'human' (private) and treat the subject as an 'agent'
     // (public capability record) ONLY when the caller explicitly says so AND the subject is a
@@ -5815,7 +5856,8 @@ app.post('/agent/verify-extension', async (req, res) => {
     // (private); 'agent' (public capability record) only when the caller explicitly says so AND
     // the subject is a wallet DID. Without this the delegated path (any signed wallet, no
     // directory membership) disclosed any subject's score + xAPI evidence to any caller.
-    const isSelf = subjectDid === auth.callerDid;
+    // ★ From the pod actually read, not from a DID the caller supplies alongside it. See readIsSelf.
+    const isSelf = readIsSelf({ callerDid: auth.callerDid, subjectPodUrl });
     // subjectKind is derived from the SUBJECT own evidence, below, once the
     // statements have been read — never from p.actor_kind. See
     // subjectKindFromOwnEvidence for why the request field cannot be trusted here.

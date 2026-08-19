@@ -700,7 +700,9 @@ describe('refineFreshness — may only ever downgrade, and only on certainty', (
     expect(out.freshness).toBe('equivalent');
     expect(out.bundleChanged).toEqual([]);
     expect(hasDisagreement([out])).toBe(false);
-  });
+    // Same reason as the workflow walk below: real `git` spawns over real history, so the
+    // measured 6.4s under full-suite load was queueing, not slowness in what is being asserted.
+  }, 30_000);
 
   it('★ the same ancestor does NOT clear a service that ships the changed paths', () => {
     // The other half of the control: a commit range that is clean for acme-id must be
@@ -923,5 +925,11 @@ describe('recipe files: comments do not reach the image, and everything else sti
     // Measured at the time of writing: 2 cleared, 9 caught, out of 11 commits touching the file.
     expect(cleared, 'no comment-only workflow commit found to judge').toBeGreaterThan(0);
     expect(caught, 'no real workflow commit found to judge').toBeGreaterThan(0);
-  });
+    // ★ AN EXPLICIT TIMEOUT, BECAUSE THIS TEST'S COST GROWS WITH THE REPOSITORY. It spawns `git`
+    // once per commit over a 30-commit window, and process spawns dominate — so the wall clock is
+    // a function of how much history exists and how loaded the machine is, not of the logic under
+    // test. It began flaking at 5.2s against vitest's 5s default after a day's commits, passing in
+    // under a second when run alone. A timing-out test is indistinguishable from a broken one at a
+    // glance, which is exactly how a real failure here would get waved through as "that flake".
+  }, 30_000);
 });
