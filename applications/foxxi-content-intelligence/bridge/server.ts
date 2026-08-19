@@ -138,7 +138,7 @@ import { mintSessionToken, deriveUserWallet } from '../src/auth.js';
 import { sendServerError } from '../src/http-errors.js';
 import { runXapiConformance, runScormConformance, runCmi5Conformance, runCamConformance } from '../src/compliance-runner.js';
 import { recoverSignedRequest } from '../src/auth.js';
-import { makeWalletDelegationVerifier, parseTrig, TENANT_ADMIN_CAPABILITY, pgslNodeKind, pgslNodeHash, actionUrl } from '@interego/core';
+import { makeWalletDelegationVerifier, parseTrig, TENANT_ADMIN_CAPABILITY, pgslNodeKind, pgslNodeHash, actionUrl, ownPodSegment } from '@interego/core';
 import { proveCompetency } from '../src/competency-proof.js';
 import { courseIri, courseIdOf, sameCourse } from '../src/course-identity.js';
 import { competencyIri, competencyIriForTerm, competencyIdOf } from '../src/competency-identity.js';
@@ -1854,12 +1854,59 @@ function notImplemented(tool: string, detail: string): Record<string, unknown> {
  * it to say human. No evidence at all is 'human' — an unknown DID's record is not
  * public by default.
  */
-function subjectKindFromOwnEvidence(statements: ReadonlyArray<{ statement?: Record<string, unknown> }>): 'human' | 'agent' {
+/**
+ * One principal, whichever spelling of its pod you were handed.
+ *
+ * ★ `own-pod.ts` derives `eth-<12hex>` from a bare `did:ethr:`, while the identity service derives
+ * `u-eth-<12hex>` for the SAME wallet. Two names, one principal. A comparison that misses this
+ * reads every wallet as two different people — which, in the classifier below, would mean no
+ * statement ever matches its own subject and every record silently becomes private.
+ */
+const podPrincipalKey = (podOrSegment: string | null | undefined): string | null => {
+  const raw = (podOrSegment ?? '').replace(/\/+$/, '').split('/').pop() ?? '';
+  const seg = raw.trim().toLowerCase();
+  return seg ? seg.replace(/^u-/, '') : null;
+};
+
+/**
+ * What the subject's OWN statements say the subject is.
+ *
+ * ── ★★ "OWN" MEANS THE STATEMENTS ARE ABOUT THE SUBJECT, NOT MERELY STORED ON ITS POD ────────
+ *
+ * This used to collect `actorKind` from EVERY statement on the pod, with no check on whose
+ * activity each one described. A pod hosts more than its owner's own record: four delegates live
+ * on `u-eth-8f3b8e939600` (`interego-workspace-desktop-…`, `mcp-client-…`, `interego-shape-probe-…`,
+ * `interego-workspace-live-driver-…`), and every step they take is written there declaring
+ * `agent`. Since the rule was "agent if anything says agent and nothing says human", a person whose
+ * delegates are busy became an agent — and agent capability records are PUBLIC.
+ *
+ * Measured: reading the human's own pod as an unrelated signed wallet returned 200 with
+ * `kind: agent`. Fail-closed was the intent and nothing lied; the evidence was simply about
+ * somebody else.
+ *
+ * So a statement now counts only when its `actor` IS the subject. The actor is
+ * `actor.account.name` (a DID, written from the performer's own authenticated call at
+ * `record_performance` time), and it is compared by PRINCIPAL rather than by string — see
+ * `podPrincipalKey`. Anything whose actor cannot be read, or resolves to somebody else, is
+ * ignored: unattributable evidence must not be able to make a record public.
+ */
+function subjectKindFromOwnEvidence(
+  statements: ReadonlyArray<{ statement?: Record<string, unknown> }>,
+  subjectPodUrl: string,
+): 'human' | 'agent' {
+  const subject = podPrincipalKey(subjectPodUrl);
   const declared = new Set<string>();
   for (const s of statements) {
-    const ext = (s.statement?.context as { extensions?: Record<string, unknown> } | undefined)?.extensions;
+    const st = s.statement;
+    const ext = (st?.context as { extensions?: Record<string, unknown> } | undefined)?.extensions;
     const k = ext?.[PERF_EXT.actorKind];
-    if (typeof k === 'string') declared.add(k);
+    if (typeof k !== 'string') continue;
+    const actorName = (st?.actor as { account?: { name?: unknown } } | undefined)?.account?.name;
+    if (typeof actorName !== 'string') continue;
+    // `ownPodSegment` returns null for an identity form it does not recognise, so an
+    // unattributable statement is skipped rather than counted.
+    if (subject === null || podPrincipalKey(ownPodSegment(actorName)) !== subject) continue;
+    declared.add(k);
   }
   return declared.has('agent') && !declared.has('human') ? 'agent' : 'human';
 }
@@ -1926,9 +1973,10 @@ function readIsSelf(opts: { readonly callerDid: string; readonly subjectPodUrl: 
 function classifySubjectKind(opts: {
   readonly isSelf: boolean;
   readonly statements: ReadonlyArray<{ statement?: Record<string, unknown> }>;
+  readonly subjectPodUrl: string;
   readonly actorKindHint?: unknown;
 }): 'human' | 'agent' {
-  const fromEvidence = subjectKindFromOwnEvidence(opts.statements);
+  const fromEvidence = subjectKindFromOwnEvidence(opts.statements, opts.subjectPodUrl);
   if (!opts.isSelf) return fromEvidence;
   if (fromEvidence === 'agent') return 'agent';
   return opts.actorKindHint === 'agent' ? 'agent' : 'human';
@@ -2396,7 +2444,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // own authenticated call). Read that instead. Fail closed: 'agent' only when the
     // subject's own evidence says agent and none of it says human — no evidence at
     // all means private, because an unknown DID's record is not public by default.
-    const subjectKind = classifySubjectKind({ isSelf, statements: learnerStatements, actorKindHint: args.actor_kind });
+    const subjectKind = classifySubjectKind({ isSelf, statements: learnerStatements, subjectPodUrl, actorKindHint: args.actor_kind });
 
     // Human records are private (self/admin only). Agent capability records are
     // discoverable, like a public registry. The gate runs AFTER the read because
@@ -5417,7 +5465,7 @@ app.post('/agent/review-record', async (req, res) => {
     // is their OWN. Agent capability records stay discoverable. The classification comes
     // from the subject own signed statements: reading it off p.actor_kind let any signed
     // wallet declare a human to be an agent and take the public path.
-    const subjectKind = classifySubjectKind({ isSelf, statements, actorKindHint: p.actor_kind });
+    const subjectKind = classifySubjectKind({ isSelf, statements, subjectPodUrl, actorKindHint: p.actor_kind });
     if (subjectKind === 'human' && !isSelf) {
       res.status(403).json({
         error: 'forbidden — a human learner record is private; you may only review your own (set subject_did to your own DID). Agent capability records are public.',
@@ -5868,7 +5916,7 @@ app.post('/agent/verify-extension', async (req, res) => {
 
     // Same gate, same reason as /agent/review-record — and now literally the same function, so
     // "same reason" is enforced rather than asserted in a comment.
-    const subjectKind = classifySubjectKind({ isSelf, statements, actorKindHint: p.actor_kind });
+    const subjectKind = classifySubjectKind({ isSelf, statements, subjectPodUrl, actorKindHint: p.actor_kind });
     if (subjectKind === 'human' && !isSelf) {
       res.status(403).json({
         error: 'forbidden — a human learner record is private; you may only verify your own (set subject_did to your own DID). Agent capability records are public.',

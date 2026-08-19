@@ -41,20 +41,31 @@ describe('subject classification is not caller-controlled', () => {
     expect(server).not.toMatch(/actor_kind as string\)\s*===\s*'agent'\s*&&\s*\/\^did:/);
   });
 
+  /**
+   * ★ THE BODY, NOT A FIXED-SIZE WINDOW. This used to slice 900 characters from the function's
+   * start, which silently measures the DOCSTRING as much as the code — so adding an explanation
+   * pushed the logic out of view and the assertion began failing for a reason that had nothing to
+   * do with the behaviour it guards. Read from the signature to the closing brace instead.
+   */
+  const classifierBody = (): string => {
+    const at = server.indexOf('function subjectKindFromOwnEvidence');
+    expect(at, 'helper not found').toBeGreaterThan(-1);
+    const rest = server.slice(at);
+    const end = rest.indexOf('\n}\n');
+    return end < 0 ? rest : rest.slice(0, end + 3);
+  };
+
   it('a shared classifier exists and reads the subject own statements', () => {
-    const fn = server.slice(
-      server.indexOf('function subjectKindFromOwnEvidence'),
-      server.indexOf('function subjectKindFromOwnEvidence') + 900,
-    );
+    const fn = classifierBody();
     expect(fn.length, 'helper not found').toBeGreaterThan(0);
     expect(fn, 'must read the kind the SUBJECT declared, not the caller').toMatch(/PERF_EXT\.actorKind/);
+    // ★ And that the evidence is ABOUT the subject: a pod hosts its delegates' statements too, and
+    // counting those made a person's record read as an agent's — which is public.
+    expect(fn, 'must check the statement actor IS the subject').toMatch(/actor[\s\S]*account/);
   });
 
   it('the classifier fails closed', () => {
-    const fn = server.slice(
-      server.indexOf('function subjectKindFromOwnEvidence'),
-      server.indexOf('function subjectKindFromOwnEvidence') + 900,
-    );
+    const fn = classifierBody();
     // 'agent' requires positive evidence AND no contradicting human evidence.
     expect(fn).toMatch(/declared\.has\('agent'\)\s*&&\s*!declared\.has\('human'\)/);
     // …and the fallback is the private class.
