@@ -126,6 +126,7 @@ import {
 } from './dpop.js';
 import { corsMiddleware, MCP_ALLOW_HEADERS } from './cors-allowlist.js';
 import { normalizeCssUrl, assertPublicPodUrl, publicStoreSpelling } from './url-rewrite.js';
+import { mayUseRelayKey } from './relay-key-gate.js';
 // The outbound HTTP layer — pools, solidFetch, and the guarded egress choke point.
 // Extracted so the SSRF address screen's WIRING is importable by a test; see the
 // header of egress.ts for why a regex over this file could never assert it.
@@ -410,6 +411,22 @@ const CSS_URL = process.env['CSS_URL'] ?? 'http://localhost:3456/';
  * setup needs no new variable.
  */
 const CSS_PUBLIC_URL = process.env['CSS_PUBLIC_URL'] ?? CSS_URL;
+/**
+ * The exact origins that ARE this deployment's store — both legitimate spellings of one thing.
+ *
+ * ★ DECLARED WITH THE CONFIG, not beside its first consumer, because two security gates now read
+ * it (`toInternalPodUrl`, `recipientKeyFor`) and a `const` initialised further down the file is a
+ * temporal-dead-zone hazard for anything that ever runs at module scope.
+ *
+ * ★ MEMBERSHIP, NEVER A PREFIX. `url.startsWith(base)` is what let
+ * `https://gate.interego.xwisee.com.<attacker>/…` be treated as ours in round 26, and it leaked a
+ * write bearer. An origin is compared whole or not at all.
+ */
+const STORE_ORIGINS: ReadonlySet<string> = new Set(
+  [CSS_URL, CSS_PUBLIC_URL]
+    .map((u) => { try { return new URL(u).origin; } catch { return ''; } })
+    .filter((o) => o !== ''),
+);
 /** A pod URL as an IDENTIFIER rather than a fetch target. Identity out, routing in. */
 const asPublicPodUrl = (url: string | undefined): string | undefined =>
   (url === undefined ? undefined : publicStoreSpelling(url, CSS_URL, CSS_PUBLIC_URL));
@@ -6115,15 +6132,47 @@ function encryptionKeyToRecord(supplied: unknown, existing?: string | null): str
   return relayAgentKey.publicKey;
 }
 
+/**
+ * The relay's decryption key, or undefined — handed out ONLY for ciphertext that lives under the
+ * caller's OWN pod, on this deployment's OWN store.
+ *
+ * ── ★★ IT WAS A DECRYPTION ORACLE, AND THE HOST IS WHY ──────────────────────────────────────
+ *
+ * This was one line: `toInternalPodUrl(target).startsWith(toInternalPodUrl(own))`. That helper
+ * DISCARDS the host and pastes the path onto our store, so the comparison reduced to a path-prefix
+ * test whose both sides a caller controls. `relayAgentKey` is ONE process-wide X25519 key that
+ * every graph published here is encrypted to, and a victim's ciphertext is public bytes — so:
+ * copy it, serve it from your own host at `/eth-<your-own-12>/anything.jose.json`, ask the relay to
+ * read it, and it decrypts somebody else's private graph for you. Same class as the unauth
+ * decryption oracle closed in the round-26 audit, at a site that fix never reached.
+ *
+ * ★★★ THE RAW TARGET IS SCREENED, BEFORE ANYTHING LAUNDERS IT. This is the whole correction, and
+ * the first attempt got it backwards: it screened `new URL(toInternalPodUrl(targetUrl))` — the
+ * value AFTER the helper had already rewritten the attacker's host to ours — so the origin check
+ * could only ever see our own origin and passed everything. A check downstream of the laundering
+ * is not defence in depth, it is decoration. `targetUrl` is examined exactly as the caller wrote
+ * it, and `toInternalPodUrl` is not called here at all.
+ *
+ * ORIGIN, then PATH, and the path boundary is a trailing slash — without it `eth-abc` is a prefix
+ * of `eth-abcdef`, so a pod whose segment merely BEGINS with yours would hand you its key.
+ *
+ * ★ AND THE PATH IS REFUSED IF IT STILL CARRIES AN ENCODED SEPARATOR. `new URL()` resolves `../`
+ * and `%2E%2E/`, but NOT `..%2f` — measured: `…/eth-mine/..%2feth-victim/secret.jose.json` survives
+ * normalisation as one long segment, passes a prefix test, and is a traversal again wherever the
+ * far end decodes it. We do not know what CSS does with it and do not need to: a pod path with an
+ * encoded slash or backslash in it is not a path we mint, so it is refused rather than reasoned
+ * about.
+ */
 async function recipientKeyFor(args: ToolArgs, targetUrl: string | undefined): Promise<typeof relayAgentKey | undefined> {
   if (!targetUrl) return undefined;
   const own = await callerOwnPod(args);
   if (!own) return undefined;
-  try {
-    return toInternalPodUrl(targetUrl).startsWith(toInternalPodUrl(own)) ? relayAgentKey : undefined;
-  } catch {
-    return undefined;
-  }
+  // The RULE lives in relay-key-gate.ts, which is importable and therefore testable; this file
+  // starts a listener at import and cannot be. See that module for why that matters here
+  // specifically: the first attempt's test passed against the vulnerable code.
+  return mayUseRelayKey({ targetUrl, ownPodUrl: own, storeOrigins: STORE_ORIGINS })
+    ? relayAgentKey
+    : undefined;
 }
 
 async function selfPodUrl(args: ToolArgs): Promise<string | undefined> {
@@ -6379,11 +6428,62 @@ function evictCanonicalDuplicates(keepUrl: string): void {
   }
 }
 
-// Map any pod URL (public gate host or legacy host) to the relay's
-// internal CSS host, which the relay's solidFetch writes/reads against
-// (the gate enforces per-user auth + rejects the relay's service writes;
-// the internal host is the relay's allow-all write path). Preserves the
-// path (the userId/eth- pod segment) exactly.
+/**
+ * Map a pod URL ON THIS DEPLOYMENT'S STORE (the public gate host, or the legacy host) to the
+ * relay's internal CSS host, which `solidFetch` reads and writes against — the gate enforces
+ * per-user auth and rejects the relay's service writes, while the internal origin is the relay's
+ * allow-all path. The path (the userId / `eth-` pod segment) is preserved exactly.
+ *
+ * ── ★★ IT USED TO REWRITE *ANY* HOST ONTO OUR STORE, AND THAT IS THREE BUGS IN ONE HELPER ────
+ *
+ * The body was `${CSS_URL}${new URL(url).pathname}` — the host of the input was DISCARDED, not
+ * checked. So it did not answer "the same pod, spelled internally"; it answered "our store, at
+ * whatever path you named". Every caller then compared or fetched against a value the caller
+ * could steer:
+ *
+ *   1. ★★ A DECRYPTION ORACLE OVER EVERY GRAPH ENCRYPTED TO THE RELAY KEY. `recipientKeyFor`
+ *      decided whether to hand out `relayAgentKey` with
+ *      `toInternalPodUrl(target).startsWith(toInternalPodUrl(own))` — a PATH-ONLY comparison. Host
+ *      away, `https://attacker.example/eth-<caller12>/x.envelope.jose.json` is prefix-equal to the
+ *      caller's own pod. Copy any victim's ciphertext (it is public bytes), serve it from your own
+ *      host under a path beginning with your own pod segment, ask for it, and the relay decrypts it
+ *      for you with its one process-wide key. Same class as the unauth decryption oracle closed in
+ *      the round-26 audit, reappearing at a site that comparison never covered.
+ *   2. A PREDICATE THAT COULD NOT SAY NO. `isCanonicalPodTarget` asked
+ *      `toInternalPodUrl(target).startsWith(toInternalPodUrl(CSS_URL))`, and the right-hand side
+ *      reduces to the store ROOT — so every path starts with it and the answer was always true.
+ *      `notify_agent` reported `delivered: true` for exactly the unpolled dead-letter the function
+ *      was added to distinguish.
+ *   3. AN EXTERNAL DELIVERY TARGET PULLED INTO OUR STORE. `handleNotifyAgent` sends to
+ *      `toInternalPodUrl(targetPod)`, and `resolveTargetPodUrl` passes an external URL through
+ *      untouched by design — so a best-effort external notification became a relay-credentialed
+ *      write into our own store at a caller-chosen path.
+ *
+ * ★★★ AND THE OBVIOUS FIX — "fold only our origins, pass anything else through" — WAS WRITTEN,
+ * REVIEWED BY SIX HOSTILE READERS, AND REVERTED. It closes (1) and creates something worse, because
+ * THIS CLAMP IS ALSO A CONTAINMENT, and nothing said so:
+ *
+ *   `canonicalPodKey` (below) discards the host too, and it is the sole comparator in
+ *   `requireOwnPod` and the `read_inbox` gate. Those gates pass for
+ *   `https://attacker.example/eth-<caller12>/` today — and that has been HARMLESS only because
+ *   every consumer then ran the target through THIS function, which forced it back onto our store
+ *   before the fetch. Let a foreign origin through here and the same gates hand `solidFetch` — the
+ *   UNSCREENED pool; the address screen only rides on `guardedInvokeFetchLanded`'s dispatcher — an
+ *   authenticated GET at a caller-chosen host with the body reflected to the caller (`read_inbox`),
+ *   and a GET + PUT + DELETE at one (`rebuild_manifest`). `GET /agents/:localPart/outbox` is worse
+ *   still: it is UNAUTHENTICATED and reaches here via a `knownPods` card, which `add_pod` will
+ *   happily seed with any URL.
+ *
+ * So the clamp stays until those gates are origin-aware. The decryption oracle is closed AT THE
+ * GATE instead — `recipientKeyFor` screens the RAW target's origin before anything folds it, which
+ * is the only place the check can live while this function still launders hosts. Fixing (2) and (3)
+ * means fixing `canonicalPodKey`, the two fetch sites and `add_pod`'s pod-space check together, and
+ * that is a change worth its own review rather than a rider on this one.
+ *
+ * ★ THE THING TO REMEMBER: the laundering WAS the bug and WAS the containment. A fix that removes
+ * a suspicious mechanism without asking what has been leaning on it trades one defect for three,
+ * and every one of the three is reachable from the internet.
+ */
 function toInternalPodUrl(url: string): string {
   try {
     return `${CSS_URL.replace(/\/$/, '')}${new URL(url).pathname}`;
@@ -6663,6 +6763,52 @@ async function handleSignRequest(args: ToolArgs): Promise<string> {
   };
   collectOptions(args);          // top-level options
   collectOptions(args.payload);  // nested options (object OR JSON string)
+  /**
+   * ── ★★ TWO SPELLINGS OF ONE POD, ADJACENT, INSIDE A REGION THAT IS SIGNED ───────────────────
+   *
+   * MEASURED, live, by a delegate reading its own envelope: `sign_request` emitted BOTH
+   * `pod_url` (INTERNAL host) and `subject_pod_url` (public, since today's fix) as neighbouring
+   * keys of one `_signed_payload`, with nothing saying which one governs. Its words: "that
+   * envelope is the twin spelling shipped as a two-field structure to every rev-196 target there
+   * will ever be, and the next target to read pod_url because it is the shorter name gets the
+   * internal host with a valid signature over it."
+   *
+   * The cause: `/mcp` fills `args.pod_url` on EVERY call from `${CSS_URL}${userId}/`, and
+   * `pod_url` is neither underscore-prefixed nor in `reserved`, so `collectOptions` folded the
+   * dispatcher's DEFAULT into the caller's signed assertion.
+   *
+   * ★ DENY-LISTING IT WOULD HAVE BEEN THE WRONG FIX, and this is the part worth recording. It is
+   * not vestigial: Foxxi's mesh-enrolment route reads `pod_url` out of the signed payload as the
+   * pod a caller is naming, which is exactly how a relay-mediated agent enrols the twin spelling
+   * of its own pod — the capability the enrolment refusal added today TELLS callers to use. Deny
+   * it and that instruction becomes impossible to follow on the only route those agents have.
+   *
+   * ★ SO IT IS DISAMBIGUATED, USING THE PROVENANCE MARKER THAT ALREADY EXISTS FOR THIS EXACT
+   * QUESTION. `POD_URL_INJECTED` is set by the dispatcher at the moment IT supplies the value, and
+   * `pod-selector.ts` already reads it to tell asked-for from defaulted. Same rule here:
+   *
+   *   the caller named a pod   -> keep it, in the PUBLIC spelling, under ONE key
+   *   the dispatcher defaulted -> drop it; `subject_pod_url` already carries the caller's own pod
+   *
+   * A nested `payload.pod_url` is always the caller's, whatever the dispatcher did at top level.
+   */
+  const nestedAsked = ((): string | undefined => {
+    let o: unknown = args.payload;
+    if (typeof o === 'string') { try { o = JSON.parse(o); } catch { return undefined; } }
+    if (!o || typeof o !== 'object' || Array.isArray(o)) return undefined;
+    const r = o as Record<string, unknown>;
+    const v = r['pod_url'] ?? r['podUrl'];
+    return typeof v === 'string' && v.trim() ? v.trim() : undefined;
+  })();
+  const topAsked = args[POD_URL_INJECTED] === true
+    ? undefined
+    : (typeof args.pod_url === 'string' && args.pod_url.trim() ? args.pod_url.trim() : undefined);
+  const askedPodUrl = nestedAsked ?? topAsked;
+  // ONE key, never both — `podUrl` is a synonym several handlers accept, and emitting the pair is
+  // the same ambiguity one casing along. Readers in this repo all check `pod_url` first.
+  delete safe['pod_url'];
+  delete safe['podUrl'];
+  if (askedPodUrl) safe['pod_url'] = asPublicPodUrl(askedPodUrl) ?? askedPodUrl;
   const signedObj: Record<string, unknown> = {
     ...safe,
     agent_id: agentId,

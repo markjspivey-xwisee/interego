@@ -72,8 +72,10 @@
       "image": "interego-relay:f9e0c74a70783394fd1188784661ad5fc96db733",
       "port": 8080,
       "public": true,
+      "_CSS_URL_vs_CSS_PUBLIC_URL": "CSS_URL is where the relay READS AND WRITES from inside the cluster; CSS_PUBLIC_URL is how that SAME store is spelled to the outside. Both are needed and they are not interchangeable: identifiers the relay mints (the sign_request pod stamp, and anything a holder is expected to dereference) use the public one, every fetch uses the internal one, and STORE_ORIGINS treats the pair as one store so a caller addressing its own pod by the public URL it was handed can still read its own private graphs. Recorded here because it was set on the LIVE service first: with CSS_PUBLIC_URL unset the code falls back to CSS_URL, the origin set collapses to one, and own-pod decryption by public URL fails with an error blaming recipient membership rather than configuration — a silent regression a rebuild or a second environment would otherwise inherit.",
       "env": {
         "CSS_URL": "http://css.railway.internal:3456/",
+        "CSS_PUBLIC_URL": "https://${{ css-gate.RAILWAY_PUBLIC_DOMAIN }}/",
         "RELAY_OAUTH_STORE_POD": "http://css.railway.internal:3456/svc-relay-dcr/",
         "PUBLIC_BASE_URL": "https://${{ relay.RAILWAY_PUBLIC_DOMAIN }}",
         "IDENTITY_URL": "https://${{ identity.RAILWAY_PUBLIC_DOMAIN }}",

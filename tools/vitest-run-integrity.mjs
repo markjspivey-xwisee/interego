@@ -213,7 +213,10 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // not exist, three ways, and was told `durable: true` three times.
 // 285 -> 286: `tests/a-minted-identifier-is-not-a-fetch-target.test.ts`. The relay composed pod
 // identifiers against the internal CSS host and handed out URLs `assertPublicPodUrl` refuses.
-export const MIN_TEST_MODULES = 286;
+// 286 -> 287: `tests/the-host-was-discarded-not-checked.test.ts`. `toInternalPodUrl` rewrote ANY
+// host onto our store instead of only our store's other spelling, which made the relay's key
+// handout a path-prefix test — a decryption oracle over every graph encrypted to the relay key.
+export const MIN_TEST_MODULES = 287;
 export const FLOOR_ALLOWANCE = 10;
 
 /**

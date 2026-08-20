@@ -84,6 +84,27 @@ check('sign_request refuses underscore-prefixed keys',
   /k\.startsWith\('_'\)/.test(signFn),
   'an explicit deny-list cannot cover internals added later');
 
+// ── 3b. The dispatcher's OWN pod default must not ride inside the signature ────
+//
+// ★ THE UNDERSCORE RULE DOES NOT COVER THIS ONE, and that gap shipped. `/mcp` fills `pod_url` on
+// EVERY call from the INTERNAL store URL; `pod_url` has no underscore and was not in `reserved`,
+// so the dispatcher's default was folded into the caller's signed assertion — emitting BOTH an
+// internal `pod_url` and a public `subject_pod_url` as adjacent keys of one signed payload, with
+// nothing saying which governs. Reported by a live delegate reading its own envelope.
+//
+// Deny-listing it would have been wrong: Foxxi's mesh enrolment READS a signed `pod_url` as the
+// pod a caller is naming, which is the documented way to enrol the twin spelling of your own pod.
+// So the rule is DISAMBIGUATION, keyed on the provenance marker `pod-selector.ts` already sets.
+check('sign_request drops the dispatcher-INJECTED pod_url',
+  /POD_URL_INJECTED\] === true/.test(signFn),
+  'the marker is the only thing that distinguishes a caller-named pod from the relay default');
+check('sign_request keeps a caller-NAMED pod_url, publicly spelled',
+  /safe\['pod_url'\] = asPublicPodUrl\(askedPodUrl\)/.test(signFn),
+  'denying it outright would break enrolment-by-pod_url on the only route relay-mediated agents have');
+check('sign_request emits ONE pod key, never pod_url and podUrl together',
+  /delete safe\['pod_url'\][\s\S]{0,120}delete safe\['podUrl'\]/.test(signFn),
+  'two synonyms for one pod is the same ambiguity one casing along');
+
 // ── 4. Thrown internals are not echoed ─────────────────────────────────────
 // Handlers report EXPECTED failures by returning { error }, which takes the 200
 // path. Anything that throws is internal by definition.
