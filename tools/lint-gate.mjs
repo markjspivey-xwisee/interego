@@ -563,7 +563,15 @@ const BASELINE = {};
 // shape-validated and readable by the agent it is about. Raised to CI's number, not this
 // machine's: a local tree carries scratch files and stale `dist/`, and a floor set from it drifts
 // below reality in the direction that stops it being a floor.
-export const MIN_FILES = 465;
+// 465 -> 466: the ratchet firing as designed after a run of new test modules landed. CI named the
+// number, and CI's number is the one to write for the reason two lines up.
+//
+// ★ AND IT CAUGHT ME BECAUSE I READ A PIPE'S EXIT CODE. Locally I ran `npm run -s lint | tail -1`,
+// saw `0 error(s)`, and treated that as green — but the gate's own failure line was three lines
+// further up, and `rc` came from `tail`, not from the gate. A gate whose verdict you read through
+// `| grep` or `| tail` is a gate you have partially disabled: run it plain and check ITS exit code.
+// Same shape as every other proxy this week — the summary line standing in for the verdict.
+export const MIN_FILES = 466;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.
