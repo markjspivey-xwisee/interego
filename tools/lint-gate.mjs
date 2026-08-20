@@ -159,7 +159,17 @@ const UNLINTED_FRONTIER = {
   // file is `deploy/mcp-relay/tests/pod-status-is-callable.test.ts`, which pins the cap on
   // `get_pod_status` — a response measured at 56,450,477 bytes, too large for any MCP client to
   // receive. The count moved because a test landed, not because debt did.
-  deploy: { errors: 356, files: 113 },
+  // ★ 113 -> 122, and the ratchet was right again. Nine files, none of them debt: four are the
+  // extracted rules `action-authority.ts` / `pod-authorization.ts` and their tests — the naming
+  // authority answered for every `Object.prototype` member, and the pod gate screened the relay's
+  // OWN minted URL with the attacker-URL guard, so `/notifications/:podSlug` returned 400 to every
+  // caller. Neither rule was testable until it left server.ts.
+  //
+  // ★★ AND THE REASON CI SAW THIS BEFORE THE LOCAL RUN DID: `lintTrackedUnder` counts over
+  // `git ls-files`, so a new file is invisible to this gate until it is COMMITTED. `npm run lint`
+  // passed locally with all nine present and untracked, then failed on the first CI run after the
+  // commit. A pre-commit lint cannot see a frontier change; re-run it once after committing.
+  deploy: { errors: 356, files: 122 },
   // The bulk of these are `no-console` in vertical bridges and CLI entry points — one config
   // decision, not a thousand defects. See the note above.
   // ★ 320 -> 337, and the ratchet caught it in CI rather than locally, which is the interesting
