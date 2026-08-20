@@ -2323,6 +2323,13 @@ iep:enrolled a owl:ObjectProperty ;
     rdfs:range iep:EvidenceSource ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
+iep:retired a owl:ObjectProperty ;
+    rdfs:label "retired"@en ;
+    rdfs:comment "A subject that WAS enrolled on this iep:EvidenceSource and is no longer admitted, carrying when that happened and why. ★ THE COUNTERPART TO iep:enrolled EXISTS BECAUSE REMOVING THE ROW PUBLISHED THE DECISION AS AN ABSENCE. Measured: an agent enrolled, was told the enrolment was durable, appeared on a register, and was gone an hour later — and 'retired', 'never enrolled' and 'the write silently failed' were the same bytes to the only party who needed to tell them apart. A register that states its membership must state its unmembership the same way, or its silence carries meaning it cannot be read for. ★ IT IS A BOUNDED TAIL, NOT A LEDGER: the point is that the subject just retired can find out, so a publisher keeps recent retirements and drops old ones rather than accumulating history nobody reads."@en ;
+    rdfs:domain iep:EvidenceSource ;
+    rdfs:range iep:EvidenceSource ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
 iep:store a owl:ObjectProperty ;
     rdfs:label "store"@en ;
     rdfs:comment "The dereferenceable identifier of the store an iep:EvidenceSource stands for. Separate from the source node itself so one description can carry a label, what fills it, what it admits and where its enrolment is published, without any of those being mistaken for the store's identity."@en ;
