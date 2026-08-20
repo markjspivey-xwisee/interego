@@ -379,6 +379,7 @@ import { callerIsOperator } from '../src/operator-auth.js';
 import { assertSafeFetchTarget, safePublicUrlOrUndefined, safeFetch, guardedFetchFn } from '../src/ssrf-guard.js';
 import { resolveSubjectPodUrlPure, explicitPodRoot, hasControlChars } from '../src/subject-pod-url.js';
 import { resolveReadTarget, type ReadTargetDecision } from '../src/read-target.js';
+import { retireRow, activeRows, isRetired } from '../src/enrolment-register.js';
 import { bindPerformanceToEvidence, EVIDENCE_BINDING_EXT, EVIDENCE_SHAPE_EXT } from '../src/performance-evidence.js';
 import type {
   IRI,
@@ -1059,9 +1060,47 @@ const sessionEnrolled = new Map<string, { at: string; by: string }>();
  * and re-read on each projector cycle so a SIBLING replica's enrolment is picked up within a cycle.
  */
 const durableEnrolled = new Map<string, { at: string; by: string }>();
+/**
+ * Pods that WERE enrolled and are no longer swept, with when and why — see MeshEnrolmentRow.
+ * Read by the register and by an empty review, so a retirement is legible to the party it happened
+ * to rather than showing up as the pod's absence from a list.
+ */
+const durableRetired = new Map<string, { at: string; by: string; retiredAt: string; reason: string }>();
+/**
+ * How many retirements the register keeps. They are a bounded audit tail, not a growing list: the
+ * point is that the agent that was just retired can find out, and a row from months ago serves
+ * nobody while costing every reader of this document bytes.
+ */
+const MESH_RETIRED_KEEP = Number(process.env.FOXXI_MESH_RETIRED_KEEP ?? 25);
 
 /** A row as it is stored on the pod. Every field is derived from a proven identity — no caller text. */
-interface MeshEnrolmentRow { pod_url: string; enrolled_by: string; enrolled_at: string }
+/**
+ * A row in the durable register.
+ *
+ * ── ★★ A RETIREMENT IS A FACT, AND DELETING THE ROW PUBLISHED IT AS AN ABSENCE ──────────────
+ *
+ * MEASURED: an agent enrolled itself, was answered `durable: true`, appeared in the register beside
+ * two others — and was gone fifty minutes later with nothing anywhere saying so. The prune had
+ * removed it for having no manifest, which is correct for the fifteen pods enrolled by keys nobody
+ * holds and is exactly WRONG for a new agent, because "has written nothing yet" is the state every
+ * agent starts in. The system therefore un-enrols precisely the agents whose records would honestly
+ * read empty, and their empty record then reports "not enrolled" — restoring the ambiguity that
+ * `whyEmpty` exists to remove, from the one direction nobody was watching.
+ *
+ * ★ THE PRUNE IS KEPT AND THE ERASURE IS NOT. Retiring a row is a decision this service made about
+ * a party that cannot see it happen, so it is recorded WITH ITS REASON and stays readable in the
+ * register. An agent that dereferences the register after being retired now learns that it was
+ * enrolled, when it was retired and why, instead of finding itself simply not there and having to
+ * guess between "my write failed", "I was never enrolled" and "something removed me".
+ */
+interface MeshEnrolmentRow {
+  pod_url: string;
+  enrolled_by: string;
+  enrolled_at: string;
+  /** Set when this row is no longer swept. Its presence is what makes the row a retirement. */
+  retired_at?: string;
+  retired_reason?: string;
+}
 
 /**
  * A hard cap on durable rows, because enrolment is reachable by anyone holding any wallet.
@@ -1093,6 +1132,7 @@ async function hydrateDurableEnrolment(): Promise<{ count: number; stale: boolea
     return { count: durableEnrolled.size, stale: true };
   }
   const next = new Map<string, { at: string; by: string }>();
+  const retired = new Map<string, { at: string; by: string; retiredAt: string; reason: string }>();
   for (const r of read.rows) {
     const pod = typeof r.pod_url === 'string' ? r.pod_url : '';
     // ★ A ROW IS ONLY HONOURED IF IT IS STILL A PLAUSIBLE POD URL, AND ON THE TRUSTED ORIGIN. The
@@ -1100,13 +1140,20 @@ async function hydrateDurableEnrolment(): Promise<{ count: number; stale: boolea
     // other path would otherwise be a standing SSRF primitive for the projector.
     if (!pod || !safePublicUrlOrUndefined(pod)) continue;
     if ('error' in enrolmentOriginCheck(pod)) continue;
-    next.set(pod, {
-      at: typeof r.enrolled_at === 'string' ? r.enrolled_at : '(unknown)',
-      by: typeof r.enrolled_by === 'string' ? r.enrolled_by : '(unknown)',
-    });
+    const at = typeof r.enrolled_at === 'string' ? r.enrolled_at : '(unknown)';
+    const by = typeof r.enrolled_by === 'string' ? r.enrolled_by : '(unknown)';
+    // ★ A RETIRED ROW IS READ BUT NOT SWEPT. It stays in the register so the party it happened to
+    // can read it; putting it in `durableEnrolled` would mean the prune had achieved nothing.
+    if (isRetired(r)) {
+      retired.set(pod, { at, by, retiredAt: String(r.retired_at), reason: typeof r.retired_reason === 'string' ? r.retired_reason : '(unrecorded)' });
+      continue;
+    }
+    next.set(pod, { at, by });
   }
   durableEnrolled.clear();
   for (const [k, v] of next) durableEnrolled.set(k, v);
+  durableRetired.clear();
+  for (const [k, v] of retired) durableRetired.set(k, v);
   return { count: durableEnrolled.size, stale: false };
 }
 
@@ -1141,7 +1188,11 @@ async function persistEnrolmentUnsafe(row: MeshEnrolmentRow): Promise<boolean> {
       return false;
     }
     const kept = read.rows.filter((r) => typeof r.pod_url === 'string' && podKey(r.pod_url) !== podKey(row.pod_url));
-    if (kept.length + 1 > MESH_ENROLMENT_CAP) return false;
+    // ★ RETIRED ROWS DO NOT CONSUME THE CAP. The cap bounds recurring outbound work — one pod fetch
+    // per cycle per enrolled pod — and a retired row is fetched by nothing. Counting them would let
+    // the audit tail deny enrolment to real agents, which is the exact failure the retirement path
+    // was added to fix.
+    if (activeRows(kept).length + 1 > MESH_ENROLMENT_CAP) return false;
     const next = [...kept, row as unknown as Record<string, unknown>];
     await publishMeshEnrolmentRegister(next, publishConfigFor(tenantPodUrl, sourceForPod(tenantPodUrl)));
     // Drop the read-through cache before verifying, or the check below is served the pre-write value
@@ -1240,21 +1291,22 @@ async function pruneDeadEnrolments(absentThisCycle: Set<string>, seenThisCycle: 
     const streak = (meshAbsentStreak.get(podKey(pod)) ?? 0) + 1;
     meshAbsentStreak.set(podKey(pod), streak);
     if (streak < MESH_DEAD_CYCLES) continue;
-    const removed = await withdrawEnrolment(pod);
+    const reason = `no trajectory-step manifest found for ${streak} consecutive projector cycles. A pod with nothing to sweep is indistinguishable from one whose key nobody holds, which is why this happens — but if you are simply new and have not written a step yet, that is not a fault and re-enrolling is one signed call to this register.`;
+    const removed = await withdrawEnrolment(pod, reason);
     sessionEnrolled.delete(pod);
     meshAbsentStreak.delete(podKey(pod));
-    console.log(`[foxxi-bridge][mesh] retired ${pod} — no manifest for ${streak} consecutive cycles (durable row removed: ${removed}). It can re-enrol itself at any time.`);
+    console.log(`[foxxi-bridge][mesh] retired ${pod} — no manifest for ${streak} consecutive cycles (durable row retired: ${removed}). It can re-enrol itself at any time.`);
   }
 }
 
-/** Remove one pod's durable row. Serialized on the same queue as writes, for the same reason. */
-async function withdrawEnrolment(pod: string): Promise<boolean> {
-  const run = enrolmentWriteQueue.then(() => withdrawEnrolmentUnsafe(pod), () => withdrawEnrolmentUnsafe(pod));
+/** Retire one pod's durable row, with the reason. Serialized on the write queue, for the same reason. */
+async function withdrawEnrolment(pod: string, reason: string): Promise<boolean> {
+  const run = enrolmentWriteQueue.then(() => withdrawEnrolmentUnsafe(pod, reason), () => withdrawEnrolmentUnsafe(pod, reason));
   enrolmentWriteQueue = run.then(() => undefined, () => undefined);
   return run;
 }
 
-async function withdrawEnrolmentUnsafe(pod: string): Promise<boolean> {
+async function withdrawEnrolmentUnsafe(pod: string, reason: string): Promise<boolean> {
   if (!tenantPodUrl) return false;
   try {
     const read = await readSectionArrayOrFail(tenantPodUrl, TENANT_TYPES.MeshEnrolmentRegister);
@@ -1263,9 +1315,19 @@ async function withdrawEnrolmentUnsafe(pod: string): Promise<boolean> {
       console.error(`[foxxi-bridge][mesh] refusing to rewrite the register for a withdrawal: could not read it first (${read.reason})`);
       return false;
     }
-    const kept = read.rows.filter((r) => typeof r.pod_url === 'string' && podKey(r.pod_url) !== podKey(pod));
-    if (kept.length === read.rows.length) return false; // nothing to remove — not an error
-    await publishMeshEnrolmentRegister(kept, publishConfigFor(tenantPodUrl, sourceForPod(tenantPodUrl)));
+    /**
+     * ★ RETIRED, NOT DELETED — see src/enrolment-register.ts for the measurement that changed this.
+     * Erasing the row published the retirement as an absence, which reads identically to "never
+     * enrolled" and to "your durable write failed", so the one party who needed to tell those apart
+     * could not. The row stays, carrying when and why.
+     */
+    const out = retireRow({
+      rows: read.rows, pod, reason,
+      now: new Date().toISOString(), keep: MESH_RETIRED_KEEP,
+      samePod: (a, b) => podKey(a) === podKey(b),
+    });
+    if (!out.changed) return out.retired;
+    await publishMeshEnrolmentRegister(out.rows, publishConfigFor(tenantPodUrl, sourceForPod(tenantPodUrl)));
     invalidateTenantCache(tenantPodUrl);
     const after = await hydrateDurableEnrolment();
     if (after.stale) return false;
@@ -1400,6 +1462,49 @@ function enrolmentPodFor(callerDid: string, explicit?: string): { pod: string } 
   return 'error' in check ? check : { pod };
 }
 
+/**
+ * Is there a pod at this URL at all?
+ *
+ * ── ★★ ENROLMENT NEVER ASKED, AND THAT IS THE WHOLE "I WAS SILENTLY UN-ENROLLED" STORY ──────
+ *
+ * MEASURED, on this deployment, by an agent auditing its own enrolment: it enrolled
+ * `…/eth-42c2ffd7e4c0/` three different ways, got 200 every time, appeared in the public register
+ * as `durable`, told a colleague so on the record — and the pod did not exist. Its real pod is the
+ * `u-eth-` twin; the `eth-` spelling was derived from a bare `did:ethr:` signature and had never
+ * been created. Fifty minutes later the prune retired it for 404ing, which was CORRECT, and the
+ * whole sequence read as the register losing a row rather than as an enrolment that was never
+ * viable. Two hours went into the wrong explanation.
+ *
+ * ★ THE CHEAPEST POSSIBLE CHECK, AT THE ONLY MOMENT ANYONE IS LISTENING. One GET, at the instant a
+ * caller is holding the answer, beats any amount of reporting fifty minutes later — and the same
+ * request can name the spelling that DOES exist, which is the sentence that would have ended this
+ * immediately.
+ *
+ * ★ 'unknown' IS NOT 'absent', and it fails OPEN. A 5xx, a timeout or a DNS blip must never block a
+ * real agent from enrolling; only a hard 404/410 is "there is nothing here". Same discipline as the
+ * prune, for the same reason, in the opposite direction.
+ */
+async function podPresence(pod: string): Promise<'present' | 'absent' | 'unknown'> {
+  try {
+    const r = await safeFetch(`${pod.replace(/\/+$/, '')}/`, { method: 'GET' });
+    if (r.status === 404 || r.status === 410) return 'absent';
+    // 200, 401 and 403 all mean THERE IS A POD HERE — we may simply not be allowed to read its root.
+    return 'present';
+  } catch { return 'unknown'; }
+}
+
+/** The other spelling of this pod (`eth-` ⇄ `u-eth-`), if that one exists. See podPresence. */
+async function siblingPodSpelling(pod: string): Promise<string | undefined> {
+  try {
+    const u = new URL(pod);
+    const seg = u.pathname.split('/').filter(Boolean)[0] ?? '';
+    if (!seg) return undefined;
+    const other = seg.startsWith('u-') ? seg.slice(2) : `u-${seg}`;
+    const candidate = `${u.origin}/${other}/`;
+    return (await podPresence(candidate)) === 'present' ? candidate : undefined;
+  } catch { return undefined; }
+}
+
 /** Is this pod in the pod space this deployment trusts? Shared by the write path and the reload, so
  *  a row that could not be enrolled today cannot be honoured tomorrow by having been written before
  *  the rule existed. */
@@ -1434,7 +1539,21 @@ function selfBoundPod(callerDid: string, explicit?: string): string {
   // host (SSRF) AND, combined with the prefix-matching write-bearer, leaked
   // FOXXI_POD_WRITE_SECRET (round-26 blocker). Binding origin too means the
   // override can only ever be the caller's own pod.
-  const sameActor = actorForPod(override, MESH_ACTOR_LABELS) === actorForPod(derived, MESH_ACTOR_LABELS);
+  /**
+   * ★★ THE FIFTH SITE OF THE SAME CLASS, AND THE ONE THAT MADE AN AGENT ENROL A POD THAT IS NOT
+   * THERE. `actorForPod` is the LABEL — the raw last path segment, mapped through the configured
+   * label table — so `eth-<hex>` and `u-eth-<hex>` compared unequal. Those are one wallet's two
+   * pods: a bare `did:ethr:` signature derives the first, the identity service creates the second,
+   * and only one of them usually exists. Refusing the override meant a caller naming its own real
+   * pod was handed a derived one that 404s, enrolled it, was told `durable: true`, and was pruned
+   * fifty minutes later for the pod not existing. Every step reported success.
+   *
+   * ★ AND THE FOLD REACHES NO FURTHER THAN THE TWIN. `podPrincipalKey` strips a leading `u-` and
+   * nothing else, so it can only ever equate a caller's two spellings of ITSELF: `eth-A` and
+   * `eth-B` still differ, and naming `u-eth-<victim>` yields the victim's principal, which is not
+   * the attacker's derived one. The origin bound below is untouched and does the rest.
+   */
+  const sameActor = samePodPrincipal(override, derived);
   // ★ `sameStore`, NOT raw origin equality — see SAME_STORE_ORIGINS. A caller passing its OWN pod
   // exactly as `sign_request` writes it (the internal spelling) failed a bare origin comparison
   // against the derived pod (the public one), and was silently handed `derived`. The SSRF guard this
@@ -1672,12 +1791,16 @@ async function runMeshProjectionCycle(): Promise<{ pods: number; projected: numb
        * "there is no pod here"; anything else — a 5xx, a timeout, a refusal — is UNKNOWN and resets
        * nothing, because retiring a live agent's pod is far worse than sweeping a dead one.
        */
-      if ((entries as unknown[]).length === 0) {
-        try {
-          const probe = await safeFetch(`${pod.replace(/\/+$/, '')}/.well-known/context-graphs`, { method: 'GET' });
-          if (probe.status === 404 || probe.status === 410) absentThisCycle.add(pod);
-        } catch { /* unreachable is UNKNOWN, not absent */ }
-      }
+      /**
+       * ★★ AND THE PROBE IS THE POD ROOT, NOT ITS MANIFEST. This asked for
+       * `/.well-known/context-graphs`, which 404s for a pod that does not exist AND for a real pod
+       * whose owner has simply not written a descriptor yet — so the predicate read "no manifest"
+       * and was documented as "no pod". A new agent is in that state by definition, which means the
+       * retirement fired hardest on the agents who had done least, fifty minutes after they
+       * enrolled. The pod ROOT separates the two: 404 there is "there is nothing here", while an
+       * existing pod answers 200/401/403 however empty it is.
+       */
+      if ((entries as unknown[]).length === 0 && (await podPresence(pod)) === 'absent') absentThisCycle.add(pod);
       for (const e of entries as unknown as MeshDiscoverEntry[]) {
         // Durable Foxxi artifacts (foxxi:RecordedPerformance = the agent's OWN
         // persisted xAPI Statements with result; foxxi:ScormCourse = authored
@@ -5262,6 +5385,28 @@ app.post('/agent/mesh/enrolment', async (req, res) => {
       return;
     }
     const pod = resolved.pod;
+
+    // ★★ IS THERE A POD THERE? See podPresence — this endpoint answered `durable: true` about a pod
+    // that did not exist, and nothing found out for fifty minutes.
+    const presence = await podPresence(pod);
+    if (presence === 'absent') {
+      const sibling = await siblingPodSpelling(pod);
+      res.status(404).json({
+        ok: false,
+        error: `there is no pod at ${pod}, so enrolling it would sweep nothing — this is refused rather than accepted, because an enrolment that reads as durable and sweeps an empty address is indistinguishable from one that works`,
+        resolvedFrom: sibling ? 'your identity, which named a pod that has never been created' : 'your identity',
+        // The sentence that ends this immediately when it happens, instead of two hours later.
+        ...(sibling
+          ? {
+            podThatDoesExist: sibling,
+            hint: `One wallet has two pod spellings here: a bare did:ethr signature derives ${pod}, while the identity service creates ${sibling}. Yours is the second. Re-send this enrolment with pod_url set to ${sibling} — it is the same principal, so the self-binding still holds and the override is honoured.`,
+          }
+          : { hint: 'Create the pod first (the identity service does this when an agent is registered), then enrol it. Nothing here can sweep an address that does not resolve.' }),
+        enrolledAs: bound.callerDid,
+        authMode: bound.authMode,
+      });
+      return;
+    }
     const already = meshPods().some((p) => podKey(p) === podKey(pod));
 
     // ★ THE CAP IS A REFUSAL, NOT A SILENT DROP. Every enrolled pod costs one outbound fetch per
@@ -5315,6 +5460,22 @@ app.post('/agent/mesh/enrolment', async (req, res) => {
         : provenance.kind === 'durable'
           ? 'DURABLE: recorded on the tenant pod, so it survives a restart of this service. No operator action needed.'
           : 'SESSION-SCOPED: the durable write to the pod did not succeed, so this is held only in this process and is cleared when the service restarts. Your steps ARE being swept now; re-enrol later to retry making it durable.',
+      /**
+       * ★★ "DURABLE" WAS READ AS "PERMANENT", AND IT IS NOT. An agent enrolled at 20:02, was told
+       * `durable: true`, said so on the record, and was gone by 00:03 — retired by a prune it had no
+       * way to know about, because durability describes surviving a RESTART and nothing here
+       * mentioned the other way a row ends. A word that means one thing to this service and a
+       * stronger thing to every reader is worse than a vaguer word, so the condition travels with
+       * the claim rather than living in a prune's source comment.
+       */
+      retirementRule: {
+        retiredWhen: `the pod ROOT returns 404/410 on ${MESH_DEAD_CYCLES} consecutive projector cycles — i.e. there is no pod there any more. A pod that exists and holds nothing is never retired: having written no steps yet is the state every agent starts in.`,
+        unreachableIsNotAbsent: 'A 5xx, a timeout or a DNS failure is UNKNOWN and resets nothing, so a store restart cannot un-enrol a fleet.',
+        nextCheckWithinMs: MESH_PROJECT_INTERVAL_MS,
+        // A retirement is published as a row with a reason, not as the row's absence, so this is
+        // answerable after the fact as well as before it.
+        published: `${base}/agent/mesh/enrolment`,
+      },
       sweptEveryMs: MESH_PROJECT_INTERVAL_MS,
       register: `${base}/agent/mesh/enrolment`,
       pods: meshPods(),
@@ -5356,7 +5517,9 @@ app.delete('/agent/mesh/enrolment', async (req, res) => {
 
     const wasConfigured = CONFIGURED_MESH_PODS.some((p) => podKey(p) === podKey(pod));
     const removedSession = sessionEnrolled.delete(pod);
-    const removedDurable = await withdrawEnrolment(pod);
+    // Escaped where it is RENDERED, not here — see the register's `lit`. A reason stored escaped
+    // would be double-escaped in Turtle and raw in JSON, which is wrong in both places.
+    const removedDurable = await withdrawEnrolment(pod, `withdrawn by the holder (${bound.callerDid}), who proved control of this pod.`);
     const base = (process.env.BRIDGE_DEPLOYMENT_URL ?? `http://localhost:${PORT}`).replace(/\/$/, '');
     res.json({
       ok: true,
@@ -5412,6 +5575,29 @@ app.get('/agent/mesh/enrolment', (_req, res) => {
         dct:description "${description}"
     ] ;`;
   }).join('\n');
+  /**
+   * ★★ RETIREMENTS ARE PUBLISHED, BECAUSE THE PARTY THEY HAPPENED TO CANNOT SEE THEM OTHERWISE.
+   *
+   * An agent enrolled itself, was answered `durable: true`, appeared here beside two others, and was
+   * gone fifty minutes later — pruned for having no manifest, which is right for a pod whose key
+   * nobody holds and wrong for an agent that has simply not written a step yet. Published as an
+   * absence, that is indistinguishable from "never enrolled" and from "your write silently failed".
+   * Published as a retirement with a reason, it is answerable: re-enrol, or write a step first.
+   */
+  const retiredRows = [...durableRetired.entries()]
+    .sort((a, b) => b[1].retiredAt.localeCompare(a[1].retiredAt))
+    .map(([pod, r]) => {
+      const seg = (() => { try { return new URL(pod).pathname.split('/').filter(Boolean)[0] ?? ''; } catch { return ''; } })();
+      return `    iep:retired [
+        a iep:EvidenceSource, dcat:Dataset ;
+        rdfs:label "${lit(MESH_ACTOR_LABELS[seg] ?? seg)}" ;
+        iep:store <${pod}> ;
+        dct:issued "${lit(r.at)}" ;
+        dct:modified "${lit(r.retiredAt)}" ;
+        iep:enrolmentDurability "retired" ;
+        dct:description "Enrolled ${lit(r.at)} by ${lit(r.by)}; RETIRED ${lit(r.retiredAt)} — ${lit(r.reason)} This pod's steps are read by nothing until it enrols again, which it may do at any time via the operation on this register."
+    ] ;`;
+    }).join('\n');
   res.type('text/turtle').send(`@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix ieh:   <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
 @prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
@@ -5458,7 +5644,7 @@ app.get('/agent/mesh/enrolment', (_req, res) => {
         iep:action <https://relay.interego.xwisee.com/ns/iep/action/foxxi/mesh-enrol> ;
         hydra:method "POST" ;
         hydra:title "Enrol your own pod" ;
-        rdfs:comment "Enrol the pod you can prove is yours. Authority is structural rather than checked: the caller's own pod is resolved from the signature, and an explicit pod_url is honoured only when it resolves to the same actor and origin — so naming another agent's pod enrols yours instead. The enrolment is recorded on the tenant pod and survives a restart; if that write fails it is held for this process only and the response and the entry above both say so. No operator action is needed either way." ;
+        rdfs:comment "Enrol the pod you can prove is yours. Authority is structural rather than checked: your own pod is resolved from the signature, and an explicit pod_url is honoured only when it names the SAME PRINCIPAL — the pod's last path segment with any leading 'u-' folded, so one wallet's two spellings (eth-<hex> from a bare did:ethr signature, u-eth-<hex> from the identity service) are interchangeable and nobody else's pod is reachable — AND its origin is one of this deployment's two exact spellings of its own store, compared by equality against an allow-list rather than by suffix, because a host ENDING in the real one would otherwise pass. Naming another agent's pod enrols yours instead. A pod that does not exist is REFUSED rather than enrolled, and the refusal names the spelling that does exist if there is one. The enrolment is recorded on the tenant pod and survives a restart; it is retired only when the pod ROOT is gone (404/410 on consecutive cycles) — never for being empty — and a retirement is published here as a row with its reason, not as the row's absence. If the durable write fails the enrolment is held for this process only and both the response and the entry above say so. No operator action is needed in any of these cases." ;
         hydra:target <${self}> ;
         dcat:accessURL <${self}> ;
         iep:requiresSignedRequest true ;
@@ -5507,6 +5693,7 @@ app.get('/agent/mesh/enrolment', (_req, res) => {
         ]
     ] ;
 ${rows}
+${retiredRows}
     rdfs:seeAlso <${base}/agent/review-record/affordance> .
 `);
 });
@@ -5771,6 +5958,16 @@ app.post('/agent/review-record', async (req, res) => {
       const norm = (u: string): string => u.replace(/\/+$/, '').toLowerCase();
       return enrolledSnapshot.some((pod) => norm(pod) === norm(subjectPodUrl));
     })();
+    /**
+     * ★ "NOT ENROLLED" AND "RETIRED" ARE DIFFERENT ANSWERS, AND ONLY ONE OF THEM IS ACTIONABLE THE
+     * WAY THE REMEDY BELOW SAYS. A pod pruned for having no manifest reads as never-enrolled, so an
+     * agent that DID enrol correctly is told to do the thing it already did. Naming the retirement
+     * — and its reason — is the difference between "try again" and "write a step first, then enrol".
+     */
+    const subjectRetirement = ((): { at: string; by: string; retiredAt: string; reason: string } | undefined => {
+      for (const [pod, r] of durableRetired) if (samePodPrincipal(pod, subjectPodUrl)) return r;
+      return undefined;
+    })();
     res.json({
       ok: true,
       reviewedAs: callerDid,
@@ -5843,13 +6040,28 @@ app.post('/agent/review-record', async (req, res) => {
             // adds a pod without a trailing slash and then reports "not enrolled" beside a remedy for
             // the enrolled case. They now read one boolean.
             subjectEnrolled: subjectIsEnrolled,
+            // ★ WAS IT EVER ENROLLED? A pruned pod is absent from the register, and absence reads
+            // the same as never having enrolled — so an agent that did everything right is told to
+            // do it again with no hint that it will be pruned again for the same reason.
+            ...(subjectRetirement
+              ? {
+                retired: {
+                  enrolledAt: subjectRetirement.at,
+                  enrolledBy: subjectRetirement.by,
+                  retiredAt: subjectRetirement.retiredAt,
+                  reason: subjectRetirement.reason,
+                },
+              }
+              : {}),
             // ★★ AND THE REMEDY NO LONGER SENDS THE AGENT TO A HUMAN. It used to say "ask the
             // operator" — the exact bottleneck this whole path exists to remove, and it would have
             // stayed true-sounding and wrong the moment self-enrolment shipped. A stale remedy is
             // worse than none: it is a confident instruction to go do the thing that does not scale.
             remedy: subjectIsEnrolled
               ? 'This pod IS enrolled, so the projector reads it. Either it holds no trajectory steps yet, or the steps it holds are not Asserted — a Hypothetical step is an intention and is not evidence of performance.'
-              : `This pod is NOT enrolled, so nothing reads the trajectory steps it holds; writing more of them will not change this review. If ${subjectPodUrl} is YOUR pod, enrol it yourself: POST a signed envelope to the enrolmentRegister above (it publishes its own hydra:Operation with the expected payload). Authority is structural — the pod is resolved from your signature, so you can only ever enrol your own. Or push steps directly with POST /agent/mesh-event.`,
+              : subjectRetirement
+                ? `This pod WAS enrolled (${subjectRetirement.at}) and was RETIRED at ${subjectRetirement.retiredAt}: ${subjectRetirement.reason} Re-enrolling alone will produce the same outcome if the pod still holds no swept steps — write a trajectory step first (POST /agent/mesh-event pushes one directly and needs no enrolment), then enrol, and the sweep will have something to find.`
+                : `This pod is NOT enrolled, so nothing reads the trajectory steps it holds; writing more of them will not change this review. If ${subjectPodUrl} is YOUR pod, enrol it yourself: POST a signed envelope to the enrolmentRegister above (it publishes its own hydra:Operation with the expected payload). Authority is structural — the pod is resolved from your signature, so you can only ever enrol your own. Or push steps directly with POST /agent/mesh-event.`,
           },
         }
         : {}),

@@ -203,7 +203,15 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // 238 -> 239: `applications/shared-workspace/discord/tests/drawing.test.ts`. An agent asked for a
 // picture said it had no such capability; it has one — a model DRAWS, SVG is text, and writing
 // text needs no permission. That file pins the projection into Discord and what will not render.
-export const MIN_TEST_MODULES = 283;
+// 282 -> 283: `tests/whose-record-is-a-different-question.test.ts`. "Whose pod am I" and "whose
+// record am I asking for" were one field, so on the relay route a review answered with the
+// caller's data under another subject's name.
+// 283 -> 284: `tests/a-retirement-published-as-an-absence.test.ts`. An agent was un-enrolled for
+// having written nothing, which is the state every agent starts in, and the removal was published
+// as the row's absence — indistinguishable from never having enrolled.
+// 284 -> 285: `tests/enrolling-a-pod-that-is-not-there.test.ts`. An agent enrolled a pod that does
+// not exist, three ways, and was told `durable: true` three times.
+export const MIN_TEST_MODULES = 285;
 export const FLOOR_ALLOWANCE = 10;
 
 /**
