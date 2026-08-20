@@ -88,6 +88,9 @@ import type {
 } from '@interego/core';
 import { verifyMessage } from 'ethers';
 import { ristretto255 } from '@noble/curves/ed25519.js';
+// The one Turtle-literal escaper. See packages/core/src/rdf/escape.ts — its header names the
+// scattered-subsets drift that this import ends.
+import { escapeTurtleLiteral } from '@interego/core';
 
 // ─────────────────────────────────────────────────────────────────────
 //  Content-addressed IRIs
@@ -1985,7 +1988,10 @@ function bundleIris(seedHex: string): { iri: IRI; graphIri: IRI } {
 }
 
 function escapeTtl(s: string): string {
-  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
+  // Was a correct but SEPARATE copy of the core helper — the same five replacements in the same
+  // order. Correct-and-duplicated is how the divergence starts: six other copies of this idea
+  // each covered a different subset, and five of them were wrong.
+  return escapeTurtleLiteral(s);
 }
 
 export interface PublishedBundle {

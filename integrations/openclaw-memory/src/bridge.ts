@@ -35,6 +35,8 @@ import {
   discover,
   publish,
 } from '@interego/solid';
+// The one Turtle-literal escaper. See packages/core/src/rdf/escape.ts.
+import { escapeTurtleLiteral } from '@interego/core';
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -180,28 +182,15 @@ const MEMORY_TYPE = `${CGH_NS}AgentMemory` as IRI;
 const MEMORY_KIND_PREDICATE = `${DCT_NS}type` as IRI;
 const MEMORY_TAG_PREDICATE = `${DCT_NS}subject` as IRI;
 
-function escapeLit(s: string): string {
-  // Escape all Turtle-active characters in a single-line string literal.
-  // Without newline / carriage-return / tab escapes, a user-supplied
-  // tag containing `\n` would break out of the single-line literal
-  // and yield a parse error downstream (or, depending on consumer
-  // tooling, an injection surface). Bring this in line with the OWM
-  // pod-publisher's escapeLit which already handles \n.
-  return s
-    .replace(/\\/g, '\\\\')
-    .replace(/"/g, '\\"')
-    .replace(/\n/g, '\\n')
-    .replace(/\r/g, '\\r')
-    .replace(/\t/g, '\\t');
-}
+// Delegates to the ONE Turtle-literal escaper in @interego/core. Local copies of this idea
+// each covered a different subset of { \ " \n \r \t }; the ones missing a control character
+// produced Turtle that would not parse. Over-escaping is legal in both literal forms.
+function escapeLit(s: string): string { return escapeTurtleLiteral(s); }
 
-function escapeMulti(s: string): string {
-  // See skills/agentskills-bridge.ts for rationale: escape every `"`,
-  // not just the substring `"""`. A memory text ending in one or two
-  // quotes (e.g. an LLM transcription that wraps quoted speech) would
-  // otherwise prematurely close the Turtle triple-quoted literal.
-  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-}
+// Delegates to the ONE Turtle-literal escaper in @interego/core. Local copies of this idea
+// each covered a different subset of { \ " \n \r \t }; the ones missing a control character
+// produced Turtle that would not parse. Over-escaping is legal in both literal forms.
+function escapeMulti(s: string): string { return escapeTurtleLiteral(s); }
 
 function nowIso(): string { return new Date().toISOString(); }
 

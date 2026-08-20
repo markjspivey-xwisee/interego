@@ -28,6 +28,9 @@ import {
   publish,
 } from '@interego/solid';
 import { createHash, randomUUID } from 'node:crypto';
+// The one Turtle-literal escaper. See packages/core/src/rdf/escape.ts — its header names the
+// scattered-subsets drift that this import ends.
+import { escapeTurtleLiteral } from '@interego/core';
 import type {
   IRI,
 } from '@interego/core';
@@ -473,11 +476,11 @@ export async function recognizeCapabilityEvolution(args: RecognizeCapabilityEvol
 // ── Helpers ──────────────────────────────────────────────────────────
 
 function escapeLit(s: string): string {
-  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  // Delegates to @interego/core: this subset left raw newlines, carriage returns and tabs in a
+  // single-quoted literal, which Turtle's STRING_LITERAL_QUOTE forbids. Measured — unparseable.
+  return escapeTurtleLiteral(s);
 }
-function escapeMulti(s: string): string {
-  // Escape every `"`, not just `"""`. A value ending in one or two
-  // quotes would otherwise collide with the closing `"""` and truncate
-  // the literal content. See tests/skills.test.ts adversarial section.
-  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-}
+// Delegates to the ONE Turtle-literal escaper in @interego/core. Local copies of this idea
+// each covered a different subset of { \ " \n \r \t }; the ones missing a control character
+// produced Turtle that would not parse. Over-escaping is legal in both literal forms.
+function escapeMulti(s: string): string { return escapeTurtleLiteral(s); }

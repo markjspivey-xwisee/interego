@@ -25,17 +25,26 @@ import type {
   IRI,
 } from '@interego/core';
 import { createHash } from 'node:crypto';
+// The one Turtle-literal escaper. See packages/core/src/rdf/escape.ts — its header names the
+// scattered-subsets drift that this import ends.
+import { escapeTurtleLiteral } from '@interego/core';
 
 const OWM_NS = 'https://markjspivey-xwisee.github.io/interego/applications/organizational-working-memory/owm#';
 
 function nowIso(): string { return new Date().toISOString(); }
 function sha16(s: string): string { return createHash('sha256').update(s, 'utf8').digest('hex').slice(0, 16); }
-function escapeLit(s: string): string { return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n'); }
+// Delegates to @interego/core. This one handled the newline but not the CARRIAGE RETURN or tab —
+// the closest of the six local copies to correct, and still unparseable on CRLF input, which is
+// what a value pasted from a Windows editor carries.
+function escapeLit(s: string): string { return escapeTurtleLiteral(s); }
 // Escape every `"` (not just the `"""` substring) — a value ending in
 // one or two quotes would otherwise collide with the closing `"""` of
 // the triple-quoted literal and truncate content. See
 // tests/skills.test.ts adversarial section.
-function escapeMulti(s: string): string { return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"'); }
+// Delegates to the ONE Turtle-literal escaper in @interego/core. Local copies of this idea
+// each covered a different subset of { \ " \n \r \t }; the ones missing a control character
+// produced Turtle that would not parse. Over-escaping is legal in both literal forms.
+function escapeMulti(s: string): string { return escapeTurtleLiteral(s); }
 
 export interface PodCtx {
   readonly podUrl: string;

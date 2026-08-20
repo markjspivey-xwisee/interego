@@ -17,6 +17,10 @@
  * Layer: L3 vertical. No protocol-ontology change; a vertical vocabulary.
  */
 
+// The one Turtle-literal escaper. See packages/core/src/rdf/escape.ts — its header names the
+// scattered-subsets drift that this import ends.
+import { escapeTurtleLiteral } from '@interego/core';
+
 /**
  * The one Foxxi namespace base. Every foxxi term is `${FOXXI_NS}<name>`.
  *
@@ -327,5 +331,7 @@ export function renderTermJsonLd(name: string): Record<string, unknown> | null {
 }
 
 function esc(s: string): string {
-  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  // Delegates to @interego/core: raw newlines / carriage returns / tabs are forbidden inside a
+  // single-quoted Turtle literal, and this subset left all three in. Measured — unparseable.
+  return escapeTurtleLiteral(s);
 }

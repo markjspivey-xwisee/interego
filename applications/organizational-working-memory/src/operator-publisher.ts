@@ -54,14 +54,17 @@ import {
   type AttestedHomomorphicSumResult,
 } from '../../_shared/aggregate-privacy/index.js';
 import { createHash } from 'node:crypto';
+// The one Turtle-literal escaper. See packages/core/src/rdf/escape.ts.
+import { escapeTurtleLiteral } from '@interego/core';
 
 const OWM_NS = 'https://markjspivey-xwisee.github.io/interego/applications/organizational-working-memory/owm#';
 
 function nowIso(): string { return new Date().toISOString(); }
 function sha16(s: string): string { return createHash('sha256').update(s, 'utf8').digest('hex').slice(0, 16); }
-function escapeLit(s: string): string {
-  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
-}
+// Delegates to the ONE Turtle-literal escaper in @interego/core. Local copies of this idea
+// each covered a different subset of { \ " \n \r \t }; the ones missing a control character
+// produced Turtle that would not parse. Over-escaping is legal in both literal forms.
+function escapeLit(s: string): string { return escapeTurtleLiteral(s); }
 
 export interface OperatorCtx {
   /** Pod URL of the org (descriptors live here). */

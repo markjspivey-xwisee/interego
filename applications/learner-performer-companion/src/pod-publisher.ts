@@ -96,7 +96,7 @@ export async function ingestTrainingContent(
     const objectiveIri = `urn:iep:lpc:objective:${pkg.identifier}:${i}` as IRI;
     objectiveTriples.push(`<${objectiveIri}> a lpc:LearningObjective ;
     lpc:groundingFragment <${atomIri}> ;
-    rdfs:label "${lesson.path.replace(/"/g, '\\"')}" .`);
+    rdfs:label "${escapeTurtleLiteral(lesson.path)}" .`);
   }
 
   const tcIri = `urn:iep:lpc:training-content:${pkg.identifier}` as IRI;
@@ -116,7 +116,7 @@ export async function ingestTrainingContent(
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 
 <${tcIri}> a lpc:TrainingContent ;
-    rdfs:label "${pkg.title.replace(/"/g, '\\"')}" ;
+    rdfs:label "${escapeTurtleLiteral(pkg.title)}" ;
     lpc:authoritativeSource <${authoritativeSource}> ;
     lpc:contentFormat lpc:${pkg.format === 'scorm-1.2' ? 'ScormPackage' : pkg.format === 'scorm-2004' ? 'ScormPackage' : 'Cmi5'} ;
     ${objectiveTriples.map(t => `lpc:learningObjective <${t.match(/^<([^>]+)>/)![1]}>`).join(' ;\n    ')} .
@@ -196,7 +196,9 @@ export async function importCredential(
     .trust({ issuer: issuerDid, trustLevel: 'ThirdPartyAttested' })
     .build();
 
-  const escapedAchievement = achievementName.replace(/"/g, '\\"');
+  // Was `.replace(/"/g, …)` alone: a value ending in a backslash escaped the template's own
+  // closing quote, and the document stopped parsing. Measured — the publish just fails.
+  const escapedAchievement = escapeTurtleLiteral(achievementName);
   const escapedJson = JSON.stringify(credentialJson).replace(/\\/g, '\\\\').replace(/"""/g, '\\"\\"\\"');
   const forContentTriple = forContent ? `lpc:forContent <${forContent}> ;` : '';
 
@@ -348,7 +350,7 @@ export async function recordLearningExperience(
   const score = args.statement.result?.score?.scaled;
   const summary = `${verbDisplay}: ${objName}${score !== undefined ? ` (score ${score})` : ''}`;
 
-  const escapedSummary = summary.replace(/"/g, '\\"');
+  const escapedSummary = escapeTurtleLiteral(summary);
   const escapedJson = JSON.stringify(args.statement).replace(/\\/g, '\\\\').replace(/"""/g, '\\"\\"\\"');
   const credentialTriple = args.earnedCredential ? `lpc:relatesToCredential <${args.earnedCredential}> ;` : '';
   const lrsTriple = args.lrsEndpoint ? `lpc:basedOnStatement <urn:iep:lrs-statement:${stmtId}> ;` : '';
@@ -378,6 +380,8 @@ export async function recordLearningExperience(
 // ── 5. Cited response (publishes the assistant's answer back to pod) ─
 
 import type { CitedAnswer } from './grounded-answer.js';
+// The one Turtle-literal escaper. See packages/core/src/rdf/escape.ts.
+import { escapeTurtleLiteral } from '@interego/core';
 
 export interface PublishCitedResponseArgs {
   readonly answer: CitedAnswer;

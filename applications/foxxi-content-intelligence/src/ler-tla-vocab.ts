@@ -51,6 +51,9 @@ import { fileURLToPath } from 'node:url';
 // `performanceProficiencyBands`. These are the substrate's own reader, used the substrate's way.
 import { parseTrig, findSubjectsOfType, readStringValue, readIriValue } from '@interego/core';
 import type { IRI } from '@interego/core';
+// The one Turtle-literal escaper. See packages/core/src/rdf/escape.ts — its header names the
+// scattered-subsets drift that this import ends.
+import { escapeTurtleLiteral } from '@interego/core';
 
 // ── Namespace bases ──────────────────────────────────────────────────
 
@@ -969,7 +972,17 @@ export function semLayerStats(): {
 // ── Turtle rendering ─────────────────────────────────────────────────
 
 function esc(s: string): string {
-  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, ' ');
+  /**
+   * ★★ THIS ONE DID NOT ESCAPE THE NEWLINE — IT REPLACED IT WITH A SPACE.
+   *
+   * That is not an escape, it is a silent CONTENT CHANGE: a value published through this helper
+   * came back different from the one handed in, with nothing recording that it had been altered.
+   * Measured by round-tripping through a parse — the payload did not survive. A carriage return
+   * was not handled at all and still produced unparseable Turtle.
+   *
+   * The core helper escapes rather than rewrites, so the value round-trips losslessly.
+   */
+  return escapeTurtleLiteral(s);
 }
 
 /** Resolve a possibly-prefixed name to a Turtle term (prefixed or <IRI>). */

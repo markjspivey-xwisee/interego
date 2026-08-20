@@ -36,6 +36,8 @@ import {
 // block in buildAgentActionDescriptor for why the IRI derivation is borrowed and the Delegation
 // itself is scoped to this record's own activity rather than to a minted one.
 import { footingDelegationIri } from '@interego/core/delegate';
+// The one Turtle-literal escaper. See packages/core/src/rdf/escape.ts.
+import { escapeTurtleLiteral } from '@interego/core';
 import {
   type ComplianceFramework,
   loadControlSet,
@@ -171,14 +173,14 @@ const XSD_NS = 'http://www.w3.org/2001/XMLSchema#';
 // JSON-encoded args, machine-readable outcome / duration / session-id).
 const ACTION_TYPE = `${CGH_NS}AgentAction` as IRI;
 
-function escapeLit(s: string): string { return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"'); }
-function escapeMulti(s: string): string {
-  // Escape every double-quote (not just `"""` substrings) so a value
-  // ending in 1 or 2 quotes can't collide with the closing `"""` of
-  // the Turtle triple-quoted literal. Over-escapes a bit; always
-  // round-trips. See tests/skills.test.ts adversarial section.
-  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-}
+// Delegates to the ONE Turtle-literal escaper in @interego/core. Local copies of this idea
+// each covered a different subset of { \ " \n \r \t }; the ones missing a control character
+// produced Turtle that would not parse. Over-escaping is legal in both literal forms.
+function escapeLit(s: string): string { return escapeTurtleLiteral(s); }
+// Delegates to the ONE Turtle-literal escaper in @interego/core. Local copies of this idea
+// each covered a different subset of { \ " \n \r \t }; the ones missing a control character
+// produced Turtle that would not parse. Over-escaping is legal in both literal forms.
+function escapeMulti(s: string): string { return escapeTurtleLiteral(s); }
 function nowIso(): string { return new Date().toISOString(); }
 
 /**

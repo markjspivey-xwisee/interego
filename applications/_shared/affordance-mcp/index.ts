@@ -21,6 +21,9 @@ import type {
   IRI,
 } from '@interego/core';
 import { actionUrl, mcpOutputSchema } from '@interego/core';
+// The one Turtle-literal escaper. See packages/core/src/rdf/escape.ts — its header names the
+// scattered-subsets drift that this import ends.
+import { escapeTurtleLiteral } from '@interego/core';
 
 // ── Types ─────────────────────────────────────────────────────────────
 
@@ -537,5 +540,15 @@ ${affordances.map(a => `    iep:affordance <${actionUrl(a.action)}>`).join(' ;\n
 // ── Internals ────────────────────────────────────────────────────────
 
 function escapeLit(s: string): string {
-  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  /**
+   * ★ DELEGATES TO THE SINGLE SOURCE OF TRUTH, because this local subset produced INVALID Turtle.
+   *
+   * Measured by embedding the output in `<s> <p> "…" .` and parsing: a value containing a newline
+   * or a carriage return failed to parse at all. Escaping `\` and `"` is enough to stop injection
+   * — and it was correct here, in the right order — but Turtle's STRING_LITERAL_QUOTE also forbids
+   * raw LF, CR and TAB, so any multi-line description made the whole document unparseable and the
+   * publish fail. `packages/core/src/rdf/escape.ts` has covered all five since it was written, and
+   * its own header names this exact drift as the reason it exists.
+   */
+  return escapeTurtleLiteral(s);
 }

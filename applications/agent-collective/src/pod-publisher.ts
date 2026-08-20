@@ -22,6 +22,9 @@ import {
   publish,
 } from '@interego/solid';
 import { createHash } from 'node:crypto';
+// The one Turtle-literal escaper. See packages/core/src/rdf/escape.ts — its header names the
+// scattered-subsets drift that this import ends.
+import { escapeTurtleLiteral } from '@interego/core';
 import type {
   IRI,
 } from '@interego/core';
@@ -39,13 +42,17 @@ const CGH = (local: string): IRI => `${CGH_NS}${local}` as IRI;
 
 function nowIso(): string { return new Date().toISOString(); }
 function sha16(s: string): string { return createHash('sha256').update(s, 'utf8').digest('hex').slice(0, 16); }
-function escapeLit(s: string): string { return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"'); }
-// Escape every `"` (not just the `"""` substring) so a value ending in
-// one or two quotes can't collide with the closing `"""` of the
-// triple-quoted literal. Over-escapes verbose content but always
-// round-trips. See tests/skills.test.ts adversarial section for the
-// contract this fix locks down.
-function escapeMulti(s: string): string { return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"'); }
+// ★ Delegates to @interego/core. This local subset escaped `\` and `"` correctly but left raw
+// newlines, carriage returns and tabs in a single-quoted literal, which Turtle forbids — measured,
+// a value with a newline made the document unparseable. It is applied to `args.toolName` and
+// `args.affordanceDescription`, both caller-supplied, so a two-sentence description failed the
+// publish outright.
+function escapeLit(s: string): string { return escapeTurtleLiteral(s); }
+// Escape every `"` (not just the `"""` substring) so a value ending in one or two quotes can't
+// collide with the closing `"""` of the triple-quoted literal. Over-escaping is always legal
+// Turtle and always round-trips — which is why ONE helper serves both literal forms. See
+// tests/skills.test.ts adversarial section for the contract this locks down.
+function escapeMulti(s: string): string { return escapeTurtleLiteral(s); }
 
 export interface PublishConfig {
   readonly podUrl: string;
