@@ -11,6 +11,9 @@
 import {
   RDF, RDFS, XSD, OWL, PROV, SHACL, ACL, DCAT, HYDRA, DPROD, FOAF, DCT,
 } from './namespaces.js';
+// The normative SHACL shapes. See systemShaclShapes() for why this file stopped restating four of
+// them. shacl-shapes.ts imports nothing, so this introduces no cycle.
+import { getShaclShapesTurtle } from '../validation/shacl-shapes.js';
 
 // ── Namespace Constants ─────────────────────────────────────
 
@@ -515,79 +518,39 @@ iep:PodAddRequest a owl:Class ;
  * Returns SHACL shapes for validating the full Interego system.
  */
 export function systemShaclShapes(): string {
-  return `${allPrefixes()}
+  /**
+   * ★★ THE FOUR SHAPES THIS USED TO RESTATE NOW COME FROM ONE PLACE, BECAUSE ALL FOUR DISAGREED.
+   *
+   * `iep:ContextDescriptorShape`, `TemporalFacetShape`, `TrustFacetShape` and `SemioticFacetShape`
+   * were defined HERE and again in `../validation/shacl-shapes.ts`, under the same IRIs, and served
+   * live from two different endpoints — pgsl-browser `GET /ontology/shacl` from this function, and
+   * the relay `GET /.well-known/shacl-shapes` from that one. Measured, 4 of 4 shared shapes
+   * differed:
+   *
+   *   describes           this file added sh:maxCount 1
+   *   validFrom           this file added sh:minCount 1   (made it REQUIRED)
+   *   trustLevel          this file added sh:minCount 1   (made it REQUIRED)
+   *   modalStatus         this file added sh:minCount 1   (made it REQUIRED)
+   *   epistemicConfidence this file said xsd:decimal, the other says xsd:double
+   *
+   * Two published shapes graphs disagreeing about the same IRI is not a difference of opinion — a
+   * client that merges them gets whichever it read last, and a descriptor valid against one is
+   * invalid against the other.
+   *
+   * `shacl-shapes.ts` is normative: it is the graph the relay ADVERTISES as its `shapesGraph`, it
+   * is the superset (20 shapes to 7), and it is what the publish gate's blast-radius analysis was
+   * measured against. The four stricter readings here are dropped rather than promoted — promoting
+   * them would make `validFrom`, `trustLevel` and `modalStatus` mandatory, invalidating descriptors
+   * that are valid today. Dropping them can only make this endpoint accept more, never less.
+   *
+   * The three shapes below are NOT duplicated anywhere and stay here.
+   */
+  return `${getShaclShapesTurtle()}
 
 # ════════════════════════════════════════════════════════════
-# Interego SHACL Shapes
+# Shapes unique to the system projection
 # ════════════════════════════════════════════════════════════
 
-# ── Context Descriptor Shape ─────────────────────────────────
-
-iep:ContextDescriptorShape a sh:NodeShape ;
-    sh:targetClass iep:ContextDescriptor ;
-    sh:property [
-        sh:path iep:describes ;
-        sh:minCount 1 ;
-        sh:maxCount 1 ;
-        sh:nodeKind sh:IRI ;
-        sh:name "describes"
-    ] ;
-    sh:property [
-        sh:path iep:hasFacet ;
-        sh:minCount 1 ;
-        sh:class iep:ContextFacet ;
-        sh:name "must have at least one facet"
-    ] .
-
-# ── Temporal Facet Shape ─────────────────────────────────────
-
-iep:TemporalFacetShape a sh:NodeShape ;
-    sh:targetClass iep:TemporalFacet ;
-    sh:property [
-        sh:path iep:validFrom ;
-        sh:minCount 1 ;
-        sh:maxCount 1 ;
-        sh:datatype xsd:dateTime ;
-        sh:name "valid from (required)"
-    ] ;
-    sh:property [
-        sh:path iep:validUntil ;
-        sh:maxCount 1 ;
-        sh:datatype xsd:dateTime ;
-        sh:name "valid until (optional)"
-    ] .
-
-# ── Trust Facet Shape ────────────────────────────────────────
-
-iep:TrustFacetShape a sh:NodeShape ;
-    sh:targetClass iep:TrustFacet ;
-    sh:property [
-        sh:path iep:trustLevel ;
-        sh:minCount 1 ;
-        sh:maxCount 1 ;
-        sh:in ( iep:SelfAsserted iep:ThirdPartyAttested iep:CryptographicallyVerified ) ;
-        sh:name "trust level (required, from enumeration)"
-    ] .
-
-# ── Semiotic Facet Shape ─────────────────────────────────────
-
-iep:SemioticFacetShape a sh:NodeShape ;
-    sh:targetClass iep:SemioticFacet ;
-    sh:property [
-        sh:path iep:modalStatus ;
-        sh:minCount 1 ;
-        sh:maxCount 1 ;
-        sh:in ( iep:Asserted iep:Hypothetical iep:Counterfactual iep:Quoted iep:Retracted ) ;
-        sh:name "modal status (required)"
-    ] ;
-    sh:property [
-        sh:path iep:epistemicConfidence ;
-        sh:maxCount 1 ;
-        sh:datatype xsd:decimal ;
-        sh:minInclusive 0 ;
-        sh:maxInclusive 1 ;
-        sh:name "epistemic confidence (0.0 to 1.0)"
-    ] .
 
 # ── Coherence Certificate Shape ──────────────────────────────
 
