@@ -43,7 +43,14 @@
 export type ReadTargetBasis = 'caller' | 'subject-identity' | 'named-pod';
 
 export type ReadTargetDecision =
-  | { readonly ok: true; readonly podUrl: string; readonly isSelf: boolean; readonly basis: ReadTargetBasis }
+  | {
+    readonly ok: true;
+    readonly podUrl: string;
+    readonly isSelf: boolean;
+    readonly basis: ReadTargetBasis;
+    /** Another pod of the same principal that this deployment also reads — see otherPodForPrincipal. */
+    readonly alsoHeld?: string;
+  }
   | { readonly ok: false; readonly error: string };
 
 export interface ReadTargetInput {
@@ -67,24 +74,29 @@ export interface ReadTargetInput {
   /** Do two pod URLs name the same principal? (Folds this store's twin spellings.) */
   readonly samePrincipal: (a: string, b: string) => boolean;
   /**
-   * ★ WHICH SPELLING OF THIS PRINCIPAL'S POD ACTUALLY EXISTS — answered by the enrolment register.
+   * ★★ THE OTHER POD THIS PRINCIPAL HOLDS — REPORTED, NEVER SUBSTITUTED.
    *
-   * One wallet has two pods here: `eth-<12hex>` for a key-holding identity that signs for itself,
-   * and `u-eth-<12hex>` for the same wallet mediated by the relay. Derivation from a `did:ethr:`
-   * can only ever produce the FIRST, so a cross-subject read of a relay-mediated agent would have
-   * derived a pod that holds none of its work and returned a well-formed empty record — the answer
-   * that is indistinguishable from "this agent has done nothing", which is the failure we already
-   * know teaches a reader the wrong thing.
+   * One wallet has two pods here: `eth-<12hex>`, which a bare `did:ethr:` derives, and
+   * `u-eth-<12hex>`, which the identity service creates. Both can exist and both can hold records,
+   * because which one a write lands in depends on which identity form the writer presented.
    *
-   * The register is the published, two-sided fact about which pods this deployment reads, so it is
-   * what resolves the ambiguity: derive the principal, then read the pod the register says exists.
-   * Returns undefined for a principal that has never enrolled, and the derived pod stands.
+   * ★ I TRIED SUBSTITUTION FIRST AND IT WAS WRONG WITHIN THE HOUR. The rule was "read whichever
+   * spelling the enrolment register knows", which is right for a relay-mediated agent whose work
+   * really is in the `u-` twin — and I then enrolled my `u-` pod while every record I had was in
+   * the other one, so the same rule would have answered my own review with somebody's empty pod.
+   * A heuristic that picks between two real pods is wrong in one direction or the other and gives
+   * no sign which time it is.
+   *
+   * So the target is exactly what was derived or named, and this only supplies a POINTER: another
+   * pod, in the set this deployment reads, whose principal is the same and which is not the one
+   * being read. An empty answer names it, and `read_pod_url` is how a caller acts on that. Nothing
+   * is guessed and nothing is hidden.
    */
-  readonly knownPodForPrincipal: (podUrl: string) => string | undefined;
+  readonly otherPodForPrincipal: (podUrl: string) => string | undefined;
 }
 
 export function resolveReadTarget(input: ReadTargetInput): ReadTargetDecision {
-  const { callerPodUrl, subjectIdentityGiven, subjectPodUrl, namedAs, namedPodUrl, tenantPodUrl, inPodSpace, samePrincipal, knownPodForPrincipal } = input;
+  const { callerPodUrl, subjectIdentityGiven, subjectPodUrl, namedAs, namedPodUrl, tenantPodUrl, inPodSpace, samePrincipal, otherPodForPrincipal } = input;
 
   let podUrl: string;
   let basis: ReadTargetBasis;
@@ -103,13 +115,9 @@ export function resolveReadTarget(input: ReadTargetInput): ReadTargetDecision {
     }
     podUrl = namedPodUrl;
     basis = 'named-pod';
-  } else if (subjectIdentityGiven) {
-    // Derivation names a principal; the register names the pod that principal actually writes to.
-    podUrl = knownPodForPrincipal(subjectPodUrl) ?? subjectPodUrl;
-    basis = 'subject-identity';
   } else {
     podUrl = subjectPodUrl;
-    basis = 'caller';
+    basis = subjectIdentityGiven ? 'subject-identity' : 'caller';
   }
 
   /**
@@ -149,5 +157,6 @@ export function resolveReadTarget(input: ReadTargetInput): ReadTargetDecision {
     return { ok: false, error: `that subject's pod resolves outside the pod space this deployment reads (${podUrl}) — records here are read only from pods on this store` };
   }
 
-  return { ok: true, podUrl, isSelf, basis };
+  const alsoHeld = otherPodForPrincipal(podUrl);
+  return { ok: true, podUrl, isSelf, basis, ...(alsoHeld ? { alsoHeld } : {}) };
 }

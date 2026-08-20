@@ -2200,11 +2200,11 @@ function samePodPrincipal(a: string, b: string): boolean {
   return own !== null && subject !== null && own === subject;
 }
 
-/** The pod this deployment ALREADY READS for that principal — see ReadTargetInput.knownPodForPrincipal. */
-function enrolledPodForPrincipal(podUrl: string): string | undefined {
+/** Another pod of the same principal that this deployment reads — see ReadTargetInput.otherPodForPrincipal. */
+function otherPodForPrincipal(podUrl: string): string | undefined {
   const want = podPrincipalKey(podUrl);
   if (!want) return undefined;
-  return meshPods().find((p) => podPrincipalKey(p) === want);
+  return meshPods().find((p) => podPrincipalKey(p) === want && podKey(p) !== podKey(podUrl));
 }
 
 /**
@@ -2242,7 +2242,7 @@ function readTargetFor(opts: {
     tenantPodUrl,
     inPodSpace: (pod) => sameStore(pod, tenantPodUrl),
     samePrincipal: samePodPrincipal,
-    knownPodForPrincipal: enrolledPodForPrincipal,
+    otherPodForPrincipal,
   });
 }
 
@@ -6040,6 +6040,22 @@ app.post('/agent/review-record', async (req, res) => {
             // adds a pod without a trailing slash and then reports "not enrolled" beside a remedy for
             // the enrolled case. They now read one boolean.
             subjectEnrolled: subjectIsEnrolled,
+            /**
+             * ★★ THE OTHER POD THIS PRINCIPAL HOLDS, WHEN THERE IS ONE. One wallet can have both an
+             * `eth-<hex>` pod and a `u-eth-<hex>` one, and which of them a write landed in depends
+             * on which identity form the writer presented — so an empty answer here is very often
+             * a full record one segment away. Reported rather than substituted: a rule that picked
+             * between two real pods would be wrong in one direction or the other with no sign
+             * which time it was. `read_pod_url` is how a caller acts on this.
+             */
+            ...(target.alsoHeld
+              ? {
+                samePrincipalAlsoHolds: {
+                  pod: target.alsoHeld,
+                  note: 'The same wallet holds a second pod on this store, and this deployment reads it too. If the records you expected were written under the other identity form, they are there. Re-ask with read_pod_url set to it — that names the same principal, so it is honoured.',
+                }
+              }
+              : {}),
             // ★ WAS IT EVER ENROLLED? A pruned pod is absent from the register, and absence reads
             // the same as never having enrolled — so an agent that did everything right is told to
             // do it again with no hint that it will be pruned again for the same reason.

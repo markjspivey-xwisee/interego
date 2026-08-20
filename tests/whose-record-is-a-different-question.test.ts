@@ -44,7 +44,11 @@ const base = {
   tenantPodUrl: TENANT,
   inPodSpace: (p: string) => { try { return [GATE, INTERNAL].includes(new URL(p).origin); } catch { return false; } },
   samePrincipal: (a: string, b: string) => { const ka = principal(a); const kb = principal(b); return ka !== null && kb !== null && ka === kb; },
-  knownPodForPrincipal: (p: string) => (principal(p) === 'eth-bbbbbbbbbbbb' ? OTHER_ENROLLED : undefined),
+  // The register reads both spellings of B's wallet; the pointer names the one you are NOT reading.
+  otherPodForPrincipal: (p: string) => {
+    if (principal(p) !== 'eth-bbbbbbbbbbbb') return undefined;
+    return p === OTHER_ENROLLED ? OTHER_DERIVED : OTHER_ENROLLED;
+  },
 } satisfies Omit<ReadTargetInput, 'subjectIdentityGiven' | 'subjectPodUrl'>;
 
 describe('★ the question that could not be asked: another subject, through the relay', () => {
@@ -58,19 +62,26 @@ describe('★ the question that could not be asked: another subject, through the
     expect(d.basis).toBe('subject-identity');
   });
 
-  it('and the ENROLMENT REGISTER decides which spelling of that pod exists', () => {
-    // One wallet, two pods: `eth-<hex>` for a key-holder that signs for itself, `u-eth-<hex>` for
-    // the same wallet mediated by the relay. `did:ethr:` derivation can only ever produce the
-    // first, so without the register a cross-subject read lands on a pod holding none of the
-    // subject's work — and returns a well-formed EMPTY record, the same bytes as "done nothing".
+  it('★ the OTHER pod of the same wallet is REPORTED, never substituted', () => {
+    // One wallet, two pods: `eth-<hex>`, which a bare did:ethr derives, and `u-eth-<hex>`, which
+    // the identity service creates. BOTH can hold records — which one a write landed in depends on
+    // the identity form the writer presented.
+    //
+    // ★ SUBSTITUTION WAS TRIED AND WAS WRONG WITHIN THE HOUR. The rule "read whichever spelling the
+    // register knows" is right for a relay-mediated agent whose work is in the `u-` twin, and I
+    // then enrolled my `u-` pod while every record I held was in the other one — where the same
+    // rule would have answered my own review out of an empty pod. A heuristic picking between two
+    // real pods is wrong in one direction or the other and gives no sign which time it is.
     const d = resolveReadTarget({ ...base, subjectIdentityGiven: true, subjectPodUrl: OTHER_DERIVED });
-    expect(d.ok && d.podUrl).toBe(OTHER_ENROLLED);
+    expect(d.ok && d.podUrl, 'the target is exactly what was derived').toBe(OTHER_DERIVED);
+    expect(d.ok && d.alsoHeld, 'and the other one is named so a caller can ask for it').toBe(OTHER_ENROLLED);
   });
 
-  it('a subject who has never enrolled still resolves to its derived pod', () => {
+  it('a subject whose wallet holds one pod gets no pointer to a second', () => {
     const stranger = `${GATE}/eth-cccccccccccc/`;
     const d = resolveReadTarget({ ...base, subjectIdentityGiven: true, subjectPodUrl: stranger });
     expect(d.ok && d.podUrl).toBe(stranger);
+    expect(d.ok && d.alsoHeld).toBeUndefined();
   });
 });
 
@@ -79,6 +90,20 @@ describe('self is "these two reduce to the same principal", across both spelling
     const d = resolveReadTarget({ ...base, subjectIdentityGiven: false, subjectPodUrl: CALLER });
     expect(d.ok && d.isSelf).toBe(true);
     expect(d.ok && d.basis).toBe('caller');
+    expect(d.ok && d.podUrl).toBe(CALLER);
+  });
+
+  it('★ a SELF-read gets the pointer too, which is how I would have found my own split records', () => {
+    // Measured on myself: a `did:ethr:` derives `eth-<hex>`, I enrolled the `u-eth-` twin, and my
+    // records were in the first while the register knew the second. The self-read returned an
+    // empty record I read as "I have written nothing" — also true at the time — and a check that
+    // passes for two reasons is evidence for neither. Naming the other pod is what breaks the tie.
+    const d = resolveReadTarget({
+      ...base, callerPodUrl: OTHER_DERIVED, subjectIdentityGiven: false, subjectPodUrl: OTHER_DERIVED,
+    });
+    expect(d.ok && d.podUrl).toBe(OTHER_DERIVED);
+    expect(d.ok && d.isSelf).toBe(true);
+    expect(d.ok && d.alsoHeld).toBe(OTHER_ENROLLED);
   });
 
   it('naming yourself in the OTHER spelling is still yourself', () => {
