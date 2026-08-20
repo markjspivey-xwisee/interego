@@ -211,7 +211,9 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // as the row's absence — indistinguishable from never having enrolled.
 // 284 -> 285: `tests/enrolling-a-pod-that-is-not-there.test.ts`. An agent enrolled a pod that does
 // not exist, three ways, and was told `durable: true` three times.
-export const MIN_TEST_MODULES = 285;
+// 285 -> 286: `tests/a-minted-identifier-is-not-a-fetch-target.test.ts`. The relay composed pod
+// identifiers against the internal CSS host and handed out URLs `assertPublicPodUrl` refuses.
+export const MIN_TEST_MODULES = 286;
 export const FLOOR_ALLOWANCE = 10;
 
 /**

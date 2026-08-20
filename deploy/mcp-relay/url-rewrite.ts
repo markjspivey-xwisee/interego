@@ -143,6 +143,47 @@ export function normalizeCssUrl(url: string): string {
   return scheme + CSS_INTERNAL_LABEL + url.slice(scheme.length);
 }
 
+/**
+ * Re-spell a URL on this deployment's INTERNAL store origin as the PUBLIC one.
+ *
+ * ── ★★ A MINTED IDENTIFIER IS NOT A FETCH TARGET, AND THE RELAY CONFLATED THEM ──────────────
+ *
+ * `CSS_URL` is `http://css.railway.internal:3456/` in production, because that is where the relay
+ * READS AND WRITES from inside the cluster. It was also the base every pod IDENTIFIER was composed
+ * against — including the `subject_pod_url` that `sign_request` stamps into a signed payload, which
+ * a vertical then carries into the documents it publishes.
+ *
+ * MEASURED, live, reported three turns running by a delegate auditing its own record: an IEEE P2997
+ * Enterprise Learner Record came back with its own `id` and every `provenance.rawDataLocations`
+ * entry on `css.railway.internal`. That is the artifact most likely to be handed to somebody who has
+ * never heard of this deployment, and it names its own evidence at an address that resolves nowhere
+ * outside one private network. `assertPublicPodUrl` in this very file REFUSES any `.internal` host,
+ * so the relay would not even accept those identifiers back from the holder it gave them to.
+ *
+ * ★ ONE DIRECTION ONLY, AND ONLY ON THE WAY OUT. Fetching stays on the internal origin — that is a
+ * routing fact about this cluster and it is correct. What changes is the spelling of a value that
+ * LEAVES the relay to become somebody else's identifier. The two questions had one answer, in the
+ * same shape as `subject_pod_url` answering both "whose pod am I" and "whose record am I asking
+ * for": a field that is right for one purpose being read for another.
+ *
+ * ★ EXACT ORIGIN, NEVER A PREFIX. `url.startsWith(internalBase)` is the shape that leaked a write
+ * bearer to `https://gate.interego.xwisee.com.<attacker>/…` once already. Origins are compared
+ * whole, and a URL on any other origin is returned untouched — including one already public, which
+ * makes this idempotent.
+ */
+export function publicStoreSpelling(url: string, internalBase: string, publicBase: string): string {
+  if (typeof url !== 'string' || url.length === 0) return url;
+  let target: URL; let internal: URL; let pub: URL;
+  try {
+    target = new URL(url);
+    internal = new URL(internalBase);
+    pub = new URL(publicBase);
+  } catch { return url; }
+  if (target.origin !== internal.origin) return url;
+  if (pub.origin === internal.origin) return url;
+  return pub.origin + target.pathname + target.search + target.hash;
+}
+
 // IPv4 literals that must never appear as an SSRF target on a
 // user-supplied URL: loopback, link-local (incl. Azure / AWS / GCP IMDS
 // at 169.254.169.254), RFC1918 private ranges, CGNAT, broadcast, and

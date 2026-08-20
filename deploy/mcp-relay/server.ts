@@ -125,7 +125,7 @@ import {
   reconstructRequestUrl,
 } from './dpop.js';
 import { corsMiddleware, MCP_ALLOW_HEADERS } from './cors-allowlist.js';
-import { normalizeCssUrl, assertPublicPodUrl } from './url-rewrite.js';
+import { normalizeCssUrl, assertPublicPodUrl, publicStoreSpelling } from './url-rewrite.js';
 // The outbound HTTP layer — pools, solidFetch, and the guarded egress choke point.
 // Extracted so the SSRF address screen's WIRING is importable by a test; see the
 // header of egress.ts for why a regex over this file could never assert it.
@@ -401,6 +401,18 @@ import { mountAmep, seedRelease42, type AmepDeps } from './amep.js';
 
 const PORT = parseInt(process.env['PORT'] ?? '8080');
 const CSS_URL = process.env['CSS_URL'] ?? 'http://localhost:3456/';
+/**
+ * How this deployment's store is spelled TO THE OUTSIDE — see `publicStoreSpelling`.
+ *
+ * `CSS_URL` is where the relay reads and writes from inside the cluster and is not resolvable
+ * anywhere else; this is the spelling that may appear in an identifier handed to somebody. Defaults
+ * to CSS_URL, so an unconfigured deployment behaves exactly as before and a single-host development
+ * setup needs no new variable.
+ */
+const CSS_PUBLIC_URL = process.env['CSS_PUBLIC_URL'] ?? CSS_URL;
+/** A pod URL as an IDENTIFIER rather than a fetch target. Identity out, routing in. */
+const asPublicPodUrl = (url: string | undefined): string | undefined =>
+  (url === undefined ? undefined : publicStoreSpelling(url, CSS_URL, CSS_PUBLIC_URL));
 const IDENTITY_URL = process.env['IDENTITY_URL'] ?? 'http://localhost:8090';
 
 // OAuth 2.1 auth config for /mcp. This is the real auth path used by
@@ -6597,7 +6609,26 @@ async function handleSignRequest(args: ToolArgs): Promise<string> {
   if (!agentId) {
     return JSON.stringify({ error: 'sign_request: no authenticated session identity — sign_request signs only for the bound caller (authenticate first).' });
   }
-  const podUrl = await selfPodUrl(args);
+  /**
+   * ★★ THE STAMPED POD IS AN IDENTIFIER IN SOMEBODY ELSE'S DOCUMENT, so it is spelled PUBLICLY.
+   *
+   * `selfPodUrl` composes against `CSS_URL`, which in production is
+   * `http://css.railway.internal:3456/` — correct as a fetch target inside the cluster and
+   * resolvable nowhere else. This value does not stay here: it goes into a SIGNED payload, a
+   * vertical binds its writes to it, and it comes back out in the documents that vertical
+   * publishes. Measured, live, and reported three turns running by a delegate reading its own
+   * record: an IEEE P2997 Enterprise Learner Record whose `id` and every
+   * `provenance.rawDataLocations` entry named the internal host. That document is the one most
+   * likely to be handed to a reader who has never heard of this deployment.
+   *
+   * `assertPublicPodUrl` — in the same module as the rewrite — refuses any `.internal` host, so
+   * the relay was minting identifiers it would not itself accept back from the holder.
+   *
+   * Nothing about routing changes: `selfPodUrl` is still the internal spelling everywhere it is
+   * used for a comparison or a fetch, and this re-spelling happens at the one point where the value
+   * stops being ours. Both spellings are the same store to every consumer that folds them.
+   */
+  const podUrl = asPublicPodUrl(await selfPodUrl(args));
   // Caller-chosen, response-affecting options to fold INTO the signed assertion.
   // Accept them nested under `payload` OR at the top level (MCP clients vary), so
   // they become part of the verified message rather than an unsigned wrapper
