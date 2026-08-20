@@ -44,6 +44,14 @@
  * data, and production code paths actually GET them at runtime.
  */
 
+import { readFileSync, existsSync } from 'node:fs';
+import { dirname, resolve as resolvePath } from 'node:path';
+import { fileURLToPath } from 'node:url';
+// The proficiency roll-up rule is a GRAPH parsed at runtime, not a ladder in this file — see
+// `performanceProficiencyBands`. These are the substrate's own reader, used the substrate's way.
+import { parseTrig, findSubjectsOfType, readStringValue, readIriValue } from '@interego/core';
+import type { IRI } from '@interego/core';
+
 // ── Namespace bases ──────────────────────────────────────────────────
 
 const BRIDGE = 'https://foxxi-bridge.interego.xwisee.com';
@@ -694,18 +702,155 @@ function wilsonLower(k: number, n: number): number {
 }
 function round3(n: number): number { return Math.round(n * 1000) / 1000; }
 
+/**
+ * ── ★★★ THE RULE IS DATA, AND THE ENGINE READS IT ───────────────────────────────────────────
+ *
+ * This was an `if` ladder over raw counts, with a separately hand-maintained string describing it
+ * for publication. Two things were wrong with that, and the second is the one that bit.
+ *
+ * ★ IT WAS A HARDCODE PUBLISHING ITS OWN DESCRIPTION. The engine decided in TypeScript and a prose
+ * constant claimed what the engine did — so the published rule was a MIRROR that nothing kept in
+ * step, and no test exercised either. `evaluateProficiency`, `wilsonLower` and the rule text had
+ * zero references in the whole test tree. This project's own stated position is a general engine
+ * reading published rule DATA, never `if (x)`; the conformance work already does that. This is now
+ * the same shape: the bands below ARE the rule, the evaluator walks them, and the published text is
+ * GENERATED from them, so a threshold cannot change without the publication changing with it.
+ *
+ * ★★ AND THE LADDER WAS WRONG, IN A WAY NOBODY HAD PERTURBED FOR. Measured against the shipped
+ * function, with mean quality 0.89 throughout:
+ *
+ *      5 executions, 5 successes  ->  rank 3 Competent,  confidence 0.566
+ *      6 executions, 6 successes  ->  rank 4 Proficient, confidence 0.610
+ *      6 executions, 5 successes  ->  rank 4 Proficient, confidence 0.436   <-- FAILING PROMOTED YOU
+ *
+ * A record that FAILED moved the subject up a rank, while the confidence attached to that very rank
+ * fell. The two outputs of one function moved in opposite directions on the same new evidence.
+ * The cause is that n was counted TWICE — as the sample-size term inside `wilsonLower`, and again
+ * as an independent `executions >=` gate — and the comment above `buildCompetencies` asserts the
+ * opposite design in as many words ("the level and the confidence together carry the sample-size
+ * honesty"). The ladder did not honour the comment above it.
+ *
+ * ★ SO RANK IS READ OFF THE RELIABILITY TERM THAT ALREADY ENCODES SAMPLE SIZE CORRECTLY. The Wilson
+ * lower bound rises with evidence and falls with failure, which is exactly the monotonicity a rank
+ * needs. Thresholds are chosen to preserve EVERY existing all-success transition point — 3/3=0.438,
+ * 6/6=0.610, 12/12=0.757 all promote at precisely the record they promoted at before — so an honest
+ * track record is unaffected and only the perverse case changes: 6/5 scores 0.436 and stays
+ * Competent, which is what it always should have done.
+ *
+ * ★ AND QUALITY MUST BE RECORDED TO CLAIM THE TOP BANDS. `q === undefined` used to satisfy every
+ * quality gate, so twelve entirely unscored executions reached EXPERT on volume alone. A level whose
+ * published definition speaks of "high-quality production performance" cannot be reachable with no
+ * quality evidence at all. Quality remains a FLOOR rather than a scale — 0.71 and 1.00 still rank
+ * the same, which is a real limitation and is now stated in the published text rather than implied.
+ */
+export interface ProficiencyBand {
+  readonly name: string;
+  readonly rank: number;
+  /** Wilson lower bound on the success rate that this band requires. */
+  readonly minReliability: number;
+  /** Mean-quality floor, or undefined when the band asks nothing of quality. */
+  readonly minQuality?: number;
+  /** Must quality have been RECORDED at all? A band describing quality may not be won without it. */
+  readonly requiresQuality: boolean;
+}
+
+/**
+ * ★★★ THE BANDS ARE PARSED FROM `docs/ns/adl-tla-proficiency.ttl` AT RUNTIME. That file IS the
+ * rule; this module evaluates it and publishes it. A threshold change is an edit to a graph, not a
+ * code change — which is the difference between a rule that is modelled and a rule that is baked.
+ *
+ * Loaded once and memoised: it is read on the first judgement and reused, so a container serves one
+ * consistent rule for its lifetime rather than re-reading mid-flight and ranking two subjects by two
+ * versions of it.
+ *
+ * ★ AND IT FAILS LOUDLY. If the graph cannot be read or parses to nothing, this THROWS rather than
+ * quietly falling back to a built-in ladder. A silent fallback would recreate exactly the thing this
+ * change removes — a hidden rule in the code that nobody can see is in force — and every silent
+ * fallback in this system has cost a defect that survived because the caller got a plausible answer.
+ */
+let _bands: readonly ProficiencyBand[] | undefined;
+
+/** Walk up for `docs/ns`, the same way `@interego/pgsl`'s static-ontology loader does. */
+function resolveNsDir(): string {
+  let dir = dirname(fileURLToPath(import.meta.url));
+  for (let i = 0; i < 8; i++) {
+    const candidate = resolvePath(dir, 'docs', 'ns');
+    if (existsSync(candidate)) return candidate;
+    const parent = resolvePath(dir, '..');
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return resolvePath(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'docs', 'ns');
+}
+
+const BAND_TTL = 'adl-tla-proficiency.ttl';
+
+/** Read the rule graph. Exported so the publication path serves the SAME bytes the engine ran. */
+export function loadProficiencyRuleTurtle(): string {
+  return readFileSync(resolvePath(resolveNsDir(), BAND_TTL), 'utf8');
+}
+
+/** Parse the bands out of the rule graph, highest rank first. */
+export function parseProficiencyBands(turtle: string): readonly ProficiencyBand[] {
+  const doc = parseTrig(turtle);
+  const num = (s: string | undefined): number | undefined => {
+    if (s === undefined) return undefined;
+    const n = Number(s);
+    return Number.isFinite(n) ? n : undefined;
+  };
+  const bands: ProficiencyBand[] = [];
+  for (const subj of findSubjectsOfType(doc, `${TLA_NS}ProficiencyBand` as IRI)) {
+    const levelIri = readIriValue(subj, `${TLA_NS}awardsLevel` as IRI);
+    const minReliability = num(readStringValue(subj, `${TLA_NS}minReliability` as IRI));
+    if (!levelIri || minReliability === undefined) continue;
+    const name = String(levelIri).replace(TLA_NS, '').replace(/^Level/, '');
+    const def = proficiencyLevelByName(name);
+    if (!def) continue;
+    const minQuality = num(readStringValue(subj, `${TLA_NS}minQuality` as IRI));
+    bands.push({
+      name,
+      rank: def.rank,
+      minReliability,
+      ...(minQuality !== undefined ? { minQuality } : {}),
+      requiresQuality: readStringValue(subj, `${TLA_NS}requiresQuality` as IRI) === 'true',
+    });
+  }
+  return Object.freeze(bands.sort((a, b) => b.rank - a.rank));
+}
+
+/** The bands in force, from the published graph. Throws rather than guessing — see above. */
+export function performanceProficiencyBands(): readonly ProficiencyBand[] {
+  if (_bands) return _bands;
+  const parsed = parseProficiencyBands(loadProficiencyRuleTurtle());
+  if (parsed.length === 0) {
+    throw new Error(
+      `${BAND_TTL} parsed to zero tla:ProficiencyBand nodes — the proficiency rule is DATA and the `
+      + 'data is unreadable. Refusing to rank rather than fall back to a hidden built-in ladder.',
+    );
+  }
+  _bands = parsed;
+  return _bands;
+}
+
+/** Does this evidence satisfy this band? The whole of the rule's per-band logic, in one place. */
+function bandSatisfied(band: ProficiencyBand, reliability: number, avgQuality: number | undefined): boolean {
+  if (reliability < band.minReliability) return false;
+  if (band.requiresQuality && avgQuality === undefined) return false;
+  if (band.minQuality !== undefined && avgQuality !== undefined && avgQuality < band.minQuality) return false;
+  return true;
+}
+
 /** Evaluate the published tla:PerformanceProficiencyRollupRule against evidence. */
 export function evaluateProficiency(input: RollupInput): RollupResult {
   const { basis, executions, successes } = input;
   const q = input.avgQuality;
-  const rate = executions > 0 ? successes / executions : 0;
   let name = 'Novice';
   if (basis === 'performance') {
-    if (executions >= 12 && rate >= 0.9 && (q === undefined || q >= 0.85)) name = 'Expert';
-    else if (executions >= 6 && rate >= 0.8 && (q === undefined || q >= 0.7)) name = 'Proficient';
-    else if (executions >= 3 && rate >= 0.66) name = 'Competent';
-    else if (successes >= 1) name = 'AdvancedBeginner';
-    else name = 'Novice';
+    // The SAME reliability term the result reports as `confidence` — one number, not two notions
+    // of sample size that can disagree.
+    const reliability = round3(wilsonLower(successes, executions));
+    const band = performanceProficiencyBands().find(b => bandSatisfied(b, reliability, q));
+    name = band ? band.name : (successes >= 1 ? 'AdvancedBeginner' : 'Novice');
   } else if (basis === 'credential') {
     name = 'Competent'; // a verified credential attests demonstrated competence
   } else {
@@ -720,13 +865,34 @@ export function evaluateProficiency(input: RollupInput): RollupResult {
   return { levelName: name, levelLabel: def.label, levelIri: proficiencyLevelIri(name), rank: def.rank, confidence, ruleIri: PERF_ROLLUP_RULE_IRI };
 }
 
-/** The human-readable rule expression published as tla:rollupRule. */
-export const PERF_ROLLUP_RULE_TEXT =
-  'Given production performance evidence (n executions carrying an asserted outcome, k successes, mean scored quality q in 0..1): ' +
-  'Expert if n>=12 and k/n>=0.90 and (q undefined or q>=0.85); Proficient if n>=6 and k/n>=0.80 and (q undefined or q>=0.70); ' +
-  'Competent if n>=3 and k/n>=0.66; Advanced Beginner if k>=1; else Novice. ' +
-  'A verified credential with no production evidence maps to Competent; training completion only maps to Novice (Hypothetical). ' +
-  'Confidence is the Wilson score interval lower bound (z=1.96) on k/n.';
+/**
+ * The human-readable rule expression published as `tla:rollupRule` — RENDERED FROM THE BANDS.
+ *
+ * ★★ IT USED TO BE A HAND-MAINTAINED STRING BESIDE AN `if` LADDER, and nothing kept the two in
+ * step: two sources for one fact, no test touching either, and a published sentence that was
+ * accurate only for as long as somebody remembered. It is now generated from the same triples the
+ * evaluator walks, so the document and the behaviour cannot disagree — the drift is not policed,
+ * it is impossible.
+ */
+export function perfRollupRuleText(): string {
+  const bands = performanceProficiencyBands();
+  const clause = (b: ProficiencyBand): string => {
+    const q = b.requiresQuality
+      ? ` and mean quality q is recorded and q>=${b.minQuality ?? 0}`
+      : '';
+    return `${proficiencyLevelByName(b.name)?.label ?? b.name} if reliability>=${b.minReliability}${q}`;
+  };
+  return 'Given production performance evidence (n executions carrying an asserted outcome, k successes, '
+    + 'mean scored quality q in 0..1): reliability is the Wilson score interval lower bound (z=1.96) on k/n, '
+    + 'which rises with evidence and FALLS when a failure is added — so it carries both how often the work '
+    + 'succeeded and how much of it there is, and no separate execution count is gated on. '
+    + `${bands.map(clause).join('; ')}; Advanced Beginner if k>=1; else Novice. `
+    + 'Quality is a FLOOR, not a scale: every value at or above a band\'s floor ranks alike. '
+    + 'A verified credential with no production evidence maps to Competent; training completion only maps to '
+    + 'Novice (Hypothetical). The reported confidence IS the reliability above. '
+    + 'This rule is DATA: it is parsed at runtime from docs/ns/adl-tla-proficiency.ttl, and this sentence is '
+    + 'generated from the same triples the evaluator walks.';
+}
 
 // Proficiency framework + roll-up-rule metadata — shared verbatim by the Turtle
 // and JSON-LD projections so the two serializations of /ns/adl-tla stay
@@ -755,7 +921,7 @@ function renderProficiencyTurtle(): string {
   const rule = `tla:PerformanceProficiencyRollupRule a tla:RollupRule ;
     rdfs:label "${esc(PROF_ROLLUP_LABEL)}" ;
     rdfs:comment "${esc(PROF_ROLLUP_COMMENT)}" ;
-    tla:rollupRule "${esc(PERF_ROLLUP_RULE_TEXT)}" ;
+    tla:rollupRule "${esc(perfRollupRuleText())}" ;
     skos:inScheme tla:PerformanceProficiencyFramework ;
     ler:construction "minted" ;
     rdfs:isDefinedBy <${TLA_DOC}> .`;
@@ -1044,7 +1210,7 @@ export function renderSemOntologyJsonLd(family: 'ler' | 'tla'): Record<string, u
       '@id': PERF_ROLLUP_RULE_IRI, '@type': 'tla:RollupRule',
       label: PROF_ROLLUP_LABEL,
       comment: PROF_ROLLUP_COMMENT,
-      'tla:rollupRule': PERF_ROLLUP_RULE_TEXT,
+      'tla:rollupRule': perfRollupRuleText(),
       'skos:inScheme': { '@id': PERF_FRAMEWORK_IRI }, construction: 'minted', isDefinedBy: doc,
     });
   }
@@ -1149,7 +1315,7 @@ export function renderSemTermJsonLd(family: 'ler' | 'tla', name: string): Record
     };
     if (name === 'PerformanceProficiencyRollupRule') return {
       '@context': JSONLD_CONTEXT, '@id': PERF_ROLLUP_RULE_IRI, '@type': 'tla:RollupRule',
-      label: PROF_ROLLUP_LABEL, comment: PROF_ROLLUP_COMMENT, 'tla:rollupRule': PERF_ROLLUP_RULE_TEXT,
+      label: PROF_ROLLUP_LABEL, comment: PROF_ROLLUP_COMMENT, 'tla:rollupRule': perfRollupRuleText(),
       'skos:inScheme': { '@id': PERF_FRAMEWORK_IRI },
       construction: 'minted', isDefinedBy: doc, _links: { self: { href: `${doc}/term/${name}` }, ontology: { href: doc } },
     };

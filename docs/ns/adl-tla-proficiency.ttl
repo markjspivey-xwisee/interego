@@ -1,0 +1,114 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# THE PRODUCTION-PERFORMANCE PROFICIENCY ROLL-UP RULE — AS DATA, NOT AS CODE.
+#
+# ★★★ THIS FILE *IS* THE RULE. It is not a description of a rule that lives
+# somewhere else. `evaluateProficiency` parses these bands at runtime and walks
+# them; the human-readable `tla:rollupRule` text served at /ns/adl-tla is
+# RENDERED from these same triples. Change a threshold here and the behaviour,
+# the published rule text and the ontology all change together, without a code
+# edit — which is the whole point.
+#
+# ── WHY IT MOVED HERE ────────────────────────────────────────────────────────
+#
+# It was an `if` ladder in TypeScript:
+#
+#     if (executions >= 12 && rate >= 0.9 && (q === undefined || q >= 0.85)) 'Expert';
+#     else if (executions >= 6 && rate >= 0.8 && (q === undefined || q >= 0.7)) 'Proficient';
+#     else if (executions >= 3 && rate >= 0.66) 'Competent';
+#
+# beside a hand-maintained prose constant claiming what the ladder did. Two
+# sources for one fact, nothing keeping them in step, and no test touching
+# either. This project's stated position is a general engine reading published
+# rule DATA — never `if (x)` — and the conformance work already does exactly
+# that. A judgement rule that decides whether a credential is issued is the last
+# place that should have been an exception.
+#
+# ── AND THE LADDER WAS WRONG, WHICH NOBODY HAD PERTURBED FOR ─────────────────
+#
+# Measured against the shipped function, mean quality 0.89 throughout:
+#
+#     5 executions, 5 successes  ->  rank 3 Competent,  confidence 0.566
+#     6 executions, 6 successes  ->  rank 4 Proficient, confidence 0.610
+#     6 executions, 5 successes  ->  rank 4 Proficient, confidence 0.436  <-- !
+#
+# A record that FAILED promoted the subject, while the confidence attached to
+# that very rank fell. The two outputs of one function moved in opposite
+# directions on the same new evidence. The cause: n was counted TWICE — as the
+# sample-size term inside the Wilson bound, and again as a bare `executions >=`
+# gate — while the comment above the caller asserted the opposite design.
+#
+# So a band is expressed against the RELIABILITY term that already encodes
+# sample size correctly (the Wilson score lower bound on the success rate),
+# which rises with evidence and FALLS with failure. The thresholds below
+# preserve every previous all-success transition exactly — 3/3 = 0.438,
+# 6/6 = 0.610, 12/12 = 0.757 promote at precisely the record they did before —
+# so an honest track record is untouched and only the perverse case changes:
+# 6/5 scores 0.436 and stays Competent, as it always should have.
+#
+# ★ AND QUALITY MUST BE RECORDED TO CLAIM A BAND THAT SPEAKS OF IT. Previously
+# an absent quality satisfied every quality gate, so twelve entirely unscored
+# executions reached EXPERT on volume alone. `tla:requiresQuality true` closes
+# that. Quality remains a FLOOR and not a scale — 0.71 and 1.00 rank alike —
+# which is a real limitation, is stated in the published text, and is a
+# threshold change away from being otherwise.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@prefix tla:  <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+
+tla:ProficiencyBand a rdfs:Class ;
+    rdfs:label "Proficiency band"@en ;
+    rdfs:comment "One band of the production-performance roll-up rule: the reliability and quality a subject's evidence must reach to be assigned a tla:Level. Bands are evaluated highest rank first and the first satisfied one wins."@en .
+
+tla:minReliability a rdfs:Property ;
+    rdfs:label "minimum reliability"@en ;
+    rdfs:comment "The Wilson score interval lower bound (z=1.96) on the success rate that this band requires. Chosen over a raw execution count deliberately: the Wilson bound already rises with sample size and FALLS when a failure is added, so one number carries both 'how often it worked' and 'how much evidence there is'. Gating on a bare count alongside it let a failing record promote a subject."@en ;
+    rdfs:domain tla:ProficiencyBand ;
+    rdfs:range xsd:decimal .
+
+tla:minQuality a rdfs:Property ;
+    rdfs:label "minimum mean quality"@en ;
+    rdfs:comment "Floor on the mean scored outcome quality (0..1). A FLOOR, not a scale — every value at or above it ranks alike."@en ;
+    rdfs:domain tla:ProficiencyBand ;
+    rdfs:range xsd:decimal .
+
+tla:requiresQuality a rdfs:Property ;
+    rdfs:label "requires recorded quality"@en ;
+    rdfs:comment "Whether quality must have been RECORDED at all to win this band. A band whose published level speaks of high-quality performance may not be reached on unscored work."@en ;
+    rdfs:domain tla:ProficiencyBand ;
+    rdfs:range xsd:boolean .
+
+tla:awardsLevel a rdfs:Property ;
+    rdfs:label "awards level"@en ;
+    rdfs:comment "The tla:Level a subject satisfying this band is assigned."@en ;
+    rdfs:domain tla:ProficiencyBand .
+
+# ── The bands. Highest first; the first satisfied band wins. ─────────────────
+
+tla:BandExpert a tla:ProficiencyBand ;
+    rdfs:label "Expert band"@en ;
+    tla:awardsLevel tla:LevelExpert ;
+    tla:minReliability "0.75"^^xsd:decimal ;
+    tla:minQuality "0.85"^^xsd:decimal ;
+    tla:requiresQuality "true"^^xsd:boolean ;
+    skos:notation "5" ;
+    rdfs:comment "Reached at 12 consecutive successes (Wilson 0.757) and not before, matching the previous rule's transition exactly."@en .
+
+tla:BandProficient a tla:ProficiencyBand ;
+    rdfs:label "Proficient band"@en ;
+    tla:awardsLevel tla:LevelProficient ;
+    tla:minReliability "0.60"^^xsd:decimal ;
+    tla:minQuality "0.70"^^xsd:decimal ;
+    tla:requiresQuality "true"^^xsd:boolean ;
+    skos:notation "4" ;
+    rdfs:comment "Reached at 6 consecutive successes (Wilson 0.610). Six executions with one failure scores 0.436 and does NOT reach it — the case the previous count-gated rule promoted."@en .
+
+tla:BandCompetent a tla:ProficiencyBand ;
+    rdfs:label "Competent band"@en ;
+    tla:awardsLevel tla:LevelCompetent ;
+    tla:minReliability "0.40"^^xsd:decimal ;
+    tla:requiresQuality "false"^^xsd:boolean ;
+    skos:notation "3" ;
+    rdfs:comment "Reached at 3 consecutive successes (Wilson 0.438). Asks nothing of quality, because the level's own definition asks nothing of it."@en .
