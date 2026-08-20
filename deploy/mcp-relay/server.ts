@@ -127,6 +127,12 @@ import {
 import { corsMiddleware, MCP_ALLOW_HEADERS } from './cors-allowlist.js';
 import { normalizeCssUrl, assertPublicPodUrl, publicStoreSpelling } from './url-rewrite.js';
 import { mayUseRelayKey } from './relay-key-gate.js';
+// The action naming authority: the roster and the resolution rule, extracted so the test exercises
+// the shipped code rather than a restatement of it. See action-authority.ts for what that caught.
+import { buildActionRoster, resolveActionTarget } from './action-authority.js';
+// Pod authorization, extracted so the rule is importable: server.ts calls app.listen() at
+// module scope and cannot be imported, which is why this area only had source-text coverage.
+import { authorizePodUrl } from './pod-authorization.js';
 // The outbound HTTP layer — pools, solidFetch, and the guarded egress choke point.
 // Extracted so the SSRF address screen's WIRING is importable by a test; see the
 // header of egress.ts for why a regex over this file could never assert it.
@@ -13060,29 +13066,35 @@ app.get('/ns/pgsl/:kind/:hash', publishedNodes.nodeRouteHandler({
 // described by /.well-known/operations rather than a vertical's /affordances. That
 // makes the relay's own actions dereferenceable too, which is the precondition for
 // any interop projection whose capability ids must be real URLs rather than urns.
-const IEP_ACTION_VERTICALS: Record<string, string> = (() => {
-  const base: Record<string, string> = {
+/**
+ * ★★ The roster and the resolution rule live in `action-authority.ts`, not here.
+ *
+ * They were inline, and the rule was therefore only reachable through an HTTP server — so it was
+ * never tested, and it was wrong: a plain object literal plus a bare index meant every member of
+ * `Object.prototype` answered as a registered vertical. Measured on the live relay,
+ * `GET /ns/iep/action/constructor/publish_context` returned 302 rather than 404. See that module
+ * for the full measurement and `tests/action-authority.test.ts` for the cases.
+ */
+const IEP_ACTION_VERTICALS: Record<string, string> = buildActionRoster(
+  {
     foxxi: 'https://foxxi-bridge.interego.xwisee.com/affordances',
     relay: `${(PUBLIC_BASE_URL || '').replace(/\/$/, '')}/.well-known/operations`,
-  };
-  try { Object.assign(base, JSON.parse(process.env.IEP_ACTION_VERTICALS ?? '{}')); } catch { /* keep defaults */ }
-  return base;
-})();
+  },
+  process.env.IEP_ACTION_VERTICALS,
+);
 app.get('/ns/iep/action/:vertical/:verb', (req, res) => {
   // CORS (ACAO:*) via the /ns/* public linked-data carve-out.
   const vertical = String(req.params.vertical);
   const verb = String(req.params.verb);
-  const target = IEP_ACTION_VERTICALS[vertical];
-  // Validate before redirecting — fixed target map + a conservative verb charset
-  // (no open redirect). Underscores are allowed because substrate operation names
-  // use them (publish_context, get_descriptor, …); without this every relay action
-  // id 404s and the interop card would have to drop them all.
-  if (!target || !/^[a-z0-9][a-z0-9_-]*$/i.test(verb)) { res.status(404).json({ error: 'no such action' }); return; }
-  // Back-compat: a bare host (no path) keeps its historical /affordances target.
-  const dest = /^https?:\/\/[^/]+\/?$/.test(target)
-    ? `${target.replace(/\/$/, '')}/affordances`
-    : target;
-  res.redirect(302, dest);
+  // One rule, in one place, imported by the test that pins it. Underscores are allowed in both
+  // segments because substrate operation names use them (publish_context, get_descriptor, …);
+  // without that every relay action id 404s and the interop card would have to drop them all.
+  const resolved = resolveActionTarget(IEP_ACTION_VERTICALS, vertical, verb);
+  if (!resolved.ok || resolved.target === undefined) {
+    res.status(404).json({ error: 'no such action', reason: resolved.reason });
+    return;
+  }
+  res.redirect(302, resolved.target);
 });
 
 app.options('/ns/:owner/:slug', (_req, res) => { res.status(204).end(); });
@@ -13332,10 +13344,17 @@ const RELAY_POD_HOST_ALLOWLIST: readonly string[] = (() => {
   return fromEnv;
 })();
 
+/**
+ * @param relayMinted TRUE only when `suppliedUrl` came out of the relay's OWN state (a slug map, a
+ * stored registration) rather than from the request. A caller can never set it. See
+ * pod-authorization.ts: screening a value the relay minted with the attacker-URL guard is what made
+ * `/notifications/:podSlug` answer 400 to everyone.
+ */
 async function requireAuthorizedPodUrl(
   req: express.Request,
   res: express.Response,
   suppliedUrl: string,
+  relayMinted = false,
 ): Promise<string | null> {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) {
@@ -13356,30 +13375,18 @@ async function requireAuthorizedPodUrl(
     res.status(403).json({ error: 'Token has no associated pod' });
     return null;
   }
-  let parsed: URL;
-  try {
-    parsed = assertPublicPodUrl(suppliedUrl, RELAY_POD_HOST_ALLOWLIST);
-  } catch (err) {
-    res.status(400).json({ error: 'pod_url_rejected', detail: (err as Error).message });
+  const decision = authorizePodUrl({
+    suppliedUrl,
+    ownerPodUrl,
+    storeOrigins: STORE_ORIGINS,
+    relayMinted,
+    screen: (u) => assertPublicPodUrl(u, RELAY_POD_HOST_ALLOWLIST),
+  });
+  if (!decision.ok) {
+    res.status(decision.status ?? 403).json({ error: decision.error, detail: decision.detail });
     return null;
   }
-  let ownerParsed: URL;
-  try {
-    ownerParsed = new URL(ownerPodUrl);
-  } catch {
-    res.status(500).json({ error: 'owner pod URL is malformed' });
-    return null;
-  }
-  const sameOrigin = parsed.protocol === ownerParsed.protocol
-    && parsed.hostname.toLowerCase() === ownerParsed.hostname.toLowerCase()
-    && parsed.port === ownerParsed.port;
-  const ownerPath = ownerParsed.pathname.endsWith('/') ? ownerParsed.pathname : `${ownerParsed.pathname}/`;
-  const suppliedPath = parsed.pathname.endsWith('/') ? parsed.pathname : `${parsed.pathname}/`;
-  if (!sameOrigin || !suppliedPath.startsWith(ownerPath)) {
-    res.status(403).json({ error: 'pod URL does not belong to the authenticated user' });
-    return null;
-  }
-  return suppliedUrl;
+  return decision.url ?? null;
 }
 
 /**
@@ -14947,7 +14954,12 @@ app.get('/notifications/:podSlug', bearerVerifyLimiter, async (req, res) => {
 
   // Reuse the existing read-auth gate: the bearer must own the pod
   // (or a subpath). This mirrors /inbox and /audit/compliance.
-  const authorizedPod = await requireAuthorizedPodUrl(req, res, podUrl);
+  //
+  // `relayMinted` because `podUrl` came from `podSlugToUrl`, which THIS relay populated from
+  // CSS_URL — the caller supplied a slug, never a URL. Screening it with assertPublicPodUrl made
+  // this endpoint return 400 `pod_url_rejected` to every caller, while publish_context handed the
+  // same URL back as `notifications.sse_url` and invited an EventSource on it.
+  const authorizedPod = await requireAuthorizedPodUrl(req, res, podUrl, true);
   if (!authorizedPod) return; // requireAuthorizedPodUrl already wrote the 401/403
 
   res.setHeader('Content-Type', 'text/event-stream');
@@ -15004,7 +15016,9 @@ app.post('/notifications/:podSlug/webhook', bearerVerifyLimiter, express.json(),
     res.status(404).json({ error: 'unknown_pod_slug' });
     return;
   }
-  const authorizedPod = await requireAuthorizedPodUrl(req, res, podUrl);
+  // relayMinted, for the same reason as the SSE channel above: `podUrl` is ours, out of
+  // podSlugToUrl. The caller supplied a slug.
+  const authorizedPod = await requireAuthorizedPodUrl(req, res, podUrl, true);
   if (!authorizedPod) return;
   const webhookUrl = (req.body as { url?: string } | undefined)?.url;
   if (!webhookUrl || typeof webhookUrl !== 'string') {

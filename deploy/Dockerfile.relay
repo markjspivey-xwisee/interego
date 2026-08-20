@@ -146,6 +146,13 @@ COPY deploy/mcp-relay/hmd-app-logic.ts ./
 COPY deploy/mcp-relay/pgsl-node-store.ts ./
 COPY deploy/mcp-relay/engagement-store.ts ./
 COPY deploy/mcp-relay/authorship-content-binding.ts ./
+# The action naming authority (roster + resolution rule), extracted from server.ts so the rule is
+# testable. tests/image-copies-every-source.test.ts fails if a module server.ts imports is missing
+# from this list — it caught exactly that on this file, which is what the gate is for.
+COPY deploy/mcp-relay/action-authority.ts ./
+# Pod authorization: which pod URLs a bearer may act on, and which of them the relay minted
+# itself. Extracted for the same reason — server.ts is unimportable, so the rule was untested.
+COPY deploy/mcp-relay/pod-authorization.ts ./
 # AMEP reference validator + JSON-LD context, vendored verbatim. amep.ts loads
 # them by a path relative to the COMPILED module (dist/amep.js), so after tsc
 # they must sit at dist/amep-vendor/.

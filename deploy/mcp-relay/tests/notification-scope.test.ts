@@ -310,12 +310,19 @@ console.log('\n14. get_pod_status returns recentNotifications only to the pod\'s
 // on `notificationLog`.
 console.log('\n15. the per-pod channel and the webhook remain pod-authorized');
 {
+  //
+  // ★ THE 4th ARGUMENT IS PART OF THE ASSERTION, NOT NOISE. Both of these read their pod URL out
+  // of `podSlugToUrl` — a map the relay filled from CSS_URL — so the value is RELAY-MINTED and
+  // must be authorized as ours rather than screened as an attacker's. Screening it is what made
+  // this endpoint answer 400 `pod_url_rejected` to every caller while publish_context handed the
+  // same URL out as `notifications.sse_url`. Dropping the flag reinstates that, so it is pinned
+  // here; the rule itself is tested directly in tests/pod-authorization.test.ts.
   const perPod = region(SERVER_CODE, "app.get('/notifications/:podSlug'", "app.post('/notifications/:podSlug/webhook'", 'per-pod SSE');
-  check('/notifications/:podSlug authorizes the pod',
-    /requireAuthorizedPodUrl\(req, res, podUrl\)/.test(perPod), perPod.slice(0, 800));
+  check('/notifications/:podSlug authorizes the pod as relay-minted',
+    /requireAuthorizedPodUrl\(req, res, podUrl, true\)/.test(perPod), perPod.slice(0, 800));
   const hook = region(SERVER_CODE, "app.post('/notifications/:podSlug/webhook'", "app.post('/messages'", 'webhook');
-  check('webhook registration authorizes the pod',
-    /requireAuthorizedPodUrl\(req, res, podUrl\)/.test(hook), hook.slice(0, 800));
+  check('webhook registration authorizes the pod as relay-minted',
+    /requireAuthorizedPodUrl\(req, res, podUrl, true\)/.test(hook), hook.slice(0, 800));
   check('webhook delivery is keyed by pod',
     /notificationWebhooks\.get\(podUrl\)/.test(SERVER_CODE));
   check('SSE fan-out is keyed by pod slug', /sseSubscribers\.get\(slug\)/.test(SERVER_CODE));
