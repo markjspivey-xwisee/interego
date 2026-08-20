@@ -2200,6 +2200,38 @@ function samePodPrincipal(a: string, b: string): boolean {
   return own !== null && subject !== null && own === subject;
 }
 
+/**
+ * The PUBLICLY-RESOLVABLE spelling of a pod on this store — for identifiers that get PUBLISHED,
+ * never for a fetch.
+ *
+ * ── ★★ AN IDENTIFIER IS A PROPERTY OF THE THING, NOT OF THE QUESTION ────────────────────────
+ *
+ * MEASURED by a delegate, same subject and same signature six seconds apart: a review with no named
+ * pod returned an ELR whose `id` and `provenance.rawDataLocations` were on the public gate; the SAME
+ * review with `read_pod_url` set to the internal spelling returned the same record naming its own
+ * evidence on `css.railway.internal`. `read_pod_url` let a caller name a pod, and the raw string it
+ * named was echoed straight into the published artifact — so the document made dereferenceable one
+ * day was undereferenceable again through the field added the next, and which one you got depended
+ * on HOW YOU ASKED rather than on anything about the subject.
+ *
+ * The read still goes wherever the caller named. This is only for the bytes that leave and become
+ * somebody else's identifier — the third time this session that one value has been serving two
+ * purposes, after `subject_pod_url` and the relay's own minting.
+ *
+ * ★ ONLY OUR STORE MOVES. A URL on any other origin is returned untouched: re-spelling a foreign
+ * host onto ours is precisely the laundering that made the relay's `toInternalPodUrl` an oracle.
+ */
+function canonicalPublicPodUrl(pod: string): string {
+  try {
+    if (!sameStore(pod, tenantPodUrl)) return pod;
+    const publicOrigin = new URL(tenantPodUrl).origin;
+    const u = new URL(pod);
+    return `${publicOrigin}${u.pathname}${u.search}${u.hash}`;
+  } catch {
+    return pod;
+  }
+}
+
 /** Another pod of the same principal that this deployment reads — see ReadTargetInput.otherPodForPrincipal. */
 function otherPodForPrincipal(podUrl: string): string | undefined {
   const want = podPrincipalKey(podUrl);
@@ -2749,6 +2781,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       learnerDid: requestedLearnerDid,
       learnerName: args.learner_name as string | undefined,
       learnerPodUrl: subjectPodUrl,
+      publicPodUrl: canonicalPublicPodUrl(subjectPodUrl),
       subjectKind,
       tenantDid: tenantProfileDid,
       lrsEndpoint: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080',
@@ -3645,7 +3678,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       await readDurableRecordedStatements({ podUrl: provePod }),
     );
     const proveElr = await assembleEnterpriseLearnerRecord({
-      learnerDid, learnerPodUrl: provePod, subjectKind: 'agent',
+      learnerDid, learnerPodUrl: provePod, publicPodUrl: canonicalPublicPodUrl(provePod), subjectKind: 'agent',
       tenantDid: tenantProfileDid, lrsEndpoint: bridgeBaseUrl, statements: proveStmts,
     });
     const wantSlug = String(args.competency_name ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-');
@@ -5741,7 +5774,7 @@ app.get('/agent/:did/affordances', async (req, res) => {
       await readDurableRecordedStatements({ podUrl: subjectPodUrl }),
     );
     const elr = await assembleEnterpriseLearnerRecord({
-      learnerDid: subjectDid, learnerPodUrl: subjectPodUrl, subjectKind: 'agent',
+      learnerDid: subjectDid, learnerPodUrl: subjectPodUrl, publicPodUrl: canonicalPublicPodUrl(subjectPodUrl), subjectKind: 'agent',
       tenantDid: tenantProfileDid, lrsEndpoint: bridgeBaseUrl, statements,
     });
     const TEACH_MIN_RANK = 4; // Proficient (Dreyfus rank 4) — the emergence threshold.
@@ -5872,6 +5905,7 @@ app.post('/agent/review-record', async (req, res) => {
       learnerDid: subjectDid,
       learnerName: typeof p.subject_name === 'string' ? p.subject_name : undefined,
       learnerPodUrl: subjectPodUrl,
+      publicPodUrl: canonicalPublicPodUrl(subjectPodUrl),
       subjectKind,
       tenantDid: tenantProfileDid,
       lrsEndpoint: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080',

@@ -216,7 +216,7 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // 286 -> 287: `tests/the-host-was-discarded-not-checked.test.ts`. `toInternalPodUrl` rewrote ANY
 // host onto our store instead of only our store's other spelling, which made the relay's key
 // handout a path-prefix test — a decryption oracle over every graph encrypted to the relay key.
-export const MIN_TEST_MODULES = 288;
+export const MIN_TEST_MODULES = 289;
 export const FLOOR_ALLOWANCE = 10;
 
 /**

@@ -223,6 +223,29 @@ export interface AssembleElrConfig {
   learnerDid: string;
   learnerName?: string;
   learnerPodUrl: string;
+  /**
+   * ── ★★ THE PUBLISHED IDENTIFIER IS NOT THE REQUEST ──────────────────────────────────────────
+   *
+   * `learnerPodUrl` is where this record was READ FROM, and it is whatever spelling the caller's
+   * request resolved to — which, once `read_pod_url` let a caller NAME a pod, can be the
+   * cluster-internal one. That value was flowing straight into the ELR's `id` and every
+   * `provenance.rawDataLocations` entry.
+   *
+   * MEASURED by a delegate, same subject and same signature six seconds apart: with no named pod
+   * the record came back with `id` on `https://gate.interego.xwisee.com/…`; with
+   * `read_pod_url: http://css.railway.internal:3456/…` it came back naming its own evidence on the
+   * internal host. So the artifact made dereferenceable one day was undereferenceable again
+   * through the field added the next, and which one you got depended on how you ASKED rather than
+   * on anything about the subject.
+   *
+   * ★ AN IDENTIFIER IS A PROPERTY OF THE THING, NOT OF THE QUESTION. Two callers asking about one
+   * subject must get one `id` back. This is the canonical, publicly-resolvable spelling of the
+   * subject's pod; the read still happens against `learnerPodUrl`. Same split as
+   * `subject_pod_url` (whose pod) versus the read target (whose record) one layer along.
+   *
+   * Defaults to `learnerPodUrl`, so a caller that has only one spelling behaves exactly as before.
+   */
+  publicPodUrl?: string;
   /** human (default) or agent. */
   subjectKind?: ElrSubjectKind;
   tenantDid: string;
@@ -299,8 +322,12 @@ export async function assembleEnterpriseLearnerRecord(
   }
 
   // 6. Provenance — P2997 raw-data-location indications.
+  // ★ PUBLISHED, so the canonical spelling — see `publicPodUrl`. A raw-data LOCATION that names an
+  // address only this cluster can resolve is a location in name only, and P2997 exists so a third
+  // party can go and look.
+  const publicPod = config.publicPodUrl ?? config.learnerPodUrl;
   const rawDataLocations: ElrRawDataLocation[] = [
-    { kind: 'subject-pod', location: config.learnerPodUrl, description: 'Subject-owned pod — credentials + competency assertions (the authoritative wallet).' },
+    { kind: 'subject-pod', location: publicPod, description: 'Subject-owned pod — credentials + competency assertions (the authoritative wallet).' },
     { kind: 'lrs', location: `${config.lrsEndpoint}/xapi/statements`, description: 'Foxxi-as-LRS — raw xAPI experience + performance statements.' },
   ];
   for (const c of credentials) {
@@ -318,7 +345,7 @@ export async function assembleEnterpriseLearnerRecord(
     '@type': [`${LER_NS}EnterpriseLearnerRecord`],
     // Dereferenceable URL id (everything-is-a-URL): the subject's own pod is the
     // authoritative home of the record, so the ELR is a fragment on it.
-    id: `${config.learnerPodUrl.replace(/\/+$/, '')}/#enterprise-learner-record`,
+    id: `${publicPod.replace(/\/+$/, '')}/#enterprise-learner-record`,
     // Dereferenceable spec IRI (everything-is-a-URL) — the same value the published
     // EnterpriseLearnerRecordShape asserts via sh:hasValue, so the assembled record
     // conforms to its own shape. Human label kept alongside.
