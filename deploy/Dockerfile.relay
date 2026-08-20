@@ -153,6 +153,9 @@ COPY deploy/mcp-relay/action-authority.ts ./
 # Pod authorization: which pod URLs a bearer may act on, and which of them the relay minted
 # itself. Extracted for the same reason — server.ts is unimportable, so the rule was untested.
 COPY deploy/mcp-relay/pod-authorization.ts ./
+# The expects/returns URLs the operations catalog advertises, and the JSON Schema documents
+# served at them. Extracted because the catalog was minting urn: values that fetch nothing.
+COPY deploy/mcp-relay/operation-contracts.ts ./
 # AMEP reference validator + JSON-LD context, vendored verbatim. amep.ts loads
 # them by a path relative to the COMPILED module (dist/amep.js), so after tsc
 # they must sit at dist/amep-vendor/.

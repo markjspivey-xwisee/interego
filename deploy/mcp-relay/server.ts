@@ -133,6 +133,9 @@ import { buildActionRoster, resolveActionTarget } from './action-authority.js';
 // Pod authorization, extracted so the rule is importable: server.ts calls app.listen() at
 // module scope and cannot be imported, which is why this area only had source-text coverage.
 import { authorizePodUrl } from './pod-authorization.js';
+// Operation contracts: the expects/returns URLs the catalog advertises, and the documents
+// served at them. Extracted because the catalog was minting urn: values that fetch nothing.
+import { contractDocument, operationActionUrl, operationContract } from './operation-contracts.js';
 // The outbound HTTP layer — pools, solidFetch, and the guarded egress choke point.
 // Extracted so the SSRF address screen's WIRING is importable by a test; see the
 // header of egress.ts for why a regex over this file could never assert it.
@@ -10983,15 +10986,23 @@ app.get('/.well-known/operations', (req, res) => {
     const schema = schemaByName.get(name);
     const classification = KERNEL_VERBS.has(name) ? 'kernel-verb' : 'thin-facade';
     const authRequired = AUTH_REQUIRED_TOOLS.has(name);
-    const shapeIri = `urn:iep:shape:input:${name}`;
-    const returnsIri = `urn:iep:shape:output:${name}`;
+    /**
+     * ★★ FETCHABLE, OR ABSENT. These were `urn:iep:shape:input:<name>` / `…:output:<name>` —
+     * 51 of 51 operations advertising a contract that resolves to nothing, with a `sh:nodeShape`
+     * pointing into a shapes graph whose 20 subjects include no urn at all. `agent.ts` refuses
+     * exactly this shape of claim from every capability anyone else publishes.
+     */
+    const contract = operationContract(base, name, schema as { inputSchema?: unknown; outputSchema?: unknown } | undefined);
     const title = schema && typeof (schema as { annotations?: { title?: string } }).annotations?.title === 'string'
       ? (schema as { annotations: { title: string } }).annotations.title
       : name;
     return {
       '@id': `urn:iep:operation:${name}`,
       '@type': ['iep:Affordance', 'hydra:Operation'],
-      action: `urn:iep:action:${name}`,
+      // The relay's OWN naming authority, which resolves — not a urn. The A2A card already
+      // publishes this URL form for the same action; the catalog naming it differently meant a
+      // peer resolving a skill id could match nothing here.
+      action: operationActionUrl(base, name),
       // REST shortcut — POST to /tool/:name is dispatched by the
       // existing handler at app.post('/tool/:name', …) which routes
       // by toolName through the same TOOLS registry.
@@ -10999,8 +11010,8 @@ app.get('/.well-known/operations', (req, res) => {
       method: 'POST',
       title,
       description,
-      expects: shapeIri,
-      returns: returnsIri,
+      ...(contract.expects ? { expects: contract.expects } : {}),
+      ...(contract.returns ? { returns: contract.returns } : {}),
       classification,
       // Hydra header expectations — Authorization is only required
       // for write tools (AUTH_REQUIRED_TOOLS); DPoP is always
@@ -11010,10 +11021,13 @@ app.get('/.well-known/operations', (req, res) => {
         { 'hydra:headerName': 'Authorization', 'hydra:required': authRequired },
         { 'hydra:headerName': 'DPoP',          'hydra:required': false },
       ],
-      // Pointer into the SHACL shapes graph served by
-      // /.well-known/shacl-shapes — clients dereference this to learn
-      // the payload contract before POSTing.
-      'sh:nodeShape': `${base}/.well-known/shacl-shapes#${shapeIri}`,
+      // ★ `sh:nodeShape` REMOVED, not repaired. It pointed at
+      // `/.well-known/shacl-shapes#urn:iep:shape:input:<name>`, and that document contains no urn
+      // subject at all — the fragment identified nothing. There is no per-operation SHACL shape to
+      // point at, and minting one would mean inventing an RDF predicate for every JSON parameter
+      // of every tool. The contract that actually governs the call is the JSON Schema now served
+      // at `expects`. A pointer to a fragment that resolves to nothing is worse than no pointer:
+      // it sends a client looking.
     };
   });
   res.type(wantsJsonLd ? 'application/ld+json' : 'application/json').json({
@@ -11024,6 +11038,41 @@ app.get('/.well-known/operations', (req, res) => {
     'hydra:totalItems': members.length,
     'hydra:member': members,
   });
+});
+
+/**
+ * The documents `expects` / `returns` point at.
+ *
+ * Without this route the catalog's new URLs would dangle exactly as the `urn:` values did — the
+ * whole defect was advertising a contract nobody can fetch, and swapping the scheme without
+ * serving anything would only make it harder to notice. Public and unauthenticated, like the
+ * catalog that names it: a caller has to be able to read the contract BEFORE it can authenticate,
+ * because the contract is how it learns what to send.
+ */
+app.get('/.well-known/operations/:name/:kind', (req, res) => {
+  const name = String(req.params['name'] ?? '');
+  const kind = String(req.params['kind'] ?? '');
+  if (kind !== 'input' && kind !== 'output') {
+    res.status(404).json({ error: 'no_such_contract', detail: 'kind must be "input" or "output"' });
+    return;
+  }
+  // Own-key only, and only for an operation this relay actually serves — the same lesson as the
+  // action authority: a bare index into an object answers for every Object.prototype member.
+  if (!Object.prototype.hasOwnProperty.call(TOOLS, name)) {
+    res.status(404).json({ error: 'no_such_operation', detail: `this relay serves no operation named ${name}` });
+    return;
+  }
+  // Same derivation the catalog uses, so the URL it advertises and the one served here agree.
+  const base = `${req.protocol}://${req.get('host') ?? ''}`;
+  const schema = TOOL_SCHEMAS.find((t) => t.name === name) as { inputSchema?: unknown; outputSchema?: unknown } | undefined;
+  const doc = contractDocument(base, name, kind, schema);
+  if (!doc) {
+    // Consistent with the catalog: an operation that publishes no schema advertises no `expects`,
+    // so this address is never linked to. Answering 404 keeps the two surfaces agreeing.
+    res.status(404).json({ error: 'no_published_contract', detail: `${name} publishes no ${kind} schema` });
+    return;
+  }
+  res.type('application/schema+json').json(doc);
 });
 
 // ── /vault/ingest — the Vault-LD projection affordance (emergent, not a tool) ──
