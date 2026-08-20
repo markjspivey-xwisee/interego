@@ -5252,6 +5252,7 @@ const REVIEW_RECORD_AFFORDANCE: Affordance = {
    */
   description: 'Review your IEEE P2997 Enterprise Learner Record + 1EdTech CLR 2.0 credential wallet, virtualized by Foxxi entirely over your OWN pod. Authenticate with a rev-196 signed-request envelope — Foxxi verifies your own signature and binds identity to the recovered did:ethr (no relay, no separate login). Defaults to your own record. '
     + 'HOW A COMPETENCY IS EARNED, so an empty judgement is readable before you spend a signature: a performance record counts toward a competency only if it carries a DOMAIN activity type, or asserts an outcome (success true/false). A record whose only type is a protocol envelope — AssertedContext, ProductionTask, SignedAuthorship, any *Facet — declares no skill, and auto-projected trajectory steps carry exactly that and no outcome, so any number of them yields zero competencies by design rather than by fault. The other two routes are a mastery-verb learning experience, and an alignment on a verified credential. Competence is a judgement about work; volume of work is not one. '
+    + 'WHO IS READABLE, which is a separate question from what counts: a subject is classified from its OWN signed statements, and a subject with none classifies HUMAN, whose record is private to its holder. That is why a brand-new agent cannot be read by anybody, and it is the correct answer rather than a fault — you are what you have done. ONE authenticated performance recorded as actor_kind agent is what flips it, and from that moment the record is a PUBLIC capability record any signed caller can read by naming your DID. Nothing you declare about yourself changes this: a self-declaration would let an agent assert its way into a public class without evidence, which is the opposite of every other rule here. '
     + 'CROSS-POD READS: pass subject_did to read another subject\'s discoverable agent-capability record — on every route, including through the relay. Two fields that used to be one: subject_pod_url answers WHOSE POD AM I (stamped from your session by sign_request, and never a read target), while the record you are asking for is resolved from subject_did and, when that subject has enrolled, from the pod the enrolment register says it actually writes to. If the subject holds a pod here that its identity does not resolve to, name it with read_pod_url — that carries no authority, only selects among pods this deployment already reads, and is refused with the reason if it names anything else. Every answer reports subject.podChosenBy so you can tell which pod was read and why. A HUMAN learner record stays private to its holder; agent capability records are public.',
   method: 'POST',
   targetTemplate: '{base}/agent/review-record',
@@ -6789,7 +6790,17 @@ const RECORD_PERFORMANCE_AFFORDANCE: Affordance = {
   action: 'urn:iep:action:foxxi:record-performance-signed' as Affordance['action'],
   toolName: 'record_foxxi_performance',
   title: 'Record a production-work performance event as yourself',
-  description: 'Record one unit of on-the-job production work as an xAPI performed statement, into your OWN Foxxi lens, authenticated by your delegation (no foxxi session token needed — this is the agent-drivable counterpart of foxxi.record_performance). Declare an activity_type (a domain type you define, e.g. urn:ttt:Move) to aggregate same-type executions into one competency; else it keys off task_name. success=true on demonstrated work promotes the competency to performance-verified. Reach it: sign_request the args, then act this affordance.',
+  /**
+   * ★ THE VISIBILITY SENTENCE IS ON THIS CONTROL, not only on the review affordance, because this
+   * is the moment the consequence attaches. Requested in exactly those terms by a delegate that had
+   * spent two turns unable to be read at all: of the three facts about classification, this is the
+   * only one that can surprise somebody badly, and a document describing it elsewhere is a document
+   * you read afterwards.
+   */
+  description: 'Record one unit of on-the-job production work as an xAPI performed statement, into your OWN Foxxi lens, authenticated by your delegation (no foxxi session token needed — this is the agent-drivable counterpart of foxxi.record_performance). Declare an activity_type (a domain type you define, e.g. urn:ttt:Move) to aggregate same-type executions into one competency; else it keys off task_name. success=true on demonstrated work promotes the competency to performance-verified. '
+    + 'THIS ALSO MAKES YOUR RECORD PUBLIC, and it is the act that does it. A subject is classified from its own signed statements; with none it classifies HUMAN and its record is private to its holder — which is why a new agent can be read by nobody, and is the correct answer rather than a fault. Recording a performance as actor_kind agent classifies you as an agent, and an agent capability record is public: from then on any signed caller can read your competencies, your performance history and your credentials by naming your DID. '
+    + 'WHERE IT LANDS: the pod your IDENTITY FORM derives — a bare did:ethr writes to eth-<hex>, an identity carrying a pod id writes to that one. One wallet can hold both, and a review resolves the pod from the identity it is given, so records split across the two are read separately. The response names the pod written to, and names the other one if this deployment reads it. Pass subject_pod_url in the signed payload to write to that one instead. '
+    + 'Reach it: sign_request the args, then act this affordance.',
   method: 'POST',
   targetTemplate: '{base}/agent/record-performance',
   mediaType: 'application/json',
@@ -7827,7 +7838,52 @@ app.post('/agent/record-performance', async (req, res) => {
       projections: ['rdf', 'vc', 'activity'],
       ...(recipientPods.length ? { recipientPods } : {}),
     });
-    res.json({ ok: true, recorded: true, statementId, performer: callerDid, taskId, taskName, activityType, success: p.success, durable: subjectPod, lensTenant: lensTenantFor(label), ...(sharedLattice ? { sharedLattice } : {}) });
+    /**
+     * ★★ THE CONSEQUENCE ATTACHES HERE, SO IT IS SAID HERE.
+     *
+     * An agent with NO signed evidence classifies `human` and its record is private — the correct
+     * fail-closed default, and the reason a brand-new agent is unreadable. ONE authenticated
+     * performance recorded as `actor_kind: agent` is what flips it, and from that moment the
+     * subject's whole learner record is a PUBLIC capability record that any signed caller may read.
+     *
+     * A delegate asked for this to be published on the CONTROL rather than only in the affordance,
+     * because "this is the moment the consequence attaches", and it is the one fact here that could
+     * surprise somebody badly. It is not a warning about a defect: fail-closed-to-human was
+     * protecting a party who had not chosen anything yet, and this is the choice.
+     */
+    const flipsToPublic = (p.actor_kind === 'human' ? 'human' : 'agent') === 'agent';
+    /**
+     * ★ AND WHERE IT LANDED, PLUS THE OTHER POD IF THERE IS ONE — see otherPodForPrincipal.
+     *
+     * The write binds to the pod your IDENTITY FORM derives: a bare `did:ethr:` writes to
+     * `eth-<hex>`, an identity carrying a pod id writes to that one. One wallet can hold both, so
+     * "where does my history live" has an answer that depends on how you signed — and it decided,
+     * silently, that five records went somewhere a register pointing at the other spelling would
+     * not find. Reported, never chosen for you: pass subject_pod_url to write to the other one.
+     */
+    const alsoHolds = otherPodForPrincipal(subjectPod);
+    res.json({
+      ok: true, recorded: true, statementId, performer: callerDid, taskId, taskName, activityType,
+      success: p.success, durable: subjectPod, lensTenant: lensTenantFor(label),
+      ...(alsoHolds
+        ? {
+          samePrincipalAlsoHolds: {
+            pod: alsoHolds,
+            note: `This record landed in ${subjectPod}, the pod your identity form derives. The same wallet also holds ${alsoHolds}, which this deployment reads. A review resolves the pod from the identity it is given, so records split across the two are read separately — pass subject_pod_url in the signed payload to write to the other one instead.`,
+          },
+        }
+        : {}),
+      ...(flipsToPublic
+        ? {
+          recordVisibility: {
+            subjectKind: 'agent',
+            publiclyReadable: true,
+            note: 'Recording a performance as an agent is what classifies you. An agent capability record is PUBLIC: from now on any signed caller can read your competencies, your performance history and your credentials by naming your DID. A subject with no signed evidence classifies human and stays private — that default was protecting a party who had not chosen; this is the choice.',
+          },
+        }
+        : {}),
+      ...(sharedLattice ? { sharedLattice } : {}),
+    });
   } catch (err) {
     sendServerError(res, err, 'route-handler');
   }

@@ -64,10 +64,21 @@ check('resolveIpfsConfig still reads args._req by property access',
 // The `reserved` list can only name internals that existed when it was written.
 // `_req` was not on it. A prefix rule covers the ones nobody has added yet, and
 // keeps session state out of an artifact that is signed and forwarded onward.
-const signFn = server.slice(
-  server.indexOf('async function handleSignRequest'),
-  server.indexOf('async function handleSignRequest') + 4000,
-);
+/**
+ * ★★ THE FUNCTION BODY, NOT A FIXED-SIZE WINDOW — and this is a bug this file HAD.
+ *
+ * It sliced 4000 characters from the signature. The rule it looks for sat at offset 4197 the day
+ * somebody added a paragraph above it, so the check went red over a line that had not changed and a
+ * rule that was still enforced. A guard that fails when a COMMENT grows teaches people to shorten
+ * comments, or worse, to distrust the guard — and the failure looked exactly like a real regression
+ * in the signer, which is how it got a deploy shipped past a red run.
+ *
+ * Signature to the first line-start `}` is the same shape every other source-level assertion in
+ * this repo uses, and it cannot drift with the size of anything inside.
+ */
+const signStart = server.indexOf('async function handleSignRequest');
+const signEnd = server.indexOf('\n}\n', signStart);
+const signFn = server.slice(signStart, signEnd < 0 ? server.length : signEnd + 3);
 check('sign_request exists', signFn.length > 0);
 check('sign_request refuses underscore-prefixed keys',
   /k\.startsWith\('_'\)/.test(signFn),
