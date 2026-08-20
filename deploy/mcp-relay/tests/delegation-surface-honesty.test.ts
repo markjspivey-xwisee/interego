@@ -138,8 +138,39 @@ check('runScopeGate consumes it',
   /runScopeGate[\s\S]{0,1400}const authority = await resolveDelegationAuthority\(agentId, podUrl\)/.test(SERVER_CODE));
 check('runScopeGate no longer inlines its own chain-then-registry walk',
   !/const registryOnly = await verifyAgentDelegation\([\s\S]{0,200}\n\s*\);\n\s*valid = registryOnly\.valid;\n\s*scope = registryOnly\.scope \?\? scope;\n\s*\}\n\s*\} catch/.test(SERVER_CODE));
+/**
+ * ★★ THE FUNCTION BODY, NOT A FIXED WINDOW — the fourth instance of one error this week.
+ *
+ * This read `/handleVerifyAgent[\s\S]{0,2000}enforcement: \{/` and went red the day a THIRD stated
+ * answer was added to the same handler, because the new block pushed `enforcement: {` past
+ * character 2000. Nothing it guards had changed. Same shape as the 4000-character slice in
+ * `tool-args-hygiene.test.mjs`, as the prune probing `/.well-known/context-graphs` for "does this
+ * pod exist", and as a row count standing in for a byte bound: A PROXY THAT IS RIGHT UNTIL
+ * SOMETHING LEGITIMATE GROWS. Worse here than elsewhere, because a gate that reddens over an
+ * unrelated addition trains people to read red as noise — and this week that cost two deploys past
+ * a red run.
+ *
+ * Signature to the first line-start `}` cannot drift with the size of anything inside it.
+ */
+const verifyAgentBody = (() => {
+  const at = SERVER_CODE.indexOf('async function handleVerifyAgent');
+  if (at < 0) return '';
+  const end = SERVER_CODE.indexOf('\n}\n', at);
+  return SERVER_CODE.slice(at, end < 0 ? SERVER_CODE.length : end + 3);
+})();
+check('handleVerifyAgent is findable (the body slice above is not silently empty)',
+  verifyAgentBody.length > 0);
 check('verify_agent reports the enforcement answer',
-  /handleVerifyAgent[\s\S]{0,2000}enforcement: \{/.test(SERVER_CODE));
+  /enforcement: \{/.test(verifyAgentBody));
+/**
+ * ★ AND THE THIRD ANSWER, which a live delegate needed and neither of the other two gave:
+ * `verified` says the chain anchors, `enforcement` says the relay will grant scope — and a
+ * delegated call was still 401'd because the relay's CURRENT signing key was not the anchor
+ * recorded in the credential. Measured: `verified: true`, `writeEligible: true`, and every
+ * `/agent/*` call refused, in the same minute. A green light that does not predict the next call.
+ */
+check('…and whether the agent can actually sign a delegated request right now',
+  /canSignDelegatedRequests/.test(verifyAgentBody) && /credentialAnchor/.test(verifyAgentBody));
 check('…including the basis the relay is acting on',
   /basis: enforcement\.basis/.test(SERVER_CODE));
 check('…and whether that scope may actually write',

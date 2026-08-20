@@ -5580,6 +5580,54 @@ async function handleVerifyAgent(args: ToolArgs): Promise<string> {
   // 276-pod enumeration that rules out failing closed. This block is the half that was
   // missing: the enforcement answer, stated, beside the cryptographic one.
   const enforcement = await resolveDelegationAuthority((args.agent_id as string), podUrl);
+  /**
+   * ── ★★ AND WHETHER THE AGENT CAN ACTUALLY SIGN A REQUEST RIGHT NOW ──────────────────────────
+   *
+   * A THIRD question comes apart from the other two, and a live delegate found it the hard way:
+   * `verified` answers "does the signed chain anchor?", `enforcement` answers "will the relay grant
+   * this agent scope on this pod?", and NEITHER answers "will a delegated call from this agent be
+   * accepted?" — which depends on the relay's CURRENT signing key matching the anchor recorded in
+   * the credential.
+   *
+   * MEASURED, same identity, same relay, same minute: `verify_agent` returned `verified: true`,
+   * `trustLevel: CryptographicallyVerified`, `writeEligible: true` — and every `/agent/*` call
+   * returned 401 "request signer 0xb897…is not the delegation anchor key (0x0FDC…)". Both verdicts
+   * were correct about their own question. An agent that did the responsible thing and checked
+   * before acting was told it was cryptographically verified and then refused on the next call. Its
+   * words: "verify_agent becomes a green light that means nothing."
+   *
+   * ★ THE CAUSE IS FIXED SEPARATELY AND THIS STAYS ANYWAY. The rotation was `RELAY_COMPLIANCE_
+   * WALLET_JSON` being unset on this deployment — the relay minted a fresh signing wallet on every
+   * container start, so every deploy silently re-anchored and 401'd every relay-mediated agent
+   * whose credential named the previous one. Pinning it stops new rotations; it does not repair a
+   * credential already anchored to a key that no longer exists, and nothing was telling the holder
+   * that was its situation. So the answer is stated rather than left to be inferred from a refusal.
+   *
+   * This is the same repair as the `enforcement` block above, one question along: when a caller
+   * reads one verdict as the answer to a different question, add the other verdict.
+   */
+  const signing = await (async (): Promise<Record<string, unknown>> => {
+    try {
+      const relayAnchor = (await ensureRelayComplianceWallet()).wallet.address;
+      const vc = await readDelegationCredential(podUrl, (args.agent_id as string) as IRI, { fetch: solidFetch })
+        .catch(() => null);
+      const credentialAnchor = vc?.proof?.signerAddress;
+      const matches = !!credentialAnchor && credentialAnchor.toLowerCase() === relayAnchor.toLowerCase();
+      return {
+        relayAnchor,
+        credentialAnchor: credentialAnchor ?? null,
+        canSignDelegatedRequests: matches,
+        note: !credentialAnchor
+          ? 'No delegation credential was readable on this pod, so nothing anchors this agent and the relay cannot sign for it.'
+          : matches
+            ? 'The relay signs with the key this credential is anchored to, so delegated requests from this agent will authenticate.'
+            : 'STALE ANCHOR: this credential is anchored to a key the relay no longer signs with, so delegated requests will be refused with 401 even though the chain above verifies. Re-register the agent to re-anchor it — the relay\'s signing key is pinned now, so a re-anchor is permanent rather than lasting until the next deploy.',
+      };
+    } catch (err) {
+      // Never let this block break the verdict it is annotating.
+      return { canSignDelegatedRequests: null, note: `could not resolve the signing anchor: ${(err as Error).message}` };
+    }
+  })();
   return JSON.stringify({
     // ★ AND IT SAYS WHICH POD IT IS ABOUT. The envelope carried `verified`, `trustLevel`
     // and a signed chain, and named no subject — so the answer to "is this agent
@@ -5589,9 +5637,18 @@ async function handleVerifyAgent(args: ToolArgs): Promise<string> {
     // The stdio shim in mcp-server/server.ts already emitted `pod: args.pod_url`; putting
     // the field in the shared builder converges the two surfaces rather than drifting
     // them further, which is the drift buildVerifyAgentEnvelope exists to prevent.
-    ...buildVerifyAgentEnvelope(result, podUrl),
+    /**
+     * ★ THE POD IS NAMED IN THE PUBLIC SPELLING, because this is the tool an OUTSIDE PEER calls to
+     * check whether an agent is who it says it is — and it was answering with
+     * `http://css.railway.internal:3456/…`, which resolves nowhere outside this cluster. The
+     * `sign_request` stamp was fixed first; a delegate then measured that the fix had not reached
+     * the one verdict a stranger reads. A verdict that names its subject at an address the reader
+     * cannot dereference has not really named it.
+     */
+    ...buildVerifyAgentEnvelope(result, asPublicPodUrl(podUrl)),
     subject_pod_name: subject.podName,
     subject_pod_selected_by: subject.source,
+    signing,
     enforcement: {
       enforced: enforcement.enforced,
       scope: enforcement.scope,

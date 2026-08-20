@@ -205,9 +205,22 @@ for (const tool of ['handleRegisterAgent', 'handleRevokeAgent', 'handlePublishDi
 // site, in code with comments stripped, and the builder's actual output is asserted
 // behaviourally in tests/verify-agent-envelope.test.ts at the repo root.
 const verify = codeOf(SERVER.match(/async function handleVerifyAgent\(args: ToolArgs\)[\s\S]*?\n\}/)?.[0] ?? '');
+// ★ AND IT PINS THE ARGUMENT, NOT THE ARGUMENT'S EXACT TEXT. This read
+// `/buildVerifyAgentEnvelope\(result, podUrl\)/` and went red when the subject started being
+// spelled publicly — `buildVerifyAgentEnvelope(result, asPublicPodUrl(podUrl))` — over a change
+// that strengthens the very property it guards. A gate that fails on a legitimate refinement of
+// what it is protecting teaches people to loosen it; the pattern below still fails if the second
+// argument is DROPPED, which is the mutant that matters.
 ok('verify_agent passes the resolved subject INTO the envelope builder',
-  /buildVerifyAgentEnvelope\(result, podUrl\)/.test(verify),
+  /buildVerifyAgentEnvelope\(\s*result\s*,[^)]*podUrl/.test(verify),
   'a verdict a caller cannot attribute to a pod is not checkable');
+// ★ …AND NAMES IT AT AN ADDRESS THE READER CAN DEREFERENCE. verify_agent is the tool an OUTSIDE
+// PEER calls to check whether an agent is who it says it is, and it was answering with
+// `http://css.railway.internal:3456/…`, which resolves nowhere outside this cluster. Measured by a
+// delegate after the same fix had landed on `sign_request` and not here.
+ok('verify_agent names the subject pod in the PUBLIC spelling',
+  /buildVerifyAgentEnvelope\(\s*result\s*,\s*asPublicPodUrl\(/.test(verify),
+  'a verdict that names its subject at an unresolvable address has not really named it');
 ok('verify_agent also reports which selector chose that subject',
   /subject_pod_name: subject\.podName/.test(verify) && /subject_pod_selected_by: subject\.source/.test(verify));
 
