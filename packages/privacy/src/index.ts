@@ -183,7 +183,17 @@ const DETECTORS: readonly Detector[] = [
   {
     kind: 'phone-number',
     description: 'Phone number (international or NANP)',
-    pattern: /(?<!\d)(?:\+?\d{1,3}[ -]?)?\(?\d{3}\)?[ -]?\d{3}[ -]?\d{4}(?!\d)/g,
+    /**
+     * ★★ THE COUNTRY-CODE GROUP HAD NO REQUIRED PUNCTUATION, so it silently absorbed three extra
+     * BARE digits and the pattern spanned a full 13-digit run — matching every epoch-millisecond
+     * timestamp at 100%, not the ~10% the credit-card rule caught. Both fired on the same value;
+     * only overlap-dedup by severity hid this one, which is why a live agent saw its own step id
+     * called a credit card one turn and a phone number the next.
+     *
+     * A leading country code is written `+1` or `1-`, never as three digits jammed against the
+     * number. Requiring either the `+` or a separator keeps every real spelling and drops the run.
+     */
+    pattern: /(?<!\d)(?:\+\d{1,3}[ -]?|\d{1,3}[ -])?\(?\d{3}\)?[ -]?\d{3}[ -]?\d{4}(?!\d)/g,
     severity: 'low',
   },
   {
@@ -243,6 +253,23 @@ export function screenForSensitiveContent(content: string): readonly Sensitivity
 
       // Per-detector secondary validation.
       if (detector.kind === 'credit-card' && !luhnValid(match)) continue;
+      /**
+       * ── ★★ AN EPOCH-MILLISECOND TIMESTAMP IS NOT A PAYMENT CARD, AND LUHN DOES NOT SAVE US ──
+       *
+       * MEASURED, live, every turn for days: an agent's own identifiers end in a 13-digit
+       * millisecond timestamp — `urn:iep:trajectory-step:<agent>:1787195991824` — and that value
+       * is GENUINELY Luhn-valid, as roughly one epoch-ms in ten is. So the check that exists to
+       * stop exactly this kind of false positive waved it straight through, and the agent was told
+       * its own generated id was somebody's credit card. It reported it four times before anyone
+       * looked.
+       *
+       * ★ THE MISSING CONSTRAINT IS THE ONE THING A CARD NUMBER ACTUALLY HAS AND A TIMESTAMP DOES
+       * NOT: an ISO/IEC 7812 major industry identifier. Every issued PAN starts 2-6 (Visa 4,
+       * Mastercard 2/5, Amex 3, Discover 6). Epoch milliseconds have started with 1 since 2001 and
+       * will until 2033. One digit of context, and it is a real property of the thing being
+       * detected rather than a carve-out for the thing that annoyed us.
+       */
+      if (detector.kind === 'credit-card' && !/^[2-6]/.test(match.replace(/\D/g, ''))) continue;
 
       flags.push({
         kind: detector.kind,

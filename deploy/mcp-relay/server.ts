@@ -8082,9 +8082,35 @@ async function handleKernelAct(args: ToolArgs): Promise<string> {
   );
   // Genuine relay-attestation proof for a same-origin /amep act (→ Verified).
   const actPayload = await stampAmepProof(actPayload0, amepTarget, { signer: amepActSigner, publicBaseUrl: PUBLIC_BASE_URL });
+  /**
+   * ── ★★ AUTHORISE THE KEY AGAINST THE URL WHOSE BYTES ARE DECRYPTED ──────────────────────────
+   *
+   * This passed `recipientKeyFor(args, descriptorUrl)` unconditionally — but `descriptor_url` and
+   * `target` are two SEPARATE caller arguments, exposed side by side in the schema, and the
+   * affordance above picks between them: with `action_iri` present the kernel follows the
+   * descriptor, and WITHOUT it the kernel fetches `target` directly while `descriptorUrl` is still
+   * defined and still authorising the key.
+   *
+   * So: `descriptor_url` = anything under your own pod, `action_iri` omitted, `target` = a victim's
+   * envelope. The key is granted on the first URL and applied to the bytes of the second. The
+   * `recipientKeyFor` gate is exact about WHOSE pod a URL is in and says nothing about whether that
+   * URL is the one being read — which is the whole defect, and `handleGetDescriptor` already gets
+   * it right (`recipientKeyFor(args, link.accessURL)`), so the correct pattern was in the file.
+   *
+   * The branch decides the URL now, so the authorisation and the fetch cannot disagree.
+   *
+   * ★ AND THIS IS THE NARROW FIX, NOT THE COMPLETE ONE. A descriptor on the caller's own pod may
+   * still name a `hydra:target` anywhere, and the kernel follows it holding this key — so the
+   * remaining hole is "authorise on a descriptor I control, decrypt what it points at". Closing
+   * that means replacing the `recipientKeyPair` option with a `mayDecrypt(url)` callback so every
+   * decrypt site must ASK about the URL it actually fetched. That option threads through
+   * packages/solid and packages/pgsl and is its own change; it is not a rider on this one. Recorded
+   * rather than half-done.
+   */
+  const keyAuthorisedFor = 'descriptorUrl' in affordance ? affordance.descriptorUrl : affordance.target;
   const r = await kernelAct(affordance as Parameters<typeof kernelAct>[0], actPayload, {
     fetch: actFetch,
-    recipientKeyPair: await recipientKeyFor(args, descriptorUrl),
+    recipientKeyPair: await recipientKeyFor(args, keyAuthorisedFor),
     ...(authorization ? { authorization } : {}),
   });
   return JSON.stringify(decorateKernelResult(r as unknown as Record<string, unknown>, {

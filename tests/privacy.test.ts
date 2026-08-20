@@ -211,3 +211,58 @@ describe('formatSensitivityWarning + shouldBlockOnSensitivity', () => {
     expect(shouldBlockOnSensitivity(flags)).toBe(false);
   });
 });
+
+/**
+ * ── ★★ AN AGENT'S OWN IDENTIFIER IS NOT THE USER'S PAYMENT CARD ─────────────────────────────
+ *
+ * MEASURED, live, on four consecutive turns: every trajectory-step id this substrate mints ends in
+ * a 13-digit epoch-millisecond timestamp — `urn:iep:trajectory-step:<agent>:1787195991824` — and
+ * BOTH numeric detectors matched it. The agent reported being told its own generated id was a
+ * credit card, then a phone number; same value, different rule, because overlap-dedup keeps
+ * whichever severity is higher.
+ *
+ * ★ THE LUHN CHECK DID NOT SAVE US, which is the part worth remembering. 1787195991824 is
+ * genuinely Luhn-valid, as roughly one epoch-ms in ten is — so the guard that exists to stop this
+ * exact false positive waved it straight through, and looked like it was working.
+ *
+ * Both fixes add a REAL property of the thing being detected rather than a carve-out for the thing
+ * that annoyed us: a payment card carries an ISO/IEC 7812 major industry identifier (2-6; epoch
+ * milliseconds have begun with 1 since 2001), and a written country code carries a `+` or a
+ * separator rather than three digits jammed against the number.
+ */
+describe('★ a 13-digit timestamp is neither a card nor a phone number', () => {
+  const STEP_ID = 'urn:iep:trajectory-step:interego-delegate-u-eth-03f52e15b9df:1787195991824';
+
+  it('the real, Luhn-VALID step id flags nothing', () => {
+    expect(screenForSensitiveContent(STEP_ID).map((f) => f.kind)).toEqual([]);
+  });
+
+  it('and so does a Luhn-invalid neighbour — the phone rule caught those too', () => {
+    expect(screenForSensitiveContent('urn:iep:trajectory-step:x:1787195991825')
+      .map((f) => f.kind)).toEqual([]);
+  });
+
+  it('★ a bare 13-digit run is still not a phone number, whatever its Luhn value', () => {
+    // The country-code group used to be `(?:\+?\d{1,3}[ -]?)?` — no required `+`, no required
+    // separator — so it absorbed three extra bare digits and spanned the whole run at 100%.
+    for (const ms of ['1787195991824', '1787195991825', '1600000000000']) {
+      expect(screenForSensitiveContent(`id:${ms}`).map((f) => f.kind), ms).toEqual([]);
+    }
+  });
+});
+
+describe('★ and the real things are still detected — a quieter detector that misses is worse', () => {
+  it('genuine payment cards, across issuers', () => {
+    for (const pan of ['4111 1111 1111 1111', '5555555555554444', '378282246310005']) {
+      expect(screenForSensitiveContent(`card ${pan} on file`).map((f) => f.kind), pan)
+        .toContain('credit-card');
+    }
+  });
+
+  it('genuine phone numbers, across spellings', () => {
+    for (const p of ['(415) 555-2671', '415-555-2671', '4155552671', '+1 415 555 2671', '1-415-555-2671']) {
+      expect(screenForSensitiveContent(`call me on ${p}`).map((f) => f.kind), p)
+        .toContain('phone-number');
+    }
+  });
+});
