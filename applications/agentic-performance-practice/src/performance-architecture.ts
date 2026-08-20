@@ -759,7 +759,10 @@ export function evaluateIntervention(input: EvaluateInput): InterventionEvaluati
     levels.outcome = { gapClosed, before: situation.observed, after: input.newObserved };
     if (gapClosed) {
       verdict = 'closed';
-      nextAction = `The gap is closed. Emit a iep:supersedes-linked PerformanceSituation descriptor whose observed-state is "${input.newObserved}" and modalStatus Asserted; retire the intervention.`;
+      // Names the predicate an agent must actually emit. This read `iep:supersedes-linked`,
+      // which is declared nowhere — an instruction to use a term that does not exist, handed
+      // to an agent that would have emitted it verbatim.
+      nextAction = `The gap is closed. Emit a PerformanceSituation descriptor whose observed-state is "${input.newObserved}" and modalStatus Asserted, linked to this one by iep:supersedes; retire the intervention.`;
     } else if (input.newObserved !== situation.observed) {
       verdict = 'improved';
       nextAction = 'Performance improved but the gap is not fully closed. Re-contextualize against the new observed-state — the remaining gap may now have a different root cause.';

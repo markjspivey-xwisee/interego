@@ -25,10 +25,11 @@
 </head>
 <body>
   <h1>NIST AI Risk Management Framework mapping ontology <span class="mono ns">nist-rmf:</span></h1>
-  <p class="sub">Namespace <code>https://markjspivey-xwisee.github.io/interego/ns/nist-rmf#</code> &middot; 19 terms.</p>
+  <p class="sub">Namespace <code>https://markjspivey-xwisee.github.io/interego/ns/nist-rmf#</code> &middot; 30 terms.</p>
   <p>L3 mapping of Interego context primitives to NIST AI RMF (AI 100-1) four functions: Govern / Map / Measure / Manage.</p>
   <p><strong>Machine-readable form:</strong> <a href="nist-rmf.ttl" rel="alternate">nist-rmf.ttl</a> (Turtle) — the authoritative source. This page is a human-readable projection of it; each term below is identified by a hash IRI under this base (e.g. <code>nist-rmf:contributesTo</code> = <code>https://markjspivey-xwisee.github.io/interego/ns/nist-rmf#contributesTo</code>).</p>
   <h2>Terms</h2>
+  <div id="AuditScope" class="term"><code>nist-rmf:AuditScope</code> <span class="kind">Individual</span><div class="c">The ten published subcategories across GOVERN / MAP / MEASURE / MANAGE. Function short codes and the EvidenceRecord class are not controls and are not members.</div></div>
   <div id="contributesTo" class="term"><code>nist-rmf:contributesTo</code> <span class="kind">Object property</span><div class="c">Links an evidence descriptor to one or more category IRIs. Many-to-many: one record can satisfy multiple categories, one category needs multiple records.</div></div>
   <div id="evidenceLevel" class="term"><code>nist-rmf:evidenceLevel</code> <span class="kind">Datatype property</span><div class="c">How strong this evidence is: 'asserted' / 'measured' / 'audited' / 'externally-attested'.</div></div>
   <div id="EvidenceRecord" class="term"><code>nist-rmf:EvidenceRecord</code> <span class="kind">Class</span><div class="c">A descriptor that contributes evidence toward one or more RMF function categories. Carries nist-rmf:contributesTo links to the specific category IRIs (e.g., nist-rmf:Map.1.2). Compliance reports aggregate evidence per category.</div></div>
@@ -37,6 +38,9 @@
   <div id="Govern.1.1" class="term"><code>nist-rmf:Govern.1.1</code> <span class="kind">Individual</span></div>
   <div id="Govern.1.4" class="term"><code>nist-rmf:Govern.1.4</code> <span class="kind">Individual</span></div>
   <div id="Govern.2.1" class="term"><code>nist-rmf:Govern.2.1</code> <span class="kind">Individual</span></div>
+  <div id="GV-1.1" class="term"><code>nist-rmf:GV-1.1</code> <span class="kind">Individual</span><div class="c">GV-1.1 — short code for GOVERN 1.1</div></div>
+  <div id="GV-1.4" class="term"><code>nist-rmf:GV-1.4</code> <span class="kind">Individual</span><div class="c">GV-1.4 — short code for GOVERN 1.4</div></div>
+  <div id="GV-2.1" class="term"><code>nist-rmf:GV-2.1</code> <span class="kind">Individual</span><div class="c">GV-2.1 — short code for GOVERN 2.1</div></div>
   <div id="Manage" class="term"><code>nist-rmf:Manage</code> <span class="kind">Class</span><div class="c">Risk response: prioritize, treat, monitor. Categories: Manage.1 (priority), Manage.2 (treatment), Manage.3 (third-party risks), Manage.4 (monitoring + improvement).</div></div>
   <div id="Manage.1.2" class="term"><code>nist-rmf:Manage.1.2</code> <span class="kind">Individual</span></div>
   <div id="Manage.4.1" class="term"><code>nist-rmf:Manage.4.1</code> <span class="kind">Individual</span><div class="c">Continuous monitoring (Manage.4.1) is satisfied by AMTA attestations + Interego's federation surface — every action is queryable, attestations accumulate, anomalies surface via SPARQL filters.</div></div>
@@ -48,5 +52,12 @@
   <div id="Measure.1.1" class="term"><code>nist-rmf:Measure.1.1</code> <span class="kind">Individual</span></div>
   <div id="Measure.2.7" class="term"><code>nist-rmf:Measure.2.7</code> <span class="kind">Individual</span></div>
   <div id="MG" class="term"><code>nist-rmf:MG</code> <span class="kind">Individual</span><div class="c">NIST AI RMF short code for the MANAGE function. Citable IRI used in compliance evidence (e.g. nist-rmf:MG-1.1). Equivalent in scope to nist-rmf:Manage.</div></div>
+  <div id="MG-1.2" class="term"><code>nist-rmf:MG-1.2</code> <span class="kind">Individual</span><div class="c">MG-1.2 — short code for MANAGE 1.2</div></div>
+  <div id="MG-4.1" class="term"><code>nist-rmf:MG-4.1</code> <span class="kind">Individual</span><div class="c">MG-4.1 — short code for MANAGE 4.1</div></div>
+  <div id="MP-1.1" class="term"><code>nist-rmf:MP-1.1</code> <span class="kind">Individual</span><div class="c">MP-1.1 — short code for MAP 1.1</div></div>
+  <div id="MP-1.2" class="term"><code>nist-rmf:MP-1.2</code> <span class="kind">Individual</span><div class="c">MP-1.2 — short code for MAP 1.2</div></div>
+  <div id="MP-4.1" class="term"><code>nist-rmf:MP-4.1</code> <span class="kind">Individual</span><div class="c">MP-4.1 — short code for MAP 4.1</div></div>
+  <div id="MS-1.1" class="term"><code>nist-rmf:MS-1.1</code> <span class="kind">Individual</span><div class="c">MS-1.1 — short code for MEASURE 1.1</div></div>
+  <div id="MS-2.7" class="term"><code>nist-rmf:MS-2.7</code> <span class="kind">Individual</span><div class="c">MS-2.7 — short code for MEASURE 2.7</div></div>
 </body>
 </html>

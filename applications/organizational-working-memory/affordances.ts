@@ -447,7 +447,7 @@ const OWM_OPERATOR_AFFORDANCES: ReadonlyArray<Affordance> = [
     action: 'urn:iep:action:owm:publish-compliance-evidence' as IRI,
     toolName: 'owm.publish_compliance_evidence',
     title: '[operator] Wrap an operational event as compliance-grade evidence',
-    description: 'Org-operator-side: wrap an org-level operational event (deploy, access change, key rotation, incident, quarterly review) as a compliance: true descriptor citing the relevant control IRIs (soc2:CC6.1, eu-ai-act:Article15, nist-rmf:MG-1.1, etc.). Composes src/ops/ for the event shape and integrations/compliance-overlay/ for the framework citation. The same code path that records the ops event becomes board-facing audit evidence; no parallel pipeline.',
+    description: 'Org-operator-side: wrap an org-level operational event (deploy, access change, key rotation, incident, quarterly review) as a compliance: true descriptor citing the relevant control IRIs (soc2:CC6.1, eu-ai-act:Article15, nist-rmf:MG-4.1, etc.). Composes src/ops/ for the event shape and integrations/compliance-overlay/ for the framework citation. The same code path that records the ops event becomes board-facing audit evidence; no parallel pipeline.',
     method: 'POST',
     targetTemplate: '{base}/owm/publish_compliance_evidence',
     annotations: { title: 'Publish compliance evidence', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },

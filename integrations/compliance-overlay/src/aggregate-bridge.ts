@@ -72,8 +72,11 @@ type ActingAgent = { agentDid: IRI };
  *     how aggregate data is collected and processed.
  *   - EU AI Act Article 12 (Record-keeping): the descriptor IS the
  *     record.
- *   - NIST RMF MG-3.1 (Risk responses): the privacy boundary on the
- *     query is the operator's documented risk mitigation.
+ *   - NIST RMF MG-1.2 (Treatment of documented AI risks is prioritized):
+ *     the privacy boundary on the query is the operator's documented
+ *     risk treatment. This read MG-3.1, and no MANAGE 3.1 subcategory
+ *     is published anywhere — the prose named the same non-existent IRI
+ *     the code below emitted.
  *
  * Operators can override via the citation arg; this is the default
  * shape when only `framework` is supplied.
@@ -82,7 +85,14 @@ function defaultAggregateControls(framework: ComplianceCitation['framework']): r
   switch (framework) {
     case 'soc2':       return ['soc2:CC6.1', 'soc2:CC6.7'];
     case 'eu-ai-act':  return ['eu-ai-act:Article10', 'eu-ai-act:Article12'];
-    case 'nist-rmf':   return ['nist-rmf:MG-3.1'];
+    // ★ WAS `nist-rmf:MG-3.1`, WHICH NAMES NOTHING. The ontology promises the short-code form is
+    // citable, so the shape of this citation was right — but no MANAGE 3.1 subcategory is
+    // published, so the scorer counted every aggregate attestation as no evidence at all. The
+    // short codes are declared now; this cites a published one. A privacy-preserving aggregate
+    // IS a risk treatment, which is what MANAGE 1.2 covers. If this deployment means a
+    // third-party-risk subcategory instead, publish it and cite that — the point is that the
+    // citation must name something a reader can dereference.
+    case 'nist-rmf':   return ['nist-rmf:MG-1.2'];
   }
 }
 

@@ -19,7 +19,12 @@
  *   regulatory category, returning a structured report.
  */
 
-import type { IRI } from '@interego/core';
+import { existsSync as nsExists, readFileSync as nsRead } from 'node:fs';
+import { dirname, join as joinPath } from 'node:path';
+import { fileURLToPath } from 'node:url';
+// The scope is PUBLISHED DATA parsed at runtime — see FRAMEWORK_CONTROLS for what this replaced.
+import { parseTrig, findSubjectsOfType, readStringValue } from '@interego/core';
+import type { IRI, ParsedSubject } from '@interego/core';
 
 export type ComplianceFramework = 'eu-ai-act' | 'nist-rmf' | 'soc2';
 
@@ -89,6 +94,14 @@ export interface FrameworkReportEntry {
 
 export interface FrameworkReport {
   readonly framework: ComplianceFramework;
+  /**
+   * WHERE THE DENOMINATOR CAME FROM. 'published' means the scope was read from the framework's
+   * iep:ControlSet and `scopeIri` dereferences to it; 'fallback' means docs/ns was unreachable and
+   * the frozen array was used. A percentage whose denominator a reader cannot locate is the defect
+   * this replaced, so the provenance travels WITH the number rather than being assumed.
+   */
+  readonly scopeSource: 'published' | 'fallback';
+  readonly scopeIri?: string;
   readonly generatedAt: string;
   readonly auditPeriod?: { from: string; to: string };
   readonly summary: {
@@ -102,8 +115,33 @@ export interface FrameworkReport {
 }
 
 /**
- * Selected control IRIs per framework. v1 ships with the controls
- * declared in our docs/ns/<framework>.ttl. Extensible.
+ * ── ★★★ THE SCOPE IS PUBLISHED DATA NOW; THIS ARRAY IS A FALLBACK THAT MUST NOT BE REACHED ──
+ *
+ * The docblock here used to read "v1 ships with the controls declared in our
+ * docs/ns/<framework>.ttl", and that sentence had quietly become false:
+ *
+ *     soc2      16 listed here     25 declared in docs/ns/soc2.ttl
+ *     nist-rmf   8 listed here     10 declared in docs/ns/nist-rmf.ttl
+ *
+ * `generateFrameworkReport` divides by `entries.length`, so a SOC 2 report reading 100% meant
+ * 16 of 16 against a scope no reader could see, with nine controls silently excluded and nothing
+ * naming which. A compliance number whose denominator is invisible is not a compliance number.
+ *
+ * ★ AND THE PROJECT'S OWN EVIDENCE DID NOT MATCH ITS OWN SCORER. `integrations/compliance-overlay`
+ * cites `eu-ai-act:Article12` — exactly as that term's published comment instructs ("used as a
+ * dct:conformsTo control target in compliance evidence; realized structurally by
+ * eu-ai-act:LoggedAction") — while this scorer keyed on `LoggedAction` and counted the citation as
+ * nothing. The bridge read what was published; the engine did not.
+ *
+ * The scope now lives in each framework's ontology as an `iep:ControlSet`, is parsed at runtime,
+ * and `rdfs:seeAlso` aliases resolve so either spelling of a control satisfies it. Widening the
+ * scope is an edit to a graph. See `loadControlSet` below and the exemplar in
+ * `applications/foxxi-content-intelligence/src/ler-tla-vocab.ts`.
+ *
+ * ★ THIS ARRAY REMAINS ONLY AS A LAST-RESORT FALLBACK for an embedding that cannot reach docs/ns,
+ * and every report says which source it used (`scopeSource`). It is deliberately NOT the silent
+ * default: a hidden fallback would recreate the exact defect — a scope in force that nobody can
+ * see — and the report makes the degradation visible instead.
  */
 export const FRAMEWORK_CONTROLS: Readonly<Record<ComplianceFramework, readonly { iri: IRI; label: string }[]>> = {
   'eu-ai-act': [
@@ -160,12 +198,198 @@ export interface AuditableDescriptor {
   readonly evidenceForControls: readonly IRI[];
 }
 
+/** One control in scope: its canonical IRI, its label, and every spelling that satisfies it. */
+export interface ScopedControl {
+  readonly iri: IRI;
+  readonly label: string;
+  /** Canonical IRI, its CURIE, and any rdfs:seeAlso alias — all forms and both spellings. */
+  readonly aliases: ReadonlySet<string>;
+}
+
+export interface ControlSet {
+  readonly controls: readonly ScopedControl[];
+  /** 'published' when the scope came from the ontology; 'fallback' when docs/ns was unreachable. */
+  readonly scopeSource: 'published' | 'fallback';
+  /** The dereferenceable IRI of the iep:ControlSet this scope came from, when published. */
+  readonly scopeIri?: string;
+}
+
+const NS_BASE = 'https://markjspivey-xwisee.github.io/interego/ns/';
+const IEP = `${NS_BASE}iep#`;
+
+/**
+ * Where the published ontologies live.
+ *
+ * ★★ THE WALK ALONE DOES NOT SURVIVE PACKAGING, AND THAT WOULD HAVE MADE THIS WHOLE CHANGE A
+ * NO-OP IN PRODUCTION.
+ *
+ * Reading the roster from `docs/ns` is only an improvement where `docs/ns` is reachable. The relay
+ * — the one deployed service that scores these reports — installs this package from a TARBALL into
+ * `/app/node_modules/@interego/compliance`, and its image ships no `docs/ns` at all. Every walk
+ * from there terminates at `/`, so `loadControlSet` would have selected the frozen array on the
+ * live relay while every local test proved the published one. Green here, wrong there: the failure
+ * mode this project keeps rediscovering, and one no amount of local verification detects.
+ *
+ * `INTEREGO_NS_DIR` makes the location an explicit deployment fact instead of a property of where
+ * npm happened to put a directory. The walk stays as the development-tree convenience it always
+ * was. Whichever wins, `scopeSource` on the report says which — a fallback is never silent.
+ */
+function resolveNsDir(): string | undefined {
+  const configured = process.env['INTEREGO_NS_DIR']?.trim();
+  if (configured) return nsExists(configured) ? configured : undefined;
+  let dir = dirname(fileURLToPath(import.meta.url));
+  for (let i = 0; i < 8; i++) {
+    const candidate = joinPath(dir, 'docs', 'ns');
+    if (nsExists(candidate)) return candidate;
+    const parent = joinPath(dir, '..');
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return undefined;
+}
+
+const _scopeCache = new Map<string, ControlSet>();
+
+/**
+ * The controls a report scores against, READ FROM THE PUBLISHED ONTOLOGY.
+ *
+ * Membership comes from the framework's `iep:ControlSet` (`iep:control` members) rather than from
+ * `rdf:type`, because the three ontologies model controls differently and inferring would be the
+ * engine guessing at somebody else's modelling — see the ControlSet term's own comment.
+ *
+ * Falls back to the frozen array ONLY when docs/ns cannot be reached, and says so in the report via
+ * `scopeSource`, because a silent fallback is the defect this replaces.
+ */
+export function loadControlSet(framework: ComplianceFramework): ControlSet {
+  const cached = _scopeCache.get(framework);
+  if (cached) return cached;
+  const ns = resolveNsDir();
+  const file = ns ? joinPath(ns, `${framework}.ttl`) : undefined;
+  let set: ControlSet | undefined;
+  if (file && nsExists(file)) {
+    try { set = parseControlSet(nsRead(file, 'utf8'), framework); } catch { set = undefined; }
+  }
+  if (!set || set.controls.length === 0) {
+    /**
+     * ★★ A NARROWER SCOPE IS A DEGRADED ANSWER; A DIFFERENT SPELLING IS A WRONG ONE.
+     *
+     * This built `aliases: new Set([String(c.iri)])` — the one frozen CURIE, and nothing else. So
+     * the fallback did not merely score fewer controls: it stopped matching the evidence the rest
+     * of the system emits. `loadControlSet` returns ABSOLUTE IRIs on the published path, and
+     * `integrations/compliance-overlay` mirrors exactly those into `dct:conformsTo`; against a
+     * CURIE-only alias set, every one of those citations scores `missing`. A deployment that fell
+     * back would have reported not "16 of 16 known" but "0 of 16 satisfied" — a confident,
+     * plausible, and entirely wrong compliance verdict, from the path that exists to degrade
+     * safely.
+     *
+     * Both spellings are therefore carried here, and the canonical IRI is the dereferenceable one,
+     * so the two paths differ only in WHICH controls are in scope — never in what counts as
+     * evidence for one. The published aliases (article forms, NIST short codes) genuinely cannot
+     * be known without the ontology; that loss is real, and it is what `scopeSource` reports.
+     */
+    set = {
+      controls: FRAMEWORK_CONTROLS[framework].map(c => {
+        const curieForm = String(c.iri);
+        const local = curieForm.startsWith(`${framework}:`) ? curieForm.slice(framework.length + 1) : undefined;
+        const absolute = local ? `${NS_BASE}${framework}#${local}` : curieForm;
+        return {
+          iri: absolute as IRI,
+          label: c.label,
+          aliases: new Set<string>([absolute, curieForm]),
+        };
+      }),
+      scopeSource: 'fallback',
+    };
+  }
+  _scopeCache.set(framework, set);
+  return set;
+}
+
+const RDFS_LABEL = 'http://www.w3.org/2000/01/rdf-schema#label' as IRI;
+const RDFS_SEE_ALSO = 'http://www.w3.org/2000/01/rdf-schema#seeAlso' as IRI;
+
+/** Every IRI object of `predicate` — the parser ships the singular; a set needs all of them. */
+function iriValues(subject: ParsedSubject, predicate: IRI): readonly IRI[] {
+  const out: IRI[] = [];
+  for (const term of subject.properties.get(predicate) ?? []) {
+    if (term.kind === 'iri') out.push(term.iri);
+  }
+  return out;
+}
+
+/** A named subject's IRI, or undefined for a blank node. */
+function subjectIri(s: ParsedSubject): IRI | undefined {
+  return typeof s.subject === 'string' ? s.subject : undefined;
+}
+
+/** Parse an `iep:ControlSet` and its members out of a framework ontology. Exported for testing. */
+export function parseControlSet(turtle: string, framework: string): ControlSet {
+  const doc = parseTrig(turtle);
+  const base = `${NS_BASE}${framework}#`;
+  const curie = (iri: string): string => (iri.startsWith(base) ? `${framework}:${iri.slice(base.length)}` : iri);
+  const scopeNode = findSubjectsOfType(doc, `${IEP}ControlSet` as IRI)[0];
+  /**
+   * ★ AN ABSENT SCOPE IS NOT AN EMPTY PUBLISHED ONE.
+   *
+   * This returned `{ controls: [], scopeSource: 'published' }` — a roster of nothing, labelled as
+   * though the framework had published it. `loadControlSet` happens to catch that via its
+   * `controls.length === 0` guard, so the live path degrades correctly; but this function is
+   * exported, and any other caller would have received a scope claiming publication for a document
+   * that published none. Scored directly, an empty roster yields `0/0` — `overallScore: NaN` with
+   * `missing: 0`, which reads as "nothing outstanding" precisely when the scope failed to load.
+   *
+   * Throwing keeps the live behaviour identical (the caller's try/catch already selects the visible
+   * `fallback`) while making the mislabelled value unreachable.
+   */
+  if (!scopeNode) {
+    throw new Error(
+      `${framework}.ttl declares no iep:ControlSet — there is no published scope to score against. ` +
+      `Refusing to return an empty roster as a published one; the caller falls back to the frozen ` +
+      `array and reports scopeSource: "fallback" so the degradation is visible in the report.`,
+    );
+  }
+
+  // rdfs:seeAlso runs alias -> canonical, so index it once rather than rescanning per control.
+  const aliasesOf = new Map<string, string[]>();
+  for (const s of doc.subjects) {
+    const from = subjectIri(s);
+    if (!from) continue;
+    for (const to of iriValues(s, RDFS_SEE_ALSO)) {
+      const list = aliasesOf.get(String(to)) ?? [];
+      list.push(String(from));
+      aliasesOf.set(String(to), list);
+    }
+  }
+  const byIri = new Map<string, ParsedSubject>();
+  for (const s of doc.subjects) {
+    const id = subjectIri(s);
+    if (id) byIri.set(String(id), s);
+  }
+
+  const controls: ScopedControl[] = [];
+  for (const iri of iriValues(scopeNode, `${IEP}control` as IRI)) {
+    const subj = byIri.get(String(iri));
+    const label = (subj ? readStringValue(subj, RDFS_LABEL) : undefined) ?? curie(String(iri));
+    // Every published spelling of this ONE control: canonical, its CURIE, and any node that points
+    // at it with rdfs:seeAlso — the article-form aliases the ontologies instruct evidence to cite.
+    const aliases = new Set<string>([String(iri), curie(String(iri))]);
+    for (const alias of aliasesOf.get(String(iri)) ?? []) {
+      aliases.add(alias);
+      aliases.add(curie(alias));
+    }
+    controls.push({ iri: iri as IRI, label, aliases });
+  }
+  const scopeIri = subjectIri(scopeNode);
+  return { controls, scopeSource: 'published', ...(scopeIri ? { scopeIri: String(scopeIri) } : {}) };
+}
+
 export function generateFrameworkReport(
   framework: ComplianceFramework,
   descriptors: readonly AuditableDescriptor[],
   options?: { auditPeriod?: { from: string; to: string } },
 ): FrameworkReport {
-  const controls = FRAMEWORK_CONTROLS[framework];
+  const scope = loadControlSet(framework);
+  const controls = scope.controls;
   const period = options?.auditPeriod;
 
   const inPeriod = (d: AuditableDescriptor): boolean => {
@@ -174,8 +398,16 @@ export function generateFrameworkReport(
   };
 
   const entries = controls.map<FrameworkReportEntry>(c => {
+    /**
+     * ★ A CONTROL IS SATISFIED BY A CITATION OF ANY OF ITS PUBLISHED SPELLINGS. The ontologies
+     * declare article-form IRIs as citable aliases of the structural control and say so in their
+     * own comments; evidence in this repo follows that instruction. Matching the canonical form
+     * alone scored those citations as nothing — the engine ignoring what the vocabulary published
+     * about itself.
+     */
+    const accepted = c.aliases;
     const evidence = descriptors.filter(d =>
-      inPeriod(d) && d.evidenceForControls.includes(c.iri),
+      inPeriod(d) && d.evidenceForControls.some(e => accepted.has(String(e))),
     );
     // The default policy is bi-modal: either evidence exists for the
     // control (satisfied) or it doesn't (missing). The previous "exactly
@@ -210,6 +442,8 @@ export function generateFrameworkReport(
 
   return {
     framework,
+    scopeSource: scope.scopeSource,
+    ...(scope.scopeIri ? { scopeIri: scope.scopeIri } : {}),
     generatedAt: new Date().toISOString(),
     auditPeriod: options?.auditPeriod,
     summary: {

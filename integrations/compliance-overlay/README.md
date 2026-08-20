@@ -32,8 +32,9 @@ declares:
 Every property an auditor wants from an agent-action audit trail comes
 from existing substrate primitives. The overlay does NOT introduce a
 new compliance facet, a new event-type ontology, or a new framework
-mapping; it composes the FRAMEWORK_CONTROLS table already in
-`src/compliance/`.
+mapping; it composes the control roster each framework ontology
+publishes as its `iep:ControlSet` (`docs/ns/<framework>.ttl`), read at
+runtime by `loadControlSet` in `@interego/compliance`.
 
 ## Two-layer API
 
@@ -92,9 +93,15 @@ await recordAgentAction(event, config, {
 ```
 
 When `controls` is empty / omitted, the overlay defaults to every
-control declared in the framework's `FRAMEWORK_CONTROLS` table — the
-sensible "wide" citation for a generic action. Tighten it when you
-know which specific clause applies.
+control in the framework's published `iep:ControlSet` — the sensible
+"wide" citation for a generic action. Tighten it when you know which
+specific clause applies.
+
+This used to read "the framework's `FRAMEWORK_CONTROLS` table", which
+was the frozen array in `@interego/compliance`. That array listed 16
+SOC 2 controls where the ontology publishes 25, so a citation claiming
+framework-wide coverage silently omitted nine of them. Widening the
+scope is now an edit to `docs/ns/<framework>.ttl`, not a release.
 
 ## Honest scoping
 

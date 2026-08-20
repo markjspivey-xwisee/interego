@@ -12,8 +12,8 @@
  * `(toolName, args, result, outcome)` shape to a typed descriptor +
  * graph block ready for `publish_context(compliance: true, ...)`.
  *
- * Three regulatory surfaces are supported via the existing
- * FRAMEWORK_CONTROLS table:
+ * Three regulatory surfaces are supported, each scored against the
+ * `iep:ControlSet` its ontology publishes (docs/ns/<framework>.ttl):
  *   - 'eu-ai-act' — Article 9, 10, 12, 13, 14, 15
  *   - 'nist-rmf'  — Govern / Map / Measure / Manage
  *   - 'soc2'      — CC4.1, CC8.1, CC9.2, etc.
@@ -38,7 +38,7 @@ import {
 import { footingDelegationIri } from '@interego/core/delegate';
 import {
   type ComplianceFramework,
-  FRAMEWORK_CONTROLS,
+  loadControlSet,
 } from '@interego/compliance';
 import {
   formatSensitivityWarning,
@@ -87,8 +87,8 @@ export interface AgentActionEvent {
 export interface ComplianceCitation {
   readonly framework: ComplianceFramework;
   /**
-   * Specific control IRIs cited by this action. Pass an empty list to
-   * cite every default control for the framework (see FRAMEWORK_CONTROLS).
+   * Specific control IRIs cited by this action. Pass an empty list to cite
+   * every control the framework's published iep:ControlSet contains.
    */
   readonly controls?: readonly IRI[];
 }
@@ -181,9 +181,16 @@ function escapeMulti(s: string): string {
 }
 function nowIso(): string { return new Date().toISOString(); }
 
+/**
+ * ★ THE WIDE CITATION HAS TO MEAN "EVERY PUBLISHED CONTROL", NOT "EVERY CONTROL THIS BUILD KNEW".
+ *
+ * A caller that names no controls is asking to cite the whole framework. Reading the frozen array
+ * made that promise over 16 of SOC 2's published 25 — an evidence record that claims framework-wide
+ * coverage while missing nine controls, with nothing in the output to say so.
+ */
 function resolveControls(citation: ComplianceCitation): readonly IRI[] {
   if (citation.controls && citation.controls.length > 0) return citation.controls;
-  return FRAMEWORK_CONTROLS[citation.framework].map(c => c.iri);
+  return loadControlSet(citation.framework).controls.map(c => c.iri);
 }
 
 /**

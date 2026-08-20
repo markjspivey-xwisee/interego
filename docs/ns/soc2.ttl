@@ -313,3 +313,29 @@ soc2:CC7.2 rdfs:seeAlso iep:ProvenanceFacet ;
 
 soc2:C1.2 rdfs:seeAlso iep:ContextDescriptor ;
     rdfs:comment "Confidential information disposal (C1.2) is satisfied by iep:supersedes + key rotation; the OLD encrypted descriptor remains but the content key is irrecoverable." .
+
+# ── Audit scope ────────────────────────────────────────────
+#
+# ★★ THE SCOPE USED TO BE A FROZEN ARRAY IN TYPESCRIPT, AND IT HAD DRIFTED. The compliance engine
+# carried a copy of 16 of the 25 controls declared below, so a report reading 100% meant 16/16
+# against a scope no reader could see, and no reader could tell which 9 were excluded or why. Which
+# controls a deployment claims to be measured on is a DECISION; a decision that is not published is
+# not auditable. It is stated here now, the engine reads it, and widening or narrowing it is an edit
+# to this file rather than a release.
+#
+# Membership is STATED rather than inferred from rdf:type, deliberately: the three framework
+# ontologies model controls differently (SOC 2 as owl:NamedIndividual, the EU AI Act largely as
+# owl:Class, NIST RMF as individuals mixed with non-control individuals such as function short
+# codes), so any type-based rule would be the engine guessing at somebody else's modelling.
+
+soc2:AuditScope a iep:ControlSet ;
+    rdfs:label "SOC 2 Common Criteria — controls this deployment is scored against"@en ;
+    rdfs:comment "All 25 published controls. The previous engine scored 16 and reported a percentage against that narrower set without saying so; scoring the full published set is what makes the percentage mean what a reader takes it to mean."@en ;
+    iep:control
+        soc2:CC1.1, soc2:CC2.1, soc2:CC2.2, soc2:CC3.1, soc2:CC3.2,
+        soc2:CC4.1, soc2:CC4.2, soc2:CC5.1, soc2:CC6.1, soc2:CC6.2,
+        soc2:CC6.3, soc2:CC6.7, soc2:CC6.8, soc2:CC7.1, soc2:CC7.2,
+        soc2:CC7.3, soc2:CC7.4, soc2:CC7.5, soc2:CC8.1, soc2:CC9.2,
+        soc2:C1.1, soc2:C1.2, soc2:P1.1, soc2:P3.1, soc2:P5.1 .
+
+soc2:Security iep:auditScope soc2:AuditScope .

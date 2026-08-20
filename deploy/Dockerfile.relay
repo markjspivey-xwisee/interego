@@ -52,6 +52,21 @@ COPY docs/AGENT-INTEGRATION-GUIDE.md /relay-docs/AGENT-INTEGRATION-GUIDE.md
 COPY docs/ns/abac.ttl /relay-docs/abac.ttl
 COPY docs/ns/code.ttl /relay-docs/code.ttl
 
+# ★★ The framework ontologies, kept in a REAL `ns/` directory rather than flattened alongside the
+# files above. @interego/compliance reads each framework's `iep:ControlSet` out of these at runtime
+# to decide which controls a report scores against; without them it selects the frozen fallback
+# array and every /audit surface silently reverts to the roster the ontologies replaced (16 SOC 2
+# controls instead of the published 25). The relay installs that package from a tarball, so no
+# directory walk from node_modules can ever reach the repo's docs/ns — the path is handed to it
+# explicitly via INTEREGO_NS_DIR in the runtime stage.
+#
+# Per-file, like every COPY above: a directory COPY here silently picks up whatever else lands in
+# docs/ns later, and this image should ship the ontologies it actually reads.
+RUN mkdir -p /relay-docs/ns
+COPY docs/ns/soc2.ttl /relay-docs/ns/soc2.ttl
+COPY docs/ns/nist-rmf.ttl /relay-docs/ns/nist-rmf.ttl
+COPY docs/ns/eu-ai-act.ttl /relay-docs/ns/eu-ai-act.ttl
+
 # ────────────────────────────────────────────────────────────
 #  Build stage: install relay deps + compile server.ts
 # ────────────────────────────────────────────────────────────
@@ -153,6 +168,12 @@ EXPOSE 8080
 
 ENV PORT=8080
 ENV CSS_URL=http://css:3456/
+
+# Where @interego/compliance reads the published control rosters. See the COPY block in the doc
+# stage: this package is installed from a tarball, so its own directory walk can never find the
+# repo's docs/ns and would fall back to the frozen array without ever failing. `/audit/frameworks`
+# reports `scopeSource`, so a probe of the running relay tells you which one it actually used.
+ENV INTEREGO_NS_DIR=/app/relay-docs/ns
 
 # The commit this image was built from, surfaced at /health so a deploy can be
 # VERIFIED rather than assumed. Declared in the runtime stage on purpose: putting

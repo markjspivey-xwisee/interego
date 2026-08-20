@@ -129,3 +129,42 @@ nist-rmf:Manage.4.1 rdfs:seeAlso iep:TrustFacet ;
 
 nist-rmf:Map.1.1 rdfs:seeAlso iep:FederationFacet ;
     rdfs:comment "Context establishment is partly the FederationFacet itself: where the system runs, who's authorized, how it syncs." .
+
+# ── Audit scope ────────────────────────────────────────────
+#
+# See soc2:AuditScope for why the scope is published rather than held as an array in the engine.
+# NOTE what is DELIBERATELY absent: nist-rmf:MG is a function SHORT CODE ("Equivalent in scope to
+# nist-rmf:Manage"), not a subcategory, so counting it would inflate the denominator by a name that
+# no evidence can satisfy on its own. Ten subcategories; the engine previously scored eight, with
+# Govern.1.4 and Map.1.2 silently unscored.
+
+nist-rmf:AuditScope a iep:ControlSet ;
+    rdfs:label "NIST AI RMF — subcategories this deployment is scored against"@en ;
+    rdfs:comment "The ten published subcategories across GOVERN / MAP / MEASURE / MANAGE. Function short codes and the EvidenceRecord class are not controls and are not members."@en ;
+    iep:control
+        nist-rmf:Govern.1.1, nist-rmf:Govern.1.4, nist-rmf:Govern.2.1,
+        nist-rmf:Map.1.1, nist-rmf:Map.1.2, nist-rmf:Map.4.1,
+        nist-rmf:Measure.1.1, nist-rmf:Measure.2.7,
+        nist-rmf:Manage.1.2, nist-rmf:Manage.4.1 .
+
+nist-rmf:Govern iep:auditScope nist-rmf:AuditScope .
+
+# ── Short-code aliases ─────────────────────────────────────
+#
+# ★ THE SHORT-CODE FORM WAS PROMISED AND NEVER DECLARED. nist-rmf:MG's comment says short codes are
+# "Citable IRI used in compliance evidence (e.g. nist-rmf:MG-1.1)" — so evidence in this repo cited
+# one, and it resolved to nothing, and the scorer counted it as no evidence at all. Either the
+# promise or the citation had to go; the promise is the better half to keep, because the short-code
+# form is how NIST itself writes these. Each alias points at its subcategory with rdfs:seeAlso, and
+# the scorer treats a citation of either spelling as satisfying the one control.
+
+nist-rmf:GV-1.1 a owl:NamedIndividual ; rdfs:label "GV-1.1 — short code for GOVERN 1.1" ; rdfs:seeAlso nist-rmf:Govern.1.1 .
+nist-rmf:GV-1.4 a owl:NamedIndividual ; rdfs:label "GV-1.4 — short code for GOVERN 1.4" ; rdfs:seeAlso nist-rmf:Govern.1.4 .
+nist-rmf:GV-2.1 a owl:NamedIndividual ; rdfs:label "GV-2.1 — short code for GOVERN 2.1" ; rdfs:seeAlso nist-rmf:Govern.2.1 .
+nist-rmf:MP-1.1 a owl:NamedIndividual ; rdfs:label "MP-1.1 — short code for MAP 1.1" ; rdfs:seeAlso nist-rmf:Map.1.1 .
+nist-rmf:MP-1.2 a owl:NamedIndividual ; rdfs:label "MP-1.2 — short code for MAP 1.2" ; rdfs:seeAlso nist-rmf:Map.1.2 .
+nist-rmf:MP-4.1 a owl:NamedIndividual ; rdfs:label "MP-4.1 — short code for MAP 4.1" ; rdfs:seeAlso nist-rmf:Map.4.1 .
+nist-rmf:MS-1.1 a owl:NamedIndividual ; rdfs:label "MS-1.1 — short code for MEASURE 1.1" ; rdfs:seeAlso nist-rmf:Measure.1.1 .
+nist-rmf:MS-2.7 a owl:NamedIndividual ; rdfs:label "MS-2.7 — short code for MEASURE 2.7" ; rdfs:seeAlso nist-rmf:Measure.2.7 .
+nist-rmf:MG-1.2 a owl:NamedIndividual ; rdfs:label "MG-1.2 — short code for MANAGE 1.2" ; rdfs:seeAlso nist-rmf:Manage.1.2 .
+nist-rmf:MG-4.1 a owl:NamedIndividual ; rdfs:label "MG-4.1 — short code for MANAGE 4.1" ; rdfs:seeAlso nist-rmf:Manage.4.1 .

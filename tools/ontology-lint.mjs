@@ -69,6 +69,20 @@ const SCAN_PATHS = [
   // so their use of CORE prefixes (iep:/ieh:/pgsl:/…) is self-description-checked
   // too. Vertical-OWNED prefixes (fxs:/lpc:/…) are unowned here and ignored.
   'applications',
+  /**
+   * ★★ `integrations/` WAS MISSING, AND THAT IS EXACTLY WHERE THE UNDECLARED TERM SURVIVED.
+   *
+   * `integrations/compliance-overlay` cited `eu-ai-act:Article10` and `nist-rmf:MG-3.1` as
+   * `dct:conformsTo` targets. Neither was declared anywhere. This lint checks precisely that —
+   * every owned-namespace term a source file emits must exist in its docs/ns/*.ttl — and it would
+   * have caught both on the commit that introduced them, except that it never looked in this
+   * directory. The allowlist file's own header records this same bug class being caught in
+   * `packages/ops`; one directory over, it was unguarded.
+   *
+   * The consequence was not cosmetic: the compliance scorer counted those citations as no evidence,
+   * so every EU AI Act and NIST RMF descriptor the project's own bridge produced scored `missing`.
+   */
+  'integrations',
 ];
 
 // Known-drift baseline. Entries here are terms emitted by code that
@@ -112,6 +126,104 @@ function extractDefinedTerms(ttlPath, prefix) {
   // are defined by `iep:canPublish a iep:Affordance`. Since Affordance is
   // already defined by the first regex, no extra work here.
   return defined;
+}
+
+/**
+ * Every local name that appears in SUBJECT position in a .ttl — i.e. at the start of a line.
+ * Broader than extractDefinedTerms (which requires `a <type>`), because a control may be
+ * described with only an rdfs:label and still be a real, resolvable subject.
+ */
+function extractSubjects(body, prefix) {
+  const subjects = new Set();
+  const re = new RegExp(`(?:^|\\n)${prefix}:([A-Za-z][A-Za-z0-9_-]*(?:\\.[0-9]+)*)\\s`, 'g');
+  let m;
+  while ((m = re.exec(body)) !== null) subjects.add(m[1]);
+  return subjects;
+}
+
+/**
+ * ★ THE OTHER DIRECTION: a PUBLISHED scope that names a control nothing defines.
+ *
+ * The scan above asks "does every term the CODE emits exist in the ontology?". That question has
+ * a mirror image, and nothing asked it. Now that the compliance engine reads its control roster
+ * out of each framework's `iep:ControlSet` instead of a frozen array, a member IRI that resolves
+ * to nothing is not a documentation nit — it is a denominator entry that NO evidence can ever
+ * satisfy. Every report would carry a permanently-`missing` control and a score depressed by a
+ * typo, with no way to tell that apart from a genuine gap.
+ *
+ * This is deliberately a dangling-reference check and not a "controls must be in scope" check.
+ * The inverse cannot be written precisely: nist-rmf.ttl declares function-level individuals
+ * (nist-rmf:MG) and short-code aliases (nist-rmf:MG-1.2) alongside controls, and no published
+ * property separates them from scope members. A gate that guessed would need an allowlist to stay
+ * quiet, and an allowlisted gate is the thing it replaces.
+ */
+function checkControlSets() {
+  const problems = [];
+  // Several prefixes share one file (iep/cg/iprot all resolve to iep.ttl), so iterate FILES.
+  // Keyed on the prefix that owns the file's own terms — the first prefix pointing at it.
+  const seen = new Set();
+  for (const [prefix, file] of Object.entries(OWNED_NAMESPACES)) {
+    if (seen.has(file)) continue;
+    seen.add(file);
+    const path = resolve(ROOT, file);
+    let body;
+    try { body = readFileSync(path, 'utf8'); } catch { continue; }
+    /**
+     * An INSTANCE of the class, not a mention of it. `body.includes('iep:ControlSet')` also matched
+     * docs/ns/iep.ttl, which merely DECLARES the term (`iep:ControlSet a owl:Class`) and publishes
+     * no scope of its own — so the zero-members rule below reported the ontology that defines the
+     * vocabulary as a broken user of it.
+     */
+    if (!/\ba\s+iep:ControlSet\b/.test(body)) continue;
+    const subjects = extractSubjects(body, prefix);
+    // `iep:control` objects run to the clause terminator. A `;` or `.` only ends a clause when
+    // whitespace-delimited — the dots inside `soc2:CC6.1` never are, so they stay part of the name.
+    //
+    // The leading indent requires PREDICATE position. Without it this matched `iep:control`'s own
+    // declaration in iep.ttl (`iep:control a owl:ObjectProperty ;`, at column 0) and read the type
+    // as a member list — a check that reported the term defining it as its own dangling reference.
+    const listRe = /(?:^|\n)[ \t]+iep:control\b([\s\S]*?)(?:\s[;.](?:\s|$))/g;
+    /**
+     * ★★ A GATE THAT MATCHED NOTHING PRINTED THE SAME LINE AS A GATE THAT CHECKED EVERYTHING.
+     *
+     * The file is only examined at all because it contains `iep:ControlSet`, so it publishes a
+     * scope by construction. If the member-list regex then matches zero times, the honest reading
+     * is "this check could not parse the thing it exists to check" — but `problems` stayed empty
+     * and the run printed "every published iep:control member resolves" and exited 0. Any legal
+     * reformatting that the regex does not anticipate (a full-IRI predicate, the list on the same
+     * line as the subject) would silently disarm it, and the output would be indistinguishable
+     * from a real pass.
+     *
+     * Counting what was actually inspected is the difference between "clean" and "blind". A file
+     * that declares a ControlSet and yields no members is now a failure in its own right.
+     */
+    let membersSeen = 0;
+    let m;
+    while ((m = listRe.exec(body)) !== null) {
+      for (const raw of m[1].split(',')) {
+        const member = raw.trim();
+        if (!member) continue;
+        // A `#` comment inside the object list is Turtle, not a member.
+        if (member.startsWith('#')) continue;
+        membersSeen++;
+        const parts = /^([A-Za-z][A-Za-z0-9_-]*):([A-Za-z][A-Za-z0-9_-]*(?:\.[0-9]+)*)$/.exec(member);
+        if (!parts) { problems.push({ file, member, why: 'not a parseable CURIE' }); continue; }
+        if (parts[1] !== prefix) { problems.push({ file, member, why: `foreign prefix (expected ${prefix}:)` }); continue; }
+        if (!subjects.has(parts[2])) problems.push({ file, member, why: 'named by iep:control but declared nowhere in this ontology' });
+      }
+    }
+    if (membersSeen === 0) {
+      problems.push({
+        file,
+        member: '(none parsed)',
+        why: 'declares an iep:ControlSet but this check parsed ZERO members from it — the scope is '
+          + 'unverified, not verified-clean. Either the member list is written in a form this check '
+          + 'does not read (a full-IRI predicate, or the list inline on the subject line), or the '
+          + 'scope is empty. Both are failures: the engine still reads this file for its roster.',
+      });
+    }
+  }
+  return problems;
 }
 
 // ── TS source scan ──────────────────────────────────────────
@@ -200,8 +312,23 @@ function findReferencesInFile(tsPath, prefixes) {
   // many-to-one, so allowlisting the stem `soc2:CC3` silently covered the UNDECLARED
   // `soc2:CC3.2` emitted by packages/ops/src/index.ts. An allowlist keyed on a truncated
   // token cannot be safe.
+  //
+  // ★★ THE HYPHEN BELONGS IN THE LOCAL NAME, AND LEAVING IT OUT MADE THIS CHECK PASS ON A
+  // TERM THAT DID NOT EXIST.
+  //
+  // The declaration side (extractDefinedTerms) has always accepted `[A-Za-z0-9_-]`; this
+  // usage side accepted only `[A-Za-z0-9_]`. So `nist-rmf:MG-3.1` was scanned as the term
+  // `MG` — and `nist-rmf:MG` is declared, as the NamedIndividual for the *Manage function*.
+  // A reference to a control that exists nowhere therefore resolved, via truncation, to a
+  // real term of an entirely different kind. Every `MG-*`, `GV-*`, `MP-*` and `MS-*` control
+  // in the codebase was unchecked, because its function-level individual absorbed it.
+  //
+  // This is the same many-to-one truncation hazard the comment above records for dots
+  // (`soc2:CC3` covering an undeclared `soc2:CC3.2`), left unfixed for hyphens. The rule is
+  // the general one: a local name must be compared WHOLE, so the two sides of this lint must
+  // agree on where a local name ends. They now use the same character class.
   const refRegex = new RegExp(
-    `(?<![-:.\\w])(${prefixes.join('|')}):([A-Za-z][A-Za-z0-9_]*(?:\\.[0-9]+)*)`,
+    `(?<![-:.\\w])(${prefixes.join('|')}):([A-Za-z][A-Za-z0-9_-]*(?:\\.[0-9]+)*)`,
     'g',
   );
   const templateVars = Object.keys(TEMPLATE_VAR_TO_PREFIX);
@@ -297,8 +424,20 @@ for (const scanPath of SCAN_PATHS) {
 
 // ── Report ───────────────────────────────────────────────────
 
-if (missing.length === 0) {
-  console.log(`\u2713 Ontology lint: every owned-namespace reference in TS is defined (or allowlisted).`);
+const scopeProblems = checkControlSets();
+if (scopeProblems.length > 0) {
+  console.error(`\u2717 Ontology lint: ${scopeProblems.length} published iep:control member(s) resolve to nothing.\n`);
+  for (const p of scopeProblems) {
+    console.error(`  ${p.member}`);
+    console.error(`      in ${p.file} \u2014 ${p.why}`);
+  }
+  console.error(`\nA scope member that names no declared subject is a control no evidence can ever`);
+  console.error(`satisfy: it sits in the denominator of every report as a permanent 'missing'.\n`);
+}
+
+if (missing.length === 0 && scopeProblems.length === 0) {
+  console.log(`\u2713 Ontology lint: every owned-namespace reference in TS is defined (or allowlisted),`);
+  console.log(`  and every published iep:control member resolves.`);
   console.log(`  prefixes checked:    ${prefixes.join(', ')}`);
   console.log(`  allowlisted drift:   ${allowlist.size} term(s) in ${ALLOWLIST_PATH}`);
   console.log(`  defined term counts:`);
@@ -316,6 +455,7 @@ for (const r of missing) {
   grouped.get(key).push(r.path);
 }
 
+if (grouped.size > 0) {
 console.error(`\u2717 Ontology lint: found ${grouped.size} undefined term(s) emitted by code.`);
 console.error(`  Every owned-namespace reference in TS must have a matching`);
 console.error(`  declaration in its docs/ns/<prefix>.ttl file.\n`);
@@ -329,4 +469,5 @@ for (const [qn, paths] of [...grouped.entries()].sort()) {
 }
 console.error(`\nFix: either add the term to the appropriate docs/ns/*.ttl file`);
 console.error(`or change the TS emission to use an existing term.`);
+}
 process.exit(1);

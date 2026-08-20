@@ -58,8 +58,8 @@ These ontologies live here for convenience while the project is early, but they 
 | [`olke.ttl`](olke.ttl) | `olke:` | 11 | **Organizational Learning & Knowledge Evolution.** Four-stage ladder Tacit → Articulate → Collective → Institutional; annotates `iep:ContextDescriptor` with current stage. |
 | [`amta.ttl`](amta.ttl) | `amta:` | 14 | **Agent-Mediated Trust Attestation.** Multi-axis trust (competence / honesty / relevance / recency). `amta:Attestation rdfs:subClassOf iep:TrustFacet`. |
 | [`code.ttl`](code.ttl) | `code:` | 35 | **Source-code domain.** Repository, Commit, Branch, PullRequest, Review, Defect, TestRun, BuildResult. Commits are `pgsl:Fragment`; branches are `iep:ParadigmSet`; reviews `iep:constructedFrom (iep:SemioticFacet iep:ProvenanceFacet)`. First L3 domain example. |
-| [`eu-ai-act.ttl`](eu-ai-act.ttl) | `eu-ai-act:` | 17 | **EU AI Act mapping.** Articles 6, 9, 10, 12, 13, 14, 15, 50. Lets compliance teams query an Interego pod using the regulation's own vocabulary. |
-| [`nist-rmf.ttl`](nist-rmf.ttl) | `nist-rmf:` | 20 | **NIST AI Risk Management Framework.** Govern / Map / Measure / Manage four-function model. Used together with `compliance: true` publishes for L4 conformance. |
+| [`eu-ai-act.ttl`](eu-ai-act.ttl) | `eu-ai-act:` | 20 | **EU AI Act mapping.** Articles 6, 9, 10, 12, 13, 14, 15, 50. Lets compliance teams query an Interego pod using the regulation's own vocabulary. |
+| [`nist-rmf.ttl`](nist-rmf.ttl) | `nist-rmf:` | 30 | **NIST AI Risk Management Framework.** Govern / Map / Measure / Manage four-function model. Used together with `compliance: true` publishes for L4 conformance. |
 | [`soc2.ttl`](soc2.ttl) | `soc2:` | 63 | **AICPA SOC 2 Trust Services Criteria.** Common Criteria + Availability + Processing Integrity + Confidentiality + Privacy. Operational event subtypes (DeployEvent, AccessChangeEvent, KeyRotationEvent, IncidentEvent, QuarterlyReviewEvent) emitted by [`src/ops/`](../../src/ops/) — Interego eats its own dog food as the SOC 2 evidence substrate. |
 | [`wks.ttl`](wks.ttl) | `wks:` | 11 | **Weak-Signal vocabulary.** Snowden-informed sensemaking. `wks:WeakSignal` (subclass of `iep:ContextDescriptor`, always Hypothetical), `wks:Reinforcement` (cross-observer aggregation count), `wks:NarrativeEvidence` (anchoring micro-narrative). Reinforcement is structural — two observers minting the same `wks:about` subject reinforce each other automatically via SPARQL. Used in Demo 18 + Demo 21. |
 
@@ -71,7 +71,7 @@ These ontologies live here for convenience while the project is early, but they 
 | [`interego-shapes.ttl`](interego-shapes.ttl) | `ie:` | Shape file for interrogative bindings |
 | [`harness-shapes.ttl`](harness-shapes.ttl) | `ieh:` | Shape file for harness structures |
 
-**Totals (2026-04-26):** 19 ontology files, 1 alignment file, 3 SHACL shape files (cg-shapes-1.2.ttl is a draft tracking the SHACL 1.2 CR). Term count by namespace — `iep:` 336, `ieh:` 138, `pgsl:` 35, `ie:` 34, `align:` 22, `hyprcat:` 18, `hypragent:` 18, `abac:` 16, `registry:` 17, `passport:` 15, `hela:` 9, `sat:` 12, `cts:` 13, `olke:` 12, `amta:` 14, `code:` 35, `eu-ai-act:` 17, `nist-rmf:` 20, `soc2:` 63. CI lint enforces every term used in TS code has a matching declaration here.
+**Totals (2026-04-26):** 19 ontology files, 1 alignment file, 3 SHACL shape files (cg-shapes-1.2.ttl is a draft tracking the SHACL 1.2 CR). Term count by namespace — `iep:` 336, `ieh:` 138, `pgsl:` 35, `ie:` 34, `align:` 22, `hyprcat:` 18, `hypragent:` 18, `abac:` 16, `registry:` 17, `passport:` 15, `hela:` 9, `sat:` 12, `cts:` 13, `olke:` 12, `amta:` 14, `code:` 35, `eu-ai-act:` 20, `nist-rmf:` 30, `soc2:` 63. CI lint enforces every term used in TS code has a matching declaration here.
 
 ## Ontology-lint CI gate
 

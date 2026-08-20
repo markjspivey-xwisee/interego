@@ -175,7 +175,16 @@ describe('Content Extraction', () => {
     // a test that only checks the happy substring would still report a clean failure
     // message while the substring check is what actually fails.
     expect(result.text).not.toContain('PDF extraction failed');
-  });
+    /**
+     * ★ EXPLICIT TIMEOUT, BECAUSE THE DEFAULT 5s IS MOSTLY SPENT LOADING THE LIBRARY.
+     *
+     * Measured on an idle machine: the cold `import('pdf-parse')` alone is ~2.6s, and the whole
+     * case ~3.0s — 60% of the budget gone before any extraction happens. On a loaded CI runner it
+     * took 7.8s and failed on time, not on behaviour. A test that flips red with the machine is
+     * worse than no test on a gate that blocks deploys: it teaches you to read red as noise, and
+     * the next red is the real one.
+     */
+  }, 30_000);
 
   it('reports a corrupt PDF as a failure rather than as content', async () => {
     // Detected as PDF by the %PDF magic, then rejected by the parser. The extractor's

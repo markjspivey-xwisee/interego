@@ -36,6 +36,71 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
 
 ---
 
+## 2026-08-20 — a compliance percentage whose denominator nobody could see
+
+The scorer divided by a frozen TypeScript array while the ontologies published a different,
+larger set of controls, and the project's own evidence cited IRIs the scorer did not recognise.
+Both numbers were plausible. Neither was checkable from outside.
+
+### Fixed
+- **★★ A SOC 2 report reading 100% meant 16 of 16 against a published 25.** `FRAMEWORK_CONTROLS`
+  listed 16 SOC 2 and 8 NIST controls; `docs/ns/soc2.ttl` declares 25 and `nist-rmf.ttl` 10. The
+  roster is now each framework's published `iep:ControlSet`, parsed at runtime, with the report
+  carrying `scopeSource` (`published` / `fallback`) and a dereferenceable `scopeIri` so the
+  denominator travels with the number. Widening a scope is an edit to a graph.
+- **★ The project's own bridge cited controls the scorer scored as nothing.**
+  `eu-ai-act:Article12`'s published comment says it is "used as a `dct:conformsTo` control target
+  in compliance evidence; realized structurally by `eu-ai-act:LoggedAction`" — and
+  `integrations/compliance-overlay` followed that instruction while the engine matched only the
+  structural IRI. Every EU AI Act descriptor the repo produced scored `missing`. `rdfs:seeAlso`
+  aliases now resolve, so either published spelling satisfies the one control.
+- **`nist-rmf:MG-3.1` and `eu-ai-act:Article10` were cited by code and declared nowhere.** The
+  article form is declared; the NIST short codes (`GV-1.1` … `MG-4.1`) are declared as
+  `rdfs:seeAlso` aliases of the canonical subcategories; the bridge cites a control that exists.
+- **★★ ontology-lint could not see the term that caused this, twice over.** `SCAN_PATHS` omitted
+  `integrations/`. Adding it was not enough: the usage-side local-name class omitted `-` while the
+  declaration side had it, so `nist-rmf:MG-3.1` was compared as the term `MG` — and `nist-rmf:MG`
+  is declared, as the *Manage function* individual. A citation of a control that exists nowhere
+  resolved by truncation to a real term of a different kind, leaving every `MG-*` / `GV-*` /
+  `MP-*` / `MS-*` reference unchecked. Both sides now use one character class.
+- **Three more undeclared terms that truncation was hiding**: `nist-rmf:MG-1.1` in an
+  organizational-working-memory affordance description, `iep:supersedes-linked` in an agp
+  instruction string (a predicate an agent would have emitted verbatim), and `iep:declares-shape`,
+  which the relay's publish gate has always honoured while the vocabulary never published it —
+  now declared as a deprecated ingest alias, since nothing emits it and no publisher could have
+  learned it.
+- **A reverse check, and a guard against it passing vacuously.** A published `iep:control` member
+  naming no declared subject is a denominator entry no evidence can ever satisfy. The check counts
+  what it inspected, because its first form printed "every published member resolves" whenever its
+  regex matched nothing — the same output as a real pass.
+- **★★ The fix was a silent no-op in production, and the fallback was worse than the bug.** The
+  relay installs `@interego/compliance` from a tarball into `/app/node_modules` and its image
+  shipped no `docs/ns`, so every upward walk terminated at `/`. Measured in that layout: `fallback`,
+  16 controls, with all tests green. `INTEREGO_NS_DIR` makes the location an explicit deployment
+  fact and the image carries the three ontologies. Separately, the fallback built its alias set
+  from the frozen CURIE alone while everything downstream emits absolute IRIs — so a degraded
+  deployment scored **0 of 16, not 16 of 16**: a confident wrong answer from the path that exists
+  to degrade safely.
+- **`/audit/frameworks` advertised a different roster than reports were scored against** — 8 EU AI
+  Act controls against reports over 9, 16 SOC 2 against 25. It reads the published scope and
+  reports `scopeSource` / `scopeIri`, so a probe of the running relay says which source it used.
+- **The overlay's wide citation promised framework-wide coverage over 16 of 25 controls.**
+- **★ ontology-lint's own workflow never triggered on two directories it scans.** `paths:` omitted
+  `integrations/**`, and listed three named files where the lint scans all of `applications/`. A
+  new guard ties the filter to `SCAN_PATHS`; it found the second case immediately.
+- **Fourteen published IRIs dereferenced to a page that did not mention them.** The framework
+  ontologies' HTML projections — the human-readable twins served at the same base — were in exact
+  sync until `AuditScope`, `Article10` and the ten short codes were added to Turtle alone. Since
+  every report now emits those IRIs, the projections are regenerated from the Turtle and gated.
+- **`examples/compliance-end-to-end.mjs` could not be run at all**, and had not been able to for
+  some time: it imported `../dist/index.js`, a repo-root `dist/` that has never existed, and half
+  its names were never in that package. Once runnable it reported `0 satisfied / 0.00`, because
+  every descriptor was stamped `now()` against a fixed 2026-Q2 window — true the day it was
+  written, false from 1 July.
+- **A flaky test on a deploy gate.** `extracts real text from a real PDF` spends ~2.6s of a 5s
+  default budget on the cold `pdf-parse` import alone and measured 5.1s unloaded. A gate that
+  flips red with machine load teaches you to read red as noise.
+
 ## 2026-08-11 — a cap that hid members and bought nothing, and a report that dropped its own qualifications
 
 Two warnings this vertical printed honestly for months turn out to have been describing damage it

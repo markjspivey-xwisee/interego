@@ -14,6 +14,7 @@ import {
   type AuditableDescriptor,
   checkComplianceInputs,
   FRAMEWORK_CONTROLS,
+  type FrameworkReport,
   generateFrameworkReport,
   importComplianceWallet,
   listValidSignerAddresses,
@@ -93,6 +94,20 @@ describe('FRAMEWORK_CONTROLS', () => {
 describe('generateFrameworkReport', () => {
   const NOW = '2026-04-25T12:00:00Z';
 
+  /**
+   * ★ `controlIri` IS NOW THE DEREFERENCEABLE IRI, NOT A CURIE.
+   *
+   * These lookups read `e.controlIri === 'soc2:CC6.1'`, which was the CURIE the frozen
+   * FRAMEWORK_CONTROLS array carried. The roster now comes from the published ontology, so a
+   * control is reported by the URL a reader can actually follow to its definition — a CURIE is
+   * only resolvable if you already hold the prefix map, which a report consumer does not.
+   *
+   * The EVIDENCE citations below deliberately stay in CURIE form: a control is satisfied by any
+   * spelling the ontology publishes for it, and that asymmetry is the behaviour under test.
+   */
+  const entryFor = (rpt: FrameworkReport, local: string) =>
+    rpt.entries.find(e => String(e.controlIri).endsWith(`#${local}`));
+
   it('reports all-missing when no evidence supplied', () => {
     const rpt = generateFrameworkReport('soc2', []);
     expect(rpt.framework).toBe('soc2');
@@ -108,7 +123,7 @@ describe('generateFrameworkReport', () => {
       { id: 'urn:2' as IRI, publishedAt: NOW, evidenceForControls: ['soc2:CC6.1' as IRI] },
     ];
     const rpt = generateFrameworkReport('soc2', descs);
-    const cc61 = rpt.entries.find(e => e.controlIri === 'soc2:CC6.1');
+    const cc61 = entryFor(rpt, 'CC6.1');
     expect(cc61?.status).toBe('satisfied');
     expect(cc61?.evidenceCount).toBe(2);
   });
@@ -123,7 +138,7 @@ describe('generateFrameworkReport', () => {
       { id: 'urn:1' as IRI, publishedAt: NOW, evidenceForControls: ['soc2:CC6.1' as IRI] },
     ];
     const rpt = generateFrameworkReport('soc2', descs);
-    expect(rpt.entries.find(e => e.controlIri === 'soc2:CC6.1')?.status).toBe('satisfied');
+    expect(entryFor(rpt, 'CC6.1')?.status).toBe('satisfied');
   });
 
   it('respects audit period filter', () => {
@@ -134,7 +149,7 @@ describe('generateFrameworkReport', () => {
     const rpt = generateFrameworkReport('soc2', descs, {
       auditPeriod: { from: '2026-01-01T00:00:00Z', to: '2026-12-31T00:00:00Z' },
     });
-    const cc61 = rpt.entries.find(e => e.controlIri === 'soc2:CC6.1');
+    const cc61 = entryFor(rpt, 'CC6.1');
     expect(cc61?.evidenceCount).toBe(1); // only urn:new is in period
   });
 

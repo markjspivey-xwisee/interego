@@ -33,12 +33,25 @@ on:
       - 'CLAUDE.md'
       - 'RELEASING.md'
       - 'SECURITY.md'
-      - 'applications/foxxi-content-intelligence/affordances.ts'
-      # The shared vertical-bridge mount emits iep: terms too (it types the
-      # affordance manifest), and was not covered — so a new undeclared term
-      # shipped from it without this lint ever running.
-      - 'applications/_shared/**'
-      - 'applications/foxxi-content-intelligence/bridge/server.ts'
+      # ★★ THE WHOLE DIRECTORY, because SCAN_PATHS says 'applications' — not three named files.
+      #
+      # This listed `applications/foxxi-content-intelligence/affordances.ts`,
+      # `applications/_shared/**` and one bridge server, each added the day something shipped
+      # past the lint from it. The comment that used to sit here said the shared mount "was not
+      # covered — so a new undeclared term shipped from it without this lint ever running", and
+      # then covered only that one mount. Every other vertical stayed exactly as exposed:
+      # measured, `applications/organizational-working-memory/affordances.ts` was emitting
+      # `nist-rmf:MG-1.1`, which is declared nowhere, and no commit confined to that file would
+      # have started this job. The lint scans the directory; the trigger now matches it, and
+      # tests/workflow-trigger-covers-the-suite.test.ts fails if the two drift apart again.
+      - 'applications/**'
+      # ★★ `integrations/**` IS IN SCAN_PATHS AND WAS NOT IN THIS FILTER, which is the same
+      # wiring bug the tools/** glob above was written for. The lint was extended to scan
+      # integrations/ precisely because two undeclared control IRIs shipped from
+      # integrations/compliance-overlay and survived every CI run; leaving it out here means a
+      # commit confined to that directory still never starts the job that would catch it. The
+      # scan reaching a directory and the job STARTING are two separate facts.
+      - 'integrations/**'
       - '.github/workflows/ontology-lint.yml'
   pull_request:
     branches: [master]
@@ -65,12 +78,25 @@ on:
       - 'CLAUDE.md'
       - 'RELEASING.md'
       - 'SECURITY.md'
-      - 'applications/foxxi-content-intelligence/affordances.ts'
-      # The shared vertical-bridge mount emits iep: terms too (it types the
-      # affordance manifest), and was not covered — so a new undeclared term
-      # shipped from it without this lint ever running.
-      - 'applications/_shared/**'
-      - 'applications/foxxi-content-intelligence/bridge/server.ts'
+      # ★★ THE WHOLE DIRECTORY, because SCAN_PATHS says 'applications' — not three named files.
+      #
+      # This listed `applications/foxxi-content-intelligence/affordances.ts`,
+      # `applications/_shared/**` and one bridge server, each added the day something shipped
+      # past the lint from it. The comment that used to sit here said the shared mount "was not
+      # covered — so a new undeclared term shipped from it without this lint ever running", and
+      # then covered only that one mount. Every other vertical stayed exactly as exposed:
+      # measured, `applications/organizational-working-memory/affordances.ts` was emitting
+      # `nist-rmf:MG-1.1`, which is declared nowhere, and no commit confined to that file would
+      # have started this job. The lint scans the directory; the trigger now matches it, and
+      # tests/workflow-trigger-covers-the-suite.test.ts fails if the two drift apart again.
+      - 'applications/**'
+      # ★★ `integrations/**` IS IN SCAN_PATHS AND WAS NOT IN THIS FILTER, which is the same
+      # wiring bug the tools/** glob above was written for. The lint was extended to scan
+      # integrations/ precisely because two undeclared control IRIs shipped from
+      # integrations/compliance-overlay and survived every CI run; leaving it out here means a
+      # commit confined to that directory still never starts the job that would catch it. The
+      # scan reaching a directory and the job STARTING are two separate facts.
+      - 'integrations/**'
 
 permissions:
   contents: read

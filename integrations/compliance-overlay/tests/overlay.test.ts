@@ -16,6 +16,7 @@ import {
   parseTrig,
   readStringValue,
 } from '@interego/core';
+import { FRAMEWORK_CONTROLS, loadControlSet } from '@interego/compliance';
 
 const AGENT = 'did:web:agent.example' as IRI;
 const OWNER = 'did:web:owner.example' as IRI;
@@ -89,11 +90,28 @@ describe('buildAgentActionDescriptor — substrate construction', () => {
     expect(onBehalf).toContain(OWNER);
   });
 
-  it('defaults controls to the full framework table when none specified', () => {
+  /**
+   * ★ THIS PASSED IDENTICALLY BEFORE AND AFTER THE BEHAVIOUR IT GUARDS CHANGED.
+   *
+   * `resolveControls` was switched from the frozen `FRAMEWORK_CONTROLS` array to the framework's
+   * published `iep:ControlSet`, so a wide citation now means "every control SOC 2 publishes" (25)
+   * rather than "every control this build was compiled with" (16). The assertions here — non-empty,
+   * and every IRI mentions `soc2` — held under both, so the call site's change was untested.
+   *
+   * The count and the named control below are exactly the difference: `soc2:P5.1` is published in
+   * docs/ns/soc2.ttl and was absent from the frozen array, so it can only appear if the roster came
+   * from the ontology.
+   */
+  it('defaults to every control the framework PUBLISHES, not the ones compiled in', () => {
     const out = buildAgentActionDescriptor(baseEvent(), { framework: 'soc2' });
-    expect(out.cited.length).toBeGreaterThan(0);
-    // Every cited control IRI is in the soc2 namespace
+    expect(out.cited.length).toBe(loadControlSet('soc2').controls.length);
+    expect(out.cited.length).toBeGreaterThan(FRAMEWORK_CONTROLS['soc2'].length);
     expect(out.cited.every(c => c.includes('soc2'))).toBe(true);
+    expect(
+      out.cited.some(c => String(c).endsWith('#P5.1')),
+      'soc2:P5.1 is published but was not in the frozen array — its absence means the wide '
+        + 'citation is still being built from compiled-in controls',
+    ).toBe(true);
   });
 
   it('honors explicit control overrides', () => {

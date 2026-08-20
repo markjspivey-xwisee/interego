@@ -1697,6 +1697,16 @@ iep:conformsTo a owl:ObjectProperty ;
     rdfs:comment "Asserts that the subject conforms to the indicated SHACL NodeShape. When attached to a container, every Holon written to that container MUST validate against the shape; the publish gate rejects non-conformant writes."@en ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
+iep:declares-shape a owl:ObjectProperty ;
+    rdfs:label "declares shape"@en ;
+    rdfs:subPropertyOf iep:conformsTo ;
+    rdfs:domain iep:Container ;
+    rdfs:range sh:NodeShape ;
+    owl:deprecated true ;
+    rdfs:seeAlso iep:conformsTo ;
+    rdfs:comment "Tolerated ingest-only alias of iep:conformsTo in a container-shape document. Publishers SHOULD use iep:conformsTo; this spelling is accepted so that documents already written against it keep resolving. It is declared here because the publish gate has always honoured it: a predicate a reader accepts but the vocabulary never publishes is undiscoverable, so no publisher could learn it and no consumer could verify it."@en ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
 iep:declares a owl:ObjectProperty ;
     rdfs:label "declares"@en ;
     rdfs:domain iep:Container ;
@@ -2321,6 +2331,23 @@ iep:enrolled a owl:ObjectProperty ;
     rdfs:comment "A subject whose evidence an iep:EvidenceSource will admit, listed on the register itself so membership is dereferenceable rather than deployment configuration. ★ AND THE LIST IS THE POINT, NOT A COUNT. An agent needs to know whether IT is on it — a register that said only how many were enrolled would leave the same question unanswered as the environment variable it replaces. ★ ABSENCE FROM A REGISTER IS A STATED FACT ABOUT A READABLE LIST, which is different from absence of a register: the first says 'not enrolled', the second says nothing at all."@en ;
     rdfs:domain iep:EvidenceSource ;
     rdfs:range iep:EvidenceSource ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:ControlSet a owl:Class ;
+    rdfs:label "Control set"@en ;
+    rdfs:comment "A named, PUBLISHED set of controls that a conformance report scores against. ★★ IT EXISTS BECAUSE THE SCOPE WAS A FROZEN ARRAY IN CODE. The compliance engine held a TypeScript copy of each framework's control list, that copy drifted from the published ontology — 16 controls against 25 declared for SOC 2 — and a report reading 100% therefore meant 16/16 of a scope no reader could see. Which controls a deployment claims to be measured on is a DECISION, and a decision that is not published is not auditable. Naming it as a node makes the scope dereferenceable, makes 'scope is narrower than the framework' a visible fact rather than a hidden one, and makes widening it an edit to a graph instead of a release."@en ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:control a owl:ObjectProperty ;
+    rdfs:label "control"@en ;
+    rdfs:comment "A control that is a member of this iep:ControlSet — i.e. one the report scores. The engine reads these rather than inferring membership from rdf:type, deliberately: the three framework ontologies model controls differently (SOC 2 as owl:NamedIndividual, EU AI Act largely as owl:Class, NIST RMF as individuals mixed with non-control individuals), so any type-based inference would be a fourth guess about somebody else's modelling. Membership is stated, not deduced."@en ;
+    rdfs:domain iep:ControlSet ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:auditScope a owl:ObjectProperty ;
+    rdfs:label "audit scope"@en ;
+    rdfs:comment "Links a framework ontology to the iep:ControlSet a conformance report scores against, so a reader arriving at the namespace document can find the scope without knowing an engine's internals."@en ;
+    rdfs:range iep:ControlSet ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
 iep:retired a owl:ObjectProperty ;

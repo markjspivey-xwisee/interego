@@ -158,8 +158,9 @@ integrations/
                         OpenClaw provider.
   compliance-overlay/   Path 4 — generic agent-action → compliance-grade
                         descriptor translator. Cites EU AI Act / NIST RMF /
-                        SOC 2 controls via dct:conformsTo into the existing
-                        FRAMEWORK_CONTROLS table. No new compliance vocab.
+                        SOC 2 controls via dct:conformsTo, naming controls from
+                        each framework's published iep:ControlSet (read at
+                        runtime from docs/ns). No new compliance vocab.
 docs/integrations/      Path-1-to-5 integration map for OpenClaw / Hermes /
                         Codex / Cursor / Claude Code etc.
 docs/ns/       Twenty OWL ontologies + three SHACL shape files (~880 terms — see docs/ns/README.md)

@@ -19,16 +19,24 @@
  * uses for theirs — see spec/policies/, spec/SOC2-PREPARATION.md.
  */
 
+// ★ THESE ALL CAME FROM `../dist/index.js`, WHICH RESOLVES TO A REPO-ROOT `dist/` THAT HAS
+// NEVER EXISTED — and half the names were never in one package anyway. An ESM relative specifier
+// resolves against the FILE, not the cwd, so this example could not be run from anywhere:
+// `node examples/compliance-end-to-end.mjs` died on ERR_MODULE_NOT_FOUND before printing a line.
+// The operator event builders live in @interego/ops; the scoring and wallet live in
+// @interego/compliance. Both resolve by workspace name from any cwd in the repo.
 import {
   buildDeployEvent,
   buildAccessChangeEvent,
   buildIncidentEvent,
   buildQuarterlyReviewEvent,
+} from '@interego/ops';
+import {
   checkComplianceInputs,
   generateFrameworkReport,
-  FRAMEWORK_CONTROLS,
+  loadControlSet,
   loadOrCreateComplianceWallet,
-} from '../dist/index.js';
+} from '@interego/compliance';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -112,15 +120,35 @@ const events = [
 // Convert to AuditableDescriptor shape that the report walker
 // expects. In real use, descriptors come from the pod via
 // discover_context; here we synthesize.
+//
+// ★ THE PUBLICATION TIME HAS TO FALL INSIDE THE PERIOD THE REPORT ASKS FOR.
+//
+// This stamped every descriptor `new Date().toISOString()` and then scored them against a fixed
+// 2026-Q2 window. That was true the day it was written and quietly stopped being true on 1 July:
+// from then on `inPeriod` excluded all four, and the walkthrough's headline read "0 satisfied, 0
+// partial, 25 missing / overall score: 0.00" directly under a Step 1 announcing the very control
+// it had just cited. Nobody saw it, because the file could not be run at all (see the imports).
+//
+// A real descriptor's `publishedAt` is the time the pod recorded it, which this example does not
+// have: it synthesizes events rather than reading them back from a pod, and the event objects the
+// builders return carry no publication time (measured — no ISO field on any of them). So these
+// are SYNTHESIZED publication times, stated as such, chosen inside the quarter being reported on.
+// The alternative of reaching for a plausible-looking field on the event and falling back to a
+// literal would have produced the same four numbers while implying they came from the data.
+const AUDIT_PERIOD = { from: '2026-04-01T00:00:00Z', to: '2026-06-30T23:59:59Z' };
+const SYNTHESIZED_PUBLICATION_TIMES = [
+  '2026-04-14T09:12:00Z', // deploy
+  '2026-04-22T16:40:00Z', // access change
+  '2026-04-25T12:05:00Z', // incident, just after the 11:00 detection above
+  '2026-06-29T08:00:00Z', // quarterly review, at the close of the quarter
+];
 const auditable = events.map((e, i) => ({
   id: `urn:descriptor:example:${i}`,
-  publishedAt: new Date().toISOString(),
+  publishedAt: SYNTHESIZED_PUBLICATION_TIMES[i],
   evidenceForControls: e.controls,
 }));
 
-const report = generateFrameworkReport('soc2', auditable, {
-  auditPeriod: { from: '2026-04-01T00:00:00Z', to: '2026-06-30T23:59:59Z' },
-});
+const report = generateFrameworkReport('soc2', auditable, { auditPeriod: AUDIT_PERIOD });
 console.log('━━ Step 3: SOC 2 framework report ━━━━━━━━━━━━━━━');
 console.log('framework:', report.framework);
 console.log('audit period:', report.auditPeriod.from, '→', report.auditPeriod.to);
@@ -132,10 +160,13 @@ console.log('totals:',
 console.log('overall score:', report.summary.overallScore.toFixed(2));
 console.log();
 console.log('per-control breakdown:');
+// Padded to the widest IRI. `padEnd(20)` was a no-op the moment controlIri became the
+// dereferenceable ~58-character URL rather than a CURIE, leaving every column ragged.
+const entryWidth = Math.max(...report.entries.map(x => String(x.controlIri).length));
 for (const entry of report.entries) {
   const mark = entry.status === 'satisfied' ? '✓'
             : entry.status === 'partial' ? '~' : ' ';
-  console.log(`  ${mark} ${entry.controlIri.padEnd(20)} count=${entry.evidenceCount}  status=${entry.status.padEnd(9)}  ${entry.controlLabel}`);
+  console.log(`  ${mark} ${String(entry.controlIri).padEnd(entryWidth)} count=${entry.evidenceCount}  status=${entry.status.padEnd(9)}  ${entry.controlLabel}`);
 }
 console.log();
 
@@ -154,8 +185,16 @@ console.log();
 
 // ── Step 5: framework controls catalog ──────────────────────
 console.log('━━ Step 5: SOC 2 controls Interego knows about ━━━');
-for (const c of FRAMEWORK_CONTROLS.soc2) {
-  console.log(`  ${c.iri.padEnd(20)} ${c.label}`);
+// The roster is READ FROM docs/ns/soc2.ttl at runtime, not from a table compiled into the
+// package — so this prints what the project publishes about itself, and says which source it
+// came from. `fallback` here would mean the ontologies were not reachable from wherever this ran.
+const soc2Scope = loadControlSet('soc2');
+console.log(`   scope: ${soc2Scope.scopeSource}${soc2Scope.scopeIri ? ` — ${soc2Scope.scopeIri}` : ''}`);
+// Padded to the widest IRI so the table stays square now that a control is reported as the
+// dereferenceable URL a reader can follow, rather than a CURIE only a prefix map resolves.
+const soc2Width = Math.max(...soc2Scope.controls.map(x => String(x.iri).length));
+for (const c of soc2Scope.controls) {
+  console.log(`  ${String(c.iri).padEnd(soc2Width)}  ${c.label}`);
 }
 console.log();
 console.log('━━ End ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');

@@ -148,3 +148,34 @@ eu-ai-act:articleReference a owl:DatatypeProperty ;
 
 eu-ai-act:LoggedAction rdfs:seeAlso iep:ProvenanceFacet ;
     rdfs:comment "Article 12 logging requirements are satisfied by Interego's standard ProvenanceFacet + iep:supersedes chain — the regulation's record-keeping is just the federation's normal operating mode, given a signed-by-default mode." .
+
+# ── Audit scope ────────────────────────────────────────────
+#
+# See soc2:AuditScope for why the scope is published rather than held as an array in the engine.
+#
+# ★ AND THE ARTICLE-FORM IRIs ARE ALIASES, NOT EXTRA CONTROLS. eu-ai-act:Article12's own comment
+# says it is "used as a dct:conformsTo control target in compliance evidence; realized structurally
+# by eu-ai-act:LoggedAction", and Article15 says the same of AccuracyAttestation. Evidence
+# legitimately cites either form — this project's own aggregate bridge cites the article form,
+# following that instruction — so the engine resolves rdfs:seeAlso and treats a citation of either
+# as satisfying the one control. Counting both would double the denominator for one obligation.
+#
+# eu-ai-act:Article10 is declared below for the same reason: the bridge already cited it, following
+# the pattern Article12 and Article15 set, and it was the only one of the three that did not exist.
+
+eu-ai-act:Article10 a owl:NamedIndividual ;
+    rdfs:label "Article 10 — Data governance" ;
+    rdfs:comment "Citable IRI for EU AI Act Article 10 (training, validation and testing data governance). Used as a dct:conformsTo control target in compliance evidence; realized structurally by eu-ai-act:DataGovernanceAttestation." ;
+    rdfs:seeAlso eu-ai-act:DataGovernanceAttestation .
+
+eu-ai-act:AuditScope a iep:ControlSet ;
+    rdfs:label "EU AI Act — obligations this deployment is scored against"@en ;
+    rdfs:comment "The nine published high-risk-system obligations. Article-form IRIs (Article10, Article12, Article15) are citable aliases resolved via rdfs:seeAlso, not additional members."@en ;
+    iep:control
+        eu-ai-act:RiskClassification, eu-ai-act:RiskManagementRecord,
+        eu-ai-act:DataGovernanceAttestation, eu-ai-act:LoggedAction,
+        eu-ai-act:TransparencyDisclosure, eu-ai-act:HumanOversightCheckpoint,
+        eu-ai-act:AccuracyAttestation, eu-ai-act:Article50Disclosure,
+        eu-ai-act:ConformityAssessment .
+
+eu-ai-act:HighRiskSystem iep:auditScope eu-ai-act:AuditScope .

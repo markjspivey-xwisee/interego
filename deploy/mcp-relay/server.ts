@@ -372,7 +372,10 @@ import {
   checkComplianceInputs,
   generateFrameworkReport,
   walkLineage,
+  // Retained as the ENUMERATION of frameworks (its keys) and as the visible fallback roster
+  // inside loadControlSet. It is no longer what any surface reports as the scope.
   FRAMEWORK_CONTROLS,
+  loadControlSet,
   loadOrCreateComplianceWallet,
 } from '@interego/compliance';
 import type { ComplianceFramework, AuditableDescriptor, PersistedComplianceWallet } from '@interego/compliance';
@@ -13379,12 +13382,30 @@ async function requireAuthorizedPodUrl(
   return suppliedUrl;
 }
 
+/**
+ * ★★ THIS ADVERTISED A DIFFERENT ROSTER THAN THE ONE REPORTS ARE SCORED AGAINST.
+ *
+ * It read `FRAMEWORK_CONTROLS` — the frozen array — while `/audit/compliance/<framework>` scores
+ * against the published `iep:ControlSet`. So the relay told callers the EU AI Act had 8 controls
+ * and then returned reports over 9, and said SOC 2 had 16 where the ontology publishes 25. A
+ * discovery endpoint that disagrees with the thing it describes is worse than no discovery
+ * endpoint: it is the number an auditor writes down.
+ *
+ * `scopeSource` and `scopeIri` are surfaced deliberately. They make two questions answerable from
+ * outside the container — did this deployment actually reach the ontologies, and which published
+ * scope is in force — and `scopeIri` is dereferenceable, so a caller can go read it.
+ */
 app.get('/audit/frameworks', (_req, res) => {
-  const frameworks = Object.entries(FRAMEWORK_CONTROLS).map(([name, controls]) => ({
-    framework: name,
-    controlCount: controls.length,
-    controls: controls.map(c => ({ iri: c.iri, label: c.label })),
-  }));
+  const frameworks = (Object.keys(FRAMEWORK_CONTROLS) as ComplianceFramework[]).map(name => {
+    const scope = loadControlSet(name);
+    return {
+      framework: name,
+      controlCount: scope.controls.length,
+      scopeSource: scope.scopeSource,
+      ...(scope.scopeIri ? { scopeIri: scope.scopeIri } : {}),
+      controls: scope.controls.map(c => ({ iri: c.iri, label: c.label })),
+    };
+  });
   res.json({ frameworks });
 });
 

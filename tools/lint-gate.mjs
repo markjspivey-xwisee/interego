@@ -571,7 +571,7 @@ const BASELINE = {};
 // further up, and `rc` came from `tail`, not from the gate. A gate whose verdict you read through
 // `| grep` or `| tail` is a gate you have partially disabled: run it plain and check ITS exit code.
 // Same shape as every other proxy this week — the summary line standing in for the verdict.
-export const MIN_FILES = 466;
+export const MIN_FILES = 469;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.

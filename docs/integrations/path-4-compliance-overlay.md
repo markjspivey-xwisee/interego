@@ -32,7 +32,7 @@ ontology, or a new framework table.
 | Provenance attribution | PROV `wasAttributedTo` (owner) + `wasAssociatedWith` (agent) — separated cleanly |
 | Modal-status filtering | success → Asserted, partial → Hypothetical, failure → Counterfactual |
 | Time-bounded validity | Temporal facet with `validFrom` / `prov:startedAtTime` / `prov:endedAtTime` |
-| Control citations | `dct:conformsTo` triples into the existing FRAMEWORK_CONTROLS table |
+| Control citations | `dct:conformsTo` triples naming controls from the framework's published `iep:ControlSet` |
 | Tamper detection | `iep:contentHash` over the event fingerprint |
 | Anchored audit pair | `publish_context(compliance: true, ...)` adds ECDSA signature + IPFS CID; the overlay produces the descriptor; this finishing happens server-side |
 | Cross-pod regulator access | `share_with: [did:web:auditor]` per descriptor; per-event scope |
@@ -68,8 +68,10 @@ await recordAgentAction(event, config, {
 ```
 
 When `controls` is omitted, the overlay defaults to every IRI in the
-framework's `FRAMEWORK_CONTROLS` table — the wide citation. Tighten
-it when you know the specific clause that applies.
+framework's published `iep:ControlSet` (`docs/ns/<framework>.ttl`,
+read at runtime) — the wide citation. Tighten it when you know the
+specific clause that applies. It previously defaulted to the frozen
+`FRAMEWORK_CONTROLS` array, which understated SOC 2 by nine controls.
 
 ## Honest scoping
 

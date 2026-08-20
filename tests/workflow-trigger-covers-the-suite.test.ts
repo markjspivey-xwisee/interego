@@ -244,3 +244,76 @@ describe('whole-tree gates run in a workflow with no paths filter', () => {
   }
 });
 
+
+/**
+ * ★★ THE SAME WIRING BUG, ONE WORKFLOW OVER — and the reason it is asserted here rather than
+ * trusted.
+ *
+ * `tools/ontology-lint.mjs` declares SCAN_PATHS: the directories whose TypeScript it reads. It is
+ * invoked by exactly one workflow, `.github/workflows/ontology-lint.yml`, which has its own
+ * `paths:` filter. Those two lists have to agree, and nothing checked that they did.
+ *
+ * Measured: `integrations` was added to SCAN_PATHS precisely because two undeclared control IRIs
+ * (`nist-rmf:MG-3.1`, `eu-ai-act:Article10`) shipped from integrations/compliance-overlay and no
+ * run ever looked there — and the workflow filter still omitted `integrations/**`, so a commit
+ * confined to that directory would not have started the job at all. The scan reaching a directory
+ * and the job STARTING on a change to it are two independent facts, and only one of them was
+ * fixed. This ties them together.
+ */
+describe('the ontology lint triggers on every directory it scans', () => {
+  const workflow = readFileSync(`${ROOT}.github/workflows/ontology-lint.yml`, 'utf8');
+  const tool = readFileSync(`${ROOT}tools/ontology-lint.mjs`, 'utf8');
+  const blocks = pathsBlocks(workflow);
+
+  /** The SCAN_PATHS array entries, read from the tool rather than restated here. */
+  const scanPaths = (): string[] => {
+    const arr = /const SCAN_PATHS\s*=\s*\[([\s\S]*?)\n\];/.exec(tool)?.[1];
+    if (arr === undefined) {
+      throw new Error('tools/ontology-lint.mjs: no `const SCAN_PATHS = [...]` — this guard reads the wrong thing');
+    }
+    /**
+     * Match ELEMENT LINES, rather than stripping comments and harvesting every literal.
+     *
+     * Stripping was tried and was wrong in a way worth recording: the array's own `//` comments
+     * mention paths like `docs/ns/*.ttl`, and the `/` immediately before the `*` opens what a
+     * block-comment regex reads as `/*`. Removing block comments first therefore deleted
+     * everything from inside that line comment through the close of the next real block comment
+     * — five of the six entries — and the guard below saw a one-element list. A bare element line
+     * cannot be confused with prose, so nothing needs stripping.
+     */
+    return [...new Set(
+      arr.split('\n')
+        .map(line => /^\s*'([^']+)',?\s*$/.exec(line)?.[1])
+        .filter((v): v is string => v !== undefined),
+    )];
+  };
+
+  it('parses both the filter and the scan list — a vacuous pass here would hide the whole check', () => {
+    expect(blocks.length).toBe(2);
+    expect(scanPaths().length).toBeGreaterThan(3);
+  });
+
+  it('names every SCAN_PATHS directory in both the push and pull_request filters', () => {
+    for (const block of blocks) {
+      for (const dir of scanPaths()) {
+        expect(
+          block.some(pattern => covers(pattern, `${dir}/anything.ts`)),
+          `tools/ontology-lint.mjs scans '${dir}/' but .github/workflows/ontology-lint.yml has no `
+            + `paths entry covering it, so a commit confined to that directory never starts the `
+            + `lint. Add '${dir}/**'.`,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it('names the tool and its allowlist, so a change to the gate itself runs the gate', () => {
+    for (const block of blocks) {
+      for (const f of ['tools/ontology-lint.mjs', 'tools/ontology-lint.allowlist.txt']) {
+        expect(
+          block.some(pattern => pattern === f || covers(pattern, f)),
+          `${f} is not covered by the ontology-lint paths filter`,
+        ).toBe(true);
+      }
+    }
+  });
+});
