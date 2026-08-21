@@ -54,6 +54,16 @@
  */
 
 import { assessDisposition, type WorkRegime } from './agent-disposition.js';
+// The regime→method routing is read from the published graph, not decided here. See
+// methodForRegime below for what this replaced and why it throws rather than defaulting.
+import { AGP_NS, readOntologyTurtle } from './ontology.js';
+import {
+  findSubjectsOfType,
+  type IRI,
+  parseTrig,
+  readIriValue,
+  readStringValue,
+} from '@interego/core';
 import type { AgentTrajectory } from './agent-trajectory.js';
 
 // ── Performers + directionality ─────────────────────────────────────
@@ -271,12 +281,71 @@ export interface DiagnoseInput {
   performedWellBefore?: boolean;
 }
 
-/** Decide which method the work regime calls for. */
+/**
+ * Which method the work regime calls for — READ FROM THE PUBLISHED GRAPH.
+ *
+ * ★★ THIS WAS AN IF-CHAIN, AND THE ONTOLOGY ALREADY SAID THE SAME THING IN PROSE.
+ *
+ * `ontology/agp.ttl` stated this routing three times over — in each regime's `rdfs:comment`
+ * ("Method: apply established practice"), in each method's `rdfs:label` ("(Evident)",
+ * "(Knowable ONLY)") — and `agp:PerformanceMethod`'s own comment admitted where the decision
+ * actually lived: "enforced in code by the regime-source discipline, not by SHACL". Four
+ * statements of one rule, three of them unreadable by anything, and free to drift from the one
+ * that ran.
+ *
+ * The routing is now `agp:routesTo` edges. Changing which method a regime calls for is an edit to
+ * a graph that a reader can dereference, and the prose and the behaviour cannot disagree because
+ * there is only one of them.
+ *
+ * ★ IT THROWS rather than defaulting, for the reason the ledger records about this exact vertical:
+ * "gap-analysis is Knowable ONLY, and surfacing it for any other regime is a category error". The
+ * old `return 'gap-analysis'` was a catch-all that happened to be correct only because
+ * `WorkRegime` has exactly four members — add a fifth and it would silently have routed it into
+ * the gap frame. Same discipline as performanceProficiencyBands: refuse rather than fall back to
+ * a hidden built-in.
+ */
+let _regimeRouting: ReadonlyMap<string, PerformanceMethod> | undefined;
+
+function regimeRouting(): ReadonlyMap<string, PerformanceMethod> {
+  if (_regimeRouting) return _regimeRouting;
+  const doc = parseTrig(readOntologyTurtle());
+  const token = new Map<string, string>();
+  for (const subj of findSubjectsOfType(doc, `${AGP_NS}PerformanceMethod` as IRI)) {
+    const iri = typeof subj.subject === 'string' ? String(subj.subject) : undefined;
+    const t = readStringValue(subj, `${AGP_NS}methodToken` as IRI);
+    if (iri && t) token.set(iri, t);
+  }
+  const routing = new Map<string, PerformanceMethod>();
+  for (const subj of findSubjectsOfType(doc, `${AGP_NS}WorkRegime` as IRI)) {
+    const iri = typeof subj.subject === 'string' ? String(subj.subject) : undefined;
+    const methodIri = readIriValue(subj, `${AGP_NS}routesTo` as IRI);
+    if (!iri || !methodIri) continue;
+    const t = token.get(String(methodIri));
+    if (!t) continue;
+    routing.set(iri.replace(AGP_NS, ''), t as PerformanceMethod);
+  }
+  if (routing.size === 0) {
+    throw new Error(
+      'ontology/agp.ttl parsed to zero agp:routesTo edges — the regime→method routing is DATA and '
+      + 'the data is unreadable. Refusing to diagnose rather than fall back to a hidden built-in '
+      + 'table, which is what this replaced.',
+    );
+  }
+  _regimeRouting = routing;
+  return routing;
+}
+
 function methodForRegime(domain: WorkRegime): PerformanceMethod {
-  if (domain === 'Emergent') return 'dispositional-read';
-  if (domain === 'Turbulent') return 'stabilise-first';
-  if (domain === 'Evident') return 'apply-practice';
-  return 'gap-analysis'; // Knowable — the one regime the gap frame fits
+  const method = regimeRouting().get(domain);
+  if (!method) {
+    throw new Error(
+      `no agp:routesTo edge published for regime "${domain}" in ontology/agp.ttl, so there is no `
+      + 'method to route it to. Publish the edge rather than letting an unrouted regime fall into '
+      + 'the gap frame — gap-analysis is Knowable ONLY, and applying it elsewhere is the category '
+      + 'error this vertical exists to prevent.',
+    );
+  }
+  return method;
 }
 
 /** Does the caller supply gap-intent evidence — an exemplary state, factor

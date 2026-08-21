@@ -122,12 +122,50 @@ agp:PerformanceMethod a owl:Class ;
     rdfs:label "Performance Method" ;
     rdfs:comment "Enumerated method a diagnosis routes to, determined by the situation's regime. Gap-analysis is bound to the Knowable regime ONLY — surfacing it for any other regime is a category error (enforced in code by the regime-source discipline, not by SHACL)." .
 
-agp:ApplyPractice    a agp:PerformanceMethod ; rdfs:label "Apply practice (Evident)" .
+agp:ApplyPractice    a agp:PerformanceMethod ; rdfs:label "Apply practice (Evident)" ;
+    agp:methodToken "apply-practice" .
 agp:GapAnalysis      a agp:PerformanceMethod ; rdfs:label "Gap analysis (Knowable ONLY)" ;
+    agp:methodToken "gap-analysis" ;
     rdfs:comment "Idealize a future state, identify the gap, analyze the six performance factors for the dominant cause, close it. Valid ONLY when the regime is Knowable and DERIVED from evidence, never asserted or defaulted." .
-agp:DispositionalRead a agp:PerformanceMethod ; rdfs:label "Dispositional read + probes (Emergent)" .
-agp:StabiliseFirst   a agp:PerformanceMethod ; rdfs:label "Stabilise first (Turbulent)" .
-agp:ClassifyFirst    a agp:PerformanceMethod ; rdfs:label "Classify first (unclassified)" .
+agp:DispositionalRead a agp:PerformanceMethod ; rdfs:label "Dispositional read + probes (Emergent)" ;
+    agp:methodToken "dispositional-read" .
+agp:StabiliseFirst   a agp:PerformanceMethod ; rdfs:label "Stabilise first (Turbulent)" ;
+    agp:methodToken "stabilise-first" .
+agp:ClassifyFirst    a agp:PerformanceMethod ; rdfs:label "Classify first (unclassified)" ;
+    agp:methodToken "classify-first" ;
+    rdfs:comment "Deliberately has NO agp:routesTo edge pointing at it: it is not a regime's method but the answer to having no regime at all, which the caller decides before routing." .
+
+# ── ★★ THE ROUTING, AS TRIPLES RATHER THAN AS PROSE ──────────────────────────
+#
+# This mapping was stated three times in this file — in each regime's rdfs:comment ("Method:
+# apply established practice"), in each method's rdfs:label ("(Evident)", "(Knowable ONLY)") —
+# and DECIDED a fourth time, in a TypeScript if-chain in performance-architecture.ts. The class
+# comment above even said so: "enforced in code by the regime-source discipline, not by SHACL".
+#
+# That is the specific failure this project keeps rediscovering: the rule described in a comment
+# while living in code, where the two can drift and nothing notices. The engine now reads these
+# edges and REFUSES to route a regime that has none, the way the proficiency ladder refuses to
+# rank without its published bands.
+#
+# `agp:methodToken` publishes the wire spelling the code uses, so even the kebab-case form is not
+# inferred from the IRI by a convention that lives only in the parser.
+
+agp:routesTo a owl:ObjectProperty ;
+    rdfs:label "routes to" ;
+    rdfs:domain agp:WorkRegime ;
+    rdfs:range agp:PerformanceMethod ;
+    rdfs:comment "The method this regime's situations must be diagnosed with. Exactly one per regime; a regime with no edge is unroutable and the engine throws rather than guessing." .
+
+agp:methodToken a owl:DatatypeProperty ;
+    rdfs:label "method token" ;
+    rdfs:domain agp:PerformanceMethod ;
+    rdfs:range xsd:string ;
+    rdfs:comment "The stable identifier the diagnosis surfaces for this method. Published so the mapping from IRI to wire value is data, not a naming convention." .
+
+agp:Evident   agp:routesTo agp:ApplyPractice .
+agp:Knowable  agp:routesTo agp:GapAnalysis .
+agp:Emergent  agp:routesTo agp:DispositionalRead .
+agp:Turbulent agp:routesTo agp:StabiliseFirst .
 
 # ── Capability composition: skills + tools + knowledge -> capability ─────
 
