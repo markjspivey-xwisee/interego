@@ -257,6 +257,9 @@ function publicAddress(descriptorUrl: string, podUrl: string): string {
 function valueOf(term: ParsedTerm): string | boolean | null {
   if (term.kind === 'iri') return String(term.iri);
   if (term.kind === 'bnode') return null;
+  // An RDF 1.2 triple term has no scalar value, the same as a blank node here. Returning
+  // null keeps this reader honest rather than reporting `undefined` as an observation.
+  if (term.kind === 'triple') return null;
   if (term.datatype === 'http://www.w3.org/2001/XMLSchema#boolean') return term.value === 'true';
   return term.value;
 }

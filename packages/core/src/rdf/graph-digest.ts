@@ -19,6 +19,7 @@
  * moves the digest, which is the behaviour a content binding has to have.
  */
 import { createHash } from 'node:crypto';
+import type { ParsedTerm, ParsedTripleTerm } from './turtle-parser.js';
 import { parseTrig } from './turtle-parser.js';
 
 /**
@@ -40,6 +41,27 @@ export function digestAlgorithmOf(digest: string | undefined): string | null {
   if (typeof digest !== 'string' || digest.length === 0) return null;
   const i = digest.indexOf(':');
   return i <= 0 ? null : digest.slice(0, i);
+}
+
+/**
+ * An RDF 1.2 triple term, rendered so that two triple terms collide in the digest only if
+ * they are the same triple. Recursive, because [34] ttObject admits a nested triple term.
+ *
+ * The literal rendering deliberately mirrors the object case below, datatype and language
+ * included: a triple term naming `:s :p "5"` and one naming `:s :p "5"^^xsd:integer` are
+ * different terms and must not share a hash.
+ */
+function canonicalTripleTerm(t: ParsedTripleTerm): string {
+  const render = (term: ParsedTerm): string => {
+    if (term.kind === 'iri') return `<${term.iri}>`;
+    if (term.kind === 'bnode') return `_:${term.id}`;
+    if (term.kind === 'triple') return canonicalTripleTerm(term);
+    const suffix = term.datatype
+      ? `^^<${term.datatype}>`
+      : term.language ? `@${term.language}` : '';
+    return `${JSON.stringify(term.value)}${suffix}`;
+  };
+  return `<<( ${render(t.subject)} <${t.predicate}> ${render(t.object)} )>>`;
 }
 
 /**
@@ -77,6 +99,18 @@ export function canonicalGraphTriples(turtle: string): string {
           o = `<${term.iri}>`;
         } else if (term.kind === 'bnode') {
           o = `_:${term.id}`;
+        } else if (term.kind === 'triple') {
+          // ★ RDF 1.2 triple terms MUST have their own rendering, and this branch is the
+          // reason the literal case below is now explicit rather than a bare `else`.
+          //
+          // When ParsedTerm gained a fourth member, the old `else` swept triple terms into
+          // the literal path — it would have read `.datatype`/`.language`/`.value` off a
+          // term that has none, digesting every distinct triple term as the SAME
+          // `undefined` string. This is the signing path: two different reified statements
+          // would have produced one hash, so a signature over one would have verified over
+          // the other. TypeScript caught it only because the union is discriminated; a
+          // `default:` would have hidden it.
+          o = canonicalTripleTerm(term);
         } else {
           // Datatype and language are part of the term's identity — a plain "5" and
           // "5"^^xsd:integer are different objects, and a digest that conflated them would

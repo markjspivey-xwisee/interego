@@ -57,7 +57,25 @@ export interface ParsedBNode {
   readonly id: string;
 }
 
-export type ParsedTerm = ParsedLiteral | ParsedIri | ParsedBNode;
+/**
+ * An RDF 1.2 triple term — the `<<( s p o )>>` form.
+ *
+ * The asymmetry is the grammar's, not ours: RDF 1.2 Turtle [33] `ttSubject ::= iri |
+ * BlankNode` admits no literal, while [34] `ttObject ::= iri | BlankNode | literal |
+ * tripleTerm` does, and nests only in object position.
+ *
+ * A triple term is NOT an assertion. It names a triple so something else can say things
+ * about it; the containing document decides separately whether that triple is also
+ * asserted. Annotation syntax asserts it, `<< >>` does not — see parseAnnotation.
+ */
+export interface ParsedTripleTerm {
+  readonly kind: 'triple';
+  readonly subject: ParsedIri | ParsedBNode;
+  readonly predicate: IRI;
+  readonly object: ParsedTerm;
+}
+
+export type ParsedTerm = ParsedLiteral | ParsedIri | ParsedBNode | ParsedTripleTerm;
 
 export interface ParsedSubject {
   readonly subject: IRI | { readonly bnode: string };
@@ -118,6 +136,53 @@ function tokenize(src: string): Tok[] {
     }
 
     const startPos = i;
+
+    // ── RDF 1.2 reification tokens ─────────────────────────────────────────────
+    //
+    // ★ ORDER IS THE GRAMMAR HERE. This tokenizer is one flat dispatch with no lookahead
+    // table, so every one of these must be tested BEFORE the shorter token that prefixes
+    // it. `<<(` before `<` or the IRI branch eats it as `<<(…>`; `)>>` before the
+    // single-character `)`; `{|` before `{`, which is already load-bearing for TriG graph
+    // blocks. Getting this order wrong does not fail loudly — it silently reinterprets
+    // the document as a different one.
+    if (src.startsWith('<<(', i)) {
+      i += 3;
+      out.push({ type: 'punct', value: '<<(', pos: startPos });
+      continue;
+    }
+    if (src.startsWith(')>>', i)) {
+      i += 3;
+      out.push({ type: 'punct', value: ')>>', pos: startPos });
+      continue;
+    }
+    // ★ `<< >>` (RDF 1.2 [29] reifiedTriple) is deliberately NOT implemented, and says so
+    // rather than being mistaken for an IRI. It differs from annotation syntax in the one
+    // way that matters: `{| |}` asserts the base triple, `<< >>` does NOT. Accepting it as
+    // if it did would add assertions the author explicitly declined to make, so it is
+    // refused by name until it is implemented properly.
+    if (src.startsWith('<<', i)) {
+      throw new ParseError(
+        'RDF 1.2 reifiedTriple syntax `<< … >>` is not implemented by this parser. It is '
+        + 'refused rather than approximated because, unlike annotation syntax `{| … |}`, it '
+        + 'does NOT assert the triple it names', startPos);
+    }
+    if (src.startsWith('{|', i)) {
+      i += 2;
+      out.push({ type: 'punct', value: '{|', pos: startPos });
+      continue;
+    }
+    if (src.startsWith('|}', i)) {
+      i += 2;
+      out.push({ type: 'punct', value: '|}', pos: startPos });
+      continue;
+    }
+    // [28] reifier ::= '~' (iri | BlankNode)?  — the term is optional, so a bare `~` is
+    // legal and means "a fresh blank node".
+    if (c === '~') {
+      i++;
+      out.push({ type: 'punct', value: '~', pos: startPos });
+      continue;
+    }
 
     // IRI <...>  (may not contain unescaped > or whitespace per Turtle; we forgive whitespace gently)
     if (c === '<') {
@@ -374,6 +439,43 @@ function resolvePrefixed(s: ParserState, prefix: string, local: string): IRI {
   return canonicalize(base + local) as IRI;
 }
 
+/**
+ * [32] tripleTerm ::= '<<(' ttSubject verb ttObject ')>>'
+ *
+ * Parses a triple term into a value; it asserts NOTHING. The nesting bound is shared with
+ * blank-node property lists deliberately — `<<( :s :p <<( :s :p <<( … )>> )>> )>>` is the
+ * same unbounded-recursion shape as `[ a [ a [ a … ] ] ]` and gets the same answer.
+ */
+function parseTripleTerm(s: ParserState): ParsedTripleTerm {
+  const open = consume(s);
+  if (s.depth >= MAX_NESTING_DEPTH) {
+    throw new ParseError(
+      `maximum nesting depth (${MAX_NESTING_DEPTH}) exceeded — refusing deeply-nested triple terms`,
+      open?.pos ?? -1);
+  }
+  s.depth++;
+  try {
+    const subjTok = peek(s);
+    const subject = parseTermAsTerm(s);
+    // [33] ttSubject ::= iri | BlankNode — no literals, no nested triple term.
+    if (subject.kind !== 'iri' && subject.kind !== 'bnode') {
+      throw new ParseError(
+        'a triple term subject must be an IRI or blank node (RDF 1.2 Turtle [33] ttSubject)',
+        subjTok?.pos ?? -1);
+    }
+    const predicate = parsePredicate(s);
+    const object = parseTermAsTerm(s); // [34] ttObject — literals and nesting allowed here
+    const close = peek(s);
+    if (!(close?.type === 'punct' && close.value === ')>>')) {
+      throw new ParseError("expected ')>>' to close a triple term", close?.pos ?? -1);
+    }
+    consume(s);
+    return { kind: 'triple', subject, predicate, object };
+  } finally {
+    s.depth--;
+  }
+}
+
 function parseTermAsTerm(s: ParserState): ParsedTerm {
   const t = peek(s);
   if (!t) throw new ParseError('expected term, got EOF', -1);
@@ -381,6 +483,8 @@ function parseTermAsTerm(s: ParserState): ParsedTerm {
   if (t.type === 'iri') { consume(s); return { kind: 'iri', iri: t.value as IRI }; }
   if (t.type === 'pname') { consume(s); return { kind: 'iri', iri: resolvePrefixed(s, t.prefix, t.local) }; }
   if (t.type === 'bnode') { consume(s); return { kind: 'bnode', id: t.id }; }
+  // [32] tripleTerm ::= '<<(' ttSubject verb ttObject ')>>'
+  if (t.type === 'punct' && t.value === '<<(') { return parseTripleTerm(s); }
   if (t.type === 'string') {
     consume(s);
     let datatype: IRI | undefined;
@@ -420,7 +524,7 @@ function parseTermAsTerm(s: ParserState): ParsedTerm {
     const id = `_anon${s.bnodeCounter++}`;
     const props = new Map<IRI, ParsedTerm[]>();
     s.bnodeProperties.set(id, props);
-    parsePropertyList(s, props);
+    parsePropertyList(s, props, { kind: 'bnode', id });
     s.depth--;
     expectPunct(s, ']');
     return { kind: 'bnode', id };
@@ -533,7 +637,7 @@ function parseSubject(s: ParserState): { key: string; props: Map<IRI, ParsedTerm
     const key = `_:${id}`;
     const props = new Map<IRI, ParsedTerm[]>();
     s.subjects.set(key, props);
-    parsePropertyList(s, props);
+    parsePropertyList(s, props, { kind: 'bnode', id });
     s.depth--;
     expectPunct(s, ']');
     return { key, props };
@@ -566,12 +670,129 @@ function parseSubject(s: ParserState): { key: string; props: Map<IRI, ParsedTerm
   throw new ParseError(`expected subject, got ${t.type}`, t.pos);
 }
 
-function parsePropertyList(s: ParserState, props: Map<IRI, ParsedTerm[]>): void {
-  // predicate object (',' object)* (';' predicate object (',' object)*)* ';'?
+const RDF_REIFIES = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#reifies' as IRI;
+
+/**
+ * [35] annotation ::= (reifier | annotationBlock)*
+ * [36] annotationBlock ::= '{|' predicateObjectList '|}'
+ *
+ * Desugars RDF 1.2 reification into ordinary triples, exactly as the spec's own parsing
+ * algorithm (§7.3) does — which is why nothing downstream needs to know this syntax
+ * exists. For `:s :p :o {| :q :v |}` the graph gets THREE triples:
+ *
+ *     :s :p :o .                              ← the base triple IS asserted
+ *     _:b0 rdf:reifies <<( :s :p :o )>> .     ← §7.3.4, fresh bnode when unnamed
+ *     _:b0 :q :v .
+ *
+ * ★ The base triple is asserted by the CALLER, before this runs — that is the difference
+ * between `{| |}` and `<< >>`, and keeping the assertion out of here is what stops a
+ * future reifiedTriple implementation from accidentally inheriting it.
+ *
+ * ★ Each annotation block gets its OWN reifier unless one was named. Production [35] is a
+ * Kleene star, so `:s :p :o {| :a 1 |} {| :b 2 |}` is legal and means two reifiers, not one
+ * with both properties; a `~:r` names only the block that follows it. Reusing one bnode
+ * across blocks would silently merge two distinct claims about the same triple.
+ */
+function parseAnnotation(
+  s: ParserState,
+  subject: ParsedIri | ParsedBNode,
+  predicate: IRI,
+  object: ParsedTerm,
+): void {
+  let pendingReifier: ParsedIri | ParsedBNode | undefined;
+  let sawAny = false;
+
+  while (true) {
+    const next = peek(s);
+    if (!next || next.type !== 'punct') break;
+
+    if (next.value === '~') {
+      consume(s);
+      sawAny = true;
+      // [28] reifier ::= '~' (iri | BlankNode)? — the term is OPTIONAL.
+      const after = peek(s);
+      if (after && (after.type === 'iri' || after.type === 'pname' || after.type === 'bnode')) {
+        const term = parseTermAsTerm(s);
+        pendingReifier = term as ParsedIri | ParsedBNode;
+      } else {
+        pendingReifier = { kind: 'bnode', id: `_anon${s.bnodeCounter++}` };
+      }
+      // A bare reifier with no block still yields the rdf:reifies triple (§7.3.1).
+      emitReifier(s, pendingReifier, subject, predicate, object);
+      continue;
+    }
+
+    if (next.value === '{|') {
+      consume(s);
+      sawAny = true;
+      // §7.3.4: "If the curReifier is not set, then it is assigned a fresh RDF blank node".
+      const reifier = pendingReifier ?? { kind: 'bnode', id: `_anon${s.bnodeCounter++}` } as const;
+      if (pendingReifier === undefined) emitReifier(s, reifier, subject, predicate, object);
+      // The block's predicate-object list hangs off the REIFIER as its subject.
+      const props = reifierProps(s, reifier);
+      parsePropertyList(s, props, reifier);
+      const close = peek(s);
+      if (!(close?.type === 'punct' && close.value === '|}')) {
+        throw new ParseError("expected '|}' to close an annotation block", close?.pos ?? -1);
+      }
+      consume(s);
+      // Consumed: a following block gets a fresh reifier unless a new `~` names one.
+      pendingReifier = undefined;
+      continue;
+    }
+    break;
+  }
+  void sawAny;
+}
+
+/** The property map a reifier writes into, registered as a subject so readers can find it. */
+function reifierProps(s: ParserState, reifier: ParsedIri | ParsedBNode): Map<IRI, ParsedTerm[]> {
+  if (reifier.kind === 'iri') {
+    const existing = s.subjects.get(reifier.iri);
+    if (existing) return existing;
+    const fresh = new Map<IRI, ParsedTerm[]>();
+    s.subjects.set(reifier.iri, fresh);
+    return fresh;
+  }
+  // ★ bnodeProperties ONLY, never also s.subjects. parseTrig's assembly pushes a subject
+  // for every entry in BOTH maps, so registering one map in both emits every triple twice
+  // — measured as 5 triples for the spec's 3-triple Example 30 before this was narrowed.
+  // The bnode is still document-visible: that same assembly loop surfaces every
+  // bnodeProperties entry as a subject, which is exactly how object-position `[ … ]` is
+  // already found by findSubjectsOfType.
+  const existing = s.bnodeProperties.get(reifier.id);
+  if (existing) return existing;
+  const fresh = new Map<IRI, ParsedTerm[]>();
+  s.bnodeProperties.set(reifier.id, fresh);
+  return fresh;
+}
+
+/** `<reifier> rdf:reifies <<( s p o )>>` — the one triple that makes a reifier a reifier. */
+function emitReifier(
+  s: ParserState,
+  reifier: ParsedIri | ParsedBNode,
+  subject: ParsedIri | ParsedBNode,
+  predicate: IRI,
+  object: ParsedTerm,
+): void {
+  const props = reifierProps(s, reifier);
+  const tt: ParsedTripleTerm = { kind: 'triple', subject, predicate, object };
+  const list = props.get(RDF_REIFIES);
+  if (list) list.push(tt); else props.set(RDF_REIFIES, [tt]);
+}
+
+function parsePropertyList(
+  s: ParserState,
+  props: Map<IRI, ParsedTerm[]>,
+  /** Identity of the subject these properties belong to, so `{| |}` can name its triple. */
+  subject: ParsedIri | ParsedBNode,
+): void {
+  // predicate object annotation (',' object annotation)* (';' …)* ';'?
   while (true) {
     const next = peek(s);
     if (!next) return;
-    if (next.type === 'punct' && (next.value === ']' || next.value === '.' || next.value === '}')) return;
+    if (next.type === 'punct'
+      && (next.value === ']' || next.value === '.' || next.value === '}' || next.value === '|}')) return;
     if (next.type === 'punct' && next.value === ';') { consume(s); continue; }
 
     const predicate = parsePredicate(s);
@@ -579,6 +800,9 @@ function parsePropertyList(s: ParserState, props: Map<IRI, ParsedTerm[]>): void 
       const term = parseTermAsTerm(s);
       const list = props.get(predicate);
       if (list) list.push(term); else props.set(predicate, [term]);
+      // [13] objectList ::= object annotation (',' object annotation)* — an annotation
+      // follows EVERY object, not just the last one in a comma list.
+      parseAnnotation(s, subject, predicate, term);
       const after = peek(s);
       if (after?.type === 'punct' && after.value === ',') { consume(s); continue; }
       break;
@@ -588,8 +812,12 @@ function parsePropertyList(s: ParserState, props: Map<IRI, ParsedTerm[]>): void 
 
 function parseTriplesBlock(s: ParserState): void {
   // subject propertyList .
-  const { props } = parseSubject(s);
-  parsePropertyList(s, props);
+  const { key, props } = parseSubject(s);
+  // The subject's identity, so an annotation on any of its objects can name the triple.
+  const subjectTerm: ParsedIri | ParsedBNode = key.startsWith('_:')
+    ? { kind: 'bnode', id: key.slice(2) }
+    : { kind: 'iri', iri: key as IRI };
+  parsePropertyList(s, props, subjectTerm);
   const end = peek(s);
   if (end?.type === 'punct' && end.value === '.') consume(s);
 }
