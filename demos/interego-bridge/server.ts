@@ -924,12 +924,48 @@ app.get('/mcp', handleMcp);
 app.delete('/mcp', handleMcp);
 
 app.get('/affordances', (_req, res) => {
-  // Minimal Turtle stub so the readiness probe in agent-lib's spawnBridge
-  // shape works. Demos that need actual affordance discovery against this
-  // bridge can rely on tools/list via MCP.
-  res.type('text/turtle').send(`@prefix iep: <https://markjspivey-xwisee.github.io/context-graphs/ns#> .
+  /**
+   * ★★ THREE THINGS WERE WRONG WITH THE FOUR LINES THIS REPLACES, AND IT IS SERVED LIVE.
+   *
+   * 1. THE PREFIX WAS DEAD. It bound `iep:` to
+   *    `https://markjspivey-xwisee.github.io/context-graphs/ns#` — the pre-rename namespace, which
+   *    404s. Measured: that IRI returns 404, `…/interego/ns/iep` returns 200. So every term in this
+   *    published document dereferenced to nothing, which is the opposite of what publishing it is
+   *    for.
+   *
+   * 2. `iep:provides` IS DECLARED NOWHERE. Not in docs/ns/iep.ttl, not anywhere. It survived
+   *    because tools/ontology-lint.mjs does not scan `demos/` — the same gap that let two
+   *    undeclared control IRIs ship from `integrations/`, one directory over.
+   *
+   * 3. THE PAYLOAD WAS A SENTENCE TELLING A MACHINE TO GO READ SOMETHING ELSE:
+   *    `iep:provides "23 tools — see /mcp tools/list"`. A count inside a string is not
+   *    discoverable; an agent cannot act on it, and the whole point of serving Turtle here is that
+   *    it does not have to parse English.
+   *
+   * The manifest now uses the live namespace, terms that are declared (`iep:AffordanceManifest`,
+   * `iep:capability`), a standard `hydra:totalItems` for the count, and `rdfs:seeAlso` pointing at
+   * the MCP endpoint that carries the full schemas — a link a follower can take, rather than an
+   * instruction it has to read. Each tool is named as its own capability so the document says what
+   * it is for, instead of describing itself in prose.
+   */
+  /**
+   * ★ AND ONE MORE THING NOT DONE, DELIBERATELY. The obvious improvement is to list each tool —
+   * `iep:capability "protocol.attest"` and so on. But `iep:capability` is declared an
+   * `owl:ObjectProperty` (docs/ns/iep.ttl:1464), so its object must be an IRI, and an MCP tool
+   * name is a STRING. Minting `<…/mcp#protocol.attest>` to satisfy the type would produce IRIs
+   * that dereference to no description of that tool — which is the exact defect just removed from
+   * the relay's operations catalog, reintroduced here in a different scheme. So the manifest
+   * states only what is true and resolvable: how many there are, and where they are. The names
+   * live at the seeAlso target, in the surface that actually carries their schemas.
+   */
+  const names = Object.keys(tools);
+  res.type('text/turtle').send(`@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix hydra: <http://www.w3.org/ns/hydra/core#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+
 <${DEPLOYMENT_URL}/affordances> a iep:AffordanceManifest ;
-  iep:provides "${Object.keys(tools).length} tools — see /mcp tools/list" .
+  hydra:totalItems ${names.length} ;
+  rdfs:seeAlso <${DEPLOYMENT_URL}/mcp> .
 `);
 });
 
