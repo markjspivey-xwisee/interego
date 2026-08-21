@@ -33,43 +33,60 @@
 # facets (e.g. `<desc> iep:modalStatus iep:Asserted {| iep:epistemicConfidence
 # 0.9 |}`), the annotation block carries metadata that must be
 # validated. SHACL 1.2's sh:reifierShape attaches constraints to
-# the reifier (the triple-term node), distinct from constraints
-# on the base triple's subject or object.
+# the REIFIER — the node that says something about the triple —
+# which is distinct from constraints on the base triple's subject
+# or object.
+#
+# ★ EVERY SHAPE HERE WAS ILL-FORMED UNTIL 2026-08-21, and the symptom was silence.
+# They hung sh:reifierShape directly off the sh:NodeShape, with no sh:path anywhere in
+# the file. SHACL 1.2 §7.8.5 evaluates the constraint over "the triple term (focus node,
+# $path, value node)", and $path exists only on a property shape — so a conformant
+# engine had nothing to evaluate and these three enforced NOTHING while reading, from
+# their names and their dereferenceable IRIs, as though they did.
+#
+# There is no well-formedness rule to catch it: SHACL 1.2 Appendix A has six explicit
+# "Node shapes cannot have any value for sh:X" rules and sh:reifierShape is not among
+# them. The engine now reports the placement itself as an unsupported construct, so this
+# cannot silently recur.
 
 iep:SemioticAnnotationShape-1.2 a sh:NodeShape ;
     sh:targetSubjectsOf iep:modalStatus ;
-    sh:reifierShape [
-        a sh:NodeShape ;
-        sh:property [
-            sh:path iep:epistemicConfidence ;
-            sh:minInclusive 0.0 ;
-            sh:maxInclusive 1.0 ;
-            sh:message "If an annotation on iep:modalStatus carries epistemic confidence, it MUST be in [0, 1]."
-        ] ;
-        sh:property [
-            sh:path iep:groundTruth ;
-            sh:in ( true false ) ;
-            sh:message "groundTruth on the annotation MUST be a boolean."
+    sh:property [
+        sh:path iep:modalStatus ;
+        sh:reifierShape [
+            a sh:NodeShape ;
+            sh:property [
+                sh:path iep:epistemicConfidence ;
+                sh:minInclusive 0.0 ;
+                sh:maxInclusive 1.0 ;
+                sh:message "If an annotation on iep:modalStatus carries epistemic confidence, it MUST be in [0, 1]."
+            ] ;
+            sh:property [
+                sh:path iep:groundTruth ;
+                sh:in ( true false ) ;
+                sh:message "groundTruth on the annotation MUST be a boolean."
+            ]
         ]
     ] ;
-    sh:reificationRequired false ;
-    rdfs:comment "A modalStatus triple MAY carry a triple-annotation with epistemicConfidence + groundTruth. If present, the annotation itself is validated by the reifierShape." .
+    rdfs:comment "A modalStatus triple MAY carry a triple-annotation with epistemicConfidence + groundTruth. If present, the annotation itself is validated by the reifierShape. No sh:reificationRequired: the annotation is optional, and SHACL 1.2 defines behaviour only for the value true — false is the absence of the requirement, not a suppression of one, so stating it added nothing." .
 
 # ── Provenance annotation ──────────────────────────────────
 
 iep:ProvenanceAnnotationShape-1.2 a sh:NodeShape ;
     sh:targetSubjectsOf iep:describes ;
-    sh:reifierShape [
-        a sh:NodeShape ;
-        sh:property [
-            sh:path <http://www.w3.org/ns/prov#generatedAtTime> ;
-            sh:datatype xsd:dateTime ;
-            sh:minCount 1 ;
-            sh:message "iep:describes annotation MUST record prov:generatedAtTime."
+    sh:property [
+        sh:path iep:describes ;
+        sh:reifierShape [
+            a sh:NodeShape ;
+            sh:property [
+                sh:path <http://www.w3.org/ns/prov#generatedAtTime> ;
+                sh:datatype xsd:dateTime ;
+                sh:minCount 1 ;
+                sh:message "iep:describes annotation MUST record prov:generatedAtTime."
+            ]
         ]
     ] ;
-    sh:reificationRequired false ;
-    rdfs:comment "When a descriptor annotates its iep:describes triple with provenance metadata (via RDF 1.2 triple-term syntax), the annotation MUST carry prov:generatedAtTime." .
+    rdfs:comment "When a descriptor annotates its iep:describes triple with provenance metadata (via RDF 1.2 triple-term syntax), the annotation MUST carry prov:generatedAtTime. The annotation itself remains optional; what is required is its CONTENT once present." .
 
 # ── PGSL containment annotation (already in use) ───────────
 #
@@ -79,21 +96,24 @@ iep:ProvenanceAnnotationShape-1.2 a sh:NodeShape ;
 
 iep:PgslContainmentAnnotationShape-1.2 a sh:NodeShape ;
     sh:targetSubjectsOf iep:hasItem ;
-    sh:reifierShape [
-        a sh:NodeShape ;
-        sh:property [
-            sh:path iep:position ;
-            sh:datatype xsd:integer ;
-            sh:minInclusive 0 ;
-            sh:minCount 1 ;
-            sh:message "PGSL containment annotation MUST carry iep:position (non-negative integer)."
+    sh:property [
+        sh:path iep:hasItem ;
+        sh:reifierShape [
+            a sh:NodeShape ;
+            sh:property [
+                sh:path iep:position ;
+                sh:datatype xsd:integer ;
+                sh:minInclusive 0 ;
+                sh:minCount 1 ;
+                sh:message "PGSL containment annotation MUST carry iep:position (non-negative integer)."
+            ] ;
+            sh:property [
+                sh:path iep:contextualDepth ;
+                sh:datatype xsd:integer ;
+                sh:minInclusive 0 ;
+                sh:message "PGSL contextualDepth (if present) MUST be non-negative integer."
+            ]
         ] ;
-        sh:property [
-            sh:path iep:contextualDepth ;
-            sh:datatype xsd:integer ;
-            sh:minInclusive 0 ;
-            sh:message "PGSL contextualDepth (if present) MUST be non-negative integer."
-        ]
+        sh:reificationRequired true
     ] ;
-    sh:reificationRequired true ;
-    rdfs:comment "PGSL containment triples REQUIRE a triple-term annotation with position + optional contextualDepth." .
+    rdfs:comment "PGSL containment triples REQUIRE a triple-term annotation with position + optional contextualDepth. This is the one shape here that states sh:reificationRequired true, and it means the annotation is mandatory rather than merely constrained." .

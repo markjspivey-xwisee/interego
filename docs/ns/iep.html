@@ -37,6 +37,13 @@
      projection dropped information relative to its source.</div>
   <div id="sourceDescriptor" class="term"><code>iep:sourceDescriptor</code> — the dereferenceable descriptor a
      projected artifact was derived from (chain of custody).</div>
+  <div id="position" class="term"><code>iep:position</code> — <code>xsd:integer</code>; zero-based ordinal of a
+     child within its parent, carried on the <em>reifier</em> of an <code>iep:hasItem</code> statement rather than
+     on the child itself. The same child may sit at different positions under different parents, so the ordinal
+     belongs to the containment, not to either endpoint.</div>
+  <div id="contextualDepth" class="term"><code>iep:contextualDepth</code> — <code>xsd:integer</code>; nesting depth
+     of a containment relative to its enclosing context, carried on the same reifier. Optional companion to
+     <code>iep:position</code>.</div>
   <p class="note">The complete term set — with domains, ranges, and <code>iep:constructedFrom</code> provenance —
      is in <a href="iep.ttl">iep.ttl</a>.</p>
 </body>

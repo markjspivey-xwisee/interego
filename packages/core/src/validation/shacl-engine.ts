@@ -38,6 +38,7 @@ import {
   type ParsedDocument,
   type ParsedSubject,
   type ParsedTerm,
+  type ParsedTripleTerm,
 } from '../rdf/turtle-parser.js';
 import { escapeTurtleLiteral } from '../rdf/escape.js';
 import type { IRI } from '../model/types.js';
@@ -63,10 +64,13 @@ const SH_MESSAGE = `${SHACL}message` as IRI;
 const SH_IN = `${SHACL}in` as IRI;
 const SH_CLOSED = `${SHACL}closed` as IRI;
 const SH_SPARQL = `${SHACL}sparql` as IRI;
-// sh:reifierShape needs no constant: it is absent from IMPLEMENTED_SHACL_PREDICATES, so the
-// allowlist sweep reports it like any other construct this engine cannot run. That is the
-// point of an allowlist — a term stops needing to be named individually to be caught.
+// SHACL 1.2 §7.8.5. Both are parameters of ONE component, sh:ReifierShapeConstraintComponent
+// — sh:reificationRequired is not a component of its own, despite Appendix C of the WD
+// appearing to name one (that heading is a ReSpec artifact, absent from the ED source and
+// from both approved test cases).
+const SH_REIFIER_SHAPE = `${SHACL}reifierShape` as IRI;
 const SH_REIFICATION_REQUIRED = `${SHACL}reificationRequired` as IRI;
+const RDF_REIFIES = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#reifies' as IRI;
 const SH_NODE = `${SHACL}node` as IRI;
 const SH_QUALIFIED_VALUE_SHAPE = `${SHACL}qualifiedValueShape` as IRI;
 const SH_QUALIFIED_MIN_COUNT = `${SHACL}qualifiedMinCount` as IRI;
@@ -113,6 +117,7 @@ const IMPLEMENTED_SHACL_PREDICATES: ReadonlySet<string> = new Set<string>([
   SH_TARGET_CLASS, SH_TARGET_NODE, SH_TARGET_SUBJECTS_OF, SH_TARGET_OBJECTS_OF,
   // structure
   SH_PROPERTY, SH_PATH, SH_NODE, SH_QUALIFIED_VALUE_SHAPE,
+  SH_REIFIER_SHAPE, SH_REIFICATION_REQUIRED,
   SH_QUALIFIED_MIN_COUNT, SH_QUALIFIED_MAX_COUNT,
   SH_CLOSED, SH_IGNORED_PROPERTIES, SH_DEACTIVATED, SH_SEVERITY, SH_MESSAGE,
   // cardinality + value type
@@ -148,7 +153,6 @@ const NON_VALIDATING_SHACL_PREDICATES: ReadonlySet<string> = new Set<string>([
   // Value-sensitive: reported explicitly below rather than by absence, because
   // `sh:reificationRequired false` requires nothing and two thirds of the shapes in
   // docs/ns/iep-shapes-1.2.ttl are exactly that.
-  SH_REIFICATION_REQUIRED,
 ]);
 
 const RDF_FIRST = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#first' as IRI;
@@ -211,6 +215,13 @@ const SH_IRI = `${SHACL}IRI` as IRI;
 const SH_LITERAL = `${SHACL}Literal` as IRI;
 const SH_BLANK_NODE = `${SHACL}BlankNode` as IRI;
 const SH_BLANK_NODE_OR_IRI = `${SHACL}BlankNodeOrIRI` as IRI;
+// ★ The other three of SHACL's seven node kinds, two of which are 1.0 and were MISSING.
+// `sh:IRIOrLiteral` and `sh:BlankNodeOrLiteral` fell through to `default: return true`, so
+// both accepted every term — measured: a shape demanding sh:IRIOrLiteral passed a blank
+// node. sh:TripleTerm is the 1.2 addition (§7.1.3).
+const SH_BLANK_NODE_OR_LITERAL = `${SHACL}BlankNodeOrLiteral` as IRI;
+const SH_IRI_OR_LITERAL = `${SHACL}IRIOrLiteral` as IRI;
+const SH_TRIPLE_TERM = `${SHACL}TripleTerm` as IRI;
 
 export type ShaclSeverity = 'Violation' | 'Warning' | 'Info';
 
@@ -335,6 +346,10 @@ interface PropertyShape {
    * than duplicated — which is what makes shapes composable across layers at all.
    */
   readonly node?: string;
+  /** SHACL 1.2 §7.8.5 — the node shape every reifier of this triple must conform to. */
+  readonly reifierShape?: string;
+  /** SHACL 1.2 §7.8.5 — when true, the triple must carry at least one reifier. */
+  readonly reificationRequired?: boolean;
   /** sh:qualifiedValueShape + counts: how many values conform to a nested shape. */
   readonly qualifiedValueShape?: string;
   readonly qualifiedMinCount?: number;
@@ -469,6 +484,14 @@ function compilePropertyShape(doc: ParsedDocument, subj: ParsedSubject): Propert
       return t?.kind === 'literal' && t.value === 'true' ? true : undefined;
     })(),
     node: refKey(getOne(subj, SH_NODE)),
+    reifierShape: refKey(getOne(subj, SH_REIFIER_SHAPE)),
+    reificationRequired: (() => {
+      // Only `true` carries meaning. SHACL 1.2 §7.8.5 defines behaviour for true and says
+      // nothing whatsoever about false — false is the absence of the requirement, not a
+      // suppression of one, so it compiles to undefined exactly like an omitted value.
+      const t = getOne(subj, SH_REIFICATION_REQUIRED);
+      return t?.kind === 'literal' && t.value === 'true' ? true : undefined;
+    })(),
     qualifiedValueShape: refKey(getOne(subj, SH_QUALIFIED_VALUE_SHAPE)),
     qualifiedMinCount: num(getOne(subj, SH_QUALIFIED_MIN_COUNT)),
     qualifiedMaxCount: num(getOne(subj, SH_QUALIFIED_MAX_COUNT)),
@@ -518,7 +541,7 @@ function compileShapes(doc: ParsedDocument): readonly NodeShape[] {
   // requiring rdf:type silently discarded them.
   const inlineShapeKeys = new Set<string>();
   for (const subj of doc.subjects) {
-    for (const pred of [SH_NODE, SH_QUALIFIED_VALUE_SHAPE]) {
+    for (const pred of [SH_NODE, SH_QUALIFIED_VALUE_SHAPE, SH_REIFIER_SHAPE]) {
       for (const t of subj.properties.get(pred) ?? []) {
         const k = refKey(t);
         if (k !== undefined) inlineShapeKeys.add(k);
@@ -730,9 +753,79 @@ function findFocusNodes(
   return matched;
 }
 
+/**
+ * Every reifier in the document, indexed by the triple it reifies.
+ *
+ * ★ MEMOISED PER DOCUMENT, for the reason `subjectFor` already is: the naive spelling here
+ * is a scan of every subject per value node per property shape per recursion level, and
+ * this engine has been bitten by exactly that shape twice — `subjectFor` and
+ * `valueHasClass` were both accidentally quadratic and blew two suites past a timeout the
+ * moment sh:node started running. One pass, WeakMap-cached, keyed off the document.
+ *
+ * A reifier is found solely via `rdf:reifies` pointing at a triple term. SHACL 1.2 Core
+ * never mentions rdf:reifies — it delegates "reifier" wholesale to RDF 1.2 Concepts — so
+ * this is the RDF-layer definition, not a SHACL one. Legacy rdf:Statement reification
+ * (rdf:subject/rdf:predicate/rdf:object) is deliberately NOT treated as a reifier: it is a
+ * different, older mechanism, and conflating them would make shapes fire on data that
+ * SHACL 1.2 does not consider reified at all.
+ */
+const REIFIER_INDEX = new WeakMap<ParsedDocument, Map<string, ParsedSubject[]>>();
+
+function reifierKey(subject: string, predicate: IRI, object: ParsedTerm): string {
+  // JSON, not a delimiter string: a literal value can contain any character, so any
+  // separator we picked could also appear inside a part and make two different
+  // triples share a key. (This line briefly held NUL separators, which worked and
+  // turned the whole source file binary to grep.)
+  return JSON.stringify([subject, predicate, termValue(object), object.kind]);
+}
+
+function reifiersOf(
+  data: ParsedDocument,
+  focus: ParsedSubject,
+  predicate: IRI,
+  value: ParsedTerm,
+): readonly ParsedSubject[] {
+  let index = REIFIER_INDEX.get(data);
+  if (index === undefined) {
+    index = new Map<string, ParsedSubject[]>();
+    for (const subj of data.subjects) {
+      for (const t of subj.properties.get(RDF_REIFIES) ?? []) {
+        if (t.kind !== 'triple') continue;
+        const s = t.subject.kind === 'iri' ? t.subject.iri : `_:${t.subject.id}`;
+        const k = reifierKey(s, t.predicate, t.object);
+        const bucket = index.get(k);
+        if (bucket) bucket.push(subj); else index.set(k, [subj]);
+      }
+    }
+    REIFIER_INDEX.set(data, index);
+  }
+  return index.get(reifierKey(subjectKey(focus), predicate, value)) ?? [];
+}
+
+/**
+ * A stable identity string for an RDF 1.2 triple term.
+ *
+ * Deliberately NOT shared with graph-digest's renderer or with termToTurtle below: this one
+ * is an equality key, the digest one is hashed, and the Turtle one is re-parsed. They agree
+ * in shape and differ in literal escaping, and collapsing them into one function would
+ * silently change whichever caller did not pick the escaping.
+ */
+function tripleTermKey(t: ParsedTripleTerm): string {
+  return `<<( ${termValue(t.subject)} ${t.predicate} ${termValue(t.object)} )>>`;
+}
+
+/** A triple term as emittable Turtle, with caller data escaped as everywhere else here. */
+function tripleTermTurtle(t: ParsedTripleTerm): string {
+  return `<<( ${termToTurtle(t.subject)} <${t.predicate}> ${termToTurtle(t.object)} )>>`;
+}
+
 function termValue(t: ParsedTerm): string {
   if (t.kind === 'iri') return t.iri;
   if (t.kind === 'literal') return t.value;
+  // A triple term is not a bnode and must not be labelled as one. The old bare return
+  // would have rendered every triple term as `_:undefined` — one string for all of them,
+  // which is the shape of bug that makes distinct values compare equal.
+  if (t.kind === 'triple') return tripleTermKey(t);
   return `_:${t.id}`;
 }
 
@@ -746,15 +839,42 @@ function termsEqual(a: ParsedTerm, b: ParsedTerm): boolean {
   return false;
 }
 
+/**
+ * SHACL §7.1.3 — all SEVEN node kinds, exhaustively.
+ *
+ * ★ Three were missing and reached `default: return true`, which accepts everything: the
+ * 1.0 kinds sh:IRIOrLiteral and sh:BlankNodeOrLiteral (measured — a shape demanding
+ * IRIOrLiteral passed a blank node), and the 1.2 kind sh:TripleTerm. A node-kind constraint
+ * that accepts every term is the facade this engine keeps finding: named for an invariant,
+ * asserting nothing.
+ *
+ * ★ "Any triple term matches only sh:TripleTerm" (§7.1.3). That falls out of listing the
+ * cases explicitly — every other kind now names the kinds it accepts, so a triple term is
+ * excluded by construction rather than by a rule someone has to remember.
+ *
+ * The remaining `default` is reached only by a value that is not one of the seven, which is
+ * an ill-formed SHAPE rather than invalid data. It stays permissive so a shape typo cannot
+ * reject a publisher's whole graph — and it is no longer silent: the sweep reports the
+ * unrecognised value, so `fullyChecked` records that this check did not run.
+ */
 function matchesNodeKind(t: ParsedTerm, kind: IRI): boolean {
   switch (kind) {
     case SH_IRI: return t.kind === 'iri';
     case SH_LITERAL: return t.kind === 'literal';
     case SH_BLANK_NODE: return t.kind === 'bnode';
     case SH_BLANK_NODE_OR_IRI: return t.kind === 'iri' || t.kind === 'bnode';
+    case SH_BLANK_NODE_OR_LITERAL: return t.kind === 'bnode' || t.kind === 'literal';
+    case SH_IRI_OR_LITERAL: return t.kind === 'iri' || t.kind === 'literal';
+    case SH_TRIPLE_TERM: return t.kind === 'triple';
     default: return true;
   }
 }
+
+/** The seven, for the sweep to recognise an eighth as ill-formed. */
+const NODE_KINDS: ReadonlySet<string> = new Set<string>([
+  SH_IRI, SH_LITERAL, SH_BLANK_NODE, SH_BLANK_NODE_OR_IRI,
+  SH_BLANK_NODE_OR_LITERAL, SH_IRI_OR_LITERAL, SH_TRIPLE_TERM,
+]);
 
 function matchesDatatype(t: ParsedTerm, datatype: IRI): boolean {
   if (t.kind !== 'literal') return false;
@@ -824,8 +944,19 @@ function conformsToShape(
       : { kind: 'bnode', id: subj.subject.bnode };
     if (!matchesNodeKind(asTerm, target.nodeKindConstraint)) return false;
   }
+  // ★ THE CLOSURE HAS TO GO DOWN WITH THE RECURSION. This dropped `subclassClosure` — the
+  // 7th argument — while the SAME function used it two blocks up for `target.nodeClass`.
+  // So a nested shape's node-level sh:class was subclass-aware and its property-level
+  // sh:class was not, one level into any sh:node or sh:qualifiedValueShape.
+  //
+  // Measured: `sh:property [ sh:path ex:facet ; sh:class ex:Parent ]` reached through
+  // `sh:node` REJECTED a value typed ex:Child with `ex:Child rdfs:subClassOf ex:Parent`,
+  // while the identical constraint at top level accepted it. A false reject, and the same
+  // asymmetry this engine already warns about for targeting: fire on the subclass, then
+  // refuse it for failing an exact-parent sh:class. Both call sites already pass the
+  // closure in correctly; it died here.
   for (const ps of target.propertyShapes) {
-    if (evaluatePropertyShape(data, subj, target, ps, byId, depth + 1)
+    if (evaluatePropertyShape(data, subj, target, ps, byId, depth + 1, subclassClosure)
       .some(r => r.severity === 'Violation')) return false;
   }
   if (target.closed) {
@@ -895,7 +1026,7 @@ function evaluatePropertyShape(
   const sev: ShaclSeverity = ps.severity ?? shape.severity;
   const fail = (path: IRI, component: string, message: string, value?: ParsedTerm): void => {
     results.push({
-      focusNode, path, sourceShape: shape.id,
+      focusNode, path, sourceShape: ps.id,
       constraintComponent: `${SHACL}${component}`,
       severity: sev, message,
       ...(value !== undefined ? { value: termValue(value) } : {}),
@@ -1016,6 +1147,43 @@ function evaluatePropertyShape(
         }
       }
     }
+    // ── SHACL 1.2 §7.8.5: sh:reifierShape + sh:reificationRequired ──────────────
+    //
+    // "Let t be the triple term (focus node, $path, value node). For each reifier for the
+    // triple term t, a failure MUST be produced if validating the reifier against the node
+    // shape $reifierShape with the reifier as focus node produces a failure."
+    //
+    // The reifier is the FOCUS NODE of the nested shape — not the triple term, and not the
+    // value. That is the whole point of the constraint: it constrains what may be SAID
+    // ABOUT a statement, separately from the statement itself.
+    if (ps.reifierShape !== undefined || ps.reificationRequired === true) {
+      const target = ps.reifierShape === undefined ? undefined : byId.get(ps.reifierShape);
+      for (const v of values) {
+        const reifiers = reifiersOf(data, focus, ps.path, v);
+
+        // sh:reificationRequired true — "there must be at least one reification value for
+        // the focus node/path combination in the data graph".
+        if (ps.reificationRequired === true && reifiers.length === 0) {
+          fail(ps.path, 'ReifierShapeConstraintComponent',
+            `sh:reificationRequired is true but the statement carries no reifier`, v);
+        }
+
+        if (target === undefined) continue;
+        for (const r of reifiers) {
+          if (!conformsToShape(data, r, target, byId, depth, subclassClosure)) {
+            // ★ sh:value is THE VALUE NODE, and this is a deliberate choice between two
+            // readings the spec cannot both satisfy. §7.8.5's prose says the result carries
+            // the triple term t — but its own text rebinds t mid-definition ("Let t be the
+            // triple term …  For each reifier t …"), and BOTH approved test cases in the
+            // W3C suite (reifierShape-001/002, sht:approved) expect the value node. An
+            // approved test is the thing an implementation is measured against, so it wins
+            // over prose that contradicts itself.
+            fail(ps.path, 'ReifierShapeConstraintComponent',
+              `A reifier of this statement does not conform to sh:reifierShape ${ps.reifierShape}`, v);
+          }
+        }
+      }
+    }
     if (ps.qualifiedValueShape && (ps.qualifiedMinCount !== undefined || ps.qualifiedMaxCount !== undefined)) {
       const target = byId.get(ps.qualifiedValueShape);
       if (target) {
@@ -1040,7 +1208,7 @@ function evaluatePropertyShape(
     results.push({
       focusNode,
       path: ps.path,
-      sourceShape: shape.id,
+      sourceShape: ps.id,
       constraintComponent: `${SHACL}MinCountConstraintComponent`,
       severity: sev,
       message: ps.message ?? `Value count ${values.length} is below sh:minCount ${ps.minCount} for ${ps.path}`,
@@ -1050,7 +1218,7 @@ function evaluatePropertyShape(
     results.push({
       focusNode,
       path: ps.path,
-      sourceShape: shape.id,
+      sourceShape: ps.id,
       constraintComponent: `${SHACL}MaxCountConstraintComponent`,
       severity: sev,
       message: ps.message ?? `Value count ${values.length} exceeds sh:maxCount ${ps.maxCount} for ${ps.path}`,
@@ -1063,7 +1231,7 @@ function evaluatePropertyShape(
         focusNode,
         path: ps.path,
         value: termValue(v),
-        sourceShape: shape.id,
+        sourceShape: ps.id,
         constraintComponent: `${SHACL}NodeKindConstraintComponent`,
         severity: sev,
         message: ps.message ?? `Value does not match sh:nodeKind ${ps.nodeKind}`,
@@ -1074,7 +1242,7 @@ function evaluatePropertyShape(
         focusNode,
         path: ps.path,
         value: termValue(v),
-        sourceShape: shape.id,
+        sourceShape: ps.id,
         constraintComponent: `${SHACL}DatatypeConstraintComponent`,
         severity: sev,
         message: ps.message ?? `Value does not match sh:datatype ${ps.datatype}`,
@@ -1085,7 +1253,7 @@ function evaluatePropertyShape(
         focusNode,
         path: ps.path,
         value: termValue(v),
-        sourceShape: shape.id,
+        sourceShape: ps.id,
         constraintComponent: `${SHACL}ClassConstraintComponent`,
         severity: sev,
         message: ps.message ?? `Value is not an instance of sh:class ${ps.clazz}`,
@@ -1115,7 +1283,7 @@ function evaluatePropertyShape(
             focusNode,
             path: ps.path,
             value: termValue(v),
-            sourceShape: shape.id,
+            sourceShape: ps.id,
             constraintComponent: `${SHACL}PatternConstraintComponent`,
             severity: sev,
             message: ps.message ?? `Value does not match sh:pattern /${ps.pattern}/`,
@@ -1131,7 +1299,7 @@ function evaluatePropertyShape(
           focusNode,
           path: ps.path,
           value: termValue(v),
-          sourceShape: shape.id,
+          sourceShape: ps.id,
           constraintComponent: `${SHACL}InConstraintComponent`,
           severity: sev,
           message: ps.message ?? `Value is not in the sh:in enumeration`,
@@ -1146,7 +1314,7 @@ function evaluatePropertyShape(
       results.push({
         focusNode,
         path: ps.path,
-        sourceShape: shape.id,
+        sourceShape: ps.id,
         constraintComponent: `${SHACL}HasValueConstraintComponent`,
         severity: sev,
         message: ps.message ?? `Required sh:hasValue ${termValue(ps.hasValue)} is missing`,
@@ -1341,6 +1509,12 @@ export function validateAgainstShape(
           emit({
             focusNode: subjectKey(focus),
             path: predicate,
+            // ★ shape.id, NOT a property shape: sh:closed is a NODE-shape constraint and
+            // the result is about the node shape. The nine sourceShape sites inside
+            // evaluatePropertyShape moved to the property shape (SHACL §6.7.2, and both
+            // approved W3C reifierShape tests expect `ex:TestShape-propertyA`); this one
+            // is the exception, and it is the compiler that caught the over-reach — `ps`
+            // is not even in scope here.
             sourceShape: shape.id,
             constraintComponent: `${SHACL}ClosedConstraintComponent`,
             severity: 'Violation',
@@ -1429,7 +1603,7 @@ export function validateAgainstShape(
       ownerSeverity.set(key, prior === undefined ? effective : stricter(prior, effective));
       const subj = subjectsByKey.get(key);
       if (!subj) continue;
-      for (const pred of [SH_PROPERTY, SH_NODE, SH_QUALIFIED_VALUE_SHAPE]) {
+      for (const pred of [SH_PROPERTY, SH_NODE, SH_QUALIFIED_VALUE_SHAPE, SH_REIFIER_SHAPE]) {
         for (const t of subj.properties.get(pred) ?? []) {
           const k = refKey(t);
           if (k !== undefined) stack.push([k, effective]);
@@ -1483,14 +1657,46 @@ export function validateAgainstShape(
           : 'the constraint was not evaluated',
       );
     }
-    // `sh:reificationRequired false` on its own REQUIRES nothing, so ignoring it skips
-    // nothing — and two of the three shapes in docs/ns/iep-shapes-1.2.ttl are exactly
-    // that. Only an explicit `true` is a real gap, which is why this one predicate is
-    // value-sensitive instead of being caught by its absence from the allowlist above.
-    // (`sh:reifierShape` is NOT in either list, so the sweep already reports it.)
-    const reifRequired = subj.properties.get(SH_REIFICATION_REQUIRED)?.[0];
-    if (reifRequired?.kind === 'literal' && reifRequired.value === 'true') {
-      noteUnsupported(id, 'sh:reificationRequired true', 'RDF 1.2 reification constraints were skipped');
+    // ★ REIFICATION IS IMPLEMENTED NOW, BUT ONLY IN ITS WELL-FORMED SHAPE — and the forms
+    // outside that shape must still say so rather than pass quietly.
+    //
+    // SHACL 1.2 §7.8.5 defines sh:reifierShape over a PROPERTY shape: the validator reads
+    // `the triple term (focus node, $path, value node)`, and `$path` exists only on a
+    // property shape. Appendix A adds one syntax rule — "If a value for sh:reifierShape is
+    // given, sh:path values are constrained to IRIs" — so a complex path is ill-formed too.
+    //
+    // Neither case is a well-formedness ERROR the spec asks a validator to raise, which is
+    // exactly why it needs reporting here: a reifier constraint hung on a node shape, or on
+    // a sequence path, would otherwise be compiled into nothing and validate silently. That
+    // is the facade this sweep exists to prevent, and the published iep-shapes-1.2.ttl was
+    // written in precisely that form.
+    const carriesReification = subj.properties.has(SH_REIFIER_SHAPE)
+      || (() => {
+        const t = subj.properties.get(SH_REIFICATION_REQUIRED)?.[0];
+        return t?.kind === 'literal' && t.value === 'true';
+      })();
+    if (carriesReification) {
+      const pathTerms = subj.properties.get(SH_PATH) ?? [];
+      const pathTerm = pathTerms[0];
+      if (pathTerm === undefined) {
+        noteUnsupported(id, 'sh:reifierShape on a shape with no sh:path',
+          'SHACL 1.2 §7.8.5 evaluates it over (focus node, $path, value node), so a shape '
+          + 'without a path has nothing to reify and the constraint was not evaluated');
+      } else if (pathTerm.kind !== 'iri') {
+        noteUnsupported(id, 'sh:reifierShape on a non-IRI sh:path',
+          'SHACL 1.2 Appendix A constrains sh:path to IRIs when sh:reifierShape is given, '
+          + 'so the constraint was not evaluated');
+      }
+    }
+    // An sh:nodeKind whose value is not one of the seven is an ill-formed shape, and
+    // matchesNodeKind is deliberately permissive there so a typo cannot reject a
+    // publisher's entire graph. Permissive AND silent is the facade, though — the check did
+    // not run, so say so.
+    const nodeKindTerm = subj.properties.get(SH_NODE_KIND)?.[0];
+    if (nodeKindTerm?.kind === 'iri' && !NODE_KINDS.has(nodeKindTerm.iri)) {
+      noteUnsupported(id, `sh:nodeKind ${nodeKindTerm.iri}`,
+        'that is not one of the seven node kinds in SHACL §7.1.3, so the constraint matched '
+        + 'every term instead of the intended one');
     }
     // A complex path expression is a blank node under sh:path. sh:path IS implemented — for
     // a single predicate — so the allowlist cannot see this one: it is the VALUE that is
@@ -1604,6 +1810,7 @@ export class ShaclRuleError extends Error {
 function termToTurtle(t: ParsedTerm): string {
   if (t.kind === 'iri') return `<${t.iri}>`;
   if (t.kind === 'bnode') return `_:${t.id}`;
+  if (t.kind === 'triple') return tripleTermTurtle(t);
   // escapeTurtleLiteral, not a local replace(): a constructed object is CALLER data, and
   // an unescaped `"` or newline in it would close the literal and inject triples into the
   // next fold step's parse.
