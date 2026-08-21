@@ -25,7 +25,7 @@
 </head>
 <body>
   <h1>PGSL — Poly-Granular Sequence Lattice 1.0 Ontology <span class="mono ns">pgsl:</span></h1>
-  <p class="sub">Namespace <code>https://markjspivey-xwisee.github.io/interego/ns/pgsl#</code> &middot; version 1.0 &middot; 39 terms.</p>
+  <p class="sub">Namespace <code>https://markjspivey-xwisee.github.io/interego/ns/pgsl#</code> &middot; version 1.0 &middot; 42 terms.</p>
   <p>Content-addressed, lattice-structured representation of text where every fragment gets a stable atom identity and compositional relationships form a bounded lattice. Defines atoms (level 0), fragments (level ≥ 1), pullback squares for the overlapping pair construction, constituent morphisms, transitive containment, and the co-occurrence matrix that grounds usage-based semantics. Aligned with W3C PROV-O for full provenance and designed to compose with the Interego (iep:) typed context layer above it.</p>
   <p><strong>Machine-readable form:</strong> <a href="pgsl.ttl" rel="alternate">pgsl.ttl</a> (Turtle) — the authoritative source. This page is a human-readable projection of it; each term below is identified by a hash IRI under this base (e.g. <code>pgsl:AcyclicityShape</code> = <code>https://markjspivey-xwisee.github.io/interego/ns/pgsl#AcyclicityShape</code>).</p>
   <h2>Terms</h2>
@@ -68,5 +68,8 @@
   <div id="sourceFormat" class="term"><code>pgsl:sourceFormat</code> <span class="kind">Datatype property</span><div class="c">The original format the content was extracted from before being atomized into the lattice (e.g. 'scorm', 'pdf', 'html', 'cmi5'). Recorded on the minting record for provenance.</div></div>
   <div id="target" class="term"><code>pgsl:target</code> <span class="kind">Object property</span><div class="c">The target (codomain) of a constituent morphism — the containing fragment that the source is being included into.</div></div>
   <div id="value" class="term"><code>pgsl:value</code> <span class="kind">Datatype property</span><div class="c">The primitive value of an atom. Functional: each atom has exactly one value. The value type may be xsd:string, xsd:integer, xsd:double, or xsd:boolean depending on the original datum.</div></div>
+  <div id="Lexicon" class="term"><code>pgsl:Lexicon</code> <span class="kind">Class</span><div class="c">A published set of lexical relations used to expand query terms during PGSL retrieval. Read at runtime by packages/pgsl/src/ontological-inference.ts, which keeps the same relations as FALLBACK_* tables for deployments that cannot reach docs/ns.</div></div>
+  <div id="partOf" class="term"><code>pgsl:partOf</code> <span class="kind">Object property</span><div class="c">Partitive relation between lexicon terms: the subject names a part, the object the whole it belongs to (e.g. pgsl-lexicon#engine pgsl:partOf pgsl-lexicon#car). Distinct from skos:broader, which is the IS-A relation — an engine is part of a car, it is not a kind of car. SKOS defines no partitive property, which is why this one is minted rather than reused.</div></div>
+  <div id="causes" class="term"><code>pgsl:causes</code> <span class="kind">Object property</span><div class="c">Causal relation between lexicon terms: the subject names a cause, the object an effect it tends to bring about (e.g. pgsl-lexicon#malfunction pgsl:causes pgsl-lexicon#issue). Used for query expansion only — it records lexical association strong enough to be worth retrieving on, not a claim of causation in the world.</div></div>
 </body>
 </html>

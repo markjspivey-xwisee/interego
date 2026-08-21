@@ -1,0 +1,176 @@
+@prefix pgsl: <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>.
+@prefix pgslt: <https://markjspivey-xwisee.github.io/interego/ns/pgsl-lexicon#>.
+@prefix skos: <http://www.w3.org/2004/02/skos/core#>.
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#>.
+@prefix dct:  <http://purl.org/dc/terms/>.
+
+# ══════════════════════════════════════════════════════════════
+#  PGSL retrieval lexicon
+# ══════════════════════════════════════════════════════════════
+#
+#  The knowledge base behind ontological query expansion, as DATA.
+#  It was 101 keys of TypeScript literal inside packages/pgsl, which
+#  meant no term could be added without rebuilding the substrate and
+#  no other agent could read what this one believed a term related to.
+#
+#  Standard vocabulary where it exists: a synonym group is a skos:Concept
+#  carrying skos:prefLabel (the canonical form the engine keys on) plus
+#  skos:altLabel for each member. IS-A is skos:broader. Only partitive
+#  and causal relations, which SKOS does not define, are pgsl: terms.
+#
+#  Read at runtime by packages/pgsl/src/ontological-inference.ts. The
+#  frozen tables survive there as FALLBACK_* for unreachable-docs/ns
+#  deployments, and a test asserts this file parses back to exactly them.
+
+pgsl:lexicon a pgsl:Lexicon ;
+    dct:title "PGSL retrieval lexicon" ;
+    rdfs:comment "Synonym, hypernym, meronym and causal relations used to expand query terms during PGSL retrieval." .
+
+# ── Synonym groups (skos:prefLabel = canonical, skos:altLabel = members) ──
+pgslt:issue a skos:Concept ;
+    skos:prefLabel "issue" ;
+    skos:altLabel "problem", "issue", "trouble", "difficulty", "malfunction", "defect", "fault", "error", "bug", "failure", "breakdown", "glitch" .
+pgslt:fix a skos:Concept ;
+    skos:prefLabel "fix" ;
+    skos:altLabel "fix", "repair", "resolve", "solve", "address", "correct", "remedy", "patch", "mend", "restore" .
+pgslt:start a skos:Concept ;
+    skos:prefLabel "start" ;
+    skos:altLabel "start", "begin", "commence", "initiate", "launch", "kick off", "embark" .
+pgslt:finish a skos:Concept ;
+    skos:prefLabel "finish" ;
+    skos:altLabel "finish", "end", "complete", "conclude", "finalize", "wrap up", "close" .
+pgslt:like a skos:Concept ;
+    skos:prefLabel "like" ;
+    skos:altLabel "like", "enjoy", "love", "prefer", "favor", "appreciate", "fond of" .
+pgslt:dislike a skos:Concept ;
+    skos:prefLabel "dislike" ;
+    skos:altLabel "dislike", "hate", "detest", "loathe", "despise", "can't stand" .
+pgslt:buy a skos:Concept ;
+    skos:prefLabel "buy" ;
+    skos:altLabel "buy", "purchase", "acquire", "get", "obtain", "order", "pick up" .
+pgslt:travel a skos:Concept ;
+    skos:prefLabel "travel" ;
+    skos:altLabel "travel", "go", "visit", "trip", "journey", "commute", "drive", "fly", "ride" .
+pgslt:say a skos:Concept ;
+    skos:prefLabel "say" ;
+    skos:altLabel "say", "tell", "mention", "state", "explain", "describe", "report", "discuss", "talk about" .
+pgslt:work a skos:Concept ;
+    skos:prefLabel "work" ;
+    skos:altLabel "work", "function", "operate", "run", "perform", "serve" .
+pgslt:not_working a skos:Concept ;
+    skos:prefLabel "not_working" ;
+    skos:altLabel "not working", "not functioning", "broken", "malfunctioning", "down", "crashed", "failed", "unresponsive", "out of order" .
+pgslt:cost a skos:Concept ;
+    skos:prefLabel "cost" ;
+    skos:altLabel "cost", "price", "fee", "charge", "expense", "rate", "amount" .
+pgslt:big a skos:Concept ;
+    skos:prefLabel "big" ;
+    skos:altLabel "big", "large", "huge", "enormous", "massive", "substantial", "significant" .
+pgslt:small a skos:Concept ;
+    skos:prefLabel "small" ;
+    skos:altLabel "small", "little", "tiny", "minor", "slight", "minimal" .
+pgslt:good a skos:Concept ;
+    skos:prefLabel "good" ;
+    skos:altLabel "good", "great", "excellent", "wonderful", "fantastic", "amazing", "positive", "nice", "pleasant" .
+pgslt:bad a skos:Concept ;
+    skos:prefLabel "bad" ;
+    skos:altLabel "bad", "terrible", "awful", "horrible", "poor", "negative", "disappointing" .
+pgslt:help a skos:Concept ;
+    skos:prefLabel "help" ;
+    skos:altLabel "help", "assist", "support", "aid", "guide" .
+pgslt:change a skos:Concept ;
+    skos:prefLabel "change" ;
+    skos:altLabel "change", "modify", "alter", "adjust", "update", "revise", "amend" .
+pgslt:create a skos:Concept ;
+    skos:prefLabel "create" ;
+    skos:altLabel "create", "make", "build", "develop", "design", "construct", "produce", "generate" .
+pgslt:remove a skos:Concept ;
+    skos:prefLabel "remove" ;
+    skos:altLabel "remove", "delete", "eliminate", "discard", "drop", "clear", "erase" .
+
+# ── IS-A (skos:broader: specific → general) ──
+pgslt:car skos:broader pgslt:vehicle, pgslt:transport, pgslt:automobile .
+pgslt:truck skos:broader pgslt:vehicle, pgslt:transport .
+pgslt:bike skos:broader pgslt:vehicle, pgslt:transport .
+pgslt:bus skos:broader pgslt:vehicle, pgslt:transport .
+pgslt:gps skos:broader pgslt:car_component, pgslt:electronics, pgslt:navigation, pgslt:device .
+pgslt:gps_system skos:broader pgslt:car_component, pgslt:electronics, pgslt:navigation, pgslt:device .
+pgslt:engine skos:broader pgslt:car_component, pgslt:mechanical, pgslt:powertrain .
+pgslt:brake skos:broader pgslt:car_component, pgslt:safety, pgslt:mechanical .
+pgslt:brakes skos:broader pgslt:car_component, pgslt:safety, pgslt:mechanical .
+pgslt:tire skos:broader pgslt:car_component, pgslt:wheel .
+pgslt:tires skos:broader pgslt:car_component, pgslt:wheel .
+pgslt:battery skos:broader pgslt:car_component, pgslt:electrical, pgslt:power .
+pgslt:transmission skos:broader pgslt:car_component, pgslt:mechanical, pgslt:powertrain .
+pgslt:ac skos:broader pgslt:car_component, pgslt:climate, pgslt:comfort .
+pgslt:air_conditioning skos:broader pgslt:car_component, pgslt:climate, pgslt:comfort .
+pgslt:radio skos:broader pgslt:car_component, pgslt:entertainment, pgslt:electronics .
+pgslt:headlight skos:broader pgslt:car_component, pgslt:lighting, pgslt:safety .
+pgslt:windshield skos:broader pgslt:car_component, pgslt:glass, pgslt:safety .
+pgslt:laptop skos:broader pgslt:computer, pgslt:device, pgslt:electronics .
+pgslt:phone skos:broader pgslt:device, pgslt:electronics, pgslt:communication .
+pgslt:smartphone skos:broader pgslt:phone, pgslt:device, pgslt:electronics .
+pgslt:tablet skos:broader pgslt:device, pgslt:electronics, pgslt:computer .
+pgslt:app skos:broader pgslt:software, pgslt:application, pgslt:program .
+pgslt:website skos:broader pgslt:software, pgslt:online_service, pgslt:digital .
+pgslt:doctor skos:broader pgslt:professional, pgslt:medical, pgslt:healthcare .
+pgslt:teacher skos:broader pgslt:professional, pgslt:education, pgslt:instructor .
+pgslt:engineer skos:broader pgslt:professional, pgslt:technical .
+pgslt:manager skos:broader pgslt:professional, pgslt:leadership .
+pgslt:restaurant skos:broader pgslt:place, pgslt:food, pgslt:dining, pgslt:business .
+pgslt:hospital skos:broader pgslt:place, pgslt:medical, pgslt:healthcare, pgslt:building .
+pgslt:school skos:broader pgslt:place, pgslt:education, pgslt:building .
+pgslt:office skos:broader pgslt:place, pgslt:work, pgslt:building .
+pgslt:gym skos:broader pgslt:place, pgslt:fitness, pgslt:exercise, pgslt:building .
+pgslt:park skos:broader pgslt:place, pgslt:outdoor, pgslt:recreation .
+pgslt:service skos:broader pgslt:event, pgslt:maintenance, pgslt:appointment .
+pgslt:meeting skos:broader pgslt:event, pgslt:work, pgslt:discussion .
+pgslt:appointment skos:broader pgslt:event, pgslt:scheduled .
+pgslt:party skos:broader pgslt:event, pgslt:social, pgslt:celebration .
+pgslt:wedding skos:broader pgslt:event, pgslt:ceremony, pgslt:celebration .
+pgslt:concert skos:broader pgslt:event, pgslt:entertainment, pgslt:music .
+pgslt:vacation skos:broader pgslt:event, pgslt:travel, pgslt:leisure .
+pgslt:trip skos:broader pgslt:event, pgslt:travel .
+pgslt:cooking skos:broader pgslt:activity, pgslt:food, pgslt:hobby .
+pgslt:reading skos:broader pgslt:activity, pgslt:hobby, pgslt:education .
+pgslt:exercise skos:broader pgslt:activity, pgslt:fitness, pgslt:health .
+pgslt:running skos:broader pgslt:exercise, pgslt:activity, pgslt:fitness .
+pgslt:swimming skos:broader pgslt:exercise, pgslt:activity, pgslt:fitness, pgslt:sport .
+pgslt:happy skos:broader pgslt:emotion, pgslt:positive, pgslt:feeling .
+pgslt:sad skos:broader pgslt:emotion, pgslt:negative, pgslt:feeling .
+pgslt:angry skos:broader pgslt:emotion, pgslt:negative, pgslt:feeling .
+pgslt:excited skos:broader pgslt:emotion, pgslt:positive, pgslt:feeling .
+pgslt:worried skos:broader pgslt:emotion, pgslt:negative, pgslt:feeling, pgslt:anxiety .
+pgslt:stressed skos:broader pgslt:emotion, pgslt:negative, pgslt:feeling, pgslt:anxiety .
+pgslt:cold skos:broader pgslt:illness, pgslt:health_issue, pgslt:respiratory .
+pgslt:flu skos:broader pgslt:illness, pgslt:health_issue, pgslt:respiratory .
+pgslt:headache skos:broader pgslt:symptom, pgslt:health_issue, pgslt:pain .
+pgslt:pain skos:broader pgslt:symptom, pgslt:health_issue .
+pgslt:fever skos:broader pgslt:symptom, pgslt:health_issue .
+
+# ── PART-OF (part → whole) ──
+pgslt:gps pgsl:partOf pgslt:car, pgslt:vehicle .
+pgslt:gps_system pgsl:partOf pgslt:car, pgslt:vehicle .
+pgslt:engine pgsl:partOf pgslt:car, pgslt:vehicle .
+pgslt:brake pgsl:partOf pgslt:car, pgslt:vehicle .
+pgslt:brakes pgsl:partOf pgslt:car, pgslt:vehicle .
+pgslt:tire pgsl:partOf pgslt:car, pgslt:vehicle .
+pgslt:tires pgsl:partOf pgslt:car, pgslt:vehicle .
+pgslt:battery pgsl:partOf pgslt:car, pgslt:vehicle, pgslt:phone, pgslt:laptop .
+pgslt:screen pgsl:partOf pgslt:phone, pgslt:laptop, pgslt:tablet, pgslt:device .
+pgslt:keyboard pgsl:partOf pgslt:laptop, pgslt:computer .
+pgslt:wheel pgsl:partOf pgslt:car, pgslt:vehicle, pgslt:bike .
+pgslt:door pgsl:partOf pgslt:car, pgslt:building, pgslt:house .
+pgslt:window pgsl:partOf pgslt:car, pgslt:building, pgslt:house .
+pgslt:roof pgsl:partOf pgslt:car, pgslt:building, pgslt:house .
+pgslt:seat pgsl:partOf pgslt:car, pgslt:vehicle, pgslt:chair .
+
+# ── CAUSES (cause → effect) ──
+pgslt:malfunction pgsl:causes pgslt:issue, pgslt:problem, pgslt:breakdown, pgslt:failure .
+pgslt:accident pgsl:causes pgslt:injury, pgslt:damage, pgslt:issue .
+pgslt:rain pgsl:causes pgslt:wet, pgslt:delay, pgslt:flood .
+pgslt:traffic pgsl:causes pgslt:delay, pgslt:late, pgslt:stress .
+pgslt:stress pgsl:causes pgslt:anxiety, pgslt:health_issue, pgslt:insomnia .
+pgslt:exercise pgsl:causes pgslt:fitness, pgslt:health, pgslt:energy .
+pgslt:service pgsl:causes pgslt:fix, pgslt:maintenance, pgslt:repair .
+pgslt:repair pgsl:causes pgslt:fix, pgslt:working, pgslt:resolved .

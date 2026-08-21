@@ -92,7 +92,14 @@ export {
   expandTerm,
   expandEntitiesWithOntology,
   ontologicalSimilarity,
+  parseLexicon,
+  lexiconSource,
+  FALLBACK_SYNONYM_GROUPS,
+  FALLBACK_IS_A,
+  FALLBACK_PART_OF,
+  FALLBACK_CAUSES,
 } from './ontological-inference.js';
+export type { Lexicon } from './ontological-inference.js';
 export {
   classifyQuestion,
   routedRetrieve,

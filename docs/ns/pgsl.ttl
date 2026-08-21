@@ -283,3 +283,19 @@ pgsl:sign a owl:ObjectProperty ; rdfs:label "sign" ; rdfs:comment "Peircean sign
 pgsl:metagraph a owl:ObjectProperty ; rdfs:label "metagraph" ; rdfs:comment "Reference to a named graph holding meta-level annotations about this pgsl: node." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>.
 pgsl:hasAtom a owl:ObjectProperty ; rdfs:label "has atom" ; rdfs:range pgsl:Atom ; rdfs:comment "Links a descriptor or record to the content-addressed pgsl:Atom holding its payload — the lattice anchor for the resource's content. Lets a reader recover the immutable, content-addressed payload behind a mutable descriptor." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>.
 pgsl:sourceFormat a owl:DatatypeProperty ; rdfs:label "source format" ; rdfs:range xsd:string ; rdfs:comment "The original format the content was extracted from before being atomized into the lattice (e.g. 'scorm', 'pdf', 'html', 'cmi5'). Recorded on the minting record for provenance." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>.
+
+# ══════════════════════════════════════════════════════════════
+#  Retrieval lexicon
+# ══════════════════════════════════════════════════════════════
+#
+#  Vocabulary for the query-expansion knowledge base published at
+#  docs/ns/pgsl-lexicon.ttl. Synonyms use skos:prefLabel/skos:altLabel
+#  and IS-A uses skos:broader, so only the two relations SKOS has no
+#  term for are declared here. Lexicon ENTRIES are instances under the
+#  hash namespace <.../ns/pgsl-lexicon#>, deliberately not in this
+#  fragment namespace: 387 instances declared alongside the vocabulary
+#  would read as vocabulary.
+
+pgsl:Lexicon a owl:Class ; rdfs:label "Lexicon" ; rdfs:comment "A published set of lexical relations used to expand query terms during PGSL retrieval. Read at runtime by packages/pgsl/src/ontological-inference.ts, which keeps the same relations as FALLBACK_* tables for deployments that cannot reach docs/ns." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>.
+pgsl:partOf a owl:ObjectProperty ; rdfs:label "part of" ; rdfs:comment "Partitive relation between lexicon terms: the subject names a part, the object the whole it belongs to (e.g. pgsl-lexicon#engine pgsl:partOf pgsl-lexicon#car). Distinct from skos:broader, which is the IS-A relation — an engine is part of a car, it is not a kind of car. SKOS defines no partitive property, which is why this one is minted rather than reused." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>.
+pgsl:causes a owl:ObjectProperty ; rdfs:label "causes" ; rdfs:comment "Causal relation between lexicon terms: the subject names a cause, the object an effect it tends to bring about (e.g. pgsl-lexicon#malfunction pgsl:causes pgsl-lexicon#issue). Used for query expansion only — it records lexical association strong enough to be worth retrieving on, not a claim of causation in the world." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>.

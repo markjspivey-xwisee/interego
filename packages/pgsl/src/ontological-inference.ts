@@ -23,7 +23,7 @@
 // ═════════════════════════════════════════════════════════════
 
 /** Groups of interchangeable terms. Each group shares a canonical form. */
-const SYNONYM_GROUPS: Record<string, string[]> = {
+export const FALLBACK_SYNONYM_GROUPS: Record<string, string[]> = {
   // Problems/issues
   'issue': ['problem', 'issue', 'trouble', 'difficulty', 'malfunction', 'defect', 'fault', 'error', 'bug', 'failure', 'breakdown', 'glitch'],
   // Fixing
@@ -66,20 +66,16 @@ const SYNONYM_GROUPS: Record<string, string[]> = {
   'remove': ['remove', 'delete', 'eliminate', 'discard', 'drop', 'clear', 'erase'],
 };
 
-// Build reverse lookup: word → canonical form
-const SYNONYM_LOOKUP = new Map<string, string>();
-for (const [canonical, synonyms] of Object.entries(SYNONYM_GROUPS)) {
-  for (const syn of synonyms) {
-    SYNONYM_LOOKUP.set(syn.toLowerCase(), canonical);
-  }
-}
+// The reverse lookup (word → canonical form) is built AFTER the lexicon loads, below the
+// loader, so it indexes whatever is actually in use. Built here it would have indexed the
+// frozen table and then silently disagreed with a published lexicon that had moved on.
 
 // ═════════════════════════════════════════════════════════════
 //  Hypernym/Meronym Knowledge Base
 // ═════════════════════════════════════════════════════════════
 
 /** IS-A relationships: specific → general */
-const IS_A: Record<string, string[]> = {
+export const FALLBACK_IS_A: Record<string, string[]> = {
   // Vehicles
   'car': ['vehicle', 'transport', 'automobile'],
   'truck': ['vehicle', 'transport'],
@@ -150,7 +146,7 @@ const IS_A: Record<string, string[]> = {
 };
 
 /** PART-OF relationships: part → whole */
-const PART_OF: Record<string, string[]> = {
+export const FALLBACK_PART_OF: Record<string, string[]> = {
   'gps': ['car', 'vehicle'],
   'gps_system': ['car', 'vehicle'],
   'engine': ['car', 'vehicle'],
@@ -169,7 +165,7 @@ const PART_OF: Record<string, string[]> = {
 };
 
 /** CAUSES relationships: cause → effect */
-const CAUSES: Record<string, string[]> = {
+export const FALLBACK_CAUSES: Record<string, string[]> = {
   'malfunction': ['issue', 'problem', 'breakdown', 'failure'],
   'accident': ['injury', 'damage', 'issue'],
   'rain': ['wet', 'delay', 'flood'],
@@ -179,6 +175,166 @@ const CAUSES: Record<string, string[]> = {
   'service': ['fix', 'maintenance', 'repair'],
   'repair': ['fix', 'working', 'resolved'],
 };
+
+// ═════════════════════════════════════════════════════════════
+//  The lexicon, READ FROM THE PUBLISHED ONTOLOGY
+// ═════════════════════════════════════════════════════════════
+//
+// ★ The four tables above used to BE the knowledge base: 101 keys and 387 values of
+// domain fact — cars, GPS units, brake components — frozen into the substrate package as
+// TypeScript literals. This module's own header already said what they should have been
+// ("The knowledge base is itself a PGSL-compatible structure — atoms and relations"), and
+// they were not: nothing could add a term without editing and rebuilding `packages/pgsl`,
+// and no other agent could read what this one believed "gps" was a part of.
+//
+// So they are published as RDF at docs/ns/pgsl-lexicon.ttl and read at runtime. The
+// engine below is unchanged and stays general — it walks relations, it does not know what
+// a brake is. Standard vocabulary where standard vocabulary exists: a synonym group is a
+// skos:Concept with skos:prefLabel + skos:altLabel, and IS-A is skos:broader. Only the two
+// relations SKOS has no term for are ours (pgsl:partOf, pgsl:causes).
+//
+// ★ The tables remain as FALLBACK_*, exported, for two reasons. A deployment that cannot
+// reach docs/ns must degrade rather than silently lose every expansion — the retrieval
+// path has no other signal that its lexicon vanished. And they are the anti-drift anchor:
+// tests/the-lexicon-is-published-not-frozen.test.ts asserts the published file parses back
+// to exactly these tables, so the copy that ships and the copy that falls back cannot
+// diverge without a test saying so.
+
+import { readFileSync, existsSync } from 'node:fs';
+import { dirname, join as joinPath } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import type { IRI, ParsedSubject } from '@interego/core';
+import { parseTrig } from '@interego/core';
+
+const PGSL_NS = 'https://markjspivey-xwisee.github.io/interego/ns/pgsl#';
+const SKOS_NS = 'http://www.w3.org/2004/02/skos/core#';
+
+/**
+ * Lexicon ENTRIES are hash IRIs in the lexicon DOCUMENT, not terms of the vocabulary:
+ * `pgsl#partOf` is a term of the ontology, `pgsl-lexicon#gps` is a thing the ontology
+ * describes, and 387 instances in the vocabulary namespace would all have read as
+ * vocabulary.
+ *
+ * ★ A hash namespace rather than a `pgsl/term/` path, because the point of not using a urn:
+ * is that the identifier RESOLVES, and only one of the two does. Fetching a hash IRI strips
+ * the fragment and returns docs/ns/pgsl-lexicon.ttl — the document that defines the term —
+ * by exactly the mechanism every other ontology here already relies on. A path IRI would
+ * have needed 387 documents that do not exist, so it would have been an http URL that 404s:
+ * the letter of "everything is a URL" without the part that makes it worth anything.
+ */
+const TERM_BASE = 'https://markjspivey-xwisee.github.io/interego/ns/pgsl-lexicon#';
+
+export interface Lexicon {
+  readonly synonymGroups: Record<string, string[]>;
+  readonly isA: Record<string, string[]>;
+  readonly partOf: Record<string, string[]>;
+  readonly causes: Record<string, string[]>;
+  /** `'published'` when docs/ns was read; `'fallback'` when the frozen tables were used. */
+  readonly source: 'published' | 'fallback';
+}
+
+/** Same walk as @interego/compliance's resolveNsDir — env first, then upward from here. */
+function resolveNsDir(): string | undefined {
+  const configured = process.env['INTEREGO_NS_DIR']?.trim();
+  if (configured) return existsSync(configured) ? configured : undefined;
+  let dir = dirname(fileURLToPath(import.meta.url));
+  for (let i = 0; i < 8; i++) {
+    const candidate = joinPath(dir, 'docs', 'ns');
+    if (existsSync(candidate)) return candidate;
+    const parent = joinPath(dir, '..');
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return undefined;
+}
+
+/** `…/ns/pgsl-lexicon#gps_system` → `gps_system`; anything else → undefined. */
+function localTerm(iri: string): string | undefined {
+  return iri.startsWith(TERM_BASE) ? iri.slice(TERM_BASE.length) : undefined;
+}
+
+/**
+ * Parse the published lexicon. Returns undefined — never a partial lexicon — if the file
+ * is unreadable or yields nothing, so the caller falls back as a whole rather than
+ * retrieving against a lexicon that is silently missing three of its four relations.
+ */
+export function parseLexicon(turtle: string): Omit<Lexicon, 'source'> | undefined {
+  let doc;
+  try { doc = parseTrig(turtle); } catch { return undefined; }
+
+  const synonymGroups: Record<string, string[]> = {};
+  const isA: Record<string, string[]> = {};
+  const partOf: Record<string, string[]> = {};
+  const causes: Record<string, string[]> = {};
+
+  const collectIris = (subj: ParsedSubject, predicate: string): string[] =>
+    (subj.properties.get(predicate as IRI) ?? [])
+      .map(t => (t.kind === 'iri' ? localTerm(t.iri) : undefined))
+      .filter((t): t is string => t !== undefined);
+
+  for (const subj of doc.subjects) {
+    // Blank-node subjects carry no term identity — a lexicon entry has to be nameable, or
+    // nothing outside this process could ever refer to it.
+    if (typeof subj.subject !== 'string') continue;
+    const self = localTerm(subj.subject);
+    if (self === undefined) continue;
+
+    // A synonym group: prefLabel is the canonical form, altLabels are its members.
+    const pref = subj.properties.get(`${SKOS_NS}prefLabel` as IRI)?.[0];
+    const alts = (subj.properties.get(`${SKOS_NS}altLabel` as IRI) ?? [])
+      .map(t => (t.kind === 'literal' ? t.value : undefined))
+      .filter((v): v is string => v !== undefined);
+    if (pref?.kind === 'literal' && alts.length > 0) synonymGroups[pref.value] = alts;
+
+    const broader = collectIris(subj, `${SKOS_NS}broader`);
+    if (broader.length > 0) isA[self] = broader;
+    const parts = collectIris(subj, `${PGSL_NS}partOf`);
+    if (parts.length > 0) partOf[self] = parts;
+    const effects = collectIris(subj, `${PGSL_NS}causes`);
+    if (effects.length > 0) causes[self] = effects;
+  }
+
+  if (Object.keys(synonymGroups).length === 0 || Object.keys(isA).length === 0) return undefined;
+  return { synonymGroups, isA, partOf, causes };
+}
+
+function loadLexicon(): Lexicon {
+  const ns = resolveNsDir();
+  const file = ns ? joinPath(ns, 'pgsl-lexicon.ttl') : undefined;
+  if (file && existsSync(file)) {
+    try {
+      const parsed = parseLexicon(readFileSync(file, 'utf8'));
+      if (parsed) return { ...parsed, source: 'published' };
+    } catch { /* fall through to the frozen tables */ }
+  }
+  return {
+    synonymGroups: FALLBACK_SYNONYM_GROUPS,
+    isA: FALLBACK_IS_A,
+    partOf: FALLBACK_PART_OF,
+    causes: FALLBACK_CAUSES,
+    source: 'fallback',
+  };
+}
+
+const LEXICON = loadLexicon();
+
+const SYNONYM_GROUPS = LEXICON.synonymGroups;
+const IS_A = LEXICON.isA;
+const PART_OF = LEXICON.partOf;
+const CAUSES = LEXICON.causes;
+
+// Reverse lookup: word → canonical form, over the lexicon actually in use.
+const SYNONYM_LOOKUP = new Map<string, string>();
+for (const [canonical, synonyms] of Object.entries(SYNONYM_GROUPS)) {
+  for (const syn of synonyms) {
+    SYNONYM_LOOKUP.set(syn.toLowerCase(), canonical);
+  }
+}
+
+/** Whether the lexicon in use was read from docs/ns or fell back to the frozen tables. */
+export function lexiconSource(): 'published' | 'fallback' {
+  return LEXICON.source;
+}
 
 // ═════════════════════════════════════════════════════════════
 //  Inference Engine
