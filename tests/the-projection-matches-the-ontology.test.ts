@@ -112,14 +112,26 @@ describe('the set of projections is discovered, not listed', () => {
    * ratchet `MIN_FILES` uses in tools/lint-gate.mjs and for the same reason: a check that silently
    * covers less than it did yesterday is indistinguishable from one that passed.
    */
+  /**
+   * ★ AND THE BIGGEST NAMESPACE WAS OUTSIDE IT. `iep` — the L1 protocol vocabulary, 509
+   * terms — did not join this gate, because joining is opt-in by convention: a page states
+   * "&middot; N terms." and iep.html did not. Measured before it was fixed: iep.ttl declared
+   * 509 terms and iep.html projected FOUR. 505 hash IRIs dereferenced to a page that did not
+   * mention them, which is this gate's founding defect at 36x the scale that motivated it.
+   *
+   * The membership rule is still convention rather than structure, and that is the residual
+   * weakness — a new namespace can still omit the line and stay invisible here. The floor
+   * below is what makes that survivable: a page LEAVING the gate is caught even though a page
+   * never joining it is not.
+   */
   it('finds the full projections, including every compliance framework', () => {
     expect(FOUND.length, 'discovered no full projections at all').toBeGreaterThan(0);
     expect(
       FOUND.length,
-      `${FOUND.length} projections discovered, expected at least 23. A page joins this gate by `
+      `${FOUND.length} projections discovered, expected at least 24. A page joins this gate by `
         + `stating "&middot; N terms." — if one stopped stating it, it silently left the gate. `
         + `Raise this floor when adding a projection; never lower it to make a run pass.`,
-    ).toBeGreaterThanOrEqual(23);
+    ).toBeGreaterThanOrEqual(24);
     for (const fw of Object.keys(FRAMEWORK_CONTROLS)) {
       expect(FOUND.map(p => p.base), `${fw} is no longer discovered as a projection`).toContain(fw);
     }
