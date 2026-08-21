@@ -5257,7 +5257,7 @@ async function seedDemoContent(): Promise<void> {
 // vertical) advertises a capability over Interego without a substrate-relay tool.
 const REVIEW_RECORD_AFFORDANCE: Affordance = {
   action: 'urn:iep:action:foxxi:review-record' as Affordance['action'],
-  toolName: 'review_foxxi_record',
+  toolName: 'foxxi.review_record',
   title: 'Review your Foxxi performance record',
   /**
    * ★★ THE JUDGEMENT RULE IS PUBLISHED HERE BECAUSE A READER WHO DID EVERYTHING THIS DESCRIPTOR
@@ -6138,7 +6138,7 @@ app.post('/agent/review-record', async (req, res) => {
 //   criterion?, evidence?, agent_id, timestamp }.
 const ISSUE_CREDENTIAL_AFFORDANCE: Affordance = {
   action: 'urn:iep:action:foxxi:issue-credential' as Affordance['action'],
-  toolName: 'issue_foxxi_credential',
+  toolName: 'foxxi.issue_credential',
   title: 'Issue a competency credential as the authority for your vertical',
   description: 'Issue an Open Badges 3.0 / W3C Verifiable Credential to an agent who demonstrated a competency you defined, as the AUTHORITY for your own vertical. The credential is issued by your stable, platform-custodied issuer identity (derived from your DID), aligned to your competency, and delivered to the recipient agent\'s OWN pod wallet — their CLR surfaces it. Gated by your verifiable delegation (no tenant admin). Reach it: sign_request the issuance args, then act this affordance with the envelope.',
   method: 'POST',
@@ -6341,7 +6341,7 @@ app.post('/agent/issue-credential', async (req, res) => {
 // tamper-evident (engine grading + shape conformance), not on the subject's word.
 const VERIFY_EXTENSION_AFFORDANCE: Affordance = {
   action: 'urn:iep:action:foxxi:verify-extension' as Affordance['action'],
-  toolName: 'verify_extension',
+  toolName: 'foxxi.verify_extension',
   title: 'Independently verify a subject extended a standard (before crediting)',
   description: 'Independently verify, from the SUBJECT\'s own authoritative pod records, that they (a) completed an engine-graded course and (b) recorded a domain-typed StandardsExtension performance, and that the named extension (c) conforms to the agp:StandardsExtension shape. Returns a verdict that separates independently-verified evidence from any self-attested outcome — the issuer\'s due diligence before issue-credential. Signed payload: { subject_did, name?, kind?, subject_pod_url? }. sign_request -> act.',
   method: 'POST',
@@ -6746,8 +6746,8 @@ async function verifyDelegatedTenantAdmin(args: Record<string, unknown>, tenantP
 // their wallet: you can only void a credential under YOUR pod. Closes the gap
 // where /agent/void-credential 404'd (no agent-side void affordance existed).
 const VOID_CREDENTIAL_AFFORDANCE: Affordance = {
-  action: 'urn:iep:action:foxxi:void-credential-signed' as Affordance['action'],
-  toolName: 'void_credential',
+  action: 'urn:iep:action:foxxi:void-credential' as Affordance['action'],
+  toolName: 'foxxi.void_credential',
   title: 'Void (remove) a credential from your own wallet',
   description: 'Remove a credential you hold from your OWN pod wallet by its descriptor URL (the sourceDescriptor of a CLR entry returned by review-record). Deletes the credential resource + its graph AND rebuilds your pod manifest from actual contents, so no stale entry/ghost remains. You can only void credentials under your own pod. sign_request -> act.',
   method: 'POST',
@@ -6822,7 +6822,7 @@ app.post('/agent/void-credential', async (req, res) => {
 
 const RECORD_PERFORMANCE_AFFORDANCE: Affordance = {
   action: 'urn:iep:action:foxxi:record-performance-signed' as Affordance['action'],
-  toolName: 'record_foxxi_performance',
+  toolName: 'foxxi.record_performance_signed',
   title: 'Record a production-work performance event as yourself',
   /**
    * ★ THE VISIBILITY SENTENCE IS ON THIS CONTROL, not only on the review affordance, because this
@@ -6862,8 +6862,8 @@ app.get('/agent/record-performance/affordance', (_req, res) => {
 // substrate publishAgentEncryptionKey — the unblock for self-sovereign per-agent
 // holon encryption across the mesh.
 const PUBLISH_ENCRYPTION_KEY_AFFORDANCE: Affordance = {
-  action: 'urn:iep:action:foxxi:publish-encryption-key-signed' as Affordance['action'],
-  toolName: 'publish_encryption_key',
+  action: 'urn:iep:action:foxxi:publish-encryption-key' as Affordance['action'],
+  toolName: 'foxxi.publish_encryption_key',
   title: 'Publish your X25519 encryption public key (self-sovereign)',
   description: 'Publish YOUR X25519 public key to your OWN pod so the bridge encrypts your canonical PGSL holons TO YOU (not just to itself) — making your recorded performances/credentials owner-readable. You generate + hold the private key; only the public key is published (to <yourpod>/keys/encryption.json). Reach it: sign_request the args, then act this affordance.',
   method: 'POST',
@@ -7932,7 +7932,7 @@ app.post('/agent/record-performance', async (req, res) => {
 
 const INGEST_COURSE_AFFORDANCE: Affordance = {
   action: 'urn:iep:action:foxxi:ingest-course-signed' as Affordance['action'],
-  toolName: 'ingest_foxxi_course',
+  toolName: 'foxxi.ingest_course',
   title: 'Author + publish a course to your own pod (as yourself)',
   description: 'Author a Foxxi course (cmi5/SCORM-shaped: modules -> lessons -> fragments; assessment-item fragments are scored) and PUBLISH it to your OWN pod, authenticated by your delegation (no foxxi session token — the agent-drivable counterpart of foxxi.ingest_content_package). The signed payload carries { parsed: <ParsedFoxxiPackage = { courseId, title, modules:[{id,title,lessons:[{id,title,competency,fragments:[{modality,body,level}]}]}] }> }. Reach it: sign_request the args, then act this affordance.',
   method: 'POST', targetTemplate: '{base}/agent/ingest-course', mediaType: 'application/json',
@@ -7992,7 +7992,7 @@ app.post('/agent/ingest-course', async (req, res) => {
 
 const RECORD_COURSE_COMPLETION_AFFORDANCE: Affordance = {
   action: 'urn:iep:action:foxxi:record-course-completion-signed' as Affordance['action'],
-  toolName: 'record_foxxi_course_completion',
+  toolName: 'foxxi.record_course_completion',
   title: 'Record a cmi5 course completion as yourself',
   description: 'Record completing + passing a course as cmi5 xAPI (launched/initialized/completed/passed/terminated) into your OWN lens, authenticated by your delegation (the agent-drivable counterpart of foxxi.emit_cmi5_session). A passed completion (score_scaled >= mastery_score) lands mastery-verb experiences -> an inferred competency in your ELR, which a later record-performance can supersede to performance-verified. Reach it: sign_request the args, then act this affordance.',
   method: 'POST', targetTemplate: '{base}/agent/record-course-completion', mediaType: 'application/json',
@@ -8101,7 +8101,7 @@ registerForwardingHydrator(async (tenant) => {
 
 const FORWARDING_TARGETS_AFFORDANCE: Affordance = {
   action: 'urn:iep:action:foxxi:set-forwarding-targets-signed' as Affordance['action'],
-  toolName: 'set_foxxi_forwarding_targets',
+  toolName: 'foxxi.forwarding_targets',
   title: 'Manage your own downstream xAPI forwarding targets',
   description: 'Set / list / remove the downstream LRS endpoints YOUR OWN xAPI statements are forwarded to (per-user Statement Forwarding). Owner = your verified delegation; targets are scoped to your own lens, so only your statements forward to them, never another user\'s. Reach it: sign_request the args, then act this affordance.',
   method: 'POST',
@@ -8165,7 +8165,7 @@ app.post('/agent/forwarding/targets', async (req, res) => {
 
 const INBOUND_CREDENTIALS_AFFORDANCE: Affordance = {
   action: 'urn:iep:action:foxxi:set-inbound-credentials-signed' as Affordance['action'],
-  toolName: 'set_foxxi_inbound_credentials',
+  toolName: 'foxxi.credentials',
   title: 'Manage your own inbound forwarding credentials',
   description: 'Mint / list / revoke the Basic-auth credentials an upstream system uses to forward xAPI statements INTO your OWN lens. Owner = your verified delegation; credentials are scoped to your lens, so forwarded-in statements land in your record. Secrets are never echoed back. Reach it: sign_request the args, then act this affordance.',
   method: 'POST',
@@ -8366,13 +8366,13 @@ function emitScormCompletion(play: ScormPlay, course: AgentScormCourse, passed: 
 }
 
 const SCORM_AFFORDANCES: Affordance[] = [
-  { action: 'urn:iep:action:foxxi:scorm-author-signed' as Affordance['action'], toolName: 'scorm_author', title: 'Author a SCORM course (real conformant package)', method: 'POST', targetTemplate: '{base}/agent/scorm/author', mediaType: 'application/json',
+  { action: 'urn:iep:action:foxxi:scorm-author-signed' as Affordance['action'], toolName: 'foxxi.scorm_author', title: 'Author a SCORM course (real conformant package)', method: 'POST', targetTemplate: '{base}/agent/scorm/author', mediaType: 'application/json',
     description: 'Author a SCORM 2004 course as yourself. The payload carries { course: { courseId, title, masteryScore?, scos:[{ id, title, body, assessment?:[{question,answer}] }] } }. Foxxi generates a CONFORMANT imsmanifest.xml and validates it parses on the real SCORM SN runtime. Agent-drivable, no foxxi MCP. sign_request -> act.',
     inputs: [ { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, course })' }, { name: '_signature', type: 'string', required: true, description: 'sign_request signature' } ] },
-  { action: 'urn:iep:action:foxxi:scorm-launch-signed' as Affordance['action'], toolName: 'scorm_launch', title: 'Launch a SCORM course (start an attempt on the SN engine)', method: 'POST', targetTemplate: '{base}/agent/scorm/launch', mediaType: 'application/json',
+  { action: 'urn:iep:action:foxxi:scorm-launch-signed' as Affordance['action'], toolName: 'foxxi.scorm_launch', title: 'Launch a SCORM course (start an attempt on the SN engine)', method: 'POST', targetTemplate: '{base}/agent/scorm/launch', mediaType: 'application/json',
     description: 'Launch an authored SCORM course as yourself. The SN runtime parses the manifest, starts an attempt, and delivers the first SCO; you get its content + (assessment SCOs) the questions. Payload { course_id, author_did?, course_pod? } — the course is resolved from the in-memory catalog, else loaded from the author pod (author_did or course_pod; defaults to your own pod for a self-authored course), so it survives restarts and is launchable cross-agent. Then POST /agent/scorm/submit per SCO. sign_request -> act.',
     inputs: [ { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, course_id, author_did?, course_pod? })' }, { name: '_signature', type: 'string', required: true, description: 'sign_request signature' } ] },
-  { action: 'urn:iep:action:foxxi:scorm-submit-signed' as Affordance['action'], toolName: 'scorm_submit', title: 'Submit the current SCO + advance (graded, commit to SN engine)', method: 'POST', targetTemplate: '{base}/agent/scorm/submit', mediaType: 'application/json',
+  { action: 'urn:iep:action:foxxi:scorm-submit-signed' as Affordance['action'], toolName: 'foxxi.scorm_submit', title: 'Submit the current SCO + advance (graded, commit to SN engine)', method: 'POST', targetTemplate: '{base}/agent/scorm/submit', mediaType: 'application/json',
     description: 'Submit the current SCO. For an assessment SCO pass { answers:[...] } — the player GRADES them against the package answers, commitTracking()s cmi.completion/success/score into the SN engine, and advances (Continue). When the engine sequences to the end, its ROLLUP decides pass/complete and it is recorded to your ELR. Payload { session_id, answers? }. sign_request -> act.',
     inputs: [ { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, session_id, answers? })' }, { name: '_signature', type: 'string', required: true, description: 'sign_request signature' } ] },
 ];
