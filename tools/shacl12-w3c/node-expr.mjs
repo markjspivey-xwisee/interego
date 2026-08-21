@@ -9,17 +9,22 @@
  * twenty more. It is what `sh:nodeByExpression` and `sh:values` evaluate, and it is the one
  * part of 1.2 this engine had nothing for at all.
  *
- * ── WHY ONLY PART OF IT IS VENDORED, SAID PLAINLY ────────────────────────────
+ * ── WHAT THE COUNT IS OUT OF ─────────────────────────────────────────────────
  *
- * The upstream area has 106 entries. SEVENTY-SIX of them live under `shnex-sparql/` and
- * evaluate a SPARQL expression; SHACL-SPARQL is a separate specification and implementing a
- * SPARQL engine is a different project from implementing SHACL. Those are NOT vendored, and
- * this harness does not pretend they are: the count below is out of the 29 SPARQL-free
- * entries, and the number 106 appears nowhere in it.
+ * All 143 approved entries of the upstream area, in both sub-trees:
  *
- * Recording that here rather than in a commit message, because a harness that reports
- * "29/29" without saying what the 29 is out of is exactly the kind of true-but-misleading
- * number this repo keeps finding in its own history.
+ *   shnex/ + constraints/   the structural operators — pathValues, orderBy, if, count
+ *   shnex-sparql/           the SPARQL FUNCTION library — strlen, coalesce, plus, sha256
+ *
+ * ★ THIS HEADER USED TO SAY THE SECOND GROUP WAS "NOT VENDORED", AND THAT STOPPED BEING TRUE
+ * THE MOMENT SOMEBODY VENDORED IT. The runner walks the tree recursively, so adding the 76
+ * files moved the denominator from 29 to 143 immediately — while three file headers,
+ * including this one, went on asserting the old number. The harness was right and the prose
+ * was wrong, which is the safer of the two ways round and still worth fixing on sight.
+ *
+ * The 76 need no query engine: they evaluate EXPRESSIONS, and not one of them supplies a
+ * data graph or matches a graph pattern. SPARQL *queries* in SHACL — sh:select, sh:ask,
+ * sh:construct — are a separate area with a separate runner.
  *
  * ── THE COMPARISON ───────────────────────────────────────────────────────────
  *

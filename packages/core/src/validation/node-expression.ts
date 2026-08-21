@@ -19,13 +19,21 @@
  * conformance harness compares ordered lists rather than sets — a set comparison would pass
  * an implementation that ignored ordering and limiting entirely.
  *
- * ── SCOPE, STATED RATHER THAN IMPLIED ────────────────────────────────────────
+ * ── TWO OPERATOR NAMESPACES ──────────────────────────────────────────────────
  *
- * The W3C node-expression area has 106 entries and 76 of them evaluate a SPARQL expression.
- * SHACL-SPARQL is a separate specification; those are out of scope here and are not
- * vendored, so "29/29" in the harness is 29 of the 29 SPARQL-free entries and says so.
+ * `shnex:` holds the structural operators evaluated here — pathValues, orderBy, if, count.
+ * `sparql:` holds the FUNCTION library, which lives in ./sparql-functions.ts and is
+ * dispatched from this file. Both are node expressions and a node carries one or the other.
+ *
+ * ★ AN EARLIER VERSION OF THIS COMMENT PUT THE sparql: HALF "OUT OF SCOPE, NOT VENDORED".
+ * It was, briefly. The distinction that actually matters is not SPARQL versus not-SPARQL but
+ * FUNCTION versus QUERY: the 76 sparql: entries are pure functions over terms and need no
+ * engine at all, while sh:select / sh:ask / sh:construct need a query evaluator and are a
+ * genuinely separate problem. Scoping by the wrong axis is what made a tractable function
+ * library look like a compiler project.
  */
 import type { ParsedDocument, ParsedSubject, ParsedTerm } from '../rdf/turtle-parser.js';
+import { SPARQL_FN, applySparqlFunction, implementsSparqlFunction } from './sparql-functions.js';
 import type { IRI } from '../model/types.js';
 
 const SHNEX = 'http://www.w3.org/ns/shacl-node-expr#';
@@ -275,8 +283,14 @@ export function evaluateNodeExpression(
   // one thing, not zero — while `shnex:count []` counts zero. Treating "the empty list" and
   // "the empty expression" as the same thing gets one of them wrong whichever way you
   // choose, and the suite has an entry for each.
+  // ★ TWO OPERATOR NAMESPACES, NOT ONE. shnex: holds the structural operators (pathValues,
+  // orderBy, if); sparql: holds the FUNCTION library (strlen, coalesce, plus). A node
+  // carrying `sparql:strlen ( "hello" )` is an operator just as surely as one carrying
+  // `shnex:count`, and testing only for shnex: made all 76 of the suite's SPARQL-function
+  // entries fall through to the constant branch — where a blank node with properties
+  // evaluates to ITSELF, so every one of them returned the expression node.
   const isOperator = node !== undefined
-    && [...node.properties.keys()].some(k => k.startsWith(SHNEX));
+    && [...node.properties.keys()].some(k => k.startsWith(SHNEX) || k.startsWith(SPARQL_FN));
   if (!isOperator) {
     if (expr.kind === 'bnode' && (node === undefined || node.properties.size === 0)) return [];
     const members = expr.kind === 'bnode' ? listMembers(doc, expr) : undefined;
@@ -292,6 +306,41 @@ export function evaluateNodeExpression(
   const here: NodeExpressionContext = { ...ctx, focusNode, depth: depth + 1 };
   const subHere = (e: ParsedTerm | undefined): ParsedTerm[] =>
     evaluateNodeExpression(doc, e, here);
+
+  // ── the sparql: function library ──
+  //
+  // The predicate names the function and its object is an rdf:List of ARGUMENTS, each of
+  // which is itself a node expression. Evaluated before the shnex: operators because a node
+  // carries one or the other, never both.
+  for (const [pred, terms] of node?.properties ?? []) {
+    if (!pred.startsWith(SPARQL_FN)) continue;
+    const local = pred.slice(SPARQL_FN.length);
+    if (!implementsSparqlFunction(local)) {
+      // ★ REPORTED, NOT SILENTLY EMPTY. An unimplemented function returning nothing is
+      // indistinguishable from one that legitimately produced nothing, and a SHACL
+      // constraint built on it would then pass for the wrong reason.
+      throw new Error(
+        `SPARQL function sparql:${local} is not implemented by this engine, so the node `
+        + 'expression cannot be evaluated');
+    }
+    const argTerm = terms[0];
+    // `sparql:bnode ()` — rdf:nil — is a call with NO arguments, not a call with one
+    // argument that happens to be the empty list.
+    const argExprs = argTerm === undefined ? []
+      : (argTerm.kind === 'iri' && argTerm.iri === RDF_NIL) ? []
+        : listMembers(doc, argTerm) ?? [argTerm];
+
+    // ★ `if` EVALUATES LAZILY. SPARQL's IF does not evaluate the branch it does not take —
+    // `IF(false, 1/0, 2)` is 2, not an error — and eagerly evaluating both would turn a
+    // guarded expression into the error it was written to guard against.
+    if (local === 'if') {
+      const cond = sub(argExprs[0]);
+      const taken = cond[0]?.kind === 'literal' && cond[0].value === 'true'
+        ? argExprs[1] : argExprs[2];
+      return sub(taken);
+    }
+    return [...applySparqlFunction(local, argExprs.map(e => sub(e)))];
+  }
 
   // ── leaf producers ──
   if (has('var')) {

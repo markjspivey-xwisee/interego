@@ -1,12 +1,17 @@
 /**
- * The W3C SHACL 1.2 node-expression tests run in CI, at 67 of 67.
+ * The W3C SHACL 1.2 node-expression tests run in CI, at 143 of 143.
  *
- * ★ WHAT THIS IS 67 OF, SAID BEFORE THE NUMBER CAN MISLEAD. The upstream area has 106
- * entries in 29 files. SEVENTY-SIX of those entries live under `shnex-sparql/` and evaluate
- * a SPARQL expression; SHACL-SPARQL is a separate specification and a SPARQL engine is a
- * different project. They are NOT vendored and NOT counted. 67 is every approved entry in
- * the 29 SPARQL-free files, and this file says so rather than reporting a fraction whose
- * denominator has been quietly chosen.
+ * ★ THE DENOMINATOR MOVED UNDER THIS FILE, AND THE GATE CAUGHT IT. It read "67 of 67" and
+ * explained at length that the 76 `shnex-sparql/` entries were deliberately not vendored.
+ * Then they were vendored — the runner walks the tree recursively, so the suite became
+ * 143 entries and the gate went RED at 67 of 143 while this header still described the old
+ * scope. A gate that goes red when its own scope changes is doing its job; a header that
+ * keeps asserting the old scope is not.
+ *
+ * 143 is every approved entry in the area: the structural operators under `shnex/` and
+ * `constraints/`, and the SPARQL FUNCTION library under `shnex-sparql/`. The functions need
+ * no query engine — none of those entries supplies a data graph or matches a pattern.
+ * sh:select / sh:ask / sh:construct are a separate area with a separate runner.
  *
  * ★ WHY THE SUB-LANGUAGE WAS WORTH IMPLEMENTING RATHER THAN RECORDING AS A GAP. It started
  * as one line on the Core suite's known-divergence ledger — `node/nodeByExpression-001`,
@@ -59,8 +64,8 @@ describe('W3C SHACL 1.2 node expressions', () => {
   it('the vendored files and the entries in them are both there', () => {
     // Guards the guard: an empty fixture tree reports a clean sweep of nothing, and so does
     // a runner that stopped recognising sht:EvalNodeExpr.
-    expect(countTtl(SUITE)).toBeGreaterThanOrEqual(29);
-    expect(report.total - report.unapproved).toBeGreaterThanOrEqual(65);
+    expect(countTtl(SUITE)).toBeGreaterThanOrEqual(105);
+    expect(report.total - report.unapproved).toBeGreaterThanOrEqual(143);
   });
 
   it('passes every approved entry', () => {
