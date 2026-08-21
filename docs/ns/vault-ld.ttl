@@ -157,7 +157,27 @@ vldp:NoAuthorityPredicatesShape a sh:NodeShape ;
   sh:property [ sh:path iep:action ;               sh:maxCount 0 ; sh:message "Rung-<=3 violation: iep:action." ] ;
   sh:property [ sh:path hmd:target ;               sh:maxCount 0 ; sh:message "Rung-<=3 violation: hmd:target." ] ;
   sh:property [ sh:path hmd:rel ;                  sh:maxCount 0 ; sh:message "Rung-<=3 violation: hmd:rel." ] ;
-  sh:property [ sh:path hmd:control ;              sh:maxCount 0 ; sh:message "Rung-<=3 violation: hmd:control." ] .
+  sh:property [ sh:path hmd:control ;              sh:maxCount 0 ; sh:message "Rung-<=3 violation: hmd:control." ] ;
+
+  # ★ FOUR PREDICATES THAT ENTAIL A CONTROL WERE NOT SCREENED. hmd.ttl gives six predicates
+  # `rdfs:domain hmd:Control` — method, target, expects, returns, condition, rel — so bearing
+  # ANY of them entails that the subject is an hmd:Control, which is rung-4 execution
+  # authority by this profile's own definition. The list above screened target and rel and
+  # missed the other four, while the shape immediately above it claims the closure is closed
+  # under entailment. A vault could therefore ship `<note> hmd:method "POST"` and validate
+  # clean while entailing a control.
+  #
+  # Found by auditing the ontologies against hmd.ttl's domain declarations rather than
+  # against the list's own apparent completeness — the hydra: half was complete, which is
+  # what made the hmd: half look finished.
+  sh:targetSubjectsOf hmd:method ;
+  sh:targetSubjectsOf hmd:expects ;
+  sh:targetSubjectsOf hmd:returns ;
+  sh:targetSubjectsOf hmd:condition ;
+  sh:property [ sh:path hmd:method ;    sh:maxCount 0 ; sh:message "Rung-<=3 violation: hmd:method (rdfs:domain hmd:Control — bearing it entails a control)." ] ;
+  sh:property [ sh:path hmd:expects ;   sh:maxCount 0 ; sh:message "Rung-<=3 violation: hmd:expects (rdfs:domain hmd:Control)." ] ;
+  sh:property [ sh:path hmd:returns ;   sh:maxCount 0 ; sh:message "Rung-<=3 violation: hmd:returns (rdfs:domain hmd:Control)." ] ;
+  sh:property [ sh:path hmd:condition ; sh:maxCount 0 ; sh:message "Rung-<=3 violation: hmd:condition (rdfs:domain hmd:Control)." ] .
 
 # ── ENTAILMENT closure (semantic-layer authority smuggling) ──
 #
