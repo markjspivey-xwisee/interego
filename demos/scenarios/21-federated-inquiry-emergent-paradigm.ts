@@ -349,7 +349,7 @@ For EACH, mint an attestation IRI like "urn:amta:attestation:${r.short}-<short>-
   <ATT-IRI> a amta:Attestation ;
     amta:axis "${r.axis}" ;
     amta:rating "<your rating, decimal>"^^xsd:decimal ;
-    amta:about <HYP-IRI> ;
+    amta:attestsTo <HYP-IRI> ;
     amta:attestor <${r.id}> ;
     amta:direction "Peer" .
 

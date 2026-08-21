@@ -417,7 +417,7 @@ function handleGovernanceRound(args: any): unknown {
   if (amendment.status === 'Rejected' && args.forkOnReject) {
     fork = forkConstitution({ id: `urn:iep:fork:${Date.now().toString(36)}` as IRI, parentConstitution: policyId as IRI, dissenters: againstV.map(v => v.voter), newConstitution: { id: `${policyId}:fork` as IRI, tier, description: `Fork over: ${diff.summary}`, ratifyRule: rules }, reason: `amendment rejected (${tally.for}/${forV.length + againstV.length} for); dissenters fork` });
   }
-  const outcome = { kind: 'iep:ConstitutionalAmendment', amendment, tally, communityModal: cmodal, rules, fork };
+  const outcome = { kind: 'iep:Amendment', amendment, tally, communityModal: cmodal, rules, fork };
   const holonUri = mintAtom(pgslLattice, JSON.stringify(outcome));   // content-addressed, dereferenceable
   amendments.set(amendmentId, amendment);
   return { ok: true, amendment: { id: amendment.id, amends: amendment.amends, tier: amendment.tier, status: amendment.status, proposedBy: pr.signer, diff: amendment.diff, ratifiedAt: amendment.ratifiedAt, votes: amendment.votes.map(v => ({ voter: v.voter, modalStatus: v.modalStatus, weight: v.weight })) }, tally, communityModal: cmodal, droppedVotes, rules, fork, holon: { holonUri } };
@@ -434,7 +434,7 @@ function handleAttest(args: any): unknown {
   if (!_bound(r)) return { ok: false, status: 401, error: `recovered signer ${r.signer} does not match claimed agent_id ${r.payload?.agent_id ?? '(none)'}` };
   const ts = Date.parse(String(r.payload.timestamp ?? ''));
   if (!Number.isFinite(ts) || Math.abs(Date.now() - ts) > 60_000) return { ok: false, status: 401, error: 'timestamp drift exceeds ±60s — replay protection' };
-  const holonUri = mintAtom(pgslLattice, JSON.stringify({ kind: 'iep:Attestation', by: r.signer, payload: r.payload }));
+  const holonUri = mintAtom(pgslLattice, JSON.stringify({ kind: 'amta:Attestation', by: r.signer, payload: r.payload }));
   return { ok: true, status: 200, attestedBy: r.signer, holon: { holonUri } };
 }
 

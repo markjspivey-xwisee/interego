@@ -1,0 +1,105 @@
+@prefix demo: <https://markjspivey-xwisee.github.io/interego/ns/demo#> .
+@prefix iep:  <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix dct:  <http://purl.org/dc/terms/> .
+
+<https://markjspivey-xwisee.github.io/interego/ns/demo> a owl:Ontology ;
+    rdfs:label "Interego demo-scenario vocabulary" ;
+    dct:description "Terms the demo scenarios under demos/ need to describe THEIR OWN subject matter — a game, a federated query, a protocol-quality metric. Nothing here is protocol." ;
+    rdfs:comment """★★ WHY THIS FILE EXISTS AT ALL.
+
+Thirteen of these terms were being emitted into the SUBSTRATE namespace: a scenario published
+`iep:gameId`, `iep:winner`, `iep:moves`, `iep:rowCount`. Game vocabulary in the protocol namespace.
+Nothing caught it because tools/ontology-lint.mjs did not scan demos/ — the same gap that let two
+undeclared control IRIs ship from integrations/ and a dead prefix ship from demos/interego-bridge.
+
+The rule this file makes enforceable: A DEMO CITES PUBLISHED VOCABULARY, IT DOES NOT MINT PROTOCOL
+VOCABULARY. Where a demo needed a term the substrate genuinely implements — the ZK commit/reveal
+cycle — that term was added to iep.ttl instead, because core ships the capability and three MCP
+tools expose it. Where a demo needed a term for its own scenario, it belongs here.
+
+The distinction is not tidiness. `iep:` is dereferenced by external readers as the protocol's
+vocabulary; a term in it is a claim about what Interego IS. A game's winner is not.""" ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/demo> .
+
+# ── 22-game-design-build-play: a commit/reveal game ──────────────────────────
+# The commit/reveal MECHANICS are substrate (iep:Commitment, iep:Reveal, iep:revealsCommitment —
+# core implements them). Only the game around them is scenario vocabulary.
+
+demo:GameResult a owl:Class ;
+    rdfs:label "Game Result" ;
+    rdfs:comment "The outcome of one demo game round, after every commitment has been revealed." ;
+    rdfs:subClassOf iep:ContextDescriptor ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/demo> .
+
+demo:gameId a owl:DatatypeProperty ;
+    rdfs:label "game id" ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/demo> .
+
+demo:moves a owl:DatatypeProperty ;
+    rdfs:label "moves" ;
+    rdfs:comment "The revealed moves of a round, in play order." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/demo> .
+
+demo:winner a owl:ObjectProperty ;
+    rdfs:label "winner" ;
+    rdfs:comment "The agent that won the round. An ObjectProperty because a player is an identity, not a label." ;
+    rdfs:domain demo:GameResult ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/demo> .
+
+demo:protocol a owl:ObjectProperty ;
+    rdfs:label "protocol" ;
+    rdfs:comment "The socially-constructed rule set a round was played under — itself a published descriptor, which is the point the scenario is making." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/demo> .
+
+# ── 23-zero-copy-semantic-layer: a federated query result ────────────────────
+
+demo:FederatedQueryResult a owl:Class ;
+    rdfs:label "Federated Query Result" ;
+    rdfs:comment "The result of a query answered across pods without copying the underlying rows." ;
+    rdfs:subClassOf iep:ContextDescriptor ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/demo> .
+
+demo:queryRange a owl:DatatypeProperty ;
+    rdfs:label "query range" ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/demo> .
+
+demo:rowCount a owl:DatatypeProperty ;
+    rdfs:label "row count" ;
+    rdfs:range xsd:nonNegativeInteger ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/demo> .
+
+demo:dataType a owl:DatatypeProperty ;
+    rdfs:label "data type" ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/demo> .
+
+# ── 20-socio-constructed-protocol-and-app: protocol-quality metrics ──────────
+
+demo:axesCovered a owl:DatatypeProperty ;
+    rdfs:label "axes covered" ;
+    rdfs:comment "How many distinct amta: attestation axes a protocol's evidence spans. A count, not a judgement." ;
+    rdfs:range xsd:nonNegativeInteger ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/demo> .
+
+demo:meanPeerRating a owl:DatatypeProperty ;
+    rdfs:label "mean peer rating" ;
+    rdfs:comment "Mean of the PEER-direction attestations only. Self-attestations are deliberately excluded: averaging them in lets an actor raise its own score." ;
+    rdfs:range xsd:double ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/demo> .
+
+demo:proposedBy a owl:ObjectProperty ;
+    rdfs:label "proposed by" ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/demo> .
+
+# ── interego-microsite: the model-attestation demo ───────────────────────────
+
+demo:ModelAttestation a owl:Class ;
+    rdfs:label "Model Attestation" ;
+    rdfs:comment "A signed statement about which model produced a claim. Demo vocabulary: the substrate's attestation vocabulary is amta:, and this scenario adds only the model-identity framing around it." ;
+    rdfs:subClassOf iep:ContextDescriptor ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/demo> .

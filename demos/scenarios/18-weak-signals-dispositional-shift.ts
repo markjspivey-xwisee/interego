@@ -306,7 +306,7 @@ For (A), call protocol.publish_descriptor with:
       sat:shiftedBy <urn:demo:intervention:add-style-constraint-shape> ;
       sat:dampedBy  <urn:demo:intervention:tightening-eslint-pre-commit> ;
       sat:dispositionalConfidence "0.55"^^xsd:decimal .
-    <${senseDescIri}> a sat:SemioticFacet ;
+    <${senseDescIri}> a iep:SemioticFacet ;
       dct:title "Sensemaking on the codegen-drift weak-signal cluster" ;
       sat:hasDisposition <${dispositionIri}> .
   modal_status:  "Hypothetical"

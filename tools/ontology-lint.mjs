@@ -51,6 +51,13 @@ const OWNED_NAMESPACES = {
   'eu-ai-act': 'docs/ns/eu-ai-act.ttl',
   'nist-rmf':  'docs/ns/nist-rmf.ttl',
   soc2:       'docs/ns/soc2.ttl',
+  // ★ `demo:` IS DELIBERATELY NOT OWNED HERE, and the reason is a real limitation of this check.
+  // Demo scenarios bind `demo:` to FOUR different namespaces and use it for BOTH vocabulary
+  // (`demo:Hypothesis`, `demo:statement`) and minted instance names
+  // (`demo:second-contact-escalation`). This lint keys on the PREFIX, not the binding, so it
+  // cannot tell a term that should be declared from an instance that should not — owning it
+  // would demand a declaration for every name a scenario invents. The vocabulary that was
+  // squatting `iep:` now lives in docs/ns/demo.ttl and dereferences; that was the defect.
 };
 
 // There is deliberately no EXTERNAL_PREFIXES list here. One existed and was dead: this
@@ -83,6 +90,20 @@ const SCAN_PATHS = [
    * so every EU AI Act and NIST RMF descriptor the project's own bridge produced scored `missing`.
    */
   'integrations',
+  /**
+   * ★★ `demos/` WAS UNSCANNED, AND IT HELD 33 UNDECLARED TERMS.
+   *
+   * Among them: a dead `iep:` prefix bound to the pre-rename namespace (404), `sat:SemioticFacet`
+   * under the wrong prefix, `iep:Constitution` where the substrate declares
+   * `iep:ConstitutionalPolicy`, and thirteen game / query / metric terms minted straight into the
+   * PROTOCOL namespace — `iep:gameId`, `iep:winner`, `iep:moves`, `iep:rowCount`.
+   *
+   * That is the third directory this lint could not see (after `integrations/` and most of
+   * `applications/`), and each time the same shape: real drift, invisible, in a place nobody
+   * thought to point the check at. A demo publishes descriptors to real pods; its vocabulary is
+   * as public as anything else.
+   */
+  'demos',
 ];
 
 // Known-drift baseline. Entries here are terms emitted by code that
@@ -332,8 +353,21 @@ function findReferencesInFile(tsPath, prefixes) {
     'g',
   );
   const templateVars = Object.keys(TEMPLATE_VAR_TO_PREFIX);
+  /**
+   * ★★ THE SAME TRUNCATION AS `refRegex`, IN ITS SIBLING — FIXED ONE AND MISSED THE OTHER.
+   *
+   * The local-name class here was `[A-Za-z0-9_]*`, so a template emission of `${SOC2_NS}CC8.1`
+   * was compared as the term `CC8`, which is declared nowhere, and the lint reported an undeclared
+   * term for a citation that was correct. The mirror image of the `nist-rmf:MG-3.1` -> `MG` bug:
+   * there truncation HID a real defect by landing on a declared term, here it INVENTED one by
+   * landing on nothing.
+   *
+   * Both directions come from the same cause — the two sides of this lint disagreeing about where
+   * a local name ends — so the class is now identical in all three places that need it
+   * (declaration, CURIE usage, template usage).
+   */
   const tmplRegex = new RegExp(
-    `\\$\\{(${templateVars.join('|')})\\}([A-Za-z][A-Za-z0-9_]*)`,
+    `\\$\\{(${templateVars.join('|')})\\}([A-Za-z][A-Za-z0-9_-]*(?:\\.[0-9]+)*)`,
     'g',
   );
   let offset = 0;

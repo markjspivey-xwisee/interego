@@ -583,6 +583,58 @@ iep:amendmentProcess a owl:ObjectProperty ;
     rdfs:domain iep:ConstitutionalPolicy ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
 
+# ── The commit/reveal cycle the substrate IMPLEMENTS and never published ─────
+#
+# packages/core/src/crypto/zk/ ships Pedersen commitments, range proofs and confidence proofs, and
+# three MCP tools expose them (zk_commit, zk_verify_commitment, zk_prove_confidence_above_threshold).
+# The capability was real; the vocabulary for describing its artifacts was not, so a descriptor
+# recording a commitment had to invent terms. Declared here because the substrate does the work —
+# scenario-specific vocabulary belongs in demo.ttl instead.
+
+iep:Commitment a owl:Class ;
+    rdfs:label "Commitment" ;
+    rdfs:comment "A binding, hiding commitment to a value that is not yet revealed. Carries iep:commitmentHash; a later iep:Reveal opens it. Publishing the commitment before the reveal is what makes the eventual reveal checkable rather than merely asserted." ;
+    rdfs:subClassOf iep:ContextDescriptor ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:Reveal a owl:Class ;
+    rdfs:label "Reveal" ;
+    rdfs:comment "Opens a previously published iep:Commitment by supplying the value and its blinding factor. A verifier recomputes the hash and compares; the pair is the evidence, neither half alone." ;
+    rdfs:subClassOf iep:ContextDescriptor ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:commitmentHash a owl:DatatypeProperty ;
+    rdfs:label "commitment hash" ;
+    rdfs:domain iep:Commitment ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:revealsCommitment a owl:ObjectProperty ;
+    rdfs:label "reveals commitment" ;
+    rdfs:comment "Links a Reveal to the Commitment it opens." ;
+    rdfs:domain iep:Reveal ;
+    rdfs:range iep:Commitment ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:revealedValue a owl:DatatypeProperty ;
+    rdfs:label "revealed value" ;
+    rdfs:domain iep:Reveal ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:revealedBlinding a owl:DatatypeProperty ;
+    rdfs:label "revealed blinding" ;
+    rdfs:comment "The blinding factor, published only at reveal time. Without it the commitment cannot be recomputed; with it before reveal, the commitment hides nothing." ;
+    rdfs:domain iep:Reveal ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:ratifiedAmendment a owl:ObjectProperty ;
+    rdfs:label "ratified amendment" ;
+    rdfs:comment "Links a ConstitutionalPolicy to an Amendment that reached ratification and now forms part of it. The counterpart to iep:ratificationVote, which records the votes; this records the outcome. Emitted by governance demos and declared nowhere until the lint was pointed at demos/." ;
+    rdfs:domain iep:ConstitutionalPolicy ;
+    rdfs:range iep:Amendment ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
 iep:ratificationVote a owl:ObjectProperty ;
     rdfs:label "ratification vote" ;
     rdfs:comment "A descriptor recording one ratification vote on a Ratifiable. Composes via ModalAlgebra (Asserted=for, Counterfactual=against, Hypothetical=abstain). Domain generalized from iep:Amendment to iep:Ratifiable so any governance layer can reuse the ratification algebra (e.g. AMEP's Accept as a for-vote, Challenge as an against-vote)." ;

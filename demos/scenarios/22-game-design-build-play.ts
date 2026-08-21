@@ -65,7 +65,7 @@ const REPO_ROOT = join(import.meta.dirname ?? '', '..', '..');
 
 // ── Game protocol: rock-paper-scissors with commit-reveal ─────────────
 
-const PROTOCOL_IRI = `urn:iep:protocol:rps-commit-reveal:v1:${Date.now()}`;
+const PROTOCOL_IRI = `urn:demo:protocol:rps-commit-reveal:v1:${Date.now()}`;
 const RATIFY_AMENDMENT_IRI = `urn:iep:amendment:rps-ratify:${Date.now()}`;
 const GAME_ID = `game-${Date.now().toString(36)}`;
 const POLICY_IRI = 'urn:iep:policy:rps-protocol:v0';
@@ -192,6 +192,7 @@ async function main(): Promise<void> {
     // ── PHASE A — Design ──────────────────────────────────
     step(2, 'PHASE A — alpha drafts the RPS-commit-reveal protocol (Hypothetical)');
     const protocolDescriptor = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+    @prefix demo: <https://markjspivey-xwisee.github.io/interego/ns/demo#> .
 @prefix ieh: <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
 @prefix dct: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
@@ -217,7 +218,7 @@ async function main(): Promise<void> {
   rdfs:comment "Substrate applies RPS rules to revealed pairs and publishes a Result descriptor." .`;
 
     const protocolPub = await bridgeCall(bridgeUrl, 'protocol.publish_descriptor', {
-      graph_iri: `urn:graph:iep:protocol:${GAME_ID}`,
+      graph_iri: `urn:graph:demo:protocol:${GAME_ID}`,
       graph_content: protocolDescriptor,
       modal_status: 'Hypothetical',
       confidence: 0.6,
@@ -241,6 +242,7 @@ Step 3. Publish ONE attestation descriptor on axis "clarity" using protocol.publ
   @prefix amta: <https://markjspivey-xwisee.github.io/interego/ns/amta#> .
   @prefix prov: <http://www.w3.org/ns/prov#> .
   @prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+    @prefix demo: <https://markjspivey-xwisee.github.io/interego/ns/demo#> .
 
   <urn:iep:attestation:beta-clarity-${GAME_ID}> a amta:Attestation ;
     amta:attestsTo <${PROTOCOL_IRI}> ;
@@ -323,12 +325,13 @@ Step 3. Remember the move and the blinding string — you'll need both to reveal
 Step 4. Publish a Commitment descriptor via protocol.publish_descriptor with this turtle (substituting the commitment hash):
 
   @prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+    @prefix demo: <https://markjspivey-xwisee.github.io/interego/ns/demo#> .
   @prefix prov: <http://www.w3.org/ns/prov#> .
   @prefix dct: <http://purl.org/dc/terms/> .
 
   <urn:iep:game:${GAME_ID}:commitment:${player.short}> a iep:Commitment ;
     iep:commitmentHash "<paste commitment.commitment here — the 64-char hex string>" ;
-    iep:gameId "${GAME_ID}" ;
+    demo:gameId "${GAME_ID}" ;
     dct:isPartOf <${PROTOCOL_IRI}> ;
     iep:modalStatus iep:Asserted ;
     prov:wasAttributedTo <${player.id}> .
@@ -377,6 +380,7 @@ Output: {"player":"${player.short}","move":"<your-move>","blinding":"<the-blindi
       // Publish the reveal descriptor.
       const revealIri = `urn:iep:game:${GAME_ID}:reveal:${s.player.short}`;
       const revealTtl = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+    @prefix demo: <https://markjspivey-xwisee.github.io/interego/ns/demo#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix dct: <http://purl.org/dc/terms/> .
 
@@ -384,7 +388,7 @@ Output: {"player":"${player.short}","move":"<your-move>","blinding":"<the-blindi
   iep:revealsCommitment <${s.commitmentIri}> ;
   iep:revealedValue "${s.move}" ;
   iep:revealedBlinding "${s.blinding!.replace(/"/g, '\\"')}" ;
-  iep:gameId "${GAME_ID}" ;
+  demo:gameId "${GAME_ID}" ;
   iep:supersedes <${s.commitmentIri}> ;
   iep:modalStatus iep:Asserted ;
   prov:wasAttributedTo <${s.player.id}> .`;
@@ -407,14 +411,15 @@ Output: {"player":"${player.short}","move":"<your-move>","blinding":"<the-blindi
     const winnerDid = winner === 'tie' ? null : (winner === 'first' ? states[0]!.player.id : states[1]!.player.id);
     const resultIri = `urn:iep:game:${GAME_ID}:result`;
     const resultTtl = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+    @prefix demo: <https://markjspivey-xwisee.github.io/interego/ns/demo#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix dct: <http://purl.org/dc/terms/> .
 
-<${resultIri}> a iep:GameResult ;
-  iep:gameId "${GAME_ID}" ;
-  iep:protocol <${PROTOCOL_IRI}> ;
-  ${winnerDid ? `iep:winner <${winnerDid}> ;` : 'iep:outcome "tie" ;'}
-  iep:moves "${states[0]!.player.short}=${states[0]!.move}, ${states[1]!.player.short}=${states[1]!.move}" ;
+<${resultIri}> a demo:GameResult ;
+  demo:gameId "${GAME_ID}" ;
+  demo:protocol <${PROTOCOL_IRI}> ;
+  ${winnerDid ? `demo:winner <${winnerDid}> ;` : 'iep:outcome "tie" ;'}
+  demo:moves "${states[0]!.player.short}=${states[0]!.move}, ${states[1]!.player.short}=${states[1]!.move}" ;
   prov:wasDerivedFrom <${states[0]!.revealIri}> , <${states[1]!.revealIri}> ;
   iep:modalStatus iep:Asserted .`;
     await bridgeCall(bridgeUrl, 'protocol.publish_descriptor', {
@@ -463,7 +468,7 @@ Output: {"player":"${player.short}","move":"<your-move>","blinding":"<the-blindi
       `| Ratify | constitutional_propose / vote / ratify | 2-of-2 quorum; same flow as Demo 21's six-voter case |`,
       `| Commit | zk_commit + publish_descriptor | hash commitment; move stays hidden until reveal |`,
       `| Reveal | publish_descriptor (iep:supersedes commit) + zk_verify_commitment | substrate verifies neither side changed their move; same primitive Demo 14 uses for compliance confidence proofs |`,
-      `| Settle | publish_descriptor (iep:GameResult, prov:wasDerivedFrom both reveals) | full audit-walkable game record on both pods |`,
+      `| Settle | publish_descriptor (demo:GameResult, prov:wasDerivedFrom both reveals) | full audit-walkable game record on both pods |`,
       ``,
       `## Properties verified`,
       ``,

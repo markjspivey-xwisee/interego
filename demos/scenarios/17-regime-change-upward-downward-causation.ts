@@ -338,7 +338,7 @@ Output ONLY a JSON object on a single line:
       graph_iri: 'urn:iep:constitution:demo-17:current',
       graph_content: `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix dct: <http://purl.org/dc/terms/> .
-<urn:iep:constitution:demo-17:current> a iep:Constitution ;
+<urn:iep:constitution:demo-17:current> a iep:ConstitutionalPolicy ;
   dct:title "Tool-promotion regime, post-R1 ratification" ;
   dct:description ${JSON.stringify(AMENDMENT_R1_TEXT)} ;
   iep:ratifiedAmendment <${AMENDMENT_R1_ID}> ;

@@ -93,6 +93,32 @@ amta:honesty a owl:DatatypeProperty ;
     rdfs:domain amta:Attestation ;
     rdfs:range xsd:double .
 
+# ── Axes and direction emitted by code but never declared ────────────────────
+#
+# These were used as `amta:axis amta:accuracy` / `amta:clarity` and `amta:direction "Peer"` and
+# existed in no ontology. They surfaced only when tools/ontology-lint.mjs was pointed at a
+# directory it had never scanned — the same gap that let two undeclared control IRIs ship from
+# integrations/. An attestation axis nobody declares cannot be resolved by a reader deciding
+# whether to trust the rating attached to it.
+
+amta:accuracy a owl:DatatypeProperty ;
+    rdfs:label "accuracy" ;
+    rdfs:comment "Attestation axis: how factually correct the attested output was." ;
+    rdfs:domain amta:Attestation ;
+    rdfs:range xsd:double .
+
+amta:clarity a owl:DatatypeProperty ;
+    rdfs:label "clarity" ;
+    rdfs:comment "Attestation axis: how comprehensible the attested output was to its reader." ;
+    rdfs:domain amta:Attestation ;
+    rdfs:range xsd:double .
+
+amta:direction a owl:DatatypeProperty ;
+    rdfs:label "direction" ;
+    rdfs:comment "Whether the attestation is Self (the actor rating its own work) or Peer (another party rating it). The two are not interchangeable evidence: a self-attestation is a claim, a peer attestation is a second opinion." ;
+    rdfs:domain amta:Attestation ;
+    rdfs:range xsd:string .
+
 amta:clearance a owl:DatatypeProperty ;
     rdfs:label "clearance" ;
     rdfs:comment "A subject's clearance level on a monotone classification lattice (higher dominates). Read by the ABAC policy-decision point as a SHACL minInclusive constraint: a request is permitted only when the subject's amta:clearance meets or exceeds the resource's classification." ;

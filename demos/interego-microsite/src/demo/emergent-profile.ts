@@ -200,7 +200,7 @@ export async function runEmergentProfile(apiKey: string, emit: Emit): Promise<Ep
   try {
     const gateway = freshAgent();
     const claim = 'served what it believed was claude-opus-4-8 (provider: Anthropic) for this evaluation';
-    const env = await signEnvelope(gateway, { kind: 'iep:ModelAttestation', claim, model: 'claude-opus-4-8', provider: 'Anthropic' });
+    const env = await signEnvelope(gateway, { kind: 'demo:ModelAttestation', claim, model: 'claude-opus-4-8', provider: 'Anthropic' });
     const r = await callTool('protocol.attest', { envelope: env });
     if (r?.ok) { upgrades.attestedBy = r.attestedBy; upgrades.modelClaim = claim; emit({ actor: 'Gateway', kind: 'attest', title: 'model/provider claim SIGNED + attested', detail: `attributable to ${r.attestedBy}` }); }
     else emit({ actor: 'Gateway', kind: 'error', title: `attest: ${r?.error ?? 'failed'}` });

@@ -25,7 +25,7 @@
 </head>
 <body>
   <h1>EU AI Act mapping ontology <span class="mono ns">eu-ai-act:</span></h1>
-  <p class="sub">Namespace <code>https://markjspivey-xwisee.github.io/interego/ns/eu-ai-act#</code> &middot; 20 terms.</p>
+  <p class="sub">Namespace <code>https://markjspivey-xwisee.github.io/interego/ns/eu-ai-act#</code> &middot; 22 terms.</p>
   <p>L3 mapping of Interego context primitives to EU AI Act articles. v1 covers Articles 6, 9, 10, 12, 13, 14, 15, 50.</p>
   <p><strong>Machine-readable form:</strong> <a href="eu-ai-act.ttl" rel="alternate">eu-ai-act.ttl</a> (Turtle) — the authoritative source. This page is a human-readable projection of it; each term below is identified by a hash IRI under this base (e.g. <code>eu-ai-act:AccuracyAttestation</code> = <code>https://markjspivey-xwisee.github.io/interego/ns/eu-ai-act#AccuracyAttestation</code>).</p>
   <h2>Terms</h2>
@@ -33,8 +33,10 @@
   <div id="appliesToSystem" class="term"><code>eu-ai-act:appliesToSystem</code> <span class="kind">Object property</span><div class="c">Links a regulatory annotation to the AI system descriptor it concerns.</div></div>
   <div id="Article10" class="term"><code>eu-ai-act:Article10</code> <span class="kind">Individual</span><div class="c">Citable IRI for EU AI Act Article 10 (training, validation and testing data governance). Used as a dct:conformsTo control target in compliance evidence; realized structurally by eu-ai-act:DataGovernanceAttestation.</div></div>
   <div id="Article12" class="term"><code>eu-ai-act:Article12</code> <span class="kind">Individual</span><div class="c">Citable IRI for EU AI Act Article 12 (automatic, lifetime logging ensuring traceability of functioning). Used as a dct:conformsTo control target in compliance evidence; realized structurally by eu-ai-act:LoggedAction.</div></div>
+  <div id="Article14" class="term"><code>eu-ai-act:Article14</code> <span class="kind">Individual</span><div class="c">Citable IRI for EU AI Act Article 14 (high-risk systems must be effectively overseen by natural persons while in use). Used as a dct:conformsTo control target in compliance evidence; realized structurally by eu-ai-act:HumanOversightCheckpoint.</div></div>
   <div id="Article15" class="term"><code>eu-ai-act:Article15</code> <span class="kind">Individual</span><div class="c">Citable IRI for EU AI Act Article 15 (appropriate accuracy, robustness and cybersecurity over the lifecycle). Used as a dct:conformsTo control target in compliance evidence; realized structurally by eu-ai-act:AccuracyAttestation.</div></div>
   <div id="Article50Disclosure" class="term"><code>eu-ai-act:Article50Disclosure</code> <span class="kind">Class</span><div class="c">End-user-facing disclosure: this content was produced by an AI system, this image is synthetic, this chatbot is not a human, etc. Each customer-facing AI interaction descriptor SHOULD carry one.</div></div>
+  <div id="Article9" class="term"><code>eu-ai-act:Article9</code> <span class="kind">Individual</span><div class="c">Citable IRI for EU AI Act Article 9 (a continuous, iterative risk management system across the high-risk system's lifecycle). Used as a dct:conformsTo control target in compliance evidence; realized structurally by eu-ai-act:RiskManagementRecord.</div></div>
   <div id="articleReference" class="term"><code>eu-ai-act:articleReference</code> <span class="kind">Datatype property</span><div class="c">Free-text article + paragraph reference, e.g. 'Art 14(4)(a)' for granular pinning.</div></div>
   <div id="assessedAt" class="term"><code>eu-ai-act:assessedAt</code> <span class="kind">Datatype property</span></div>
   <div id="AuditScope" class="term"><code>eu-ai-act:AuditScope</code> <span class="kind">Individual</span><div class="c">The nine published high-risk-system obligations. Article-form IRIs (Article10, Article12, Article15) are citable aliases resolved via rdfs:seeAlso, not additional members.</div></div>

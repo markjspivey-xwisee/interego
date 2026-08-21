@@ -209,9 +209,10 @@ async function main(): Promise<void> {
       const inputsTtl = p.inputs.map(i => `[
     hydra:property "${i.name}" ;
     hydra:required ${i.required ? 'true' : 'false'} ;
-    iep:dataType "${i.type}"
+    demo:dataType "${i.type}"
   ]`).join(', ');
       const turtle = `@prefix iep:    <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+    @prefix demo: <https://markjspivey-xwisee.github.io/interego/ns/demo#> .
 @prefix ieh:   <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
 @prefix hydra: <http://www.w3.org/ns/hydra/core#> .
 @prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
@@ -222,7 +223,7 @@ async function main(): Promise<void> {
   hydra:method "POST" ;
   hydra:title "${p.title}" ;
   rdfs:comment ${JSON.stringify(p.description)} ;
-  iep:proposedBy <${p.id}> ;
+  demo:proposedBy <${p.id}> ;
   hydra:expects [
     a hydra:Class ;
     hydra:supportedProperty ${inputsTtl}
@@ -292,7 +293,7 @@ For EACH review:
       <ATT-IRI> a amta:Attestation ;
         amta:axis "<axis>" ;
         amta:rating "<rating>"^^<http://www.w3.org/2001/XMLSchema#decimal> ;
-        amta:about <AFFORDANCE-IRI> ;
+        amta:attestsTo <AFFORDANCE-IRI> ;
         amta:attestor <${att.id}> ;
         amta:direction "Peer" .
   - Call protocol.publish_descriptor with:
@@ -347,12 +348,13 @@ long and LLMs sometimes truncate them:
         // Publish an Asserted successor that supersedes the Hypothetical original.
         const successorIri = `${p.affordance_iri}-asserted`;
         const turtle = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+    @prefix demo: <https://markjspivey-xwisee.github.io/interego/ns/demo#> .
 @prefix dct: <http://purl.org/dc/terms/> .
 <${successorIri}> a iep:Affordance ;
   iep:supersedes <${p.affordance_iri}> ;
   dct:title "Promoted: ${p.affordance_name}" ;
-  iep:meanPeerRating "${mean.toFixed(3)}" ;
-  iep:axesCovered "${axes.join(',')}" .`;
+  demo:meanPeerRating "${mean.toFixed(3)}" ;
+  demo:axesCovered "${axes.join(',')}" .`;
         await bridgeCall(bridge.url, 'protocol.publish_descriptor', {
           graph_iri: successorIri,
           graph_content: turtle,

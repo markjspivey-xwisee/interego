@@ -209,7 +209,7 @@ checked at all — and it refuses any file whose `a owl:Class` count and
 its own parsed-class count disagree, because a file the scanner cannot
 read reports zero ungrounded classes and looks clean. Which prefixes
 are exempt is read out of §3 above, not restated in the tool. CI blocks
-on ungrounded classes. Current status: **101/101 classes grounded**.
+on ungrounded classes. Current status: **104/104 classes grounded**.
 
 Why: the whole point of L1 being the normative protocol is that
 higher constructs EMERGE from it via composition. A

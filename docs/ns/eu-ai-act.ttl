@@ -80,6 +80,16 @@ eu-ai-act:LoggedAction a owl:Class ;
     rdfs:label "Logged action (Article 12)" ;
     rdfs:comment "An action descriptor that satisfies Article 12 record-keeping: includes attributed agent, timestamp, input + output references, model identifier, and a tamper-evident anchor (iep:supersedes chain + ZK or blockchain anchor)." .
 
+eu-ai-act:Article9 a owl:NamedIndividual ;
+    rdfs:label "Article 9 — Risk management system" ;
+    rdfs:comment "Citable IRI for EU AI Act Article 9 (a continuous, iterative risk management system across the high-risk system's lifecycle). Used as a dct:conformsTo control target in compliance evidence; realized structurally by eu-ai-act:RiskManagementRecord." ;
+    rdfs:seeAlso eu-ai-act:RiskManagementRecord .
+
+eu-ai-act:Article14 a owl:NamedIndividual ;
+    rdfs:label "Article 14 — Human oversight" ;
+    rdfs:comment "Citable IRI for EU AI Act Article 14 (high-risk systems must be effectively overseen by natural persons while in use). Used as a dct:conformsTo control target in compliance evidence; realized structurally by eu-ai-act:HumanOversightCheckpoint." ;
+    rdfs:seeAlso eu-ai-act:HumanOversightCheckpoint .
+
 eu-ai-act:Article12 a owl:NamedIndividual ;
     rdfs:label "Article 12 — Record-keeping" ;
     rdfs:comment "Citable IRI for EU AI Act Article 12 (automatic, lifetime logging ensuring traceability of functioning). Used as a dct:conformsTo control target in compliance evidence; realized structurally by eu-ai-act:LoggedAction." ;

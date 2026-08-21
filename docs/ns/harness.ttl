@@ -1143,6 +1143,17 @@ ieh:presence a owl:ObjectProperty , owl:FunctionalProperty ;
 #  Companion to docs/ARCHITECTURAL-FOUNDATIONS.md §9 + sat:Disposition
 #  / sat:weakSignal in docs/ns/sat.ttl.
 
+# ★ THE SUBJECT CLASS THE TWO PROPERTIES BELOW ALREADY ASSUMED.
+#
+# `ieh:isAdjacentPossibleTo` and `ieh:reachabilityRationale` were declared; the thing they hang off
+# was not, so a descriptor typed `a ieh:AdjacentPossibleClaim` cited a class that existed nowhere.
+# It surfaced only when the ontology lint was pointed at demos/, a directory it had never scanned.
+ieh:AdjacentPossibleClaim a owl:Class ;
+    rdfs:label "Adjacent Possible Claim" ;
+    rdfs:comment "A descriptor asserting that one situation could plausibly transition to another under known constraints, WITHOUT predicting that it will. Carries ieh:isAdjacentPossibleTo to name the reachable state and ieh:reachabilityRationale to say why. Its iep:modalStatus SHOULD be Hypothetical: the whole point is to hold a possibility open without asserting it." ;
+    rdfs:subClassOf iep:ContextDescriptor ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
 ieh:isAdjacentPossibleTo a owl:ObjectProperty ;
     rdfs:label "is adjacent possible to" ;
     rdfs:domain iep:ContextDescriptor ;

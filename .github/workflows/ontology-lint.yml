@@ -52,6 +52,10 @@ on:
       # commit confined to that directory still never starts the job that would catch it. The
       # scan reaching a directory and the job STARTING are two separate facts.
       - 'integrations/**'
+      # `demos/**` joins for the same reason, and it held the most: 33 undeclared terms,
+      # including thirteen minted straight into the PROTOCOL namespace (iep:gameId,
+      # iep:winner, iep:rowCount) and a prefix bound to a namespace that 404s.
+      - 'demos/**'
       - '.github/workflows/ontology-lint.yml'
   pull_request:
     branches: [master]
@@ -97,6 +101,10 @@ on:
       # commit confined to that directory still never starts the job that would catch it. The
       # scan reaching a directory and the job STARTING are two separate facts.
       - 'integrations/**'
+      # `demos/**` joins for the same reason, and it held the most: 33 undeclared terms,
+      # including thirteen minted straight into the PROTOCOL namespace (iep:gameId,
+      # iep:winner, iep:rowCount) and a prefix bound to a namespace that 404s.
+      - 'demos/**'
 
 permissions:
   contents: read

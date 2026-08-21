@@ -163,7 +163,8 @@ integrations/
                         runtime from docs/ns). No new compliance vocab.
 docs/integrations/      Path-1-to-5 integration map for OpenClaw / Hermes /
                         Codex / Cursor / Claude Code etc.
-docs/ns/       Twenty OWL ontologies + three SHACL shape files (~880 terms — see docs/ns/README.md)
+docs/ns/       OWL ontologies + SHACL shape files (counts in docs/ns/README.md, which is the
+               one place they are stated — a number repeated here drifts silently)
 tools/
   ontology-lint.mjs  Scans TS for iep:/ieh:/pgsl:/ie:/hyprcat:/hypragent:/hela:/
                      sat:/cts:/olke:/amta: usages vs ontology definitions.

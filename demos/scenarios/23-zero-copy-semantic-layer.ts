@@ -260,6 +260,7 @@ async function main(): Promise<void> {
 
     const lrsCatalogIri = `urn:iep:hyprcat:lrs:${Date.now()}`;
     const lrsCatalogTtl = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+    @prefix demo: <https://markjspivey-xwisee.github.io/interego/ns/demo#> .
 @prefix hyprcat: <https://markjspivey-xwisee.github.io/interego/ns/hyprcat#> .
 @prefix dcat: <http://www.w3.org/ns/dcat#> .
 @prefix hydra: <http://www.w3.org/ns/hydra/core#> .
@@ -291,6 +292,7 @@ async function main(): Promise<void> {
 
     const warehouseCatalogIri = `urn:iep:hyprcat:warehouse:${Date.now()}`;
     const warehouseCatalogTtl = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+    @prefix demo: <https://markjspivey-xwisee.github.io/interego/ns/demo#> .
 @prefix hyprcat: <https://markjspivey-xwisee.github.io/interego/ns/hyprcat#> .
 @prefix dcat: <http://www.w3.org/ns/dcat#> .
 @prefix hydra: <http://www.w3.org/ns/hydra/core#> .
@@ -350,6 +352,7 @@ Use this turtle template (substitute the bridge IRI):
   @prefix owl: <http://www.w3.org/2002/07/owl#> .
   @prefix skos: <http://www.w3.org/2004/02/skos/core#> .
   @prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+    @prefix demo: <https://markjspivey-xwisee.github.io/interego/ns/demo#> .
   @prefix prov: <http://www.w3.org/ns/prov#> .
   @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
   @prefix xapi: <http://adlnet.gov/expapi/> .
@@ -407,6 +410,7 @@ Step 3. Publish ONE amta:Attestation descriptor on the bridge with axis="accurac
 
   @prefix amta: <https://markjspivey-xwisee.github.io/interego/ns/amta#> .
   @prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+    @prefix demo: <https://markjspivey-xwisee.github.io/interego/ns/demo#> .
   @prefix prov: <http://www.w3.org/ns/prov#> .
 
   <urn:iep:attestation:${player.short}-accuracy-${Date.now()}> a amta:Attestation ;
@@ -467,6 +471,7 @@ Step 4. Output ONLY: {"attester":"${player.short}","axis":"accuracy","rating":<y
     const constraintTtl = `@prefix ieh: <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
 @prefix dct: <http://purl.org/dc/terms/> .
 @prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+    @prefix demo: <https://markjspivey-xwisee.github.io/interego/ns/demo#> .
 
 <${ALIGNMENT_CONSTRAINT_IRI}> a ieh:PromotionConstraint ;
   dct:title "Alignment bridges require ≥2 distinct accuracy attestations before Asserted" ;
@@ -483,6 +488,7 @@ Step 4. Output ONLY: {"attester":"${player.short}","axis":"accuracy","rating":<y
     // Promote the bridge by superseding with an Asserted version.
     const promotedBridgeIri = `${alignerOutput.bridge_iri}.asserted`;
     const promoteTtl = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+    @prefix demo: <https://markjspivey-xwisee.github.io/interego/ns/demo#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 
@@ -562,13 +568,14 @@ Step 2. Output ONLY: {"query":{"intent":"completed-training","since":"2026-03-01
     // Publish the result descriptor with full provenance
     const resultIri = `urn:iep:semantic-query-result:${Date.now()}`;
     const resultTtl = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+    @prefix demo: <https://markjspivey-xwisee.github.io/interego/ns/demo#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 
-<${resultIri}> a iep:FederatedQueryResult ;
+<${resultIri}> a demo:FederatedQueryResult ;
   rdfs:label "completed training across LRS + warehouse, ${since} → ${until}" ;
-  iep:rowCount ${unified.length} ;
-  iep:queryRange "${since} → ${until}" ;
+  demo:rowCount ${unified.length} ;
+  demo:queryRange "${since} → ${until}" ;
   prov:wasDerivedFrom <${promotedBridgeIri}> , <${MOCK_BASE}/lrs/statements> , <${MOCK_BASE}/warehouse/training_completions> ;
   iep:modalStatus iep:Asserted ;
   prov:wasAttributedTo <${CONSUMER.id}> .`;
