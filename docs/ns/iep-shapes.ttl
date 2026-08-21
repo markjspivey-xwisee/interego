@@ -281,6 +281,32 @@ iep:VisibilityShape a sh:NodeShape ;
         sh:maxCount 1 ;
         sh:message "iep:visibility MUST be one of \"public\", \"shared\", or \"private\" (functional property — at most one value per distribution)."
     ] ;
+    # ★ THE CONSISTENCY RULE, IN CORE. It lived only in the sh:sparql block below, and this
+    # substrate ships no SPARQL evaluator — so a distribution declaring "public" while
+    # shipping ciphertext, or "private" while shipping plaintext, validated clean. The
+    # audience class is what a reader branches its dereference path on, which makes a
+    # mismatch between the label and the payload the one inconsistency here that misleads.
+    #
+    # Written as implication — "NOT antecedent OR consequent" — which is how SHACL Core says
+    # if-then. Note sh:not [ sh:in ( … ) ] and NOT sh:not [ sh:hasValue … ]: sh:hasValue is a
+    # property constraint and means nothing on a bare node shape, so that spelling is
+    # vacuously satisfied and the negation refuses everything.
+    sh:and (
+      [ sh:or (
+          [ sh:property [ sh:path iep:visibility ; sh:not [ sh:in ( "public" ) ] ] ]
+          [ sh:property [ sh:path iep:encrypted ; sh:in ( false ) ; sh:minCount 1 ] ]
+      ) ]
+      [ sh:or (
+          [ sh:property [ sh:path iep:visibility ; sh:not [ sh:in ( "shared" ) ] ] ]
+          [ sh:property [ sh:path iep:encrypted ; sh:in ( true ) ; sh:minCount 1 ] ]
+      ) ]
+      [ sh:or (
+          [ sh:property [ sh:path iep:visibility ; sh:not [ sh:in ( "private" ) ] ] ]
+          [ sh:property [ sh:path iep:encrypted ; sh:in ( true ) ; sh:minCount 1 ] ]
+      ) ]
+    ) ;
+    sh:message "iep:visibility consistency: \"public\" requires iep:encrypted=false; \"shared\" and \"private\" require iep:encrypted=true. A distribution whose label and payload disagree misleads the reader that branches on it." ;
+
     sh:sparql [
         sh:message "iep:visibility consistency: \"public\" requires iep:encrypted=false; \"shared\" and \"private\" require iep:encrypted=true." ;
         sh:prefixes iep: ;
@@ -405,6 +431,73 @@ iep:AuthorshipProofShape a sh:NodeShape ;
     sh:closed true ;
     sh:ignoredProperties ( rdf:type ) ;
     sh:message "A iep:SignedAuthorship block MUST carry no predicate beyond the ones the canonical-payload reconstructor reads — anything else is unsigned content inside a signed block." .
+
+# ── A presence lease must be checkable ───────────────────────────────────────
+#
+# ★ NO SHAPE TARGETED iep:PresenceLease. Its comment states the invariants in capitals and
+# nothing verified any of them: "A reader MUST refuse a lease ... with no expiry at all".
+# A lease with no expiry is not a lease — it is the relay-held "online" flag the class was
+# written to avoid, since the whole mechanism works by decaying against the substrate's own
+# clock rather than by anyone running a timer.
+#
+# ★ ONE MUST FROM THAT COMMENT IS DELIBERATELY NOT HERE: "refuse a lease whose span is long
+# enough that renewing it proved nothing". That needs the wall clock, which SHACL Core has no
+# access to, so it stays a reader obligation rather than being half-expressed here.
+
+iep:PresenceLeaseShape a sh:NodeShape ;
+    sh:targetClass iep:PresenceLease ;
+    sh:property [
+        sh:path iep:presenceOf ;
+        sh:nodeKind sh:IRI ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "A iep:PresenceLease MUST name exactly one iep:presenceOf, inside the signed region. A lease whose subject came only from its filename would be an unattributable claim that somebody else is running."
+    ] ;
+    sh:property [
+        sh:path iep:leaseExpires ;
+        sh:datatype xsd:dateTime ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "A iep:PresenceLease MUST carry exactly one iep:leaseExpires. A lease with no expiry is not a lease — it cannot decay, so nothing ever stops answering for it."
+    ] ;
+    sh:property [
+        sh:path iep:presenceActingFor ;
+        sh:nodeKind sh:IRI ;
+        sh:maxCount 1 ;
+        sh:message "iep:presenceActingFor is optional but MUST be at most one — an agent acts for one principal at a time or the claim is ambiguous."
+    ] ;
+    sh:property [
+        sh:path iep:presenceHost ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:singleLine true ;
+        sh:message "iep:presenceHost is optional, at most one, and a single line."
+    ] .
+
+# ── A capability document must be reachable by exactly one route ─────────────
+#
+# ★ iep:capabilityOf and iep:askVia carry the two strongest MUSTs in iep.ttl and no shape
+# targeted either. A capability document tells a reader WHERE TO POST somebody's work: one
+# whose subject came from its filename would be "an unattributable instruction to send
+# somebody else's work to an address of the forger's choosing", in the vocabulary's own words.
+#
+# sh:xone is that sentence exactly. NEITHER route means the agent is reachable by no route
+# at all; BOTH means a reader must choose between them with no honest basis for choosing.
+
+iep:CapabilityDocumentShape a sh:NodeShape ;
+    sh:targetSubjectsOf iep:capabilityOf ;
+    sh:property [
+        sh:path iep:capabilityOf ;
+        sh:nodeKind sh:IRI ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "A capability document MUST name exactly one iep:capabilityOf. A reader returning the first of several would let document order decide whose inbox is advertised."
+    ] ;
+    sh:xone (
+        [ sh:property [ sh:path <http://www.w3.org/ns/hydra/core#target> ; sh:minCount 1 ] ]
+        [ sh:property [ sh:path iep:askVia ; sh:minCount 1 ] ]
+    ) ;
+    sh:message "A capability document MUST offer exactly one of hydra:target and iep:askVia. Neither leaves the agent reachable by no route; both leave a reader choosing with no basis. iep:askVia exists precisely because an agent on somebody's laptop has nothing that will answer a POST." .
 
 # ── An access-control policy must be decidable ───────────────────────────────
 #

@@ -215,13 +215,27 @@ ex:PersonShape a sh:NodeShape ;
     ['sh:pattern', 'sh:pattern "^[0-9]+$"'],
     ['sh:in', 'sh:in ( "a" "b" )'],
     ['sh:hasValue', 'sh:hasValue "zzz"'],
-  ])('%s under sh:severity sh:Info reports Info and leaves conforms true', (_name, component) => {
+  ])('%s under sh:severity sh:Info reports Info — and still does not conform', (_name, component) => {
     const report = validateAgainstShape(dataWrongType, shapeWith(component));
     const fired = report.results.filter(r => r.constraintComponent.startsWith('http://www.w3.org/ns/shacl#'));
     // The constraint must actually FIRE — otherwise this asserts nothing about severity.
     expect(fired.length).toBeGreaterThan(0);
     expect(fired.every(r => r.severity === 'Info')).toBe(true);
-    expect(report.conforms).toBe(true);
+    // ★ THIS LINE USED TO ASSERT `true`, AND THAT WAS THIS REPO'S BUG, NOT THE SPEC'S.
+    //
+    // §3.6 defines sh:conforms as "true if the validation did not produce any validation
+    // results, and false otherwise" — ANY result, at ANY severity. Severity says how loudly
+    // a result speaks, not whether it counts. We were reading it as "no Violations", so a
+    // shape declaring sh:Info or sh:Warning reported conforms:true on data that broke it.
+    //
+    // Two independent oracles say otherwise, and neither is our own reading of the prose:
+    //   - pySHACL 0.30.1, same graph, same shapes file: conforms=False where we said true.
+    //   - W3C SHACL 1.2 Core, tests/core/misc/severity-001.ttl, mf:status sht:approved: one
+    //     sh:Warning result, expected `sh:conforms false`.
+    //
+    // A caller that wants "no Violations" filters results by severity, which is a thing it
+    // can do; a caller that trusts `conforms` cannot un-break what it already let through.
+    expect(report.conforms).toBe(false);
   });
 
   it('still reports Violation when the shape declares no severity', () => {

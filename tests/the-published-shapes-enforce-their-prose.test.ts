@@ -24,6 +24,7 @@ const VAULT_LD = readFileSync(join(REPO, 'docs/ns/vault-ld.ttl'), 'utf8');
 
 const P = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix hmd: <https://relay.interego.xwisee.com/ns/maintainer/hmd#> .
+@prefix hydra: <http://www.w3.org/ns/hydra/core#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix ex: <https://example.org/> .
 `;
@@ -119,4 +120,80 @@ describe('iep:SemioticFacet — modal status and ground truth must agree', () =>
     ['Counterfactual with groundTruth TRUE', 'iep:modalStatus iep:Counterfactual ; iep:groundTruth true'],
     ['Hypothetical WITH a groundTruth', 'iep:modalStatus iep:Hypothetical ; iep:groundTruth true'],
   ])('refuses %s', (_l, body) => expect(violations(body)).toBeGreaterThan(0));
+});
+
+describe('iep:PresenceLease — "a lease with no expiry is not a lease"', () => {
+  // Its comment states the invariants in capitals and nothing verified any of them. The
+  // whole mechanism works by DECAYING against the substrate's clock rather than by anyone
+  // running a timer, so a lease without an expiry is exactly the relay-held "online" flag
+  // the class was written to avoid.
+  const MUST = /iep:PresenceLease MUST/;
+  const lease = (body: string): string => `ex:l a iep:PresenceLease ; ${body} .`;
+  const valid = 'iep:presenceOf ex:a ; iep:leaseExpires "2026-01-01T00:00:00Z"^^xsd:dateTime';
+
+  it('accepts a well-formed lease', () => {
+    expect(violationsMatching(lease(valid), IEP_SHAPES, MUST)).toBe(0);
+  });
+
+  it.each([
+    ['no expiry at all', 'iep:presenceOf ex:a'],
+    ['no presenceOf — an unattributable claim that somebody else is running',
+      'iep:leaseExpires "2026-01-01T00:00:00Z"^^xsd:dateTime'],
+    ['two presenceOf', 'iep:presenceOf ex:a , ex:b ; iep:leaseExpires "2026-01-01T00:00:00Z"^^xsd:dateTime'],
+  ])('refuses: %s', (_l, body) => {
+    expect(violationsMatching(lease(body), IEP_SHAPES, MUST)).toBeGreaterThan(0);
+  });
+
+  it('does NOT try to enforce the span rule, which needs a wall clock', () => {
+    // "refuse a lease whose span is long enough that renewing it proved nothing" is in the
+    // same comment and is deliberately absent: SHACL Core cannot read the current time, and
+    // half-expressing it here would read as coverage it does not have.
+    expect(IEP_SHAPES).toContain('stays a reader obligation');
+  });
+});
+
+describe('a capability document must be reachable by exactly one route', () => {
+  const MUST = /capability document MUST/;
+  const doc = (body: string): string => `ex:c ${body} .`;
+
+  it.each([
+    ['hydra:target alone', 'iep:capabilityOf ex:a ; hydra:target ex:t'],
+    ['iep:askVia alone', 'iep:capabilityOf ex:a ; iep:askVia ex:v'],
+  ])('accepts %s', (_l, body) => {
+    expect(violationsMatching(doc(body), IEP_SHAPES, MUST)).toBe(0);
+  });
+
+  it.each([
+    ['neither route — reachable by nothing', 'iep:capabilityOf ex:a'],
+    ['both routes — a reader choosing with no basis',
+      'iep:capabilityOf ex:a ; hydra:target ex:t ; iep:askVia ex:v'],
+    ['two capabilityOf — document order would decide whose inbox is advertised',
+      'iep:capabilityOf ex:a , ex:b ; hydra:target ex:t'],
+  ])('refuses: %s', (_l, body) => {
+    expect(violationsMatching(doc(body), IEP_SHAPES, MUST)).toBeGreaterThan(0);
+  });
+});
+
+describe('iep:visibility — the label and the payload must agree', () => {
+  // Was sh:sparql-only: a distribution declaring "public" while shipping ciphertext, or
+  // "private" while shipping plaintext, validated clean. The audience class is what a reader
+  // branches its dereference path on.
+  const RULE = /visibility consistency/;
+  const aff = (body: string): string => `ex:a a iep:Affordance ; ${body} .`;
+
+  it.each([
+    ['public + encrypted false', 'iep:visibility "public" ; iep:encrypted false'],
+    ['private + encrypted true', 'iep:visibility "private" ; iep:encrypted true'],
+    ['shared + encrypted true', 'iep:visibility "shared" ; iep:encrypted true'],
+    ['no visibility stated at all', 'iep:encrypted true'],
+  ])('accepts %s', (_l, body) => {
+    expect(violationsMatching(aff(body), IEP_SHAPES, RULE)).toBe(0);
+  });
+
+  it.each([
+    ['public while shipping ciphertext', 'iep:visibility "public" ; iep:encrypted true'],
+    ['private while shipping plaintext', 'iep:visibility "private" ; iep:encrypted false'],
+  ])('refuses %s', (_l, body) => {
+    expect(violationsMatching(aff(body), IEP_SHAPES, RULE)).toBeGreaterThan(0);
+  });
 });

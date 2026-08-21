@@ -196,13 +196,38 @@ describe('SHACL 1.2 severities', () => {
       `${P}ex:S a sh:NodeShape ; sh:targetSubjectsOf ex:p ;
         sh:property [ sh:path ex:p ; sh:datatype xsd:integer ; sh:severity sh:${sev} ] .`, {});
 
-  it.each([['Trace', true], ['Debug', true], ['Info', true], ['Warning', true], ['Violation', false]] as const)(
-    'sh:%s produces a result; conforms stays %s', (sev, stillConforms) => {
+  // ★ EVERY SEVERITY STILL MEANS "DOES NOT CONFORM". The `stillConforms` column here used to
+  // read true for the four non-Violation severities, which is the reading this engine
+  // shipped and the reading SHACL does not have: §3.6 makes sh:conforms false when there is
+  // ANY result. W3C Core tests/core/misc/severity-001.ttl (approved) pins it — a lone
+  // sh:Warning, expected sh:conforms false — and pySHACL agrees.
+  //
+  // What severity DOES change is the first two assertions: which result you get, and how
+  // loudly it speaks. Those are what this test is for, and they were right all along.
+  it.each(['Trace', 'Debug', 'Info', 'Warning', 'Violation'] as const)(
+    'sh:%s produces a result at that severity, and does not conform', sev => {
       const r = withSeverity(sev);
       expect(r.results.length, `sh:${sev} produced no result at all`).toBeGreaterThan(0);
       expect(r.results[0]!.severity).toBe(sev);
-      expect(r.conforms).toBe(stillConforms);
+      expect(r.conforms).toBe(false);
     });
+
+  it('and an ADVISORY result does not move conforms — that is what the flag is for', () => {
+    // Guards the exemption the change above needed. `entailment: 'rdfs-observe'` promises to
+    // report what enforcing WOULD reject without rejecting, and a rule counting every result
+    // would have broken that promise silently — the mode would still run, still report, and
+    // now also refuse. If advisory ever stops being honoured, this goes red rather than a
+    // caller discovering it.
+    const data = `${P}ex:Rich rdfs:subClassOf ex:Turn .
+ex:t a ex:Rich ; ex:allowed "x" ; ex:secret "s" .`;
+    const shapes = `${P}ex:Rich rdfs:subClassOf ex:Turn .
+ex:S a sh:NodeShape ; sh:targetClass ex:Turn ; sh:closed true ;
+  sh:ignoredProperties ( rdf:type ) ; sh:property [ sh:path ex:allowed ; sh:minCount 1 ] .`;
+    const r = validateAgainstShape(data, shapes, { entailment: 'rdfs-observe' });
+    expect(r.results.some(x => x.advisory === true), 'no advisory result was produced').toBe(true);
+    expect(r.results.every(x => x.advisory === true), 'a non-advisory result crept in').toBe(true);
+    expect(r.conforms).toBe(true);
+  });
 });
 
 describe('sh:closed sh:ByTypes', () => {
