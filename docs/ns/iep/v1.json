@@ -1,0 +1,150 @@
+{
+  "@context": {
+    "@version": 1.1,
+    "iep": "https://markjspivey-xwisee.github.io/interego/ns/iep#",
+    "cg": "https://markjspivey-xwisee.github.io/interego/ns/cg#",
+    "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+    "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+    "prov": "http://www.w3.org/ns/prov#",
+    "time": "http://www.w3.org/2006/time#",
+    "dct": "http://purl.org/dc/terms/",
+    "as": "https://www.w3.org/ns/activitystreams#",
+    "acl": "http://www.w3.org/ns/auth/acl#",
+    "vc": "https://www.w3.org/2018/credentials#",
+    "dcat": "http://www.w3.org/ns/dcat#",
+    "oa": "http://www.w3.org/ns/oa#",
+    "ContextDescriptor": "iep:ContextDescriptor",
+    "ComposedDescriptor": "iep:ComposedDescriptor",
+    "TemporalFacet": "iep:TemporalFacet",
+    "ProvenanceFacet": "iep:ProvenanceFacet",
+    "AgentFacet": "iep:AgentFacet",
+    "AccessControlFacet": "iep:AccessControlFacet",
+    "SemioticFacet": "iep:SemioticFacet",
+    "TrustFacet": "iep:TrustFacet",
+    "FederationFacet": "iep:FederationFacet",
+    "describes": {
+      "@id": "iep:describes",
+      "@type": "@id"
+    },
+    "hasFacet": {
+      "@id": "iep:hasFacet"
+    },
+    "compositionOp": {
+      "@id": "iep:compositionOp",
+      "@type": "@id"
+    },
+    "operand": {
+      "@id": "iep:operand",
+      "@type": "@id",
+      "@container": "@set"
+    },
+    "restrictToType": {
+      "@id": "iep:restrictToType",
+      "@type": "@id",
+      "@container": "@set"
+    },
+    "supersedes": {
+      "@id": "iep:supersedes",
+      "@type": "@id"
+    },
+    "version": {
+      "@id": "iep:version",
+      "@type": "xsd:nonNegativeInteger"
+    },
+    "validFrom": {
+      "@id": "iep:validFrom",
+      "@type": "xsd:dateTime"
+    },
+    "validUntil": {
+      "@id": "iep:validUntil",
+      "@type": "xsd:dateTime"
+    },
+    "temporalResolution": {
+      "@id": "iep:temporalResolution",
+      "@type": "xsd:duration"
+    },
+    "wasGeneratedBy": {
+      "@id": "prov:wasGeneratedBy"
+    },
+    "wasDerivedFrom": {
+      "@id": "prov:wasDerivedFrom",
+      "@type": "@id"
+    },
+    "wasAttributedTo": {
+      "@id": "prov:wasAttributedTo",
+      "@type": "@id"
+    },
+    "generatedAtTime": {
+      "@id": "prov:generatedAtTime",
+      "@type": "xsd:dateTime"
+    },
+    "assertingAgent": {
+      "@id": "iep:assertingAgent"
+    },
+    "onBehalfOf": {
+      "@id": "iep:onBehalfOf",
+      "@type": "@id"
+    },
+    "agentRole": {
+      "@id": "iep:agentRole",
+      "@type": "@id"
+    },
+    "agentIdentity": {
+      "@id": "iep:agentIdentity",
+      "@type": "@id"
+    },
+    "interpretationFrame": {
+      "@id": "iep:interpretationFrame",
+      "@type": "@id"
+    },
+    "signSystem": {
+      "@id": "iep:signSystem",
+      "@type": "@id"
+    },
+    "modalStatus": {
+      "@id": "iep:modalStatus",
+      "@type": "@id"
+    },
+    "epistemicConfidence": {
+      "@id": "iep:epistemicConfidence",
+      "@type": "xsd:double"
+    },
+    "groundTruth": {
+      "@id": "iep:groundTruth",
+      "@type": "xsd:boolean"
+    },
+    "trustLevel": {
+      "@id": "iep:trustLevel",
+      "@type": "@id"
+    },
+    "issuer": {
+      "@id": "iep:issuer",
+      "@type": "@id"
+    },
+    "proofMechanism": {
+      "@id": "iep:proofMechanism",
+      "@type": "@id"
+    },
+    "origin": {
+      "@id": "iep:origin",
+      "@type": "@id"
+    },
+    "storageEndpoint": {
+      "@id": "iep:storageEndpoint",
+      "@type": "@id"
+    },
+    "syncProtocol": {
+      "@id": "iep:syncProtocol",
+      "@type": "@id"
+    },
+    "replicaOf": {
+      "@id": "iep:replicaOf",
+      "@type": "@id"
+    },
+    "lastSynced": {
+      "@id": "iep:lastSynced",
+      "@type": "xsd:dateTime"
+    }
+  }
+}

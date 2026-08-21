@@ -26,8 +26,26 @@ import type {
 
 // ── JSON-LD Context Document (§7) ────────────────────────────
 
+/**
+ * ★ THIS URL 404'd, AND IT IS THE DEFAULT. `toJsonLd` emits it as the document's `@context`
+ * unless a caller passes `remoteContext: false`, and dereferencing a remote context is not
+ * optional for a consumer: a JSON-LD processor that cannot load it fails the whole document
+ * with `loading remote context failed`. Measured against the live host, `…/ns/iep/v1`
+ * answered 404 while its sibling `…/ns/iep.ttl` answered 200 — so our default JSON-LD
+ * projection was unprocessable by anyone who actually tried to read it.
+ *
+ * ★ AND THE EXTENSION IS LOAD-BEARING, which is why this is `.json` and not the bare path it
+ * used to be. GitHub Pages serves an extensionless request from `<path>.html` and anything
+ * else it does not recognise as `application/octet-stream` — measured on
+ * `orgb/.well-known/context-graphs`, which returns 200 with exactly that type. JSON-LD 1.1
+ * requires a remote context to arrive as `application/ld+json`, `application/json`, or a
+ * `+json` media type, so publishing at the bare path would have turned a 404 into a 200 the
+ * processor still refuses. `.json` is the one spelling this host serves acceptably.
+ *
+ * Nothing was consuming the old URL, because nothing could — it never resolved.
+ */
 export const CONTEXT_GRAPHS_JSONLD_CONTEXT_URL =
-  'https://markjspivey-xwisee.github.io/interego/ns/iep/v1' as const;
+  'https://markjspivey-xwisee.github.io/interego/ns/iep/v1.json' as const;
 
 export const CONTEXT_GRAPHS_JSONLD_CONTEXT = {
   '@context': {
