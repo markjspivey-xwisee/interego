@@ -100,7 +100,12 @@ function readEntry(text, path) {
 
   const entry = doc.subjects.find(s =>
     (s.properties.get(RDF_TYPE) ?? []).some(t => t.kind === 'iri' && t.iri === `${SHT}Validate`));
-  if (!entry) return { runnable: false, why: 'no sht:Validate entry' };
+  // ★ NOT A TEST, rather than a test we failed to run. A multi-file entry names sibling .ttl
+  // files for its data and shapes graphs, and those siblings carry no sht:Validate of their
+  // own — they are INPUTS. Counting them as "not runnable" reported 17 skipped tests when 16
+  // of them were not tests, which understates coverage in exactly the way that trains a
+  // reader to stop believing the number.
+  if (!entry) return { runnable: false, notATest: true, why: 'a data/shapes input, not a test entry' };
 
   const status = termText(one(doc, entry, `${MF}status`));
   const label = termText(one(doc, entry, 'http://www.w3.org/2000/01/rdf-schema#label')) ?? path;
@@ -210,6 +215,14 @@ function matched(expected, ours) {
  * failures" is a sentence rather than a number, and so that a NEW failure is visibly
  * different from these two rather than absorbed into them.
  */
+const KNOWN_NOT_RUNNABLE = {
+  'node/in-003.ttl':
+    'INVALID TURTLE UPSTREAM. The file uses the `shsh:` prefix on three lines and declares '
+    + 'it nowhere — there is no `@prefix shsh:` in it. An undeclared prefix is a syntax '
+    + 'error, so refusing to parse it is the correct behaviour and making the parser lenient '
+    + 'to run one test would be the wrong trade twice over.',
+};
+
 const KNOWN_DIVERGENCES = {
   'node/in-002.ttl':
     'DISPUTED UPSTREAM. The entry expects a result whose sh:sourceShape is ex:TestShape, and '
@@ -228,7 +241,10 @@ for (const path of files) {
   const rel = relative(SUITE, path).replaceAll('\\', '/');
   const text = readFileSync(path, 'utf8');
   const e = readEntry(text, path);
-  if (!e.runnable) { rows.push({ rel, state: 'notrun', why: e.why, status: e.status }); continue; }
+  if (!e.runnable) {
+    rows.push({ rel, state: e.notATest ? 'input' : 'notrun', why: e.why, status: e.status });
+    continue;
+  }
   if (e.status !== `${SHT}approved`) { rows.push({ rel, state: 'unapproved', label: e.label }); continue; }
 
   let report;
@@ -258,12 +274,15 @@ if (process.argv.includes('--json')) {
     approvedRunnable: approved.length,
     pass: count('pass'), verdictOnly: count('verdict-only'),
     fail: count('fail'), error: count('error'),
-    notRun: count('notrun'), unapproved: count('unapproved'),
+    notRun: count('notrun'), siblingInputs: count('input'), unapproved: count('unapproved'),
+    notRunFiles: rows.filter(r => r.state === 'notrun').map(r => `${r.rel} — ${r.why}`),
     failing: rows.filter(r => r.state === 'fail' || r.state === 'error').map(r => r.rel),
     unexplained: rows
       .filter(r => (r.state === 'fail' || r.state === 'error') && !KNOWN_DIVERGENCES[r.rel])
       .map(r => r.rel),
     knownDivergences: Object.keys(KNOWN_DIVERGENCES),
+    unexplainedNotRun: rows
+      .filter(r => r.state === 'notrun' && !KNOWN_NOT_RUNNABLE[r.rel]).map(r => r.rel),
     verdictOnlyFiles: rows.filter(r => r.state === 'verdict-only').map(r => r.rel),
   }, null, 2));
   process.exit(0);
@@ -273,7 +292,13 @@ console.log('\nW3C SHACL 1.2 Core test suite — vendored from w3c/data-shapes @
 if (verbose) {
   for (const r of rows) {
     if (r.state === 'pass' || r.state === 'unapproved') continue;
-    if (r.state === 'notrun') { console.log(`  NOT RUN   ${r.rel}  — ${r.why}`); continue; }
+    if (r.state === 'input') continue;              // an input file, not a test
+    if (r.state === 'notrun') {
+      console.log(`  NOT RUN   ${r.rel}  — ${r.why}`);
+      const k = KNOWN_NOT_RUNNABLE[r.rel];
+      if (k) console.log(`            known:    ${k}`);
+      continue;
+    }
     if (r.state === 'error') { console.log(`  ERROR     ${r.rel}  — ${r.why}`); continue; }
     if (r.state === 'fail') {
       console.log(`  FAIL      ${r.rel}`);
@@ -305,5 +330,8 @@ console.log(`      of which recorded as known divergences  `
 if (unexplained.length > 0) {
   console.log(`      NOT EXPLAINED: ${unexplained.map(r => r.rel).join(', ')}`);
 }
-console.log(`  not runnable        ${count('notrun')}`);
+console.log(`  not runnable        ${count('notrun')}`
+  + (count('notrun') > 0 ? '   (each listed under NOT RUN with --verbose)' : ''));
+console.log(`  sibling inputs      ${count('input')}   `
+  + '(data/shapes files a multi-file entry names — not tests)');
 console.log(`  unapproved upstream ${count('unapproved')}\n`);

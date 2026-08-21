@@ -48,7 +48,7 @@ const SUITE = join(REPO, 'tests', 'fixtures', 'shacl12-w3c', 'core');
  */
 const FLOOR = {
   /** Verdict AND every expected result matched. */
-  exact: 138,
+  exact: 140,
   /** Verdict matched. The number that actually decides whether a publish is refused. */
   verdict: 140,
 };
@@ -56,6 +56,9 @@ const FLOOR = {
 interface Report {
   approvedRunnable: number;
   unexplained: string[];
+  unexplainedNotRun: string[];
+  siblingInputs: number;
+  notRunFiles: string[];
   knownDivergences: string[];
   pass: number;
   verdictOnly: number;
@@ -129,6 +132,20 @@ describe('W3C SHACL 1.2 Core conformance', () => {
     expect(report.knownDivergences.length,
       'the known-divergence list is growing; it is a ledger, not a bucket')
       .toBeLessThanOrEqual(1);
+  });
+
+  it('skips only where the runner records WHY, and counts inputs as inputs', () => {
+    // ★ THE SKIP COUNT WAS MISLEADING IN THE SAFE-LOOKING DIRECTION. It read 17, of which
+    // SIXTEEN were the sibling data/shapes files that multi-file entries name as INPUTS —
+    // not tests at all. Reporting them as "not runnable" understated coverage, and a number
+    // that is wrong in the pessimistic direction still teaches a reader to stop reading it.
+    // One real skip remains: node/in-003 uses an undeclared `shsh:` prefix and is invalid
+    // Turtle, so refusing to parse it is correct.
+    expect(report.unexplainedNotRun,
+      `an entry is skipped with no recorded reason:\n  ${report.notRunFiles.join('\n  ')}`)
+      .toEqual([]);
+    expect(report.notRun, 'more entries are being skipped than the one recorded').toBeLessThanOrEqual(1);
+    expect(report.siblingInputs).toBeGreaterThanOrEqual(14);
   });
 
   it('and the floor is not set below what the engine currently does', () => {

@@ -1346,7 +1346,30 @@ function listMembers(doc: ParsedDocument, v: ParsedTerm): readonly ParsedTerm[] 
   const subj = subjectFor(doc, v);
   // No rdf:first is not a list; §7.5 makes that a violation, not a pass.
   if (!subj?.properties.has(RDF_FIRST)) return undefined;
-  return walkRdfList(doc, v);
+
+  // ★ WALKED STRICTLY HERE, unlike walkRdfList. A cell with rdf:first and NO rdf:rest is a
+  // TRUNCATED list, and walkRdfList returns what it found so far — which is the right
+  // behaviour for `sh:in ( … )`, where a malformed shape should not take the whole shape
+  // down, and the wrong answer for the list constraints, whose question is precisely
+  // "is this a well-formed SHACL list?". `ex:list4 rdf:first ex:Alice .` came back as a
+  // valid one-element list and satisfied sh:memberShape.
+  const out: ParsedTerm[] = [];
+  let cursor: ParsedTerm = v;
+  const seen = new Set<string>();
+  for (let i = 0; i < 4096; i++) {
+    if (cursor.kind === 'iri' && cursor.iri === RDF_NIL) return out;
+    const k = cursor.kind === 'iri' ? cursor.iri
+      : cursor.kind === 'bnode' ? `_:${cursor.id}` : undefined;
+    if (k === undefined || seen.has(k)) return undefined;   // literal cell, or a cycle
+    seen.add(k);
+    const cell = subjectFor(doc, cursor);
+    const first = cell?.properties.get(RDF_FIRST)?.[0];
+    const rest = cell?.properties.get(RDF_REST)?.[0];
+    if (first === undefined || rest === undefined) return undefined;   // truncated
+    out.push(first);
+    cursor = rest;
+  }
+  return undefined;   // longer than any real list; treat as malformed rather than truncate
 }
 
 /**
@@ -1940,6 +1963,56 @@ const NODE_KINDS: ReadonlySet<string> = new Set<string>([
 
 const RDF_LANG_STRING = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#langString' as IRI;
 
+/**
+ * Is a lexical form VALID for its datatype?
+ *
+ * ★ sh:datatype IS NOT AN IRI COMPARISON. §4.1.2 requires the value node to be a literal
+ * whose datatype is the given one AND whose lexical form is well-formed for it. We compared
+ * the IRI alone, so `"aldi"^^xsd:integer` satisfied `sh:datatype xsd:integer` — a literal
+ * that is not an integer, accepted by a constraint whose entire job is to say it must be.
+ *
+ * That is the fail-OPEN direction and it is worse than it first looks: an ill-formed literal
+ * is the shape of a data-entry bug, a bad cast, or a hand-edited file, which is precisely
+ * what a datatype constraint is written to catch.
+ *
+ * A datatype not listed here is not checked — an unknown or user-defined datatype has no
+ * lexical space this engine can know, and inventing one would refuse valid data. Silence
+ * about what we cannot judge, rather than a guess.
+ */
+const LEXICAL_FORMS: ReadonlyMap<string, RegExp> = new Map<string, RegExp>([
+  ['integer', /^[+-]?\d+$/],
+  ['long', /^[+-]?\d+$/], ['int', /^[+-]?\d+$/],
+  ['short', /^[+-]?\d+$/], ['byte', /^[+-]?\d+$/],
+  ['nonNegativeInteger', /^\+?\d+$/], ['positiveInteger', /^\+?\d+$/],
+  ['nonPositiveInteger', /^(-\d+|\+?0+)$/], ['negativeInteger', /^-\d+$/],
+  ['unsignedLong', /^\+?\d+$/], ['unsignedInt', /^\+?\d+$/],
+  ['unsignedShort', /^\+?\d+$/], ['unsignedByte', /^\+?\d+$/],
+  ['decimal', /^[+-]?(\d+(\.\d*)?|\.\d+)$/],
+  ['double', /^([+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?|[+-]?INF|NaN)$/],
+  ['float', /^([+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?|[+-]?INF|NaN)$/],
+  ['boolean', /^(true|false|0|1)$/],
+  ['dateTime', /^-?\d{4,}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)?$/],
+  ['dateTimeStamp', /^-?\d{4,}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)$/],
+  ['date', /^-?\d{4,}-\d\d-\d\d(Z|[+-]\d\d:\d\d)?$/],
+  ['time', /^\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)?$/],
+  ['gYear', /^-?\d{4,}(Z|[+-]\d\d:\d\d)?$/],
+  ['gYearMonth', /^-?\d{4,}-\d\d(Z|[+-]\d\d:\d\d)?$/],
+  ['gMonthDay', /^--\d\d-\d\d(Z|[+-]\d\d:\d\d)?$/],
+  ['gDay', /^---\d\d(Z|[+-]\d\d:\d\d)?$/],
+  ['gMonth', /^--\d\d(Z|[+-]\d\d:\d\d)?$/],
+  ['duration', /^-?P(?!$)(\d+Y)?(\d+M)?(\d+D)?(T(?!$)(\d+H)?(\d+M)?(\d+(\.\d+)?S)?)?$/],
+  ['hexBinary', /^([0-9a-fA-F]{2})*$/],
+  ['base64Binary', /^[A-Za-z0-9+/\s]*={0,2}$/],
+  ['anyURI', /^\S*$/],
+  ['language', /^[a-zA-Z]{1,8}(-[a-zA-Z0-9]{1,8})*$/],
+]);
+
+function lexicallyValid(value: string, datatype: IRI): boolean {
+  if (!datatype.startsWith(XSD)) return true;
+  const re = LEXICAL_FORMS.get(datatype.slice(XSD.length));
+  return re === undefined || re.test(value);
+}
+
 function matchesDatatype(t: ParsedTerm, datatype: IRI): boolean {
   if (t.kind !== 'literal') return false;
   // ★ A LANGUAGE-TAGGED LITERAL IS rdf:langString, NOT xsd:string. RDF 1.1 §3.3 gives every
@@ -1948,7 +2021,7 @@ function matchesDatatype(t: ParsedTerm, datatype: IRI): boolean {
   // makes `sh:datatype xsd:string` mean "any string-ish literal", and a shape that meant to
   // exclude localised values from a field kept letting them in.
   if (t.language !== undefined && t.language !== '') return datatype === RDF_LANG_STRING;
-  if (t.datatype) return t.datatype === datatype;
+  if (t.datatype) return t.datatype === datatype && lexicallyValid(t.value, datatype);
   // A plain literal with no language tag is xsd:string.
   return datatype === (`${XSD}string` as IRI);
 }
