@@ -33,6 +33,40 @@ const violationsMatching = (data: string, shapes: string, re: RegExp): number =>
   validateAgainstShape(P + data, shapes, {}).results
     .filter(r => r.severity === 'Violation' && re.test(r.message ?? '')).length;
 
+describe('a rule stated in Core does not also need an sh:sparql twin', () => {
+  // ★ THREE RULES WERE WRITTEN TWICE — once in Core, once in sh:sparql beside it. The Core
+  // half enforces; the sh:sparql half is not executed by the engine that reads this file, so
+  // it contributed nothing EXCEPT a permanent `fullyChecked: false` on every graph those
+  // shapes select. That flag exists to say "a constraint here was not evaluated", and a
+  // duplicate that cannot run makes it say so forever, about a rule that IS being checked.
+  //
+  // Measured before removing them: for a conforming graph and for each way of breaking each
+  // rule, `conforms` and the entire result set are identical either way. Only fullyChecked
+  // moves. These assertions pin the half that is easy to lose — nothing above would notice
+  // an sh:sparql twin being added back, because enforcement would not change.
+  const fully = (data: string): boolean =>
+    validateAgainstShape(P + data, IEP_SHAPES, {}).fullyChecked;
+
+  it.each([
+    ['a SemioticFacet', 'ex:f a iep:SemioticFacet ; iep:modalStatus iep:Asserted ; iep:groundTruth true .'],
+    ['an Affordance', 'ex:a a iep:Affordance ; iep:visibility "public" ; iep:encrypted false .'],
+    ['a ContextDescriptor', 'ex:d a iep:ContextDescriptor .'],
+  ])('%s graph reports fullyChecked — every constraint selecting it was evaluated', (_l, data) => {
+    expect(fully(data)).toBe(true);
+  });
+
+  it('and the two rules Core genuinely CANNOT express still say so', () => {
+    // The other half of the trade. iep:TemporalFacetNonFutureValidFromShape needs the wall
+    // clock and iep:RevocationConditionNoSelfReferenceShape needs substring containment
+    // across two paths — neither is expressible in Core, both keep their sh:sparql, and a
+    // graph they select therefore still reports fullyChecked:false. That is the flag working:
+    // it is now false only where a constraint really was skipped.
+    expect(IEP_SHAPES).toContain('sh:sparql');
+    expect(fully('ex:t a iep:TemporalFacet ; iep:validFrom "2030-01-01T00:00:00Z"^^xsd:dateTime .'))
+      .toBe(false);
+  });
+});
+
 describe('iep:AccessControlPolicy — its comment specifies (a)(b)(c) and nothing checked them', () => {
   const MUST = /iep:AccessControlPolicy MUST/;
   const policy = (body: string): string => `ex:pol a iep:AccessControlPolicy ; ${body} .`;

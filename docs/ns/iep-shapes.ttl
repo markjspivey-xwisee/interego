@@ -41,6 +41,15 @@
 #  false Counterfactual and a Counterfactual from being queried as
 #  if it were Asserted.
 # ──────────────────────────────────────────────────────────────
+# ★ THE sh:sparql TWIN OF THIS RULE WAS REMOVED, NOT LOST. The SemioticFacet modal-truth consistency
+#   rule is stated ABOVE IN SHACL CORE and enforced by the engine that reads this file. The
+#   sh:sparql block beside it said the same thing in a language nothing here executes, so it
+#   contributed no enforcement and DID make every graph this shape selects report
+#   fullyChecked:false — the flag that exists to say "a constraint here was not evaluated".
+#   Measured before removing it: for a conforming graph and for each way of breaking the
+#   rule, conforms and the full result set are IDENTICAL either way; only fullyChecked
+#   changes, false -> true. A duplicate that cannot run is not a second opinion, it is a
+#   permanent unresolved warning about itself.
 iep:SemioticFacetModalTruthConsistencyShape a sh:NodeShape ;
     sh:targetClass iep:SemioticFacet ;
 
@@ -70,24 +79,8 @@ iep:SemioticFacetModalTruthConsistencyShape a sh:NodeShape ;
           [ sh:property [ sh:path iep:modalStatus ; sh:not [ sh:in ( iep:Hypothetical ) ] ] ]
           [ sh:property [ sh:path iep:groundTruth ; sh:maxCount 0 ] ]
       ) ]
-    ) ;
+    ) .
 
-    sh:sparql [
-        sh:message "SemioticFacet: Asserted requires groundTruth=true, Counterfactual requires groundTruth=false, Hypothetical MUST NOT set groundTruth." ;
-        sh:prefixes iep: ;
-        sh:select """
-            PREFIX iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#>
-            SELECT $this ?modalStatus ?groundTruth WHERE {
-              $this iep:modalStatus ?modalStatus .
-              OPTIONAL { $this iep:groundTruth ?groundTruth . }
-              FILTER (
-                ( ?modalStatus = iep:Asserted       && ( !BOUND(?groundTruth) || ?groundTruth != true ) ) ||
-                ( ?modalStatus = iep:Counterfactual && ( !BOUND(?groundTruth) || ?groundTruth != false ) ) ||
-                ( ?modalStatus = iep:Hypothetical   && BOUND(?groundTruth) )
-              )
-            }
-        """
-    ] .
 
 # ──────────────────────────────────────────────────────────────
 #  2. TemporalFacet — future-validFrom warning
@@ -204,6 +197,15 @@ iep:DescriptorCoreFacetShape a sh:NodeShape ;
 #  (not violation) because there are legitimate ghost-write patterns
 #  (e.g. agent X proxying for agent Y) where this is intentional.
 # ──────────────────────────────────────────────────────────────
+# ★ THE sh:sparql TWIN OF THIS RULE WAS REMOVED, NOT LOST. The AgentFacet / ProvenanceFacet agent consistency
+#   rule is stated ABOVE IN SHACL CORE and enforced by the engine that reads this file. The
+#   sh:sparql block beside it said the same thing in a language nothing here executes, so it
+#   contributed no enforcement and DID make every graph this shape selects report
+#   fullyChecked:false — the flag that exists to say "a constraint here was not evaluated".
+#   Measured before removing it: for a conforming graph and for each way of breaking the
+#   rule, conforms and the full result set are IDENTICAL either way; only fullyChecked
+#   changes, false -> true. A duplicate that cannot run is not a second opinion, it is a
+#   permanent unresolved warning about itself.
 iep:AgentProvenanceConsistencyShape a sh:NodeShape ;
     sh:targetClass iep:ContextDescriptor ;
     sh:severity sh:Warning ;
@@ -231,26 +233,8 @@ iep:AgentProvenanceConsistencyShape a sh:NodeShape ;
         sh:path ( iep:hasFacet iep:assertingAgent iep:agentIdentity ) ;
         sh:equals ( iep:hasFacet prov:wasGeneratedBy prov:wasAssociatedWith ) ;
         sh:message "AgentFacet.assertingAgent != ProvenanceFacet.wasAssociatedWith — identity fork detected. If intentional (ghost-write), ignore." ;
-    ] ;
-
-    sh:sparql [
-        sh:message "AgentFacet.assertingAgent != ProvenanceFacet.wasAssociatedWith — identity fork detected. If intentional (ghost-write), ignore." ;
-        sh:prefixes iep: ;
-        sh:select """
-            PREFIX iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#>
-            PREFIX prov: <http://www.w3.org/ns/prov#>
-            SELECT $this ?aa ?pa WHERE {
-              $this iep:hasFacet ?agentFacet .
-              ?agentFacet a iep:AgentFacet ;
-                          iep:assertingAgent/iep:agentIdentity ?aa .
-              $this iep:hasFacet ?provFacet .
-              ?provFacet a iep:ProvenanceFacet ;
-                         iep:wasGeneratedBy ?activity .
-              ?activity iep:agent ?pa .
-              FILTER (?aa != ?pa)
-            }
-        """
     ] .
+
 
 # ──────────────────────────────────────────────────────────────
 #  6. Distribution — visibility / encryption consistency
@@ -272,6 +256,15 @@ iep:AgentProvenanceConsistencyShape a sh:NodeShape ;
 #  inert and existing pre-visibility descriptors continue to pass.
 #  Only one of the three legal string values is permitted.
 # ──────────────────────────────────────────────────────────────
+# ★ THE sh:sparql TWIN OF THIS RULE WAS REMOVED, NOT LOST. The visibility / encrypted agreement
+#   rule is stated ABOVE IN SHACL CORE and enforced by the engine that reads this file. The
+#   sh:sparql block beside it said the same thing in a language nothing here executes, so it
+#   contributed no enforcement and DID make every graph this shape selects report
+#   fullyChecked:false — the flag that exists to say "a constraint here was not evaluated".
+#   Measured before removing it: for a conforming graph and for each way of breaking the
+#   rule, conforms and the full result set are IDENTICAL either way; only fullyChecked
+#   changes, false -> true. A duplicate that cannot run is not a second opinion, it is a
+#   permanent unresolved warning about itself.
 iep:VisibilityShape a sh:NodeShape ;
     sh:targetClass iep:Affordance ;
     sh:property [
@@ -305,24 +298,8 @@ iep:VisibilityShape a sh:NodeShape ;
           [ sh:property [ sh:path iep:encrypted ; sh:in ( true ) ; sh:minCount 1 ] ]
       ) ]
     ) ;
-    sh:message "iep:visibility consistency: \"public\" requires iep:encrypted=false; \"shared\" and \"private\" require iep:encrypted=true. A distribution whose label and payload disagree misleads the reader that branches on it." ;
+    sh:message "iep:visibility consistency: \"public\" requires iep:encrypted=false; \"shared\" and \"private\" require iep:encrypted=true. A distribution whose label and payload disagree misleads the reader that branches on it." .
 
-    sh:sparql [
-        sh:message "iep:visibility consistency: \"public\" requires iep:encrypted=false; \"shared\" and \"private\" require iep:encrypted=true." ;
-        sh:prefixes iep: ;
-        sh:select """
-            PREFIX iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#>
-            SELECT $this ?visibility ?encrypted WHERE {
-              $this iep:visibility ?visibility .
-              $this iep:encrypted ?encrypted .
-              FILTER (
-                ( ?visibility = "public"  && ?encrypted != false ) ||
-                ( ?visibility = "shared"  && ?encrypted != true  ) ||
-                ( ?visibility = "private" && ?encrypted != true  )
-              )
-            }
-        """
-    ] .
 
 # ──────────────────────────────────────────────────────────────
 #  7. AuthorshipProof — required fields for iep:SignedAuthorship
