@@ -19,13 +19,17 @@
  *                     actually supported is worse than no note — it is an instruction to go
  *                     hand-roll a workaround for something that already works.
  *
+ *   - RDF 1.2 reification, complete:
+ *       annotation      s p o {| … |}     [35][36] — ASSERTS the base triple
+ *       reifier         s p o ~:r         [28]     — names the reifier
+ *       reified triple  << s p o ~:r >>   [29]     — does NOT assert; denotes the reifier
+ *       triple term     <<( s p o )>>     [32]     — a term, asserts nothing
+ *       @version "1.2"                             — recognised; optional per §7.1
+ *     All desugar to ordinary triples per §7.3, so nothing downstream knows this syntax
+ *     exists. This block previously read "NOT supported (intentional): annotation syntax",
+ *     while serializer.ts EMITTED that syntax — our own output was not our own input.
+ *
  * NOT supported (intentional):
- *   - Annotation syntax {| ... |}   ← ★ but serializer.ts EMITS it (toTripleAnnotationTurtle),
- *                     so the RDF 1.2 annotation write path has no matching read path here:
- *                     feeding our own output back in throws "unexpected character '|'".
- *                     Loud rather than silent, and no production caller emits it today, but
- *                     it is the reason docs/ns/iep-shapes-1.2.ttl cannot be enforced — all
- *                     three of its shapes are sh:reifierShape, which needs this syntax.
  *   - @base / relative IRI resolution
  *   - SPARQL UPDATE operations
  *
@@ -155,16 +159,22 @@ function tokenize(src: string): Tok[] {
       out.push({ type: 'punct', value: ')>>', pos: startPos });
       continue;
     }
-    // ★ `<< >>` (RDF 1.2 [29] reifiedTriple) is deliberately NOT implemented, and says so
-    // rather than being mistaken for an IRI. It differs from annotation syntax in the one
-    // way that matters: `{| |}` asserts the base triple, `<< >>` does NOT. Accepting it as
-    // if it did would add assertions the author explicitly declined to make, so it is
-    // refused by name until it is implemented properly.
+    // [29] reifiedTriple ::= '<<' rtSubject verb rtObject reifier? '>>'
+    //
+    // ★ THE DIFFERENCE FROM `{| |}` IS THE WHOLE POINT: annotation syntax ASSERTS the triple
+    // it names, and this does NOT. The term denotes the REIFIER; the base triple is not added
+    // to the graph. This was refused outright for one commit rather than approximated,
+    // because accepting it as an assertion would have invented statements the author
+    // explicitly declined to make.
     if (src.startsWith('<<', i)) {
-      throw new ParseError(
-        'RDF 1.2 reifiedTriple syntax `<< … >>` is not implemented by this parser. It is '
-        + 'refused rather than approximated because, unlike annotation syntax `{| … |}`, it '
-        + 'does NOT assert the triple it names', startPos);
+      i += 2;
+      out.push({ type: 'punct', value: '<<', pos: startPos });
+      continue;
+    }
+    if (src.startsWith('>>', i)) {
+      i += 2;
+      out.push({ type: 'punct', value: '>>', pos: startPos });
+      continue;
     }
     if (src.startsWith('{|', i)) {
       i += 2;
@@ -277,7 +287,7 @@ function tokenize(src: string): Tok[] {
       i++;
       let id = '';
       while (i < n && /[A-Za-z0-9-]/.test(src[i]!)) { id += src[i]!; i++; }
-      if (id === 'prefix' || id === 'base') {
+      if (id === 'prefix' || id === 'base' || id === 'version') {
         out.push({ type: 'keyword', value: id, pos: startPos });
       } else {
         out.push({ type: 'lang', value: id, pos: startPos });
@@ -476,6 +486,65 @@ function parseTripleTerm(s: ParserState): ParsedTripleTerm {
   }
 }
 
+/**
+ * [29] reifiedTriple ::= '<<' rtSubject verb rtObject reifier? '>>'
+ *
+ * Evaluates to the REIFIER — a fresh blank node, or the one a trailing `~name` supplies —
+ * and yields exactly one triple, `reifier rdf:reifies <<( s p o )>>`.
+ *
+ * ★ IT DOES NOT ASSERT THE BASE TRIPLE. That is the entire difference from annotation
+ * syntax, and the reason this returns the reifier rather than calling the shared assert
+ * path: `:bob :said << :alice :age 23 >>` records that Bob said it, NOT that Alice is 23.
+ * §2.11 is explicit — "this graph does not assert that employee38 has a jobTitle".
+ */
+function parseReifiedTriple(s: ParserState): ParsedTerm {
+  const open = consume(s);
+  if (s.depth >= MAX_NESTING_DEPTH) {
+    throw new ParseError(
+      `maximum nesting depth (${MAX_NESTING_DEPTH}) exceeded — refusing deeply-nested reified triples`,
+      open?.pos ?? -1);
+  }
+  s.depth++;
+  try {
+    const subjTok = peek(s);
+    const subject = parseTermAsTerm(s);
+    // [30] rtSubject ::= iri | BlankNode | reifiedTriple — a nested reifiedTriple has
+    // already collapsed to its reifier bnode by the time we see it here.
+    if (subject.kind !== 'iri' && subject.kind !== 'bnode') {
+      throw new ParseError(
+        'a reified-triple subject must be an IRI, blank node or nested reified triple '
+        + '(RDF 1.2 Turtle [30] rtSubject)', subjTok?.pos ?? -1);
+    }
+    const predicate = parsePredicate(s);
+    const object = parseTermAsTerm(s);   // [31] rtObject — literals and nesting allowed
+
+    // reifier? — at most one, unlike annotation syntax which may carry several.
+    let reifier: ParsedIri | ParsedBNode;
+    const next = peek(s);
+    if (next?.type === 'punct' && next.value === '~') {
+      consume(s);
+      const after = peek(s);
+      if (after && (after.type === 'iri' || after.type === 'pname' || after.type === 'bnode')) {
+        reifier = parseTermAsTerm(s) as ParsedIri | ParsedBNode;
+      } else {
+        reifier = { kind: 'bnode', id: `_anon${s.bnodeCounter++}` };
+      }
+    } else {
+      reifier = { kind: 'bnode', id: `_anon${s.bnodeCounter++}` };
+    }
+
+    const close = peek(s);
+    if (!(close?.type === 'punct' && close.value === '>>')) {
+      throw new ParseError("expected '>>' to close a reified triple", close?.pos ?? -1);
+    }
+    consume(s);
+    emitReifier(s, reifier, subject, predicate, object);
+    return reifier;
+  } finally {
+    s.depth--;
+  }
+}
+
 function parseTermAsTerm(s: ParserState): ParsedTerm {
   const t = peek(s);
   if (!t) throw new ParseError('expected term, got EOF', -1);
@@ -485,6 +554,8 @@ function parseTermAsTerm(s: ParserState): ParsedTerm {
   if (t.type === 'bnode') { consume(s); return { kind: 'bnode', id: t.id }; }
   // [32] tripleTerm ::= '<<(' ttSubject verb ttObject ')>>'
   if (t.type === 'punct' && t.value === '<<(') { return parseTripleTerm(s); }
+  // [29] reifiedTriple — evaluates to the REIFIER, and asserts nothing.
+  if (t.type === 'punct' && t.value === '<<') { return parseReifiedTriple(s); }
   if (t.type === 'string') {
     consume(s);
     let datatype: IRI | undefined;
@@ -872,6 +943,18 @@ export function parseTrig(src: string): ParsedDocument {
       continue;
     }
 
+    // @version "1.2" — RDF 1.2 §7.1 makes the version announcement a HINT that mandates no
+    // parser behaviour, so it is consumed and discarded rather than switching a mode. A
+    // document is RDF 1.2 because of the syntax it uses, not because it says so; refusing
+    // 1.2 syntax in a document that omits the directive would reject conformant input.
+    if (t.type === 'keyword' && t.value === 'version') {
+      consume(state);
+      const lit = peek(state);
+      if (lit?.type === 'string') consume(state);
+      const dot = peek(state);
+      if (dot?.type === 'punct' && dot.value === '.') consume(state);
+      continue;
+    }
     if (t.type === 'keyword' && (t.value === 'base' || t.value === 'sparql-base')) {
       // Skip either base form — this parser does not resolve relative IRIs, so the base has
       // nothing to act on and dropping it changes no term it would otherwise produce.

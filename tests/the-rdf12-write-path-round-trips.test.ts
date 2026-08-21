@@ -66,17 +66,28 @@ describe('the RDF 1.2 write path', () => {
   });
 });
 
-describe('reifiedTriple is refused by name, not by accident', () => {
-  it('names itself in the error instead of "unexpected character"', () => {
-    // A generic tokeniser error would send the next reader hunting for a typo. This one
-    // has to explain that the construct is real, understood, and declined.
-    expect(() => parseTrig('@prefix ex: <https://example.org/> .\nex:s ex:p << ex:a ex:b ex:c >> .\n'))
-      .toThrow(/reifiedTriple/i);
+describe('reifiedTriple is IMPLEMENTED, and still does not assert', () => {
+  // ★ These two used to assert that `<< >>` was REFUSED BY NAME, and that was the right
+  // behaviour for exactly as long as it lasted: refusing is honest where approximating is
+  // not, because this form does not assert the triple it names and treating it like
+  // `{| |}` would invent assertions the author explicitly declined to make. It is
+  // implemented now, so what these assert is the property that motivated the refusal.
+  const ttl = '@prefix ex: <https://example.org/> .\nex:bob ex:said << ex:alice ex:age 23 >> .\n';
+  const REIFIES = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#reifies';
+
+  it('parses', () => {
+    expect(() => parseTrig(ttl)).not.toThrow();
   });
 
-  it('and explains WHY, because the reason is the whole distinction', () => {
-    expect(() => parseTrig('@prefix ex: <https://example.org/> .\nex:s ex:p << ex:a ex:b ex:c >> .\n'))
-      .toThrow(/does NOT assert/i);
+  it('does NOT assert the triple it names', () => {
+    const asserted = parseTrig(ttl).subjects.some(s =>
+      s.subject === 'https://example.org/alice'
+      && [...s.properties.keys()].some(k => k === 'https://example.org/age'));
+    expect(asserted).toBe(false);
+  });
+
+  it('and yields the reifier, linked by rdf:reifies', () => {
+    expect(parseTrig(ttl).subjects.some(s => s.properties.has(REIFIES as never))).toBe(true);
   });
 });
 
