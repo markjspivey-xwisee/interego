@@ -1,0 +1,6 @@
+# shape: severity-shapes.ttl
+# expect: violates
+# why: the same rule one level down — sh:severity on the PROPERTY shape rather than the node shape. Pinned separately because the engine used to honour the two through different code paths, so a fix to one said nothing about the other.
+@prefix ex: <https://example.org/severity#> .
+
+ex:n a ex:Note .

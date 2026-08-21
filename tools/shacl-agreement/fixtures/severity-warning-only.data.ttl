@@ -1,0 +1,6 @@
+# shape: severity-shapes.ttl
+# expect: violates
+# why: §3.6 makes sh:conforms false when validation produced ANY result. A shape declaring sh:severity sh:Warning still produces one, so the graph does not conform — this engine used to report conforms:true here while pySHACL reported false.
+@prefix ex: <https://example.org/severity#> .
+
+ex:t a ex:Thing ; ex:count "not a number" .

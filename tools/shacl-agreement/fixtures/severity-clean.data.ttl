@@ -1,0 +1,7 @@
+# shape: severity-shapes.ttl
+# expect: conforms
+# why: guards the two above. A rule that answered "does not conform" for everything would satisfy both of them, and this is the graph that distinguishes enforcement from blanket refusal.
+@prefix ex: <https://example.org/severity#> .
+
+ex:t a ex:Thing ; ex:count 3 .
+ex:n a ex:Note ; ex:label "has one" .

@@ -22,7 +22,9 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { toTripleAnnotationTurtle, parseTrig, validateAgainstShape } from '@interego/core';
+import {
+  toTripleAnnotationTurtle, parseTrig, validateAgainstShape, escapeTurtleLiteral,
+} from '@interego/core';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const RDF_REIFIES = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#reifies';
@@ -63,6 +65,56 @@ describe('the RDF 1.2 write path', () => {
       { prefixes: true });
     expect(plain).not.toContain('{|');
     expect(parseTrig(plain).subjects.length).toBe(1);
+  });
+});
+
+describe('★ the ESCAPES the serializer writes are escapes the parser can read', () => {
+  // ★ THIS FILE'S ORIGINAL SUBJECT, FOUND AGAIN IN A DIFFERENT PLACE. It was written because
+  // serializer.ts emitted RDF 1.2 annotation syntax that turtle-parser.ts could not read.
+  // That asymmetry was closed — and an older, quieter one had been sitting underneath it the
+  // whole time, in the most ordinary thing either side does.
+  //
+  // escapeTurtleLiteral has always emitted the full Turtle escape set: BS-f for a form feed,
+  // BS-b for a backspace, BS-u000B and BS-u0001 for the control characters that have no
+  // short form. The parser implemented four escapes and passed the rest through as their
+  // LETTER — so a form feed came back as the letter f, and BS-u0001 came back as the five
+  // characters u0001.
+  //
+  // Unlike the annotation gap, this one did not throw. Our own output was accepted by our
+  // own parser and quietly meant something else, which is worse: in the signing path the
+  // canonical bytes stop being the author's bytes while every check stays green.
+  const AWKWARD: ReadonlyArray<readonly [string, string]> = [
+    ['line feed', String.fromCharCode(10)],
+    ['carriage return', String.fromCharCode(13)],
+    ['tab', String.fromCharCode(9)],
+    ['form feed', String.fromCharCode(12)],
+    ['backspace', String.fromCharCode(8)],
+    ['line tabulation', String.fromCharCode(11)],
+    ['a control character with no short escape', String.fromCharCode(1)],
+    ['a backslash', String.fromCharCode(92)],
+    ['a double quote', '"'],
+    ['a supplementary-plane character', String.fromCodePoint(0x1F600)],
+    ['non-ASCII text', 'café — naïve'],
+  ];
+
+  it.each(AWKWARD)('round-trips %s', (_label, ch) => {
+    const value = `before${ch}after`;
+    const ttl = `@prefix ex: <https://example.org/> .
+ex:s ex:p "${escapeTurtleLiteral(value)}" .`;
+    const doc = parseTrig(ttl);
+    const [term] = [...doc.subjects[0]!.properties.values()][0]!;
+    expect(term!.kind).toBe('literal');
+    expect((term as { value: string }).value).toBe(value);
+  });
+
+  it('and the escaping is REAL — the Turtle is not just the raw character', () => {
+    // Guards the guard. If escapeTurtleLiteral regressed to returning the string unchanged,
+    // every case above would still round-trip through a lenient parser while producing
+    // Turtle no other parser would accept. A raw line feed inside a short string is a
+    // syntax error, so its presence in the output is the thing to refuse.
+    const out = escapeTurtleLiteral(`a${String.fromCharCode(10)}b`);
+    expect(out).not.toContain(String.fromCharCode(10));
+    expect(out).toContain(`${String.fromCharCode(92)}n`);
   });
 });
 

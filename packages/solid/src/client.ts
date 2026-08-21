@@ -2434,7 +2434,27 @@ export async function publish(
    */
   if (!options.sealedPayload && options.conformsToShapes && options.conformsToShapes.length > 0) {
     for (const { shapeIri, shapeTurtle } of options.conformsToShapes) {
-      const report = validateAgainstShape(graphContent, shapeTurtle, { entailment: 'rdfs' });
+      // ★ THE GATE'S SEVERITY POLICY, STATED RATHER THAN INHERITED.
+      //
+      // `conforms` used to mean "no sh:Violation" in this engine, everywhere, with no way to
+      // ask for anything else. That was a misreading of §3.6 — which says ANY result — and
+      // fixing it silently tightened every gate that reads the flag, including this one.
+      //
+      // Measured, on a shape this repo publishes: iep:AgentProvenanceConsistencyShape
+      // declares `sh:severity sh:Warning` and its own prose says why — "Warning (not
+      // violation) because there are legitimate ghost-write patterns (e.g. agent X proxying
+      // for agent Y) where this is intentional". Under the corrected rule that Warning
+      // refuses the publish, so a pattern the shape author explicitly permits would start
+      // being rejected by a change that was about a boolean's definition.
+      //
+      // sh:conformanceDisallows is SHACL 1.2's answer: the severities that defeat
+      // conformance are a property of the REQUEST, not of the engine. Declaring
+      // ['Violation'] here preserves exactly the behaviour this gate has always had, and
+      // says so out loud at the call site instead of relying on the engine to keep getting
+      // a boolean wrong in a convenient direction. Warnings still travel in `results` —
+      // they are advice, and the caller below already carries the notes forward.
+      const report = validateAgainstShape(graphContent, shapeTurtle,
+        { entailment: 'rdfs', conformanceDisallows: ['Violation'] });
       if (!report.conforms) {
         throw new PublishShapeViolationError(
           `publish: inbound graph violates shape ${shapeIri}`,

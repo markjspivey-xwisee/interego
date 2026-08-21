@@ -2573,7 +2573,7 @@ function evaluatePropertyShape(
         // ★ FOUR CONTROL CHARACTERS BREAK A LINE, not two. Line feed and carriage return
         // are the ones anyone thinks of; the suite also pins FORM FEED (u+000C) and LINE
         // TABULATION (u+000B), and XML's definition of a line boundary includes them.
-        // Checking two of the four let `"Invalidinstance"` through a constraint whose
+        // Checking two of the four let a label with an embedded form feed through a constraint whose
         // entire job is to refuse embedded line breaks.
         const lex = termValue(v);
         const BREAKS = [10, 13, 12, 11].map(c => String.fromCharCode(c));

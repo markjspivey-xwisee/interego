@@ -1,0 +1,34 @@
+@prefix sh:  <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix ex:  <https://example.org/severity#> .
+
+#  What sh:severity does to sh:conforms — the field consumers branch on.
+#
+#  ★ THIS HARNESS HAD 23 FIXTURES AND NONE OF THEM DECLARED A SEVERITY, so the one
+#  disagreement it could most usefully have caught was outside its own coverage. Our engine
+#  computed `conforms` as "no Violations"; SHACL §3.6 says "no validation results", and
+#  pySHACL implements the spec. A shape declaring sh:Warning therefore reported
+#  conforms:true here and conforms:false to every reader — measured, opposite verdicts on
+#  the same graph and the same shapes file.
+#
+#  Adding the fixtures after the fix is not proof the fix works; it is proof the harness
+#  would now SEE the regression. Verified by reverting the engine to "Violations only" and
+#  watching these two disagree.
+
+ex:WarningShape
+  a sh:NodeShape ;
+  sh:targetClass ex:Thing ;
+  sh:severity sh:Warning ;
+  sh:property [
+    sh:path     ex:count ;
+    sh:datatype xsd:integer ;
+  ] .
+
+ex:InfoShape
+  a sh:NodeShape ;
+  sh:targetClass ex:Note ;
+  sh:property [
+    sh:path     ex:label ;
+    sh:severity sh:Info ;
+    sh:minCount 1 ;
+  ] .

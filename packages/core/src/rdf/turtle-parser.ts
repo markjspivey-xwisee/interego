@@ -112,7 +112,9 @@ type Tok =
   | { type: 'iri'; value: string; pos: number }
   | { type: 'pname'; prefix: string; local: string; pos: number }
   | { type: 'bnode'; id: string; pos: number }
-  | { type: 'string'; value: string; pos: number }
+  // `triple` records the LONG form. The version directive accepts only the short one, and
+  // by the time a token reaches the parser the quotes are gone — so it has to be carried.
+  | { type: 'string'; value: string; pos: number; triple?: true }
   | { type: 'number'; value: string; pos: number }
   | { type: 'boolean'; value: boolean; pos: number }
   | { type: 'punct'; value: string; pos: number }   // . ; , [ ] { } ( ) ^^ @
@@ -275,18 +277,14 @@ function tokenize(src: string): Tok[] {
             case 'u': {
               const d = hex(4);
               if (d === undefined) { value += esc; break; }
-              value += String.fromCodePoint(parseInt(d, 16));
+              value += fromCodePointChecked(parseInt(d, 16), startPos);
               i += 4;
               break;
             }
             case 'U': {
               const d = hex(8);
               if (d === undefined) { value += esc; break; }
-              const cp = parseInt(d, 16);
-              // Beyond the Unicode range there is no character to produce; leaving the text
-              // as written is the only non-lossy answer.
-              if (cp > 0x10FFFF) { value += esc; break; }
-              value += String.fromCodePoint(cp);
+              value += fromCodePointChecked(parseInt(d, 16), startPos);
               i += 8;
               break;
             }
@@ -299,7 +297,9 @@ function tokenize(src: string): Tok[] {
         }
       }
       if (!closed) throw new ParseError('unterminated string at EOF', startPos);
-      out.push({ type: 'string', value, pos: startPos });
+      out.push(triple
+        ? { type: 'string', value, pos: startPos, triple: true }
+        : { type: 'string', value, pos: startPos });
       continue;
     }
 
@@ -327,6 +327,21 @@ function tokenize(src: string): Tok[] {
       if (id === 'prefix' || id === 'base' || id === 'version') {
         out.push({ type: 'keyword', value: id, pos: startPos });
       } else {
+        // ★ RDF 1.2 BASE DIRECTION IS A CLOSED SET OF TWO, LOWER CASE. `@en--ltr` and
+        // `@en--rtl` are the only forms [144s]; the lexer accepted any word after the
+        // separator, so `@en--unk` and `@en--LTR` both became language tags carrying a
+        // direction that means nothing. A reader branching on direction to lay out text
+        // would get a value no vocabulary defines, and the document would have been
+        // rejected by any other parser.
+        const sep = id.indexOf('--');
+        if (sep !== -1) {
+          const dir = id.slice(sep + 2);
+          if (dir !== 'ltr' && dir !== 'rtl') {
+            throw new ParseError(
+              `base direction "${dir}" is not defined; RDF 1.2 permits only --ltr and --rtl, `
+              + 'in lower case', startPos);
+          }
+        }
         out.push({ type: 'lang', value: id, pos: startPos });
       }
       continue;
@@ -412,6 +427,16 @@ function tokenize(src: string): Tok[] {
         out.push({ type: 'keyword', value: `sparql-${upper.toLowerCase()}`, pos: startPos });
         continue;
       }
+      // ★ RDF 1.2 gives the version announcement BOTH spellings, exactly as PREFIX and BASE
+      // have both: the at-sign directive `@version "1.2" .` and the SPARQL-style
+      // `VERSION "1.2"` with no at-sign and no trailing dot. Only the first was recognised,
+      // so a document opening with the second died on its first line with
+      // `unknown bareword "VERSION"` — five suite entries, and the spelling a 1.2 document
+      // is most likely to be written with.
+      if (upper === 'VERSION') {
+        out.push({ type: 'keyword', value: 'sparql-version', pos: startPos });
+        continue;
+      }
       // TriG GRAPH keyword: `GRAPH <iri> { ... }` / `GRAPH prefix:name { ... }`.
       // Recognized case-insensitively (the TriG spec admits both `GRAPH` and
       // `graph` lexically). The parser dispatch in parseTrig() branches on
@@ -432,6 +457,22 @@ function tokenize(src: string): Tok[] {
 interface ParserState {
   readonly tokens: readonly Tok[];
   index: number;
+  /**
+   * The in-scope base IRI, from the most recent `@base` / `BASE` directive.
+   *
+   * ★ RELATIVE IRIs WERE NOT RESOLVED AT ALL. The directive was consumed and dropped, with
+   * the note "this parser does not resolve relative IRIs, so the base has nothing to act
+   * on" — which reads as a deliberate limitation and is actually a wrong answer: `<s>` did
+   * not stay unresolved, it became the ABSOLUTE IRI `s`. Every relative reference in every
+   * based document silently named a different resource than the author wrote, and two
+   * documents with different bases collided on the same key.
+   *
+   * That matters most where this repo cares most. A based document is the normal way to
+   * write a pod resource that refers to its own siblings, and a graph digest computed over
+   * `<s>` rather than `http://example/s` signs a statement about a resource that does not
+   * exist.
+   */
+  base?: string;
   readonly prefixes: Map<string, string>;
   readonly subjects: Map<string, Map<IRI, ParsedTerm[]>>;
   readonly bnodeProperties: Map<string, Map<IRI, ParsedTerm[]>>;
@@ -460,8 +501,77 @@ function describeTok(t: Tok): string {
   }
 }
 
+/**
+ * Resolve a relative reference against a base, per RFC 3986 §5.3.
+ *
+ * ★ WRITTEN OUT RATHER THAN DELEGATED TO `new URL(ref, base)`, and the reason is the signing
+ * path. WHATWG URL parsing NORMALISES: it lower-cases the scheme and host, drops a default
+ * port, re-encodes percent sequences, and rewrites some paths. Every one of those changes
+ * the IRI STRING while leaving the resource the same — which is fine for fetching and fatal
+ * for a canonical digest, because the bytes we sign would stop being the bytes the author
+ * wrote. RFC 3986's merge-and-remove-dot-segments does only what Turtle asks for.
+ */
+function resolveIri(ref: string, base: string | undefined): string {
+  if (base === undefined) return ref;
+  // An absolute reference has a scheme and is returned untouched.
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(ref)) return ref;
+
+  const m = /^([A-Za-z][A-Za-z0-9+.-]*:)(\/\/[^/?#]*)?([^?#]*)(\?[^#]*)?(#.*)?$/.exec(base);
+  if (!m) return ref;
+  const [, scheme, authority = '', basePath = '', baseQuery = ''] = m;
+
+  if (ref === '') return `${scheme}${authority}${basePath}${baseQuery}`;
+  if (ref.startsWith('#')) return `${scheme}${authority}${basePath}${baseQuery}${ref}`;
+  if (ref.startsWith('//')) return `${scheme}${ref}`;
+
+  const hash = ref.indexOf('#');
+  const frag = hash === -1 ? '' : ref.slice(hash);
+  const noFrag = hash === -1 ? ref : ref.slice(0, hash);
+  const q = noFrag.indexOf('?');
+  const query = q === -1 ? '' : noFrag.slice(q);
+  const refPath = q === -1 ? noFrag : noFrag.slice(0, q);
+
+  if (refPath === '') return `${scheme}${authority}${basePath}${query || baseQuery}${frag}`;
+
+  // §5.3 merge: an absolute-path reference replaces the base path outright; otherwise it
+  // is appended after the base path's last '/'.
+  const merged = refPath.startsWith('/')
+    ? refPath
+    : basePath.slice(0, basePath.lastIndexOf('/') + 1) + refPath;
+
+  // §5.2.4 remove_dot_segments.
+  const out: string[] = [];
+  for (const seg of merged.split('/')) {
+    if (seg === '.') continue;
+    if (seg === '..') { out.pop(); continue; }
+    out.push(seg);
+  }
+  let path = out.join('/');
+  // A trailing '.' or '..' segment leaves a trailing slash behind.
+  if (/(^|\/)\.\.?$/.test(merged) && !path.endsWith('/')) path += '/';
+  if (authority !== '' && path !== '' && !path.startsWith('/')) path = `/${path}`;
+  return `${scheme}${authority}${path}${query}${frag}`;
+}
+
 function peek(s: ParserState, offset = 0): Tok | undefined { return s.tokens[s.index + offset]; }
-function consume(s: ParserState): Tok | undefined { return s.tokens[s.index++]; }
+
+/**
+ * ★ RESOLUTION HAPPENS HERE, at the single point where a token becomes a value.
+ *
+ * Nine places in this file turn an `iri` token into an IRI, and resolving in each of them
+ * is nine places for the next one to be forgotten. Consumption is also exactly the right
+ * moment: tokens are consumed in document order, so the base in scope at that point is the
+ * base the spec says applies — including for the `@base` directive's OWN argument, which
+ * §4.4 resolves against the PREVIOUS base before becoming the new one.
+ */
+function consume(s: ParserState): Tok | undefined {
+  const t = s.tokens[s.index++];
+  if (t?.type === 'iri' && s.base !== undefined) {
+    const resolved = resolveIri(t.value, s.base);
+    return resolved === t.value ? t : { type: 'iri', value: resolved, pos: t.pos };
+  }
+  return t;
+}
 function expectPunct(s: ParserState, value: string): void {
   const t = consume(s);
   if (!t || t.type !== 'punct' || t.value !== value) {
@@ -503,6 +613,7 @@ function parseTripleTerm(s: ParserState): ParsedTripleTerm {
   s.depth++;
   try {
     const subjTok = peek(s);
+    refuseCompoundTerm(s, 'subject inside << >> or <<( )>>');
     const subject = parseTermAsTerm(s);
     // [33] ttSubject ::= iri | BlankNode — no literals, no nested triple term.
     if (subject.kind !== 'iri' && subject.kind !== 'bnode') {
@@ -511,6 +622,7 @@ function parseTripleTerm(s: ParserState): ParsedTripleTerm {
         subjTok?.pos ?? -1);
     }
     const predicate = parsePredicate(s);
+    refuseCompoundTerm(s, 'object inside << >> or <<( )>>');
     const object = parseTermAsTerm(s); // [34] ttObject — literals and nesting allowed here
     const close = peek(s);
     if (!(close?.type === 'punct' && close.value === ')>>')) {
@@ -534,6 +646,66 @@ function parseTripleTerm(s: ParserState): ParsedTripleTerm {
  * path: `:bob :said << :alice :age 23 >>` records that Bob said it, NOT that Alice is 23.
  * §2.11 is explicit — "this graph does not assert that employee38 has a jobTitle".
  */
+/**
+ * Turn a UCHAR code point into a character, refusing the ones that are not characters.
+ *
+ * ★ A SURROGATE IS NOT A CHARACTER, and String.fromCodePoint will happily produce a lone
+ * one. A four-hex escape in the D800-DFFF range was accepted and yielded an unpaired
+ * surrogate — a string that is not valid UTF-8, cannot be serialised, and travels through
+ * the graph until something downstream fails on bytes instead of here on syntax. Turtle's
+ * UCHAR excludes that range for exactly this reason, and the suite pins seven cases: lone
+ * high, lone low, high-high, low-low, wrong order, and both spellings of a "surrogate pair"
+ * written as two escapes — which is not how a supplementary character is written in Turtle
+ * either. One eight-hex escape is.
+ *
+ * Out-of-range was previously handled by leaving the escape text as written, on the
+ * reasoning that this is "non-lossy". It is not: it silently turns a malformed document
+ * into a well-formed one that says something different. Refusing is the honest answer, and
+ * the same answer the suite expects.
+ */
+function fromCodePointChecked(cp: number, pos: number): string {
+  const hexed = cp.toString(16).toUpperCase();
+  if (cp > 0x10FFFF) {
+    throw new ParseError(`numeric escape ${hexed} is beyond the Unicode range`, pos);
+  }
+  if (cp >= 0xD800 && cp <= 0xDFFF) {
+    throw new ParseError(
+      `numeric escape ${hexed} is a surrogate code point, which is not a character; `
+      + 'write a supplementary character as one 8-hex escape', pos);
+  }
+  return String.fromCodePoint(cp);
+}
+
+/**
+ * Refuse the two compound forms that may not appear inside a reified triple or triple term.
+ *
+ * ★ [30]/[31] AND [33]/[34] RESTRICT BOTH ENDS, and both parsers called the general term
+ * parser instead. `<<:s :p ("abc")>>` and `<<:s :p [ :p1 :o1 ]>>` are the forms the grammar
+ * excludes and we accepted: each expands to triples of its OWN, while a reified triple or a
+ * triple term names exactly one. Accepting them meant those extra triples were asserted from
+ * inside a construct whose entire purpose is to mention a statement without asserting it.
+ *
+ * An empty `[]` is a different thing and stays legal: it is a BlankNode, it produces no
+ * triples, and `<<[] :p []>>` is an approved entry.
+ */
+function refuseCompoundTerm(s: ParserState, position: string): void {
+  const nx = peek(s);
+  if (nx?.type === 'punct' && nx.value === '(') {
+    throw new ParseError(
+      `a ${position} may not be a collection: it expands to triples of its own, and this `
+      + 'construct names exactly one (RDF 1.2 Turtle [30]/[31], [33]/[34])', nx.pos);
+  }
+  if (nx?.type === 'punct' && nx.value === '[') {
+    const after = peek(s, 1);
+    const empty = after?.type === 'punct' && after.value === ']';
+    if (!empty) {
+      throw new ParseError(
+        `a ${position} may not be a blank-node property list; an empty [] is permitted `
+        + '(RDF 1.2 Turtle [30]/[31], [33]/[34])', nx.pos);
+    }
+  }
+}
+
 function parseReifiedTriple(s: ParserState): ParsedTerm {
   const open = consume(s);
   if (s.depth >= MAX_NESTING_DEPTH) {
@@ -544,6 +716,7 @@ function parseReifiedTriple(s: ParserState): ParsedTerm {
   s.depth++;
   try {
     const subjTok = peek(s);
+    refuseCompoundTerm(s, 'subject inside << >> or <<( )>>');
     const subject = parseTermAsTerm(s);
     // [30] rtSubject ::= iri | BlankNode | reifiedTriple — a nested reifiedTriple has
     // already collapsed to its reifier bnode by the time we see it here.
@@ -553,6 +726,7 @@ function parseReifiedTriple(s: ParserState): ParsedTerm {
         + '(RDF 1.2 Turtle [30] rtSubject)', subjTok?.pos ?? -1);
     }
     const predicate = parsePredicate(s);
+    refuseCompoundTerm(s, 'object inside << >> or <<( )>>');
     const object = parseTermAsTerm(s);   // [31] rtObject — literals and nesting allowed
 
     // reifier? — at most one, unlike annotation syntax which may carry several.
@@ -586,7 +760,15 @@ function parseTermAsTerm(s: ParserState): ParsedTerm {
   const t = peek(s);
   if (!t) throw new ParseError('expected term, got EOF', -1);
 
-  if (t.type === 'iri') { consume(s); return { kind: 'iri', iri: t.value as IRI }; }
+  // ★ The value comes off the CONSUMED token, not the peeked one. consume() is where a
+  // relative IRI is resolved against @base, so reading `t.value` here — from the token as
+  // peeked — silently bypassed resolution for every object and every subject while
+  // predicates, which go through parsePredicate's consume(), resolved correctly. Half a
+  // triple in one namespace and half in another is worse than no resolution at all.
+  if (t.type === 'iri') {
+    const c = consume(s) as { type: 'iri'; value: string; pos: number };
+    return { kind: 'iri', iri: c.value as IRI };
+  }
   if (t.type === 'pname') { consume(s); return { kind: 'iri', iri: resolvePrefixed(s, t.prefix, t.local) }; }
   if (t.type === 'bnode') { consume(s); return { kind: 'bnode', id: t.id }; }
   // [32] tripleTerm ::= '<<(' ttSubject verb ttObject ')>>'
@@ -613,9 +795,17 @@ function parseTermAsTerm(s: ParserState): ParsedTerm {
   }
   if (t.type === 'number') {
     consume(s);
-    const dt = t.value.includes('.') || /[eE]/.test(t.value)
-      ? 'http://www.w3.org/2001/XMLSchema#decimal'
-      : 'http://www.w3.org/2001/XMLSchema#integer';
+    // ★ THREE numeric datatypes, not two. Turtle §6.4: an EXPONENT makes it xsd:double, a
+    // dot without one makes it xsd:decimal, neither makes it xsd:integer. Folding double
+    // into decimal typed `1e0` as xsd:decimal — a different datatype, so a different RDF
+    // term, so a different graph. It also silently changes what a shape sees: SHACL's
+    // sh:datatype compares the IRI, so `sh:datatype xsd:double` refused every double this
+    // parser produced.
+    const dt = /[eE]/.test(t.value)
+      ? 'http://www.w3.org/2001/XMLSchema#double'
+      : t.value.includes('.')
+        ? 'http://www.w3.org/2001/XMLSchema#decimal'
+        : 'http://www.w3.org/2001/XMLSchema#integer';
     return { kind: 'literal', value: t.value, datatype: dt as IRI };
   }
   if (t.type === 'boolean') {
@@ -718,8 +908,8 @@ function parseSubject(s: ParserState): { key: string; props: Map<IRI, ParsedTerm
   const t = peek(s);
   if (!t) throw new ParseError('expected subject', -1);
   if (t.type === 'iri') {
-    consume(s);
-    const key = t.value;
+    const c = consume(s) as { type: 'iri'; value: string; pos: number };
+    const key = c.value;   // resolved against @base by consume()
     if (!s.subjects.has(key)) s.subjects.set(key, new Map());
     return { key, props: s.subjects.get(key)! };
   }
@@ -1002,20 +1192,37 @@ export function parseTrig(src: string): ParsedDocument {
     // parser behaviour, so it is consumed and discarded rather than switching a mode. A
     // document is RDF 1.2 because of the syntax it uses, not because it says so; refusing
     // 1.2 syntax in a document that omits the directive would reject conformant input.
-    if (t.type === 'keyword' && t.value === 'version') {
+    if (t.type === 'keyword' && (t.value === 'version' || t.value === 'sparql-version')) {
       consume(state);
       const lit = peek(state);
+      // ★ THE VERSION STRING IS A SHORT STRING, NOT ANY STRING. Turtle 1.2 [4a] takes
+      // STRING_LITERAL_QUOTE or STRING_LITERAL_SINGLE_QUOTE — the triple-quoted forms are
+      // excluded, because a version announcement spanning lines is not a thing. Accepting
+      // them made four suite entries that MUST be rejected parse cleanly, and a parser that
+      // accepts what the grammar excludes is inventing a dialect.
+      if (lit?.type === 'string' && lit.triple === true) {
+        throw new ParseError(
+          'the version string must be a short quoted string; the triple-quoted forms are '
+          + 'not permitted here (Turtle 1.2 [4a])', lit.pos);
+      }
       if (lit?.type === 'string') consume(state);
-      const dot = peek(state);
-      if (dot?.type === 'punct' && dot.value === '.') consume(state);
+      // The at-sign form is a Turtle directive and takes a terminating dot; the SPARQL-style
+      // form, like PREFIX and BASE, does not.
+      if (t.value === 'version') {
+        const dot = peek(state);
+        if (dot?.type === 'punct' && dot.value === '.') consume(state);
+      }
       continue;
     }
     if (t.type === 'keyword' && (t.value === 'base' || t.value === 'sparql-base')) {
-      // Skip either base form — this parser does not resolve relative IRIs, so the base has
-      // nothing to act on and dropping it changes no term it would otherwise produce.
       consume(state);
       const iriTok = peek(state);
-      if (iriTok?.type === 'iri') consume(state);
+      if (iriTok?.type === 'iri') {
+        // consume() resolves against the CURRENT base first, which is what §4.4 requires
+        // for a relative `@base` — a second directive is relative to the first.
+        const resolvedBase = consume(state);
+        if (resolvedBase?.type === 'iri') state.base = resolvedBase.value;
+      }
       // ★ THE TERMINATOR IS PEEKED, NOT CONSUMED BLIND. This was an unconditional
       // `consume(state)` whose result was inspected and then discarded with a "best-effort"
       // comment — so on `BASE <iri>` (SPARQL, no terminator) it ate the FIRST TOKEN OF THE
