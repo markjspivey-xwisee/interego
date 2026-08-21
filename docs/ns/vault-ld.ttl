@@ -80,6 +80,39 @@ vldp:conformanceShape a owl:ObjectProperty ;
   rdfs:label "conformance shape" ;
   rdfs:comment "The SHACL NodeShape a projection's output must satisfy to conform to this profile." .
 
+# ★ The other five knobs, declared. vldp:maxRung and vldp:conformanceShape above were the
+# only two of the profile's seven that had definitions — the rest were read by the engine
+# and set on the published profile while resolving to nothing, so a reader following one
+# learned only that it existed. A knob nobody can look up is configuration by folklore.
+
+vldp:contextSource a owl:DatatypeProperty ;
+  rdfs:label "context source" ;
+  rdfs:comment "Where the JSON-LD @context comes from when projecting: \"external\" requires a dereferenceable context document, which is what lets a consumer expand the output without trusting the projector. Paired with vldp:forbidInlineContext." ;
+  rdfs:range xsd:string .
+
+vldp:forbidInlineContext a owl:DatatypeProperty ;
+  rdfs:label "forbid inline context" ;
+  rdfs:comment "When true, an inline @context in vault content is refused rather than honoured. An inline context lets the SOURCE redefine what its own terms mean, which would let a note silently rebind a term to a different IRI after the profile had been checked." ;
+  rdfs:range xsd:boolean .
+
+vldp:identityStrategy a owl:DatatypeProperty ;
+  rdfs:label "identity strategy" ;
+  rdfs:comment "Named rule for minting stable IRIs for vault entries, so the same note projects to the same identifier across runs. The value names a versioned strategy (e.g. \"vault-ld-4.5\") rather than describing one, because changing how identity is derived breaks every existing reference and must therefore be a visible version change." ;
+  rdfs:range xsd:string .
+
+vldp:linkGrammar a owl:DatatypeProperty ;
+  rdfs:label "link grammar" ;
+  rdfs:comment "The link syntax the vault is written in, which the projector must parse to recover edges (e.g. \"wiki\" for [[wikilinks]]). Declared as profile DATA rather than detected, because guessing wrong silently produces a graph with no edges instead of an error." ;
+  rdfs:range xsd:string .
+
+vldp:placementPredicate a owl:ObjectProperty ;
+  rdfs:label "placement predicate" ;
+  rdfs:comment "The predicate used to record where an entry sits in the vault's own hierarchy (e.g. vld:path). Named by the profile so a consumer can find structural placement without knowing the projector's conventions." .
+
+vldp:IngestResult a owl:Class ;
+  rdfs:label "Ingest Result" ;
+  rdfs:comment "What an ingest affordance returns: the outcome of projecting a vault bundle under this profile. Referenced by vldp:IngestAffordance as its return type." .
+
 # ── §6 conformance: the rung-<=3 AUTHORITY CLOSURE, as verifiable SHACL ──
 #
 #  The load-bearing, verifiable property: a Vault-LD graph is DESCRIPTIVE DATA and must
