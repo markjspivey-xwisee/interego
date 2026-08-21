@@ -190,6 +190,68 @@ describe('SHACL 1.2 targets', () => {
   });
 });
 
+describe('sh:datatype checks the LEXICAL FORM, not just the datatype IRI', () => {
+  // ★ §4.1.2 requires the value to be a literal with that datatype AND a well-formed lexical
+  // form for it. We compared the IRI alone, so `"aldi"^^xsd:integer` satisfied
+  // `sh:datatype xsd:integer` — a literal that is not an integer, accepted by the constraint
+  // whose whole job is to say it must be. W3C Core node/datatype-001 pins it.
+  //
+  // ★ THE ACCEPT HALF IS THE LOAD-BEARING ONE. A lexical table that is too strict does not
+  // report a bug, it REFUSES LIVE DATA — so every typed literal form this repo's own
+  // serializer emits is checked here, and a regex tightened by mistake goes red on the
+  // accept list before anyone's publish does.
+  const P = `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix ex: <https://example.org/> .
+`;
+  const check = (literal: string, datatype: string): boolean =>
+    validateAgainstShape(`${P}ex:s ex:p ${literal} .`,
+      `${P}ex:S a sh:NodeShape ; sh:targetSubjectsOf ex:p ;
+         sh:property [ sh:path ex:p ; sh:datatype ${datatype} ] .`, {}).conforms;
+
+  it.each([
+    ['"2026-08-21T17:04:05Z"^^xsd:dateTime', 'xsd:dateTime'],
+    ['"2026-08-21T17:04:05+01:00"^^xsd:dateTime', 'xsd:dateTime'],
+    ['"2026-08-21T17:04:05.123Z"^^xsd:dateTime', 'xsd:dateTime'],
+    ['"2026-08-21T17:04:05"^^xsd:dateTime', 'xsd:dateTime'],
+    ['"2026-08-21"^^xsd:date', 'xsd:date'],
+    ['"1.0"^^xsd:double', 'xsd:double'],
+    ['"1.5e-3"^^xsd:double', 'xsd:double'],
+    ['"0.87"^^xsd:double', 'xsd:double'],
+    ['"42"^^xsd:integer', 'xsd:integer'],
+    ['"-7"^^xsd:integer', 'xsd:integer'],
+    ['"3.14"^^xsd:decimal', 'xsd:decimal'],
+    ['"true"^^xsd:boolean', 'xsd:boolean'],
+    ['"https://example.org/a?b=c#d"^^xsd:anyURI', 'xsd:anyURI'],
+    ['"0"^^xsd:nonNegativeInteger', 'xsd:nonNegativeInteger'],
+    ['"P1DT2H"^^xsd:duration', 'xsd:duration'],
+    ['"aGVsbG8="^^xsd:base64Binary', 'xsd:base64Binary'],
+    ['"deadBEEF"^^xsd:hexBinary', 'xsd:hexBinary'],
+    ['"en-GB"^^xsd:language', 'xsd:language'],
+  ])('accepts %s', (literal, datatype) => {
+    expect(check(literal, datatype), `${literal} was REFUSED — the lexical table is too strict`)
+      .toBe(true);
+  });
+
+  it.each([
+    ['"aldi"^^xsd:integer', 'xsd:integer'],
+    ['"3.5"^^xsd:integer', 'xsd:integer'],
+    ['"-1"^^xsd:nonNegativeInteger', 'xsd:nonNegativeInteger'],
+    ['"yesterday"^^xsd:dateTime', 'xsd:dateTime'],
+    ['"maybe"^^xsd:boolean', 'xsd:boolean'],
+    ['"zz"^^xsd:hexBinary', 'xsd:hexBinary'],
+  ])('refuses %s', (literal, datatype) => {
+    expect(check(literal, datatype)).toBe(false);
+  });
+
+  it('and says nothing about a datatype it cannot know', () => {
+    // A user-defined datatype has no lexical space this engine can judge, and guessing one
+    // would refuse valid data. Silence is the honest answer — the IRI still has to match.
+    expect(check('"anything at all"^^ex:MyType', 'ex:MyType')).toBe(true);
+    expect(check('"anything at all"^^ex:MyType', 'ex:OtherType')).toBe(false);
+  });
+});
+
 describe('SHACL 1.2 severities', () => {
   const withSeverity = (sev: string): ReturnType<typeof validateAgainstShape> =>
     validateAgainstShape(P + 'ex:s ex:p "x" .',

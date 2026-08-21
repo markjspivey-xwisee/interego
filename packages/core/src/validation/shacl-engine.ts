@@ -102,6 +102,7 @@ const SH_REIFICATION_REQUIRED = `${SHACL}reificationRequired` as IRI;
 const RDF_REIFIES = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#reifies' as IRI;
 const SH_NODE = `${SHACL}node` as IRI;
 const SH_NODE_BY_EXPRESSION = `${SHACL}nodeByExpression` as IRI;
+const SH_EXPRESSION = `${SHACL}expression` as IRI;
 const SH_QUALIFIED_VALUE_SHAPE = `${SHACL}qualifiedValueShape` as IRI;
 const SH_QUALIFIED_VALUE_SHAPES_DISJOINT = `${SHACL}qualifiedValueShapesDisjoint` as IRI;
 const SH_QUALIFIED_MIN_COUNT = `${SHACL}qualifiedMinCount` as IRI;
@@ -744,6 +745,14 @@ interface PropertyShape {
    */
   readonly nodeByExpression?: ParsedTerm;
   /**
+   * SHACL 1.2 sh:expression — the node expression must evaluate to `true` for the value.
+   *
+   * ★ The general escape hatch of the 1.2 constraint set: anything the fixed components
+   * cannot say, an expression can compute. `sh:expression false` is the degenerate case the
+   * suite uses, and it must refuse every focus node.
+   */
+  readonly expression?: ParsedTerm;
+  /**
    * sh:property ON A PROPERTY SHAPE — each VALUE NODE is a focus node for these.
    *
    * ★ Only node shapes carried sh:property here, so the idiomatic way to reach two levels
@@ -1078,6 +1087,7 @@ const PARAM_COMPONENT: ReadonlyMap<string, string> = new Map<string, string>([
   [SH_MAX_LENGTH, 'MaxLengthConstraintComponent'],
   [SH_NODE, 'NodeConstraintComponent'],
   [SH_NODE_BY_EXPRESSION, 'NodeByExpressionConstraintComponent'],
+  [SH_EXPRESSION, 'ExpressionConstraintComponent'],
   [SH_REIFIER_SHAPE, 'ReifierShapeConstraintComponent'],
 ]);
 
@@ -1224,6 +1234,7 @@ function compilePropertyShape(
     })(),
     node: refKey(getOne(subj, SH_NODE)),
     nodeByExpression: getOne(subj, SH_NODE_BY_EXPRESSION),
+    expression: getOne(subj, SH_EXPRESSION),
     // Nested property shapes apply to the VALUE nodes, so they are compiled here rather
     // than by compileShapes — which only ever looked at node shapes.
     // Suppressed in nodeLevel mode for the same reason as the logicals: a NODE shape's
@@ -2813,6 +2824,25 @@ function evaluatePropertyShape(
           data, inner, shape, nested, byId, depth + 1, subclassClosure)) {
           results.push(r);
         }
+      }
+    }
+  }
+
+  // ── sh:expression: the expression must come back TRUE ──
+  if (ps.expression !== undefined) {
+    for (const v of values) {
+      const result = evaluateNodeExpression(data, ps.expression, {
+        focusNode: v,
+        conforms: (n, sh) => nodeConformsToShape(data, n, sh),
+      });
+      // Anything other than exactly `true` fails — including an empty sequence, which is
+      // "the expression had no answer" rather than "the answer was yes".
+      const ok = result.length === 1 && result[0]!.kind === 'literal'
+        && result[0]!.value === 'true';
+      if (!ok) {
+        fail(ps.path, 'ExpressionConstraintComponent',
+          'The value does not satisfy sh:expression — the expression did not evaluate to true',
+          v);
       }
     }
   }

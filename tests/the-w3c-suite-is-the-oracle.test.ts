@@ -48,9 +48,9 @@ const SUITE = join(REPO, 'tests', 'fixtures', 'shacl12-w3c', 'core');
  */
 const FLOOR = {
   /** Verdict AND every expected result matched. */
-  exact: 140,
+  exact: 142,
   /** Verdict matched. The number that actually decides whether a publish is refused. */
-  verdict: 140,
+  verdict: 142,
 };
 
 interface Report {
@@ -89,7 +89,14 @@ describe('W3C SHACL 1.2 Core conformance', () => {
     // empty or half-deleted fixture tree reports a clean sweep of nothing. The upstream
     // core suite is 166 files; anything far below that means the vendoring broke.
     expect(countTtl(SUITE)).toBeGreaterThanOrEqual(160);
-    expect(report.approvedRunnable).toBeGreaterThanOrEqual(140);
+    // ★ The runner covers node-expr/constraints too. Those three sht:Validate entries were
+    // run by NEITHER harness — this one scanned core/ only, the node-expression one
+    // recognises sht:EvalNodeExpr only, and they fell down the gap between two harnesses
+    // each of which was complete about its own scope. sh:expression was unimplemented and
+    // invisible until they were picked up.
+    expect(countTtl(join(REPO, 'tests', 'fixtures', 'shacl12-w3c', 'node-expr', 'constraints')))
+      .toBeGreaterThanOrEqual(3);
+    expect(report.approvedRunnable).toBeGreaterThanOrEqual(143);
   });
 
   it('never throws on a spec-conformant shapes graph', () => {

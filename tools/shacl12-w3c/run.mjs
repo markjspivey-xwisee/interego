@@ -49,13 +49,26 @@
  *   node tools/shacl12-w3c/run.mjs --verbose   # every failing entry, with the diff
  *   node tools/shacl12-w3c/run.mjs --json      # machine-readable, for the ratchet test
  */
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, relative } from 'node:path';
 import { parseTrig, validateAgainstShape, renderPathTerm } from '../../packages/core/dist/index.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SUITE = join(HERE, '..', '..', 'tests', 'fixtures', 'shacl12-w3c', 'core');
+const FIXTURES = join(HERE, '..', '..', 'tests', 'fixtures', 'shacl12-w3c');
+const SUITE = join(FIXTURES, 'core');
+
+/**
+ * ★ THE CONSTRAINT ENTRIES UNDER node-expr/ ARE CONSTRAINT TESTS, AND NEITHER HARNESS RAN
+ * THEM. This runner scanned `core/` only; the node-expression runner recognises
+ * `sht:EvalNodeExpr` only. `node-expr/constraints/` holds three `sht:Validate` entries —
+ * sh:expression and sh:nodeByExpression exercised as CONSTRAINTS rather than as expressions
+ * — and they fell straight down the gap between the two.
+ *
+ * A gap between two harnesses is the hardest kind to notice, because each is complete about
+ * its own scope and neither is wrong.
+ */
+const ROOTS = [SUITE, join(FIXTURES, 'node-expr', 'constraints')];
 
 const MF = 'http://www.w3.org/2001/sw/DataAccess/tests/test-manifest#';
 const SHT = 'http://www.w3.org/ns/shacl-test#';
@@ -64,6 +77,7 @@ const RDF_TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
 
 /** Every .ttl under the vendored suite except the manifests, which list rather than test. */
 function suiteFiles(dir = SUITE, out = []) {
+  if (!existsSync(dir)) return out;
   for (const name of readdirSync(dir)) {
     const p = join(dir, name);
     if (statSync(p).isDirectory()) suiteFiles(p, out);
@@ -233,12 +247,13 @@ const KNOWN_DIVERGENCES = {
     + 'cover it); the file appears to have been renamed without updating the data.',
 };
 
-const files = suiteFiles().sort();
+const files = ROOTS.flatMap(r => suiteFiles(r)).sort();
 const verbose = process.argv.includes('--verbose');
 const rows = [];
 
 for (const path of files) {
-  const rel = relative(SUITE, path).replaceAll('\\', '/');
+  const rel = relative(FIXTURES, path).replaceAll('\\', '/')
+    .replace(/^core\//, '');
   const text = readFileSync(path, 'utf8');
   const e = readEntry(text, path);
   if (!e.runnable) {
