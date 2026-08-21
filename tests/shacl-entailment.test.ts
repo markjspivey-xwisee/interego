@@ -176,6 +176,53 @@ ex:S a sh:NodeShape ; sh:targetClass ex:Doc ;
 });
 
 /**
+ * ★ …AND IT HAS TO SURVIVE THE RECURSION, which it did not.
+ *
+ * `conformsToShape` took `subclassClosure` and used it for the nested shape's node-level
+ * sh:class — then dropped it when re-entering `evaluatePropertyShape` for that shape's
+ * PROPERTY shapes. One function, two behaviours, one level down.
+ *
+ * The result was the exact false-reject asymmetry the block above exists to prevent,
+ * just relocated: identical `sh:class ex:Parent` accepted a subclass at top level and
+ * refused it through `sh:node`. Both call sites were passing the closure in correctly —
+ * it died on the last hop, which is why nothing above caught it.
+ */
+describe('the closure survives nested-shape recursion', () => {
+  const P = `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix ex: <https://example.org/> .
+`;
+  const NESTED = P + `
+ex:Outer a sh:NodeShape ; sh:targetClass ex:Holder ;
+  sh:property [ sh:path ex:wraps ; sh:node ex:Inner ] .
+ex:Inner a sh:NodeShape ;
+  sh:property [ sh:path ex:facet ; sh:class ex:Parent ; sh:minCount 1 ] .`;
+  const sub = (type: string) => P + `ex:Child rdfs:subClassOf ex:Parent .
+ex:h a ex:Holder ; ex:wraps ex:w .
+ex:w ex:facet ex:f .
+ex:f a ${type} .`;
+
+  it('accepts a subclass value through sh:node', () => {
+    expect(validateAgainstShape(sub('ex:Child'), NESTED, {}).conforms).toBe(true);
+  });
+
+  it('and still rejects an unrelated class through sh:node — it constrains, it does not surrender', () => {
+    // Guards the guard: without this, passing the closure down could have been "accept
+    // everything nested" and the test above would not tell the difference.
+    expect(validateAgainstShape(sub('ex:Unrelated'), NESTED, {}).conforms).toBe(false);
+  });
+
+  it('agrees with the identical constraint at top level, which is the whole point', () => {
+    const FLAT = P + `ex:Flat a sh:NodeShape ; sh:targetClass ex:Holder ;
+  sh:property [ sh:path ex:facet ; sh:class ex:Parent ; sh:minCount 1 ] .`;
+    const flatData = P + `ex:Child rdfs:subClassOf ex:Parent .
+ex:h a ex:Holder ; ex:facet ex:f . ex:f a ex:Child .`;
+    expect(validateAgainstShape(flatData, FLAT, {}).conforms)
+      .toBe(validateAgainstShape(sub('ex:Child'), NESTED, {}).conforms);
+  });
+});
+
+/**
  * ★ THE EDGE BOUND WAS AN OFF SWITCH THE CALLER COULD REACH.
  *
  * buildSubclassClosure caps materialised descendant edges to avoid a caller-triggered
