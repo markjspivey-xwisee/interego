@@ -11,15 +11,15 @@
  * ad-hoc copy was a place the next one got forgotten).
  */
 
+// The one Turtle-literal escaper. See packages/core/src/rdf/escape.ts.
+import { escapeTurtleLiteral } from '@interego/core';
 /** Escape a value for a Turtle STRING_LITERAL_QUOTE ("..."). Backslash first,
  *  then quote and the control chars Turtle forbids raw in a quoted literal. */
 export function tesc(s: string): string {
-  return String(s)
-    .replace(/\\/g, '\\\\')
-    .replace(/"/g, '\\"')
-    .replace(/\n/g, '\\n')
-    .replace(/\r/g, '\\r')
-    .replace(/\t/g, '\\t');
+  // A correct but SEPARATE copy of the core helper — the same five replacements in the same order.
+  // Correct-and-duplicated is how the divergence starts: twelve other copies of this idea existed,
+  // each covering a different subset, and six of them produced Turtle that would not parse.
+  return escapeTurtleLiteral(String(s));
 }
 
 /** Percent-encode any character illegal in a Turtle IRIREF (`<...>`): angle

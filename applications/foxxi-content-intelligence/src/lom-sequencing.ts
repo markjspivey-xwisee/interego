@@ -21,6 +21,8 @@
  */
 import { FOXXI_NS } from './foxxi-vocab.js';
 import { iesc } from './turtle-escape.js';
+// The one Turtle-literal escaper.
+import { escapeTurtleLiteral } from '@interego/core';
 
 export interface LomMetadata {
   /** §1 General */
@@ -190,7 +192,8 @@ function emitLangMap(lines: string[], sub: string, pred: string, m: Record<strin
 }
 
 function escape(s: string): string {
-  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
+  // A correct but SEPARATE copy of the core helper. Delegates.
+  return escapeTurtleLiteral(s);
 }
 
 // ── SCORM sequencing ─────────────────────────────────────────

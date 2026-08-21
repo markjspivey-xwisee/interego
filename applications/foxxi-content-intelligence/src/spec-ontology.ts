@@ -26,6 +26,8 @@
  * shared graph.
  */
 import { composeIntoSharedLattice, readArtifact } from './foundation-shared-lattice.js';
+// The one Turtle-literal escaper. See packages/core/src/rdf/escape.ts.
+import { escapeTurtleLiteral } from '@interego/core';
 
 /** The dereferenceable namespace root the bridge serves (conneg + HATEOAS). Kept
  *  identical to foxxi-vocab's host so every Foxxi ns IRI resolves the same way. */
@@ -89,7 +91,9 @@ export interface OntologyModel {
 export const ontologyIri = (m: OntologyModel): string => `${NS_ROOT}${m.module}`;
 export const ns = (m: OntologyModel): string => `${ontologyIri(m)}#`;
 export const shapesIri = (m: OntologyModel): string => `${ontologyIri(m)}/shapes`;
-const esc = (s: string): string => String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+// Handled the newline but not the CARRIAGE RETURN or the tab, so it produced unparseable Turtle
+// for any value pasted from a Windows editor. Delegates to the one escaper in @interego/core.
+const esc = (s: string): string => escapeTurtleLiteral(String(s));
 
 /** A Turtle-safe PN_LOCAL for a term's IRI local part. Vocabulary MEMBER names can be raw
  *  spec enum values (e.g. the SCORM `exit,message` / `not attempted` / `-1` timeLimitAction

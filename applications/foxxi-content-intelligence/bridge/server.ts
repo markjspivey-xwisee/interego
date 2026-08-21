@@ -381,6 +381,8 @@ import { resolveSubjectPodUrlPure, explicitPodRoot, hasControlChars } from '../s
 import { resolveReadTarget, type ReadTargetDecision } from '../src/read-target.js';
 import { retireRow, activeRows, isRetired } from '../src/enrolment-register.js';
 import { bindPerformanceToEvidence, EVIDENCE_BINDING_EXT, EVIDENCE_SHAPE_EXT } from '../src/performance-evidence.js';
+// The one Turtle-literal escaper. See packages/core/src/rdf/escape.ts.
+import { escapeTurtleLiteral } from '@interego/core';
 import type {
   IRI,
   ContextDescriptorData,
@@ -4801,7 +4803,9 @@ const app = createVerticalBridge({
       const id = isTermIri ? competencyIriForTerm(slug) : competencyIri(slug);
       // Defensive Turtle-string escaping on the interpolated label (belt-and-suspenders atop the
       // charset validation above).
-      const tesc = (s: string): string => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+      // Was a LOCAL shadow of the exported `tesc`, one character short of it (no tab) — a weaker
+      // copy of a helper that already existed two directories away. Delegates to the one escaper.
+      const tesc = (s: string): string => escapeTurtleLiteral(s);
       // A term-named competency's readable label is the term's OWN local name, not a
       // de-slugged URL — de-slugging one would print the whole IRI as a sentence.
       const label = isTermIri

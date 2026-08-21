@@ -18,6 +18,8 @@ import { LER_NS, TLA_NS } from '../../foxxi-content-intelligence/src/ler-tla-voc
 import { AGP_NS } from './ontology.js';
 import { AGP_PROFILE_ID } from './xapi-profile.js';
 import { withGuidance, type AffordanceGuidance } from '../../_shared/guided-affordance/index.js';
+// The one Turtle-literal escaper. See packages/core/src/rdf/escape.ts.
+import { escapeTurtleLiteral } from '@interego/core';
 
 export type ExtensionKind = 'XapiContextExtension' | 'XapiProfileFragment' | 'LerTerm' | 'TlaTerm';
 
@@ -44,7 +46,10 @@ export interface ProposeExtensionInput {
 }
 
 const slug = (s: string): string => s.trim().replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-const ttlEscape = (s: string): string => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+// Measured by embedding the output in a "…" literal and parsing: this left a raw newline or
+// carriage return in place, which Turtle's STRING_LITERAL_QUOTE forbids, so the document did not
+// parse and the publish failed. Delegates to the one escaper in @interego/core.
+const ttlEscape = (s: string): string => escapeTurtleLiteral(s);
 
 const DEFAULT_STANDARD: Record<ExtensionKind, string> = {
   XapiContextExtension: AGP_PROFILE_ID,

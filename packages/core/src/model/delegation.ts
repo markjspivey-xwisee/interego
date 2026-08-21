@@ -23,6 +23,8 @@ import type {
 // Digest labels are compared, never assumed equal — see the algorithm check in
 // verifySignedAuthorship for the false-forgery this import prevents.
 import { digestAlgorithmOf } from '../rdf/graph-digest.js';
+// The one Turtle-literal escaper.
+import { escapeTurtleLiteral } from '../rdf/escape.js';
 
 // ── Signer / Verifier injection types ───────────────────────
 //
@@ -180,7 +182,10 @@ export function ownerProfileToTurtle(profile: OwnerProfileData): string {
   // self-registering agent cannot break out of `<...>`/`"..."` and inject triples into the
   // published agent-registry graph.
   const escI = (s: string): string => String(s).replace(/[\x00-\x20<>"{}|^`\\]/g, encodeURIComponent);
-  const escL = (s: string): string => String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
+  // A correct but SEPARATE copy of escapeTurtleLiteral's five replacements, in the same package
+  // that defines it. Delegates: correct-and-duplicated is how the divergence starts, and six of
+  // the thirteen copies of this idea produced Turtle that would not parse.
+  const escL = (s: string): string => escapeTurtleLiteral(String(s));
   // A prefixed name (`iep:<local>`) cannot be escaped into safety — any character
   // outside PN_LOCAL ends the name and starts new RDF. DelegationScope is a closed
   // enum, so allow-list it and fail to the LEAST privilege on anything unrecognised.

@@ -4198,7 +4198,10 @@ async function handleRecordTrajectoryStep(args: ToolArgs): Promise<string> {
   // Inline turtle for the step's graph payload. Facets are emitted on
   // the publish_context side; this is the substantive content the
   // verifier reads.
-  const escape = (s: string) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  // ★ Left raw newlines, carriage returns and tabs in a "…" literal, which Turtle forbids — so a
+  // multi-line value here produced a document that would not parse. This is the substantive
+  // content a VERIFIER reads, which makes an unparseable document the worst outcome available.
+  const escape = (s: string) => escapeTurtleLiteral(s);
   // ★ These three values are CALLER-SUPPLIED and land inside Turtle IRI brackets. An IRI
   // reference ends at the first `>`, and Turtle defines no escape for it — so
   // `urn:x> ; prov:wasAttributedTo <did:someone-else` used to close the IRI, open a new
