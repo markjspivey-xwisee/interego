@@ -43,6 +43,35 @@
 # ──────────────────────────────────────────────────────────────
 iep:SemioticFacetModalTruthConsistencyShape a sh:NodeShape ;
     sh:targetClass iep:SemioticFacet ;
+
+    # ★ IN SHACL CORE NOW. Three conditionals, each written the way SHACL expresses
+    # implication: "NOT antecedent OR consequent". sh:or was parsed and dropped by this
+    # engine until complex constraints landed, which is why the rule lived in SPARQL and
+    # therefore lived nowhere.
+    #
+    #   Asserted       => groundTruth = true
+    #   Counterfactual => groundTruth = false
+    #   Hypothetical   => groundTruth absent
+    #
+    # The antecedents use `sh:not [ sh:in ( … ) ]` rather than `sh:not [ sh:hasValue … ]`:
+    # sh:hasValue is a property constraint and means nothing on a bare node shape, so the
+    # inner shape would be vacuously satisfied and sh:not would refuse every value. sh:in
+    # is the node-level membership test this needs.
+    sh:and (
+      [ sh:or (
+          [ sh:property [ sh:path iep:modalStatus ; sh:not [ sh:in ( iep:Asserted ) ] ] ]
+          [ sh:property [ sh:path iep:groundTruth ; sh:hasValue true ; sh:minCount 1 ] ]
+      ) ]
+      [ sh:or (
+          [ sh:property [ sh:path iep:modalStatus ; sh:not [ sh:in ( iep:Counterfactual ) ] ] ]
+          [ sh:property [ sh:path iep:groundTruth ; sh:hasValue false ; sh:minCount 1 ] ]
+      ) ]
+      [ sh:or (
+          [ sh:property [ sh:path iep:modalStatus ; sh:not [ sh:in ( iep:Hypothetical ) ] ] ]
+          [ sh:property [ sh:path iep:groundTruth ; sh:maxCount 0 ] ]
+      ) ]
+    ) ;
+
     sh:sparql [
         sh:message "SemioticFacet: Asserted requires groundTruth=true, Counterfactual requires groundTruth=false, Hypothetical MUST NOT set groundTruth." ;
         sh:prefixes iep: ;
@@ -178,6 +207,24 @@ iep:DescriptorCoreFacetShape a sh:NodeShape ;
 iep:AgentProvenanceConsistencyShape a sh:NodeShape ;
     sh:targetClass iep:ContextDescriptor ;
     sh:severity sh:Warning ;
+
+    # ★ IN SHACL CORE NOW, because sh:sparql is not implemented by the engine that runs this
+    # and the shape therefore checked nothing. SHACL 1.2 lets the property-pair parameters
+    # take a PATH rather than only a predicate IRI, which is exactly the shape of this
+    # comparison: "the agent named by the AgentFacet must be the agent named by the
+    # ProvenanceFacet's activity", two sequence paths from the same focus node.
+    #
+    # Equivalent in practice to the SPARQL below without the explicit facet-type guards:
+    # iep:assertingAgent occurs only on an AgentFacet and iep:wasGeneratedBy only on a
+    # ProvenanceFacet, so the paths are self-selecting. Kept at sh:Warning, unchanged — a
+    # ghost-write is a legitimate pattern, and promoting it to Violation while making it
+    # enforceable for the first time would be two changes wearing one commit.
+    sh:property [
+        sh:path ( iep:hasFacet iep:assertingAgent iep:agentIdentity ) ;
+        sh:equals ( iep:hasFacet iep:wasGeneratedBy iep:agent ) ;
+        sh:message "AgentFacet.assertingAgent != ProvenanceFacet.wasAssociatedWith — identity fork detected. If intentional (ghost-write), ignore." ;
+    ] ;
+
     sh:sparql [
         sh:message "AgentFacet.assertingAgent != ProvenanceFacet.wasAssociatedWith — identity fork detected. If intentional (ghost-write), ignore." ;
         sh:prefixes iep: ;

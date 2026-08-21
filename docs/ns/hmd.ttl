@@ -56,8 +56,12 @@ hmd:Control a rdfs:Class, owl:Class ;
 
 hmd:Claim a rdfs:Class, owl:Class ;
   rdfs:label "Claim" ;
-  rdfs:comment "An asserted statement (subject/predicate/object) that may carry confidence, source, and provenance; reifiable as an rdf:Statement." ;
+  rdfs:comment "An asserted statement that may carry confidence, source and provenance. In RDF 1.2 the statement is named by a TRIPLE TERM and described through a REIFIER linked by rdf:reifies — in Turtle, the annotation form `s p o {| hmd:confidence 0.9 |}`, which asserts the base triple and hangs the metadata off the reifier. Prefer that over rdf:Statement: RDF 1.2 reification names one specific occurrence of a triple, where rdf:subject/rdf:predicate/rdf:object is a separate description that nothing binds to the statement it describes." ;
   rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> ;
+  rdfs:seeAlso rdf:reifies ;
+  # ★ rdf:Statement is kept as a SECONDARY pointer, not deleted. It is what pre-1.2 readers
+  # will look for, and an IRI others may already cite; demoting it says which mechanism is
+  # current without breaking anyone who followed the old one.
   rdfs:seeAlso rdf:Statement .
 
 hmd:Template a rdfs:Class, owl:Class ;

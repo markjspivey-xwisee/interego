@@ -170,6 +170,41 @@ vldp:NoAuthorityPredicatesShape a sh:NodeShape ;
 vldp:EntailmentAuthorityShape a sh:NodeShape ;
   rdfs:label "no entailed authority (subclass / equivalent / subproperty chains)" ;
   rdfs:comment "Refuses any node whose rdf:type reaches an authority class, or which uses a predicate that reaches an authority predicate, through rdfs:subClassOf / owl:equivalentClass / rdfs:subPropertyOf / owl:equivalentProperty / owl:sameAs chains." ;
+
+  # ★ IT ALSO HAD NO TARGET, so it selected no focus node and could not have fired even if
+  # the engine ran SPARQL. Every typed node is the right scope for "does your type reach
+  # execution authority", and stating it is what turns the shape below from a declaration
+  # into a check. (Found by attributing a passing test's violations and discovering they came
+  # from vldp:ConformanceShape, not from here.)
+  sh:targetSubjectsOf rdf:type ;
+
+  # ★ THE CLASS-CHAIN BRANCH, IN SHACL CORE — because until now this shape enforced NOTHING.
+  #
+  # It was sh:sparql-only, and SHACL-SPARQL is not implemented by the engine that runs it, so
+  # the anti-authority-smuggling defence was a dereferenceable name over an empty check. The
+  # transitive class chain is exactly a zero-or-more alternative path, which SHACL Core has
+  # always been able to express and this engine could not evaluate until complex paths landed.
+  #
+  # ★ COVERAGE IS PARTIAL, AND SAYING SO IS THE POINT. This covers the FIRST of the SPARQL
+  # query's three branches — rdf:type reaching an authority class. The other two quantify over
+  # "any predicate of this node", and SHACL Core has no wildcard-predicate path (no negated
+  # property set, no variable predicate), so they remain SPARQL-only and remain unenforced
+  # here. Partial real enforcement beats total pretend enforcement; claiming the whole thing
+  # was covered would recreate the facade in a new place.
+  sh:property [
+    sh:path ( rdf:type [ sh:zeroOrMorePath [ sh:alternativePath (
+      rdfs:subClassOf owl:equivalentClass owl:sameAs ) ] ] ) ;
+    sh:not [
+      sh:in (
+        <http://www.w3.org/ns/hydra/core#Operation>
+        iep:Affordance
+        ieh:Affordance
+        hmd:Control
+      )
+    ] ;
+    sh:message "Rung-<=3 violation: rdf:type reaches an execution-authority class through a subClassOf / equivalentClass / sameAs chain." ;
+  ] ;
+
   sh:sparql [
     a sh:SPARQLConstraint ;
     sh:message "Rung-<=3 violation: execution authority is reachable by RDFS/OWL entailment (a subclass / equivalent-class / subproperty chain to an operation/affordance/control/target/action term)." ;
