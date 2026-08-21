@@ -8,11 +8,19 @@
 # ────────────────────────────────────────────────────────────
 #  SHACL 1.2 — additive shapes for Interego
 #
-#  This file is the SHACL-1.2 counterpart to cg-shapes.ttl (which
-#  stays SHACL 1.1 for backward compatibility). It uses the
-#  SHACL-1.2 `sh:reifierShape` + `sh:reificationRequired` pair
-#  to validate RDF 1.2 triple-term annotations on descriptor
-#  triples.
+#  This file carries the shapes that need RDF 1.2 REIFICATION — the
+#  `sh:reifierShape` + `sh:reificationRequired` pair, which validate
+#  triple-term annotations on descriptor triples. It is additive to
+#  iep-shapes.ttl, not a replacement.
+#
+#  ★ THE SPLIT IS ABOUT REIFICATION, NOT ABOUT A VERSION LINE. This header
+#  used to read "the SHACL-1.2 counterpart to cg-shapes.ttl (which stays
+#  SHACL 1.1 for backward compatibility)", and both halves had gone stale:
+#  cg-shapes.ttl no longer exists (renamed to iep-shapes.ttl in the cg:->iep:
+#  rename), and iep-shapes.ttl does not stay at 1.1 — it now uses sh:or,
+#  sh:not, sequence paths and path-valued sh:equals, because those became
+#  enforceable and the rules that needed them had been sitting in inert
+#  sh:sparql blocks.
 #
 #  Referenced by: spec/architecture.md §2.x (RDF 1.2 / SHACL 1.2
 #  compliance).

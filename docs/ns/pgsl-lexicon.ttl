@@ -26,65 +26,238 @@ pgsl:lexicon a pgsl:Lexicon ;
     dct:title "PGSL retrieval lexicon" ;
     rdfs:comment "Synonym, hypernym, meronym and causal relations used to expand query terms during PGSL retrieval." .
 
+pgsl:lexiconScheme a skos:ConceptScheme ;
+    dct:title "PGSL retrieval lexicon concept scheme" ;
+    rdfs:comment "The scheme every term below belongs to. Stated so a reader who dereferences one concept can find the set it is part of, rather than only the relations it happens to sit on." .
+
+# -- Every concept, typed and in the scheme --
+pgslt:ac a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:accident a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:activity a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:air_conditioning a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:angry a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:anxiety a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:app a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:application a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:appointment a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:automobile a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:bad a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:battery a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:big a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:bike a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:brake a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:brakes a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:breakdown a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:building a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:bus a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:business a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:buy a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:car a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:car_component a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:celebration a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:ceremony a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:chair a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:change a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:climate a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:cold a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:comfort a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:communication a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:computer a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:concert a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:cooking a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:cost a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:create a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:damage a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:delay a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:device a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:digital a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:dining a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:discussion a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:dislike a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:doctor a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:door a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:education a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:electrical a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:electronics a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:emotion a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:energy a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:engine a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:engineer a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:entertainment a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:event a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:excited a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:exercise a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:failure a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:feeling a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:fever a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:finish a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:fitness a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:fix a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:flood a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:flu a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:food a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:glass a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:good a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:gps a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:gps_system a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:gym a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:happy a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:headache a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:headlight a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:health a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:health_issue a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:healthcare a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:help a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:hobby a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:hospital a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:house a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:illness a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:injury a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:insomnia a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:instructor a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:issue a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:keyboard a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:laptop a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:late a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:leadership a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:leisure a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:lighting a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:like a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:maintenance a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:malfunction a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:manager a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:mechanical a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:medical a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:meeting a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:music a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:navigation a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:negative a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:not_working a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:office a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:online_service a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:outdoor a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:pain a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:park a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:party a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:phone a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:place a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:positive a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:power a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:powertrain a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:problem a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:professional a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:program a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:radio a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:rain a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:reading a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:recreation a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:remove a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:repair a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:resolved a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:respiratory a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:restaurant a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:roof a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:running a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:sad a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:safety a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:say a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:scheduled a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:school a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:screen a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:seat a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:service a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:small a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:smartphone a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:social a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:software a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:sport a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:start a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:stress a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:stressed a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:swimming a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:symptom a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:tablet a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:teacher a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:technical a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:tire a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:tires a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:traffic a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:transmission a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:transport a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:travel a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:trip a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:truck a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:vacation a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:vehicle a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:website a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:wedding a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:wet a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:wheel a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:window a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:windshield a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:work a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:working a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+pgslt:worried a skos:Concept ; skos:inScheme pgsl:lexiconScheme .
+
 # ── Synonym groups (skos:prefLabel = canonical, skos:altLabel = members) ──
-pgslt:issue a skos:Concept ;
+pgslt:issue
     skos:prefLabel "issue" ;
     skos:altLabel "problem", "issue", "trouble", "difficulty", "malfunction", "defect", "fault", "error", "bug", "failure", "breakdown", "glitch" .
-pgslt:fix a skos:Concept ;
+pgslt:fix
     skos:prefLabel "fix" ;
     skos:altLabel "fix", "repair", "resolve", "solve", "address", "correct", "remedy", "patch", "mend", "restore" .
-pgslt:start a skos:Concept ;
+pgslt:start
     skos:prefLabel "start" ;
     skos:altLabel "start", "begin", "commence", "initiate", "launch", "kick off", "embark" .
-pgslt:finish a skos:Concept ;
+pgslt:finish
     skos:prefLabel "finish" ;
     skos:altLabel "finish", "end", "complete", "conclude", "finalize", "wrap up", "close" .
-pgslt:like a skos:Concept ;
+pgslt:like
     skos:prefLabel "like" ;
     skos:altLabel "like", "enjoy", "love", "prefer", "favor", "appreciate", "fond of" .
-pgslt:dislike a skos:Concept ;
+pgslt:dislike
     skos:prefLabel "dislike" ;
     skos:altLabel "dislike", "hate", "detest", "loathe", "despise", "can't stand" .
-pgslt:buy a skos:Concept ;
+pgslt:buy
     skos:prefLabel "buy" ;
     skos:altLabel "buy", "purchase", "acquire", "get", "obtain", "order", "pick up" .
-pgslt:travel a skos:Concept ;
+pgslt:travel
     skos:prefLabel "travel" ;
     skos:altLabel "travel", "go", "visit", "trip", "journey", "commute", "drive", "fly", "ride" .
-pgslt:say a skos:Concept ;
+pgslt:say
     skos:prefLabel "say" ;
     skos:altLabel "say", "tell", "mention", "state", "explain", "describe", "report", "discuss", "talk about" .
-pgslt:work a skos:Concept ;
+pgslt:work
     skos:prefLabel "work" ;
     skos:altLabel "work", "function", "operate", "run", "perform", "serve" .
-pgslt:not_working a skos:Concept ;
+pgslt:not_working
     skos:prefLabel "not_working" ;
     skos:altLabel "not working", "not functioning", "broken", "malfunctioning", "down", "crashed", "failed", "unresponsive", "out of order" .
-pgslt:cost a skos:Concept ;
+pgslt:cost
     skos:prefLabel "cost" ;
     skos:altLabel "cost", "price", "fee", "charge", "expense", "rate", "amount" .
-pgslt:big a skos:Concept ;
+pgslt:big
     skos:prefLabel "big" ;
     skos:altLabel "big", "large", "huge", "enormous", "massive", "substantial", "significant" .
-pgslt:small a skos:Concept ;
+pgslt:small
     skos:prefLabel "small" ;
     skos:altLabel "small", "little", "tiny", "minor", "slight", "minimal" .
-pgslt:good a skos:Concept ;
+pgslt:good
     skos:prefLabel "good" ;
     skos:altLabel "good", "great", "excellent", "wonderful", "fantastic", "amazing", "positive", "nice", "pleasant" .
-pgslt:bad a skos:Concept ;
+pgslt:bad
     skos:prefLabel "bad" ;
     skos:altLabel "bad", "terrible", "awful", "horrible", "poor", "negative", "disappointing" .
-pgslt:help a skos:Concept ;
+pgslt:help
     skos:prefLabel "help" ;
     skos:altLabel "help", "assist", "support", "aid", "guide" .
-pgslt:change a skos:Concept ;
+pgslt:change
     skos:prefLabel "change" ;
     skos:altLabel "change", "modify", "alter", "adjust", "update", "revise", "amend" .
-pgslt:create a skos:Concept ;
+pgslt:create
     skos:prefLabel "create" ;
     skos:altLabel "create", "make", "build", "develop", "design", "construct", "produce", "generate" .
-pgslt:remove a skos:Concept ;
+pgslt:remove
     skos:prefLabel "remove" ;
     skos:altLabel "remove", "delete", "eliminate", "discard", "drop", "clear", "erase" .
 

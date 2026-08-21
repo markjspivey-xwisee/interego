@@ -78,6 +78,12 @@
 #  what it MUST preserve. AATs are deontic types — they constrain
 #  before any policy rule is consulted.
 
+ieh:Agent a owl:Class ;
+    rdfs:subClassOf prov:SoftwareAgent ;
+    rdfs:label "Agent" ;
+    rdfs:comment "The harness-internal view of an agent: the participant that takes turns, holds memory and acts under an ieh:AbstractAgentType. Cited as a superclass by alignment.ttl (hypragent:Agent rdfs:subClassOf ieh:Agent) and as a skos:closeMatch target by hypragent.ttl, and declared by neither — so both alignments pointed at a class this namespace never defined. Distinct from ieh:AbstractAgentType, which classifies what an agent MAY do; this is the agent itself." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
 ieh:AbstractAgentType a owl:Class ;
     rdfs:subClassOf prov:Plan ;
     rdfs:label "Abstract Agent Type" ;

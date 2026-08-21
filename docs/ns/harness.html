@@ -25,7 +25,7 @@
 </head>
 <body>
   <h1>Interego Harness 1.0 Ontology <span class="mono ns">cgh:</span></h1>
-  <p class="sub">Namespace <code>https://markjspivey-xwisee.github.io/interego/ns/harness#</code> &middot; version 1.0 &middot; 186 terms.</p>
+  <p class="sub">Namespace <code>https://markjspivey-xwisee.github.io/interego/ns/harness#</code> &middot; version 1.0 &middot; 187 terms.</p>
   <p>The harness ontology formalizes the agent framework, policy engine, runtime evaluation, decision functor, and affordance decorator machinery that wraps an LLM and reasons over the PGSL substrate. Each harness operation produces a PROV-O trace; each affordance is exposed as a Hydra Operation; each policy decision is grounded in deontic rules aligned with ODRL. Together with iep: and pgsl:, this ontology provides the third layer of a co-designed substrate-and-harness system.</p>
   <p><strong>Machine-readable form:</strong> <a href="harness.ttl" rel="alternate">harness.ttl</a> (Turtle) — the authoritative source. This page is a human-readable projection of it; each term below is identified by a hash IRI under this base (e.g. <code>cgh:AATRegistry</code> = <code>https://markjspivey-xwisee.github.io/interego/ns/harness#AATRegistry</code>).</p>
   <h2>Terms</h2>
@@ -33,6 +33,7 @@
   <div id="Abstain" class="term"><code>cgh:Abstain</code> <span class="kind">Concept</span><div class="c">The question cannot be answered from available evidence. Return an abstention.</div></div>
   <div id="Abstained" class="term"><code>ieh:Abstained</code> <span class="kind">Individual</span></div>
   <div id="AbstainStrategy" class="term"><code>cgh:AbstainStrategy</code> <span class="kind">Concept</span><div class="c">Take no action. Used when no affordance has sufficient grounding.</div></div>
+  <div id="Agent" class="term"><code>cgh:Agent</code> <span class="kind">Class</span><div class="c">The harness-internal view of an agent: the participant that takes turns, holds memory and acts under an AbstractAgentType. Cited as a superclass by alignment.ttl and as a skos:closeMatch target by hypragent.ttl, and declared by neither — so both alignments pointed at a class this namespace never defined. Distinct from AbstractAgentType, which classifies what an agent MAY do; this is the agent itself.</div></div>
   <div id="AbstractAgentType" class="term"><code>cgh:AbstractAgentType</code> <span class="kind">Class</span><div class="c">A typed bundle of capabilities and deontic constraints that classifies an agent. AATs determine what the agent CAN perceive (canPerceive), what it CAN do (canAct), and what invariants it MUST preserve (mustPreserve). An agent's effective capabilities are the conjunction of its AAT's permissions and any further restrictions imposed by the policy engine. Modeled as a prov:Plan because an AAT specifies the procedure an agent follows.</div></div>
   <div id="Accept" class="term"><code>cgh:Accept</code> <span class="kind">Concept</span><div class="c">Use the answer as-is. Confidence is high enough to commit.</div></div>
   <div id="action" class="term"><code>cgh:action</code> <span class="kind">Datatype property</span><div class="c">The action a policy rule governs (e.g. 'mintAtom', 'publishContext'). Use '*' for any action.</div></div>

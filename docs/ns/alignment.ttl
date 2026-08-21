@@ -348,6 +348,16 @@ align:IntegrationPattern a owl:Class , skos:ConceptScheme ;
         align:FederatedObservationPattern ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/alignment#>.
 
+align:Renamed a skos:Concept , align:MappingRelation ;
+    skos:prefLabel "Renamed" ;
+    skos:definition "The mapping records a pure RENAME: the source and target terms denote the same thing under different IRIs, with no change of meaning, scope or membership. Weaker than owl:equivalentClass in what it claims about reasoning and stronger than skos:closeMatch in what it claims about identity — a rename is a fact about the migration, not an inference licence. Used by the cgh:->ieh: migration record below, and undeclared until the term scan found it." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/alignment#>.
+
+align:MappingRelation a owl:Class ;
+    rdfs:label "Mapping Relation" ;
+    rdfs:comment "The kind of correspondence a mapping asserts between a source and a target term. Values are individuals of this class (align:Renamed) or standard relations named directly (owl:equivalentClass, rdfs:subClassOf, skos:closeMatch, skos:relatedMatch)." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/alignment#>.
+
 align:TracedAnswerPattern a skos:Concept , align:IntegrationPattern ;
     skos:inScheme align:IntegrationPattern ;
     skos:prefLabel "Traced Answer Pattern" ;
