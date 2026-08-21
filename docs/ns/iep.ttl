@@ -113,6 +113,11 @@ iep:AccessControlPolicy a owl:Class ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
 
 iep:DeonticMode a owl:Class ;
+    # ★ CLOSED. The comment below has always said "Permit, Deny, or Duty", and nothing
+    # said it in a form a reader or a validator could check — so a fourth value was
+    # well-formed. Deny overrides Permit when policies compose, which makes an
+    # unrecognised mode a decision with no defined outcome rather than a typo.
+    owl:oneOf ( iep:Permit iep:Deny iep:Duty ) ;
     rdfs:label "Deontic Mode" ;
     rdfs:comment "Modality of a policy rule: Permit, Deny, or Duty. Aligned with ODRL deontic semantics (odrl:Permission / odrl:Prohibition / odrl:Duty) so policies are interoperable with ODRL expressions, without requiring the full ODRL vocabulary as a runtime dependency." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.

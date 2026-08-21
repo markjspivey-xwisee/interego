@@ -701,6 +701,13 @@ interface NodeShape {
   readonly nodeDatatype?: IRI;
   readonly nodeKindConstraint?: IRI;
   /**
+   * sh:message on the NODE shape. PropertyShape has carried one all along; NodeShape did
+   * not, so an author's message on a node-level constraint — sh:closed above all, where the
+   * message is the only place to explain WHY a predicate is refused — was silently dropped
+   * and replaced by the engine's generic text.
+   */
+  readonly message?: string;
+  /**
    * SHACL 1.0 logical constraints (7.2). All four were PARSED AND DROPPED — the engine
    * compiled the shape, ignored these, and reported `conforms: true` for a graph violating
    * an sh:not prohibition. Shape references, resolved through the same byId index as sh:node.
@@ -1017,6 +1024,10 @@ function compileShapes(doc: ParsedDocument): readonly NodeShape[] {
         t.kind === 'iri' && (t.iri === 'http://www.w3.org/2000/01/rdf-schema#Class' || t.iri === SH_SHAPE_CLASS)),
       deactivated,
       severity,
+      message: (() => {
+        const t = getOne(subj, SH_MESSAGE);
+        return t?.kind === 'literal' ? t.value : undefined;
+      })(),
       nodeClass: asIri(getOne(subj, SH_CLASS)),
       nodeDatatype: asIri(getOne(subj, SH_DATATYPE)),
       nodeKindConstraint: asIri(getOne(subj, SH_NODE_KIND)),
@@ -1480,26 +1491,27 @@ function nodeConstraintResults(
   const out: ShaclResult[] = [];
   const term = subjectAsTerm(focus);
   const base = { focusNode: subjectKey(focus), sourceShape: shape.id, severity: shape.severity };
+  const msg = (fallback: string): string => shape.message ?? fallback;
   if (shape.nodeClass !== undefined && !valueHasClass(data, term, shape.nodeClass, subclassClosure)) {
     out.push({ ...base, value: termValue(term),
       constraintComponent: `${SHACL}ClassConstraintComponent`,
-      message: `Focus node is not an instance of sh:class ${shape.nodeClass}` });
+      message: msg(`Focus node is not an instance of sh:class ${shape.nodeClass}`) });
   }
   if (shape.nodeDatatype !== undefined && !matchesDatatype(term, shape.nodeDatatype)) {
     out.push({ ...base, value: termValue(term),
       constraintComponent: `${SHACL}DatatypeConstraintComponent`,
-      message: `Focus node does not match sh:datatype ${shape.nodeDatatype}` });
+      message: msg(`Focus node does not match sh:datatype ${shape.nodeDatatype}`) });
   }
   if (shape.nodeKindConstraint !== undefined && !matchesNodeKind(term, shape.nodeKindConstraint)) {
     out.push({ ...base, value: termValue(term),
       constraintComponent: `${SHACL}NodeKindConstraintComponent`,
-      message: `Focus node does not match sh:nodeKind ${shape.nodeKindConstraint}` });
+      message: msg(`Focus node does not match sh:nodeKind ${shape.nodeKindConstraint}`) });
   }
   if (shape.nodeIn && shape.nodeIn.length > 0
     && !shape.nodeIn.some(allowed => termsEqual(allowed, term))) {
     out.push({ ...base, value: termValue(term),
       constraintComponent: `${SHACL}InConstraintComponent`,
-      message: 'Focus node is not among the values of sh:in' });
+      message: msg('Focus node is not among the values of sh:in') });
   }
   return out;
 }
@@ -2316,9 +2328,9 @@ export function validateAgainstShape(
             // Name rdf:type explicitly: SHACL does not exempt it implicitly, and a shape
             // author who closed a shape without listing it hits this first and is
             // otherwise left guessing.
-            message: predicate === RDF_TYPE
+            message: shape.message ?? (predicate === RDF_TYPE
               ? `Closed shape ${shape.id} does not permit rdf:type — add it to sh:ignoredProperties`
-              : `Closed shape ${shape.id} does not permit predicate ${predicate}`,
+              : `Closed shape ${shape.id} does not permit predicate ${predicate}`),
           });
         }
       }

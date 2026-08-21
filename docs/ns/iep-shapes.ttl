@@ -219,9 +219,17 @@ iep:AgentProvenanceConsistencyShape a sh:NodeShape ;
     # ProvenanceFacet, so the paths are self-selecting. Kept at sh:Warning, unchanged — a
     # ghost-write is a legitimate pattern, and promoting it to Violation while making it
     # enforceable for the first time would be two changes wearing one commit.
+    # ★ prov:wasGeneratedBy / prov:wasAssociatedWith, NOT iep:. The SPARQL below asks for
+    # `iep:wasGeneratedBy` and `iep:agent`, and the serializer emits neither — it writes
+    # `prov:wasGeneratedBy` to a `prov:Activity` carrying `prov:wasAssociatedWith`
+    # (serializer.ts serializeProvenanceFacet). So the query could never have matched, even
+    # on an engine that ran SPARQL: the rule was wrong as well as unenforced, and its own
+    # sh:message named the right predicate while the query named a different one. Writing it
+    # in Core is what surfaced that — the undeclared-term scan flagged iep:agent and
+    # iep:wasGeneratedBy the moment they stopped being hidden inside a string literal.
     sh:property [
         sh:path ( iep:hasFacet iep:assertingAgent iep:agentIdentity ) ;
-        sh:equals ( iep:hasFacet iep:wasGeneratedBy iep:agent ) ;
+        sh:equals ( iep:hasFacet prov:wasGeneratedBy prov:wasAssociatedWith ) ;
         sh:message "AgentFacet.assertingAgent != ProvenanceFacet.wasAssociatedWith — identity fork detected. If intentional (ghost-write), ignore." ;
     ] ;
 
@@ -374,6 +382,68 @@ iep:AuthorshipProofShape a sh:NodeShape ;
         sh:datatype xsd:string ;
         sh:maxCount 1 ;
         sh:message "iep:agentDid is optional but MUST be at most one when present."
+    ] ;
+    sh:property [
+        sh:path iep:contentHash ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:message "iep:contentHash is optional — a proof written before content binding existed cannot acquire one — but MUST be at most one. Its ABSENCE means the proof covers who signed and which record, NOT the bytes, and a reader reports contentBinding 'unbound' rather than 'verified'."
+    ] ;
+
+    # ★ CLOSED, BECAUSE THE SIGNATURE ONLY COVERS THESE. The verifier rebuilds the canonical
+    # payload from a FIXED field set (buildAuthorshipProofBlock in packages/solid/src/client.ts:
+    # scheme, issuer, verificationMethod, signerAddress, created, ownerWebId, descriptorId,
+    # agentDid?, contentHash?, proofValue). Any OTHER predicate inside this block is content
+    # the signature does not cover, sitting exactly where a reader expects signed content —
+    # which is the whole failure mode an authorship proof exists to prevent.
+    #
+    # The block was OPEN. Nothing in this file used sh:closed at all, so a forger could append
+    # arbitrary unsigned triples to a valid, verifying proof and no shape would object.
+    #
+    # Safe to close because the writer emits exactly this set and nothing else: the permitted
+    # list is not a guess about what proofs contain, it is the serializer's own field list.
+    sh:closed true ;
+    sh:ignoredProperties ( rdf:type ) ;
+    sh:message "A iep:SignedAuthorship block MUST carry no predicate beyond the ones the canonical-payload reconstructor reads — anything else is unsigned content inside a signed block." .
+
+# ── An access-control policy must be decidable ───────────────────────────────
+#
+# ★ NO SHAPE TARGETED iep:AccessControlPolicy. Its own comment specifies (a) policyPredicate,
+# (b) governedAction and (c) deonticMode as what a policy CARRIES, with (d) policyDuty
+# optional — a published, numbered contract that nothing checked.
+#
+# Each absence is a decision with no defined answer rather than a cosmetic gap:
+#   - no policyPredicate: the policy applies to everyone, or to nobody, and a reader cannot
+#     tell which.
+#   - no deonticMode: Deny overrides Permit when policies compose, so a mode-less policy has
+#     no composition behaviour at all.
+#   - two deonticModes: the same, twice over.
+
+iep:AccessControlPolicyShape a sh:NodeShape ;
+    sh:targetClass iep:AccessControlPolicy ;
+    sh:property [
+        sh:path iep:policyPredicate ;
+        sh:nodeKind sh:IRI ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "An iep:AccessControlPolicy MUST name exactly one iep:policyPredicate — the SHACL shape a subject's attribute graph must satisfy. With none, the policy applies to everyone or to no one and a reader cannot tell which."
+    ] ;
+    sh:property [
+        sh:path iep:governedAction ;
+        sh:nodeKind sh:IRI ;
+        sh:minCount 1 ;
+        sh:message "An iep:AccessControlPolicy MUST name at least one iep:governedAction. A policy that governs nothing decides nothing."
+    ] ;
+    sh:property [
+        sh:path iep:deonticMode ;
+        sh:in ( iep:Permit iep:Deny iep:Duty ) ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "An iep:AccessControlPolicy MUST carry exactly one iep:deonticMode, one of Permit / Deny / Duty. Deny overrides Permit when policies compose, so an absent or multi-valued mode leaves the composed decision undefined."
+    ] ;
+    sh:property [
+        sh:path iep:policyDuty ;
+        sh:message "iep:policyDuty is optional — obligations attach to Duty mode — and unconstrained in cardinality."
     ] .
 
 # ── An evidence source must be usable, not merely mentioned ──────────────────
