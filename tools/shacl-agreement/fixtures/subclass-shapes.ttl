@@ -1,0 +1,25 @@
+@prefix sh:   <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix ex:   <https://example.org/subclass#> .
+
+#  The sh:class subclass question, isolated.
+#
+#  SHACL defines sh:class in terms of "SHACL instance", which follows
+#  rdfs:subClassOf*. That closure is part of sh:class itself -- it is NOT
+#  the optional RDFS entailment regime. This shape pins the distinction:
+#  a value typed with a SUBCLASS of the named class must satisfy sh:class.
+#
+#  Mirrors the live case: descriptors serialize
+#    iep:hasFacet [ a iep:TemporalFacet ]
+#  against a shape requiring sh:class iep:ContextFacet.
+
+ex:SpecificFacet rdfs:subClassOf ex:GenericFacet .
+
+ex:HolderShape
+  a sh:NodeShape ;
+  sh:targetClass ex:Holder ;
+  sh:property [
+    sh:path     ex:hasFacet ;
+    sh:class    ex:GenericFacet ;
+    sh:minCount 1 ;
+  ] .

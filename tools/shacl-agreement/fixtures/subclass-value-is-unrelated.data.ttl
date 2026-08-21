@@ -1,0 +1,7 @@
+# shape: subclass-shapes.ttl
+# expect: violates
+# why: Guards the guard -- an unrelated type must still fail, or the conforms case above would pass vacuously.
+@prefix ex: <https://example.org/subclass#> .
+
+ex:h1 a ex:Holder ; ex:hasFacet ex:f1 .
+ex:f1 a ex:Unrelated .

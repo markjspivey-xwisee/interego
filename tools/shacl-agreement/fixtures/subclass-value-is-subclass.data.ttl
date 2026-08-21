@@ -1,0 +1,10 @@
+# shape: subclass-shapes.ttl
+# expect: conforms
+# why: sh:class follows rdfs:subClassOf* per the SHACL "SHACL instance" definition, so a value typed with a subclass of the named class satisfies it.
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix ex:   <https://example.org/subclass#> .
+
+ex:SpecificFacet rdfs:subClassOf ex:GenericFacet .
+
+ex:h1 a ex:Holder ; ex:hasFacet ex:f1 .
+ex:f1 a ex:SpecificFacet .

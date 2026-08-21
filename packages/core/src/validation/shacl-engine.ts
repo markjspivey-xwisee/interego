@@ -251,24 +251,30 @@ export interface ShaclReport {
 
 export interface ValidateAgainstShapeOptions {
   /**
-   * RDFS entailment knob — when 'rdfs', the validator treats values
-   * whose declared rdf:type is a subclass of the constraint's sh:class
-   * as conformant. We don't load external class hierarchies, so the
-   * check stays direct-type. Provided for API parity with rdf-validate-
-   * shacl.
-   */
-  /**
-   * - `'none'` (default) — direct-type matching, exactly as SHACL and every other
-   *   processor default. A published shape must mean the same thing here as in pySHACL.
-   * - `'rdfs'` — subclass-aware targeting and sh:class. ENFORCING.
-   * - `'rdfs-observe'` — compute entailment, but downgrade every violation that exists
-   *   ONLY because of it to Info, so `conforms` is unchanged.
+   * What to do BEYOND the subclass closure, which is no longer optional.
    *
-   * ★ The observe mode exists because turning entailment on is not a code change, it is a
-   * FLEET change: shapes begin firing on nodes they never fired on before, so publishes
-   * that pass today start failing — all at once, across every publisher, at deploy time.
-   * Observe first, read what would have been rejected, then enforce. There is no safe way
-   * to discover that list except by running it.
+   * ★ This knob used to gate `rdfs:subClassOf*` itself, with `'none'` as the default and
+   * the claim that direct-type matching was "exactly as SHACL and every other processor
+   * default". That claim was false, and it is now measured rather than argued:
+   * tools/shacl-agreement/fixtures/subclass-value-is-subclass.data.ttl puts a value typed
+   * with a subclass against `sh:class` on the superclass, and pySHACL conforms where we
+   * violated. sh:class and sh:targetClass are specified over "SHACL instance" —
+   * rdf:type plus rdfs:subClassOf* — so that closure is part of the constraints' meaning,
+   * not an entailment regime layered on top. It now always applies.
+   *
+   * - `'none'` (default) and `'rdfs'` — conformant SHACL. Identical today: the closure is
+   *   unconditional, and no inference beyond it (subPropertyOf, domain/range) is
+   *   implemented. `'rdfs'` is kept because callers pass it meaning "be correct", which is
+   *   now simply the default, and because it is where that further inference would land.
+   * - `'rdfs-observe'` — MIGRATION ONLY, and deliberately non-conformant: computes the
+   *   closure, then downgrades every violation that exists only because of it to Info, so
+   *   `conforms` is unchanged.
+   *
+   * ★ The observe mode exists because correcting this is not a code change, it is a FLEET
+   * change: shapes begin firing on nodes they never fired on before, so publishes that
+   * pass today start failing — all at once, across every publisher, at deploy time.
+   * Observe first, read what would have been rejected, then let the default enforce. There
+   * is no safe way to discover that list except by running it.
    */
   readonly entailment?: 'none' | 'rdfs' | 'rdfs-observe';
   /**
@@ -1229,8 +1235,22 @@ export function validateAgainstShape(
   // (Still unresolved: an `owl:imports` in a shapes file pointing at a separate ontology
   // document. Following it needs a fetch, which belongs to the caller that already
   // fetches shape bodies, not to a pure validator. Called out rather than pretended.)
-  const entailmentRequested = options.entailment === 'rdfs' || options.entailment === 'rdfs-observe';
-  const closureResult = entailmentRequested ? buildSubclassClosure(dataDoc, shapeDoc) : undefined;
+  // ★ AND THE CLOSURE IS NOT OPTIONAL. It used to be computed only when the caller asked
+  // for entailment, on the stated grounds that direct-type matching is "exactly as SHACL
+  // and every other processor default". That grounds was measurably false, and
+  // tools/shacl-agreement/fixtures/subclass-value-is-subclass.data.ttl is the measurement:
+  // pySHACL says conforms, we said violates, on a value typed with a subclass of the class
+  // named by sh:class. Our published shape meant two different things to us and to a
+  // conformant reader.
+  //
+  // The error was conflating two separate things. Applying an RDFS entailment regime to the
+  // data graph IS optional (SHACL §1.5). But sh:class and sh:targetClass are not defined in
+  // terms of a regime at all — they are defined over "SHACL instance", which the spec spells
+  // out as rdf:type followed by rdfs:subClassOf*. That closure is part of what those two
+  // constraints MEAN. Making it opt-in did not make us conservative, it made us wrong, and it
+  // left the one-triple bypass described above armed for every caller that took the default.
+  // The relay's publish gate passed 'rdfs' explicitly and was safe; nothing else was.
+  const closureResult = buildSubclassClosure(dataDoc, shapeDoc);
   const subclassClosure = closureResult?.closure;
 
   const shapes = compileShapes(shapeDoc);
@@ -1264,13 +1284,13 @@ export function validateAgainstShape(
       focusNode: 'urn:iep:shacl:subclassClosure',
       sourceShape: 'urn:iep:shacl:subclassClosure',
       constraintComponent: 'urn:iep:shacl:EntailmentIncomplete',
-      severity: options.entailment === 'rdfs' ? 'Violation' : 'Warning',
+      severity: options.entailment === 'rdfs-observe' ? 'Warning' : 'Violation',
       message:
-        'RDFS entailment was requested but the subclass closure exceeded its edge bound, '
-        + 'so it was abandoned and NO subclass reasoning was applied. A result computed '
-        + 'without the entailment that was asked for is not the result that was asked for. '
-        + 'If this graph is not adversarial, reduce its rdfs:subClassOf count or raise the '
-        + 'bound deliberately.',
+        'The subclass closure exceeded its edge bound, so it was abandoned and NO subclass '
+        + 'reasoning was applied. sh:class and sh:targetClass are defined over SHACL '
+        + 'instances (rdfs:subClassOf*), so without it this result is not conformant SHACL '
+        + 'and every class-targeted shape here carries a one-triple bypass. If this graph is '
+        + 'not adversarial, reduce its rdfs:subClassOf count or raise the bound deliberately.',
     });
   }
 

@@ -121,6 +121,23 @@ function patternedTerms(shapeFile) {
 }
 
 /**
+ * Every constraint component a shapes file actually carries.
+ *
+ * The floor below used to be spelled `sh:pattern`, because sh:pattern was the only constraint
+ * any shape here used. That made a legitimately pattern-free shape (subclass-shapes.ttl, which
+ * constrains with sh:class) indistinguishable from a shape that had stopped constraining
+ * anything. The invariant was never "uses sh:pattern" — it is "constrains something a fixture
+ * can disagree about", so that is what this counts.
+ */
+function constraintComponents(shapeFile) {
+  const text = readFileSync(join(FIXTURES, shapeFile), 'utf8');
+  const body = text.split('\n').filter(l => !l.trimStart().startsWith('#')).join('\n');
+  return new Set([...body.matchAll(
+    /\bsh:(pattern|class|datatype|nodeKind|minCount|maxCount|in|hasValue|minInclusive|maxInclusive|minLength|maxLength|languageIn|node|not|or|and|xone|equals|disjoint|lessThan)\b/g,
+  )].map(m => m[1]));
+}
+
+/**
  * The IRI objects a fixture states on one term. Comment lines are stripped first, so a term
  * NAMED in a `# why:` line cannot be mistaken for a term the data actually carries.
  *
@@ -143,9 +160,9 @@ for (const shapeFile of shapeFiles) {
   const terms = patterns.get(shapeFile);
   // A floor first: a scan that matched nothing would report full coverage while checking
   // nothing, which is the failure mode this gate is here to prevent rather than to have.
-  if (terms.size === 0) {
-    console.error(`${shapeFile}: no sh:pattern found. Either the shape stopped constraining `
-      + 'anything or this scan stopped seeing it; both are failures.');
+  if (constraintComponents(shapeFile).size === 0) {
+    console.error(`${shapeFile}: no constraint component found at all. Either the shape stopped `
+      + 'constraining anything or this scan stopped seeing it; both are failures.');
     gaps++;
   }
   for (const [term, pattern] of terms) {

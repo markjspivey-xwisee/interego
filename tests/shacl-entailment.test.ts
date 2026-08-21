@@ -15,9 +15,28 @@
  * vault-ld's authority-class check it is precisely the smuggling attack that file
  * documents in its own comment.
  *
- * ★ Entailment stays OPT-IN and OFF by default, because SHACL's own default is
- * direct-type matching and a published shape must mean the same thing here as in
- * pySHACL. The relay turns it on at its gate deliberately.
+ * ★ AND THE FIX WAS HALF-APPLIED. The closure was implemented but left opt-in, on the
+ * stated grounds that "SHACL's own default is direct-type matching and a published shape
+ * must mean the same thing here as in pySHACL". That is now measured rather than argued,
+ * and it was false: tools/shacl-agreement/fixtures/subclass-value-is-subclass.data.ttl
+ * puts a value typed with a subclass against sh:class on the superclass, and pySHACL
+ * CONFORMS where we violated. Our published shape meant two different things to us and to
+ * a conformant reader — the exact failure that agreement harness exists to catch, on the
+ * one case it had never been given.
+ *
+ * The confusion was between two separate mechanisms. Applying an RDFS entailment regime to
+ * the data graph IS optional (SHACL 1.1 §1.5). But sh:class and sh:targetClass are not
+ * defined via a regime at all — they are defined over "SHACL instance", which is rdf:type
+ * plus rdfs:subClassOf*. That closure is part of what those two constraints MEAN.
+ *
+ * So leaving it opt-in did not leave us conservative, it left the bypass above ARMED for
+ * every caller taking the default — including applications/foxxi-content-intelligence/
+ * src/performance-evidence.ts, which validates a submitter-supplied body against a
+ * submitter-named shape and returns 422 on failure. The submitter controls that data
+ * graph, so the submitter could have shipped the subClassOf triple themselves.
+ *
+ * The closure is now unconditional: 'none' and 'rdfs' are identical and both conformant,
+ * and 'rdfs-observe' remains as a deliberately non-conformant migration mode.
  */
 import { describe, it, expect } from 'vitest';
 import { validateAgainstShape } from '@interego/core';
@@ -36,12 +55,12 @@ const conforms = (data: string, rdfs?: boolean) =>
   validateAgainstShape(P + data, SHAPE, rdfs ? { entailment: 'rdfs' } : {}).conforms;
 
 describe('rdfs entailment', () => {
-  it('is OFF by default, matching SHACL and every other processor', () => {
+  it('applies BY DEFAULT — sh:targetClass is defined over SHACL instances, not direct types', () => {
     expect(conforms(`ex:Sub rdfs:subClassOf ex:Turn .\nex:n a ex:Sub ; ex:allowed "x" ; ex:secret "s" .`))
-      .toBe(true);
+      .toBe(false);
   });
 
-  it('ON, a subclass no longer escapes the shape', () => {
+  it('and asking for it explicitly changes nothing, because it was never optional', () => {
     expect(conforms(`ex:Sub rdfs:subClassOf ex:Turn .\nex:n a ex:Sub ; ex:allowed "x" ; ex:secret "s" .`, true))
       .toBe(false);
   });

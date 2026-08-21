@@ -175,10 +175,25 @@ ex:NoSecrets a sh:NodeShape ; sh:targetSubjectsOf ex:secretPath ;
     expect(validateAgainstShape(withSecret('ex:Turn'), CLOSED).conforms).toBe(false);
   });
 
-  it('…but a SUBCLASS escapes it entirely — a one-triple bypass', () => {
-    // Documenting the hole, not endorsing it. If this ever starts failing because
-    // entailment was added, the denylist below is still required — see the module note.
-    expect(validateAgainstShape(withSecret('ex:Rich'), CLOSED).conforms).toBe(true);
+  it('…and a SUBCLASS no longer escapes it — the one-triple bypass is closed', () => {
+    // This test used to assert `true` and document the hole. It closed when the subclass
+    // closure stopped being opt-in: sh:targetClass is defined over SHACL instances
+    // (rdf:type + rdfs:subClassOf*), so a shape targeting ex:Turn always reached ex:Rich
+    // and we were simply not implementing it. See tests/shacl-entailment.test.ts.
+    //
+    // Per that comment's own instruction, the denylist below is STILL required, and the
+    // two tests after this one are why: it is graph-scoped rather than class-targeted, so
+    // it also catches a secret on a node carrying no rdf:type for any closure to follow.
+    expect(validateAgainstShape(withSecret('ex:Rich'), CLOSED).conforms).toBe(false);
+  });
+
+  it('and the denylist still earns its place: an UNTYPED node has no closure to follow', () => {
+    // The justification for keeping both, made checkable. sh:targetSubjectsOf keys on the
+    // predicate, so it reaches a node the class-targeted shape cannot see at all — no
+    // rdf:type means no subclass path to ex:Turn, however complete the closure is.
+    const untyped = P + `ex:t ex:allowed "fine" ; ex:secretPath "/home/me/.ssh/id_rsa" .\n`;
+    expect(validateAgainstShape(untyped, CLOSED).conforms).toBe(true);
+    expect(validateAgainstShape(untyped, DENYLIST).conforms).toBe(false);
   });
 
   it('the graph-scoped denylist catches what the closed shape missed', () => {
