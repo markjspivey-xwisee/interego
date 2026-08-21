@@ -29,6 +29,13 @@
 <https://markjspivey-xwisee.github.io/interego/ns/pgsl-shapes#>
     a owl:Ontology ;
     owl:versionInfo "1.0" ;
+    # ★ THE IMPORT ITS SIBLING HAS AND THIS FILE DID NOT. Three shapes here constrain values
+    # with `sh:class pgsl:Node`, and pgsl:Node has no direct instances — every real value is
+    # a pgsl:Atom or pgsl:Fragment, both declared `rdfs:subClassOf pgsl:Node` in pgsl.ttl.
+    # sh:class follows that closure, so without the ontology in the graph the closure is
+    # EMPTY and these shapes FALSE-REJECT a correctly serialized lattice. iep-shapes.ttl
+    # already imports its ontology for the same reason; this file was the odd one out.
+    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/pgsl> ;
     dct:title "PGSL 1.0 SHACL Shapes" ;
     dct:description "SHACL validation shapes for PGSL serializations. Enforces atom/fragment invariants, pullback square commutativity, and required PROV-O provenance triples." ;
     dct:license <https://opensource.org/licenses/MIT> ;
@@ -107,12 +114,23 @@ pgsl:FragmentShape a sh:NodeShape ;
         sh:description "Topological depth from the root (optional but at most one)."
     ] ;
 
+    # ★ ONE MESSAGE PER CONSTRAINT. These were a single property shape carrying sh:minCount,
+    # sh:class and ONE sh:message — legal SHACL, and misleading in practice: a value of the
+    # wrong CLASS was reported as "must contain at least one pgsl:item", which is a different
+    # complaint about a different problem. A reader debugging that message would go looking
+    # for a missing item that is not missing. Split so each constraint says what it means.
     sh:property [
         sh:path pgsl:item ;
         sh:minCount 1 ;
-        sh:class pgsl:Node ;
         sh:name "items" ;
         sh:message "A Fragment must contain at least one pgsl:item."
+    ] ;
+
+    sh:property [
+        sh:path pgsl:item ;
+        sh:class pgsl:Node ;
+        sh:name "items" ;
+        sh:message "Every pgsl:item must be a pgsl:Node — an Atom or a Fragment. This relies on the rdfs:subClassOf closure from pgsl.ttl, which is why this file imports it."
     ] ;
 
     sh:property [
