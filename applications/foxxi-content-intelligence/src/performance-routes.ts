@@ -66,11 +66,24 @@ import type {
 // Resolves the prefixes used in @type / facets / affordances so a
 // consumer doesn't have to memorise our IRIs. The Foxxi vertical's vocab
 // is dereferenceable at /ns/foxxi.
+// ★ THESE FOUR WERE BOUND TO NAMESPACES THAT DO NOT EXIST, and the damage was not the 404.
+// `…/ns/iep/v1#`, `…/ns/pgsl/v1#`, `…/ns/ac/v1#` and `…/ns/amta/v1#` all answer 404 on the
+// live host, but a prefix is only a spelling — the real defect is that every iep: term in a
+// Foxxi response EXPANDED to a different IRI than the same term everywhere else in the
+// system. `iep:hasFacet` here meant `…/ns/iep/v1#hasFacet`; the relay, the core serializer
+// and every published shape mean `…/ns/iep#hasFacet`. Two disjoint vocabularies that look
+// identical in the source: a consumer merging Foxxi's linked data with anyone else's would
+// unify nothing, and a SHACL shape targeting iep:ContextDescriptor would never match a Foxxi
+// descriptor that says it is one.
+//
+// Nothing needed inventing to fix it. applications/agent-collective — the sibling vertical
+// this file composes with — already binds ns/iep#, ns/pgsl# and ns/amta# correctly, so Foxxi
+// was the lone outlier. All four below are verified 200.
 const JSONLD_CONTEXT = {
-  iep: 'https://markjspivey-xwisee.github.io/interego/ns/iep/v1#',
-  pgsl: 'https://markjspivey-xwisee.github.io/interego/ns/pgsl/v1#',
-  ac: 'https://markjspivey-xwisee.github.io/interego/ns/ac/v1#',
-  amta: 'https://markjspivey-xwisee.github.io/interego/ns/amta/v1#',
+  iep: 'https://markjspivey-xwisee.github.io/interego/ns/iep#',
+  pgsl: 'https://markjspivey-xwisee.github.io/interego/ns/pgsl#',
+  ac: 'https://markjspivey-xwisee.github.io/interego/applications/agent-collective/ac#',
+  amta: 'https://markjspivey-xwisee.github.io/interego/ns/amta#',
   prov: 'http://www.w3.org/ns/prov#',
   dct: 'http://purl.org/dc/terms/',
   hydra: 'http://www.w3.org/ns/hydra/core#',

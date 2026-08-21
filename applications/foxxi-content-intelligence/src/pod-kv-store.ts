@@ -165,7 +165,7 @@ function buildGraph(args: {
   const lines: string[] = [];
   lines.push(`@prefix dct:   <http://purl.org/dc/terms/> .`);
   lines.push(`@prefix prov:  <http://www.w3.org/ns/prov#> .`);
-  lines.push(`@prefix pgsl:  <https://markjspivey-xwisee.github.io/interego/ns/pgsl/v1#> .`);
+  lines.push(`@prefix pgsl:  <https://markjspivey-xwisee.github.io/interego/ns/pgsl#> .`);
   lines.push(`@prefix iep:    <https://markjspivey-xwisee.github.io/interego/ns/iep#> .`);
   lines.push(`@prefix foxxi: <${FOXXI}> .`);
   lines.push(`@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .`);

@@ -305,7 +305,7 @@ export async function publishAuthoringPolicy(args: {
   const graphIri = `urn:graph:foxxi:authoring-policy:${seed}` as IRI;
 
   const ttl = `@prefix fxs: <${FOXXI_NS}scorm#> .
-@prefix abac: <https://markjspivey-xwisee.github.io/interego/abac#> .
+@prefix abac: <https://markjspivey-xwisee.github.io/interego/ns/abac#> .
 @prefix dct: <http://purl.org/dc/terms/> .
 <${iesc(graphIri)}> a abac:Policy ;
   dct:title "Foxxi authoring-tool / standard policy" ;

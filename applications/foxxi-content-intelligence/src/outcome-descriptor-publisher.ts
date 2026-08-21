@@ -64,8 +64,14 @@ import { FOXXI_NS } from './foxxi-vocab.js';
 // /ns/foxxi on the bridge and is dereferenceable.
 
 const FOXXI = FOXXI_NS;
-const AC = 'https://markjspivey-xwisee.github.io/interego/ns/ac/v1#';
-const AMTA = 'https://markjspivey-xwisee.github.io/interego/ns/amta/v1#';
+// ★ These were `…/ns/ac/v1#` and `…/ns/amta/v1#`, neither of which exists — and unlike a
+// display prefix, these compose into IRIs that get WRITTEN TO PODS. Every ac:/amta: term
+// Foxxi persisted named a vocabulary nobody else uses and nothing resolves, so a reader
+// following its nose from a stored descriptor hit a 404 and a reader merging it with
+// agent-collective's own records unified nothing. Both below are verified 200, and both are
+// the spelling applications/agent-collective already writes.
+const AC = 'https://markjspivey-xwisee.github.io/interego/applications/agent-collective/ac#';
+const AMTA = 'https://markjspivey-xwisee.github.io/interego/ns/amta#';
 
 export const FOXXI_TYPES = {
   Outcome:            `${FOXXI}Outcome` as IRI,
@@ -193,7 +199,7 @@ function buildEntityGraph(args: {
   const lines: string[] = [];
   lines.push(`@prefix dct:   <http://purl.org/dc/terms/> .`);
   lines.push(`@prefix prov:  <http://www.w3.org/ns/prov#> .`);
-  lines.push(`@prefix pgsl:  <https://markjspivey-xwisee.github.io/interego/ns/pgsl/v1#> .`);
+  lines.push(`@prefix pgsl:  <https://markjspivey-xwisee.github.io/interego/ns/pgsl#> .`);
   lines.push(`@prefix foxxi: <${FOXXI}> .`);
   lines.push(`@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .`);
   lines.push(``);

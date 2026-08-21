@@ -14,7 +14,7 @@
  * reference. This test pins that the path keeps existing.
  */
 import { describe, it, expect } from 'vitest';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -40,10 +40,12 @@ const DECLARED: ReadonlyArray<{
   // one-entry allowlist does not catch the namespace nobody remembered; every new
   // Pages-base namespace constant is registered here at the moment it is written.
   //
-  // NOT converted to whole-tree discovery on purpose: applications/foxxi-content-
-  // intelligence declares ns/iep/v1#, ns/pgsl/v1#, ns/ac/v1# and ns/amta/v1#, none of
-  // which are published. Auto-discovery would fail this gate on a different vertical's
-  // defect and take master red for something this change does not fix.
+  // This paragraph used to end "NOT converted to whole-tree discovery on purpose:
+  // applications/foxxi-content-intelligence declares ns/iep/v1#, ns/pgsl/v1#, ns/ac/v1# and
+  // ns/amta/v1#, none of which are published. Auto-discovery would fail this gate on a
+  // different vertical's defect and take master red for something this change does not fix."
+  // That was the right call at the time and it is no longer true — those four are fixed, so
+  // discovery now runs below and this list is the belt to its braces, not a substitute.
   {
     source: 'applications/_shared/aggregate-privacy/index.ts',
     constant: 'AGGREGATE_NS',
@@ -66,6 +68,77 @@ const AGG_PUBLISHED_TERMS = [
   'SignedBudgetAuditLog', 'CommitteeAuthorization', 'EncryptedShareDistribution',
   'CommitteeReconstructionAttestation', 'cohort', 'participant', 'policy', 'bundleJson',
 ] as const;
+
+/**
+ * ★ AND NOW THE WHOLE TREE, which the note above said could not be done yet.
+ *
+ * It was right about the obstacle and the obstacle is gone. The four namespaces it named —
+ * foxxi's ns/iep/v1#, ns/pgsl/v1#, ns/ac/v1# and ns/amta/v1# — were not merely unpublished:
+ * binding iep: to `…/ns/iep/v1#` meant every iep: term Foxxi emitted, in JSON-LD responses
+ * AND in Turtle written to pods, expanded to a different IRI than the same term everywhere
+ * else in the system. Two disjoint vocabularies that look identical in the source. Fixed at
+ * the four call sites, plus `interego/abac#` (published at ns/abac#, per the ontology's own
+ * vann:preferredNamespaceUri), and discovery now finds 28 namespaces with nothing missing.
+ *
+ * The hand-list above stays: it pins the exact constant and its regex, which catches a
+ * namespace that is renamed rather than merely unpublished. This adds the coverage a list
+ * cannot have — the namespace nobody remembered to register.
+ *
+ * WebID-style fragments are excluded, and that is a type distinction rather than an
+ * allowlist: `…/orgb/carol#me` names an individual, not a vocabulary, so "is there a
+ * namespace document at this path" is the wrong question to ask of it.
+ */
+const WEBID_FRAGMENTS = ['me', 'this', 'agent', 'i'] as const;
+
+function discoveredNamespaces(): Map<string, string[]> {
+  const found = new Map<string, string[]>();
+  const walk = (dir: string): string[] => {
+    if (!existsSync(dir)) return [];
+    const out: string[] = [];
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === 'node_modules' || entry.name === 'dist') continue;
+      const p = join(dir, entry.name);
+      if (entry.isDirectory()) out.push(...walk(p));
+      else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.d.ts')) out.push(p);
+    }
+    return out;
+  };
+  for (const top of ['packages', 'applications', 'deploy', 'mcp-server', 'integrations']) {
+    for (const file of walk(join(REPO, top))) {
+      const src = readFileSync(file, 'utf8');
+      const pattern = new RegExp(
+        `${PAGES_BASE.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}([A-Za-z0-9._/-]+)#([A-Za-z0-9_-]*)`, 'g');
+      for (const m of src.matchAll(pattern)) {
+        const path = m[1]!;
+        if ((WEBID_FRAGMENTS as readonly string[]).includes(m[2] ?? '')) continue;
+        const rel = file.slice(REPO.length + 1);
+        const seen = found.get(path);
+        if (seen) { if (!seen.includes(rel)) seen.push(rel); } else found.set(path, [rel]);
+      }
+    }
+  }
+  return found;
+}
+
+describe('every namespace referenced anywhere in the tree resolves', () => {
+  const discovered = discoveredNamespaces();
+
+  it('discovers namespaces at all', () => {
+    // A scan that matched nothing would report full coverage while checking nothing —
+    // the same vacuous pass the DECLARED regexes were once guilty of.
+    expect(discovered.size).toBeGreaterThan(20);
+  });
+
+  it('every one of them has a published document', () => {
+    const missing = [...discovered.entries()]
+      .filter(([path]) => !PAGES_CANDIDATES.some(ext => existsSync(join(REPO, 'docs', path + ext))))
+      .map(([path, files]) => `${path}  ← ${files.slice(0, 3).join(', ')}`);
+    expect(missing, 'namespaces referenced in code with nothing published at their path.\n'
+      + 'Publish the bytes at the declared path, or bind the code to the namespace that '
+      + 'already exists — never rename the IRI to match a file.\n  ' + missing.join('\n  '))
+      .toEqual([]);
+  });
+});
 
 describe('every declared shape namespace resolves to a published file', () => {
   for (const { source, constant, re } of DECLARED) {
