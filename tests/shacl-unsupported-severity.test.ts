@@ -98,15 +98,27 @@ ex:PersonShape a sh:NodeShape ;
     expect(validateAgainstShape(PERSON_DATA, off).fullyChecked).toBe(true);
   });
 
-  it('a blank-node sh:path drops the whole property shape, and says so', () => {
-    // The most dangerous of the three, because the omission is invisible in the shape.
+  it('a complex sh:path COMPILES now, so it no longer drops the property shape', () => {
+    // ★ Inverted from "drops the whole property shape, and says so". Complex paths are
+    // implemented; what remains reportable is a path the engine cannot compile at all.
     const pathShape = `${PREFIXES}
 ex:PersonShape a sh:NodeShape ;
   sh:targetClass ex:Person ;
   sh:property [ sh:path [ sh:inversePath ex:knows ] ; sh:minCount 1 ] .
 `;
-    expect(validateAgainstShape(PERSON_DATA, pathShape).fullyChecked).toBe(false);
-    expect(validateAgainstShape(OTHER_DATA, pathShape).fullyChecked).toBe(true);
+    expect(validateAgainstShape(PERSON_DATA, pathShape).fullyChecked).toBe(true);
+    // And it enforces: nobody knows ex:alice, so the inverse path yields no value node.
+    expect(validateAgainstShape(PERSON_DATA, pathShape).conforms).toBe(false);
+  });
+
+  it('but a path it CANNOT compile is still reported', () => {
+    // An empty alternative list is syntactically a path and semantically nothing.
+    const broken = `${PREFIXES}
+ex:PersonShape a sh:NodeShape ;
+  sh:targetClass ex:Person ;
+  sh:property [ sh:path [ sh:alternativePath ( ) ] ; sh:minCount 1 ] .
+`;
+    expect(validateAgainstShape(PERSON_DATA, broken).fullyChecked).toBe(false);
   });
 });
 
@@ -248,13 +260,25 @@ ex:PersonShape a sh:NodeShape ;
     ['sh:or', 'sh:or ( [ sh:property [ sh:path ex:aaa ; sh:minCount 1 ] ] [ sh:property [ sh:path ex:bbb ; sh:minCount 1 ] ] )'],
     ['sh:and', 'sh:and ( [ sh:property [ sh:path ex:aaa ; sh:minCount 1 ] ] )'],
     ['sh:xone', 'sh:xone ( [ sh:property [ sh:path ex:aaa ; sh:minCount 1 ] ] [ sh:property [ sh:path ex:bbb ; sh:minCount 1 ] ] )'],
-  ])('%s on a LIVE shape clears fullyChecked', (name, clause) => {
+  ])('%s is ENFORCED, and therefore no longer reported as unsupported', (name, clause) => {
+    // ★ THIS BLOCK USED TO ASSERT THE OPPOSITE — that each of these cleared `fullyChecked`
+    // because the engine could not run it. All four are implemented now, so the assertion
+    // inverts: a construct that IS enforced must stop appearing in the unsupported sweep, or
+    // the report tells a caller a check was skipped when it ran.
     const report = validateAgainstShape(violatesTheShape, logical(clause));
-    expect(report.fullyChecked).toBe(false);
-    expect(report.results.some(r => r.message.includes(name))).toBe(true);
+    expect(report.fullyChecked, `${name} is implemented; it must not clear fullyChecked`).toBe(true);
+    expect(report.results.some(r => r.message.includes('not implemented')), `${name}`).toBe(false);
   });
 
-  it('a logical constraint that selected no focus node leaves fullyChecked alone', () => {
+  it('and sh:not actually refuses the graph it prohibits', () => {
+    // Reporting is not enforcing, and the previous version of this file could not tell the
+    // difference: it checked only that the construct was MENTIONED.
+    const report = validateAgainstShape(violatesTheShape,
+      logical('sh:not [ sh:property [ sh:path ex:ssn ; sh:minCount 1 ] ]'));
+    expect(report.conforms).toBe(false);
+  });
+
+  it('a shape that selected no focus node still leaves fullyChecked alone', () => {
     const report = validateAgainstShape(OTHER_DATA, logical('sh:not [ sh:property [ sh:path ex:ssn ; sh:minCount 1 ] ]'));
     expect(report.fullyChecked).toBe(true);
   });

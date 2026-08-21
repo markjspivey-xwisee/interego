@@ -39,6 +39,7 @@ import {
   type ParsedSubject,
   type ParsedTerm,
   type ParsedTripleTerm,
+  type ParsedLiteral,
 } from '../rdf/turtle-parser.js';
 import { escapeTurtleLiteral } from '../rdf/escape.js';
 import type { IRI } from '../model/types.js';
@@ -52,7 +53,33 @@ const SH_PROPERTY_SHAPE = `${SHACL}PropertyShape` as IRI;
 const SH_TARGET_CLASS = `${SHACL}targetClass` as IRI;
 const SH_TARGET_NODE = `${SHACL}targetNode` as IRI;
 const SH_PROPERTY = `${SHACL}property` as IRI;
+// SHACL 1.2 additions.
+// SHACL 1.2 target mechanisms (3.1.3.3 / 3.1.3.6 / 3.1.3.7).
+const SH_BY_TYPES = `${SHACL}ByTypes` as IRI;
+const SH_TARGET_WHERE = `${SHACL}targetWhere` as IRI;
+const SH_SHAPE = `${SHACL}shape` as IRI;
+const SH_SHAPE_CLASS = `${SHACL}ShapeClass` as IRI;
+const SH_SOME_VALUE = `${SHACL}someValue` as IRI;
+const SH_MEMBER_SHAPE = `${SHACL}memberShape` as IRI;
+const SH_MIN_LIST_LENGTH = `${SHACL}minListLength` as IRI;
+const SH_MAX_LIST_LENGTH = `${SHACL}maxListLength` as IRI;
+const SH_UNIQUE_MEMBERS = `${SHACL}uniqueMembers` as IRI;
+const SH_SUBSET_OF = `${SHACL}subsetOf` as IRI;
+const SH_ROOT_CLASS = `${SHACL}rootClass` as IRI;
+const SH_SINGLE_LINE = `${SHACL}singleLine` as IRI;
+const SH_NOT = `${SHACL}not` as IRI;
+const SH_AND = `${SHACL}and` as IRI;
+const SH_OR = `${SHACL}or` as IRI;
+const SH_XONE = `${SHACL}xone` as IRI;
 const SH_PATH = `${SHACL}path` as IRI;
+// SHACL property paths (§2.3). Carried into 1.2 unchanged, and unimplemented here until now:
+// compilePropertyShape returned null for any non-IRI sh:path, so the WHOLE property shape
+// vanished — every constraint on it silently enforcing nothing.
+const SH_INVERSE_PATH = `${SHACL}inversePath` as IRI;
+const SH_ALTERNATIVE_PATH = `${SHACL}alternativePath` as IRI;
+const SH_ZERO_OR_MORE_PATH = `${SHACL}zeroOrMorePath` as IRI;
+const SH_ONE_OR_MORE_PATH = `${SHACL}oneOrMorePath` as IRI;
+const SH_ZERO_OR_ONE_PATH = `${SHACL}zeroOrOnePath` as IRI;
 const SH_MIN_COUNT = `${SHACL}minCount` as IRI;
 const SH_MAX_COUNT = `${SHACL}maxCount` as IRI;
 const SH_DATATYPE = `${SHACL}datatype` as IRI;
@@ -115,8 +142,17 @@ const SH_IGNORED_PROPERTIES = `${SHACL}ignoredProperties` as IRI;
 const IMPLEMENTED_SHACL_PREDICATES: ReadonlySet<string> = new Set<string>([
   // targets
   SH_TARGET_CLASS, SH_TARGET_NODE, SH_TARGET_SUBJECTS_OF, SH_TARGET_OBJECTS_OF,
+  // property paths (SHACL 2.3) — these are path SYNTAX, not constraints, and reporting
+  // them as unimplemented after implementing them would be its own false claim.
+  SH_INVERSE_PATH, SH_ALTERNATIVE_PATH, SH_ZERO_OR_MORE_PATH, SH_ONE_OR_MORE_PATH,
+  SH_ZERO_OR_ONE_PATH,
   // structure
   SH_PROPERTY, SH_PATH, SH_NODE, SH_QUALIFIED_VALUE_SHAPE,
+  SH_NOT, SH_AND, SH_OR, SH_XONE,
+  // SHACL 1.2 constraint components
+  SH_SOME_VALUE, SH_MEMBER_SHAPE, SH_MIN_LIST_LENGTH, SH_MAX_LIST_LENGTH,
+  SH_UNIQUE_MEMBERS, SH_SUBSET_OF, SH_ROOT_CLASS, SH_SINGLE_LINE,
+  SH_TARGET_WHERE, SH_SHAPE,
   SH_REIFIER_SHAPE, SH_REIFICATION_REQUIRED,
   SH_QUALIFIED_MIN_COUNT, SH_QUALIFIED_MAX_COUNT,
   SH_CLOSED, SH_IGNORED_PROPERTIES, SH_DEACTIVATED, SH_SEVERITY, SH_MESSAGE,
@@ -179,6 +215,221 @@ const RDF_NIL   = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#nil'   as IRI;
  * Returns the empty array on rdf:nil OR on a malformed list (e.g.
  * a bnode head with no rdf:first). Cycle-safe: bounded to 1024 hops.
  */
+/**
+ * A compiled SHACL property path (§2.3).
+ *
+ * ★ ONLY PREDICATE PATHS EXISTED BEFORE THIS. `compilePropertyShape` did `asIri(sh:path)`
+ * and returned null for anything else, so a shape with a sequence, inverse, alternative or
+ * transitive path was DROPPED ENTIRELY — not just its path, the whole property shape and
+ * every constraint hanging off it. Measured: four such shapes, all inert, all silent to
+ * `conforms`. That is SHACL 1.0, not 1.2; it has been missing since the beginning.
+ */
+export type CompiledPath =
+  | { readonly kind: 'predicate'; readonly iri: IRI }
+  | { readonly kind: 'sequence'; readonly steps: readonly CompiledPath[] }
+  | { readonly kind: 'inverse'; readonly of: CompiledPath }
+  | { readonly kind: 'alternative'; readonly options: readonly CompiledPath[] }
+  | { readonly kind: 'zeroOrMore'; readonly of: CompiledPath }
+  | { readonly kind: 'oneOrMore'; readonly of: CompiledPath }
+  | { readonly kind: 'zeroOrOne'; readonly of: CompiledPath };
+
+/** Depth bound on path nesting, mirroring the parser's own guard against hostile input. */
+const MAX_PATH_DEPTH = 12;
+
+/**
+ * Compile a `sh:path` value. Returns undefined for a path this engine cannot express, so the
+ * caller can REPORT it rather than silently dropping the shape.
+ */
+function compilePath(doc: ParsedDocument, term: ParsedTerm | undefined, depth = 0): CompiledPath | undefined {
+  if (!term || depth > MAX_PATH_DEPTH) return undefined;
+  if (term.kind === 'iri') return { kind: 'predicate', iri: term.iri };
+  if (term.kind !== 'bnode') return undefined;
+  const subj = subjectFor(doc, term);
+  if (!subj) return undefined;
+
+  const one = (pred: IRI): CompiledPath | undefined => {
+    const t = subj.properties.get(pred)?.[0];
+    return t ? compilePath(doc, t, depth + 1) : undefined;
+  };
+
+  const inv = one(SH_INVERSE_PATH);
+  if (inv) return { kind: 'inverse', of: inv };
+  const zom = one(SH_ZERO_OR_MORE_PATH);
+  if (zom) return { kind: 'zeroOrMore', of: zom };
+  const oom = one(SH_ONE_OR_MORE_PATH);
+  if (oom) return { kind: 'oneOrMore', of: oom };
+  const zoo = one(SH_ZERO_OR_ONE_PATH);
+  if (zoo) return { kind: 'zeroOrOne', of: zoo };
+
+  const altHead = subj.properties.get(SH_ALTERNATIVE_PATH)?.[0];
+  if (altHead) {
+    const members = walkRdfList(doc, altHead)
+      .map(m => compilePath(doc, m, depth + 1))
+      .filter((x): x is CompiledPath => x !== undefined);
+    // An alternative of one member is legal but degenerate; of none, unusable.
+    return members.length > 0 ? { kind: 'alternative', options: members } : undefined;
+  }
+
+  // A bare blank node carrying rdf:first is a SEQUENCE path — the list form, `( ex:a ex:b )`.
+  if (subj.properties.has(RDF_FIRST)) {
+    const steps = walkRdfList(doc, term)
+      .map(m => compilePath(doc, m, depth + 1))
+      .filter((x): x is CompiledPath => x !== undefined);
+    return steps.length > 0 ? { kind: 'sequence', steps } : undefined;
+  }
+  return undefined;
+}
+
+/** A stable, readable rendering for `sh:resultPath` and for messages. */
+function renderPath(p: CompiledPath): string {
+  switch (p.kind) {
+    case 'predicate': return p.iri;
+    case 'sequence': return `(${p.steps.map(renderPath).join(' / ')})`;
+    case 'inverse': return `^${renderPath(p.of)}`;
+    case 'alternative': return `(${p.options.map(renderPath).join(' | ')})`;
+    case 'zeroOrMore': return `${renderPath(p.of)}*`;
+    case 'oneOrMore': return `${renderPath(p.of)}+`;
+    case 'zeroOrOne': return `${renderPath(p.of)}?`;
+  }
+}
+
+/**
+ * Reverse index: object term key -> subjects that point at it, per predicate.
+ *
+ * ★ Memoised per document for the reason `subjectFor` and `reifiersOf` already are. An
+ * inverse path evaluated by scanning every subject is a scan per focus node per path step,
+ * and this engine has shipped that accidental quadratic twice.
+ */
+const INVERSE_INDEX = new WeakMap<ParsedDocument, Map<string, ParsedSubject[]>>();
+function inverseSubjects(data: ParsedDocument, pred: IRI, object: ParsedTerm): readonly ParsedSubject[] {
+  let idx = INVERSE_INDEX.get(data);
+  if (idx === undefined) {
+    idx = new Map<string, ParsedSubject[]>();
+    for (const s of data.subjects) {
+      for (const [p, terms] of s.properties) {
+        for (const t of terms) {
+          const k = JSON.stringify([p, termValue(t), t.kind]);
+          const bucket = idx.get(k);
+          if (bucket) bucket.push(s); else idx.set(k, [s]);
+        }
+      }
+    }
+    INVERSE_INDEX.set(data, idx);
+  }
+  return idx.get(JSON.stringify([pred, termValue(object), object.kind])) ?? [];
+}
+
+/** The term a subject denotes, so a path step can move from a subject back to a node. */
+/**
+ * A focus node that may be a LITERAL.
+ *
+ * ★ ParsedSubject cannot express one — its `subject` is `IRI | { bnode }` — so
+ * `sh:targetObjectsOf` over a literal-valued predicate selected NOTHING, and every
+ * node-level constraint on such a shape (sh:datatype above all, which is the whole point of
+ * targeting objects) was skipped in silence. Carrying the term alongside keeps the change
+ * contained: everything downstream still sees a ParsedSubject with an empty property map,
+ * and only `subjectAsTerm`/`subjectKey` need to know.
+ */
+interface FocusNode extends ParsedSubject {
+  readonly literalTerm?: ParsedLiteral;
+}
+
+function subjectAsTerm(s: ParsedSubject): ParsedTerm {
+  const lit = (s as FocusNode).literalTerm;
+  if (lit) return lit;
+  return typeof s.subject === 'string'
+    ? { kind: 'iri', iri: s.subject }
+    : { kind: 'bnode', id: s.subject.bnode };
+}
+
+/**
+ * The value nodes a path yields from one focus node (§2.3). Set-valued and duplicate-free:
+ * SHACL speaks of the SET of value nodes, and a transitive path over a cycle would otherwise
+ * not terminate.
+ */
+function evaluatePath(data: ParsedDocument, focus: ParsedTerm, path: CompiledPath): ParsedTerm[] {
+  // JSON, not a delimiter: a literal value can contain any separator character.
+  const key = (t: ParsedTerm): string => JSON.stringify([t.kind, termValue(t)]);
+  const step = (from: ParsedTerm, p: CompiledPath): ParsedTerm[] => {
+    switch (p.kind) {
+      case 'predicate': {
+        const subj = subjectFor(data, from);
+        return [...(subj?.properties.get(p.iri) ?? [])];
+      }
+      case 'inverse': {
+        // Only a predicate under an inverse can use the index; a nested complex path is
+        // evaluated by asking every node whether it reaches `from`.
+        if (p.of.kind === 'predicate') {
+          return inverseSubjects(data, p.of.iri, from).map(subjectAsTerm);
+        }
+        const out: ParsedTerm[] = [];
+        for (const s of data.subjects) {
+          const t = subjectAsTerm(s);
+          if (evaluatePath(data, t, p.of).some(v => key(v) === key(from))) out.push(t);
+        }
+        return out;
+      }
+      case 'sequence': {
+        let current: ParsedTerm[] = [from];
+        for (const s of p.steps) {
+          const next: ParsedTerm[] = [];
+          const seen = new Set<string>();
+          for (const c of current) {
+            for (const v of step(c, s)) {
+              if (seen.has(key(v))) continue;
+              seen.add(key(v));
+              next.push(v);
+            }
+          }
+          current = next;
+        }
+        return current;
+      }
+      case 'alternative': {
+        const out: ParsedTerm[] = [];
+        const seen = new Set<string>();
+        for (const opt of p.options) {
+          for (const v of step(from, opt)) {
+            if (seen.has(key(v))) continue;
+            seen.add(key(v));
+            out.push(v);
+          }
+        }
+        return out;
+      }
+      case 'zeroOrOne': {
+        const out: ParsedTerm[] = [from];
+        const seen = new Set<string>([key(from)]);
+        for (const v of step(from, p.of)) {
+          if (!seen.has(key(v))) { seen.add(key(v)); out.push(v); }
+        }
+        return out;
+      }
+      case 'zeroOrMore':
+      case 'oneOrMore': {
+        // Breadth-first closure with a visited set: cycles terminate rather than hang.
+        const seen = new Set<string>();
+        const out: ParsedTerm[] = [];
+        const queue: ParsedTerm[] = [from];
+        const includeSelf = p.kind === 'zeroOrMore';
+        if (includeSelf) { seen.add(key(from)); out.push(from); }
+        let guard = 0;
+        while (queue.length > 0 && guard++ < 10000) {
+          const cur = queue.shift()!;
+          for (const v of step(cur, p.of)) {
+            if (seen.has(key(v))) continue;
+            seen.add(key(v));
+            out.push(v);
+            queue.push(v);
+          }
+        }
+        return out;
+      }
+    }
+  };
+  return step(focus, path);
+}
+
 function walkRdfList(
   doc: ParsedDocument,
   head: ParsedTerm,
@@ -223,7 +474,12 @@ const SH_BLANK_NODE_OR_LITERAL = `${SHACL}BlankNodeOrLiteral` as IRI;
 const SH_IRI_OR_LITERAL = `${SHACL}IRIOrLiteral` as IRI;
 const SH_TRIPLE_TERM = `${SHACL}TripleTerm` as IRI;
 
-export type ShaclSeverity = 'Violation' | 'Warning' | 'Info';
+/**
+ * SHACL 1.2 §3.1.4 widens the ladder to five. sh:Trace and sh:Debug sit BELOW sh:Info and,
+ * like it, are outside the default conformance-disallow set — they produce results without
+ * making `conforms` false. sh:Violation remains the default when sh:severity is unstated.
+ */
+export type ShaclSeverity = 'Violation' | 'Warning' | 'Info' | 'Debug' | 'Trace';
 
 export interface ShaclResult {
   readonly focusNode: string;
@@ -306,12 +562,16 @@ export interface ValidateAgainstShapeOptions {
 
 interface PropertyShape {
   readonly id: string;
+  /** Rendering for sh:resultPath and messages; the predicate IRI for a simple path. */
   readonly path: IRI;
+  /** The compiled path actually evaluated. A predicate path is the common case. */
+  readonly pathExpr: CompiledPath;
   readonly minCount?: number;
   readonly maxCount?: number;
-  readonly datatype?: IRI;
-  readonly nodeKind?: IRI;
-  readonly clazz?: IRI;
+  /** SHACL 1.2: an IRI OR a list, meaning a union of choices. */
+  readonly datatypes?: readonly IRI[];
+  readonly nodeKinds?: readonly IRI[];
+  readonly classes?: readonly IRI[];
   readonly pattern?: string;
   readonly hasValue?: ParsedTerm;
   readonly inValues?: readonly ParsedTerm[];
@@ -329,10 +589,10 @@ interface PropertyShape {
   // ── property pairs: compare this path's values against another path's on the SAME
   //    focus node. Needed because a constraint like "validFrom lessThan validUntil"
   //    cannot be expressed on either property alone. ──
-  readonly equals?: IRI;
-  readonly disjoint?: IRI;
-  readonly lessThan?: IRI;
-  readonly lessThanOrEquals?: IRI;
+  readonly equals?: CompiledPath;
+  readonly disjoint?: CompiledPath;
+  readonly lessThan?: CompiledPath;
+  readonly lessThanOrEquals?: CompiledPath;
   /** sh:deactivated on a property shape. */
   readonly deactivated?: boolean;
   /** sh:severity on a property shape, overriding the node shape's. */
@@ -346,6 +606,30 @@ interface PropertyShape {
    * than duplicated — which is what makes shapes composable across layers at all.
    */
   readonly node?: string;
+  /**
+   * SHACL §7.2 logical constraints, on a PROPERTY shape.
+   *
+   * ★ These were implemented on node shapes only, so `sh:property [ sh:path ex:p ;
+   * sh:not [ … ] ]` was inert — measured. In a property shape they apply to each VALUE
+   * NODE, not to the focus node, which is the form every real prohibition uses.
+   */
+  readonly notShapes?: readonly string[];
+  readonly andShapes?: readonly string[];
+  readonly orShapes?: readonly string[];
+  readonly xoneShapes?: readonly string[];
+  /** SHACL 1.2 §7.8.3 — at least one value node must conform to this shape. */
+  readonly someValue?: string;
+  /** SHACL 1.2 §7.5 list constraints. Each value node must BE a SHACL list. */
+  readonly memberShape?: string;
+  readonly minListLength?: number;
+  readonly maxListLength?: number;
+  readonly uniqueMembers?: boolean;
+  /** SHACL 1.2 §7.9 — every value node must also be reachable by this path. */
+  readonly subsetOf?: CompiledPath;
+  /** SHACL 1.2 §7.1 — the value node must be a class rooted at one of these. */
+  readonly rootClasses?: readonly IRI[];
+  /** SHACL 1.2 §7.4.4 (AT RISK) — the value's lexical form carries no line break. */
+  readonly singleLine?: boolean;
   /** SHACL 1.2 §7.8.5 — the node shape every reifier of this triple must conform to. */
   readonly reifierShape?: string;
   /** SHACL 1.2 §7.8.5 — when true, the triple must carry at least one reifier. */
@@ -373,9 +657,25 @@ interface NodeShape {
    * ones you did not, which is the whole point when a shape exists to keep sensitive
    * fields off a published graph.
    */
-  readonly closed: boolean;
+  readonly closed: boolean | 'byTypes';
   /** sh:targetSubjectsOf — every subject that has this predicate. */
   readonly targetSubjectsOf: readonly IRI[];
+  /**
+   * SHACL 1.2 §3.1.3.6 — every node CONFORMING to this shape is a focus node. Unlike every
+   * other target, it is evaluated rather than looked up.
+   */
+  readonly targetWhere?: string;
+  /**
+   * SHACL 1.2 §3.1.3.7 — `?n sh:shape <thisShape>` in the DATA graph. The only target
+   * mechanism read from the data rather than the shapes graph: the data nominates which
+   * shapes apply to it.
+   */
+  readonly isShapeTargetable?: boolean;
+  /**
+   * SHACL 1.2 §3.1.3.3 — a shape that is ALSO an rdfs:Class (or an sh:ShapeClass) targets
+   * its own SHACL instances, without any sh:targetClass triple.
+   */
+  readonly implicitClassTarget?: boolean;
   /** sh:targetObjectsOf — every node appearing as the OBJECT of this predicate. */
   readonly targetObjectsOf: readonly IRI[];
   /**
@@ -400,6 +700,15 @@ interface NodeShape {
   readonly nodeClass?: IRI;
   readonly nodeDatatype?: IRI;
   readonly nodeKindConstraint?: IRI;
+  /**
+   * SHACL 1.0 logical constraints (7.2). All four were PARSED AND DROPPED — the engine
+   * compiled the shape, ignored these, and reported `conforms: true` for a graph violating
+   * an sh:not prohibition. Shape references, resolved through the same byId index as sh:node.
+   */
+  readonly notShapes?: readonly string[];
+  readonly andShapes?: readonly string[];
+  readonly orShapes?: readonly string[];
+  readonly xoneShapes?: readonly string[];
   readonly nodeIn?: readonly ParsedTerm[];
   /** sh:severity — defaults to Violation. Unread before, so a shape declaring
    *  sh:Warning had its findings counted as conformance failures. */
@@ -428,6 +737,8 @@ function getAll(subj: ParsedSubject, pred: IRI): readonly ParsedTerm[] {
 }
 
 function subjectKey(subj: ParsedSubject): string {
+  const lit = (subj as FocusNode).literalTerm;
+  if (lit) return JSON.stringify(['literal', lit.value, lit.datatype ?? '', lit.language ?? '']);
   return typeof subj.subject === 'string' ? subj.subject : `_:${subj.subject.bnode}`;
 }
 
@@ -437,8 +748,13 @@ function isShape(subj: ParsedSubject): boolean {
 }
 
 function compilePropertyShape(doc: ParsedDocument, subj: ParsedSubject): PropertyShape | null {
-  const path = asIri(getOne(subj, SH_PATH));
-  if (!path) return null;
+  // ★ A non-IRI sh:path used to return null here, dropping the entire property shape and
+  // every constraint on it. Complex paths now compile; only a path this engine genuinely
+  // cannot express still returns null, and the sweep reports that case.
+  const pathTerm = getOne(subj, SH_PATH);
+  const pathExpr = compilePath(doc, pathTerm);
+  if (!pathExpr) return null;
+  const path = renderPath(pathExpr) as IRI;
   const minCountLit = asLiteral(getOne(subj, SH_MIN_COUNT));
   const maxCountLit = asLiteral(getOne(subj, SH_MAX_COUNT));
   // sh:in resolution: every object under sh:in is either
@@ -455,11 +771,12 @@ function compilePropertyShape(doc: ParsedDocument, subj: ParsedSubject): Propert
   return {
     id: subjectKey(subj),
     path,
+    pathExpr,
     minCount: minCountLit !== undefined ? parseInt(minCountLit, 10) : undefined,
     maxCount: maxCountLit !== undefined ? parseInt(maxCountLit, 10) : undefined,
-    datatype: asIri(getOne(subj, SH_DATATYPE)),
-    nodeKind: asIri(getOne(subj, SH_NODE_KIND)),
-    clazz: asIri(getOne(subj, SH_CLASS)),
+    datatypes: iriOrList(doc, getOne(subj, SH_DATATYPE)),
+    nodeKinds: iriOrList(doc, getOne(subj, SH_NODE_KIND)),
+    classes: iriOrList(doc, getOne(subj, SH_CLASS)),
     pattern: asLiteral(getOne(subj, SH_PATTERN)),
     hasValue: getOne(subj, SH_HAS_VALUE),
     inValues,
@@ -484,6 +801,25 @@ function compilePropertyShape(doc: ParsedDocument, subj: ParsedSubject): Propert
       return t?.kind === 'literal' && t.value === 'true' ? true : undefined;
     })(),
     node: refKey(getOne(subj, SH_NODE)),
+    notShapes: getAll(subj, SH_NOT).map(refKey).filter((k): k is string => k !== undefined),
+    andShapes: listShapeRefs(doc, subj, SH_AND),
+    orShapes: listShapeRefs(doc, subj, SH_OR),
+    xoneShapes: listShapeRefs(doc, subj, SH_XONE),
+    someValue: refKey(getOne(subj, SH_SOME_VALUE)),
+    memberShape: refKey(getOne(subj, SH_MEMBER_SHAPE)),
+    minListLength: num(getOne(subj, SH_MIN_LIST_LENGTH)),
+    maxListLength: num(getOne(subj, SH_MAX_LIST_LENGTH)),
+    uniqueMembers: (() => {
+      const t = getOne(subj, SH_UNIQUE_MEMBERS);
+      return t?.kind === 'literal' && t.value === 'true' ? true : undefined;
+    })(),
+    // sh:subsetOf takes a PATH, not merely a predicate IRI (§7.9).
+    subsetOf: compilePath(doc, getOne(subj, SH_SUBSET_OF)),
+    rootClasses: iriOrList(doc, getOne(subj, SH_ROOT_CLASS)),
+    singleLine: (() => {
+      const t = getOne(subj, SH_SINGLE_LINE);
+      return t?.kind === 'literal' && t.value === 'true' ? true : undefined;
+    })(),
     reifierShape: refKey(getOne(subj, SH_REIFIER_SHAPE)),
     reificationRequired: (() => {
       // Only `true` carries meaning. SHACL 1.2 §7.8.5 defines behaviour for true and says
@@ -495,10 +831,10 @@ function compilePropertyShape(doc: ParsedDocument, subj: ParsedSubject): Propert
     qualifiedValueShape: refKey(getOne(subj, SH_QUALIFIED_VALUE_SHAPE)),
     qualifiedMinCount: num(getOne(subj, SH_QUALIFIED_MIN_COUNT)),
     qualifiedMaxCount: num(getOne(subj, SH_QUALIFIED_MAX_COUNT)),
-    equals: asIri(getOne(subj, SH_EQUALS)),
-    disjoint: asIri(getOne(subj, SH_DISJOINT)),
-    lessThan: asIri(getOne(subj, SH_LESS_THAN)),
-    lessThanOrEquals: asIri(getOne(subj, SH_LESS_THAN_OR_EQUALS)),
+    equals: compilePath(doc, getOne(subj, SH_EQUALS)),
+    disjoint: compilePath(doc, getOne(subj, SH_DISJOINT)),
+    lessThan: compilePath(doc, getOne(subj, SH_LESS_THAN)),
+    lessThanOrEquals: compilePath(doc, getOne(subj, SH_LESS_THAN_OR_EQUALS)),
     deactivated: (() => {
       const t = getOne(subj, SH_DEACTIVATED);
       return t?.kind === 'literal' && t.value === 'true' ? true : undefined;
@@ -507,9 +843,53 @@ function compilePropertyShape(doc: ParsedDocument, subj: ParsedSubject): Propert
       const iri = asIri(getOne(subj, SH_SEVERITY));
       return iri === `${SHACL}Warning` ? 'Warning'
         : iri === `${SHACL}Info` ? 'Info'
+        : iri === `${SHACL}Debug` ? 'Debug'
+        : iri === `${SHACL}Trace` ? 'Trace'
         : iri === `${SHACL}Violation` ? 'Violation' : undefined;
     })(),
   };
+}
+
+/**
+ * SHACL 1.2: sh:class, sh:datatype, sh:nodeKind and sh:rootClass may take EITHER an IRI or a
+ * SHACL list, "indicating a union of choices".
+ *
+ * ★ The three pre-existing ones read the value with `asIri`, which yields undefined for a
+ * list — so `sh:datatype ( xsd:integer xsd:string )` compiled to NO datatype constraint and
+ * accepted every term. Silently: a list is a legal value, so nothing was unsupported to
+ * report. That is the worst variety of the gap this engine keeps finding, and the only one
+ * of the three that was not merely missing but actively misread.
+ *
+ * Distinguishing "a list" from "a class that happens to be an rdf:List" is unambiguous in
+ * practice and in the spec's own wording: the list form is a BLANK NODE list.
+ */
+function iriOrList(doc: ParsedDocument, term: ParsedTerm | undefined): readonly IRI[] | undefined {
+  if (!term) return undefined;
+  if (term.kind === 'iri') return [term.iri];
+  if (term.kind !== 'bnode') return undefined;
+  const members = walkRdfList(doc, term)
+    .map(t => (t.kind === 'iri' ? t.iri : undefined))
+    .filter((x): x is IRI => x !== undefined);
+  return members.length > 0 ? members : undefined;
+}
+
+/** The members of a SHACL list value node, or undefined when it is not a well-formed list. */
+function listMembers(doc: ParsedDocument, v: ParsedTerm): readonly ParsedTerm[] | undefined {
+  if (v.kind === 'iri' && v.iri === RDF_NIL) return [];
+  if (v.kind !== 'bnode') return undefined;
+  const subj = subjectFor(doc, v);
+  // A bnode with no rdf:first is not a list; §7.5 makes that a violation, not a pass.
+  if (!subj?.properties.has(RDF_FIRST)) return undefined;
+  return walkRdfList(doc, v);
+}
+
+/** The shape refs in an rdf:List value of `pred` (sh:and / sh:or / sh:xone). */
+function listShapeRefs(doc: ParsedDocument, subj: ParsedSubject, pred: IRI): readonly string[] {
+  const head = subj.properties.get(pred)?.[0];
+  if (!head) return [];
+  return walkRdfList(doc, head)
+    .map(refKey)
+    .filter((k): k is string => k !== undefined);
 }
 
 /** Key a shape reference the same way subjectKey does, so IRIs and bnodes both resolve. */
@@ -541,11 +921,18 @@ function compileShapes(doc: ParsedDocument): readonly NodeShape[] {
   // requiring rdf:type silently discarded them.
   const inlineShapeKeys = new Set<string>();
   for (const subj of doc.subjects) {
-    for (const pred of [SH_NODE, SH_QUALIFIED_VALUE_SHAPE, SH_REIFIER_SHAPE]) {
+    for (const pred of [SH_NODE, SH_QUALIFIED_VALUE_SHAPE, SH_REIFIER_SHAPE, SH_NOT,
+      SH_SOME_VALUE, SH_MEMBER_SHAPE, SH_TARGET_WHERE]) {
       for (const t of subj.properties.get(pred) ?? []) {
         const k = refKey(t);
         if (k !== undefined) inlineShapeKeys.add(k);
       }
+    }
+    // sh:and / sh:or / sh:xone hold their shapes inside an rdf:List, so the members are not
+    // direct objects of the predicate and the loop above cannot see them. An inline
+    // `sh:or ( [ … ] [ … ] )` — the idiomatic spelling — would otherwise never compile.
+    for (const pred of [SH_AND, SH_OR, SH_XONE]) {
+      for (const k of listShapeRefs(doc, subj, pred)) inlineShapeKeys.add(k);
     }
   }
 
@@ -586,7 +973,12 @@ function compileShapes(doc: ParsedDocument): readonly NodeShape[] {
     // silently closing a shape its author did not close would reject valid data across
     // the whole federation.
     const closedTerm = getOne(subj, SH_CLOSED);
-    const closed = closedTerm?.kind === 'literal' && closedTerm.value === 'true';
+    // SHACL 1.2 §7.6.3 widens sh:closed from a boolean to boolean-or-sh:ByTypes. ByTypes
+    // closes the node against the properties declared for ITS OWN rdf:types, rather than
+    // against the properties of the shape that happens to carry sh:closed.
+    const closed: boolean | 'byTypes' = closedTerm?.kind === 'iri' && closedTerm.iri === SH_BY_TYPES
+      ? 'byTypes'
+      : closedTerm?.kind === 'literal' && closedTerm.value === 'true';
     const ignoredProperties: IRI[] = [];
     for (const head of getAll(subj, SH_IGNORED_PROPERTIES)) {
       for (const v of walkRdfList(doc, head)) {
@@ -605,7 +997,9 @@ function compileShapes(doc: ParsedDocument): readonly NodeShape[] {
     for (const head of getAll(subj, SH_IN)) for (const v of walkRdfList(doc, head)) nodeIn.push(v);
     const sevIri = asIri(getOne(subj, SH_SEVERITY));
     const severity: ShaclSeverity = sevIri === `${SHACL}Warning` ? 'Warning'
-      : sevIri === `${SHACL}Info` ? 'Info' : 'Violation';
+      : sevIri === `${SHACL}Info` ? 'Info'
+        : sevIri === `${SHACL}Debug` ? 'Debug'
+          : sevIri === `${SHACL}Trace` ? 'Trace' : 'Violation';
 
     nodeShapes.push({
       id: subjectKey(subj),
@@ -616,11 +1010,21 @@ function compileShapes(doc: ParsedDocument): readonly NodeShape[] {
       ignoredProperties,
       targetSubjectsOf,
       targetObjectsOf,
+      targetWhere: refKey(getOne(subj, SH_TARGET_WHERE)),
+      isShapeTargetable: typeof subjectKey(subj) === 'string',
+      // Implicit class target: the shape is itself declared a class.
+      implicitClassTarget: (subj.properties.get(RDF_TYPE) ?? []).some(t =>
+        t.kind === 'iri' && (t.iri === 'http://www.w3.org/2000/01/rdf-schema#Class' || t.iri === SH_SHAPE_CLASS)),
       deactivated,
       severity,
       nodeClass: asIri(getOne(subj, SH_CLASS)),
       nodeDatatype: asIri(getOne(subj, SH_DATATYPE)),
       nodeKindConstraint: asIri(getOne(subj, SH_NODE_KIND)),
+      // sh:not takes shapes directly (repeatable); the other three take ONE rdf:List each.
+      notShapes: getAll(subj, SH_NOT).map(refKey).filter((k): k is string => k !== undefined),
+      andShapes: listShapeRefs(doc, subj, SH_AND),
+      orShapes: listShapeRefs(doc, subj, SH_OR),
+      xoneShapes: listShapeRefs(doc, subj, SH_XONE),
       ...(nodeIn.length > 0 ? { nodeIn } : {}),
     });
   }
@@ -696,6 +1100,8 @@ function findFocusNodes(
   data: ParsedDocument,
   shape: NodeShape,
   subclassClosure?: ReadonlyMap<IRI, ReadonlySet<IRI>>,
+  /** Needed only by sh:targetWhere, which selects by CONFORMANCE rather than by lookup. */
+  byId?: ReadonlyMap<string, NodeShape>,
 ): readonly ParsedSubject[] {
   const matched: ParsedSubject[] = [];
   const seen = new Set<string>();
@@ -710,17 +1116,69 @@ function findFocusNodes(
       }
     }
   }
+  // ★ sh:targetNode NAMES A NODE. It does not ask whether the data mentions it.
+  //
+  // This searched `data.subjects` and selected nothing when the named node was absent or
+  // appeared only as an object — so `sh:targetNode ex:s` + `sh:minCount 1` CONFORMED on a
+  // graph where ex:s had nothing at all, which is the precise case the constraint exists to
+  // refuse. Measured on all three shapes of the problem: subject (correctly failed), object
+  // only (passed), absent entirely (passed).
+  //
+  // SHACL §2.1.3.2 is unconditional: "The node targets of a shape are the set of nodes
+  // that are values of sh:targetNode." An unmentioned node is a focus node with no
+  // properties, and every constraint judges it on that basis.
   for (const node of shape.targetNodes) {
+    const existing = data.subjects.find(s => typeof s.subject === 'string' && s.subject === node);
+    const focus: ParsedSubject = existing ?? { subject: node, properties: new Map() };
+    const key = subjectKey(focus);
+    if (!seen.has(key)) {
+      seen.add(key);
+      matched.push(focus);
+    }
+  }
+  // ── SHACL 1.2 §3.1.3.7: sh:shape, the only target read from the DATA graph ──
+  // `?n sh:shape <thisShape>` in the data nominates this shape for ?n. It inverts the usual
+  // direction of control, so an engine that only scans the shapes graph never sees it.
+  if (shape.isShapeTargetable) {
     for (const s of data.subjects) {
-      if (typeof s.subject === 'string' && s.subject === node) {
+      for (const t of s.properties.get(SH_SHAPE) ?? []) {
+        if (t.kind !== 'iri' || t.iri !== shape.id) continue;
         const key = subjectKey(s);
-        if (!seen.has(key)) {
+        if (!seen.has(key)) { seen.add(key); matched.push(s); }
+      }
+    }
+  }
+
+  // ── SHACL 1.2 §3.1.3.3: implicit class targets ──
+  // A shape that is ALSO a class targets its own SHACL instances, with no sh:targetClass.
+  if (shape.implicitClassTarget) {
+    const accepted = subclassClosure?.get(shape.id as IRI);
+    for (const s of data.subjects) {
+      const isInstance = (s.properties.get(RDF_TYPE) ?? []).some(t =>
+        t.kind === 'iri' && (t.iri === shape.id || (accepted?.has(t.iri) ?? false)));
+      if (!isInstance) continue;
+      const key = subjectKey(s);
+      if (!seen.has(key)) { seen.add(key); matched.push(s); }
+    }
+  }
+
+  // ── SHACL 1.2 §3.1.3.6: sh:targetWhere ──
+  // Every node CONFORMING to the given shape is a focus node. Evaluated, not looked up —
+  // which is why this one needs the shape index.
+  if (shape.targetWhere !== undefined && byId) {
+    const where = byId.get(shape.targetWhere);
+    if (where) {
+      for (const s of data.subjects) {
+        const key = subjectKey(s);
+        if (seen.has(key)) continue;
+        if (conformsToShape(data, s, where, byId, 0, subclassClosure)) {
           seen.add(key);
           matched.push(s);
         }
       }
     }
   }
+
   // sh:targetSubjectsOf — every subject carrying the named predicate.
   // ★ Three of this repo's own published shapes target this way. Unimplemented, they
   // selected NO focus nodes and therefore passed vacuously: a published contract that
@@ -737,17 +1195,30 @@ function findFocusNodes(
   // with no outgoing statements has nothing to validate.
   if (shape.targetObjectsOf.length > 0) {
     const wanted = new Set<string>();
+    // ★ EVERY object, not only those that are also subjects. This collected keys and then
+    // matched them against data.subjects, so an object appearing nowhere as a subject — the
+    // ordinary case for a leaf node, and the ONLY case for a literal — was never selected.
+    // The subject-shaped ones keep their real property map; the rest become focus nodes with
+    // none, which is exactly what they are.
+    const objects: ParsedTerm[] = [];
     for (const pred of shape.targetObjectsOf) {
       for (const s of data.subjects) {
-        for (const t of s.properties.get(pred) ?? []) {
-          if (t.kind === 'iri') wanted.add(t.iri);
-          else if (t.kind === 'bnode') wanted.add(`_:${t.id}`);
-        }
+        for (const t of s.properties.get(pred) ?? []) objects.push(t);
       }
     }
-    for (const s of data.subjects) {
-      const key = subjectKey(s);
-      if (wanted.has(key) && !seen.has(key)) { seen.add(key); matched.push(s); }
+    void wanted;
+    for (const t of objects) {
+      if (t.kind === 'triple') continue;   // a triple term is not a node of the graph
+      const existing = t.kind === 'iri'
+        ? data.subjects.find(s => typeof s.subject === 'string' && s.subject === t.iri)
+        : t.kind === 'bnode'
+          ? data.subjects.find(s => typeof s.subject === 'object' && s.subject.bnode === t.id)
+          : undefined;
+      const focus: FocusNode = existing ?? (t.kind === 'literal'
+        ? { subject: 'urn:iep:shacl:literalFocus' as IRI, properties: new Map(), literalTerm: t }
+        : { subject: t.kind === 'iri' ? t.iri : { bnode: t.id }, properties: new Map() });
+      const key = subjectKey(focus);
+      if (!seen.has(key)) { seen.add(key); matched.push(focus); }
     }
   }
   return matched;
@@ -921,6 +1392,145 @@ function valueHasClass(
  * SHACL (a linked list, a tree), and the honest failure for an unbounded one is to stop
  * rather than hang. Only Violations count — a Warning is not non-conformance.
  */
+/**
+ * The four logical constraints (SHACL 7.2), as violations against one focus node.
+ *
+ * ★ ALL FOUR WERE PARSED AND DROPPED. A graph violating an `sh:not` prohibition came back
+ * `conforms: true` — the shape compiled, the constraint evaporated, and nothing said so
+ * until the allowlist sweep started reporting them. Reporting is not enforcing.
+ *
+ * Shared by the top-level loop and by conformsToShape so nesting behaves identically:
+ * `sh:not [ sh:or ( … ) ]` has to mean the same thing at depth 3 as at depth 0.
+ */
+function logicalResults(
+  data: ParsedDocument,
+  focus: ParsedSubject,
+  shape: NodeShape,
+  byId: ReadonlyMap<string, NodeShape>,
+  depth: number,
+  subclassClosure?: ReadonlyMap<IRI, ReadonlySet<IRI>>,
+): ShaclResult[] {
+  const out: ShaclResult[] = [];
+  const sev = shape.severity;
+  const focusNode = subjectKey(focus);
+  const holds = (ref: string): boolean => {
+    const target = byId.get(ref);
+    // An unresolvable reference cannot be satisfied OR refuted; treat it as vacuously true
+    // so a dangling ref does not silently reject a graph. The sweep reports the shape.
+    if (!target) return true;
+    return conformsToShape(data, focus, target, byId, depth + 1, subclassClosure);
+  };
+  const fail = (component: string, message: string): void => {
+    out.push({ focusNode, sourceShape: shape.id, constraintComponent: `${SHACL}${component}`,
+      severity: sev, message });
+  };
+
+  for (const ref of shape.notShapes ?? []) {
+    if (holds(ref)) fail('NotConstraintComponent', `Focus node conforms to sh:not ${ref}, and must not`);
+  }
+  const and = shape.andShapes ?? [];
+  if (and.length > 0 && !and.every(holds)) {
+    fail('AndConstraintComponent', 'Focus node does not conform to every shape in sh:and');
+  }
+  const or = shape.orShapes ?? [];
+  if (or.length > 0 && !or.some(holds)) {
+    fail('OrConstraintComponent', 'Focus node conforms to no shape in sh:or');
+  }
+  const xone = shape.xoneShapes ?? [];
+  if (xone.length > 0) {
+    const n = xone.filter(holds).length;
+    if (n !== 1) {
+      fail('XoneConstraintComponent',
+        `Focus node conforms to ${n} shapes in sh:xone; exactly one is required`);
+    }
+  }
+  return out;
+}
+
+/**
+ * Does a TERM satisfy a node shape? Needed where a value node may be a literal.
+ *
+ * `conformsToShape` takes a ParsedSubject, so it cannot judge a literal at all — and the
+ * pre-existing sh:node code fell back to `target.propertyShapes.length === 0`, i.e. "a
+ * literal satisfies any shape that has no property shapes". That is right for property
+ * constraints (a literal has no outgoing edges) and WRONG for node-level ones: a
+ * `sh:memberShape [ sh:datatype xsd:integer ]` over a list of literals is exactly the
+ * common case, and it would have accepted every member.
+ */
+/**
+ * The node-level constraints — sh:class, sh:datatype, sh:nodeKind, sh:in stated directly on
+ * a node shape rather than inside sh:property — as results against one focus node.
+ *
+ * ★ NONE OF THESE WERE EVALUATED AT THE TOP LEVEL. They existed only inside
+ * `conformsToShape`, which runs for NESTED shapes (sh:node, sh:qualifiedValueShape). So
+ * `ex:S a sh:NodeShape ; sh:targetSubjectsOf ex:p ; sh:class ex:Good .` enforced nothing at
+ * all — measured inert for all four. A shape reachable only as a target got its property
+ * shapes checked and its own node constraints skipped, which is the harder half of the
+ * failure to notice: the shape visibly DID something, just not the thing it also said.
+ *
+ * `sh:in` compounded it — the value was compiled into `nodeIn` and then read by nothing,
+ * at any level.
+ */
+function nodeConstraintResults(
+  data: ParsedDocument,
+  focus: ParsedSubject,
+  shape: NodeShape,
+  subclassClosure?: ReadonlyMap<IRI, ReadonlySet<IRI>>,
+): ShaclResult[] {
+  const out: ShaclResult[] = [];
+  const term = subjectAsTerm(focus);
+  const base = { focusNode: subjectKey(focus), sourceShape: shape.id, severity: shape.severity };
+  if (shape.nodeClass !== undefined && !valueHasClass(data, term, shape.nodeClass, subclassClosure)) {
+    out.push({ ...base, value: termValue(term),
+      constraintComponent: `${SHACL}ClassConstraintComponent`,
+      message: `Focus node is not an instance of sh:class ${shape.nodeClass}` });
+  }
+  if (shape.nodeDatatype !== undefined && !matchesDatatype(term, shape.nodeDatatype)) {
+    out.push({ ...base, value: termValue(term),
+      constraintComponent: `${SHACL}DatatypeConstraintComponent`,
+      message: `Focus node does not match sh:datatype ${shape.nodeDatatype}` });
+  }
+  if (shape.nodeKindConstraint !== undefined && !matchesNodeKind(term, shape.nodeKindConstraint)) {
+    out.push({ ...base, value: termValue(term),
+      constraintComponent: `${SHACL}NodeKindConstraintComponent`,
+      message: `Focus node does not match sh:nodeKind ${shape.nodeKindConstraint}` });
+  }
+  if (shape.nodeIn && shape.nodeIn.length > 0
+    && !shape.nodeIn.some(allowed => termsEqual(allowed, term))) {
+    out.push({ ...base, value: termValue(term),
+      constraintComponent: `${SHACL}InConstraintComponent`,
+      message: 'Focus node is not among the values of sh:in' });
+  }
+  return out;
+}
+
+function nodeSatisfiesShape(
+  data: ParsedDocument,
+  term: ParsedTerm,
+  target: NodeShape,
+  byId: ReadonlyMap<string, NodeShape>,
+  depth: number,
+  subclassClosure?: ReadonlyMap<IRI, ReadonlySet<IRI>>,
+): boolean {
+  if (target.deactivated) return true;
+  if (target.nodeKindConstraint && !matchesNodeKind(term, target.nodeKindConstraint)) return false;
+  if (target.nodeDatatype && !matchesDatatype(term, target.nodeDatatype)) return false;
+  if (target.nodeClass !== undefined && !valueHasClass(data, term, target.nodeClass, subclassClosure)) {
+    return false;
+  }
+  // ★ sh:in at node level was compiled and read by nothing, which made the idiomatic
+  // prohibition `sh:not [ sh:in ( … ) ]` vacuously TRUE for every term — it reported that
+  // every value conformed to the inner shape, so sh:not refused everything.
+  if (target.nodeIn && target.nodeIn.length > 0
+    && !target.nodeIn.some(allowed => termsEqual(allowed, term))) {
+    return false;
+  }
+  const sub = subjectFor(data, term);
+  if (sub) return conformsToShape(data, sub, target, byId, depth + 1, subclassClosure);
+  // No description: it can satisfy only a shape that demands no properties of it.
+  return target.propertyShapes.length === 0;
+}
+
 function conformsToShape(
   data: ParsedDocument,
   subj: ParsedSubject,
@@ -939,11 +1549,12 @@ function conformsToShape(
       && (t.iri === target.nodeClass || accepted?.has(t.iri)))) return false;
   }
   if (target.nodeKindConstraint !== undefined) {
-    const asTerm: ParsedTerm = typeof subj.subject === 'string'
-      ? { kind: 'iri', iri: subj.subject }
-      : { kind: 'bnode', id: subj.subject.bnode };
-    if (!matchesNodeKind(asTerm, target.nodeKindConstraint)) return false;
+    if (!matchesNodeKind(subjectAsTerm(subj), target.nodeKindConstraint)) return false;
   }
+  if (target.nodeDatatype !== undefined
+    && !matchesDatatype(subjectAsTerm(subj), target.nodeDatatype)) return false;
+  if (target.nodeIn && target.nodeIn.length > 0
+    && !target.nodeIn.some(allowed => termsEqual(allowed, subjectAsTerm(subj)))) return false;
   // ★ THE CLOSURE HAS TO GO DOWN WITH THE RECURSION. This dropped `subclassClosure` — the
   // 7th argument — while the SAME function used it two blocks up for `target.nodeClass`.
   // So a nested shape's node-level sh:class was subclass-aware and its property-level
@@ -955,12 +1566,20 @@ function conformsToShape(
   // asymmetry this engine already warns about for targeting: fire on the subclass, then
   // refuse it for failing an exact-parent sh:class. Both call sites already pass the
   // closure in correctly; it died here.
+  if (logicalResults(data, subj, target, byId, depth, subclassClosure)
+    .some(r => r.severity === 'Violation')) return false;
   for (const ps of target.propertyShapes) {
     if (evaluatePropertyShape(data, subj, target, ps, byId, depth + 1, subclassClosure)
       .some(r => r.severity === 'Violation')) return false;
   }
   if (target.closed) {
-    const declared = new Set<string>(target.propertyShapes.map(x => x.path));
+    // ★ Only a PREDICATE path contributes a permitted predicate. A sequence or inverse
+    // path does not name one, and adding its rendering ("(a / b)") to the permitted set
+    // would let no predicate through while looking like it had.
+    const declared = new Set<string>(
+      target.propertyShapes
+        .filter(x => x.pathExpr.kind === 'predicate')
+        .map(x => (x.pathExpr as { kind: 'predicate'; iri: IRI }).iri));
     for (const ign of target.ignoredProperties) declared.add(ign);
     for (const predicate of subj.properties.keys()) {
       if (!declared.has(predicate)) return false;
@@ -1007,7 +1626,12 @@ function evaluatePropertyShape(
   // A property shape its author deactivated must produce nothing, exactly as for a
   // deactivated node shape.
   if (ps.deactivated) return results;
-  const values = focus.properties.get(ps.path) ?? [];
+  // ★ evaluatePath, not a map lookup: a sequence/inverse/alternative/transitive path has no
+  // single predicate to look up, and looking one up is how those shapes came to enforce
+  // nothing.
+  const values = ps.pathExpr.kind === 'predicate'
+    ? [...(focus.properties.get(ps.pathExpr.iri) ?? [])]
+    : evaluatePath(data, subjectAsTerm(focus), ps.pathExpr);
   const focusNode = subjectKey(focus);
   /**
    * Severity for THIS shape: the property shape's own, else the node shape's.
@@ -1028,7 +1652,13 @@ function evaluatePropertyShape(
     results.push({
       focusNode, path, sourceShape: ps.id,
       constraintComponent: `${SHACL}${component}`,
-      severity: sev, message,
+      severity: sev,
+      // ★ sh:message WINS, everywhere. It was honoured by a handful of components that
+      // remembered to write `ps.message ?? …` at their own call site and ignored by the
+      // rest, so a shape author's message appeared or vanished depending on which
+      // constraint happened to fail. SHACL §6.7.2.4 makes it the result's message when
+      // present; centralising it here means a new component cannot forget.
+      message: ps.message ?? message,
       ...(value !== undefined ? { value: termValue(value) } : {}),
     });
   };
@@ -1092,19 +1722,24 @@ function evaluatePropertyShape(
   // These cannot be expressed on either property alone, which is why a constraint like
   // "validFrom must precede validUntil" had no way to be stated before.
   {
-    const other = (pred: IRI): readonly ParsedTerm[] => focus.properties.get(pred) ?? [];
+    // ★ SHACL 1.2 lets the four property-pair parameters take a PATH, not only a predicate
+    // IRI. The 1.0 IRI form is the degenerate case of that, so nothing migrates.
+    const other = (path: CompiledPath): readonly ParsedTerm[] =>
+      path.kind === 'predicate'
+        ? (focus.properties.get(path.iri) ?? [])
+        : evaluatePath(data, subjectAsTerm(focus), path);
     if (ps.equals) {
       const o = other(ps.equals);
       const missing = values.filter(v => !o.some(x => termsEqual(v, x)))
         .concat(o.filter(x => !values.some(v => termsEqual(v, x))));
       for (const v of missing) {
-        fail(ps.path, 'EqualsConstraintComponent', `Values must equal those of ${ps.equals}`, v);
+        fail(ps.path, 'EqualsConstraintComponent', `Values must equal those of ${renderPath(ps.equals)}`, v);
       }
     }
     if (ps.disjoint) {
       for (const v of values) {
         if (other(ps.disjoint).some(x => termsEqual(v, x))) {
-          fail(ps.path, 'DisjointConstraintComponent', `Value must not also appear under ${ps.disjoint}`, v);
+          fail(ps.path, 'DisjointConstraintComponent', `Value must not also appear under ${renderPath(ps.disjoint)}`, v);
         }
       }
     }
@@ -1118,7 +1753,7 @@ function evaluatePropertyShape(
       for (const v of values) for (const x of other(ps.lessThan)) {
         const c = cmp(v, x);
         if (c !== undefined && c >= 0) {
-          fail(ps.path, 'LessThanConstraintComponent', `Value must be less than every value of ${ps.lessThan}`, v);
+          fail(ps.path, 'LessThanConstraintComponent', `Value must be less than every value of ${renderPath(ps.lessThan)}`, v);
         }
       }
     }
@@ -1126,7 +1761,7 @@ function evaluatePropertyShape(
       for (const v of values) for (const x of other(ps.lessThanOrEquals)) {
         const c = cmp(v, x);
         if (c !== undefined && c > 0) {
-          fail(ps.path, 'LessThanOrEqualsConstraintComponent', `Value must be <= every value of ${ps.lessThanOrEquals}`, v);
+          fail(ps.path, 'LessThanOrEqualsConstraintComponent', `Value must be <= every value of ${renderPath(ps.lessThanOrEquals)}`, v);
         }
       }
     }
@@ -1138,15 +1773,159 @@ function evaluatePropertyShape(
       const target = byId.get(ps.node);
       if (target) {
         for (const v of values) {
-          const sub = subjectFor(data, v);
           // A value with no description cannot satisfy a shape that requires anything.
-          const ok = sub ? conformsToShape(data, sub, target, byId, depth, subclassClosure) : target.propertyShapes.length === 0;
+          const ok = nodeSatisfiesShape(data, v, target, byId, depth, subclassClosure);
           if (!ok) {
             fail(ps.path, 'NodeConstraintComponent', `Value does not conform to sh:node ${ps.node}`, v);
           }
         }
       }
     }
+    // ── SHACL §7.2 logical constraints, per VALUE NODE ──────────────────────────
+    if (byId) {
+      const holdsFor = (v: ParsedTerm, ref: string): boolean => {
+        const target = byId.get(ref);
+        // Unresolvable ref: vacuously true, so a dangling reference cannot reject a graph.
+        return target ? nodeSatisfiesShape(data, v, target, byId, depth, subclassClosure) : true;
+      };
+      for (const v of values) {
+        for (const ref of ps.notShapes ?? []) {
+          if (holdsFor(v, ref)) {
+            fail(ps.path, 'NotConstraintComponent',
+              ps.message ?? `Value conforms to sh:not ${ref}, and must not`, v);
+          }
+        }
+        const and = ps.andShapes ?? [];
+        if (and.length > 0 && !and.every(r => holdsFor(v, r))) {
+          fail(ps.path, 'AndConstraintComponent',
+            ps.message ?? 'Value does not conform to every shape in sh:and', v);
+        }
+        const or = ps.orShapes ?? [];
+        if (or.length > 0 && !or.some(r => holdsFor(v, r))) {
+          fail(ps.path, 'OrConstraintComponent',
+            ps.message ?? 'Value conforms to no shape in sh:or', v);
+        }
+        const xone = ps.xoneShapes ?? [];
+        if (xone.length > 0) {
+          const n = xone.filter(r => holdsFor(v, r)).length;
+          if (n !== 1) {
+            fail(ps.path, 'XoneConstraintComponent',
+              ps.message ?? `Value conforms to ${n} shapes in sh:xone; exactly one is required`, v);
+          }
+        }
+      }
+    }
+
+    // ── SHACL 1.2 §7.5: list constraints ────────────────────────────────────────
+    //
+    // Each of these requires the VALUE NODE ITSELF to be a SHACL list. A value that is not
+    // a list is a violation in its own right, not a silent skip: "Each value node v must be
+    // a SHACL list - if v is not a SHACL list there is a validation result." sh:value is the
+    // value node (the list, or the thing that failed to be one), never the offending member.
+    if (ps.memberShape !== undefined || ps.minListLength !== undefined
+      || ps.maxListLength !== undefined || ps.uniqueMembers === true) {
+      for (const v of values) {
+        const members = listMembers(data, v);
+        if (members === undefined) {
+          fail(ps.path, 'MemberShapeConstraintComponent',
+            'Value node is not a SHACL list, so its list constraints cannot hold', v);
+          continue;
+        }
+        if (ps.minListLength !== undefined && members.length < ps.minListLength) {
+          fail(ps.path, 'MinListLengthConstraintComponent',
+            `List has ${members.length} member(s), fewer than sh:minListLength ${ps.minListLength}`, v);
+        }
+        if (ps.maxListLength !== undefined && members.length > ps.maxListLength) {
+          fail(ps.path, 'MaxListLengthConstraintComponent',
+            `List has ${members.length} member(s), more than sh:maxListLength ${ps.maxListLength}`, v);
+        }
+        if (ps.uniqueMembers === true) {
+          const seenMembers = new Set<string>();
+          let dup = false;
+          for (const m of members) {
+            const k = JSON.stringify([m.kind, termValue(m)]);
+            if (seenMembers.has(k)) { dup = true; break; }
+            seenMembers.add(k);
+          }
+          if (dup) {
+            fail(ps.path, 'UniqueMembersConstraintComponent',
+              'List contains a duplicated member and sh:uniqueMembers is true', v);
+          }
+        }
+        if (ps.memberShape !== undefined && byId) {
+          const target = byId.get(ps.memberShape);
+          if (target) {
+            for (const m of members) {
+              if (!nodeSatisfiesShape(data, m, target, byId, depth, subclassClosure)) {
+                fail(ps.path, 'MemberShapeConstraintComponent',
+                  `A member of the list does not conform to sh:memberShape ${ps.memberShape}`, v);
+                break;   // one result per value node, per the spec's own guidance
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // ── SHACL 1.2 §7.8.3: sh:someValue ──────────────────────────────────────────
+    // "if none of the value nodes conforms to $someValue, there is a validation result."
+    // Note the asymmetry with sh:node: this passes as soon as ONE value conforms, and the
+    // result carries NO sh:value (there is no single node to blame).
+    if (ps.someValue !== undefined && byId) {
+      const target = byId.get(ps.someValue);
+      if (target) {
+        const any = values.some(v =>
+          nodeSatisfiesShape(data, v, target, byId, depth, subclassClosure));
+        if (!any) {
+          fail(ps.path, 'SomeValueConstraintComponent',
+            `No value node conforms to sh:someValue ${ps.someValue}`);
+        }
+      }
+    }
+
+    // ── SHACL 1.2 §7.9: sh:subsetOf ─────────────────────────────────────────────
+    // "Let $otherNodes be the set of nodes that can be reached from the focus node via
+    // $path. For each value node that does not exist in $otherNodes, there is a validation
+    // result with the value node as sh:value." The parameter is a PATH, not a predicate.
+    if (ps.subsetOf) {
+      const others = evaluatePath(data, subjectAsTerm(focus), ps.subsetOf);
+      const otherKeys = new Set(others.map(t => JSON.stringify([t.kind, termValue(t)])));
+      for (const v of values) {
+        if (!otherKeys.has(JSON.stringify([v.kind, termValue(v)]))) {
+          fail(ps.path, 'SubsetOfConstraintComponent',
+            'Value node is not among the nodes reachable by sh:subsetOf', v);
+        }
+      }
+    }
+
+    // ── SHACL 1.2 §7.1: sh:rootClass ────────────────────────────────────────────
+    // The value node must BE a class that has one of the given classes among its
+    // rdfs:subClassOf ancestors (or be one of them). Distinct from sh:class, which asks
+    // what the value is an INSTANCE of.
+    if (ps.rootClasses) {
+      for (const v of values) {
+        const ok = v.kind === 'iri' && ps.rootClasses.some(root =>
+          v.iri === root || (subclassClosure?.get(root)?.has(v.iri) ?? false));
+        if (!ok) {
+          fail(ps.path, 'RootClassConstraintComponent',
+            `Value node is not a class rooted at sh:rootClass ${ps.rootClasses.join(' | ')}`, v);
+        }
+      }
+    }
+
+    // ── SHACL 1.2 §7.4.4: sh:singleLine (AT RISK in the WD) ─────────────────────
+    if (ps.singleLine === true) {
+      for (const v of values) {
+        // fromCharCode, not a regex literal: a newline written into this source by a
+        // generator becomes a real line break and the pattern stops being one.
+        const lex = termValue(v);
+        if (lex.includes(String.fromCharCode(10)) || lex.includes(String.fromCharCode(13))) {
+          fail(ps.path, 'SingleLineConstraintComponent',
+            'Value contains a line break and sh:singleLine is true', v);
+        }
+      }
+    }
+
     // ── SHACL 1.2 §7.8.5: sh:reifierShape + sh:reificationRequired ──────────────
     //
     // "Let t be the triple term (focus node, $path, value node). For each reifier for the
@@ -1189,8 +1968,7 @@ function evaluatePropertyShape(
       if (target) {
         let n = 0;
         for (const v of values) {
-          const sub = subjectFor(data, v);
-          if (sub ? conformsToShape(data, sub, target, byId, depth, subclassClosure) : target.propertyShapes.length === 0) n++;
+          if (nodeSatisfiesShape(data, v, target, byId, depth, subclassClosure)) n++;
         }
         if (ps.qualifiedMinCount !== undefined && n < ps.qualifiedMinCount) {
           fail(ps.path, 'QualifiedMinCountConstraintComponent',
@@ -1226,7 +2004,7 @@ function evaluatePropertyShape(
   }
 
   for (const v of values) {
-    if (ps.nodeKind && !matchesNodeKind(v, ps.nodeKind)) {
+    if (ps.nodeKinds && !ps.nodeKinds.some(k => matchesNodeKind(v, k))) {
       results.push({
         focusNode,
         path: ps.path,
@@ -1234,10 +2012,10 @@ function evaluatePropertyShape(
         sourceShape: ps.id,
         constraintComponent: `${SHACL}NodeKindConstraintComponent`,
         severity: sev,
-        message: ps.message ?? `Value does not match sh:nodeKind ${ps.nodeKind}`,
+        message: ps.message ?? `Value does not match sh:nodeKind ${ps.nodeKinds?.join(' | ')}`,
       });
     }
-    if (ps.datatype && !matchesDatatype(v, ps.datatype)) {
+    if (ps.datatypes && !ps.datatypes.some(d => matchesDatatype(v, d))) {
       results.push({
         focusNode,
         path: ps.path,
@@ -1245,10 +2023,10 @@ function evaluatePropertyShape(
         sourceShape: ps.id,
         constraintComponent: `${SHACL}DatatypeConstraintComponent`,
         severity: sev,
-        message: ps.message ?? `Value does not match sh:datatype ${ps.datatype}`,
+        message: ps.message ?? `Value does not match sh:datatype ${ps.datatypes?.join(' | ')}`,
       });
     }
-    if (ps.clazz && !valueHasClass(data, v, ps.clazz, subclassClosure)) {
+    if (ps.classes && !ps.classes.some(cl => valueHasClass(data, v, cl, subclassClosure))) {
       results.push({
         focusNode,
         path: ps.path,
@@ -1256,7 +2034,7 @@ function evaluatePropertyShape(
         sourceShape: ps.id,
         constraintComponent: `${SHACL}ClassConstraintComponent`,
         severity: sev,
-        message: ps.message ?? `Value is not an instance of sh:class ${ps.clazz}`,
+        message: ps.message ?? `Value is not an instance of sh:class ${ps.classes?.join(' | ')}`,
       });
     }
     // ★ sh:pattern APPLIES TO IRIs TOO, not only literals.
@@ -1477,11 +2255,11 @@ export function validateAgainstShape(
   for (const shape of shapes) {
     // sh:deactivated — a shape switched off by its author MUST produce no results.
     if (shape.deactivated) continue;
-    const focusNodes = findFocusNodes(dataDoc, shape, subclassClosure);
+    const focusNodes = findFocusNodes(dataDoc, shape, subclassClosure, byId);
     if (focusNodes.length > 0) liveShapeIds.add(shape.id);
     // Which of these would NOT have been selected without entailment? Only those can
     // produce a "new" violation, so only those are downgraded in observe mode.
-    const directOnly = new Set(findFocusNodes(dataDoc, shape).map(f => subjectKey(f)));
+    const directOnly = new Set(findFocusNodes(dataDoc, shape, undefined, byId).map(f => subjectKey(f)));
     for (const focus of focusNodes) {
       const entailedOnly = options.entailment === 'rdfs-observe'
         && !directOnly.has(subjectKey(focus));
@@ -1494,6 +2272,8 @@ export function validateAgainstShape(
             }
           : r);
       };
+      for (const r of nodeConstraintResults(dataDoc, focus, shape, subclassClosure)) emit(r);
+      for (const r of logicalResults(dataDoc, focus, shape, byId, 0, subclassClosure)) emit(r);
       for (const ps of shape.propertyShapes) {
         for (const r of evaluatePropertyShape(dataDoc, focus, shape, ps, byId, 0, subclassClosure)) emit(r);
       }
@@ -1502,7 +2282,22 @@ export function validateAgainstShape(
       // here that should not be?", which is what makes it the one usable enforcement for
       // "this graph may carry ONLY these fields".
       if (shape.closed) {
-        const declared = new Set<string>(shape.propertyShapes.map(ps => ps.path));
+        // sh:ByTypes: the permitted set comes from the shapes that target this node's OWN
+        // types, not from this shape. A node with no type is then closed against nothing
+        // declared, so every predicate it carries is reported — which is the honest reading
+        // of "closed against its types" for a node that has none.
+        const sources = shape.closed === 'byTypes'
+          ? (() => {
+            const myTypes = new Set((focus.properties.get(RDF_TYPE) ?? [])
+              .filter(t => t.kind === 'iri').map(t => (t as { kind: 'iri'; iri: IRI }).iri));
+            return shapes.filter(sh =>
+              sh.targetClasses.some(tc => myTypes.has(tc)) || myTypes.has(sh.id as IRI));
+          })()
+          : [shape];
+        const declared = new Set<string>(
+          sources.flatMap(sh => sh.propertyShapes)
+            .filter(ps => ps.pathExpr.kind === 'predicate')
+            .map(ps => (ps.pathExpr as { kind: 'predicate'; iri: IRI }).iri));
         for (const ign of shape.ignoredProperties) declared.add(ign);
         for (const predicate of focus.properties.keys()) {
           if (declared.has(predicate)) continue;
@@ -1563,7 +2358,8 @@ export function validateAgainstShape(
   // subject reachable here is a subject that was compiled.
   const ownerSeverity = new Map<string, ShaclSeverity>();
   /** Strictness order, so "the stricter of" and "capped at" are one comparison. */
-  const SEVERITY_RANK: Readonly<Record<ShaclSeverity, number>> = { Info: 0, Warning: 1, Violation: 2 };
+  const SEVERITY_RANK: Readonly<Record<ShaclSeverity, number>> =
+    { Trace: 0, Debug: 1, Info: 2, Warning: 3, Violation: 4 };
   const stricter = (a: ShaclSeverity, b: ShaclSeverity): ShaclSeverity =>
     SEVERITY_RANK[a] >= SEVERITY_RANK[b] ? a : b;
   const laxer = (a: ShaclSeverity, b: ShaclSeverity): ShaclSeverity =>
@@ -1575,6 +2371,8 @@ export function validateAgainstShape(
     const iri = asIri(subj.properties.get(SH_SEVERITY)?.[0]);
     return iri === `${SHACL}Warning` ? 'Warning'
       : iri === `${SHACL}Info` ? 'Info'
+      : iri === `${SHACL}Debug` ? 'Debug'
+      : iri === `${SHACL}Trace` ? 'Trace'
       : iri === `${SHACL}Violation` ? 'Violation' : undefined;
   };
   for (const rootId of liveShapeIds) {
@@ -1698,13 +2496,15 @@ export function validateAgainstShape(
         'that is not one of the seven node kinds in SHACL §7.1.3, so the constraint matched '
         + 'every term instead of the intended one');
     }
-    // A complex path expression is a blank node under sh:path. sh:path IS implemented — for
-    // a single predicate — so the allowlist cannot see this one: it is the VALUE that is
-    // out of range, not the term. compilePropertyShape returns null for these, so the WHOLE
-    // property shape silently vanishes, and the omission is not visible in the shape at all.
+    // ★ Complex paths COMPILE now (sequence / inverse / alternative / zeroOrMore /
+    // oneOrMore / zeroOrOne), so a blank-node sh:path is no longer reportable on sight.
+    // What remains reportable is a path shape this engine cannot express at all — an empty
+    // alternative, an unterminated list, a nesting past the depth bound. compilePath returns
+    // undefined for those and the property shape is still dropped, which must stay visible.
     const pathTerm = subj.properties.get(SH_PATH)?.[0];
-    if (pathTerm && pathTerm.kind === 'bnode') {
-      noteUnsupported(id, 'a complex sh:path expression', 'the entire property shape was dropped');
+    if (pathTerm && pathTerm.kind === 'bnode' && compilePath(shapeDoc, pathTerm) === undefined) {
+      noteUnsupported(id, 'an sh:path expression this validator cannot compile',
+        'the entire property shape was dropped');
     }
   }
 
