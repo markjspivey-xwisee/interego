@@ -25,14 +25,18 @@
 </head>
 <body>
   <h1>OLKE — Organizational Learning &amp; Knowledge Evolution <span class="mono ns">olke:</span></h1>
-  <p class="sub">Namespace <code>https://markjspivey-xwisee.github.io/interego/ns/olke#</code> &middot; 7 terms.</p>
+  <p class="sub">Namespace <code>https://markjspivey-xwisee.github.io/interego/ns/olke#</code> &middot; 11 terms.</p>
   <p>Stages and transitions by which knowledge evolves within an organization: tacit -&gt; articulate -&gt; collective -&gt; institutional. Annotates iep:ContextDescriptor with the current stage + allows tracking of stage transitions.</p>
   <p><strong>Machine-readable form:</strong> <a href="olke.ttl" rel="alternate">olke.ttl</a> (Turtle) — the authoritative source. This page is a human-readable projection of it; each term below is identified by a hash IRI under this base (e.g. <code>olke:fromStage</code> = <code>https://markjspivey-xwisee.github.io/interego/ns/olke#fromStage</code>).</p>
   <h2>Terms</h2>
+  <div id="Articulate" class="term"><code>olke:Articulate</code> <span class="kind">Individual</span><div class="c">Knowledge encoded in language or code — a iep:ContextDescriptor exists, is discoverable, and carries a coherent statement of the knowledge.</div></div>
+  <div id="Collective" class="term"><code>olke:Collective</code> <span class="kind">Individual</span><div class="c">Knowledge shared by a group with consistent interpretation — multiple agents' descriptors have achieved iep:Equal coherence on the subject.</div></div>
   <div id="fromStage" class="term"><code>olke:fromStage</code> <span class="kind">Object property</span></div>
+  <div id="Institutional" class="term"><code>olke:Institutional</code> <span class="kind">Individual</span><div class="c">Knowledge embedded in policy — bound by ODRL rules, hydra:Operation preconditions, or ieh:PolicyDecision precedents.</div></div>
   <div id="KnowledgeStage" class="term"><code>olke:KnowledgeStage</code> <span class="kind">Class</span><div class="c">Abstract parent of the four canonical OLKE stages. A stage is a classification on iep:ContextDescriptor (carried via olke:stage); knowledge stages are epistemic lenses over descriptors.</div></div>
   <div id="promotedBy" class="term"><code>olke:promotedBy</code> <span class="kind">Object property</span></div>
   <div id="stage" class="term"><code>olke:stage</code> <span class="kind">Object property</span></div>
+  <div id="Tacit" class="term"><code>olke:Tacit</code> <span class="kind">Individual</span><div class="c">Knowledge that is experienced but not yet articulated; lives in individual practice, not in documentation.</div></div>
   <div id="toStage" class="term"><code>olke:toStage</code> <span class="kind">Object property</span></div>
   <div id="Transition" class="term"><code>olke:Transition</code> <span class="kind">Class</span><div class="c">A recorded transition of a iep:ContextDescriptor from one olke:KnowledgeStage to another. Realized as a iep:ContextDescriptor with iep:supersedes pointing at the prior stage's descriptor, and PROV attribution to the promoting agent.</div></div>
   <div id="transitionAt" class="term"><code>olke:transitionAt</code> <span class="kind">Datatype property</span></div>

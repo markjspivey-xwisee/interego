@@ -25,21 +25,28 @@
 </head>
 <body>
   <h1>code: — Source code domain ontology <span class="mono ns">code:</span></h1>
-  <p class="sub">Namespace <code>https://markjspivey-xwisee.github.io/interego/ns/code#</code> &middot; 25 terms.</p>
+  <p class="sub">Namespace <code>https://markjspivey-xwisee.github.io/interego/ns/code#</code> &middot; 32 terms.</p>
   <p>L3 domain ontology for source-code artifacts. Every class is grounded in L1 (iep:/pgsl:) or a W3C vocabulary. Demonstrates that a non-trivial software domain can be expressed compositionally on top of the Interego protocol without new primitives.</p>
   <p><strong>Machine-readable form:</strong> <a href="code.ttl" rel="alternate">code.ttl</a> (Turtle) — the authoritative source. This page is a human-readable projection of it; each term below is identified by a hash IRI under this base (e.g. <code>code:authoredBy</code> = <code>https://markjspivey-xwisee.github.io/interego/ns/code#authoredBy</code>).</p>
   <h2>Terms</h2>
+  <div id="Approved" class="term"><code>code:Approved</code> <span class="kind">Individual</span><div class="c">Approved</div></div>
   <div id="authoredBy" class="term"><code>code:authoredBy</code> <span class="kind">Object property</span><div class="c">The agent who authored a commit. Specialises prov:wasAttributedTo for the code domain.</div></div>
   <div id="Branch" class="term"><code>code:Branch</code> <span class="kind">Class</span><div class="c">A named line of commits. A branch IS a paradigmatic selection over the space of possible commit sequences for a repository — the other branches are the paradigm alternatives.</div></div>
   <div id="branchName" class="term"><code>code:branchName</code> <span class="kind">Datatype property</span></div>
   <div id="buildOutcome" class="term"><code>code:buildOutcome</code> <span class="kind">Datatype property</span><div class="c">The terminal state of a build: success | failure | cancelled.</div></div>
   <div id="BuildResult" class="term"><code>code:BuildResult</code> <span class="kind">Class</span><div class="c">Outcome of a build (pass/fail, artifact produced, logs). An attestation: who vouches for this outcome (trust facet) + when the build activity ran (provenance facet).</div></div>
+  <div id="ChangesRequested" class="term"><code>code:ChangesRequested</code> <span class="kind">Individual</span><div class="c">Changes Requested</div></div>
+  <div id="Commented" class="term"><code>code:Commented</code> <span class="kind">Individual</span><div class="c">Commented</div></div>
   <div id="Commit" class="term"><code>code:Commit</code> <span class="kind">Class</span><div class="c">A single commit — one granular unit in a commit sequence. Modeled as pgsl:Fragment (granular unit in a sequence lattice) since commit chains are naturally syntagmatic; parent/child relations are pgsl:pullback-compatible.</div></div>
   <div id="commitMessage" class="term"><code>code:commitMessage</code> <span class="kind">Datatype property</span></div>
   <div id="commitSha" class="term"><code>code:commitSha</code> <span class="kind">Datatype property</span></div>
+  <div id="Critical" class="term"><code>code:Critical</code> <span class="kind">Individual</span><div class="c">Critical</div></div>
   <div id="Defect" class="term"><code>code:Defect</code> <span class="kind">Class</span><div class="c">A reported bug or flaw. Constructed from a semiotic facet whose interpretant is 'this artifact is buggy' with severity + epistemic confidence. Modal state tracks whether the defect is Asserted (confirmed), Hypothetical (suspected), or Counterfactual (refuted).</div></div>
+  <div id="High" class="term"><code>code:High</code> <span class="kind">Individual</span><div class="c">High</div></div>
   <div id="linesAdded" class="term"><code>code:linesAdded</code> <span class="kind">Datatype property</span></div>
   <div id="linesRemoved" class="term"><code>code:linesRemoved</code> <span class="kind">Datatype property</span></div>
+  <div id="Low" class="term"><code>code:Low</code> <span class="kind">Individual</span><div class="c">Low</div></div>
+  <div id="Medium" class="term"><code>code:Medium</code> <span class="kind">Individual</span><div class="c">Medium</div></div>
   <div id="onRepository" class="term"><code>code:onRepository</code> <span class="kind">Object property</span><div class="c">The repository a PR / commit / branch belongs to.</div></div>
   <div id="parentCommit" class="term"><code>code:parentCommit</code> <span class="kind">Object property</span><div class="c">The immediate ancestor of a commit in the syntagmatic chain. A commit may have multiple parents (merge commits).</div></div>
   <div id="PullRequest" class="term"><code>code:PullRequest</code> <span class="kind">Class</span><div class="c">A change proposal. Extends iep:ContextDescriptor directly because a PR is inherently a typed context that carries temporal (opened/merged), provenance (author), agent (reviewers), semiotic (open/closed/merged modal), trust (required approvals), and federation (which repo + pod) facets.</div></div>

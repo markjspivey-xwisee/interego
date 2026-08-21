@@ -1,5 +1,5 @@
 /**
- * Each framework ontology's HTML projection must list every term the Turtle declares.
+ * Every ontology's HTML projection must list every term its Turtle declares.
  *
  * ★★ WHY THIS BECAME LOAD-BEARING. `docs/ns/<framework>.html` is the browser-facing twin of
  * `docs/ns/<framework>.ttl` — it carries `<link rel="alternate" type="text/turtle">` and its own
@@ -17,20 +17,74 @@
  * property that held by care alone until something made it easy to break silently. The frameworks
  * are read from the compliance package, so publishing a fourth fails here until its page exists.
  *
- * Scope is deliberately the framework ontologies, not all of `docs/ns`. Others are genuinely
- * different artifacts — `iep.html` is a landing page carrying 4 of 500 terms, not a projection —
- * and several unrelated namespaces (`code`, `hypragent`, `olke`, `hyprcat`) carry pre-existing
- * drift that is real debt but is not what this guard is about. Widening it would need an
- * allowlist, and an allowlisted gate is the thing this file exists to avoid.
+ * ★ THIS PARAGRAPH USED TO SAY THE OPPOSITE, AND IT WAS WRONG — recorded rather than deleted,
+ * because the reasoning is the point. It read: "Scope is deliberately the framework ontologies…
+ * several unrelated namespaces carry pre-existing drift… widening it would need an allowlist, and
+ * an allowlisted gate is the thing this file exists to avoid."
+ *
+ * The instinct was right and the conclusion was not. Widening needed no allowlist — it needed a
+ * STRUCTURAL membership rule (see below). With one, the gate covers everything and stays
+ * allowlist-free, and the "pre-existing drift" turned out to be 51 terms across 8 files rather
+ * than the 18 first measured: `harness` alone was missing 28.
+ *
+ * The lesson generalises past this file. "It would need an allowlist" is a claim about the
+ * membership rule you happen to have, not about the check. Change the rule and the allowlist
+ * disappears.
  */
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { FRAMEWORK_CONTROLS } from '@interego/compliance';
 
-const nsFile = (name: string): string =>
-  readFileSync(fileURLToPath(new URL(`../docs/ns/${name}`, import.meta.url)), 'utf8');
+/**
+ * ★★ WIDENED BEYOND THE THREE FRAMEWORKS, AND THE MEMBERSHIP RULE IS STRUCTURAL.
+ *
+ * This started scoped to the compliance ontologies because they were the ones the API had just
+ * started emitting IRIs into. Measured afterwards across all of docs/ns: five MORE projections
+ * were out of sync — `code` (7 terms), `hypragent` (4), `olke` (4), `amta` (3), `hyprcat` (3) —
+ * 21 declared terms whose hash IRIs resolved to a page that did not mention them.
+ *
+ * The membership test is "does the page STATE a term count", not a list of names. A full
+ * projection says `&middot; N terms.` about itself; `iep.html` is a landing page carrying 4 of 500
+ * terms and states no count, so it is excluded BY CONSTRUCTION rather than by an allowlist — which
+ * matters, because an allowlist is how the five above stayed invisible after the first pass.
+ *
+ * The prefix a file declares is not always its filename (`harness.ttl` declares `ieh:`,
+ * `alignment.ttl` declares `align:`), so the prefix is read from the document's own `@prefix`
+ * line. Guessing it from the filename made every term in those files invisible and reported them
+ * as clean.
+ */
+const NS_DIR = fileURLToPath(new URL('../docs/ns/', import.meta.url));
+
+/** The prefix a ttl binds to its OWN namespace, read from the file rather than guessed. */
+function selfPrefix(ttl: string, base: string): string | undefined {
+  for (const m of ttl.matchAll(/@prefix\s+([A-Za-z][A-Za-z0-9_-]*):\s*<([^>]+)>/g)) {
+    const iri = m[2] ?? '';
+    if (iri.endsWith(`/${base}#`) || iri.endsWith(`/${base}`)) return m[1];
+  }
+  return undefined;
+}
+
+/** Every docs/ns page that declares itself a full projection by stating a term count. */
+function projections(): { base: string; ttl: string; html: string; prefix: string }[] {
+  const out: { base: string; ttl: string; html: string; prefix: string }[] = [];
+  for (const f of readdirSync(NS_DIR)) {
+    if (!f.endsWith('.html')) continue;
+    const base = f.slice(0, -5);
+    let html: string;
+    let ttl: string;
+    try {
+      html = readFileSync(`${NS_DIR}${f}`, 'utf8');
+      ttl = readFileSync(`${NS_DIR}${base}.ttl`, 'utf8');
+    } catch { continue; }
+    if (!/&middot;\s*\d+\s*terms?/.test(html)) continue;  // not a full projection
+    const prefix = selfPrefix(ttl, base);
+    if (!prefix) continue;
+    out.push({ base, ttl, html, prefix });
+  }
+  return out;
+}
 
 /** Local names the Turtle declares for its own prefix. */
 function declaredTerms(ttl: string, prefix: string): string[] {
@@ -43,18 +97,50 @@ function projectedTerms(html: string): Set<string> {
   return new Set([...html.matchAll(/<div id="([^"]+)" class="term"/g)].map(m => m[1] ?? ''));
 }
 
-describe.each(Object.keys(FRAMEWORK_CONTROLS))('%s namespace', (framework) => {
-  const ttl = nsFile(`${framework}.ttl`);
-  const html = nsFile(`${framework}.html`);
+const FOUND = projections();
+
+describe('the set of projections is discovered, not listed', () => {
+  /**
+   * ★★ A FLOOR, NOT A LOWER BOUND OF CONVENIENCE — because membership is self-declared.
+   *
+   * A page joins this gate by STATING its own term count. Measured: deleting that one line from
+   * `olke.html` dropped it out of the set, the suite went from 93 tests to 89, and it still
+   * reported GREEN. A page could escape the check by removing the thing that makes it checkable,
+   * and the removal looks like a formatting tidy-up in review.
+   *
+   * So the count is pinned. Adding a projection means raising this number, which is the same
+   * ratchet `MIN_FILES` uses in tools/lint-gate.mjs and for the same reason: a check that silently
+   * covers less than it did yesterday is indistinguishable from one that passed.
+   */
+  it('finds the full projections, including every compliance framework', () => {
+    expect(FOUND.length, 'discovered no full projections at all').toBeGreaterThan(0);
+    expect(
+      FOUND.length,
+      `${FOUND.length} projections discovered, expected at least 23. A page joins this gate by `
+        + `stating "&middot; N terms." — if one stopped stating it, it silently left the gate. `
+        + `Raise this floor when adding a projection; never lower it to make a run pass.`,
+    ).toBeGreaterThanOrEqual(23);
+    for (const fw of Object.keys(FRAMEWORK_CONTROLS)) {
+      expect(FOUND.map(p => p.base), `${fw} is no longer discovered as a projection`).toContain(fw);
+    }
+  });
+});
+
+describe.each(FOUND.map(p => [p.base, p] as const))('%s namespace', (framework, proj) => {
+  const ttl = proj.ttl;
+  const html = proj.html;
 
   it('declares terms at all — a vacuous pass here would hide every assertion below', () => {
-    expect(declaredTerms(ttl, framework).length).toBeGreaterThan(5);
-    expect(projectedTerms(html).size).toBeGreaterThan(5);
+    // Non-vacuous means "parsed something", not "is big": docs/ns/cg.ttl and cgh.ttl are
+    // deprecated read-aliases carrying exactly ONE term each, and a threshold of >5 failed them
+    // for being small rather than for being wrong.
+    expect(declaredTerms(ttl, proj.prefix).length, 'parsed no declared terms').toBeGreaterThan(0);
+    expect(projectedTerms(html).size, 'parsed no projected terms').toBeGreaterThan(0);
   });
 
   it('projects every declared term into the HTML served at the same base', () => {
     const projected = projectedTerms(html);
-    const missing = declaredTerms(ttl, framework).filter(t => !projected.has(t));
+    const missing = declaredTerms(ttl, proj.prefix).filter(t => !projected.has(t));
     expect(
       missing,
       `docs/ns/${framework}.ttl declares ${missing.length} term(s) that docs/ns/${framework}.html `
@@ -64,7 +150,7 @@ describe.each(Object.keys(FRAMEWORK_CONTROLS))('%s namespace', (framework) => {
   });
 
   it('projects nothing the ontology does not declare', () => {
-    const declared = new Set(declaredTerms(ttl, framework));
+    const declared = new Set(declaredTerms(ttl, proj.prefix));
     const extra = [...projectedTerms(html)].filter(t => !declared.has(t));
     expect(extra, `docs/ns/${framework}.html lists terms absent from the Turtle: ${extra.join(', ')}`)
       .toEqual([]);
