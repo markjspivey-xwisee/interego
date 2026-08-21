@@ -48,13 +48,15 @@ const SUITE = join(REPO, 'tests', 'fixtures', 'shacl12-w3c', 'core');
  */
 const FLOOR = {
   /** Verdict AND every expected result matched. */
-  exact: 88,
+  exact: 137,
   /** Verdict matched. The number that actually decides whether a publish is refused. */
-  verdict: 110,
+  verdict: 139,
 };
 
 interface Report {
   approvedRunnable: number;
+  unexplained: string[];
+  knownDivergences: string[];
   pass: number;
   verdictOnly: number;
   fail: number;
@@ -104,6 +106,26 @@ describe('W3C SHACL 1.2 Core conformance', () => {
     // sh:sourceConstraintComponent to explain the refusal is told something untrue.
     expect(report.pass, 'right answer, wrong reason:\n  ' + report.verdictOnlyFiles.join('\n  '))
       .toBeGreaterThanOrEqual(FLOOR.exact);
+  });
+
+  it('fails only where the runner records WHY', () => {
+    // ★ THE POINT OF THE KNOWN-DIVERGENCE LIST, AND ITS ONLY JOB. It excuses nothing — the
+    // two entries on it still run and still fail — but it makes the difference between
+    // "two failures we can each account for" and "two failures". A NEW failure lands here
+    // rather than blending into a count that was already non-zero.
+    //
+    // The two recorded, in full in tools/shacl12-w3c/run.mjs:
+    //   node/in-002              — the entry expects a sh:sourceShape that is not in its own
+    //                              file; the behaviour it means to test is implemented and
+    //                              covered by in-001.
+    //   node/nodeByExpression-001 — sh:nodeByExpression needs the SHACL 1.2 node-expression
+    //                              sub-language, which has its own 106-entry test area.
+    expect(report.unexplained,
+      'a suite entry fails with no recorded reason — either fix the engine or record why '
+      + 'the entry is disputed, in KNOWN_DIVERGENCES').toEqual([]);
+    expect(report.knownDivergences.length,
+      'the known-divergence list is growing; it is a ledger, not a bucket')
+      .toBeLessThanOrEqual(2);
   });
 
   it('and the floor is not set below what the engine currently does', () => {

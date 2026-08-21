@@ -363,6 +363,7 @@ export {
   getShaclShapesTurtle,
   SHACL_SHAPES_TURTLE,
   validateAgainstShape,
+  renderPathTerm,
   runShaclRules,
   ShaclRuleError,
   type ShaclReport,

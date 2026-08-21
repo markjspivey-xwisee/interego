@@ -2,6 +2,7 @@ export { validate, assertValid } from './validator.js';
 export { getShaclShapesTurtle, SHACL_SHAPES_TURTLE } from './shacl-shapes.js';
 export {
   validateAgainstShape,
+  renderPathTerm,
   runShaclRules,
   ShaclRuleError,
   type ShaclReport,

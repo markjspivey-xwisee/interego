@@ -52,7 +52,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, relative } from 'node:path';
-import { parseTrig, validateAgainstShape } from '../../packages/core/dist/index.js';
+import { parseTrig, validateAgainstShape, renderPathTerm } from '../../packages/core/dist/index.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SUITE = join(HERE, '..', '..', 'tests', 'fixtures', 'shacl12-w3c', 'core');
@@ -135,19 +135,54 @@ function readEntry(text, path) {
   if (!conformsT) return { runnable: false, why: 'no sh:conforms', status, label };
   const expectConforms = termText(conformsT) === 'true';
 
+  // ★ sh:conformanceDisallows IS PART OF THE REQUEST, not of the expectation. The entry's
+  // own rdfs:comment says so: "in order to pass this test, the test framework needs to use
+  // the values of sh:conformanceDisallows from the mf:result". Reading it as an assertion
+  // and comparing it would fail a correct engine; ignoring it fails a correct engine too,
+  // just in the other direction (conformance-disallows-001 and -002 differ ONLY in this
+  // triple and expect opposite verdicts).
+  const disallows = (report.properties.get(`${SH}conformanceDisallows`) ?? [])
+    .filter(t => t.kind === 'iri' && t.iri.startsWith(SH))
+    .map(t => t.iri.slice(SH.length));
+
   const expected = [];
   for (const rt of report.properties.get(`${SH}result`) ?? []) {
     const r = nodeFor(doc, rt);
     if (!r) continue;
     expected.push({
+      // ★ A BLANK NODE FOCUS IS NOT COMPARED BY LABEL. `_:b22415` is the suite's label for
+      // a node in ITS parse; ours is `_:_anon12` for the same node, and neither label means
+      // anything outside the graph that produced it. Comparing them asserts that two
+      // independent bnode allocators agree, which is not a property of a correct engine.
+      // The component, severity and path are still compared, and the verdict tier still
+      // covers "did we report on the right node" — a result on the wrong node changes the
+      // count, which the extra/missing arithmetic sees.
       focusNode: termText(one(doc, r, `${SH}focusNode`)),
-      path: termText(one(doc, r, `${SH}resultPath`)),
+      focusNodeIsBlank: one(doc, r, `${SH}focusNode`)?.kind === 'bnode',
+      // ★ A COMPLEX PATH IS NAMED BY A BLANK NODE, not by a string. `sh:resultPath` is an
+      // RDF path expression, so for a sequence / inverse / alternative / transitive path the
+      // suite gives the head of the structure and there is no label to compare — bnode ids
+      // do not survive between graphs. Rendering it through the engine's own path renderer
+      // compares the path STRUCTURE, which is what the assertion is about.
+      path: (() => {
+        const t = one(doc, r, `${SH}resultPath`);
+        if (t === undefined) return undefined;
+        if (t.kind === 'iri') return t.iri;
+        return renderPathTerm(doc, t);
+      })(),
       component: termText(one(doc, r, `${SH}sourceConstraintComponent`)),
-      severity: (termText(one(doc, r, `${SH}resultSeverity`)) ?? `${SH}Violation`).slice(SH.length),
+      // A severity may be ANY IRI; only the five SHACL ones are reported by local name.
+      severity: (() => {
+        const iri = termText(one(doc, r, `${SH}resultSeverity`)) ?? `${SH}Violation`;
+        return iri.startsWith(SH) ? iri.slice(SH.length) : iri;
+      })(),
       value: termText(one(doc, r, `${SH}value`)),
     });
   }
-  return { runnable: true, status, label, expectConforms, expected, dataText, shapesText };
+  return {
+    runnable: true, status, label, expectConforms, expected, dataText, shapesText,
+    ...(disallows.length > 0 ? { disallows } : {}),
+  };
 }
 
 /**
@@ -161,9 +196,35 @@ function matched(expected, ours) {
   return ours.some(r =>
     r.constraintComponent === expected.component
     && r.severity === expected.severity
-    && (expected.focusNode === undefined || String(r.focusNode) === expected.focusNode)
+    && (expected.focusNode === undefined || expected.focusNodeIsBlank
+      || String(r.focusNode) === expected.focusNode)
     && (expected.path === undefined || String(r.path) === expected.path));
 }
+
+/**
+ * Entries this engine does not pass, each with the reason, so the gap is stated rather than
+ * left to be inferred from a count.
+ *
+ * ★ THIS LIST DOES NOT EXCUSE ANYTHING. Nothing here is skipped, filtered, or counted as a
+ * pass — every entry still runs and still shows up as FAIL. The list exists so that "two
+ * failures" is a sentence rather than a number, and so that a NEW failure is visibly
+ * different from these two rather than absorbed into them.
+ */
+const KNOWN_DIVERGENCES = {
+  'node/in-002.ttl':
+    'DISPUTED UPSTREAM. The entry expects a result whose sh:sourceShape is ex:TestShape, and '
+    + 'no ex:TestShape exists in the file — the only shape defined is '
+    + 'ex:TestInUnsatisfiableShape, and the one instance is typed ex:TestShape, which nothing '
+    + 'declares as a shape. No target rule reaches ex:Instance from the shape that is there. '
+    + 'The empty-sh:in behaviour it means to test IS implemented (in-001 and our own tests '
+    + 'cover it); the file appears to have been renamed without updating the data.',
+  'node/nodeByExpression-001.ttl':
+    'NOT IMPLEMENTED. sh:nodeByExpression takes a SHACL 1.2 NODE EXPRESSION, a separate '
+    + 'sub-language with its own 106-entry test area (tests/node-expr/) and its own spec '
+    + 'section. This is the only Core entry that reaches into it, and implementing the '
+    + 'expression language for one test would be the tail wagging the dog. Recorded as a '
+    + 'known gap rather than worked around.',
+};
 
 const files = suiteFiles().sort();
 const verbose = process.argv.includes('--verbose');
@@ -177,7 +238,10 @@ for (const path of files) {
   if (e.status !== `${SHT}approved`) { rows.push({ rel, state: 'unapproved', label: e.label }); continue; }
 
   let report;
-  try { report = validateAgainstShape(e.dataText ?? text, e.shapesText ?? text, {}); }
+  try {
+    report = validateAgainstShape(e.dataText ?? text, e.shapesText ?? text,
+      e.disallows ? { conformanceDisallows: e.disallows } : {});
+  }
   catch (err) { rows.push({ rel, state: 'error', why: err.message }); continue; }
 
   const verdictOk = report.conforms === e.expectConforms;
@@ -202,6 +266,10 @@ if (process.argv.includes('--json')) {
     fail: count('fail'), error: count('error'),
     notRun: count('notrun'), unapproved: count('unapproved'),
     failing: rows.filter(r => r.state === 'fail' || r.state === 'error').map(r => r.rel),
+    unexplained: rows
+      .filter(r => (r.state === 'fail' || r.state === 'error') && !KNOWN_DIVERGENCES[r.rel])
+      .map(r => r.rel),
+    knownDivergences: Object.keys(KNOWN_DIVERGENCES),
     verdictOnlyFiles: rows.filter(r => r.state === 'verdict-only').map(r => r.rel),
   }, null, 2));
   process.exit(0);
@@ -216,6 +284,8 @@ if (verbose) {
     if (r.state === 'fail') {
       console.log(`  FAIL      ${r.rel}`);
       console.log(`            conforms: expected ${r.expectConforms}, got ${r.gotConforms}`);
+      const known = KNOWN_DIVERGENCES[r.rel];
+      if (known) console.log(`            known:    ${known}`);
     } else {
       console.log(`  VERDICT   ${r.rel}  (right answer, ${r.missing.length} expected result(s) unmatched)`);
     }
@@ -234,5 +304,12 @@ console.log(`    exact  (verdict + every expected result)  ${count('pass')}`);
 console.log(`    verdict only (right answer, wrong reason) ${count('verdict-only')}`);
 console.log(`    FAIL   (wrong verdict)                    ${count('fail')}`);
 console.log(`    ERROR  (engine threw)                     ${count('error')}`);
+const unexplained = rows
+  .filter(r => (r.state === 'fail' || r.state === 'error') && !KNOWN_DIVERGENCES[r.rel]);
+console.log(`      of which recorded as known divergences  `
+  + `${count('fail') + count('error') - unexplained.length}`);
+if (unexplained.length > 0) {
+  console.log(`      NOT EXPLAINED: ${unexplained.map(r => r.rel).join(', ')}`);
+}
 console.log(`  not runnable        ${count('notrun')}`);
 console.log(`  unapproved upstream ${count('unapproved')}\n`);

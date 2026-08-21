@@ -173,11 +173,31 @@ ex:P a sh:NodeShape ; sh:targetClass ex:Record ;
   });
 
   it('throws when sh:rule hangs off something that is not a compiled sh:NodeShape', () => {
+    // ★ THE FIXTURE HERE USED TO BE `ex:P sh:targetClass ex:Record ; sh:rule [ … ]`, AND IT
+    // WAS WRONG ABOUT WHAT A SHAPE IS. §2.1.1 gives four sufficient conditions and rdf:type
+    // is only one of them: a node that is the subject of a TARGET triple is a shape, full
+    // stop. The engine required the type, so it did not compile that node, so this threw —
+    // and the test recorded the bug as the contract.
+    //
+    // The guard itself is real, so it is kept and re-pointed at a node that genuinely is
+    // not a shape by any of the four conditions: no rdf:type, no target, no constraint
+    // parameter. sh:rule alone does not make one — a rule needs a shape to say WHICH nodes
+    // it applies to, and without that there is nothing to run it against.
     const notAShape = `${PREFIXES}
+ex:P sh:rule [ a sh:TripleRule ; sh:subject sh:this ; sh:predicate ex:status ; sh:object [ sh:path ex:status ] ] .
+`;
+    expect(() => runShaclRules(RECORD_DATA, notAShape)).toThrow(/not a compiled sh:NodeShape/);
+  });
+
+  it('…and a shape declared by its TARGET alone, with no rdf:type, does compile', () => {
+    // The other half of the correction above: what §2.1.1 says IS a shape must be treated
+    // as one. Without this, the fix could have been "make the error message match" rather
+    // than "recognise the shape", and nothing would have caught the difference.
+    const typeless = `${PREFIXES}
 ex:P sh:targetClass ex:Record ;
   sh:rule [ a sh:TripleRule ; sh:subject sh:this ; sh:predicate ex:status ; sh:object [ sh:path ex:status ] ] .
 `;
-    expect(() => runShaclRules(RECORD_DATA, notAShape)).toThrow(/not a compiled sh:NodeShape/);
+    expect(() => runShaclRules(RECORD_DATA, typeless)).not.toThrow();
   });
 
   // ★ THE OFF SWITCH IS NOT A SKIP-THE-CHECKS SWITCH.

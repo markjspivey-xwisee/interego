@@ -196,21 +196,30 @@ describe('SHACL 1.2 severities', () => {
       `${P}ex:S a sh:NodeShape ; sh:targetSubjectsOf ex:p ;
         sh:property [ sh:path ex:p ; sh:datatype xsd:integer ; sh:severity sh:${sev} ] .`, {});
 
-  // ★ EVERY SEVERITY STILL MEANS "DOES NOT CONFORM". The `stillConforms` column here used to
-  // read true for the four non-Violation severities, which is the reading this engine
-  // shipped and the reading SHACL does not have: §3.6 makes sh:conforms false when there is
-  // ANY result. W3C Core tests/core/misc/severity-001.ttl (approved) pins it — a lone
-  // sh:Warning, expected sh:conforms false — and pySHACL agrees.
+  // ★ THE LINE BETWEEN THESE TWO GROUPS IS NOT WHERE THIS ENGINE HAD IT, TWICE.
   //
-  // What severity DOES change is the first two assertions: which result you get, and how
-  // loudly it speaks. Those are what this test is for, and they were right all along.
-  it.each(['Trace', 'Debug', 'Info', 'Warning', 'Violation'] as const)(
-    'sh:%s produces a result at that severity, and does not conform', sev => {
-      const r = withSeverity(sev);
-      expect(r.results.length, `sh:${sev} produced no result at all`).toBeGreaterThan(0);
-      expect(r.results[0]!.severity).toBe(sev);
-      expect(r.conforms).toBe(false);
-    });
+  // It first read "only sh:Violation stops conformance", which made a shape declaring
+  // sh:Warning report conforms:true on data that broke it. Corrected to "any result stops
+  // it" from §3.6 — and that overshot: sh:Trace and sh:Debug are 1.2's diagnostic levels
+  // below sh:Info and report without bearing on the verdict.
+  //
+  // The W3C Core suite settles it directly, three approved entries with identical shapes and
+  // only the severity changed:
+  //   misc/severity-003 — one sh:Warning result, sh:conforms FALSE
+  //   misc/severity-004 — one sh:Debug   result, sh:conforms TRUE
+  //   misc/severity-005 — one sh:Trace   result, sh:conforms TRUE
+  //
+  // Both readings were self-consistent and both were wrong; nothing inside our own tests
+  // could have distinguished them.
+  it.each([
+    ['Trace', true], ['Debug', true],
+    ['Info', false], ['Warning', false], ['Violation', false],
+  ] as const)('sh:%s produces a result at that severity; conforms = %s', (sev, stillConforms) => {
+    const r = withSeverity(sev);
+    expect(r.results.length, `sh:${sev} produced no result at all`).toBeGreaterThan(0);
+    expect(r.results[0]!.severity).toBe(sev);
+    expect(r.conforms).toBe(stillConforms);
+  });
 
   it('and an ADVISORY result does not move conforms — that is what the flag is for', () => {
     // Guards the exemption the change above needed. `entailment: 'rdfs-observe'` promises to

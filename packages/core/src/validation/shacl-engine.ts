@@ -61,6 +61,7 @@ const SH_SHAPE = `${SHACL}shape` as IRI;
 const SH_SHAPE_CLASS = `${SHACL}ShapeClass` as IRI;
 const SH_SOME_VALUE = `${SHACL}someValue` as IRI;
 const SH_MEMBER_SHAPE = `${SHACL}memberShape` as IRI;
+const SH_UNIQUE_VALUES_FOR = `${SHACL}uniqueValuesFor` as IRI;
 const SH_MIN_LIST_LENGTH = `${SHACL}minListLength` as IRI;
 const SH_MAX_LIST_LENGTH = `${SHACL}maxListLength` as IRI;
 const SH_UNIQUE_MEMBERS = `${SHACL}uniqueMembers` as IRI;
@@ -100,6 +101,7 @@ const SH_REIFICATION_REQUIRED = `${SHACL}reificationRequired` as IRI;
 const RDF_REIFIES = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#reifies' as IRI;
 const SH_NODE = `${SHACL}node` as IRI;
 const SH_QUALIFIED_VALUE_SHAPE = `${SHACL}qualifiedValueShape` as IRI;
+const SH_QUALIFIED_VALUE_SHAPES_DISJOINT = `${SHACL}qualifiedValueShapesDisjoint` as IRI;
 const SH_QUALIFIED_MIN_COUNT = `${SHACL}qualifiedMinCount` as IRI;
 const SH_QUALIFIED_MAX_COUNT = `${SHACL}qualifiedMaxCount` as IRI;
 const SH_TARGET_SUBJECTS_OF = `${SHACL}targetSubjectsOf` as IRI;
@@ -500,19 +502,33 @@ function walkRdfList(
   head: ParsedTerm,
 ): readonly ParsedTerm[] {
   if (head.kind === 'iri' && head.iri === RDF_NIL) return [];
-  // Form (1) — Collection: head is a bnode pointing at an rdf:first/rdf:rest chain.
-  if (head.kind === 'bnode') {
+
+  // ★ A CELL MAY BE NAMED. This walked blank nodes only, so `ex:list1 rdf:first 1 ;
+  // rdf:rest ( 2 3 ) .` — a perfectly ordinary list with an IRI for a head — fell through
+  // to "head is itself a value" and came back as a one-element list containing the head.
+  // Turtle's `( … )` always produces blank nodes, which is why it is easy to write a list
+  // walker that only knows about them; rdf:first and rdf:rest are just predicates.
+  //
+  // The discriminator is rdf:first, not the term kind, and it also keeps the case this
+  // fallback exists for: `sh:in ex:Foo` names a VALUE, ex:Foo has no rdf:first, and it is
+  // still returned as a single-member list.
+  const cellFor = (t: ParsedTerm): ParsedSubject | undefined => {
+    if (t.kind !== 'iri' && t.kind !== 'bnode') return undefined;
+    const c = subjectFor(doc, t);
+    return c?.properties.has(RDF_FIRST) ? c : undefined;
+  };
+
+  if (cellFor(head)) {
     const out: ParsedTerm[] = [];
     let cursor: ParsedTerm = head;
     const seen = new Set<string>();
     for (let i = 0; i < 1024; i++) {
       if (cursor.kind === 'iri' && cursor.iri === RDF_NIL) return out;
-      if (cursor.kind !== 'bnode') return out;
-      if (seen.has(cursor.id)) return out;
-      seen.add(cursor.id);
-      const cell = doc.subjects.find(s =>
-        typeof s.subject === 'object' && 'bnode' in s.subject && s.subject.bnode === (cursor as { kind: 'bnode'; id: string }).id,
-      );
+      const key = cursor.kind === 'iri' ? cursor.iri
+        : cursor.kind === 'bnode' ? `_:${cursor.id}` : undefined;
+      if (key === undefined || seen.has(key)) return out;
+      seen.add(key);
+      const cell = subjectFor(doc, cursor);
       if (!cell) return out;
       const first = cell.properties.get(RDF_FIRST)?.[0];
       const rest = cell.properties.get(RDF_REST)?.[0];
@@ -544,7 +560,41 @@ const SH_TRIPLE_TERM = `${SHACL}TripleTerm` as IRI;
  * like it, are outside the default conformance-disallow set — they produce results without
  * making `conforms` false. sh:Violation remains the default when sh:severity is unstated.
  */
-export type ShaclSeverity = 'Violation' | 'Warning' | 'Info' | 'Debug' | 'Trace';
+/**
+ * A result's severity.
+ *
+ * ★ SHACL PUTS NO CEILING ON THIS: sh:severity takes ANY IRI, and the five below are simply
+ * the ones the specification names. A vocabulary is free to define its own — the W3C Core
+ * suite does exactly that, `sh:severity ex:MySeverity`, and expects it to survive into the
+ * report. This engine folded every unrecognised IRI to 'Violation', which is not a missing
+ * feature but a WRONG ANSWER: an author's advisory level came back as a hard refusal.
+ *
+ * A custom severity is carried as its full IRI. It is not in the default
+ * sh:conformanceDisallows set — the spec names three severities there, and silently adding
+ * an unknown one to them would put the fold back where it was, one level down.
+ *
+ * The union-with-`(string & {})` shape keeps editor completion for the five while accepting
+ * any IRI, and every existing `=== 'Violation'` comparison keeps working unchanged.
+ */
+export type ShaclSeverity =
+  | 'Violation' | 'Warning' | 'Info' | 'Debug' | 'Trace'
+  | (string & Record<never, never>);
+
+/** The five the specification names, in strictness order. */
+const NAMED_SEVERITIES = ['Trace', 'Debug', 'Info', 'Warning', 'Violation'] as const;
+
+/**
+ * Decode a `sh:severity` value. One of the five names for a SHACL IRI, the full IRI for
+ * anything else, `undefined` when there is no value.
+ */
+function decodeSeverity(iri: string | undefined): ShaclSeverity | undefined {
+  if (iri === undefined) return undefined;
+  if (iri.startsWith(SHACL)) {
+    const local = iri.slice(SHACL.length);
+    if ((NAMED_SEVERITIES as readonly string[]).includes(local)) return local as ShaclSeverity;
+  }
+  return iri;
+}
 
 export interface ShaclResult {
   readonly focusNode: string;
@@ -576,6 +626,12 @@ export interface ShaclResult {
 
 export interface ShaclReport {
   readonly conforms: boolean;
+  /**
+   * The severities that defeated conformance for this run — the effective
+   * sh:conformanceDisallows. Reported because `conforms` alone is ambiguous once it is
+   * configurable: the same false can mean "a violation" or "a warning, and you asked".
+   */
+  readonly conformanceDisallows: readonly ShaclSeverity[];
   readonly results: readonly ShaclResult[];
   /**
    * False when at least one shape that SELECTED A FOCUS NODE in this data graph carried a
@@ -641,6 +697,19 @@ export interface ValidateAgainstShapeOptions {
    *   of the five revocation conformance fixtures.
    */
   readonly unsupportedConstructs?: 'violation' | 'observe';
+  /**
+   * SHACL 1.2 sh:conformanceDisallows — which severities defeat conformance for THIS run.
+   *
+   * ★ Defaults to Info, Warning and Violation, which is the spec default and the reading
+   * the W3C suite checks. sh:Trace and sh:Debug are never in the set.
+   *
+   * This is also the honest home for the behaviour this engine used to have by mistake.
+   * `conforms` counted Violations only, everywhere, with no way to ask for anything else —
+   * so a caller who genuinely wanted "warnings are advisory here" and a caller who wanted
+   * the spec got the same wrong answer. Passing `['Violation']` now says so out loud, at
+   * the call site, and is visible in the report.
+   */
+  readonly conformanceDisallows?: readonly ShaclSeverity[];
 }
 
 interface PropertyShape {
@@ -651,19 +720,47 @@ interface PropertyShape {
   readonly pathExpr: CompiledPath;
   readonly minCount?: number;
   readonly maxCount?: number;
-  /** SHACL 1.2: an IRI OR a list, meaning a union of choices. */
-  readonly datatypes?: readonly IRI[];
-  readonly nodeKinds?: readonly IRI[];
-  readonly classes?: readonly IRI[];
+  /**
+   * One entry per parameter TRIPLE; within an entry, the alternatives from a 1.2 list value.
+   * Repeating the parameter conjoins; listing its values disjoins. See eachIriOrList.
+   */
+  readonly datatypes?: readonly (readonly IRI[])[];
+  readonly nodeKinds?: readonly (readonly IRI[])[];
+  readonly classes?: readonly (readonly IRI[])[];
   readonly pattern?: string;
   readonly hasValue?: ParsedTerm;
+  /** sh:in. `undefined` is absent; `[]` is `sh:in ()`, which permits nothing. */
   readonly inValues?: readonly ParsedTerm[];
+  /**
+   * sh:property ON A PROPERTY SHAPE — each VALUE NODE is a focus node for these.
+   *
+   * ★ Only node shapes carried sh:property here, so the idiomatic way to reach two levels
+   * down without naming an intermediate shape —
+   *   `sh:property [ sh:path ex:address ; sh:property [ sh:path ex:city ; sh:class ex:City ] ]`
+   * — compiled the outer shape, ignored the inner one, and validated the address without
+   * ever looking at the city. Nesting is what makes a shape describe a structure rather
+   * than a single hop, so this was not a corner: it is how depth is written.
+   */
+  readonly propertyShapes?: readonly PropertyShape[];
   readonly message?: string;
-  // ── value range. Numeric comparison on the lexical form's numeric value. ──
-  readonly minInclusive?: number;
-  readonly maxInclusive?: number;
-  readonly minExclusive?: number;
-  readonly maxExclusive?: number;
+  /**
+   * ── value range ──
+   *
+   * ★ THE BOUND IS A TERM, NOT A NUMBER, and storing it as a number is why every non-numeric
+   * range constraint silently vanished. `num()` returns undefined for a literal whose lexical
+   * form is not finite, so `sh:minInclusive "2002-10-10T12:00:00"^^xsd:dateTime` compiled to
+   * `undefined` and the constraint was simply absent — no note, no unsupported-construct
+   * report, nothing. A shape ordering timestamps is the ordinary case for anything carrying
+   * a validity window, and this repo publishes several.
+   *
+   * §4.3 defines these by the SPARQL relational operators, which are typed: they order
+   * numerics with numerics, dates with dates, strings with strings, and raise a type error
+   * otherwise. SHACL treats that error as a VIOLATION, not as a skip — see compareForRange.
+   */
+  readonly minInclusive?: ParsedTerm;
+  readonly maxInclusive?: ParsedTerm;
+  readonly minExclusive?: ParsedTerm;
+  readonly maxExclusive?: ParsedTerm;
   // ── string ──
   readonly minLength?: number;
   readonly maxLength?: number;
@@ -721,6 +818,16 @@ interface PropertyShape {
   readonly reificationRequired?: boolean;
   /** sh:qualifiedValueShape + counts: how many values conform to a nested shape. */
   readonly qualifiedValueShape?: string;
+  /**
+   * sh:qualifiedValueShapesDisjoint — a value that ALSO conforms to a sibling property
+   * shape's sh:qualifiedValueShape does not count toward this one.
+   *
+   * ★ It is the whole point of the constraint, and it was parsed by nothing. "A hand has one
+   * thumb and four fingers" is unenforceable without it: a node that is both a Thumb and a
+   * Finger satisfies both counts at once, so four digits pass as five. Disjointness is what
+   * makes the counts partition rather than overlap.
+   */
+  readonly qualifiedValueShapesDisjoint?: boolean;
   readonly qualifiedMinCount?: number;
   readonly qualifiedMaxCount?: number;
 }
@@ -825,6 +932,17 @@ interface NodeShape {
    * See the `identity` case of CompiledPath for what this replaced and why.
    */
   readonly nodeLevelShape?: PropertyShape;
+  /**
+   * SHACL 1.2 sh:uniqueValuesFor — the ONE component in Core that is not a statement about
+   * a single focus node.
+   *
+   * Every other constraint here can be decided from one focus node and the data reachable
+   * from it. This one says the values are unique ACROSS the shape's whole target set, so it
+   * cannot be evaluated inside the per-focus-node loop at all and lives beside it instead.
+   * A composite key is a list of paths, and a focus node missing a value for any of them
+   * does not participate.
+   */
+  readonly uniqueValuesFor?: readonly CompiledPath[];
   readonly nodeIn?: readonly ParsedTerm[];
   /** sh:severity — defaults to Violation. Unread before, so a shape declaring
    *  sh:Warning had its findings counted as conformance failures. */
@@ -877,9 +995,40 @@ function focusLabel(focus: ParsedSubject): string {
   return typeof focus.subject === 'string' ? focus.subject : `_:${focus.subject.bnode}`;
 }
 
+/**
+ * Predicates whose presence makes their SUBJECT a shape, per §2.1.1.
+ *
+ * ★ rdf:type IS NOT THE ONLY WAY TO DECLARE A SHAPE, and requiring it silently discarded
+ * whole shapes. §2.1.1 lists four sufficient conditions and we implemented one: a node is
+ * also a shape if it is the subject of a triple whose predicate is a TARGET or a CONSTRAINT
+ * PARAMETER. `ex:TestShape1 sh:nodeKind sh:BlankNode ; sh:targetNode ex:X .` is a complete,
+ * well-formed shape with no rdf:type anywhere, and we compiled nothing from it.
+ *
+ * The set is derived from PARAM_COMPONENT rather than written out again, so a parameter
+ * added there is recognised here too — the alternative is a second list that drifts, and
+ * the symptom of drift is a shape that quietly stops being one.
+ */
+let shapeDeclaringPredicates: ReadonlySet<string> | undefined;
+function shapeDeclaring(): ReadonlySet<string> {
+  // Built on first use: PARAM_COMPONENT is declared further down the file, and referencing
+  // it from a module-level initialiser here is a temporal-dead-zone crash at import time.
+  shapeDeclaringPredicates ??= new Set<string>([
+    SH_TARGET_CLASS, SH_TARGET_NODE, SH_TARGET_SUBJECTS_OF, SH_TARGET_OBJECTS_OF,
+    SH_TARGET_WHERE, SH_PATH,
+    ...PARAM_COMPONENT.keys(),
+  ]);
+  return shapeDeclaringPredicates;
+}
+
 function isShape(subj: ParsedSubject): boolean {
   const types = subj.properties.get(RDF_TYPE) ?? [];
-  return types.some(t => t.kind === 'iri' && (t.iri === SH_NODE_SHAPE || t.iri === SH_PROPERTY_SHAPE));
+  if (types.some(t => t.kind === 'iri' && (t.iri === SH_NODE_SHAPE || t.iri === SH_PROPERTY_SHAPE))) {
+    return true;
+  }
+  for (const pred of subj.properties.keys()) {
+    if (shapeDeclaring().has(pred)) return true;
+  }
+  return false;
 }
 
 /**
@@ -897,6 +1046,10 @@ function isShape(subj: ParsedSubject): boolean {
  * override with the same string it already passes to fail().
  */
 const PARAM_COMPONENT: ReadonlyMap<string, string> = new Map<string, string>([
+  // ★ sh:property IS a constraint parameter (§4.8.1), not merely structure — which is why
+  // it can be deactivated one value at a time. Omitting it made
+  // `sh:property X {| sh:deactivated true |}` parse cleanly and change nothing.
+  [SH_PROPERTY, 'PropertyConstraintComponent'],
   [SH_MIN_COUNT, 'MinCountConstraintComponent'],
   [SH_MAX_COUNT, 'MaxCountConstraintComponent'],
   [SH_DATATYPE, 'DatatypeConstraintComponent'],
@@ -921,6 +1074,11 @@ export interface ConstraintOverride {
   readonly deactivated?: boolean;
 }
 
+/** Key for an override that applies to ONE value of a repeatable parameter. */
+function valueScopedKey(component: string, value: ParsedTerm): string {
+  return JSON.stringify([component, value.kind, termValue(value)]);
+}
+
 function constraintOverrides(
   doc: ParsedDocument,
   subj: ParsedSubject,
@@ -938,11 +1096,7 @@ function constraintOverrides(
       const msgTerm = r.properties.get(SH_MESSAGE)?.[0];
       const deacTerm = r.properties.get(SH_DEACTIVATED)?.[0];
       const entry: ConstraintOverride = {
-        severity: sevIri === `${SHACL}Warning` ? 'Warning'
-          : sevIri === `${SHACL}Info` ? 'Info'
-            : sevIri === `${SHACL}Debug` ? 'Debug'
-              : sevIri === `${SHACL}Trace` ? 'Trace'
-                : sevIri === `${SHACL}Violation` ? 'Violation' : undefined,
+        severity: decodeSeverity(sevIri),
         message: msgTerm?.kind === 'literal' ? msgTerm.value : undefined,
         deactivated: deacTerm?.kind === 'literal' && deacTerm.value === 'true' ? true : undefined,
       };
@@ -950,6 +1104,12 @@ function constraintOverrides(
         && entry.deactivated === undefined) continue;
       out ??= new Map<string, ConstraintOverride>();
       out.set(component, entry);
+      // ★ ALSO KEYED BY THE VALUE, because a parameter can be REPEATED and the reifier
+      // annotates ONE triple. `sh:property A {| sh:deactivated true |} ; sh:property B .`
+      // switches off A and leaves B running; keyed by component alone, the second write
+      // would clobber the first and both would take whichever override was parsed last.
+      // Constraints that can only appear once are unaffected — they just get two keys.
+      out.set(valueScopedKey(component, t.object), entry);
     }
   }
   return out;
@@ -1008,10 +1168,14 @@ function compilePropertyShape(
   // walkRdfList handles all three; flatten so the engine's downstream
   // termsEqual sweep sees a flat allowed-value set regardless of how
   // the shape author wrote it.
+  // ★ `sh:in ()` IS A CONSTRAINT, AND AN UNSATISFIABLE ONE. An empty enumeration permits
+  // nothing, so every value violates it. Collapsing "no sh:in at all" and "sh:in ()" into
+  // one empty array made the second disappear — the fail-OPEN direction, where a shape
+  // written to admit nothing admits everything. `undefined` now means absent.
   const rawIn = getAll(subj, SH_IN);
-  const inValues: ParsedTerm[] = [];
+  const inValues: ParsedTerm[] | undefined = rawIn.length === 0 ? undefined : [];
   for (const head of rawIn) {
-    for (const v of walkRdfList(doc, head)) inValues.push(v);
+    for (const v of walkRdfList(doc, head)) inValues!.push(v);
   }
   return {
     id: subjectKey(subj),
@@ -1019,17 +1183,17 @@ function compilePropertyShape(
     pathExpr,
     minCount: minCountLit !== undefined ? parseInt(minCountLit, 10) : undefined,
     maxCount: maxCountLit !== undefined ? parseInt(maxCountLit, 10) : undefined,
-    datatypes: iriOrList(doc, getOne(subj, SH_DATATYPE)),
-    nodeKinds: iriOrList(doc, getOne(subj, SH_NODE_KIND)),
-    classes: iriOrList(doc, getOne(subj, SH_CLASS)),
+    datatypes: eachIriOrList(doc, getAll(subj, SH_DATATYPE)),
+    nodeKinds: eachIriOrList(doc, getAll(subj, SH_NODE_KIND)),
+    classes: eachIriOrList(doc, getAll(subj, SH_CLASS)),
     pattern: asLiteral(getOne(subj, SH_PATTERN)),
     hasValue: getOne(subj, SH_HAS_VALUE),
     inValues,
     message: asLiteral(getOne(subj, SH_MESSAGE)),
-    minInclusive: num(getOne(subj, SH_MIN_INCLUSIVE)),
-    maxInclusive: num(getOne(subj, SH_MAX_INCLUSIVE)),
-    minExclusive: num(getOne(subj, SH_MIN_EXCLUSIVE)),
-    maxExclusive: num(getOne(subj, SH_MAX_EXCLUSIVE)),
+    minInclusive: getOne(subj, SH_MIN_INCLUSIVE),
+    maxInclusive: getOne(subj, SH_MAX_INCLUSIVE),
+    minExclusive: getOne(subj, SH_MIN_EXCLUSIVE),
+    maxExclusive: getOne(subj, SH_MAX_EXCLUSIVE),
     minLength: num(getOne(subj, SH_MIN_LENGTH)),
     maxLength: num(getOne(subj, SH_MAX_LENGTH)),
     languageIn: (() => {
@@ -1046,12 +1210,24 @@ function compilePropertyShape(
       return t?.kind === 'literal' && t.value === 'true' ? true : undefined;
     })(),
     node: refKey(getOne(subj, SH_NODE)),
+    // Nested property shapes apply to the VALUE nodes, so they are compiled here rather
+    // than by compileShapes — which only ever looked at node shapes.
+    // Suppressed in nodeLevel mode for the same reason as the logicals: a NODE shape's
+    // sh:property is already compiled by compileShapes, and compiling it again here would
+    // report every nested violation twice.
+    propertyShapes: (nodeLevel ? [] : getAll(subj, SH_PROPERTY))
+      .map(ref => {
+        const k = refKey(ref);
+        const target = k === undefined ? undefined : subjectFor(doc, ref);
+        return target ? compilePropertyShape(doc, target) : null;
+      })
+      .filter((x): x is PropertyShape => x !== null && x !== undefined),
     // Excluded in nodeLevel mode: logicalResults() already owns these for a node shape.
     notShapes: nodeLevel
-      ? [] : getAll(subj, SH_NOT).map(refKey).filter((k): k is string => k !== undefined),
-    andShapes: nodeLevel ? [] : listShapeRefs(doc, subj, SH_AND),
-    orShapes: nodeLevel ? [] : listShapeRefs(doc, subj, SH_OR),
-    xoneShapes: nodeLevel ? [] : listShapeRefs(doc, subj, SH_XONE),
+      ? undefined : getAll(subj, SH_NOT).map(refKey).filter((k): k is string => k !== undefined),
+    andShapes: nodeLevel ? undefined : listShapeRefs(doc, subj, SH_AND),
+    orShapes: nodeLevel ? undefined : listShapeRefs(doc, subj, SH_OR),
+    xoneShapes: nodeLevel ? undefined : listShapeRefs(doc, subj, SH_XONE),
     overrides: constraintOverrides(doc, subj),
     someValue: refKey(getOne(subj, SH_SOME_VALUE)),
     memberShape: refKey(getOne(subj, SH_MEMBER_SHAPE)),
@@ -1077,6 +1253,10 @@ function compilePropertyShape(
       return t?.kind === 'literal' && t.value === 'true' ? true : undefined;
     })(),
     qualifiedValueShape: refKey(getOne(subj, SH_QUALIFIED_VALUE_SHAPE)),
+    qualifiedValueShapesDisjoint: (() => {
+      const t = getOne(subj, SH_QUALIFIED_VALUE_SHAPES_DISJOINT);
+      return t?.kind === 'literal' && t.value === 'true' ? true : undefined;
+    })(),
     qualifiedMinCount: num(getOne(subj, SH_QUALIFIED_MIN_COUNT)),
     qualifiedMaxCount: num(getOne(subj, SH_QUALIFIED_MAX_COUNT)),
     equals: compilePath(doc, getOne(subj, SH_EQUALS)),
@@ -1087,14 +1267,7 @@ function compilePropertyShape(
       const t = getOne(subj, SH_DEACTIVATED);
       return t?.kind === 'literal' && t.value === 'true' ? true : undefined;
     })(),
-    severity: (() => {
-      const iri = asIri(getOne(subj, SH_SEVERITY));
-      return iri === `${SHACL}Warning` ? 'Warning'
-        : iri === `${SHACL}Info` ? 'Info'
-        : iri === `${SHACL}Debug` ? 'Debug'
-        : iri === `${SHACL}Trace` ? 'Trace'
-        : iri === `${SHACL}Violation` ? 'Violation' : undefined;
-    })(),
+    severity: decodeSeverity(asIri(getOne(subj, SH_SEVERITY))),
   };
 }
 
@@ -1121,20 +1294,64 @@ function iriOrList(doc: ParsedDocument, term: ParsedTerm | undefined): readonly 
   return members.length > 0 ? members : undefined;
 }
 
+/**
+ * Every value of a parameter, each compiled to its own set of alternatives.
+ *
+ * ★ REPEATING A PARAMETER AND LISTING ITS VALUES MEAN OPPOSITE THINGS, and we read only the
+ * first value, so one of them was silently discarded.
+ *
+ *   sh:class ( ex:Person ex:Animal )        — ONE constraint: Person OR Animal (1.2 §4.1.1)
+ *   sh:class ex:Person ; sh:class ex:Animal — TWO constraints: Person AND Animal
+ *
+ * The second is just RDF: two triples are two constraints, and SHACL never says otherwise.
+ * Reading `getOne` meant `sh:class ex:Person ; sh:class ex:Animal` enforced Person alone,
+ * so a node that was a Person and not an Animal passed a shape that demanded both — and a
+ * node that was neither produced one result where the suite expects two, one per constraint.
+ */
+function eachIriOrList(
+  doc: ParsedDocument, terms: readonly ParsedTerm[],
+): readonly (readonly IRI[])[] | undefined {
+  const out: (readonly IRI[])[] = [];
+  for (const t of terms) {
+    const one = iriOrList(doc, t);
+    if (one) out.push(one);
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 /** The members of a SHACL list value node, or undefined when it is not a well-formed list. */
 function listMembers(doc: ParsedDocument, v: ParsedTerm): readonly ParsedTerm[] | undefined {
   if (v.kind === 'iri' && v.iri === RDF_NIL) return [];
-  if (v.kind !== 'bnode') return undefined;
+  // ★ A LIST HEAD MAY BE AN IRI. Turtle's `( … )` produces blank nodes, so it is easy to
+  // believe a list is always blank-node-headed — but rdf:first / rdf:rest are ordinary
+  // predicates and `ex:list0 rdf:first 1 ; rdf:rest ( 2 ) .` is a perfectly good list with
+  // a name. Rejecting IRIs made every NAMED list "not a SHACL list", which turned
+  // sh:maxListLength and its siblings into the opposite of themselves: the conforming lists
+  // were reported and the over-long one was not looked at.
+  if (v.kind !== 'iri' && v.kind !== 'bnode') return undefined;
   const subj = subjectFor(doc, v);
-  // A bnode with no rdf:first is not a list; §7.5 makes that a violation, not a pass.
+  // No rdf:first is not a list; §7.5 makes that a violation, not a pass.
   if (!subj?.properties.has(RDF_FIRST)) return undefined;
   return walkRdfList(doc, v);
 }
 
-/** The shape refs in an rdf:List value of `pred` (sh:and / sh:or / sh:xone). */
-function listShapeRefs(doc: ParsedDocument, subj: ParsedSubject, pred: IRI): readonly string[] {
+/**
+ * The shape refs in an rdf:List value of `pred` (sh:and / sh:or / sh:xone).
+ *
+ * ★ `undefined` IS NOT `[]` HERE. This returned `[]` for both "the predicate is absent" and
+ * "the predicate's value is the empty list", and the evaluator then guarded on
+ * `length > 0` — so `sh:xone ()` and `sh:or ()`, which are UNSATISFIABLE (exactly one of
+ * zero shapes; at least one of zero shapes), were treated as no constraint at all. A shape
+ * written to admit nothing admitted everything.
+ *
+ * sh:and () is the one that really is vacuous — "conforms to every shape in an empty list"
+ * is true — so it keeps passing, for a reason rather than by accident.
+ */
+function listShapeRefs(
+  doc: ParsedDocument, subj: ParsedSubject, pred: IRI,
+): readonly string[] | undefined {
   const head = subj.properties.get(pred)?.[0];
-  if (!head) return [];
+  if (!head) return undefined;
   return walkRdfList(doc, head)
     .map(refKey)
     .filter((k): k is string => k !== undefined);
@@ -1148,12 +1365,83 @@ function refKey(t: ParsedTerm | undefined): string | undefined {
   return undefined;
 }
 
+const NUMERIC_TYPES: ReadonlySet<string> = new Set([
+  'integer', 'decimal', 'float', 'double', 'long', 'int', 'short', 'byte',
+  'nonNegativeInteger', 'positiveInteger', 'nonPositiveInteger', 'negativeInteger',
+  'unsignedLong', 'unsignedInt', 'unsignedShort', 'unsignedByte',
+].map(t => `${XSD}${t}`));
+const TEMPORAL_TYPES: ReadonlySet<string> = new Set(
+  ['dateTime', 'dateTimeStamp', 'date'].map(t => `${XSD}${t}`));
+
+/**
+ * Order two terms the way SPARQL's relational operators do, or undefined if it cannot.
+ *
+ * ★ UNDEFINED MEANS "TYPE ERROR", WHICH SHACL MAKES A VIOLATION — not "no opinion". The
+ * three families order only within themselves, and a cross-family comparison is an error
+ * rather than a fallback to string order.
+ *
+ * ★ AND A dateTime WITH A TIMEZONE DOES NOT ORDER AGAINST ONE WITHOUT. XSD calls that
+ * indeterminate, and the suite pins both directions: with the bound timezoned,
+ * `"2002-10-10T12:00:00"^^xsd:dateTime` violates; with the bound NOT timezoned, all three
+ * timezoned values violate — including one that is plainly later on the clock. Reading the
+ * untimed form as UTC is the tempting shortcut and would make the first case pass.
+ */
+function compareForRange(a: ParsedTerm, b: ParsedTerm): number | undefined {
+  if (a.kind !== 'literal' || b.kind !== 'literal') return undefined;
+  const at = a.datatype ?? '';
+  const bt = b.datatype ?? '';
+  if (NUMERIC_TYPES.has(at) && NUMERIC_TYPES.has(bt)) {
+    const x = Number(a.value);
+    const y = Number(b.value);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return undefined;
+    return x < y ? -1 : x > y ? 1 : 0;
+  }
+  if (TEMPORAL_TYPES.has(at) && TEMPORAL_TYPES.has(bt)) {
+    const tzRe = /(Z|[+-]\d\d:\d\d)$/;
+    const tzA = tzRe.test(a.value);
+    const tzB = tzRe.test(b.value);
+    if (tzA !== tzB) return undefined;               // indeterminate, per XSD
+    const x = Date.parse(tzA ? a.value : `${a.value}Z`);
+    const y = Date.parse(tzB ? b.value : `${b.value}Z`);
+    if (Number.isNaN(x) || Number.isNaN(y)) return undefined;
+    return x < y ? -1 : x > y ? 1 : 0;
+  }
+  // Plain literals and xsd:string order by codepoint. A language-tagged literal does not
+  // order against anything: SPARQL raises on it, and so do we.
+  const strish = (t: ParsedLiteral): boolean =>
+    t.language === undefined && (t.datatype === undefined || t.datatype === `${XSD}string`);
+  if (strish(a) && strish(b)) return a.value < b.value ? -1 : a.value > b.value ? 1 : 0;
+  return undefined;
+}
+
 /** Numeric value of a literal, or undefined. Non-numeric lexical forms are not an
  *  error here — they simply do not participate in a numeric range check. */
 function num(t: ParsedTerm | undefined): number | undefined {
   if (t?.kind !== 'literal') return undefined;
   const n = Number(t.value);
   return Number.isFinite(n) ? n : undefined;
+}
+
+/**
+ * Render a SHACL path NODE the way this engine renders the path in `ShaclResult.path`.
+ *
+ * ★ EXPORTED FOR ONE CALLER, AND FOR A REASON THAT IS NOT CONVENIENCE. sh:resultPath is an
+ * RDF path expression, so for anything but a predicate path the W3C suite names it with a
+ * BLANK NODE — the head of the rdf:List, or the node carrying sh:inversePath. There is no
+ * string to compare against: bnode labels do not survive between graphs, and comparing them
+ * would be comparing nothing.
+ *
+ * Putting both sides through this renderer compares the path STRUCTURE, which is the thing
+ * the assertion is actually about — did the engine attribute this result to the sequence
+ * path, or to the inverse one. It does mean a bug in the renderer itself would be invisible
+ * to that comparison; the verdict tier is what covers that, because a path evaluated wrongly
+ * yields different value nodes and a different verdict.
+ *
+ * Returns undefined for a path this engine cannot express, which is itself the answer.
+ */
+export function renderPathTerm(doc: ParsedDocument, term: ParsedTerm | undefined): string | undefined {
+  const compiled = compilePath(doc, term);
+  return compiled ? renderPath(compiled) : undefined;
 }
 
 function compileShapes(doc: ParsedDocument): readonly NodeShape[] {
@@ -1180,16 +1468,31 @@ function compileShapes(doc: ParsedDocument): readonly NodeShape[] {
     // direct objects of the predicate and the loop above cannot see them. An inline
     // `sh:or ( [ … ] [ … ] )` — the idiomatic spelling — would otherwise never compile.
     for (const pred of [SH_AND, SH_OR, SH_XONE]) {
-      for (const k of listShapeRefs(doc, subj, pred)) inlineShapeKeys.add(k);
+      for (const k of listShapeRefs(doc, subj, pred) ?? []) inlineShapeKeys.add(k);
     }
   }
 
   for (const subj of doc.subjects) {
     if (!isShape(subj) && !inlineShapeKeys.has(subjectKey(subj))) continue;
-    const types = (subj.properties.get(RDF_TYPE) ?? []).filter(t => t.kind === 'iri') as { kind: 'iri'; iri: IRI }[];
-    const isProperty = types.some(t => t.iri === SH_PROPERTY_SHAPE);
-    // A property-shape declared standalone is not a node shape itself.
-    if (isProperty && !types.some(t => t.iri === SH_NODE_SHAPE)) continue;
+    // ★ A STANDALONE PROPERTY SHAPE IS STILL A SHAPE, AND IT WAS `continue`d.
+    //
+    // The line here read "a property-shape declared standalone is not a node shape itself"
+    // and skipped it. True and irrelevant: §2.1 gives targets to SHAPES, not to node shapes,
+    // and a property shape carrying sh:targetNode selects focus nodes and is validated
+    // against them exactly as a node shape is. Its own constraints simply apply to the
+    // values of its sh:path rather than to the focus node.
+    //
+    // Skipping it made every such shape enforce nothing. The W3C Core suite writes almost
+    // all of its PATH tests this way — one `sh:PropertyShape` with `sh:path`, `sh:minCount`
+    // and four `sh:targetNode`s — so sequence, alternative, zeroOrMore, oneOrMore, zeroOrOne
+    // and complex paths were all reported as failures of the path implementation, which was
+    // fine, when nothing had ever been evaluated against them at all.
+    //
+    // Compiled as a node shape whose single property shape is ITSELF. Everything below that
+    // would otherwise ALSO read its constraints — the node-level shape, and the four logical
+    // constraints — is suppressed for it, because on a property shape those are statements
+    // about the value nodes and the property shape already carries them.
+    const hasPath = subj.properties.has(SH_PATH);
 
     const targetClasses = getAll(subj, SH_TARGET_CLASS)
       .map(t => asIri(t))
@@ -1199,20 +1502,22 @@ function compileShapes(doc: ParsedDocument): readonly NodeShape[] {
     const propertyShapeRefs = getAll(subj, SH_PROPERTY);
 
     const propertyShapes: PropertyShape[] = [];
+    if (hasPath) {
+      const self = compilePropertyShape(doc, subj);
+      if (self) propertyShapes.push(self);
+    }
+    const shapeOverrides = constraintOverrides(doc, subj);
     for (const ref of propertyShapeRefs) {
-      if (ref.kind === 'iri') {
-        const target = propertyShapesByKey.get(ref.iri);
-        if (target) {
-          const ps = compilePropertyShape(doc, target);
-          if (ps) propertyShapes.push(ps);
-        }
-      } else if (ref.kind === 'bnode') {
-        const target = propertyShapesByKey.get(`_:${ref.id}`);
-        if (target) {
-          const ps = compilePropertyShape(doc, target);
-          if (ps) propertyShapes.push(ps);
-        }
-      }
+      const refK = refKey(ref);
+      if (refK === undefined) continue;
+      // §3.1.4 — `sh:property X {| sh:deactivated true |}` switches off THAT property
+      // constraint. Scoped to the value, so a sibling sh:property keeps running.
+      if (shapeOverrides?.get(valueScopedKey('PropertyConstraintComponent', ref))
+        ?.deactivated === true) continue;
+      const target = propertyShapesByKey.get(refK);
+      if (!target) continue;
+      const ps = compilePropertyShape(doc, target);
+      if (ps) propertyShapes.push(ps);
     }
 
     // sh:closed is `true` only when literally "true" — anything else (absent, "false",
@@ -1246,16 +1551,28 @@ function compileShapes(doc: ParsedDocument): readonly NodeShape[] {
     // description can satisfy only a shape that demands nothing of it), and a shape that
     // silently gained a constraint-free extra shape would answer that question differently.
     const nodeLevelShape = ((): PropertyShape | undefined => {
+      if (hasPath) return undefined;   // its constraints belong to the path, not the node
       const compiled = compilePropertyShape(doc, subj, true);
       return compiled && carriesConstraint(compiled) ? compiled : undefined;
     })();
-    const nodeIn: ParsedTerm[] = [];
-    for (const head of getAll(subj, SH_IN)) for (const v of walkRdfList(doc, head)) nodeIn.push(v);
+    // ★ A LIST HERE MEANS SEVERAL PATHS, NOT A SEQUENCE PATH — the two are spelled
+    // identically in Turtle, `( a b )`, and they mean opposite things. `sh:uniqueValuesFor
+    // ( skos:notation skos:inScheme )` is a COMPOSITE KEY: the pair must be unique, while
+    // either alone may repeat. Compiled as a sequence path it would instead walk notation
+    // then inScheme, yield nothing, and report every instance as having no key.
+    const uniqueValuesFor: CompiledPath[] = [];
+    for (const t of getAll(subj, SH_UNIQUE_VALUES_FOR)) {
+      const asList = listMembers(doc, t);
+      for (const step of asList ?? [t]) {
+        const cp = compilePath(doc, step);
+        if (cp) uniqueValuesFor.push(cp);
+      }
+    }
+    const rawNodeIn = hasPath ? [] : getAll(subj, SH_IN);
+    const nodeIn: ParsedTerm[] | undefined = rawNodeIn.length === 0 ? undefined : [];
+    for (const head of rawNodeIn) for (const v of walkRdfList(doc, head)) nodeIn!.push(v);
     const sevIri = asIri(getOne(subj, SH_SEVERITY));
-    const severity: ShaclSeverity = sevIri === `${SHACL}Warning` ? 'Warning'
-      : sevIri === `${SHACL}Info` ? 'Info'
-        : sevIri === `${SHACL}Debug` ? 'Debug'
-          : sevIri === `${SHACL}Trace` ? 'Trace' : 'Violation';
+    const severity: ShaclSeverity = decodeSeverity(sevIri) ?? 'Violation';
 
     nodeShapes.push({
       id: subjectKey(subj),
@@ -1277,17 +1594,19 @@ function compileShapes(doc: ParsedDocument): readonly NodeShape[] {
         const t = getOne(subj, SH_MESSAGE);
         return t?.kind === 'literal' ? t.value : undefined;
       })(),
-      nodeClass: asIri(getOne(subj, SH_CLASS)),
-      nodeDatatype: asIri(getOne(subj, SH_DATATYPE)),
-      nodeKindConstraint: asIri(getOne(subj, SH_NODE_KIND)),
+      nodeClass: hasPath ? undefined : asIri(getOne(subj, SH_CLASS)),
+      nodeDatatype: hasPath ? undefined : asIri(getOne(subj, SH_DATATYPE)),
+      nodeKindConstraint: hasPath ? undefined : asIri(getOne(subj, SH_NODE_KIND)),
       // sh:not takes shapes directly (repeatable); the other three take ONE rdf:List each.
-      notShapes: getAll(subj, SH_NOT).map(refKey).filter((k): k is string => k !== undefined),
-      andShapes: listShapeRefs(doc, subj, SH_AND),
-      orShapes: listShapeRefs(doc, subj, SH_OR),
-      xoneShapes: listShapeRefs(doc, subj, SH_XONE),
-      overrides: constraintOverrides(doc, subj),
+      notShapes: hasPath
+        ? undefined : getAll(subj, SH_NOT).map(refKey).filter((k): k is string => k !== undefined),
+      andShapes: hasPath ? undefined : listShapeRefs(doc, subj, SH_AND),
+      orShapes: hasPath ? undefined : listShapeRefs(doc, subj, SH_OR),
+      xoneShapes: hasPath ? undefined : listShapeRefs(doc, subj, SH_XONE),
+      overrides: shapeOverrides,
+      ...(uniqueValuesFor.length > 0 ? { uniqueValuesFor } : {}),
       ...(nodeLevelShape ? { nodeLevelShape } : {}),
-      ...(nodeIn.length > 0 ? { nodeIn } : {}),
+      ...(nodeIn !== undefined ? { nodeIn } : {}),
     });
   }
   return nodeShapes;
@@ -1605,10 +1924,18 @@ const NODE_KINDS: ReadonlySet<string> = new Set<string>([
   SH_BLANK_NODE_OR_LITERAL, SH_IRI_OR_LITERAL, SH_TRIPLE_TERM,
 ]);
 
+const RDF_LANG_STRING = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#langString' as IRI;
+
 function matchesDatatype(t: ParsedTerm, datatype: IRI): boolean {
   if (t.kind !== 'literal') return false;
+  // ★ A LANGUAGE-TAGGED LITERAL IS rdf:langString, NOT xsd:string. RDF 1.1 §3.3 gives every
+  // language-tagged literal that datatype and no other, so `"A"@en` does not satisfy
+  // `sh:datatype xsd:string`. Falling through to the untyped branch accepted it — which
+  // makes `sh:datatype xsd:string` mean "any string-ish literal", and a shape that meant to
+  // exclude localised values from a field kept letting them in.
+  if (t.language !== undefined && t.language !== '') return datatype === RDF_LANG_STRING;
   if (t.datatype) return t.datatype === datatype;
-  // Untyped literals are xsd:string by RDF semantics.
+  // A plain literal with no language tag is xsd:string.
   return datatype === (`${XSD}string` as IRI);
 }
 
@@ -1693,16 +2020,19 @@ function logicalResults(
   if (and.length > 0 && !and.every(holds)) {
     fail('AndConstraintComponent', 'Focus node does not conform to every shape in sh:and');
   }
-  const or = shape.orShapes ?? [];
-  if (or.length > 0 && !or.some(holds)) {
-    fail('OrConstraintComponent', 'Focus node conforms to no shape in sh:or');
+  const or = shape.orShapes;
+  if (or !== undefined && !or.some(holds)) {
+    fail('OrConstraintComponent', or.length === 0
+      ? 'sh:or is the empty list, so there is no shape for the focus node to conform to'
+      : 'Focus node conforms to no shape in sh:or');
   }
-  const xone = shape.xoneShapes ?? [];
-  if (xone.length > 0) {
+  const xone = shape.xoneShapes;
+  if (xone !== undefined) {
     const n = xone.filter(holds).length;
     if (n !== 1) {
-      fail('XoneConstraintComponent',
-        `Focus node conforms to ${n} shapes in sh:xone; exactly one is required`);
+      fail('XoneConstraintComponent', xone.length === 0
+        ? 'sh:xone is the empty list, so exactly one of zero shapes can never hold'
+        : `Focus node conforms to ${n} shapes in sh:xone; exactly one is required`);
     }
   }
   return out;
@@ -1738,10 +2068,21 @@ function nodeSatisfiesShape(
       byId, depth, subclassClosure).length > 0) {
     return false;
   }
-  const sub = subjectFor(data, term);
-  if (sub) return conformsToShape(data, sub, target, byId, depth + 1, subclassClosure);
-  // No description: it can satisfy only a shape that demands no properties of it.
-  return target.propertyShapes.length === 0;
+  // ★ "NOT DESCRIBED" IS NOT "DOES NOT CONFORM". This used to return
+  // `target.propertyShapes.length === 0` for any term the graph says nothing about — so a
+  // value with no outgoing triples failed EVERY sh:node shape that carried a property
+  // shape, whatever that shape actually required.
+  //
+  // The reasoning behind it was sound and the conclusion was inverted: a node with no
+  // description has no values for any path, and a property shape with no sh:minCount is
+  // satisfied by no values. Vacuous satisfaction is the correct answer, not vacuous failure.
+  //
+  // Measured on the suite's hardest entry, complex/shacl-shacl — SHACL-SHACL validating
+  // itself. `shsh:PropertyShapeShape` requires each sh:path value to conform to
+  // shsh:PathShape; a plain predicate path like `ex:p` is an IRI that appears nowhere as a
+  // subject, so it failed, so every property shape in the meta-model failed the
+  // "shapes are either node shapes or property shapes" xone. 55 violations from one line.
+  return conformsToShape(data, focusFor(data, term), target, byId, depth + 1, subclassClosure);
 }
 
 function conformsToShape(
@@ -1752,8 +2093,54 @@ function conformsToShape(
   depth: number,
   subclassClosure?: ReadonlyMap<IRI, ReadonlySet<IRI>>,
 ): boolean {
-  if (depth > 12) return true;
+  // ★ A CYCLE GUARD, NOT A DEPTH CAP — and the difference decided a real verdict.
+  //
+  // This read `if (depth > 12) return true`, which is two mistakes at once. It bounds
+  // LEGITIMATE nesting, not just cycles: a shape twelve levels deep is unusual but valid,
+  // and past the cap the engine stops evaluating and answers "conforms". And "conforms" is
+  // not a safe thing to invent, because sh:not and sh:xone INVERT it — under sh:not,
+  // give-up-and-conform becomes give-up-and-REFUSE.
+  //
+  // Measured on complex/shacl-shacl, the suite's self-validation: PathShape recursing
+  // through the SHACL path grammar crossed depth 12, the cap answered "conforms" for a
+  // branch it had not looked at, and the enclosing
+  // `sh:xone ( NodeShapeShape PropertyShapeShape )` got the wrong count. Raising 12 to 40
+  // made the test pass, which is exactly why it is the wrong fix: it moves the cliff.
+  //
+  // What actually terminates recursion is revisiting the SAME (shape, node) pair. Assuming
+  // conformance for a pair already on the stack is the standard least-fixpoint reading of
+  // recursive shapes — SHACL leaves recursion implementation-defined — and it triggers only
+  // on a genuine cycle, so honest depth is evaluated however deep it goes.
   if (target.deactivated) return true;
+  const cycleKey = JSON.stringify([target.id, subjectKey(subj)]);
+  if (RECURSION_STACK.has(cycleKey)) return true;
+  if (RECURSION_STACK.size > 20000) return true;   // pathological input backstop
+  RECURSION_STACK.add(cycleKey);
+  try {
+    return conformsToShapeInner(data, subj, target, byId, depth, subclassClosure);
+  } finally {
+    RECURSION_STACK.delete(cycleKey);
+  }
+}
+
+/**
+ * The (shape, focus node) pairs currently being evaluated.
+ *
+ * Module-level rather than threaded through every signature: validation is synchronous and
+ * single-threaded, the entry point clears it, and `finally` unwinds it on every path
+ * including a throw. A parameter would have to be added to eight mutually recursive
+ * functions, and the one that forgot to pass it would reintroduce the bug silently.
+ */
+const RECURSION_STACK = new Set<string>();
+
+function conformsToShapeInner(
+  data: ParsedDocument,
+  subj: ParsedSubject,
+  target: NodeShape,
+  byId: ReadonlyMap<string, NodeShape>,
+  depth: number,
+  subclassClosure?: ReadonlyMap<IRI, ReadonlySet<IRI>>,
+): boolean {
   // Node-level value constraints apply to the focus node itself — the third of the three
   // copies this now shares. See nodeSatisfiesShape above.
   if (target.nodeLevelShape
@@ -1891,23 +2278,30 @@ function evaluatePropertyShape(
   };
 
   // ── value range ────────────────────────────────────────────────────
-  for (const v of values) {
-    if (v.kind !== 'literal') continue;
-    const n = Number(v.value);
-    if (!Number.isFinite(n)) continue;   // non-numeric literals do not participate
-    if (ps.minInclusive !== undefined && n < ps.minInclusive) {
-      fail(ps.path, 'MinInclusiveConstraintComponent', `Value ${n} is less than sh:minInclusive ${ps.minInclusive}`, v);
+  //
+  // ★ AN INCOMPARABLE VALUE VIOLATES; it is not skipped. `sh:minExclusive 40` against
+  // `"A string"` and against `rdfs:Resource` both produce a result (W3C Core
+  // property/minExclusive-002, approved), because SPARQL raises a type error on those
+  // operands and §4.3 makes the error a violation. Skipping them — which is what "if it is
+  // not a finite number, continue" did — is the fail-OPEN reading: a bound stops applying to
+  // exactly the values that are the wrong shape for it.
+  const rangeCheck = (
+    bound: ParsedTerm | undefined, component: string, ok: (cmp: number) => boolean, word: string,
+  ): void => {
+    if (bound === undefined) return;
+    for (const v of values) {
+      const cmp = compareForRange(v, bound);
+      if (cmp === undefined) {
+        fail(ps.path, component, `Value is not comparable with ${termValue(bound)}`, v);
+      } else if (!ok(cmp)) {
+        fail(ps.path, component, `Value ${termValue(v)} is ${word} ${termValue(bound)}`, v);
+      }
     }
-    if (ps.maxInclusive !== undefined && n > ps.maxInclusive) {
-      fail(ps.path, 'MaxInclusiveConstraintComponent', `Value ${n} is greater than sh:maxInclusive ${ps.maxInclusive}`, v);
-    }
-    if (ps.minExclusive !== undefined && n <= ps.minExclusive) {
-      fail(ps.path, 'MinExclusiveConstraintComponent', `Value ${n} is not greater than sh:minExclusive ${ps.minExclusive}`, v);
-    }
-    if (ps.maxExclusive !== undefined && n >= ps.maxExclusive) {
-      fail(ps.path, 'MaxExclusiveConstraintComponent', `Value ${n} is not less than sh:maxExclusive ${ps.maxExclusive}`, v);
-    }
-  }
+  };
+  rangeCheck(ps.minInclusive, 'MinInclusiveConstraintComponent', c => c >= 0, 'below sh:minInclusive');
+  rangeCheck(ps.maxInclusive, 'MaxInclusiveConstraintComponent', c => c <= 0, 'above sh:maxInclusive');
+  rangeCheck(ps.minExclusive, 'MinExclusiveConstraintComponent', c => c > 0, 'not above sh:minExclusive');
+  rangeCheck(ps.maxExclusive, 'MaxExclusiveConstraintComponent', c => c < 0, 'not below sh:maxExclusive');
 
   // ── string ─────────────────────────────────────────────────────────
   for (const v of values) {
@@ -1921,15 +2315,23 @@ function evaluatePropertyShape(
         fail(ps.path, 'MaxLengthConstraintComponent', `Value is longer than sh:maxLength ${ps.maxLength}`, v);
       }
     }
-    if (ps.languageIn && v.kind === 'literal') {
-      const tag = (v.language ?? '').toLowerCase();
+    if (ps.languageIn) {
+      // ★ A NON-LITERAL VIOLATES; it is not skipped. §4.4.4 requires every value node to be
+      // a literal whose language tag matches, so an IRI or a blank node fails the
+      // constraint outright. `v.kind === 'literal' &&` in the guard made the constraint stop
+      // applying to exactly the values that cannot possibly satisfy it — the same fail-open
+      // shape as the range bounds and the empty lists.
+      const tag = v.kind === 'literal' ? (v.language ?? '').toLowerCase() : undefined;
       // BCP-47 basic filtering: "en" permits "en-GB".
-      const ok = ps.languageIn.some(w => {
+      const ok = tag !== undefined && ps.languageIn.some(w => {
         const want = w.toLowerCase();
         return tag === want || tag.startsWith(want + '-');
       });
       if (!ok) {
-        fail(ps.path, 'LanguageInConstraintComponent', `Language tag "${v.language ?? ''}" is not in sh:languageIn`, v);
+        fail(ps.path, 'LanguageInConstraintComponent',
+          v.kind === 'literal'
+            ? `Language tag "${v.language ?? ''}" is not in sh:languageIn`
+            : 'Value is not a language-tagged literal, so it cannot be in sh:languageIn', v);
       }
     }
   }
@@ -1970,16 +2372,20 @@ function evaluatePropertyShape(
         }
       }
     }
-    const cmp = (a: ParsedTerm, b: ParsedTerm): number | undefined => {
-      if (a.kind !== 'literal' || b.kind !== 'literal') return undefined;
-      const na = Number(a.value); const nb = Number(b.value);
-      if (Number.isFinite(na) && Number.isFinite(nb)) return na === nb ? 0 : na < nb ? -1 : 1;
-      return a.value === b.value ? 0 : a.value < b.value ? -1 : 1;   // lexicographic fallback
-    };
+    // ★ THE SAME TYPED RULE AS sh:minInclusive AND FRIENDS, for the same reason: §4.7
+    // defines sh:lessThan by the SPARQL relational operators, so comparing an integer with a
+    // string is a type error, and SHACL makes the error a VIOLATION.
+    //
+    // The local comparator this replaced pointed the other way twice over. It coerced with
+    // Number() and then fell back to LEXICOGRAPHIC order for anything non-numeric, so a
+    // cross-type comparison got an answer instead of an error -- and the two call sites
+    // below then wrote `c !== undefined && ...`, reading "cannot compare" as "comparison
+    // satisfied". Both halves fail open.
+    const cmp = compareForRange;
     if (ps.lessThan) {
       for (const v of values) for (const x of other(ps.lessThan)) {
         const c = cmp(v, x);
-        if (c !== undefined && c >= 0) {
+        if (c === undefined || c >= 0) {   // undefined is a type error, i.e. a violation
           fail(ps.path, 'LessThanConstraintComponent', `Value must be less than every value of ${renderPath(ps.lessThan)}`, v);
         }
       }
@@ -1987,7 +2393,7 @@ function evaluatePropertyShape(
     if (ps.lessThanOrEquals) {
       for (const v of values) for (const x of other(ps.lessThanOrEquals)) {
         const c = cmp(v, x);
-        if (c !== undefined && c > 0) {
+        if (c === undefined || c > 0) {    // undefined is a type error, i.e. a violation
           fail(ps.path, 'LessThanOrEqualsConstraintComponent', `Value must be <= every value of ${renderPath(ps.lessThanOrEquals)}`, v);
         }
       }
@@ -2054,8 +2460,27 @@ function evaluatePropertyShape(
       for (const v of values) {
         const members = listMembers(data, v);
         if (members === undefined) {
-          fail(ps.path, 'MemberShapeConstraintComponent',
-            'Value node is not a SHACL list, so its list constraints cannot hold', v);
+          // ★ ATTRIBUTED TO EACH CONSTRAINT THAT ASKED, not all to sh:memberShape. §7.5
+          // makes "not a list" a violation of every list constraint on the shape, and a
+          // shape declaring only sh:maxListLength was being told it had a memberShape
+          // problem — a component it never used. The report named a rule the author had
+          // not written.
+          if (ps.minListLength !== undefined) {
+            fail(ps.path, 'MinListLengthConstraintComponent',
+              'Value node is not a SHACL list, so it has no list length', v);
+          }
+          if (ps.maxListLength !== undefined) {
+            fail(ps.path, 'MaxListLengthConstraintComponent',
+              'Value node is not a SHACL list, so it has no list length', v);
+          }
+          if (ps.uniqueMembers === true) {
+            fail(ps.path, 'UniqueMembersConstraintComponent',
+              'Value node is not a SHACL list, so it has no members to be unique', v);
+          }
+          if (ps.memberShape !== undefined) {
+            fail(ps.path, 'MemberShapeConstraintComponent',
+              'Value node is not a SHACL list, so it has no members to check', v);
+          }
           continue;
         }
         if (ps.minListLength !== undefined && members.length < ps.minListLength) {
@@ -2145,8 +2570,14 @@ function evaluatePropertyShape(
       for (const v of values) {
         // fromCharCode, not a regex literal: a newline written into this source by a
         // generator becomes a real line break and the pattern stops being one.
+        // ★ FOUR CONTROL CHARACTERS BREAK A LINE, not two. Line feed and carriage return
+        // are the ones anyone thinks of; the suite also pins FORM FEED (u+000C) and LINE
+        // TABULATION (u+000B), and XML's definition of a line boundary includes them.
+        // Checking two of the four let `"Invalidinstance"` through a constraint whose
+        // entire job is to refuse embedded line breaks.
         const lex = termValue(v);
-        if (lex.includes(String.fromCharCode(10)) || lex.includes(String.fromCharCode(13))) {
+        const BREAKS = [10, 13, 12, 11].map(c => String.fromCharCode(c));
+        if (BREAKS.some(b => lex.includes(b))) {
           fail(ps.path, 'SingleLineConstraintComponent',
             'Value contains a line break and sh:singleLine is true', v);
         }
@@ -2193,9 +2624,23 @@ function evaluatePropertyShape(
     if (ps.qualifiedValueShape && (ps.qualifiedMinCount !== undefined || ps.qualifiedMaxCount !== undefined)) {
       const target = byId.get(ps.qualifiedValueShape);
       if (target) {
+        // §4.7.4 — with sh:qualifiedValueShapesDisjoint, the SIBLING qualified value shapes
+        // are those of the parent shape's OTHER property shapes. A value conforming to any
+        // of them is excluded from this count, so the counts partition the values instead
+        // of double-counting a value that satisfies two of them.
+        const siblings = ps.qualifiedValueShapesDisjoint === true
+          ? shape.propertyShapes
+            .filter(x => x.id !== ps.id && x.qualifiedValueShape !== undefined)
+            .map(x => byId.get(x.qualifiedValueShape!))
+            .filter((x): x is NodeShape => x !== undefined)
+          : [];
         let n = 0;
         for (const v of values) {
-          if (nodeSatisfiesShape(data, v, target, byId, depth, subclassClosure)) n++;
+          if (!nodeSatisfiesShape(data, v, target, byId, depth, subclassClosure)) continue;
+          if (siblings.some(sib => nodeSatisfiesShape(data, v, sib, byId, depth, subclassClosure))) {
+            continue;
+          }
+          n++;
         }
         if (ps.qualifiedMinCount !== undefined && n < ps.qualifiedMinCount) {
           fail(ps.path, 'QualifiedMinCountConstraintComponent',
@@ -2219,17 +2664,23 @@ function evaluatePropertyShape(
   }
 
   for (const v of values) {
-    if (ps.nodeKinds && !ps.nodeKinds.some(k => matchesNodeKind(v, k))) {
-      fail(ps.path, 'NodeKindConstraintComponent',
-        `Value does not match sh:nodeKind ${ps.nodeKinds?.join(' | ')}`, v);
+    for (const alternatives of ps.nodeKinds ?? []) {
+      if (!alternatives.some(k => matchesNodeKind(v, k))) {
+        fail(ps.path, 'NodeKindConstraintComponent',
+          `Value does not match sh:nodeKind ${alternatives.join(' | ')}`, v);
+      }
     }
-    if (ps.datatypes && !ps.datatypes.some(d => matchesDatatype(v, d))) {
-      fail(ps.path, 'DatatypeConstraintComponent',
-        `Value does not match sh:datatype ${ps.datatypes?.join(' | ')}`, v);
+    for (const alternatives of ps.datatypes ?? []) {
+      if (!alternatives.some(d => matchesDatatype(v, d))) {
+        fail(ps.path, 'DatatypeConstraintComponent',
+          `Value does not match sh:datatype ${alternatives.join(' | ')}`, v);
+      }
     }
-    if (ps.classes && !ps.classes.some(cl => valueHasClass(data, v, cl, subclassClosure))) {
-      fail(ps.path, 'ClassConstraintComponent',
-        `Value is not an instance of sh:class ${ps.classes?.join(' | ')}`, v);
+    for (const alternatives of ps.classes ?? []) {
+      if (!alternatives.some(cl => valueHasClass(data, v, cl, subclassClosure))) {
+        fail(ps.path, 'ClassConstraintComponent',
+          `Value is not an instance of sh:class ${alternatives.join(' | ')}`, v);
+      }
     }
     // ★ sh:pattern APPLIES TO IRIs TOO, not only literals.
     //
@@ -2258,9 +2709,23 @@ function evaluatePropertyShape(
         // Malformed regex in shape — skip rather than crash the gate.
       }
     }
-    if (ps.inValues && ps.inValues.length > 0) {
-      if (!ps.inValues.some(allowed => termsEqual(allowed, v))) {
-        fail(ps.path, 'InConstraintComponent', `Value is not in the sh:in enumeration`, v);
+    if (ps.inValues !== undefined && !ps.inValues.some(allowed => termsEqual(allowed, v))) {
+      fail(ps.path, 'InConstraintComponent',
+        ps.inValues.length === 0
+          ? 'sh:in is the empty list, which permits no value at all'
+          : 'Value is not in the sh:in enumeration', v);
+    }
+  }
+
+  // ── sh:property nested on a property shape: the VALUE NODES are the focus nodes ──
+  if (ps.propertyShapes && ps.propertyShapes.length > 0 && depth < 64) {
+    for (const v of values) {
+      const inner = focusFor(data, v);
+      for (const nested of ps.propertyShapes) {
+        for (const r of evaluatePropertyShape(
+          data, inner, shape, nested, byId, depth + 1, subclassClosure)) {
+          results.push(r);
+        }
       }
     }
   }
@@ -2292,6 +2757,11 @@ export function validateAgainstShape(
   shapeTurtle: string,
   options: ValidateAgainstShapeOptions = {},
 ): ShaclReport {
+  // The recursion guard unwinds itself in `finally` on every path, so this should always be
+  // a no-op. It is here because "should always be" is the assumption that makes shared
+  // mutable state expensive to be wrong about: one leaked entry would make a later,
+  // unrelated validation silently answer "conforms" for that (shape, node) pair.
+  RECURSION_STACK.clear();
   let shapeDoc: ParsedDocument;
   try {
     shapeDoc = parseTrig(shapeTurtle);
@@ -2308,6 +2778,7 @@ export function validateAgainstShape(
     // read can't be relied on as a gate.)
     return {
       conforms: false,
+      conformanceDisallows: options.conformanceDisallows ?? ['Info', 'Warning', 'Violation'],
       results: [{
         focusNode: '',
         constraintComponent: `${SHACL}ShapeGraphParseFailure`,
@@ -2324,6 +2795,7 @@ export function validateAgainstShape(
   } catch {
     return {
       conforms: false,
+      conformanceDisallows: options.conformanceDisallows ?? ['Info', 'Warning', 'Violation'],
       results: [{
         focusNode: '',
         constraintComponent: `${SHACL}DataGraphParseFailure`,
@@ -2431,6 +2903,50 @@ export function validateAgainstShape(
     if (shape.deactivated) continue;
     const focusNodes = findFocusNodes(dataDoc, shape, subclassClosure, byId);
     if (focusNodes.length > 0) liveShapeIds.add(shape.id);
+
+    // ── sh:uniqueValuesFor — the one Core component that spans focus nodes ──
+    //
+    // Evaluated here rather than inside the loop below because it is not decidable from one
+    // focus node: "unique" is a statement about the whole target set, and the node that
+    // breaks it is indistinguishable from the node that is fine until you have seen both.
+    //
+    // A node missing a value for ANY path of the key does not participate — approved test
+    // uniqueValuesFor-004 pins that, and the alternative reading (absent counts as its own
+    // key) would make every incomplete record collide with every other one.
+    if (shape.uniqueValuesFor && focusNodes.length > 1) {
+      const byKey = new Map<string, ParsedSubject[]>();
+      for (const focus of focusNodes) {
+        const term = subjectAsTerm(focus);
+        const parts: string[] = [];
+        let complete = true;
+        for (const path of shape.uniqueValuesFor) {
+          const vals = evaluatePath(dataDoc, term, path);
+          if (vals.length === 0) { complete = false; break; }
+          // Order-independent within one path, so two nodes carrying the same multi-valued
+          // key in a different document order are still the same key.
+          parts.push(JSON.stringify([...vals.map(v => [v.kind, termValue(v)])].sort()));
+        }
+        if (!complete) continue;
+        const k = JSON.stringify(parts);
+        (byKey.get(k) ?? byKey.set(k, []).get(k)!).push(focus);
+      }
+      for (const [, group] of byKey) {
+        if (group.length < 2) continue;
+        for (const focus of group) {
+          results.push({
+            focusNode: focusLabel(focus),
+            sourceShape: shape.id,
+            constraintComponent: `${SHACL}UniqueValuesForConstraintComponent`,
+            severity: shape.overrides?.get('UniqueValuesForConstraintComponent')?.severity
+              ?? shape.severity,
+            message: shape.overrides?.get('UniqueValuesForConstraintComponent')?.message
+              ?? shape.message
+              ?? `${group.length} focus nodes of ${shape.id} share the same value for `
+                + `sh:uniqueValuesFor; each must be unique`,
+          });
+        }
+      }
+    }
     // Which of these would NOT have been selected without entailment? Only those can
     // produce a "new" violation, so only those are downgraded in observe mode.
     const directOnly = new Set(findFocusNodes(dataDoc, shape, undefined, byId).map(f => subjectKey(f)));
@@ -2536,22 +3052,23 @@ export function validateAgainstShape(
   // subject reachable here is a subject that was compiled.
   const ownerSeverity = new Map<string, ShaclSeverity>();
   /** Strictness order, so "the stricter of" and "capped at" are one comparison. */
-  const SEVERITY_RANK: Readonly<Record<ShaclSeverity, number>> =
-    { Trace: 0, Debug: 1, Info: 2, Warning: 3, Violation: 4 };
+  // A custom severity IRI has no place in this order — the spec defines no ordering over
+  // user-defined severities — so it ranks alongside Violation, which is the conservative
+  // end. "Cap this at Warning" must not be a way to quietly downgrade something an author
+  // named themselves.
+  const rankOf = (x: ShaclSeverity): number => {
+    const i = (NAMED_SEVERITIES as readonly string[]).indexOf(x);
+    return i === -1 ? NAMED_SEVERITIES.length - 1 : i;
+  };
   const stricter = (a: ShaclSeverity, b: ShaclSeverity): ShaclSeverity =>
-    SEVERITY_RANK[a] >= SEVERITY_RANK[b] ? a : b;
+    rankOf(a) >= rankOf(b) ? a : b;
   const laxer = (a: ShaclSeverity, b: ShaclSeverity): ShaclSeverity =>
-    SEVERITY_RANK[a] <= SEVERITY_RANK[b] ? a : b;
+    rankOf(a) <= rankOf(b) ? a : b;
   /** `sh:severity` declared on ANY subject, not just the ones that compiled to node shapes. */
   const declaredOn = (key: string): ShaclSeverity | undefined => {
     const subj = subjectsByKey.get(key);
     if (!subj) return undefined;
-    const iri = asIri(subj.properties.get(SH_SEVERITY)?.[0]);
-    return iri === `${SHACL}Warning` ? 'Warning'
-      : iri === `${SHACL}Info` ? 'Info'
-      : iri === `${SHACL}Debug` ? 'Debug'
-      : iri === `${SHACL}Trace` ? 'Trace'
-      : iri === `${SHACL}Violation` ? 'Violation' : undefined;
+    return decodeSeverity(asIri(subj.properties.get(SH_SEVERITY)?.[0]));
   };
   for (const rootId of liveShapeIds) {
     const rootSeverity = declaredSeverity.get(rootId) ?? 'Violation';
@@ -2699,8 +3216,8 @@ export function validateAgainstShape(
   // ★ `conforms` NOW MEANS WHAT SHACL SAYS IT MEANS, and it did not before.
   //
   // §3.6: sh:conforms is "true if the validation did not produce any validation results,
-  // and false otherwise" — ANY result, at ANY severity. We counted only Violations, so a
-  // shape declaring `sh:severity sh:Warning` reported conforms:true on data that broke it.
+  // and false otherwise" — not "any Violations", which is what we counted, so a shape
+  // declaring `sh:severity sh:Warning` reported conforms:true on data that broke it.
   //
   // Measured against pySHACL on the same graph and the same shapes file:
   //   ours  conforms=true   results=1 [Warning]
@@ -2719,8 +3236,24 @@ export function validateAgainstShape(
   // — whose whole contract is "report what enforcing WOULD reject, without rejecting" —
   // reject. They keep their own rule, unchanged and still fail-closed: an advisory RAISED
   // TO Violation refuses exactly as it did before.
+  // ★ AND TRACE/DEBUG DO NOT COUNT — which is narrower than "any result", and is a 1.2
+  // refinement I got wrong on the first pass and the suite corrected. sh:Trace and sh:Debug
+  // are diagnostic levels new in 1.2, below sh:Info; they report without bearing on whether
+  // the data conforms. Approved, and unambiguous side by side:
+  //   misc/severity-003 — one sh:Warning result, sh:conforms FALSE
+  //   misc/severity-004 — one sh:Debug   result, sh:conforms TRUE
+  //   misc/severity-005 — one sh:Trace   result, sh:conforms TRUE
+  const disallows: readonly ShaclSeverity[] = options.conformanceDisallows
+    ?? ['Info', 'Warning', 'Violation'];
+  const countsAgainst = new Set<ShaclSeverity>(disallows);
   return {
-    conforms: !all.some(r => r.advisory !== true || r.severity === 'Violation'),
+    // An ADVISORY result is engine instrumentation, not a finding about the data, so the
+    // caller's severity choice does not apply to it: a Violation-severity advisory is
+    // fail-closed by construction and refuses regardless.
+    conforms: !all.some(r => r.advisory === true
+      ? r.severity === 'Violation'
+      : countsAgainst.has(r.severity)),
+    conformanceDisallows: disallows,
     results: all,
     fullyChecked,
   };

@@ -246,13 +246,50 @@ function tokenize(src: string): Tok[] {
         }
         if (src[i] === '\\' && i + 1 < n) {
           const esc = src[i + 1]!;
+          // ★ THE FULL Turtle ECHAR AND UCHAR SET — six of the eight escapes were missing
+          // or wrong, and every one of them failed SILENTLY by emitting the escape letter.
+          //
+          //   \\f  became the letter f          (u+000C FORM FEED)
+          //   \\b  became the letter b          (u+0008 BACKSPACE)
+          //   \\uXXXX / \\UXXXXXXXX  became the literal text 'u0041'
+          //
+          // The last is the serious one. UCHAR is how any non-ASCII character survives a
+          // Turtle document that was written conservatively — and a document we round-trip
+          // through this parser had its text changed rather than rejected. In the SIGNING
+          // path that means the canonical bytes are not the author's bytes, and the
+          // signature covers something the author never wrote.
+          const hex = (len: number): string | undefined => {
+            const digits = src.slice(i + 2, i + 2 + len);
+            if (digits.length !== len || !/^[0-9A-Fa-f]+$/.test(digits)) return undefined;
+            return digits;
+          };
           switch (esc) {
             case 't': value += '\t'; break;
             case 'n': value += '\n'; break;
             case 'r': value += '\r'; break;
+            case 'f': value += String.fromCharCode(0x0C); break;
+            case 'b': value += String.fromCharCode(0x08); break;
             case '"': value += '"'; break;
             case "'": value += "'"; break;
             case '\\': value += '\\'; break;
+            case 'u': {
+              const d = hex(4);
+              if (d === undefined) { value += esc; break; }
+              value += String.fromCodePoint(parseInt(d, 16));
+              i += 4;
+              break;
+            }
+            case 'U': {
+              const d = hex(8);
+              if (d === undefined) { value += esc; break; }
+              const cp = parseInt(d, 16);
+              // Beyond the Unicode range there is no character to produce; leaving the text
+              // as written is the only non-lossy answer.
+              if (cp > 0x10FFFF) { value += esc; break; }
+              value += String.fromCodePoint(cp);
+              i += 8;
+              break;
+            }
             default: value += esc;
           }
           i += 2;
@@ -737,6 +774,24 @@ function parseSubject(s: ParserState): { key: string; props: Map<IRI, ParsedTerm
     const props = existing ?? new Map<IRI, ParsedTerm[]>();
     s.subjects.set(key, props);
     return { key, props };
+  }
+  if (t.type === 'punct' && t.value === '<<') {
+    // ★ [10] subject ::= iri | BlankNode | collection | reifiedTriple — a reified triple is
+    // a SUBJECT too, and this only handled it as an object. `<<:s :p :o>> :q 123 .` is the
+    // suite's very first RDF 1.2 entry and the natural way to say something ABOUT a
+    // statement, which is the whole reason the syntax exists; ten of its entries failed here
+    // with "expected subject, got punct".
+    //
+    // parseReifiedTriple already collapses the block to its reifier, so the subject of the
+    // outer triple is that reifier — exactly as §7.3 desugars it.
+    const reifier = parseReifiedTriple(s);
+    const key = reifier.kind === 'iri' ? reifier.iri
+      : reifier.kind === 'bnode' ? `_:${reifier.id}` : undefined;
+    if (key === undefined) {
+      throw new ParseError('internal: reified triple did not yield a reifier node', t.pos);
+    }
+    if (!s.subjects.has(key)) s.subjects.set(key, new Map());
+    return { key, props: s.subjects.get(key)! };
   }
   throw new ParseError(`expected subject, got ${t.type}`, t.pos);
 }
