@@ -218,12 +218,6 @@ const KNOWN_DIVERGENCES = {
     + 'declares as a shape. No target rule reaches ex:Instance from the shape that is there. '
     + 'The empty-sh:in behaviour it means to test IS implemented (in-001 and our own tests '
     + 'cover it); the file appears to have been renamed without updating the data.',
-  'node/nodeByExpression-001.ttl':
-    'NOT IMPLEMENTED. sh:nodeByExpression takes a SHACL 1.2 NODE EXPRESSION, a separate '
-    + 'sub-language with its own 106-entry test area (tests/node-expr/) and its own spec '
-    + 'section. This is the only Core entry that reaches into it, and implementing the '
-    + 'expression language for one test would be the tail wagging the dog. Recorded as a '
-    + 'known gap rather than worked around.',
 };
 
 const files = suiteFiles().sort();

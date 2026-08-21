@@ -48,9 +48,9 @@ const SUITE = join(REPO, 'tests', 'fixtures', 'shacl12-w3c', 'core');
  */
 const FLOOR = {
   /** Verdict AND every expected result matched. */
-  exact: 137,
+  exact: 138,
   /** Verdict matched. The number that actually decides whether a publish is refused. */
-  verdict: 139,
+  verdict: 140,
 };
 
 interface Report {
@@ -114,18 +114,21 @@ describe('W3C SHACL 1.2 Core conformance', () => {
     // "two failures we can each account for" and "two failures". A NEW failure lands here
     // rather than blending into a count that was already non-zero.
     //
-    // The two recorded, in full in tools/shacl12-w3c/run.mjs:
-    //   node/in-002              — the entry expects a sh:sourceShape that is not in its own
-    //                              file; the behaviour it means to test is implemented and
-    //                              covered by in-001.
-    //   node/nodeByExpression-001 — sh:nodeByExpression needs the SHACL 1.2 node-expression
-    //                              sub-language, which has its own 106-entry test area.
+    // ★ THE LIST IS DOWN TO ONE, and the entry that left it is the interesting half.
+    // node/nodeByExpression-001 was on it as "NOT IMPLEMENTED — needs the node-expression
+    // sub-language". Writing that down is what made it a task rather than a footnote: the
+    // sub-language is now implemented (67/67 on its SPARQL-free entries) and the entry
+    // passes. A divergence ledger is only useful if entries can leave it.
+    //
+    // What remains, in full in tools/shacl12-w3c/run.mjs:
+    //   node/in-002 — the entry expects a sh:sourceShape that is not in its own file; the
+    //                 behaviour it means to test is implemented and covered by in-001.
     expect(report.unexplained,
       'a suite entry fails with no recorded reason — either fix the engine or record why '
       + 'the entry is disputed, in KNOWN_DIVERGENCES').toEqual([]);
     expect(report.knownDivergences.length,
       'the known-divergence list is growing; it is a ledger, not a bucket')
-      .toBeLessThanOrEqual(2);
+      .toBeLessThanOrEqual(1);
   });
 
   it('and the floor is not set below what the engine currently does', () => {

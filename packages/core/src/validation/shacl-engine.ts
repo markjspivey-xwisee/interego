@@ -43,6 +43,7 @@ import {
 } from '../rdf/turtle-parser.js';
 import { escapeTurtleLiteral } from '../rdf/escape.js';
 import type { IRI } from '../model/types.js';
+import { evaluateNodeExpression, type NodeExpressionContext } from './node-expression.js';
 
 const SHACL = 'http://www.w3.org/ns/shacl#';
 const RDF_TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type' as IRI;
@@ -100,6 +101,7 @@ const SH_REIFIER_SHAPE = `${SHACL}reifierShape` as IRI;
 const SH_REIFICATION_REQUIRED = `${SHACL}reificationRequired` as IRI;
 const RDF_REIFIES = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#reifies' as IRI;
 const SH_NODE = `${SHACL}node` as IRI;
+const SH_NODE_BY_EXPRESSION = `${SHACL}nodeByExpression` as IRI;
 const SH_QUALIFIED_VALUE_SHAPE = `${SHACL}qualifiedValueShape` as IRI;
 const SH_QUALIFIED_VALUE_SHAPES_DISJOINT = `${SHACL}qualifiedValueShapesDisjoint` as IRI;
 const SH_QUALIFIED_MIN_COUNT = `${SHACL}qualifiedMinCount` as IRI;
@@ -732,6 +734,16 @@ interface PropertyShape {
   /** sh:in. `undefined` is absent; `[]` is `sh:in ()`, which permits nothing. */
   readonly inValues?: readonly ParsedTerm[];
   /**
+   * SHACL 1.2 sh:nodeByExpression — the value must conform to every shape the NODE
+   * EXPRESSION yields, rather than to a shape named directly.
+   *
+   * ★ The difference from sh:node is that the shape is COMPUTED. `sh:node ex:S` fixes the
+   * shape at authoring time; this one can select it from the data — which is how a profile
+   * says "conform to whichever shape your own rdf:type nominates" without enumerating the
+   * types in advance.
+   */
+  readonly nodeByExpression?: ParsedTerm;
+  /**
    * sh:property ON A PROPERTY SHAPE — each VALUE NODE is a focus node for these.
    *
    * ★ Only node shapes carried sh:property here, so the idiomatic way to reach two levels
@@ -1065,6 +1077,7 @@ const PARAM_COMPONENT: ReadonlyMap<string, string> = new Map<string, string>([
   [SH_MIN_LENGTH, 'MinLengthConstraintComponent'],
   [SH_MAX_LENGTH, 'MaxLengthConstraintComponent'],
   [SH_NODE, 'NodeConstraintComponent'],
+  [SH_NODE_BY_EXPRESSION, 'NodeByExpressionConstraintComponent'],
   [SH_REIFIER_SHAPE, 'ReifierShapeConstraintComponent'],
 ]);
 
@@ -1210,6 +1223,7 @@ function compilePropertyShape(
       return t?.kind === 'literal' && t.value === 'true' ? true : undefined;
     })(),
     node: refKey(getOne(subj, SH_NODE)),
+    nodeByExpression: getOne(subj, SH_NODE_BY_EXPRESSION),
     // Nested property shapes apply to the VALUE nodes, so they are compiled here rather
     // than by compileShapes — which only ever looked at node shapes.
     // Suppressed in nodeLevel mode for the same reason as the logicals: a NODE shape's
@@ -2730,6 +2744,23 @@ function evaluatePropertyShape(
     }
   }
 
+  // ── sh:nodeByExpression: the shapes are computed, then applied ──
+  if (ps.nodeByExpression !== undefined) {
+    for (const v of values) {
+      const shapes = evaluateNodeExpression(data, ps.nodeByExpression, {
+        focusNode: v,
+        conforms: (n, sh) => nodeConformsToShape(data, n, sh),
+      });
+      for (const shapeTerm of shapes) {
+        if (!nodeConformsToShape(data, v, shapeTerm)) {
+          fail(ps.path, 'NodeByExpressionConstraintComponent',
+            `Value does not conform to the shape computed by sh:nodeByExpression `
+            + `(${termValue(shapeTerm)})`, v);
+        }
+      }
+    }
+  }
+
   if (ps.hasValue) {
     const present = values.some(v => termsEqual(v, ps.hasValue!));
     if (!present) {
@@ -2752,6 +2783,52 @@ function evaluatePropertyShape(
  * shape — that is the correct SHACL semantics (a shape with no targets
  * trivially conforms).
  */
+/**
+ * Does a node conform to a shape written inline in the SAME document?
+ *
+ * ★ EXISTS TO BREAK A CYCLE, and the cycle is real rather than a build artefact. SHACL 1.2
+ * node expressions include `shnex:filterShape`, `shnex:findFirst`, `shnex:nodesMatching`,
+ * `shnex:matchAll` and `shnex:conformsToShape` — every one of which asks "does this node
+ * satisfy that shape". The validator is what can answer, and the validator is also what will
+ * CALL the expression evaluator for `sh:nodeByExpression`. So node-expression.ts takes the
+ * check as an injected function and this is the implementation of it.
+ *
+ * The shape is a TERM in the same document rather than a separate shapes graph: in a node
+ * expression it is almost always an inline blank node, `[ sh:minInclusive 3 ]`, which has no
+ * identity outside the document it is written in.
+ */
+export function nodeConformsToShape(
+  doc: ParsedDocument, node: ParsedTerm, shape: ParsedTerm,
+): boolean {
+  const shapes = compileShapes(doc);
+  const byId = new Map<string, NodeShape>();
+  for (const sh of shapes) byId.set(sh.id, sh);
+  const k = refKey(shape);
+  const target = k === undefined ? undefined : byId.get(k);
+  // A shape the document does not describe constrains nothing, so everything satisfies it —
+  // which is also what `shnex:filterShape [ ]` (no constraints) is expected to do: keep
+  // every input node rather than drop them all.
+  if (!target) return true;
+  return nodeSatisfiesShape(doc, node, target, byId, 0, buildSubclassClosure(doc).closure);
+}
+
+/**
+ * Evaluate a SHACL 1.2 node expression, with shape conformance wired in.
+ *
+ * The thin wrapper is the whole point: a caller that reached for evaluateNodeExpression
+ * directly would get an evaluator whose five shape-valued operators silently return nothing.
+ */
+export function evaluateExpression(
+  doc: ParsedDocument,
+  expr: ParsedTerm | undefined,
+  ctx: Omit<NodeExpressionContext, 'conforms'> = {},
+): ParsedTerm[] {
+  return evaluateNodeExpression(doc, expr, {
+    ...ctx,
+    conforms: (node, shape) => nodeConformsToShape(doc, node, shape),
+  });
+}
+
 export function validateAgainstShape(
   dataTurtle: string,
   shapeTurtle: string,
