@@ -12,10 +12,20 @@
  *   - Objects:        <iri> | prefixed:name | literal in all four Turtle quotings
  *                     ("…" '…' """…""" '''…''') with optional ^^datatype or @lang
  *                     | integer | decimal | boolean | nested [ ... ]
+ *   - Collections     ( ... ), expanded to real rdf:first/rdf:rest cells. This line used to
+ *                     sit under "NOT supported" and had gone stale: collections were
+ *                     implemented (see readCollection below) and SHACL depends on them for
+ *                     sh:in, sh:or and sh:ignoredProperties. A "NOT supported" that is
+ *                     actually supported is worse than no note — it is an instruction to go
+ *                     hand-roll a workaround for something that already works.
  *
  * NOT supported (intentional):
- *   - Lists ( ... )
- *   - Annotation syntax {| ... |}
+ *   - Annotation syntax {| ... |}   ← ★ but serializer.ts EMITS it (toTripleAnnotationTurtle),
+ *                     so the RDF 1.2 annotation write path has no matching read path here:
+ *                     feeding our own output back in throws "unexpected character '|'".
+ *                     Loud rather than silent, and no production caller emits it today, but
+ *                     it is the reason docs/ns/iep-shapes-1.2.ttl cannot be enforced — all
+ *                     three of its shapes are sh:reifierShape, which needs this syntax.
  *   - @base / relative IRI resolution
  *   - SPARQL UPDATE operations
  *
