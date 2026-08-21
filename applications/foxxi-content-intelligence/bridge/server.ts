@@ -868,7 +868,28 @@ function ontologyTurtleToJsonLd(turtle: string): Record<string, unknown> {
       node[pred as string] = terms.map(t =>
         t.kind === 'iri' ? { '@id': t.iri }
           : t.kind === 'bnode' ? { '@id': `_:${t.id}` }
-            : { '@value': t.value, ...(t.datatype ? { '@type': t.datatype } : {}), ...(t.language ? { '@language': t.language } : {}) });
+            // ★ Identical to deploy/mcp-relay/server.ts's nsTurtleToJsonLd, because this
+            // function IS a copy of it. Both ended in a bare `else` that treated any
+            // non-IRI, non-bnode term as a literal, so an RDF 1.2 triple term would have
+            // been published as `{"@value": undefined}` — a well-formed-looking JSON-LD
+            // node asserting nothing. Only each deployable's OWN tsconfig caught it; the
+            // repo-wide typecheck gate does not cover bridges.
+            //
+            // `@type: "@json"` is standard JSON-LD 1.1, so this needs no new vocabulary,
+            // and it is unmistakably structured rather than a value a reader might trust.
+            : t.kind === 'triple'
+              ? {
+                '@type': '@json',
+                '@value': {
+                  subject: t.subject.kind === 'iri' ? t.subject.iri : `_:${t.subject.id}`,
+                  predicate: t.predicate,
+                  object: t.object.kind === 'iri' ? t.object.iri
+                    : t.object.kind === 'bnode' ? `_:${t.object.id}`
+                      : t.object.kind === 'literal' ? t.object.value
+                        : '[nested triple term]',
+                },
+              }
+              : { '@value': t.value, ...(t.datatype ? { '@type': t.datatype } : {}), ...(t.language ? { '@language': t.language } : {}) });
     }
     return node;
   });

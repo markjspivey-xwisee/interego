@@ -12771,7 +12771,35 @@ function nsTurtleToJsonLd(turtle: string): Record<string, unknown> {
       node[pred as string] = terms.map(t =>
         t.kind === 'iri' ? { '@id': t.iri }
           : t.kind === 'bnode' ? { '@id': `_:${t.id}` }
-            : { '@value': t.value, ...(t.datatype ? { '@type': t.datatype } : {}), ...(t.language ? { '@language': t.language } : {}) });
+            // ★ An RDF 1.2 triple term needs its own encoding, and JSON-LD 1.1 has no
+            // standard one — RDF 1.2's JSON-LD serialization is still in progress. The
+            // chain below used to end in a bare `else` that treated ANY non-IRI, non-bnode
+            // term as a literal, so a triple term would have been published as
+            // `{"@value": undefined}`: a well-formed-looking JSON-LD node asserting
+            // nothing, on a route whose whole job is to serve the vocabulary faithfully.
+            //
+            // Until there is a standard, this emits the three parts under our own
+            // namespace rather than guessing at one. It is unmistakably not a literal, it
+            // round-trips the information, and a reader that does not know the term simply
+            // sees a nested node instead of silently reading a null value as fact.
+            : t.kind === 'triple'
+              ? {
+                // `@type: "@json"` is standard JSON-LD 1.1, so this needs no new
+                // vocabulary — which matters, because three minted terms for a
+                // serialization gap would join the undeclared-term debt this repo already
+                // carries. It is also unmistakably structured: a reader that does not know
+                // RDF 1.2 sees a JSON object, not a string it might treat as a value.
+                '@type': '@json',
+                '@value': {
+                  subject: t.subject.kind === 'iri' ? t.subject.iri : `_:${t.subject.id}`,
+                  predicate: t.predicate,
+                  object: t.object.kind === 'iri' ? t.object.iri
+                    : t.object.kind === 'bnode' ? `_:${t.object.id}`
+                      : t.object.kind === 'literal' ? t.object.value
+                        : '[nested triple term]',
+                },
+              }
+              : { '@value': t.value, ...(t.datatype ? { '@type': t.datatype } : {}), ...(t.language ? { '@language': t.language } : {}) });
     }
     return node;
   });
