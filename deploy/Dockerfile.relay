@@ -66,6 +66,11 @@ RUN mkdir -p /relay-docs/ns
 COPY docs/ns/soc2.ttl /relay-docs/ns/soc2.ttl
 COPY docs/ns/nist-rmf.ttl /relay-docs/ns/nist-rmf.ttl
 COPY docs/ns/eu-ai-act.ttl /relay-docs/ns/eu-ai-act.ttl
+# The retrieval lexicon lands here too, not because the relay expands queries today, but
+# because INTEREGO_NS_DIR is PINNED in this image: the upward directory walk that finds
+# docs/ns in every other image is skipped entirely once that variable is set, so anything
+# @interego/pgsl needs has to be in this directory or it silently falls back.
+COPY docs/ns/pgsl-lexicon.ttl /relay-docs/ns/pgsl-lexicon.ttl
 
 # ────────────────────────────────────────────────────────────
 #  Build stage: install relay deps + compile server.ts

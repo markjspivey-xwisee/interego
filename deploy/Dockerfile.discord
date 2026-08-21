@@ -75,6 +75,15 @@ RUN npm install --no-save tsx@4.22.0
 #   packages/                     the @interego/* substrate it imports
 #   applications/shared-workspace the vertical (the bot AND tools/live-identity.ts)
 COPY packages/ ./packages/
+
+# ★ The retrieval lexicon, as DATA. @interego/pgsl reads docs/ns/pgsl-lexicon.ttl at runtime
+# for query expansion (synonyms, IS-A, part-of, causal relations). Without it the package
+# silently selects its frozen FALLBACK_* tables — behaviour is identical today, because the
+# published file is generated from them and a test pins that, but the whole point of moving
+# the knowledge out of TypeScript is that a deployment reads the published copy. Landing it
+# at /app/docs/ns is enough: the package walks up from its own dist/ and finds it there, so
+# no INTEREGO_NS_DIR is needed here.
+COPY docs/ns/pgsl-lexicon.ttl ./docs/ns/pgsl-lexicon.ttl
 COPY applications/shared-workspace/ ./applications/shared-workspace/
 
 # Compile the @interego/* packages to their dist/ — `@interego/workspace-client`

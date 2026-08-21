@@ -12,6 +12,15 @@ COPY package.json package-lock.json tsconfig.base.json ./
 COPY scripts/ ./scripts/
 COPY packages/ ./packages/
 
+# ★ The retrieval lexicon, as DATA. @interego/pgsl reads docs/ns/pgsl-lexicon.ttl at runtime
+# for query expansion (synonyms, IS-A, part-of, causal relations). Without it the package
+# silently selects its frozen FALLBACK_* tables — behaviour is identical today, because the
+# published file is generated from them and a test pins that, but the whole point of moving
+# the knowledge out of TypeScript is that a deployment reads the published copy. Landing it
+# at /app/docs/ns is enough: the package walks up from its own dist/ and finds it there, so
+# no INTEREGO_NS_DIR is needed here.
+COPY docs/ns/pgsl-lexicon.ttl ./docs/ns/pgsl-lexicon.ttl
+
 RUN npm install --workspaces --include-workspace-root --no-audit --no-fund
 RUN npm run build
 
