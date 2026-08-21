@@ -221,6 +221,16 @@ export interface SparqlQuery {
   groupBy: string[];
   aggregates: SparqlAggregate[];
   orderBy: Array<{ variable: string; direction: 'ASC' | 'DESC' }>;
+  /**
+   * VALUES blocks — an inline table joined with the rest of the pattern.
+   *
+   * ★ IT WAS PARSED BY NOTHING AND IGNORED SILENTLY, and one of this repo's own exported
+   * query generators depends on it. `queryGraphsByTrustLevel` uses VALUES to map three trust
+   * IRIs to numeric scores and then filters on the score — so with VALUES dropped, `?score`
+   * was never bound, the FILTER compared against an unbound variable, and the query returned
+   * ZERO ROWS for every input including its own minimum level.
+   */
+  values: Array<{ variables: string[]; rows: string[][] }>;
   limit?: number;
 }
 
@@ -407,13 +417,37 @@ export function parseSparql(queryString: string): SparqlQuery {
     whereWithoutUnion = whereWithoutUnion.replace(optMatch[0], '');
   }
 
-  // Parse FILTER expressions
-  const filterRe = /FILTER\s*\(([^)]+)\)/gi;
-  let filterMatch;
-  while ((filterMatch = filterRe.exec(whereWithoutUnion)) !== null) {
-    const expr = filterMatch[1]!.trim();
+  // ── Parse VALUES blocks ──
+  //
+  // Two spellings, and the tuple form is the one that matters here:
+  //   VALUES ?v { a b }
+  //   VALUES (?a ?b) { (a 1) (b 2) }
+  // Parsed BEFORE the filters so the block is removed from the text either way — left in, it
+  // would be re-read as triple patterns and quietly poison the join.
+  const values: Array<{ variables: string[]; rows: string[][] }> = [];
+  for (const { variables, rows, whole } of extractValues(whereWithoutUnion, expandPrefixed)) {
+    values.push({ variables, rows });
+    whereWithoutUnion = whereWithoutUnion.replace(whole, '');
+  }
+
+  // ── Parse FILTER expressions ──
+  //
+  // ★ THE BODY WAS MATCHED WITH `([^)]+)`, WHICH CANNOT CONTAIN A CLOSING PAREN — so every
+  // FILTER holding a FUNCTION CALL was truncated at its first `)`. `BOUND(?x)` became
+  // `BOUND(?x`, `STRSTARTS(STR(?t), "…")` became `STRSTARTS(STR(?t`.
+  //
+  // parseFilter implements STRSTARTS, BOUND, !BOUND and REGEX correctly and each of its
+  // patterns requires the closing paren the outer regex had already eaten, so all four were
+  // UNREACHABLE. The fallthrough then returned `?_ = ''` — a filter on a variable nothing
+  // ever binds — which does not error, it drops EVERY ROW.
+  //
+  // Measured consequence in shipped, exported code: `queryContextManifest` (from
+  // @interego/core) filters on `STRSTARTS(STR(?facetType), STR(iep:))` and therefore
+  // returned ZERO ROWS for every graph, always. One character class, four features, and a
+  // public query that answered "nothing here" about data that was there.
+  for (const { expr, whole } of extractFilters(whereWithoutUnion)) {
     filters.push(parseFilter(expr, expandPrefixed));
-    whereWithoutUnion = whereWithoutUnion.replace(filterMatch[0], '');
+    whereWithoutUnion = whereWithoutUnion.replace(whole, '');
   }
 
   // Parse BIND expressions
@@ -467,6 +501,7 @@ export function parseSparql(queryString: string): SparqlQuery {
     groupBy,
     aggregates,
     orderBy,
+    values,
     limit,
   };
 }
@@ -508,29 +543,114 @@ function expandTerm(term: string, expandPrefixed: (s: string) => string): string
   return expandPrefixed(term);
 }
 
+/** Split a VALUES row or header into terms, respecting quoted strings and <IRI> forms. */
+function splitTerms(text: string): string[] {
+  return text.trim().split(/\s+/).filter(t => t.length > 0);
+}
+
+/**
+ * Every `VALUES` block in a WHERE clause, with its braces balanced.
+ */
+function extractValues(
+  where: string, expandPrefixed: (s: string) => string,
+): { variables: string[]; rows: string[][]; whole: string }[] {
+  const out: { variables: string[]; rows: string[][]; whole: string }[] = [];
+  const re = /VALUES\s*(\(([^)]*)\)|\?\w+)\s*\{/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(where)) !== null) {
+    const header = m[2] !== undefined ? splitTerms(m[2]) : [m[1]!.trim()];
+    let depth = 1;
+    let i = m.index + m[0].length;
+    for (; i < where.length && depth > 0; i++) {
+      if (where[i] === '{') depth++;
+      else if (where[i] === '}') depth--;
+    }
+    if (depth !== 0) continue;
+    const body = where.slice(m.index + m[0].length, i - 1);
+    const rows: string[][] = [];
+    if (m[2] !== undefined) {
+      // Tuple form: each row is parenthesised.
+      const rowRe = /\(([^)]*)\)/g;
+      let r: RegExpExecArray | null;
+      while ((r = rowRe.exec(body)) !== null) {
+        rows.push(splitTerms(r[1]!).map(t => expandTerm(t, expandPrefixed)));
+      }
+    } else {
+      for (const t of splitTerms(body)) rows.push([expandTerm(t, expandPrefixed)]);
+    }
+    out.push({ variables: header, rows, whole: where.slice(m.index, i) });
+    re.lastIndex = i;
+  }
+  return out;
+}
+
+/**
+ * Every `FILTER (…)` in a WHERE clause, with the parentheses BALANCED.
+ *
+ * A regex cannot match balanced parens, and the one that used to do this job silently
+ * truncated any filter containing a function call. Scanning is three lines and is right for
+ * every depth.
+ */
+function extractFilters(where: string): { expr: string; whole: string }[] {
+  const out: { expr: string; whole: string }[] = [];
+  const re = /FILTER\s*\(/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(where)) !== null) {
+    let depth = 1;
+    let i = m.index + m[0].length;
+    for (; i < where.length && depth > 0; i++) {
+      if (where[i] === '(') depth++;
+      else if (where[i] === ')') depth--;
+    }
+    if (depth !== 0) continue;                       // unterminated — leave it to parseFilter
+    const whole = where.slice(m.index, i);
+    out.push({ expr: where.slice(m.index + m[0].length, i - 1).trim(), whole });
+    re.lastIndex = i;
+  }
+  return out;
+}
+
+/** `STR(?v)` and `str(?v)` mean the same thing as `?v` to every filter below. */
+function unwrapStr(arg: string): string {
+  const m = /^\s*STR\s*\(\s*(.+?)\s*\)\s*$/i.exec(arg);
+  return m ? m[1]!.trim() : arg.trim();
+}
+
 function parseFilter(expr: string, expandPrefixed: (s: string) => string): SparqlFilter {
-  // STRSTARTS(?var, "prefix")
-  const startsMatch = expr.match(/STRSTARTS\s*\(\s*(\?\w+)\s*,\s*"([^"]*?)"\s*\)/i);
-  if (startsMatch) {
-    return { type: 'strstarts', variable: startsMatch[1]!, pattern: startsMatch[2]! };
-  }
+  // ★ ARGUMENTS MAY BE WRAPPED IN STR(), and in practice they usually are — this repo's own
+  // `queryContextManifest` writes `STRSTARTS(STR(?facetType), STR(iep:))`. The patterns
+  // below took a bare `?var` only, so even with the paren bug fixed the common spelling
+  // would still have fallen through. STR() of a variable is that variable's lexical form,
+  // which is exactly what these filters compare, so unwrapping it is not an approximation.
 
-  // BOUND(?var)
-  const boundMatch = expr.match(/BOUND\s*\(\s*(\?\w+)\s*\)/i);
-  if (boundMatch) {
-    return { type: 'bound', variable: boundMatch[1]! };
-  }
-
-  // !BOUND(?var)
-  const notBoundMatch = expr.match(/!\s*BOUND\s*\(\s*(\?\w+)\s*\)/i);
+  // !BOUND(?var) — tested BEFORE BOUND, or the negation is swallowed by the positive form.
+  const notBoundMatch = expr.match(/^\s*!\s*BOUND\s*\(\s*(\?\w+)\s*\)\s*$/i);
   if (notBoundMatch) {
     return { type: 'not-bound', variable: notBoundMatch[1]! };
   }
 
-  // REGEX(?var, "pattern")
-  const regexMatch = expr.match(/REGEX\s*\(\s*(\?\w+)\s*,\s*"([^"]*?)"\s*(?:,\s*"([^"]*?)"\s*)?\)/i);
+  // BOUND(?var)
+  const boundMatch = expr.match(/^\s*BOUND\s*\(\s*(\?\w+)\s*\)\s*$/i);
+  if (boundMatch) {
+    return { type: 'bound', variable: boundMatch[1]! };
+  }
+
+  // STRSTARTS(?var | STR(?var), "prefix" | STR(pfx:) | pfx:local)
+  const startsMatch = expr.match(/^\s*STRSTARTS\s*\(\s*(.+?)\s*,\s*(.+?)\s*\)\s*$/i);
+  if (startsMatch) {
+    const variable = unwrapStr(startsMatch[1]!);
+    if (/^\?\w+$/.test(variable)) {
+      return { type: 'strstarts', variable, pattern: filterString(startsMatch[2]!, expandPrefixed) };
+    }
+  }
+
+  // REGEX(?var | STR(?var), "pattern" [, "flags"])
+  const regexMatch = expr.match(/^\s*REGEX\s*\(\s*(.+?)\s*,\s*"([^"]*?)"\s*(?:,\s*"([^"]*?)"\s*)?\)\s*$/i);
   if (regexMatch) {
-    return { type: 'regex', variable: regexMatch[1]!, pattern: regexMatch[2]! };
+    const variable = unwrapStr(regexMatch[1]!);
+    if (/^\?\w+$/.test(variable)) {
+      return { type: 'regex', variable, pattern: regexMatch[2]! };
+    }
   }
 
   // Comparison: ?var op value
@@ -544,8 +664,25 @@ function parseFilter(expr: string, expandPrefixed: (s: string) => string): Sparq
     };
   }
 
-  // Fallback
-  return { type: 'comparison', variable: '?_', operator: '=', value: '' };
+  // ★ NO SILENT FALLBACK. This returned `?_ = ''` — a comparison on a variable nothing ever
+  // binds — so an expression this parser did not understand did not report anything, it
+  // dropped every row. At a call site "no results" is indistinguishable from "no data", and
+  // that is how a public query came to answer "nothing here" about data that was there.
+  //
+  // Refusing is the honest answer and it is also the safe one: a caller sees an error it can
+  // act on rather than an empty array it will believe.
+  throw new Error(
+    `SPARQL FILTER expression is not supported by this engine: ${JSON.stringify(expr)}. `
+    + 'Supported: comparison (?v op value), BOUND, !BOUND, STRSTARTS, REGEX — each optionally '
+    + 'with STR() around the variable.');
+}
+
+/** A filter's right-hand string: a quoted literal, STR(pfx:), or a prefixed/absolute IRI. */
+function filterString(arg: string, expandPrefixed: (s: string) => string): string {
+  const inner = unwrapStr(arg);
+  const quoted = /^"([^"]*)"$/.exec(inner);
+  if (quoted) return quoted[1]!;
+  return expandPrefixed(inner.replace(/^<|>$/g, ''));
 }
 
 // ── SPARQL Executor ────────────────────────────────────────
@@ -560,6 +697,33 @@ export function executeSparql(store: TripleStore, query: SparqlQuery): SparqlRes
   // Apply WHERE triple patterns (conjunctive join)
   for (const pattern of query.where) {
     bindings = joinPattern(store, bindings, pattern);
+  }
+
+  // ── Join each VALUES table ──
+  //
+  // An inner join on the variables the block names: a candidate row is kept when every
+  // already-bound variable agrees with it, and contributes its own bindings for the rest.
+  // Applied after the BGP so a VALUES over a variable the pattern bound RESTRICTS it, which
+  // is the whole point of the construct.
+  for (const table of query.values ?? []) {
+    const joined: Binding[] = [];
+    for (const binding of bindings) {
+      for (const row of table.rows) {
+        let compatible = true;
+        for (let i = 0; i < table.variables.length; i++) {
+          const v = table.variables[i]!;
+          const existing = binding.get(v);
+          if (existing !== undefined && existing !== row[i]) { compatible = false; break; }
+        }
+        if (!compatible) continue;
+        const next = new Map(binding);
+        for (let i = 0; i < table.variables.length; i++) {
+          if (row[i] !== undefined) next.set(table.variables[i]!, row[i]!);
+        }
+        joined.push(next);
+      }
+    }
+    bindings = joined;
   }
 
   // Apply UNION blocks (each block is an alternative)
