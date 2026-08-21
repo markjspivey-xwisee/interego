@@ -2,6 +2,7 @@
 @prefix vld:     <https://github.com/The-Knowledge-Graph-Guys/vault-ld#> .
 @prefix hmd:     <https://relay.interego.xwisee.com/ns/maintainer/hmd#> .
 @prefix iep:     <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix pgsl:    <https://markjspivey-xwisee.github.io/interego/ns/pgsl#> .
 @prefix ieh:     <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
 @prefix hydra:   <http://www.w3.org/ns/hydra/core#> .
 @prefix owl:     <http://www.w3.org/2002/07/owl#> .
@@ -111,7 +112,8 @@ vldp:placementPredicate a owl:ObjectProperty ;
 
 vldp:IngestResult a owl:Class ;
   rdfs:label "Ingest Result" ;
-  rdfs:comment "What an ingest affordance returns: the outcome of projecting a vault bundle under this profile. Referenced by vldp:IngestAffordance as its return type." .
+  rdfs:comment "What vldp:IngestAffordance returns: the outcome of projecting a vault bundle under this profile — the rung-<=3 graph, the content-addressed source atoms it was built from, and the conformance report for vldp:ConformanceShape. Grounded by construction rather than by subclassing iep:KernelResult, which is the envelope of a KERNEL VERB and carries iep:KernelResultShape; an ingest is an affordance, not a kernel verb, so claiming that superclass would assert a shape this never satisfies." ;
+  iep:constructedFrom ( pgsl:Atom iep:ContextDescriptor vldp:ConformanceShape ) .
 
 # ── §6 conformance: the rung-<=3 AUTHORITY CLOSURE, as verifiable SHACL ──
 #
