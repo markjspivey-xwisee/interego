@@ -180,18 +180,39 @@ Interego targets **RDF 1.2** (W3C Candidate Recommendation,
 - **Standard constraint components** (sh:in, sh:hasValue,
   sh:minInclusive, sh:maxInclusive, sh:minCount, sh:message)
   — unchanged from SHACL 1.1.
-- **Property paths** — simple sh:path used throughout. Sequence,
-  inverse, and cardinality paths are valid SHACL 1.2 but not
-  currently exercised by Interego shapes.
+- **Property paths** — sequence, inverse, alternative and the
+  three cardinality paths are implemented and exercised:
+  `docs/ns/iep-shapes.ttl` states in Core several rules that used
+  to sit in inert `sh:sparql` blocks because no path but a single
+  predicate compiled.
+- **Node expressions** (`shnex:`) — the full set, including
+  `sh:values`, `sh:expression` and `sh:nodeByExpression`.
+- **SHACL-SPARQL** — `sh:sparql`, SPARQL-based constraint
+  components (`sh:parameter` + `sh:validator`), user-defined
+  `sh:function`, and SPARQL-based targets, over a synchronous
+  SELECT/ASK/CONSTRUCT evaluator in
+  `packages/core/src/validation/sparql-query.ts`.
+- **SHACL rules** — `sh:SPARQLRule` and `sh:TripleRule`, shape-bound
+  and global, with `sh:condition`, `sh:layer`, `sh:order`,
+  `sh:runOnce`, `sh:expectedPredicate` and `sh:tempTriple`, each
+  layer iterated to a fixpoint
+  (`packages/core/src/validation/shacl-rules.ts`).
 
-**SHACL 1.2 features NOT used:**
+**Measured, not asserted.** Each specification's own test suite is
+vendored and ratcheted in CI — RDF 1.2 Turtle 106/106, SHACL 1.2
+Core 142/143 (the one divergence is a disputed upstream entry, named
+in the runner), node expressions 143/143, SHACL-SPARQL Extensions
+44/44 across both validation and inference. See
+`tests/the-*-suite-is-the-oracle.test.ts`.
 
-- **`sh:rule`** for SHACL-based derivation rules — we use the
-  `iep:constructedFrom` + runtime-constructor pattern instead
-  (see `spec/DERIVATION.md`).
-- **Full SHACL 1.2 Node Expressions** — our mini-SHACL validator
-  in `examples/_lib.mjs` covers the subset we ship shapes for.
-  Production implementations MAY use a full SHACL 1.2 engine.
+**Where Interego's own shapes stop short:**
+
+- Interego descriptors are DERIVED by the `iep:constructedFrom` +
+  runtime-constructor pattern (see `spec/DERIVATION.md`) rather than
+  by `sh:rule`. The engine runs `sh:rule`; the substrate's own
+  derivation path does not use it, and the reducer's
+  `runShaclRules` deliberately refuses SPARQL rules rather than
+  fold a transform it cannot execute.
 
 **Compliance statement:**
 

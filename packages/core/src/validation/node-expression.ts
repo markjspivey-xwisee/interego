@@ -39,6 +39,7 @@ import type { IRI } from '../model/types.js';
 const SHNEX = 'http://www.w3.org/ns/shacl-node-expr#';
 const SH_SELECT = 'http://www.w3.org/ns/shacl#select' as IRI;
 const SH_ASK = 'http://www.w3.org/ns/shacl#ask' as IRI;
+const SH_SPARQL_EXPR = 'http://www.w3.org/ns/shacl#sparqlExpr' as IRI;
 const RDF = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#';
 const XSD = 'http://www.w3.org/2001/XMLSchema#';
 const RDF_FIRST = `${RDF}first` as IRI;
@@ -305,7 +306,8 @@ export function evaluateNodeExpression(
   // blank node and failed.
   const isOperator = node !== undefined
     && [...node.properties.keys()].some(k =>
-      k.startsWith(SHNEX) || k.startsWith(SPARQL_FN) || k === SH_SELECT || k === SH_ASK);
+      k.startsWith(SHNEX) || k.startsWith(SPARQL_FN)
+      || k === SH_SELECT || k === SH_ASK || k === SH_SPARQL_EXPR);
   if (!isOperator) {
     if (expr.kind === 'bnode' && (node === undefined || node.properties.size === 0)) return [];
     const members = expr.kind === 'bnode' ? listMembers(doc, expr) : undefined;
@@ -328,7 +330,14 @@ export function evaluateNodeExpression(
   // it did, the path simply yielded nothing — so a shape whose values are derived rather
   // than stored failed every constraint written about them. That is a FALSE REFUSAL of a
   // valid graph, which is the direction that costs a publisher rather than a reader.
-  if (node?.properties.has(SH_SELECT) || node?.properties.has(SH_ASK)) {
+  // ★ sh:sparqlExpr IS THE THIRD FORM, and it is a BARE EXPRESSION rather than a query:
+  // `sh:values [ sh:sparqlExpr "STRLEN(STR($this))" ]` derives a value from the focus node
+  // with no WHERE clause to hang it on. Missing from this test it fell through to the
+  // constant branch and the property's value node became the expression's own blank node —
+  // so `sh:datatype xsd:integer` and `sh:hasValue 27` were both judged against `_:b0`, and
+  // BOTH focus nodes were reported, including the one the entry says conforms.
+  if (node?.properties.has(SH_SELECT) || node?.properties.has(SH_ASK)
+    || node?.properties.has(SH_SPARQL_EXPR)) {
     return ctx.runQuery ? [...ctx.runQuery(expr, focusNode)] : [];
   }
 
@@ -374,6 +383,16 @@ export function evaluateNodeExpression(
     if (name === undefined) return [];
     if (name === 'focusNode') return focusNode ? [focusNode] : [];
     return [...(ctx.bindings?.get(name) ?? [])];
+  }
+  if (has('arg')) {
+    // ★ POSITIONAL, and the index is the VALUE not the predicate. `shnex:arg 0` inside a
+    // `sh:bodyExpression` is "the first argument this function was called with" — the
+    // parameter it corresponds to is declared separately as `sh:path shnex:arg0`. Reading
+    // the predicate instead of the value would make every argument reference index zero.
+    const idx = op('arg');
+    const n = idx?.kind === 'literal' ? Number(idx.value) : NaN;
+    if (!Number.isInteger(n)) return [];
+    return [...(ctx.bindings?.get(`arg${n}`) ?? [])];
   }
   if (has('constant')) {
     const c = op('constant');

@@ -15,3 +15,10 @@ export {
   type ShaclSeverity,
   type ValidateAgainstShapeOptions,
 } from './shacl-engine.js';
+export {
+  inferShaclTriples,
+  ShaclRulesError,
+  type InferenceOptions,
+  type InferenceResult,
+  type InferredTriple,
+} from './shacl-rules.js';

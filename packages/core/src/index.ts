@@ -373,6 +373,12 @@ export {
   renderPathTerm,
   runShaclRules,
   ShaclRuleError,
+  // The rules ENGINE, distinct from the reducer's deliberately-refusing runShaclRules.
+  inferShaclTriples,
+  ShaclRulesError,
+  type InferenceOptions,
+  type InferenceResult,
+  type InferredTriple,
   type ShaclReport,
   type ShaclResult,
   type ShaclRuleRun,

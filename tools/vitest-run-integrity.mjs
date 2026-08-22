@@ -216,7 +216,19 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // 286 -> 287: `tests/the-host-was-discarded-not-checked.test.ts`. `toInternalPodUrl` rewrote ANY
 // host onto our store instead of only our store's other spelling, which made the relay's key
 // handout a path-prefix test — a decryption oracle over every graph encrypted to the relay key.
-export const MIN_TEST_MODULES = 299;
+// 299 -> 306: not one file — the floor had drifted 16 below a tree that grew to 315 while
+// nobody looked, which is exactly the widening-allowance failure this check was added to
+// catch. The two new files are `tests/the-suite-does-not-reach-every-answer.test.ts` and
+// `tests/the-rules-engine-past-the-suite.test.ts`: six mutants survived a FULL score on the
+// W3C SHACL-SPARQL suite, and those two files are where the behaviours a conformance suite
+// does not ask about are pinned.
+// 305 -> 306: the second of that pair, named by this check on the next whole-tree run.
+// 306 -> 307: `tests/a-constraint-that-only-ran-at-the-top.test.ts`. Two whole constraint
+// families — `sh:sparql` and the SPARQL-based constraint components — were evaluated only for
+// shapes the driver reached DIRECTLY, so a shape reached through sh:node / sh:not / sh:or /
+// sh:xone enforced nothing while looking fully constrained. Found by a reviewer told to
+// refute, not by a failing test: the conformance suite was already at 44 of 44.
+export const MIN_TEST_MODULES = 307;
 export const FLOOR_ALLOWANCE = 10;
 
 /**
