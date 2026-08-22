@@ -204,8 +204,22 @@ for (const item of collect(join(SUITE, 'manifest.ttl'))) {
       : { rel, name, kind, state: 'fail', why: `threw: ${String(e.message).slice(0, 90)}` });
     continue;
   }
+  // ★ AN ABORT IS NOT A VERDICT, AND MUST NOT BE SCORED AS ONE. The engine reports a
+  // constraint it could not evaluate with its own component rather than with
+  // sh:SPARQLConstraintComponent, precisely so this harness can tell the two apart. Without
+  // that, "we refused because we could not run the rule" scores as a PASS on every entry
+  // whose expected verdict is false — measured, three entries flipped to green for exactly
+  // that reason the moment the engine started reporting instead of throwing.
+  const aborted = got.results.some(r => r.constraintComponent === 'urn:iep:shacl:SparqlRefused');
   if (expectsFailure) {
-    rows.push({ rel, name, kind, state: 'fail', why: 'expected the validation to ABORT; it returned a report' });
+    rows.push(aborted
+      ? { rel, name, kind, state: 'pass' }
+      : { rel, name, kind, state: 'fail', why: 'expected the validation to ABORT; it produced a verdict' });
+    continue;
+  }
+  if (aborted) {
+    const why = got.results.find(r => r.constraintComponent === 'urn:iep:shacl:SparqlRefused')?.message;
+    rows.push({ rel, name, kind, state: 'fail', why: `validation ABORTED: ${String(why).slice(0, 110)}` });
     continue;
   }
   rows.push(got.conforms === expectConforms

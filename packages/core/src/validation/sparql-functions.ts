@@ -395,6 +395,14 @@ export function implementsSparqlFunction(local: string): boolean {
 }
 
 const IMPLEMENTED: ReadonlySet<string> = new Set([
+  // ★ `now` AND `if` ARE EVALUATED BY THE CALLER, NOT BY THE TABLE BELOW — one needs the
+  // clock, the other must not evaluate the branch it does not take — and they still have to
+  // be LISTED here, because this set is what the query parser consults to decide whether a
+  // call is legal. `now` was implemented in the evaluator and absent from this list, so the
+  // parser refused `FILTER (?validFrom > NOW())` — which is the query in this repo's own
+  // published iep:TemporalFacetNonFutureValidFromShape. Two lists that must agree, and the
+  // one that decides is not the one you edit while writing the feature.
+  'now',
   'bound', 'coalesce', 'if',
   'isIRI', 'isURI', 'isBlank', 'isLiteral', 'isNumeric', 'isTriple',
   'datatype', 'lang', 'langdir', 'hasLang', 'hasLangdir', 'langMatches',

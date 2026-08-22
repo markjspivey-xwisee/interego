@@ -177,8 +177,25 @@ function tokenize(src: string): Tok[] {
 //  Algebra
 // ═══════════════════════════════════════════════════════════════
 
-interface Pattern { s: Node; p: Node; o: Node }
+interface Pattern { s: Node; p: PathNode; o: Node }
 type Node = { var: string } | { term: ParsedTerm };
+
+/**
+ * A predicate position: a variable, a single IRI, or a PROPERTY PATH.
+ *
+ * ★ THE PREDICATE IS NOT ALWAYS A TERM. `?d iep:revokedIf|iep:revokedBy $this` is this
+ * repo's own published RevocationCondition shape, and a parser that reads the predicate with
+ * the same function it uses for subjects and objects dies on the `|`. Alternation and
+ * sequence are the two forms that actually appear; the transitive operators are parsed too,
+ * so a query using them is EVALUATED rather than mistaken for a syntax error.
+ */
+type PathNode =
+  | { var: string }
+  | { term: ParsedTerm }
+  | { alt: PathNode[] }
+  | { seq: PathNode[] }
+  | { repeat: PathNode; min: number; max: number }
+  | { inv: PathNode };
 
 type Group =
   | { k: 'bgp'; patterns: Pattern[] }
@@ -281,6 +298,37 @@ class Parser {
     const t = this.peek();
     if (t?.t === 'var') { this.i++; return { var: t.v }; }
     return { term: this.term() };
+  }
+
+  /** A predicate: variable, IRI, or property path. */
+  private pathNode(): PathNode {
+    const alts: PathNode[] = [this.pathSeq()];
+    while (this.eatPunc('|')) alts.push(this.pathSeq());
+    return alts.length === 1 ? alts[0]! : { alt: alts };
+  }
+
+  private pathSeq(): PathNode {
+    const steps: PathNode[] = [this.pathUnary()];
+    while (this.eatPunc('/')) steps.push(this.pathUnary());
+    return steps.length === 1 ? steps[0]! : { seq: steps };
+  }
+
+  private pathUnary(): PathNode {
+    if (this.eatPunc('^')) return { inv: this.pathUnary() };
+    let base: PathNode;
+    if (this.eatPunc('(')) { base = this.pathNode(); this.expectPunc(')'); }
+    else {
+      const t = this.peek();
+      if (t?.t === 'var') { this.i++; base = { var: t.v }; }
+      else base = { term: this.term() };
+    }
+    for (;;) {
+      if (this.eatPunc('*')) { base = { repeat: base, min: 0, max: Infinity }; continue; }
+      if (this.eatPunc('+')) { base = { repeat: base, min: 1, max: Infinity }; continue; }
+      if (this.eatPunc('?')) { base = { repeat: base, min: 0, max: 1 }; continue; }
+      break;
+    }
+    return base;
   }
 
   /** The query, from the top. Prologue PREFIX/BASE lines are consumed by the caller. */
@@ -442,7 +490,7 @@ class Parser {
       // A triple pattern, with `;` and `,` continuations.
       const s = this.node();
       for (;;) {
-        const p = this.node();
+        const p = this.pathNode();
         for (;;) {
           const o = this.node();
           bgp.push({ s, p, o });
@@ -604,21 +652,104 @@ function matches(node: Node, term: ParsedTerm, b: Map<string, ParsedTerm>): bool
   return true;
 }
 
+/** Is this predicate a plain IRI or variable, matchable one triple at a time? */
+function isSimplePredicate(p: PathNode): p is { var: string } | { term: ParsedTerm } {
+  return 'var' in p || 'term' in p;
+}
+
+/**
+ * (subject, object) pairs a PATH connects.
+ *
+ * Only reached for a compound path; a plain predicate is matched triple-by-triple in the
+ * join, which keeps the common case cheap.
+ */
+function pathPairs(doc: ParsedDocument, path: PathNode, depth = 0): [ParsedTerm, ParsedTerm][] {
+  if (depth > 16) return [];
+  const out: [ParsedTerm, ParsedTerm][] = [];
+  if ('term' in path) {
+    const iri = path.term.kind === 'iri' ? path.term.iri : undefined;
+    if (iri === undefined) return [];
+    for (const subj of doc.subjects) {
+      for (const o of subj.properties.get(iri) ?? []) out.push([subjTerm(subj), o]);
+    }
+    return out;
+  }
+  if ('var' in path) {
+    for (const subj of doc.subjects) {
+      for (const [, objs] of subj.properties) for (const o of objs) out.push([subjTerm(subj), o]);
+    }
+    return out;
+  }
+  if ('alt' in path) {
+    for (const a of path.alt) out.push(...pathPairs(doc, a, depth + 1));
+    return out;
+  }
+  if ('inv' in path) {
+    for (const [a, b] of pathPairs(doc, path.inv, depth + 1)) out.push([b, a]);
+    return out;
+  }
+  if ('seq' in path) {
+    let acc = pathPairs(doc, path.seq[0]!, depth + 1);
+    for (const step of path.seq.slice(1)) {
+      const nextPairs = pathPairs(doc, step, depth + 1);
+      const joined: [ParsedTerm, ParsedTerm][] = [];
+      for (const [a, mid] of acc) {
+        for (const [m2, b] of nextPairs) if (termKey(mid) === termKey(m2)) joined.push([a, b]);
+      }
+      acc = joined;
+    }
+    return acc;
+  }
+  // repeat
+  const step = pathPairs(doc, path.repeat, depth + 1);
+  const seen = new Set<string>();
+  const push = (a: ParsedTerm, b: ParsedTerm): void => {
+    const k = `${termKey(a)} ${termKey(b)}`;
+    if (!seen.has(k)) { seen.add(k); out.push([a, b]); }
+  };
+  if (path.min === 0) {
+    for (const [a, b] of step) { push(a, a); push(b, b); }
+  }
+  let frontier = step;
+  for (let n = 1; n <= Math.min(path.max === Infinity ? 16 : path.max, 16); n++) {
+    for (const [a, b] of frontier) if (n >= path.min) push(a, b);
+    const grown: [ParsedTerm, ParsedTerm][] = [];
+    for (const [a, mid] of frontier) {
+      for (const [m2, b] of step) if (termKey(mid) === termKey(m2)) grown.push([a, b]);
+    }
+    if (grown.length === 0) break;
+    frontier = grown;
+  }
+  return out;
+}
+
 function joinBgp(doc: ParsedDocument, patterns: readonly Pattern[], input: Binding[]): Binding[] {
   let rows = input;
   for (const pat of patterns) {
     const next: Binding[] = [];
-    for (const row of rows) {
-      for (const subj of doc.subjects) {
-        const sTerm = subjTerm(subj);
-        for (const [pred, objs] of subj.properties) {
-          for (const obj of objs) {
-            const b = new Map(row);
-            if (!matches(pat.s, sTerm, b)) continue;
-            if (!matches(pat.p, { kind: 'iri', iri: pred }, b)) continue;
-            if (!matches(pat.o, obj, b)) continue;
-            next.push(b);
+    if (isSimplePredicate(pat.p)) {
+      for (const row of rows) {
+        for (const subj of doc.subjects) {
+          const sTerm = subjTerm(subj);
+          for (const [pred, objs] of subj.properties) {
+            for (const obj of objs) {
+              const b = new Map(row);
+              if (!matches(pat.s, sTerm, b)) continue;
+              if (!matches(pat.p, { kind: 'iri', iri: pred }, b)) continue;
+              if (!matches(pat.o, obj, b)) continue;
+              next.push(b);
+            }
           }
+        }
+      }
+    } else {
+      const pairs = pathPairs(doc, pat.p);
+      for (const row of rows) {
+        for (const [sTerm, oTerm] of pairs) {
+          const b = new Map(row);
+          if (!matches(pat.s, sTerm, b)) continue;
+          if (!matches(pat.o, oTerm, b)) continue;
+          next.push(b);
         }
       }
     }

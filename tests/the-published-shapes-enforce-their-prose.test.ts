@@ -33,6 +33,65 @@ const violationsMatching = (data: string, shapes: string, re: RegExp): number =>
   validateAgainstShape(P + data, shapes, {}).results
     .filter(r => r.severity === 'Violation' && re.test(r.message ?? '')).length;
 
+describe('the two rules Core cannot express are ENFORCED NOW, by SPARQL', () => {
+  // ★ BOTH WERE INERT FROM THE DAY THEY WERE WRITTEN. They are the two published rules SHACL
+  // Core genuinely cannot state — one needs the wall clock, the other needs substring
+  // containment across two paths — so both were written in sh:sparql, and nothing in this
+  // repo executed sh:sparql. A dereferenceable IRI, a rule in capitals, and no enforcement.
+  //
+  // A SPARQL SELECT/ASK evaluator runs them now. These assertions are what makes that a fact
+  // rather than a claim, and they are written in both directions: a rule that refused
+  // everything would satisfy the violation half just as well.
+
+  it('TemporalFacet: a validFrom in the FUTURE warns', () => {
+    const r = validateAgainstShape(
+      `${P}ex:t a iep:TemporalFacet ; iep:validFrom "2099-01-01T00:00:00Z"^^xsd:dateTime .`,
+      IEP_SHAPES, {});
+    const future = r.results.filter(x => /future/i.test(x.message ?? ''));
+    expect(future.length).toBe(1);
+    // Warning, not Violation — a scheduled claim is legal, and the shape says so.
+    expect(future[0]!.severity).toBe('Warning');
+  });
+
+  it('…and one in the PAST does not — it constrains, it does not warn about everything', () => {
+    const r = validateAgainstShape(
+      `${P}ex:t a iep:TemporalFacet ; iep:validFrom "2020-01-01T00:00:00Z"^^xsd:dateTime .`,
+      IEP_SHAPES, {});
+    expect(r.results.filter(x => /future/i.test(x.message ?? ''))).toEqual([]);
+  });
+
+  it('RevocationCondition: a successor query naming its OWN graph is refused', () => {
+    // Self-revoking by existence — the condition is satisfied the moment the descriptor
+    // exists, so the descriptor revokes itself.
+    const r = validateAgainstShape(
+      `${P}ex:d iep:revokedIf ex:rc ; iep:describes <https://example.org/g1> .
+       ex:rc a iep:RevocationCondition ;
+         iep:successorQuery "SELECT * WHERE { GRAPH <https://example.org/g1> { ?s ?p ?o } }" .`,
+      IEP_SHAPES, {});
+    expect(r.results.some(x => /self-revoking/i.test(x.message ?? ''))).toBe(true);
+  });
+
+  it('…and one naming a DIFFERENT graph is not', () => {
+    const r = validateAgainstShape(
+      `${P}ex:d iep:revokedIf ex:rc ; iep:describes <https://example.org/g1> .
+       ex:rc a iep:RevocationCondition ;
+         iep:successorQuery "SELECT * WHERE { ?s ?p ?o }" .`,
+      IEP_SHAPES, {});
+    expect(r.results.some(x => /self-revoking/i.test(x.message ?? ''))).toBe(false);
+  });
+
+  it('★ and NEITHER reports a skipped constraint any more', () => {
+    // The load-bearing one. `fullyChecked: false` was these two shapes' permanent state, and
+    // it was TRUE — a constraint really was being skipped. Now that they run, the flag says
+    // so, and if either regresses to unevaluated this goes red rather than the enforcement
+    // quietly disappearing again.
+    const r = validateAgainstShape(
+      `${P}ex:t a iep:TemporalFacet ; iep:validFrom "2020-01-01T00:00:00Z"^^xsd:dateTime .`,
+      IEP_SHAPES, {});
+    expect(r.fullyChecked).toBe(true);
+  });
+});
+
 describe('a rule stated in Core does not also need an sh:sparql twin', () => {
   // ★ THREE RULES WERE WRITTEN TWICE — once in Core, once in sh:sparql beside it. The Core
   // half enforces; the sh:sparql half is not executed by the engine that reads this file, so
@@ -55,15 +114,14 @@ describe('a rule stated in Core does not also need an sh:sparql twin', () => {
     expect(fully(data)).toBe(true);
   });
 
-  it('and the two rules Core genuinely CANNOT express still say so', () => {
-    // The other half of the trade. iep:TemporalFacetNonFutureValidFromShape needs the wall
-    // clock and iep:RevocationConditionNoSelfReferenceShape needs substring containment
-    // across two paths — neither is expressible in Core, both keep their sh:sparql, and a
-    // graph they select therefore still reports fullyChecked:false. That is the flag working:
-    // it is now false only where a constraint really was skipped.
+  it('and the two rules Core cannot express keep their sh:sparql — which now RUNS', () => {
+    // ★ THIS ASSERTION USED TO EXPECT fullyChecked:false HERE, and it was right at the time:
+    // those two shapes were sh:sparql-only and sh:sparql was not executed, so a graph they
+    // selected really did have a constraint skipped. Both run now, so the flag is true —
+    // and the change is the point, not an inconvenience to the test.
     expect(IEP_SHAPES).toContain('sh:sparql');
     expect(fully('ex:t a iep:TemporalFacet ; iep:validFrom "2030-01-01T00:00:00Z"^^xsd:dateTime .'))
-      .toBe(false);
+      .toBe(true);
   });
 });
 

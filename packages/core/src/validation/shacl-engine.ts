@@ -44,7 +44,7 @@ import {
 import { escapeTurtleLiteral } from '../rdf/escape.js';
 import type { IRI } from '../model/types.js';
 import { evaluateNodeExpression, type NodeExpressionContext } from './node-expression.js';
-import { runSparql } from './sparql-query.js';
+import { runSparql, SparqlRefusedError } from './sparql-query.js';
 
 const SHACL = 'http://www.w3.org/ns/shacl#';
 const RDF_TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type' as IRI;
@@ -113,6 +113,15 @@ const SH_NODE = `${SHACL}node` as IRI;
 const SH_NODE_BY_EXPRESSION = `${SHACL}nodeByExpression` as IRI;
 const SH_EXPRESSION = `${SHACL}expression` as IRI;
 const SH_VALUES = `${SHACL}values` as IRI;
+
+/**
+ * The result component for a SPARQL constraint this engine REFUSED to run.
+ *
+ * Distinct from sh:SPARQLConstraintComponent on purpose: "the rule ran and the data failed"
+ * and "the rule could not run" are the same VERDICT and different FACTS, and only one of
+ * them means the shape was checked.
+ */
+export const SPARQL_REFUSED = 'urn:iep:shacl:SparqlRefused';
 const SH_QUALIFIED_VALUE_SHAPE = `${SHACL}qualifiedValueShape` as IRI;
 const SH_QUALIFIED_VALUE_SHAPES_DISJOINT = `${SHACL}qualifiedValueShapesDisjoint` as IRI;
 const SH_QUALIFIED_MIN_COUNT = `${SHACL}qualifiedMinCount` as IRI;
@@ -2289,8 +2298,38 @@ function sparqlResults(
   for (const c of shape.sparqlConstraints) {
     if (c.deactivated) continue;
     const preBound = new Map<string, ParsedTerm>([['this', term]]);
-    // Throws for a refused query — deliberately not caught here. See the note above.
-    const result = runSparql(data, c.query, c.prefixes, preBound);
+    // ★ A REFUSAL BECOMES A FAIL-CLOSED VIOLATION, NOT AN ESCAPING EXCEPTION.
+    //
+    // SHACL calls this outcome "the validation process fails", and a thrown error is one
+    // faithful spelling of that. It is the wrong one HERE: validateAgainstShape is called by
+    // the relay's publish gate, the Solid write path and the workspace sealer, and an
+    // uncaught throw turns a shape the engine cannot evaluate into a 500 rather than a
+    // refusal the caller can report.
+    //
+    // A Violation carries the same verdict — conforms is false, the publish is refused — and
+    // it arrives as data, with the reason in the message. Fail-CLOSED either way; the
+    // difference is whether the caller can say why.
+    let result;
+    try {
+      result = runSparql(data, c.query, c.prefixes, preBound);
+    } catch (err) {
+      if (!(err instanceof SparqlRefusedError)) throw err;
+      // ★ ITS OWN COMPONENT, NOT sh:SPARQLConstraintComponent. Reusing the normal component
+      // would make "the constraint ran and the data failed it" indistinguishable from "the
+      // constraint could not run, so we refused" — and a conformance harness comparing
+      // verdicts would then score the second as a PASS whenever the expected verdict was
+      // false. Measured: three entries flipped to passing for exactly that wrong reason the
+      // moment the throw became a report.
+      out.push({
+        focusNode: focusLabel(focus),
+        sourceShape: shape.id,
+        constraintComponent: SPARQL_REFUSED,
+        severity: 'Violation',
+        message: `The sh:sparql constraint could not be evaluated, so this graph is refused `
+          + `rather than passed: ${err.message}`,
+      });
+      continue;
+    }
     const failures = result.form === 'ASK'
       ? (result.boolean === false ? 1 : 0)
       : result.bindings.length;
