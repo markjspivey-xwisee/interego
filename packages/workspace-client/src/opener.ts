@@ -41,6 +41,8 @@
  * exposed on the renderer bridge. Only the PUBLIC half is ever published.
  */
 
+import { canonicalGraphDigest } from '@interego/core';
+import { digestedGraphRegion, parseAuthorshipProofFromDescriptorTurtle } from '@interego/solid';
 import { deriveEncryptionKeyPair, openEncryptedEnvelope, type EncryptedEnvelope, type EncryptionKeyPair } from '@interego/core';
 
 /**
@@ -109,6 +111,90 @@ export function openGraph(payload: unknown, key: EncryptionKeyPair): Opened {
     return { kind: 'unreadable', why: 'this identity is named as a recipient but the envelope would not open, so the key material or the ciphertext is damaged' };
   }
   return { kind: 'opened', content: plain };
+}
+
+/**
+ * ★★ THE HALF OF THE PROOF ONLY A RECIPIENT CAN CHECK, CHECKED BY THE RECIPIENT.
+ *
+ * ── WHAT WAS WRONG ──────────────────────────────────────────────────────────
+ *
+ * The relay verifies an authorship proof in two independent parts: the SIGNATURE, and whether
+ * that signature covers the bytes being served. The second part needs the payload — and for a
+ * sealed graph the relay is not a recipient, so it cannot read one. Its own module says so:
+ * "a private payload the relay is not a recipient of decrypts to null", which it reports, quite
+ * correctly, as `contentBinding: 'declared'` — an honest "I did not check".
+ *
+ * But `verifiedSigner()` keys on `contentBinding`, by design and for a good measured reason. So
+ * every descriptor in every PRIVATE workspace arrived with `signedBy: null`, and `judgeAuthorship`
+ * reads a null signer on a record attributed to an agent as **disputed** — with the reason "no
+ * authorship block reached this reader", which was not true. One did. It was complete, its
+ * signature verified, and the only thing missing was a comparison the relay was structurally
+ * unable to make.
+ *
+ * The visible result: in an end-to-end encrypted workspace, every entry a DELEGATE wrote rendered
+ * as authorship disputed. Encrypting a channel silently disabled the thing that says who is
+ * speaking in it — worst in exactly the rooms where that matters most.
+ *
+ * ── WHY THE READER MAY ANSWER IT ────────────────────────────────────────────
+ *
+ * Because the reader has what the relay lacked. It just opened the envelope with a key the relay
+ * does not hold, so it is holding the plaintext the publisher digested. Running the SAME digest
+ * the relay would have run, over the SAME region, is not a new trust assumption — it is the
+ * deferred half of a check that was already specified.
+ *
+ * ★ THE REGION IS NOT THIS FUNCTION'S TO CHOOSE. `digestedGraphRegion` decides it, and every
+ * party goes through it. A digest scope only one side knows is not a scope — when the relay owned
+ * that decision privately, a forged acceptance in the DEFAULT graph left the digest byte-identical.
+ *
+ * ★ AND IT CAN ONLY EVER NARROW THE ANSWER. It runs on `'declared'` alone — never on `'bound'`,
+ * `'mismatched'` or `'unbound'`, all of which are verdicts the relay reached by looking. A local
+ * check may complete a check nobody ran; it may not overturn one that ran.
+ *
+ * ★ AND A MISMATCH IS REPORTED, NOT SWALLOWED. If the opened plaintext does not digest to what
+ * the proof committed to, this says `'mismatched'` — the strongest signal in the vocabulary — and
+ * `verifiedSigner` refuses it exactly as it refuses `'declared'`. Returning `'declared'` on a
+ * failed comparison would be reporting "I did not check" about a check that ran and caught
+ * something.
+ */
+export function sealedBindingCheck(
+  d: Record<string, unknown>, content: string,
+): { readonly authorship?: Record<string, unknown> } {
+  const a = d['authorship'] as Record<string, unknown> | undefined;
+  // Only the case the relay could not reach. Every other value is a verdict from a look.
+  if (!a || a['contentBinding'] !== 'declared') return {};
+  const turtle = typeof d['turtle'] === 'string' ? d['turtle'] as string : null;
+  if (!turtle) return {};
+  const declared = parseAuthorshipProofFromDescriptorTurtle(turtle)?.contentHash;
+  if (typeof declared !== 'string' || !declared) return {};
+  let observed: string | undefined;
+  try {
+    const region = digestedGraphRegion({ graphContent: content, descriptorTurtle: turtle });
+    observed = region.ok ? canonicalGraphDigest(region.turtle) ?? undefined : undefined;
+  } catch { return {}; }
+  // Still could not compute one. Unchanged: 'declared' is already the right answer for that.
+  if (!observed) return {};
+  const bound = observed === declared;
+  return {
+    authorship: {
+      ...a,
+      contentBinding: bound ? 'bound' : 'mismatched',
+      /**
+       * ★ WHO ESTABLISHED IT, SAID OUT LOUD. The relay's own note stays as the relay wrote it;
+       * this is a separate field, because a reader must be able to tell a verdict the relay
+       * reached from one this process reached with a key the relay does not hold. Collapsing the
+       * two would let a client's own arithmetic wear the relay's authority.
+       */
+      contentBindingCheckedLocally: true,
+      contentBindingLocalNote: bound
+        ? 'The relay could not compare this proof against the payload, because the payload is '
+          + 'sealed and the relay is not a recipient of it. This reader opened the envelope with '
+          + 'its own key and ran the same digest over the same region: it matches, so the '
+          + 'signature does cover these bytes. Established here, not by the relay.'
+        : 'The relay could not compare this proof against the payload. This reader opened the '
+          + 'envelope with its own key and ran the same digest over the same region, and it DOES '
+          + 'NOT match what the proof committed to — so whatever was signed, it was not this.',
+    },
+  };
 }
 
 /**

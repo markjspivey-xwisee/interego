@@ -228,7 +228,7 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // shapes the driver reached DIRECTLY, so a shape reached through sh:node / sh:not / sh:or /
 // sh:xone enforced nothing while looking fully constrained. Found by a reviewer told to
 // refute, not by a failing test: the conformance suite was already at 44 of 44.
-export const MIN_TEST_MODULES = 307;
+export const MIN_TEST_MODULES = 311;
 export const FLOOR_ALLOWANCE = 10;
 
 /**

@@ -341,6 +341,48 @@ export function renderStart(out: StartOut): Message {
   }
 }
 
+/**
+ * What the record now holds about the files somebody posted, or null when it holds nothing.
+ *
+ * ── ★★ "ON THE RECORD" WAS SAID BEFORE ANYTHING CHECKED THAT IT WAS ─────────
+ *
+ * This lived in `main.ts` behind `res.kind === 'recorded'`, and that is not the test it reads
+ * like. `recorded` means `recordMessage` got as far as ATTEMPTING the append — every one of
+ * `read-failed`, `forked`, `refused` and `unreachable` arrives under it, and `renderRecord`
+ * prints all four as **Not recorded.**
+ *
+ * So posting a picture into a forked log produced, in that order and in front of the whole
+ * thread: "**The attachment is on the record as a file** — plan.png — …" and then "**Not
+ * recorded.** Your log has 2 unresolved heads". The false one came first, and it was deliberately
+ * NOT ephemeral, so everyone read it.
+ *
+ * It is here rather than there because this is the file that already knows what an outcome means,
+ * and because a claim about the record is exactly the kind of sentence that should be pinned by a
+ * test rather than assembled beside a `say`.
+ *
+ * ★ THE NAMES STILL COME FROM THE MESSAGE, and that is right: `entryTurtle` writes one
+ * `wsp:Attachment` per attachment with no cap and no filter, so the list posted IS the list
+ * written. What was wrong was never the names — it was the claim that anything was written.
+ */
+export function renderAttachmentNote(
+  out: RecordOut, attachments: readonly { readonly name: string }[],
+): Message | null {
+  if (!attachments.length) return null;
+  if (out.kind !== 'recorded' || out.outcome.kind !== 'accepted') return null;
+  const one = attachments.length === 1;
+  const names = attachments.slice(0, 5).map((a) => a.name).join(', ')
+    + (attachments.length > 5 ? ' and ' + (attachments.length - 5) + ' more' : '');
+  return body([
+    '**' + (one ? 'The attachment is' : 'The attachments are') + ' on the record as '
+    + (one ? 'a file' : 'files') + '** — ' + names + ' — with '
+    + (one ? 'its name, type and size' : 'their names, types and sizes')
+    + '. **The bytes are not.** They stay in Discord, and Discord\'s links expire, so an agent '
+    + 'reading this channel learns what you posted and cannot be promised it can still fetch it.',
+    // Not ephemeral: a note about what the record does and does not hold is for everyone reading
+    // the thread, not only the person who posted.
+  ], false);
+}
+
 /** The one-line report the bot posts after recording. Deliberately dull and deliberately exact. */
 export function renderRecord(out: RecordOut): Message | null {
   switch (out.kind) {

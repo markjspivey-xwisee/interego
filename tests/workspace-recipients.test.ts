@@ -194,3 +194,77 @@ describe('★★ what the relay actually reached', () => {
     expect(unreachedRecipients(null)).toEqual([]);
   });
 });
+
+describe('★★ everybody a standing grant names, whatever their acceptance says', () => {
+  /**
+   * ── THE ONE-WAY DOOR THIS CLOSES ────────────────────────────────────────────
+   *
+   * `pending` is set only when the acceptance was genuinely ABSENT, never when the read failed —
+   * and that rule is right, because "waiting to accept" would otherwise be a claim about
+   * somebody's pod made from a read that established nothing. The block above pins it.
+   *
+   * But a reseal is not asking about acceptances. It asks who must be able to READ THE RECORD, and
+   * between those two questions sat a whole population: the member whose acceptance pins a grant
+   * revision the convener has since superseded, whose pod returned 502 while the roster was
+   * folded, whose acceptance chain is forked. Each is `seated: false` and `pending: false`, so
+   * each was dropped by the next reseal — from the very document `verifyGrantIri` reads. They
+   * then cannot accept, cannot re-accept, and cannot be told why.
+   *
+   * ★ AND NOBODY REVOKED THEM. It is triggered by a transient 502 during somebody ELSE's
+   * invitation, and the roster goes on showing only why their seat did not fold.
+   */
+  const seatedRow = (pod: string): Seat => seat(pod);
+
+  it('★ includes a member whose acceptance could not be READ — the case `pending` excludes', () => {
+    const plan = recipientsFromRoster({
+      seats: [
+        seatedRow('u-a'),
+        seat('u-b', { seated: false, why: 'their acceptance could not be resolved: 502' } as Partial<Seat>),
+        seat('u-c', { seated: false, why: 'their acceptance pins revision cid-1, and the head is cid-2' } as Partial<Seat>),
+      ],
+      grantsFound: 3, grantsRead: 3,
+    });
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    // Unchanged, and deliberately so: neither is IN the conversation, and neither is waiting.
+    expect(plan.shareWith).toEqual([WEBID('u-a')]);
+    expect(plan.pendingWebIds).toEqual([]);
+    // ★ THE LOAD-BEARING ASSERTION. Both still hold a grant nobody withdrew, so both must keep
+    // the record — or the next invitation locks them out of this workspace for good.
+    expect(plan.grantedWebIds, 'a member whose acceptance merely could not be read was dropped from the reseal')
+      .toEqual([WEBID('u-a'), WEBID('u-b'), WEBID('u-c')]);
+  });
+
+  it('excludes a revoked grant — that is a withdrawal, by the person entitled to make it', () => {
+    const plan = recipientsFromRoster({
+      seats: [seatedRow('u-a'), seat('u-b', { seated: false, revoked: true } as Partial<Seat>)],
+      grantsFound: 2, grantsRead: 2,
+    });
+    expect(plan.ok).toBe(true);
+    if (plan.ok) expect(plan.grantedWebIds).toEqual([WEBID('u-a')]);
+  });
+
+  it('excludes a grant its own author retracted, and case does not decide it', () => {
+    // `isRetracted` compares case-insensitively, and that is what set `grantStatus`. A status
+    // differing only in case must not be a withdrawal in one file and not one in the other.
+    const plan = recipientsFromRoster({
+      seats: [
+        seatedRow('u-a'),
+        seat('u-b', { seated: false, grantStatus: 'Retracted' } as Partial<Seat>),
+        seat('u-c', { seated: false, grantStatus: 'retracted' } as Partial<Seat>),
+      ],
+      grantsFound: 3, grantsRead: 3,
+    });
+    expect(plan.ok).toBe(true);
+    if (plan.ok) expect(plan.grantedWebIds).toEqual([WEBID('u-a')]);
+  });
+
+  it('excludes a row whose grant could not be read at all, because it names nobody to seal to', () => {
+    const plan = recipientsFromRoster({
+      seats: [seatedRow('u-a'), seat('u-b', { seated: false, grantedTo: null, why: 'the signed region of this grant could not be located' } as Partial<Seat>)],
+      grantsFound: 2, grantsRead: 2,
+    });
+    expect(plan.ok).toBe(true);
+    if (plan.ok) expect(plan.grantedWebIds).toEqual([WEBID('u-a')]);
+  });
+});

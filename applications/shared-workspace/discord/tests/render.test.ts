@@ -11,7 +11,10 @@
 
 import { describe, it, expect } from 'vitest';
 import type { Check } from '@interego/workspace-client';
-import { DISCORD_LIMIT, body, bodyParts, renderChallenge, renderConfirm, renderNews, renderRecord, renderShow, renderStart, renderUnlink } from '../src/render.js';
+import {
+  DISCORD_LIMIT, body, bodyParts, renderAttachmentNote, renderChallenge, renderConfirm, renderNews,
+  renderRecord, renderShow, renderStart, renderUnlink,
+} from '../src/render.js';
 import type { Message } from '../src/render.js';
 import type { Seat } from '@interego/workspace-client';
 import type { RecordOut, ShowOut } from '../src/workspace.js';
@@ -520,5 +523,77 @@ describe('renderNews: who appears to be speaking', () => {
     // like a bot outage. Better the old format than no message.
     const posts = renderNews(news([entry({ ...DELEGATE_AUTHOR, name: 'discord helper' })])) ?? [];
     expect(posts.every((p) => p.kind === 'bot')).toBe(true);
+  });
+});
+
+describe('★★ what the channel is told about a file somebody posted', () => {
+  /**
+   * ── THE SENTENCE THAT WAS SAID BEFORE ANYTHING CHECKED IT ──────────────────
+   *
+   * The notice used to be assembled in `main.ts` behind `res.kind === 'recorded'`. That reads
+   * like "it was recorded" and is not: `read-failed`, `forked`, `refused` and `unreachable` all
+   * arrive under `kind: 'recorded'`, and `renderRecord` prints every one of them as
+   * **Not recorded.**
+   *
+   * So posting a picture into a forked log produced, in this order, in front of the whole thread:
+   *
+   *     **The attachment is on the record as a file** — plan.png — …
+   *     **Not recorded.** Your log has 2 unresolved heads …
+   *
+   * The false one came first, and it was deliberately non-ephemeral, so everybody read it.
+   */
+  const rec = (over: Partial<Extract<RecordOut, { kind: 'recorded' }>> = {}): RecordOut => ({
+    kind: 'recorded', pod: POD, streamIri: 'https://relay.interego.xwisee.com/ns/' + POD + '/x-stream',
+    seated: 'already',
+    outcome: {
+      kind: 'accepted', descriptorUrl: null, committed: true, seq: 1, shapeSent: null,
+      ifMatch: null, ifMatchKind: null, response: {}, unreached: [],
+    },
+    authorship: null,
+    ...over,
+  });
+  const files = [{ name: 'plan.png' }];
+
+  it('says what the record holds when the append was accepted', () => {
+    const m = renderAttachmentNote(rec(), files);
+    expect(m?.content).toContain('plan.png');
+    expect(m?.content).toContain('on the record');
+    // The limit, stated rather than implied.
+    expect(m?.content).toContain('The bytes are not.');
+    // Everybody in the thread, not only the poster.
+    expect(m?.ephemeral).toBe(false);
+  });
+
+  const notWritten: readonly Extract<RecordOut, { kind: 'recorded' }>['outcome'][] = [
+    { kind: 'forked', heads: 2, anyLinks: false },
+    { kind: 'refused', code: 422, body: { error: 'shape_violation' } },
+    { kind: 'read-failed', error: new Error('502') },
+    { kind: 'unreachable', error: new Error('socket hang up'), relayAnswered: false },
+  ];
+  for (const outcome of notWritten) {
+    it('★ says NOTHING when the append came back ' + outcome.kind, () => {
+      // ★ THE LOAD-BEARING ASSERTION. Silence, not a softer sentence: `renderRecord` already
+      // explains this outcome in full, and a second message about files that were not written
+      // could only contradict it or repeat it.
+      expect(renderAttachmentNote(rec({ outcome }), files),
+        'the channel was told a file was on the record after a ' + outcome.kind + ' append')
+        .toBeNull();
+    });
+  }
+
+  it('says nothing about a message that carried no files', () => {
+    expect(renderAttachmentNote(rec(), [])).toBeNull();
+  });
+
+  it('says nothing when the person was never seated, so nothing was even attempted', () => {
+    expect(renderAttachmentNote({ kind: 'unseated', pod: POD, why: 'no', seating: [] }, files)).toBeNull();
+  });
+
+  it('names at most five and counts the rest, so a bulk upload does not fill the channel', () => {
+    const many = Array.from({ length: 8 }, (_, i) => ({ name: 'f' + i + '.png' }));
+    const m = renderAttachmentNote(rec(), many);
+    expect(m?.content).toContain('f4.png');
+    expect(m?.content).not.toContain('f5.png');
+    expect(m?.content).toContain('and 3 more');
   });
 });

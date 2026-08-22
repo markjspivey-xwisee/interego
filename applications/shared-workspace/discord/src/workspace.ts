@@ -15,7 +15,7 @@
 import {
   type Check, type GrantVerdict, type RosterFold, type Seat, type Viewer, type WorkspaceRecord,
   POD_RX, acceptGrant, checkDelegation, checkRoleForWorkspace, createWorkspace, errorCopy,
-  findSeat, foldRoster, graphRegion, nsIri, orderChain, parseRoleProfile, podOfNsIri, postEntry,
+  findSeat, foldRoster, graphRegion, isRetracted, nsIri, orderChain, parseRoleProfile, podOfNsIri, postEntry,
   qualifiedName, readAuthorship, readDelegates, readEntryAuthorship, readInt, readIri, readIriAll, readLiteral,
   recipientsFor,
   verifiedSigner,
@@ -296,7 +296,8 @@ async function frameOf(deps: Deps, binding: ThreadBinding): Promise<Frame | { re
  * roster, and encrypting to the part of it that was read would lock out the members it missed,
  * permanently and with nothing to show for it.
  */
-async function audienceFor(deps: Deps, frame: Frame): Promise<{ visibility: 'public' | 'private'; shareWith?: readonly string[]; pendingWebIds?: readonly string[] }> {
+async function audienceFor(deps: Deps, frame: Frame): Promise<{ visibility: 'public' | 'private';
+  shareWith?: readonly string[]; pendingWebIds?: readonly string[]; grantedWebIds?: readonly string[] }> {
   /**
    * ★ PUBLIC COSTS NOTHING. The roster is two round trips per grant — far too much to spend on
    * every message in a public channel, and a public workspace has no recipients to compute.
@@ -322,9 +323,12 @@ async function audienceFor(deps: Deps, frame: Frame): Promise<{ visibility: 'pub
   return {
     visibility: audience.visibility,
     ...(audience.shareWith ? { shareWith: audience.shareWith } : {}),
-    // Only meaningful to `sendInvite`'s reseal; `postEntry` ignores it. Carried here so the seat
-    // path cannot forget it — omitting it evicts anybody with an outstanding invitation.
+    // Only meaningful to `sendInvite`'s reseal; `postEntry` ignores both. Carried here so the
+    // seat path cannot forget them — omitting them evicts, from a record they need in order to
+    // accept, anybody with an outstanding invitation and anybody whose acceptance merely could
+    // not be read this time round.
     pendingWebIds: audience.pendingWebIds,
+    grantedWebIds: audience.grantedWebIds,
   };
 }
 
@@ -458,11 +462,66 @@ export async function recordMessage(
     if ('problem' in frame) return { kind: 'unseated', pod: link.pod, why: frame.problem, seating: [] };
     const member = await readMember(deps.client, link.pod);
 
+    // Composed, not read: the two names a member writes under are derived from the workspace's
+    // own pod and slug, which is what every reader of this workspace looks for. Needed before the
+    // seat is decided, because the member's own half has to point at THIS log to be a seat at all.
+    const streamIri = nsIri(deps.relay, member.podName, qualifiedName(frame.convenerPod, binding.slug, 'stream'));
+
     let seated: 'already' | 'just-now' = 'already';
     const already = await findSeat(deps.client, { relay: deps.relay, viewer: member, workspace: binding.workspace });
-    if (!already.ok) {
+    /**
+     * ★★ "NOT SEATED" IS TWO DIFFERENT FACTS, AND ONLY ONE OF THEM MAY BE ANSWERED BY GRANTING.
+     *
+     * Never-granted and granted-then-REVOKED both come back `ok: false`. This branch read them
+     * as one and called `seat()` for either — and `seat()` calls `sendInvite`, which publishes
+     * `<workspace>-grant-<pod>` with `auto_supersede_prior: true` and no revoked flag, at the
+     * very IRI the revocation lives at. So a member the convener had removed put themselves back
+     * on the roster by typing one message in the thread.
+     *
+     * ★ AND EVERY GATE IT PASSED WAS GENUINELY OPEN, which is what makes it a bypass rather than
+     * a refusal in the wrong words: the grant is written under the CONVENER's delegation of this
+     * bot, and revoking a MEMBER does not touch that. The substrate had no reason to object. The
+     * judgement that was missing is this vertical's own, and this is where it belongs — `seat()`
+     * is told to seat somebody and cannot know why it was called.
+     *
+     * Reproduced against the scripted relay in tests/record.test.ts before this line existed.
+     *
+     * ★ RE-ADMISSION IS STILL POSSIBLE AND STILL THE CONVENER'S. Nothing here stops them
+     * inviting the person again from their own client; what it stops is the removed party doing
+     * it for themselves, silently, as a side effect of speaking.
+     */
+    if (!already.ok && already.revoked === true) {
+      return {
+        kind: 'unseated', pod: link.pod, seating: already.checks,
+        why: 'your membership of this workspace was revoked by its convener, so nothing you say '
+          + 'here is being recorded. Speaking again does not restore it — only the convener can, '
+          + 'from their own client.',
+      };
+    }
+    /**
+     * ★★ AND A GRANT IS ONLY HALF A SEAT. `findSeat` reads the convener's half; `ownHalf` reads
+     * the member's, which is the half every reader of this workspace also requires — see its
+     * note for what a missing one looked like from inside the channel.
+     *
+     * Asked only when the grant already stands, because when it does not, `seat()` is being
+     * called regardless and the acceptance is the second thing it writes.
+     */
+    const half = already.ok
+      ? await ownHalf(deps, frame, member, already, streamIri)
+      : { ok: false as const, why: 'no grant on the convener\'s pod seats them yet' };
+    // Narrowed here rather than in the branch: the condition below is a disjunction, so `half`
+    // is not narrowed inside it even when `already.ok` guarantees which arm produced it.
+    const missing = half.ok ? null : half.why;
+    if (!already.ok || missing) {
       const put = await seat(deps, frame, member);
-      if (!put.ok) return { kind: 'unseated', pod: link.pod, why: put.why, seating: put.checks };
+      if (!put.ok) {
+        return {
+          kind: 'unseated', pod: link.pod, seating: put.checks,
+          // Both reasons: what was missing, and why supplying it failed. Reporting only the
+          // second reads as a fresh problem rather than as a repair that did not take.
+          why: already.ok && missing ? missing + ', and seating them failed: ' + put.why : put.why,
+        };
+      }
       seated = 'just-now';
     }
 
@@ -482,9 +541,6 @@ export async function recordMessage(
     try { audience = await audienceFor(deps, frame); }
     catch (e) { return { kind: 'unseated', pod: link.pod, why: (e as Error).message, seating: [] }; }
 
-    // Composed, not read: the two names a member writes under are derived from the workspace's
-    // own pod and slug, which is what every reader of this workspace looks for.
-    const streamIri = nsIri(deps.relay, member.podName, qualifiedName(frame.convenerPod, binding.slug, 'stream'));
     const outcome = await postEntry(deps.client, {
       podName: member.podName, streamIri, workspace: binding.workspace,
       body, entryShape: frame.record.entryShape,
@@ -590,6 +646,108 @@ export type ShowOut =
     };
 
 /**
+ * ★★ THE MEMBER'S OWN HALF OF THE SEAT, WHICH `findSeat` DOES NOT READ AND EVERY READER DOES.
+ *
+ * Membership in this vertical is two-sided by design: the convener's GRANT on their pod, and the
+ * member's ACCEPTANCE on theirs. `foldRoster` — the fold behind `/workspace show`, the desktop
+ * channel and the watcher — requires both, and folds a grant with no acceptance as `pending`,
+ * whose log it does not read at all.
+ *
+ * `findSeat` answers only about the grant. That is the right question for the flow it was written
+ * for and the wrong one here: read as "seated", it let `recordMessage` skip `seat()` — the one
+ * call that publishes the acceptance — for somebody the convener had invited from another client
+ * and who had never accepted. Their words landed on their own pod, correctly signed, and were
+ * invisible to everyone in the room including themselves. Nothing failed; no reader was wrong.
+ *
+ * So this asks the question the READERS ask, and it is deliberately cheap — one head and, at
+ * most, one descriptor, against the member's own pod.
+ *
+ * ★ IT ALSO CATCHES A STALE HALF. An acceptance pinned to a grant revision that has since been
+ * superseded fails `foldRoster`'s revision test the same way an absent one fails its presence
+ * test, and is repaired the same way: `seat()` republishes it against the grant that is there now.
+ *
+ * ★ WHAT IT DOES NOT DO IS DECIDE. It reports; the caller decides, because "no acceptance" and
+ * "revoked" arrive here looking alike and must never be answered alike.
+ *
+ * ── ★ AND IT IS NOT CACHED, WHICH WAS TRIED AND WITHDRAWN ───────────────────
+ *
+ * Two round trips per message is a real cost on a path already spending eight or nine, so a cache
+ * keyed by (pod, workspace, grantCid) was written — the grant revision being the one thing a
+ * convener can change. It is the wrong key: the document being checked is the ACCEPTANCE, and
+ * nothing in that triple moves when the acceptance does. The cache would have closed this hole by
+ * opening a narrower one, which is not a trade worth two round trips on a chat bot.
+ */
+async function ownHalf(
+  deps: Deps, frame: Frame, member: Viewer, verdict: GrantVerdict, streamIri: string,
+): Promise<{ readonly ok: true } | { readonly ok: false; readonly why: string }> {
+  const iriOwner = podOfNsIri(frame.binding.workspace) ?? frame.convenerPod;
+  let found;
+  try {
+    found = await deps.client.resolveMemberDoc(member.podName, iriOwner, frame.binding.slug, 'acceptance');
+  } catch (e) {
+    return { ok: false, why: 'their acceptance could not be resolved: ' + errorCopy(e).t };
+  }
+  if (found.forked) return { ok: false, why: 'their acceptance has ' + found.forked.heads.length + ' unresolved heads' };
+  // ★ AN UNREADABLE POD IS NOT AN ABSENT DOCUMENT, and re-seating on a transport hiccup would
+  // rewrite a member's own record because the network blinked. `resolveMemberDoc` separates the
+  // two — see its own note — and only genuine absence is answerable by writing.
+  if (found.error) return { ok: false, why: 'their acceptance could not be read: ' + found.error };
+  if (!found.found || !found.head) return { ok: false, why: 'no acceptance for this workspace is published on their pod' };
+
+  let region: string | null;
+  try {
+    const d = await deps.client.descriptor(found.head.url);
+    region = graphRegion((d['graph'] as { content?: string } | undefined)?.content ?? '', found.iri);
+  } catch (e) {
+    return { ok: false, why: 'their acceptance could not be read: ' + errorCopy(e).t };
+  }
+  if (region === null) return { ok: false, why: 'the signed region of their acceptance could not be located' };
+  /**
+   * ★ RETIRING YOUR OWN ACCEPTANCE IS HOW YOU LEAVE, AND SPEAKING AGAIN IS HOW YOU COME BACK.
+   *
+   * This is the mirror image of the revoked grant above and resolves the OTHER way, for one
+   * reason: this record is theirs. They withdrew it on their own pod under their own signature,
+   * and typing in the thread is that same person choosing to be in the room again. Nobody's
+   * decision is being reversed but their own — which is exactly what is NOT true of a revocation,
+   * where the convener decided and only the convener may undo it.
+   */
+  if (isRetracted(region)) return { ok: false, why: 'they had retired their own acceptance, and speaking again republishes it' };
+  // The two facts a reader gets out of this document, both of which have to be current or the
+  // entry about to be written is not the one anybody will fold.
+  const accepts = readIri(region, 'wsp:accepts');
+  const acceptsCid = readLiteral(region, 'wsp:acceptsCid');
+  const stream = readIri(region, 'wsp:stream');
+  if (stream !== streamIri) {
+    return { ok: false, why: 'their acceptance names a different log (' + String(stream) + ') than the one this entry would be written to' };
+  }
+  if (!accepts) return { ok: false, why: 'their acceptance names no grant, so no reader can hold it against one' };
+  /**
+   * ★ WHICH GRANT REVISION THEY AGREED TO — the same test `foldRoster` applies, in the same two
+   * forms, because a seat this disagreed with would be a seat no reader honours.
+   *
+   * The newer form names the grant's own IRI and pins the revision separately, which is
+   * comparable against the verdict already in hand. The OLDER form names the grant's descriptor
+   * URL, which the verdict does not carry — so that branch, and only that branch, spends a head
+   * read. Answering "stale" for a form this could not compare would republish a member's own
+   * record on every message they typed.
+   */
+  if (accepts === verdict.grantIri) {
+    if (!acceptsCid || !verdict.grantCid) {
+      return { ok: false, why: 'their acceptance names the grant and pins no revision either side could compare' };
+    }
+    return acceptsCid === verdict.grantCid ? { ok: true }
+      : { ok: false, why: 'their acceptance pins a revision of the grant that is no longer the head, so what they agreed to is not what is there now' };
+  }
+  let head;
+  try { head = await deps.client.currentHead(verdict.grantIri, iriOwner); }
+  catch (e) { return { ok: false, why: 'the grant their acceptance names could not be resolved: ' + errorCopy(e).t }; }
+  if (head.forked || !head.url) return { ok: false, why: 'the grant their acceptance names has no single current head' };
+  return accepts === head.url ? { ok: true }
+    : { ok: false, why: 'their acceptance names a grant descriptor that is no longer the one at the head' };
+}
+
+
+/**
  * Fold the workspace and read the newest entries out of every seated member's own log.
  *
  * ★ ORDER WITHIN A LOG IS THE CHAIN. ORDER ACROSS LOGS IS A CLOCK, AND THAT IS SAID RATHER THAN
@@ -615,7 +773,7 @@ export async function showWorkspace(deps: Deps, threadId: string): Promise<ShowO
     });
 
     const streams: ShownStream[] = [];
-    const rows: { seat: Seat; url: string; cid: string | null }[] = [];
+    const rows: { seat: Seat; url: string; cid: string | null; at: string | null }[] = [];
     /**
      * Each seated member's delegates, from THEIR OWN pod.
      *
@@ -643,16 +801,38 @@ export async function showWorkspace(deps: Deps, threadId: string): Promise<ShowO
           why: walk.forked ? 'this log has ' + walk.heads + ' unresolved heads, so its order is not decided and nothing is being read out of it in sequence' : null,
         });
         if (walk.forked) continue;
-        for (const r of walk.ordered) rows.push({ seat: s, url: r.url, cid: r.cid });
+        for (const r of walk.ordered) rows.push({ seat: s, url: r.url, cid: r.cid, at: r.validFrom ?? null });
       } catch (e) {
         streams.push({ pod, stream: s.stream, total: 0, forked: false, partial: false, why: 'this log could not be read: ' + errorCopy(e).t });
       }
     }
 
-    // Newest-first by the manifest order the chain walk produced, then capped, then read. Reading
-    // first and capping after would cost a descriptor round trip per entry on a long workspace.
+    /**
+     * ★★ ORDERED ACROSS SEATS BEFORE IT IS CAPPED, AND THAT ORDER IS THE WHOLE POINT OF THE CAP.
+     *
+     * `rows` is built seat by seat — each member's entire ordered chain appended in turn — so its
+     * order was SEAT order, not time. Slicing the last twelve therefore took the tail of whichever
+     * member happened to be folded last, and if that member had twelve entries of their own then
+     * NOBODY ELSE APPEARED AT ALL. The convener's messages could vanish from `/workspace show`
+     * while the footer said "newest 12 shown".
+     *
+     * The sort that existed ran AFTER the slice, so it only ever reordered an already-wrong
+     * twelve. Sorting after capping cannot fix a cap that chose the wrong twelve.
+     *
+     * ★ AND IT COSTS NOTHING EXTRA, which is why the original trade-off does not apply. The
+     * comment here said reading before capping would cost a descriptor round trip per entry —
+     * true, and not needed: `validFrom` is already in the MANIFEST row the chain walk carried, so
+     * the interleave uses what has been fetched. Only the twelve that survive are dereferenced.
+     *
+     * ★ WHAT THIS ORDER IS AND IS NOT. Between two members there is no happens-before the
+     * substrate establishes, so this is each entry's own declared time and nothing stronger — the
+     * same caveat the header of this function states about the interleave. Within one member the
+     * chain order is authoritative and is preserved, because a stable sort leaves equal keys as
+     * they were.
+     */
     const totalEntries = rows.length;
-    const take = rows.slice(-SHOW_ENTRY_CAP);
+    const ordered = [...rows].sort((x, y) => String(x.at ?? '').localeCompare(String(y.at ?? '')));
+    const take = ordered.slice(-SHOW_ENTRY_CAP);
     const entries: ShownEntry[] = [];
     for (const r of take) {
       try {

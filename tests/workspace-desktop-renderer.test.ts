@@ -516,6 +516,19 @@ const CLAUDE_ABSENT = {
 async function open(opts: {
   viewer?: string; setup?: (s: Scripted) => void; coldStartMs?: number; agent?: AgentScript;
   accounts?: Partial<AccountScript>;
+  /**
+   * Compress `setInterval` too, so a watch's REFETCH fires inside a test.
+   *
+   * ★ OPT-IN, AND THE DEFAULT STAYS OFF FOR THE REASON THE `setTimeout` NOTE GIVES: compressing
+   * every interval spins the poll continuously and `settle()` never sees the shell go quiet — a
+   * whole run of timeouts. A case about what a watch DOES when it refires needs the refire, and
+   * only that case pays for it.
+   *
+   * ★ AND IT COMPRESSES, IT DOES NOT REPLACE. `pollingWatch` keeps its own logic — the priming
+   * read that is not activity, the backoff, the in-flight guard, the interval swap when the
+   * period changes. Only the wall-clock is short.
+   */
+  fastWatches?: boolean;
 } = {}): Promise<Opened> {
   /**
    * ★ MUTABLE, BECAUSE SWITCHING IDENTITY IS THE FEATURE. Every scripted answer below reads this,
@@ -551,6 +564,19 @@ async function open(opts: {
   const realSetTimeout = win.setTimeout.bind(win) as (fn: () => void, ms?: number) => number;
   (win as unknown as Record<string, unknown>)['setTimeout'] = (fn: () => void, ms?: number): number =>
     realSetTimeout(fn, Math.min(ms ?? 0, 1));
+  if (opts.fastWatches) {
+    /**
+     * ★ ONLY THE SLOW ONES, AND NOT ALL THE WAY DOWN. Clamping EVERY interval is what the note
+     * above warns against: the boot checklist ticks at 1 s and the presence heartbeat at its own
+     * cadence, and compressing those spins the page so `settle()` never sees six quiet passes.
+     * The watch's ceiling is 45 s, so a floor of 10 s separates "a poll nobody wants to wait for"
+     * from "a UI tick that is part of what is being measured" — and 250 ms is slow enough that a
+     * loaded machine still gets a quiet window between ticks.
+     */
+    const realSetInterval = win.setInterval.bind(win) as (fn: () => void, ms?: number) => number;
+    (win as unknown as Record<string, unknown>)['setInterval'] = (fn: () => void, ms?: number): number =>
+      realSetInterval(fn, (ms ?? 0) >= 10_000 ? 250 : ms);
+  }
   /**
    * ★ A CONFIRMATION IS A DECISION AND IS SCRIPTED AS ONE. jsdom's `window.confirm` is a stub that
    * returns undefined, which is falsy — so a destructive path guarded by one would appear to be
@@ -942,6 +968,67 @@ describe('the roster: two documents on two pods, and every non-seat carries its 
     expect(roster).toContain('does name your pod, and it does not seat you');
     expect(roster).not.toMatch(/This read found no grant naming your pod/);
   });
+
+  /**
+   * ★★ THE ROSTER WAS READ ONCE AND THEN TRUSTED FOR THE LIFE OF THE WINDOW.
+   *
+   * `loadRoster()` runs on opening a workspace and after THIS client's own invite or revoke.
+   * Nothing re-read it when somebody ELSE changed the membership, and the streams watch cannot
+   * help: it watches each SEATED member's log, so it can neither notice a seat that did not
+   * exist when it was registered nor a seat that has gone.
+   *
+   * ★ THE DANGEROUS DIRECTION IS REVOCATION. `recipientsFor` is called from the stale `S.fold`
+   * on every private write, so this client goes on sealing NEW entries to a member the convener
+   * removed. Revocation is meant to be automatic — "every write recomputes the list", as
+   * `recipients.ts` puts it — and it was, from a list that had stopped being recomputed.
+   *
+   * The other direction loses history instead: somebody invited elsewhere is not in the
+   * recipient set, so everything written until the next restart is permanently unreadable to
+   * them, and an envelope's recipients cannot be changed afterwards.
+   *
+   * This drives the REAL poll — the same `pollingWatch` the transport uses — so the wait below is
+   * that loop's own cadence and not a sleep chosen to make an assertion pass.
+   */
+  it('★ notices a revocation made from somewhere else, without the window being reopened', async () => {
+    const o = await open({ fastWatches: true });
+    await signInAndSettle(o);
+    expect(text(o.doc, '#roster'), 'the fixture did not start with B seated').not.toContain('revoked');
+
+    // The convener revokes B from their own client. Nothing tells this window.
+    const a = o.s.pods.get(POD_A) as Pod;
+    a.put({ graph: GRANT_B, cid: 'cid-grant-b2', url: DESC(POD_A, 99),
+      content: trig(GRANT_B, '<' + GRANT_B + '> a wsp:MembershipGrant ; wsp:workspace <' + WS + '> ;\n'
+        + '  wsp:grantedTo <' + WEBID(POD_B) + '> ; wsp:role <' + ROLES + '#Contributor> ; wsp:revoked true .') });
+
+    // The watch's own refire, compressed by `fastWatches` — `pollingWatch` keeps its priming
+    // read, its backoff and its in-flight guard; only the wall-clock between ticks is short.
+    await new Promise((r) => { setTimeout(r, 900); });
+    await o.settle();
+
+    // ★ THE LOAD-BEARING ASSERTION. Before this, the row stayed seated until the app restarted,
+    // and every private entry written in between was sealed to somebody who had been removed.
+    expect(text(o.doc, '#roster'), 'a revocation made elsewhere never reached this window')
+      .toContain('revoked');
+  }, 20000);
+
+  it('does not re-fold the roster when the convener merely says something', async () => {
+    // ★ REVISIONS, NOT ACTIVITY. The watch reads the convener's whole pod, which changes every
+    // time they type. Re-folding on that costs two round trips per grant per sentence.
+    const o = await open({ fastWatches: true });
+    await signInAndSettle(o);
+    const before = o.s.calls.filter((c) => c.name === 'get_descriptor').length;
+
+    const a = o.s.pods.get(POD_A) as Pod;
+    a.put({ graph: STREAM(POD_A), cid: 'cid-chat-1', url: DESC(POD_A, 98),
+      content: trig(STREAM(POD_A), '<' + STREAM(POD_A) + '/e/9> a wsp:Entry ; dct:description "just talking" .') });
+
+    await new Promise((r) => { setTimeout(r, 900); });
+    await o.settle();
+    // The stream watch reads the new entry — that is its job. The ROSTER fold must not re-run,
+    // and a re-fold is unmistakable: it is a `get_descriptor` per grant plus one per acceptance.
+    const after = o.s.calls.filter((c) => c.name === 'get_descriptor').length;
+    expect(after - before, 'a message from the convener re-folded the whole roster').toBeLessThan(4);
+  }, 20000);
 
   it('stops seating a member whose grant was revoked, and says their words are untouched', async () => {
     const o = await open({ setup: (s) => {

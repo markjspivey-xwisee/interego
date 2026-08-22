@@ -39,7 +39,7 @@ import {
  * index into the BROWSER artifact bundle, and that build fails outright — which is the good
  * outcome; the bad one would have been a polyfill quietly satisfying it.
  */
-import { encryptionKeyFor, openerFor } from '@interego/workspace-client/opener';
+import { encryptionKeyFor, openerFor, sealedBindingCheck } from '@interego/workspace-client/opener';
 // The sealer is node-only for the same reason the opener is; see its header.
 import { sealForRoster } from '@interego/workspace-client/sealer';
 import {
@@ -388,11 +388,42 @@ let accountEncryptionPublicKey: string | null = null;
  */
 let accountEncryptionPair: ReturnType<typeof encryptionKeyFor> | null = null;
 
-async function installEncryption(target: WorkspaceClient, privateKeyHex: string | null, agentId: string | null): Promise<void> {
-  if (!privateKeyHex) return;   // browser sign-in: no key on this machine, so it reads what it can
-  const key = encryptionKeyFor(privateKeyHex);
-  accountEncryptionPublicKey = key.publicKey;
+/**
+ * ★★ THE ONE PLACE THIS KEY'S LIFETIME IS DECIDED, BECAUSE IT USED TO OUTLIVE ITS SESSION.
+ *
+ * Both fields above were only ever WRITTEN, by a sign-in that found a key. Nothing cleared them,
+ * and two ordinary sequences then carried one identity's secret into another's session:
+ *
+ *   · SIGN OUT. `auth:signout` drops the bearer, the transport, the client and the delegate
+ *     sessions — and left the encryption pair in this process. `substrate:seal` checks only
+ *     `accountEncryptionPair`, never the session, so it would still seal, as the person who had
+ *     signed out.
+ *   · ★ SIGN IN THROUGH THE BROWSER AFTERWARDS. That path holds no key on this machine, and
+ *     `installEncryption` used to RETURN EARLY for it — so the new session was published with
+ *     `encryptionPublicKey: <the previous account's>`. That value goes into the new identity's
+ *     ACCEPTANCE, which is the one document every other member reads to decide who to seal to.
+ *     Every entry written afterwards would be encrypted to a key only the previous identity can
+ *     open, in a channel the new one is correctly seated in — and nothing anywhere reports it,
+ *     because from every side it looks like a member with a key.
+ *
+ * Absent is a real state and this is what it means: no key here, so nothing seals and nothing
+ * opens, which is exactly what a browser sign-in already advertises about itself.
+ */
+function setAccountEncryption(key: ReturnType<typeof encryptionKeyFor> | null): void {
   accountEncryptionPair = key;
+  accountEncryptionPublicKey = key?.publicKey ?? null;
+}
+
+async function installEncryption(target: WorkspaceClient, privateKeyHex: string | null, agentId: string | null): Promise<void> {
+  if (!privateKeyHex) {
+    // Browser sign-in: no key on this machine, so it reads what it can — and carries nothing
+    // over from whoever was signed in before. See `setAccountEncryption`.
+    setAccountEncryption(null);
+    target.setGraphOpener(null);
+    return;
+  }
+  const key = encryptionKeyFor(privateKeyHex);
+  setAccountEncryption(key);
   if (agentId) {
     try {
       await target.tool('register_agent', {
@@ -400,7 +431,7 @@ async function installEncryption(target: WorkspaceClient, privateKeyHex: string 
       });
     } catch { /* see above: the opener is still worth having */ }
   }
-  target.setGraphOpener(openerFor(privateKeyHex));
+  target.setGraphOpener(openerFor(privateKeyHex), sealedBindingCheck);
 }
 
 const listeners = new Set<WebContents>();
@@ -716,6 +747,10 @@ app.whenReady().then(() => {
   ipcMain.handle('auth:signout', () => {
     if (renewTimer) { clearTimeout(renewTimer); renewTimer = null; }
     bearer = null; transport = null; client = null; signedInAs = null;
+    // ★ AND THE ENCRYPTION KEY, which `substrate:seal` reads without consulting the session at
+    // all — so leaving it here meant a signed-out process would still seal as the person who
+    // left. See `setAccountEncryption`.
+    setAccountEncryption(null);
     // Delegate sessions were minted under THEIR OWN keys and are nothing to do with this person's
     // bearer — but they were opened during this person's run, and leaving them live would let the
     // next identity's window drive delegates the previous one switched on.
@@ -756,6 +791,14 @@ app.whenReady().then(() => {
    * Adding a recipient here would be exactly the move the relay was making.
    */
   ipcMain.handle('substrate:seal', async (_e, req: { graphIri: string; payloadTurtle: string; recipientKeys: readonly string[]; shape?: { iri: string; turtle: string } }) => {
+    /**
+     * ★ A SESSION AND A KEY, NOT JUST A KEY. This checked only the key, so it was reachable in a
+     * signed-out process — and answered, with a seal made under the departed identity. Sealing is
+     * an act performed AS somebody; there has to be a somebody.
+     */
+    if (!client || !signedInAs) {
+      return { ok: false as const, why: 'nothing is signed in here, so there is no identity to seal as and nothing was sealed.' };
+    }
     if (!accountEncryptionPair) {
       return { ok: false as const, why: 'this session holds no encryption key, so nothing can be sealed here. Sign in with a wallet key.' };
     }

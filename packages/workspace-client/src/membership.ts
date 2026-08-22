@@ -505,6 +505,21 @@ export async function sendInvite(
      * With N outstanding invitations only the most recent could ever be accepted, one at a time.
      */
     readonly pendingWebIds?: readonly string[];
+    /**
+     * Everybody a standing grant names, from `recipientsFor().grantedWebIds`.
+     *
+     * ── ★★ A SUPERSET OF `pendingWebIds`, AND THE ONE A RESEAL NEEDS ──────────
+     *
+     * `pendingWebIds` covers members whose acceptance is genuinely absent. It deliberately does
+     * NOT cover members whose acceptance could not be READ — a pod that answered 502, an
+     * acceptance pinned to a grant revision since superseded, a forked chain. Those are seated:
+     * false and pending: false, and a reseal built from the two lists above dropped every one of
+     * them from a record they need in order to accept or re-accept. See `RecipientPlan`.
+     *
+     * Optional so no caller silently narrows the set by forgetting it; when it is absent the two
+     * older lists are used exactly as before.
+     */
+    readonly grantedWebIds?: readonly string[];
     readonly onState?: (state: string, detail: string) => void;
   },
 ): Promise<InviteOutcome> {
@@ -534,9 +549,13 @@ export async function sendInvite(
   if (args.visibility === 'private') {
     const resealed = await resealRecord(client, {
       workspace: args.workspace, viewer: args.viewer, entryShape: args.entryShape,
-      // Seated members, everyone with an outstanding invitation, and the person being invited now.
-      // Dropping any of the three locks somebody out of a record they need in order to join.
-      shareWith: [...new Set([...(args.shareWith ?? []), ...(args.pendingWebIds ?? []), who.webId])].filter(Boolean),
+      // Seated members, everyone a standing grant names, and the person being invited now.
+      // Dropping any of the three locks somebody out of a record they need in order to join —
+      // and the middle one is a SUPERSET of "outstanding invitations" for the reason its own
+      // parameter gives: a member whose acceptance merely could not be read is still a member.
+      shareWith: [...new Set([
+        ...(args.shareWith ?? []), ...(args.pendingWebIds ?? []), ...(args.grantedWebIds ?? []), who.webId,
+      ])].filter(Boolean),
       resolution: who,
       onState: args.onState,
     });
@@ -1051,6 +1070,20 @@ export async function findSeat(
   }
   const pick = mine ?? last;
   return {
+    /**
+     * ★★ THE STRUCTURED FIELDS SURVIVE, NOT ONLY THE SENTENCE. This built a fresh object from
+     * four keys, so everything the verdict had ESTABLISHED — `revoked`, `grantedTo`, `role`,
+     * `workspace`, `modalStatus` — was dropped, and `why` was the only trace left of it.
+     *
+     * That made "revoked" and "never granted" indistinguishable to a caller except by matching
+     * on prose, and one caller that needed the difference did not: the Discord bot read both as
+     * "not seated yet" and re-granted, so a revoked member re-seated themselves by typing. The
+     * flag it needed was on the verdict two frames earlier and did not survive the return.
+     *
+     * A field exists so callers do not have to parse a sentence. Spread first, so the four keys
+     * below still win.
+     */
+    ...(pick ?? {}),
     grantIri: direct.grantIri, ok: false, checks: pick?.checks ?? direct.checks,
     why: (mine
       ? 'a grant for this workspace does name you, and it does not seat you: ' + mine.why

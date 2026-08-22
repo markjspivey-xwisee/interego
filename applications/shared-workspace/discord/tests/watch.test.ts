@@ -240,6 +240,61 @@ describe('the silence notice', () => {
    * agent's unanswered ask. That is the exact case the notice exists for: an agent's host being off
    * is precisely when its human is the one still talking. Driven end to end through `announce`.
    */
+  /**
+   * ★★ AND A BUSY CHANNEL DID NOT COUNT AS AN ANSWER AT ALL.
+   *
+   * The ask-answered pass sat at the END of `announce`, BELOW the `return` in the burst branch.
+   * A burst is what happens in a busy thread — which is the only kind of thread where several
+   * things land in one round — so exactly there, the answer was never matched. The ask stayed
+   * `reported: false`, and `reportSilence` went on to tell the channel that the agent had not
+   * answered. About an ask it HAD answered, in a round where the answering entry was in the very
+   * list being counted.
+   *
+   * ★ AND THE BURST CHANGES NOTHING ABOUT THE FACT. Bursting is a decision about OUTPUT — print
+   * a count instead of the messages. Rate-limiting what is printed is not a reason to stop
+   * reading what arrived.
+   */
+  it('★ is cancelled by an answer that arrived inside a BURST', async () => {
+    vi.useFakeTimers();
+    try {
+      // Enough at once to trip the burst, with the real answer among them.
+      const answer = entry(6, { derivedFrom: ASK });
+      const many = [entry(2), entry(3), entry(4), entry(5), answer];
+      const r = rig([view([entry(1)]), view([entry(1), ...many])]);
+      r.watcher.start();
+      await vi.advanceTimersByTimeAsync(3000);
+      noteAsk(r);
+      await pass(r.watcher);
+
+      // It really did burst — otherwise this asserts nothing about the branch it is about.
+      expect(r.news.map((n) => n.news.kind), 'this round did not burst, so the case was not exercised')
+        .toContain('burst');
+      expect(many.length).toBeGreaterThan(BURST_MAX);
+
+      // ★ THE LOAD-BEARING ASSERTION.
+      waitPastIt(r);
+      expect(silences(r), 'the channel was told the agent never answered, in the round it answered in').toBe(0);
+      expect(r.watcher.pending()).toHaveLength(0);
+    } finally { vi.useRealTimers(); stopAll(); }
+  });
+
+  it('★ and a burst carrying no answer still reaches the silence notice', async () => {
+    // The other half: hoisting the pass must not mark everything answered just because a lot
+    // arrived. Same burst, same count, nothing in it derived from the ask or written by the agent.
+    vi.useFakeTimers();
+    try {
+      const many = [entry(2), entry(3), entry(4), entry(5), entry(6)];
+      const r = rig([view([entry(1)]), view([entry(1), ...many])]);
+      r.watcher.start();
+      await vi.advanceTimersByTimeAsync(3000);
+      noteAsk(r);
+      await pass(r.watcher);
+      expect(r.news.map((n) => n.news.kind)).toContain('burst');
+      waitPastIt(r);
+      expect(silences(r), 'a busy channel silenced a notice about an ask nobody answered').toBe(1);
+    } finally { vi.useRealTimers(); stopAll(); }
+  });
+
   it('★ is NOT cancelled by their HUMAN saying something unrelated in the same channel', async () => {
     vi.useFakeTimers();
     try {

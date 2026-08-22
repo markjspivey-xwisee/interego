@@ -26,6 +26,7 @@
  * anywhere. The recipient list refuses rather than guesses.
  */
 
+import { MODAL_RETRACTED } from './turtle.js';
 import type { Seat } from './seats.js';
 
 /** What to publish with, or why nothing may be published. */
@@ -75,6 +76,39 @@ export type RecipientPlan =
        * With N outstanding invitations only the most recent could ever be accepted, one at a time.
        */
       readonly pendingWebIds: readonly string[];
+      /**
+       * WebIDs of EVERYBODY the convener's standing grants name, whatever their acceptance says.
+       *
+       * ── ★★ THE SET A RESEAL MUST USE, AND WHY IT IS NOT `pendingWebIds` ─────
+       *
+       * `pending` means one exact thing: the acceptance was looked for and is genuinely not there.
+       * It is deliberately NOT set when the read FAILED, because "waiting to accept" would then be
+       * a claim about somebody's pod made from a read that established nothing. That rule is right
+       * and stays.
+       *
+       * But it is a rule about the ACCEPTANCE, and a reseal is not asking about acceptances. A
+       * reseal asks who must be able to READ THE RECORD, and the answer is written on the
+       * convener's own pod: everybody a live grant names. Between those two questions sat a whole
+       * population — a member whose acceptance pins a grant revision the convener has since
+       * superseded, whose pod returned 502 while the roster was folded, whose acceptance is forked
+       * or whose signed region would not locate. Each is `seated: false` and `pending: false`, so
+       * each was dropped from the recipient set by the next reseal.
+       *
+       * ★ AND THAT IS A ONE-WAY DOOR. Losing the record means `verifyGrantIri` cannot read it,
+       * which means they cannot accept, which means they can never become seated again — a
+       * permanent lockout of a member nobody revoked, triggered by a transient 502 during somebody
+       * ELSE's invitation. The roster goes on showing why their seat did not fold, and says
+       * nothing about the envelope they just fell out of.
+       *
+       * ★ INCLUDING THEM COSTS NOTHING. The grant naming them is published PUBLIC, and the record
+       * carries the title, convener, role profile and entry shape — which is exactly the reasoning
+       * this file already gives for not re-sealing on revoke. Excluding them buys no
+       * confidentiality and costs a member their workspace.
+       *
+       * Revoked grants and grants their own author has retracted are not here: those are
+       * withdrawals, stated by the person entitled to state them.
+       */
+      readonly grantedWebIds: readonly string[];
     }
   | { readonly ok: false; readonly why: string };
 
@@ -103,6 +137,17 @@ export function recipientsFromRoster(args: {
   // Granted but not yet accepted. Excluded from `shareWith`, included in a reseal — see the field.
   const pendingWebIds = args.seats
     .filter((s) => !s.seated && !s.revoked && s.pending && s.grantedTo)
+    .map((s) => s.grantedTo as string);
+  /**
+   * Everybody a standing grant names — see the field. Read off the GRANT half only, which is the
+   * half the convener owns and the half a reseal is about.
+   */
+  const grantedWebIds = args.seats
+    // Case-folded, because `isRetracted` — which is what SET this field's source — compares
+    // that way, and a status differing only in case would otherwise be a withdrawal here and
+    // not one there.
+    .filter((s) => !s.revoked && s.grantedTo
+      && String(s.grantStatus ?? '').toLowerCase() !== MODAL_RETRACTED.toLowerCase())
     .map((s) => s.grantedTo as string);
   const handles: string[] = [];
   const missing: string[] = [];
@@ -140,6 +185,7 @@ export function recipientsFromRoster(args: {
     keys: keysMissing.length > 0 ? [] : keys,
     keysMissing,
     pendingWebIds: [...new Set(pendingWebIds)],
+    grantedWebIds: [...new Set(grantedWebIds)],
   };
 }
 
@@ -178,7 +224,8 @@ export function recipientsFor(
   visibility: 'public' | 'private' | 'unknown' | undefined,
   roster: { readonly seats: readonly Seat[]; readonly grantsFound: number; readonly grantsRead: number } | null,
 ): { readonly ok: true; readonly visibility: 'public' | 'private'; readonly shareWith: readonly string[] | undefined;
-      readonly keys: readonly string[]; readonly keysMissing: readonly string[]; readonly pendingWebIds: readonly string[] }
+      readonly keys: readonly string[]; readonly keysMissing: readonly string[]; readonly pendingWebIds: readonly string[];
+      readonly grantedWebIds: readonly string[] }
   | { readonly ok: false; readonly why: string } {
   /**
    * ★★ REFUSED, BECAUSE THE ALTERNATIVE IS PUBLISHING IN THE CLEAR. `'unknown'` means the record
@@ -201,7 +248,7 @@ export function recipientsFor(
   // ★ The resolved value is RETURNED rather than left for the caller to re-derive: a caller that
   // asked here and then read `record.visibility` again for the write could get two answers.
   // A public workspace seals nothing, so it has no recipients of either kind.
-  if (visibility !== 'private') return { ok: true, visibility: 'public', shareWith: undefined, keys: [], keysMissing: [], pendingWebIds: [] };
+  if (visibility !== 'private') return { ok: true, visibility: 'public', shareWith: undefined, keys: [], keysMissing: [], pendingWebIds: [], grantedWebIds: [] };
   if (!roster) {
     return {
       ok: false,
@@ -211,7 +258,7 @@ export function recipientsFor(
   }
   const plan = recipientsFromRoster(roster);
   return plan.ok
-    ? { ok: true, visibility: 'private', shareWith: plan.shareWith, keys: plan.keys, keysMissing: plan.keysMissing, pendingWebIds: plan.pendingWebIds }
+    ? { ok: true, visibility: 'private', shareWith: plan.shareWith, keys: plan.keys, keysMissing: plan.keysMissing, pendingWebIds: plan.pendingWebIds, grantedWebIds: plan.grantedWebIds }
     : { ok: false, why: plan.why };
 }
 

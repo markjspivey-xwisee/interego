@@ -21,7 +21,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  WorkspaceClient, graphRegion, readIriAll, DELEGATE_LABEL_PREFIX, type AnyTransport,
+  WorkspaceClient, graphRegion, readIriAll, DELEGATE_LABEL_PREFIX, findSeat, type AnyTransport,
 } from '@interego/workspace-client';
 import { recordMessage } from '../src/workspace.js';
 import type { Link, ThreadBinding } from '../src/links.js';
@@ -50,26 +50,38 @@ const trig = (iri: string, body: string): string =>
 interface Doc { graph: string; cid: string; url: string; content: string }
 
 /** The store the scripted relay answers from, so a test cannot assert an impossible state. */
-function docs(): Doc[] {
-  return [
+function docs(opts: { readonly revoked?: boolean; readonly accepted?: boolean } = {}): Doc[] {
+  const out: Doc[] = [
     { graph: WS, cid: 'cid-ws', url: DESC(CONV, 3), content: trig(WS, '<' + WS + '> a wsp:Workspace ; dct:title "T" ;\n'
       + '  wsp:convener <' + WEBID(CONV) + '> ; wsp:roleProfile <' + ROLES + '> ; wsp:entryShape <' + SHAPE + '> .') },
     { graph: GRANT, cid: 'cid-grant', url: DESC(CONV, 4), content: trig(GRANT, '<' + GRANT + '> a wsp:MembershipGrant ; wsp:workspace <' + WS + '> ;\n'
-      + '  wsp:grantedTo <' + WEBID(MEMBER) + '> ; wsp:role <' + ROLES + '#Contributor> .') },
-    { graph: ACC, cid: 'cid-acc', url: DESC(MEMBER, 5), content: trig(ACC, '<' + ACC + '> a wsp:MembershipAcceptance ; wsp:workspace <' + WS + '> ;\n'
-      + '  wsp:member <' + WEBID(MEMBER) + '> ; wsp:accepts <' + GRANT + '> ; wsp:acceptsCid "cid-grant" ; wsp:stream <' + STREAM + '> .') },
+      + '  wsp:grantedTo <' + WEBID(MEMBER) + '> ; wsp:role <' + ROLES + '#Contributor> '
+      + (opts.revoked ? ';\n  wsp:revoked true ' : '') + '.') },
   ];
+  // ★ THE MEMBER'S OWN HALF, WHICH ONLY EXISTS ONCE THEY HAVE ACCEPTED. A convener inviting
+  // somebody from their desktop client publishes the GRANT and nothing on the invitee's pod;
+  // until that person's own client writes an acceptance this document is simply not there.
+  if (opts.accepted !== false) {
+    out.push({ graph: ACC, cid: 'cid-acc', url: DESC(MEMBER, 5), content: trig(ACC, '<' + ACC + '> a wsp:MembershipAcceptance ; wsp:workspace <' + WS + '> ;\n'
+      + '  wsp:member <' + WEBID(MEMBER) + '> ; wsp:accepts <' + GRANT + '> ; wsp:acceptsCid "cid-grant" ; wsp:stream <' + STREAM + '> .') });
+  }
+  return out;
 }
 
 interface Run { readonly client: WorkspaceClient; readonly published: Record<string, unknown>[] }
 
-function scripted(): Run {
-  const store = docs();
+function scripted(opts: { readonly revoked?: boolean; readonly accepted?: boolean } = {}): Run {
+  const store = docs(opts);
   const published: Record<string, unknown>[] = [];
   const answer = (name: string, input: Record<string, unknown>): unknown => {
     switch (name) {
       case 'get_pod_status': {
-        const pod = input['pod_name'] ? String(input['pod_name']) : CONV;
+        // ★ BOTH SELECTORS. `resolveInvitee` asks by `pod_url` and everything else by
+        // `pod_name`; a stub honouring only one answered for the CALLER's pod on the other,
+        // which is the same confusion the relay's own `resolvePodSubject` exists to prevent.
+        const pod = input['pod_name'] ? String(input['pod_name'])
+          : input['pod_url'] ? (String(input['pod_url']).replace(/\/$/, '').split('/').pop() ?? CONV)
+            : CONV;
         return {
           pod: 'http://css.railway.internal:3456/' + pod + '/',
           registry: { owner: WEBID(pod) },
@@ -79,6 +91,21 @@ function scripted(): Run {
           sessionAgent: { did: BOT, scope: 'PublishOnly' },
         };
       }
+      /**
+       * ★ THE STUB HAS TO ANSWER THIS OR THE SEATING PATH STOPS BEFORE THE THING UNDER TEST.
+       * `seat()` -> `sendInvite` -> `resolveInvitee` calls `resolve_webfinger` first, and a stub
+       * that answered nothing made the revocation test pass for the wrong reason: no grant was
+       * republished because handle resolution failed, not because anything checked the
+       * revocation. A refusal from the fixture reads exactly like a refusal from the design.
+       */
+      case 'resolve_webfinger': {
+        const pod = String(input['resource'] ?? '').replace(/^acct:/, '').split('@')[0] ?? MEMBER;
+        return { links: [
+          { rel: 'http://webfinger.net/rel/profile-page', href: 'http://css.railway.internal:3456/' + pod + '/' },
+          { rel: 'http://www.w3.org/ns/ldp#inbox', href: 'http://css.railway.internal:3456/' + pod + '/inbox/' },
+        ] };
+      }
+      case 'notify_agent': return { delivered: true };
       case 'verify_agent':
         return { subject_pod_name: input['pod_name'], verified: true, enforcement: { basis: 'signed-chain', scope: 'PublishOnly', writeEligible: true, note: '' } };
       case 'get_current_head': {
@@ -158,5 +185,121 @@ describe('a relayed message is the PERSON\'s entry, not the bot\'s', () => {
     const rows = (status['delegationRegistry'] as { rows: Record<string, unknown>[] }).rows;
     expect(rows[0]?.['label']).toBe('discord-link 4242');
     expect(String(rows[0]?.['label'])).not.toContain(DELEGATE_LABEL_PREFIX);
+  });
+});
+
+
+describe('a member the convener REVOKED', () => {
+  /**
+   * ★★ TYPING ONE MESSAGE UNDID THE REVOCATION. Found by a six-lens review of this vertical and
+   * confirmed against the real path here.
+   *
+   * `recordMessage` asks `findSeat`, which correctly answers no for a grant carrying
+   * `wsp:revoked true`. The `!already.ok` branch then reads that as "not seated yet" — the state
+   * of somebody who has never spoken — and calls `seat()`, which calls `sendInvite`, which
+   * publishes `<workspace>-grant-<pod>` with `auto_supersede_prior: true` and no revoked flag.
+   * At the very IRI the revocation lives at.
+   *
+   * ★ WHY IT SUCCEEDS AT THE SUBSTRATE, which is what makes it a real bypass rather than a
+   * refusal in the wrong words: the grant is written under the CONVENER's delegation of the bot,
+   * and revoking a MEMBER does not touch that. Every gate the write passes is genuinely open.
+   * The judgement that was missing is the vertical's own.
+   *
+   * ★ AND "NOT SEATED" IS TWO DIFFERENT FACTS. Never-granted and granted-then-revoked are both
+   * `ok: false` from `findSeat`, and only the first of them may be answered by granting.
+   */
+  it('is NOT re-seated by typing, and no fresh grant is published', async () => {
+    const run = scripted({ revoked: true });
+    // The state the bot's own decision sees: not seated, AND the reason is structured rather
+    // than only spelled out in prose — which is what lets this be told apart from never-granted.
+    const before = await findSeat(run.client, {
+      relay: RELAY, viewer: { podName: MEMBER, webId: WEBID(MEMBER) } as never, workspace: WS });
+    expect(before.ok).toBe(false);
+    expect(before.revoked, 'the verdict lost the revoked flag on its way back').toBe(true);
+    const out = await recordMessage({
+      relay: RELAY, client: run.client, agentId: BOT,
+      store: { threadOf: () => binding(), linkOf: () => link() } as never,
+    }, { threadId: 't1', discordUserId: '4242', text: 'let me back in' });
+
+    // ★ THE LOAD-BEARING ASSERTION. Not the returned kind — what was WRITTEN. A future
+    // refactor that reports `unseated` while still publishing the grant would be the same
+    // defect wearing a better sentence.
+    const grants = run.published.filter((p) => String(p['graph_iri']) === GRANT);
+    expect(grants, 'a revoked member typing republished their own grant').toHaveLength(0);
+
+    expect(out.kind).toBe('unseated');
+    if (out.kind === 'unseated') {
+      // And the reason names the revocation, so the person is not told to try again.
+      expect(String(out.why).toLowerCase()).toContain('revok');
+    }
+    // Nothing of theirs went onto the record either.
+    expect(run.published.filter((p) => String(p['graph_iri']) === STREAM)).toHaveLength(0);
+  });
+
+  it('while a member who has simply never spoken IS still seated on first speaking', async () => {
+    // The other half. A fix that refuses everybody who is not already seated would break the
+    // ordinary path this bot exists for — seating happens by speaking.
+    const run = scripted();
+    const out = await recordMessage({
+      relay: RELAY, client: run.client, agentId: BOT,
+      store: { threadOf: () => binding(), linkOf: () => link() } as never,
+    }, { threadId: 't1', discordUserId: '4242', text: 'first words' });
+    expect(out.kind).toBe('recorded');
+  });
+});
+
+describe('a member the convener INVITED, who has never accepted', () => {
+  /**
+   * ★★ A GRANT IS HALF A SEAT, AND SPEAKING WAS TREATED AS THE WHOLE OF ONE.
+   *
+   * Membership here is two-sided on purpose: the convener's grant on THEIR pod, and the member's
+   * acceptance on THEIRS. `foldRoster` enforces both — a grant with no acceptance folds as
+   * `pending`, and a pending seat's log is not folded into the channel at all.
+   *
+   * `recordMessage` asked `findSeat`, which reads only the GRANT, and read `ok: true` as
+   * "already seated" — so it skipped `seat()`, the one call that publishes the acceptance. The
+   * entry then went to a stream IRI it COMPOSED rather than one any reader had been told about.
+   *
+   * ★ WHAT THAT LOOKS LIKE TO THE PEOPLE IN THE ROOM. The convener invites somebody from the
+   * desktop client. That person types in the Discord thread and the bot answers "on the record".
+   * It IS on their pod, correctly signed — and nobody sees it. Not the other members, not the
+   * convener, not the author, because every reader folds the roster first and their seat is
+   * pending. No error is raised anywhere: the write succeeded, and the read is right to skip it.
+   *
+   * ★ AND `seat()` WAS ALREADY THE FIX — it publishes the grant (superseding an identical one is
+   * a no-op) and then the acceptance, on the member's own pod under their own delegation. The
+   * only thing wrong was the question asked before calling it.
+   */
+  it('★ publishes their acceptance rather than writing into a log nobody folds', async () => {
+    const run = scripted({ accepted: false });
+    const out = await recordMessage({
+      relay: RELAY, client: run.client, agentId: BOT,
+      store: { threadOf: () => binding(), linkOf: () => link() } as never,
+    }, { threadId: 't1', discordUserId: '4242', text: 'thanks for the invite' });
+
+    expect(out.kind).toBe('recorded');
+    // ★ THE LOAD-BEARING ASSERTION: the member's own half of the seat now exists. Without it the
+    // entry is unreadable to every member of this workspace including the person who wrote it.
+    const acceptances = run.published.filter((p) => String(p['graph_iri']) === ACC);
+    expect(acceptances, 'the entry was recorded and no acceptance was published, so no reader folds this member in')
+      .toHaveLength(1);
+    // On the MEMBER's pod, which is the only pod their half of the seat may live on.
+    expect(acceptances[0]?.['pod_name']).toBe(MEMBER);
+    // And the seating is reported as what it was, so the channel does not claim "already".
+    if (out.kind === 'recorded') expect(out.seated).toBe('just-now');
+  });
+
+  it('and an accepted member is NOT re-seated, so an ordinary message stays one write', async () => {
+    // The other half of the fix. Re-publishing an acceptance on every message would rewrite the
+    // member's own record for nothing and cost round trips per line typed.
+    const run = scripted();
+    const out = await recordMessage({
+      relay: RELAY, client: run.client, agentId: BOT,
+      store: { threadOf: () => binding(), linkOf: () => link() } as never,
+    }, { threadId: 't1', discordUserId: '4242', text: 'ordinary message' });
+    expect(out.kind).toBe('recorded');
+    if (out.kind === 'recorded') expect(out.seated).toBe('already');
+    expect(run.published.filter((p) => String(p['graph_iri']) === ACC)).toHaveLength(0);
+    expect(run.published).toHaveLength(1);
   });
 });

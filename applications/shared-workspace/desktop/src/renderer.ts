@@ -342,6 +342,14 @@ const S = {
   streams: new Map<string, Loaded>(),
   bodies: new Map<string, Body>(),
   watches: [] as (() => void)[],
+  /**
+   * The grant graphs and their revisions, as of the last fold — see `watchGrants`. A STRING and
+   * not a count: a revoke supersedes a grant in place, so the number of grants on the pod is
+   * exactly the same before and after the one change this most needs to notice.
+   */
+  grantIndex: null as string | null,
+  /** The single grant watch for the open workspace, so re-folding does not accumulate them. */
+  grantWatch: null as (() => void) | null,
   streamsOpened: false,
   streamIri: null as string | null,
   canvas: { iri: null as string | null, head: null as string | null, loaded: null as string | null, exists: false },
@@ -1383,8 +1391,10 @@ async function invite(): Promise<void> {
     // which could answer differently and cannot answer 'unknown' safely.
     visibility: inviteAudience.visibility,
     ...(inviteAudience.shareWith ? { shareWith: inviteAudience.shareWith } : {}),
-    // Anyone with an outstanding invitation, or this reseal evicts them — see `sendInvite`.
+    // Anyone with an outstanding invitation, and anyone else a standing grant names, or this
+    // reseal evicts them from a record they need in order to accept — see `sendInvite`.
     pendingWebIds: inviteAudience.pendingWebIds,
+    grantedWebIds: inviteAudience.grantedWebIds,
     onState: (s, d) => { if (!set) set = writeLine(log, 'grant on your pod'); set(s, d); },
   });
   b.disabled = false;
@@ -1518,7 +1528,7 @@ function teardownWorkspace(): void {
   S.watches = [];
   S.streams.clear();
   S.bodies.clear();
-  S.seats = []; S.fold = null; S.record = null; S.recordResult = null;
+  S.seats = []; S.fold = null; S.record = null; S.recordResult = null; S.grantIndex = null;
   // Whose delegates were read is a fact about the OTHER MEMBERS of the workspace being left, and
   // carrying it forward would attribute one channel's delegates to another channel's authors.
   S.delegatesByPod.clear();
@@ -1660,6 +1670,68 @@ async function openWorkspace(iri: string): Promise<void> {
   renderLobby();
 }
 
+/**
+ * ★★ THE ROSTER WAS READ ONCE AND THEN TRUSTED FOR THE LIFE OF THE WINDOW.
+ *
+ * `S.fold` was set by `loadRoster()`, which runs on opening a workspace and after THIS client's
+ * own invite or revoke. Nothing re-read it when somebody ELSE changed the membership, and the
+ * streams watch does not help: it watches each seated member's log, so it cannot report a seat
+ * that did not exist when it was registered.
+ *
+ * Both directions of that are wrong, and one of them is a confidentiality failure:
+ *
+ *   · SOMEBODY WAS ADDED. Every entry this client writes is sealed to the roster it remembers,
+ *     so the new member cannot read anything written between their invitation and the next time
+ *     somebody restarts this app. An envelope's recipients are fixed when it is written, so that
+ *     gap in their history is permanent — and nothing on either side reports it.
+ *   · ★ SOMEBODY WAS REVOKED. The stale fold still names them, so this client goes on sealing
+ *     NEW entries to a member the convener removed. Revocation is supposed to be automatic —
+ *     "every write recomputes the list", as `recipients.ts` puts it — and it is, from a list that
+ *     had stopped being recomputed.
+ *
+ * ── WHY A WATCH AND NOT A RE-FOLD PER WRITE ─────────────────────────────────
+ *
+ * Folding costs two round trips per grant. Paying that on every message to discover that nothing
+ * changed is the kind of cost that gets removed again later. The relay already pushes changes to
+ * this pod, and this reader already knows how to consume that — so it re-folds when the grants
+ * actually MOVE, and not otherwise.
+ *
+ * ★ AND IT COMPARES REVISIONS, NOT ACTIVITY. `discover_context` on the convener's pod fires for
+ * anything published there, their own messages included. The fingerprint is the grant graphs and
+ * their CIDs, so a re-fold happens when a grant is written, revoked or superseded, and a busy
+ * convener does not re-fold the roster once per sentence they type.
+ */
+function watchGrants(grantPod: string | null): void {
+  if (!S.client || !grantPod || !S.workspace) return;
+  const prefix = S.workspace + '-grant-';
+  const fingerprint = (rows: readonly Record<string, unknown>[]): string => rows
+    .flatMap((e) => (Array.isArray(e['describes']) ? e['describes'] as string[] : [])
+      .filter((g) => typeof g === 'string' && g.indexOf(prefix) === 0)
+      .map((g) => g + '@' + String(e['cid'] ?? '')))
+    .sort()
+    .join(' ');
+  const unsub = S.client.tx.watchTool?.('discover_context', { pod_name: grantPod, sort: 'newest-first' }, (ev) => {
+    if (ev.type === 'error') return;  // The roster on screen is the last one that was READ; a failed poll changes nothing about it.
+    const payload = ev.result.payload as Record<string, unknown> | null;
+    const entries = payload?.['entries'];
+    if (!Array.isArray(entries)) return;
+    const next = fingerprint(entries as Record<string, unknown>[]);
+    // ★ THE FIRST ANSWER ONLY RECORDS. `loadRoster` has just folded from this same pod, so
+    // treating the first payload as a change would re-fold immediately and then once more for
+    // the fold that re-registered this watch.
+    if (S.grantIndex === null) { S.grantIndex = next; return; }
+    if (next === S.grantIndex) return;
+    S.grantIndex = next;
+    void loadRoster();
+  }) ?? null;
+  // One per workspace. `loadRoster` runs again after every invite and revoke, and a watch
+  // registered on each of those would multiply until the window closed.
+  if (!unsub) return;
+  if (S.grantWatch) { try { S.grantWatch(); } catch { /* already gone */ } }
+  S.grantWatch = unsub;
+  S.watches.push(unsub);
+}
+
 async function loadRoster(): Promise<void> {
   if (!S.client || !S.workspace || !S.iriOwner || !S.slug) return;
   const box = $('roster');
@@ -1705,6 +1777,7 @@ async function loadRoster(): Promise<void> {
   }
   S.fold = fold;
   S.seats = fold.seats.slice();
+  watchGrants(grantPodFor(rec.convenerPod, S.iriOwner));
   S.podMarks = assignPodMarks(S.seats.map((m) => m.pod).concat([S.viewer?.podName ?? null]));
   renderRoster();
   renderLobby();

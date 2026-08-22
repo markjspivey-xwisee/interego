@@ -2475,6 +2475,7 @@ var WSPC = (() => {
       throw fail("tool_error", where + " was asked for pod " + asked + " and the response says it answered for pod " + got + ". These disagree, so nothing is being read out of it.");
     }
   }
+  var CONFIRM_BUDGET_MS = 3e4;
   var RelayClient = class {
     constructor(relay, transport) {
       __publicField(this, "relay");
@@ -2623,7 +2624,7 @@ var WSPC = (() => {
      * returned. Backoff 400 ms → 5 s, about 30 s in total, then "accepted and not yet reported
      * readable" — which is neither saved nor failed, and says so.
      */
-    async publishAndConfirm(args, podName, graphIri, onState, sleep = (ms) => new Promise((r) => setTimeout(r, ms))) {
+    async publishAndConfirm(args, podName, graphIri, onState, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = () => Date.now()) {
       const tell = (s, d) => {
         try {
           onState?.(s, d);
@@ -2649,9 +2650,9 @@ var WSPC = (() => {
       if (!url)
         return { res, readable: false, why: "the response named no descriptor URL, so there is nothing to read back and match" };
       let wait = 400;
-      const until = Date.now() + 3e4;
+      const until = now() + CONFIRM_BUDGET_MS;
       let lastWhy = null;
-      while (Date.now() < until) {
+      while (now() < until) {
         await sleep(wait);
         wait = Math.min(Math.round(wait * 1.6), 5e3);
         try {
@@ -2667,13 +2668,21 @@ var WSPC = (() => {
           if (h.url)
             lastWhy = "the head is a different descriptor (" + h.url + ")";
           else
-            lastWhy = h.message || "the relay reports no head for this IRI yet";
+            lastWhy = "the relay has not reported a head for this IRI yet" + (h.message ? " (" + h.message + ")" : "");
         } catch (e) {
           lastWhy = errorCopy(e).t;
         }
       }
+      const waited = Math.round((now() - (until - CONFIRM_BUDGET_MS)) / 1e3);
       tell("pending", "accepted, not yet reported readable");
-      return { res, readable: false, why: lastWhy ?? "the wait ran out before the head matched" };
+      return {
+        res,
+        readable: false,
+        // ★ THE VERDICT SENTENCE SAYS WHAT THIS FUNCTION ACTUALLY DID. `readable: false` after an
+        // ACCEPTED publish means "I stopped waiting", and a caller rendering `why` alone must not
+        // be able to mistake that for "the relay rejected it".
+        why: "the relay accepted this write and it had not read back within " + waited + "s: " + (lastWhy ?? "the wait ran out before the head matched") + ". It may have landed since \u2014 re-reading is safe, and re-publishing supersedes."
+      };
     }
   };
 
@@ -2704,6 +2713,7 @@ var WSPC = (() => {
        * material would put it wherever the client runs, including a browser.
        */
       __publicField(this, "opener", null);
+      __publicField(this, "bindingCheck", null);
       /**
        * Sealed payloads are opened BEFORE they reach this client, by whatever it is talking to.
        *
@@ -2725,9 +2735,19 @@ var WSPC = (() => {
     connect() {
       return super.connect(REQUIRED_TOOLS, PROBE_TOOL);
     }
-    /** Install (or clear) the local opener. See {@link GraphOpener}. */
-    setGraphOpener(opener) {
+    /**
+     * Install (or clear) the local opener, and with it the hash a reader needs to finish checking
+     * an opened payload against its proof. See {@link GraphOpener} and {@link ContentDigest}.
+     *
+     * ★★ THE DIGEST TRAVELS WITH THE OPENER BECAUSE THE TWO ARE THE SAME CAPABILITY. Only a host
+     * that can open a sealed graph is ever in a position to digest one, and `canonicalGraphDigest`
+     * reaches `node:crypto` — so importing it here would drag Node into the browser bundle for a
+     * code path a browser can never take. Injecting it keeps the artifact buildable and leaves the
+     * one honest degradation in place: no digest, no local verdict, `declared` stands.
+     */
+    setGraphOpener(opener, bindingCheck) {
       this.opener = opener;
+      this.bindingCheck = bindingCheck ?? null;
     }
     /** Declare that this client's transport returns sealed payloads already opened. */
     declareSealedReadsUpstream() {
@@ -2794,7 +2814,16 @@ var WSPC = (() => {
         // ★ Evidence, not decoration: this content was decrypted HERE, with a key the relay does
         // not hold. A reader that could not tell this from ordinary plaintext could not honestly
         // tell anyone their workspace is end-to-end encrypted.
-        openedWithOwnKey: true
+        openedWithOwnKey: true,
+        /**
+         * ★★ THE OTHER HALF OF THE PROOF, WHICH ONLY THIS READER CAN CHECK. The relay verified the
+         * signature and could NOT compare it against the payload — the payload is sealed and the
+         * relay is not a recipient — so it reported `contentBinding: 'declared'`, which
+         * `verifiedSigner` correctly refuses. That made every delegate's entry in every private
+         * workspace read as "authorship disputed". This reader just opened the envelope with a key
+         * the relay does not hold, so it can finish the check. Null when the host supplied none.
+         */
+        ...this.bindingCheck ? this.bindingCheck(d, opened.content) : {}
       };
     }
     /**
@@ -3667,6 +3696,7 @@ var WSPC = (() => {
     }
     const seated = args.seats.filter((s) => s.seated && !s.revoked);
     const pendingWebIds = args.seats.filter((s) => !s.seated && !s.revoked && s.pending && s.grantedTo).map((s) => s.grantedTo);
+    const grantedWebIds = args.seats.filter((s) => !s.revoked && s.grantedTo && String(s.grantStatus ?? "").toLowerCase() !== MODAL_RETRACTED.toLowerCase()).map((s) => s.grantedTo);
     const handles = [];
     const missing = [];
     const keys = [];
@@ -3696,7 +3726,8 @@ var WSPC = (() => {
       // so the caller gets an empty list plus the names, and decides in the open.
       keys: keysMissing.length > 0 ? [] : keys,
       keysMissing,
-      pendingWebIds: [...new Set(pendingWebIds)]
+      pendingWebIds: [...new Set(pendingWebIds)],
+      grantedWebIds: [...new Set(grantedWebIds)]
     };
   }
   function recipientsFor(visibility, roster) {
@@ -3706,7 +3737,7 @@ var WSPC = (() => {
         why: "this workspace's record could not be read here, so whether it is private is not established \u2014 and writing under a guess would publish in the clear if the guess is wrong. Open the workspace in a client signed in with your own key. Nothing was written."
       };
     }
-    if (visibility !== "private") return { ok: true, visibility: "public", shareWith: void 0, keys: [], keysMissing: [], pendingWebIds: [] };
+    if (visibility !== "private") return { ok: true, visibility: "public", shareWith: void 0, keys: [], keysMissing: [], pendingWebIds: [], grantedWebIds: [] };
     if (!roster) {
       return {
         ok: false,
@@ -3714,7 +3745,7 @@ var WSPC = (() => {
       };
     }
     const plan = recipientsFromRoster(roster);
-    return plan.ok ? { ok: true, visibility: "private", shareWith: plan.shareWith, keys: plan.keys, keysMissing: plan.keysMissing, pendingWebIds: plan.pendingWebIds } : { ok: false, why: plan.why };
+    return plan.ok ? { ok: true, visibility: "private", shareWith: plan.shareWith, keys: plan.keys, keysMissing: plan.keysMissing, pendingWebIds: plan.pendingWebIds, grantedWebIds: plan.grantedWebIds } : { ok: false, why: plan.why };
   }
   function unreachedRecipients(publishResponse) {
     const r = publishResponse ?? {};
@@ -4385,9 +4416,16 @@ var WSPC = (() => {
         workspace: args.workspace,
         viewer: args.viewer,
         entryShape: args.entryShape,
-        // Seated members, everyone with an outstanding invitation, and the person being invited now.
-        // Dropping any of the three locks somebody out of a record they need in order to join.
-        shareWith: [.../* @__PURE__ */ new Set([...args.shareWith ?? [], ...args.pendingWebIds ?? [], who.webId])].filter(Boolean),
+        // Seated members, everyone a standing grant names, and the person being invited now.
+        // Dropping any of the three locks somebody out of a record they need in order to join —
+        // and the middle one is a SUPERSET of "outstanding invitations" for the reason its own
+        // parameter gives: a member whose acceptance merely could not be read is still a member.
+        shareWith: [.../* @__PURE__ */ new Set([
+          ...args.shareWith ?? [],
+          ...args.pendingWebIds ?? [],
+          ...args.grantedWebIds ?? [],
+          who.webId
+        ])].filter(Boolean),
         resolution: who,
         onState: args.onState
       });
@@ -4656,6 +4694,20 @@ var WSPC = (() => {
     }
     const pick = mine ?? last;
     return {
+      /**
+       * ★★ THE STRUCTURED FIELDS SURVIVE, NOT ONLY THE SENTENCE. This built a fresh object from
+       * four keys, so everything the verdict had ESTABLISHED — `revoked`, `grantedTo`, `role`,
+       * `workspace`, `modalStatus` — was dropped, and `why` was the only trace left of it.
+       *
+       * That made "revoked" and "never granted" indistinguishable to a caller except by matching
+       * on prose, and one caller that needed the difference did not: the Discord bot read both as
+       * "not seated yet" and re-granted, so a revoked member re-seated themselves by typing. The
+       * flag it needed was on the verdict two frames earlier and did not survive the return.
+       *
+       * A field exists so callers do not have to parse a sentence. Spread first, so the four keys
+       * below still win.
+       */
+      ...pick ?? {},
       grantIri: direct.grantIri,
       ok: false,
       checks: pick?.checks ?? direct.checks,
@@ -6058,6 +6110,31 @@ async function sendInvite() {
   const log = el("div"); log.style.marginTop = "6px"; p.appendChild(log);
   let set = null;
 
+  /* ── ★★ WHO CAN STILL READ THE RECORD AFTERWARDS ──────────────────────────
+     This passed no visibility at all, so `sendInvite` never re-sealed — and a
+     private workspace CANNOT ADMIT ANYBODY without one. `verifyGrantIri` reads
+     the workspace record to establish a grant is real, and a record written
+     before the invitee existed does not name them among its recipients. So the
+     grant published below was one their own client would refuse — "this
+     workspace is private and this identity is not among them", about a grant
+     written FOR them seconds earlier. Nothing on this side said so: the publish
+     returned 200 and the roster showed them as invited.
+
+     The same join every other writer makes, from the roster THIS page already
+     folded. It refuses rather than guesses when that roster is partial, because
+     encrypting to part of a membership locks the rest out permanently. */
+  const audience = WSPC.recipientsFor(S.record ? S.record.visibility : undefined, {
+    seats: S.members || [],
+    grantsFound: S.grantsFound,
+    grantsRead: S.grantsRead,
+  });
+  if (!audience.ok) {
+    p.className = "panel refused";
+    p.querySelector("h4").textContent = "Nothing was published";
+    p.appendChild(el("div", "note", audience.why));
+    btn.disabled = false;
+    return;
+  }
   const out = await WSPC.sendInvite(CLIENT, {
     viewer: S.viewer,
     workspace: WORKSPACE,
@@ -6065,6 +6142,16 @@ async function sendInvite() {
     handle: handle,
     role: roleIri,
     entryShape: (S.ws && S.ws.entryShape) || null,
+    /* The value `recipientsFor` RESOLVED and vouched for, not a second read of
+       the record — which could answer differently and cannot answer 'unknown'
+       safely. */
+    visibility: audience.visibility,
+    shareWith: audience.shareWith,
+    /* Everyone with an outstanding invitation, and everyone else a standing
+       grant names. A reseal REPLACES the recipient set, so omitting either
+       evicts them from a record they need in order to accept. */
+    pendingWebIds: audience.pendingWebIds,
+    grantedWebIds: audience.grantedWebIds,
     onState: (state, detail) => {
       if (!set) set = writeLine(log, "grant on your pod");
       set(state, detail);

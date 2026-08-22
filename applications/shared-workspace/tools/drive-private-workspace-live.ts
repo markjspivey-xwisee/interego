@@ -42,7 +42,7 @@ import {
   recipientsFor, toChainRow, unreachedRecipients, verifyInvitation, sendInvite,
   type Viewer,
 } from '@interego/workspace-client';
-import { openerFor } from '@interego/workspace-client/opener';
+import { openerFor, sealedBindingCheck } from '@interego/workspace-client/opener';
 import { mintBearer, type Signer } from './live-identity.js';
 
 const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
@@ -76,7 +76,7 @@ async function party(label: string, wallet: Signer & { privateKey: string }): Pr
   await client.tool('register_agent', {
     agent_id: viewer.agentDid, scope: 'ReadWrite', encryption_public_key: key.publicKey,
   });
-  client.setGraphOpener(openerFor(wallet.privateKey));
+  client.setGraphOpener(openerFor(wallet.privateKey), sealedBindingCheck);
 
   log('  ' + label + ' pod ' + viewer.podName + ' · key ' + key.publicKey.slice(0, 12) + '…');
   return { client, viewer, handle: composedHandle(RELAY, viewer.podName) };

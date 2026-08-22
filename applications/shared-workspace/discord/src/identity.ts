@@ -21,7 +21,7 @@
 import { Wallet } from 'ethers';
 import { RelayMcpTransport, WorkspaceClient, type RelayOAuthBearer } from '@interego/workspace-client';
 // A separate entry point because it reaches node:crypto — see the note in the desktop's main.ts.
-import { openerFor } from '@interego/workspace-client/opener';
+import { openerFor, sealedBindingCheck } from '@interego/workspace-client/opener';
 import { deriveEncryptionKeyPair, type EncryptionKeyPair } from '@interego/core';
 // ★ IMPORTED, NOT REPEATED. This SIWE ceremony already exists twice — `desktop/src/auth.ts` and
 // this driver helper — and `tests/workspace-live-identity-parity.test.ts` pins the two message
@@ -116,8 +116,33 @@ export class BotSession {
 
   get address(): string { return this.wallet.address; }
 
-  /** Mint, connect, and resolve who the relay says this process is. */
+  /**
+   * Mint, connect, and resolve who the relay says this process is.
+   *
+   * ── ★★ SINGLE-FLIGHT, BECAUSE EVERY CALLER NOTICES EXPIRY AT THE SAME MOMENT ─
+   *
+   * `expiring()` is a comparison against one clock, so at the hour boundary every concurrent
+   * caller answers it identically — and each would run its own SIWE ceremony, mint its own bearer,
+   * and build its own transport. The last one to finish wins `this.identity` and the rest have
+   * signed in for nothing, against a relay that just rate-limited a burst of identical
+   * authorization requests from one wallet.
+   *
+   * It was survivable while only Discord commands went through `call()`. It stops being
+   * survivable the moment the WATCHES do — one per watched thread, all polling on the same
+   * cadence — which is exactly the change this guard was added for.
+   *
+   * The in-flight promise is shared, not awaited-and-discarded: a second caller gets the SAME
+   * ceremony's result, so both hold the identity the relay actually issued.
+   */
+  private opening: Promise<BotIdentity> | null = null;
+
   async open(): Promise<BotIdentity> {
+    if (this.opening) return this.opening;
+    this.opening = this.openOnce().finally(() => { this.opening = null; });
+    return this.opening;
+  }
+
+  private async openOnce(): Promise<BotIdentity> {
     // ★ THE CLIENT NAME IS PASSED, NOT DEFAULTED. See `DISCORD_CLIENT_NAME`: the relay bakes it
     // into the agent DID, so omitting it here is what made this bot's permanent identity read
     // `interego-workspace-live-driver-…`.
@@ -181,7 +206,7 @@ export class BotSession {
       // A registry write that did not land is not a reason to refuse to start: the opener below
       // is what reading depends on, and the pod may already carry this key from a previous run.
     }
-    client.setGraphOpener(this.opener);
+    client.setGraphOpener(this.opener, sealedBindingCheck);
     this.identity = { client, agentId, pod, address: this.wallet.address };
     return this.identity;
   }
@@ -202,6 +227,9 @@ export class BotSession {
    * `WorkspaceClient` and a caller holding the old one would keep using a dead transport.
    */
   async call<T>(fn: (client: WorkspaceClient) => Promise<T>): Promise<T> {
+    // ★ PRE-EMPTIVE, and this is the ONLY path that is. Anything reaching the relay outside
+    // `call()` runs on whatever bearer is current and discovers expiry the way the relay tells
+    // it — a 401. See `watchVia`, which is why the live watches now come through here.
     if (this.expiring()) await this.open();
     try {
       return await fn(this.current.client);

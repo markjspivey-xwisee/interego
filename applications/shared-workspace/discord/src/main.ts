@@ -56,7 +56,8 @@ import { mentionedAgentName, roleRows, syncAgentRoles } from './mentions.js';
 import { findProduced, renderPng } from './drawing.js';
 import {
   bodyParts,
-  renderAsk, renderChallenge, renderConfirm, renderMentions, renderNews, renderRecord, renderShow, renderStart,
+  renderAsk, renderAttachmentNote, renderChallenge, renderConfirm, renderMentions, renderNews, renderRecord,
+  renderShow, renderStart,
   renderUnlink, renderWho, type Message, type NewsPost,
 } from './render.js';
 
@@ -430,12 +431,22 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
   const watcher = new ChannelWatcher({
     store,
     withClient: (fn) => session.call(async (c) => fn(deps(c))),
-    // ★ A GETTER, NOT THE CLIENT. `session.current.client` evaluated HERE binds one client for the
-    // life of the watch, so a re-minted session — a bearer expiring, or the relay restarting
-    // underneath the bot — left every watch polling with a session that no longer exists. Passing
-    // the getter means each poll uses whatever session is current, so a re-mint heals them.
+    /**
+     * ★★ THROUGH `session.call`, NOT `session.current.client` — WHICH IS THE HOURLY REJECTION.
+     *
+     * A getter hands back whatever bearer is current; it does not RENEW one. The pre-emptive
+     * re-mint lives in `call()`, and until now only Discord commands went through it — while
+     * these watches poll every 45 s and are therefore, in a quiet channel, always the first
+     * caller after the hour is up. So every hour: a poll 401s, the transport's reauthorizer
+     * re-mints, and the log says "session token was rejected". The reactive path working,
+     * because the pre-emptive one was never asked.
+     *
+     * `call()` also carries the `needs_reauth` retry, so a relay replaced mid-poll still heals.
+     * `cache: false`, because a watch reading through a cache fires on the cache's schedule
+     * instead of the pod's.
+     */
     watch: (name, input, onChange, onError) =>
-      watchVia(() => session.current.client)(name, input, onChange, onError),
+      watchVia((n, i) => session.call((c) => c.tool(n, i, { cache: false })))(name, input, onChange, onError),
     emit: (channelId, news) => sayNews(channelId, renderNews(news)),
     out,
   });
@@ -874,18 +885,14 @@ export async function main(boot: Boot = {}): Promise<Started | null> {
        * record. Saying plainly that the words were kept and the file was not is the honest
        * version, and it is what lets a person decide to type a sentence instead of assuming the
        * image landed.
+       *
+       * ★★ AND WHETHER IT LANDED IS NOW THE RENDERER'S QUESTION. The gate here was
+       * `res.kind === 'recorded'`, which is true of a REFUSED append and of a forked log — so
+       * this notice claimed a file was on the record immediately before `renderRecord` said
+       * nothing was. See `renderAttachmentNote`, which is pinned by a test.
        */
-      const attached = msg.attachments;
-      if (attached.length && res.kind === 'recorded') {
-        const names = attached.slice(0, 5).map((a) => a.name).join(', ')
-          + (attached.length > 5 ? ` and ${attached.length - 5} more` : '');
-        await say(msg.channelId, {
-          // Not ephemeral: a note about what the record does and does not hold is for everyone
-          // reading the thread, not only the person who posted.
-          ephemeral: false,
-          content: `**${attached.length === 1 ? 'The attachment is' : 'The attachments are'} on the record as ${attached.length === 1 ? 'a file' : 'files'}** — ${names} — with ${attached.length === 1 ? 'its name, type and size' : 'their names, types and sizes'}. **The bytes are not.** They stay in Discord, and Discord's links expire, so an agent reading this channel learns what you posted and cannot be promised it can still fetch it.`,
-        });
-      }
+      const note = renderAttachmentNote(res, msg.attachments);
+      if (note) await say(msg.channelId, note);
       await say(msg.channelId, renderRecord(res));
     }).catch((e: unknown) => { out('recording failed for message ' + msg.id + ': ' + ((e as Error)?.stack ?? String(e))); });
   };

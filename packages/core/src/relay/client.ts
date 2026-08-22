@@ -80,6 +80,15 @@ export type HeadResult =
  * transport's business, and this class must work identically under a connector grant and
  * under a relay OAuth bearer or a published artifact and a desktop app would drift.
  */
+/**
+ * How long to wait for an ACCEPTED write to read back before saying so.
+ *
+ * Named rather than inline because the number appears in the sentence the caller shows a
+ * person: "had not read back within 30s" has to be the budget that was actually used, and a
+ * literal in two places is the way those two drift apart.
+ */
+const CONFIRM_BUDGET_MS = 30000;
+
 export class RelayClient {
   readonly relay: string;
   private readonly transport: AnyTransport;
@@ -226,6 +235,15 @@ export class RelayClient {
     args: Record<string, unknown>, podName: string, graphIri: string,
     onState?: (state: string, detail: string) => void,
     sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+    /**
+     * ★ THE CLOCK IS INJECTED BECAUSE THE SLEEP ALONE COULD NOT DO ITS JOB. `sleep` has been a
+     * parameter here for one reason — so a test can run this loop without waiting — and it
+     * never worked: the budget is compared against `Date.now()`, so a fake sleep does not
+     * shorten the wait, it just spins for the full thirty seconds of REAL time. Any test that
+     * tried cost 30s and timed out, which is why the timeout branch of this function had no
+     * test at all until one was written for a live defect in it.
+     */
+    now: () => number = () => Date.now(),
   ): Promise<{ readonly res?: Record<string, unknown>; readonly readable?: boolean; readonly why?: string; readonly error?: unknown; readonly refusal?: unknown; readonly head?: HeadResult }> {
     const tell = (s: string, d: string): void => { try { onState?.(s, d); } catch { /* a reporter must not break a write */ } };
     tell('sending', 'Publishing ' + graphIri.replace(/^https:\/\//, ''));
@@ -256,9 +274,9 @@ export class RelayClient {
     tell('accepted', 'The relay reported status ' + String(res['status'] ?? 'none') + (url ? '' : ' and named no descriptor URL'));
     if (!url) return { res, readable: false, why: 'the response named no descriptor URL, so there is nothing to read back and match' };
     let wait = 400;
-    const until = Date.now() + 30000;
+    const until = now() + CONFIRM_BUDGET_MS;
     let lastWhy: string | null = null;
-    while (Date.now() < until) {
+    while (now() < until) {
       await sleep(wait);
       wait = Math.min(Math.round(wait * 1.6), 5000);
       try {
@@ -266,11 +284,40 @@ export class RelayClient {
         if (h.forked) { lastWhy = 'the chain for this IRI has ' + h.heads.length + ' unresolved heads'; continue; }
         if (h.url === url) { tell('readable', 'Read back from ' + podName); return { res, readable: true, head: h }; }
         if (h.url) lastWhy = 'the head is a different descriptor (' + h.url + ')';
-        else lastWhy = h.message || 'the relay reports no head for this IRI yet';
+        /**
+         * ★★ OUR SENTENCE, NOT THE RELAY'S — A TIMEOUT IS NOT A REFUSAL.
+         *
+         * This preferred `h.message`, and for the not-yet-readable case that message is
+         * `get_current_head`'s "No descriptor on this pod describes the requested urn." Read on
+         * its own that is a definitive negative: the pod does not have this. During a write the
+         * relay itself reported as `pending`, it means the opposite — the manifest has not caught
+         * up YET, which is the expected intermediate state and the whole reason this loop exists.
+         *
+         * ★ MEASURED, on the live fleet: a workspace create stalled at "role table" and told the
+         * caller `No descriptor on this pod describes the requested urn.` The role table was on
+         * the pod, head present, when the same pod was asked again minutes later. The write had
+         * succeeded; the loop had stopped waiting. Every layer above repeated the relay's
+         * sentence, so `/workspace start` reported a failure for a document that exists.
+         *
+         * The relay's words are kept — they are evidence — but as a parenthetical inside a
+         * sentence that says which of the two things happened.
+         */
+        else lastWhy = 'the relay has not reported a head for this IRI yet'
+          + (h.message ? ' (' + h.message + ')' : '');
       } catch (e) { lastWhy = errorCopy(e).t; }
     }
+    const waited = Math.round((now() - (until - CONFIRM_BUDGET_MS)) / 1000);
     tell('pending', 'accepted, not yet reported readable');
-    return { res, readable: false, why: lastWhy ?? 'the wait ran out before the head matched' };
+    return {
+      res,
+      readable: false,
+      // ★ THE VERDICT SENTENCE SAYS WHAT THIS FUNCTION ACTUALLY DID. `readable: false` after an
+      // ACCEPTED publish means "I stopped waiting", and a caller rendering `why` alone must not
+      // be able to mistake that for "the relay rejected it".
+      why: 'the relay accepted this write and it had not read back within ' + waited + 's: '
+        + (lastWhy ?? 'the wait ran out before the head matched')
+        + '. It may have landed since — re-reading is safe, and re-publishing supersedes.',
+    };
   }
 }
 

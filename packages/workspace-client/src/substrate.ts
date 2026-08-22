@@ -17,6 +17,21 @@
 import { RelayClient, type HeadResult } from '@interego/core/relay';
 // The three answers an opener may give. Type-only, so the browser bundle is unaffected.
 import type { OpenedGraph } from './opener.js';
+/**
+ * The half of an authorship proof only a recipient can check, supplied by a host that can.
+ *
+ * ★★ INJECTED, NOT IMPORTED, AND THE REASON IS THE BUNDLE. Completing the check needs a canonical
+ * digest (`node:crypto`) and the region rule from `@interego/solid` — and this module is bundled
+ * into the browser artifact, where a static import of either drags Node into a build that cannot
+ * have it. It is also dead code there: the artifact holds no key and opens nothing.
+ *
+ * So the capability travels with the opener, which is the honest coupling — only a host that can
+ * OPEN a sealed graph is ever in a position to digest one. See `sealedBindingCheck` in
+ * `./opener.js` for the implementation and for what the check actually establishes.
+ */
+export type SealedBindingCheck = (
+  descriptor: Record<string, unknown>, content: string,
+) => { readonly authorship?: Record<string, unknown> };
 import { graphRegion, readIri, readLiteral } from './turtle.js';
 import { memberDocIris, type MemberDocKind, type Naming, podOfDescriptorUrl, podOfWebid } from './naming.js';
 
@@ -127,9 +142,22 @@ export class WorkspaceClient extends RelayClient {
    * material would put it wherever the client runs, including a browser.
    */
   private opener: GraphOpener | null = null;
+  private bindingCheck: SealedBindingCheck | null = null;
 
-  /** Install (or clear) the local opener. See {@link GraphOpener}. */
-  setGraphOpener(opener: GraphOpener | null): void { this.opener = opener; }
+  /**
+   * Install (or clear) the local opener, and with it the hash a reader needs to finish checking
+   * an opened payload against its proof. See {@link GraphOpener} and {@link ContentDigest}.
+   *
+   * ★★ THE DIGEST TRAVELS WITH THE OPENER BECAUSE THE TWO ARE THE SAME CAPABILITY. Only a host
+   * that can open a sealed graph is ever in a position to digest one, and `canonicalGraphDigest`
+   * reaches `node:crypto` — so importing it here would drag Node into the browser bundle for a
+   * code path a browser can never take. Injecting it keeps the artifact buildable and leaves the
+   * one honest degradation in place: no digest, no local verdict, `declared` stands.
+   */
+  setGraphOpener(opener: GraphOpener | null, bindingCheck?: SealedBindingCheck | null): void {
+    this.opener = opener;
+    this.bindingCheck = bindingCheck ?? null;
+  }
 
   /**
    * Sealed payloads are opened BEFORE they reach this client, by whatever it is talking to.
@@ -221,6 +249,15 @@ export class WorkspaceClient extends RelayClient {
       // not hold. A reader that could not tell this from ordinary plaintext could not honestly
       // tell anyone their workspace is end-to-end encrypted.
       openedWithOwnKey: true,
+      /**
+       * ★★ THE OTHER HALF OF THE PROOF, WHICH ONLY THIS READER CAN CHECK. The relay verified the
+       * signature and could NOT compare it against the payload — the payload is sealed and the
+       * relay is not a recipient — so it reported `contentBinding: 'declared'`, which
+       * `verifiedSigner` correctly refuses. That made every delegate's entry in every private
+       * workspace read as "authorship disputed". This reader just opened the envelope with a key
+       * the relay does not hold, so it can finish the check. Null when the host supplied none.
+       */
+      ...(this.bindingCheck ? this.bindingCheck(d, opened.content) : {}),
     };
   }
 

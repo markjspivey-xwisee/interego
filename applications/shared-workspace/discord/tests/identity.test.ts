@@ -41,8 +41,10 @@ interface Seen { readonly url: string; readonly body: Record<string, unknown> | 
  * is the one the real code paths parse — the authorize page's inline `PENDING_ID`, the redirect
  * with the code in its query, the JSON-RPC envelope with `structuredContent`.
  */
-function scriptedFleet(): { impl: typeof fetch; seen: Seen[] } {
+function scriptedFleet(): { impl: typeof fetch; seen: Seen[]; minted: () => number } {
   const seen: Seen[] = [];
+  /** How many SIWE ceremonies reached the token endpoint. One per real re-mint. */
+  let tokens = 0;
   const json = (payload: unknown): Response =>
     new Response(JSON.stringify(payload), { status: 200, headers: { 'Content-Type': 'application/json' } });
 
@@ -61,7 +63,7 @@ function scriptedFleet(): { impl: typeof fetch; seen: Seen[] } {
     }
     if (url === IDENTITY + '/challenges') return json({ nonce: 'nonce-1' });
     if (url === RELAY + '/oauth/verify') return json({ redirect: 'http://127.0.0.1:1/callback?code=code-1&state=s' });
-    if (url === RELAY + '/token') return json({ access_token: 'access-1', expires_in: 3600 });
+    if (url === RELAY + '/token') return json({ access_token: 'access-' + (++tokens), expires_in: 3600 });
     if (url === RELAY + '/mcp') {
       const method = (body as Record<string, unknown> | null)?.['method'];
       if (method === 'tools/list') {
@@ -80,7 +82,7 @@ function scriptedFleet(): { impl: typeof fetch; seen: Seen[] } {
     throw new Error('this test scripted no answer for ' + url);
   }) as typeof fetch;
 
-  return { impl, seen };
+  return { impl, seen, minted: () => tokens };
 }
 
 describe('the OAuth client name the bot signs in under', () => {
@@ -124,5 +126,46 @@ describe('the OAuth client name the bot signs in under', () => {
     const b = await new BotSession(RELAY, IDENTITY, KEY, scriptedFleet().impl).open();
     expect(a.address).toBe(b.address);
     expect(a.pod).toBe(b.pod);
+  });
+});
+
+describe('★★ re-minting the bot\'s own session', () => {
+  /**
+   * ── WHY THE BOT WAS REJECTED ONCE AN HOUR ───────────────────────────────────
+   *
+   * `expiring()` is a comparison against one clock, so at the hour boundary EVERY concurrent
+   * caller answers it identically. Before this guard each would run its own SIWE ceremony, mint
+   * its own bearer and build its own transport — the last to finish winning `this.identity`,
+   * the rest having signed in for nothing against a relay that had just been handed a burst of
+   * identical authorization requests from one wallet.
+   *
+   * It was survivable while only Discord commands went through `call()`. It stops being
+   * survivable now the WATCHES do — one per watched thread, all polling on the same cadence.
+   */
+  it('runs ONE ceremony when everything notices expiry at the same instant', async () => {
+    const fleet = scriptedFleet();
+    const session = new BotSession(RELAY, IDENTITY, KEY, fleet.impl);
+    await session.open();
+    expect(fleet.minted(), 'opening once did not mint once').toBe(1);
+
+    // Every watch and every command, in the same tick, all seeing an expired bearer.
+    (session as unknown as { bearer: { expiresAt: number } }).bearer.expiresAt = Date.now() + 1000;
+    const all = await Promise.all(Array.from({ length: 8 }, () => session.call(async (c) => c !== null)));
+    expect(all.every(Boolean)).toBe(true);
+
+    // ★ THE LOAD-BEARING ASSERTION. Eight callers, one ceremony.
+    expect(fleet.minted(), 'concurrent callers each ran their own SIWE ceremony').toBe(2);
+  });
+
+  it('and a later expiry mints again, so the guard is a lock and not a latch', async () => {
+    // The other half: single-flight must not become sign-in-once.
+    const fleet = scriptedFleet();
+    const session = new BotSession(RELAY, IDENTITY, KEY, fleet.impl);
+    await session.open();
+    for (const _ of [1, 2]) {
+      (session as unknown as { bearer: { expiresAt: number } }).bearer.expiresAt = Date.now() + 1000;
+      await session.call(async () => null);
+    }
+    expect(fleet.minted()).toBe(3);
   });
 });

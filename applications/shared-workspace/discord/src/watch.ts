@@ -31,7 +31,7 @@
  * the RECORD rather than about anybody's agent.
  */
 
-import { pollingWatch, type Unsubscribe, type WorkspaceClient } from '@interego/workspace-client';
+import { pollingWatch, type Unsubscribe } from '@interego/workspace-client';
 import type { LinkStore, ThreadBinding } from './links.js';
 import { showWorkspace, type Deps, type ShowOut, type ShownEntry } from './workspace.js';
 import { askCandidates, type CandidatesOut } from './ask.js';
@@ -392,6 +392,20 @@ export class ChannelWatcher {
     const readable = fresh.filter((e) => !e.why && (e.body ?? '').trim());
     for (const u of unreadable) void this.deps.emit(threadId, { kind: 'unreadable-entry', binding, why: u.why as string });
     if (!readable.length) return;
+    /**
+     * ★★ WHETHER AN ASK WAS ANSWERED IS DECIDED BEFORE ANYTHING IS PRINTED, AND USED NOT TO BE.
+     *
+     * This pass lived at the END of the method, below a `return` in the burst branch. So in a
+     * busy thread — the only situation a burst exists for — an answer that arrived in the same
+     * round was never matched, the ask stayed `reported: false`, and `reportSilence` later told
+     * the channel the agent had not answered. About an ask it HAD answered, in a round where the
+     * answering entry was in this very list.
+     *
+     * ★ AND THE BURST CHANGES NOTHING ABOUT THE FACT. `readable` is the same list either way;
+     * bursting only changes how it is PRINTED — a count instead of the messages. Rate-limiting
+     * output is not a reason to stop reading it.
+     */
+    this.markAnswered(threadId, readable);
     const now = this.now();
     st.pushes = st.pushes.filter((t) => now - t < BURST_WINDOW_MS);
     if (st.pushes.length + readable.length > BURST_MAX) {
@@ -401,18 +415,25 @@ export class ChannelWatcher {
     }
     for (const _ of readable) st.pushes.push(now);
     void this.deps.emit(threadId, { kind: 'entries', binding, entries: readable });
-    // ★ AN ASK IS ANSWERED BY AN ENTRY THAT SAYS SO, NOT BY ITS TARGET'S POD BEING ALIVE. This used
-    // to cancel on ANY readable entry from `a.targetPod` — the DELEGATOR's pod — so the person
-    // typing "back from lunch" permanently silenced the notice about their own agent's unanswered
-    // ask. That is precisely the case the notice exists for: an agent's host being off is exactly
-    // when its human is the one still talking. Two things end the wait now, and both are statements
-    // about the ask:
-    //
-    //   · an entry declaring `prov:wasDerivedFrom` the ask's own descriptor — the same derivation
-    //     `verifyRequest`'s sixth check reads, so "answered" means one thing in both places; or
-    //   · an entry composed by the ADDRESSED AGENT, which is a claim held down by that agent's own
-    //     signature — see `judgeAuthorship`, which returns `delegate` only where the key that
-    //     signed the bytes is the agent the entry names.
+  }
+
+  /**
+   * End the wait on any ask these entries answer.
+   *
+   * ★ AN ASK IS ANSWERED BY AN ENTRY THAT SAYS SO, NOT BY ITS TARGET'S POD BEING ALIVE. This used
+   * to cancel on ANY readable entry from `a.targetPod` — the DELEGATOR's pod — so the person
+   * typing "back from lunch" permanently silenced the notice about their own agent's unanswered
+   * ask. That is precisely the case the notice exists for: an agent's host being off is exactly
+   * when its human is the one still talking. Two things end the wait, and both are statements
+   * about the ask:
+   *
+   *   · an entry declaring `prov:wasDerivedFrom` the ask's own descriptor — the same derivation
+   *     `verifyRequest`'s sixth check reads, so "answered" means one thing in both places; or
+   *   · an entry composed by the ADDRESSED AGENT, which is a claim held down by that agent's own
+   *     signature — see `judgeAuthorship`, which returns `delegate` only where the key that
+   *     signed the bytes is the agent the entry names.
+   */
+  private markAnswered(threadId: string, readable: readonly ShownEntry[]): void {
     for (const a of this.asks) {
       if (a.threadId !== threadId) continue;
       const answered = readable.some((e) => e.derivedFrom === a.descriptorUrl
@@ -465,8 +486,22 @@ export class ChannelWatcher {
  *   1. THE CLIENT WAS CAPTURED AT REGISTRATION — `watchVia(session.current.client)` binds one
  *      client for the life of the watch. The bot re-mints its session (bearer expiry, or a relay
  *      that restarted underneath it, which happened at 21:50 the same evening). Every poll after
- *      that used a client whose session was gone. Taking a GETTER means each poll uses whatever
- *      session is current, so a re-mint heals the watch instead of orphaning it.
+ *      that used a client whose session was gone. It now takes a READ FUNCTION, so each poll goes
+ *      wherever the caller sends it and a re-mint heals the watch instead of orphaning it.
+ *
+ *      ★★ AND THAT READ NOW GOES THROUGH `session.call`, WHICH IS WHY THE BOT USED TO BE REJECTED
+ *      ONCE AN HOUR. A getter returns whatever bearer is current; it does not RENEW one. The
+ *      pre-emptive re-mint lives in `call()`, and only Discord commands went through it — while
+ *      the watches poll every 45 s and are therefore, in any quiet channel, always the first
+ *      caller after the hour is up. So the reliable sequence was: bearer expires, a watch poll
+ *      401s, the transport's reauthorizer re-mints and logs "session token was rejected", every
+ *      hour, forever. Nothing was broken — the reactive path was doing its job because the
+ *      pre-emptive one was never consulted. Routing the read through `call()` means expiry is
+ *      noticed BEFORE the request, and the 401 path goes back to being what it is for: a relay
+ *      that was replaced underneath us.
+ *
+ *      ★ It also means every watch can trigger a re-mint at the same instant, which is why
+ *      `BotSession.open()` is single-flight.
  *
  *   2. ERROR EVENTS WERE DISCARDED — `if (ev.type === 'data') onChange()` and nothing else. A
  *      watch failing every 45 seconds forever is then indistinguishable from a channel where
@@ -477,15 +512,13 @@ export class ChannelWatcher {
  * because "I could not tell whether anything changed" is a reason to look, not a reason to wait
  * six minutes.
  */
-export const watchVia = (client: WorkspaceClient | (() => WorkspaceClient)) =>
+export const watchVia = (read: (name: string, input: Record<string, unknown>) => Promise<unknown>) =>
   (
     name: string, input: Record<string, unknown>, onChange: () => void,
     onError?: (why: string) => void,
   ): Unsubscribe | null =>
     pollingWatch(
-      // `cache: false`, because a watch reading through a cache is a watch that fires on the
-      // cache's schedule instead of the pod's.
-      (n, i) => (typeof client === 'function' ? client() : client).tool(n, i, { cache: false }),
+      read,
       name, input,
       (ev) => {
         if (ev.type === 'data') onChange();
