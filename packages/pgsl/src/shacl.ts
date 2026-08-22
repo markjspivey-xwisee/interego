@@ -481,14 +481,50 @@ export function validateDomainShapes(
         }
       }
 
-      // SPARQL-based constraints
+      // ── SPARQL-based constraints ──
+      //
+      // ★ A SELECT-BASED CONSTRAINT COULD NEVER VIOLATE. The only test here was
+      // `result.boolean === false`, and `boolean` is set by ASK alone — a SELECT leaves it
+      // `undefined`, and `undefined === false` is false. So every SELECT constraint passed
+      // unconditionally, which is the opposite of what SHACL says: §5.2.1 makes each
+      // SOLUTION a violation. Nothing in the suite exercised this path, so nothing said so.
       if (shape.sparqlConstraints) {
         for (const sparql of shape.sparqlConstraints) {
-          // Replace $this with the node URI
+          // ★ TEXTUAL SUBSTITUTION IS NOT SHACL PRE-BINDING, and the difference is not
+          // cosmetic: the spec substitutes into the query ALGEBRA and forbids a pre-bound
+          // variable being re-bound by BIND, VALUES or a sub-SELECT projection. Replacing
+          // the characters cannot tell those cases apart, and it would also rewrite a
+          // `$this` that happens to sit inside a string literal.
+          //
+          // Refusing the cases it cannot handle is the honest boundary for a substitution
+          // this crude — the alternative is a constraint that runs and answers wrongly.
+          if (/"[^"]*\$this[^"]*"|'[^']*\$this[^']*'/.test(sparql)) {
+            throw new Error(
+              `SPARQL constraint on shape ${shape.name} contains $this inside a string `
+              + 'literal; textual pre-binding would rewrite it. Rewrite the query or bind '
+              + 'the value another way.');
+          }
+          if (/\b(BIND|VALUES)\b[^\n]*\$this/i.test(sparql)) {
+            throw new Error(
+              `SPARQL constraint on shape ${shape.name} re-binds $this with BIND or VALUES, `
+              + 'which SHACL pre-binding forbids.');
+          }
           const instantiated = sparql.replace(/\$this/g, `<${nodeUri}>`);
+          // Strip the PREFIX block first. A multi-line prefix header between the query
+          // form and the start of the string is the normal spelling, and a regex that
+          // tries to skip it inline is exactly where a newline escape gets mangled.
+          const withoutPrefixes = instantiated.replace(/^\s*PREFIX\s+\S*\s*<[^>]*>\s*/gim, '');
+          const isAsk = /^\s*ASK\b/i.test(withoutPrefixes);
+          const isSelect = /^\s*SELECT\b/i.test(withoutPrefixes);
+          if (!isAsk && !isSelect) {
+            throw new Error(
+              `SPARQL constraint on shape ${shape.name} is neither ASK nor SELECT; SHACL `
+              + 'defines constraint queries as one or the other.');
+          }
           const result = executeSparqlString(store, instantiated);
-          // SPARQL constraint: if ASK returns false, it's a violation
-          if (result.boolean === false) {
+          // ASK: false is the violation. SELECT: EVERY SOLUTION is a violation.
+          const failed = isAsk ? result.boolean === false : result.bindings.length > 0;
+          if (failed) {
             violations.push({
               node: nodeUri,
               shape: shape.name,
