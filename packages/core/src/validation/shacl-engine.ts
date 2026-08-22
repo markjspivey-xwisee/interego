@@ -44,6 +44,7 @@ import {
 import { escapeTurtleLiteral } from '../rdf/escape.js';
 import type { IRI } from '../model/types.js';
 import { evaluateNodeExpression, type NodeExpressionContext } from './node-expression.js';
+import { runSparql } from './sparql-query.js';
 
 const SHACL = 'http://www.w3.org/ns/shacl#';
 const RDF_TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type' as IRI;
@@ -93,6 +94,14 @@ const SH_MESSAGE = `${SHACL}message` as IRI;
 const SH_IN = `${SHACL}in` as IRI;
 const SH_CLOSED = `${SHACL}closed` as IRI;
 const SH_SPARQL = `${SHACL}sparql` as IRI;
+const SH_SELECT = `${SHACL}select` as IRI;
+const SH_ASK = `${SHACL}ask` as IRI;
+const SH_PREFIXES = `${SHACL}prefixes` as IRI;
+const SH_DECLARE = `${SHACL}declare` as IRI;
+const SH_NAMESPACE = `${SHACL}namespace` as IRI;
+const SH_PREFIX = `${SHACL}prefix` as IRI;
+const SH_SHAPES_GRAPH_CLASS = `${SHACL}ShapesGraph` as IRI;
+const OWL_IMPORTS = 'http://www.w3.org/2002/07/owl#imports' as IRI;
 // SHACL 1.2 §7.8.5. Both are parameters of ONE component, sh:ReifierShapeConstraintComponent
 // — sh:reificationRequired is not a component of its own, despite Appendix C of the WD
 // appearing to name one (that heading is a ReSpec artifact, absent from the ED source and
@@ -103,6 +112,7 @@ const RDF_REIFIES = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#reifies' as IRI;
 const SH_NODE = `${SHACL}node` as IRI;
 const SH_NODE_BY_EXPRESSION = `${SHACL}nodeByExpression` as IRI;
 const SH_EXPRESSION = `${SHACL}expression` as IRI;
+const SH_VALUES = `${SHACL}values` as IRI;
 const SH_QUALIFIED_VALUE_SHAPE = `${SHACL}qualifiedValueShape` as IRI;
 const SH_QUALIFIED_VALUE_SHAPES_DISJOINT = `${SHACL}qualifiedValueShapesDisjoint` as IRI;
 const SH_QUALIFIED_MIN_COUNT = `${SHACL}qualifiedMinCount` as IRI;
@@ -159,6 +169,13 @@ const IMPLEMENTED_SHACL_PREDICATES: ReadonlySet<string> = new Set<string>([
   SH_UNIQUE_MEMBERS, SH_SUBSET_OF, SH_ROOT_CLASS, SH_SINGLE_LINE,
   SH_TARGET_WHERE, SH_SHAPE,
   SH_REIFIER_SHAPE, SH_REIFICATION_REQUIRED,
+  // ★ sh:sparql IS IMPLEMENTED NOW, so it must leave this sweep. Reporting an implemented
+  // constraint as unsupported would pin `fullyChecked: false` on every graph the shape
+  // selects, which is the same false claim as the reverse — the flag would say a check was
+  // skipped when it ran. sh:select / sh:ask / sh:prefixes / sh:declare and the prefix
+  // vocabulary are the constraint's INTERIOR and were already exempt.
+  SH_SPARQL, SH_SELECT, SH_ASK, SH_PREFIXES, SH_DECLARE, SH_NAMESPACE, SH_PREFIX,
+  SH_VALUES,
   SH_QUALIFIED_MIN_COUNT, SH_QUALIFIED_MAX_COUNT,
   SH_CLOSED, SH_IGNORED_PROPERTIES, SH_DEACTIVATED, SH_SEVERITY, SH_MESSAGE,
   // cardinality + value type
@@ -753,6 +770,16 @@ interface PropertyShape {
    */
   readonly expression?: ParsedTerm;
   /**
+   * SHACL 1.2 sh:values — the value nodes are COMPUTED by a node expression rather than
+   * read from the path.
+   *
+   * ★ Without it the path yields nothing and every constraint written about the derived
+   * values fails, which REFUSES A VALID GRAPH. `sh:path ex:fullName ; sh:values [ sh:select
+   * … CONCAT(?first, " ", ?last) … ] ; sh:hasValue "John Muir"` is the suite's example and
+   * the natural shape of a derived field.
+   */
+  readonly valuesExpr?: ParsedTerm;
+  /**
    * sh:property ON A PROPERTY SHAPE — each VALUE NODE is a focus node for these.
    *
    * ★ Only node shapes carried sh:property here, so the idiomatic way to reach two levels
@@ -947,6 +974,8 @@ interface NodeShape {
    * the constraint triple. Keyed by constraint component name. See constraintOverrides().
    */
   readonly overrides?: ReadonlyMap<string, ConstraintOverride>;
+  /** sh:sparql — SHACL-SPARQL constraints attached to this shape. */
+  readonly sparqlConstraints?: readonly SparqlConstraint[];
   /**
    * ★ This shape's own constraints, compiled over the identity path — every value
    * constraint SHACL applies to the FOCUS NODE. Undefined when the shape declares none.
@@ -1233,6 +1262,7 @@ function compilePropertyShape(
       return t?.kind === 'literal' && t.value === 'true' ? true : undefined;
     })(),
     node: refKey(getOne(subj, SH_NODE)),
+    valuesExpr: nodeLevel ? undefined : getOne(subj, SH_VALUES),
     nodeByExpression: getOne(subj, SH_NODE_BY_EXPRESSION),
     expression: getOne(subj, SH_EXPRESSION),
     // Nested property shapes apply to the VALUE nodes, so they are compiled here rather
@@ -1492,6 +1522,94 @@ export function renderPathTerm(doc: ParsedDocument, term: ParsedTerm | undefined
   return compiled ? renderPath(compiled) : undefined;
 }
 
+/** One compiled `sh:sparql` constraint: the query, its prefixes and its message. */
+interface SparqlConstraint {
+  readonly query: string;
+  readonly prefixes: ReadonlyMap<string, string>;
+  readonly message?: string;
+  readonly deactivated: boolean;
+}
+
+/**
+ * The prefix declarations in scope for a SPARQL constraint.
+ *
+ * ★ THREE SOURCES, AND MISSING ANY OF THEM MAKES A CORRECT QUERY FAIL TO PARSE.
+ *
+ *   1. `sh:prefixes <ontology>` names a resource whose `sh:declare` set applies.
+ *   2. That resource's `owl:imports` are followed — node/prefixes-001 declares `test` locally
+ *      and imports the ontology that declares `ex`, and needs both.
+ *   3. With NO sh:prefixes at all, the declarations of every resource typed `sh:ShapesGraph`
+ *      apply. node/prefixes-002 relies on that AND plants a conflicting declaration on a
+ *      plain rdfs:Resource that must be ignored — so "collect every sh:declare anywhere" is
+ *      the wrong shortcut, and it is the obvious one.
+ *
+ * The query's own inline PREFIX lines override all of this; that is handled in runSparql,
+ * because SPARQL is last-declaration-wins and the prologue is written last.
+ */
+function prefixesFor(doc: ParsedDocument, constraintNode: ParsedSubject): Map<string, string> {
+  const out = new Map<string, string>();
+  const declaredOn = (subj: ParsedSubject | undefined): void => {
+    for (const d of subj?.properties.get(SH_DECLARE) ?? []) {
+      const decl = subjectFor(doc, d);
+      const ns = decl?.properties.get(SH_NAMESPACE)?.[0];
+      const px = decl?.properties.get(SH_PREFIX)?.[0];
+      if (px?.kind !== 'literal') continue;
+      // sh:namespace is xsd:anyURI-typed in some fixtures and a plain string in others.
+      const nsText = ns?.kind === 'literal' ? ns.value : ns?.kind === 'iri' ? ns.iri : undefined;
+      if (nsText !== undefined) out.set(px.value, nsText);
+    }
+  };
+
+  const named = constraintNode.properties.get(SH_PREFIXES) ?? [];
+  if (named.length > 0) {
+    const seen = new Set<string>();
+    const walk = (term: ParsedTerm): void => {
+      const k = refKey(term);
+      if (k === undefined || seen.has(k)) return;
+      seen.add(k);
+      const subj = subjectFor(doc, term);
+      declaredOn(subj);
+      for (const imp of subj?.properties.get(OWL_IMPORTS) ?? []) walk(imp);
+    };
+    for (const t of named) walk(t);
+    return out;
+  }
+
+  // No sh:prefixes: every sh:ShapesGraph contributes, and nothing else does.
+  for (const subj of doc.subjects) {
+    const isShapesGraph = (subj.properties.get(RDF_TYPE) ?? [])
+      .some(t => t.kind === 'iri' && t.iri === SH_SHAPES_GRAPH_CLASS);
+    if (isShapesGraph) declaredOn(subj);
+  }
+  return out;
+}
+
+/** Compile every `sh:sparql` on a shape. */
+function compileSparqlConstraints(
+  doc: ParsedDocument, subj: ParsedSubject,
+): readonly SparqlConstraint[] {
+  const out: SparqlConstraint[] = [];
+  for (const t of subj.properties.get(SH_SPARQL) ?? []) {
+    // ★ THE CONSTRAINT NODE MAY BE THE SHAPE ITSELF. `ex:S a sh:NodeShape, sh:SPARQLConstraint
+    // ; sh:sparql ex:S` is legal and appears in the suite — resolving the value blindly and
+    // finding the shape again is correct, not a cycle to guard against.
+    const node = subjectFor(doc, t) ?? subj;
+    const sel = node.properties.get(SH_SELECT)?.[0];
+    const ask = node.properties.get(SH_ASK)?.[0];
+    const q = sel?.kind === 'literal' ? sel.value : ask?.kind === 'literal' ? ask.value : undefined;
+    if (q === undefined) continue;
+    const msg = node.properties.get(SH_MESSAGE)?.[0];
+    const deac = node.properties.get(SH_DEACTIVATED)?.[0];
+    out.push({
+      query: q,
+      prefixes: prefixesFor(doc, node),
+      ...(msg?.kind === 'literal' ? { message: msg.value } : {}),
+      deactivated: deac?.kind === 'literal' && deac.value === 'true',
+    });
+  }
+  return out;
+}
+
 function compileShapes(doc: ParsedDocument): readonly NodeShape[] {
   const nodeShapes: NodeShape[] = [];
   const propertyShapesByKey = new Map<string, ParsedSubject>();
@@ -1555,6 +1673,7 @@ function compileShapes(doc: ParsedDocument): readonly NodeShape[] {
       if (self) propertyShapes.push(self);
     }
     const shapeOverrides = constraintOverrides(doc, subj);
+    const sparqlConstraints = compileSparqlConstraints(doc, subj);
     for (const ref of propertyShapeRefs) {
       const refK = refKey(ref);
       if (refK === undefined) continue;
@@ -1652,6 +1771,7 @@ function compileShapes(doc: ParsedDocument): readonly NodeShape[] {
       orShapes: hasPath ? undefined : listShapeRefs(doc, subj, SH_OR),
       xoneShapes: hasPath ? undefined : listShapeRefs(doc, subj, SH_XONE),
       overrides: shapeOverrides,
+      ...(sparqlConstraints.length > 0 ? { sparqlConstraints } : {}),
       ...(uniqueValuesFor.length > 0 ? { uniqueValuesFor } : {}),
       ...(nodeLevelShape ? { nodeLevelShape } : {}),
       ...(nodeIn !== undefined ? { nodeIn } : {}),
@@ -2146,6 +2266,78 @@ function logicalResults(
  * `sh:memberShape [ sh:datatype xsd:integer ]` over a list of literals is exactly the
  * common case, and it would have accepted every member.
  */
+/**
+ * Run this shape's `sh:sparql` constraints against one focus node.
+ *
+ * ★ A SELECT SOLUTION IS A VIOLATION; AN ASK FALSE IS A VIOLATION. §5.2.1. Getting the ASK
+ * polarity backwards is the easy mistake — the query asserts the condition that must HOLD,
+ * so `false` is the failure — and getting SELECT wrong is easier still, because "the query
+ * returned rows" reads like success.
+ *
+ * ★ AND A REFUSED QUERY ABORTS THE VALIDATION RATHER THAN PASSING. SHACL says a validator
+ * that cannot honour a constraint's pre-binding must FAIL, and the suite has five entries
+ * whose expected result is exactly that. Returning "no violations" for a query we declined
+ * to run would be the fail-open this whole file exists to prevent — the constraint would
+ * report clean because it never happened.
+ */
+function sparqlResults(
+  data: ParsedDocument, focus: ParsedSubject, shape: NodeShape,
+): ShaclResult[] {
+  if (shape.sparqlConstraints === undefined) return [];
+  const out: ShaclResult[] = [];
+  const term = subjectAsTerm(focus);
+  for (const c of shape.sparqlConstraints) {
+    if (c.deactivated) continue;
+    const preBound = new Map<string, ParsedTerm>([['this', term]]);
+    // Throws for a refused query — deliberately not caught here. See the note above.
+    const result = runSparql(data, c.query, c.prefixes, preBound);
+    const failures = result.form === 'ASK'
+      ? (result.boolean === false ? 1 : 0)
+      : result.bindings.length;
+    for (let i = 0; i < failures; i++) {
+      out.push({
+        focusNode: focusLabel(focus),
+        sourceShape: shape.id,
+        constraintComponent: `${SHACL}SPARQLConstraintComponent`,
+        severity: shape.severity,
+        message: c.message ?? shape.message
+          ?? 'The focus node does not satisfy the shape\'s sh:sparql constraint',
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Evaluate a `sh:select` node expression and return the terms it produced.
+ *
+ * ★ WHICH VARIABLE? The one the query PROJECTS. A SHACL value-producing query names exactly
+ * what it is producing — `SELECT ?fullName` — so taking the projected variable is reading
+ * the query's own answer rather than guessing at a convention. `?value` wins when both are
+ * present, because that is the name SHACL reserves for a produced value.
+ */
+function sparqlExpressionValues(
+  data: ParsedDocument, exprNode: ParsedTerm, focus: ParsedTerm | undefined,
+): readonly ParsedTerm[] {
+  const node = subjectFor(data, exprNode);
+  if (!node) return [];
+  const sel = node.properties.get(SH_SELECT)?.[0] ?? node.properties.get(SH_ASK)?.[0];
+  if (sel?.kind !== 'literal') return [];
+  const preBound = new Map<string, ParsedTerm>();
+  if (focus !== undefined) preBound.set('this', focus);
+  const result = runSparql(data, sel.value, prefixesFor(data, node), preBound);
+  if (result.form === 'ASK') {
+    return [{ kind: 'literal', value: String(result.boolean), datatype: `${XSD}boolean` as IRI }];
+  }
+  const out: ParsedTerm[] = [];
+  for (const b of result.bindings) {
+    const preferred = b.get('value');
+    if (preferred !== undefined) { out.push(preferred); continue; }
+    for (const [name, v] of b) { if (name !== 'this') { out.push(v); break; } }
+  }
+  return out;
+}
+
 function nodeSatisfiesShape(
   data: ParsedDocument,
   term: ParsedTerm,
@@ -2320,9 +2512,18 @@ function evaluatePropertyShape(
   // ★ evaluatePath, not a map lookup: a sequence/inverse/alternative/transitive path has no
   // single predicate to look up, and looking one up is how those shapes came to enforce
   // nothing.
-  const values = ps.pathExpr.kind === 'predicate'
-    ? [...(focus.properties.get(ps.pathExpr.iri) ?? [])]
-    : evaluatePath(data, subjectAsTerm(focus), ps.pathExpr);
+  const values = ps.valuesExpr !== undefined
+    // ★ sh:values REPLACES the path lookup rather than adding to it. The path still names
+    // the property the constraint is ABOUT — it is what sh:resultPath reports — but the
+    // values are the expression's, which is the whole point of a derived field.
+    ? [...evaluateNodeExpression(data, ps.valuesExpr, {
+      focusNode: subjectAsTerm(focus),
+      conforms: (n, sh) => nodeConformsToShape(data, n, sh),
+      runQuery: (exprNode, f) => sparqlExpressionValues(data, exprNode, f),
+    })]
+    : ps.pathExpr.kind === 'predicate'
+      ? [...(focus.properties.get(ps.pathExpr.iri) ?? [])]
+      : evaluatePath(data, subjectAsTerm(focus), ps.pathExpr);
   const focusNode = focusLabel(focus);
   /**
    * Severity for THIS shape: the property shape's own, else the node shape's.
@@ -3147,6 +3348,7 @@ export function validateAgainstShape(
         for (const r of evaluatePropertyShape(
           dataDoc, focus, shape, shape.nodeLevelShape, byId, 0, subclassClosure)) emit(r);
       }
+      for (const r of sparqlResults(dataDoc, focus, shape)) emit(r);
       for (const r of logicalResults(dataDoc, focus, shape, byId, 0, subclassClosure)) emit(r);
       for (const ps of shape.propertyShapes) {
         for (const r of evaluatePropertyShape(dataDoc, focus, shape, ps, byId, 0, subclassClosure)) emit(r);

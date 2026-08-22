@@ -37,6 +37,8 @@ import { SPARQL_FN, applySparqlFunction, implementsSparqlFunction } from './spar
 import type { IRI } from '../model/types.js';
 
 const SHNEX = 'http://www.w3.org/ns/shacl-node-expr#';
+const SH_SELECT = 'http://www.w3.org/ns/shacl#select' as IRI;
+const SH_ASK = 'http://www.w3.org/ns/shacl#ask' as IRI;
 const RDF = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#';
 const XSD = 'http://www.w3.org/2001/XMLSchema#';
 const RDF_FIRST = `${RDF}first` as IRI;
@@ -56,6 +58,12 @@ export interface NodeExpressionContext {
    * see the note on evaluateNodeExpression.
    */
   readonly conforms?: (node: ParsedTerm, shape: ParsedTerm) => boolean;
+  /**
+   * Run a `sh:select` / `sh:ask` node expression. Injected for the same reason `conforms`
+   * is: the query evaluator needs the shapes graph's prefix declarations, which only the
+   * validator has assembled.
+   */
+  readonly runQuery?: (exprNode: ParsedTerm, focus: ParsedTerm | undefined) => readonly ParsedTerm[];
   /** Recursion guard; callers do not set this. */
   readonly depth?: number;
 }
@@ -289,8 +297,15 @@ export function evaluateNodeExpression(
   // `shnex:count`, and testing only for shnex: made all 76 of the suite's SPARQL-function
   // entries fall through to the constant branch — where a blank node with properties
   // evaluates to ITSELF, so every one of them returned the expression node.
+  // ★ THREE operator namespaces. shnex: is the structural set, sparql: the function set —
+  // and a node carrying sh:select / sh:ask is a QUERY expression, which has neither. Left
+  // out of this test it fell through to the constant branch, where a blank node with
+  // properties evaluates to ITSELF: `sh:values [ sh:select … ]` produced the expression node
+  // as the value, so every constraint written about the derived value compared against a
+  // blank node and failed.
   const isOperator = node !== undefined
-    && [...node.properties.keys()].some(k => k.startsWith(SHNEX) || k.startsWith(SPARQL_FN));
+    && [...node.properties.keys()].some(k =>
+      k.startsWith(SHNEX) || k.startsWith(SPARQL_FN) || k === SH_SELECT || k === SH_ASK);
   if (!isOperator) {
     if (expr.kind === 'bnode' && (node === undefined || node.properties.size === 0)) return [];
     const members = expr.kind === 'bnode' ? listMembers(doc, expr) : undefined;
@@ -306,6 +321,16 @@ export function evaluateNodeExpression(
   const here: NodeExpressionContext = { ...ctx, focusNode, depth: depth + 1 };
   const subHere = (e: ParsedTerm | undefined): ParsedTerm[] =>
     evaluateNodeExpression(doc, e, here);
+
+  // ── a SPARQL query as a node expression ──
+  //
+  // ★ `sh:values [ sh:select "…" ]` COMPUTES THE VALUE NODES of a property shape, and until
+  // it did, the path simply yielded nothing — so a shape whose values are derived rather
+  // than stored failed every constraint written about them. That is a FALSE REFUSAL of a
+  // valid graph, which is the direction that costs a publisher rather than a reader.
+  if (node?.properties.has(SH_SELECT) || node?.properties.has(SH_ASK)) {
+    return ctx.runQuery ? [...ctx.runQuery(expr, focusNode)] : [];
+  }
 
   // ── the sparql: function library ──
   //

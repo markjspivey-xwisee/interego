@@ -1,5 +1,5 @@
 /**
- * The W3C SHACL 1.2 SPARQL Extension suite is COUNTED, and the count is currently 1 of 26.
+ * The W3C SHACL 1.2 SPARQL Extension suite is COUNTED, and the count is 18 of 26.
  *
  * ★ THIS GATE EXISTS BECAUSE THE NUMBER IS SMALL, NOT DESPITE IT. 44 approved entries were
  * vendored into `tests/fixtures/shacl12-w3c/sparql/` and read by nothing: the Core runner
@@ -10,14 +10,22 @@
  * A vendored suite nobody runs is worse than no suite: it is a claim with no check behind it.
  * So the number goes on the record now, at whatever it is, and moves in one direction.
  *
- * ── WHAT THE 1 AND THE 25 ARE ────────────────────────────────────────────────
+ * ── WHAT THE 18 AND THE 8 ARE ────────────────────────────────────────────────
  *
- * `sh:sparql` is not implemented. The engine reports it as an unsupported construct — which
- * is the honest behaviour and is why `fullyChecked` exists — but an unsupported constraint
- * produces no violation, so an entry expecting `sh:conforms false` gets `true`. Those are
- * the 25. Five of the 26 additionally expect validation to ABORT (`sht:Failure`): SHACL
- * requires an implementation to REFUSE a query whose pre-binding it cannot honour, rather
- * than execute it and return a plausible answer.
+ * It opened at 1 of 26: `sh:sparql` was reported as an unsupported construct — honest, and
+ * why `fullyChecked` exists — but an unsupported constraint produces no violation, so every
+ * entry expecting `sh:conforms false` got `true`.
+ *
+ * A synchronous SELECT/ASK evaluator now runs them, including the four `sht:Failure` entries
+ * where the required behaviour is to REFUSE: SHACL forbids MINUS, VALUES and SERVICE in a
+ * constraint query, and forbids re-binding a pre-bound variable, because pre-binding into
+ * them is undefined. Executing one anyway returns a plausible answer to a question the spec
+ * says must not be asked.
+ *
+ * The remaining 8 are THREE FEATURES, not eight problems — SPARQL-based constraint
+ * components, user-defined sh:function, and SPARQL-based targets — each named in the
+ * runner with the reason, and each a discrete piece of SHACL-SPARQL rather than a defect in
+ * what is built.
  *
  * The 18 `sht:Infer` entries are recorded as NOT RUN with their reason rather than as
  * failures. "We did not attempt this" and "we attempted it and were wrong" are different
@@ -34,11 +42,10 @@ const RUNNER = join(REPO, 'tools', 'shacl12-w3c', 'sparql.mjs');
 const SUITE = join(REPO, 'tests', 'fixtures', 'shacl12-w3c', 'sparql');
 
 /**
- * ★ THE RATCHET. Raise as the engine improves; never lower it. A floor of 1 is not an
- * embarrassment to be hidden — it is the measurement that makes the next commit's number
- * mean something.
+ * ★ THE RATCHET. Raise as the engine improves; never lower it. It opened at 1, which was
+ * not an embarrassment to hide — it was the measurement that made 18 mean something.
  */
-const FLOOR = { pass: 1 };
+const FLOOR = { pass: 18 };
 
 interface Report {
   total: number;
@@ -51,6 +58,8 @@ interface Report {
   unapproved: number;
   failing: string[];
   notRunFiles: string[];
+  unexplained: string[];
+  features: string[];
 }
 
 const report: Report = JSON.parse(
@@ -96,6 +105,18 @@ describe('W3C SHACL 1.2 SPARQL Extensions', () => {
     expect(report.pass - FLOOR.pass,
       `FLOOR.pass is ${FLOOR.pass} but the engine passes ${report.pass} — raise it`)
       .toBeLessThan(4);
+  });
+
+  it('fails only where the runner names the FEATURE that is missing', () => {
+    // ★ The difference between a work plan and a number nobody reads. Every remaining
+    // failure belongs to a named, described feature; a failure that does not is a
+    // REGRESSION in something already built, and lands here rather than blending into a
+    // count that was already non-zero.
+    expect(report.unexplained,
+      'a SPARQL entry fails with no recorded feature — either it is a regression, or record '
+      + 'the feature in KNOWN_UNIMPLEMENTED').toEqual([]);
+    expect(report.features.length, 'the unimplemented-feature list is growing')
+      .toBeLessThanOrEqual(3);
   });
 
   it('records a REASON for every entry it did not run', () => {
