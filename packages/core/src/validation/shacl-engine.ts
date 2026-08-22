@@ -113,6 +113,12 @@ const SH_NODE = `${SHACL}node` as IRI;
 const SH_NODE_BY_EXPRESSION = `${SHACL}nodeByExpression` as IRI;
 const SH_EXPRESSION = `${SHACL}expression` as IRI;
 const SH_VALUES = `${SHACL}values` as IRI;
+const SH_CONSTRAINT_COMPONENT = `${SHACL}ConstraintComponent` as IRI;
+const SH_PARAMETER = `${SHACL}parameter` as IRI;
+const SH_OPTIONAL = `${SHACL}optional` as IRI;
+const SH_VALIDATOR = `${SHACL}validator` as IRI;
+const SH_NODE_VALIDATOR = `${SHACL}nodeValidator` as IRI;
+const SH_PROPERTY_VALIDATOR = `${SHACL}propertyValidator` as IRI;
 
 /**
  * The result component for a SPARQL constraint this engine REFUSED to run.
@@ -185,6 +191,10 @@ const IMPLEMENTED_SHACL_PREDICATES: ReadonlySet<string> = new Set<string>([
   // vocabulary are the constraint's INTERIOR and were already exempt.
   SH_SPARQL, SH_SELECT, SH_ASK, SH_PREFIXES, SH_DECLARE, SH_NAMESPACE, SH_PREFIX,
   SH_VALUES,
+  // SPARQL-based constraint components: the shapes graph declares a new constraint kind
+  // and the engine runs it, so reporting the vocabulary as unsupported would pin
+  // fullyChecked:false on every graph a component touches.
+  SH_PARAMETER, SH_OPTIONAL, SH_VALIDATOR, SH_NODE_VALIDATOR, SH_PROPERTY_VALIDATOR,
   SH_QUALIFIED_MIN_COUNT, SH_QUALIFIED_MAX_COUNT,
   SH_CLOSED, SH_IGNORED_PROPERTIES, SH_DEACTIVATED, SH_SEVERITY, SH_MESSAGE,
   // cardinality + value type
@@ -788,6 +798,8 @@ interface PropertyShape {
    * the natural shape of a derived field.
    */
   readonly valuesExpr?: ParsedTerm;
+  /** The property shape's own subject — a constraint component activates on ITS predicates. */
+  readonly subject?: ParsedSubject;
   /**
    * sh:property ON A PROPERTY SHAPE — each VALUE NODE is a focus node for these.
    *
@@ -985,6 +997,15 @@ interface NodeShape {
   readonly overrides?: ReadonlyMap<string, ConstraintOverride>;
   /** sh:sparql — SHACL-SPARQL constraints attached to this shape. */
   readonly sparqlConstraints?: readonly SparqlConstraint[];
+  /**
+   * The shape's own subject in the shapes graph.
+   *
+   * ★ Kept because a SPARQL-based constraint component is activated by a predicate the
+   * engine has never heard of — `ex:requiredParam "One"` on the shape — and its VALUE is the
+   * pre-binding. There is nowhere else to read that from: the compiler cannot know in
+   * advance which predicates matter, because the shapes graph decides.
+   */
+  readonly subject?: ParsedSubject;
   /**
    * ★ This shape's own constraints, compiled over the identity path — every value
    * constraint SHACL applies to the FOCUS NODE. Undefined when the shape declares none.
@@ -1271,6 +1292,7 @@ function compilePropertyShape(
       return t?.kind === 'literal' && t.value === 'true' ? true : undefined;
     })(),
     node: refKey(getOne(subj, SH_NODE)),
+    subject: subj,
     valuesExpr: nodeLevel ? undefined : getOne(subj, SH_VALUES),
     nodeByExpression: getOne(subj, SH_NODE_BY_EXPRESSION),
     expression: getOne(subj, SH_EXPRESSION),
@@ -1531,12 +1553,44 @@ export function renderPathTerm(doc: ParsedDocument, term: ParsedTerm | undefined
   return compiled ? renderPath(compiled) : undefined;
 }
 
+/**
+ * A SPARQL-based constraint component declared by the shapes graph.
+ *
+ * ★ THE SHAPES GRAPH DEFINES A NEW CONSTRAINT KIND, and that is what makes this different
+ * from every other constraint in this file. Everything else is a fixed vocabulary the engine
+ * knows; a component is a rule the DOCUMENT invents, activated on any shape that carries its
+ * parameters as predicates, with the parameter values pre-bound into a query by their local
+ * names. `sh:parameter [ sh:path ex:test1 ]` on the component plus `ex:test1 "Hello "` on a
+ * shape means `$test1` inside the validator is "Hello ".
+ */
+interface ConstraintComponentDef {
+  readonly iri: string;
+  readonly params: readonly { path: IRI; name: string; optional: boolean }[];
+  /** Applies to both shape kinds. */
+  readonly validator?: SparqlConstraint;
+  /** Node shapes only. */
+  readonly nodeValidator?: SparqlConstraint;
+  /** Property shapes only. */
+  readonly propertyValidator?: SparqlConstraint;
+}
+
 /** One compiled `sh:sparql` constraint: the query, its prefixes and its message. */
 interface SparqlConstraint {
   readonly query: string;
   readonly prefixes: ReadonlyMap<string, string>;
   readonly message?: string;
   readonly deactivated: boolean;
+  /**
+   * ASK or SELECT, read from WHICH PREDICATE carried the query.
+   *
+   * ★ It decides whether `?value` is PRE-BOUND, and guessing it from the validator's
+   * position gets that backwards half the time. An ASK validator is asked once per value
+   * node with `?value` bound to it; a SELECT validator FINDS the values itself and `?value`
+   * is a result variable — pre-binding it there would constrain the query to a value it was
+   * supposed to discover. It is also what makes `BIND (true AS ?value)` detectable as the
+   * illegal re-binding it is, which is a whole suite entry.
+   */
+  readonly form: 'ASK' | 'SELECT';
 }
 
 /**
@@ -1611,10 +1665,74 @@ function compileSparqlConstraints(
     const deac = node.properties.get(SH_DEACTIVATED)?.[0];
     out.push({
       query: q,
+      form: sel?.kind === 'literal' ? 'SELECT' : 'ASK',
       prefixes: prefixesFor(doc, node),
       ...(msg?.kind === 'literal' ? { message: msg.value } : {}),
       deactivated: deac?.kind === 'literal' && deac.value === 'true',
     });
+  }
+  return out;
+}
+
+/**
+ * Every SPARQL-based constraint component the shapes graph declares.
+ *
+ * ★ THE TYPE CHECK IS SUBCLASS-AWARE, and the suite makes sure of it: validator-001 declares
+ * `ex:ConstraintComponent rdfs:subClassOf sh:ConstraintComponent` and types its component
+ * with that, plus `ex:SPARQLAskValidator rdfs:subClassOf sh:SPARQLAskValidator`. An exact
+ * rdf:type comparison finds neither, and the component silently does not exist — which looks
+ * exactly like a graph that conforms.
+ */
+function compileConstraintComponents(doc: ParsedDocument): readonly ConstraintComponentDef[] {
+  const closure = buildSubclassClosure(doc).closure;
+  const isComponent = (subj: ParsedSubject): boolean =>
+    (subj.properties.get(RDF_TYPE) ?? []).some(t => t.kind === 'iri'
+      && (t.iri === SH_CONSTRAINT_COMPONENT || closure.get(SH_CONSTRAINT_COMPONENT)?.has(t.iri)));
+
+  const validatorAt = (subj: ParsedSubject, pred: IRI): SparqlConstraint | undefined => {
+    const ref = subj.properties.get(pred)?.[0];
+    const node = ref === undefined ? undefined : subjectFor(doc, ref);
+    if (!node) return undefined;
+    const selT = node.properties.get(SH_SELECT)?.[0];
+    const sel = selT ?? node.properties.get(SH_ASK)?.[0];
+    if (sel?.kind !== 'literal') return undefined;
+    const msg = node.properties.get(SH_MESSAGE)?.[0];
+    return {
+      query: sel.value,
+      form: selT?.kind === 'literal' ? 'SELECT' : 'ASK',
+      prefixes: prefixesFor(doc, node),
+      ...(msg?.kind === 'literal' ? { message: msg.value } : {}),
+      deactivated: false,
+    };
+  };
+
+  const out: ConstraintComponentDef[] = [];
+  for (const subj of doc.subjects) {
+    if (typeof subj.subject !== 'string' || !isComponent(subj)) continue;
+    const params: { path: IRI; name: string; optional: boolean }[] = [];
+    for (const pref of subj.properties.get(SH_PARAMETER) ?? []) {
+      const pnode = subjectFor(doc, pref);
+      const path = asIri(pnode?.properties.get(SH_PATH)?.[0]);
+      if (path === undefined) continue;
+      const opt = pnode?.properties.get(SH_OPTIONAL)?.[0];
+      params.push({
+        path,
+        // The variable name is the path's LOCAL name: `ex:test1` binds `$test1`.
+        name: path.slice(Math.max(path.lastIndexOf('#'), path.lastIndexOf('/')) + 1),
+        optional: opt?.kind === 'literal' && opt.value === 'true',
+      });
+    }
+    if (params.length === 0) continue;
+    const def: ConstraintComponentDef = {
+      iri: subj.subject,
+      params,
+      ...(validatorAt(subj, SH_VALIDATOR) ? { validator: validatorAt(subj, SH_VALIDATOR)! } : {}),
+      ...(validatorAt(subj, SH_NODE_VALIDATOR)
+        ? { nodeValidator: validatorAt(subj, SH_NODE_VALIDATOR)! } : {}),
+      ...(validatorAt(subj, SH_PROPERTY_VALIDATOR)
+        ? { propertyValidator: validatorAt(subj, SH_PROPERTY_VALIDATOR)! } : {}),
+    };
+    if (def.validator ?? def.nodeValidator ?? def.propertyValidator) out.push(def);
   }
   return out;
 }
@@ -1780,6 +1898,7 @@ function compileShapes(doc: ParsedDocument): readonly NodeShape[] {
       orShapes: hasPath ? undefined : listShapeRefs(doc, subj, SH_OR),
       xoneShapes: hasPath ? undefined : listShapeRefs(doc, subj, SH_XONE),
       overrides: shapeOverrides,
+      subject: subj,
       ...(sparqlConstraints.length > 0 ? { sparqlConstraints } : {}),
       ...(uniqueValuesFor.length > 0 ? { uniqueValuesFor } : {}),
       ...(nodeLevelShape ? { nodeLevelShape } : {}),
@@ -2275,6 +2394,120 @@ function logicalResults(
  * `sh:memberShape [ sh:datatype xsd:integer ]` over a list of literals is exactly the
  * common case, and it would have accepted every member.
  */
+/**
+ * Run every SPARQL-based constraint component this shape ACTIVATES, against one focus node.
+ *
+ * ★ ACTIVATION IS BY PREDICATE, NOT BY DECLARATION. A shape does not say which components
+ * apply to it; it carries a component's parameter predicates and that IS the activation.
+ * `ex:requiredParam "One"` on a node shape activates any component declaring
+ * `sh:parameter [ sh:path ex:requiredParam ]`.
+ *
+ * ★ AN OPTIONAL PARAMETER MUST BE LEFT GENUINELY UNBOUND. `sh:optional true` means absent,
+ * not empty-string and not defaulted — component/optional-001's validator reads
+ * `COALESCE(?optionalParam, "Three")`, and COALESCE only reaches its fallback if the variable
+ * has no value. Binding it to anything at all silently changes the rule.
+ */
+function componentResults(
+  data: ParsedDocument,
+  focus: ParsedSubject,
+  shape: NodeShape,
+  components: readonly ConstraintComponentDef[],
+): ShaclResult[] {
+  if (components.length === 0) return [];
+  const out: ShaclResult[] = [];
+  const term = subjectAsTerm(focus);
+
+  // ★ A COMPONENT ACTIVATES ON A PROPERTY SHAPE TOO, and that is not a variation — it is
+  // where sh:propertyValidator lives. The carrier is then the PROPERTY shape's subject, and
+  // `$PATH` binds to its path: `$this $PATH ?value` is how a select-based property validator
+  // finds the values it is judging. Checking only node shapes leaves every property-scoped
+  // component silently inactive, which reads exactly like a graph that conforms.
+  const carriers: { subject: ParsedSubject; path?: IRI }[] = [];
+  if (shape.subject !== undefined) carriers.push({ subject: shape.subject });
+  for (const ps of shape.propertyShapes) {
+    if (ps.subject === undefined) continue;
+    carriers.push({
+      subject: ps.subject,
+      ...(ps.pathExpr.kind === 'predicate' ? { path: ps.pathExpr.iri } : {}),
+    });
+  }
+
+  for (const { subject: shapeSubject, path } of carriers) {
+  for (const comp of components) {
+    // Every REQUIRED parameter must be present on the shape, or the component is not active.
+    const bindings = new Map<string, ParsedTerm>();
+    let active = true;
+    for (const param of comp.params) {
+      const v = shapeSubject.properties.get(param.path)?.[0];
+      if (v === undefined) {
+        if (!param.optional) { active = false; break; }
+        continue;                       // optional and absent: leave it UNBOUND
+      }
+      bindings.set(param.name, v);
+    }
+    if (!active) continue;
+
+    // sh:propertyValidator applies ONLY to a property shape; sh:nodeValidator only to a node
+    // shape; sh:validator to either. Picking the wrong one is how a validator runs in a
+    // scope its author excluded it from.
+    const isProperty = path !== undefined || shapeSubject !== shape.subject;
+    const validator = (isProperty ? comp.propertyValidator : comp.nodeValidator)
+      ?? comp.validator;
+    if (validator === undefined) continue;
+
+    const preBound = new Map(bindings);
+    preBound.set('this', term);
+    if (path !== undefined) preBound.set('PATH', { kind: 'iri', iri: path });
+
+    // An ASK validator is asked once per VALUE NODE with ?value bound; the value nodes are
+    // the path's values on a property shape, and the focus node itself on a node shape.
+    const valueNodes: ParsedTerm[] = validator.form !== 'ASK' ? [term]
+      : path !== undefined ? [...(focus.properties.get(path) ?? [])]
+        : [term];
+
+    let failures = 0;
+    let message = validator.message;
+    try {
+      for (const v of valueNodes) {
+        const withValue = new Map(preBound);
+        if (validator.form === 'ASK') withValue.set('value', v);
+        const r = runSparql(data, validator.query, validator.prefixes, withValue);
+        failures += r.form === 'ASK' ? (r.boolean === false ? 1 : 0) : r.bindings.length;
+      }
+    } catch (err) {
+      if (!(err instanceof SparqlRefusedError)) throw err;
+      // ★ THE SAME DISTINCTION AS sh:sparql, AND IT HAS TO BE MADE HERE TOO. Reporting a
+      // refusal under the COMPONENT's own IRI says "this component judged the data and it
+      // failed", which is not what happened — the component could not run. Naming it
+      // SPARQL_REFUSED is what lets a caller, and the conformance harness, tell an abort
+      // from a verdict.
+      out.push({
+        focusNode: focusLabel(focus),
+        sourceShape: shape.id,
+        constraintComponent: SPARQL_REFUSED,
+        severity: 'Violation',
+        message: `The constraint component ${comp.iri} could not be evaluated, so this graph `
+          + `is refused rather than passed: ${err.message}`,
+      });
+      continue;
+    }
+    for (let i = 0; i < failures; i++) {
+      out.push({
+        focusNode: focusLabel(focus),
+        sourceShape: shape.id,
+        // The report names the COMPONENT, not sh:SPARQLConstraintComponent — the shapes
+        // graph defined this constraint kind and a reader needs to know which one fired.
+        constraintComponent: comp.iri,
+        severity: shape.severity,
+        message: message ?? shape.message
+          ?? `The focus node does not satisfy ${comp.iri}`,
+      });
+    }
+  }
+  }
+  return out;
+}
+
 /**
  * Run this shape's `sh:sparql` constraints against one focus node.
  *
@@ -3317,6 +3550,10 @@ export function validateAgainstShape(
   // findFocusNodes pass is free to drift from this one and silently stop escalating, and
   // nothing would fail when it did. A sh:deactivated shape never reaches this line, which
   // is correct: its constraints were not skipped, they were switched off by their author.
+  // Compiled from the SHAPES graph, once: a component is a declaration, not per-focus-node
+  // state, and recompiling it inside the loop would be quadratic in a file that declares
+  // several.
+  const components = compileConstraintComponents(shapeDoc);
   const liveShapeIds = new Set<string>();
   for (const shape of shapes) {
     // sh:deactivated — a shape switched off by its author MUST produce no results.
@@ -3388,6 +3625,7 @@ export function validateAgainstShape(
           dataDoc, focus, shape, shape.nodeLevelShape, byId, 0, subclassClosure)) emit(r);
       }
       for (const r of sparqlResults(dataDoc, focus, shape)) emit(r);
+      for (const r of componentResults(dataDoc, focus, shape, components)) emit(r);
       for (const r of logicalResults(dataDoc, focus, shape, byId, 0, subclassClosure)) emit(r);
       for (const ps of shape.propertyShapes) {
         for (const r of evaluatePropertyShape(dataDoc, focus, shape, ps, byId, 0, subclassClosure)) emit(r);

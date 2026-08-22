@@ -113,19 +113,6 @@ function collect(manifestPath, seen = new Set(), out = []) {
  * A failure NOT on this list is a regression, and the gate says so.
  */
 const KNOWN_UNIMPLEMENTED = {
-  'SPARQL-based constraint components': {
-    why:
-      'sh:parameter + sh:validator / sh:propertyValidator let a shapes graph DEFINE a new '
-      + 'constraint component whose activation is "the shape carries this parameter\'s '
-      + 'sh:path as a predicate". That is a shape-compilation feature, not a query feature — '
-      + 'the queries themselves already run.',
-    entries: [
-      'component/optional-001.ttl',
-      'component/propertyValidator-select-001.ttl',
-      'component/validator-001.ttl',
-      'pre-binding/unsupported-sparql-006.ttl',
-    ],
-  },
   'user-defined SPARQL functions': {
     why:
       'sh:function with sh:bodyExpression / sh:select lets a shapes graph define a callable '

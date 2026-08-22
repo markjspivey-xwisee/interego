@@ -1,5 +1,5 @@
 /**
- * The W3C SHACL 1.2 SPARQL Extension suite is COUNTED, and the count is 18 of 26.
+ * The W3C SHACL 1.2 SPARQL Extension suite is COUNTED, and the count is 22 of 26.
  *
  * ★ THIS GATE EXISTS BECAUSE THE NUMBER IS SMALL, NOT DESPITE IT. 44 approved entries were
  * vendored into `tests/fixtures/shacl12-w3c/sparql/` and read by nothing: the Core runner
@@ -22,10 +22,14 @@
  * them is undefined. Executing one anyway returns a plausible answer to a question the spec
  * says must not be asked.
  *
- * The remaining 8 are THREE FEATURES, not eight problems — SPARQL-based constraint
- * components, user-defined sh:function, and SPARQL-based targets — each named in the
- * runner with the reason, and each a discrete piece of SHACL-SPARQL rather than a defect in
- * what is built.
+ * The remaining 4 are TWO FEATURES, not four problems — user-defined `sh:function` and
+ * SPARQL-based targets — each named in the runner with the reason.
+ *
+ * ★ A THIRD FEATURE LEFT THAT LEDGER, WHICH IS THE ONLY THING THAT MAKES IT A LEDGER RATHER
+ * THAN A LIST OF EXCUSES. SPARQL-based constraint components were on it — `sh:parameter`
+ * plus `sh:validator` / `sh:propertyValidator`, where the shapes graph DEFINES a constraint
+ * kind and activation is "the shape carries this parameter's predicate". Four entries, now
+ * passing.
  *
  * The 18 `sht:Infer` entries are recorded as NOT RUN with their reason rather than as
  * failures. "We did not attempt this" and "we attempted it and were wrong" are different
@@ -45,7 +49,7 @@ const SUITE = join(REPO, 'tests', 'fixtures', 'shacl12-w3c', 'sparql');
  * ★ THE RATCHET. Raise as the engine improves; never lower it. It opened at 1, which was
  * not an embarrassment to hide — it was the measurement that made 18 mean something.
  */
-const FLOOR = { pass: 18 };
+const FLOOR = { pass: 22 };
 
 interface Report {
   total: number;
@@ -116,7 +120,7 @@ describe('W3C SHACL 1.2 SPARQL Extensions', () => {
       'a SPARQL entry fails with no recorded feature — either it is a regression, or record '
       + 'the feature in KNOWN_UNIMPLEMENTED').toEqual([]);
     expect(report.features.length, 'the unimplemented-feature list is growing')
-      .toBeLessThanOrEqual(3);
+      .toBeLessThanOrEqual(2);
   });
 
   it('records a REASON for every entry it did not run', () => {
