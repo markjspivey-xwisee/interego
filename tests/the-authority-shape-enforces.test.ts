@@ -71,8 +71,22 @@ describe('smuggled execution authority is refused', () => {
     const data = 'ex:Eq owl:equivalentClass hydra:Operation . ex:n a ex:Eq .';
     const all = validateAgainstShape(P + data, SHAPES, {}).results
       .filter(r => r.severity === 'Violation');
-    expect(all.length).toBe(1);
-    expect(all[0]!.message).toMatch(/reaches an execution-authority class/);
+    // ★ THIS ASSERTED `length === 1`, AND THAT NUMBER ENCODED A FEATURE BEING DEAD. The rule
+    // is stated TWICE in vault-ld.ttl — once in Core as `sh:not [ sh:in … ]` over a
+    // subClassOf/equivalentClass/sameAs path, once in sh:sparql for the two branches Core
+    // cannot express (they quantify over "any predicate of this node"). While sh:sparql was
+    // unimplemented only the Core half fired, so the count was 1. Both fire now.
+    //
+    // The claim this test exists for is unchanged and now holds more strongly: every
+    // violation reported for an owl:equivalentClass smuggle comes from the entailment rule,
+    // and none from anywhere else. Asserting THAT rather than a count is what the test
+    // always meant.
+    // Matched on the RULE, not on one of its two wordings: the Core half says "reaches an
+    // execution-authority class", the SPARQL half says "execution authority is reachable by
+    // RDFS/OWL entailment". Pinning either phrase would make this test a spelling check.
+    expect(all.length).toBeGreaterThanOrEqual(1);
+    expect(all.every(r => /execution[- ]authority/i.test(r.message ?? '')),
+      all.map(r => r.message).join(' | ')).toBe(true);
   });
 
   it('and the shape declares a target, without which it selects nothing', () => {

@@ -537,6 +537,29 @@ class Parser {
       '=': 'equals', '!=': 'not-equals', '<': 'less-than', '>': 'greater-than',
       '<=': 'less-than-or-equal', '>=': 'greater-than-or-equal',
     };
+    // ★ `IN` IS AN OPERATOR, NOT A FUNCTION, and it is the legal way to write what VALUES
+    // cannot be used for here. SHACL forbids VALUES in a constraint query, so an enumeration
+    // has to be spelled `FILTER (?x IN (a, b, c))` — and a parser without it forces the
+    // author toward the construct the spec bans.
+    //
+    // Desugared to `logical-or` of equality tests rather than given its own evaluator: the
+    // semantics ARE that disjunction, including the empty-list case, which is false.
+    const notIn = this.isWord('NOT') && this.isWord('IN', 1);
+    if (notIn || this.isWord('IN')) {
+      if (notIn) this.i++;
+      this.i++;
+      this.expectPunc('(');
+      const items: Expr[] = [];
+      if (!this.isPunc(')')) {
+        for (;;) { items.push(this.expression()); if (!this.eatPunc(',')) break; }
+      }
+      this.expectPunc(')');
+      const tests = items.map(item => ({ e: 'call', fn: 'equals', args: [left, item] } as Expr));
+      const any: Expr = tests.length === 0
+        ? { e: 'term', term: { kind: 'literal', value: 'false', datatype: `${XSD}boolean` as IRI } }
+        : { e: 'call', fn: 'logical-or', args: tests };
+      return notIn ? { e: 'call', fn: 'logical-not', args: [any] } : any;
+    }
     const t = this.peek();
     if (t?.t === 'punc' && ops[t.v] !== undefined) {
       this.i++;
@@ -634,8 +657,12 @@ const termKey = (t: ParsedTerm): string => {
   switch (t.kind) {
     case 'iri': return `I${t.iri}`;
     case 'bnode': return `B${t.id}`;
-    case 'literal': return `L${t.value} ${t.datatype ?? ''} ${t.language ?? ''}`;
-    case 'triple': return `T${termKey(t.subject)} ${t.predicate} ${termKey(t.object)}`;
+    // JSON, not a separator byte: a literal's value can contain ANY byte, including
+      // whatever separator looked safe -- and a raw NUL additionally makes the whole
+      // source file binary to git, with no reviewable diff at all.
+      case 'literal': return `L${JSON.stringify([t.value, t.datatype ?? '', t.language ?? ''])}`;
+    case 'triple':
+      return `T${JSON.stringify([termKey(t.subject), t.predicate, termKey(t.object)])}`;
   }
 };
 
@@ -846,7 +873,7 @@ function runQuery(doc: ParsedDocument, q: Query, pre: Binding): Binding[] {
   if (q.aggregates.length > 0) {
     const groups = new Map<string, Binding[]>();
     for (const r of rows) {
-      const k = q.groupBy.map(v => (r.get(v) ? termKey(r.get(v)!) : '')).join(' ');
+      const k = JSON.stringify(q.groupBy.map(v => (r.get(v) ? termKey(r.get(v)!) : null)));
       (groups.get(k) ?? groups.set(k, []).get(k)!).push(r);
     }
     const out: Binding[] = [];
@@ -911,7 +938,7 @@ function runQuery(doc: ParsedDocument, q: Query, pre: Binding): Binding[] {
   if (q.distinct) {
     const seen = new Set<string>();
     rows = rows.filter(r => {
-      const k = [...r.entries()].sort().map(([a, v]) => `${a}=${termKey(v)}`).join(' ');
+      const k = JSON.stringify([...r.entries()].sort().map(([a, v]) => [a, termKey(v)]));
       if (seen.has(k)) return false;
       seen.add(k);
       return true;

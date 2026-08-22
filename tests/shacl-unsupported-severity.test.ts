@@ -10,14 +10,24 @@
  * "your data hit a rule I cannot check" from "this file mentions a construct I do not
  * implement."
  *
- * ★ WHY THE FIX IS A NEW FIELD AND NOT A PROMOTION TO Violation. Measured: promoting these
- * notes to Violation refuses four of the five fixtures in
- * `spec/conformance/fixtures/revocation/`, three of which say in their own headers that
- * they MUST be accepted. `docs/ns/iep-shapes.ttl` attaches `sh:sparql` to shapes targeting
- * `iep:SemioticFacet` and `iep:RevocationCondition` — classes essentially every descriptor
- * carries — and this substrate ships no SPARQL evaluator. A Violation is a statement about
- * the DATA; the data broke nothing. `report.fullyChecked` says the true thing instead, and
- * `conforms && fullyChecked` is the fail-closed predicate for a write gate to apply.
+ * ★ WHY THE FIX IS A NEW FIELD AND NOT A PROMOTION TO Violation. Measured at the time:
+ * promoting these notes to Violation refused four of the five fixtures in
+ * `spec/conformance/fixtures/revocation/`, three of which say in their own headers that they
+ * MUST be accepted. A Violation is a statement about the DATA; the data broke nothing.
+ * `report.fullyChecked` says the true thing instead, and `conforms && fullyChecked` is the
+ * fail-closed predicate for a write gate to apply.
+ *
+ * ★ THE EXAMPLE IN THIS FILE USED TO BE sh:sparql, AND IT HAD TO CHANGE — which is the best
+ * possible reason for a test to need editing. That was the canonical unevaluated construct
+ * here because this substrate shipped no SPARQL evaluator; it ships one now, sh:sparql is
+ * enforced, and a test using it to demonstrate "a construct I do not implement" would have
+ * been demonstrating the opposite.
+ *
+ * `sh:sparqlExpr` takes its place: a SHACL 1.2 construct that is still genuinely
+ * unimplemented and is scoped out deliberately rather than pending. The BEHAVIOUR under test
+ * — an unevaluated constraint reported as unevaluated, capped at its shape's severity, never
+ * silently passing — is unchanged, and that is the point: it is a property of the mechanism,
+ * not of any one construct.
  */
 import { describe, it, expect } from 'vitest';
 import { validateAgainstShape } from '@interego/core';
@@ -28,11 +38,11 @@ const PREFIXES = `
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 `;
 
-/** A shape carrying sh:sparql — a construct this engine does not evaluate. */
+/** A shape carrying sh:sparqlExpr — a construct this engine does not evaluate. */
 const SPARQL_SHAPE = `${PREFIXES}
 ex:PersonShape a sh:NodeShape ;
   sh:targetClass ex:Person ;
-  sh:sparql [ sh:message "custom rule" ; sh:select "SELECT $this WHERE { }" ] .
+  sh:sparqlExpr "STRLEN(STR($this))" .
 `;
 
 const PERSON_DATA = `${PREFIXES}
@@ -51,7 +61,7 @@ describe('an unevaluated constraint is reported as unevaluated, not as conforman
     // broke no rule. Before the fix there was nothing else in the report to read.
     expect(report.conforms).toBe(true);
     expect(report.fullyChecked).toBe(false);
-    const note = report.results.find(r => /sh:sparql/.test(r.message));
+    const note = report.results.find(r => /sh:sparqlExpr/.test(r.message));
     expect(note?.message).toContain('fullyChecked is false');
   });
 
@@ -61,7 +71,7 @@ describe('an unevaluated constraint is reported as unevaluated, not as conforman
     const report = validateAgainstShape(OTHER_DATA, SPARQL_SHAPE);
     expect(report.fullyChecked).toBe(true);
     expect(report.conforms).toBe(true);
-    expect(report.results.find(r => /sh:sparql/.test(r.message))?.message)
+    expect(report.results.find(r => /sh:sparqlExpr/.test(r.message))?.message)
       .toContain('nothing was actually skipped');
   });
 
@@ -93,7 +103,7 @@ ex:PersonShape a sh:NodeShape ;
 ex:PersonShape a sh:NodeShape ;
   sh:targetClass ex:Person ;
   sh:deactivated true ;
-  sh:sparql [ sh:message "custom rule" ; sh:select "SELECT $this WHERE { }" ] .
+  sh:sparqlExpr "STRLEN(STR($this))" .
 `;
     expect(validateAgainstShape(PERSON_DATA, off).fullyChecked).toBe(true);
   });
@@ -125,7 +135,7 @@ ex:PersonShape a sh:NodeShape ;
 describe('unsupportedConstructs:"violation" is available, but opt-in', () => {
   it('promotes a live skipped construct to Violation', () => {
     const report = validateAgainstShape(PERSON_DATA, SPARQL_SHAPE, { unsupportedConstructs: 'violation' });
-    expect(report.results.find(r => /sh:sparql/.test(r.message))?.severity).toBe('Violation');
+    expect(report.results.find(r => /sh:sparqlExpr/.test(r.message))?.severity).toBe('Violation');
     expect(report.conforms).toBe(false);
   });
 
@@ -134,12 +144,12 @@ describe('unsupportedConstructs:"violation" is available, but opt-in', () => {
 ex:PersonShape a sh:NodeShape ;
   sh:targetClass ex:Person ;
   sh:severity sh:Warning ;
-  sh:sparql [ sh:message "custom rule" ; sh:select "SELECT $this WHERE { }" ] .
+  sh:sparqlExpr "STRLEN(STR($this))" .
 `;
     const report = validateAgainstShape(PERSON_DATA, warnShape, { unsupportedConstructs: 'violation' });
     // A shape its author downgraded to Warning must not be promoted to a hard refusal by
     // this engine's own incompleteness — that would enforce more than the shape asks for.
-    expect(report.results.find(r => /sh:sparql/.test(r.message))?.severity).toBe('Warning');
+    expect(report.results.find(r => /sh:sparqlExpr/.test(r.message))?.severity).toBe('Warning');
     expect(report.conforms).toBe(true);
     // The gap is still reported through the field that does not depend on the option.
     expect(report.fullyChecked).toBe(false);
@@ -147,7 +157,7 @@ ex:PersonShape a sh:NodeShape ;
 
   it('does not promote a construct nothing reached', () => {
     const report = validateAgainstShape(OTHER_DATA, SPARQL_SHAPE, { unsupportedConstructs: 'violation' });
-    expect(report.results.find(r => /sh:sparql/.test(r.message))?.severity).toBe('Info');
+    expect(report.results.find(r => /sh:sparqlExpr/.test(r.message))?.severity).toBe('Info');
     expect(report.conforms).toBe(true);
   });
 
@@ -163,12 +173,12 @@ ex:PersonShape a sh:NodeShape ;
 ex:PersonShape a sh:NodeShape ;
   sh:targetClass ex:Person ;
   sh:property [ sh:path ex:name ; sh:severity sh:Info ;
-                sh:sparql [ sh:message "advisory only" ; sh:select "SELECT $this WHERE { }" ] ] .
+                sh:sparqlExpr "STRLEN(STR($this))" ] .
 `;
     const report = validateAgainstShape(PERSON_DATA, nested, { unsupportedConstructs: 'violation' });
     // The root declares no severity (default Violation). The property shape its author
     // explicitly downgraded to Info must NOT be promoted past it.
-    expect(report.results.find(r => /sh:sparql/.test(r.message))?.severity).toBe('Info');
+    expect(report.results.find(r => /sh:sparqlExpr/.test(r.message))?.severity).toBe('Info');
     expect(report.conforms).toBe(true);
     expect(report.fullyChecked).toBe(false);
   });
@@ -179,10 +189,10 @@ ex:PersonShape a sh:NodeShape ;
   sh:targetClass ex:Person ;
   sh:severity sh:Violation ;
   sh:property [ sh:path ex:name ; sh:severity sh:Warning ;
-                sh:sparql [ sh:message "advisory" ; sh:select "SELECT $this WHERE { }" ] ] .
+                sh:sparqlExpr "STRLEN(STR($this))" ] .
 `;
     const report = validateAgainstShape(PERSON_DATA, nested, { unsupportedConstructs: 'violation' });
-    expect(report.results.find(r => /sh:sparql/.test(r.message))?.severity).toBe('Warning');
+    expect(report.results.find(r => /sh:sparqlExpr/.test(r.message))?.severity).toBe('Warning');
     expect(report.conforms).toBe(true);
   });
 });
