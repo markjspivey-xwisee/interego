@@ -162,6 +162,32 @@ export function sealedBindingCheck(
   const a = d['authorship'] as Record<string, unknown> | undefined;
   // Only the case the relay could not reach. Every other value is a verdict from a look.
   if (!a || a['contentBinding'] !== 'declared') return {};
+  /**
+   * ★★ AND ONLY WHEN EVERY OTHER PART OF THE PROOF ALREADY PASSED. FOUND BY A REFUTE-REVIEW OF
+   * THE FIRST VERSION OF THIS FUNCTION, WHICH WAS A FORGERY HOLE.
+   *
+   * `'declared'` does NOT mean "the signature was fine and only the content went unchecked". The
+   * relay reports it from `contentBindingWhenUnchecked(proof.contentHash)` on EVERY path that did
+   * not reach the comparison — including the two refusals:
+   *
+   *   · the signature did not verify, and
+   *   · the signature verified and the proof is about SOME OTHER RECORD — the lifted-proof class
+   *     `descriptorBinding` exists to catch, where a real proof from one of a principal's honest
+   *     public descriptors is pasted into a fabricated one.
+   *
+   * Both arrive as `authorshipVerified: false` with `contentBinding: 'declared'`. Gating on the
+   * binding alone therefore upgraded a REFUSED descriptor to `'bound'` — and `verifiedSigner`
+   * keys on exactly that value, so it began returning the forger's chosen issuer for records the
+   * relay had already thrown out. A reader completing the one check the relay could not make must
+   * not thereby overturn the checks it did make.
+   *
+   * ★ `descriptorBinding.bound` is required as well as `authorshipVerified`. They are separate
+   * axes and the relay reports them separately on purpose: a descriptor can verify and still not
+   * be the one its proof names.
+   */
+  if (a['authorshipVerified'] !== true) return {};
+  const db = a['descriptorBinding'] as { bound?: unknown } | undefined;
+  if (!db || db['bound'] !== true) return {};
   const turtle = typeof d['turtle'] === 'string' ? d['turtle'] as string : null;
   if (!turtle) return {};
   const declared = parseAuthorshipProofFromDescriptorTurtle(turtle)?.contentHash;

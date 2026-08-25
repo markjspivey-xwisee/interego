@@ -30,6 +30,7 @@ import {
 } from './naming.js';
 import { graphRegion, hasTrue, isRetracted, MODAL_RETRACTED, readIri, readModalStatus } from './turtle.js';
 import { fail, refusal } from './transport.js';
+import { recipientReach, type RecipientReach } from './recipients.js';
 import { assertPod, errorCopy, type HeadResult, type WorkspaceClient } from './substrate.js';
 
 /**
@@ -348,6 +349,25 @@ export async function resolveInvitee(client: WorkspaceClient, handle: string): P
   const st = await client.tool('get_pod_status', { pod_url: podUrl }) as Record<string, unknown> | null;
   const sbad = refusal(st);
   if (sbad) throw fail('tool_error', String(sbad['message'] ?? sbad['error']));
+  /**
+   * ★★ THE ECHO IS CHECKED, like every other cross-pod read in this package — `readMember`
+   * (delegation.ts) states the rule in the same words, `foldRoster` calls `assertPod` on its one
+   * cross-pod scan, and this call had none.
+   *
+   * The whole value of this function is one sentence: "pod P's own registry says P is owned by
+   * WebID W". A relay that answered about a DIFFERENT pod makes that sentence false while every
+   * field in it still looks well formed, and the WebID it hands back belongs to somebody else.
+   * DRIVEN on the repair path below: asked about `u-ghost`, answered about the convener, and the
+   * invite came back `invited` with `share_with` naming the convener twice and `u-ghost` nowhere
+   * — under `auto_supersede_prior`, which retires the revision `u-ghost` needs in order to
+   * accept. Success reported, membership gone.
+   *
+   * ★ NOT REPORTED IS NOT A MISMATCH — that is `assertPod`'s own rule and it is kept, because
+   * the relay may legitimately omit the field and refusing on its absence would refuse every
+   * invite. The ownership check below is the half that does not depend on the relay volunteering
+   * anything: `podOfWebid(webId) === pod` is read out of the WebID itself.
+   */
+  assertPod(pod, st?.['pod'], 'get_pod_status');
   // ★ MEASURED TRAP: `sessionAgent` on a cross-pod status call is still the CALLER'S agent, not
   // theirs. It is not read.
   const registry = st?.['registry'] as { owner?: string } | undefined;
@@ -391,6 +411,41 @@ export type InviteOutcome =
       readonly readable: boolean;
       readonly why: string | null;
       readonly notify: NotifyReport;
+      /**
+       * Named recipients the re-seal of the RECORD did not reach, from the publish response.
+       *
+       * ── ★★ THE EVICTION CLASS, ONE LAYER BELOW THE RECIPIENT LIST ───────────
+       *
+       * `recipientsFromRoster` decides WHO the record should be sealed to. Whether the relay then
+       * resolved a key for each of them is a separate answer, and until now nothing asked for it
+       * here: `resolveRecipient` returns an entry with an EMPTY key list rather than an error, so
+       * the re-seal succeeds, `auto_supersede_prior` retires the revision the unreached member
+       * could read, and the only evidence is `sharedWith[].agentCount` — which `postEntry` and
+       * `saveCanvas` have both read for a while and this write did not.
+       *
+       * Empty for a public workspace, which re-seals nothing, and empty when the response carried
+       * no `sharedWith` at all — that is "nothing reported", not "nobody was reached". Read
+       * {@link recordReach} to tell those two apart; this list is the STATED half of it, kept
+       * because it is what the existing surfaces render.
+       */
+      readonly recordUnreached: readonly string[];
+      /**
+       * The whole answer the re-seal's publish response gave about who it reached.
+       *
+       * ── ★★ THE ONE SURFACE THIS HARM HAS NEVER HAD ──────────────────────────
+       *
+       * Three shells render `unreached` for entries and canvas saves — the two harms a retry
+       * fixes — and none of them renders anything for the reseal, which is the harm that is
+       * permanent: a named member the relay resolved no key for is dropped from the record by the
+       * same `auto_supersede_prior` that published it, and `verifyGrantIri` reads that record
+       * before anybody can accept. The INVITEE's own case is refused before the grant is written
+       * (see the gate in `sendInvite`); every OTHER named recipient is reported here and must be
+       * shown, because nothing else in the system will mention it again.
+       *
+       * `established: false` means the relay answered in a shape this client could not read, which
+       * is not the same as everyone being reached and must not be rendered as it.
+       */
+      readonly recordReach: RecipientReach;
     };
 
 /**
@@ -403,6 +458,29 @@ export type InviteOutcome =
  * does not un-publish a grant.
  */
 /**
+ * What one re-seal established.
+ *
+ * ★ "PUBLISHED" AND "READABLE BY EVERYONE NAMED" ARE DIFFERENT ANSWERS, and collapsing them is the
+ * same class of defect the recipient list itself exists for: `resolveRecipient` hands back an entry
+ * with an EMPTY key list rather than an error, so naming somebody in `share_with` and reaching them
+ * are independent facts and only the response says which happened.
+ */
+type ResealResult =
+  | { readonly kind: 'failed'; readonly outcome: InviteOutcome }
+  | {
+      readonly kind: 'sealed';
+      /** Recipients the relay STATED it resolved no agent for. */
+      readonly unreached: readonly string[];
+      /**
+       * The whole answer, including whether there WAS one.
+       *
+       * ★★ `unreached` ALONE CANNOT TELL "NOBODY WAS MISSED" FROM "NOTHING WAS REPORTED", and
+       * the invitee gate below reads it before writing a grant. See `recipientReach`.
+       */
+      readonly reach: RecipientReach;
+    };
+
+/**
  * Re-publish a private workspace's record so a named set of members can read it.
  *
  * ★ THE CONTENT IS REBUILT FROM WHAT THE RECORD SAYS, NOT COPIED. `workspaceTurtle` is the only
@@ -412,7 +490,10 @@ export type InviteOutcome =
  * record this client cannot see would replace it with a reconstruction of a document it never
  * examined.
  *
- * Returns an outcome ONLY on failure; `null` means the record is now readable by everyone named.
+ * Returns the failure that stops the invite, or — when the record was published — WHO IT ACTUALLY
+ * REACHED. Those are two answers and this used to give only the first: `null` meant "published",
+ * and "published" was read by the caller as "everyone named can read it now". See
+ * {@link ResealResult}.
  */
 async function resealRecord(
   client: WorkspaceClient,
@@ -429,30 +510,42 @@ async function resealRecord(
     readonly resolution: InviteeResolution;
     readonly onState?: (state: string, detail: string) => void;
   },
-): Promise<InviteOutcome | null> {
+): Promise<ResealResult> {
+  const stop = (outcome: InviteOutcome): ResealResult => ({ kind: 'failed', outcome });
   if (args.shareWith.length === 0) {
-    return { kind: 'error', resolution: args.resolution,
+    return stop({ kind: 'error', resolution: args.resolution,
       error: new Error('this workspace is private and no members were named to re-seal its record to, so '
-        + 'the invitee would not be able to read it and could not accept. Nothing was written.') };
+        + 'the invitee would not be able to read it and could not accept. Nothing was written.') });
   }
   const owner = podOfNsIri(args.workspace);
   if (!owner) {
-    return { kind: 'error', resolution: args.resolution,
-      error: new Error('the workspace IRI names no pod this client can read a record from, so its record cannot be re-sealed. Nothing was written.') };
+    return stop({ kind: 'error', resolution: args.resolution,
+      error: new Error('the workspace IRI names no pod this client can read a record from, so its record cannot be re-sealed. Nothing was written.') });
   }
   const rec = await client.readWorkspaceRecord(args.workspace, owner);
   if (rec.kind !== 'record' || !rec.record.regionFound || !rec.record.convener) {
-    return { kind: 'error', resolution: args.resolution,
+    /**
+     * ★ AND THE RELAY'S OWN REASON IS CARRIED OUT, because the caller above this has none of its
+     * own. `readWorkspaceRecord` now returns its `{kind:'missing', unreadable:true, message}` arm
+     * for a head whose body could not be fetched, where it used to let `descriptor` throw — and a
+     * throw out of here reaches `sendInvite`, then `invite()` in the desktop renderer, which
+     * awaits it with no `try`: the Invite button never re-enabled and the panel sat on
+     * "Resolving <handle>" with nothing said. A typed refusal with the pod's own sentence in it is
+     * the difference between that and a person knowing what to do.
+     */
+    const said = rec.kind === 'missing' || rec.kind === 'forked' ? ' — ' + rec.message : '';
+    return stop({ kind: 'error', resolution: args.resolution,
       error: new Error('this workspace is private and its record could not be read here'
         + (rec.kind === 'record' && rec.record.withheld ? ' — it is encrypted and this identity is not among its recipients' : '')
-        + ', so it cannot be re-sealed to include the invitee. Nothing was written.') };
+        + said
+        + ', so it cannot be re-sealed to include the invitee. Nothing was written.') });
   }
   const rolesIri = rec.record.roleProfile;
   const shapeIri = rec.record.entryShape ?? args.entryShape;
   if (!rolesIri || !shapeIri) {
-    return { kind: 'error', resolution: args.resolution,
+    return stop({ kind: 'error', resolution: args.resolution,
       error: new Error('the workspace record names no ' + (rolesIri ? 'entry shape' : 'role profile')
-        + ', so re-publishing it would drop a term the workspace depends on. Nothing was written.') };
+        + ', so re-publishing it would drop a term the workspace depends on. Nothing was written.') });
   }
   const publishArgs: Record<string, unknown> = {
     graph_iri: args.workspace,
@@ -467,9 +560,14 @@ async function resealRecord(
   };
   const out = await client.publishAndConfirm(publishArgs, args.viewer.podName, args.workspace,
     (state, detail) => args.onState?.('re-sealing the record · ' + state, detail));
-  if (out.error) return { kind: 'error', error: out.error, resolution: args.resolution };
-  if (out.refusal) return { kind: 'refused', refusal: out.refusal as Record<string, unknown>, resolution: args.resolution };
-  return null;
+  if (out.error) return stop({ kind: 'error', error: out.error, resolution: args.resolution });
+  if (out.refusal) return stop({ kind: 'refused', refusal: out.refusal as Record<string, unknown>, resolution: args.resolution });
+  // ★ WHO THE WRITE REACHED, ASKED FOR HERE RATHER THAN LEFT TO THE CALLER. `out.res` is the
+  // publish response and has always been returned; nothing read `sharedWith[].agentCount` off it
+  // on this path, so a named member the relay resolved no key for was dropped from the record by
+  // the very `auto_supersede_prior` above, silently. `postEntry` and `saveCanvas` already read it.
+  const reach = recipientReach(out.res);
+  return { kind: 'sealed', unreached: reach.unreached, reach };
 }
 
 export async function sendInvite(
@@ -520,6 +618,32 @@ export async function sendInvite(
      * older lists are used exactly as before.
      */
     readonly grantedWebIds?: readonly string[];
+    /**
+     * Pods whose GRANT could not be read at all, from `recipientsFor('reseal', …).repairBy`.
+     *
+     * ── ★★ THE HALF NO WebID EXISTS FOR, AND THE REASON THIS INVITE CAN RUN ───
+     *
+     * The three lists above are all built from `wsp:grantedTo`, so a grant whose chain is forked,
+     * whose head is absent, or whose signed region will not locate contributes to NONE of them —
+     * there is nothing readable in it to contribute. Each such row is `seated: false`,
+     * `pending: false`, WebID-less, and therefore dropped by the reseal below, from the very
+     * document `verifyGrantIri` reads. That is a one-way door: they cannot accept without the
+     * record, so they can never become seated again.
+     *
+     * For a round the answer to that was to REFUSE every write in the workspace whenever any grant
+     * went unread — which also refused this call, the only act in the package that republishes a
+     * grant and so the only act that collapses a fork, creates a missing head or re-files a lost
+     * region. The workspace was read-only for everybody, permanently.
+     *
+     * ★ SO THE MEMBER IS INCLUDED INSTEAD. A grant's IRI is `<workspace>-grant-<pod>`, so its NAME
+     * says whose it is even when its bytes will not read (`podOfGrantGraph`). Each pod here is
+     * resolved to a WebID by the same WebFinger + registry lookup this function already performs
+     * for the invitee, and unioned into the reseal's audience.
+     *
+     * Optional, and an absent list is not a claim that there are none — a caller that does not
+     * pass it re-seals exactly as it did before.
+     */
+    readonly repairBy?: readonly { readonly pod: string; readonly why: string }[];
     readonly onState?: (state: string, detail: string) => void;
   },
 ): Promise<InviteOutcome> {
@@ -527,6 +651,17 @@ export async function sendInvite(
   try { who = await resolveInvitee(client, args.handle); }
   catch (e) { return { kind: 'resolve-failed', error: e }; }
   if (who.blocked) return { kind: 'blocked', resolution: who };
+
+  // Empty for a public workspace, which re-seals nothing. See `InviteOutcome`'s field.
+  let recordUnreached: readonly string[] = [];
+  /**
+   * What the re-seal established about who can read the record.
+   *
+   * ★ `established: true` FOR A PUBLIC WORKSPACE, because there is nothing to establish: no
+   * record is re-sealed, no handles are named, and the invitee needs no envelope. Starting it
+   * `false` would make the gate below refuse every public invite over a read nobody made.
+   */
+  let recordReach: RecipientReach = { established: true, unreached: [], unstated: [], named: [], why: null };
 
   /**
    * ── ★★ A PRIVATE WORKSPACE MUST BE RE-SEALED BEFORE ANYBODY CAN JOIN IT ────
@@ -547,19 +682,151 @@ export async function sendInvite(
    * re-seal: if the re-seal fails, somebody holds a grant they cannot use and nothing says so.
    */
   if (args.visibility === 'private') {
+    /**
+     * ── ★★ THE MEMBERS WHOSE GRANT WOULD NOT READ, PUT BACK BY POD ────────────
+     *
+     * See the `repairBy` parameter. Two calls per pod, bounded by the number of unreadable grants
+     * — `resolveInvitee` is reused rather than reimplemented so the pod→WebID step is the same one
+     * the invitee goes through, including its measured trap that WebFinger's own `webId` is the
+     * wrong identifier and the pod registry's is the right one.
+     *
+     * ★★ `blocked` IS CONSULTED, AND THE COMMENT SAYING IT NEED NOT BE WAS WRONG ON ALL THREE OF
+     * ITS CLAIMS. It read: `blocked` answers "would a grant naming this WebID seat them", a
+     * question about a grant nobody is writing here; the answer for a pod is whatever that pod's
+     * own registry says owns it; and the exposure is narrow by construction because it needs a
+     * registry read that FAILS in the same moment.
+     *
+     *   · `blocked`'s only assignment is `podOfWebid(webId) !== pod`. It answers "does this WebID
+     *     belong to the pod that was asked about" — precisely the question this loop asks, and
+     *     the only check that holds the answer against the question.
+     *   · "whatever that pod's own registry says" asserted a provenance nothing on this path had
+     *     established. The read is `get_pod_status` and, until the echo check now in
+     *     `resolveInvitee`, nothing compared the pod that ANSWERED with the pod asked about.
+     *   · a registry answering about the WRONG pod does not fail and is not narrow. DRIVEN: asked
+     *     about `u-ghost`, answered about the convener — the convener's WebID was unioned into
+     *     `share_with`, deduplicated away to nothing, `auto_supersede_prior` retired the revision
+     *     `u-ghost` can read, and the invite reported `invited`. Eviction reported as success, on
+     *     the one write that costs somebody their membership.
+     *
+     * So a repair lookup that comes back `blocked` stops the write exactly as one that threw does,
+     * and for the same reason: nothing may write a membership document on a read that established
+     * nothing about the party it is about.
+     */
+    const repaired: string[] = [];
+    for (const r of args.repairBy ?? []) {
+      args.onState?.('re-sealing the record · recovering ' + r.pod, r.why);
+      /** One sentence for both failure arms, so a caller cannot be handed two shapes for one act. */
+      const cannotRecover = (said: string): InviteOutcome => ({ kind: 'error', resolution: who,
+        error: new Error('the grant for pod ' + r.pod + ' in this workspace could not be read (' + r.why
+          + '), so that member has to be kept in the record\'s recipients by pod — and this pod could not be '
+          + 'resolved to a WebID either: ' + said + '. Re-sealing the record without them would '
+          + 'retire the revision they can read, and the record is what a grant is verified against, so they '
+          + 'could never accept again. Try the invitation again; if that pod is genuinely gone, republish or '
+          + 'revoke its grant first. Nothing was written and nobody was notified.') });
+      try {
+        const back = await resolveInvitee(client, 'acct:' + r.pod + '@' + new URL(client.relay).host);
+        if (back.blocked) return cannotRecover(back.blocked);
+        repaired.push(back.webId);
+      } catch (e) {
+        /**
+         * ★★ AND A LOOKUP THAT DID NOT COMPLETE STOPS THE WRITE, because the alternative is the
+         * one-way door. This is the rule stated beside `Seat.basis` and quoted at every consumer:
+         * nothing may WRITE a membership document on a read that established nothing. Proceeding
+         * would re-seal the record without this member and retire the revision they can read, and
+         * `verifyGrantIri` reads that record before anybody can accept — so they could never get
+         * back in. Refusing costs an invitation that can be sent again.
+         *
+         * ★ AND IT IS NOT AS NARROW AS THIS USED TO CLAIM. The old sentence said it needs a grant
+         * that is permanently unreadable AND a pod whose WebFinger or registry read FAILS in the
+         * same moment — which leaves out the case that produced the eviction: a read that does not
+         * fail at all and simply answers about a different pod. That one arrives as `back.blocked`
+         * above rather than as a throw here, and both stop the write. What remains true of the
+         * throw: `recipientsFor` has already refused anything whose grant read could still clear
+         * on its own, so nothing reaching here is waiting on a retry of the GRANT.
+         */
+        return cannotRecover(errorCopy(e).t);
+      }
+    }
     const resealed = await resealRecord(client, {
       workspace: args.workspace, viewer: args.viewer, entryShape: args.entryShape,
-      // Seated members, everyone a standing grant names, and the person being invited now.
-      // Dropping any of the three locks somebody out of a record they need in order to join —
-      // and the middle one is a SUPERSET of "outstanding invitations" for the reason its own
-      // parameter gives: a member whose acceptance merely could not be read is still a member.
+      // Seated members, everyone a standing grant names, everyone whose grant would not read at
+      // all, and the person being invited now. Dropping any of the four locks somebody out of a
+      // record they need in order to join — and `grantedWebIds` is a SUPERSET of "outstanding
+      // invitations" for the reason its own parameter gives: a member whose acceptance merely
+      // could not be read is still a member.
       shareWith: [...new Set([
-        ...(args.shareWith ?? []), ...(args.pendingWebIds ?? []), ...(args.grantedWebIds ?? []), who.webId,
+        ...(args.shareWith ?? []), ...(args.pendingWebIds ?? []), ...(args.grantedWebIds ?? []),
+        ...repaired, who.webId,
       ])].filter(Boolean),
       resolution: who,
       onState: args.onState,
     });
-    if (resealed) return resealed;
+    if (resealed.kind === 'failed') return resealed.outcome;
+    recordUnreached = resealed.unreached;
+    recordReach = resealed.reach;
+    /**
+     * ── ★★ AND THE INVITEE HAS TO BE ONE OF THE PEOPLE IT REACHED ─────────────
+     *
+     * The whole reason the re-seal runs FIRST is that the invitee must be able to read the record:
+     * `verifyGrantIri` reads it to check the grant against the workspace, so an invitee who cannot
+     * open it cannot accept. Naming them in `share_with` does not establish that — the relay
+     * resolves each handle to a pod and its registered encryption key, and `resolveRecipient`
+     * answers with an EMPTY key list rather than an error when either step comes up short. The
+     * publish then succeeds having encrypted to everyone but them.
+     *
+     * Writing the grant anyway produces exactly the state the ordering above exists to prevent:
+     * somebody holding a grant they cannot use, with nothing saying so. So it stops here, before
+     * the grant, and names them.
+     *
+     * ★ MATCHED ON THE HANDLE THE RELAY ECHOES BACK for the recipient this client named, which is
+     * the WebID that went into `share_with`. If a relay ever echoes some other spelling this
+     * comparison misses and the invite proceeds as it did before — the unreached list is still
+     * carried out on the outcome either way, so the failure degrades to being reported rather
+     * than to being hidden.
+     */
+    /**
+     * ★★ AND "THE RELAY DID NOT SAY" IS ITS OWN ANSWER, WHICH THIS GATE USED TO PASS SILENTLY.
+     *
+     * The test was `recordUnreached.indexOf(who.webId) >= 0`, over a list `unreachedRecipients`
+     * returned EMPTY for a response carrying no per-handle resolution at all. So the one gate
+     * standing between a person and a grant they cannot use opened whenever the relay answered in
+     * a shape this client could not read — the absence of a finding read as a finding, on the
+     * write this whole ordering exists to protect.
+     *
+     * ★ WHAT IS REFUSED IS A GAP IN AN ANSWER THAT CAME BACK, AND NOT THE ABSENCE OF AN ANSWER.
+     * The line is drawn there deliberately. `resolveRecipients` returns one entry per handle —
+     * failures included, with an empty key list — so a response that carries a resolution and
+     * does not name the invitee, or names them with no count, is that response contradicting
+     * itself about the one document the invitee must be able to read. A response carrying NO
+     * resolution is a different thing: the relay emits the field only when it resolved handles
+     * itself, and a client cannot tell "this deployment does not report it" from "this one does
+     * and something went wrong". Refusing there would refuse every invite against a relay that
+     * does not report the field, which is a worse failure than the one being closed, so it is
+     * REPORTED instead — `recordReach.established` is false on the outcome and a shell must say
+     * so rather than render silence as success.
+     *
+     * Two states refuse, and each sentence says which was established:
+     *   · the relay STATED it resolved no agent for them;
+     *   · it answered about the recipients and did not state one for them — either with no count
+     *     (`agentCount` is optional in its published output schema, so reading a missing one as
+     *     zero would assert a failure the relay never reported) or by not naming them at all.
+     */
+    const said = !recordReach.established ? null
+      : recordReach.unreached.indexOf(who.webId) >= 0
+        ? 'the relay reported that it resolved no agent for them'
+        : recordReach.unstated.indexOf(who.webId) >= 0
+          ? 'the relay echoed them without an agent count, so whether it resolved a key for them is not established'
+          : recordReach.named.indexOf(who.webId) >= 0 ? null
+            : 'the relay did not name them among the recipients it resolved, so whether it reached them is not established';
+    if (said !== null) {
+      return { kind: 'error', resolution: who,
+        error: new Error('the workspace record was re-published naming ' + who.webId + ' as a recipient, and '
+          + said + ' — so whether the record is readable by the person being invited is not established, and '
+          + 'they could not verify a grant against it or accept one. Either that handle does not resolve to a '
+          + 'pod on this relay, or that pod registers no encryption key, or the relay answered in a shape this '
+          + 'client cannot read. No grant was written and nobody was notified; the record now names them and '
+          + 'will reach them once their pod registers a key.') };
+    }
   }
 
   const grantIri = args.workspace + '-grant-' + who.pod;
@@ -594,6 +861,11 @@ export async function sendInvite(
   return {
     kind: 'invited', resolution: who, grantIri, readable: !!out.readable, why: out.why ?? null,
     notify: { attempted: !nerr, delivered, line },
+    // Members the re-seal named and the relay reached no key for. The invitee is not among them —
+    // that case returned above, before the grant — so these are people who were already in this
+    // workspace and have just lost the revision of the record they could read.
+    recordUnreached,
+    recordReach,
   };
 }
 
@@ -608,6 +880,56 @@ export interface GrantVerdict {
   readonly checks: readonly Check[];
   readonly ok: boolean;
   readonly why?: string;
+  /**
+   * Whether this verdict is a CONCLUSION or the absence of one — the same word, and the same
+   * question, as {@link Seat.basis}, asked about the GRANT half instead of the roster row.
+   *
+   * ── ★★ THE DISTINCTION EXISTED ONLY IN THE PROSE, ON THE HALF THAT WRITES ───
+   *
+   * `verifyGrantIri` draws it carefully in its own sentences — "the read of that IRI did not
+   * resolve, so whether a grant is published there is not established" versus "no grant is
+   * published at that IRI" — and then discarded it at the type boundary: both arrived as
+   * `{ok: false, why}` with nothing to match on but the prose. The ACCEPTANCE half was given this
+   * discriminant a round ago (`OwnHalf.repairable` in the Discord shell, whose own docblock
+   * enumerates what re-seating on a failed read costs); the GRANT half, one line above the call
+   * site it protects, was left exactly as it was.
+   *
+   * `'unestablished'` means a read did not complete — the head, the descriptor, the signed region,
+   * the workspace record, the pod scan. ★ THE RULE FROM `Seat.basis` APPLIES UNCHANGED: nothing
+   * may WRITE a membership document on it. `seat()` republishes the grant with a fresh
+   * `dct:created`, so it is never a no-op — it mints a new cid that every existing acceptance is
+   * instantly stale against.
+   */
+  readonly basis: 'answered' | 'unestablished';
+  /**
+   * Whether PUBLISHING is an answer to what this verdict found. Meaningful only when `ok` is false.
+   *
+   * The same field, with the same meaning, as `OwnHalf.repairable`: is this a state a write can
+   * fix, or one a write can only make worse? `false` arrives for three unlike reasons, and `basis`
+   * is what tells the first from the other two:
+   *
+   *   · `basis: 'unestablished'` — a read failed. Writing edits somebody's record because the
+   *     network blinked.
+   *   · A WITHDRAWAL that was read: `wsp:revoked`, or `iep:modalStatus "Retracted"` on the grant.
+   *     Republishing the grant is precisely the revoked-member-re-seats-by-typing bypass, and the
+   *     convener is the only party who may undo either.
+   *   · A state that was read in full and that publishing a grant does not change — the workspace
+   *     record naming a convener on another pod, or an IRI this reader will not dereference at all
+   *     because it is outside the relay's namespace or addressed to somebody else's pod.
+   *
+   * ★ AND `true` INCLUDES A STATED ABSENCE, which is what keeps the ordinary join flow alive: "no
+   * grant is published at that IRI" is an answer, and the answer to it is to publish one. This
+   * mirrors `ownHalf`, which returns `repairable: true` for an acceptance that is genuinely not
+   * there and `false` for one it could not read.
+   *
+   * ★★ A CALLER GATING ON THIS IN A PRIVATE WORKSPACE MUST READ THE RECORD EXITS FIRST. Once a
+   * grant IS read, this function goes on to read the workspace RECORD, and a client holding no
+   * key cannot open a private one — so those exits are `unestablished`, and a shell that answers
+   * every `!repairable` by refusing will refuse a keyless client in a private workspace on every
+   * message. That is a real judgement to make in the shell, in the open, rather than a case for
+   * softening the field here.
+   */
+  readonly repairable: boolean;
   readonly owner?: string;
   readonly grantCid?: string | null;
   readonly grantedTo?: string | null;
@@ -660,20 +982,33 @@ export async function verifyGrantIri(
 ): Promise<GrantVerdict> {
   const nameMustTargetMe = args.nameMustTargetMe !== false;
   const checks: Check[] = [];
-  const no = (why: string, extra?: Partial<GrantVerdict>): GrantVerdict => {
+  /**
+   * ★ TWO REFUSAL HELPERS RATHER THAN ONE, SO EVERY EXIT HAS TO SAY WHICH KIND IT IS.
+   *
+   * There was one `no(why)` and every exit below used it, which is exactly how "the read did not
+   * resolve" and "no grant is published there" came to be the same value to a caller. Splitting
+   * the helper puts the choice in front of whoever adds the next exit; a single helper with a
+   * defaulted flag would let the next one inherit somebody else's judgement silently.
+   */
+  const answered = (repairable: boolean, why: string, extra?: Partial<GrantVerdict>): GrantVerdict => {
     checks.push({ mark: 'n', text: why });
-    return { grantIri: args.grantIri, checks, ok: false, why, ...extra };
+    return { grantIri: args.grantIri, checks, ok: false, basis: 'answered', repairable, why, ...extra };
+  };
+  /** A read that did not complete. Never repairable — see {@link GrantVerdict.repairable}. */
+  const unestablished = (why: string, extra?: Partial<GrantVerdict>): GrantVerdict => {
+    checks.push({ mark: 'n', text: why });
+    return { grantIri: args.grantIri, checks, ok: false, basis: 'unestablished', repairable: false, why, ...extra };
   };
   const grantIri = args.grantIri;
   const m = GRANT_IRI_RX.exec(grantIri || '');
   if (!m || grantIri.indexOf(args.relay + '/ns/') !== 0) {
-    return no('that is not a grant IRI in this relay\'s namespace, so there is nothing on a pod to check it against');
+    return answered(false, 'that is not a grant IRI in this relay\'s namespace, so there is nothing on a pod to check it against');
   }
   const owner = m[1] as string;
   const target = m[3] as string;
-  if (!POD_RX.test(owner)) return no('the pod segment in that IRI is not a pod identifier');
+  if (!POD_RX.test(owner)) return answered(false, 'the pod segment in that IRI is not a pod identifier');
   if (nameMustTargetMe && target !== args.viewer.podName) {
-    return no('that grant is addressed to pod ' + target + ', and you are ' + args.viewer.podName);
+    return answered(false, 'that grant is addressed to pod ' + target + ', and you are ' + args.viewer.podName);
   }
   checks.push({ mark: 'y', text: nameMustTargetMe
     ? 'The grant IRI is on pod ' + owner + ' and names your pod in its own name'
@@ -681,20 +1016,30 @@ export async function verifyGrantIri(
 
   let h: HeadResult;
   try { h = await client.currentHead(grantIri, owner); }
-  catch (e) { return no('the grant could not be read from ' + owner + ': ' + ((e as Error)?.message ?? String((e as { code?: string })?.code)), { owner }); }
-  if (h.forked) return no('that grant\'s chain has ' + h.heads.length + ' unresolved heads, so which grant is current is not decided', { owner });
+  catch (e) { return unestablished('the grant could not be read from ' + owner + ': ' + ((e as Error)?.message ?? String((e as { code?: string })?.code)), { owner }); }
+  if (h.forked) return unestablished('that grant\'s chain has ' + h.heads.length + ' unresolved heads, so which grant is current is not decided', { owner });
   if (h.url === null) {
-    // Two different facts, and only one of them is "no grant is published there".
-    return no('unreadable' in h
-      ? 'the read of that IRI on pod ' + owner + ' did not resolve, so whether a grant is published there is not established — ' + h.message
-      : 'no grant is published at that IRI on pod ' + owner + ' — ' + (h.message || 'the relay gave no reason'), { owner });
+    // Two different facts, and only one of them is "no grant is published there". They now differ
+    // in the VERDICT and not only in the sentence: a stated absence is answerable by publishing a
+    // grant, and a read that did not resolve is answerable by nothing at all.
+    return 'unreadable' in h
+      ? unestablished('the read of that IRI on pod ' + owner + ' did not resolve, so whether a grant is published there is not established — ' + h.message, { owner })
+      : answered(true, 'no grant is published at that IRI on pod ' + owner + ' — ' + (h.message || 'the relay gave no reason'), { owner });
+  }
+  // ★ A HEAD WITH A URL AND AN ERROR IS NOT A READABLE HEAD — `HeadResult.headError`, checked here
+  // for the same reason `readCanvas` and `foldRoster` check it. Without this the fetch below throws
+  // and lands in a catch whose sentence blames the descriptor, which is a true sentence about the
+  // wrong document: the relay already said which document it could not fetch and why.
+  if (h.headError) {
+    return unestablished('the current grant on pod ' + owner + ' reports a head whose body could not be fetched, so '
+      + 'nothing was read from bytes anybody signed: ' + h.headError, { owner });
   }
   const grantCid = h.cid;
   let d: Record<string, unknown>;
   try { d = await client.descriptor(h.url); }
-  catch (e) { return no('the grant\'s descriptor could not be fetched: ' + ((e as Error)?.message ?? String((e as { code?: string })?.code)), { owner, grantCid }); }
+  catch (e) { return unestablished('the grant\'s descriptor could not be fetched: ' + ((e as Error)?.message ?? String((e as { code?: string })?.code)), { owner, grantCid }); }
   const region = graphRegion((d['graph'] as { content?: string } | undefined)?.content ?? '', grantIri);
-  if (region === null) return no('the signed region of that grant could not be located, so nothing was read from bytes anybody signed', { owner, grantCid });
+  if (region === null) return unestablished('the signed region of that grant could not be located, so nothing was read from bytes anybody signed', { owner, grantCid });
   checks.push({ mark: 'y', text: 'Its signed region was located on ' + owner + '\'s pod' });
 
   const base: Partial<GrantVerdict> = {
@@ -710,27 +1055,36 @@ export async function verifyGrantIri(
   // first kept quoting a document its own author had withdrawn. Retraction is tested first
   // because a retracted document's other fields are not current claims to reason from.
   if (isRetracted(region)) {
-    return no('that grant states iep:modalStatus "' + String(base.modalStatus)
+    // ★ READ IN FULL, AND STILL NOT REPAIRABLE. The bytes said so, so this is `answered`; but the
+    // act that would "fix" it is republishing the grant, and the author of those bytes withdrew
+    // them. A member typing in a thread must not undo that — the same judgement the revoked branch
+    // below carries, and the reason both are `false`.
+    return answered(false, 'that grant states iep:modalStatus "' + String(base.modalStatus)
       + '", so the pod that published it has withdrawn it as an assertion. A withdrawn record seats nobody.', base);
   }
-  if (base.revoked) return no('that grant carries wsp:revoked true', base);
-  if (!base.grantedTo) return no('the grant names no wsp:grantedTo', base);
+  if (base.revoked) return answered(false, 'that grant carries wsp:revoked true', base);
+  // Read, and does not seat anybody as it stands. Rewriting the grant is exactly what fixes both.
+  if (!base.grantedTo) return answered(true, 'the grant names no wsp:grantedTo', base);
   if (base.grantedTo !== args.viewer.webId) {
-    return no('the grant names ' + base.grantedTo + ', and your pod reports your WebID as ' + (args.viewer.webId || 'none'), base);
+    return answered(true, 'the grant names ' + base.grantedTo + ', and your pod reports your WebID as ' + (args.viewer.webId || 'none'), base);
   }
   checks.push({ mark: 'y', text: 'It names your own WebID as grantee' });
   const workspace = readIri(region, 'wsp:workspace');
-  if (!workspace) return no('the grant names no wsp:workspace', base);
+  if (!workspace) return answered(true, 'the grant names no wsp:workspace', base);
   const withWs: Partial<GrantVerdict> = { ...base, workspace };
 
   // The workspace record itself, read from the pod its own IRI names, so the convener it
   // declares can be held against the pod the grant is on.
   const wsOwner = podOfNsIri(workspace);
-  if (!wsOwner) return no('the workspace IRI in that grant is not one this reader can read a pod out of', withWs);
+  if (!wsOwner) return answered(false, 'the workspace IRI in that grant is not one this reader can read a pod out of', withWs);
   const rec = await client.readWorkspaceRecord(workspace, wsOwner).catch((e: unknown) => ({ kind: 'error' as const, error: e }));
-  if (rec.kind === 'forked') return no('the workspace record at ' + workspace + ' has ' + rec.heads.length + ' unresolved heads, so it has no single current head', withWs);
-  if (rec.kind === 'missing') return no('the workspace record at ' + workspace + ' could not be read: ' + rec.message, withWs);
-  if (rec.kind === 'error') return no('the workspace record could not be read: ' + ((rec.error as Error)?.message ?? String(rec.error)), withWs);
+  // ★ ALL THREE ARE READS OF THE RECORD THAT DID NOT COMPLETE, `missing` included: the record is
+  // the document `acceptGrant` needs and `createWorkspace` already wrote, so its absence is not a
+  // state a grant write repairs — it is a state in which this reader knows nothing about the
+  // workspace the grant names.
+  if (rec.kind === 'forked') return unestablished('the workspace record at ' + workspace + ' has ' + rec.heads.length + ' unresolved heads, so it has no single current head', withWs);
+  if (rec.kind === 'missing') return unestablished('the workspace record at ' + workspace + ' could not be read: ' + rec.message, withWs);
+  if (rec.kind === 'error') return unestablished('the workspace record could not be read: ' + ((rec.error as Error)?.message ?? String(rec.error)), withWs);
   if (!rec.record.regionFound) {
     /**
      * ★ WITHHELD AND MALFORMED ARE OPPOSITE CLAIMS. Saying "the signed region could not be
@@ -754,18 +1108,37 @@ export async function verifyGrantIri(
      * they were not among their own workspace's members, in the very sentence re-sealing was
      * introduced to stop anybody seeing.
      */
-    return no(rec.record.withheld
-      ? (rec.record.sealedReadFailed
-        ? 'this workspace is private and its record could not be READ here — ' + rec.record.sealedReadFailed
-          + '. That is a failure to fetch or open the bytes, not an answer about whether you are a member '
-          + 'of it, so nothing is concluded either way. Try again.'
-        : client.canOpenSealed
-          ? 'this workspace is private and its record is encrypted to its members, and this identity is not '
-            + 'among them. Nothing is wrong with the record; it is not yours to read.'
-          : 'this workspace is private and its records are encrypted, and this client holds no key to open '
-            + 'them — so whether you are a member of it is not something this read can answer either way. '
-            + 'Open it in a client signed in with your own key.')
-      : 'the workspace record\'s signed region could not be located', withWs);
+    /**
+     * ★★ AND THOSE FOUR CLAIMS ARE NOT FOUR SENTENCES ABOUT ONE VERDICT. Exactly one of them is
+     * an answer — the recipient set was read and does not name this identity — and the other three
+     * are reads that did not complete. The prose separated them and the single `no(...)` collapsed
+     * all four, which is the defect `basis` exists for, committed on the branch that documents it
+     * at greatest length.
+     */
+    if (rec.record.withheld && rec.record.sealedReadFailed) {
+      return unestablished('this workspace is private and its record could not be READ here — ' + rec.record.sealedReadFailed
+        + '. That is a failure to fetch or open the bytes, not an answer about whether you are a member '
+        + 'of it, so nothing is concluded either way. Try again.', withWs);
+    }
+    if (rec.record.withheld && client.canOpenSealed) {
+      // ★ AN ANSWER, AND A REPAIRABLE ONE. The decryption WAS attempted with a key this client
+      // holds and this envelope does not name it — that is a fact about the record's recipient
+      // set, not a failed read. And it is the one fact in this block a write fixes: `sendInvite`
+      // re-seals the record to include somebody BEFORE it writes their grant.
+      return answered(true, 'this workspace is private and its record is encrypted to its members, and this identity is not '
+        + 'among them. Nothing is wrong with the record; it is not yours to read.', withWs);
+    }
+    if (rec.record.withheld) {
+      // No key installed at all — a browser sign-in, the published artifact. Nothing was attempted,
+      // so nothing is established. ★ THIS IS THE EXIT A SHELL GATING ON `repairable` MUST WEIGH:
+      // in a private workspace a keyless client reaches it on every message. See the field.
+      return unestablished('this workspace is private and its records are encrypted, and this client holds no key to open '
+        + 'them — so whether you are a member of it is not something this read can answer either way. '
+        + 'Open it in a client signed in with your own key.', withWs);
+    }
+    // Read in the clear and the block for this IRI is not inside it. Same reading as everywhere
+    // else in this vertical: a region that would not locate means nothing signed was read.
+    return unestablished('the workspace record\'s signed region could not be located', withWs);
   }
   const full: Partial<GrantVerdict> = {
     ...withWs, title: rec.record.title, convener: rec.record.convener,
@@ -773,9 +1146,12 @@ export async function verifyGrantIri(
     visibility: rec.record.visibility,
   };
   const cp = rec.record.convenerPod;
-  if (!cp) return no('the workspace names no convener this reader can resolve to a pod', full);
+  // Both read out of the record's own signed region, so both are answers — and neither is one a
+  // grant write repairs: the disagreement is between the RECORD and where this grant lives, and
+  // republishing the grant at the same IRI would restate exactly the thing that does not match.
+  if (!cp) return answered(false, 'the workspace names no convener this reader can resolve to a pod', full);
   if (cp !== owner) {
-    return no('the workspace\'s convener resolves to pod ' + cp + ', and this grant is on pod ' + owner
+    return answered(false, 'the workspace\'s convener resolves to pod ' + cp + ', and this grant is on pod ' + owner
       + '. A grant only counts on the convener\'s own pod, so this one seats nobody.', full);
   }
   checks.push({ mark: 'y', text: 'The workspace names a convener on pod ' + owner + ' — the same pod the grant is on' });
@@ -789,13 +1165,19 @@ export async function verifyGrantIri(
   // together. It runs AFTER the convener test on purpose: the two overlap on a grant sitting on
   // the wrong pod entirely, and that case is better told as "the convener is elsewhere".
   if (grantIri.indexOf(workspace + '-grant-') !== 0) {
-    return no('that grant is at ' + grantIri + ', and the workspace it names is ' + workspace
+    // Repairable: the grant this reader WOULD look for is the one at `<workspace>-grant-<pod>`,
+    // and writing that one is what `sendInvite` does. This verdict is about a document that exists
+    // under a name nothing reads, not about a read that failed.
+    return answered(true, 'that grant is at ' + grantIri + ', and the workspace it names is ' + workspace
       + ' — so it is not one of that workspace\'s own "' + workspace + '-grant-…" documents. '
       + 'Every reader of this workspace looks only under that prefix, so accepting it would write a real '
       + 'acceptance that seats you on nobody\'s roster.', full);
   }
   checks.push({ mark: 'y', text: 'Its IRI is one of ' + workspace + '\'s own grant names, which is where every reader looks' });
-  return { grantIri, checks, ok: true, ...full } as GrantVerdict;
+  // `basis: 'answered'` on the success path too: every read this verdict rests on completed.
+  // `repairable` is meaningless when `ok` is true and is set false rather than left to a spread,
+  // so no caller can read a stale value out of `full`.
+  return { grantIri, checks, ok: true, basis: 'answered', repairable: false, ...full } as GrantVerdict;
 }
 
 export type AcceptOutcome =
@@ -904,10 +1286,32 @@ export async function revokeGrant(
     readonly onState?: (state: string, detail: string) => void;
   },
 ): Promise<RevokeOutcome> {
+  /**
+   * ── ★ THE REPAIR VERB DECLINES EXACTLY THE ROWS THAT NEED REPAIRING, AND NAMES WHAT DOES ────
+   *
+   * Declining is right, and it is not only this client's caution: the shapes document a workspace
+   * publishes carries `#GrantShape`, which targets `wsp:MembershipGrant` — what `grantTurtle`
+   * writes — with `sh:minCount 1` on `wsp:grantedTo`. This call passes that document as
+   * `conforms_to_shapes` whenever the workspace names one, so a tombstone omitting the grantee
+   * would be refused at the relay rather than merely being impolite. Restating a field this client
+   * could not read would also be this client deciding what somebody else's document says.
+   *
+   * ★ WHAT CHANGED IS THAT THE SENTENCE NOW NAMES AN ACT SOMEBODY CAN PERFORM. For a round this
+   * refusal was advertised as one of the two ways out of the channel-wide "the roster is
+   * incomplete" refusal, and it is not one — it declines precisely the unreadable rows that
+   * refusal fired on, which made the pair a closed loop with a workspace inside it. That refusal
+   * is gone (see `recipientsFor`), and with it `sendInvite` is reachable again: it republishes
+   * `<workspace>-grant-<pod>` with `auto_supersede_prior`, which collapses a fork, creates a
+   * missing head and re-files a lost region in one act, and it writes a grantee this reader can
+   * read. So the honest exit is to re-invite the pod and then revoke, and that is what is said.
+   */
   if (!args.grantedTo || !args.role) {
     return { kind: 'incomplete', why: 'Republishing this grant means restating what it says, and '
       + (!args.grantedTo ? 'its wsp:grantedTo' : 'its wsp:role') + ' could not be read out of its signed region. '
-      + 'Rewriting it with a field missing would be this client deciding what the grant says.' };
+      + 'Rewriting it with a field missing would be this client deciding what the grant says, and this '
+      + 'workspace\'s own grant shape requires a grantee, so the relay would refuse it too. Invite that pod '
+      + 'again first — that republishes the grant at the same IRI with a grantee this reader can read — and '
+      + 'revoking it will then work. Nothing was written.' };
   }
   const publishArgs: Record<string, unknown> = {
     graph_iri: args.grantIri,
@@ -958,7 +1362,26 @@ export async function readInbox(client: WorkspaceClient, limit = INBOX_LIMIT): P
   const p = await client.tool('read_inbox', { limit }) as Record<string, unknown> | null;
   const bad = refusal(p);
   if (bad) throw fail('tool_error', String(bad['message'] ?? bad['error']));
-  const all = Array.isArray(p?.['items']) ? p?.['items'] as Record<string, unknown>[] : [];
+  /**
+   * ★★ "YOU HAVE NO INVITATIONS" IS A READ, AND A READ THAT CARRIED NO LIST IS NOT THAT READ.
+   *
+   * This was `Array.isArray(p['items']) ? … : []`, so a `read_inbox` answer of `{inbox, count: 0}`
+   * with no `items` key resolved as `{invitations: [], saturated: false}` — the empty inbox
+   * screen, stated from an answer that enumerated nothing. It is the invitee-facing instance of
+   * the shape closed at three sibling sites this round, two of them in this file: `foldRoster`,
+   * `findSeat`'s pod scan and `listWorkspaces` all now refuse a `discover_context` answer with no
+   * `entries` array rather than reading it as "nothing is there".
+   *
+   * Throwing is what the callers are already written for — the same path a refused or unreachable
+   * `read_inbox` already takes — whereas an empty list is the one answer they render as a fact
+   * about the person's own pod.
+   */
+  const raw = p?.['items'];
+  if (!Array.isArray(raw)) {
+    throw fail('tool_error', 'read_inbox answered without an items array, so what is in your inbox could not be '
+      + 'enumerated at all — which is not the same as your having no invitations.');
+  }
+  const all = raw as Record<string, unknown>[];
   const items = all.filter((it) => it && it['type'] === 'Offer' && it['about']);
   return {
     invitations: items.map((item) => ({ item, verdict: null, lead: null, state: 'unchecked' as const })),
@@ -975,7 +1398,9 @@ export async function verifyInvitation(
   try { inv.verdict = await verifyGrantIri(client, { relay, viewer, grantIri: about }); }
   catch (e) {
     const t = errorCopy(e).t;
-    inv.verdict = { grantIri: about, ok: false, why: t, checks: [{ mark: 'n', text: t }] };
+    // The call itself threw, so nothing about that grant was established — the same reading
+    // `verifyGrantIri`'s own catch exits take, restated here because this catch is outside it.
+    inv.verdict = { grantIri: about, ok: false, basis: 'unestablished', repairable: false, why: t, checks: [{ mark: 'n', text: t }] };
   }
   inv.state = 'checked';
   // A workspace IRI is not a grant and is not treated as one — but it IS a lead, and the
@@ -1014,10 +1439,40 @@ export async function findSeat(
 ): Promise<GrantVerdict> {
   const owner = podOfNsIri(args.workspace);
   if (!owner) {
-    return { grantIri: args.workspace, ok: false, checks: [], why: 'that is not a workspace IRI this reader can read a pod out of' };
+    // Nothing was read and nothing is going to be: the argument names no pod. Answered — this is
+    // a fact about the string — and not repairable, because there is no pod to publish onto.
+    return { grantIri: args.workspace, ok: false, basis: 'answered', repairable: false, checks: [],
+      why: 'that is not a workspace IRI this reader can read a pod out of' };
   }
   const direct = await verifyGrantIri(client, { relay: args.relay, viewer: args.viewer, grantIri: args.workspace + '-grant-' + args.viewer.podName });
   if (direct.ok) return direct;
+
+  /**
+   * WHAT THE DIRECT READ ALREADY ESTABLISHED ABOUT THIS VIEWER, CARRIED BY EVERY FAILURE BELOW.
+   *
+   * The final return spreads the verdict that is about the viewer, so a caller can tell "revoked"
+   * from "never granted" without matching on prose - the Discord bot's revocation gate reads
+   * exactly that flag. Three returns between here and there built a fresh four-key object and
+   * dropped it: the relay refusing the pod scan, the scan throwing, and the scan finding no grant.
+   *
+   * On each of those paths a viewer whose OWN grant is revoked - established right here, before
+   * the scan ran - came back with `revoked` undefined. The gate then reads "not seated yet" and
+   * re-grants them: the revoked-member-re-seats-by-typing bypass, still reachable through any
+   * transport failure on the convener's pod. Found by a reviewer told to break the fix for it.
+   *
+   * `notSeated` is the one shape all of them use, so a future return cannot forget.
+   */
+  const mine0: GrantVerdict | null = direct.grantedTo === args.viewer.webId ? direct : null;
+  /**
+   * ★ AND THE SPREAD CARRIES `basis` AND `repairable` TOO, SO BOTH ARE STATED EXPLICITLY AFTER IT.
+   * `mine0` is a whole verdict; inheriting its classification for a DIFFERENT question — the pod
+   * scan, not the composed name — is how a caller comes to act on a conclusion nobody drew about
+   * the thing it is acting on.
+   */
+  const notSeated = (basis: GrantVerdict['basis'], repairable: boolean, why: string): GrantVerdict => ({
+    ...(mine0 ?? {}), grantIri: direct.grantIri, ok: false, checks: mine0?.checks ?? direct.checks,
+    basis, repairable, why,
+  });
 
   let rows: readonly Record<string, unknown>[];
   try {
@@ -1025,12 +1480,25 @@ export async function findSeat(
     // only hide an older grant — including, on a long-lived pod, the one that seats this viewer.
     const p = await client.tool('discover_context', { pod_name: owner, sort: 'newest-first' }) as Record<string, unknown> | null;
     const bad = refusal(p);
-    if (bad) return { grantIri: direct.grantIri, ok: false, checks: direct.checks, why: String(bad['message'] ?? bad['error']) };
+    if (bad) return notSeated('unestablished', false, String(bad['message'] ?? bad['error']));
     assertPod(owner, p?.['pod'], 'discover_context');
-    rows = (p?.['entries'] as readonly Record<string, unknown>[]) ?? [];
+    /**
+     * ★★ A FAILED READ MUST NOT LOOK LIKE AN EMPTY ONE, and the sentence twenty lines below states
+     * completeness outright — "that pod's whole index and not a window into it". This was
+     * `?? []`, which fires precisely when the answer carried NO index at all, so that sentence was
+     * asserted on the strength of the one value that establishes nothing. `RelayClient.manifest`
+     * refuses the same shape one layer down; this raw call scans a whole pod rather than one
+     * graph, so it has to restate the rule rather than inherit it.
+     */
+    const entries = p?.['entries'];
+    if (!Array.isArray(entries)) {
+      return notSeated('unestablished', false, 'the scan of ' + owner + ' returned no entries array, so the grants on '
+        + 'that pod could not be enumerated at all — which is not the same as none of them naming you');
+    }
+    rows = entries as readonly Record<string, unknown>[];
   } catch (e) {
     const t = errorCopy(e).t;
-    return { grantIri: direct.grantIri, ok: false, checks: direct.checks, why: t + ((e as Error)?.message ? ' — ' + (e as Error).message : '') };
+    return notSeated('unestablished', false, t + ((e as Error)?.message ? ' - ' + (e as Error).message : ''));
   }
 
   const prefix = args.workspace + '-grant-';
@@ -1048,27 +1516,71 @@ export async function findSeat(
   // of it" — because the scan was capped. It is not, and `discover()` throws rather than return a
   // partial pod, so "no grant for this workspace is on that pod" is now something this can say.
   if (!grants.length) {
-    return { grantIri: direct.grantIri, ok: false, checks: direct.checks,
-      why: 'no grant for this workspace appears among the ' + rows.length + ' descriptors on ' + owner
-        + ', which is that pod\'s whole index and not a window into it' };
+    // ★ AND NOW THE SENTENCE IS EARNED. The entries array was present (checked above), the scan is
+    // uncapped, and `discover()` throws rather than hand back a partial pod — so this really is an
+    // absence somebody's pod stated, and the answer to it is to publish a grant.
+    return notSeated('answered', true, 'no grant for this workspace appears among the ' + rows.length + ' descriptors on ' + owner
+      + ", which is that pod's whole index and not a window into it");
   }
+
+  /**
+   * ★ WHICH GRANTS SURVIVE A TRUNCATED READ, decided rather than left to the relay's order.
+   *
+   * `foldRoster` was given a stable `prefer` partition for exactly this and `findSeat` — which
+   * answers the SAME question for the WRITE path — never got one. The scan is newest-first and
+   * grants are written once at invite time, so the oldest members are precisely the rows a cap
+   * drops; if one of those is a REVOKED grant naming the viewer, the caller reads "none of them
+   * names you" and re-seats somebody the convener removed.
+   *
+   * The composed name is the only row this can identify without reading anything, so it is the
+   * only one moved. A partition, not a sort: every other row stays exactly where the relay put it,
+   * because the relay's order is the only ordering evidence there is for the rest.
+   */
+  const composed = prefix + args.viewer.podName;
+  const ordered = grants.indexOf(composed) > 0
+    ? [composed, ...grants.filter((g) => g !== composed)]
+    : grants;
 
   // ★ WHICH FAILURE TO REPORT. A workspace has grants for everybody in it, so most fail this
   // reader's check for the boring reason that they are somebody else's. If ONE of them is about
   // you and failed for its own reason — revoked, say — that is the reason worth telling you, and
   // reporting whichever happened to be read last buried it behind "this grant names somebody else".
-  let mine: GrantVerdict | null = direct.grantedTo === args.viewer.webId ? direct : null;
+  let mine: GrantVerdict | null = mine0;
   let last: GrantVerdict | null = null;
   let read = 0;
-  for (const g of grants) {
+  /**
+   * Grants this scan could not read a GRANTEE out of.
+   *
+   * ★★ THE COUNT IS WHAT MAKES "NONE OF THEM NAMES YOU" AN ANSWER OR NOT. That sentence is a claim
+   * about every grant on the pod, and one unread grant is enough to make it false — including, on
+   * a workspace with a revoked member, a grant that would have stopped the caller re-seating them.
+   *
+   * ★ ONLY THE EXITS BEFORE THE GRANTEE IS READ COUNT, and that is deliberate rather than lazy.
+   * `verifyGrantIri` goes on to read the workspace RECORD, which a keyless client cannot open in a
+   * private workspace — so counting every `unestablished` verdict would make a private workspace's
+   * every scan inconclusive over other people's grants, which say nothing about this viewer once
+   * their `wsp:grantedTo` has been read. `grantedTo` being present on the verdict is exactly the
+   * line between "this grant is somebody else's, settled" and "this grant was never read".
+   */
+  let unread = 0;
+  for (const g of ordered) {
     if (read >= SEAT_READ_CAP) break;
     read++;
     const v = await verifyGrantIri(client, { relay: args.relay, viewer: args.viewer, grantIri: g, nameMustTargetMe: false });
     if (v.ok) return v;
+    if (v.basis === 'unestablished' && v.grantedTo === undefined) unread++;
     if (!mine && v.grantedTo === args.viewer.webId) mine = v;
     last = v;
   }
-  const pick = mine ?? last;
+  /**
+   * ★ WHETHER THE SCAN'S OWN CONCLUSION IS ONE. Three ways it is not: the cap stopped it short,
+   * the composed-name read that ran first did not resolve, or a grant in the scan did not read.
+   * In all three the honest verdict is that this reader does not know whether a grant names the
+   * viewer — which is the state in which nothing may be written.
+   */
+  const truncated = grants.length > read;
+  const directUnread = direct.basis === 'unestablished' && direct.grantedTo === undefined;
+  const settled = !truncated && !directUnread && unread === 0;
   return {
     /**
      * ★★ THE STRUCTURED FIELDS SURVIVE, NOT ONLY THE SENTENCE. This built a fresh object from
@@ -1083,13 +1595,38 @@ export async function findSeat(
      * A field exists so callers do not have to parse a sentence. Spread first, so the four keys
      * below still win.
      */
-    ...(pick ?? {}),
-    grantIri: direct.grantIri, ok: false, checks: pick?.checks ?? direct.checks,
+    /**
+     * ★★ AND ONLY FROM A VERDICT THAT IS ABOUT THE VIEWER. This spread `mine ?? last`, and `last`
+     * is the last grant READ — somebody else's. So a viewer no grant names inherited a stranger's
+     * `revoked`, `grantedTo` and `role`, while `why` correctly said "none of them names you".
+     *
+     * ★ REPRODUCED, not reasoned about: a workspace holding one revoked grant answered a
+     * never-granted viewer with `revoked: true` and that stranger's WebID. The Discord bot's
+     * revocation gate reads exactly that flag and returns BEFORE `seat()` — so a single revoked
+     * member permanently blocked every new person from joining the thread, and told each of them
+     * their own membership had been revoked. Found by a refute-review of the round that added
+     * both the spread and the gate; neither was wrong alone.
+     *
+     * `last` still contributes its SENTENCE below, which is about a grant and names nobody.
+     */
+    ...(mine ?? {}),
+    grantIri: direct.grantIri, ok: false, checks: mine?.checks ?? direct.checks,
+    /**
+     * ★ THE CLASSIFICATION IS THE CONCLUSION'S, NOT THE SPREAD'S. When a grant DOES name the
+     * viewer, this verdict is that grant's verdict and carries its `basis`/`repairable` unchanged.
+     * When none does, the classification is about the SCAN — see `settled` — and the spread above
+     * would otherwise hand it whichever values `mine` happened to hold, or none at all.
+     */
+    ...(mine
+      ? { basis: mine.basis, repairable: mine.repairable }
+      : { basis: settled ? 'answered' as const : 'unestablished' as const, repairable: settled }),
     why: (mine
       ? 'a grant for this workspace does name you, and it does not seat you: ' + mine.why
       : read + ' grant' + (read === 1 ? '' : 's') + ' for this workspace on ' + owner
-        + ' were read and none of them names you'
-        + (grants.length > read ? ' (of ' + grants.length + ' found; this reader reads at most ' + SEAT_READ_CAP + ')' : '')
+        + (settled ? ' were read and none of them names you' : ' were read and none of THOSE names you')
+        + (truncated ? ' (of ' + grants.length + ' found; this reader reads at most ' + SEAT_READ_CAP + ')' : '')
+        + (unread > 0 ? ' — and ' + unread + ' of them could not be read at all, so whether one of those names you is not established' : '')
+        + (directUnread ? ' — and the read of your own composed grant name did not resolve either' : '')
         + (last?.why ? ' — the last one: ' + last.why : '')),
   };
 }
@@ -1106,7 +1643,16 @@ export interface WorkspaceEntry {
   workspace: string | null;
   /** What the acceptance states about its own status, or null when it states none. */
   modalStatus?: string | null;
-  /** undefined = not verified yet. A real third state, and shells must render it as one. */
+  /**
+   * undefined = not verified yet, OR verified and not established. A real third state, and shells
+   * must render it as one.
+   *
+   * ★ IT USED TO BE `verdict.ok`, WHICH IS TWO-VALUED, so the lobby's per-workspace tick was false
+   * for a convener's pod that did not answer exactly as it was for a revocation. `why` kept the
+   * sentence and the shells print it, so this was under-claiming rather than lying — but `verified`
+   * is the field a caller keys on, and the third state existed for "not yet" and not for "could
+   * not". `verdict.basis` is what tells them apart, and it is now what this is set from.
+   */
   verified?: boolean;
   verdict?: GrantVerdict;
   title?: string;
@@ -1210,7 +1756,22 @@ export async function listWorkspaces(
   const bad = refusal(p);
   if (bad) throw fail('tool_error', String(bad['message'] ?? bad['error']));
   assertPod(podName, p?.['pod'], 'discover_context');
-  const rows = (p?.['entries'] as readonly Record<string, unknown>[]) ?? [];
+  /**
+   * ★★ "YOU ARE IN NO WORKSPACE" IS A READ, AND A READ THAT FAILED IS NOT THAT READ.
+   *
+   * This was `?? []`, so a `discover_context` answer carrying no entries array RESOLVED as an
+   * empty list. The shells wrote careful guards for the THROW case — the artifact's boot prints
+   * "Whether you are in a workspace is not established" when the call rejects — and this line
+   * walked straight past all of them: the second person ever to open the app got the flat "You are
+   * in no workspace. Accept an invitation, create one…" on their first screen, from a read that
+   * established nothing. Throwing is what those guards are already written for.
+   */
+  const scanned = p?.['entries'];
+  if (!Array.isArray(scanned)) {
+    throw fail('tool_error', 'discover_context on ' + podName + ' returned no entries array, so the acceptances on '
+      + 'your own pod could not be enumerated at all — which is not the same as your being in no workspace.');
+  }
+  const rows = scanned as readonly Record<string, unknown>[];
   const found = new Map<string, WorkspaceEntry>();
   for (const e of rows) {
     const describes = e['describes'];
@@ -1297,11 +1858,16 @@ export async function verifyWorkspaceEntry(
   if (!c.workspace) { c.verified = false; return c; }
   try {
     c.verdict = await findSeat(client, { relay, viewer, workspace: c.workspace });
-    c.verified = c.verdict.ok;
+    // ★ THREE ANSWERS, THREE VALUES. `true` seats you; `false` is a conclusion that you are not
+    // seated; `undefined` is this read not having established either — see the field.
+    c.verified = c.verdict.ok ? true : (c.verdict.basis === 'answered' ? false : undefined);
     c.title = c.verdict.title ?? '';
-    if (!c.verified) c.why = c.verdict.why;
+    if (!c.verdict.ok) c.why = c.verdict.why;
   } catch (e) {
-    c.verified = false;
+    // ★ AND A THROW IS THE SAME THIRD STATE, not a fourth. Nothing was established about this
+    // workspace, so saying "not verified" of it would be this client's transport failure rendered
+    // as a fact about somebody's membership.
+    c.verified = undefined;
     c.why = errorCopy(e).t;
   }
   return c;

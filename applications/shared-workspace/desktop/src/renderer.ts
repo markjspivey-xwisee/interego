@@ -26,7 +26,7 @@ import {
   PRESENCE_RENEW_MS, publishCapability, publishPresence, readRequests, verifyRequest,
   RESPOND_AS_MEMBER, type RequestVerdict,
   readDelegates, readEntryAuthorship, REQUIRED_TOOLS,
-  foldRoster, graphRegion, grantPodFor, hasType, listWorkspaces, mergeForward, nsIri, orderChain,
+  foldRoster, graphRegion, grantPodFor, hasType, listWorkspaces, memberDocIris, mergeForward, nsIri, orderChain,
   parseRoleProfile, parseWorkspaceIri, podClaimVsServed, podOfDescriptorUrl, pollingWatch, postEntry, verifiedSigner,
   preconditionLine, publishDelegation, readCanvas, readInbox, readInt, readIri, readIriAll, readLiteral,
   readPresence, readViewer, recipientsFor, revokeDelegation, revokeGrant, turnsGraphIri,
@@ -39,6 +39,8 @@ import {
   type EntryFooting, type StatedFooting,
   type SeenEntry, type SpeakingDelegate, type Viewer, type WithheldAcceptance,
   type WorkspaceEntry, type WorkspaceRecord,
+  EpochCounter, podOfGrantGraph, seatStanding, seatUnreadKind, unreadGrants,
+  type Epoch, type RecipientAudience, type Sealing, type UnreadGrant,
 } from '@interego/workspace-client';
 /**
  * ★ THE DISCORD LINK FORM COMES FROM THE DISCORD CONDUIT, NOT FROM THE SHARED CLIENT.
@@ -248,12 +250,37 @@ interface Loaded {
   readonly pod: string;
   readonly graph: string;
   readonly isYou: boolean;
-  readonly seat: Seat | null;
+  /**
+   * The roster row this log belongs to — MUTABLE, unlike the pod and the graph it is keyed on.
+   *
+   * ★ BECAUSE THE ROSTER IS RE-FOLDED AND THIS IS READ ON EVERY ENTRY. `loadBodies` takes
+   * `grantedTo` from here to decide whether an entry's author is the log's owner or a delegate
+   * speaking for them; a `Seat` frozen at the moment the log was opened is a membership claim that
+   * has since been re-read from two pods. `reconcileStreams` re-points it on every fold that
+   * SEATS this log. Two kinds of entry it keeps are not re-pointed and say so on screen: the
+   * viewer's own lazily-added log, whose seat is null anyway, and a log kept because the fold
+   * could not read its owner's seat, which holds the last row that WAS read — see
+   * {@link Loaded.seatUnread}.
+   */
+  seat: Seat | null;
   rows: readonly ChainRow[];
   error: unknown;
   loaded: boolean;
   stale: unknown;
   watchFailed: unknown;
+  /**
+   * Set when the latest fold produced no seat for this log AND could not establish why.
+   *
+   * ★★ BECAUSE A MEMBER IS UN-SEATED BY A FAILED READ AS WELL AS BY A REVOCATION, AND ONLY ONE OF
+   * THOSE IS AN ANSWER. `reconcileStreams` deletes an entry the fold no longer names, and one
+   * transient unreadable head on a member's pod — a CSS 502 during a redeploy, the same fault
+   * `loadBodies` below evicts its cache for — then deleted their whole history from the channel
+   * and unsubscribed their log,
+   * permanently, because nothing re-folds once their pod recovers. Reproduced by an adversarial
+   * reviewer. The entry is now KEPT and marked instead, which is the same distinction `ownHalf` in
+   * the Discord bot draws with `repairable`: absence of evidence is not evidence of absence.
+   */
+  seatUnread: string | null;
 }
 interface Body {
   readonly body: string | null;
@@ -292,6 +319,48 @@ interface Body {
   readonly note: string | null;
   readonly error?: unknown;
 }
+
+/**
+ * A desktop shell is not a three-second autocomplete, so it reads further than the package
+ * default of 25 — two round trips per grant against possibly-cold pods, which this panel can
+ * afford behind a spinner where the Discord Ask picker cannot. See {@link S.readCap}, which the
+ * reader can raise past this for one workspace.
+ */
+const DEFAULT_READ_CAP = 200;
+
+/**
+ * ★★ WHICH RUN'S ANSWER THE WINDOW WANTS — TWO SUBJECTS, AND THE GUARD IS THE PACKAGE'S.
+ *
+ * These replace `S.wsGen` and `S.foldSeq`, two integers this file captured and compared by hand at
+ * each site. Four shells re-derived that discipline privately and each got a different subset of
+ * it right: the published artifact carries an identity guard and no ordering guard, citing
+ * `S.wsGen` as its precedent — while the docblock under `S.wsGen` said, in capitals, that two
+ * folds of one workspace SHARE a generation, which is exactly the question the artifact was using
+ * it to answer. One implementation, imported by every shell, is the only thing that stops that.
+ *
+ * ── WHO MAY CALL `begin()`, WHICH IS THE WHOLE OF THE LOCAL DISCIPLINE ──────
+ *
+ * `begin()` SUPERSEDES every outstanding attempt at its subject, so it belongs only to runs that
+ * are ALTERNATIVES to one another. At the workspace subject exactly one family of runs is: the
+ * roster fold. Two folds of one workspace race — `foldRoster` short-circuits a revoked grant
+ * before it reads the grantee's pod at all, so the fold that SEES a revocation is several round
+ * trips shorter than one begun before it and is routinely the first to land — and the older one
+ * used to win by finishing last, re-seating the revoked member and re-registering the watches on
+ * their pod. `loadRoster` is therefore the only caller of `ws.begin()` in this file.
+ *
+ * ★ EVERYTHING ELSE AT THIS SUBJECT TAKES A STAMP AND ASKS `sameSubject`. Opening the workspace,
+ * reading the canvas, fetching entry bodies, each member's delegate registry, the agent's own
+ * turn: none of these is an alternative to the fold or to each other, and a `begin()` in any of
+ * them would cancel an in-flight fold that nothing would then restart. "Is this still the same
+ * workspace" is the whole of what they have to ask, and `sameSubject` is named so that the source
+ * has to say so rather than leave it to be inferred from an integer comparison.
+ *
+ * ★ THE ACCOUNT AXIS IS NEW — this file had no counter for it at all. Every post-await write in
+ * `boot`, `loadInvites`, `loadSpaces` and `loadDelegates` landed on whoever was signed in by the
+ * time it finished, including after a sign-out, which clears exactly those fields.
+ */
+const ws = new EpochCounter();
+const accounts = new EpochCounter();
 
 const S = {
   relay: RELAY_FALLBACK,
@@ -340,6 +409,15 @@ const S = {
   delegatesByPod: new Map<string, DelegateRoster>(),
   podMarks: new Map<string, string>(),
   streams: new Map<string, Loaded>(),
+  /**
+   * The watch on each folded log, keyed by the same `streamKey` as {@link streams}.
+   *
+   * ★ SEPARATE FROM {@link watches}, WHICH IS A FLAT LIST NOTHING CAN AIM AT. `reconcileStreams`
+   * has to stop ONE log's poll — the member whose grant was just revoked — and a list of anonymous
+   * closures cannot say which one is theirs. Without this their entry was dropped from the render
+   * and their watch went on polling their pod for the life of the window.
+   */
+  streamWatches: new Map<string, () => void>(),
   bodies: new Map<string, Body>(),
   watches: [] as (() => void)[],
   /**
@@ -350,9 +428,62 @@ const S = {
   grantIndex: null as string | null,
   /** The single grant watch for the open workspace, so re-folding does not accumulate them. */
   grantWatch: null as (() => void) | null,
+  /**
+   * One watch per MEMBER acceptance document, keyed by that document's IRI — see
+   * `watchAcceptances`. Keyed rather than a list because the set changes with the roster: a
+   * revoked member's poll has to be stoppable by name, and a re-fold must be able to tell a watch
+   * it already holds from one it has to register.
+   *
+   * ★★ AND EACH ONE CARRIES THE POD IT POLLS, WHICH IS THE AXIS THE DROP LOOP DECIDES ON. Held as
+   * a field rather than parsed back out of the IRI for the same reason `Loaded.pod` is: it is
+   * recorded from the roster row the watch was registered for, so the two loops that decide
+   * whether to unsubscribe somebody — {@link reconcileStreams} and {@link watchAcceptances} — read
+   * the pod off their own state and ask ONE question about it. Keying the acceptance loop on the
+   * document IRI instead is what let a member seated under the LEGACY name lose their watch to a
+   * read that established nothing: `resolveMemberDoc` reports the QUALIFIED candidate when nothing
+   * answered, so their legacy IRI silently left the wanted set. Reproduced by an adversarial
+   * reviewer, and permanent — the legacy poll went 5 -> 5 while a new watch polled a qualified
+   * document that does not exist and never will.
+   */
+  acceptWatches: new Map<string, AcceptWatch>(),
+  /**
+   * The revision each of those documents was last known to be at — from the FOLD where the fold
+   * could state it, and otherwise from the watch's own first answer.
+   *
+   * `''` is "compare against an empty document", which the fold states for two different reasons
+   * — a member who has been granted and has not accepted, and a row the fold established nothing
+   * about at all; ABSENT is "no baseline has been established for this document yet", which is
+   * what makes the first answer a recording rather than news. Collapsing the two would re-fold the
+   * roster once per watch registered. See `AcceptTarget.baseline` for both causes and for why the
+   * seeded case exists at all — comparing the first answer against itself is how an acceptance
+   * published DURING the fold was swallowed for the life of the window.
+   */
+  acceptIndex: new Map<string, string>(),
+  /**
+   * How many grants a fold of THIS workspace may read before it stops.
+   *
+   * ★ IT IS STATE BECAUSE THE READER CAN RAISE IT, and every later fold has to keep the raised
+   * value. A grant the cap never reached comes back as an `UnreadGrant` whose `clears` is
+   * `'fold-more'` — the one exit in that vocabulary that is not "try again", because re-folding
+   * with the same cap truncates at exactly the same place. The roster panel offers the act, and a
+   * fold started by a watch afterwards must not quietly drop back to the default and lose those
+   * rows again.
+   */
+  readCap: DEFAULT_READ_CAP,
   streamsOpened: false,
   streamIri: null as string | null,
-  canvas: { iri: null as string | null, head: null as string | null, loaded: null as string | null, exists: false },
+  /**
+   * `unsettled` — the probe of the viewer's own pod for this document did not COMPLETE, and its
+   * reason. Null when it did, whatever it found.
+   *
+   * ★ IT IS HELD SEPARATELY FROM `iri` BECAUSE THE IRI IS STILL THE RIGHT ONE TO READ AND THE
+   * WRONG ONE TO CREATE AT. `resolveMemberDoc` reports the qualified name when nothing answered —
+   * that is where a write would go — and a caller cannot tell that from a probe whose LEGACY
+   * candidate failed, where a document may be sitting under the older name unread. Reading the
+   * qualified name is harmless either way; publishing a first revision there is not, because it
+   * puts a second document beside somebody's existing one and nothing merges them afterwards.
+   */
+  canvas: { iri: null as string | null, head: null as string | null, loaded: null as string | null, exists: false, unsettled: null as string | null },
 
   invites: null as readonly Invitation[] | null,
   inviteError: null as unknown,
@@ -774,6 +905,20 @@ async function signOut(): Promise<void> {
   $('signin').hidden = false;
   signInButtons().forEach((b) => { b.disabled = false; });
   renderAccounts();
+  /**
+   * ★★ LAST, AND ON THE ACCOUNT AXIS. Everything above is the signed-out state being written;
+   * this is what stops the reads that were in flight for the departing identity from writing over
+   * it. `boot`'s inbox read, its workspace list and its delegate registry all assign after their
+   * awaits, and the fields they assign are the ones cleared here — so a sign-out during a slow
+   * boot used to leave the lobby listing the previous account's invitations under the sign-in
+   * card. It goes after the writes rather than before them because a bump invalidates stamps, and
+   * this function's own writes are not stamped.
+   */
+  accounts.bumpSubject();
+  // Every delegate session this window opened belongs to the identity that just left — see
+  // `delegateClient`.
+  delegateClients.clear();
+  delegateOpening.clear();
 }
 
 // ── boot ─────────────────────────────────────────────────────────────────────
@@ -782,16 +927,29 @@ async function boot(): Promise<void> {
   teardownWorkspace();
   S.handleCheck = null; S.invites = null; S.inviteError = null;
   S.spaces = null; S.spacesError = null; S.writeBlocked = null;
+  /**
+   * ★ THE ONE RUN THAT SUPERSEDES ITS PREDECESSORS AT THE ACCOUNT SUBJECT. Booting again — the
+   * retry in the error box below, or signing in as a second key — replaces everything the last
+   * boot was going to assign, and every checkpoint under here asks whether this is still it. The
+   * connect alone was measured between 2 and 31 seconds on this fleet, so the window in which two
+   * of these overlap is a real one and not a theoretical one.
+   */
+  const acct = accounts.begin();
   step('connect', 'Resolving the tool surface — the first pod-aware call provisions a pod. Measured between 2 and 31 seconds on this fleet, so half a minute here is normal and not a hang', 'wait');
   const client = new WorkspaceClient(S.relay, new ConnectorTransport(bridgeAsMcp()));
   try {
     await client.connect();
   } catch (e) {
+    // ★ THE CATCH IS A SHARED WRITE TOO. An error box about a sign-in that has since been
+    // replaced is painted over whatever the newer one has already drawn, and its Retry button
+    // re-runs the older boot.
+    if (!accounts.current(acct)) return;
     step('connect', 'The relay tool surface could not be resolved', 'err');
     showLobby(true);
     clear($('bootnote')).appendChild(errBox(e, 'Nothing on this screen is pre-baked, so with no tool surface there is nothing to show.', () => { void boot(); }));
     return;
   }
+  if (!accounts.current(acct)) return;
   S.client = client;
   /**
    * ★★ THIS CLIENT HOLDS NO KEY AND NEVER WILL — the renderer is sandboxed on purpose. Its reads
@@ -803,9 +961,11 @@ async function boot(): Promise<void> {
   step('connect', 'Tool surface reachable', 'done');
 
   step('identity', 'Resolving which pod you write to', 'wait');
+  let viewer;
   try {
-    S.viewer = await readViewer(client);
+    viewer = await readViewer(client);
   } catch (e) {
+    if (!accounts.current(acct)) return;
     step('identity', 'Your pod could not be resolved', 'err');
     showLobby(true);
     clear($('bootnote')).appendChild(errBox(e,
@@ -813,6 +973,8 @@ async function boot(): Promise<void> {
       () => { void boot(); }));
     return;
   }
+  if (!accounts.current(acct)) return;
+  S.viewer = viewer;
   step('identity', 'You are pod ' + S.viewer.podName, 'done');
   $('whoami').textContent = S.viewer.podName;
   // Not awaited: what this machine can run an agent on is a local question with no bearing on
@@ -823,19 +985,24 @@ async function boot(): Promise<void> {
   // Whether the viewer may write is a property of THEIR pod and THEIR agent — nothing to do with
   // any workspace record or roster. Asked here, before any write control is offered.
   const verdict = await checkWriteEligibility(client, S.viewer);
+  if (!accounts.current(acct)) return;
   S.enforcement = verdict.enforcement;
   S.enforcementWhy = verdict.why;
   if (verdict.blocked) applyWriteVerdict(verdict.blocked);
   renderMe();
   // Unawaited: the handle is printed either way and the line under it says "resolving…" until
   // this settles, so boot is not held on a self-check.
-  void checkOwnHandle(client, S.relay, S.viewer.podName).then((h) => { S.handleCheck = h; renderMe(); });
+  void checkOwnHandle(client, S.relay, S.viewer.podName).then((h) => {
+    if (!accounts.current(acct)) return;
+    S.handleCheck = h; renderMe();
+  });
   // Unawaited for the same reason: the delegates card says "reading…" until it lands, which is a
   // true sentence, and a boot held behind an optional read is a boot that looks broken.
   void loadDelegates();
 
   await loadInvites();
   await loadSpaces();
+  if (!accounts.current(acct)) return;
 
   // Which workspace: what this machine last had open, then the first acceptance that verified,
   // then none — which is the lobby, and is the ordinary state for somebody who has just signed in.
@@ -951,15 +1118,25 @@ function renderMe(): void {
 
 async function loadInvites(): Promise<void> {
   if (!S.client) return;
+  /**
+   * ★ `asOf`, NOT `begin`. This is a read that must land on its own merits, not an alternative
+   * to anything: the retry in the lobby's error box re-issues the SAME call, and two of them both
+   * committing is right — the later answer wins. Beginning an attempt here would instead cancel
+   * whichever of the two was already in flight, and cancel `boot`'s own stamp with it.
+   */
+  const acct = accounts.asOf();
   step('inbox', 'Reading your inbox', 'wait');
   try {
     const read = await readInbox(S.client);
+    if (!accounts.sameSubject(acct)) return;
     S.invites = read.invitations;
     S.inboxSaturated = read.saturated;
     S.inviteError = null;
     step('inbox', 'Inbox read — ' + read.invitations.length + ' offer' + (read.invitations.length === 1 ? '' : 's')
       + ' with something to look at' + (read.saturated ? ', and that read came back full at ' + read.limit + ' items' : ''), 'done');
   } catch (e) {
+    // The catch writes the panel too, so it asks the same question the success path asks.
+    if (!accounts.sameSubject(acct)) return;
     S.inviteError = e;
     S.invites = null;
     step('inbox', 'Your inbox could not be read (' + errorCopy(e).t.toLowerCase() + ')', 'err');
@@ -969,22 +1146,29 @@ async function loadInvites(): Promise<void> {
   renderLobby();
   for (const inv of S.invites) {
     await verifyInvitation(S.client, S.relay, S.viewer as Viewer, inv);
+    // `verifyInvitation` mutates the row it is handed, and the row belongs to the list assigned
+    // above — which a sign-out has already replaced with null.
+    if (!accounts.sameSubject(acct)) return;
     renderLobby();
   }
 }
 
 async function loadSpaces(): Promise<void> {
   if (!S.client || !S.viewer) return;
+  // Same reasoning as `loadInvites`: a retry of the same read, never an alternative to it.
+  const acct = accounts.asOf();
   step('spaces', 'Looking for acceptances on your own pod', 'wait');
   let list;
   try {
     list = await listWorkspaces(S.client, S.relay, S.viewer.podName);
   } catch (e) {
+    if (!accounts.sameSubject(acct)) return;
     S.spacesError = e; S.spaces = null; S.withheld = [];
     step('spaces', 'Your own pod\'s manifest could not be read', 'err');
     renderLobby();
     return;
   }
+  if (!accounts.sameSubject(acct)) return;
   S.spaces = list.entries.slice();
   S.withheld = list.withheld;
   S.spacesScanned = list.scanned;
@@ -1004,6 +1188,8 @@ async function loadSpaces(): Promise<void> {
   let verified = 0;
   for (const c of S.spaces) {
     await verifyWorkspaceEntry(S.client, S.relay, S.viewer, c);
+    // Verified rows are written INTO `S.spaces`, which a sign-out has already set to null.
+    if (!accounts.sameSubject(acct)) return;
     if (c.verified) verified++;
     renderLobby();
   }
@@ -1235,10 +1421,21 @@ function renderLobby(): void {
       o.value = ''; o.textContent = 'no roles were read from this workspace\'s profile';
       sel.appendChild(o);
     }
-    btn('sendinvite').disabled = !roles.length || !!S.writeBlocked;
+    /**
+     * ★ THE CONTROL ASKS THE VERB THAT GATES IT. Inviting re-seals the workspace record, and
+     * `recipientsFor('reseal', …)` refuses while a member's grant could still be read — so the
+     * button used to be offered, pressed, and answered with a refusal after the handle had been
+     * typed. This render runs after every fold (`loadRoster` calls it), so the state tracks the
+     * roster rather than freezing at open time.
+     */
+    const inviteCan = recipientsFor('reseal', S.record?.visibility, S.fold);
+    btn('sendinvite').disabled = !roles.length || !!S.writeBlocked || !inviteCan.ok;
     const grantCap = S.record?.grantCapability ?? null;
     let why = 'Grants for this workspace are only counted when they are on pod ' + convPod
       + ', and that is your pod — which is what makes this control worth offering.';
+    // ★ IN THE TEXT AND NOT ONLY IN A TOOLTIP: a disabled control with the reason hidden behind a
+    // hover is a refusal with no exit for anybody reading the panel.
+    if (!inviteCan.ok) why = 'Inviting is not being offered: ' + inviteCan.why + ' ' + why;
     why += grantCap
       ? ' The workspace\'s record also names ' + grantCap + ' as the capability inviting needs.'
       : ' This workspace\'s record names no wsp:grantCapability, so there is no role-level test to run against it.';
@@ -1378,9 +1575,28 @@ async function invite(): Promise<void> {
    * it — which means they cannot verify their own grant and cannot accept. `sendInvite` handles
    * that, given the roster to re-seal to; it adds the invitee itself.
    */
-  const inviteAudience = recipientsFor(S.record?.visibility, S.fold);
+  /**
+   * ★★ `'reseal'` — AND THE VERB IS THE WHOLE OF WHY THIS CALL IS DIFFERENT FROM THE OTHER THREE.
+   * A re-seal publishes the record with `auto_supersede_prior`, so the revision an omitted member
+   * could read is retired, and `verifyGrantIri` reads that record as a precondition of accepting:
+   * losing it is a one-way door out of the workspace. It is the only write in this shell whose
+   * omission costs somebody their MEMBERSHIP, and the only one that refuses over an incomplete
+   * roster — while a row could still be read. When none of them can, it hands back `repairBy`
+   * instead of refusing, and the missing pods are put BACK into the recipient set.
+   */
+  const inviteAudience = recipientsFor('reseal', S.record?.visibility, S.fold);
   if (!inviteAudience.ok) {
-    clear($('sendresult')).appendChild(errBox(new Error(inviteAudience.why), 'Nothing was published and nobody was notified.'));
+    const p = clear($('sendresult'));
+    p.appendChild(errBox(new Error(inviteAudience.why), 'Nothing was published and nobody was notified.'));
+    // ★ A RETRY IS OFFERED ONLY WHERE THE SAME CALL COULD SUCCEED — see `unreadExit`. The roster
+    // panel carries the cap-raising act for the other case, which a Retry here cannot perform.
+    if (inviteAudience.retryable) {
+      const row = el('div', 'row');
+      const again = el('button', 'sm', 'Read the members list again') as HTMLButtonElement;
+      again.addEventListener('click', () => { void loadRoster(); });
+      row.appendChild(again);
+      p.appendChild(row);
+    }
     b.disabled = false;
     return;
   }
@@ -1395,6 +1611,17 @@ async function invite(): Promise<void> {
     // reseal evicts them from a record they need in order to accept — see `sendInvite`.
     pendingWebIds: inviteAudience.pendingWebIds,
     grantedWebIds: inviteAudience.grantedWebIds,
+    /**
+     * ★★ THE PODS WHOSE GRANT COULD NOT BE READ AT ALL, PUT BACK RATHER THAN EVICTED.
+     *
+     * A grant whose bytes are unreadable still says WHOSE it is, in its own IRI, so this re-seal
+     * does not have to choose between dropping that member from the record and refusing the one
+     * act that could repair their grant. Without this argument the audience is computed from the
+     * rows that DID read, `auto_supersede_prior` retires the revision the missing member could
+     * read, and nobody — on either side — is told. `sendInvite` resolves each pod to a WebID with
+     * the same lookup it already performs for the invitee.
+     */
+    ...(inviteAudience.repairBy.length ? { repairBy: inviteAudience.repairBy } : {}),
     onState: (s, d) => { if (!set) set = writeLine(log, 'grant on your pod'); set(s, d); },
   });
   b.disabled = false;
@@ -1423,6 +1650,33 @@ async function invite(): Promise<void> {
   p.appendChild(el('div', 'note', out.notify.delivered
     ? 'They will see it the next time their client reads their inbox. The grant is the thing that matters — the notice is only a pointer to it.'
     : 'The grant exists either way. A notification is a convenience, not the membership: send them the grant IRI above by any means and their client will verify it against your pod exactly the same way.'));
+  /**
+   * ★★ WHO THE RE-SEAL DID NOT REACH — the only surface the PERMANENT half of the eviction has
+   * ever had, and until now nothing in any shell rendered it.
+   *
+   * The invitee's own case is refused before the grant is written, so anybody in these lists is an
+   * EXISTING member who has just lost their copy of the workspace record to the same
+   * `auto_supersede_prior` that published it. `verifyGrantIri` reads that record before anybody can
+   * accept, so it is not a cosmetic loss and no later write puts it back.
+   *
+   * ★ AND "THE RELAY SAID NOTHING" IS NOT "EVERYBODY WAS REACHED". `recordReach.established` is
+   * false when the response carried no per-handle resolution at all; rendering silence for that
+   * would be this panel asserting an outcome it was never told.
+   */
+  if (out.recordUnreached.length > 0) {
+    p.className = 'panel pending';
+    p.appendChild(el('div', 'note', 'The workspace record was re-published and the relay resolved no key for '
+      + out.recordUnreached.length + ' existing member' + (out.recordUnreached.length === 1 ? '' : 's') + ': '
+      + out.recordUnreached.join(', ') + '. That re-publish supersedes the revision they could read, and reading the '
+      + 'record is a precondition of accepting a grant — so they need to sign in once with their own key, and then be '
+      + 'invited again so the record is re-sealed with them in it.'));
+  }
+  if (!out.recordReach.established) {
+    p.className = 'panel pending';
+    p.appendChild(el('div', 'note', 'Whether the re-published record reached the existing members is NOT established: '
+      + (out.recordReach.why ?? 'the relay reported no per-handle resolution') + '. This is not the same as everybody '
+      + 'having been reached, and it is not rendered as silence.'));
+  }
   await loadRoster();
 }
 
@@ -1436,14 +1690,41 @@ function renderRevokeList(): void {
     h.title = roleWhy(S.roles, m.role);
     r.appendChild(h);
     r.appendChild(el('div', 'iri', m.graph));
-    r.appendChild(el('div', 'verdict ' + (m.revoked ? 'no' : m.seated ? 'ok' : 'wait'),
-      m.revoked ? 'revoked' : m.seated ? 'seated' : 'granted, not accepted'));
+    /**
+     * ★ "GRANTED, NOT ACCEPTED" IS A POSITIVE CLAIM ABOUT SOMEBODY ELSE'S POD, and it was printed
+     * for every row that did not seat — including rows whose acceptance, or whose grant, this fold
+     * could not read at all. This is the panel where the convener decides whether to revoke
+     * somebody, so a read that failed being drawn as "they have not accepted" is the worst place
+     * in the shell to make that substitution. One judgement, `seatStanding`, same as everywhere.
+     */
+    const standing = seatStanding(m);
+    r.appendChild(el('div', 'verdict ' + (m.revoked ? 'no' : standing === 'seated' ? 'ok' : 'wait'),
+      m.revoked ? 'revoked'
+        : standing === 'seated' ? 'seated'
+          : standing === 'unestablished' ? 'not established — this fold could not read their half'
+            : 'granted, not accepted'));
+    if (standing === 'unestablished' && m.why) r.appendChild(el('div', 'note', m.why));
     if (m.revoked) {
       r.appendChild(el('div', 'note', 'Their own acceptance is still on their pod and everything they wrote is still theirs. Revoking a grant cannot reach either.'));
     } else {
       const b = el('button', 'danger sm', 'Revoke this grant') as HTMLButtonElement;
-      b.disabled = !!S.writeBlocked;
+      /**
+       * ★★ A REVOCATION IS COMPOSED FROM THE GRANT'S OWN BYTES, so a grant this fold could not
+       * read cannot be rewritten from here: `revokeGrant` needs `wsp:grantedTo` and a row whose
+       * grant read failed carries none. It answered `incomplete` at the click; saying so before
+       * the click is the difference between a control that refuses and a control that is not
+       * offered, and the sentence names the act that would change it.
+       */
+      const unreadable = !m.grantedTo;
+      b.disabled = !!S.writeBlocked || unreadable;
       if (S.writeBlocked) b.title = S.writeBlocked;
+      if (unreadable) {
+        b.title = 'This grant\'s own signed region was not read by the last fold, so there is no wsp:grantedTo to carry '
+          + 'into a revocation and one written without it would name nobody.';
+        r.appendChild(el('div', 'note', 'Not offered: the last fold did not read this grant, so a revocation cannot be '
+          + 'composed from it. The roster panel says which act would change that — for a grant past the read cap, folding '
+          + 'the whole roster; for one that would not read, republishing it, which inviting that pod does.'));
+      }
       b.addEventListener('click', () => { void revoke(m, b); });
       const row = el('div', 'row'); row.appendChild(b); r.appendChild(row);
     }
@@ -1466,7 +1747,18 @@ async function revoke(m: Seat, b: HTMLButtonElement): Promise<void> {
   });
   b.disabled = false;
   const h4 = p.querySelector('h4') as HTMLElement;
-  if (out.kind === 'incomplete') { p.className = 'panel refused'; h4.textContent = 'This grant cannot be rewritten from here'; p.appendChild(el('div', 'note', out.why)); return; }
+  if (out.kind === 'incomplete') {
+    p.className = 'panel refused';
+    h4.textContent = 'This grant cannot be rewritten from here';
+    p.appendChild(el('div', 'note', out.why));
+    // ★ AND THE EXIT, because this is the one repair verb a convener reaches for when a row will
+    // not read, and it used to dead-end here with a sentence about what was missing and nothing
+    // about what to do. Both acts are real and both are offered elsewhere in this window.
+    p.appendChild(el('div', 'note', 'What would change it: fold the whole roster, if this grant was past the read cap '
+      + '(the roster panel offers that), or republish the grant — which inviting that pod does, and which is why '
+      + 'inviting is not blocked by an unreadable grant.'));
+    return;
+  }
   if (out.kind === 'error') { clear($('sendresult')).appendChild(errBox(out.error, 'Nothing was written; the grant still stands.')); return; }
   if (out.kind === 'refused') { refusalPanel('sendresult', out.refusal, 'The revocation'); return; }
   p.className = 'panel ' + (out.readable ? 'ok' : 'pending');
@@ -1527,7 +1819,29 @@ function teardownWorkspace(): void {
   S.watches.forEach((u) => { try { u(); } catch { /* already gone */ } });
   S.watches = [];
   S.streams.clear();
+  // The unsubs themselves were just fired above — this is the AIM, and it names documents and
+  // logs of the workspace being left. Carried into the next one it would make `reconcileStreams`
+  // and `watchAcceptances` believe they already hold a watch they no longer have.
+  S.streamWatches.clear();
+  S.acceptWatches.clear();
+  S.acceptIndex.clear();
   S.bodies.clear();
+  /**
+   * ★ THE WORKSPACE SUBJECT MOVES HERE AND NOWHERE ELSE, so every stamp taken for the workspace
+   * being left — an in-flight fold, a canvas read, a queue of entry bodies — stops being current
+   * at the same instant its state is cleared. Not a handover: "no workspace open" is a valid
+   * resting state, so nothing has to be put back if the next open fails.
+   */
+  ws.bumpSubject();
+  /**
+   * ★ AND THE AIM OF THE GRANT WATCH GOES WITH IT. Its unsub was just fired with the rest of
+   * `S.watches`, but the field kept pointing at the fired closure, so `watchGrants` in the NEXT
+   * workspace fired it a second time and spliced nothing out of a list it is no longer in.
+   */
+  S.grantWatch = null;
+  // Back to the shell's own default: a cap the reader raised is a decision about the workspace
+  // they were reading, and carrying it into the next one would spend somebody else's round trips.
+  S.readCap = DEFAULT_READ_CAP;
   S.seats = []; S.fold = null; S.record = null; S.recordResult = null; S.grantIndex = null;
   // Whose delegates were read is a fact about the OTHER MEMBERS of the workspace being left, and
   // carrying it forward would attribute one channel's delegates to another channel's authors.
@@ -1541,7 +1855,7 @@ function teardownWorkspace(): void {
   S.roles = { roles: null, caps: null };
   S.profileFrom = null; S.profileError = null;
   S.streamsOpened = false; S.streamIri = null;
-  S.canvas = { iri: null, head: null, loaded: null, exists: false };
+  S.canvas = { iri: null, head: null, loaded: null, exists: false, unsettled: null };
   for (const id of ['postresult', 'canvasresult']) { const n = document.getElementById(id); if (n) clear(n); }
   /**
    * ★ THE AGENT IS SWITCHED OFF AND ITS DRAFT DISCARDED WHEN THE WORKSPACE CHANGES.
@@ -1603,6 +1917,18 @@ async function openWorkspace(iri: string): Promise<void> {
     return;
   }
   teardownWorkspace();
+  /**
+   * ★ WHICH WORKSPACE THIS OPEN IS FOR, taken AFTER the teardown that moved the subject.
+   *
+   * `asOf` and not `begin`: opening a workspace is not an ALTERNATIVE to any other run at this
+   * subject, because the teardown one line up has already invalidated every stamp taken for the
+   * last one. Beginning an attempt here would cancel nothing that is not already dead, and would
+   * make this function's own stamp go stale the moment `loadRoster` begins its fold at the bottom
+   * — dropping the reconcile that exists for the case where that fold returns early. Every
+   * checkpoint below therefore asks `sameSubject`, which is the whole of what this function needs
+   * to know: is the workspace it is opening still the one that is open.
+   */
+  const e = ws.asOf();
   S.workspace = iri; S.iriOwner = parts.owner; S.slug = parts.slug;
   try { localStorage.setItem('wsp:last', iri); } catch { /* storage may be denied */ }
   $('openhint').textContent = '';
@@ -1618,9 +1944,36 @@ async function openWorkspace(iri: string): Promise<void> {
   // answered is what the composer and the canvas then use, so a conversation already living
   // under the older name keeps going.
   const st = await S.client.resolveMemberDoc(S.viewer.podName, parts.owner, parts.slug, 'stream');
-  S.streamIri = st.iri;
+  if (!ws.sameSubject(e)) return;
+  /**
+   * ★★ THE IRI THIS HANDS BACK IS NOT ALWAYS AN ANSWER, AND THE `error` BESIDE IT WAS DISCARDED.
+   *
+   * `resolveMemberDoc` probes both naming forms and reports the QUALIFIED name when nothing
+   * answered — "that is where a write would go", which is right for a probe that COMPLETED and
+   * found nothing. A probe that did NOT complete reports the same name with `error` set, and
+   * taking the iri alone reads a failed read as "nothing is published on your own pod". A
+   * conversation already living under the older unqualified name then gets handed the qualified
+   * one the moment their pod blinks, and the first post starts a second log beside the one
+   * holding their history — which is the harm `resolveMemberDoc`'s own note about `seat()`
+   * describes, arriving through the shell instead.
+   *
+   * ★ SO AN UNSETTLED PROBE RESOLVES NOTHING. `found` is an answer whatever else failed, and a
+   * probe that completed and found nothing (`error === null`) is an answer too — the ordinary
+   * state of somebody about to write their first entry. Anything else leaves this null, and the
+   * composer below is shut with the pod's own reason on it.
+   */
+  const streamSettled = st.found || st.error === null;
+  S.streamIri = streamSettled ? st.iri : null;
   const cv = await S.client.resolveMemberDoc(S.viewer.podName, parts.owner, parts.slug, 'canvas');
+  if (!ws.sameSubject(e)) return;
+  /**
+   * ★ THE CANVAS KEEPS ITS IRI AND RECORDS THE VERDICT INSTEAD — see {@link S.canvas}. Unlike the
+   * stream, this document is READ before anything is offered against it, and `readCanvas` reports
+   * an unresolvable head far better than a probe can. What the read cannot know is that the OTHER
+   * candidate failed, so it is that half — the offer to CREATE — that is withheld below.
+   */
   S.canvas.iri = cv.iri;
+  S.canvas.unsettled = cv.found || cv.error === null ? null : cv.error;
 
   // ★ THE VERDICT WINS OVER THE DESCRIPTION. `applyWriteVerdict` runs during boot, BEFORE any
   // workspace is opened, and this line used to overwrite it unconditionally — so a viewer the
@@ -1628,20 +1981,33 @@ async function openWorkspace(iri: string): Promise<void> {
   // their posts would land. Found by driving this renderer with writeEligible:false.
   clear($('writes-to')).appendChild(document.createTextNode(S.writeBlocked
     ? S.writeBlocked
-    : 'Posting writes a wsp:Entry to your own pod ' + S.viewer.podName + ' — a real, public record on the live fleet. '
-      + 'Its IRI is composed from that pod name, this workspace\'s convener pod and its short name; the workspace record '
-      + 'does not enumerate streams.' + (st.found || st.forked ? '' : ' Nothing is published there yet, so your first post creates it.')));
+    : !streamSettled
+      // ★ A POSITIVE CLAIM ABOUT THE VIEWER'S OWN POD IS NOT MADE FROM A READ THAT FAILED. This
+      // line used to say where posts would land whatever the probe did.
+      ? 'Which document your posts go in is not established: the probe of your own pod did not complete — '
+        + (st.error ?? 'no reason was reported') + '. Nothing is offered to write, because this reader tries two names '
+        + 'for that document and writing to the wrong one starts a second log beside the one holding your history.'
+      : 'Posting writes a wsp:Entry to your own pod ' + S.viewer.podName + ' — a real, public record on the live fleet. '
+        + 'Its IRI is composed from that pod name, this workspace\'s convener pod and its short name; the workspace record '
+        + 'does not enumerate streams.'
+        // ★ "THE RELAY STATES", because that is the difference the arm above turns on: this
+        // sentence is now reached only when the probe completed.
+        + (st.found || st.forked ? '' : ' The relay states that nothing is published there yet, so your first post creates it.')));
 
   // ★ THE COMPOSER STAYS SHUT UNTIL THE RECORD HAS BEEN READ. Posting sends the record's own
   // `wsp:entryShape` as `conforms_to_shapes`; opening the composer before the read settles is
   // how an entry goes out with no shape at all while the panel reports as positive fact that
   // the record names none.
   area('composer').placeholder = 'Reading ' + parts.slug + '\'s record — it says which shape a post is validated against…';
-  S.recordResult = await S.client.readWorkspaceRecord(iri, parts.owner).catch((e: unknown) => ({ kind: 'error' as const, error: e }));
+  const recordResult = await S.client.readWorkspaceRecord(iri, parts.owner).catch((err: unknown) => ({ kind: 'error' as const, error: err }));
+  if (!ws.sameSubject(e)) return;
+  S.recordResult = recordResult;
   S.record = S.recordResult.kind === 'record' ? S.recordResult.record : null;
   if (S.record) { $('wstitle').textContent = S.record.title; }
 
-  const settled = S.recordResult.kind !== 'error';
+  // ★ AND WHICH DOCUMENT IT WOULD GO IN, WHICH IS THE OTHER HALF OF BEING ABLE TO POST. A
+  // composer opened over an unresolved stream takes somebody's sentence and refuses it at Send.
+  const settled = S.recordResult.kind !== 'error' && streamSettled;
   btn('send').disabled = !!S.writeBlocked || !settled;
   area('composer').disabled = !!S.writeBlocked || !settled;
   // ★ THE PLACEHOLDER HAS TO AGREE WITH THE CONTROL. This used to say "Message #<slug>" over a
@@ -1650,24 +2016,118 @@ async function openWorkspace(iri: string): Promise<void> {
   // document with the relay answering writeEligible:false.
   area('composer').placeholder = S.writeBlocked ? 'Not write-eligible on this pod.'
     : settled ? 'Message #' + parts.slug
-      : 'The workspace record could not be read, so which shape a post is validated against is not established — nothing is offered to write.';
+      : !streamSettled ? 'Which document your posts go in is not established, so nothing is offered to write.'
+        : 'The workspace record could not be read, so which shape a post is validated against is not established — nothing is offered to write.';
 
   renderCanvasShell();
-  void loadCanvas(true);
+  // ★ THE HELPER CARRIES THIS RUN'S STAMP RATHER THAN MINTING ITS OWN — see the counters. Fired
+  // unawaited, so it lands after `loadRoster` has begun its fold, and a `begin()` of its own here
+  // would cancel that fold with nothing left to restart it.
+  void loadCanvas(true, e);
 
   // Roles are DATA — read from the profile the record names, not an enum in this file.
   if (S.record?.roleProfile) {
     try {
       const got = await S.client.fetchProfileTurtle(S.record.roleProfile);
+      if (!ws.sameSubject(e)) return;
       const parsed = parseRoleProfile(got.turtle);
       S.roles = { roles: parsed.roles, caps: parsed.caps };
       S.profileFrom = { from: got.from, hops: got.hops };
-    } catch (e) { S.profileError = e; }
+    } catch (err) {
+      // A role table that failed to read belongs to the workspace it was read for; painted into
+      // the next one it would report the wrong profile as unreachable.
+      if (!ws.sameSubject(e)) return;
+      S.profileError = err;
+    }
   }
 
   await loadRoster();
-  openStreams();
+  /**
+   * ★ STILL CALLED HERE EVEN THOUGH `loadRoster` NOW CALLS IT TOO, and the second call is not the
+   * redundant one: `loadRoster` returns early when the workspace record could not be read at all,
+   * and the viewer's OWN log is a participant either way. Without this, a channel whose record is
+   * unreadable would sit on "Connecting to the workspace…" with nothing to read it. Applying the
+   * difference twice is applying it once.
+   *
+   * ★★ AND IT IS GUARDED, WHICH IT DID NOT NEED TO BE WHEN IT WAS `openStreams`. That only ever
+   * ADDED entries, so a stale continuation of this function cost nothing. `reconcileStreams`
+   * DELETES entries and fires unsubscribes, and five awaits stand between the stamp and here —
+   * two member-document probes, the record read, the role profile when the record names one, and
+   * a whole roster fold — so an `openWorkspace(A)` resuming after `openWorkspace(B)` has torn A
+   * down would run with an empty roster and no stream IRI, empty `S.streams` out from under B,
+   * and set `S.streamsOpened` for a workspace it is not about.
+   *
+   * ★ `sameSubject`, SAID DELIBERATELY. `loadRoster` above has begun a newer ATTEMPT at this same
+   * workspace, so `current` answers false here for a run that is not stale at all — and this
+   * reconcile is exactly the one that has to run when that fold returned early. Which workspace
+   * is the only question this line has.
+   */
+  if (!ws.sameSubject(e)) return;
+  reconcileStreams();
   renderLobby();
+}
+
+/**
+ * The graphs on a pod that a watch is ABOUT, and the revision each is at — never the pod's
+ * activity. Shared by the two roster watches below so "an event means a membership document
+ * moved" is one implementation rather than two: the grant watch and the acceptance watch differ
+ * only in WHICH graphs they are about, and a second copy of this is how the two would come to
+ * disagree about what counts as a change.
+ */
+const graphIndex = (rows: readonly Record<string, unknown>[], wanted: (g: string) => boolean): string => rows
+  .flatMap((e) => (Array.isArray(e['describes']) ? e['describes'] as string[] : [])
+    .filter((g) => typeof g === 'string' && wanted(g))
+    .map((g) => g + '@' + String(e['cid'] ?? '')))
+  .sort()
+  .join(' ');
+
+/**
+ * Stop ONE keyed watch and forget it — from the map that aims it and from the flat teardown list.
+ *
+ * ★ BOTH, BECAUSE IT WAS PUT IN BOTH. Every keyed watch is also pushed into `S.watches`, which is
+ * what `teardownWorkspace` and `beforeunload` fire. The drop paths deleted only from the map, so
+ * each dropped stream or acceptance left a dead closure in that array for the life of the window
+ * — harmless when it is finally fired (`pollingWatch`'s unsub only sets a flag and clears a
+ * timer, so firing it twice is not an error) and accumulating until then, one per drop, on a
+ * roster that now re-folds on every membership document that moves. Found by an adversarial
+ * reviewer.
+ */
+function stopWatch(map: Map<string, () => void>, key: string): void {
+  const unsub = map.get(key);
+  map.delete(key);
+  if (!unsub) return;
+  try { unsub(); } catch { /* already gone */ }
+  forgetWatch(unsub);
+}
+
+/**
+ * The same, for ONE acceptance document — the poll, the aim, and the revision this window believed
+ * that document was at.
+ *
+ * ★ SEPARATE FROM {@link stopWatch} BECAUSE AN ACCEPTANCE WATCH IS TWO THINGS PLUS A BASELINE.
+ * `S.acceptWatches` holds an {@link AcceptWatch} rather than a bare closure — the pod is what the
+ * drop loop decides on — and `S.acceptIndex` has to go at the same moment, so that a member who is
+ * re-granted later is primed against an empty document rather than compared against whatever their
+ * pod said the last time they were in the room.
+ */
+function stopAcceptWatch(iri: string): void {
+  const held = S.acceptWatches.get(iri);
+  S.acceptWatches.delete(iri);
+  S.acceptIndex.delete(iri);
+  if (!held) return;
+  try { held.unsub(); } catch { /* already gone */ }
+  forgetWatch(held.unsub);
+}
+
+/**
+ * Drop one already-fired unsub from the flat teardown list, which nothing else prunes.
+ *
+ * Separate from {@link stopWatch} because `watchGrants` holds its single unsub in a field rather
+ * than a map and fires it itself — it leaked the same way, one dead closure per re-fold.
+ */
+function forgetWatch(unsub: () => void): void {
+  const at = S.watches.indexOf(unsub);
+  if (at >= 0) S.watches.splice(at, 1);
 }
 
 /**
@@ -1689,6 +2149,15 @@ async function openWorkspace(iri: string): Promise<void> {
  *     "every write recomputes the list", as `recipients.ts` puts it — and it is, from a list that
  *     had stopped being recomputed.
  *
+ * ★★ AND THIS WATCH ALONE CLOSES ONLY ONE OF THEM, WHICH THIS COMMENT USED TO DENY. A seat is two
+ * documents on two pods: the grant is here, on the convener's, and the ACCEPTANCE is on the
+ * member's own — `acceptGrant` writes it there and touches nothing on this pod. `foldRoster` only
+ * seats somebody once it has resolved that acceptance, so a member accepting an invitation moves
+ * NOTHING in the index below and this watch never fires. The revoked half was covered and tested;
+ * the added half — the confidentiality one — was still open with a header claiming it closed.
+ * `watchAcceptances` is the other half, and the two are deliberately separate watches because
+ * they are separate pods with separate owners.
+ *
  * ── WHY A WATCH AND NOT A RE-FOLD PER WRITE ─────────────────────────────────
  *
  * Folding costs two round trips per grant. Paying that on every message to discover that nothing
@@ -1704,18 +2173,12 @@ async function openWorkspace(iri: string): Promise<void> {
 function watchGrants(grantPod: string | null): void {
   if (!S.client || !grantPod || !S.workspace) return;
   const prefix = S.workspace + '-grant-';
-  const fingerprint = (rows: readonly Record<string, unknown>[]): string => rows
-    .flatMap((e) => (Array.isArray(e['describes']) ? e['describes'] as string[] : [])
-      .filter((g) => typeof g === 'string' && g.indexOf(prefix) === 0)
-      .map((g) => g + '@' + String(e['cid'] ?? '')))
-    .sort()
-    .join(' ');
   const unsub = S.client.tx.watchTool?.('discover_context', { pod_name: grantPod, sort: 'newest-first' }, (ev) => {
     if (ev.type === 'error') return;  // The roster on screen is the last one that was READ; a failed poll changes nothing about it.
     const payload = ev.result.payload as Record<string, unknown> | null;
     const entries = payload?.['entries'];
     if (!Array.isArray(entries)) return;
-    const next = fingerprint(entries as Record<string, unknown>[]);
+    const next = graphIndex(entries as Record<string, unknown>[], (g) => g.indexOf(prefix) === 0);
     // ★ THE FIRST ANSWER ONLY RECORDS. `loadRoster` has just folded from this same pod, so
     // treating the first payload as a change would re-fold immediately and then once more for
     // the fold that re-registered this watch.
@@ -1727,13 +2190,259 @@ function watchGrants(grantPod: string | null): void {
   // One per workspace. `loadRoster` runs again after every invite and revoke, and a watch
   // registered on each of those would multiply until the window closed.
   if (!unsub) return;
-  if (S.grantWatch) { try { S.grantWatch(); } catch { /* already gone */ } }
+  if (S.grantWatch) { try { S.grantWatch(); } catch { /* already gone */ } forgetWatch(S.grantWatch); }
   S.grantWatch = unsub;
   S.watches.push(unsub);
 }
 
+/**
+ * The acceptance documents this fold would resolve, one entry per document, valued by the pod it
+ * lives on.
+ *
+ * ★ THE NAMES ARE THE ONES `resolveMemberDoc` ASKS FOR, composed by the SAME function the fold
+ * composes them with. Spelling `<owner>--<slug>-acceptance` again in this file is how a watch
+ * comes to watch a document the fold never reads — green in both places, agreeing about nothing.
+ *
+ * ★ AND THE QUALIFIED NAME IS WATCHED EVEN FOR A ROW NOTHING WAS FOUND AT, because that row is
+ * exactly the one this exists for: "granted, but no acceptance published on their pod yet" is a
+ * seat about to happen, and `acceptGrant` composes only the qualified name, so that is where it
+ * will appear. For a row the fold ANSWERED about, the legacy name is added only when the fold
+ * SETTLED ON one — `acceptNaming` is the candidate `resolveMemberDoc` came back with, which for a
+ * legacy row means it found a document there or found its chain forked, and either has to keep
+ * being watched. It is not added for every answered row, because each name is a poll and no NEW
+ * acceptance is ever written under it.
+ *
+ * ★★ AN UNESTABLISHED ROW GETS BOTH NAMES, AND THAT IS NOT SYMMETRY FOR ITS OWN SAKE. `acceptGrant`
+ * writes only the qualified name, but `resolveMemberDoc` PROBES both — and when neither answered it
+ * reports the qualified candidate, because that is where a write would go. So `acceptNaming` cannot
+ * say 'legacy' on a failed read, and a member whose live acceptance sits at the older name had
+ * their only watch dropped the moment their pod blinked: the legacy IRI left this set, the drop
+ * loop below unsubscribed it, and the replacement watch polled a qualified document that does not
+ * exist and never will, because they have already accepted under the other name. Reproduced by an
+ * adversarial reviewer against a control that differed only in the naming — the qualified case
+ * re-seats when the pod recovers, the legacy case never does. Which of the two names holds their
+ * acceptance is exactly what this fold failed to establish, so both are watched until one answers.
+ *
+ * WHAT IS LEFT OUT, exactly: revoked rows, because the grant decides them, the grant is on the
+ * convener's pod and `watchGrants` is already watching it; and rows whose grant IRI carries no pod
+ * at all ({@link seatPod} returning null), which name no pod to poll. Nothing else — a row with no
+ * `Seat.pod` is a row whose GRANT would not read rather than a row about nobody, and it is here
+ * under the pod its grant's own name carries.
+ */
+function acceptanceTargets(): Map<string, AcceptTarget> {
+  const out = new Map<string, AcceptTarget>();
+  if (!S.iriOwner || !S.slug) return out;
+  for (const m of S.seats) {
+    if (m.revoked) continue;
+    /**
+     * ★★ THE POD IS RECOVERED FROM THE GRANT'S IRI WHEN THE GRANT'S BYTES WOULD NOT READ. This
+     * loop skipped every row with `m.pod === null`, which is every grant-read failure, and the
+     * drop loop below then read the absence of a target as "this member is gone" and fired their
+     * unsubscribe. One transient unreadable head on the CONVENER's pod cost a seated member their
+     * acceptance watch — the very trigger that would have re-folded once the pod recovered.
+     */
+    const pod = seatPod(m);
+    if (!pod) continue;
+    const names = memberDocIris(S.relay, pod, S.iriOwner, S.slug, 'acceptance');
+    /**
+     * ★ TWO DIFFERENT REASONS TO COMPARE THE FIRST ANSWER AGAINST AN EMPTY DOCUMENT, and both
+     * are stated rather than inferred — see `AcceptTarget.baseline`.
+     *   · `pending` — the fold LOOKED and established that nothing is published at this name.
+     *   · `'unestablished'` — the fold established nothing at all here, so there is no
+     *     observation to prime against and the honest default is to treat whatever the watch
+     *     first sees as news. That costs at most one extra fold, and it is the recovery this row
+     *     otherwise has none of: the read that failed was `get_current_head`, which moves nothing
+     *     in `discover_context`, so without it a recovered pod is never noticed.
+     */
+    if (seatStanding(m) === 'unestablished') {
+      // Both candidates, both primed against the empty document — see the ★★ note above for why
+      // the failed probe's own answer cannot be trusted to say which name to watch.
+      for (const c of names) out.set(c.iri, { pod, baseline: '' });
+      continue;
+    }
+    const qualified = names.find((c) => c.naming === 'qualified');
+    if (qualified) out.set(qualified.iri, { pod, baseline: m.pending === true ? '' : null });
+    // `acceptNaming` is which candidate ANSWERED, and this row was answered — so a second poll is
+    // added only for a member actually seated under the older name. A document was resolved
+    // there, so there is no baseline to state.
+    if (m.acceptIri && m.acceptNaming === 'legacy') out.set(m.acceptIri, { pod, baseline: null });
+  }
+  return out;
+}
+
+/**
+ * One acceptance watch this window is holding: the unsubscribe, and the POD it polls.
+ *
+ * ★★ THE POD IS HELD RATHER THAN PARSED BACK OUT OF THE KEY, which is the whole of what puts the
+ * drop loop on `reconcileStreams`' axis — that loop reads `Loaded.pod` off its own state and asks
+ * `seatNotEstablished` about it, and this is the same field under a different map. Recovering a
+ * pod from an acceptance IRI would be this file re-deriving privately a composition the naming
+ * module owns, which is the class of defect this round exists to remove.
+ */
+interface AcceptWatch {
+  readonly pod: string;
+  readonly unsub: () => void;
+}
+
+/** One acceptance document to watch: whose pod it is on, and what the fold saw there. */
+interface AcceptTarget {
+  readonly pod: string;
+  /**
+   * The revision index this document was at when the FOLD read it, or null when the fold's
+   * observation cannot be written in that form.
+   *
+   * ── ★★ THE HOLE THIS CLOSES, WHICH THE FIRST ATTEMPT AT IT DID NOT ──────────
+   *
+   * The watch below suppresses its own first answer, because the fold has just read the same
+   * document and treating that first answer as news would re-fold immediately. But the baseline
+   * that suppression assumed was the WATCH's first read, taken after the fold finished — and
+   * `foldRoster` is a sequential per-grant loop against possibly cold pods, so everything
+   * published in between was swallowed for the life of the window. That window is exactly when
+   * the feature is needed: `invite` calls `loadRoster()` the instant the invitee is notified, so
+   * this client is folding at the moment they are most likely to accept. Reproduced by an
+   * adversarial reviewer — the acceptance was on the member's pod, the watch polled it nine times
+   * in two seconds and returned it every time, and the row still read "granted, but no acceptance
+   * published on their pod yet" while the channel folded two logs instead of three. Every private
+   * entry written afterwards was sealed without them, permanently.
+   *
+   * `''` is "compare the first answer against an empty document", and it is set for two different
+   * reasons that must not be collapsed into one sentence:
+   *   · the fold ESTABLISHED that nothing is published at this name — the ordinary state of an
+   *     invited member, and the only observation of the fold's that is expressible as an index,
+   *     since an index is graph IRIs and CIDs and an absent document has neither. Seeding it makes
+   *     the watch's first answer a comparison against what the FOLD saw rather than against
+   *     itself, so an acceptance that landed mid-fold is news on the first poll.
+   *   · the fold established NOTHING about this row (`seatStanding` is `'unestablished'`). There
+   *     is no observation to prime against, and the choice is between one extra fold and no
+   *     recovery at all — these reads failed in `get_current_head`, which moves nothing in the
+   *     `discover_context` index this watch compares, so a first answer treated as a recording is
+   *     a watch that will never fire. It re-folds at most once: the index is written before the
+   *     comparison, so a pod that stays broken produces no second event.
+   *
+   * `null` is "state no baseline" and keeps the old behaviour for that document: the first answer
+   * only records. A `Seat` carries the acceptance's descriptor URL but not its CID, so for a
+   * document the fold DID resolve there is nothing here that could be compared against the index
+   * the watch composes — and inventing one would be this file guessing at bytes it never read.
+   */
+  readonly baseline: string | null;
+}
+
+/**
+ * ★★ "SOMEBODY WAS ADDED" IS NOT VISIBLE FROM THE CONVENER'S POD, WHICH IS THE ONLY POD
+ * `watchGrants` READS.
+ *
+ * The grant for a new member is published before they have accepted, so it is already in the
+ * grant index and moves nothing when they accept. Their acceptance goes on THEIR pod, under their
+ * own signature — that is the point of it — and `foldRoster` sets `seated` only once it has
+ * resolved it. So this client sat with the row reading "granted, but no acceptance published on
+ * their pod yet" for as long as the window stayed open, and `recipientsFromRoster` builds
+ * `shareWith` from `seated` rows only: every private entry written in between was sealed WITHOUT
+ * the new member, permanently, because an envelope's recipients are fixed when it is written.
+ * Reproduced by publishing a conformant acceptance on a third pod and watching the row not move.
+ *
+ * ★ ONE WATCH PER DOCUMENT, NOT PER POD — `graph_iri` is an exact-match single-graph query, so
+ * this reads one document rather than a member's whole manifest. That matters more here than it
+ * does for the grants: there is one convener and there are N members, and a member's manifest is
+ * every entry they have ever written. It also means a member TALKING does not fire this watch at
+ * all, so the fingerprint below is a second line of defence and not the only one.
+ *
+ * ★ EXISTING WATCHES ARE KEPT, NOT RE-REGISTERED. `loadRoster` runs again on every re-fold —
+ * including the ones these watches cause — and rebuilding the set each time would unsubscribe and
+ * re-register every document's poll on every fold, paying one extra read per document per fold
+ * and throwing away the index each of them had already established. Only the difference is
+ * applied: documents this fold no longer names are unsubscribed, and documents it names for the
+ * first time are registered against the baseline the fold itself observed.
+ */
+function watchAcceptances(): void {
+  if (!S.client) return;
+  const wanted = acceptanceTargets();
+  /**
+   * ★★ THE POD IS THE AXIS, AND IT IS THE ONE `reconcileStreams` DECIDES ON — `seatNotEstablished`,
+   * asked about `AcceptWatch.pod` exactly as that loop asks about `Loaded.pod`.
+   *
+   * A document leaves `wanted` when an AUTHORITY said so — the convener revoked the grant, or it
+   * is no longer on their pod at all in a scan that answered — and equally when this fold could
+   * not READ the half that would have named it. Keying the DROP on the document IRI could not tell
+   * those apart, because which IRI a member's acceptance is at is itself one of the things a
+   * failed read leaves unestablished: `resolveMemberDoc` reports the QUALIFIED candidate when
+   * nothing answered, so a member seated under the LEGACY name silently left `wanted` and was
+   * unsubscribed on a read that concluded nothing. Reproduced by an adversarial reviewer, and
+   * permanent for the life of the window — the fault is in `get_current_head`, which moves nothing
+   * in the `discover_context` index `watchGrants` fingerprints, so the acceptance watch that was
+   * torn down was the only remaining trigger for the fold that would have repaired it. Measured:
+   * the legacy poll 5 -> 5 while a replacement watch polled a qualified document that will never
+   * exist.
+   *
+   * ★ ONE QUESTION, SO EVERY CAUSE IS COVERED AT ONCE. `seatNotEstablished` answers for a row this
+   * fold could not establish, for a pod named by a grant the fold never read and which produced no
+   * row at all (the read cap), and for a shortfall that names no pod — in which case it answers
+   * "not established" for EVERY pod, so nothing is dropped this pass. Two private sets used to
+   * carry the second and third of those, and neither of them covered the legacy name.
+   */
+  for (const [iri, held] of [...S.acceptWatches]) {
+    if (wanted.has(iri)) continue;
+    if (seatNotEstablished(held.pod)) continue;
+    // Dropped because an authority decided it. The poll stops here, and the index goes with it so
+    // a member who is re-granted later is primed rather than compared against what their pod said
+    // the last time they were in the room.
+    stopAcceptWatch(iri);
+  }
+  for (const [iri, target] of wanted) {
+    if (S.acceptWatches.has(iri)) continue;
+    const pod = target.pod;
+    // ★ THE BASELINE IS WHAT THE FOLD SAW, NOT WHAT A LATER READ SAYS — see `AcceptTarget`. Set
+    // BEFORE the watch is registered, because `pollingWatch` primes immediately and that first
+    // answer has to be compared against something.
+    if (target.baseline !== null) S.acceptIndex.set(iri, target.baseline);
+    const unsub = S.client.tx.watchTool?.('discover_context', { pod_name: pod, graph_iri: iri, sort: 'newest-first' }, (ev) => {
+      if (ev.type === 'error') return;  // The roster on screen is the last one that was READ; a failed poll changes nothing about it.
+      const payload = ev.result.payload as Record<string, unknown> | null;
+      const entries = payload?.['entries'];
+      if (!Array.isArray(entries)) return;
+      // Filtered on the graph this watch asked for, not taken as read: a relay that ignored
+      // `graph_iri` would answer with the member's whole manifest, and re-folding the roster once
+      // per message they type is the cost `watchGrants` refuses for the convener.
+      const next = graphIndex(entries as Record<string, unknown>[], (g) => g === iri);
+      const seen = S.acceptIndex.get(iri);
+      S.acceptIndex.set(iri, next);
+      // ★ `undefined` IS "NOTHING TO COMPARE AGAINST YET" AND ONLY THAT. It is reached when the
+      // fold stated no baseline for this document — see `AcceptTarget.baseline` — and the first
+      // answer then becomes the baseline, as `watchGrants` does for the grant index. Where the
+      // fold DID state one (`''`, the invited member's empty document) it was seeded before this
+      // watch was registered, so the acceptance that landed mid-fold arrives here as a change
+      // against what the fold saw rather than being compared against itself and lost.
+      if (seen === undefined || seen === next) return;
+      void loadRoster();
+    }) ?? null;
+    if (!unsub) continue;
+    // ★ THE POD GOES IN WITH THE UNSUB, NOT BESIDE IT. It is what the drop loop above decides on,
+    // and a second map keyed by the same IRI is a second thing to keep in step.
+    S.acceptWatches.set(iri, { pod, unsub });
+    S.watches.push(unsub);
+  }
+}
+
 async function loadRoster(): Promise<void> {
   if (!S.client || !S.workspace || !S.iriOwner || !S.slug) return;
+  /**
+   * ★★ THE ONLY `begin()` IN THIS FILE, AND THE WHOLE REASON THE ATTEMPT AXIS EXISTS.
+   *
+   * Two folds of one workspace are ALTERNATIVES — only the newest-started one may assign — and
+   * they do not take the same time: `foldRoster` short-circuits a revoked grant before it reads
+   * the grantee's pod at all, so the fold that SEES a revocation is several round trips shorter
+   * than one begun before it and routinely lands first. The older one then won by finishing last,
+   * re-seating the revoked member, re-folding their log and re-registering the watches on their
+   * pod, with nothing left to correct it because the grant-index change that would have triggered
+   * another fold had already been consumed. Measured at 14 -> 19 -> 35 reads of a revoked
+   * member's log, the row still not revoked four seconds later.
+   *
+   * `begin` also carries the workspace subject, so a fold begun for workspace A cannot assign
+   * `S.fold` after the window has moved to B — and `S.fold` is what decides who every private
+   * write in B would then be encrypted to.
+   */
+  const e = ws.begin();
+  /** Is this still the fold whose answer the window wants? Both axes, at every checkpoint. */
+  const current = (): boolean => ws.current(e);
   const box = $('roster');
   if (!S.recordResult || S.recordResult.kind !== 'record') {
     clear(box);
@@ -1764,27 +2473,67 @@ async function loadRoster(): Promise<void> {
        * Discord Ask picker cannot: Discord gives an autocomplete no "thinking" state, so a
        * handler that overruns draws an empty box with no explanation. One number could not serve
        * both, which is why this is per-caller and the picker keeps the default.
+       *
+       * ★★ AND IT IS RAISABLE, because a grant the cap never reached is an `UnreadGrant` whose
+       * `clears` is `'fold-more'` — the one exit in that vocabulary that re-reading cannot
+       * satisfy, since re-folding with the same cap truncates at exactly the same place. The
+       * roster panel offers the act; see {@link S.readCap}.
        */
-      readCap: 200,
+      readCap: S.readCap,
       // If the cap does bite, read the grants that matter first: the viewer's own seat, so this
       // client can never tell somebody they are not in a room they are in, and the convener's.
       prefer: S.viewer ? [S.viewer.podName] : [],
     });
   } catch (e) {
+    // Same guard on the failure path: an error box about a workspace somebody has already left,
+    // or about a fold a newer one has already superseded, is drawn over what they are looking at.
+    if (!current()) return;
     clear(box).appendChild(errBox(e, 'Grants live on the convener\'s pod (' + grantPodFor(rec.convenerPod, S.iriOwner)
       + '); without them there are no roles to read.', () => { void loadRoster(); }));
     return;
   }
+  /**
+   * ★★ THE WINDOW MOVED WHILE THIS WAS IN FLIGHT, IN EITHER OF TWO WAYS, AND BOTH END HERE.
+   *
+   * A different WORKSPACE was opened: assigning now would hand the workspace that is OPEN a roster
+   * folded from a different one, and `recipientsFor` reads exactly this to decide recipients.
+   *
+   * ★ Or a LATER FOLD of this same workspace has started: this one's answer is older, however much
+   * later it happens to arrive. That is not the rare case — see `S.foldSeq` — and it used to
+   * resurrect a revoked member's seat, their folded log and the watches on their pod, with nothing
+   * left to correct it. Dropping the result is right either way: whatever superseded this fold
+   * started its own read.
+   */
+  if (!current()) return;
   S.fold = fold;
   S.seats = fold.seats.slice();
   watchGrants(grantPodFor(rec.convenerPod, S.iriOwner));
+  // The other pod each seat is half on. Reads `S.seats`, so it goes after the assignment above
+  // and inside the same guard — a watch registered from a fold this window has already moved past
+  // would re-fold a workspace nobody is looking at, or re-open a poll a newer fold had stopped.
+  watchAcceptances();
   S.podMarks = assignPodMarks(S.seats.map((m) => m.pod).concat([S.viewer?.podName ?? null]));
   renderRoster();
   renderLobby();
+  /**
+   * ★★ AND THE LOGS FOLLOW THE ROSTER, WHICH THEY DID NOT.
+   *
+   * `openStreams` ran ONCE, from `openWorkspace`, and every later re-fold — this client's own
+   * invite and revoke included — refreshed `S.seats` and redrew the roster while `S.streams` kept
+   * the set captured at open time. So a member seated afterwards was on the roster and their log
+   * was not folded in ("Composed from 1 append-only logs" under a roster showing two), and a
+   * member REVOKED afterwards had their row marked revoked while their entries went on rendering
+   * and their watch went on polling their pod — which made the sentence `revoke` prints, "the
+   * roster will now show the row as revoked and stop folding their log into this channel", false
+   * until the window was reopened. No await between the guard above and here, so the reconcile
+   * runs against the roster that was just assigned.
+   */
+  reconcileStreams();
   // ★ AFTER THE ROSTER IS ON SCREEN, NOT BEFORE. One `get_pod_status` per seated member is a
   // round trip each, and the roster is worth showing before they finish — every author line
   // renders as "not checked" until they land, which is a true statement rather than a wait.
-  await loadMemberDelegates();
+  if (!current()) return;
+  await loadMemberDelegates(e);
 }
 
 /**
@@ -1795,7 +2544,7 @@ async function loadRoster(): Promise<void> {
  * else — `respond.ts` records the same trap one layer over. An absent roster makes
  * `readEntryAuthorship` answer `authorised: null`, which the stream renders as "not checked".
  */
-async function loadMemberDelegates(): Promise<void> {
+async function loadMemberDelegates(e: Epoch): Promise<void> {
   if (!S.client) return;
   // Keyed on the seat's own `pod` — the one derived from the grant's grantee WebID — because that
   // is what `Loaded.pod` carries, and a map two different derivations write into is a map whose
@@ -1804,7 +2553,16 @@ async function loadMemberDelegates(): Promise<void> {
   for (const m of S.seats) if (m.seated && m.pod) pods.add(m.pod);
   if (S.viewer) pods.add(S.viewer.podName);
   for (const pod of pods) {
-    S.delegatesByPod.set(pod, await readDelegates(delegatePort(S.client), pod));
+    const roster = await readDelegates(delegatePort(S.client), pod);
+    /**
+     * ★ THE FOLD'S OWN STAMP, TAKEN AS AN ARGUMENT AND NOT MINTED HERE — see the counters. This
+     * is one read per seated pod inside an N-iteration loop, and it used to assign after every
+     * one of them and then redraw four panels. The pods it reads are the ones the CALLING fold
+     * seated, so a newer fold makes every remaining answer here a statement about a roster the
+     * window has already replaced; the newer fold reads them again for itself.
+     */
+    if (!ws.current(e)) return;
+    S.delegatesByPod.set(pod, roster);
   }
   if (S.viewer) S.myDelegates = S.delegatesByPod.get(S.viewer.podName) ?? null;
   reauthorBodies();
@@ -1841,6 +2599,107 @@ function reauthorBodies(): void {
 
 const viewerIsSeated = (): boolean => !!(S.viewer && S.seats.some((m) => m.seated && m.pod === S.viewer?.podName));
 
+/**
+ * The pod a roster row is about — including when the grant naming them would not read.
+ *
+ * ★★ `Seat.pod` IS ASSIGNED ONLY AFTER THE GRANT'S SIGNED REGION HAS BEEN PARSED, so every
+ * grant-read failure — an unreadable head, a forked grant chain, a region that would not locate,
+ * a descriptor that threw — produces a row with `pod === null`. Every reader in this file that
+ * keyed on `m.pod` therefore skipped exactly the rows it most needed to see: an adversarial
+ * reviewer reproduced one unreadable head on the CONVENER's pod firing a seated member's
+ * acceptance unsubscribe and deleting their index, permanently, because `acceptanceTargets`
+ * skipped their row and the drop loop read that as "gone".
+ *
+ * ★ THE POD COMES OUT OF THE GRANT'S OWN IRI AND NOT OUT OF ITS BYTES — `podOfGrantGraph`, the
+ * inverse of the composition `foldRoster` performs when it names a grant `<workspace>-grant-<pod>`.
+ * That is what makes an unreadable grant still say WHOSE it is, reading nothing. Null only when
+ * the IRI carries no pod either, and a caller must treat that as "not established" rather than as
+ * a row about nobody.
+ */
+const seatPod = (m: Seat): string | null =>
+  m.pod ?? (S.workspace ? podOfGrantGraph(m.graph, S.workspace) : null);
+
+/**
+ * The ACT that would change an unread grant's answer, printed from `clears` and never from `kind`.
+ *
+ * ★★ THE TWO ARE DIFFERENT AXES AND ONE REFUSAL PRINTED THE WRONG ONE. `kind` says whether the
+ * same read could answer differently; `clears` says which act would. A grant the read cap stopped
+ * before and a grant whose head fetch failed are both `'transient'`, and "read the members list
+ * again" clears the second while being an exact no-op for the first — re-folding with the same cap
+ * truncates in exactly the same place, for ever. This shell exposes the cap, so it can offer the
+ * act rather than a sentence about one.
+ */
+function unreadExit(u: UnreadGrant): string {
+  if (u.clears === 'read-again') return 'A read was made and did not complete, so repeating it is a real act: the next fold that reaches this row can answer differently. It is not a promise that it will — a pod that stays down stays down.';
+  if (u.clears === 'fold-more') return 'Reading again does NOT clear this one — a fold with the same cap stops in the same place. The act is a bigger cap.';
+  if (u.clears === 'republish') return 'Waiting does not clear this: the grant itself has to be written again, which inviting that pod does.';
+  return 'Nothing is established about this row, not even which act would change it.';
+}
+
+/**
+ * ★★ WHAT THE NEXT PRIVATE WRITE WILL DO TO ITS PAYLOAD, ON SCREEN BEFORE ANYBODY WRITES ONE.
+ *
+ * A private workspace has two publish paths and they are not equivalent. SEALED: this client
+ * builds the envelope and the relay receives ciphertext it is not a recipient of. ESCROW: the
+ * relay resolves each WebID to a registered key, encrypts, and puts its OWN key in the envelope,
+ * so the relay can read everything written that way — and cannot be removed from it afterwards,
+ * because an envelope's recipients are fixed at write time. Both come back from a publish as a
+ * success and both look identical on the roster.
+ *
+ * ★ SO THE MODE IS RENDERED, AND THIS IS THE ONLY PLACE A PERSON WOULD EVER LEARN IT. The whole
+ * claim this vertical makes about a private workspace is that the second path is not being used;
+ * a shell that reads `sealing.mode === 'escrow'` and draws nothing is publishing relay-readable
+ * content into a workspace its own UI calls private. Drawn from the ENTRY audience because that is
+ * the write this channel makes constantly; each write reports its own mode on its own result panel
+ * as well, since the roster can move between this render and the send.
+ */
+function renderWritePolicy(box: HTMLElement): void {
+  const audience = recipientsFor('entry', S.record?.visibility, S.fold);
+  /**
+   * ★ ASKED, NOT ASSUMED. The two verbs share a policy today — a canvas revision supersedes but
+   * retires no membership record, so it carries no completeness refusal of its own — and a heading
+   * that NAMED the canvas on the strength of the entry's answer would be this panel asserting a
+   * package invariant it did not check. It costs one pure call.
+   */
+  const canvas = recipientsFor('canvas', S.record?.visibility, S.fold);
+  if (!audience.ok || !canvas.ok) {
+    const p = el('div', 'panel refused');
+    p.appendChild(el('h4', undefined, !audience.ok && !canvas.ok
+      ? 'Messages and canvas saves are being refused in this workspace'
+      : audience.ok ? 'Canvas saves are being refused in this workspace' : 'Messages are being refused in this workspace'));
+    p.appendChild(el('div', undefined, audience.ok ? (canvas.ok ? '' : canvas.why) : audience.why));
+    // ★ A BARE RETRY IS OFFERED ONLY WHERE `retryable` SAYS THIS SAME CALL CAN SUCCEED. Offering
+    // one for a shortfall the cap caused would be a button that reproduces the refusal.
+    if ((!audience.ok && audience.retryable) || (!canvas.ok && canvas.retryable)) {
+      const row = el('div', 'row');
+      const b = el('button', 'sm', 'Read the members list again') as HTMLButtonElement;
+      b.addEventListener('click', () => { void loadRoster(); });
+      row.appendChild(b);
+      p.appendChild(row);
+    }
+    box.appendChild(p);
+    return;
+  }
+  if (audience.sealing.mode === 'escrow') {
+    const p = el('div', 'panel refused');
+    p.appendChild(el('h4', undefined, 'Writes here are NOT end-to-end encrypted'));
+    // The package's own sentence, naming who and why. Quoted rather than paraphrased so this
+    // panel, the send receipt and the canvas panel cannot come to describe one state three ways.
+    p.appendChild(el('div', undefined, audience.sealing.why));
+    for (const u of audience.sealing.keysUnestablished) {
+      p.appendChild(el('div', 'mmeta', (u.pod ?? u.webId) + ' — ' + u.why));
+    }
+    box.appendChild(p);
+  }
+  if (audience.unestablishedWebIds.length) {
+    box.appendChild(el('div', 'note', audience.unestablishedWebIds.length + ' member'
+      + (audience.unestablishedWebIds.length === 1 ? ' is' : 's are') + ' in the recipient list of every private write here '
+      + 'on a seat this fold could not establish: ' + audience.unestablishedWebIds.join(', ')
+      + '. They are INCLUDED rather than dropped — an envelope\'s recipients are fixed when it is written, so leaving '
+      + 'somebody out of one is permanent, and a read that did not finish is not a reason to do that to anybody.'));
+  }
+}
+
 function renderRoster(): void {
   const box = clear($('roster'));
   const fold = S.fold;
@@ -1862,14 +2721,54 @@ function renderRoster(): void {
     // channel — true at the time, and caused by this client asking for only 400 descriptors when
     // the relay's own default is unbounded. Nothing about it is being suppressed; the condition
     // it reported cannot arise.
-    if (fold.grantsFound > fold.grantsRead) {
+    /**
+     * ★ ONE ROW PER GRANT THIS FOLD DID NOT READ, WHICH IS WHAT THE PAIR OF INTEGERS COULD NOT
+     * GIVE. `unreadGrants` reconciles the pair against the rows the fold classified and names the
+     * pod of each from the grant's own IRI — so the two causes are no longer one number, and a row
+     * the cap never reached is nameable here even though it produced no seat.
+     */
+    const missing = unreadGrants(fold);
+    if (missing.length) {
       const w = el('div', 'panel pending');
       w.appendChild(el('h4', undefined, fold.grantsFound + ' grants were found and ' + fold.grantsRead + ' of them were read'));
-      w.appendChild(el('div', undefined, 'Reading a grant is two round trips against a pod that may be cold, so the fold stops at '
-        + fold.grantReadCap + '. The rest are not on the list below and their logs are not in the channel. That is this client\'s '
-        + 'cap on its own work, not a finding about whether those grants seat anybody.'));
+      /**
+       * ★ THE COPY IS TRUE OF BOTH CAUSES NOW, AND OF WHAT EACH ONE COSTS. It used to name the cap
+       * as the cause; then it named both and said rows past the cap were "not here at all", which
+       * stopped being true the moment those rows carried their pod. And the consequence it stated
+       * — that every private write in the workspace is refused — was the old channel-wide guard,
+       * which is gone: the refusal is per verb now, and an entry never makes it.
+       */
+      w.appendChild(el('div', undefined, 'Reading a grant is two round trips against a pod that may be cold, and a grant counts '
+        + 'as read once its signed region has been located. Both causes land here: a grant this fold REACHED and could not '
+        + 'read, and a grant it stopped before at its cap of ' + fold.grantReadCap + '. Every one of them is named below by '
+        + 'the pod its own IRI carries, whether or not its bytes could be read — a row the fold reached is also on the '
+        + 'roster with its own reason, a row past the cap is only here.'));
+      for (const u of missing) {
+        w.appendChild(el('div', 'mmeta', (u.pod ?? 'a grant whose IRI names no pod') + ' — ' + u.why));
+        w.appendChild(el('div', 'note', unreadExit(u)));
+      }
+      /**
+       * ★★ AN EXIT THIS SHELL CAN ACTUALLY PERFORM. `'fold-more'` is the one `clears` value that
+       * a retry cannot satisfy, and no shell exposed the read cap at all — so a workspace past its
+       * cap carried a refusal advertising an act nobody could take. Raising it is sticky for this
+       * workspace (see {@link S.readCap}) so the folds the watches start keep the reader's choice.
+       */
+      if (missing.some((u) => u.clears === 'fold-more')) {
+        const row = el('div', 'row');
+        const b = el('button', 'sm', 'Read all ' + fold.grantsFound + ' grants') as HTMLButtonElement;
+        b.title = 'Folds again with a read cap of ' + fold.grantsFound + ' instead of ' + fold.grantReadCap
+          + '. That is two round trips per extra grant, against pods that may be cold.';
+        b.addEventListener('click', () => { S.readCap = Math.max(S.readCap, fold.grantsFound); void loadRoster(); });
+        row.appendChild(b);
+        w.appendChild(row);
+      }
+      w.appendChild(el('div', 'note', 'What this costs is decided per WRITE and is no longer channel-wide. An entry replaces '
+        + 'no recipient set and cannot evict anybody, so it goes out and reports the hole; a canvas save is the same. Only '
+        + 'the re-seal of the workspace record — which inviting performs — waits, and only while one of these rows could '
+        + 'still be read. Rows that can never be read are put back into the invitation instead of blocking it.'));
       box.appendChild(w);
     }
+    renderWritePolicy(box);
   }
 
   for (const m of S.seats) {
@@ -1891,7 +2790,14 @@ function renderRoster(): void {
       nm.appendChild(t);
     }
     if (m.revoked) nm.appendChild(el('span', 'cap', 'revoked'));
-    if (!m.seated && !m.revoked) nm.appendChild(el('span', 'cap', m.pending ? 'invited' : 'not seated'));
+    // ★ "NOT SEATED" IS A CONCLUSION AND WAS THE CHIP FOR EVERY UNSEATED ROW, including the ones
+    // where this fold established nothing. The `why` underneath carried the truth and the chip
+    // contradicted it. `seatStanding` decides, here as everywhere else.
+    if (!m.seated && !m.revoked) {
+      const standing = seatStanding(m);
+      nm.appendChild(el('span', 'cap', m.pending ? 'invited'
+        : standing === 'unestablished' ? 'not established' : 'not seated'));
+    }
     right.appendChild(nm);
     const pl = el('div', 'mpod', m.pod ?? 'unresolved principal');
     pl.title = 'Parsed from the grantee WebID in the convener\'s grant. That is a claim in somebody else\'s document.';
@@ -1960,12 +2866,46 @@ function renderRoster(): void {
   }
   if (viewerIsSeated()) return;
 
+  /**
+   * ★★ "YOU ARE NOT ON THE ROSTER" IS A CONCLUSION, AND A READ THAT DID NOT FINISH IS NOT ONE.
+   *
+   * Every other surface in this file stopped drawing findings over unestablished reads this round
+   * — the revoke list, the roster chip, the agent panel — and this one, the panel aimed at the
+   * READER'S OWN standing, kept doing it: a single unreadable head on the convener's pod put
+   * "You are writing, and you are not on the roster" under a row that says, in the same box, that
+   * their acceptance could not be resolved. Telling somebody they are not a member because a read
+   * failed is the worst version of the class, because it is about them. Reproduced by an
+   * adversarial reviewer with `get_current_head` unreadable for the viewer's own half.
+   *
+   * ★ AND IT ASKS THE PER-PERSON JUDGEMENT, NOT THE DROP-SIDE ONE. `standingNotEstablished` still
+   * covers the pod with NO row — the shape a grant past the read cap takes, which a filter over
+   * `S.seats` cannot see at all — but it answers only from evidence that NAMES this pod. Asking
+   * `seatNotEstablished` here told a COMPLETE STRANGER that their standing was unestablished
+   * because somebody else's grant IRI carried no pod suffix: that arm shields every pod at once,
+   * which is the right answer for deciding a DROP and the wrong one for a sentence about a reader.
+   */
+  const yourStanding = S.viewer ? standingNotEstablished(S.viewer.podName) : null;
+  if (yourStanding) {
+    const p = el('div', 'panel pending');
+    p.appendChild(el('h4', undefined, 'Your own standing here was NOT established by this read'));
+    p.appendChild(el('div', undefined, 'Membership is two-sided — a convener publishes a grant on their pod, you publish '
+      + 'an acceptance on yours — and this fold could not read enough to say where you stand: ' + yourStanding
+      + ' This is not a finding that you are outside the room, and it is not a finding that you are in it. '
+      + 'The panel above names the act that would settle it. Your posts still land on your pod and are still yours.'));
+    box.appendChild(p);
+    return;
+  }
+
   // ★ WHY THE FOLD DID NOT SEAT YOU, FROM THE ROWS ABOVE. Printing "no grant names your pod"
   // while a row directly above shows that same pod tagged "invited" is a contradiction the
   // client already holds the record for.
   const you = el('div', 'panel');
   you.appendChild(el('h4', undefined, 'You are writing, and you are not on the roster'));
-  const yourRows = S.viewer ? S.seats.filter((m) => m.pod && m.pod === S.viewer?.podName) : [];
+  // ★ `seatPod`, NOT `Seat.pod` — the same recovery every other reader in this file makes. A row
+  // whose grant would not read has no `Seat.pod`, so this filter used to be blind to exactly the
+  // row that explains the reader's own state, and the block below then said "no grant naming your
+  // pod appeared" about a grant sitting on the convener's pod with the reader's name in its IRI.
+  const yourRows = S.viewer ? S.seats.filter((m) => seatPod(m) === S.viewer?.podName) : [];
   let w = 'Membership is two-sided. A convener publishes a grant on their pod; you publish an acceptance on yours. ';
   if (yourRows.length) {
     w += (yourRows.length === 1 ? 'One grant on the convener\'s pod does name your pod, and it does not seat you: '
@@ -2103,11 +3043,186 @@ function participants(): readonly Participant[] {
   return list;
 }
 
-function openStreams(): void {
+/**
+ * Why this fold has no seat for a pod, WHEN THE HONEST ANSWER IS "IT COULD NOT TELL". Null when
+ * the fold does have an answer — including "they are out" — so the caller may act on it.
+ *
+ * ★★ THE JUDGEMENT IS `seatStanding`'s, AND THIS FILE NO LONGER RE-DERIVES IT. What stood here
+ * was a local `unestablishedSeat` that reconstructed "did the fold reach an answer" from five
+ * optional `Seat` fields — `seated`, `revoked`, `pending`, `acceptUrl`, `acceptStatus` — because
+ * `Seat` carried no flag for it. It carries one now: `basis`, set by `foldRoster` at the exit it
+ * actually took, read through `seatStanding`. Two readers of one question in two packages is how
+ * five surfaces came to disagree about the same member, and the re-derivation could not see the
+ * exits it was not told about: a grant whose own read failed leaves a row with NO pod at all, so
+ * this function was never even asked about it.
+ *
+ * ★ THE RULE THE PACKAGE STATES BESIDE `seatStanding`, QUOTED HERE BECAUSE THIS IS A CONSUMER OF
+ * IT: nothing may DROP a row, DELETE a stream, UNSUBSCRIBE a watch, EXCLUDE somebody from an
+ * ENVELOPE, or WRITE a membership document on `'unestablished'`.
+ *
+ * ★★ AND A DROP NEEDS POSITIVE EVIDENCE, because the cost of the two mistakes is not symmetric.
+ * Keeping a log one fold too long shows entries the member has already been removed from writing
+ * — visible, self-correcting on the next fold, and no confidentiality consequence, since who a
+ * private entry is SEALED to comes from `S.fold` and never from this map. Deleting one is
+ * permanent for the life of the window: the entry goes, the watch goes with it, and no later
+ * event names that pod again.
+ *
+ * ★ A POD WITH NO ROW AT ALL IS DECIDED BY THE UNREAD GRANTS, ONE ROW EACH. `seatStanding` cannot
+ * answer for somebody who produced no seat, and the pair `grantsFound`/`grantsRead` could only say
+ * that SOME grant went unread, never whose — so any shortfall used to keep every unnamed pod.
+ * `unreadGrants` names the pod of each one from the grant's own IRI, so a shortfall that does not
+ * name this pod no longer keeps it, and one that carries no pod at all still does.
+ *
+ * ★★ THIS IS THE DROP-SIDE QUESTION, AND IT IS THE CONSERVATIVE ONE. Everything it answers from
+ * a pod's own evidence is `standingNotEstablished` below; the arm it adds is the shortfall that
+ * names NOBODY, which shields every pod at once. That arm is a fact about the fold rather than
+ * about a person, so a surface making a claim about a READER asks the other function — see its
+ * note for the first post it refused.
+ */
+function seatNotEstablished(pod: string): string | null {
+  const mine = standingNotEstablished(pod);
+  if (mine) return mine;
+  const missing = S.fold ? unreadGrants(S.fold) : [];
+  // A row that names no pod cannot be ruled out of being this one, so it keeps everything — the
+  // same conservative answer the old count gave, now reached only when a row really is nameless.
+  return missing.some((u) => u.pod === null)
+    ? 'This fold read ' + (S.fold?.grantsRead ?? 0) + ' of the ' + (S.fold?.grantsFound ?? 0) + ' grants on the '
+      + 'convener\'s pod and could not name which one it missed, so whether a grant still names this pod is not established'
+    : null;
+}
+
+/**
+ * The same question asked of THIS POD'S OWN EVIDENCE ONLY — a row this fold placed for it, or an
+ * unread grant whose IRI names it. Null when nothing this fold failed to read was about this pod.
+ *
+ * ★★ THE NAMELESS ARM IS NOT A STATEMENT ABOUT A PERSON, AND READING IT AS ONE REFUSED A
+ * STRANGER'S FIRST POST. `seatNotEstablished` answers "not established" for EVERY pod once any
+ * unread grant's IRI carries no pod suffix, because it cannot tell whose that grant is, so it
+ * shields everybody. That is the right answer for a DROP — a shortfall may not unsubscribe
+ * anybody — and the wrong one for a claim about a particular reader. Measured with a control
+ * differing in one document: a viewer on a pod NO grant names posted normally; add one unread
+ * grant named `<workspace>-grant-` on the convener's pod and that same viewer's ordinary first
+ * post was refused — over a grant that was not theirs, whose own words are that the relay's answer
+ * carried neither a head nor a reason. ★ AND THE DEFECT IS NOT THAT THE REFUSAL NAMED AN ACT THEY
+ * COULD NOT PERFORM: that row's `clears` is `'read-again'`, which any reader can do. It is that the
+ * sentence was a CLAIM ABOUT THEM drawn from a read that established nothing about them.
+ *
+ * ★ SO THE TWO QUESTIONS ARE TWO FUNCTIONS RATHER THAN ONE WITH A FLAG. "May I drop this?" is
+ * `seatNotEstablished`, which stays conservative and keeps the nameless arm; "what did this fold
+ * establish about THIS person?" is this one, and it may answer only from evidence that names
+ * them. Both arms here do: a row this fold placed for their pod (`seatPod` recovers that pod from
+ * the grant IRI when the bytes would not read), and an unread grant whose own IRI carries it —
+ * which is the shape a grant past the read cap takes, and which produces no row at all, so a
+ * filter over `S.seats` cannot see it.
+ */
+function standingNotEstablished(pod: string): string | null {
+  for (const m of S.seats) {
+    if (seatPod(m) !== pod) continue;
+    if (seatStanding(m) !== 'unestablished') continue;
+    return m.why ?? 'this fold established no answer for their half of the seat';
+  }
+  /**
+   * ★ ASKED WHETHER OR NOT THIS POD HAS A ROW, because one pod can hold more than one grant. A
+   * first version of this skipped the unread grants entirely once any row named the pod — so a pod
+   * with one grant that READ and answered "out" and a second grant this fold never read was
+   * decided by the first, and the second might be the one that seats them, under a different log.
+   * A row for the pod is never a reason to stop asking; only an ANSWER is.
+   */
+  const mine = (S.fold ? unreadGrants(S.fold) : []).find((u) => u.pod === pod);
+  return mine ? mine.why : null;
+}
+
+/**
+ * ★★ WHICH LOGS ARE FOLDED IN, RECONCILED AGAINST THE ROSTER — NOT DECIDED ONCE AT OPEN.
+ *
+ * This function used to be `openStreams`, and it ran from exactly one place: `openWorkspace`. It
+ * built a fresh `Loaded` and a fresh watch for every participant unconditionally, which is only
+ * correct on an empty map. Every later re-fold left it alone, so both halves of a membership
+ * change stopped at the roster panel:
+ *
+ *   · SEATED AFTERWARDS. The roster named them and `S.streams` did not, so the channel said
+ *     "Composed from 1 append-only logs" under a roster showing two, and nothing they had written
+ *     ever appeared. `discover_context` was never called for their log at all.
+ *   · REVOKED AFTERWARDS. Their entry stayed in `S.streams`, so their messages kept rendering and
+ *     their watch kept polling their pod — for the life of the window — directly contradicting
+ *     the sentence `revoke` prints when it succeeds.
+ *
+ * ★ AND CALLING THE OLD `openStreams` AGAIN WOULD NOT HAVE FIXED EITHER. It replaces every entry,
+ * so every already-loaded log goes back to "reading…" and every row is re-fetched; it registers a
+ * second watch for logs that already have one, doubling the poll on every pod at every re-fold;
+ * and it removes nothing, so the revoked member is still there. This applies the DIFFERENCE, and
+ * applying a difference twice is applying it once — `loadRoster` calls it after every fold and
+ * `openWorkspace` still calls it for the case where the fold returned early and there is no
+ * roster at all, but the viewer's own log should still be readable.
+ */
+function reconcileStreams(): void {
   if (!S.client) return;
-  for (const p of participants()) {
-    const key = streamKey(p.pod, p.graph);
-    const st: Loaded = { ...p, rows: [], error: null, loaded: false, stale: null, watchFailed: null };
+  /**
+   * ★ THE STAMP THE WATCHES REGISTERED BELOW CARRY. A `pollingWatch` outlives this call and keeps
+   * answering into its callback; without a stamp its answers cache entry bodies into `S.bodies`
+   * and fire the agent's own decision for a channel nobody is looking at. `asOf` because these
+   * reads are not alternatives to anything — every log must land, and one log's poll must not
+   * cancel another's.
+   */
+  const e = ws.asOf();
+  const want = new Map<string, Participant>();
+  for (const p of participants()) want.set(streamKey(p.pod, p.graph), p);
+  for (const [key, st] of [...S.streams]) {
+    if (want.has(key)) continue;
+    /**
+     * ★ YOUR OWN LOG IS NOT SOMEBODY ELSE'S SEAT, AND NO FOLD PRODUCES IT. `post` adds it lazily
+     * at send time, at `seat?.stream ?? S.streamIri` — a document no seat need declare, which is
+     * exactly the state of somebody who has not been seated yet or whose acceptance names no
+     * stream. Dropping it would delete the entries this window had just published, out from under
+     * the person who published them, and a viewer whose own grant was withdrawn still gets to read
+     * what they themselves wrote.
+     *
+     * ★ THE CURRENT one, not every log that was ever theirs: `S.streamIri` is where this window
+     * writes, resolved when the workspace was opened. An `isYou` entry naming anything else is
+     * either in `want` already — a seat declares it — or a log this window has moved off.
+     */
+    if (st.isYou && st.graph === S.streamIri) continue;
+    /**
+     * ★★ NOT IN THIS FOLD IS NOT THE SAME AS GONE, AND DELETING ON THE SECOND ONE COST A MEMBER
+     * THEIR WHOLE HISTORY.
+     *
+     * A member drops out of `participants()` when an AUTHORITY said so — the convener revoked the
+     * grant, they retired their own acceptance, the grant naming them is no longer there — and
+     * equally when this fold simply could not READ their half. One transient unreadable head on
+     * their pod unsubscribed their log and deleted every entry of theirs from the channel, and
+     * nothing re-folded once their pod recovered, so it was permanent: reproduced by an
+     * adversarial reviewer, poll count 1 -> 1 across the recovery, their pod never read again. The
+     * row on screen even SAID the read was unestablished — "whether anything is published here is
+     * not established" — while this loop deleted on the strength of it.
+     *
+     * ★ SO THE UNESTABLISHED CASE IS MARKED, NOT DROPPED. Same distinction the watch callback
+     * below already draws for a poll that fails (authz codes retract the rows, a transient error
+     * keeps the last good ones), and the same one `ownHalf` in the Discord bot draws with
+     * `repairable`. The next fold that CAN read them clears the mark.
+     */
+    const unread = seatNotEstablished(st.pod);
+    if (unread) { st.seatUnread = unread; continue; }
+    // ★ THE UNSUBSCRIBE IS THE POINT, NOT THE DELETE. Dropping the entry alone stops them being
+    // RENDERED and leaves `pollingWatch` reading their pod every few seconds until the window
+    // closes, answering into a callback that now returns immediately.
+    stopWatch(S.streamWatches, key);
+    S.streams.delete(key);
+  }
+  for (const [key, p] of want) {
+    const held = S.streams.get(key);
+    if (held) {
+      // ★ THE SEAT IS RE-POINTED AT THE ROW THIS FOLD PRODUCED. It is what `loadBodies` reads
+      // `grantedTo` from to decide whether an entry's author is the log's owner or a delegate
+      // speaking for them, and holding the object captured at open time is holding a claim about
+      // membership that has since been re-read from two pods.
+      held.seat = p.seat;
+      // This fold read them and seated them, so whatever the previous one could not establish
+      // about them is answered. Left standing it would keep telling the reader a read had failed
+      // after the read that succeeded.
+      held.seatUnread = null;
+      continue;
+    }
+    const st: Loaded = { ...p, rows: [], error: null, loaded: false, stale: null, watchFailed: null, seatUnread: null };
     S.streams.set(key, st);
     const input = { pod_name: p.pod, graph_iri: p.graph, sort: 'oldest-first' };
     const unsub = S.client.tx.watchTool?.('discover_context', input, (ev) => {
@@ -2137,7 +3252,7 @@ function openStreams(): void {
           supersedes: Array.isArray(e['supersedes']) ? e['supersedes'] as string[] : [],
         }));
       renderStream();
-      void loadBodies(cur.rows);
+      void loadBodies(cur.rows, e);
       // ★ NO INTERVAL PINNED HERE. `pollingWatch` owns the cadence now — a quiet ceiling and a
       // fast cadence while a conversation is live — and a number written here would freeze this
       // reader at one speed while the other reader of the same channel adapted.
@@ -2145,34 +3260,49 @@ function openStreams(): void {
     // ★ NULL IS THE ANSWER HERE, NOT A THROW. A registration that failed means no update will
     // EVER arrive on its own, so the row is marked and a one-shot read is attempted rather than
     // leaving "reading…" up forever.
-    if (unsub) S.watches.push(unsub);
+    if (unsub) { S.watches.push(unsub); S.streamWatches.set(key, unsub); }
     else {
       st.watchFailed = new Error('this transport registered no watch for this log, so no update will arrive on its own');
-      void readOnce(key);
+      void readOnce(key, e);
     }
   }
   S.streamsOpened = true;
   renderStream();
 }
 
-async function readOnce(key: string): Promise<{ rows?: readonly ChainRow[]; error?: unknown }> {
+async function readOnce(key: string, e: Epoch): Promise<{ rows?: readonly ChainRow[]; error?: unknown }> {
   const st = S.streams.get(key);
   if (!st || !S.client) return { error: new Error('this client is not tracking a log for ' + key) };
   try {
-    const rows = (await S.client.manifest(st.pod, st.graph)).map((e) => ({
-      url: String(e['descriptorUrl'] ?? ''), cid: (e['cid'] as string) ?? null,
-      validFrom: (e['validFrom'] as string) ?? null,
-      supersedes: Array.isArray(e['supersedes']) ? e['supersedes'] as string[] : [],
+    const rows = (await S.client.manifest(st.pod, st.graph)).map((row) => ({
+      url: String(row['descriptorUrl'] ?? ''), cid: (row['cid'] as string) ?? null,
+      validFrom: (row['validFrom'] as string) ?? null,
+      supersedes: Array.isArray(row['supersedes']) ? row['supersedes'] as string[] : [],
     }));
+    // The `Loaded` this writes into was taken out of `S.streams` before the await, and a teardown
+    // has since emptied that map — so these writes would land on an object nothing reads while
+    // `renderStream` redrew a channel this read is not about.
+    if (!ws.sameSubject(e)) return { rows };
     st.rows = rows; st.error = null; st.loaded = true;
     renderStream();
-    await loadBodies(rows);
+    await loadBodies(rows, e);
     return { rows };
-  } catch (e) { st.error = e; st.loaded = true; renderStream(); return { error: e }; }
+  } catch (err) {
+    if (!ws.sameSubject(e)) return { error: err };
+    st.error = err; st.loaded = true; renderStream(); return { error: err };
+  }
 }
 
-/** One `get_descriptor` per entry, on its author's pod, four at a time. */
-async function loadBodies(rows: readonly ChainRow[]): Promise<void> {
+/**
+ * One `get_descriptor` per entry, on its author's pod, four at a time.
+ *
+ * ★ THE EPOCH IS THE CALLER'S AND `sameSubject` IS THE QUESTION. These are N independent reads
+ * that must ALL land — one body per descriptor URL — so they must not supersede each other or the
+ * fold they run under; "is this still the same workspace" is the whole of what a body fetch has to
+ * ask. Without it a queue drained after a switch caches one channel's bodies, and the entries the
+ * cache is missing, into the map the NEXT channel reads.
+ */
+async function loadBodies(rows: readonly ChainRow[], e: Epoch): Promise<void> {
   if (!S.client) return;
   // ★ A FAILED READ IS RETRIED; ONLY A SUCCESSFUL ONE IS CACHED. The cache used to be keyed on
   // presence alone, so one transient 502 on one descriptor was permanent for the session — the row
@@ -2209,6 +3339,7 @@ async function loadBodies(rows: readonly ChainRow[]): Promise<void> {
         // convener's pod and which the log's owner therefore cannot write. Taking it from the
         // entry would let the entry decide what it is being checked against.
         const st = ownerOf(url);
+        if (!ws.sameSubject(e)) return;
         S.bodies.set(url, {
           body: readLiteral(src, 'dct:description'),
           seq: readInt(src, 'wsp:seq'),
@@ -2234,17 +3365,19 @@ async function loadBodies(rows: readonly ChainRow[]): Promise<void> {
               ? 'the signed region of this record could not be located, so nothing here was read from bytes anybody signed'
               : null,
         });
-      } catch (e) {
+      } catch (err) {
+        if (!ws.sameSubject(e)) return;
         S.bodies.set(url, {
           body: null, seq: null, isEntry: false, declaredWorkspace: null, servedPod: null,
           signed: false, signedBy: null, derivedFrom: null, addressedTo: [],
           author: { kind: 'unstated', why: 'this record could not be read, so nothing about its author was established' },
-          note: errorCopy(e).t, error: e,
+          note: errorCopy(err).t, error: err,
         });
       }
     }
   });
   await Promise.all(workers);
+  if (!ws.sameSubject(e)) return;
   renderStream();
   // ★ THE AGENT IS CONSIDERED HERE AND NOWHERE ELSE — after the bodies for a read are in, which is
   // the only moment the channel is actually known. Hooking it to the watch tick instead would run
@@ -2443,7 +3576,7 @@ function renderStream(): void {
     if (st.error) {
       wrap.appendChild(errBox(st.error, 'This is the log on pod ' + st.pod + '. The rest of the channel is unaffected — one '
         + 'member being unreachable is not the channel being down, and it is not that member having written nothing.',
-      () => { void readOnce(streamKey(st.pod, st.graph)); }));
+      () => { void readOnce(streamKey(st.pod, st.graph), ws.asOf()); }));
       continue;
     }
     if (st.watchFailed) {
@@ -2469,6 +3602,21 @@ function renderStream(): void {
       n.style.color = 'var(--pending)';
       wrap.appendChild(n);
     }
+    /**
+     * ★ A SEPARATE SENTENCE FROM `stale`, BECAUSE IT IS A DIFFERENT READ THAT FAILED. `stale` is
+     * this log's own poll; this is the ROSTER fold failing to establish whether the pod that owns
+     * it is still seated. The log itself is still being read and is still current — what is not
+     * current is the claim that its owner belongs here, and saying so is the alternative to
+     * deleting their history on the strength of a read that did not happen. See
+     * `seatNotEstablished`.
+     */
+    if (st.seatUnread) {
+      const n = el('div', 'note', 'Still folding the log on ' + st.pod + ', though the last roster read did not settle whether '
+        + 'they are still seated: ' + st.seatUnread + '. Nothing was removed on the strength of that — a read that failed is '
+        + 'not a member who left. The next fold that reaches their pod decides it.');
+      n.style.color = 'var(--pending)';
+      wrap.appendChild(n);
+    }
   }
   if (atBottom) scroller.scrollTop = scroller.scrollHeight;
 }
@@ -2486,10 +3634,28 @@ function renderStream(): void {
  * substrate had no reason to believe.
  */
 const delegateClients = new Map<string, WorkspaceClient>();
+/**
+ * The opens that have not finished yet, one per address.
+ *
+ * ★ BECAUSE THE CACHE ABOVE IS ONLY WRITTEN AFTER `connect()` RETURNS, and three callers can ask
+ * for the same delegate at once — a heartbeat, a wake and the person pressing Send. Each of them
+ * built its own client and ran its own `connect`, so one delegate held three relay sessions and
+ * the two that lost the race were never closed and never reachable again. Sharing the PROMISE is
+ * what makes it one open; sharing the client afterwards is what makes it one session.
+ */
+const delegateOpening = new Map<string, Promise<WorkspaceClient>>();
 
 async function delegateClient(address: string): Promise<WorkspaceClient> {
   const live = delegateClients.get(address);
   if (live) return live;
+  const opening = delegateOpening.get(address);
+  if (opening) return opening;
+  // ★ WHICH SIGN-IN ASKED. A delegate's session is opened through the main process under the
+  // delegate's OWN key, so the client itself is honest whoever is signed in here — but caching it
+  // past a sign-out would hand the next identity a session this window opened for the last one,
+  // out of a map `signOut` has already emptied. The caller that asked still gets what it asked
+  // for; only the CACHING is conditional.
+  const e = accounts.asOf();
   const c = new WorkspaceClient(S.relay, new ConnectorTransport({
     async listTools() {
       // One live call, which is also the check that this machine can actually drive this
@@ -2508,8 +3674,14 @@ async function delegateClient(address: string): Promise<WorkspaceClient> {
       return { payload: r.payload };
     },
   }));
-  await c.connect();
-  delegateClients.set(address, c);
+  const run = (async (): Promise<WorkspaceClient> => { await c.connect(); return c; })();
+  delegateOpening.set(address, run);
+  try {
+    await run;
+  } finally {
+    delegateOpening.delete(address);
+  }
+  if (accounts.sameSubject(e)) delegateClients.set(address, c);
   return c;
 }
 
@@ -2592,7 +3764,65 @@ async function post(as?: {
   const send = btn('send');
   send.disabled = true;
   ta.disabled = true;                     // locked, not emptied, until it is confirmed readable
+  /**
+   * ★ WHICH WORKSPACE THIS POST IS FOR. Everything after the first await here — the composer, the
+   * result panel, `S.ask`, the agent's phase — belongs to the channel that was on screen when Send
+   * was pressed, and this function awaits a delegate sign-in, a write and up to 34 readback polls
+   * (~24 s) before it stops touching them.
+   */
+  const e = ws.asOf();
   const seat = S.seats.find((m) => m.seated && m.pod === S.viewer?.podName && m.stream);
+  /**
+   * ★★ THE FALLBACK IS FOR SOMEBODY WITH NO SEAT, NOT FOR A SEAT THIS FOLD COULD NOT READ.
+   *
+   * `S.streamIri` is the name a WRITE would use, composed from the pod and the workspace; a
+   * member's acceptance may name a different one, and for a member seated under the older
+   * unqualified name it does. So `??` firing on an UNESTABLISHED row sends the entry to the
+   * composed name instead of the one their own acceptance declares — a second log beside the one
+   * holding their history, started by a read that failed rather than by anything they did.
+   *
+   * ★★ AND IT IS ASKED ABOUT THE READER, NOT ABOUT THE FOLD — WHICH IS THE DISTINCTION THIS
+   * LINE GOT WRONG AND THIS COMMENT USED TO DENY. It read `seatNotEstablished`, whose last arm
+   * answers "not established" for EVERY pod whenever an unread grant's IRI carries no pod at all,
+   * and it claimed beside itself that "a row that is genuinely absent still falls through: that
+   * is the ordinary first-post case this fallback exists for". It did not. Measured with a
+   * control differing in one document: a viewer on a pod no grant names posted normally, and with
+   * one unread `<workspace>-grant-` on the convener's pod the same viewer's first post was
+   * refused — a stranger's malformed grant revoking an unrelated person's ability to say
+   * anything, under a refusal pointing at a roster row whose `clears` is `'read-again'` — a
+   * sentence with no control beside it. The defect is not that the named act is impossible;
+   * re-reading is something any reader can do. It is that the sentence was about THEM, and
+   * nothing this fold failed to read was about them at all.
+   *
+   * ★ SO: "this fold could not establish YOUR standing" holds a write back; "this fold could not
+   * read SOMEBODY's grant, and it might not be yours" does not, for a reader with no row at all.
+   * `standingNotEstablished` is exactly that narrower question. A SEATED reader is shielded by
+   * `!seat` below; a reader whose OWN grant or acceptance would not read has a row here —
+   * `unreadHere` places one for every skipped read — and is still held back, which is the case
+   * this refusal was written for and the one it keeps.
+   *
+   * ★ ITS OTHER ARM COVERS CAP TRUNCATION, AND SAYING MORE THAN THAT WAS WRONG. An unread grant
+   * naming a pod with no row is what a grant past the READ CAP looks like, and THAT one cannot be
+   * the viewer's own: `loadRoster` asks `foldRoster` with `prefer: [S.viewer.podName]`, which moves
+   * their grant to the front of the read. An earlier draft of this comment concluded from that
+   * that the arm answers about a state this caller never sees. It does see it: `foldRoster`'s
+   * ABSENT-head exit places an ANSWERED row for the viewer's own pod — which the row loop skips,
+   * because 'out' is an answer — beside an unread row whose IRI names that same pod, and the arm
+   * then fires. That is right, not a leak: a grant of theirs with no current head genuinely leaves
+   * their standing unestablished, and holding the write back is the point.
+   */
+  const unestablished = S.viewer ? standingNotEstablished(S.viewer.podName) : null;
+  if (unestablished && !seat) {
+    reportTurn('Refused', 'this fold could not establish your own seat, so which document your entries go in is not known and nothing was written.');
+    // Quoted from the fold rather than paraphrased, so this panel and the roster row above it say
+    // the same words about the same read.
+    say('postresult', 'refused', 'Your own seat was not established by the last roster read',
+      'The last fold reported: ' + unestablished
+      + ' Your acceptance may name a log this client would not have written to — posting to the composed name instead would '
+      + 'start a second log beside the one holding your history. The roster panel above says what would clear it.');
+    send.disabled = false; ta.disabled = false;
+    return;
+  }
   const streamIri = seat?.stream ?? S.streamIri;
   if (!streamIri) { reportTurn('Refused', 'This client could not resolve which document entries go in, so nothing was written.'); say('postresult', 'refused', 'No log to write to', 'This client could not resolve which document your entries go in.'); send.disabled = false; ta.disabled = false; return; }
   // ★ NO WEBID, NO ENTRY. Every entry now states who composed it, and for a person's own post
@@ -2607,7 +3837,7 @@ async function post(as?: {
   }
   const key = streamKey(S.viewer.podName, streamIri);
   if (!S.streams.has(key)) {
-    S.streams.set(key, { pod: S.viewer.podName, graph: streamIri, isYou: true, seat: seat ?? null, rows: [], error: null, loaded: false, stale: null, watchFailed: null });
+    S.streams.set(key, { pod: S.viewer.podName, graph: streamIri, isYou: true, seat: seat ?? null, rows: [], error: null, loaded: false, stale: null, watchFailed: null, seatUnread: null });
   }
   say('postresult', 'pending', 'Deriving your position in your own log…',
     'Reading the current head of ' + streamIri.replace(/^https:\/\//, '') + ' so this entry can declare the one before it.');
@@ -2615,24 +3845,41 @@ async function post(as?: {
   let writer = S.client;
   if (as) {
     try { writer = await delegateClient(as.address); }
-    catch (e) {
+    catch (err) {
       reportTurn('Refused', 'This delegate\'s own session could not be opened, so nothing was written: '
-        + ((e as Error)?.message ?? String(e)));
-      clear($('postresult')).appendChild(errBox(e, 'Your delegate\'s own session could not be opened, so nothing was '
+        + ((err as Error)?.message ?? String(err)));
+      // The panel and the composer belong to the channel on screen now.
+      if (!ws.sameSubject(e)) return;
+      clear($('postresult')).appendChild(errBox(err, 'Your delegate\'s own session could not be opened, so nothing was '
         + 'written. This app holds its key or it does not — and a delegate\'s entry is written under the delegate\'s '
         + 'own session, not yours, so it is not falling back to writing this as you.'));
       send.disabled = !!S.writeBlocked; ta.disabled = !!S.writeBlocked; renderAgent();
       return;
     }
+    if (!ws.sameSubject(e)) return;
   }
   /**
    * ★★ WHO THIS IS ENCRYPTED TO, WHEN IT IS ENCRYPTED AT ALL. Entries live on their author's pod
    * and seal to that pod's own agents unless the other members are named — so without this a
    * private channel is one conversation per person, each invisible to everybody else, with the
-   * writing side looking completely normal. `recipientsFor` refuses rather than guesses when the
-   * roster is partial, and a refusal here costs a message where a guess costs the record.
+   * writing side looking completely normal.
+   *
+   * ★★ AND AN ENTRY NO LONGER REFUSES OVER A PARTIAL ROSTER, WHICH THIS COMMENT USED TO SAY IT
+   * DID. `entry.ts` publishes with `auto_supersede_prior: false`, so an entry replaces no
+   * recipient set and cannot evict anybody; the worst an incomplete roster costs here is one
+   * message a missing member cannot read, against a channel-wide refusal that took the whole
+   * workspace read-only. The refusal that remains is about SEALING — a member of the envelope
+   * whose key could not be READ, while the workspace would otherwise have sealed end to end —
+   * and it is retryable by re-folding.
    */
-  const audience = recipientsFor(S.record?.visibility, S.fold);
+  /**
+   * ★ WHO THIS ENTRY IS ADDRESSED TO, FIXED HERE AND READ FROM HERE AFTERWARDS. The receipt below
+   * used to read `S.ask` again, ~24 s of readback later, and print whatever it then held — so a
+   * person who chose a different addressee while the write was in flight was shown a claim about
+   * the signed region that the signed region does not make.
+   */
+  const addressed = S.ask;
+  const audience = recipientsFor('entry', S.record?.visibility, S.fold);
   if (!audience.ok) {
     reportTurn('Refused', audience.why);
     clear($('postresult')).appendChild(errBox(new Error(audience.why), 'Nothing was written.'));
@@ -2651,10 +3898,17 @@ async function post(as?: {
      * unsealed history stays unsealed, and a member whose acceptance carries no key can only be
      * reached that way.
      *
-     * ★ `keysMissing` DECIDES, NOT "do we have any keys". Sealing to the members who happen to
-     * have published one locks out the rest permanently and silently, so `recipientsFromRoster`
-     * hands back an EMPTY key list the moment anybody is missing — and then this does not seal at
+     * ★ THE PLAN DECIDES, NOT "do we have any keys". Sealing to the members who happen to have
+     * published one locks out the rest permanently and silently, so the plan hands back an EMPTY
+     * key list the moment anybody in the envelope is missing one — and then this does not seal at
      * all, rather than sealing to a subset.
+     *
+     * ★★ AND AN EMPTY LIST IS NOT SELF-EXPLANATORY, WHICH IS WHY `audience.sealing` IS RENDERED
+     * BELOW. `[]` is the same value for "this workspace is public and seals nothing" and for "seal
+     * to nobody and let the relay read it", and reading it alone is how one member's transient
+     * 502 turned end-to-end sealing off for a whole workspace with nothing said on either side.
+     * `recipientsFor` refuses that case outright now; what reaches here is the permanent one, and
+     * it is stated.
      */
     ...(sealerFor(audience.keys)),
     /**
@@ -2678,13 +3932,24 @@ async function post(as?: {
     // authorship are different axes: a person may address another person's agent, and so may a
     // delegate. Restricting this to the human's own Post would have made the chip above the box
     // lie the moment a delegate's draft was in it.
-    ...(S.ask ? { addressedTo: [S.ask.agentId] } : {}),
+    ...(addressed ? { addressedTo: [addressed.agentId] } : {}),
     entryShape: S.record?.entryShape ?? null,
     onAttempt: (n) => {
       if (n > 1) say('postresult', 'pending', 'Someone appended while you were typing — re-deriving',
         '412 precondition_failed. Re-reading the head and trying once more, which is the right move for a log.');
     },
   });
+  /**
+   * ★ THE WINDOW MOVED WHILE THE WRITE WAS IN FLIGHT. What happened to the entry is a fact and it
+   * is still recorded — the turn log is on the pod and is not about this window — but every panel
+   * below belongs to the channel that is on screen NOW, and the composer this would re-enable and
+   * empty is a different one holding somebody's unsent sentence.
+   */
+  if (!ws.sameSubject(e)) {
+    reportTurn(out.kind === 'accepted' ? 'Posted' : 'Refused',
+      'the window moved to another workspace while this write was in flight, so its outcome was not reported on screen');
+    return;
+  }
   // Every early return re-enables the composer to whatever the delegation check decided, never
   // to plain `false`: a viewer whose scope forbids writing must not be handed it back. And never
   // past `renderAgent`, which is the one place that decides whether a delegate's unedited draft
@@ -2746,6 +4011,13 @@ async function post(as?: {
    * written and its recipients are already sealed into it, so the only thing left is to say who
    * will never be able to read it, in time for the next message to wait for them.
    */
+  /**
+   * ★★ SAID ON THE RECEIPT, NOT ONLY ON THE ROSTER. The roster banner is drawn per fold and this
+   * is drawn per WRITE, and the two can differ: a re-fold between the render and the Send changes
+   * which path this particular entry took, and its recipients are fixed in it for ever.
+   */
+  const sealNote = sealingNote(audience.sealing);
+  if (sealNote) { p.className = 'panel pending'; p.appendChild(sealNote); }
   if (out.unreached.length > 0) {
     p.className = 'panel pending';
     p.appendChild(el('div', 'note', 'This entry is encrypted, and ' + out.unreached.length + ' member'
@@ -2764,8 +4036,8 @@ async function post(as?: {
     ['wsp:seq', String(out.seq)],
     // Stated as the triple, like every other line here. "Addressed to Scribe" is what the UI did;
     // `iep:addressedTo <did>` is what the record now says, and only the second one is checkable.
-    ['addressed to', S.ask
-      ? 'iep:addressedTo ' + S.ask.agentId + ' — inside the signed region, so whoever relays this cannot change who it '
+    ['addressed to', addressed
+      ? 'iep:addressedTo ' + addressed.agentId + ' — inside the signed region, so whoever relays this cannot change who it '
         + 'is for. Every other agent reading this channel is expected to leave it alone.'
       : 'nobody — this entry names no iep:addressedTo, so it is open to any agent that reads the channel'],
     ['descriptor', out.descriptorUrl ?? 'not reported by the response'],
@@ -2806,10 +4078,16 @@ async function post(as?: {
   let readErr: unknown = null;
   for (let i = 0; i < 34 && !landed; i++) {
     await new Promise((r) => { setTimeout(r, 700); });
-    const got = await readOnce(key);
+    // ★ UP TO ~24 SECONDS OF POLLING, AND EVERYTHING PAST IT WRITES SHARED STATE: the composer is
+    // emptied, the pending addressee is consumed and a presence read is published about it. A
+    // workspace switch inside that window used to clear the NEW channel's composer and send this
+    // channel's notice.
+    if (!ws.sameSubject(e)) return;
+    const got = await readOnce(key, e);
     if (got.rows?.some((r) => r.url === out.descriptorUrl)) { landed = true; break; }
     if (got.error) readErr = got.error;
   }
+  if (!ws.sameSubject(e)) return;
   if (landed) {
     ta.value = '';
     // The delegate's claim on the composer ends with the text it wrote. Leaving it set would let
@@ -2862,15 +4140,16 @@ async function post(as?: {
        * verified live lease, so every other answer — including this one — sends.
        */
       const presence = await readPresence(agentPort(S.client), { relay: S.relay, agentId: target.agentId })
-        .catch((e): Presence => ({
+        .catch((err): Presence => ({
           state: 'unreadable', agentId: target.agentId, pod: target.agentPod ?? '', iri: '',
-          why: 'the read of this agent\'s presence lease failed: ' + errorCopy(e).t,
+          why: 'the read of this agent\'s presence lease failed: ' + errorCopy(err).t,
         }));
       const notice = await notifyAsk(S.client, {
         agentId: target.agentId, agentPod: target.agentPod, presence,
         about: out.descriptorUrl,
         summary: 'A request addressed to ' + (target.name ?? target.agentId) + ' was published in this workspace',
       });
+      if (!ws.sameSubject(e)) return;
       p.appendChild(kvPair([
         ['its host', presenceLine(presence)],
         ['notice', notice.attempted
@@ -2930,17 +4209,28 @@ function armStale(): void {
       : 'Re-sends ' + shortCid(S.canvas.loaded) + ' — the revision this panel first loaded — as if_match, which the head has since moved past.';
 }
 
-/** `adopt` — whether the served text replaces what is in the editor. False after a save. */
-async function loadCanvas(adopt: boolean): Promise<void> {
+/**
+ * `adopt` — whether the served text replaces what is in the editor. False after a save.
+ *
+ * ★ `e` IS THE CALLER'S STAMP AND IS NEVER MINTED HERE. `openWorkspace` fires this unawaited and
+ * goes on to fold the roster; a `begin()` of its own would supersede that fold, and the fold is
+ * what decides who every private write is encrypted to. Every write below — fifteen of them, to
+ * `S.canvas`, to two buttons and to the editor itself — sits after one await and is guarded by
+ * the one check under it.
+ */
+async function loadCanvas(adopt: boolean, e: Epoch): Promise<void> {
   if (!S.client || !S.viewer || !S.canvas.iri) return;
   const save = btn('save');
   let read: CanvasRead;
   try { read = await readCanvas(S.client, S.canvas.iri, S.viewer.podName); }
-  catch (e) {
+  catch (err) {
+    // The error box and the two disabled buttons are as much a shared write as the editor is.
+    if (!ws.sameSubject(e)) return;
     save.disabled = true; btn('stalesave').disabled = true;
-    clear($('canvasresult')).appendChild(errBox(e, 'The canvas could not be read from your pod, so no write is offered against it.', () => { void loadCanvas(adopt); }));
+    clear($('canvasresult')).appendChild(errBox(err, 'The canvas could not be read from your pod, so no write is offered against it.', () => { void loadCanvas(adopt, ws.asOf()); }));
     return;
   }
+  if (!ws.sameSubject(e)) return;
   if (read.kind === 'forked') {
     S.canvas.head = null;
     renderRev(read.heads.length + ' unresolved heads');
@@ -2964,6 +4254,28 @@ async function loadCanvas(adopt: boolean): Promise<void> {
   }
   if (read.kind === 'absent') {
     S.canvas.exists = false; S.canvas.head = null;
+    /**
+     * ★★ "NOTHING IS HERE" IS A READ OF ONE NAME, AND THIS DOCUMENT HAS TWO.
+     *
+     * `readCanvas` reads the name `resolveMemberDoc` settled on, and reports absence of THAT name
+     * perfectly well. What it cannot see is the other candidate: when the probe of the older
+     * unqualified name did not complete, a canvas may be published there and unread, and Create
+     * would publish a second document beside it — permanently, since nothing merges two graphs.
+     * The absence is still reported; only the offer to create on the strength of it is withheld.
+     */
+    if (S.canvas.unsettled) {
+      renderRev('not established');
+      area('canvas').placeholder = 'Nothing is published at the name this read resolved, and the other name for this document was not read.';
+      save.disabled = true;
+      save.title = 'Disabled: ' + S.canvas.unsettled + ' — so whether a canvas already exists under the older name for '
+        + 'this workspace is not established, and creating one here would publish a second document beside it.';
+      btn('stalesave').disabled = true;
+      say('canvasresult', 'pending', 'Nothing is published at this name, and the other name was not read',
+        read.message + ' The probe of the older unqualified name did not complete: ' + S.canvas.unsettled
+        + ' Creating here would publish a second document beside whatever is under that name, and nothing merges two '
+        + 'graphs afterwards. Reopen the workspace to try that read again.');
+      return;
+    }
     renderRev('none yet — Create makes the first one');
     area('canvas').placeholder = 'Nothing here yet. Type, then press Create — that publishes this text to your pod as a public graph anyone can read.';
     save.textContent = 'Create on your pod';
@@ -3012,10 +4324,16 @@ async function doSave(useStale: boolean): Promise<void> {
   if (!S.client || !S.viewer || !S.canvas.iri || !S.workspace || !S.slug) return;
   const b = useStale ? btn('stalesave') : btn('save');
   b.disabled = true;
+  // Which workspace's canvas this save is about — see the counters. Everything after the write
+  // paints panels and re-enables controls that belong to whatever is on screen when it lands.
+  const e = ws.asOf();
   const ifMatch = useStale ? S.canvas.loaded : S.canvas.head;
   // See the entry post: the canvas is one document everybody supersedes in turn, so saving it
   // sealed to yourself hands the next member a head they cannot read.
-  const canvasAudience = recipientsFor(S.record?.visibility, S.fold);
+  // ★ `'canvas'` — `canvas.ts` DOES supersede, so a member left out of one revision cannot read
+  // the document until somebody saves again; unlike a re-seal it retires no membership record, so
+  // the next save recomputes the audience and lets them back in.
+  const canvasAudience = recipientsFor('canvas', S.record?.visibility, S.fold);
   if (!canvasAudience.ok) {
     clear($('canvasresult')).appendChild(errBox(new Error(canvasAudience.why), 'Nothing was written.'));
     b.disabled = !!S.writeBlocked;
@@ -3028,10 +4346,13 @@ async function doSave(useStale: boolean): Promise<void> {
     // the entry post above. A plaintext canvas in a private workspace is the same hole.
     visibility: canvasAudience.visibility,
     ...(canvasAudience.shareWith ? { shareWith: canvasAudience.shareWith } : {}),
-    // Sealed here when every member has published a key — see `sealerFor`.
+    // Sealed here when every member has published a key — see `sealerFor`, and `sealingNote` for
+    // what is said when it is not.
     ...(sealerFor(canvasAudience.keys)),
   });
+  if (!ws.sameSubject(e)) return;
   const reopen = (): void => { b.disabled = !!S.writeBlocked; };
+  const canvasSealNote = sealingNote(canvasAudience.sealing);
   if (out.kind === 'error') {
     clear($('canvasresult')).appendChild(errBox(out.error, out.relayAnswered
       ? 'The relay answered and reported this failure — the message above is its own. Re-read the document before saving again.'
@@ -3056,7 +4377,7 @@ async function doSave(useStale: boolean): Promise<void> {
     mf.title = 'Follows the retryHint exactly: get_current_head { urn, pod_name }, then resend with the returned cid.';
     mf.addEventListener('click', () => { void doMerge(); });
     const disc = el('button', 'sm', 'Discard mine, reload theirs') as HTMLButtonElement;
-    disc.addEventListener('click', () => { S.canvas.loaded = null; clear($('canvasresult')); void loadCanvas(true); });
+    disc.addEventListener('click', () => { S.canvas.loaded = null; clear($('canvasresult')); void loadCanvas(true, ws.asOf()); });
     row.appendChild(mf); row.appendChild(disc);
     p.appendChild(row);
     reopen(); return;
@@ -3109,11 +4430,39 @@ async function doSave(useStale: boolean): Promise<void> {
     h4.textContent = 'Accepted, but not yet readable';
     p.appendChild(el('div', 'note', 'The relay took the write and it has not become the readable head within the wait. It may still land; this panel will not call it saved on that basis.'));
   }
-  await loadCanvas(false);
+  // ★ THE MODE THIS PARTICULAR SAVE WENT OUT UNDER, on the panel that reports it. The roster
+  // banner is per fold; a revision's recipients are fixed in it for ever.
+  if (canvasSealNote) { p.className = 'panel pending'; p.appendChild(canvasSealNote); }
+  await loadCanvas(false, e);
+  if (!ws.sameSubject(e)) return;
   if (keep) S.canvas.loaded = keep;
   armStale();
   renderRev();
   reopen();
+}
+
+/**
+ * The sentence a write owes its author when it is NOT end-to-end encrypted — or null when it is.
+ *
+ * ★★ `keys.length === 0` IS THE SAME VALUE FOR TWO OPPOSITE FACTS, which is why this branches on
+ * the mode instead. It is "this workspace is public and seals nothing" AND "this is private and
+ * the relay will be able to read it", and `sealerFor([])` cannot tell them apart — which is how
+ * one member's transient 502 turned end-to-end sealing off for a whole workspace with nothing said
+ * on either side. That case is refused outright now; what reaches here is the permanent one, where
+ * a member of the envelope publishes no key at all and the relay path is the only path left.
+ *
+ * ★ THE PACKAGE'S OWN SENTENCE IS QUOTED, NOT PARAPHRASED. Three surfaces in this shell report
+ * this state and a fourth is the Discord conduit; a local rewording is how they come to describe
+ * one arrangement four ways.
+ */
+function sealingNote(sealing: Sealing): HTMLElement | null {
+  if (sealing.mode !== 'escrow') return null;
+  const n = el('div', 'note');
+  const b = el('b', undefined, 'This write is not end-to-end encrypted. ');
+  b.style.color = 'var(--refused)';
+  n.appendChild(b);
+  n.appendChild(document.createTextNode(sealing.why));
+  return n;
 }
 
 /**
@@ -3136,6 +4485,8 @@ function sealerFor(keys: readonly string[]): { seal?: (payloadTurtle: string, gr
 
 async function doMerge(): Promise<void> {
   if (!S.client || !S.viewer || !S.canvas.iri || !S.workspace || !S.slug) return;
+  // Same stamp and the same reason as `doSave`.
+  const e = ws.asOf();
   say('canvasresult', 'pending', 'Following the retryHint', 'get_current_head { urn, pod_name } — one read, then a resend with the cid it returns.');
   /**
    * ★★ A MERGE IS A SAVE AND CARRIES THE SAME POLICY. This was the one canvas write that did not:
@@ -3144,7 +4495,8 @@ async function doMerge(): Promise<void> {
    * "Merge forward" is offered after any 412 — the ordinary case for a shared document — so it was
    * one click away at all times, and there is no unpublish.
    */
-  const mergeAudience = recipientsFor(S.record?.visibility, S.fold);
+  // A merge IS a save, so it asks the same verb. See `doSave`.
+  const mergeAudience = recipientsFor('canvas', S.record?.visibility, S.fold);
   if (!mergeAudience.ok) {
     clear($('canvasresult')).appendChild(errBox(new Error(mergeAudience.why), 'Nothing was written.'));
     return;
@@ -3157,6 +4509,7 @@ async function doMerge(): Promise<void> {
     // Sealed here when every member has published a key — see `sealerFor`.
     ...(sealerFor(mergeAudience.keys)),
   });
+  if (!ws.sameSubject(e)) return;
   if (out.kind === 'no-head') { say('canvasresult', 'refused', 'No single head to merge onto', out.why); return; }
   S.canvas.head = out.onto;
   S.canvas.loaded = out.onto;
@@ -3177,7 +4530,10 @@ async function doMerge(): Promise<void> {
     p.appendChild(el('div', 'note', 'The resend ended as "' + s.kind + '"'
       + (s.kind === 'accepted' ? ' with the head settling as "' + s.settled.kind + '"' : '') + '.'));
   }
-  await loadCanvas(false);
+  const mergeSealNote = sealingNote(mergeAudience.sealing);
+  if (mergeSealNote) { p.className = 'panel pending'; p.appendChild(mergeSealNote); }
+  await loadCanvas(false, e);
+  if (!ws.sameSubject(e)) return;
   armStale();
   renderRev();
 }
@@ -3427,13 +4783,26 @@ async function revokeDiscord(): Promise<void> {
  * author.
  */
 async function loadDelegates(): Promise<void> {
+  // What this machine holds and what the pod authorises are both facts about the SIGNED-IN
+  // identity, and `signOut` clears all three fields below. `asOf` for the reason `loadInvites`
+  // gives: publishing or revoking a delegation re-issues this same read, and those must not
+  // cancel each other.
+  const acct = accounts.asOf();
   try {
     const got = await window.interego.delegateList();
+    if (!accounts.sameSubject(acct)) return;
     S.hosted = got.delegates;
     S.hostedRead = true;
     S.hostedError = null;
-  } catch (e) { S.hostedRead = true; S.hostedError = e; }
-  if (S.client && S.viewer) S.myDelegates = await readDelegates(delegatePort(S.client), S.viewer.podName);
+  } catch (e) {
+    if (!accounts.sameSubject(acct)) return;
+    S.hostedRead = true; S.hostedError = e;
+  }
+  if (S.client && S.viewer) {
+    const mine = await readDelegates(delegatePort(S.client), S.viewer.podName);
+    if (!accounts.sameSubject(acct)) return;
+    S.myDelegates = mine;
+  }
   renderDelegates();
   renderAgent();
   renderSetup();
@@ -3908,9 +5277,22 @@ function renderAgent(): void {
   if (rosterRead && !seated) {
     btn('agenttoggle').disabled = true;
     clear($('agentstate')).appendChild(document.createTextNode('Unavailable'));
-    clear($('agentwhy')).appendChild(document.createTextNode(
-      'You are not seated in this workspace, so there is no log of yours for an agent to write to. '
-      + 'The roster above says which half is missing.'));
+    /**
+     * ★ "YOU ARE NOT SEATED" IS A FINDING, AND THIS DREW IT FROM ROWS THAT MAY BE UNSEATED ONLY
+     * BECAUSE A READ FAILED. The agent is withheld either way — which is right, since nothing has
+     * established a log for it to write to — but the sentence must not tell somebody they are out
+     * of a room they are in. Same judgement as the roster panel, which is the PER-PERSON one: it
+     * answers only from evidence naming this pod, never from the drop-side arm that shields every
+     * pod at once when an unread grant's IRI names nobody. The drop loops keep that arm, because
+     * refusing to drop on a shortfall is conservative; saying it about a person is a claim.
+     */
+    const unsettled = S.viewer ? standingNotEstablished(S.viewer.podName) : null;
+    clear($('agentwhy')).appendChild(document.createTextNode(unsettled
+      ? 'Whether you are seated here was NOT established by the last roster read: ' + unsettled
+        + '. Nothing is offered to an agent on that basis — not because you are out, but because there is no '
+        + 'established log of yours for it to write to. The roster above says what would settle it.'
+      : 'You are not seated in this workspace, so there is no log of yours for an agent to write to. '
+        + 'The roster above says which half is missing.'));
     return;
   }
   const provider = usableProvider();
@@ -4218,6 +5600,16 @@ function startTurnWatch(title: string, preamble: string): TurnWatch {
 
 async function agentConsider(): Promise<void> {
   if (!A.on || A.busy || !S.client || !S.viewer || !S.workspace || !S.slug) return;
+  /**
+   * ★★ A BOOLEAN IS NOT A GENERATION, AND `!A.on` WAS THE ONLY POST-TURN CHECK. A turn takes
+   * about a minute; `teardownWorkspace` switches the agent off, so `A.on` catches a switch that
+   * has already happened — but the person can switch the agent back ON in the new channel inside
+   * that minute, and then every write below lands: the draft goes into the NEW channel's composer,
+   * `A.answered` records an entry from the old one, and with auto-post ticked the old channel's
+   * discussion is published as a permanent entry in the new one. The `channel`, `channelIri` and
+   * `channelPrivate` fields of every outcome published below are read post-await too.
+   */
+  const e = ws.asOf();
   const provider = usableProvider();
   if (!provider) { A.why = 'no model available'; renderAgent(); return; }
   const speaker = speakingDelegate();
@@ -4292,9 +5684,23 @@ async function agentConsider(): Promise<void> {
         askedBy: decision.answering.pod,
         channel: S.slug ?? S.workspace ?? 'this workspace',
       });
-  } catch (e) {
-    A.busy = false; A.phase = 'watching';
-    clear($('agentresult')).appendChild(errBox(e, 'Your delegate could not be run, so nothing was drafted and nothing was written.'));
+  } catch (err) {
+    /**
+     * ★★ THE GUARD COMES FIRST HERE BECAUSE `A.busy` IS A LOCK AND NOT A DISPLAY FIELD.
+     *
+     * Everything else this function writes after a stale turn returns is cosmetic — a phase, a
+     * panel — and the guard exists to stop those being drawn over the channel the window has moved
+     * to. `A.busy` is different in kind: it is the mutex `agentConsider` and `wake` both test on
+     * entry, so a turn belonging to a workspace nobody is looking at was clearing the lock a LIVE
+     * turn in the current workspace is holding, and a second turn could start on top of it. It is
+     * cleared for this subject only. Nothing is stranded by that: `teardownWorkspace` sets
+     * `A.busy = false` as it bumps the subject, so the workspace being left has already released
+     * it before this line is reached.
+     */
+    if (!ws.sameSubject(e)) return;
+    A.busy = false;
+    A.phase = 'watching';
+    clear($('agentresult')).appendChild(errBox(err, 'Your delegate could not be run, so nothing was drafted and nothing was written.'));
     renderAgent();
     return;
   } finally {
@@ -4304,6 +5710,15 @@ async function agentConsider(): Promise<void> {
     // was added for. `finally` runs before the catch's own `return` propagates, so both paths stop.
     watching.stop();
   }
+  /**
+   * ★ THE WORKSPACE MOVED WHILE IT WAS THINKING. Nothing below belongs to this channel any more,
+   * and the drafts log has already recorded that the turn ran — so the answer is dropped in
+   * silence rather than drawn over whatever is on screen now.
+   *
+   * ★★ AND `A.busy` IS RELEASED AFTER IT, NOT BEFORE — see the catch path above for why the mutex
+   * is the one field whose release must be inside the guard.
+   */
+  if (!ws.sameSubject(e)) return;
   A.busy = false;
   // Turned off while it was thinking. The answer is discarded rather than used: "off" has to mean
   // off from the moment it is pressed, not from the end of whatever was already running.
@@ -4508,6 +5923,10 @@ let readInboxAt: string | null = null;
 async function heartbeat(): Promise<void> {
   const speaker = speakingDelegate();
   if (!A.on || !speaker || !S.viewer) return;
+  // The entry guard above runs before two awaits and was never asked again. `A.presence` is drawn
+  // in the agent panel of whatever channel is open, and switching workspace switches the agent off
+  // — so a beat that lands afterwards reports a running host under a panel that says it is off.
+  const e = ws.asOf();
   try {
     // ★ THE DELEGATE'S OWN SESSION, AND THAT IS THE WHOLE OF WHY THE LEASE IS WORTH ANYTHING. A
     // lease published through the person's session would be the person saying their agent is up,
@@ -4521,14 +5940,16 @@ async function heartbeat(): Promise<void> {
       principal: S.viewer.webId || null,
       host: 'the Interego desktop app',
     });
+    if (!ws.sameSubject(e) || !A.on) return;
     A.presence = out.kind === 'published'
       ? { at: Date.now(), why: null }
       : { at: null, why: out.kind === 'refused' ? out.why : out.kind === 'unnameable' ? out.why : errorCopy((out as { error: unknown }).error).t };
-  } catch (e) {
+  } catch (err) {
     // ★ A FAILED PUBLISH IS REPORTED AND NOT RETRIED HARDER. The next beat is the retry, and until
     // one lands this agent simply reads as not-running to everybody else — which is the correct
     // thing for it to read as, because nothing established that it is.
-    A.presence = { at: null, why: errorCopy(e).t };
+    if (!ws.sameSubject(e) || !A.on) return;
+    A.presence = { at: null, why: errorCopy(err).t };
   }
   renderAgent();
 }
@@ -4549,6 +5970,10 @@ async function heartbeat(): Promise<void> {
 async function wake(): Promise<void> {
   const speaker = speakingDelegate();
   if (!A.on || A.busy || !speaker || !S.workspace) return;
+  // ★ `admitSeatedIn` BELOW IS COMPOSED FROM `S.workspace` AND `S.seats` INSIDE THE LOOP, i.e.
+  // after one or more `verifyRequest` awaits — so a switch mid-loop would verify the rest of this
+  // inbox against the NEXT channel's roster and record the verdicts in its panel.
+  const e = ws.asOf();
   const verdicts: RequestVerdict[] = [];
   try {
     // ★ THE DELEGATE'S OWN SESSION, WHICH IS THE ONLY INBOX IT CAN READ. Measured: the relay
@@ -4560,8 +5985,10 @@ async function wake(): Promise<void> {
     const client = await delegateClient(speaker.address);
     const port = agentPort(client);
     const inbox = await readRequests(port);
+    if (!ws.sameSubject(e)) return;
     readInboxAt = inbox.inbox;
     for (const n of inbox.notices) {
+      if (!ws.sameSubject(e)) return;
       if (woken.has(n.about) || A.answered.has(n.about)) continue;
       verdicts.push(await verifyRequest(port, n, {
         heldAgentIds: [speaker.agentId],
@@ -4575,8 +6002,9 @@ async function wake(): Promise<void> {
         admits: admitSeatedIn({ workspace: S.workspace, seats: S.seats, port: delegatePort(client) }),
       }));
     }
-  } catch (e) {
-    A.wake = { at: Date.now(), why: 'the inbox could not be read (' + errorCopy(e).t + '), so whether anything is waiting is not established' };
+  } catch (err) {
+    if (!ws.sameSubject(e)) return;
+    A.wake = { at: Date.now(), why: 'the inbox could not be read (' + errorCopy(err).t + '), so whether anything is waiting is not established' };
     renderAgent();
     return;
   }
@@ -4599,7 +6027,10 @@ async function wake(): Promise<void> {
   // ★ THE CHANNEL IS WHAT IT ANSWERS FROM, so a fresh read comes first and the decision follows it.
   // `readOnce` ends in `loadBodies`, which is the one place `agentConsider` is called — so the
   // wake path reaches the SAME decision every other path reaches, with no second dispatcher.
-  if (ok.length) for (const key of [...S.streams.keys()]) await readOnce(key);
+  if (ok.length) for (const key of [...S.streams.keys()]) {
+    if (!ws.sameSubject(e)) return;
+    await readOnce(key, e);
+  }
 }
 
 /**

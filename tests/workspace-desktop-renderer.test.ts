@@ -42,6 +42,18 @@ import { delegateLabel } from '@interego/core/delegate';
 // itself could not notice the writer changing underneath it — and the writer is what decides
 // whether an entry says it was spoken for its delegator or on the agent's own account.
 import { capabilitiesIri, entryTurtle, presenceIri, type EntryAuthor } from '@interego/workspace-client';
+/**
+ * ★★ THE SEALER IS THE REAL ONE, AND A DOUBLE HERE WOULD HAVE VERIFIED NOTHING. `window.interego`
+ * is scripted because a jsdom document has no IPC channel — but what the main process does BEHIND
+ * that channel is `sealForRoster`, an ordinary importable package, and the invariant this shell is
+ * asked to hold is that a private write leaves here as ciphertext. A stub answering `{ok:true}`
+ * with a made-up envelope would pass whether the renderer sealed to the roster's keys, to a subset,
+ * or to nobody. With no `seal` scripted at all, forcing `sealerFor` to return `{}` for every key
+ * list — never seal, ever — was measured by an adversarial reviewer surviving this whole file at
+ * 164/164, because no case in it ever reached a workspace where every member had published a key.
+ */
+import { sealForRoster } from '@interego/workspace-client/sealer';
+import { encryptionKeyFor, openGraph } from '@interego/workspace-client/opener';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DESKTOP = join(ROOT, 'applications/shared-workspace/desktop');
@@ -49,6 +61,14 @@ const RELAY = 'https://relay.interego.xwisee.com';
 
 const POD_A = 'u-eth-8f3b8e939600';        // the convener, from the live run
 const POD_B = 'u-eth-e9dfa2a9e44f';        // the member, from the live run
+/**
+ * A THIRD pod, invented — the live run had two.
+ *
+ * It exists for the cases where somebody is added to a workspace that is already open, which
+ * neither of the two above can express: A convenes and B was seated before the window opened, so
+ * only a pod that starts outside the room can be let into one.
+ */
+const POD_C = 'u-eth-c0ffee5eafed';
 const WEBID = (p: string): string => 'https://identity.interego.xwisee.com/users/' + p + '/profile#me';
 const SLUG = 'drive-demo';
 const WS = RELAY + '/ns/' + POD_A + '/' + SLUG;
@@ -56,6 +76,7 @@ const SHAPE = RELAY + '/ns/' + POD_A + '/' + SLUG + '-shapes';
 const ROLES = RELAY + '/ns/' + POD_A + '/' + SLUG + '-roles';
 const GRANT_A = WS + '-grant-' + POD_A;
 const GRANT_B = WS + '-grant-' + POD_B;
+const GRANT_C = WS + '-grant-' + POD_C;
 const ACC = (pod: string): string => RELAY + '/ns/' + pod + '/' + POD_A + '--' + SLUG + '-acceptance';
 const STREAM = (pod: string): string => RELAY + '/ns/' + pod + '/' + POD_A + '--' + SLUG + '-stream';
 const CANVAS = (pod: string): string => RELAY + '/ns/' + pod + '/' + POD_A + '--' + SLUG + '-canvas';
@@ -212,6 +233,17 @@ const podOfDelegate = (did: string): string => did.slice(did.lastIndexOf('u-eth-
 const D1 = DELEGATE('111111111111');
 const D2 = DELEGATE('222222222222');
 const KEY = (n: string): string => '0x' + n.padEnd(40, '0');
+/**
+ * The encryption keypair the "main process" seals AS, and the members' own published halves.
+ *
+ * ★ DERIVED THROUGH THE SUBSTRATE'S OWN FUNCTION rather than spelled as base64 literals, for the
+ * reason `delegateLabel` is imported above: a fixture holding its own copy of a value cannot notice
+ * the derivation changing underneath it, and `sealForRoster` refuses a key it cannot decode — so a
+ * hand-written literal would fail as a fixture error rather than as the fact under test.
+ */
+const SEALER_PAIR = encryptionKeyFor('0x' + '11'.repeat(32));
+/** One member's PUBLIC half, as their own acceptance publishes it in `wsp:encryptionKey`. */
+const MEMBER_KEY = (pod: string): string => encryptionKeyFor('0x' + pod.slice(-2).repeat(32)).publicKey;
 /** One row as `get_pod_status` reports it. */
 const delegationRow = (agentId: string, label: string | null, scope = 'PublishOnly'): Record<string, unknown> =>
   ({ agentId, scope, label, validFrom: '2026-08-06T09:00:00.000Z' });
@@ -408,6 +440,15 @@ interface Opened {
   /** The account keyring the "main process" holds, and what the renderer did to it. */
   accounts: AccountScript;
   settle: () => Promise<void>;
+  /**
+   * Every seal the renderer asked the main process to perform, in order.
+   *
+   * ★ WHAT WAS ASKED, KEPT APART FROM WHAT WAS PUBLISHED. The recipient list handed to the
+   * sealer and the `share_with` handed to the relay are two different lists computed from one
+   * roster, and an entry sealed to a SUBSET of the people it names is the silent lockout this
+   * whole vertical is built to refuse — so a case has to be able to assert them separately.
+   */
+  seals: { graphIri: string; recipientKeys: readonly string[] }[];
   /** Push a session change the way the main process does, through the listener the shell installed. */
   pushSession: (s: Record<string, unknown>) => void;
   /**
@@ -529,6 +570,18 @@ async function open(opts: {
    * period changes. Only the wall-clock is short.
    */
   fastWatches?: boolean;
+  /**
+   * How long the scripted relay holds ONE call before answering it, in real milliseconds.
+   *
+   * ★ NOT A CONVENIENCE — IT IS THE ONLY WAY TO EXPRESS TWO FOLDS THAT OVERLAP. `foldRoster` is a
+   * sequential loop, and how long it takes depends on which grants it has to dereference: a
+   * revoked one short-circuits before the member's pod is read at all, so the fold that SEES a
+   * revocation is genuinely shorter than one that started before it. A harness in which every
+   * call answers instantly can only ever run folds one at a time, and the defect this exists for
+   * is entirely about which of two in-flight folds lands last. Node's clock, like `coldStartMs`
+   * above — the window's `setTimeout` is compressed and this must not be.
+   */
+  delay?: (name: string, input: Record<string, unknown>) => number;
 } = {}): Promise<Opened> {
   /**
    * ★ MUTABLE, BECAUSE SWITCHING IDENTITY IS THE FEATURE. Every scripted answer below reads this,
@@ -587,6 +640,8 @@ async function open(opts: {
     accounts.confirms.push(String(message ?? ''));
     return accounts.confirm;
   };
+  /** What the renderer asked to have sealed — see {@link Opened.seals}. */
+  const seals: { graphIri: string; recipientKeys: readonly string[] }[] = [];
   let sessionListener: ((x: unknown) => void) | null = null;
   let progressListener: ((x: unknown) => void) | null = null;
   /** A live session, announced through the listener the shell installed, as the main process does. */
@@ -674,8 +729,28 @@ async function open(opts: {
       if (opts.coldStartMs && s.calls.length === 0) {
         await new Promise((r) => { setTimeout(r, opts.coldStartMs); });
       }
+      const held = opts.delay?.(name, input) ?? 0;
+      if (held > 0) await new Promise((r) => { setTimeout(r, held); });
       const payload = tool(s, viewer, name, input);
       return { ok: true, payload };
+    },
+    /**
+     * ★★ THE SEAL, PERFORMED BY THE PACKAGE THE MAIN PROCESS PERFORMS IT WITH. `substrate:seal`
+     * checks the three states this harness cannot have (mid-switch, signed out, no pair) and then
+     * calls `sealForRoster` with the ACCOUNT's keypair — so that is what happens here, over the
+     * real recipient keys the roster published. The ciphertext this returns is what reaches
+     * `publish_context`, which is the only reason a case can assert that the words did not.
+     */
+    seal: async (req: { graphIri: string; payloadTurtle: string; recipientKeys: readonly string[] }) => {
+      seals.push({ graphIri: String(req?.graphIri ?? ''), recipientKeys: [...(req?.recipientKeys ?? [])] });
+      const out = sealForRoster({
+        graphIri: String(req?.graphIri ?? ''), payloadTurtle: String(req?.payloadTurtle ?? ''),
+        recipientKeys: [...(req?.recipientKeys ?? [])], sender: SEALER_PAIR,
+      });
+      return out.ok
+        ? { ok: true as const, graphContent: out.graphContent, contentDigest: out.contentDigest,
+            cleartextMirror: out.cleartextMirror, recipientCount: out.recipientCount }
+        : { ok: false as const, why: out.why };
     },
     sessionStatus: async () => ({ state: 'live', pod: viewer, method: 'wallet', expiresAt: null, renewable: true, why: null }),
     renewSession: async () => ({ ok: true, session: { state: 'live', pod: viewer, method: 'wallet', expiresAt: null, renewable: true, why: null } }),
@@ -753,7 +828,7 @@ async function open(opts: {
   };
   await settle();
   return {
-    doc: dom.window.document, win, s, agent, accounts, settle,
+    doc: dom.window.document, win, s, agent, accounts, settle, seals,
     pushSession: (next) => { sessionListener?.(next); },
     turnProgress: progressListener ? (p) => { progressListener?.(p); } : null,
   };
@@ -1042,6 +1117,369 @@ describe('the roster: two documents on two pods, and every non-seat carries its 
     expect(roster).toContain('revoked');
     expect(roster).toContain('revoking a grant cannot reach it');
   });
+});
+
+/**
+ * ★★ A SEAT IS TWO DOCUMENTS ON TWO PODS, AND THE WATCH ONLY READ ONE OF THEM.
+ *
+ * The roster watch reads the CONVENER's pod and fingerprints the grant graphs on it. That is the
+ * right place to notice a revocation — a revocation republishes the grant, which is there — and
+ * the wrong place to notice everything else, because `acceptGrant` publishes the acceptance on the
+ * MEMBER's own pod and touches nothing on the convener's. `foldRoster` seats nobody until it has
+ * resolved that acceptance, so the whole "somebody was added" half of what that watch's own header
+ * claimed to close was still open: the row went on reading "granted, but no acceptance published
+ * on their pod yet", and `recipientsFromRoster` builds `shareWith` from `seated` rows only, so
+ * every private entry written in between was sealed WITHOUT the new member — permanently, since an
+ * envelope's recipients are fixed when it is written.
+ *
+ * ★ AND THE FOLDED SET OF LOGS DID NOT MOVE EITHER, IN EITHER DIRECTION. `openStreams` ran once
+ * from `openWorkspace` and no re-fold ever revisited it, so a member seated afterwards had their
+ * log left out of the channel and a member REVOKED afterwards kept both their rendered messages
+ * and a live poll on their pod — which made the sentence the revoke handler prints ("the roster
+ * will now show the row as revoked and stop folding their log into this channel") false until the
+ * window was reopened.
+ *
+ * These drive the REAL poll, the same `pollingWatch` the transport uses, so the waits below are
+ * that loop's own cadence and not sleeps chosen to make an assertion pass.
+ */
+describe('a membership change made elsewhere reaches the roster AND the folded logs', () => {
+  /** One roster row's text, picked out by the pod it names — the panel as a whole says too much. */
+  const rowFor = (doc: Document, pod: string): string => [...doc.querySelectorAll('#roster .member')]
+    .map((n) => n.textContent ?? '')
+    .find((t) => t.indexOf(pod) >= 0) ?? '';
+  /** How many times this window has read one log. Zero is the assertion, twice over. */
+  const readsOf = (o: Opened, graph: string): number =>
+    o.s.calls.filter((c) => c.name === 'discover_context' && c.input['graph_iri'] === graph).length;
+  /**
+   * How many times the roster has been FOLDED.
+   *
+   * Counted on the head read of B's ACCEPTANCE, which lives on B's own pod. `foldRoster` asks for
+   * it exactly once per fold, and it is the one read here that nothing else in the shell makes:
+   * the grant reads are shared with `listWorkspaces`, which folds the lobby's grants at boot, and
+   * `discover_context` on the grant pod is the same request the grant watch polls with, by design.
+   */
+  const folds = (o: Opened): number =>
+    o.s.calls.filter((c) => c.name === 'get_current_head' && c.input['urn'] === ACC(POD_B)).length;
+  /** A grant on the CONVENER's pod, in the shape `scripted()` writes the other two. */
+  const grantOn = (a: Pod, pod: string, cid: string, n: number): void => {
+    const iri = WS + '-grant-' + pod;
+    a.put({ graph: iri, cid, url: DESC(POD_A, n),
+      content: trig(iri, '<' + iri + '> a wsp:MembershipGrant ; wsp:workspace <' + WS + '> ;\n'
+        + '  wsp:grantedTo <' + WEBID(pod) + '> ; wsp:role <' + ROLES + '#Contributor> .') });
+  };
+  /** The other half — written by the MEMBER, on the MEMBER's own pod, which is the whole point. */
+  const acceptanceOn = (p: Pod, pod: string, grantIri: string, grantCid: string, n: number): void => {
+    p.put({ graph: ACC(pod), cid: 'cid-acc-' + pod, url: DESC(pod, n),
+      authorship: { signedBy: 'did:ethr:0x' + pod.slice(-4), authorshipVerified: true },
+      content: trig(ACC(pod), '<' + ACC(pod) + '> a wsp:MembershipAcceptance ; wsp:workspace <' + WS + '> ;\n'
+        + '  wsp:member <' + WEBID(pod) + '> ; wsp:accepts <' + grantIri + '> ;\n'
+        + '  wsp:acceptsCid "' + grantCid + '" ; wsp:stream <' + STREAM(pod) + '> .') });
+  };
+  /** C, granted before the window opened and yet to accept: the ordinary "invited" state. */
+  const invitedC = (s: Scripted): void => {
+    s.pods.set(POD_C, new Pod(POD_C));
+    grantOn(s.pods.get(POD_A) as Pod, POD_C, 'cid-grant-c', 60);
+  };
+
+  it('★ notices an acceptance published on the MEMBER\'s own pod, which is not the pod the grants live on', async () => {
+    const o = await open({ fastWatches: true, setup: invitedC });
+    await signInAndSettle(o);
+    expect(rowFor(o.doc, POD_C), 'the fixture did not start with C granted and unseated')
+      .toContain('granted, but no acceptance published on their pod yet');
+
+    // C accepts, from C's own client, on C's own pod. Nothing on the convener's pod moves: the
+    // grant naming C was published before this window opened and is not touched by accepting it.
+    acceptanceOn(o.s.pods.get(POD_C) as Pod, POD_C, GRANT_C, 'cid-grant-c', 61);
+
+    await new Promise((r) => { setTimeout(r, 900); });
+    await o.settle();
+
+    // ★ THE LOAD-BEARING ASSERTION. Before this, the row stayed "invited" until the app was
+    // restarted, and every private entry written in between was sealed to a roster without them.
+    const row = rowFor(o.doc, POD_C);
+    expect(row, 'an acceptance published on the member\'s OWN pod never reached this window')
+      .not.toContain('granted, but no acceptance published on their pod yet');
+    expect(row, 'the row moved but nothing says what seated them').toMatch(/pins revision .*, which is the head/);
+  }, 20000);
+
+  it('★ folds the newly seated member\'s log into the channel, and does not merely list them', async () => {
+    const o = await open({ fastWatches: true, setup: (s) => {
+      invitedC(s);
+      // C has already written in their own log. Nobody could see it: they were not seated, so no
+      // watch was ever registered for it.
+      (s.pods.get(POD_C) as Pod).put({ graph: STREAM(POD_C), cid: 'cid-c-1', url: DESC(POD_C, 62),
+        content: trig(STREAM(POD_C), '<' + STREAM(POD_C) + '/e/0> a wsp:Entry ; dct:description "C speaking, after the window opened" .') });
+    } });
+    await signInAndSettle(o);
+    expect(text(o.doc, '#stream')).toContain('Composed from 2 append-only logs');
+    expect(readsOf(o, STREAM(POD_C)), 'the fixture already had C\'s log open').toBe(0);
+
+    acceptanceOn(o.s.pods.get(POD_C) as Pod, POD_C, GRANT_C, 'cid-grant-c', 61);
+
+    await new Promise((r) => { setTimeout(r, 900); });
+    await o.settle();
+
+    const stream = text(o.doc, '#stream');
+    expect(stream, 'the roster gained a member and the channel went on composing itself from the old set')
+      .toContain('Composed from 3 append-only logs');
+    expect(readsOf(o, STREAM(POD_C)), 'no watch was ever registered for the new member\'s log').toBeGreaterThan(0);
+    expect(stream, 'the new member\'s log was opened and what they wrote still is not on screen')
+      .toContain('C speaking, after the window opened');
+  }, 20000);
+
+  it('★ drops a revoked member\'s log from the channel AND stops polling their pod', async () => {
+    const o = await open({ fastWatches: true, setup: (s) => {
+      (s.pods.get(POD_B) as Pod).put({ graph: STREAM(POD_B), cid: 'cid-b-1', url: DESC(POD_B, 41),
+        content: trig(STREAM(POD_B), '<' + STREAM(POD_B) + '/e/0> a wsp:Entry ; dct:description "B, before the revocation" .') });
+    } });
+    await signInAndSettle(o);
+    expect(text(o.doc, '#stream')).toContain('Composed from 2 append-only logs');
+    expect(text(o.doc, '#stream')).toContain('B, before the revocation');
+
+    // The convener revokes B from their other client — the case the roster watch already covered.
+    const a = o.s.pods.get(POD_A) as Pod;
+    a.put({ graph: GRANT_B, cid: 'cid-grant-b2', url: DESC(POD_A, 99),
+      content: trig(GRANT_B, '<' + GRANT_B + '> a wsp:MembershipGrant ; wsp:workspace <' + WS + '> ;\n'
+        + '  wsp:grantedTo <' + WEBID(POD_B) + '> ; wsp:role <' + ROLES + '#Contributor> ; wsp:revoked true .') });
+
+    await new Promise((r) => { setTimeout(r, 900); });
+    await o.settle();
+    expect(rowFor(o.doc, POD_B), 'the revocation never reached the roster at all').toContain('revoked');
+
+    const stream = text(o.doc, '#stream');
+    expect(stream, 'the row said revoked while the channel went on folding their log in')
+      .toContain('Composed from 1 append-only logs');
+    expect(stream, 'their entries were still being rendered into a channel they are no longer in')
+      .not.toContain('B, before the revocation');
+
+    // ★ AND THE POLL ITSELF STOPPED, which dropping the entry from the render does NOT do: the
+    // watch answers into a callback that now returns immediately, and goes on reading their pod
+    // every few seconds for as long as the window is open. Sampled across a whole second of the
+    // compressed cadence, which is several ticks of it.
+    const at = readsOf(o, STREAM(POD_B));
+    // ★ AND THE ACCEPTANCE DOCUMENT TOO, which is a SECOND watch on the same pod and was
+    // asserted by nothing. A reviewer mutated its unsubscribe away and every test in this file
+    // stayed green while a revoked member's pod went on being polled for the life of the
+    // window; the same is true if the watch is re-registered rather than kept, since
+    // overwriting the map entry orphans the unsub that could have stopped it.
+    const atAcc = readsOf(o, ACC(POD_B));
+    await new Promise((r) => { setTimeout(r, 900); });
+    await o.settle();
+    expect(readsOf(o, STREAM(POD_B)), 'the revoked member\'s log is still being polled')
+      .toBe(at);
+    expect(readsOf(o, ACC(POD_B)), 'the revoked member\'s acceptance document is still being polled')
+      .toBe(atAcc);
+  }, 20000);
+
+  /** The relay's own "nothing describes this urn" answer, copied from the handler above. */
+  const miss = (pod: string, urn: string): Record<string, unknown> => ({
+    urn, podUrl: 'http://css.railway.internal:3456/' + pod + '/',
+    message: 'No descriptor on this pod describes the requested urn.',
+  });
+
+  it('★ a watch registered over a document the fold already read does not re-fold on its own first answer', async () => {
+    /**
+     * ★★ THE OTHER HALF OF THE PRIMING RULE, AND IT WAS PINNED BY NOTHING. `watchAcceptances`
+     * registers one watch per member acceptance right after the fold has read those same
+     * documents, and `pollingWatch` primes immediately — so treating that first answer as news
+     * would cost one extra fold per member on every open, and a fold is two round trips per grant
+     * plus an acceptance lookup per member. A reviewer mutated the rule and all 132 tests stayed
+     * green. Both seated members here (the convener and B) get a watch whose baseline the fold
+     * cannot state, so both take the `undefined` path; nothing about their pods has moved, and
+     * the roster must be folded exactly once.
+     */
+    const o = await open({ fastWatches: true });
+    await signInAndSettle(o);
+    await new Promise((r) => { setTimeout(r, 900); });
+    await o.settle();
+    expect(readsOf(o, ACC(POD_B)), 'the acceptance watch never polled at all, so this asserts nothing')
+      .toBeGreaterThan(1);
+    expect(folds(o), 'the watches re-folded the roster over documents the fold had just read')
+      .toBe(1);
+  }, 20000);
+
+  it('★ a re-fold keeps the acceptance watches it already holds, and does not stack a second poll per fold', async () => {
+    /**
+     * ★★ THE OTHER LOAD-BEARING HALF OF `watchAcceptances`, ALSO PINNED BY NOTHING UNTIL NOW. The
+     * function runs after EVERY fold, and every fold names the same documents. Registering them
+     * again rather than keeping them does not merely cost a read: `S.acceptWatches.set` overwrites,
+     * so the previous watch's unsubscribe is orphaned and can never be stopped by name again — the
+     * exact failure the keyed map exists to prevent, and the one that leaves a revoked member's pod
+     * being polled for the life of the window. A reviewer deleted the dedupe and the whole file
+     * stayed green while the poll rate on one member's pod went 4 -> 16 over three re-folds.
+     *
+     * Measured as a RATE over a fixed window rather than a total, because the total legitimately
+     * grows with time and only the number of pollers is under test.
+     */
+    const o = await open({ fastWatches: true, setup: (s) => { s.pods.set(POD_C, new Pod(POD_C)); } });
+    await signInAndSettle(o);
+    /** How many times B's acceptance document is read in a fixed window. */
+    const rate = async (): Promise<number> => {
+      const at = readsOf(o, ACC(POD_B));
+      await new Promise((r) => { setTimeout(r, 800); });
+      return readsOf(o, ACC(POD_B)) - at;
+    };
+    const before = await rate();
+    expect(before, 'B\'s acceptance is not being polled at all, so a rate proves nothing').toBeGreaterThan(0);
+
+    // Three re-folds, each caused by a grant on the convener's pod being republished. B's own
+    // documents do not move: their watch is one this fold already holds, three times over.
+    for (const cid of ['cid-grant-c1', 'cid-grant-c2', 'cid-grant-c3']) {
+      grantOn(o.s.pods.get(POD_A) as Pod, POD_C, cid, 70);
+      await new Promise((r) => { setTimeout(r, 600); });
+      await o.settle();
+    }
+    expect(folds(o), 'the fixture did not actually re-fold, so nothing was re-registered either')
+      .toBeGreaterThan(3);
+
+    const after = await rate();
+    expect(after, 'each re-fold stacked another poller on the same member\'s pod')
+      .toBeLessThan(before * 2);
+  }, 30000);
+
+  it('★ an acceptance published DURING the fold is not swallowed by the watch priming against itself', async () => {
+    const o = await open({ fastWatches: true, setup: (s) => {
+      invitedC(s);
+      /**
+       * ★★ THE ORDERING THE FIRST ATTEMPT AT THIS MISSED, AND IT IS THE LIKELIER ONE.
+       *
+       * The fold asks C's pod for their acceptance and is told there is none; C publishes it; the
+       * watch is registered afterwards and takes its own priming read. Everything between those
+       * two reads used to be swallowed, because the baseline the watch compared against was its
+       * OWN first answer rather than what the fold saw. The gap is a whole sequential fold wide,
+       * and it is exactly the window this feature exists for — `invite` re-folds the instant the
+       * invitee is notified, which is when they are most likely to accept.
+       *
+       * The override answers the fold's read with the miss and publishes immediately after, then
+       * removes itself so every later read sees the acceptance. Reproduced by an adversarial
+       * reviewer against the first fix: the watch polled the document nine times in two seconds,
+       * returned the acceptance every time, and the row never moved.
+       */
+      s.fail.set('get_current_head', (input) => {
+        if (String(input['urn']) !== ACC(POD_C)) return undefined;
+        s.fail.delete('get_current_head');
+        const answer = miss(POD_C, ACC(POD_C));
+        acceptanceOn(s.pods.get(POD_C) as Pod, POD_C, GRANT_C, 'cid-grant-c', 61);
+        return answer;
+      });
+    } });
+    await signInAndSettle(o);
+    await new Promise((r) => { setTimeout(r, 900); });
+    await o.settle();
+
+    // The watch WAS registered and WAS answering — this is not a case about a missing watch.
+    expect(readsOf(o, ACC(POD_C)), 'no watch ever polled the acceptance document at all').toBeGreaterThan(1);
+    const row = rowFor(o.doc, POD_C);
+    expect(row, 'the acceptance was on their pod and every poll returned it, and the row never moved')
+      .not.toContain('granted, but no acceptance published on their pod yet');
+    expect(row, 'the row moved but nothing says what seated them').toMatch(/pins revision .*, which is the head/);
+    expect(text(o.doc, '#stream'), 'the roster seated them and the channel went on composing itself from the old set')
+      .toContain('Composed from 3 append-only logs');
+  }, 20000);
+
+  it('★ a transient unreadable read of a seated member\'s acceptance does not delete their log', async () => {
+    const o = await open({ fastWatches: true, setup: (s) => {
+      s.pods.set(POD_C, new Pod(POD_C));
+      (s.pods.get(POD_B) as Pod).put({ graph: STREAM(POD_B), cid: 'cid-b-1', url: DESC(POD_B, 41),
+        content: trig(STREAM(POD_B), '<' + STREAM(POD_B) + '/e/0> a wsp:Entry ; dct:description "B said this before the blip" .') });
+    } });
+    await signInAndSettle(o);
+    expect(text(o.doc, '#stream')).toContain('B said this before the blip');
+    expect(text(o.doc, '#stream')).toContain('Composed from 2 append-only logs');
+
+    /**
+     * ★★ B IS UN-SEATED BY A FAILED READ, NOT BY ANYBODY'S DECISION. Their pod answers the head of
+     * their acceptance with neither a head nor a reason — the 502-during-a-redeploy shape — which
+     * `currentHead` reports as `unreadable` precisely so that a fault is never rendered as a
+     * permission. Something unrelated then moves on the convener's pod, so the grant watch
+     * re-folds while that read is failing.
+     */
+    o.s.fail.set('get_current_head', (input) => (String(input['urn']) === ACC(POD_B)
+      ? { urn: ACC(POD_B), podUrl: 'http://css.railway.internal:3456/' + POD_B + '/' }
+      : undefined));
+    grantOn(o.s.pods.get(POD_A) as Pod, POD_C, 'cid-grant-c', 60);
+
+    await new Promise((r) => { setTimeout(r, 900); });
+    await o.settle();
+    expect(rowFor(o.doc, POD_B), 'the fold did not report the unreadable acceptance as unestablished')
+      .toContain('not established');
+
+    // ★ THE LOAD-BEARING ASSERTION. Before this, one unreadable head unsubscribed their log and
+    // deleted every entry of theirs from the channel, permanently — nothing re-folds a pod that
+    // is no longer in the map.
+    const stream = text(o.doc, '#stream');
+    expect(stream, 'a transient unreadable head deleted a member\'s history from the channel')
+      .toContain('B said this before the blip');
+    expect(stream, 'their log was dropped from the fold on the strength of a read that failed')
+      .toContain('Composed from 2 append-only logs');
+    expect(stream, 'nothing on screen says why the log is still folded under an unseated row')
+      .toContain('did not settle whether they are still seated');
+
+    // And their pod is still being read, which is what makes the recovery below possible at all.
+    const at = readsOf(o, STREAM(POD_B));
+    await new Promise((r) => { setTimeout(r, 700); });
+    await o.settle();
+    expect(readsOf(o, STREAM(POD_B)), 'their log stopped being polled, so nothing could ever restore it')
+      .toBeGreaterThan(at);
+
+    // The pod recovers, and the next fold that CAN read them answers what the mark left open.
+    o.s.fail.delete('get_current_head');
+    grantOn(o.s.pods.get(POD_A) as Pod, POD_C, 'cid-grant-c2', 63);
+    await new Promise((r) => { setTimeout(r, 900); });
+    await o.settle();
+    const back = text(o.doc, '#stream');
+    expect(back, 'the read succeeded and the window still says it did not settle')
+      .not.toContain('did not settle whether they are still seated');
+    expect(back).toContain('B said this before the blip');
+    expect(rowFor(o.doc, POD_B), 'the recovered read never re-seated them').not.toContain('not established');
+  }, 30000);
+
+  it('★ a fold that started before a revocation does not resurrect the member by finishing after it', async () => {
+    // The descriptor of the acceptance B republishes below. The fold that SEES the revocation
+    // short-circuits on the revoked grant and never reads B's pod at all, so holding this one
+    // call makes the EARLIER fold the slower one — the asymmetry the live client has, not one
+    // invented for the test.
+    const held = DESC(POD_B, 77);
+    const o = await open({
+      fastWatches: true,
+      delay: (name, input) => (name === 'get_descriptor' && String(input['url']) === held ? 2000 : 0),
+      setup: (s) => {
+        (s.pods.get(POD_B) as Pod).put({ graph: STREAM(POD_B), cid: 'cid-b-1', url: DESC(POD_B, 41),
+          content: trig(STREAM(POD_B), '<' + STREAM(POD_B) + '/e/0> a wsp:Entry ; dct:description "B, before the revocation" .') });
+      },
+    });
+    await signInAndSettle(o);
+    expect(text(o.doc, '#stream')).toContain('Composed from 2 append-only logs');
+
+    // B republishes their own acceptance. Nothing on the convener's pod moves, so only the
+    // acceptance watch sees it — and it starts a fold that is about to be overtaken.
+    acceptanceOn(o.s.pods.get(POD_B) as Pod, POD_B, GRANT_B, 'cid-grant-b', 77);
+    await new Promise((r) => { setTimeout(r, 500); });
+
+    // The convener revokes B from their other client, while that fold is still in flight.
+    const a = o.s.pods.get(POD_A) as Pod;
+    a.put({ graph: GRANT_B, cid: 'cid-grant-b2', url: DESC(POD_A, 99),
+      content: trig(GRANT_B, '<' + GRANT_B + '> a wsp:MembershipGrant ; wsp:workspace <' + WS + '> ;\n'
+        + '  wsp:grantedTo <' + WEBID(POD_B) + '> ; wsp:role <' + ROLES + '#Contributor> ; wsp:revoked true .') });
+
+    await new Promise((r) => { setTimeout(r, 3000); });
+    await o.settle();
+
+    // ★ THE LOAD-BEARING ASSERTION. `S.wsGen` cannot decide this: two folds of the SAME workspace
+    // share a generation, so the older fold used to win by landing last — re-seating the member,
+    // re-folding their log and re-registering the watches on their pod, with `watchGrants` having
+    // already consumed the grant change so nothing ever fired again.
+    expect(rowFor(o.doc, POD_B), 'a fold that started before the revocation landed after it and re-seated the member')
+      .toContain('revoked');
+    expect(text(o.doc, '#stream'), 'the resurrected seat put their log back into the channel')
+      .toContain('Composed from 1 append-only logs');
+
+    const at = readsOf(o, STREAM(POD_B));
+    await new Promise((r) => { setTimeout(r, 900); });
+    await o.settle();
+    expect(readsOf(o, STREAM(POD_B)), 'a resurrected watch went on reading a revoked member\'s pod')
+      .toBe(at);
+  }, 30000);
 });
 
 describe('the stream: five states for a body, and they do not look the same', () => {
@@ -3095,4 +3533,957 @@ describe('signing in with a wallet key you already have', () => {
     expect(note).toContain('sign out and paste its key instead');
     expect(note).toContain('not another door to it');
   });
+});
+
+/**
+ * ── UNIT B1: ONE JUDGEMENT ABOUT A SEAT, ONE ORDERING GUARD, AND A SEALING MODE ON SCREEN ──
+ *
+ * Every case here is a sentence the shell must or must not be able to put on screen, and each one
+ * corresponds to a defect an adversarial reviewer reproduced against the shipped tree:
+ *
+ *   · a grant this fold could not READ unsubscribed the grantee's acceptance watch, which was the
+ *     only remaining trigger for the fold that would have repaired it;
+ *   · the same fold's rows were drawn as conclusions — "granted, not accepted", "not seated",
+ *     "You are not seated in this workspace" — about pods nothing had been established for;
+ *   · a private workspace publishing under the RELAY's key said nothing about it anywhere;
+ *   · an `openWorkspace` continuation painted its own record over a workspace the reader had
+ *     already moved to.
+ */
+describe('B1: a read that did not finish is not a finding, and the window says which is which', () => {
+  /** How many times this window has read one graph — a log, or a member's acceptance document. */
+  const readsOf = (o: Opened, graph: string): number =>
+    o.s.calls.filter((c) => c.name === 'discover_context' && c.input['graph_iri'] === graph).length;
+  /** A grant on the CONVENER's pod, in the shape `scripted()` writes the other two. */
+  const grantOn = (a: Pod, pod: string, cid: string, n: number): void => {
+    const iri = WS + '-grant-' + pod;
+    a.put({ graph: iri, cid, url: DESC(POD_A, n),
+      content: trig(iri, '<' + iri + '> a wsp:MembershipGrant ; wsp:workspace <' + WS + '> ;\n'
+        + '  wsp:grantedTo <' + WEBID(pod) + '> ; wsp:role <' + ROLES + '#Contributor> .') });
+  };
+  /**
+   * The relay answering about a document with NEITHER a head NOR a reason — the 502-during-a-
+   * redeploy shape, which `currentHead` reports as `unreadable` precisely so that a fault is never
+   * rendered as a permission.
+   */
+  const unreadable = (urn: string, pod: string) => (input: Record<string, unknown>): unknown =>
+    (String(input['urn']) === urn ? { urn, podUrl: 'http://css.railway.internal:3456/' + pod + '/' } : undefined);
+
+  it('★★ a grant this fold could not READ does not unsubscribe that member\'s acceptance watch', async () => {
+    const o = await open({ fastWatches: true, setup: (s) => {
+      s.pods.set(POD_C, new Pod(POD_C));
+      (s.pods.get(POD_B) as Pod).put({ graph: STREAM(POD_B), cid: 'cid-b-1', url: DESC(POD_B, 41),
+        content: trig(STREAM(POD_B), '<' + STREAM(POD_B) + '/e/0> a wsp:Entry ; dct:description "B said this before the blip" .') });
+    } });
+    await signInAndSettle(o);
+    expect(text(o.doc, '#stream')).toContain('Composed from 2 append-only logs');
+    expect(readsOf(o, ACC(POD_B)), 'the fixture never registered a watch on B\'s acceptance at all').toBeGreaterThan(0);
+
+    /**
+     * ★★ THE FAILURE IS ON THE CONVENER'S POD, ON B'S GRANT — not on B's own acceptance. That is
+     * the whole point: `Seat.pod` is assigned only after a grant's signed region has been parsed,
+     * so a grant-read failure produces a row with NO pod, and every reader keyed on `Seat.pod`
+     * skipped exactly the row it most needed to see. Something unrelated then moves on the
+     * convener's pod so the grant watch re-folds while that read is failing.
+     */
+    o.s.fail.set('get_current_head', unreadable(GRANT_B, POD_A));
+    grantOn(o.s.pods.get(POD_A) as Pod, POD_C, 'cid-grant-c', 60);
+    await new Promise((r) => { setTimeout(r, 900); });
+    await o.settle();
+
+    // The panel names the pod the unread grant's own IRI carries, which is how it is nameable at
+    // all: nothing inside those bytes was read.
+    const roster = text(o.doc, '#roster');
+    expect(roster, 'the fold did not report the unread grant').toContain('grants were found and');
+    expect(roster, 'the unread grant was not named by the pod its IRI carries').toContain(POD_B);
+
+    // ★ THE LOAD-BEARING ASSERTION. Before this, the drop loop read "no target for this document"
+    // as "this member is gone" and fired the unsub — and it did not come back, because the fault
+    // was in `get_current_head`, which moves nothing in the `discover_context` index `watchGrants`
+    // fingerprints. The acceptance watch WAS the remaining trigger.
+    const at = readsOf(o, ACC(POD_B));
+    await new Promise((r) => { setTimeout(r, 800); });
+    await o.settle();
+    expect(readsOf(o, ACC(POD_B)), 'a grant that could not be read unsubscribed the grantee\'s acceptance watch')
+      .toBeGreaterThan(at);
+
+    // And their history is still in the channel, which is the sibling loop's half of the same rule.
+    expect(text(o.doc, '#stream'), 'an unreadable grant deleted the member\'s history from the channel')
+      .toContain('B said this before the blip');
+
+    // The pod recovers and the watch that was kept is what notices.
+    o.s.fail.delete('get_current_head');
+    (o.s.pods.get(POD_B) as Pod).put({ graph: ACC(POD_B), cid: 'cid-acc-b2', url: DESC(POD_B, 78),
+      authorship: { signedBy: 'did:ethr:0x' + POD_B.slice(-4), authorshipVerified: true },
+      content: trig(ACC(POD_B), '<' + ACC(POD_B) + '> a wsp:MembershipAcceptance ; wsp:workspace <' + WS + '> ;\n'
+        + '  wsp:member <' + WEBID(POD_B) + '> ; wsp:accepts <' + GRANT_B + '> ;\n'
+        + '  wsp:acceptsCid "cid-grant-b" ; wsp:stream <' + STREAM(POD_B) + '> .') });
+    await new Promise((r) => { setTimeout(r, 900); });
+    await o.settle();
+    expect(text(o.doc, '#roster'), 'the recovery the kept watch exists for never happened')
+      .not.toContain('grants were found and');
+  }, 30000);
+
+  it('★ an unestablished row is not drawn as "granted, not accepted", and Revoke is not offered for it', async () => {
+    const o = await open({ setup: (s) => {
+      s.fail.set('get_current_head', unreadable(GRANT_B, POD_A));
+    } });
+    await signInAndSettle(o);
+
+    /**
+     * ★ THE PANEL WHERE THE CONVENER DECIDES WHETHER TO REVOKE SOMEBODY is the worst place in the
+     * shell to render a read that failed as a claim about their pod. `revokeGrant` needs the
+     * grant's own `wsp:grantedTo`, which a row like this does not carry, so the control answered
+     * `incomplete` at the click; it is withheld before the click now, with the act that would
+     * change it named.
+     */
+    const revokeList = text(o.doc, '#revokelist');
+    expect(revokeList, 'a read that failed was rendered as a statement about the member\'s own pod')
+      .not.toContain('granted, not accepted');
+    expect(revokeList).toContain('not established — this fold could not read their half');
+    expect(revokeList).toContain('a revocation cannot be composed from it');
+    const buttons = [...o.doc.querySelectorAll('#revokelist button')] as HTMLButtonElement[];
+    expect(buttons.some((b) => b.disabled), 'Revoke was offered for a grant whose bytes were never read').toBe(true);
+
+    // The roster's own chip, which said "not seated" for every unseated row while the reason
+    // underneath it said the opposite.
+    expect(text(o.doc, '#roster')).toContain('not established');
+  });
+
+  it('★ the agent panel does not tell you that you are not seated when the fold could not tell', async () => {
+    // The VIEWER's own grant is the unreadable one, so nothing establishes their seat either way.
+    const o = await open({ setup: (s) => {
+      s.fail.set('get_current_head', unreadable(GRANT_A, POD_A));
+    } });
+    await signInAndSettle(o);
+    // Boot leaves the lobby when no acceptance verified — and none can, with the viewer's own
+    // grant unreadable — so the channel is opened by IRI, which is what a person does.
+    await openByIri(o, WS);
+    const why = text(o.doc, '#agentwhy');
+    expect(why, 'the shell told somebody they are out of a room nothing established they had left')
+      .not.toContain('You are not seated in this workspace');
+    expect(why).toContain('was NOT established by the last roster read');
+  });
+
+  it('★★ a private workspace that cannot seal end to end says so, before anything is written', async () => {
+    const o = await open({ setup: (s) => {
+      // The same record, declared private. Neither member's acceptance publishes an encryption
+      // key — the ordinary state of a workspace whose members joined from the browser artifact,
+      // which installs no opener at all — so the relay path is the only path left.
+      (s.pods.get(POD_A) as Pod).put({
+        graph: WS, cid: 'cid-ws-private', url: DESC(POD_A, 300),
+        authorship: { signedBy: 'did:ethr:0xA', authorshipVerified: true },
+        content: trig(WS, '<' + WS + '> a wsp:Workspace ; dct:title "Live drive" ;\n'
+          + '  wsp:convener <' + WEBID(POD_A) + '> ;\n'
+          + '  wsp:visibility "private" ;\n'
+          + '  wsp:roleProfile <' + ROLES + '> ;\n'
+          + '  wsp:entryShape <' + SHAPE + '> ;\n'
+          + '  wsp:grantCapability <' + ROLES + '#Convene> .'),
+      });
+    } });
+    await signInAndSettle(o);
+
+    /**
+     * ★★ `keys.length === 0` IS THE SAME VALUE FOR "public, nothing to seal" AND "seal to nobody,
+     * let the relay read it", and the shell read it as the first for both. One member's transient
+     * 502 turned end-to-end sealing off for a whole workspace through exactly that value, with
+     * nothing said on either side. The mode is a value now, and this is where a person learns it.
+     */
+    const roster = text(o.doc, '#roster');
+    expect(roster, 'a workspace publishing under the relay\'s own key said nothing about it anywhere')
+      .toContain('Writes here are NOT end-to-end encrypted');
+    expect(roster, 'the banner does not say who or why').toContain('published no encryption key');
+  });
+
+  it('★ the shortfall panel names each unread grant, the pod its IRI carries, and the act that clears it', async () => {
+    const o = await open({ setup: (s) => {
+      s.fail.set('get_current_head', unreadable(GRANT_B, POD_A));
+    } });
+    await signInAndSettle(o);
+    const roster = text(o.doc, '#roster');
+    expect(roster).toContain('2 grants were found and 1 of them were read');
+    // ★ BOTH CAUSES, and the copy no longer claims the rows past the cap are unnameable.
+    expect(roster).toContain('a grant it stopped before at its cap of');
+    expect(roster).toContain(POD_B);
+    // The exit comes from `clears`, not from `kind`: this row was READ and did not complete, so
+    // repeating it is a real act. A row the cap never reached would say the opposite.
+    expect(roster).toContain('repeating it is a real act');
+    expect(roster, 'the panel still claims the old channel-wide refusal')
+      .not.toContain('every private write in this workspace');
+    // ★ AND AN ENTRY IS NOT REFUSED OVER IT. The refusal is per verb now: an entry replaces no
+    // recipient set and cannot evict anybody, so the composer stays open and the hole is reported.
+    expect(roster).not.toContain('Messages and canvas saves are being refused');
+    expect((o.doc.getElementById('send') as HTMLButtonElement).disabled,
+      'an incomplete roster took the whole channel read-only again').toBe(false);
+  });
+
+  it('★ the Invite control asks the verb that gates it, and a reseal is not refused over the ENTRY audience', async () => {
+    /**
+     * ★★ THE MEASURED OUTAGE THE VERB CLOSES. A private workspace whose members all hold live
+     * grants and have not accepted has an EMPTY entry audience and a perfectly good reseal
+     * audience — and the un-verbed call answered the invite with "no member of this private
+     * workspace resolves to an encryption address", `retryable: false`, no exit named. That is the
+     * one act that repairs a workspace, refused for a state ordinary workspaces pass through.
+     */
+    const o = await open({ setup: (s) => {
+      const a = s.pods.get(POD_A) as Pod;
+      a.put({
+        graph: WS, cid: 'cid-ws-private', url: DESC(POD_A, 300),
+        authorship: { signedBy: 'did:ethr:0xA', authorshipVerified: true },
+        content: trig(WS, '<' + WS + '> a wsp:Workspace ; dct:title "Live drive" ;\n'
+          + '  wsp:convener <' + WEBID(POD_A) + '> ;\n'
+          + '  wsp:visibility "private" ;\n'
+          + '  wsp:roleProfile <' + ROLES + '> ;\n'
+          + '  wsp:entryShape <' + SHAPE + '> ;\n'
+          + '  wsp:grantCapability <' + ROLES + '#Convene> .'),
+      });
+      // Nobody has accepted: the convener's own acceptance is retired and B's is absent. Every
+      // grant reads perfectly — this is not a shortfall, it is a workspace nobody has joined yet.
+      a.put({ graph: ACC(POD_A), cid: 'cid-acc-a2', url: DESC(POD_A, 301),
+        authorship: { signedBy: 'did:ethr:0xA', authorshipVerified: true },
+        content: trig(ACC(POD_A), '<' + ACC(POD_A) + '> a wsp:MembershipAcceptance ; wsp:workspace <' + WS + '> ;\n'
+          + '  wsp:member <' + WEBID(POD_A) + '> ; iep:modalStatus "Retracted" .') });
+      (s.pods.get(POD_B) as Pod).docs.length = 0;
+    } });
+    await signInAndSettle(o);
+    await openByIri(o, WS);
+
+    expect(text(o.doc, '#roster'), 'the fixture did not reach the state this case is about')
+      .toContain('Grants below were read from pod');
+    // The ENTRY audience really is empty here, and that verb really does refuse — which is the
+    // whole reason this case exists: the un-verbed call handed that refusal to the invite too.
+    expect(text(o.doc, '#roster')).toContain('Messages and canvas saves are being refused');
+    expect((o.doc.getElementById('sendinvite') as HTMLButtonElement).disabled,
+      'the one act that repairs a workspace was withheld over an audience it does not use').toBe(false);
+    expect(text(o.doc, '#sendwhy')).not.toContain('Inviting is not being offered');
+  });
+
+  it('★ an open that resumes after the reader has moved on does not paint its own record over theirs', async () => {
+    const SLUG2 = 'second-room';
+    const WS2 = RELAY + '/ns/' + POD_A + '/' + SLUG2;
+    const o = await open({
+      /**
+       * The FIRST await in `openWorkspace` — the probe of the viewer's own stream document for
+       * workspace one. Holding it there is what puts an open in flight across another open, which
+       * is the state five awaits' worth of assignments used to land in.
+       */
+      delay: (name, input) => (name === 'get_current_head' && String(input['urn']) === STREAM(POD_A) ? 1200 : 0),
+      setup: (s) => {
+        const a = s.pods.get(POD_A) as Pod;
+        const g2 = WS2 + '-grant-' + POD_A;
+        a.put({ graph: WS2, cid: 'cid-ws2', url: DESC(POD_A, 400),
+          authorship: { signedBy: 'did:ethr:0xA', authorshipVerified: true },
+          content: trig(WS2, '<' + WS2 + '> a wsp:Workspace ; dct:title "Second room" ;\n'
+            + '  wsp:convener <' + WEBID(POD_A) + '> ;\n'
+            + '  wsp:roleProfile <' + ROLES + '> .') });
+        a.put({ graph: g2, cid: 'cid-g2', url: DESC(POD_A, 401),
+          content: trig(g2, '<' + g2 + '> a wsp:MembershipGrant ; wsp:workspace <' + WS2 + '> ;\n'
+            + '  wsp:grantedTo <' + WEBID(POD_A) + '> ; wsp:role <' + ROLES + '#Convener> .') });
+      },
+    });
+    // Not `signInAndSettle`: settling would wait out the delay, and the state under test only
+    // exists while the first open is still in flight.
+    click(o.doc, 'signin-wallet');
+    await new Promise((r) => { setTimeout(r, 350); });
+    (o.doc.getElementById('wsopen') as HTMLInputElement).value = WS2;
+    click(o.doc, 'openbtn');
+    await o.settle();
+    await new Promise((r) => { setTimeout(r, 1400); });
+    await o.settle();
+
+    expect(text(o.doc, '#chname'), 'the older open finished last and took the window back').toBe(SLUG2);
+    expect(text(o.doc, '#wstitle'), 'an open the reader had moved past painted its own record over theirs')
+      .toBe('Second room');
+  }, 30000);
+  it('★ a workspace RECORD read that lands after the switch is not committed either', async () => {
+    /**
+     * ★ THE SAME RULE, ONE AWAIT FURTHER IN, AND IT NEEDS ITS OWN CASE. The checkpoints in
+     * `openWorkspace` are a chain: a switch before the first one is stopped by the first one, and
+     * removing any single later link is masked by whichever link the run happens to reach. Only a
+     * switch that happens DURING the record read is stopped by the guard on the record's own
+     * commit — the assignment that sets `S.recordResult`, `S.record` and the channel title, and
+     * decides the visibility every later write in this window is encrypted under.
+     */
+    const SLUG2 = 'second-room';
+    const WS2 = RELAY + '/ns/' + POD_A + '/' + SLUG2;
+    /**
+     * The delay is armed only AFTER boot, and that is not a convenience. Boot reads this same
+     * record twice on its way to the lobby — once to verify the viewer's own acceptance against
+     * the convener's pod, once to open the workspace — so a delay armed from the start holds boot
+     * itself, and the open under test then races boot's rather than the reader's.
+     */
+    let armed = false;
+    const o = await open({
+      delay: (name, input) => (armed && name === 'get_current_head' && String(input['urn']) === WS ? 1200 : 0),
+      setup: (s) => {
+        const a = s.pods.get(POD_A) as Pod;
+        const g2 = WS2 + '-grant-' + POD_A;
+        a.put({ graph: WS2, cid: 'cid-ws2', url: DESC(POD_A, 400),
+          authorship: { signedBy: 'did:ethr:0xA', authorshipVerified: true },
+          content: trig(WS2, '<' + WS2 + '> a wsp:Workspace ; dct:title "Second room" ;\n'
+            + '  wsp:convener <' + WEBID(POD_A) + '> ;\n'
+            + '  wsp:roleProfile <' + ROLES + '> .') });
+        a.put({ graph: g2, cid: 'cid-g2', url: DESC(POD_A, 401),
+          content: trig(g2, '<' + g2 + '> a wsp:MembershipGrant ; wsp:workspace <' + WS2 + '> ;\n'
+            + '  wsp:grantedTo <' + WEBID(POD_A) + '> ; wsp:role <' + ROLES + '#Convener> .') });
+      },
+    });
+    await signInAndSettle(o);
+    expect(text(o.doc, '#wstitle'), 'boot did not open the first workspace at all').toBe('Live drive');
+
+    armed = true;
+    (o.doc.getElementById('wsopen') as HTMLInputElement).value = WS;
+    click(o.doc, 'openbtn');
+    // Long enough for that open to clear both member-document probes and reach the record read,
+    // and short enough that it is still held there.
+    await new Promise((r) => { setTimeout(r, 250); });
+    expect(text(o.doc, '#wstitle'), 'the first open was not still held at its record read').toBe('');
+    (o.doc.getElementById('wsopen') as HTMLInputElement).value = WS2;
+    click(o.doc, 'openbtn');
+    await o.settle();
+    expect(text(o.doc, '#chname'), 'the second open never ran').toBe(SLUG2);
+    await new Promise((r) => { setTimeout(r, 1500); });
+    await o.settle();
+    // Twice the held read's own 1.2 s, so the assertion below is about what the continuation
+    // DID rather than about it not having landed yet.
+    await new Promise((r) => { setTimeout(r, 1200); });
+    await o.settle();
+    expect(text(o.doc, '#wstitle'), 'a record read for a workspace the reader had left was committed over theirs')
+      .toBe('Second room');
+    expect(text(o.doc, '#chname')).toBe(SLUG2);
+  }, 30000);
+  it('★ a member whose GRANT would not read is still watched on their own pod', async () => {
+    /**
+     * ★★ REGISTRATION, WHICH IS THE HALF KEEPING AN EXISTING WATCH CANNOT COVER. A grant unreadable
+     * from the very first fold produces a row with no `Seat.pod` and there is no earlier watch to
+     * keep — so if `acceptanceTargets` skips the row, nothing on that member's own pod is ever
+     * polled and nothing will ever notice them accepting, republishing, or their convener's pod
+     * recovering. The pod comes out of the grant's own IRI, which is readable when its bytes are
+     * not.
+     */
+    const o = await open({ setup: (s) => {
+      s.fail.set('get_current_head', unreadable(GRANT_B, POD_A));
+    } });
+    await signInAndSettle(o);
+    await openByIri(o, WS);
+    expect(readsOf(o, ACC(POD_B)), 'no watch was ever registered on the pod of a grant that would not read')
+      .toBeGreaterThan(0);
+  });
+  it('★★ a roster the read cap truncated is offered the act that clears it, and the act works', async () => {
+    /**
+     * ★★ THE EXIT THAT WAS A MEASURED NO-OP. A grant the cap never reached is `'transient'` — the
+     * same kind as a head fetch that failed — and the refusal printed one sentence for both: "read
+     * the members list again and retry". Re-folding with the same cap truncates in exactly the
+     * same place, for ever, and no shell exposed the cap at all. `clears` is the axis that tells
+     * them apart, and this shell is the one that can actually perform the act it names.
+     */
+    const BULK = (n: number): string => 'u-eth-bulk' + String(n).padStart(6, '0');
+    const EXTRA = 7;
+    const o = await open({ setup: (s) => {
+      const a = s.pods.get(POD_A) as Pod;
+      // Two grants already exist in the fixture, so this takes the pod past the shell's cap of 200.
+      for (let i = 0; i < 199 + EXTRA; i++) {
+        const pod = BULK(i);
+        const iri = WS + '-grant-' + pod;
+        a.put({ graph: iri, cid: 'cid-bulk-' + i, url: DESC(POD_A, 1000 + i),
+          content: trig(iri, '<' + iri + '> a wsp:MembershipGrant ; wsp:workspace <' + WS + '> ;\n'
+            + '  wsp:grantedTo <' + WEBID(pod) + '> ; wsp:role <' + ROLES + '#Contributor> .') });
+        s.pods.set(pod, new Pod(pod));
+      }
+    } });
+    await signInAndSettle(o);
+
+    const roster = text(o.doc, '#roster');
+    expect(roster).toContain('208 grants were found and 200 of them were read');
+    // ★ THE EXIT IS PRINTED FROM `clears`, NOT FROM `kind`. Both a capped row and a failed head
+    // fetch are 'transient'; only one of them clears by reading again.
+    expect(roster, 'a capped row was told that reading again would clear it')
+      .toContain('Reading again does NOT clear this one');
+    // The rows past the cap produce no seat at all, so the pod their IRI carries is the only thing
+    // anybody can be told about them.
+    expect(roster).toContain(BULK(199 + EXTRA - 1));
+
+    const raise = [...o.doc.querySelectorAll('#roster button')]
+      .find((b) => (b.textContent ?? '').indexOf('Read all 208 grants') >= 0) as HTMLButtonElement | undefined;
+    expect(raise, 'the one act that clears a truncated fold was not offered').toBeTruthy();
+
+    (raise as HTMLButtonElement).click();
+    await o.settle();
+    expect(text(o.doc, '#roster'), 'the act was offered and performing it changed nothing')
+      .not.toContain('grants were found and');
+  }, 60000);
+});
+
+/**
+ * ── UNIT F2: THE OTHER NAME, THE READER'S OWN STANDING, AND WHAT A WRITE SAYS ABOUT ITSELF ──
+ *
+ * Every case here corresponds to something an adversarial reviewer either reproduced against the
+ * shipped tree or measured as unpinned:
+ *
+ *   · the drop loop was put on `Seat.pod` and still keyed on the DOCUMENT IRI, so a member seated
+ *     under the LEGACY acceptance name lost their watch to a read that concluded nothing — and it
+ *     did not come back, because `resolveMemberDoc` reports the QUALIFIED candidate when nothing
+ *     answered and the replacement watch polls a document that will never exist;
+ *   · the roster told the READER they were not a member when their own read merely did not finish;
+ *   · the per-WRITE escrow note, the unread-grant fallback in `seatNotEstablished`, and the
+ *     shortfall-that-names-no-pod bail-out were all correct and all unpinned — three mutants
+ *     survived a full 147/147;
+ *   · `post` re-derived "is my own seat unestablished" privately, and the two readers disagreed;
+ *   · `agentConsider` released `A.busy` — a mutex, not a display field — before its guard.
+ */
+describe('F2: the other candidate name, the reader\'s own standing, and what each write says about itself', () => {
+  /** One roster row's text, picked out by the pod it names. */
+  const rowFor = (doc: Document, pod: string): string => [...doc.querySelectorAll('#roster .member')]
+    .map((n) => n.textContent ?? '')
+    .find((t) => t.indexOf(pod) >= 0) ?? '';
+  /** How many times this window has read one graph — a log, or a member's acceptance document. */
+  const readsOf = (o: Opened, graph: string): number =>
+    o.s.calls.filter((c) => c.name === 'discover_context' && c.input['graph_iri'] === graph).length;
+  /**
+   * The OLDER, unqualified name a member document can still live at.
+   *
+   * ★ COMPOSED HERE RATHER THAN IMPORTED, deliberately: `legacyName` is the composition the client
+   * under test uses, and a fixture that shared it could not notice the two drifting apart. This is
+   * the name as the naming module documents it — `<slug>-<kind>` on the MEMBER's own pod.
+   */
+  const LEGACY_ACC = (pod: string): string => RELAY + '/ns/' + pod + '/' + SLUG + '-acceptance';
+  /** A grant on the CONVENER's pod, in the shape `scripted()` writes the other two. */
+  const grantOn = (a: Pod, pod: string, cid: string, n: number, extra = ''): void => {
+    const iri = WS + '-grant-' + pod;
+    a.put({ graph: iri, cid, url: DESC(POD_A, n),
+      content: trig(iri, '<' + iri + '> a wsp:MembershipGrant ; wsp:workspace <' + WS + '> ;\n'
+        + '  wsp:grantedTo <' + WEBID(pod) + '> ; wsp:role <' + ROLES + '#Contributor> .' + extra) });
+  };
+  /** The relay answering about a document with NEITHER a head NOR a reason — the 502 shape. */
+  const unreadable = (urn: string, pod: string) => (input: Record<string, unknown>): unknown =>
+    (String(input['urn']) === urn ? { urn, podUrl: 'http://css.railway.internal:3456/' + pod + '/' } : undefined);
+  /** B's acceptance, published at the OLDER name, naming the same log. */
+  const legacyAcceptance = (cid: string, n: number): Doc => ({
+    graph: LEGACY_ACC(POD_B), cid, url: DESC(POD_B, n),
+    authorship: { signedBy: 'did:ethr:0x' + POD_B.slice(-4), authorshipVerified: true },
+    content: trig(LEGACY_ACC(POD_B), '<' + LEGACY_ACC(POD_B) + '> a wsp:MembershipAcceptance ; wsp:workspace <' + WS + '> ;\n'
+      + '  wsp:member <' + WEBID(POD_B) + '> ; wsp:accepts <' + GRANT_B + '> ;\n'
+      + '  wsp:acceptsCid "cid-grant-b" ; wsp:stream <' + STREAM(POD_B) + '> .'),
+  });
+  /** The same workspace record, declared private, with nobody publishing an encryption key. */
+  const privateRecord = (s: Scripted): void => {
+    (s.pods.get(POD_A) as Pod).put({
+      graph: WS, cid: 'cid-ws-private', url: DESC(POD_A, 300),
+      authorship: { signedBy: 'did:ethr:0xA', authorshipVerified: true },
+      content: trig(WS, '<' + WS + '> a wsp:Workspace ; dct:title "Live drive" ;\n'
+        + '  wsp:convener <' + WEBID(POD_A) + '> ;\n'
+        + '  wsp:visibility "private" ;\n'
+        + '  wsp:roleProfile <' + ROLES + '> ;\n'
+        + '  wsp:entryShape <' + SHAPE + '> ;\n'
+        + '  wsp:grantCapability <' + ROLES + '#Convene> .'),
+    });
+  };
+
+  /**
+   * One member's acceptance WITH the encryption key their own pod publishes.
+   *
+   * ★★ EVERY PRIVATE FIXTURE IN THIS FILE USED TO LACK ONE, AND THAT IS WHY THE SEALED PATH WAS
+   * UNDRIVEN. With any seated member keyless the plan comes back `escrow` and `keys: []`, so
+   * `sealerFor` returns no sealer and `window.interego.seal` is never called — which is the state
+   * every existing case here is in. A workspace where everybody has published a key is the only
+   * one that exercises the invariant this vertical exists for.
+   */
+  const keyedAcceptance = (s: Scripted, pod: string, grantIri: string, grantCid: string, n: number): void => {
+    (s.pods.get(pod) as Pod).put({ graph: ACC(pod), cid: 'cid-acc-keyed-' + pod, url: DESC(pod, n),
+      authorship: { signedBy: 'did:ethr:0x' + pod.slice(-4), authorshipVerified: true },
+      content: trig(ACC(pod), '<' + ACC(pod) + '> a wsp:MembershipAcceptance ; wsp:workspace <' + WS + '> ;\n'
+        + '  wsp:member <' + WEBID(pod) + '> ; wsp:accepts <' + grantIri + '> ;\n'
+        + '  wsp:acceptsCid "' + grantCid + '" ; wsp:stream <' + STREAM(pod) + '> ;\n'
+        + '  wsp:encryptionKey "' + MEMBER_KEY(pod) + '" .') });
+  };
+
+  it('★★ a member seated under the OLDER acceptance name keeps their watch across a read that concluded nothing', async () => {
+    /**
+     * ★★ THE SIBLING SITE THE POD RECOVERY DID NOT REACH. Recovering the POD from a grant's IRI put
+     * an unestablished row back in `wanted` — under the QUALIFIED name, because that is the
+     * candidate `resolveMemberDoc` reports when nothing answered (it is where a write would go).
+     * A member whose live acceptance sits at the older name therefore left `wanted` the instant
+     * their pod blinked, was unsubscribed, and got a replacement watch on a qualified document
+     * that does not exist and never will — they have already accepted under the other name. The
+     * control an adversarial reviewer ran differed only in the naming: the qualified case recovers
+     * when the pod does, the legacy case never did.
+     */
+    const o = await open({ fastWatches: true, setup: (s) => {
+      s.pods.set(POD_C, new Pod(POD_C));
+      const b = s.pods.get(POD_B) as Pod;
+      b.docs.length = 0;                        // no qualified acceptance anywhere on their pod
+      b.put(legacyAcceptance('cid-acc-legacy', 90));
+      b.put({ graph: STREAM(POD_B), cid: 'cid-b-1', url: DESC(POD_B, 91),
+        content: trig(STREAM(POD_B), '<' + STREAM(POD_B) + '/e/0> a wsp:Entry ; dct:description "B said this under the older name" .') });
+    } });
+    await signInAndSettle(o);
+    expect(text(o.doc, '#stream'), 'the fixture never seated the legacy-named member at all')
+      .toContain('Composed from 2 append-only logs');
+    expect(readsOf(o, LEGACY_ACC(POD_B)), 'no watch was registered on the name their acceptance is actually at')
+      .toBeGreaterThan(0);
+
+    // Their own pod blinks on the one name their acceptance is at; something unrelated moves on
+    // the convener's pod so the grant watch re-folds while that read is failing.
+    o.s.fail.set('get_current_head', unreadable(LEGACY_ACC(POD_B), POD_B));
+    grantOn(o.s.pods.get(POD_A) as Pod, POD_C, 'cid-grant-c', 60);
+    await new Promise((r) => { setTimeout(r, 900); });
+    await o.settle();
+    expect(rowFor(o.doc, POD_B), 'the fixture did not reach the state this case is about')
+      .toContain('their acceptance could not be resolved');
+
+    // ★ THE LOAD-BEARING ASSERTION. The watch on the older name is the only thing on this member's
+    // own pod that anybody is still reading, and the fold that failed is the reason it matters.
+    const at = readsOf(o, LEGACY_ACC(POD_B));
+    await new Promise((r) => { setTimeout(r, 800); });
+    await o.settle();
+    expect(readsOf(o, LEGACY_ACC(POD_B)), 'a read that concluded nothing unsubscribed the watch on the name their acceptance is at')
+      .toBeGreaterThan(at);
+    expect(text(o.doc, '#stream'), 'an unestablished acceptance deleted the member\'s history from the channel')
+      .toContain('B said this under the older name');
+
+    // And the recovery that watch exists for: their pod comes back and republishes, under the
+    // same older name, and this window notices without anybody pressing anything.
+    o.s.fail.delete('get_current_head');
+    (o.s.pods.get(POD_B) as Pod).put(legacyAcceptance('cid-acc-legacy-2', 92));
+    await new Promise((r) => { setTimeout(r, 900); });
+    await o.settle();
+    expect(rowFor(o.doc, POD_B), 'the recovery the kept watch exists for never happened')
+      .not.toContain('their acceptance could not be resolved');
+  }, 30000);
+
+  it('★ both candidate names are watched for a row the fold established nothing about', async () => {
+    /**
+     * ★ THE REGISTRATION HALF, WHICH KEEPING AN EXISTING WATCH CANNOT COVER. With the member's
+     * GRANT unreadable from the very first fold there is no earlier watch to keep — so if only the
+     * qualified name is registered, the one document that would announce their recovery is on a
+     * name nobody is reading. Which of the two names holds their acceptance is exactly what this
+     * fold failed to establish, so both are polled until one answers.
+     */
+    const o = await open({ setup: (s) => {
+      const b = s.pods.get(POD_B) as Pod;
+      b.docs.length = 0;
+      b.put(legacyAcceptance('cid-acc-legacy', 90));
+      s.fail.set('get_current_head', unreadable(GRANT_B, POD_A));
+    } });
+    await signInAndSettle(o);
+    await openByIri(o, WS);
+    expect(readsOf(o, LEGACY_ACC(POD_B)), 'the older name — the one this member\'s acceptance is actually at — is watched by nobody')
+      .toBeGreaterThan(0);
+    expect(readsOf(o, ACC(POD_B)), 'the qualified name, where a new acceptance would appear, is watched by nobody')
+      .toBeGreaterThan(0);
+  });
+
+  it('★ a reader whose own half did not read is not told they are not on the roster', async () => {
+    /**
+     * ★★ THE WORST VERSION OF THE CLASS, BECAUSE IT IS ABOUT THEM. Every other surface in the
+     * shell stopped drawing findings over unestablished reads; this panel kept heading itself
+     * "You are writing, and you are not on the roster" while a row in the same box said their own
+     * acceptance could not be resolved.
+     */
+    const o = await open({ setup: (s) => {
+      s.fail.set('get_current_head', unreadable(GRANT_A, POD_A));
+    } });
+    await signInAndSettle(o);
+    await openByIri(o, WS);
+    const roster = text(o.doc, '#roster');
+    expect(roster, 'the shell told somebody they are not a member because a read did not finish')
+      .not.toContain('You are writing, and you are not on the roster');
+    expect(roster).toContain('Your own standing here was NOT established by this read');
+    expect(roster).toContain('not a finding that you are outside the room');
+  });
+
+  it('★★ the SEND receipt says whether THIS entry went out end-to-end encrypted', async () => {
+    /**
+     * ★★ PER WRITE, NOT PER FOLD, AND MEASURED AS UNPINNED. The roster banner is drawn from the
+     * fold; a re-fold between the render and the Send changes which path this particular entry
+     * took, and an envelope's recipients are fixed in it for ever. An adversarial reviewer nulled
+     * all three of these notes and the suite stayed at 147/147.
+     */
+    const o = await open({ setup: privateRecord });
+    await signInAndSettle(o);
+    (o.doc.getElementById('composer') as HTMLTextAreaElement).value = 'a line in a private room';
+    click(o.doc, 'send');
+    await o.settle();
+    const panel = text(o.doc, '#postresult');
+    expect(panel, 'the fixture did not actually write the entry').toMatch(/Posted to your pod|landing on your pod/);
+    expect(panel, 'an entry published under the relay\'s own key said nothing about it on its own receipt')
+      .toContain('This write is not end-to-end encrypted');
+    expect(panel, 'the note does not say who or why').toContain('published no encryption key');
+  });
+
+  it('★★ the SEND receipt says so for the members whose keys were never READ, not only the answered ones', async () => {
+    /**
+     * ★★ THE OTHER HALF OF "ESCROW IS NEVER SILENT", AND IT WAS MEASURED UNPINNED. Two
+     * populations reach the relay-readable path and they are different facts: a seated member
+     * whose own acceptance publishes NO key (answered, permanent — the case above), and a member
+     * of the envelope whose acceptance could not be READ at all where every such read is permanent.
+     * `recipientsFor` escrows the second deliberately rather than refusing, because none of those
+     * reads clears by being repeated. Every private fixture in this file produced only the first,
+     * so narrowing the note's guard to `keysMissing.length === 0` — silencing it for exactly this
+     * population — was measured by an adversarial reviewer surviving the whole suite at 164/164
+     * while the write still went out under the relay's key.
+     */
+    const o = await open({ setup: (s) => {
+      privateRecord(s);
+      // The convener has published a key, so nothing is MISSING — which is what makes this the
+      // other population rather than the one the case above drives.
+      keyedAcceptance(s, POD_A, GRANT_A, 'cid-grant-a', 310);
+      // B's acceptance is fetched in full and carries no signed block under its own IRI:
+      // `'unestablished'` and PERMANENT, so no repeat of this read establishes their key.
+      (s.pods.get(POD_B) as Pod).put({ graph: ACC(POD_B), cid: 'cid-acc-b-unreadable', url: DESC(POD_B, 311),
+        content: trig(WS, '<' + WS + '> dct:description "not the acceptance region" .') });
+    } });
+    await signInAndSettle(o);
+    (o.doc.getElementById('composer') as HTMLTextAreaElement).value = 'a line written while one pod stayed unreadable';
+    click(o.doc, 'send');
+    await o.settle();
+    const panel = text(o.doc, '#postresult');
+    expect(panel, 'the fixture did not actually write the entry').toMatch(/Posted to your pod|landing on your pod/);
+    expect(panel, 'an entry published under the relay\'s own key said nothing about it on its own receipt')
+      .toContain('This write is not end-to-end encrypted');
+    expect(panel, 'the note named the answered population, so this fixture is the one the case above already covers')
+      .not.toContain('published no encryption key');
+    expect(panel, 'the note does not say whose read failed, or that repeating it will not help')
+      .toContain('none of those reads clears by being repeated');
+    expect(panel, 'the note does not name the member it is about').toContain(POD_B);
+  });
+
+  it('★★ a private entry every member holds a key for leaves this window as ciphertext, sealed to exactly them', async () => {
+    /**
+     * ★★ THE SINGLE MOST IMPORTANT THING THIS SHELL DOES, AND UNTIL NOW NO CASE HERE DROVE IT.
+     * `window.interego.seal` was not scripted at all, so forcing `sealerFor` to return `{}` for
+     * every key list — never seal, ever, every private write handed to the relay in the clear —
+     * was measured by an adversarial reviewer surviving the whole file at 164/164. It survived
+     * because every private fixture here had a keyless member, which is the escrow path; nothing
+     * in this file reached the sealed one at all.
+     *
+     * ★ SO THE ASSERTION IS ABOUT THE BYTES, NOT ABOUT A FLAG. `sealed_payload: true` beside a
+     * plaintext `graph_content` is exactly the failure `entry.ts` warns about in its own note —
+     * every assertion about flags would pass and the words would still be at the relay. So this
+     * reads what was published, refuses to find the sentence in it, and then OPENS it with a
+     * member's own key: readable by the member, and `not-for-you` to a key nobody named.
+     */
+    const secret = 'the minutes nobody outside this room may read';
+    const o = await open({ setup: (s) => {
+      privateRecord(s);
+      keyedAcceptance(s, POD_A, GRANT_A, 'cid-grant-a', 320);
+      keyedAcceptance(s, POD_B, GRANT_B, 'cid-grant-b', 321);
+    } });
+    await signInAndSettle(o);
+    (o.doc.getElementById('composer') as HTMLTextAreaElement).value = secret;
+    click(o.doc, 'send');
+    await o.settle();
+    const panel = text(o.doc, '#postresult');
+    expect(panel, 'the fixture did not actually write the entry').toMatch(/Posted to your pod|landing on your pod/);
+    // The note is a claim about THIS write, so a sealed one must not carry it either.
+    expect(panel, 'an end-to-end sealed entry told its author the relay could read it')
+      .not.toContain('This write is not end-to-end encrypted');
+
+    const published = entryPublishes(o).find((c) => String(c.input['graph_iri']) === STREAM(POD_A));
+    expect(published, 'nothing was published to the author\'s own log').toBeTruthy();
+    const body = String((published as { input: Record<string, unknown> }).input['graph_content']);
+    expect(body, 'THE INVARIANT: the words went to the relay in the clear').not.toContain(secret);
+    expect(published?.input['sealed_payload'], 'the relay was not told this payload is sealed').toBe(true);
+    // ...and to exactly the two keys the roster published, which is the other half: an entry
+    // sealed to a SUBSET of the members it names is the silent lockout, and it publishes green.
+    expect(o.seals.map((x) => x.recipientKeys), 'the renderer never asked for a seal at all')
+      .toEqual([[MEMBER_KEY(POD_A), MEMBER_KEY(POD_B)]]);
+    /**
+     * ★ OPENED, RATHER THAN INSPECTED. A ciphertext naming the right recipients that none of them
+     * can open is the same outage as no seal at all, and only opening it tells the two apart —
+     * which is also the half a stub sealer could never have answered.
+     */
+    // Handed over the way a READER gets it: `{ envelope }` is the shape `get_encrypted_graph`
+    // answers with, so this opens the published bytes through the path a member's client takes.
+    const opened = openGraph({ envelope: body }, encryptionKeyFor('0x' + POD_B.slice(-2).repeat(32)));
+    expect(opened.kind, 'the member this was sealed to cannot open it').toBe('opened');
+    expect(opened.kind === 'opened' ? opened.content : '', 'the envelope does not carry the entry')
+      .toContain(secret);
+    const stranger = openGraph({ envelope: body }, encryptionKeyFor('0x' + 'ab'.repeat(32)));
+    expect(stranger.kind, 'a key this entry never named could open it').toBe('not-for-you');
+  });
+
+  it('★★ the canvas SAVE and MERGE receipts say the same about their own revision', async () => {
+    const o = await open({ setup: (s) => {
+      privateRecord(s);
+      (s.pods.get(POD_A) as Pod).put({ graph: CANVAS(POD_A), cid: 'cid-head-now', url: DESC(POD_A, 40),
+        content: trig(CANVAS(POD_A), '<' + CANVAS(POD_A) + '> dct:description "loaded" .') });
+    } });
+    await signInAndSettle(o);
+    (o.doc.getElementById('canvas') as HTMLTextAreaElement).value = 'first private revision';
+    click(o.doc, 'save');
+    await o.settle();
+    expect(text(o.doc, '#canvasresult'), 'the fixture did not actually save').toContain('Saved — your revision is the head');
+    expect(text(o.doc, '#canvasresult'), 'a canvas revision published under the relay\'s own key said nothing about it')
+      .toContain('This write is not end-to-end encrypted');
+
+    // The head moves under the panel, so the resend that follows is a MERGE — the one canvas write
+    // that used to carry no policy at all.
+    (o.s.pods.get(POD_A) as Pod).put({ graph: CANVAS(POD_A), cid: 'cid-head-moved', url: DESC(POD_A, 41),
+      content: trig(CANVAS(POD_A), '<' + CANVAS(POD_A) + '> dct:description "somebody else" .') });
+    (o.doc.getElementById('canvas') as HTMLTextAreaElement).value = 'my edit';
+    click(o.doc, 'save');
+    await o.settle();
+    const merge = [...o.doc.querySelectorAll('#canvasresult button')].find((b) => b.textContent === 'Merge forward') as HTMLElement;
+    expect(merge, 'the fixture never reached the 412 this case merges out of').toBeTruthy();
+    merge.click();
+    await o.settle();
+    expect(text(o.doc, '#canvasresult'), 'a merged revision said nothing about the path it went out on')
+      .toContain('This write is not end-to-end encrypted');
+  }, 30000);
+
+  it('★ a grant the read cap never reached keeps that member\'s log and their acceptance watch', async () => {
+    /**
+     * ★★ THE ONE SHAPE `seatStanding` CANNOT ANSWER FOR: a grant past the cap produces NO ROW at
+     * all, so a reader that only consults `S.seats` sees a pod nothing names and drops it.
+     * `seatNotEstablished`'s unread-grant fallback is what stops that, and an adversarial reviewer
+     * measured it surviving a full 147/147 — in the loop that costs a member their whole history.
+     *
+     * The bulk grants are REVOKED so that they consume cap slots without seating anybody: a
+     * revoked grant short-circuits before the grantee's pod is read at all, which keeps this case
+     * to one extra watch rather than two hundred.
+     */
+    const o = await open({ fastWatches: true, setup: (s) => {
+      (s.pods.get(POD_B) as Pod).put({ graph: STREAM(POD_B), cid: 'cid-b-1', url: DESC(POD_B, 41),
+        content: trig(STREAM(POD_B), '<' + STREAM(POD_B) + '/e/0> a wsp:Entry ; dct:description "B said this before the cap moved" .') });
+    } });
+    await signInAndSettle(o);
+    expect(text(o.doc, '#stream'), 'the fixture never folded B\'s log in').toContain('Composed from 2 append-only logs');
+    const at = readsOf(o, ACC(POD_B));
+
+    /**
+     * B's grant is moved BEHIND two hundred others. Nothing about B changed and nobody revoked
+     * them — the fold simply stops before their row now, which is the whole point: this window
+     * knows their pod only from the grant IRI it never opened.
+     */
+    const a = o.s.pods.get(POD_A) as Pod;
+    const gb = a.docs.splice(a.docs.findIndex((d) => d.graph === GRANT_B), 1)[0] as Doc;
+    for (let i = 0; i < 199; i++) {
+      const bulk = 'u-eth-bulk' + String(i).padStart(6, '0');
+      grantOn(a, bulk, 'cid-bulk-' + i, 1000 + i, '\n<' + WS + '-grant-' + bulk + '> wsp:revoked true .');
+    }
+    a.put(gb);
+    await new Promise((r) => { setTimeout(r, 900); });
+    await o.settle();
+    expect(text(o.doc, '#roster'), 'the fixture did not push B past the cap')
+      .toContain('201 grants were found and 200 of them were read');
+
+    expect(text(o.doc, '#stream'), 'a grant the fold never opened deleted that member\'s whole history from the channel')
+      .toContain('B said this before the cap moved');
+    await new Promise((r) => { setTimeout(r, 800); });
+    await o.settle();
+    expect(readsOf(o, ACC(POD_B)), 'a grant the fold never opened unsubscribed that member\'s acceptance watch')
+      .toBeGreaterThan(at);
+  }, 60000);
+
+  it('★ a shortfall the fold cannot NAME drops nobody', async () => {
+    /**
+     * ★ THE LAST ARM OF THE SAME JUDGEMENT, AND IT IS THE ONE THAT HOLDS WHEN THE OTHER TWO
+     * CANNOT. An unread grant whose IRI carries no pod cannot be matched to anybody, so there is
+     * no way to tell which of the held watches it is about — and a shortfall may not unsubscribe
+     * anybody. Both loops read it off `seatNotEstablished`, so this pins them together.
+     */
+    const NAMELESS = WS + '-grant-';
+    const o = await open({ fastWatches: true, setup: (s) => {
+      (s.pods.get(POD_B) as Pod).put({ graph: STREAM(POD_B), cid: 'cid-b-1', url: DESC(POD_B, 41),
+        content: trig(STREAM(POD_B), '<' + STREAM(POD_B) + '/e/0> a wsp:Entry ; dct:description "B said this before the fold went short" .') });
+    } });
+    await signInAndSettle(o);
+    const at = readsOf(o, ACC(POD_B));
+
+    /**
+     * B's grant is gone from the convener's pod — an authority-shaped removal, which on its own is
+     * a drop — and in the same scan a grant appears whose IRI carries no pod and whose head will
+     * not read. This fold cannot rule out that the grant it missed is B's.
+     */
+    const a = o.s.pods.get(POD_A) as Pod;
+    a.docs.splice(a.docs.findIndex((d) => d.graph === GRANT_B), 1);
+    a.put({ graph: NAMELESS, cid: 'cid-nameless', url: DESC(POD_A, 700),
+      content: trig(NAMELESS, '<' + NAMELESS + '> a wsp:MembershipGrant ; wsp:workspace <' + WS + '> .') });
+    o.s.fail.set('get_current_head', unreadable(NAMELESS, POD_A));
+    await new Promise((r) => { setTimeout(r, 900); });
+    await o.settle();
+    expect(text(o.doc, '#roster'), 'the fixture did not produce a shortfall at all')
+      .toContain('grants were found and');
+
+    expect(text(o.doc, '#stream'), 'a fold that could not name what it missed deleted a member\'s history anyway')
+      .toContain('B said this before the fold went short');
+    await new Promise((r) => { setTimeout(r, 800); });
+    await o.settle();
+    expect(readsOf(o, ACC(POD_B)), 'a fold that could not name what it missed unsubscribed a member\'s acceptance watch')
+      .toBeGreaterThan(at);
+  }, 30000);
+
+  it('★★ a stranger\'s unreadable grant does not refuse a non-member\'s ordinary first post', async () => {
+    /**
+     * ★★ THE REFUSAL THAT WAS ABOUT SOMEBODY ELSE. `seatNotEstablished`'s last arm answers "not
+     * established" for EVERY pod the moment one unread grant's IRI carries no pod suffix, because it
+     * cannot tell whose row that grant is. Send read that judgement, so ONE malformed grant on the
+     * convener's pod — a third party's, or nobody's — refused the ordinary first post of a viewer no
+     * grant mentions at all, and `post`'s `&& !seat` conjunct did not shield them: it shields a
+     * SEATED reader, never an absent one. Measured against a control differing in this ONE
+     * document: without it, "Posted to your pod" and a write to their own log; with it, "Your own
+     * seat was not established by the last roster read" and nothing written — under a refusal
+     * pointing at a roster row whose `clears` is `'read-again'`, which prints a sentence and offers no
+     * control. The defect is not that the remedy is impossible — re-reading is something any
+     * reader can do — it is that the sentence was a claim about THEM, and nothing this fold
+     * failed to read was about them at all.
+     */
+    const NAMELESS = WS + '-grant-';
+    const o = await open({ viewer: POD_C, setup: (s) => {
+      s.pods.set(POD_C, new Pod(POD_C));
+      (s.pods.get(POD_A) as Pod).put({ graph: NAMELESS, cid: 'cid-nameless', url: DESC(POD_A, 700),
+        content: trig(NAMELESS, '<' + NAMELESS + '> a wsp:MembershipGrant ; wsp:workspace <' + WS + '> .') });
+      s.fail.set('get_current_head', unreadable(NAMELESS, POD_A));
+    } });
+    await signInAndSettle(o);
+    await openByIri(o, WS);
+    // The fixture is only the case it claims to be if the fold actually went short and could not
+    // name what it missed — otherwise this passes for the reason every other post case passes.
+    expect(text(o.doc, '#roster'), 'the fixture produced no unread grant at all')
+      .toContain('grants were found and');
+    (o.doc.getElementById('composer') as HTMLTextAreaElement).value = 'my first line in this room';
+    click(o.doc, 'send');
+    await o.settle();
+    expect(text(o.doc, '#postresult'), 'somebody else\'s unreadable grant refused this reader\'s own first post')
+      .not.toContain('Your own seat was not established by the last roster read');
+    expect(text(o.doc, '#postresult'), 'the fixture did not actually write the entry')
+      .toMatch(/Posted to your pod|landing on your pod/);
+    expect(entryPublishes(o).some((c) => String(c.input['graph_iri']) === STREAM(POD_C)),
+      'the entry never reached this reader\'s own log').toBe(true);
+  });
+
+  it('★★ and it does not tell that stranger their own standing is unestablished either', async () => {
+    /**
+     * ★★ THE SAME ARM, THE OTHER TWO SURFACES. Send was fixed to ask `standingNotEstablished`, and
+     * two reader-facing panels went on asking `seatNotEstablished` — so the write went through while
+     * the roster panel above it said "Your own standing here was NOT established by this read" and
+     * the agent pane said "Whether you are seated here was NOT established", both to somebody no
+     * grant in this workspace mentions. The file then held two comments giving opposite conventions:
+     * that one, and `renderRoster`'s own note that the shared judgement answers it.
+     *
+     * ★ THE DROP LOOPS KEEP THE NAMELESS ARM, and that is not an inconsistency. "May I unsubscribe
+     * this watch?" must stay conservative when the fold cannot name what it missed; "what did this
+     * fold establish about YOU?" may answer only from evidence that names you. Two questions, two
+     * functions.
+     */
+    const NAMELESS = WS + '-grant-';
+    const o = await open({ viewer: POD_C, setup: (s) => {
+      s.pods.set(POD_C, new Pod(POD_C));
+      (s.pods.get(POD_A) as Pod).put({ graph: NAMELESS, cid: 'cid-nameless', url: DESC(POD_A, 700),
+        content: trig(NAMELESS, '<' + NAMELESS + '> a wsp:MembershipGrant ; wsp:workspace <' + WS + '> .') });
+      s.fail.set('get_current_head', unreadable(NAMELESS, POD_A));
+    } });
+    await signInAndSettle(o);
+    await openByIri(o, WS);
+    // Same non-vacuity guard as the case above: without a shortfall the fold could not NAME, this
+    // would pass for the reason every ordinary roster render passes.
+    expect(text(o.doc, '#roster'), 'the fixture produced no unread grant at all')
+      .toContain('grants were found and');
+    expect(text(o.doc, '#roster'), 'a stranger was told their own standing was unestablished')
+      .not.toContain('Your own standing here was NOT established');
+    expect(text(o.doc, '#agentwhy'), 'the agent pane made the same claim about the same stranger')
+      .not.toContain('Whether you are seated here was NOT established');
+  });
+
+  it('★ Send still holds back when the reader\'s OWN half is the one that would not read', async () => {
+    /**
+     * ★ THE OTHER SIDE OF THE SAME DISTINCTION, AND THE HALF THAT MUST NOT REOPEN. `S.streamIri`
+     * is the name a WRITE would compose; this reader's own acceptance may name a different one, and
+     * for a member accepted under the older unqualified name it does. So the `?? S.streamIri`
+     * fallback firing on a row this fold could not read starts a SECOND log beside the one holding
+     * their history, on the strength of a read that failed rather than anything they did.
+     *
+     * ★ AND THIS ROW IS THE PER-PERSON ARM ON ITS OWN. Their grant reads perfectly, so the fold
+     * reports no unread grant anywhere — the only thing that names this reader is the row placed
+     * for their own unreadable acceptance, which is exactly the evidence a claim about them may be
+     * made from.
+     */
+    const o = await open({ viewer: POD_C, setup: (s) => {
+      s.pods.set(POD_C, new Pod(POD_C));
+      grantOn(s.pods.get(POD_A) as Pod, POD_C, 'cid-grant-c', 60);
+      // Published, fetched in full, and carrying no signed block under the acceptance's own IRI:
+      // `foldRoster`'s region exit, which is `'unestablished'` and permanent.
+      (s.pods.get(POD_C) as Pod).put({ graph: ACC(POD_C), cid: 'cid-acc-c', url: DESC(POD_C, 61),
+        content: trig(WS, '<' + WS + '> dct:description "not the acceptance region" .') });
+    } });
+    await signInAndSettle(o);
+    await openByIri(o, WS);
+    expect(text(o.doc, '#roster'), 'the fixture reported a shortfall, so this is not the per-row case')
+      .not.toContain('grants were found and');
+    (o.doc.getElementById('composer') as HTMLTextAreaElement).value = 'writing into a room nothing established';
+    click(o.doc, 'send');
+    await o.settle();
+    expect(text(o.doc, '#postresult'), 'a fold that established nothing about this reader let the composed-name fallback fire')
+      .toContain('Your own seat was not established by the last roster read');
+    expect(entryPublishes(o).some((c) => String(c.input['graph_iri']) === STREAM(POD_C)),
+      'an entry was written to a composed log name on the strength of a read that established nothing').toBe(false);
+  });
+
+  /**
+   * Run one turn in a channel, move the window on, start a SECOND turn in the channel that is now
+   * on screen, and then end the FIRST turn the way `finish` says.
+   *
+   * ★★ `A.busy` IS A LOCK, NOT A DISPLAY FIELD, AND THE GUARD WAS ONE LINE TOO LATE FOR IT ON BOTH
+   * EXITS. Everything else `agentConsider` writes after its `sameSubject` check is cosmetic — a
+   * phase, a panel — and the guard exists to stop those being drawn over the channel the window
+   * has moved to. `A.busy` is the mutex `agentConsider` and `wake` test on entry, so a turn
+   * belonging to a channel nobody is looking at was freeing the lock the CURRENT channel's turn is
+   * holding. Nothing is stranded by releasing it only for the current subject: `teardownWorkspace`
+   * clears `A.busy` as it bumps the subject, so the channel being left has already let go.
+   *
+   * The count of turns run is the whole observable, and switching the delegate off and on again is
+   * the one synchronous route back into `agentConsider`.
+   */
+  const staleTurnEndsWhileALiveOneRuns = async (
+    finish: (resolve: (v: unknown) => void, reject: (e: unknown) => void) => void,
+  ): Promise<Opened> => {
+    const held: { resolve: (v: unknown) => void; reject: (e: unknown) => void }[] = [];
+    const o = await open({
+      setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'A question', '2026-08-07T10:00:00.000Z')); },
+      agent: {
+        prompts: [], cancels: 0, drafts: [],
+        think: () => new Promise((resolve, reject) => { held.push({ resolve: resolve as (v: unknown) => void, reject }); }),
+      },
+    });
+    await signInAndSpeak(o);
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    expect(o.agent.prompts, 'the first turn never started').toHaveLength(1);
+
+    // Re-opening IS a teardown: it bumps the workspace subject and releases the mutex, so the
+    // channel being left is holding nothing by the time the turn below starts.
+    await openByIri(o, WS);
+    await speakAs(o, D1);
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    expect(o.agent.prompts, 'the second turn never started').toHaveLength(2);
+
+    // The FIRST turn now ends, into a window that has moved on.
+    const first = held[0] as { resolve: (v: unknown) => void; reject: (e: unknown) => void };
+    finish(first.resolve, first.reject);
+    await o.settle();
+
+    click(o.doc, 'agenttoggle');
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    return o;
+  };
+
+  it('★ a turn that ANSWERS after the window moved does not free the mutex a live turn is holding', async () => {
+    const o = await staleTurnEndsWhileALiveOneRuns((resolve) => {
+      resolve({ ok: true, text: BEHALF + 'an answer for a channel nobody is looking at', why: 'ok', ms: 10 });
+    });
+    expect(o.agent.prompts, 'a turn belonging to a window nobody is looking at freed the mutex a live turn was holding')
+      .toHaveLength(2);
+  }, 30000);
+
+  it('★ and neither does one that THROWS after it — the same lock, the other exit', async () => {
+    // The catch path is a separate `A.busy = false` and was wrong in the same way. A provider that
+    // dies is the ordinary reason a turn ends, so this is not the rarer half.
+    const o = await staleTurnEndsWhileALiveOneRuns((_resolve, reject) => {
+      reject(new Error('the provider for a channel nobody is looking at died'));
+    });
+    expect(o.agent.prompts, 'a FAILED turn in a window nobody is looking at freed the mutex a live turn was holding')
+      .toHaveLength(2);
+  }, 30000);
 });

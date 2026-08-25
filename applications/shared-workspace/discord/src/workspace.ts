@@ -19,6 +19,7 @@ import {
   qualifiedName, readAuthorship, readDelegates, readEntryAuthorship, readInt, readIri, readIriAll, readLiteral,
   recipientsFor,
   verifiedSigner,
+  type Sealing, type WriteKind,
   readMember, sendInvite, toChainRow,
   type AuthorshipReading, type DelegateRoster, type EntryAttachment, type EntryAuthorship, type PostOutcome,
   type WorkspaceClient,
@@ -36,6 +37,103 @@ export interface Deps {
 
 /** How many entries `/workspace show` reads bodies for. Each one is a descriptor round trip. */
 export const SHOW_ENTRY_CAP = 12;
+
+/**
+ * How many grants a fold in this shell may dereference.
+ *
+ * ── ★★ THE WRITE GATE FOLDED AT 25 WHILE THE COMMAND THAT REPORTS THE ROSTER FOLDED AT 200 ──
+ *
+ * `audienceFor` passed no `readCap`, so `GRANT_READ_CAP` (25) applied to it, while
+ * `showWorkspace` asked for 200 and the desktop asks for 200. On any workspace holding 26 to 200
+ * grants that meant `/workspace show` folded the whole roster and reported nothing wrong, the
+ * desktop wrote normally, and every Discord message was refused over a shortfall only the message
+ * path could see. Two folds of the same workspace, in the same command surface, disagreeing, with
+ * the gate on the pessimistic one.
+ *
+ * One constant, read by both, so they cannot drift apart again.
+ */
+export const ROSTER_READ_CAP = 200;
+
+/**
+ * WHAT ACTUALLY PROTECTED A WRITE, FOR A CHANNEL THAT HAS NO OTHER WAY TO FIND OUT.
+ *
+ * ── ★★ THIS BOT CANNOT SEAL, AND `Sealing` IS ABOUT A CLIENT THAT CAN ──────
+ *
+ * `recipientsFor` answers `sealing.mode === 'seal'` when every member of the envelope published an
+ * encryption key. That is a statement about the WORKSPACE, and a host that holds key material acts
+ * on it by sealing before the payload leaves — the desktop does, in its main process. This bot
+ * passes no `seal` callback to `postEntry` at all, and holds none to pass: it is a conduit, its own
+ * key is in nobody's envelope, and `entry.ts` says what happens without one — "the relay encrypts
+ * it, and puts its own key in the envelope".
+ *
+ * ★ SO A PRIVATE WRITE FROM HERE IS RELAY-READABLE WHATEVER `Sealing` SAYS, and rendering the
+ * package's `'seal'` as "end-to-end encrypted" would be false in this shell specifically. The mode
+ * is therefore recomputed for what this shell DID, and `relayReadable` is the fact a member of a
+ * private channel is entitled to before they type the next thing.
+ */
+export interface SealingNote {
+  /** ★ Whether the relay holds a key to what was written. True for every private write from here. */
+  readonly relayReadable: boolean;
+  /**
+   * Finished copy for the channel, naming every member it is about.
+   *
+   * ★ ONE FIELD RATHER THAN A SENTENCE PLUS A LIST. A parallel `unreachable: string[]` was written
+   * here and then removed: the escrow copy `recipientsFor` composes already names those members,
+   * so the array would have been carried by this type and rendered by nothing — which is the
+   * shape of `recordUnreached`, the defect this round exists to close, reintroduced one file over.
+   */
+  readonly why: string;
+}
+
+/**
+ * The note for one write, or null when there is nothing to say.
+ *
+ * Null for a public workspace — nothing there is encrypted and nothing claims to be — and null for
+ * the record re-seal, which `resealRecord` publishes under the relay's shared class deliberately.
+ */
+function sealingNote(write: WriteKind, sealing: Sealing): SealingNote | null {
+  if (write === 'reseal' || sealing.mode === 'unsealed') return null;
+  return {
+    relayReadable: true,
+    why: sealing.mode === 'escrow'
+      // The module's sentence is finished user-facing copy naming who and why, so it is quoted
+      // rather than paraphrased: every surface in this vertical then says the same words about the
+      // same member. What it cannot know is that THIS host never seals, which is the clause added.
+      ? sealing.why + ' And nothing typed into Discord is sealed by this bot in any case — it holds '
+        + 'no key material, so every message here takes that same relay path.'
+      : 'This is NOT end-to-end encrypted. Every member of this workspace has published an '
+        + 'encryption key, so a client that holds one — the desktop channel — writes here without the '
+        + 'relay reading anything. This bot holds none: it is a conduit, so it hands the relay your '
+        + 'words and the relay encrypts them, with the relay\'s own key in the envelope. The relay '
+        + 'can read this, and an envelope\'s recipients are fixed at write time, so that cannot be '
+        + 'changed afterwards.',
+  };
+}
+
+/**
+ * A refusal from the module, with the act a DISCORD user can actually perform appended to it.
+ *
+ * ── ★★ EVERY EXIT THE PACKAGE NAMES IS AN ACT IN SOME OTHER CLIENT ────────
+ *
+ * "Open the workspace in a client signed in with your own key"; "read the members list again";
+ * "fold the roster again with a read cap of at least N"; "republish those grants under a name
+ * carrying the grantee's pod". This bot's whole command tree is `start`, `link`, `link-confirm`,
+ * `unlink`, `mentionable`, `show`, `who` and `ask` — it ships no invite and no revoke — so a
+ * refusal that stops at the module's sentence tells a channel to do something nobody in it can do.
+ * That is not hypothetical: a refusal naming a revoke was, in this shell, a dead end.
+ *
+ * The module's sentence is carried unchanged, because it is the accurate half. What is added is
+ * where the person actually is.
+ */
+function discordExit(why: string, retryable: boolean): string {
+  return why + (retryable
+    ? ' From Discord the act that repeats that read is posting again: the roster is folded afresh '
+      + 'for every message, and `/workspace show` folds it too and prints what it found.'
+    : ' No command this bot has changes that — `/workspace start`, `link`, `link-confirm`, `unlink`, '
+      + '`mentionable`, `show`, `who` and `ask` are the whole tree, and there is no invite and no '
+      + 'revoke among them. Whatever is named above has to be done by the person or the pod it is '
+      + 'about, from a client of their own.');
+}
 
 // ── linking ──────────────────────────────────────────────────────────────────
 
@@ -168,7 +266,18 @@ export type StartOut =
   | { readonly kind: 'already'; readonly binding: ThreadBinding }
   | { readonly kind: 'not-delegated'; readonly pod: string; readonly checks: readonly Check[]; readonly why: string }
   | { readonly kind: 'error'; readonly error: unknown }
-  | { readonly kind: 'created'; readonly binding: ThreadBinding; readonly streamIri: string; readonly seated: boolean; readonly why: string | null }
+  | {
+      readonly kind: 'created'; readonly binding: ThreadBinding; readonly streamIri: string;
+      readonly seated: boolean; readonly why: string | null;
+      /**
+       * What writes into this thread will and will not be protected by — see {@link SealingNote}.
+       *
+       * ★★ FOR A PRIVATE WORKSPACE IT IS DECIDED HERE AND NOWHERE ELSE. The founder is the one
+       * member who cannot be invited later, so their founding acceptance is the only chance to
+       * record their key — and this shell has none to record.
+       */
+      readonly sealing: SealingNote | null;
+    }
   | { readonly kind: 'create-failed'; readonly detail: string; readonly done: readonly string[] };
 
 /**
@@ -202,7 +311,24 @@ export async function startWorkspace(
   } catch (e) { return { kind: 'error', error: e }; }
 
   const title = args.threadName.trim() || 'Discord thread ' + args.threadId;
-  const out = await createWorkspace(deps.client, { relay: deps.relay, viewer: member, title, slug, visibility: args.visibility ?? 'public' });
+  const visibility = args.visibility ?? 'public';
+  /**
+   * ★★ NO `encryptionKey`, AND FOR A PRIVATE WORKSPACE THAT IS PERMANENT.
+   *
+   * `createWorkspace` takes the convener's own X25519 public key and publishes it in their
+   * founding acceptance. This bot has none to pass: it is a conduit and holds no key material for
+   * anybody, by design. `createWorkspace` says what that costs in its own words — the convener is
+   * then permanently `keysMissing`, a missing key withholds the WHOLE key list, and no client can
+   * seal anything in the workspace while theirs is the missing one. The founder is the one member
+   * who cannot be invited later, so nothing downstream can repair it either.
+   *
+   * ★ SO IT IS SAID RATHER THAN FIXED, because this shell cannot fix it. Refusing
+   * `/workspace start visibility:private` outright would remove a capability people use — the
+   * relay path is real encryption, just not end-to-end — and inventing a key here would be this
+   * bot holding key material for a human, which is the one thing the delegation model exists so
+   * nobody has to trust. The note below is the honest third option.
+   */
+  const out = await createWorkspace(deps.client, { relay: deps.relay, viewer: member, title, slug, visibility });
   if (out.kind === 'invalid') return { kind: 'create-failed', detail: out.why, done: [] };
   if (out.kind === 'error') return { kind: 'create-failed', detail: 'at "' + out.at + '": ' + errorCopy(out.error).t + ' — ' + errorCopy(out.error).d, done: out.done };
   if (out.kind === 'refused') return { kind: 'create-failed', detail: 'at "' + out.at + '" the relay refused: ' + JSON.stringify(out.refusal).slice(0, 300), done: out.done };
@@ -213,7 +339,22 @@ export async function startWorkspace(
     title, startedAt: new Date().toISOString(), startedBy: args.discordUserId,
   };
   deps.store.bindThread(binding);
-  return { kind: 'created', binding, streamIri: out.streamIri, seated: out.seated, why: out.why };
+  return {
+    kind: 'created', binding, streamIri: out.streamIri, seated: out.seated, why: out.why,
+    sealing: visibility === 'private'
+      ? {
+          relayReadable: true,
+          why: 'This private workspace can never be end-to-end encrypted, and that was decided by '
+            + 'creating it here. Your founding acceptance publishes no encryption key — this bot '
+            + 'holds none for you — and a member whose acceptance publishes no key withholds the '
+            + 'whole key list, so no client can seal to this workspace while yours is the missing '
+            + 'one. Every write into it, from every client, is encrypted by the relay with the '
+            + 'relay\'s own key in the envelope: the relay can read this thread. Publishing your '
+            + 'acceptance again from a client that holds your key supersedes this one and ends '
+            + 'that; no command this bot has does it.',
+        }
+      : null,
+  };
 }
 
 // ── recording a message ──────────────────────────────────────────────────────
@@ -234,6 +375,27 @@ export type RecordOut =
       readonly seated: 'already' | 'just-now';
       readonly outcome: PostOutcome;
       readonly authorship: AuthorshipReading | null;
+      /**
+       * What seating them established, EMPTY unless `seated` is `'just-now'`.
+       *
+       * ── ★★ THE RE-SEAL'S EVICTION HALF WAS DETECTED AND THROWN AWAY ─────────
+       *
+       * `seat()` collects these and the failure arm returns them, so `renderRecord` printed them
+       * whenever seating FAILED and never when it succeeded — and the one finding that only exists
+       * on the success path is the worst of them: `sendInvite` republished the workspace record
+       * with `auto_supersede_prior`, and any existing member the relay resolved no key for has
+       * just lost the document `verifyGrantIri` makes them read before they can accept. An
+       * envelope's recipients are fixed at write time, so nothing later gives it back.
+       */
+      readonly seating: readonly Check[];
+      /**
+       * ★★ WHAT PROTECTED THIS ENTRY, AND A DISCORD USER HAS NO OTHER WAY TO LEARN IT.
+       *
+       * Null for a public workspace. Non-null means the workspace is private and this write went
+       * out RELAY-READABLE — always, from this shell, because it holds no key to seal with. See
+       * {@link SealingNote}, which is why that is not inferred from `Sealing.mode`.
+       */
+      readonly sealing: SealingNote | null;
     };
 
 /** What the bot posts and reads for one workspace, resolved from the record every time. */
@@ -248,8 +410,16 @@ async function frameOf(deps: Deps, binding: ThreadBinding): Promise<Frame | { re
   const iriOwner = podOfNsIri(binding.workspace);
   if (!iriOwner) return { problem: 'the stored workspace IRI is not one a pod can be read out of: ' + binding.workspace };
   const read = await deps.client.readWorkspaceRecord(binding.workspace, iriOwner);
-  if (read.kind === 'forked') return { problem: 'the workspace record has ' + read.heads.length + ' unresolved heads, so which record governs here is not decided. Nothing was written.' };
-  if (read.kind === 'missing') return { problem: 'the workspace record could not be read: ' + read.message };
+  /**
+   * ── ★ AND EACH OF THESE NAMES AN ACT SOMEBODY CAN ACTUALLY PERFORM ─────────
+   *
+   * A refusal in a Discord channel reaches people whose only verbs are `start`, `link`,
+   * `link-confirm`, `unlink`, `mentionable`, `show`, `who` and `ask`. Everything else is somebody
+   * else's client against somebody else's pod, and a refusal that does not say so is a dead end
+   * with a sentence attached. See `discordExit`, which does the same for the module's own copy.
+   */
+  if (read.kind === 'forked') return { problem: 'the workspace record has ' + read.heads.length + ' unresolved heads, so which record governs here is not decided. Nothing was written. Republishing the record collapses that, and only the convener can, from a client of their own.' };
+  if (read.kind === 'missing') return { problem: 'the workspace record could not be read: ' + read.message + ' Post again in a moment — this read is made afresh for every message.' };
   if (!read.record.regionFound) {
     /**
      * ★ Withheld, not malformed — see `WorkspaceRecord.withheld`. A bot that told a channel
@@ -273,9 +443,11 @@ async function frameOf(deps: Deps, binding: ThreadBinding): Promise<Frame | { re
           + 'nothing follows from it about membership. Try again.'
         : 'this workspace is private and its record is encrypted to its members. This bot is not one of '
           + 'them — it is a conduit, and nobody encrypts to a conduit by default. If you want it to mirror '
-          + 'a private workspace, invite it as a member like anybody else. Until then it can carry your '
-          + 'messages INTO the workspace but cannot read them back out.')
-      : 'the workspace record\'s signed region could not be located, so nothing was read from bytes anybody signed.' };
+          + 'a private workspace, invite it as a member like anybody else — from the convener\'s own client, '
+          + 'because this bot ships no invite command. Until then it can carry your messages INTO the '
+          + 'workspace but cannot read them back out.')
+      : 'the workspace record\'s signed region could not be located, so nothing was read from bytes anybody signed. '
+        + 'Republishing the record is what fixes that, and only the convener can, from a client of their own.' };
   }
   return {
     binding, record: read.record,
@@ -287,48 +459,99 @@ async function frameOf(deps: Deps, binding: ThreadBinding): Promise<Frame | { re
   };
 }
 
+/** What one write may go out with, or why it may not go out at all. */
+type AudienceOut =
+  | {
+      readonly ok: true;
+      /** Spread straight into `postEntry` or `sendInvite`. */
+      readonly post: {
+        readonly visibility: 'public' | 'private';
+        readonly shareWith?: readonly string[];
+        readonly pendingWebIds?: readonly string[];
+        readonly grantedWebIds?: readonly string[];
+      };
+      /** `'reseal'` only — pods to keep in the record. Always empty for the other verbs. */
+      readonly repairBy: readonly { readonly pod: string; readonly why: string }[];
+      readonly sealing: SealingNote | null;
+    }
+  | { readonly ok: false; readonly why: string };
+
 /**
- * Every seated member's WebID, for a private workspace.
+ * Every seated member's WebID, for a private workspace, and what this write may do with them.
  *
  * ★ FOLDED ON DEMAND AND ONLY WHEN PRIVATE. The roster costs two round trips per grant, far too
  * much to spend on every message in a public channel — and a public workspace has no recipients to
- * compute. It THROWS rather than returning a short list: `recipientsFor` refuses a truncated
- * roster, and encrypting to the part of it that was read would lock out the members it missed,
- * permanently and with nothing to show for it.
+ * compute.
+ *
+ * ── ★★ THE VERB IS THE ARGUMENT, AND ITS ABSENCE BRICKED THIS SHELL ─────────
+ *
+ * This asked `recipientsFor('private', roster)` — the un-verbed form, which applies every verb's
+ * refusal. `postEntry` publishes with `auto_supersede_prior: false`: an entry replaces no recipient
+ * set and CANNOT evict anybody, so the completeness refusal written to protect the re-seal was
+ * being applied to ordinary chat. One unreadable grant therefore refused every message anybody
+ * typed, for ever, and — because `renderRecord` prints that refusal NOT ephemerally — posted a
+ * paragraph into the channel each time. Discord ships no invite and no revoke, so there was no act
+ * in the product that ended it.
+ *
+ * ★ AND IT RETURNS ITS REFUSAL RATHER THAN THROWING IT. A throw from inside a spread argument in
+ * `seat()` escaped to `recordMessage`'s outer handler as `{kind:'error'}`, discarding every seating
+ * check collected before it and printing the same sentence under a different heading.
  */
-async function audienceFor(deps: Deps, frame: Frame): Promise<{ visibility: 'public' | 'private';
-  shareWith?: readonly string[]; pendingWebIds?: readonly string[]; grantedWebIds?: readonly string[] }> {
+async function audienceFor(
+  deps: Deps, frame: Frame, write: WriteKind, prefer: readonly string[] = [],
+): Promise<AudienceOut> {
   /**
    * ★ PUBLIC COSTS NOTHING. The roster is two round trips per grant — far too much to spend on
    * every message in a public channel, and a public workspace has no recipients to compute.
    */
   if (frame.record.visibility !== 'private') {
-    const plain = recipientsFor(frame.record.visibility, null);
-    if (!plain.ok) throw new Error(plain.why);
-    return { visibility: plain.visibility };
+    const plain = recipientsFor(write, frame.record.visibility, null);
+    // Only `'unknown'` reaches this, and `frameOf` refuses before it on the one state that
+    // produces `'unknown'` — a record whose signed region would not locate. Handled rather than
+    // asserted away, because the module's exit for it ("open the workspace in a client signed in
+    // with your own key") is not an act anybody in a Discord channel can perform.
+    if (!plain.ok) return { ok: false, why: discordExit(plain.why, plain.retryable) };
+    return { ok: true, post: { visibility: plain.visibility }, repairBy: [], sealing: null };
   }
   const iriOwner = podOfNsIri(frame.binding.workspace) ?? frame.convenerPod;
-  const roster = await foldRoster(deps.client, {
+  const fold = (readCap: number): Promise<RosterFold> => foldRoster(deps.client, {
     workspace: frame.binding.workspace, iriOwner, slug: frame.binding.slug,
     convener: frame.record.convener, convenerPod: frame.convenerPod,
+    readCap,
+    // `foldRoster` always prefers the convener's own grant; the pod this write is FOR is added so
+    // a cap that bites cannot drop the one row the write is about.
+    prefer,
   });
-  const audience = recipientsFor('private', roster);
+  let roster = await fold(ROSTER_READ_CAP);
   /**
-   * ★ THROWS RATHER THAN RETURNING A SHORT LIST. `recipientsFor` refuses a truncated roster and a
-   * record this client could not read; encrypting to the part it managed to read would lock out
-   * the members it missed, permanently, and writing under a guessed visibility would publish in
-   * the clear. Both are worse than a message that did not send.
+   * ★★ THE ONE EXIT THE MODULE NAMES THAT DISCORD CANNOT OFFER, PERFORMED HERE INSTEAD.
+   *
+   * `recipientsFor` answers a cap-truncated fold with "fold the roster again with a read cap of at
+   * least N" and `retryable: false`, precisely because repeating the same call truncates in the
+   * same place. No Discord command exposes a read cap, so this shell performs that act itself
+   * rather than printing an instruction nobody in a channel can follow.
+   *
+   * ★ ONLY WHEN THE CAP IS WHAT BIT. `grantsRead` also falls short for grants that would not read,
+   * and a bigger cap changes nothing about those — re-folding for them would double the cost of
+   * every message in an unwell workspace and answer identically.
    */
-  if (!audience.ok) throw new Error(audience.why);
+  if (roster.grantsFound > ROSTER_READ_CAP) roster = await fold(roster.grantsFound);
+  const audience = recipientsFor(write, 'private', roster);
+  if (!audience.ok) return { ok: false, why: discordExit(audience.why, audience.retryable) };
   return {
-    visibility: audience.visibility,
-    ...(audience.shareWith ? { shareWith: audience.shareWith } : {}),
-    // Only meaningful to `sendInvite`'s reseal; `postEntry` ignores both. Carried here so the
-    // seat path cannot forget them — omitting them evicts, from a record they need in order to
-    // accept, anybody with an outstanding invitation and anybody whose acceptance merely could
-    // not be read this time round.
-    pendingWebIds: audience.pendingWebIds,
-    grantedWebIds: audience.grantedWebIds,
+    ok: true,
+    post: {
+      visibility: audience.visibility,
+      ...(audience.shareWith ? { shareWith: audience.shareWith } : {}),
+      // Only meaningful to `sendInvite`'s reseal; `postEntry` ignores both. Carried here so the
+      // seat path cannot forget them — omitting them evicts, from a record they need in order to
+      // accept, anybody with an outstanding invitation and anybody whose acceptance merely could
+      // not be read this time round.
+      pendingWebIds: audience.pendingWebIds,
+      grantedWebIds: audience.grantedWebIds,
+    },
+    repairBy: audience.repairBy,
+    sealing: sealingNote(write, audience.sealing),
   };
 }
 
@@ -345,7 +568,13 @@ async function seat(deps: Deps, frame: Frame, member: Viewer): Promise<{ readonl
   const checks: Check[] = [];
   const convGate = await checkDelegation(deps.client, { agentId: deps.agentId, podName: frame.convenerPod });
   if (!convGate.ok) {
-    return { ok: false, checks: convGate.checks, why: 'seating you needs a grant on the convener\'s pod (' + frame.convenerPod + ') and this bot is no longer delegated there: ' + (convGate.why ?? 'no reason reported') };
+    return { ok: false, checks: convGate.checks, why: 'seating you needs a grant on the convener\'s pod ('
+      + frame.convenerPod + ') and this bot is no longer delegated there: ' + (convGate.why ?? 'no reason reported')
+      // ★ THE ACT IS THE CONVENER'S AND IT IS NAMED. Nothing in this bot can restore a delegation
+      // on somebody else's pod — that is the whole point of the delegation model — so a refusal
+      // that stopped at "no longer delegated" left a channel with nothing to do about it.
+      + '. Only the convener can restore it, by running `register_agent` for this bot (' + deps.agentId
+      + ') on their own pod from a client of their own. No command this bot has does it.' };
   }
   checks.push({ mark: 'y', text: 'The convener\'s pod still delegates this bot, so a grant can be published there' });
 
@@ -357,7 +586,10 @@ async function seat(deps: Deps, frame: Frame, member: Viewer): Promise<{ readonl
     const profile = await deps.client.fetchProfileTurtle(frame.record.roleProfile ?? frame.rolesIri);
     table = parseRoleProfile(profile.turtle);
   } catch (e) {
-    return { ok: false, checks, why: 'this workspace\'s role profile did not resolve (' + errorCopy(e).t.toLowerCase() + '), so no role could be checked and none was granted' };
+    return { ok: false, checks, why: 'this workspace\'s role profile did not resolve (' + errorCopy(e).t.toLowerCase()
+      + '), so no role could be checked and none was granted. Post again in a moment if that read simply did '
+      + 'not complete; if it keeps saying the same thing, the profile is on the convener\'s pod and only they '
+      + 'can republish it.' };
   }
   const role = (frame.record.roleProfile ?? frame.rolesIri) + '#Contributor';
   const roleOk = checkRoleForWorkspace(table, role);
@@ -366,45 +598,96 @@ async function seat(deps: Deps, frame: Frame, member: Viewer): Promise<{ readonl
 
   let convener: Viewer;
   try { convener = await readMember(deps.client, frame.convenerPod); }
-  catch (e) { return { ok: false, checks, why: 'the convener\'s pod could not be read: ' + errorCopy(e).t }; }
+  catch (e) { return { ok: false, checks, why: 'the convener\'s pod could not be read: ' + errorCopy(e).t
+    + '. Post again in a moment — this read is made afresh for every message.' }; }
 
+  /**
+   * ★★ SEATING SOMEBODY IN A PRIVATE WORKSPACE MEANS RE-SEALING ITS RECORD TO THEM. Written when
+   * the convener was its only member, it is encrypted to the convener alone — so without this the
+   * new member cannot read the record, cannot verify the grant just written for them, and cannot
+   * accept. `sendInvite` adds the invitee; this is the roster it already had.
+   *
+   * ★ `'reseal'` IS THE VERB, AND IT IS THE ONLY ONE OF THE THREE THAT CAN EVICT ANYBODY: the
+   * record is republished with `auto_supersede_prior`, so the revision an omitted member could
+   * read is retired, and `verifyGrantIri` makes them read it before they can accept. That is why
+   * this verb still refuses over a shortfall the fold might yet resolve, and why the entry path
+   * no longer does.
+   *
+   * ★ AND THE REFUSAL IS RETURNED, NOT THROWN. This call used to be `...(await audienceFor(…))`
+   * inside the argument object, so a refusal became an exception that escaped `seat()` entirely,
+   * was caught by `recordMessage`'s outer handler as `{kind:'error'}`, and threw away every check
+   * collected above — the same sentence, under a different heading, with the evidence gone.
+   */
+  const aud = await audienceFor(deps, frame, 'reseal', [member.podName]);
+  if (!aud.ok) return { ok: false, checks, why: aud.why };
   const invited = await sendInvite(deps.client, {
     viewer: convener, workspace: frame.binding.workspace, workspaceTitle: frame.record.title || frame.binding.title,
     // The composed handle rather than a pod name: `sendInvite` resolves an invitee through
     // WebFinger, which is the one step that establishes the pod and the WebID agree.
     handle: 'acct:' + member.podName + '@' + new URL(deps.relay).host,
     role, entryShape: frame.record.entryShape,
+    ...aud.post,
     /**
-     * ★★ SEATING SOMEBODY IN A PRIVATE WORKSPACE MEANS RE-SEALING ITS RECORD TO THEM. Written when
-     * the convener was its only member, it is encrypted to the convener alone — so without this
-     * the new member cannot read the record, cannot verify the grant just written for them, and
-     * cannot accept. `sendInvite` adds the invitee; this is the roster it already had.
+     * ★★ PODS WHOSE GRANT WOULD NOT READ, PUT BACK INTO THE RECORD RATHER THAN DROPPED FROM IT.
+     *
+     * The three WebID lists above are all built from `wsp:grantedTo`, so a member whose grant is
+     * forked, headless or unlocatable contributes to none of them — and the re-seal would drop
+     * them from the very document they must read in order to accept. `recipientsFor('reseal', …)`
+     * recovers their pod from the grant's own IRI, which needs none of its bytes.
      */
-    ...(await audienceFor(deps, frame)),
+    ...(aud.repairBy.length ? { repairBy: aud.repairBy } : {}),
   });
   if (invited.kind !== 'invited') {
     const why = invited.kind === 'blocked' ? (invited.resolution.blocked ?? 'the invitee could not be resolved to a pod a grant would seat')
       : invited.kind === 'resolve-failed' ? 'resolving your handle failed: ' + errorCopy(invited.error).t
       : invited.kind === 'refused' ? 'the relay refused the grant: ' + JSON.stringify(invited.refusal).slice(0, 240)
       : 'publishing the grant failed: ' + errorCopy(invited.error).t;
-    return { ok: false, checks, why };
+    // ★ ONE ACT FOR ALL FOUR, because all four are about a write this bot makes on every message
+    // and none of them is repaired by anything in the command tree.
+    return { ok: false, checks, why: why + '. Post again in a moment: seating is attempted afresh '
+      + 'for every message, and nothing of yours was written.' };
   }
   checks.push({ mark: invited.readable ? 'y' : 'q', text: invited.readable
     ? 'A Contributor grant naming you was published on ' + frame.convenerPod + ' and read back'
     : 'A Contributor grant naming you was accepted on ' + frame.convenerPod + ' and is not yet reported readable: ' + (invited.why ?? 'no reason reported') });
+  /**
+   * ★★ WHO THE RE-SEAL DROPPED, WHICH THIS SHELL DETECTED AND THREW AWAY.
+   *
+   * `sendInvite` republished the workspace record with `auto_supersede_prior`, so the revision a
+   * member the relay resolved no key for could read is now retired — and `verifyGrantIri` reads
+   * that record before anybody can accept. The invitee's own case is refused inside `sendInvite`
+   * before the grant is written, so anybody named here is an EXISTING member who has just lost
+   * their copy, permanently: an envelope's recipients are fixed at write time.
+   *
+   * ★ AND "NOTHING REPORTED" IS NOT "EVERYBODY WAS REACHED". `recordReach.established` is false
+   * when the publish response carried no per-handle resolution at all, which is a different fact
+   * from an empty `recordUnreached` and must not be rendered as silence.
+   */
+  if (invited.recordUnreached.length > 0) {
+    checks.push({ mark: 'n', text: 'The workspace record was re-sealed and the relay resolved no key for '
+      + invited.recordUnreached.join(', ') + ' — they can no longer read the record they need in order to '
+      + 'accept, and writing again does not give it back to them' });
+  } else if (!invited.recordReach.established) {
+    checks.push({ mark: 'q', text: 'The re-seal of the workspace record reported no per-recipient resolution ('
+      + (invited.recordReach.why ?? 'no reason given') + '), so who can still read it is not established here' });
+  }
 
   // The acceptance is written against the grant as VERIFIED, not against the invite's own report
   // of itself — `acceptGrant` needs the revision CID, and the only honest source for it is a read
   // of the grant that is there now.
   const found: GrantVerdict = await findSeat(deps.client, { relay: deps.relay, viewer: member, workspace: frame.binding.workspace });
   if (!found.ok) {
-    return { ok: false, checks, why: 'the grant was published and does not yet seat you: ' + (found.why ?? 'no reason reported') };
+    return { ok: false, checks, why: 'the grant was published and does not yet seat you: ' + (found.why ?? 'no reason reported')
+      // The grant IS written; what has not happened is a read of it that agrees. Posting again is
+      // the act, and it is the one thing somebody in a channel can do.
+      + '. The grant is on the convener\'s pod either way — post again in a moment and this checks it afresh.' };
   }
   const accepted = await acceptGrant(deps.client, { relay: deps.relay, viewer: member, verdict: found });
   if (accepted.kind !== 'accepted') {
-    return { ok: false, checks, why: accepted.kind === 'refused'
+    return { ok: false, checks, why: (accepted.kind === 'refused'
       ? 'the relay refused your acceptance: ' + JSON.stringify(accepted.refusal).slice(0, 240)
-      : 'publishing your acceptance failed: ' + errorCopy(accepted.error).t };
+      : 'publishing your acceptance failed: ' + errorCopy(accepted.error).t)
+      + '. Your grant stands; only your own half is missing, and posting again writes it.' };
   }
   checks.push({ mark: accepted.readable ? 'y' : 'q', text: accepted.readable
     ? 'Your own acceptance was published on ' + member.podName + ' and read back'
@@ -462,12 +745,17 @@ export async function recordMessage(
     if ('problem' in frame) return { kind: 'unseated', pod: link.pod, why: frame.problem, seating: [] };
     const member = await readMember(deps.client, link.pod);
 
-    // Composed, not read: the two names a member writes under are derived from the workspace's
-    // own pod and slug, which is what every reader of this workspace looks for. Needed before the
-    // seat is decided, because the member's own half has to point at THIS log to be a seat at all.
-    const streamIri = nsIri(deps.relay, member.podName, qualifiedName(frame.convenerPod, binding.slug, 'stream'));
+    /**
+     * The name a NEW seat writes under, derived from the workspace's own pod and slug. It is the
+     * default, not the answer: an already-seated member's log is whatever their own acceptance
+     * names, which `ownHalf` reads back below — see its note. Composing it unconditionally is
+     * what orphaned a legacy-named member's entire history.
+     */
+    const composedStream = nsIri(deps.relay, member.podName, qualifiedName(frame.convenerPod, binding.slug, 'stream'));
 
     let seated: 'already' | 'just-now' = 'already';
+    // What seating them established, for the notice. Empty while nobody is seated here.
+    let seatingChecks: readonly Check[] = [];
     const already = await findSeat(deps.client, { relay: deps.relay, viewer: member, workspace: binding.workspace });
     /**
      * ★★ "NOT SEATED" IS TWO DIFFERENT FACTS, AND ONLY ONE OF THEM MAY BE ANSWERED BY GRANTING.
@@ -503,15 +791,67 @@ export async function recordMessage(
      * the member's, which is the half every reader of this workspace also requires — see its
      * note for what a missing one looked like from inside the channel.
      *
-     * Asked only when the grant already stands, because when it does not, `seat()` is being
-     * called regardless and the acceptance is the second thing it writes.
+     * The acceptance is asked about only when the grant already stands. When it does not, the
+     * verdict about the GRANT is the whole answer — either `seat()` is about to write both halves,
+     * or nothing may be written at all, which is what the rest of this note is about.
+     *
+     * ★★ AND ONLY HALF OF THAT GATE EXISTED. This arm read EVERY `ok: false` verdict — including
+     * one produced by a failed read — as `{ repairable: true, why: 'no grant … seats them yet' }`,
+     * a manufactured absence with a sentence asserting the grant is not there.
+     *
+     * `findSeat` answers `ok: false` for a relay refusal on the pod scan, a throw, an answer
+     * carrying no entries array, a composed-name read that did not resolve, and a scan its read
+     * cap stopped short. None of those is "no grant seats them yet", and the refusal below was
+     * gated on `already.ok`, so it could never fire for any of them. The write they authorised is
+     * `seat()`, which republishes the grant with a fresh `dct:created` — a new cid every existing
+     * acceptance is instantly stale against — and, for a legacy-named member, rewrites their
+     * acceptance at the qualified name pointing at a new stream, orphaning their whole log while
+     * answering `recorded`. Exactly the harms `OwnHalf` was written for, reached through the
+     * other half.
+     *
+     * `GrantVerdict` now carries `basis` and `repairable`, the same fields with the same meanings
+     * as `OwnHalf`'s, set by the exit that knows which one it took. They are read here rather
+     * than re-derived: both are non-optional on the verdict, so there is nothing to default.
      */
-    const half = already.ok
-      ? await ownHalf(deps, frame, member, already, streamIri)
-      : { ok: false as const, why: 'no grant on the convener\'s pod seats them yet' };
+    const half: OwnHalf = already.ok
+      ? await ownHalf(deps, frame, member, already)
+      : {
+          ok: false, basis: already.basis, repairable: already.repairable,
+          why: already.why ?? 'no grant on the convener\'s pod seats them yet',
+        };
     // Narrowed here rather than in the branch: the condition below is a disjunction, so `half`
     // is not narrowed inside it even when `already.ok` guarantees which arm produced it.
     const missing = half.ok ? null : half.why;
+    /**
+     * ★★ AND A STATE A WRITE CANNOT FIX IS ANSWERED BY NOT WRITING. See {@link OwnHalf}: seating
+     * somebody republishes their grant, which is never a no-op, so answering "I could not read
+     * your acceptance" by writing is how a network blink unseated a standing member — or, for a
+     * legacy-named one, moved their entire log somewhere no reader folds while reporting success.
+     *
+     * Nothing is touched here. The message is refused and the person is told what was found.
+     *
+     * ★ AND THE EXIT DEPENDS ON WHICH KIND OF STATE IT IS, which is why `basis` is on both halves.
+     * `'unestablished'` is a read that did not finish, and the next message re-runs every one of
+     * these reads — so posting again IS the act, and a transport failure is the one kind of problem
+     * that usually is not there a minute later. `'answered'` is not: a retracted grant or a record
+     * naming a convener on another pod says the same thing however often it is read, so telling
+     * somebody to try again there would be sending them to repeat a question already answered.
+     */
+    if (!half.ok && !half.repairable) {
+      return { kind: 'unseated', pod: link.pod, seating: already.checks, why: half.why
+        + (half.basis === 'unestablished'
+          ? '. Nothing was written — this is a read that failed, not a seat that is missing, and '
+            + 'publishing anything on the strength of it would edit your own record. Post again in '
+            + 'a moment: every one of these reads is made afresh for every message.'
+          // The other reason a write cannot answer: a state that WAS read, in full, and that
+          // publishing a grant or an acceptance does not change — a retracted grant, a record
+          // naming a convener on another pod, an IRI this reader will not dereference. Saying
+          // "try again" there would send somebody to repeat a read that already answered.
+          : '. Nothing was written — that is an answer rather than a read that did not finish, so '
+            + 'repeating it says the same thing and publishing over it would edit somebody\'s '
+            + 'record without changing what it found. No command this bot has resolves it; it has '
+            + 'to be done by the convener, or by you, from a client with a key of its own.') };
+    }
     if (!already.ok || missing) {
       const put = await seat(deps, frame, member);
       if (!put.ok) {
@@ -523,7 +863,15 @@ export async function recordMessage(
         };
       }
       seated = 'just-now';
+      seatingChecks = put.checks;
     }
+    /**
+     * ★ THE LOG THIS ENTRY GOES TO IS THE ONE EVERY READER FOLDS. When the member was already
+     * seated, that is whatever their own acceptance names — legacy or qualified — because
+     * `foldRoster` reads it from there. When they were just seated, `seat()` wrote an acceptance
+     * naming the composed name, so the two agree.
+     */
+    const streamIri = half.ok ? half.stream : composedStream;
 
     /**
      * ★★ WHO THIS ENTRY IS ENCRYPTED TO, IN A PRIVATE WORKSPACE.
@@ -536,10 +884,16 @@ export async function recordMessage(
      * ★ FOLDED ONLY WHEN IT IS NEEDED. The roster costs two round trips per grant, which is far
      * too much to spend on every message in a public channel — and a public workspace has no
      * recipients to compute.
+     *
+     * ★★ AND `'entry'` IS THE VERB, WHICH CANNOT EVICT ANYBODY. `entry.ts` publishes with
+     * `auto_supersede_prior: false`, so it replaces no recipient set: the worst an incomplete
+     * roster costs here is one entry a missing member cannot read. The un-verbed call this
+     * replaces applied the RE-SEAL's completeness refusal to ordinary chat, so one unreadable
+     * grant refused every message anybody typed, for ever, in a shell with no repair command.
+     * The re-seal in `seat()` is the verb that can evict, and it is the one that still refuses.
      */
-    let audience: { visibility: 'public' | 'private'; shareWith?: readonly string[] };
-    try { audience = await audienceFor(deps, frame); }
-    catch (e) { return { kind: 'unseated', pod: link.pod, why: (e as Error).message, seating: [] }; }
+    const audience = await audienceFor(deps, frame, 'entry', [member.podName]);
+    if (!audience.ok) return { kind: 'unseated', pod: link.pod, why: audience.why, seating: [] };
 
     const outcome = await postEntry(deps.client, {
       podName: member.podName, streamIri, workspace: binding.workspace,
@@ -555,7 +909,7 @@ export async function recordMessage(
        * in a Discord channel is a different layer with a different audience; it does not change
        * who the record on the pod is written for.
        */
-      ...audience,
+      ...audience.post,
       ...(args.attachments?.length ? { attachments: args.attachments } : {}),
       ...(args.addressedTo === undefined ? {} : { addressedTo: args.addressedTo }),
       /**
@@ -573,7 +927,8 @@ export async function recordMessage(
       author: { kind: 'principal', webId: member.webId },
     });
     const authorship = outcome.kind === 'accepted' ? readAuthorship(outcome.response['authorship']) : null;
-    return { kind: 'recorded', pod: member.podName, streamIri, seated, outcome, authorship };
+    return { kind: 'recorded', pod: member.podName, streamIri, seated, outcome, authorship,
+      seating: seatingChecks, sealing: audience.sealing };
   } catch (e) { return { kind: 'error', error: e }; }
 }
 
@@ -646,6 +1001,56 @@ export type ShowOut =
     };
 
 /**
+ * What `ownHalf` found, and — when it found a problem — WHETHER WRITING IS AN ANSWER TO IT.
+ *
+ * ── ★★ THE DISTINCTION USED TO EXIST ONLY IN THE PROSE ──────────────────────
+ *
+ * `ownHalf` already separated "their acceptance could not be READ" from "there is no acceptance",
+ * and its own note said re-seating on a transport hiccup must not happen. But both arrived at the
+ * caller as `{ ok: false, why }` with no discriminant, and the caller answered every one of them
+ * the same way: by calling `seat()`.
+ *
+ * ★ WHAT THAT COST, reproduced against the scripted relay by a reviewer told to break it. `seat()`
+ * republishes the GRANT first, and the grant is never a no-op — `grantTurtle` stamps `dct:created`
+ * with the current time, so the bytes differ and `auto_supersede_prior` gives it a NEW cid. The
+ * member's existing acceptance pins the OLD one. So:
+ *
+ *   · a 502 while reading an ALREADY-SEATED member's acceptance republished the grant, and if the
+ *     acceptance write then failed too — the same outage — `foldRoster` unseated them for every
+ *     reader, with "the grant was republished after they accepted it";
+ *   · ★ worse, for a LEGACY-named member the same hiccup made `acceptGrant` write a fresh
+ *     acceptance at the QUALIFIED name pointing at a NEW stream, orphaning their whole log — and
+ *     `recordMessage` answered `recorded`. A success message for a write that moved their history
+ *     out from under every reader.
+ *   · and a permanently non-repairable state (a forked acceptance chain) made EVERY message
+ *     republish the grant, growing that chain at chat volume.
+ *
+ * `repairable` is the fact the caller actually needs: is this a state a write can fix, or a state
+ * a write can only make worse? Absence, a retired acceptance and a stale pin are the first.
+ * Anything the reader could not READ is the second — absence of evidence, and writing on it edits
+ * somebody's record because the network blinked.
+ */
+type OwnHalf =
+  | { readonly ok: true; readonly stream: string }
+  | {
+      readonly ok: false;
+      readonly repairable: boolean;
+      /**
+       * Whether this is a CONCLUSION or the absence of one — the same word and the same question
+       * as `Seat.basis` and `GrantVerdict.basis`.
+       *
+       * ★ CARRIED BECAUSE THE CALLER NOW BUILDS AN `OwnHalf` OUT OF A `GrantVerdict`, where the
+       * two axes come apart: a grant that was READ and states a withdrawal is `'answered'` AND
+       * not repairable, and the sentence a refusal should print for it is not the one about a
+       * read that failed. Inside `ownHalf` itself they still coincide — every exit that is not
+       * repairable there is a read that did not complete — and `unread`/`notThere` below are what
+       * keep that true rather than a comment claiming it.
+       */
+      readonly basis: 'answered' | 'unestablished';
+      readonly why: string;
+    };
+
+/**
  * ★★ THE MEMBER'S OWN HALF OF THE SEAT, WHICH `findSeat` DOES NOT READ AND EVERY READER DOES.
  *
  * Membership in this vertical is two-sided by design: the convener's GRANT on their pod, and the
@@ -678,30 +1083,39 @@ export type ShowOut =
  * opening a narrower one, which is not a trade worth two round trips on a chat bot.
  */
 async function ownHalf(
-  deps: Deps, frame: Frame, member: Viewer, verdict: GrantVerdict, streamIri: string,
-): Promise<{ readonly ok: true } | { readonly ok: false; readonly why: string }> {
+  deps: Deps, frame: Frame, member: Viewer, verdict: GrantVerdict,
+): Promise<OwnHalf> {
   const iriOwner = podOfNsIri(frame.binding.workspace) ?? frame.convenerPod;
+  /**
+   * The two exits, built rather than typed out fifteen times.
+   *
+   * ★ THEY PIN THE CORRELATION THIS FUNCTION RELIES ON: inside `ownHalf` every state a write
+   * cannot answer is a read that did not complete, and every state a write CAN answer was read.
+   * A future exit that wants to break that pair has to say so by not using either of these.
+   */
+  const unread = (why: string): OwnHalf => ({ ok: false, repairable: false, basis: 'unestablished', why });
+  const notThere = (why: string): OwnHalf => ({ ok: false, repairable: true, basis: 'answered', why });
   let found;
   try {
     found = await deps.client.resolveMemberDoc(member.podName, iriOwner, frame.binding.slug, 'acceptance');
   } catch (e) {
-    return { ok: false, why: 'their acceptance could not be resolved: ' + errorCopy(e).t };
+    return unread('their acceptance could not be resolved: ' + errorCopy(e).t);
   }
-  if (found.forked) return { ok: false, why: 'their acceptance has ' + found.forked.heads.length + ' unresolved heads' };
+  if (found.forked) return unread('their acceptance has ' + found.forked.heads.length + ' unresolved heads');
   // ★ AN UNREADABLE POD IS NOT AN ABSENT DOCUMENT, and re-seating on a transport hiccup would
   // rewrite a member's own record because the network blinked. `resolveMemberDoc` separates the
   // two — see its own note — and only genuine absence is answerable by writing.
-  if (found.error) return { ok: false, why: 'their acceptance could not be read: ' + found.error };
-  if (!found.found || !found.head) return { ok: false, why: 'no acceptance for this workspace is published on their pod' };
+  if (found.error) return unread('their acceptance could not be read: ' + found.error);
+  if (!found.found || !found.head) return notThere('no acceptance for this workspace is published on their pod');
 
   let region: string | null;
   try {
     const d = await deps.client.descriptor(found.head.url);
     region = graphRegion((d['graph'] as { content?: string } | undefined)?.content ?? '', found.iri);
   } catch (e) {
-    return { ok: false, why: 'their acceptance could not be read: ' + errorCopy(e).t };
+    return unread('their acceptance could not be read: ' + errorCopy(e).t);
   }
-  if (region === null) return { ok: false, why: 'the signed region of their acceptance could not be located' };
+  if (region === null) return unread('the signed region of their acceptance could not be located');
   /**
    * ★ RETIRING YOUR OWN ACCEPTANCE IS HOW YOU LEAVE, AND SPEAKING AGAIN IS HOW YOU COME BACK.
    *
@@ -711,16 +1125,33 @@ async function ownHalf(
    * decision is being reversed but their own — which is exactly what is NOT true of a revocation,
    * where the convener decided and only the convener may undo it.
    */
-  if (isRetracted(region)) return { ok: false, why: 'they had retired their own acceptance, and speaking again republishes it' };
+  if (isRetracted(region)) return notThere('they had retired their own acceptance, and speaking again republishes it');
   // The two facts a reader gets out of this document, both of which have to be current or the
   // entry about to be written is not the one anybody will fold.
   const accepts = readIri(region, 'wsp:accepts');
   const acceptsCid = readLiteral(region, 'wsp:acceptsCid');
+  /**
+   * ★★ THE LOG IS READ FROM THEIR ACCEPTANCE, NOT COMPOSED — BECAUSE THAT IS WHAT THE READERS DO.
+   *
+   * This compared `wsp:stream` against a composed, always-QUALIFIED IRI and refused anything else.
+   * `foldRoster` is looser and is the authority: it takes whatever the acceptance names and only
+   * checks that it is under the member's OWN pod. `resolveMemberDoc` still supports the LEGACY
+   * naming form, so a member seated before qualified names existed has an acceptance naming a
+   * legacy stream — which this refused, sending `recordMessage` to `seat()`, which republished
+   * their acceptance pointing at a NEW qualified stream and orphaned their entire history. Every
+   * reader folds the log the acceptance names; nothing folds the old one again.
+   *
+   * ★ AND IT IS THE SAME MISTAKE THIS WHOLE HELPER EXISTS TO FIX, in the opposite direction: a
+   * writer applying a DIFFERENT standard from its readers. Reproduced by an adversarial reviewer
+   * against the version of `ownHalf` added earlier in this round.
+   */
   const stream = readIri(region, 'wsp:stream');
-  if (stream !== streamIri) {
-    return { ok: false, why: 'their acceptance names a different log (' + String(stream) + ') than the one this entry would be written to' };
+  if (!stream) return notThere('their acceptance names no log to write to');
+  const streamPod = podOfNsIri(stream);
+  if (streamPod && streamPod !== member.podName) {
+    return notThere('their acceptance names a log under pod ' + streamPod + ', which is not their own — no reader folds that');
   }
-  if (!accepts) return { ok: false, why: 'their acceptance names no grant, so no reader can hold it against one' };
+  if (!accepts) return notThere('their acceptance names no grant, so no reader can hold it against one');
   /**
    * ★ WHICH GRANT REVISION THEY AGREED TO — the same test `foldRoster` applies, in the same two
    * forms, because a seat this disagreed with would be a seat no reader honours.
@@ -733,17 +1164,17 @@ async function ownHalf(
    */
   if (accepts === verdict.grantIri) {
     if (!acceptsCid || !verdict.grantCid) {
-      return { ok: false, why: 'their acceptance names the grant and pins no revision either side could compare' };
+      return notThere('their acceptance names the grant and pins no revision either side could compare');
     }
-    return acceptsCid === verdict.grantCid ? { ok: true }
-      : { ok: false, why: 'their acceptance pins a revision of the grant that is no longer the head, so what they agreed to is not what is there now' };
+    return acceptsCid === verdict.grantCid ? { ok: true, stream }
+      : notThere('their acceptance pins a revision of the grant that is no longer the head, so what they agreed to is not what is there now');
   }
   let head;
   try { head = await deps.client.currentHead(verdict.grantIri, iriOwner); }
-  catch (e) { return { ok: false, why: 'the grant their acceptance names could not be resolved: ' + errorCopy(e).t }; }
-  if (head.forked || !head.url) return { ok: false, why: 'the grant their acceptance names has no single current head' };
-  return accepts === head.url ? { ok: true }
-    : { ok: false, why: 'their acceptance names a grant descriptor that is no longer the one at the head' };
+  catch (e) { return unread('the grant their acceptance names could not be resolved: ' + errorCopy(e).t); }
+  if (head.forked || !head.url) return unread('the grant their acceptance names has no single current head');
+  return accepts === head.url ? { ok: true, stream }
+    : notThere('their acceptance names a grant descriptor that is no longer the one at the head');
 }
 
 
@@ -769,11 +1200,15 @@ export async function showWorkspace(deps: Deps, threadId: string): Promise<ShowO
       convener: frame.record.convener, convenerPod: frame.record.convenerPod,
       // ★ A COMMAND, NOT AN AUTOCOMPLETE. `/workspace show` is deferred and has fifteen minutes;
       // the Ask picker in `ask.ts` has three seconds and no deferral, so it keeps the default.
-      readCap: 200,
+      //
+      // ★★ AND IT IS THE SAME CONSTANT THE WRITE PATH USES. This said `200` and `audienceFor`
+      // said nothing at all, so the two folds of one workspace disagreed and the write gate was
+      // on the pessimistic one — see {@link ROSTER_READ_CAP}.
+      readCap: ROSTER_READ_CAP,
     });
 
     const streams: ShownStream[] = [];
-    const rows: { seat: Seat; url: string; cid: string | null; at: string | null }[] = [];
+    const rows: { seat: Seat; url: string; cid: string | null }[] = [];
     /**
      * Each seated member's delegates, from THEIR OWN pod.
      *
@@ -801,38 +1236,65 @@ export async function showWorkspace(deps: Deps, threadId: string): Promise<ShowO
           why: walk.forked ? 'this log has ' + walk.heads + ' unresolved heads, so its order is not decided and nothing is being read out of it in sequence' : null,
         });
         if (walk.forked) continue;
-        for (const r of walk.ordered) rows.push({ seat: s, url: r.url, cid: r.cid, at: r.validFrom ?? null });
+        // Chain order, oldest first: `orderChain` walks back from the single head. This is
+        // the ONE ordering in this vertical nothing outside the member's pod can rewrite.
+        for (const r of walk.ordered) rows.push({ seat: s, url: r.url, cid: r.cid });
       } catch (e) {
         streams.push({ pod, stream: s.stream, total: 0, forked: false, partial: false, why: 'this log could not be read: ' + errorCopy(e).t });
       }
     }
 
     /**
-     * ★★ ORDERED ACROSS SEATS BEFORE IT IS CAPPED, AND THAT ORDER IS THE WHOLE POINT OF THE CAP.
+     * ★★ A FAIR SHARE OF THE WINDOW PER LOG, TAKEN IN CHAIN ORDER.
      *
-     * `rows` is built seat by seat — each member's entire ordered chain appended in turn — so its
-     * order was SEAT order, not time. Slicing the last twelve therefore took the tail of whichever
-     * member happened to be folded last, and if that member had twelve entries of their own then
-     * NOBODY ELSE APPEARED AT ALL. The convener's messages could vanish from `/workspace show`
-     * while the footer said "newest 12 shown".
+     * Two wrong answers preceded this one, and the second was worse than the first.
      *
-     * The sort that existed ran AFTER the slice, so it only ever reordered an already-wrong
-     * twelve. Sorting after capping cannot fix a cap that chose the wrong twelve.
+     *   1. `rows.slice(-CAP)`. `rows` is built seat by seat — each member's whole ordered chain
+     *      appended in turn — so its order was SEAT order, not time. Slicing the last twelve took
+     *      the tail of whichever member happened to be folded last, and if that member had twelve
+     *      entries of their own then NOBODY ELSE APPEARED AT ALL, convener included, while the
+     *      footer said "newest 12 shown".
      *
-     * ★ AND IT COSTS NOTHING EXTRA, which is why the original trade-off does not apply. The
-     * comment here said reading before capping would cost a descriptor round trip per entry —
-     * true, and not needed: `validFrom` is already in the MANIFEST row the chain walk carried, so
-     * the interleave uses what has been fetched. Only the twelve that survive are dereferenced.
+     *   2. Sorting by the manifest's `validFrom` before the slice. That fixed the interleaving and
+     *      introduced something worse: ★★ `valid_from` IS A CALLER-SUPPLIED ARGUMENT to
+     *      `publish_context` — the relay writes `(args.valid_from) ?? now`. Keying the window on
+     *      it hands every member a suppression primitive: date one entry far in the future and it
+     *      takes the whole window, evicting everybody else from `/workspace show` and from the
+     *      Discord mirror; date them in the past and hide your own. Found by a refute-review of
+     *      the round that introduced it.
      *
-     * ★ WHAT THIS ORDER IS AND IS NOT. Between two members there is no happens-before the
-     * substrate establishes, so this is each entry's own declared time and nothing stronger — the
-     * same caveat the header of this function states about the interleave. Within one member the
-     * chain order is authoritative and is preserved, because a stable sort leaves equal keys as
-     * they were.
+     * So the window is not decided by any value an author writes. Each log contributes from its
+     * own NEWEST end in chain order — the supersession links, which are the one ordering nothing
+     * outside that pod can rewrite — round-robin, until the cap is full. A member with fifty
+     * entries and a member with one each get a turn before anybody gets a second.
+     *
+     * ★ WHAT IT COSTS AND WHAT IT BUYS. It is no longer "the newest twelve in the room", because
+     * there is no room-wide clock to be newest by — `dct:created` is each client's own and
+     * `validFrom` is now known to be untrusted. It is "the most recent few from everybody", which
+     * is both honest about what the substrate establishes and unsteerable. `renderShow` says so.
+     *
+     * ★ SEAT ORDER STILL BREAKS THE TIE when the cap does not divide evenly, and that is the fold
+     * order — the convener's grant first, then the pod scan. Deterministic, and not something a
+     * member can move themselves up in.
      */
     const totalEntries = rows.length;
-    const ordered = [...rows].sort((x, y) => String(x.at ?? '').localeCompare(String(y.at ?? '')));
-    const take = ordered.slice(-SHOW_ENTRY_CAP);
+    const perSeat: { seat: Seat; url: string; cid: string | null }[][] = [];
+    for (const s of fold.seats) {
+      const mine = rows.filter((r) => r.seat === s);
+      if (mine.length) perSeat.push(mine);
+    }
+    const take: { seat: Seat; url: string; cid: string | null }[] = [];
+    for (let depth = 0; take.length < SHOW_ENTRY_CAP; depth++) {
+      let anyLeft = false;
+      for (const log of perSeat) {
+        const at = log.length - 1 - depth;
+        if (at < 0) continue;
+        anyLeft = true;
+        take.push(log[at] as { seat: Seat; url: string; cid: string | null });
+        if (take.length >= SHOW_ENTRY_CAP) break;
+      }
+      if (!anyLeft) break;
+    }
     const entries: ShownEntry[] = [];
     for (const r of take) {
       try {
@@ -878,7 +1340,21 @@ export async function showWorkspace(deps: Deps, threadId: string): Promise<ShowO
         entries.push({ pod: r.seat.podServed ?? r.seat.pod ?? '?', seq: null, created: null, body: null, descriptorUrl: r.url, author: null, derivedFrom: null, addressedTo: [], why: 'this entry could not be read: ' + errorCopy(e).t });
       }
     }
-    // See the header: a clock, and the renderer prints that beside it.
+    /**
+     * The printed order, and it is a CLOCK — `dct:created`, out of each entry's own signed region,
+     * which is whatever the writing client's clock said. The renderer prints that caveat beside it.
+     *
+     * ★ AND IT IS A DIFFERENT QUESTION FROM WHICH ENTRIES ARE HERE. Selection above is by chain
+     * position and cannot be steered; this is presentation and can be — a client that lies about
+     * `dct:created` moves its own line up or down the printed list. It cannot thereby remove
+     * anybody else's, which is the property that was missing.
+     *
+     * ★ SO CHAIN ORDER IS NOT WHAT A READER SEES, and an earlier version of this comment claimed
+     * it was — "a stable sort leaves equal keys as they were" is true and irrelevant, because
+     * this sort runs over the whole selection with a key that is rarely equal. Within one log the
+     * two orders normally agree; where they disagree, the printed one is the author's clock and
+     * this says so rather than implying an authority it does not have.
+     */
     entries.sort((a, b) => String(a.created ?? '').localeCompare(String(b.created ?? '')));
     return { kind: 'view', binding, record: frame.record, fold, streams, entries, truncated: totalEntries > take.length, totalEntries };
   } catch (e) { return { kind: 'error', error: e }; }

@@ -244,12 +244,116 @@ describe('recipientsFor joins "is it private" to "who is in it"', () => {
     // author alone — the exact silo this file exists for — so it is a refusal.
     const r = recipientsFor('private', null);
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.why).toContain('roster has not been read');
+    if (r.ok) return;
+    /**
+     * ★ THE FACTS A CALLER ACTS ON, NOT THE SENTENCE. This assertion used to pin the substring
+     * 'roster has not been read', and the copy has since been rewritten twice — once because it
+     * told somebody to wait for a members list that had already FAILED to load, which is not an
+     * act. A test pinned to the wording fails on every honest correction and pins none of what a
+     * caller does with the result, so what is pinned here is: it refuses, repeating the same call
+     * can succeed, it names the read to repeat, and it says the write was withheld.
+     */
+    expect(r.retryable, 'a state that a re-read clears was reported as terminal').toBe(true);
+    expect(r.why, 'the refusal names no act').toMatch(/members read|read the members/i);
+    expect(r.why).toContain('Nothing was written');
   });
 
-  it('★ and passes the truncated-roster refusal through rather than encrypting to what it read', () => {
+  it('★ and refuses a truncated roster rather than encrypting to the part of it that was read', () => {
+    // 15 of the 40 grants this fold FOUND were never read, so the recipient set built from it is
+    // not the workspace. Re-sealing the record to it would retire the revision the other 15 need
+    // in order to accept — a one-way door out, for somebody nobody revoked.
     const r = recipientsFor('private', { seats: [seat('u-a')], grantsFound: 40, grantsRead: 25 });
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.why).toContain('roster is incomplete');
+    if (r.ok) return;
+    // The counts, because they are what makes the refusal checkable against the workspace.
+    expect(r.why, 'the shortfall is not quantified').toContain('15');
+    expect(r.why, 'the roster it was measured against is not named').toContain('40');
+    /**
+     * ★ AND `retryable` IS FALSE, WHICH IS THE HONEST ANSWER HERE AND WAS NOT ALWAYS. This fold
+     * reports a shortfall and names no row for it, so nothing is established about those grants
+     * — not even whether they were asked for. Offering a bare Retry over that advertises an act
+     * whose effect is unknown; `retryable` means precisely that this same call, unchanged, can
+     * answer differently, and nothing here says it can.
+     */
+    expect(r.retryable).toBe(false);
+    expect(r.why).toContain('Nothing was written');
+  });
+
+  /**
+   * ── ★★ AND A REFUSAL NOBODY FINISHES READING NAMES NO EXIT ──────────────────────
+   *
+   * Measured on the fold above: 1,279 characters in which the phrase "a grant whose IRI names no
+   * pod" appeared THIRTY times — fifteen in the clause naming the population, fifteen more in the
+   * clause naming what could be done about it. Every word of it was true.
+   *
+   * That is not a cosmetic complaint. The person holding a refusal is deciding what to do next,
+   * and the two clauses that answer that were buried in a wall of one repeated phrase; a refusal
+   * that is not read to the end costs exactly what a refusal naming no exit costs, which is the
+   * failure the rest of `recipients.ts` was written to avoid. Every list in that file is one row
+   * per member or per grant, so any of them can do this.
+   *
+   * ★ PINNED AS A PROPERTY, BECAUSE THE WORDING IS THE PART THAT CHANGES. The rule is: name each
+   * distinct cause once, and stay short enough to act on.
+   */
+  const worstRepeat = (text: string): { phrase: string; times: number } => {
+    const words = text.split(/\s+/).filter((w) => w !== '');
+    let worst = { phrase: '', times: 1 };
+    // Five words is long enough not to collide on the ordinary connectives a refusal is made of,
+    // and short enough to catch a repeated NAME together with the grammar around it.
+    for (let n = 5; n <= 10; n++) {
+      const seen = new Map<string, number>();
+      for (let i = 0; i + n <= words.length; i++) {
+        const phrase = words.slice(i, i + n).join(' ');
+        const times = (seen.get(phrase) ?? 0) + 1;
+        seen.set(phrase, times);
+        if (times > worst.times) worst = { phrase, times };
+      }
+    }
+    return worst;
+  };
+
+  /** One grant this fold reached for and did not read — the shape `foldRoster` records. */
+  const unreadRow = (pod: string): {
+    graph: string; pod: string; kind: 'transient'; clears: 'read-again'; why: string;
+  } => ({
+    graph: 'https://relay.example/ns/u-a/wsp-grant-' + pod, pod,
+    kind: 'transient', clears: 'read-again', why: 'the grant record could not be read',
+  });
+
+  it('★★ and it names each cause once, so it can be read to the end', () => {
+    // 1. THE MEASURED FOLD. It reports a shortfall and names no row for it, so every one of the
+    //    fifteen is the same nothing and the only honest rendering of them is a count.
+    const padded = recipientsFor('private', { seats: [seat('u-a')], grantsFound: 40, grantsRead: 25 });
+    expect(padded.ok).toBe(false);
+    if (padded.ok) return;
+    const worst = worstRepeat(padded.why);
+    expect(worst.times, 'the refusal says "' + worst.phrase + '" ' + worst.times + ' times')
+      .toBeLessThanOrEqual(2);
+
+    // 2. AND A REAL ROSTER'S WORTH OF NAMES STAYS SHORT. Measured with the cap removed, this same
+    //    fold answers in 810 characters, half of them a list of forty pods standing between the
+    //    reader and the clause that says what to do. A relay outage puts every grant in a
+    //    workspace into this state at once, so the size of the list is the size of the workspace.
+    const many = recipientsFor('private', {
+      seats: [seat('u-a')], grantsFound: 41, grantsRead: 1,
+      unread: Array.from({ length: 40 }, (_, i) => unreadRow('u-eth-' + (0x1000 + i).toString(16))),
+    });
+    expect(many.ok).toBe(false);
+    if (many.ok) return;
+    expect(many.why.length, 'too long to read to the end is the same as naming no exit').toBeLessThan(600);
+    expect(worstRepeat(many.why).times).toBeLessThanOrEqual(2);
+
+    // 3. AND NO ROW IS NAMED TWICE. The opening sentence used to carry the whole population in
+    //    parentheses and the clause naming the act then named every one of them over again, which
+    //    is where half of the thirty copies came from.
+    const two = recipientsFor('private', {
+      seats: [seat('u-a')], grantsFound: 3, grantsRead: 1,
+      unread: [unreadRow('u-eth-bb02'), unreadRow('u-eth-cc03')],
+    });
+    expect(two.ok).toBe(false);
+    if (two.ok) return;
+    for (const pod of ['u-eth-bb02', 'u-eth-cc03']) {
+      expect(two.why.split(pod).length - 1, pod + ' is named more than once').toBe(1);
+    }
   });
 });

@@ -30,8 +30,9 @@ import {
 } from './telemetry.js';
 import { Wallet } from 'ethers';
 import {
-  DELEGATE_SURFACE, RelayMcpTransport, WorkspaceClient, publishTurn,
-  type RelayOAuthBearer, type TurnOutcome,
+  DELEGATE_SURFACE, EpochCounter, RelayMcpTransport, WorkspaceClient, guarded, handover,
+  isOvertaken, isRestoreFailed, publishTurn,
+  type Epoch, type RelayOAuthBearer, type TurnOutcome,
 } from '@interego/workspace-client';
 /**
  * ★ A SEPARATE ENTRY POINT, AND NOT FOR TIDINESS. The opener reaches `@interego/core`'s crypto,
@@ -175,6 +176,13 @@ const TURN_PROGRESS_MS = 2000;
  * own OAuth client name — measured, see `auth.ts`: the client name is inside the agent DID, so
  * signing a delegate in under "interego-workspace-desktop" would make it a different delegate in
  * every other client that ever held the same key.
+ *
+ * ★★ AND THERE IS DELIBERATELY NO ROW FOR THE DELEGATE'S ENCRYPTION KEYPAIR. A first repair for
+ * "a delegate's sign-in overwrote its human's sealing key" gave it one, and nothing ever read it:
+ * this process seals only as the ACCOUNT (`substrate:seal` is the person's act) and routes a
+ * delegate's work as tool calls under its own bearer, so the only thing here that consumes a
+ * delegate's key is the opener on `client`, which closes over its own copy — see `openerFor`. A
+ * field written and never read is a claim that something depends on it, and nothing did.
  */
 interface HostedDelegate {
   readonly address: string;
@@ -185,6 +193,19 @@ interface HostedDelegate {
 }
 const hosted = new Map<string, HostedDelegate>();
 
+/**
+ * Delegate ceremonies currently in flight, one per address.
+ *
+ * ★★ SINGLE-FLIGHT, BECAUSE TWO CEREMONIES FOR ONE DELEGATE ARE NOT TWO SESSIONS. Three callers
+ * ask independently — `delegate:list` on every boot, `delegate:call` re-minting after a 401, and
+ * `agent:think` before a turn — and none of them was deduped. So two ceremonies could run for one
+ * address: each caller was handed its OWN session and the map kept whichever finished LAST, which
+ * means the session in `hosted` need not be the one a caller is holding, and a loopback port and
+ * four relay round trips were spent twice to establish one delegate. Joining the run already in
+ * flight is the same answer to the same question.
+ */
+const opening = new Map<string, Promise<HostedDelegate>>();
+
 /** Open (or reuse) a delegate's own relay session. Its key never leaves this process. */
 async function delegateSession(address: string): Promise<HostedDelegate> {
   const key = address.toLowerCase();
@@ -193,53 +214,111 @@ async function delegateSession(address: string): Promise<HostedDelegate> {
   // the key, so re-running the ceremony costs four round trips and needs no rotation state — the
   // same reasoning the Discord bot's `BotSession` records.
   if (live && (!live.bearer.expiresAt || live.bearer.expiresAt - Date.now() > RENEW_MARGIN_MS)) return live;
+  /**
+   * ★ REFUSED WHILE THE ACCOUNT IS BEING SWITCHED. `adopt`'s handover has already dropped
+   * `hosted`, so a ceremony begun here would commit into the gap between identities — the very
+   * write the clear just performed, arriving one await later. There is a live answer to "which
+   * person is hosting this delegate" on either side of a switch and none during it.
+   */
+  if (accounts.handingOver()) {
+    throw new Error('This app is switching accounts right now, so there is no signed-in person to host a delegate '
+      + 'as. Nothing was signed in. Ask again once the switch has finished.');
+  }
+  const already = opening.get(key);
+  if (already) return already;
+  const run = openDelegateSession(key, address).finally(() => {
+    // Cleared however it ended, so a ceremony that failed is not remembered as one in flight.
+    if (opening.get(key) === run) opening.delete(key);
+  });
+  opening.set(key, run);
+  return run;
+}
+
+/**
+ * The ceremony itself, as a {@link handover} on this ADDRESS's own counter.
+ *
+ * ★★ WHY A HANDOVER AND NOT A GUARD. `hosted.set` used to land after five awaits with no ordering
+ * of any kind, and the write that has to be stopped is not a stale one — it is a CORRECT one
+ * arriving after somebody signed out. Reproduced (round4/refute-7 #7): a delegate sign-in in
+ * flight at `auth:signout` landed in `hosted` after `hosted.clear()`, and `delegate:list` then
+ * reported a live delegate with nobody signed in. `auth:signout` and `adopt` bump every delegate
+ * counter as they clear the map (see {@link endDelegateAttempts}), which takes custody away from
+ * a ceremony in flight — so it commits nothing, restores nothing, and fails with `Overtaken`.
+ *
+ * ★ AND THE FAILURE PATH IS REAL HERE TOO: a re-mint that throws puts the session the address
+ * already had back, rather than leaving the caller with neither the old one nor a new one.
+ */
+async function openDelegateSession(key: string, address: string): Promise<HostedDelegate> {
   const pk = getSecret(DELEGATE_KEY(key));
   if (!pk) throw new Error('This app does not hold a key for delegate ' + address + '. It may be authorised on your pod and hosted somewhere else — a delegate is its key, not this application.');
   const wallet = new Wallet(pk);
-  const recv = await startLoopbackReceiver();
-  let bearer: RelayOAuthBearer;
-  try {
-    bearer = await signInWithWallet(RELAY, IDENTITY, wallet.address, (m) => wallet.signMessage(m), recv.redirectUri, DELEGATE_SURFACE);
-  } finally { recv.close(); }
-  const delegateTransport = new RelayMcpTransport(RELAY, bearer);
-  /**
-   * ── ★★ A DELEGATE RE-AUTHENTICATES ITSELF ───────────────────────────────────
-   *
-   * MEASURED: a relay redeploy invalidates every bearer the previous revision issued, and this
-   * process then held a dead one until somebody restarted the app. The turn that hit it reported
-   * "the delegation registry could not be read", which reads as the substrate refusing the agent
-   * rather than as a token that needed re-minting.
-   *
-   * The key never leaves this process either way — the ceremony below is the SAME one that opened
-   * the session, run again. What changes is that a person is no longer the retry mechanism.
-   */
-  delegateTransport.setReauthorizer(async () => {
-    const again = await startLoopbackReceiver();
-    try {
-      return await signInWithWallet(
-        RELAY, IDENTITY, wallet.address, (m) => wallet.signMessage(m), again.redirectUri, DELEGATE_SURFACE,
-      );
-    } finally { again.close(); }
+  return handover<HostedDelegate | null, HostedDelegate>(delegateEpochs(key), {
+    snapshot: () => hosted.get(key) ?? null,
+    clear: () => { hosted.delete(key); },
+    work: async () => {
+      const recv = await startLoopbackReceiver();
+      let issued: RelayOAuthBearer;
+      try {
+        issued = await signInWithWallet(RELAY, IDENTITY, wallet.address, (m) => wallet.signMessage(m), recv.redirectUri, DELEGATE_SURFACE);
+      } finally { recv.close(); }
+      const delegateTransport = new RelayMcpTransport(RELAY, issued);
+      /**
+       * ── ★★ A DELEGATE RE-AUTHENTICATES ITSELF ──────────────────────────
+       *
+       * MEASURED: a relay redeploy invalidates every bearer the previous revision issued, and this
+       * process then held a dead one until somebody restarted the app. The turn that hit it reported
+       * "the delegation registry could not be read", which reads as the substrate refusing the agent
+       * rather than as a token that needed re-minting.
+       *
+       * The key never leaves this process either way — the ceremony below is the SAME one that opened
+       * the session, run again. What changes is that a person is no longer the retry mechanism.
+       *
+       * ★ IT WRITES NOTHING SHARED, which is why it takes no Epoch: the fresh credential goes to
+       * the transport that asked for it and nowhere else. The ACCOUNT's re-authorizer is the one
+       * that had to be guarded, because that one wrote a module global.
+       */
+      delegateTransport.setReauthorizer(async () => {
+        const again = await startLoopbackReceiver();
+        try {
+          return await signInWithWallet(
+            RELAY, IDENTITY, wallet.address, (m) => wallet.signMessage(m), again.redirectUri, DELEGATE_SURFACE,
+          );
+        } finally { again.close(); }
+      });
+      const delegateClient = new WorkspaceClient(RELAY, delegateTransport);
+      await delegateClient.connect();
+      const status = await delegateClient.podStatus();
+      const podUrl = String(status['pod'] ?? status['podUrl'] ?? '');
+      const pod = podUrl.replace(/\/$/, '').split('/').pop() ?? '';
+      const agent = status['sessionAgent'] as { did?: string; id?: string } | undefined;
+      const agentId = agent?.did ?? agent?.id ?? '';
+      // ★ REFUSED RATHER THAN GUESSED, exactly as the Discord bot refuses. The agent id is the string
+      // a delegator authorises and the string the relay's scope gate compares. A delegate that came up
+      // without one would ask somebody to authorise an empty name, and every write it then made would
+      // be attributed to nothing while looking like a delegate that worked.
+      if (!pod || !agentId) throw new Error('The relay signed this delegate key in and reported no ' + (pod ? 'sessionAgent' : 'pod') + ', so it has no identity to be authorised under. Nothing was done.');
+      // ★ A delegate holds its OWN encryption key, derived from its OWN wallet. That is what stops an
+      // agent's reach from silently becoming its human's: being seated in a private workspace is a
+      // separate grant, and this key is what makes it a separate one in fact and not just on paper.
+      //
+      // ★★ AND IT IS INSTALLED ON THIS CLIENT ONLY. This called `installEncryption`, which also wrote
+      // the ACCOUNT's `accountEncryptionPair` — so the sentence above was true of the derivation and
+      // false of where the result went. See `setAccountEncryption` for the two things that cost.
+      //
+      // ★ BOTH HALVES, AND THE OPENER IS THE ONE WITH NO SUBSTITUTE. Registration is what lets other
+      // members seal TO this delegate; the opener is what lets it READ what they sealed. A session
+      // that got the registration and no opener reports `canOpenSealed: false`, which `verifyGrantIri`
+      // renders as "this client holds no key to open them" for every private record it is seated in —
+      // a total, silent loss of private reads that nothing else in this file would notice.
+      const encryption = installClientEncryption(delegateClient, pk);
+      await registerEncryptionKey(delegateClient, encryption, agentId);
+      return { address: key, agentId, pod, client: delegateClient, bearer: issued };
+    },
+    commit: (next) => { hosted.set(key, next); },
+    // Only when there WAS one: `clear` deleted the entry, so an address that had no session goes
+    // back to having none rather than to having a hole somebody has to read as absence.
+    restore: (was) => { if (was) hosted.set(key, was); },
   });
-  const client = new WorkspaceClient(RELAY, delegateTransport);
-  await client.connect();
-  const status = await client.podStatus();
-  const podUrl = String(status['pod'] ?? status['podUrl'] ?? '');
-  const pod = podUrl.replace(/\/$/, '').split('/').pop() ?? '';
-  const agent = status['sessionAgent'] as { did?: string; id?: string } | undefined;
-  const agentId = agent?.did ?? agent?.id ?? '';
-  // ★ REFUSED RATHER THAN GUESSED, exactly as the Discord bot refuses. The agent id is the string
-  // a delegator authorises and the string the relay's scope gate compares. A delegate that came up
-  // without one would ask somebody to authorise an empty name, and every write it then made would
-  // be attributed to nothing while looking like a delegate that worked.
-  if (!pod || !agentId) throw new Error('The relay signed this delegate key in and reported no ' + (pod ? 'sessionAgent' : 'pod') + ', so it has no identity to be authorised under. Nothing was done.');
-  // ★ A delegate holds its OWN encryption key, derived from its OWN wallet. That is what stops an
-  // agent's reach from silently becoming its human's: being seated in a private workspace is a
-  // separate grant, and this key is what makes it a separate one in fact and not just on paper.
-  await installEncryption(client, pk, agentId);
-  const next: HostedDelegate = { address: key, agentId, pod, client, bearer };
-  hosted.set(key, next);
-  return next;
 }
 
 // ── the account keyring ──────────────────────────────────────────────────────
@@ -346,29 +425,6 @@ async function signInWithAccountKey(privateKey: string): Promise<{ pod: string; 
 }
 
 /**
- * GIVE A CLIENT THE KEY IT READS PRIVATE WORKSPACES WITH.
- *
- * ── ★★ THE HALF THAT MAKES THE WORD "END-TO-END" TRUE ───────────────────────
- *
- * The relay keeps a public key an agent supplies and hands back sealed envelopes without opening
- * them. Both are useless until something on this side actually HOLDS a secret: until now no member
- * held a key at all, so "encrypted to its members" meant encrypted to one keypair the relay owns.
- * This registers the public half and installs the opener that uses the private half.
- *
- * ── ★ THE DERIVATION TAKES NO PRINCIPAL, DELIBERATELY ───────────────────────
- *
- * `encryptionKeyFor` accepts one so a delegate need not share a key with its human, but a delegate
- * here already HAS its own wallet — `DELEGATE_KEY` — so passing anything would only make the key
- * depend on a second input. That matters more than it looks: the derivation must be STABLE for the
- * lifetime of the identity, because content encrypted to a key is unreadable the moment the key
- * changes. Scoping it by, say, the session agent DID would silently re-key on some future sign-in
- * and quietly orphan every private message the person had already received.
- *
- * ★ AND A FAILURE HERE MUST NOT STOP THE SIGN-IN. Registration is a nicety on a pod that may
- * already carry the key; the opener is worth installing either way, because reading is what this
- * key is for and reading does not depend on the registry.
- */
-/**
  * The PUBLIC half of the account's encryption key, for the renderer to publish in an acceptance.
  *
  * ★★ THE PUBLIC HALF ONLY, AND IT LEAVES THIS PROCESS BY DESIGN. That is what a recipient list is
@@ -399,8 +455,9 @@ let accountEncryptionPair: ReturnType<typeof encryptionKeyFor> | null = null;
  *     `accountEncryptionPair`, never the session, so it would still seal, as the person who had
  *     signed out.
  *   · ★ SIGN IN THROUGH THE BROWSER AFTERWARDS. That path holds no key on this machine, and
- *     `installEncryption` used to RETURN EARLY for it — so the new session was published with
- *     `encryptionPublicKey: <the previous account's>`. That value goes into the new identity's
+ *     `installEncryption` used to RETURN EARLY for it without clearing anything — so the new
+ *     session was published with `encryptionPublicKey: <the previous account's>`. That value goes
+ *     into the new identity's
  *     ACCEPTANCE, which is the one document every other member reads to decide who to seal to.
  *     Every entry written afterwards would be encrypted to a key only the previous identity can
  *     open, in a channel the new one is correctly seated in — and nothing anywhere reports it,
@@ -408,30 +465,227 @@ let accountEncryptionPair: ReturnType<typeof encryptionKeyFor> | null = null;
  *
  * Absent is a real state and this is what it means: no key here, so nothing seals and nothing
  * opens, which is exactly what a browser sign-in already advertises about itself.
+ *
+ * ── ★★ AND IT SAID "THE ONE PLACE" WHILE A THIRD WRITER EXISTED ─────────────
+ *
+ * The heading above was a wish, not a description. `installEncryption` was ONE function with TWO
+ * callers — the person's sign-in and `delegateSession` — and it wrote these fields for both, so
+ * every delegate this app signed in overwrote its human's key and nothing ever put the human's
+ * back. The invariant `delegateSession` states in its own comment, and again on the turn path
+ * ("a delegate's reach must not silently become its human's"), was being broken by the line that
+ * states it.
+ *
+ * ★ IT IS NOT AN EXOTIC PATH. It is an ORDINARY BOOT. The renderer fires `loadDelegates()` after
+ * sign-in; `delegate:list` signs in every stored delegate key not already in `hosted` — it has to,
+ * because the relay is the only thing that can say what agent id a key gets. So by the time the
+ * window is drawn, the LAST delegate's keypair is sitting in the account's globals with the
+ * person's own session live in front of it. Two things followed:
+ *
+ *   · `substrate:seal` reads `accountEncryptionPair` as the SENDER, so every entry the person
+ *     wrote afterwards carried `senderPublicKey: <a delegate's>`. Nobody was locked out — a
+ *     recipient reads the sender out of each wrapped key, so opening never consults who claimed to
+ *     have sealed it — but the provenance stamped on somebody's own words named an agent they had
+ *     merely switched on, and provenance is the thing this vertical asks to be believed about.
+ *   · ★ THE REFUSAL BELOW STOPPED REFUSING, WHICH IS THE BEHAVIOURAL HALF. A browser sign-in
+ *     installs a NULL pair precisely so that nothing can be sealed; `substrate:seal` checks the
+ *     pair and says so. Once `loadDelegates` had run, the pair was a delegate's and the guard
+ *     PASSED. Measured with the sequence in
+ *     `tests/workspace-desktop-delegate-key.test.ts`: "seal refused before delegate = true |
+ *     after delegate = false". A deliberate refusal that lapses on an ordinary boot is worse than
+ *     one nobody wrote, because the code still reads as though it holds.
+ *
+ * ── ★★ AND THE FIRST REPAIR ANSWERED THE WRONG QUESTION ────────────────────
+ *
+ * Splitting the installer removed the third writer, and the docblock then declared the heading
+ * true again "because only two things call this". That is a CALLER COUNT, and the heading is
+ * about a LIFETIME — nothing a caller count can establish, because the interesting writes happen
+ * across an await where the number of callers is irrelevant and the ORDER is everything. The
+ * split had in fact moved the write from BEFORE `register_agent` to AFTER it, and both halves of
+ * the defect above came straight back by a new route:
+ *
+ *   · SIGN OUT mid-sign-in and the sign-in's continuation wrote the pair back on top of the
+ *     clear. Measured: "SEALED as ACC1" after signing out, where the ordering before the split
+ *     refused.
+ *   · SWITCH ACCOUNTS and, for the length of the new account's `register_agent`, sealing was
+ *     stamped with the PREVIOUS account's key.
+ *
+ * ── ★★ WHAT ACTUALLY BOUNDS THE LIFETIME NOW ─────────────────────────
+ *
+ * Not a caller count. An ORDER — and one this file no longer keeps privately, because `adopt` is
+ * a {@link handover} on {@link accounts} and the order is the package's:
+ *
+ *   1 · `clear` drops this pair SYNCHRONOUSLY, before the sign-in's first await, along with the
+ *       bearer, the transport, the client, the renewal timer and the hosted delegate sessions. A
+ *       handover starts when it is asked for, so there is no window in which this process is
+ *       still armed with the outgoing identity's secret while acquiring the incoming one's.
+ *   2 · `work` writes NOTHING shared: it derives the key, installs the opener on the client it
+ *       built and registers the public half under that client's own bearer. See
+ *       {@link prepareAccountEncryption}.
+ *   3 · `commit` assigns in ONE synchronous block, and it runs only while that sign-in still
+ *       holds custody of the state it cleared. An overtaken sign-in commits nothing and says so.
+ *   4 · ★ AND THE FAILURE PATH IS WRITTEN, which is the half that was missing for three rounds.
+ *       A throw anywhere in `work` used to exit with this pair permanently null while the panel
+ *       still advertised the OUTGOING account as live — `sealedReads: true` and its
+ *       `encryptionPublicKey` included — so sealing was disarmed for the life of the process.
+ *       `restore` puts every field back and re-arms the timer, and it runs only while this
+ *       handover is still the custodian.
+ *
+ * So the writers are `adopt`'s handover (`clear`, `commit` and `restore`) and `auth:signout`,
+ * which clears and then bumps the subject — and the bump ends any adopt's custody, so a failing
+ * sign-in can no longer put a departed account's key back on top of a sign-out.
  */
 function setAccountEncryption(key: ReturnType<typeof encryptionKeyFor> | null): void {
   accountEncryptionPair = key;
   accountEncryptionPublicKey = key?.publicKey ?? null;
 }
 
-async function installEncryption(target: WorkspaceClient, privateKeyHex: string | null, agentId: string | null): Promise<void> {
-  if (!privateKeyHex) {
-    // Browser sign-in: no key on this machine, so it reads what it can — and carries nothing
-    // over from whoever was signed in before. See `setAccountEncryption`.
-    setAccountEncryption(null);
-    target.setGraphOpener(null);
-    return;
-  }
+/**
+ * WHICH ACCOUNT THIS PROCESS'S SHARED STATE BELONGS TO, AND WHICH ATTEMPT AT IT.
+ *
+ * ★★ TWO AXES, BECAUSE AN IDENTITY GUARD IS NOT AN ORDERING GUARD. This was one integer,
+ * `accountGeneration`, and one integer cannot answer both questions: two sign-ins at the SAME
+ * account share an identity and are still alternatives, and a renewal in flight is neither a
+ * sign-in nor a different account. {@link EpochCounter} is the single implementation of this,
+ * shared with the renderer, the Discord watcher and the artifact — it lives in the package
+ * because four shells re-derived the guard privately and each got a different subset of it right.
+ *
+ * ★ AND IT CARRIES CUSTODY, WHICH A NUMBER CANNOT. `adopt` clears the credential, the key, the
+ * timer and the delegate sessions before its first await; for the whole of that window
+ * `current()` and `sameSubject()` answer FALSE for every stamp, so nothing — not the renewal
+ * timer, not a 401 re-authorizer, not a delegate ceremony — can write into the gap. An integer
+ * can say "a different identity"; it has no way to say "between identities".
+ */
+const accounts = new EpochCounter();
+
+/**
+ * ONE COUNTER PER DELEGATE ADDRESS, because two delegates are two subjects.
+ *
+ * ★ THE ORDERING QUESTION IS "IS THERE A NEWER CEREMONY FOR THIS DELEGATE", AND ONE SHARED
+ * COUNTER CANNOT ASK IT. Two ceremonies for DIFFERENT addresses are routinely in flight together:
+ * the renderer fires `loadDelegates()` unawaited at boot while `agent:think` opens a delegate's
+ * session before a turn, and `delegate:call` opens one on demand. On a shared counter each of
+ * those would take the subject from the others, so a delegate would be dropped for a reason that
+ * has nothing to do with it — while "a second sign-in for the SAME address replaces the first",
+ * which is the rule actually wanted, would still not be expressible.
+ *
+ * (`delegate:list`'s own loop is NOT the case that forces this, and the first version of this
+ * comment said it was: it AWAITS each ceremony, so iteration N has committed before iteration
+ * N+1 bumps anything, and a shared counter would survive it.)
+ */
+const delegates = new Map<string, EpochCounter>();
+
+/** The counter for one delegate address, minted on first use. */
+function delegateEpochs(key: string): EpochCounter {
+  const held = delegates.get(key);
+  if (held) return held;
+  const made = new EpochCounter();
+  delegates.set(key, made);
+  return made;
+}
+
+/**
+ * End every outstanding attempt at every delegate this run has opened a counter for.
+ *
+ * ★★ CALLED WHEREVER `hosted` IS CLEARED, OR THE CLEAR IS HALF A CLEAR. `auth:signout` and
+ * `adopt` both mean "the person this process acts for has changed", and both drop `hosted` — but
+ * a ceremony already in flight holds its own counter and would commit into the map afterwards.
+ * MEASURED (round4/refute-7 #7): a delegate sign-in in flight at `auth:signout` landed in
+ * `hosted` AFTER `hosted.clear()`, so with nothing signed in `delegate:list` returned a live
+ * delegate. This is the line that makes those commits drop.
+ */
+function endDelegateAttempts(): void {
+  for (const counter of delegates.values()) counter.bumpSubject();
+}
+
+/**
+ * GIVE A CLIENT THE KEY IT READS PRIVATE WORKSPACES WITH.
+ *
+ * ── ★★ THE HALF THAT MAKES THE WORD "END-TO-END" TRUE ───────────────────────
+ *
+ * The relay keeps a public key an agent supplies and hands back sealed envelopes without opening
+ * them. Both are useless until something on this side actually HOLDS a secret: until now no member
+ * held a key at all, so "encrypted to its members" meant encrypted to one keypair the relay owns.
+ * This installs the opener that uses the private half; {@link registerEncryptionKey} publishes the
+ * public one.
+ *
+ * ── ★ THE DERIVATION TAKES NO PRINCIPAL, DELIBERATELY ───────────────────────
+ *
+ * `encryptionKeyFor` accepts one so a delegate need not share a key with its human, but a delegate
+ * here already HAS its own wallet — `DELEGATE_KEY` — so passing anything would only make the key
+ * depend on a second input. That matters more than it looks: the derivation must be STABLE for the
+ * lifetime of the identity, because content encrypted to a key is unreadable the moment the key
+ * changes. Scoping it by, say, the session agent DID would silently re-key on some future sign-in
+ * and quietly orphan every private message the person had already received.
+ *
+ * ── ★★ ONE CLIENT, ONE IDENTITY — AND SYNCHRONOUS ON PURPOSE ────────────────
+ *
+ * Deriving a keypair from a private key is arithmetic and so is installing an opener, so this
+ * function awaits nothing and touches nothing but the client it is handed. That is load-bearing
+ * rather than tidy: while the derivation and the relay-side registration were one `async`
+ * function, the account's sign-in could not commit its own key until the network had answered,
+ * and a sign-out landing in that window was overwritten by the sign-in's continuation. See
+ * `setAccountEncryption`, which records both the merge that made a delegate write the account's
+ * key and the ordering that undid a sign-out.
+ *
+ * The derived pair is RETURNED rather than stored, so each caller decides where its own identity's
+ * key belongs: `adopt` commits the account's into the module globals under the generation guard,
+ * and `delegateSession` stores a delegate's nowhere at all — the opener installed here already
+ * holds the only copy anything in this process reads.
+ */
+function installClientEncryption(target: WorkspaceClient, privateKeyHex: string): ReturnType<typeof encryptionKeyFor> {
   const key = encryptionKeyFor(privateKeyHex);
-  setAccountEncryption(key);
-  if (agentId) {
-    try {
-      await target.tool('register_agent', {
-        agent_id: agentId, scope: 'ReadWrite', encryption_public_key: key.publicKey,
-      });
-    } catch { /* see above: the opener is still worth having */ }
-  }
   target.setGraphOpener(openerFor(privateKeyHex), sealedBindingCheck);
+  return key;
+}
+
+/**
+ * Publish a client's PUBLIC half relay-side, so other members can seal TO this identity.
+ *
+ * ★ AND A FAILURE HERE MUST NOT STOP THE SIGN-IN. Registration is a nicety on a pod that may
+ * already carry the key; the opener {@link installClientEncryption} installed is worth having
+ * either way, because reading is what this key is for and reading does not depend on the registry.
+ *
+ * ★ NO AGENT ID, NO CALL. The relay's row is keyed on the agent the SESSION is, so without one
+ * there is nothing to register the key against — and a guessed id would attach it to nobody.
+ */
+async function registerEncryptionKey(
+  target: WorkspaceClient, key: ReturnType<typeof encryptionKeyFor>, agentId: string | null,
+): Promise<void> {
+  if (!agentId) return;
+  try {
+    await target.tool('register_agent', {
+      agent_id: agentId, scope: 'ReadWrite', encryption_public_key: key.publicKey,
+    });
+  } catch { /* see above: the opener is still worth having */ }
+}
+
+/**
+ * The account's own key: derived, installed on ITS client, published relay-side — and deliberately
+ * NOT committed. What comes back is what `adopt` commits, or null for a session that holds no key.
+ *
+ * ★★ PREPARE, NOT INSTALL, AND THE NAME IS THE INVARIANT. Called `installEncryption`, with a
+ * `target` parameter that made it look per-client, it read as something any session could safely
+ * call — and `delegateSession` did, so every delegate this app signed in overwrote its human's
+ * sealing key. Renamed `installAccountEncryption` it was out of the delegate's reach but still
+ * WROTE the account globals, from the far side of a network round trip, which undid a sign-out.
+ * Nothing here writes anything a sign-out or a later sign-in shares; `adopt` alone commits, behind
+ * one generation check. See `setAccountEncryption` for both measurements.
+ *
+ * ★ NULL IS A RESULT, NOT THE ABSENCE OF ONE. A browser sign-in holds no key on this machine, so
+ * it reads what it can and carries NOTHING over from whoever was signed in before. Carrying one
+ * over is the second defect `setAccountEncryption` records: the new session was published with
+ * the previous account's `encryptionPublicKey`, and that value goes into an acceptance.
+ */
+async function prepareAccountEncryption(
+  target: WorkspaceClient, privateKeyHex: string | null, agentId: string | null,
+): Promise<ReturnType<typeof encryptionKeyFor> | null> {
+  if (!privateKeyHex) {
+    target.setGraphOpener(null);
+    return null;
+  }
+  const key = installClientEncryption(target, privateKeyHex);
+  await registerEncryptionKey(target, key, agentId);
+  return key;
 }
 
 const listeners = new Set<WebContents>();
@@ -484,56 +738,297 @@ function createWindow(): BrowserWindow {
   return win;
 }
 
-/** Resolve which pod the freshly minted session actually writes to, and cache the client. */
-async function adopt(next: RelayOAuthBearer, method: AuthMethod, accountKey?: string): Promise<{ pod: string; displayName: string | null; method: AuthMethod }> {
-  bearer = next;
-  transport = new RelayMcpTransport(RELAY, next);
+/**
+ * What one sign-in built, ready to become this process's live session in a single assignment.
+ *
+ * ★ EVERY FIELD IS PRODUCED BY `work`, WHICH WRITES NOTHING SHARED. That is a rule `handover`
+ * makes structural rather than advisory: module state is touched only in `clear`, `commit` and
+ * `restore`, all three synchronous, and a `guarded` commit attempted from inside `work` drops.
+ */
+interface AdoptedSession {
+  readonly client: WorkspaceClient;
+  readonly transport: RelayMcpTransport;
   /**
-   * ★ ONLY WHEN THIS PROCESS HOLDS THE KEY. A wallet sign-in can be repeated silently because the
-   * key is here; a BROWSER sign-in cannot — repeating it means putting a window in front of
-   * somebody, and doing that unprompted because a token expired would be worse than the honest
-   * "needs_reauth" the transport reports instead. So the account session recovers by itself for
-   * the one method where recovering is not a decision on the person's behalf.
+   * The credential the transport is ACTUALLY holding when `work` finishes, which is not always
+   * the one `adopt` was handed.
+   *
+   * ★ THEY DIFFER WHENEVER THE RE-AUTHORIZER FIRED DURING THE SIGN-IN ITSELF, and `connect` and
+   * `get_pod_status` are both calls that can provoke it. Committing the argument instead would
+   * install a credential the transport had already replaced, and `scheduleRenewal` would arm its
+   * timer off a spent expiry. The old code did not have this problem because that closure wrote
+   * the module global directly — which is the defect being closed, so the value has to come back
+   * some other way.
    */
-  if (accountKey) {
-    const key = accountKey;
-    transport.setReauthorizer(async () => {
-      const w = new Wallet(key);
-      const again = await startLoopbackReceiver();
-      try {
-        const fresh = await signInWithWallet(RELAY, IDENTITY, w.address, (m) => w.signMessage(m), again.redirectUri);
-        bearer = fresh;
-        return fresh;
-      } finally { again.close(); }
+  readonly credential: RelayOAuthBearer;
+  readonly pod: string;
+  readonly displayName: string | null;
+  readonly key: ReturnType<typeof encryptionKeyFor> | null;
+}
+
+/** Everything the OUTGOING account owns in this process, read before any of it is dropped. */
+interface OutgoingAccount {
+  readonly client: WorkspaceClient | null;
+  readonly transport: RelayMcpTransport | null;
+  readonly bearer: RelayOAuthBearer | null;
+  readonly signedInAs: { readonly method: AuthMethod; readonly pod: string | null } | null;
+  readonly session: Session;
+  readonly encryption: ReturnType<typeof encryptionKeyFor> | null;
+  /** A COPY. `clear` empties the live map, so a restore needs its own list to fill it from. */
+  readonly hosted: readonly (readonly [string, HostedDelegate])[];
+}
+
+/**
+ * Resolve which pod the freshly minted session actually writes to, and make it this process's.
+ *
+ * ── ★★ A HANDOVER, AND THE FAILURE PATH IS THE POINT ───────────────────────
+ *
+ * The account's state is dropped before the first await, because leaving the outgoing key
+ * standing across the incoming account's `register_agent` had `substrate:seal` answering — for
+ * the length of a round trip, stamped with the PREVIOUS account's key — on an entry the new
+ * account was about to write.
+ *
+ * ★★ AND NOTHING PUT IT BACK. Any throw between building the client and the commit — a failed
+ * `connect`, a `get_pod_status` with no pod URL, a key that would not derive — exited with the
+ * encryption pair permanently null while `session:status` still advertised the OUTGOING account
+ * as live, `sealedReads: true` and its `encryptionPublicKey` included. Sealing was disarmed for
+ * the life of the process and nothing anywhere said so. Reproduced twice (round4/refute-7 #1,
+ * refute-10 #1). {@link handover} is that shape written once, in the package all four shells
+ * already import: snapshot, clear, await, then commit if this run still holds custody of what it
+ * cleared and restore if it does not.
+ *
+ * ★ SO "BETWEEN IDENTITIES, ACTING AS NEITHER" IS NOW TRUE OF THE PROCESS. The previous version
+ * of this docblock claimed it while `session:status` went on answering as the outgoing account
+ * and `hosted` went on holding the delegate sessions it had switched on. `clear` drops the
+ * credential, the transport, the client, `signedInAs`, the encryption pair, the renewal timer and
+ * the delegate sessions, and publishes a SIGNED-OUT session — which is what this process is for
+ * that window: every handler needing a credential refuses, through the same checks that refuse
+ * before a first sign-in.
+ */
+async function adopt(next: RelayOAuthBearer, method: AuthMethod, accountKey?: string): Promise<{ pod: string; displayName: string | null; method: AuthMethod }> {
+  let adopted: AdoptedSession;
+  try {
+    adopted = await handover<OutgoingAccount, AdoptedSession>(accounts, {
+      snapshot: () => ({
+        client, transport, bearer, signedInAs, session,
+        encryption: accountEncryptionPair,
+        hosted: [...hosted],
+      }),
+      clear: () => {
+        /**
+         * ★ THE TIMER IS STATE, AND IT WAS THE HALF NOBODY NAMED. `adopt` never disarmed it, and
+         * only its own success path ever reached `scheduleRenewal`. So a FAILED switch left the
+         * outgoing account's renewal armed over the incoming globals: when it fired it refreshed
+         * whatever bearer was there and republished `{...session, state: 'live'}` for a pod
+         * nobody was signed in to — once an hour, indefinitely.
+         *
+         * ★★ BUT THIS LINE IS NOT WHAT CLOSES THAT, AND SAYING SO WAS THE FIRST THING A MUTANT
+         * REFUTED. What closes it is the Epoch the timer carries: one armed by an earlier sign-in
+         * finds `accounts.current(e)` false and spends nothing. Removing this line leaves all
+         * fourteen cases green, because `scheduleRenewal` clears the slot before it arms and
+         * every exit from a handover goes through it. It stays for the reason `Handover.clear`
+         * gives in `epoch.ts` — "clear everything the outgoing subject owns INCLUDING TIMERS, or
+         * restore cannot be its inverse": with it, nothing fires into the gap at all, rather than
+         * firing and being refused, and the pair below describes what actually happened.
+         */
+        if (renewTimer) { clearTimeout(renewTimer); renewTimer = null; }
+        renewing = null;
+        client = null;
+        transport = null;
+        bearer = null;
+        signedInAs = null;
+        setAccountEncryption(null);
+        /**
+         * ★ AND THE DELEGATES, WHICH `auth:signout` HAS ALWAYS CLEARED AND THIS NEVER TOUCHED.
+         * The two writers of "the person this process acts for has changed" disagreed about what
+         * a handover is, so switching accounts left the previous identity's hosted delegate
+         * sessions live for the next identity's window to drive. Bumping their counters is the
+         * other half: it stops a ceremony already in flight putting one back an await later.
+         */
+        hosted.clear();
+        endDelegateAttempts();
+        setSession({
+          state: 'signed-out', pod: null, method: null, expiresAt: null, renewable: false,
+          why: 'this process is between accounts: the previous session has been dropped and the next one has not '
+            + 'answered yet. Nothing can be read, written or sealed until it does.',
+          sealedReads: false, encryptionPublicKey: null,
+        });
+      },
+      work: async (e) => {
+        const myTransport = new RelayMcpTransport(RELAY, next);
+        // See {@link AdoptedSession.credential}: the re-authorizer below can replace this before
+        // `work` returns, and the commit has to install what the transport is actually holding.
+        let credential = next;
+        /**
+         * ★ ONLY WHEN THIS PROCESS HOLDS THE KEY. A wallet sign-in can be repeated silently
+         * because the key is here; a BROWSER sign-in cannot — repeating it means putting a window
+         * in front of somebody, and doing that unprompted because a token expired would be worse
+         * than the honest "needs_reauth" the transport reports instead. So the account session
+         * recovers by itself for the one method where recovering is not a decision on the
+         * person's behalf.
+         */
+        if (accountKey) {
+          const stored = accountKey;
+          myTransport.setReauthorizer(async () => {
+            const w = new Wallet(stored);
+            const again = await startLoopbackReceiver();
+            try {
+              const fresh = await signInWithWallet(RELAY, IDENTITY, w.address, (m) => w.signMessage(m), again.redirectUri);
+              /**
+               * ── ★★ THIS TRANSPORT'S CREDENTIAL ALWAYS; THE PROCESS'S ONLY WHILE IT IS STILL
+               * THIS ACCOUNT ───────────────────────────────────────
+               *
+               * This closure wrote `bearer` unconditionally, capturing neither a generation nor a
+               * transport identity. A 401 on a call still travelling through account A's
+               * transport, resolving after a switch to B, overwrote B's `bearer` with A's fresh
+               * credential — and `renew` then read that global, refreshed A's token and set it on
+               * B's transport, so the process made relay calls as A under a panel that said B.
+               *
+               * `sameSubject` is also false for the whole of a handover, so a 401 arriving
+               * mid-switch cannot write into the gap either. The fresh credential is still
+               * RETURNED: it belongs to the transport that asked for it, and withholding it would
+               * fail a call in flight for a reason that has nothing to do with that call.
+               */
+              credential = fresh;
+              if (accounts.sameSubject(e)) bearer = fresh;
+              return fresh;
+            } finally { again.close(); }
+          });
+        }
+        /**
+         * ★ THE CLIENT THIS SIGN-IN OWNS, AND IT IS A LOCAL. The module `client` is null for the
+         * whole of `work` — `clear` dropped it — so there is no global here to read back by
+         * mistake. MEASURED, on the version that assigned it on the way in: signing out
+         * mid-sign-in made the continuation throw `Cannot read properties of null (reading
+         * 'canOpenSealed')`, and an overtaken sign-in handed its opener to whatever client the
+         * LATER sign-in had installed.
+         */
+        const mine = new WorkspaceClient(RELAY, myTransport);
+        await mine.connect();
+        const status = await mine.podStatus();
+        const podUrl = String(status['pod'] ?? status['podUrl'] ?? '');
+        // The pod SEGMENT, taken from the pod URL — never `displayName`, which is a label the
+        // account chose. Using a display name as a pod name addresses a pod that does not exist,
+        // and that reads back as an EMPTY LOG rather than as an error.
+        const pod = podUrl.replace(/\/$/, '').split('/').pop() ?? '';
+        if (!pod) throw new Error('get_pod_status answered without a pod URL this client could turn into a pod name, so there is no address to write to.');
+        // The key this machine reads private workspaces with, registered against the agent the
+        // relay says this session IS. A browser sign-in passes no key and simply reads less.
+        const sessionAgent = status['sessionAgent'] as { did?: string; id?: string } | undefined;
+        const key = await prepareAccountEncryption(mine, accountKey ?? null, sessionAgent?.did ?? sessionAgent?.id ?? null);
+        return { client: mine, transport: myTransport, credential, pod, displayName: (status['displayName'] as string) ?? null, key };
+      },
+      commit: (v, e) => {
+        /**
+         * ── ★★ THE COMMIT: ONE SYNCHRONOUS BLOCK, RUN ONLY BY THE CUSTODIAN ────
+         *
+         * What stood here said "everything above this line either read the relay or wrote `mine`,
+         * which no other session can see" — while the five lines above it had assigned the
+         * generation, the encryption pair, the bearer, the transport and the client. It is true
+         * of `work`, and it is true because `handover` puts every shared write into one of three
+         * synchronous callbacks, not because a reader checked the lines above.
+         */
+        client = v.client;
+        transport = v.transport;
+        bearer = v.credential;
+        setAccountEncryption(v.key);
+        signedInAs = { method, pod: v.pod };
+        setSession({
+          state: 'live', pod: v.pod, method, expiresAt: v.credential.expiresAt,
+          renewable: !!(v.credential.refreshToken && v.credential.clientId),
+          why: null,
+          // Measured from the client, not inferred from the sign-in method: the opener is
+          // installed only if a key was actually found and derived.
+          sealedReads: v.client.canOpenSealed,
+          // The address other members seal to. Null for a browser sign-in, which holds no key — such a
+          // member is still seated, and `recipientsFromRoster` names them rather than sealing to a subset.
+          encryptionPublicKey: accountEncryptionPublicKey,
+        });
+        scheduleRenewal(e);
+      },
+      restore: (was) => {
+        /**
+         * ★ WHAT `clear` DROPPED, PUT BACK — and the two lists are written to be read against
+         * each other. A field cleared and not restored is the whole of the defect this callback
+         * exists to close.
+         */
+        client = was.client;
+        transport = was.transport;
+        bearer = was.bearer;
+        signedInAs = was.signedInAs;
+        setAccountEncryption(was.encryption);
+        /**
+         * ★ EXCEPT `renewing`, WHICH IS DELIBERATELY NOT PUT BACK, and the rule above says a
+         * cleared field that does not come back is the defect — so this is the exception being
+         * argued rather than overlooked. It is a promise, not a value: the exchange it names was
+         * begun for a credential this handover took away, its Epoch is stale, and it will answer
+         * `false` whatever happens here. Reinstating it would only make the next renewal join a
+         * run that is already refusing.
+         */
+        for (const [address, delegate] of was.hosted) hosted.set(address, delegate);
+        setSession(was.session);
+        /**
+         * ★ THE TIMER IS RE-ARMED RATHER THAN RESTORED: `clear` called `clearTimeout` on it and a
+         * cancelled handle cannot be put back. `asOf()` and not `begin()` — this is not an
+         * attempt at anything and must supersede nothing, and a LATER handover can be running
+         * this restore from the chain it inherited, where this handover's own Epoch is already
+         * stale and would arm a timer that could only ever drop itself.
+         */
+        scheduleRenewal(accounts.asOf());
+      },
     });
+  } catch (err) {
+    if (isOvertaken(err)) {
+      /**
+       * ★ AN OVERTAKEN SIGN-IN FAILS RATHER THAN PARTLY SUCCEEDING. Returning quietly would let
+       * `signInWithAccountKey` go on to record this key as the ACTIVE account for a session that
+       * never became live. The person asked for two things and got the later one; saying so is
+       * the only answer that leaves the app and the disk agreeing.
+       *
+       * ★ `err.value` IS THIS RUN'S SESSION AND NOTHING ELSE HOLDS A REFERENCE TO IT — and there
+       * is nothing on it to close. `RelayMcpTransport` opens no socket of its own (`connect` is
+       * one `tools/list` POST, and a watch is opened per CALL — this run made none), and the
+       * loopback receiver a wallet sign-in opens is closed in its caller's `finally`. Dropping
+       * the reference is the whole of the disposal; a `close()` that does not exist would be a
+       * worse thing to write here than this sentence.
+       */
+      throw new Error('This sign-in was overtaken — you signed out, or signed in again, before it finished. '
+        + 'Nothing about the live session was changed.');
+    }
+    if (isRestoreFailed(err)) {
+      /**
+       * ★★ THE ONE OUTCOME THIS PROCESS MAY NOT CARRY ON FROM. The sign-in failed AND the session
+       * it had put aside could not be put back, so the account's state is cleared and nothing
+       * owns it: no credential, no key to seal with, and a panel that would be describing neither
+       * identity. Signing out is the only description that is true, and it is a state the person
+       * can act on.
+       */
+      if (renewTimer) { clearTimeout(renewTimer); renewTimer = null; }
+      renewing = null;
+      client = null;
+      transport = null;
+      bearer = null;
+      signedInAs = null;
+      setAccountEncryption(null);
+      hosted.clear();
+      endDelegateAttempts();
+      setSession({
+        state: 'signed-out', pod: null, method: null, expiresAt: null, renewable: false,
+        why: 'a sign-in failed and the session it had put aside could not be put back, so this process signed '
+          + 'itself out rather than carry on holding half of one. Sign in again.',
+        sealedReads: false, encryptionPublicKey: null,
+      });
+      accounts.bumpSubject();
+      throw new Error('This sign-in failed, and restoring the session it had put aside failed as well — so this '
+        + 'process has signed itself out rather than carry on with half a session. Nothing was written to your pod. '
+        + ((err as Error)?.message ?? String(err)));
+    }
+    /**
+     * Everything else: the handover restored, so the OUTGOING account is live again and the panel
+     * is describing it correctly. The error belongs to the sign-in and is reported as its own.
+     */
+    throw err;
   }
-  client = new WorkspaceClient(RELAY, transport);
-  await client.connect();
-  const status = await client.podStatus();
-  const podUrl = String(status['pod'] ?? status['podUrl'] ?? '');
-  // The pod SEGMENT, taken from the pod URL — never `displayName`, which is a label the
-  // account chose. Using a display name as a pod name addresses a pod that does not exist,
-  // and that reads back as an EMPTY LOG rather than as an error.
-  const pod = podUrl.replace(/\/$/, '').split('/').pop() ?? '';
-  if (!pod) throw new Error('get_pod_status answered without a pod URL this client could turn into a pod name, so there is no address to write to.');
-  // The key this machine reads private workspaces with, registered against the agent the relay
-  // says this session IS. A browser sign-in passes no key and simply reads less.
-  const sessionAgent = status['sessionAgent'] as { did?: string; id?: string } | undefined;
-  await installEncryption(client, accountKey ?? null, sessionAgent?.did ?? sessionAgent?.id ?? null);
-  signedInAs = { method, pod };
-  setSession({
-    state: 'live', pod, method, expiresAt: next.expiresAt,
-    renewable: !!(next.refreshToken && next.clientId),
-    why: null,
-    // Measured from the client, not inferred from the sign-in method: the opener is installed
-    // only if a key was actually found and derived.
-    sealedReads: client.canOpenSealed,
-    // The address other members seal to. Null for a browser sign-in, which holds no key — such a
-    // member is still seated, and `recipientsFromRoster` names them rather than sealing to a subset.
-    encryptionPublicKey: accountEncryptionPublicKey,
-  });
-  scheduleRenewal();
-  return { pod, displayName: (status['displayName'] as string) ?? null, method };
+  return { pod: adopted.pod, displayName: adopted.displayName, method };
 }
 
 /**
@@ -544,13 +1039,30 @@ async function adopt(next: RelayOAuthBearer, method: AuthMethod, accountKey?: st
  * the middle of a session. With no `expiresAt` the shell relies on the 401 recovery below,
  * which is a real mechanism rather than an assumption, and the session panel says which of the
  * two is protecting it.
+ *
+ * ★ THE TIMER CARRIES THE EPOCH OF THE RUN THAT ARMED IT, and that is what makes a renewal safe
+ * beside a switch. One that fires while `adopt` is in flight finds `accounts.current(e)` false
+ * and spends no round trip — and it needs no re-issuing, because whichever way that handover
+ * ends re-arms one: `commit` for the incoming credential, `restore` for the outgoing one.
  */
-function scheduleRenewal(): void {
+function scheduleRenewal(e: Epoch): void {
   if (renewTimer) { clearTimeout(renewTimer); renewTimer = null; }
   if (!bearer?.expiresAt || !bearer.refreshToken) return;
   const at = Math.max(10_000, bearer.expiresAt - Date.now() - RENEW_MARGIN_MS);
-  renewTimer = setTimeout(() => { void renew('the token was about to expire'); }, at);
+  renewTimer = setTimeout(() => { void renew('the token was about to expire', e); }, at);
 }
+
+/**
+ * The renewal in flight, if any.
+ *
+ * ★ ONE AT A TIME, BECAUSE THE REFRESH TOKEN ROTATES. The relay issues a new refresh token and
+ * REFUSES the spent one — that is the measurement the docblock below is built on. Three things
+ * can ask for a renewal at once (the timer, the session panel's button, and `substrate:call`'s
+ * 401 recovery), and the second to arrive would be spending a token the first had already
+ * exchanged: it fails, and the catch below then paints `lapsed` over a session that is live.
+ * Joining the run already in flight is the same answer to the same question.
+ */
+let renewing: Promise<boolean> | null = null;
 
 /**
  * Exchange the refresh token for a fresh bearer, in place.
@@ -558,26 +1070,83 @@ function scheduleRenewal(): void {
  * ★ THE WHOLE CREDENTIAL IS REPLACED, NOT JUST ITS ACCESS TOKEN. The relay ROTATES the refresh
  * token and refuses the spent one — measured — so a shell that swapped only the access token
  * would renew exactly once and then fail an hour later with nobody at the keyboard.
+ *
+ * ── ★★ AND IT IS THE THIRD WRITER OF THE ACCOUNT'S SHARED STATE ─────────────
+ *
+ * `setAccountEncryption` names "the two writers" as `adopt` and `auth:signout`. This was the
+ * third, it wrote `bearer`, the transport's credential and the whole session panel across an
+ * await, and it carried no guard of any kind. Two things were measured (round4/refute-7 #2 and
+ * #3):
+ *
+ *   · Park ACC1's renewal at `/token`, sign out, sign in as ACC2, release — `session:renew`
+ *     answered `ok`, ACC1's refreshed credential was written over ACC2's and set on ACC2's
+ *     transport, and the panel was wrong. The live session was acting as a departed identity.
+ *   · A renewal in flight across a sign-out ALONE un-did the sign-out, and reported
+ *     `state: "lapsed", why: "Cannot read properties of null (reading 'setCredential')"` — a raw
+ *     JS TypeError shown to a person as the reason their session had lapsed.
+ *
+ * Both close on the same two moves. The credential and the transport are captured BEFORE the
+ * await, so the transport written to is the one that asked and cannot have become null; and the
+ * write is a {@link guarded} commit, which re-checks the Epoch and assigns synchronously. The
+ * catch is a shared write too and asks first — a lapse notice about a session somebody has
+ * already left is painted over whatever they are looking at now.
+ *
+ * ★ A DROP LEAVES THE PANEL TO WHOEVER TOOK IT. Nothing in this process calls
+ * `accounts.begin()`; the only things that end an attempt are `adopt`'s handover and
+ * `auth:signout`'s bump, and both write the session themselves as they do it. So a renewal that
+ * finds itself superseded has nothing to put right.
  */
-async function renew(because: string): Promise<boolean> {
-  if (!bearer || !transport) return false;
+function renew(because: string, e: Epoch): Promise<boolean> {
+  if (!accounts.current(e)) return Promise.resolve(false);
+  const joined = renewing;
+  if (joined) return joined;
+  const run = renewOnce(because, e).finally(() => {
+    // Only if it is still ours: `adopt` and `auth:signout` clear this as they clear the credential.
+    if (renewing === run) renewing = null;
+  });
+  renewing = run;
+  return run;
+}
+
+async function renewOnce(because: string, e: Epoch): Promise<boolean> {
+  /**
+   * ★ CAPTURED BEFORE THE AWAIT, WHICH IS THE WHOLE OF THE NULL-DEREFERENCE REPAIR. `transport`
+   * is module state a sign-out nulls; reading it back after the round trip is what produced
+   * "Cannot read properties of null (reading 'setCredential')" as a user-facing lapse reason.
+   */
+  const held = bearer;
+  const heldTransport = transport;
+  if (!held || !heldTransport) return false;
   setSession({ ...session, state: 'renewing', why: because });
   try {
-    const next = await refreshBearer(RELAY, bearer);
-    bearer = next;
-    transport.setCredential(next);
+    return await guarded(
+      accounts, e,
+      () => refreshBearer(RELAY, held),
+      (fresh) => {
+        bearer = fresh;
+        heldTransport.setCredential(fresh);
+        setSession({
+          ...session, state: 'live', expiresAt: fresh.expiresAt,
+          renewable: !!(fresh.refreshToken && fresh.clientId), why: null,
+        });
+        scheduleRenewal(e);
+      },
+    );
+  } catch (err) {
+    /**
+     * ★ SAID OUT LOUD. The alternative — carry on and let every read 401 — renders as an empty
+     * workspace, which is a statement about somebody's pod made from no read at all.
+     *
+     * ★ AND SAID AS A SENTENCE. The relay's own message is carried, framed by what was attempted
+     * and what it cost, because what this used to hand a person verbatim was a JS TypeError
+     * thrown by this function's own null dereference.
+     */
+    if (!accounts.current(e)) return false;
     setSession({
-      ...session, state: 'live', expiresAt: next.expiresAt,
-      renewable: !!(next.refreshToken && next.clientId), why: null,
-    });
-    scheduleRenewal();
-    return true;
-  } catch (e) {
-    // ★ SAID OUT LOUD. The alternative — carry on and let every read 401 — renders as an empty
-    // workspace, which is a statement about somebody's pod made from no read at all.
-    setSession({
-      ...session, state: 'lapsed', why: (e as Error)?.message
-        ?? 'the session could not be renewed and the relay gave no reason',
+      ...session, state: 'lapsed',
+      why: 'this session could not be renewed — ' + ((err as Error)?.message
+        ?? 'the relay refused the refresh and gave no reason')
+        + ' Nothing below was refreshed from it, and the credential this process still holds is the expired one.',
     });
     return false;
   }
@@ -608,9 +1177,18 @@ app.whenReady().then(() => {
   }));
 
   ipcMain.handle('session:status', () => session);
-  /** Renew on demand, so the session panel's control is the same path the timer takes. */
+  /**
+   * Renew on demand, so the session panel's control is the same path the timer takes.
+   *
+   * ★ `asOf()`, WHICH SUPERSEDES NOTHING. Pressing this button is not a new attempt at the
+   * account — a `begin()` here would cancel the sign-in or the timed renewal already in flight and
+   * report `ok: false` for having done so. What the stamp buys is the refusal: taken while `adopt`
+   * is mid-handover it is never current, so the renewal drops before it spends a round trip, and
+   * `session` below is whatever the switch has already published rather than a panel this handler
+   * painted over it.
+   */
   ipcMain.handle('session:renew', async () => {
-    const ok = await renew('you asked for it');
+    const ok = await renew('you asked for it', accounts.asOf());
     return { ok, session };
   });
 
@@ -746,6 +1324,10 @@ app.whenReady().then(() => {
    */
   ipcMain.handle('auth:signout', () => {
     if (renewTimer) { clearTimeout(renewTimer); renewTimer = null; }
+    // The renewal in flight, if any, is no longer this process's business: whatever it returns is
+    // about a credential nobody is holding. Dropping the handle also means the next sign-in's
+    // renewal does not join it. See {@link renewing}.
+    renewing = null;
     bearer = null; transport = null; client = null; signedInAs = null;
     // ★ AND THE ENCRYPTION KEY, which `substrate:seal` reads without consulting the session at
     // all — so leaving it here meant a signed-out process would still seal as the person who
@@ -756,6 +1338,23 @@ app.whenReady().then(() => {
     // next identity's window drive delegates the previous one switched on.
     hosted.clear();
     setSession({ state: 'signed-out', pod: null, method: null, expiresAt: null, renewable: false, why: null, sealedReads: false, encryptionPublicKey: null });
+    /**
+     * ── ★★ THE BUMPS, AND THEY COME AFTER THE WRITES ───────────────────────
+     *
+     * Clearing alone was not enough once a sign-in's own write moved to the far side of a round
+     * trip: sign out while a sign-in is in flight and its continuation wrote the pair straight
+     * back. `bumpSubject` is what tells that continuation it is answering about a session nobody
+     * is in any more — and, unlike the integer it replaces, it also ENDS ANY HANDOVER'S CUSTODY,
+     * so a sign-in that then fails cannot put the departed account back over what was just
+     * written here. This handler is the one writing the state, so it is the one that owns it.
+     *
+     * ★ AND THE DELEGATE COUNTERS TOO, WHICH IS THE OTHER HALF OF `hosted.clear()`. MEASURED
+     * (round4/refute-7 #7): a delegate sign-in in flight at this line landed in `hosted` AFTER the
+     * clear, so `delegate:list` returned a live delegate with nobody signed in. The map being
+     * empty is not the same as the ceremonies filling it having stopped.
+     */
+    accounts.bumpSubject();
+    endDelegateAttempts();
     return { accounts: accountSlots() };
   });
 
@@ -789,8 +1388,41 @@ app.whenReady().then(() => {
    * ★ AND THE RECIPIENT LIST IS THE CALLER'S. This process does not decide who a workspace's
    * members are — the renderer read that from the roster, out of each member's own acceptance.
    * Adding a recipient here would be exactly the move the relay was making.
+   *
+   * ── ★★ WHAT AN `ok` FROM HERE MEANS, AND WHAT IT CANNOT MEAN ─────────────
+   *
+   * It means END-TO-END, to exactly the `recipientCount` keys the CALLER supplied.
+   * `sealForRoster` encrypts to `recipientKeys` and to nothing else; this process adds no
+   * recipient of its own, and an empty list is REFUSED (`no_recipients`) rather than turned into
+   * an envelope somebody else would fill. There is no degraded success here to tell apart from a
+   * real one — whether the relay is inside an envelope built here is settled entirely by the list
+   * that crossed the bridge, and `entry.ts` refuses to send `share_with` beside a sealed payload,
+   * which is the only argument that would ever have put it there.
+   *
+   * ★ THE RELAY-READABLE PATH IS NOT REACHED BY FAILING HERE EITHER. `recipientsFor` calls it
+   * `Sealing` mode `'escrow'`: the client publishes `share_with` with the payload in the clear,
+   * the relay resolves each member to a registered key and puts ITS OWN key in the envelope. A
+   * write takes that path when the renderer supplies NO sealer at all — `sealerFor([])` — and
+   * never as a fallback from a refusal below, because `postEntry` answers a refusal with
+   * `seal_failed` and writes nothing ("a refusal is not a reason to fall back", `entry.ts`).
+   * Which of the two a private write took is the renderer's to state, because the roster and the
+   * mode are the renderer's; what this process owes is an unambiguous account of what IT did,
+   * and refusals that say which state they are refusing from rather than all sounding like "no
+   * key".
    */
   ipcMain.handle('substrate:seal', async (_e, req: { graphIri: string; payloadTurtle: string; recipientKeys: readonly string[]; shape?: { iri: string; turtle: string } }) => {
+    /**
+     * ★ AND THE THIRD STATE, WHICH BOTH CHECKS BELOW WOULD HAVE MISDESCRIBED. Mid-switch the
+     * pair is null and `client` is null, so this refused already — as "nothing is signed in",
+     * which is true of the process and reads to a person as "you are signed out". The machine
+     * still holds the key and an identity is arriving; "seal as whom?" simply has no answer for
+     * that second. Naming the switch is the difference between a state somebody waits out and one
+     * they go and sign in again over.
+     */
+    if (accounts.handingOver()) {
+      return { ok: false as const, why: 'this app is switching accounts right now, so there is no identity to seal as. '
+        + 'Nothing was sealed and nothing was sent. Your key is still on this machine — ask again once the switch has finished.' };
+    }
     /**
      * ★ A SESSION AND A KEY, NOT JUST A KEY. This checked only the key, so it was reachable in a
      * signed-out process — and answered, with a seal made under the departed identity. Sealing is
@@ -815,8 +1447,35 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle('substrate:call', async (_e, name: string, input: Record<string, unknown>) => {
-    if (!client) throw new Error('not signed in yet');
+    /**
+     * ★ THE CLIENT IS TAKEN ONCE AND THE CALL IS MADE THROUGH THAT ONE. `once()` below read the
+     * module global on every invocation, and the 401 retry re-invokes it after `await renew(...)`
+     * — so with the unguarded `renew` this file used to have, a second `adopt` landing in that
+     * window issued the renderer's A-scoped tool call against B's client.
+     *
+     * ★★ WHAT CLOSES THAT IS THE EPOCH `renew` NOW CARRIES, NOT THIS CAPTURE. A renewal that is
+     * no longer the current account drops and answers false, so the retry is not reached at all;
+     * mutating this line back to `client!` leaves all fourteen cases green. It is kept because it
+     * makes the property structural rather than a two-step argument, and because it takes a `!`
+     * off a global read on the far side of an await.
+     *
+     * ★ AND THE OTHER HALF OF THE CENSUS FINDING DOES NOT SURVIVE READING. It said this line could
+     * also "dereference a null `client!` and throw a raw TypeError across IPC". Both writers of
+     * this state null `client` and `bearer` together, and `renew` returns false when there is no
+     * bearer — so the retry that would read the null is never taken. Reported rather than fixed,
+     * because there was nothing there to fix.
+     */
+    const mine = client;
+    if (!mine) throw new Error('not signed in yet');
     if (typeof name !== 'string' || !name) throw new Error('a tool call needs a tool name');
+    /**
+     * ★ WHICH ACCOUNT THIS CALL IS BEING MADE AS, STAMPED BEFORE IT IS MADE. `asOf()` and not
+     * `begin()`: this handler fires once per read the renderer makes, and a `begin()` here would
+     * supersede — and so cancel — the account's renewal guard and any sign-in commit, on every
+     * read in the app. It supersedes nothing and answers only "is this still the account I
+     * started as".
+     */
+    const startedAs = accounts.asOf();
     /**
      * ★★ THE ONE CALL THIS BRIDGE MAY NOT PASS STRAIGHT THROUGH.
      *
@@ -832,11 +1491,11 @@ app.whenReady().then(() => {
      * else the caller sent still applies.
      */
     const once = async (): Promise<{ ok: true; payload: unknown }> => {
-      const payload = await client!.tool(name, input ?? {});
+      const payload = await mine.tool(name, input ?? {});
       if (name === 'get_descriptor' && payload && typeof payload === 'object') {
         return {
           ok: true,
-          payload: await client!.openSealedDescriptor(payload as Record<string, unknown>, String((input ?? {})['url'] ?? '')),
+          payload: await mine.openSealedDescriptor(payload as Record<string, unknown>, String((input ?? {})['url'] ?? '')),
         };
       }
       return { ok: true, payload };
@@ -851,7 +1510,23 @@ app.whenReady().then(() => {
       // A read that failed because the hour ran out is a different thing from a write that was
       // refused, and only the first is safe to re-issue.
       if (e.code === 'needs_reauth' && bearer?.refreshToken) {
-        if (await renew('the relay rejected the session token mid-call')) {
+        /**
+         * ★★ THE SAME IDENTITY OR NO RETRY, AND `startedAs` IS THE WHOLE OF HOW THAT IS SAID. The
+         * justification above is "safe to re-issue" — and it is safe to re-issue AS THE SAME
+         * IDENTITY. Handing `renew` the stamp this call began under makes it refuse outright once
+         * a sign-out or a second `adopt` has landed, so `true` here already carries "and it is
+         * still the account that asked": {@link guarded} re-checks that Epoch at the instant it
+         * commits, and nothing between that commit and this line is more than a microtask.
+         *
+         * ★ SO THERE IS NO SECOND CHECK HERE, AND ONE WAS WRITTEN AND THEN TAKEN OUT. Nothing could
+         * reach it, and a refusal nobody can ever be shown reads as protection that is not there.
+         * What would make it reachable is `renew` losing this parameter or gaining an await after
+         * its guarded commit — and that is measured from the HARM instead, by the case that counts
+         * refresh grants after a switch: a renewal issued on the wrong stamp spends the arriving
+         * account's one turn of a rotating key, which is visible whether or not a branch here
+         * catches it.
+         */
+        if (await renew('the relay rejected the session token mid-call', startedAs)) {
           try { return await once(); }
           catch (again) {
             const a = again as { code?: string; message?: string; retryable?: boolean; retryAfterMs?: number };
@@ -886,11 +1561,26 @@ app.whenReady().then(() => {
    * DELEGATE's own pod (the one its key provisions), which is not where it writes.
    */
   ipcMain.handle('delegate:list', async () => {
+    /**
+     * ★ THE LISTING BELONGS TO THE ACCOUNT THAT ASKED FOR IT, and it signs delegates in one at a
+     * time, so a sign-out lands MIDWAY through an ordinary boot's loop. `hosted` is the person's:
+     * `auth:signout` clears it precisely so the next identity's window cannot drive delegates the
+     * previous one switched on, and a loop that kept going would put them back an iteration at a
+     * time. Each ceremony's own handover already drops its commit; this stops the loop spending
+     * four relay round trips and a loopback port per remaining key to produce nothing.
+     *
+     * `asOf()` because a listing is not an attempt at the account and must supersede none.
+     */
+    const startedAs = accounts.asOf();
     const out: { address: string; agentId: string | null; why: string | null }[] = [];
     for (const address of listDelegateKeys()) {
       let live = hosted.get(address.toLowerCase()) ?? null;
       let why: string | null = null;
-      if (!live) {
+      if (!live && !accounts.current(startedAs)) {
+        why = 'this listing began under a session that has since been signed out, or is being switched right '
+          + 'now, so no delegate session was opened for it. Which delegates this machine can drive is a '
+          + 'question about the person who is signed in; ask again.';
+      } else if (!live) {
         /**
          * ★★ ASK THE RELAY, RATHER THAN REPORT THAT NOBODY HAS ASKED IT. THIS WAS A DEADLOCK,
          * AND IT MADE EVERY DELEGATE STOP WORKING THE MOMENT THE APP RESTARTED.
@@ -967,6 +1657,14 @@ app.whenReady().then(() => {
     const key = String(address ?? '').toLowerCase();
     forgetSecret(DELEGATE_KEY(key));
     hosted.delete(key);
+    /**
+     * ★ AND ANY CEREMONY STILL IN FLIGHT FOR IT. `delegate:list` signs every stored key in on an
+     * ordinary boot, so "forget" pressed during that loop would otherwise be undone one await
+     * later by the sign-in it interrupted: the key gone from disk and the session live in the map,
+     * with nothing left on the machine to explain where it came from. Same shape as the sign-out
+     * resurrection, one address wide.
+     */
+    delegateEpochs(key).bumpSubject();
     return { forgotten: key };
   });
 

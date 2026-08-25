@@ -776,3 +776,87 @@ describe('★ a role label is read from the table, or it is not a label', () => 
     expect(checkRoleForWorkspace(table, ROLES + '#Reader').ok).toBe(true);
   });
 });
+
+describe('★★ a verdict may only carry fields about the viewer it is answering', () => {
+  /**
+   * ── A NEVER-GRANTED VIEWER INHERITED A STRANGER'S REVOCATION ────────────────
+   *
+   * `findSeat` reports the most useful failure it can: if one grant on the pod is ABOUT you and
+   * failed for its own reason — revoked, say — that reason beats "this grant names somebody
+   * else". To keep that reason's structured fields it spread the picked verdict, `mine ?? last`.
+   *
+   * `last` is simply the last grant READ. It belongs to whoever happened to be at the end of the
+   * scan. So a viewer no grant names came back with THAT person's `revoked`, `grantedTo` and
+   * `role`, while `why` said, correctly, "none of them names you".
+   *
+   * ★ AND A SECOND CHANGE IN THE SAME ROUND MADE IT LOAD-BEARING. The Discord bot had just
+   * learned to refuse a revoked member — `if (!already.ok && already.revoked === true)` — and
+   * that branch returns BEFORE `seat()`. So one revoked grant anywhere in a workspace stopped
+   * every NEW person from being seated by speaking, and told each of them that their own
+   * membership had been revoked. Neither change was wrong on its own.
+   *
+   * Reproduced against the real `findSeat` before the fix, by an adversarial reviewer.
+   */
+  const THIRD = 'u-eth-999999999999';
+  /**
+   * ★ ONE DESCRIPTOR URL PER GRANT, WHICH THE SHARED `grantDoc` DOES NOT GIVE — it hardcodes
+   * `context-graphs/2.ttl`, so two grants built with it resolve to the SAME document and the
+   * second one's signed region is never located. A first draft of this test used it and the
+   * mutant survived: both grants read back as the convener's, so `last` carried no `revoked` and
+   * there was nothing for the spread to leak. A fixture that cannot express the state cannot
+   * test it.
+   */
+  const grantAt = (iri: string, grantee: string, n: number, extra = ''): { cid: string; url: string; content: string } => ({
+    cid: 'cid-' + iri.slice(-8),
+    url: 'http://css.railway.internal:3456/' + POD + '/context-graphs/' + n + '.ttl',
+    content: trig(iri, '<' + iri + '> a wsp:MembershipGrant ; wsp:workspace <' + WS + '> ;\n'
+      + '  wsp:grantedTo <' + grantee + '> ; wsp:role <' + ROLES + '#Contributor> .' + extra),
+  });
+
+  it('★ does not hand a viewer somebody else\'s revoked grant', async () => {
+    const conveners = WS + '-grant-' + POD;
+    const theirs = WS + '-grant-' + THIRD;
+    const c = client({
+      ...podWith({
+        [WS]: WS_DOC,
+        [conveners]: grantAt(conveners, WEBID(POD), 21),
+        [theirs]: grantAt(theirs, WEBID(THIRD), 22, '\n<' + theirs + '> wsp:revoked true .'),
+      }),
+      discover_context: () => ({
+        pod: 'http://css.railway.internal:3456/' + POD + '/',
+        entries: [{ descriptorUrl: 'a', describes: [conveners] }, { descriptorUrl: 'b', describes: [theirs] }],
+      }),
+    });
+
+    // A viewer no grant on this pod names.
+    const v = await findSeat(c, { relay: RELAY, viewer: viewer(OTHER), workspace: WS });
+
+    expect(v.ok).toBe(false);
+    // ★ THE LOAD-BEARING ASSERTIONS. Every one of these came back as the STRANGER's before.
+    expect(v.revoked, 'a never-granted viewer was reported as revoked').toBeUndefined();
+    expect(v.grantedTo, 'a verdict carried a WebID belonging to somebody else').toBeUndefined();
+    expect(v.role, 'a verdict carried a role granted to somebody else').toBeUndefined();
+    // The sentence still reports what was found, and it names nobody.
+    expect(v.why).toContain('none of them names you');
+  });
+
+  it('and still carries the fields when the failing grant IS about the viewer', async () => {
+    // The other half — the spread exists so a caller can tell "revoked" from "never granted"
+    // without matching on prose, and that must keep working.
+    const theirs = WS + '-grant-' + OTHER;
+    const c = client({
+      ...podWith({
+        [WS]: WS_DOC,
+        [theirs]: grantAt(theirs, WEBID(OTHER), 23, '\n<' + theirs + '> wsp:revoked true .'),
+      }),
+      discover_context: () => ({
+        pod: 'http://css.railway.internal:3456/' + POD + '/',
+        entries: [{ descriptorUrl: 'b', describes: [theirs] }],
+      }),
+    });
+    const v = await findSeat(c, { relay: RELAY, viewer: viewer(OTHER), workspace: WS });
+    expect(v.ok).toBe(false);
+    expect(v.revoked, 'a revoked member is no longer distinguishable from a never-granted one').toBe(true);
+    expect(v.grantedTo).toBe(WEBID(OTHER));
+  });
+});

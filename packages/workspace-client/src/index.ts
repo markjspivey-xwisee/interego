@@ -39,7 +39,7 @@ export {
 
 export {
   REQUIRED_TOOLS, PROBE_TOOL, errorCopy, assertPod, WorkspaceClient,
-  type HeadResult, type WorkspaceRecord, type MemberDocLookup,
+  type HeadResult, type WorkspaceRecord, type MemberDocLookup, type MemberDocProbe,
 } from './substrate.js';
 
 export { RESPOND_AS_MEMBER, actionUrl, actionUrn, actionKey, sameAction } from './actions.js';
@@ -56,7 +56,8 @@ export {
 } from './entry.js';
 
 export {
-  foldRoster, grantPodFor, GRANT_READ_CAP, type Seat, type RosterFold,
+  foldRoster, grantPodFor, seatStanding, seatUnreadKind, podOfGrantGraph, unreadGrants, GRANT_READ_CAP,
+  type Seat, type RosterFold, type SeatStanding, type ReadFailure, type UnreadGrant,
 } from './seats.js';
 
 export {
@@ -144,7 +145,12 @@ export {
   type RequestNotice, type RequestVerdict, type AdmissionPredicate,
 } from './request.js';
 export { visibilityFor, alwaysPublic, type WorkspaceDoc, type WorkspaceVisibility } from './visibility.js';
-export { recipientsFromRoster, recipientsFor, unreachedRecipients, type RecipientPlan } from './recipients.js';
+export { EpochCounter, guarded, handover, Overtaken, isOvertaken, RestoreFailed, isRestoreFailed, type Epoch, type Handover } from './epoch.js';
+export {
+  recipientsFromRoster, recipientsFor, unreachedRecipients, recipientReach,
+  type RecipientPlan, type RecipientAudience, type RecipientReach, type Sealing,
+  type UnestablishedMember, type WriteKind,
+} from './recipients.js';
 export {
   IEH, turnsGraphIri, turnIri, turnTurtle, publishTurn,
   type AgentTurnFacts, type TurnOutcome, type TurnPublish,

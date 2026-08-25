@@ -228,7 +228,14 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // shapes the driver reached DIRECTLY, so a shape reached through sh:node / sh:not / sh:or /
 // sh:xone enforced nothing while looking fully constrained. Found by a reviewer told to
 // refute, not by a failing test: the conformance suite was already at 44 of 44.
-export const MIN_TEST_MODULES = 311;
+// 311 -> 315: four modules from the round that stopped fixing FINDINGS and started fixing the
+// CLASS. A 169-site census found 119 defective sites no reviewer had named, because three rounds of
+// per-finding fixes each closed the sites their prompt named and re-committed the same defect at a
+// sibling site nobody did. The four: `workspace-epoch` (one ordering guard for both shells — an
+// identity guard is not an ordering guard, and two folds of the same workspace share a generation),
+// `workspace-seat-standing` (an unestablished read is not an authoritative absence, enforced by type),
+// `workspace-artifact-teardown`, and `workspace-desktop-delegate-key`.
+export const MIN_TEST_MODULES = 315;
 export const FLOOR_ALLOWANCE = 10;
 
 /**

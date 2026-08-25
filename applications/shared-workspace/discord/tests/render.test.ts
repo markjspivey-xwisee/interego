@@ -185,6 +185,12 @@ describe('the record notice', () => {
       proves: ['The relay signed a statement that the caller it had authenticated as ' + AGENT + ' published this descriptor.'],
       doesNotProve: ['The signature verifies against ' + RELAY_KEY + " — the relay's own delegation key. It is NOT the author's wallet."],
     },
+    seating: [],
+    // A public workspace, so there is nothing to say about sealing. Non-optional on the outcome
+    // BY TYPE, so a fixture cannot leave the channel's one statement about confidentiality to a
+    // default — which is how the escrow note would come to be missing from exactly the surfaces
+    // nobody wrote a test for.
+    sealing: null,
     ...over,
   });
 
@@ -550,6 +556,8 @@ describe('★★ what the channel is told about a file somebody posted', () => {
       ifMatch: null, ifMatchKind: null, response: {}, unreached: [],
     },
     authorship: null,
+    seating: [],
+    sealing: null,
     ...over,
   });
   const files = [{ name: 'plan.png' }];

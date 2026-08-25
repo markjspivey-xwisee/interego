@@ -337,6 +337,14 @@ export function renderStart(out: StartOut): Message {
         : 'Your grant is published; your acceptance was accepted and is not yet reported readable' + (out.why ? ' (' + out.why + ')' : '') + '. Until it reads back you will show as invited rather than seated.',
       '',
       'Anyone else in this thread who wants their messages recorded runs `/workspace link`. Everybody else can talk freely — nothing they say is written anywhere.',
+      /**
+       * ★★ AND WHAT A PRIVATE WORKSPACE STARTED FROM HERE CAN NEVER BE. `createWorkspace` records
+       * the convener's own encryption key in their founding acceptance and this bot has none to
+       * record, which withholds the whole key list for the life of the workspace — so the moment
+       * this thread is created is the moment that is decided, and the only moment anybody would
+       * think to read a notice about it. `startWorkspace` composes the sentence; see `SealingNote`.
+       */
+      ...(out.sealing ? ['', '⚠ ' + out.sealing.why] : []),
     ], false);
   }
 }
@@ -436,6 +444,33 @@ export function renderRecord(out: RecordOut): Message | null {
           + ' could not be reached with a key: ' + o.unreached.join(', ')
           + '. They will see this entry exists and will not be able to open it, and that cannot be changed '
           + 'afterwards. They need to sign in once with their own key.');
+      }
+      /**
+       * ★★ WHAT SEATING THEM ESTABLISHED, ON THE PATH WHERE IT SUCCEEDED.
+       *
+       * These were printed for a seating that FAILED and dropped for one that worked, and the
+       * finding that only exists on the success path is the one that matters most: the re-seal of
+       * the workspace record retired the revision an existing member could read. Empty unless
+       * somebody was seated by this very message, so an ordinary line prints nothing extra.
+       */
+      if (out.seating.length > 0) {
+        lines.push('');
+        lines.push(...checkLines(out.seating));
+      }
+      /**
+       * ★★ WHETHER THE RELAY CAN READ THIS, SAID IN THE CHANNEL WHERE IT WAS TYPED.
+       *
+       * A private workspace's whole claim is that the relay is not a recipient, and a Discord user
+       * has no other surface on which to learn that here it is one. `recordMessage` decides it —
+       * see `SealingNote` — and deliberately NOT from `Sealing.mode`: this bot passes no sealer to
+       * `postEntry` and holds no key material to pass, so a private write from Discord takes the
+       * relay path even when the module says a sealing client would have sealed end to end.
+       *
+       * Null for a public workspace, where nothing is encrypted and nothing claims to be.
+       */
+      if (out.sealing) {
+        lines.push('');
+        lines.push('⚠ ' + out.sealing.why);
       }
       if (out.authorship) {
         lines.push('');

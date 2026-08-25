@@ -107,6 +107,42 @@ export interface WorkspaceRecord {
   readonly servedFrom: string | null;
 }
 
+/**
+ * What ONE of the candidate names answered.
+ *
+ * ── ★★ ONE `error` FIELD USED TO ANSWER TWO DIFFERENT QUESTIONS ─────────────
+ *
+ * `memberDocIris` probes two names — the QUALIFIED one, which is the only name this client still
+ * writes, and the LEGACY one, which exists so a member seated before qualified names are not lost.
+ * A caller has two genuinely different questions to ask about that pair:
+ *
+ *   · "is anything published at the name a WRITE would use" — the qualified name, `primary`;
+ *   · "could anything be read ANYWHERE" — the whole probe, `error`.
+ *
+ * Collapsing them cost an invitee their invitation: with the qualified name answering a clean
+ * absence and the legacy probe throwing, `error` carried the LEGACY failure, `pending` came out
+ * false, and `ownHalf` reported `repairable: false` — so a genuinely un-accepted invitee was
+ * refused with "nothing was written, try again" for as long as that unrelated probe kept failing,
+ * on a name `acceptGrant` never writes to.
+ */
+export interface MemberDocProbe {
+  readonly iri: string;
+  readonly naming: Naming;
+  /**
+   *   · `found`     — a readable head. Its body was fetchable.
+   *   · `absent`    — the relay STATED that nothing is published at this name.
+   *   · `unreadable`— the answer carried neither a head nor a reason.
+   *   · `head-unreadable` — a head IS published here and its body could not be fetched.
+   *   · `forked`    — the chain at this name has more than one undecided head.
+   *   · `error`     — the call threw.
+   *
+   * Only `found` and `absent` are answers. The rest establish nothing about this pod.
+   */
+  readonly outcome: 'found' | 'absent' | 'unreadable' | 'head-unreadable' | 'forked' | 'error';
+  /** Whatever the relay or the exception said. Null only for a clean `found`. */
+  readonly message: string | null;
+}
+
 /** What happened when a member document was looked for under both naming forms. */
 export interface MemberDocLookup {
   readonly iri: string;
@@ -114,7 +150,25 @@ export interface MemberDocLookup {
   readonly found: boolean;
   readonly head: Extract<HeadResult, { url: string }> | null;
   readonly forked: Extract<HeadResult, { forked: true }> | null;
+  /**
+   * The first failure from ANY candidate — the CONSERVATIVE signal, and it stays that way.
+   *
+   * ★ IT IS DELIBERATELY NOT NARROWED TO THE QUALIFIED NAME. A legacy probe that failed is the
+   * case where a member's whole history may be sitting under the legacy name, unread; answering
+   * "no acceptance is published" on that evidence is how `seat()` came to write a fresh qualified
+   * acceptance pointing at a NEW stream and orphan somebody's entire log while reporting success.
+   * A caller that wants the narrower question asks {@link primary} or reads {@link candidates}.
+   */
   readonly error: string | null;
+  /** Every candidate this probe reached, in the order it tried them — qualified first. */
+  readonly candidates: readonly MemberDocProbe[];
+  /**
+   * The outcome at the name a WRITE would use — `candidates[0]`, the qualified name.
+   *
+   * Always the qualified probe: `memberDocIris` puts it first, and its outcome is recorded before
+   * any early return, so it is present even when a later candidate was never reached.
+   */
+  readonly primary: MemberDocProbe;
 }
 
 /**
@@ -269,13 +323,52 @@ export class WorkspaceClient extends RelayClient {
    * than smoothing over.
    */
   async resolveMemberDoc(memberPod: string, convenerPod: string, slug: string, kind: MemberDocKind): Promise<MemberDocLookup> {
-    const candidates = memberDocIris(this.relay, memberPod, convenerPod, slug, kind);
+    const names = memberDocIris(this.relay, memberPod, convenerPod, slug, kind);
     let firstError: string | null = null;
-    for (const c of candidates) {
+    const probes: MemberDocProbe[] = [];
+    // Recorded before any return, so `primary` below is always the qualified probe rather than
+    // whichever candidate happened to answer.
+    const note = (c: { iri: string; naming: Naming }, outcome: MemberDocProbe['outcome'], message: string | null): MemberDocProbe => {
+      const p: MemberDocProbe = { iri: c.iri, naming: c.naming, outcome, message };
+      probes.push(p);
+      if (message !== null && outcome !== 'absent' && outcome !== 'found' && firstError === null) firstError = message;
+      return p;
+    };
+    const done = (
+      c: { iri: string; naming: Naming },
+      rest: Pick<MemberDocLookup, 'found' | 'head' | 'forked'>,
+    ): MemberDocLookup => ({
+      iri: c.iri, naming: c.naming, ...rest,
+      error: firstError, candidates: probes, primary: probes[0] as MemberDocProbe,
+    });
+    for (const c of names) {
       try {
         const h = await this.currentHead(c.iri, memberPod);
-        if (h.forked) return { iri: c.iri, naming: c.naming, found: false, head: null, forked: h, error: null };
-        if (h.url) return { iri: c.iri, naming: c.naming, found: true, head: h, forked: null, error: null };
+        if (h.forked) {
+          note(c, 'forked', h.message);
+          return done(c, { found: false, head: null, forked: h });
+        }
+        if (h.url) {
+          /**
+           * ★★ A HEAD WITH A URL AND AN ERROR IS NOT A READABLE HEAD, AND THIS REPORTED IT AS AN
+           * ESTABLISHED DOCUMENT — `{found: true, error: null}`. `HeadResult`'s readable variant
+           * carries `headError` for exactly this shape: the head was found and its body could not
+           * be fetched, so there is a URL, no cid, and a reason. Callers then dereferenced it —
+           * `foldRoster` and `ownHalf` both go straight to `descriptor(head.url)` — and got a
+           * throw where the lookup's own contract has a field for saying so. `readCanvas` checks
+           * this field and returns a distinct `head-unreadable`; that precedent is applied here.
+           *
+           * ★ AND IT STOPS THE PROBE RATHER THAN FALLING THROUGH TO THE LEGACY NAME. Something IS
+           * published at this name; a legacy document found afterwards would be the older one, and
+           * returning it as `found` would seat a member off a record their own pod has superseded.
+           */
+          if (h.headError) {
+            note(c, 'head-unreadable', h.headError);
+            return done(c, { found: false, head: null, forked: null });
+          }
+          note(c, 'found', null);
+          return done(c, { found: true, head: h, forked: null });
+        }
         // ★ AN UNREADABLE HEAD IS NOT AN ABSENT ONE, AND ONLY THE THROW USED TO BE CARRIED.
         // `currentHead` already separates "the relay said nothing is published here" (absent)
         // from "the answer carried neither a head nor a reason" (unreadable). Both arrive here
@@ -284,16 +377,16 @@ export class WorkspaceClient extends RelayClient {
         // licence to say "granted, but no acceptance published on their pod yet". That is
         // absence rendered as a positive fact about somebody else's pod, from a read that
         // established nothing. The `unreadable` message is carried as an error instead.
-        if ('unreadable' in h && firstError === null) firstError = h.message;
+        note(c, 'unreadable' in h ? 'unreadable' : 'absent', h.message);
       } catch (e) {
-        if (firstError === null) firstError = (e as Error)?.message ?? String(e);
+        note(c, 'error', (e as Error)?.message ?? String(e));
       }
     }
     // Nothing answered. The QUALIFIED name is the one reported back, because that is where a
     // write would go — reporting the legacy name would offer to create a document under a name
     // this client has decided not to write any more.
-    const primary = candidates[0] as { iri: string; naming: Naming };
-    return { iri: primary.iri, naming: primary.naming, found: false, head: null, forked: null, error: firstError };
+    const first = names[0] as { iri: string; naming: Naming };
+    return done(first, { found: false, head: null, forked: null });
   }
 
   /**
@@ -313,6 +406,34 @@ export class WorkspaceClient extends RelayClient {
     // `=== null` rather than falsiness: the readable variant types `url` as `string`, so a
     // truthiness test does not narrow the union and `message` stays `string | null`.
     if (h.url === null) return { kind: 'missing', unreadable: 'unreadable' in h, message: h.message };
+    /**
+     * ★★ AND A HEAD WITH A URL AND AN ERROR IS NOT A READABLE HEAD HERE EITHER — the third
+     * `currentHead` call in this file, and the one the round that fixed the other two did not
+     * reach. `resolveMemberDoc` sixty lines up checks this field; `canvas.ts` checks it and
+     * returns `head-unreadable`; `foldRoster`, `verifyGrantIri` and `findSeat` all check it. This
+     * one went straight to `descriptor(h.url)` on the strength of the URL alone, and it took
+     * BOTH bad outcomes rather than one:
+     *
+     *   · with the body genuinely unfetchable it THREW, out of a method whose own return type has
+     *     a `{kind:'missing', unreadable:true, message}` arm for saying so. `resealRecord` does
+     *     not catch it, `sendInvite` does not, and the desktop's `invite()` awaits `sendInvite`
+     *     with no try — so the Invite button stayed disabled on "Resolving <handle>" with no error
+     *     shown. A refusal with no exit and no sentence.
+     *   · with the body still servable from `descriptor`'s own two-minute cache it returned
+     *     `kind: 'record'` with `regionFound: true`, and `verifyGrantIri` then validated a grant
+     *     against bytes the relay had just said it could not fetch, with the reason sitting unread
+     *     on `record.head`.
+     *
+     * Reproduced both ways, and adding this guard changed no test result in either direction
+     * before the regression test below it existed.
+     */
+    if (h.headError) {
+      return {
+        kind: 'missing', unreadable: true,
+        message: 'the workspace record\'s head is published and its body could not be fetched, so nothing about '
+          + 'the workspace was read from bytes anybody signed: ' + h.headError,
+      };
+    }
     const d = await this.descriptor(h.url);
     const graph = d['graph'] as { content?: string; encrypted?: boolean } | undefined;
     const region = graphRegion(graph?.content ?? '', workspaceIri);

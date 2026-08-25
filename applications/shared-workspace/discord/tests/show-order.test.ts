@@ -56,7 +56,7 @@ interface Doc { graph: string; url: string; cid: string; content: string; validF
  * worth, all of it older. Seat order folds the convener FIRST, so their single newest entry sat
  * at the head of the row list and was the first thing a tail-slice discarded.
  */
-function store(): Doc[] {
+function store(opts: { readonly otherClaimsFuture?: boolean; readonly otherClaimsPast?: boolean } = {}): Doc[] {
   const docs: Doc[] = [];
   const at = (n: number): string => '2026-08-2' + '0T' + String(n).padStart(2, '0') + ':00:00.000Z';
 
@@ -76,8 +76,14 @@ function store(): Doc[] {
 
   // The other member: a full cap of OLD entries, hours 02..13.
   for (let i = 0; i < SHOW_ENTRY_CAP; i++) {
+    // ★ THE MANIFEST TIME IS THE AUTHOR'S TO CHOOSE — `publish_context` takes `valid_from`.
+    // `dct:created` inside the signed region stays honest; only the manifest row is steered,
+    // which is exactly the shape a member wanting the whole window would publish.
     const t = at(2 + i);
-    docs.push({ graph: streamOf(OTHER), url: DESC(OTHER, 'other-' + i), cid: 'e-other-' + i, validFrom: t,
+    const manifestAt = opts.otherClaimsFuture ? '2099-01-0' + (i % 9 + 1) + 'T00:00:00.000Z'
+      : opts.otherClaimsPast ? '1971-01-0' + (i % 9 + 1) + 'T00:00:00.000Z'
+      : t;
+    docs.push({ graph: streamOf(OTHER), url: DESC(OTHER, 'other-' + i), cid: 'e-other-' + i, validFrom: manifestAt,
       sup: i === 0 ? [] : [DESC(OTHER, 'other-' + (i - 1))],
       content: trig(streamOf(OTHER), '<' + streamOf(OTHER) + '/e/' + i + '> a wsp:Entry ; wsp:seq ' + i
         + ' ; dct:created "' + t + '" ; dct:description "other ' + i + '" ; prov:wasAttributedTo <' + WEBID(OTHER) + '> .') });
@@ -90,8 +96,8 @@ function store(): Doc[] {
   return docs;
 }
 
-function scripted(): WorkspaceClient {
-  const docs = store();
+function scripted(opts: { readonly otherClaimsFuture?: boolean; readonly otherClaimsPast?: boolean } = {}): WorkspaceClient {
+  const docs = store(opts);
   const answer = (name: string, input: Record<string, unknown>): unknown => {
     switch (name) {
       case 'get_pod_status': {
@@ -179,5 +185,54 @@ describe('/workspace show, when one member has written a whole cap\'s worth', ()
       .map((e) => e.seq);
     expect(seqs, 'one member\'s entries came back out of their own chain order')
       .toEqual([...seqs].sort((a, b) => Number(a) - Number(b)));
+  });
+});
+
+describe('★★ the window cannot be taken by one member', () => {
+  /**
+   * ── THE SUPPRESSION PRIMITIVE THE SECOND VERSION OF THIS CODE HANDED OUT ────
+   *
+   * The first fix for the seat-order bug sorted by the manifest's `validFrom` before capping.
+   * `valid_from` is a CALLER-SUPPLIED argument to `publish_context` — the relay stores
+   * `(args.valid_from) ?? now` — so any member could date one entry far in the future, take the
+   * entire twelve-row window with it, and evict every other member from `/workspace show` and
+   * from the Discord mirror. That is strictly worse than the bug it replaced, which at least
+   * could not be aimed.
+   *
+   * Selection is now by chain position, round-robin across logs. Nothing an author writes decides
+   * who appears.
+   */
+  it('★ a member dating entries far in the future does not evict anybody', async () => {
+    const out = await showWorkspace(
+      { relay: RELAY, client: scripted({ otherClaimsFuture: true }), agentId: 'did:web:bot',
+        store: { threadOf: () => binding() } as never },
+      't9');
+    if (out.kind !== 'view') throw new Error('expected a view');
+    const bodies = out.entries.map((e) => e.body);
+    expect(bodies, 'a member claiming a future validFrom evicted the convener')
+      .toContain('the convener speaks last');
+  });
+
+  it('★ and a member dating them in the deep past cannot hide their own log either', async () => {
+    // The mirror image: backdating used to push your rows off the oldest end of the window.
+    const out = await showWorkspace(
+      { relay: RELAY, client: scripted({ otherClaimsPast: true }), agentId: 'did:web:bot',
+        store: { threadOf: () => binding() } as never },
+      't9');
+    if (out.kind !== 'view') throw new Error('expected a view');
+    const fromOther = out.entries.filter((e) => String(e.body ?? '').startsWith('other '));
+    expect(fromOther.length, 'a backdated log vanished from the channel entirely').toBeGreaterThan(0);
+  });
+
+  it('gives every log a turn before any log gets a second', async () => {
+    // The fairness property stated directly: one member with a full cap of entries and one with a
+    // single entry both appear, and the single one is not crowded out.
+    const out = await showWorkspace(
+      { relay: RELAY, client: scripted(), agentId: 'did:web:bot',
+        store: { threadOf: () => binding() } as never },
+      't9');
+    if (out.kind !== 'view') throw new Error('expected a view');
+    const pods = new Set(out.entries.map((e) => e.pod));
+    expect(pods.size, 'only one member survived the cap').toBe(2);
   });
 });
