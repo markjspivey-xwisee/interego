@@ -1003,6 +1003,61 @@ evidence), a cross-origin **redirect** refuses (the origin **is** the authority)
 the answer comes from and an alternate link is the *document* choosing — a claim written by
 whoever can write the page), and any non-200 is `'unreadable'`, which refuses to confer.
 
+**11. Correct RDF can still read as MISSING, because the reader only tries its own prefix
+label.** `readIri` and its siblings resolve a term against the substrate's fixed prefix table and
+the full IRI form, and never against the *document's own* `@prefix` declarations. A grant that
+binds the `wsp:` namespace to some other label and writes `w:grantedTo`, or that writes the
+grantee as a PrefixedName rather than `<…>`, folds to `grantedTo: null`. The row does not seat,
+and `verifyGrantIri` refuses it identically, so its holder can never accept — over a document
+whose triples are all correct.
+
+A prefix-aware reader was written for this and **reverted before it shipped**. It was fail-OPEN:
+the rebound-label drop was applied to every term including those where absence is the safe
+answer, and with the term in subject position the reader answered with the *next triple's
+predicate*. `turtle-region.ts` is shared substrate — every vertical's signed-region reading goes
+through it — and a fail-open reader there is worse than a fail-closed one in one vertical, so the
+narrower bug is the one that stands. Fixing it properly means resolving against the document's own
+bindings **without** letting a rebound label make a term read as one it does not denote, which is
+the direction that has to be got right rather than merely got working.
+
+**12. The seal itself has no test with teeth on the desktop, and none at all on the canvas
+path.** Forcing `sealerFor` to return `{}` for every key list — never seal, ever — survives the
+whole desktop renderer suite, because `window.interego.seal` is not scripted in that harness. The
+artifact side does drive real ciphertext and the package side pins the key selection, so the
+invariant is measured; it is the *desktop shell's* wiring to it that is not. Separately, `doSave`
+and `doMerge` reach the same `sealerFor` as Send, but the ciphertext and subset cases exist only
+for Send — and a canvas revision is the write that *supersedes*, so it is the one whose ciphertext
+matters most after an entry. The fixtures for both are cheap and neither is written.
+
+**13. A post that lands after a workspace switch still paints its outcome into the workspace now
+on screen.** Everything between `postEntry` returning and the readback loop — the error boxes, the
+success panel, the escrow note, `refreshStream` — writes `#postresult` and the streams map without
+asking the epoch, so a slow post repopulates a stale stream key into the map
+`teardownWorkspace()` has just cleared. The controls half of this is closed (a write in flight
+owns them, and the hold is dropped by teardown) and `drawSaveOutcome` on the canvas path shows the
+shape of the fix; the panel writes never had a guard.
+
+**14. `Seat.pod` is still read directly at five sites.** It is assigned only after a grant's
+signed region parses, so every grant-read failure leaves it null — which is why one unreadable
+head once deleted a seated member's whole history from a channel. `seatPod()` recovers it from the
+grant IRI reading nothing, and the drop loops, the watches and the write paths now use it;
+`participants()`, `loadMemberDelegates`, `assignPodMarks`, `renderAgent`'s seated test and
+`delegateRows`' guard do not. None of them is known to produce a wrong answer today — that is why
+they were not swept — but they are the same class at the same field. Relatedly, reverting
+`renderRoster`'s `yourRows` filter from `seatPod(m)` to `m.pod` survives the suite: the line is
+reachable only through a grant that read perfectly whose `wsp:grantedTo` maps to no pod, which its
+own comment does not name.
+
+**15. Smaller, and named rather than fixed.** `writeStanding()` in the artifact cannot tell "no
+fold has been attempted" from "a fold was attempted and threw", because the page keeps no such
+fact, so a private workspace whose fold failed is described with the wrong half of the reason —
+one field would close it. The canvas `Save`/`stalesave` controls are set from five places with no
+owner, the way the composer was before a write in flight was given one; whether an ownership
+hazard exists there is **unexamined**, not cleared. And the source rule that keeps the write
+controls owned bans `.disabled` writes through `$("send")`, `$("composer")` and `ta` outside the
+four owning functions — any other alias walks past it, which is a claim about the shape of the
+file and not a measurement of its behaviour.
+
 ### What this grade is actually worth — and it is smaller than the other three
 
 A workspace IRI names a **pod**, and the substrate refuses everyone but its holder a write there;
