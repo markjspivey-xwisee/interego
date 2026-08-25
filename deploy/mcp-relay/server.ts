@@ -354,6 +354,7 @@ import { resolveInteropPrincipal } from './interop-principal.js';
 import { NotificationLog } from './notification-log.js';
 import { POD_STATUS_ENTRY_BUDGET_BYTES, podStatusEntryPage } from './pod-status-page.js';
 import { ENFORCED_REQUIRED_ARGS, requiredArgsRefusal } from './required-args.js';
+import { turtleIriArgs, type TurtleIriRef } from './turtle-iri-args.js';
 import { parseSealedPayload, type SealedPayload } from './sealed-payload.js';
 import {
   resolvePodSubject, podNameOf, POD_URL_INJECTED, POD_NAME_INJECTED,
@@ -2388,7 +2389,86 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   const podUrl = `${CSS_URL}${podName}/`;
   const agentId = callerAgentId(args) ?? 'urn:agent:remote:unknown';
   const ownerWebId = (args.owner_webid as string) ?? `https://id.example.com/${podName}/profile#me`;
-  const descId = (args.descriptor_id as string ?? `urn:iep:${podName}:${Date.now()}`) as IRI;
+  /**
+   * ★ AN EMPTY `descriptor_id` IS "THE CALLER NAMED NONE", NOT A VALUE TO REFUSE. This read
+   * `??` until the IRI gate below existed, so an empty string survived as the id and a
+   * descriptor published carrying one; once the gate arrived it became a hard 400 on the whole
+   * publish — a new refusal on a shape no comment or test mentioned, and unlike `owner_webid`
+   * (which every authenticated transport fills in before the gate) nothing upstream fills this
+   * one in. The default below is exactly what "the caller named none" is for, so a blank now
+   * reaches it instead of the refusal.
+   */
+  const namedDescId = typeof args.descriptor_id === 'string' ? args.descriptor_id.trim() : '';
+  const descId = (namedDescId.length > 0 ? namedDescId : `urn:iep:${podName}:${Date.now()}`) as IRI;
+
+  /**
+   * ── ★★ THE CALLER-NAMED IRIs THIS HANDLER WRITES INTO A DOCUMENT ────────────
+   *
+   * `owner_webid` and `descriptor_id` are both ordinary `tools/call` arguments — every
+   * identity injection fills them in only when the caller did NOT (`/mcp`'s
+   * `if (!args.owner_webid)`, and both branches of `injectRestVerifiedIdentity`), so a
+   * caller-supplied value WINS over the session's on every transport. Two things in this
+   * file then interpolate them into Turtle BY HAND, without going through the descriptor
+   * serializer, which is the layer that percent-encodes:
+   *
+   *   owner_webid    → `writePublicReadAcl` builds `acl:agent <…>` on the
+   *                    visibility:"public" path and PUTs it AS THE RELAY, not as the
+   *                    caller. That document is a Web Access Control policy, and by
+   *                    `ensurePodAcls`'s own note these `.acl` files become the
+   *                    storage-side authority the moment CSS moves off allow-all. An IRI
+   *                    reference ends at the first `>`, so a value carrying one could
+   *                    close it and append a second `acl:Authorization` — a grant the
+   *                    caller composed and the relay installed.
+   *   descriptor_id  → the inline HyperMarkdown render below, whose affordances an MCP
+   *                    client displays and may act on.
+   *
+   * ★ AND THE DEFAULTS ARE NOT SAFE EITHER, WHICH IS WHY THE EFFECTIVE VALUE IS JUDGED
+   * AND NOT THE ARGUMENT. Both fall back to a string built out of `pod_name`, itself a
+   * caller argument. Gating `args.owner_webid` would have waved through the very same
+   * characters arriving one field over.
+   *
+   * Refusal, not escaping: Turtle defines no escape for the characters IRIREF forbids.
+   * Refusal, not omission: this handler's product is a signed, content-addressed record,
+   * and dropping `acl:agent` from an ACL or the subject from a rendered note would ship a
+   * document that quietly says something other than what it claims.
+   *
+   * Placed here for the reason `requiredArgsRefusal` above is: a call that can never write
+   * must not create a pod container or take the per-pod write lock on its way out.
+   *
+   * ── ★★ WHY `agent_id` IS GATED HERE TOO, WHEN NOTHING IN THIS FUNCTION EMITS IT RAW ──
+   *
+   * It reaches Turtle anyway, three times, through the descriptor serializer:
+   * `prov:wasAttributedTo`, `prov:wasAssociatedWith`, `iep:agentIdentity`. The serializer
+   * does not refuse a hostile value, it PERCENT-ENCODES it (`escIriBody`), so the pod ends
+   * up holding an IRI nobody named — contained, but silently rewritten.
+   *
+   * That difference was measured and it was an inconsistency, not a design: on ONE bearer
+   * session, `remember` refused `agent_id` while `publish_context` — the function
+   * `remember` itself delegates to — wrote the very same string through without a word. A
+   * rule enforced at one of two adjacent doors teaches callers that the closed door is the
+   * broken one. One rule, one place: each handler judges the value IT will emit, by the
+   * same test.
+   *
+   * ★ WHICH VALUE THAT IS DIFFERS BY HANDLER, AND AN EARLIER DRAFT OF THIS PARAGRAPH GOT THE
+   * TRANSPORTS WRONG IN BOTH DIRECTIONS — measured, then corrected. The value here is
+   * `callerAgentId(args)`, the session identity wherever there is one, and that covers MORE
+   * paths than the draft claimed: the legacy-API-key path does have a session to prefer,
+   * because `/mcp` sets `_session_agent_did` from the auth context unconditionally, so the gate
+   * is inert there too; and "open mode" is not reachable on `/mcp` at all, since with no API
+   * key configured `mcpGate` falls through to `oauthDpopOrBearer` and answers 401. The one
+   * place this gate can bite is a `/tool` or `/messages` BEARER whose `auth.agentId` is falsy —
+   * `injectRestVerifiedIdentity` sets the session field only `if (auth.agentId)` — which is the
+   * case the draft omitted entirely. `remember` reads the wire field directly and is the sink
+   * where a caller-sent value genuinely wins; that one is measured, not assumed.
+   */
+  const iriArgs = turtleIriArgs('publish_context', {
+    owner_webid: ownerWebId,
+    descriptor_id: descId,
+    agent_id: agentId,
+  });
+  if (!iriArgs.ok) return JSON.stringify(iriArgs.refusal);
+  const { owner_webid: ownerWebIdRef, descriptor_id: descIdRef } = iriArgs.refs;
+
   // The URL this publish will land on. Deterministic from (podUrl, descId), so it is
   // knowable here — before the manifest read that has to compare against it. Hoisted from
   // its old home further down because THREE things need it and two of them used to
@@ -3479,8 +3559,8 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     // on failure (the parent ACL still applies).
     if (visibility === 'public') {
       const aclResults = await Promise.allSettled([
-        writePublicReadAcl(result.descriptorUrl, ownerWebId as IRI),
-        writePublicReadAcl(result.graphUrl, ownerWebId as IRI),
+        writePublicReadAcl(result.descriptorUrl, ownerWebIdRef),
+        writePublicReadAcl(result.graphUrl, ownerWebIdRef),
       ]);
       const aclLabels = ['descriptor', 'payload'] as const;
       aclResults.forEach((settled, idx) => {
@@ -3671,8 +3751,8 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
         manifestCache.delete(podUrl);
         if (visibility === 'public') {
           const aclResults = await Promise.allSettled([
-            writePublicReadAcl(real.descriptorUrl, ownerWebId as IRI),
-            writePublicReadAcl(real.graphUrl, ownerWebId as IRI),
+            writePublicReadAcl(real.descriptorUrl, ownerWebIdRef),
+            writePublicReadAcl(real.graphUrl, ownerWebIdRef),
           ]);
           const aclLabels = ['descriptor', 'payload'] as const;
           aclResults.forEach((settled, idx) => {
@@ -3853,11 +3933,21 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
       const enc = (result.encrypted ?? false);
       // Minimal descriptor turtle carrying the note's real affordances (the same
       // ones the persisted descriptor advertises) so its controls render inline.
+      //
+      // ★ THE SUBJECT IS THE CALLER'S `descriptor_id`, and this Turtle is hand-built —
+      // it never passes the descriptor serializer that percent-encodes IRI bodies. A
+      // value closing its own `<…>` here would inject affordances into a document an MCP
+      // client renders and offers as controls, i.e. attacker-chosen `hydra:target`s
+      // presented to the user as this note's own. `descIdRef` is the same id, already
+      // refused at the handler door if it could not be an IRI reference; using the token
+      // rather than the string is what keeps that true if this block is ever moved.
+      // (`viewUrl` is not: it is this relay's own base plus an encodeURIComponent of the
+      // id, so its interpolation below cannot carry a delimiter.)
       const affTurtle = [
         `@prefix iep: <${IEP_NS}> .`,
         `@prefix hydra: <http://www.w3.org/ns/hydra/core#> .`,
         `@prefix dcat: <http://www.w3.org/ns/dcat#> .`,
-        `<${descriptor.id}> a iep:ContextDescriptor ; iep:affordance ${enc ? '<#canDecrypt>, ' : ''}<#renderView> .`,
+        `${descIdRef} a iep:ContextDescriptor ; iep:affordance ${enc ? '<#canDecrypt>, ' : ''}<#renderView> .`,
         ...(enc ? [`<#canDecrypt> a iep:Affordance ; iep:action <${IEP_NS}canDecrypt> ; hydra:target <${viewUrl}> ; hydra:method "GET" .`] : []),
         `<#renderView> a iep:Affordance ; iep:action <${IEP_NS}renderView> ; hydra:target <${viewUrl}> ; hydra:method "GET" ; dcat:mediaType "text/markdown; charset=UTF-8; variant=CommonMark" .`,
       ].join('\n');
@@ -4086,7 +4176,45 @@ async function handleRemember(args: ToolArgs): Promise<string> {
   const now = new Date().toISOString();
   const agentId = (args['agent_id'] as string) || 'urn:agent:remote:unknown';
 
+  /**
+   * ★★ THIS READS `args.agent_id` DIRECTLY — THE WIRE FIELD, NOT `callerAgentId(args)`.
+   *
+   * TWO of the three identity injections only DEFAULT this field, so a caller who sends
+   * one keeps it: `/mcp` does `if (!args.agent_id) args.agent_id = authContext.agentId`
+   * (server.ts ~10643), and `injectRestVerifiedIdentity`'s BEARER branch does
+   * `if (!target.agent_id)` (~6314). The value then lands in the graph body below as
+   * `prov:wasAttributedTo <…>` — a graph this handler publishes with
+   * `sign_authorship: true`. An IRI reference ends at the first `>`;
+   * `urn:x> ; prov:wasAttributedTo <did:someone-else` closes it and adds a second
+   * attribution to a SIGNED memory. That is the provenance forgery `rdf/escape.ts`
+   * documents, at the one sink that does not consult the session identity.
+   *
+   * ★ THE THIRD INJECTION IS THE EXCEPTION, AND SAYING "every dispatcher" HERE WAS FALSE.
+   * `injectRestVerifiedIdentity`'s SIGNED branch assigns `target.agent_id =
+   * auth.recoveredDid` UNCONDITIONALLY (~6298) — deliberately, so a caller cannot claim
+   * `agent_id: alice` while signing with bob's wallet. Measured: a valid signed envelope
+   * carrying the hostile value above published normally, because the value was replaced
+   * before this line ever saw it. So this gate protects `/mcp` and the bearer REST path,
+   * and is inert on the signed one. That is not a reason to drop it, but it IS the reason
+   * the gate reads `args.agent_id` — the field this handler actually emits — rather than
+   * `callerAgentId(args)`, which would look past it.
+   *
+   * Refused rather than dropped: this note's whole evidentiary value is who wrote it, and
+   * a memory published with no `prov:wasAttributedTo` claims less than the caller asked
+   * for while still reporting `remembered: true`. Same refusal shape as the `body` check
+   * above — named, and about this call.
+   *
+   * ★ AND IT REFUSES DELIMITERS, NOT SCHEME-LESS IDENTIFIERS — see turtle-iri-args.ts.
+   * The relay's own bearer path injects the identity server's bare-slug `agentId`
+   * (`mcp-client-<userId>`), and a gate that demanded a scheme refused every ordinary
+   * authenticated `remember` on `/tool` and `/messages` with the caller's name on it.
+   */
+  const iriArgs = turtleIriArgs('remember', { agent_id: agentId });
+  if (!iriArgs.ok) return JSON.stringify(iriArgs.refusal);
+
   // Host-free logical graph id; the note's PRESENTED identity is its HTTPS view.
+  // ★ NOT gated above and deliberately: the slug is squeezed through `[^a-z0-9]+ → -`, so
+  // this is a value the process minted, not one the caller wrote.
   const slug = (title || body).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'note';
   const graphIri = `urn:graph:memory:${slug}-${Date.now()}`;
   const lit = (s: string) => JSON.stringify(s); // valid Turtle string literal (escapes \n, ", \)
@@ -4100,7 +4228,7 @@ async function handleRemember(args: ToolArgs): Promise<string> {
     `<${graphIri}> a ieh:AgentMemory, schema:NoteDigitalDocument ;`,
     ...(title ? [`  schema:name ${lit(title)} ;`] : []),
     `  schema:text ${lit(body)} ;`,
-    `  prov:wasAttributedTo <${agentId}> ;`,
+    `  prov:wasAttributedTo ${iriArgs.refs.agent_id} ;`,
     `  dct:created "${now}"^^xsd:dateTime .`,
   ].join('\n');
 
@@ -4209,6 +4337,39 @@ async function handleRecordTrajectoryStep(args: ToolArgs): Promise<string> {
     : 'tool-call';
   const agentId = callerAgentId(args) ?? 'urn:agent:remote:unknown';
   const ownerWebId = (args.owner_webid as string) ?? '';
+
+  /**
+   * ★★ `callerAgentId` PREFERS THE SESSION IDENTITY, BUT IT FALLS BACK TO `args.agent_id`.
+   *
+   * `_session_agent_did` is set on every transport that HAS one to set —
+   * `injectRestVerifiedIdentity` sets it only "if (auth.agentId)", so a bearer that
+   * resolved no agent leaves the caller's own `agent_id` as the answer. That value is
+   * `prov:wasAttributedTo` in a step this handler publishes with `sign_authorship`
+   * defaulting to TRUE, and a trajectory step exists to be read back by
+   * `verifyCapabilityTransfer` as evidence about who did what.
+   *
+   * ★ AND THE BLAST RADIUS IS WIDER HERE THAN THE ONE TRIPLE: `agentSlug` below is a
+   * SUFFIX of this value, and it names both the step's own subject (`stepId`, which also
+   * becomes the published `descriptor_id`) and the trajectory graph every other step of
+   * this agent hangs off. A delimiter in `agent_id` would therefore land in the SUBJECT
+   * position, not merely an object — the one place a broken-out IRI can rewrite what the
+   * rest of the document is about.
+   *
+   * Refused rather than dropped, unlike `parent_step_id` further down: that one is an
+   * optional back-reference a step is still worth recording without, and this one is the
+   * step's identity and its attribution.
+   */
+  const iriArgs = turtleIriArgs('record_trajectory_step', { agent_id: agentId });
+  if (!iriArgs.ok) return JSON.stringify(iriArgs.refusal);
+
+  // ★ MINTED, NOT WRITTEN BY THE CALLER — which is only true because of the gate above.
+  // `[^:/#]+$` selects a run of characters out of `agentId`; it cannot introduce one that
+  // was not already there, and `turtleIriArgs` has just established that none of them is a
+  // character IRIREF forbids. So `graphIri` and `stepId` below are safe to interpolate
+  // raw, and would NOT be if this gate moved or stopped covering `agent_id`.
+  // Note the gate does NOT require `agentId` to be absolute — the relay's own bearer path
+  // injects a bare slug — and this derivation does not need it to be: `[^:/#]+$` over a
+  // slug is the whole slug, which is exactly the value the pre-gate code sliced.
   const agentSlug = (agentId.match(/[^:/#]+$/)?.[0] ?? 'unknown').toLowerCase();
   const sessionId = typeof args.session_id === 'string' && args.session_id.length > 0
     ? args.session_id
@@ -4263,7 +4424,7 @@ async function handleRecordTrajectoryStep(args: ToolArgs): Promise<string> {
     traj:verb "${escape(verb)}" ;
     traj:objectName "${escape(objectName)}" ;
     traj:granularity "${granularity}" ;
-${parentLine}${supersedesLine}${derivedLines}${resultBlock}    prov:wasAttributedTo <${agentId}> ;
+${parentLine}${supersedesLine}${derivedLines}${resultBlock}    prov:wasAttributedTo ${iriArgs.refs.agent_id} ;
     iep:modalStatus iep:${modalStatus} .
 `;
 
@@ -11798,6 +11959,19 @@ const POD_BOOTSTRAP_MAX_ATTEMPTS = 3;
 // off allow-all. We don't want a transient CSS .acl PUT failure to
 // block the rest of the pod init (agent registry, profile card,
 // bootstrap descriptor).
+/**
+ * ★ WHY THE FOUR BUILDERS BELOW STILL INTERPOLATE THEIR IRIs RAW, AND `writePublicReadAcl`
+ * DOES NOT. They look alike and their inputs do not come from the same place.
+ *
+ * These four are reached only from here, and `ensurePodAcls` is reached only from
+ * `bootstrapPod`, whose `podUrl` / `ownerWebId` / `surfaceAgentIri` are the identity
+ * server's answer to /auth — `${BASE_URL}/users/<userId>/profile#me` over a derived
+ * userId, and a `did:web:` built from a surface slug that `surfaceAgentFromClient` has
+ * already squeezed through `^[a-z][a-z0-9-]{1,31}$`. No `tools/call` argument reaches
+ * them. `writePublicReadAcl` is the odd one out: its owner is `publish_context`'s
+ * `owner_webid`, which the dispatchers only DEFAULT, so a caller-supplied value wins —
+ * see the gate at the top of that handler.
+ */
 async function ensurePodAcls(params: {
   podUrl: string;
   userId: string;
@@ -11889,22 +12063,69 @@ async function ensurePodAcls(params: {
  * this by narrowing the class — callers who want authenticated-only want `"shared"`,
  * which envelopes to specific keys.
  */
-async function writePublicReadAcl(targetUrl: string, ownerWebId: IRI): Promise<void> {
+/**
+ * ★★ `ownerRef` IS A `TurtleIriRef`, NOT A WebID STRING, AND THAT IS THE FIX.
+ *
+ * The owner reaching here is whatever the caller put in `publish_context`'s `owner_webid`
+ * — the dispatchers only default that field, they do not overwrite it. This function
+ * composes an ACCESS CONTROL POLICY and PUTs it as the relay; per the `ensurePodAcls`
+ * note above, `.acl` documents become the storage-side authority as soon as CSS is off
+ * allow-all. So a value that could close its own `<…>` would let the caller append a
+ * second `acl:Authorization` to a policy it does not own. Taking the already-serialized
+ * token means there is no owner string in scope here to interpolate by mistake;
+ * `publish_context`'s door gate is the only place one can be produced, and `tsc` refuses
+ * any other call.
+ */
+async function writePublicReadAcl(targetUrl: string, ownerRef: TurtleIriRef): Promise<void> {
   const aclUrl = `${targetUrl}.acl`;
+  // The resource's own URL. Relay-minted from (podUrl, slug) — but `podUrl` is built from
+  // the caller's `pod_name`, so it is checked rather than assumed. Throwing is what this
+  // function already does when it cannot write the policy (see the non-2xx below), and
+  // both call sites Promise.allSettled + log it; the leaf grant is a pin on top of the
+  // container ACL that already inherits anonymous Read, so not writing it withholds no
+  // access the caller was promised. Emitting a half-formed policy would.
+  //
+  // ★★ BOTH POSITIONS TAKE THE STRICTER RULE — `turtleIriRef`, absolute only — WHERE BOTH
+  // ARRIVED THROUGH `turtleIriArgs`, WHICH ACCEPTS A SCHEME-LESS IDENTIFIER. An earlier draft
+  // applied it to `acl:accessTo` alone and defended the asymmetry by saying a bare slug "is
+  // what this relay's identity server actually mints". True of an AGENT id, false of the value
+  // in THIS position: `acl:agent` here carries `publish_context`'s `owner_webid`, and every
+  // transport supplies an absolute one — the bearer branch composes an `${IDENTITY_URL}/users/…`
+  // profile URL, the signed branch uses the recovered DID, `/mcp` uses the identity server's own
+  // answer, and the handler's own default is an https URL. So the only scheme-less value the
+  // looser rule admitted here was a CALLER-supplied one, and it reached the document: measured,
+  // `owner_webid: "../../../other/profile#me"` was accepted and PUT as
+  // `acl:agent <../../../other/profile#me>`, a relative reference resolving against the `.acl`
+  // document itself. It gives access away rather than takes it, which is why this is a
+  // tightening and not an incident — but an access-control document is the last place to keep a
+  // rule whose stated reason does not hold.
+  //
+  // Throwing is what this function already does when it cannot write the policy, and both call
+  // sites `Promise.allSettled` + log it; the leaf grant is a pin on top of a container ACL that
+  // already inherits anonymous Read, so not writing it withholds no access the caller was
+  // promised. Emitting a half-formed policy would.
+  const targetRef = turtleIriRef(targetUrl);
+  if (targetRef === null) {
+    throw new Error(`refusing to PUT ${aclUrl}: "${targetUrl}" cannot be a Turtle IRI reference, so no ACL naming it can be written`);
+  }
+  // `ownerRef` is the already-serialized `<…>` form, so the bare value is what is re-asked.
+  if (turtleIriRef(ownerRef.slice(1, -1)) === null) {
+    throw new Error(`refusing to PUT ${aclUrl}: owner ${ownerRef} is not an absolute IRI, so acl:agent would name a reference resolved against the ACL document itself`);
+  }
   const aclBody = [
     `@prefix acl: <http://www.w3.org/ns/auth/acl#> .`,
     `@prefix foaf: <http://xmlns.com/foaf/0.1/> .`,
     ``,
     `<#owner>`,
     `    a acl:Authorization ;`,
-    `    acl:agent <${ownerWebId}> ;`,
-    `    acl:accessTo <${targetUrl}> ;`,
+    `    acl:agent ${ownerRef} ;`,
+    `    acl:accessTo ${targetRef} ;`,
     `    acl:mode acl:Read, acl:Write, acl:Control .`,
     ``,
     `<#public>`,
     `    a acl:Authorization ;`,
     `    acl:agentClass foaf:Agent ;`,
-    `    acl:accessTo <${targetUrl}> ;`,
+    `    acl:accessTo ${targetRef} ;`,
     `    acl:mode acl:Read .`,
     ``,
   ].join('\n');

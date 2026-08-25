@@ -254,6 +254,200 @@ describe('serializing a membership record', () => {
       })).toThrow(/extraTriples must be ONE predicate-object pair/);
     }
   });
+
+  it('★★ REFUSES a second SUBJECT, which the extraTriples grammar alone let through', () => {
+    // The measured bypass. `rejectExtraTriple` looks for a statement terminator as a `.`
+    // bounded by whitespace; Turtle needs no whitespace around one. This fragment is one
+    // line, carries no directive, has no space-bounded `.` and does not end in `.` or `;`,
+    // so it passes all four rules — and the serializer used to emit it verbatim, producing a
+    // published grant whose second top-level statement handed a stranger `acl:agent` on the
+    // workspace. `parseTrig` reported two subjects.
+    //
+    // The check is over the EMITTED DOCUMENT, so it does not depend on the fragment grammar
+    // being complete: a membership record states triples about itself and nothing else,
+    // however a caller reaches this function.
+    const forged = '<https://x#derivedFrom> <https://a>.' + `<${WS}>`
+      + ' <http://www.w3.org/ns/auth/acl#agent> <did:web:attacker>';
+    expect(() => grantTurtle({
+      grantIri: 'https://c/g', workspace: WS, grantedTo: bee, role: `${P}#Observer`,
+      extraTriples: [forged],
+    })).toThrow(/would also state triples about "https:\/\/relay\.test\/ws\/alpha"/);
+    // Same hole, same refusal, on the other two writers — a guard applied to one of three
+    // record classes is the shape this area has shipped before.
+    expect(() => acceptanceTurtle({
+      acceptanceIri: 'https://b/a', workspace: WS, member: bee, accepts: GRANT_URL,
+      stream: 'https://b/s', extraTriples: [forged],
+    })).toThrow(/would also state triples about/);
+    expect(() => workspaceTurtle({
+      workspaceIri: WS, convener: CONV, roleProfile: P, title: 't',
+      extraTriples: ['<https://x#derivedFrom> <https://a>.<https://victim.test/p#me>'
+        + ' <http://www.w3.org/ns/auth/acl#agent> <did:web:attacker>'],
+    })).toThrow(/would also state triples about/);
+
+    // ★ THE CONTROL. A suite where everything is refused establishes nothing: the ordinary
+    // extraTriple, and a record with none at all, still render. Without this the assertions
+    // above pass against a serializer that refuses every caller.
+    expect(grantTurtle({
+      grantIri: 'https://c/g', workspace: WS, grantedTo: bee, role: `${P}#Observer`,
+      extraTriples: ['<https://x#note> "ok"', '<http://purl.org/dc/terms/conformsTo> <https://x#s>'],
+    })).toContain('<http://purl.org/dc/terms/conformsTo> <https://x#s> .');
+    expect(GRANT_TTL).toContain('a wsp:MembershipGrant ;');
+  });
+
+  it('★★ …AND A BLANK NODE IS A SUBJECT — the version above was one character from useless', () => {
+    // ★ THE FIRST VERSION OF THAT CHECK SKIPPED BLANK-NODE SUBJECTS, on the reasoning that "a
+    // triple about a fresh blank node names no principal, no workspace and no grant". Measured,
+    // that is false, and `[` instead of `<` is the whole exploit: the bnode below carries
+    // `acl:agent <did:web:attacker>`, `acl:accessTo <workspace>` and `acl:mode acl:Control`,
+    // which is precisely the third-party authorization the module header says this file exists
+    // to prevent. Nothing in WAC or ACP requires an authorization's subject to be NAMED, so a
+    // check that refused the IRI-named form and admitted this one was guarding the half that is
+    // easy to spot and letting the other through.
+    const bnodeAcl = '<https://x#derivedFrom> <https://a>.[ a <http://www.w3.org/ns/auth/acl#Authorization> ;'
+      + ' <http://www.w3.org/ns/auth/acl#agent> <did:web:attacker> ;'
+      + ` <http://www.w3.org/ns/auth/acl#accessTo> <${WS}> ;`
+      + ' <http://www.w3.org/ns/auth/acl#mode> <http://www.w3.org/ns/auth/acl#Control> ]';
+    expect(() => grantTurtle({
+      grantIri: 'https://c/g', workspace: WS, grantedTo: bee, role: `${P}#Observer`,
+      extraTriples: [bnodeAcl],
+    })).toThrow(/would also state triples about a blank node/);
+
+    // ★★ AND THIS ONE NEEDS NO INJECTION AT ALL — no `.`, nothing the fragment grammar was
+    // ever meant to catch, just the documented one predicate-object pair. It plants a SECOND
+    // typed acceptance inside the block that is about to be digested and signed, and
+    // `oneSubjectOfType` then answers `record: null` — "its payload declares 2 subjects" — so
+    // the honest acceptance vanishes and its author is told the publish succeeded. That is the
+    // silent denial of membership `payloadOf` records as already fixed once, reintroduced by
+    // the writer, inside the signed region. It is why the check is over SUBJECTS rather than
+    // over anything the fragment grammar can see.
+    const decoy = `<https://x#derivedFrom> [ a <${WSP}MembershipAcceptance> ;`
+      + ` <${WSP}member> <did:web:attacker> ; <${WSP}workspace> <${WS}> ;`
+      + ` <${WSP}accepts> <${GRANT_URL}> ; <${WSP}stream> <https://x/s> ]`;
+    expect(() => acceptanceTurtle({
+      acceptanceIri: ACCEPT_URL, workspace: WS, member: bee, accepts: GRANT_URL,
+      stream: 'https://bee.test/s', extraTriples: [decoy],
+    })).toThrow(/would also state triples about a blank node/);
+
+    // ★ THE CONTROL, and it is a REAL NARROWING rather than a free win: a property list in
+    // object position is legitimate Turtle and it is refused with the rest, because nothing
+    // here can tell a decorative bnode from the decoy above. The pair form still renders, and
+    // that is what `extraTriples` has always documented itself as.
+    expect(() => grantTurtle({
+      grantIri: 'https://c/g', workspace: WS, grantedTo: bee, role: `${P}#Observer`,
+      extraTriples: ['<https://x#note> [ <https://x#p> "v" ]'],
+    })).toThrow(/would also state triples about a blank node/);
+    expect(grantTurtle({
+      grantIri: 'https://c/g', workspace: WS, grantedTo: bee, role: `${P}#Observer`,
+      extraTriples: ['<https://x#note> <https://x#v>'],
+    })).toContain('<https://x#note> <https://x#v> .');
+  });
+
+  it('★★ REFUSES a second value of a term the RECORD ITSELF is read with', () => {
+    // ★ THE OTHER HALF OF THE SAME CLASS, and the one the subject check never touched: this
+    // fragment states a second `wsp:grantedTo` on the record's OWN subject, so there is no
+    // second subject to find. `oneIri` refuses duplicates, which contains the READING track —
+    // but `restrictionPrincipals` is the RESTRICTING track and reads every value matching the
+    // published pattern (`^https?://|^did:`, so `did:web:attacker` qualifies), one revoking row
+    // each, so a hostile second principal widens a revocation to somebody nobody revoked.
+    expect(() => grantTurtle({
+      grantIri: 'https://c/g', workspace: WS, grantedTo: bee, role: `${P}#Observer`,
+      extraTriples: [`<${WSP}grantedTo> <did:web:attacker>`],
+    })).toThrow(/2 value\(s\) of ".*grantedTo" where this writer stated 1/);
+
+    // ★★ AND A TERM THE WRITER STATED NO VALUE FOR AT ALL. `revoked` is absent from this call,
+    // so the count to beat is zero — an appended flag would revoke a grant its author issued.
+    // A rule stated only as "no duplicates" would have missed this one entirely.
+    expect(() => grantTurtle({
+      grantIri: 'https://c/g', workspace: WS, grantedTo: bee, role: `${P}#Observer`,
+      extraTriples: [`<${WSP}revoked> "true"^^<http://www.w3.org/2001/XMLSchema#boolean>`],
+    })).toThrow(/1 value\(s\) of ".*revoked" where this writer stated 0/);
+
+    // ★ THE PATH THIS ACTUALLY GUARDS. `respond.ts` builds its fragments as `<PROV_USED> <${u}>`
+    // from URLs read off ANOTHER POD's response — so `u` is a foreign value in an IRI position
+    // inside raw Turtle. A `;` in it needs no statement terminator and passes all four rules.
+    const hostileUrl = `https://a> ; <${WSP}grantedTo> <did:web:attacker`;
+    expect(() => grantTurtle({
+      grantIri: 'https://c/g', workspace: WS, grantedTo: bee, role: `${P}#Observer`,
+      extraTriples: [`<http://www.w3.org/ns/prov#used> <${hostileUrl}>`],
+    })).toThrow(/where this writer stated 1/);
+
+    // ★ CONTROLS. Terms OUTSIDE the read set are exactly what the hatch is for and still
+    // render — refusing those would be refusing the feature — and every term the writer states
+    // for itself still comes out, which is what says the ledger counts the emission rather
+    // than a paraphrase of it.
+    expect(grantTurtle({
+      grantIri: 'https://c/g', workspace: WS, grantedTo: bee, role: `${P}#Observer`,
+      extraTriples: ['<http://purl.org/dc/terms/conformsTo> <https://x#a>',
+        '<http://purl.org/dc/terms/conformsTo> <https://x#b>'],
+    })).toContain('<http://purl.org/dc/terms/conformsTo> <https://x#b> .');
+    const full = grantTurtle({
+      grantIri: 'https://c/g', workspace: WS, grantedTo: bee, role: `${P}#Observer`,
+      revoked: false, supersedes: 'https://c/g0', title: 'a grant',
+    });
+    expect(full).toContain('wsp:revoked "false"^^xsd:boolean ;');
+    expect(full).toContain('iep:supersedes <https://c/g0> ;');
+    expect(full).toContain('dct:title "a grant" .');
+  });
+
+  it('★ REFUSES an empty extraTriple rather than dropping it', () => {
+    // The same silent omission as the empty `supersedes` below, in the same function: the loop
+    // used to `continue` past an entry that evaluated to `''`, so a record was signed without
+    // a term its author asked for and nothing said so. The bytes are immutable afterwards.
+    expect(() => grantTurtle({
+      grantIri: 'https://c/g', workspace: WS, grantedTo: bee, role: `${P}#Observer`,
+      extraTriples: ['<https://x#note> "ok"', '   '],
+    })).toThrow(/extraTriples contains an empty fragment/);
+    // ★ CONTROL: no entries at all still means "this record carries no extra terms".
+    expect(grantTurtle({
+      grantIri: 'https://c/g', workspace: WS, grantedTo: bee, role: `${P}#Observer`, extraTriples: [],
+    })).toContain('a wsp:MembershipGrant ;');
+  });
+
+  it('★ names an unparseable assembly instead of leaking a bare parser error', () => {
+    // A DELIBERATE CONTRACT CHANGE, recorded here because it is one: `foaf:name "alice"` used
+    // to be emitted verbatim, and the four prefixes the writer declares are now the only ones
+    // a fragment may use. A record naming an undeclared prefix is unreadable by whoever
+    // fetches it, so refusing is right — but the refusal has to name the function that made
+    // the document, not arrive as a parser error from one the caller never called.
+    expect(() => grantTurtle({
+      grantIri: 'https://c/g', workspace: WS, grantedTo: bee, role: `${P}#Observer`,
+      extraTriples: ['foaf:name "alice"'],
+    })).toThrow(/grantTurtle: the record it assembled does not parse as Turtle \(unknown prefix/);
+    // ★ CONTROL: the prefixes it DOES declare still work in a fragment.
+    expect(grantTurtle({
+      grantIri: 'https://c/g', workspace: WS, grantedTo: bee, role: `${P}#Observer`,
+      extraTriples: ['dct:conformsTo <https://x#s>'],
+    })).toContain('dct:conformsTo <https://x#s> .');
+  });
+
+  it('★ REFUSES an unusable prior head instead of dropping iep:supersedes', () => {
+    // `if (args.supersedes)` treated the EMPTY STRING as "supersedes nothing" and skipped the
+    // guard, so a caller computing it from a response field — `String(res.descriptorUrl ?? '')`
+    // — published a grant with no `iep:supersedes` at all. That is a SECOND HEAD on an
+    // authorization chain, and `foldRoster` answers a fork by intersection rather than by
+    // picking a winner: a revocation meant to supersede becomes an unresolvable fork and a
+    // reinstatement is lost. A record that quietly says less than its author asked for is the
+    // failure this file has already had to undo twice, so it is a refusal that names the value.
+    expect(() => grantTurtle({
+      grantIri: 'https://c/g', workspace: WS, grantedTo: bee, role: `${P}#Observer`, supersedes: '',
+    })).toThrow(/the prior head is not serializable as a Turtle IRI: ""/);
+    expect(() => acceptanceTurtle({
+      acceptanceIri: 'https://b/a', workspace: WS, member: bee, accepts: GRANT_URL,
+      stream: 'https://b/s', supersedes: '  ',
+    })).toThrow(/the prior head is not serializable/);
+
+    // ★ CONTROLS, both directions. `null` and absent still mean "this record supersedes
+    // nothing" — a real and common case — and a genuine prior head is still emitted. Turning
+    // the empty string into a refusal must not turn "no prior head" into one.
+    expect(grantTurtle({
+      grantIri: 'https://c/g', workspace: WS, grantedTo: bee, role: `${P}#Observer`, supersedes: null,
+    })).not.toContain('iep:supersedes');
+    expect(GRANT_TTL).not.toContain('iep:supersedes');
+    expect(grantTurtle({
+      grantIri: 'https://c/g', workspace: WS, grantedTo: bee, role: `${P}#Observer`,
+      supersedes: 'https://conv.test/c/g0.ttl',
+    })).toContain('iep:supersedes <https://conv.test/c/g0.ttl>');
+  });
 });
 
 // ── residual gap 6: the record that says who was entitled to grant ───────────
@@ -313,12 +507,16 @@ describe('the workspace record — who convenes here', () => {
   });
 
   it('a record declaring two conveners states none — order must not decide who may grant', async () => {
-    // Through `extraTriples`, so the document is genuinely well-formed and genuinely carries
-    // two declarations — not a string edit that only looks like one.
-    const two = workspaceTurtle({
-      workspaceIri: WS, convener: CONV, roleProfile: P, title: 'two',
-      extraTriples: ['wsp:convener <https://attacker.test/#me>'],
-    });
+    // ★ THIS FIXTURE USED TO COME OUT OF `workspaceTurtle` VIA `extraTriples`, and it cannot
+    // any more: the writer's output check refuses a second value of a `wsp:` term it stated
+    // once. That refusal is the point — but the READER's guard is still the one that matters
+    // here, because a reader is handed documents by pods it does not control, and nothing on
+    // the far end of a `get_descriptor` was produced by this serializer. So the second
+    // declaration is spliced into an honest emission: a well-formed document carrying two
+    // genuine declarations, which is what a hostile pod would serve.
+    const two = workspaceTurtle({ workspaceIri: WS, convener: CONV, roleProfile: P, title: 'two' })
+      .replace(`wsp:convener <${CONV}> ;`, `wsp:convener <${CONV}>, <https://attacker.test/#me> ;`);
+    expect(two).toContain('<https://attacker.test/#me>');
     const deps = descriptorDeps({ [WORKSPACE_URL]: { content: two, signedBy: CONV_KEY } });
     const read = await readWorkspaceRecord(WORKSPACE_URL, deps);
     expect(read.record).toBeNull();

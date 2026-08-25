@@ -103,3 +103,24 @@ jobs:
       # let the commit that breaks it skip the check.
       - name: Emergence boundary (neither demo program names the other vertical)
         run: node tools/emergence-boundary-lint.mjs
+      # ★★ THE THIRD GATE IN THIS REPOSITORY THAT RAN IN NO WORKFLOW AT ALL. The other two are
+      # two steps above — the conformance runner, "called by nothing" — and in ontology-lint.yml,
+      # whose note records the security-txt expiry helper being red at HEAD while CI ran the
+      # narrower `npm run lint` and saw nothing. Each was closed by adding a step; nothing stopped
+      # the next, and this is the next. It is the injection ratchet on raw `<${expr}>` Turtle
+      # interpolation, and Turtle injection has already been a finding here in three separate
+      # positions, one of which signed only a filename. It was reachable only through
+      # `npm run lint:all`, which no workflow runs. Measured 2026-08-25: 702 raw sites against a
+      # budget of 691 — drifted 11 over while nothing could report it, and confirmed pre-existing
+      # rather than newly broken by running the tool in a detached worktree at the previous commit,
+      # which also read exactly 702.
+      #
+      # Unfiltered by `paths:` for the reason every step above gives, and additionally because the
+      # tool scans THREE roots — applications, packages and deploy — so no single path list
+      # describes its subject.
+      #
+      # ★ tests/every-gate-script-is-invoked.test.ts is what stops a FOURTH: it derives the gate
+      # scripts from package.json and the invocations from these `run:` values, and fails on any
+      # gate reachable only by somebody typing it.
+      - name: Turtle IRI ratchet (raw interpolation into an IRI may not grow)
+        run: node tools/turtle-iri-ratchet.mjs

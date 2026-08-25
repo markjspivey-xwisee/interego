@@ -93,6 +93,9 @@ import type {
 const IEP = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
 const RDF_TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
 const XSD_BOOLEAN = 'http://www.w3.org/2001/XMLSchema#boolean';
+const DCT_TITLE = 'http://purl.org/dc/terms/title';
+/** The supersession link, as `membershipTurtle`'s output check resolves it back out of the document. */
+const IEP_SUPERSEDES = `${IEP}supersedes`;
 
 /** The three record classes, and every predicate this module writes or reads. */
 export const WSP_TERMS = {
@@ -167,6 +170,13 @@ export const WSP_TERMS = {
  * That guard matters more here than it did on a log entry. These are authorization records:
  * a grant that could be made to carry a second `wsp:grantedTo`, or an `acl:agent` triple
  * about a third party, would be a membership forged through string concatenation.
+ *
+ * ★ AND `turtleIriRef` IS NOT THE WHOLE GUARANTEE, because `extraTriples` is raw Turtle that
+ * never passes through it. BOTH examples in the paragraph above were reachable through that
+ * hatch — the second `wsp:grantedTo` needed no injection at all, just the documented one-pair
+ * fragment — and both are refused by the output check at the END of this function. Read that
+ * check before trusting this paragraph: it states exactly what it holds and the three things
+ * it deliberately does not, and one of those is a live path in another file.
  */
 function membershipTurtle(args: {
   readonly subjectIri: string;
@@ -183,7 +193,10 @@ function membershipTurtle(args: {
 }): string {
   const guard = (iri: string, role: string): string => {
     const ref = turtleIriRef(iri);
-    if (!ref) throw new Error(`${args.what}: ${role} is not serializable as a Turtle IRI: ${iri}`);
+    // `JSON.stringify` and not the bare value: the values that reach here are the ones that
+    // are wrong in ways a bare paste hides — the empty string, a leading space, a trailing
+    // newline. A refusal that reads `... as a Turtle IRI: ` names nothing.
+    if (!ref) throw new Error(`${args.what}: ${role} is not serializable as a Turtle IRI: ${JSON.stringify(iri)}`);
     return ref;
   };
   /**
@@ -203,6 +216,18 @@ function membershipTurtle(args: {
     return guard(iri, 'a vocabulary term');
   };
 
+  /**
+   * Every predicate this writer states, and how many values it states for it.
+   *
+   * ★ RECORDED AS THE LINES GO OUT, not reconstructed from `args` afterwards. Reconstructing it
+   * would be a second reading of the same arguments, and the output check below would then be
+   * comparing the document against a PARAPHRASE of the emission rather than against the
+   * emission — so the two could drift apart and the check would go on passing. Same reason
+   * `term()` derives its local part from `WSP` instead of spelling it out.
+   */
+  const stated = new Map<string, number>();
+  const state = (predicate: string): void => { stated.set(predicate, (stated.get(predicate) ?? 0) + 1); };
+
   const lines: string[] = [
     `@prefix wsp: <${WSP}> .`,
     `@prefix iep: <${IEP}> .`,
@@ -212,9 +237,11 @@ function membershipTurtle(args: {
     guard(args.subjectIri, 'the record IRI'),
     `  a ${term(args.type)} ;`,
   ];
+  state(RDF_TYPE);
 
   for (const [predicate, object] of args.iris) {
     lines.push(`  ${term(predicate)} ${guard(object, `the object of <${predicate}>`)} ;`);
+    state(predicate);
   }
   for (const [predicate, value] of args.booleans) {
     // ★ EMITTED ONLY WHERE PRESENT, and `false` is emitted as well as `true`. An absent
@@ -224,21 +251,59 @@ function membershipTurtle(args: {
     // record whose author had never considered revocation.
     if (value === undefined) continue;
     lines.push(`  ${term(predicate)} "${value ? 'true' : 'false'}"^^xsd:boolean ;`);
+    state(predicate);
   }
-  if (args.supersedes) {
+  // ★ `!== undefined && !== null`, NOT a truthiness test, and the difference is a triple that
+  // vanishes out of a signed record. `if (args.supersedes)` treated the EMPTY STRING as "there
+  // is no prior head" and skipped the guard entirely: MEASURED, `grantTurtle({… supersedes: ''})`
+  // returned a complete, shape-valid, signable grant with `iep:supersedes` silently absent.
+  //
+  // ★ NOTHING IN THIS REPO HAS PUBLISHED SUCH A RECORD, and saying otherwise would be inventing
+  // a measurement. No caller passes `supersedes` to these three writers at all today — checked,
+  // not assumed. It is the FIRST one that pays, because the idiom which produces the empty
+  // string is everywhere in this tree (`String(res['descriptorUrl'] ?? '')`, `head ?? ''`) and
+  // the cost lands on the record rather than on the call: a grant published with no
+  // `iep:supersedes` is a SECOND HEAD on an authorization chain, and `foldRoster` answers a fork
+  // by INTERSECTION rather than by picking a winner (roster.ts) — so a revocation meant to
+  // supersede a grant becomes a fork the fold cannot resolve, and a reinstatement is lost.
+  //
+  // Absent and null still mean "this record supersedes nothing", which is a real and common
+  // case. An unusable value means the caller HAS a prior head and could not name it, and that
+  // is a refusal — see the guard.
+  if (args.supersedes !== undefined && args.supersedes !== null) {
     // Declared in the CONTENT rather than via auto_supersede_prior: exactly one link per
     // record, so a grant chain stays linear instead of growing a link to every ancestor.
     lines.push(`  iep:supersedes ${guard(args.supersedes, 'the prior head')} ;`);
+    state(IEP_SUPERSEDES);
   }
   if (args.title !== undefined) {
     lines.push(`  dct:title "${escapeTurtleLiteral(args.title)}" ;`);
+    state(DCT_TITLE);
   }
-  // Same constraint as `entryTurtle.extraTriples`, for the same reason and with more at
-  // stake: raw Turtle cannot be escaped, so anything that could end this statement or open
-  // a new one is refused outright.
+  // Same constraint as `entryTurtle.extraTriples`, for the same reason and with more at stake:
+  // raw Turtle cannot be escaped, so a fragment that looks like it could end this statement or
+  // open a new one is refused here.
+  //
+  // ★ AND IT IS NOT SUFFICIENT — see the output check at the end of this function, which is what
+  // actually holds the line. `rejectExtraTriple` misses a `.` with no whitespace around it, and
+  // a fragment exploiting that emitted a top-level `acl:agent` triple about a third party out of
+  // this function. This pass is kept because it names the ordinary mistake precisely, and
+  // because two checks that disagree about a hostile fragment both refuse it; it is not the
+  // guarantee.
   for (const raw of args.extraTriples ?? []) {
     const trimmed = raw.trim();
-    if (trimmed.length === 0) continue;
+    // ★ REFUSED RATHER THAN SKIPPED. It used to `continue`, inside the loop whose invariant the
+    // check below states over the output — so an `extraTriples` entry that evaluated to `''`
+    // was dropped and the record was signed without the term its author asked for. That is the
+    // same silent omission as the empty `supersedes` above, in the same function, and the bytes
+    // are immutable once signed. An empty fragment is a caller bug and it is worth a name.
+    if (trimmed.length === 0) {
+      throw new Error(
+        `${args.what}: extraTriples contains an empty fragment. Dropping it would sign a record `
+        + 'missing a term its author asked for, and the bytes cannot be corrected afterwards. '
+        + 'Pass no entry rather than an empty one.',
+      );
+    }
     const rejection = rejectExtraTriple(trimmed);
     if (rejection !== null) {
       throw new Error(
@@ -251,7 +316,163 @@ function membershipTurtle(args: {
 
   const last = lines[lines.length - 1]!;
   lines[lines.length - 1] = last.replace(/ ;$/, ' .');
-  return lines.join('\n') + '\n';
+  const document = lines.join('\n') + '\n';
+
+  /**
+   * ★★ THE DOCUMENT IS CHECKED AS EMITTED, NOT THE FRAGMENTS SPLICED INTO IT — because the
+   * fragment grammar above can be walked past, and because it can be left alone entirely.
+   * Everything in this comment was measured through this function's own public API.
+   *
+   * (1) WITH AN INJECTION. `rejectExtraTriple` refuses a statement terminator by looking for a
+   * `.` bounded by whitespace (`/(^|[\s>"])\.(\s|$)/`); Turtle requires no whitespace around
+   * one. The extraTriple
+   *
+   *     <https://x#derivedFrom> <https://a>.<WORKSPACE> <acl#agent> <did:web:attacker>
+   *
+   * passes all four of its rules — one line, no directive, no space-bounded `.`, does not end
+   * in `.` or `;` — and this function emitted it verbatim. `parseTrig` then reported TWO
+   * subjects: the grant, and a top-level statement handing a stranger `acl:agent` on the
+   * workspace. An authorization triple about a third party, written by string concatenation
+   * into an AUTHORIZATION RECORD. Replacing that `<WORKSPACE>` with a `[` — ONE CHARACTER —
+   * gives the same authorization a blank-node subject. ★ AND CALLING THAT "THE ORDINARY
+   * WAC/ACP FORM" — as an earlier draft of this sentence did — OVERSTATES IT: nothing in WAC
+   * or ACP REQUIRES an authorization’s subject to be named, but CSS and NSS both emit named
+   * ones (`<#owner>`, `<#public>`), the WAC examples do the same, and an ACP policy has to be
+   * IRI-referenceable from its ACR. Blank-node is permitted, not ordinary — which matters here
+   * because the check below must refuse it on its own merits, not because it is unusual.
+   *
+   * (2) WITH NO INJECTION AT ALL, and this is the one that decided the shape of the check. A
+   * plain, documented one-pair fragment,
+   *
+   *     <https://x#derivedFrom> [ a wsp:MembershipAcceptance ; wsp:member <did:web:attacker> ; … ]
+   *
+   * puts a SECOND TYPED RECORD inside the block that is about to be digested and signed.
+   * `readAcceptanceRecord` then answers `record: null` — "its payload declares 2
+   * <wsp#MembershipAcceptance> subjects" — which is the silent denial of membership
+   * `oneSubjectOfType` exists to produce, aimed at the honest record by its own author, who is
+   * told the publish succeeded. The same fragment shape against a grant gives the same result.
+   *
+   * (3) AND THE RECORD'S OWN SUBJECT IS REACHABLE TOO, again with no injection:
+   * `extraTriples: ['<…wsp#grantedTo> <did:web:attacker>']` emits a second `wsp:grantedTo`.
+   * `oneIri` refuses duplicates so the READING track is contained — but `restrictionPrincipals`
+   * is the RESTRICTING track and reads EVERY value that matches the published pattern
+   * (`^https?://|^did:` for `grantedTo`, so `did:web:attacker` qualifies), one revoking row
+   * each. On a record carrying `wsp:revoked true` that quietly widens a revocation to a
+   * principal nobody revoked.
+   *
+   * ★ SO THE INVARIANT IS STATED OVER THE OUTPUT, AND IT IS THIS, WHOLE: the emitted document
+   * contains exactly one subject, that subject is the record's own, and the terms a membership
+   * record is READ with — the whole `wsp:` vocabulary, plus `iep:supersedes` — appear on it
+   * exactly as many times as THIS function stated them, from its typed arguments. Anything
+   * else is refused. None of it depends on the fragment grammar being complete, which is what
+   * (1) and (2) between them showed it is not.
+   *
+   * ★ WHAT IT DOES NOT HOLD, written out because the previous version of this comment claimed a
+   * totality it did not have, and a reader trusting that was worse off than one who knew the
+   * check was absent:
+   *   • It does not stop the record's author putting a FOREIGN vocabulary's terms on the
+   *     record's own subject — that is what the hatch is for. `<x#note> "ok"` and
+   *     `dct:conformsTo <x#s>` still render. Those are claims the record makes about itself.
+   *     That includes a fragment which uses the `.` bypass to open a SECOND TOP-LEVEL statement
+   *     about the record's own subject: `parseTrig` merges statements sharing a subject, so it
+   *     arrives here as the one subject, and the RDF it produces is exactly what the ordinary
+   *     pair form would have produced — measured. The same fragment carrying a `wsp:` term is
+   *     refused by the count below, which is the half that matters.
+   *   • It is a property of THIS function only. `entryTurtle` (stream.ts) still splices
+   *     `extraTriples` on the fragment grammar alone with no output check, and `respond.ts`
+   *     feeds it fragments built from other pods' descriptor URLs — a live path from another
+   *     party's data to a forged top-level triple in a signed log entry. Not this file.
+   *   • It says nothing about a document a caller assembles for itself and hands straight to
+   *     `publishMembershipRecord`.
+   *
+   * ★ IT NARROWS THE HATCH, DELIBERATELY. An `extraTriple` whose object is a property list
+   * `[ … ]`, or a non-empty collection `( <a> <b> )`, is now refused with the rest: both hoist
+   * into subjects of their own and nothing here can tell a decorative one from (2). (`()` is
+   * `rdf:nil`, an IRI, and still renders — measured, not assumed.) "ONE predicate-object pair
+   * for the record itself" is what the parameter has always documented; this is the first
+   * version that means it.
+   *
+   * ★ REFUSES RATHER THAN DROPPING THE OFFENDING LINE. The record is about to be signed and the
+   * bytes are immutable afterwards; a serializer that quietly emitted less than it was asked
+   * for would produce a grant whose author believes it carries a term it does not, which is the
+   * failure shape this file has already had to undo twice.
+   */
+  let emitted;
+  try {
+    emitted = parseTrig(document);
+  } catch (e) {
+    // ★ REACHABLE, AND AN INTENDED CONTRACT CHANGE — the comment that stood here said `parseTrig`
+    // "did not throw on any input measured here", which was false one line of test away.
+    // `extraTriples: ['foaf:name "alice"']` used to be emitted verbatim and now refuses with
+    // `unknown prefix "foaf:"`: the four prefixes declared above are the only ones a fragment
+    // may use, because a record naming an undeclared prefix is unreadable by whoever fetches
+    // it. No caller in this repo passes `extraTriples` to these three writers, so nothing live
+    // changed — but a caller of the hatch should learn it by name rather than as a bare parser
+    // error from a function it never called, which is what the wrap is for.
+    throw new Error(
+      `${args.what}: the record it assembled does not parse as Turtle `
+      + `(${e instanceof Error ? e.message : String(e)}), so it cannot be checked and is refused.`,
+    );
+  }
+
+  const foreign = emitted.subjects.filter(subject => subjectIriOf(subject) !== args.subjectIri);
+  if (foreign.length > 0) {
+    // A blank node is named as one rather than by its parser-assigned label: `_:_anon0` is an
+    // artefact of this parse and tells the author nothing about which fragment produced it.
+    // The IRIs are quoted rather than wrapped in `<>` — a refusal reporting a hostile value
+    // should show its whitespace, and prose that spells an IRI the way Turtle does is the
+    // population `tools/turtle-iri-ratchet.mjs` counts, so a fix for Turtle injection that
+    // grows that count is arguing against itself.
+    const namedSubjects = foreign
+      .map(subject => subjectIriOf(subject))
+      .filter((iri): iri is string => iri !== null);
+    // Counted rather than repeated: one collection produces several bnodes, and a refusal
+    // reading "a blank node, a blank node" reads like a bug in the refusal.
+    const blanks = foreign.length - namedSubjects.length;
+    const names = [
+      ...namedSubjects.map(iri => JSON.stringify(iri)),
+      ...(blanks === 0 ? [] : [blanks === 1 ? 'a blank node' : `${blanks} blank nodes`]),
+    ].join(', ');
+    throw new Error(
+      `${args.what}: the record would also state triples about ${names} — and a membership `
+      + `record states things about its own subject ${JSON.stringify(args.subjectIri)} and `
+      + 'about nothing else. A second subject, blank or named, is either a claim about somebody '
+      + 'else inside a signed authorization record or a decoy that makes this one unreadable. '
+      + 'Publish it as its own graph and cite it instead.',
+    );
+  }
+  const own = emitted.subjects.filter(subject => subjectIriOf(subject) === args.subjectIri);
+  if (own.length !== 1) {
+    // Not reachable through any fragment measured: the record always states at least its own
+    // `rdf:type`, so there is never zero, and `parseTrig` MERGES statements that share a
+    // subject, so a fragment re-opening this one does not make two. Checked anyway, because
+    // everything after this reads `own[0]` — and a check that silently passes when there is
+    // nothing to check is exactly the shape this block exists to stop shipping.
+    throw new Error(
+      `${args.what}: the record it assembled parses as ${own.length} statement(s) about its own `
+      + `subject ${JSON.stringify(args.subjectIri)} rather than exactly one, so what it says `
+      + 'cannot be checked and it is refused.',
+    );
+  }
+  for (const [predicate, values] of own[0]!.properties) {
+    const asked = stated.get(predicate) ?? 0;
+    // ★ THE GOVERNED SET IS THE READ SET, not "everything". A membership record is read for the
+    // `wsp:` vocabulary and for `iep:supersedes`, and a reader cannot tell a term this writer
+    // stated from one a fragment appended — so those are written here from typed arguments and
+    // nowhere else. Terms outside that set are the vertical's own and are left alone, because
+    // refusing them would be refusing the feature.
+    const governed = asked > 0 || predicate.startsWith(WSP) || predicate === IEP_SUPERSEDES;
+    if (!governed || values.length === asked) continue;
+    throw new Error(
+      `${args.what}: the record would state ${values.length} value(s) of `
+      + `${JSON.stringify(predicate)} where this writer stated ${asked}. The terms a membership `
+      + 'record is read with are written from its typed arguments and nowhere else: a reader '
+      + 'cannot tell an appended one from an authorised one, and `restrictionPrincipals` reads '
+      + 'every value, so a second one silently widens a revocation. Pass it as an argument, or '
+      + 'publish it as its own graph and cite it.',
+    );
+  }
+  return document;
 }
 
 /**

@@ -792,6 +792,33 @@ export interface PodInfo {
 
 /**
  * Generate a DCAT catalog with DPROD alignment for a set of federated pods.
+ *
+ * ★★ THE ONLY FUNCTION IN THIS MODULE WHOSE IRIs ARE NOT COMPILE-TIME CONSTANTS, AND IT IS
+ * DELIBERATELY LEFT UNGUARDED. Everything above interpolates `CG_NS`, `PGSL_NS`, `HYDRA_NS` and
+ * friends — `as const` strings and re-exports of `./namespaces.js` that no caller can reach.
+ * `pods` is the exception: it is a parameter, so `pod.uri` and `pod.accessUrl` reach `<...>`
+ * with nothing between them and the document, and `pod.title` / `pod.description` reach a
+ * `"..."` literal the same way.
+ *
+ * ★ A `turtleIriRef` / `escapeTurtleLiteral` GUARD WAS WRITTEN HERE AND REVERTED BEFORE IT
+ * SHIPPED, because it broke the only caller in the tree while buying nothing there.
+ * `examples/pgsl-browser/server.ts` `/catalog` — the public Railway service `pgsl-browser`
+ * (deploy/railway/services.json, deploy/Dockerfile.pgsl-browser) — calls this with
+ * `{url, name, descriptorCount}` where `PodInfo` declares `{uri, title, accessUrl}`. Every
+ * field this function reads is therefore `undefined` on that path: it emits
+ * `<undefined> a dcat:Dataset ; dcterms:title "undefined"` today — wrong, but served — and the
+ * guard turned that 200 into an uncaught 500 on every request once any pod had been discovered,
+ * while the injection it defends against was unreachable, no body-supplied value reaching any
+ * field this function reads.
+ *
+ * ★ SO THE GUARD BELONGS HERE, BUT NOT ON ITS OWN. It has to land together with the
+ * three-property rename in that caller, by someone who owns `examples/` — and at that moment the
+ * hole becomes real, so the two halves are one change: `POST /api/pods/add` pushes a
+ * body-supplied url onto `KNOWN_PODS` and the next `GET /api/pods` registers it either way (the
+ * catch branch registers an unreachable pod too), so a uri of `https://p.example/> ;
+ * dcterms:publisher <https://attacker.example/me> . <urn:x` would close the subject IRI and
+ * write triples into a directory other agents navigate by. Guarding this function while its
+ * caller still passes the wrong names moves the failure; it does not fix it.
  */
 export function systemDcatCatalog(pods: readonly PodInfo[]): string {
   const podEntries = pods.map(pod => {

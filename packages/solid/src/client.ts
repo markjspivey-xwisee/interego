@@ -19,6 +19,11 @@ import { turtlePrefixes } from '@interego/core';
 import { ownerProfileToTurtle, parseOwnerProfile, delegationCredentialToJsonLd, parseDelegationCredential, verifyDelegation } from '@interego/core';
 import { createEncryptedEnvelope, openEncryptedEnvelope, type EncryptedEnvelope, type EncryptionKeyPair } from '@interego/core';
 import { computeCid } from '@interego/core';
+// ★ REFUSES, it does not sanitise: `turtleIriRef` returns null for a value that would break out
+// of `<...>`, so every use below has to decide what to do with a value it cannot emit. That is
+// the point — `iescIri` (percent-encode) is safe against injection but silently changes the
+// identifier, which is the wrong answer where the identifier is the thing being attested.
+import { turtleIriRef } from '@interego/core';
 // The wrap refuses to store a payload whose meaning it would change; deciding that needs
 // the triples, not the characters, so it reaches for the same digest the read path uses.
 import { canonicalGraphDigest } from '@interego/core';
@@ -54,6 +59,31 @@ import { AGENT_REGISTRY_PATH, CREDENTIALS_PATH } from './types.js';
  *  the remaining sink. A value with no illegal char is unchanged (valid IRIs round-trip). */
 function iescIri(value: string): string {
   return String(value).replace(/[\x00-\x20<>"{}|^`\\]/g, encodeURIComponent);
+}
+
+/** The scheme `relativeIriRef` prepends to ask escape.ts whether a value is otherwise emittable. */
+const RELATIVE_PROBE_SCHEME = 'x-relative-probe:';
+
+/**
+ * Serialise `value` as a Turtle IRI reference when the ONLY thing wrong with it is that it is
+ * RELATIVE — i.e. `turtleIriRef` would have taken it but for the missing scheme. Null otherwise.
+ *
+ * ★ THE POINT IS THE SEPARATION, AND IT IS LOAD-BEARING. `turtleIriRef` refuses two unrelated
+ * things at once: a value that BREAKS OUT of `<...>` (Turtle's IRIREF production has no escape
+ * for `>`, so refusing is the only correct handling) and a value that is merely relative — legal
+ * Turtle, resolved against whatever base the reading parser uses, which escape.ts's own docblock
+ * calls "a different bug wearing this one's clothes". A caller closing the first must not start
+ * failing publishes on the second, and bare, scheme-less agent ids demonstrably reach this file
+ * (see the ★★ note in `buildAuthorshipProofBlock`). Those two decisions need to be separable.
+ *
+ * ★ AND IT ASKS escape.ts RATHER THAN RESTATING ITS RULE. Probing with a synthetic scheme keeps
+ * the forbidden-character set defined in exactly one place; a second copy of that character class
+ * here is how one rule quietly becomes two once either is updated.
+ */
+function relativeIriRef(value: unknown): string | null {
+  if (typeof value !== 'string' || value.length === 0) return null;
+  if (turtleIriRef(`${RELATIVE_PROBE_SCHEME}${value}`) === null) return null;
+  return `<${value}>`;
 }
 
 /** Escape a Turtle string LITERAL. The manifest lines below are hand-built and
@@ -2617,10 +2647,83 @@ export async function publish(
   // PGSL projection does not carry it, so we append it to the projected
   // turtle's tail too, or the auditor trail is silently dropped on the
   // PGSL-primary path.
+  /**
+   * ★★ A `#` COMMENT IS A TURTLE POSITION TOO, AND A NEWLINE IS ITS TERMINATOR.
+   *
+   * ★ THE CONCRETE DEFECT. `preconditionWitness.matched` was interpolated raw into the audit
+   * comment below. It is `hit.descriptorUrl`, and for a non-http supersedes target
+   * `checkSupersessionPrecondition` pushes the caller's string through UNTOUCHED
+   * (`observed.push({ descriptorUrl: target, cid: '' })` on the `!/^https?:\/\//` branch), then
+   * matches it by string equality against the caller's own `ifMatchSupersedes`. So a publish
+   * carrying `supersedes: ['urn:x\n<https://pod.example/someone-elses.ttl> iep:supersededBy
+   * <https://attacker.example/y.ttl> .\n#']` with the identical `ifMatchSupersedes` ends the
+   * comment at the newline and writes real triples into the descriptor — the same forgery the
+   * `<...>` positions allow, reached through a comment nobody thought of as a sink.
+   *
+   * ★ WHY THROW RATHER THAN DROP THE COMMENT. CAVEAT A immediately above exists because this
+   * witness was once silently missing on one of the two paths, and the fix was to guarantee it
+   * on both. Re-introducing "sometimes there is no witness" as the injection response would undo
+   * that by a different route. Nothing has been PUT yet at this point in publish(), so the throw
+   * costs a legitimate caller nothing and leaves no partial write behind.
+   */
+  let witnessRef: string | null = null;
+  if (preconditionWitness) {
+    witnessRef = turtleIriRef(preconditionWitness.matched);
+    if (witnessRef === null) {
+      throw new Error(
+        `publish: the CAS precondition matched ${JSON.stringify(preconditionWitness.matched)}, `
+        + `which is not a usable Turtle IRI reference, so the supersession witness cannot be `
+        + `recorded without it escaping the audit comment. Refusing the publish — pass an `
+        + `absolute IRI (no <>"{}|^\` \\, no whitespace, no control characters) in supersedes / `
+        + `ifMatchSupersedes.`,
+      );
+    }
+  }
   const descriptorTurtle = preconditionWitness
-    ? `${baseDescriptorTurtle.trimEnd()}\n# ── CAS supersession witness (precondition matched at publish time, via ${preconditionWitness.via}) ──\n# iep:supersedes precondition gated against <${preconditionWitness.matched}>\n`
+    ? `${baseDescriptorTurtle.trimEnd()}\n# ── CAS supersession witness (precondition matched at publish time, via ${preconditionWitness.via}) ──\n# iep:supersedes precondition gated against ${witnessRef}\n`
     : baseDescriptorTurtle;
   const primaryGraph = descriptor.describes[0]!;
+
+  // Optional authorship-proof block. When the caller minted a signed
+  // authorship proof for THIS publish (typically via `sign_authorship:
+  // true` in the relay shim → `createSignedAuthorship` with the
+  // calling agent's delegation key), embed it as
+  //   <> iep:authorshipProof [ a iep:SignedAuthorship ; ... ] .
+  // adjacent to the AgentFacet block. Independent of the trust-facet
+  // iep:proof block (which signs the whole descriptor turtle and is
+  // operator-grade): authorship binds the AgentFacet to THIS agent's
+  // delegation key so any reader can verify "the named agent actually
+  // signed this AgentFacet" without trusting pod storage.
+  //
+  // Also asserts `dct:conformsTo <iep:SignedAuthorship>` so readers
+  // can detect a signed-authorship descriptor by feature, not by
+  // probe-parse.
+  /**
+   * ★★ BUILT HERE, BEFORE STEP 1, BECAUSE IT CAN REFUSE — AND A REFUSAL AFTER THE PAYLOAD PUT
+   * LEAVES A HALF-PUBLISHED RECORD BEHIND. The value is not used until the descriptor is
+   * assembled ~120 lines below, and nothing in it depends on either PUT, so its position decides
+   * exactly one thing: what a refusal costs.
+   *
+   * ★ THE CONCRETE DEFECT THIS ORDERING FIXES. `buildAuthorshipProofBlock` throws on a value it
+   * cannot serialise into `<...>`. Called at its point of use, those throws were the FIRST
+   * deterministic, caller-value-triggered abort anywhere between the graph PUT (step 1) and the
+   * descriptor PUT (step 2) — every other abort in that window is transient network failure,
+   * which `withTransientRetry` already owns. So a refused publish left the graph payload on the
+   * pod with no descriptor and no manifest entry. The retry is worse than the first failure: step
+   * 1 sends `If-None-Match: *` and DELIBERATELY tolerates the 412, so a corrected second attempt
+   * at the same descriptor id keeps the FIRST attempt's bytes, writes a descriptor over them and
+   * reports success. The authorship proof's contentHash then covers bytes the pod does not serve,
+   * so every entitled reader recomputes the digest and gets `contentBinding: 'mismatched'` — the
+   * sharpest evidence of tampering this substrate can produce, manufactured by an honest
+   * publisher who simply corrected a value and tried again. The graph slug is derived from the
+   * caller's own descriptor id, so the caller also chooses which URL gets primed.
+   *
+   * ★ `buildAuthorshipProofBlock`'s own docblock promises "stops before any PUT". That promise is
+   * not the function's to keep — it is the caller's, and this is where it is kept.
+   */
+  const authorshipBlock = options.authorshipProof
+    ? buildAuthorshipProofBlock(options.authorshipProof)
+    : '';
 
   // 1. PUT the graph payload — plaintext TriG OR encrypted envelope.
   //    When options.encrypt is set, the named-graph content is wrapped in
@@ -2726,23 +2829,8 @@ export async function publish(
     // the relay can read, that one it cannot" has to be answerable per record.
     sealedByPublisher: !!options.sealedPayload,
   });
-  // Optional authorship-proof block. When the caller minted a signed
-  // authorship proof for THIS publish (typically via `sign_authorship:
-  // true` in the relay shim → `createSignedAuthorship` with the
-  // calling agent's delegation key), embed it as
-  //   <> iep:authorshipProof [ a iep:SignedAuthorship ; ... ] .
-  // adjacent to the AgentFacet block. Independent of the trust-facet
-  // iep:proof block (which signs the whole descriptor turtle and is
-  // operator-grade): authorship binds the AgentFacet to THIS agent's
-  // delegation key so any reader can verify "the named agent actually
-  // signed this AgentFacet" without trusting pod storage.
-  //
-  // Also asserts `dct:conformsTo <iep:SignedAuthorship>` so readers
-  // can detect a signed-authorship descriptor by feature, not by
-  // probe-parse.
-  const authorshipBlock = options.authorshipProof
-    ? buildAuthorshipProofBlock(options.authorshipProof)
-    : '';
+  // `authorshipBlock` is built BEFORE step 1 — see the ★★ note there for why a refusal
+  // has to happen before the first PUT rather than here.
   const descriptorWithDistribution =
     descriptorTurtle.trimEnd()
     + '\n\n' + distributionBlock
@@ -3229,18 +3317,46 @@ function buildDistributionBlock(d: {
    */
   if (d.encrypted && !d.sealedByPublisher && d.relayBaseUrl && d.descriptorId) {
     const relayBase = d.relayBaseUrl.replace(/\/$/, '');
-    const renderTarget = `${relayBase}/render/${encodeURIComponent(d.descriptorId)}`;
-    lines.push('');
-    lines.push('# ── Affordance (iep:renderView — server-side projection for thin clients) ──');
-    lines.push(`<> iep:affordance [`);
-    lines.push(`    a iep:Affordance, ieh:Affordance, hydra:Operation ;`);
-    lines.push(`    iep:action iep:renderView ;`);
-    lines.push(`    hydra:method "GET" ;`);
-    lines.push(`    hydra:target <${renderTarget}> ;`);
-    lines.push(`    hydra:returns iep:GraphPayload ;`);
-    lines.push(`    hydra:title "Render plaintext projection of encrypted graph (relay unwraps for authorized bearer)" ;`);
-    lines.push(`    dcat:mediaType "text/turtle"`);
-    lines.push(`] .`);
+    /**
+     * ★ THE BASE IS THE UNGUARDED HALF. In the very same expression, `descriptorId` is
+     * percent-encoded into one path segment while `relayBaseUrl` reached `<...>` raw — and it is
+     * a `publish()` OPTION, i.e. caller input at this package's boundary (the relay happens to
+     * pass PUBLIC_BASE_URL, but this function cannot know that of the next caller). A base ending
+     * `…> ; hydra:target <https://attacker.example/render` would point thin clients at an
+     * attacker's projection endpoint from inside the pod owner's own descriptor.
+     *
+     * ★ AND HERE THE REFUSAL IS AN OMISSION, NOT A THROW — unlike the authorship block. The
+     * branch above ALREADY omits this whole affordance when there is no usable relay base, and
+     * the ★★ note above says why: an affordance nobody could honour is worse than silence. A
+     * base that is not an IRI reference is exactly that situation, and `iep:canDecrypt` remains
+     * the documented path.
+     *
+     * ★ OMITTING IT CORRUPTS NO PROOF — BUT NOT BECAUSE THIS IS UNSIGNED TURTLE. It is not: the
+     * affordance sits inside the descriptor body, and `compliance: true` signs that body into the
+     * sibling `<descriptor>.sig.json`. What makes the omission safe is the ORDER — that signature
+     * is taken over the bytes actually published, after this function has decided what to emit,
+     * so a reader verifies the document in front of them, gap and all. (An earlier draft of this
+     * note claimed "nothing here is signed", which was simply untrue of the document.) The
+     * omission is narrated rather than left silent, because a reader comparing two descriptors
+     * deserves to know which of "no relay configured" and "relay base rejected" produced the gap.
+     */
+    const renderTarget = turtleIriRef(`${relayBase}/render/${encodeURIComponent(d.descriptorId)}`);
+    if (renderTarget === null) {
+      lines.push('');
+      lines.push('# ── iep:renderView OMITTED — the supplied relay base URL is not a usable IRI reference ──');
+    } else {
+      lines.push('');
+      lines.push('# ── Affordance (iep:renderView — server-side projection for thin clients) ──');
+      lines.push(`<> iep:affordance [`);
+      lines.push(`    a iep:Affordance, ieh:Affordance, hydra:Operation ;`);
+      lines.push(`    iep:action iep:renderView ;`);
+      lines.push(`    hydra:method "GET" ;`);
+      lines.push(`    hydra:target ${renderTarget} ;`);
+      lines.push(`    hydra:returns iep:GraphPayload ;`);
+      lines.push(`    hydra:title "Render plaintext projection of encrypted graph (relay unwraps for authorized bearer)" ;`);
+      lines.push(`    dcat:mediaType "text/turtle"`);
+      lines.push(`] .`);
+    }
   }
   return lines.join('\n');
 }
@@ -3273,18 +3389,78 @@ export function buildAuthorshipProofBlock(p: import('@interego/core').Authorship
   // Escape minimal Turtle-literal hazards in the proof value + signer
   // address (they are hex / base64 in practice but defensive).
   const esc = (s: string): string => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  /**
+   * ★★ THE FOUR IRI FIELDS ARE REFUSED, NOT ESCAPED, AND A REFUSAL FAILS THE WHOLE PUBLISH.
+   *
+   * ★ THE CONCRETE DEFECT. The round-21 sweep put `iescIri()` on this file's hand-built
+   * graph / manifest / distribution lines and never reached this block, which is the one whose
+   * entire purpose is that a reader can trust it. And the values here are the most reachable in
+   * the file: the relay's publish handler takes `owner_webid`, `descriptor_id` and `agent_id` off
+   * the wire verbatim (deploy/mcp-relay/server.ts — `const ownerWebId = (args.owner_webid as
+   * string) ?? ...`, and the comment beside `descId` already calls it "caller-chosen"), and they
+   * arrive here as `p.ownerWebId`, `p.descriptorId` and `p.issuer`.
+   *
+   * A value like `https://pod.example/x.ttl> ] . <https://pod.example/someone-elses.ttl>
+   * iep:supersededBy <https://attacker.example/y.ttl> . <> iep:authorshipProof [` closes the IRI,
+   * then closes the blank node with `]`, and everything after it lands as TOP-LEVEL statements in
+   * the descriptor this publish writes to the pod — a document the whole federation reads and
+   * whose `iep:supersedes` / `dct:conformsTo` triples drive real gates. Retiring another agent's
+   * record by writing your own web-id is forgery by string concatenation.
+   *
+   * ★ WHY ALL FOUR AND NOT JUST THE THREE THAT DEMONSTRABLY COME OFF THE WIRE. This function is
+   * exported from `@interego/solid`; its parameter IS caller input. `verificationMethod` happens
+   * to come from the signer on the relay's path, but nothing here can know that of the next
+   * caller, and singling it out would leave one un-pinned field in a four-line block whose whole
+   * point is that a reader can trust it.
+   *
+   * ★ WHY THROW RATHER THAN OMIT THE BLOCK. The caller asked for a signed proof. Dropping the
+   * block would publish an unsigned descriptor and report success — the record quietly saying
+   * less than it should, which is the shape this repo has been bitten by repeatedly. Emitting a
+   * partial block is worse still: `parseAuthorshipProofFromDescriptorTurtle` reads each field
+   * with a first-match regex over the bnode body, so a half-written block verifies as tampered
+   * rather than as absent. Refusal names the field, and `publish()` builds this block BEFORE its
+   * first PUT so the refusal is total — that ordering is the CALLER's to keep, not this
+   * function's, and the ★★ note at the call site records why it had to move there.
+   *
+   * ★★ AND IT REFUSES ONLY WHAT CANNOT BE HELD — NOT EVERYTHING `turtleIriRef` REJECTS.
+   * `turtleIriRef` refuses two unrelated things at once: a value that BREAKS OUT of `<...>`, and
+   * a value that is merely RELATIVE. Only the first is the defect described above. Bundling the
+   * second in as a hard publish failure is a change of contract, not an injection fix, and the
+   * values it would newly fail are real: bare, scheme-less agent ids occur, which is why the
+   * relay carries `principalIri()` ("the relay's userId is a bare slug"),
+   * `canonicalSurfaceAgentDid()` and a `startsWith('did:web:')` branch, and why a live
+   * participant is named `chatgpt-u-pk-b03a054d6915`. `agent_id` is undeclared in the
+   * `publish_context` / `remember` / `record_trajectory_step` schemas, so `handleRemember` reads
+   * it off the wire verbatim and publishes with `sign_authorship: true` hard-coded. None of those
+   * values holds a `<`, a `>` or a space; none can inject; every one of them is refused by the
+   * absoluteness rule alone. So a relative reference is emitted exactly as it was before this
+   * guard existed (see `relativeIriRef`), and making it fatal is left to a change that first
+   * measures which live values would stop publishing.
+   */
+  const iri = (field: string, value: unknown): string => {
+    const absolute = turtleIriRef(value);
+    if (absolute !== null) return absolute;
+    const relative = relativeIriRef(value);
+    if (relative !== null) return relative;
+    throw new Error(
+      `buildAuthorshipProofBlock: ${field} cannot be serialised as a Turtle IRI reference `
+      + `(it must be a non-empty string free of <>"{}|^\` \\ and control characters), so the `
+      + `authorship proof cannot be written without letting the value write triples of its own. `
+      + `Refusing to publish rather than writing a descriptor with a corrupted or missing proof.`,
+    );
+  };
   const lines: string[] = [
     '# ── Authorship Proof (iep:SignedAuthorship) ──',
     `<> dct:conformsTo <https://markjspivey-xwisee.github.io/interego/ns/iep#SignedAuthorship> .`,
     `<> iep:authorshipProof [`,
     `    a iep:SignedAuthorship ;`,
     `    iep:scheme "${esc(p.scheme)}" ;`,
-    `    iep:issuer <${p.issuer}> ;`,
-    `    iep:verificationMethod <${p.verificationMethod}> ;`,
+    `    iep:issuer ${iri('issuer', p.issuer)} ;`,
+    `    iep:verificationMethod ${iri('verificationMethod', p.verificationMethod)} ;`,
     `    iep:signerAddress "${esc(p.signerAddress)}" ;`,
     `    iep:created "${esc(p.created)}"^^xsd:dateTime ;`,
-    `    iep:ownerWebId <${p.ownerWebId}> ;`,
-    `    iep:descriptorId <${p.descriptorId}> ;`,
+    `    iep:ownerWebId ${iri('ownerWebId', p.ownerWebId)} ;`,
+    `    iep:descriptorId ${iri('descriptorId', p.descriptorId)} ;`,
   ];
   if (p.agentDid) {
     lines.push(`    iep:agentDid "${esc(p.agentDid)}" ;`);

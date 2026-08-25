@@ -138,6 +138,7 @@ COPY deploy/mcp-relay/alternate-turtle.ts ./
 COPY deploy/mcp-relay/shape-body.ts ./
 COPY deploy/mcp-relay/supersession-frontier.ts ./
 COPY deploy/mcp-relay/required-args.ts ./
+COPY deploy/mcp-relay/turtle-iri-args.ts ./
 COPY deploy/mcp-relay/sealed-payload.ts ./
 COPY deploy/mcp-relay/pod-selector.ts ./
 COPY deploy/mcp-relay/interop-principal.ts ./

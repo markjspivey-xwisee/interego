@@ -235,7 +235,15 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // identity guard is not an ordering guard, and two folds of the same workspace share a generation),
 // `workspace-seat-standing` (an unestablished read is not an authoritative absence, enforced by type),
 // `workspace-artifact-teardown`, and `workspace-desktop-delegate-key`.
-export const MIN_TEST_MODULES = 315;
+// 315 -> 316: `tests/every-gate-script-is-invoked.test.ts`. THE THIRD gate found running in no
+// workflow at all — after the security-txt expiry helper and the conformance runner, each closed
+// by adding a step and neither by adding a check. It derives the gate scripts from package.json
+// and the invocations from the workflows' own `run:` values, so a gate added tomorrow is covered
+// the day it is added. Its first draft read the raw YAML and scored a COMMENT about
+// `npm run lint:all` as an invocation — a gate credited to a sentence describing its absence.
+// 316 -> 317: `tests/the-sweep-missed-the-signed-positions.test.ts`, from the raw-IRI
+// interpolation sweep — the signed positions the first pass walked past.
+export const MIN_TEST_MODULES = 317;
 export const FLOOR_ALLOWANCE = 10;
 
 /**
