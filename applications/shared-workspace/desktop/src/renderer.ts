@@ -39,8 +39,8 @@ import {
   type EntryFooting, type StatedFooting,
   type SeenEntry, type SpeakingDelegate, type Viewer, type WithheldAcceptance,
   type WorkspaceEntry, type WorkspaceRecord,
-  EpochCounter, podOfGrantGraph, seatStanding, seatUnreadKind, unreadGrants,
-  type Epoch, type RecipientAudience, type Sealing, type UnreadGrant,
+  EpochCounter, podOfGrantGraph, seatStanding, unreadGrants,
+  type Epoch, type Sealing, type UnreadGrant,
 } from '@interego/workspace-client';
 /**
  * ★ THE DISCORD LINK FORM COMES FROM THE DISCORD CONDUIT, NOT FROM THE SHARED CLIENT.
