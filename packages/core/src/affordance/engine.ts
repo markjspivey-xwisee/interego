@@ -27,9 +27,15 @@ import type {
   StigmergicField,
   PodFieldState,
   TrustDistribution,
+  TrustEvidence,
   ReconsiderationTrigger,
 } from './types.js';
-import { computeAffordances } from './compute.js';
+// ★ `evaluateTrust` LIVES IN compute.ts, not here, because the trust POLICY evaluator is
+// there and the two must not be able to disagree about what a descriptor warrants. It used
+// to be a private function in this file computing `verified` off the descriptor's own
+// `iep:trustLevel` string while `evaluateTrustPolicy` ranked that same string independently
+// — two readings of one forgeable field, in two modules, with nothing tying them together.
+import { computeAffordances, evaluateTrust } from './compute.js';
 
 /**
  * Pull one facet out of a descriptor, narrowed to that facet's own interface.
@@ -79,14 +85,16 @@ export function assimilateDescriptor(
   state: AgentState,
   descriptor: ContextDescriptorData,
   profile: AgentProfile,
+  /** What this reader checked for itself. Absent = nothing checked; see {@link TrustEvidence}. */
+  evidence?: TrustEvidence,
 ): { state: AgentState; evaluation: FreeEnergyEvaluation } {
   // Compute surprise (Friston)
-  const evaluation = evaluateSurprise(state, descriptor, profile);
+  const evaluation = evaluateSurprise(state, descriptor, profile, evidence);
 
   // Create belief entry
   const entry: BeliefEntry = {
     descriptor,
-    trustEvaluation: evaluateTrust(descriptor),
+    trustEvaluation: evaluateTrust(descriptor, evidence),
     surprise: evaluation.surprise,
     assimilated: evaluation.recommendedResponse === 'accept',
   };
@@ -173,11 +181,21 @@ export function orient(
   cycle: OODACycle,
   profile: AgentProfile,
   _state: AgentState,
+  /**
+   * What this reader checked, keyed by descriptor IRI. A descriptor with no entry was not
+   * checked, and its trust verdict is capped at `SelfAsserted` accordingly.
+   *
+   * ★ KEYED BY DESCRIPTOR BECAUSE `orient` FOLDS MANY, and one observation's proof says
+   * nothing about another's. A single shared evidence value here would let one verified
+   * descriptor launder the whole batch, which is a fresh instance of the defect this
+   * argument exists to close rather than a shortcut.
+   */
+  evidence?: ReadonlyMap<IRI, TrustEvidence>,
 ): OODACycle {
   // Evaluate trust for all new observations
   const trustedSources = new Map(cycle.orientation.trustedSources);
   for (const desc of cycle.observations) {
-    const trust = evaluateTrust(desc);
+    const trust = evaluateTrust(desc, evidence?.get(desc.id));
     const agentFacet = facetOf(desc, 'Agent');
     // ★ `.identity`, NOT `.agentIdentity` — AND THIS IS A DEFECT THE `as any` WAS HIDING,
     // not a rename. `agentIdentity` is the RDF PREDICATE (`iep:agentIdentity`, emitted by
@@ -197,7 +215,7 @@ export function orient(
   for (const desc of cycle.observations) {
     const key = `${profile.agentId}:${desc.id}`;
     if (!affordanceCache.has(key)) {
-      affordanceCache.set(key, computeAffordances(profile, desc));
+      affordanceCache.set(key, computeAffordances(profile, desc, evidence?.get(desc.id)));
     }
   }
 
@@ -310,6 +328,8 @@ export function evaluateSurprise(
   state: AgentState,
   descriptor: ContextDescriptorData,
   _profile: AgentProfile,
+  /** What this reader checked for itself. Absent = nothing checked; see {@link TrustEvidence}. */
+  evidence?: TrustEvidence,
 ): FreeEnergyEvaluation {
   let surprise = 0;
   let beliefUpdateCost = 0;
@@ -318,9 +338,22 @@ export function evaluateSurprise(
   let epistemicValue = 0;
 
   const semiotic = facetOf(descriptor, 'Semiotic');
-  const trust = facetOf(descriptor, 'Trust');
   const confidence = semiotic?.epistemicConfidence ?? DEFAULT_EPISTEMIC_CONFIDENCE;
-  const trustLevel = trust?.trustLevel ?? 'SelfAsserted';
+  // ★ THE WARRANTED RUNG, NOT `trust?.trustLevel`, AND THE OLD READ WAS BACKWARDS. Factor 3
+  // below scores "low trust asserted with high confidence" as suspicious — so keying it on
+  // the descriptor's own string handed a publisher the suspicion switch: typing
+  // `CryptographicallyVerified` into their own Trust facet turned the check OFF, and typing
+  // the honest `SelfAsserted` left it on. `?? 'SelfAsserted'` is unchanged and still covers
+  // the no-Trust-facet case — and now also an off-ladder level, which warrants no rung.
+  //
+  // ★ WHAT THIS DOES AND DOES NOT BUY, stated because the obvious reading is too generous.
+  // The factor no longer DISCRIMINATES BY CLAIM, which is the fix. It does not discriminate
+  // by warrant either until a caller supplies `evidence`: with none, every descriptor warrants
+  // at most `SelfAsserted`, so factor 3 fires for every high-confidence descriptor including
+  // one whose chain the relay verified. The heuristic is uniform rather than well-aimed today;
+  // aiming it needs the ingestion wiring that would pass `trustEvidenceFromAuthorship(...)`
+  // down from the fetch that has the served bytes.
+  const trustLevel = evaluateTrust(descriptor, evidence).trustLevel ?? 'SelfAsserted';
 
   // Surprise factors:
 
@@ -437,7 +470,16 @@ export function updateStigmergicField(
 ): StigmergicField {
   const pods = new Map(field.pods);
 
-  // Compute trust distribution
+  // Compute trust distribution.
+  //
+  // ★ THIS IS A CENSUS OF WHAT PODS DECLARE, NOT A TALLY OF VERDICTS, and it is the one
+  // reader of `iep:trustLevel` in this file that is allowed to be. It counts claims because
+  // "what does this pod say about itself" is the question a stigmergic field is asking, and
+  // the field has no evidence channel to check them against. Nothing may gate on it:
+  // `coherenceMetric` below is verified-share OF THE CLAIMS, so a pod full of self-declared
+  // `CryptographicallyVerified` descriptors scores 1.0 while warranting nothing. Trust
+  // decisions go through `evaluateTrust`, where no rung above `SelfAsserted` is reachable
+  // except through evidence the reader checked for itself.
   let selfAsserted = 0;
   let delegatedTrust = 0;
   let cryptographicallyVerified = 0;
@@ -568,34 +610,6 @@ function createOrientation(): Orientation {
     causalModels: new Map(),
     timestamp: new Date().toISOString(),
     staleness: 0,
-  };
-}
-
-function evaluateTrust(descriptor: ContextDescriptorData): TrustEvaluation {
-  const trust = facetOf(descriptor, 'Trust');
-  const provenance = facetOf(descriptor, 'Provenance');
-
-  // Absence of a Trust facet is semantically distinct from positively
-  // asserting 'SelfAsserted': trustLevel is undefined and confidence
-  // collapses to 0 (no trust claim → no warranted confidence).
-  if (!trust) {
-    return {
-      source: provenance?.wasAttributedTo ?? ('unknown' as IRI),
-      trustLevel: undefined,
-      verified: false,
-      lastVerified: new Date().toISOString(),
-      confidence: 0,
-    };
-  }
-
-  return {
-    source: provenance?.wasAttributedTo ?? ('unknown' as IRI),
-    trustLevel: trust.trustLevel,
-    verified: trust.trustLevel === 'CryptographicallyVerified',
-    lastVerified: new Date().toISOString(),
-    confidence: trust.trustLevel === 'CryptographicallyVerified' ? 1.0
-      : trust.trustLevel === 'ThirdPartyAttested' ? 0.85
-      : 0.7,
   };
 }
 

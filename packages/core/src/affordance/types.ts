@@ -13,7 +13,8 @@
  *   - Stigmergy: Indirect coordination through environment modification
  */
 
-import type { IRI, ContextDescriptorData } from '../model/types.js';
+import type { IRI, ContextDescriptorData, TrustLevel } from '../model/types.js';
+import type { ContentBinding } from '../model/delegation.js';
 
 // ═════════════════════════════════════════════════════════════
 //  Core Affordance Types (Gibson + Norman)
@@ -178,19 +179,157 @@ export interface Orientation {
   readonly staleness: number;           // seconds since last update
 }
 
+/**
+ * On what a {@link TrustEvaluation} rests — a fact about the READER, never about the
+ * descriptor. Four values because there are four genuinely different situations and the
+ * three that are not `'evidence-checked'` are not the same as each other.
+ *
+ *   no-claim           the descriptor carries no Trust facet. It has declined to make a
+ *                      trust claim, which is not the same as positively asserting the
+ *                      weakest rung. Checks may still have been run — a descriptor with no
+ *                      claim can carry a proof — so this basis can still carry
+ *                      {@link TrustEvaluation.evidence}; what it cannot do is warrant a rung,
+ *                      because evidence caps a claim and never stands in for one.
+ *   unwarranted        the descriptor makes a claim and NOTHING reached this reader to check
+ *                      it against. The claim stands on the publisher's word about their own
+ *                      bytes. A verifier that ran and crashed lands here too — an attempt is
+ *                      not a finding, and reporting it as one is how "we could not check"
+ *                      became "we checked and it failed".
+ *   evidence-checked   this reader ran checks of its own and the verdict is capped by what
+ *                      they support. The cap may still be the weakest rung — "I looked and
+ *                      found only self-assertion" is a checked answer, not a failure.
+ *   evidence-refuted   a check this reader ran COMPARED TWO THINGS AND THEY DISAGREED: a
+ *                      signature that did not verify against the payload it signs, or a
+ *                      content digest recomputed over the served bytes that differs from the
+ *                      one the signer committed to. Affirmative evidence against, which is
+ *                      strictly worse than none. Reserved for exactly that — it warrants no
+ *                      rung and refuses even `read`, so anything that lands here by accident
+ *                      is a denial of service on honest content.
+ */
+export type TrustBasis = 'no-claim' | 'unwarranted' | 'evidence-checked' | 'evidence-refuted';
+
+/**
+ * What a reader ESTABLISHED FOR ITSELF about a descriptor, by running checks over the bytes
+ * it actually parsed.
+ *
+ * ★★ NOTHING IN THIS TYPE IS EVER READ OUT OF A DESCRIPTOR BODY, and that is the entire
+ * point of its existing. The affordance plane's inputs arrive as `ContextDescriptorData`
+ * parsed from whatever representation a fetch returned; every field on it, `iep:trustLevel`
+ * included, is text the publisher wrote. This type is the other channel — the reader's own
+ * findings — and NO RUNG ABOVE `SelfAsserted` IS REACHABLE EXCEPT THROUGH IT. That is the
+ * invariant, and it is narrower than the sentence that used to stand here ("the only channel
+ * a verdict is allowed to be a function of"), which was never true: a verdict is
+ * `min(claim, ceiling)`, so the descriptor's own claim decides too — in the one direction
+ * that is safe, downward.
+ *
+ * ★ THE SUBSTRATE ALREADY PRODUCES THIS, so callers should not hand-assemble it. The relay's
+ * `get_descriptor` returns an `authorship` block — `{ authorshipVerified, signedBy,
+ * effectiveTrustLevel, contentBinding, descriptorBinding }` — that it derives by re-running
+ * `verifySignedAuthorship` over the served bytes and walking the delegation chain.
+ * `trustEvidenceFromAuthorship` maps that block onto this type, so the honest path is one
+ * call and nobody computes a ceiling by hand.
+ */
+export interface TrustEvidence {
+  /**
+   * ★ THE CEILING: the highest rung THIS READER'S OWN CHECKS support, or `'refuted'` when a
+   * check compared two things and they disagreed — never merely because a check could not be
+   * run, which produces no evidence at all. A verdict is `min(what the descriptor claims,
+   * this)` — so
+   * evidence can only ever hold a claim DOWN, never lift one up. A reader that establishes
+   * more than the descriptor claims does not get to overrule the publisher's own modesty.
+   */
+  readonly ceiling: TrustLevel | 'refuted';
+  /** The signature verdict this ceiling came from, when it came from one. */
+  readonly authorshipVerified?: boolean;
+  /** Who the verified proof names as signer — the reader's finding, not the body's claim. */
+  readonly signedBy?: IRI;
+  /**
+   * How much the proof says about the CONTENT served beside it.
+   *
+   * ★ CARRIED, NOT FOLDED INTO THE CEILING, and deliberately so. The relay states the
+   * reasoning at the point it emits both: the trust level answers "is the signer a delegate
+   * the pod owner vouches for" and the binding answers "is this signature over the bytes in
+   * front of you". A descriptor can be `CryptographicallyVerified` and `'unbound'` at once,
+   * and that combination is the one a reader most needs told — folding either into the other
+   * reproduces exactly the collapse this type exists to undo.
+   */
+  readonly contentBinding?: ContentBinding;
+  /** What ran the checks, for the verdict's note. E.g. 'relay get_descriptor'. */
+  readonly checkedBy?: string;
+}
+
+/**
+ * What a READER is warranted in believing about a descriptor's trust claim.
+ *
+ * ── ★★ THE DEFECT THIS SHAPE EXISTS TO CLOSE ────────────────────────────────────────────
+ *
+ * `evaluateTrust` used to return `verified: trust.trustLevel === 'CryptographicallyVerified'`
+ * with a 1.0 / 0.85 / 0.7 confidence ladder derived from that same string, and
+ * `evaluateTrustPolicy` ranked that same string against `policy.minTrustLevel` by index.
+ * Both read `iep:trustLevel` straight off a fetched body. So a publisher who wrote
+ * `iep:trustLevel "CryptographicallyVerified"` into their OWN descriptor received
+ * `verified: true, confidence: 1.0` and satisfied a policy demanding the strongest rung —
+ * from one line of Turtle on a pod they control. A grep of this whole directory for
+ * `authorshipProof|authorshipVerified|contentBinding|wasDerivedFrom` returned zero hits: the
+ * plane that decided could not see a single piece of evidence.
+ *
+ * The relay computes that field honestly on its own publish path, gated on a delegation
+ * chain that verified. That was never the problem. The problem is that the kernel consumes
+ * `ContextDescriptorData` from EVERY ingestion path — `kernelDereference` runs the Turtle
+ * extractor over whatever body came back, including another pod's — and an honestly computed
+ * level and a typed one are the same six syllables by the time they reach here.
+ *
+ * ★★ IT IS ONE DEFECT CLASS, NOT ONE BUG: a check that keys on something the adversary
+ * writes. The same shape has been found in this codebase as a membership decided by a boolean
+ * four read-failures also produce, and as an ACL grant composed from a caller-supplied WebID.
+ * Read `Seat.basis` in `@interego/workspace-client` for the enforcement this borrows.
+ *
+ * ── WHAT EACH FIELD IS FOR ──────────────────────────────────────────────────────────────
+ *
+ * `trustLevel` is the VERDICT and keeps the name every consumer already reads, so the
+ * dangerous read now lands on the honest value. `claimedTrustLevel` is the publisher's text,
+ * under a name that says so. Nothing may branch on `claimedTrustLevel`; it is there so a
+ * demotion is VISIBLE rather than silent — a reader that shows a "CryptographicallyVerified"
+ * badge and then quietly acts at SelfAsserted has replaced one lie with another.
+ */
 export interface TrustEvaluation {
   readonly source: IRI;
   /**
-   * Trust level positively asserted by the descriptor's Trust facet
-   * (e.g. 'SelfAsserted' | 'ThirdPartyAttested' | 'CryptographicallyVerified').
-   * `undefined` means the descriptor carries no Trust facet at all —
-   * the caller has declined to make a trust claim. This is distinct
-   * from positively asserting 'SelfAsserted'.
+   * ★ THE WARRANTED LEVEL — never above what {@link basis} supports. `min(claim, ceiling)`.
+   * `undefined` means no rung is warranted at all: the descriptor made no claim, made one
+   * with no level in it, or carries a proof this reader REFUTED.
    */
-  readonly trustLevel: string | undefined;
+  readonly trustLevel: TrustLevel | undefined;
+  /**
+   * The level the descriptor's Trust facet positively asserted, verbatim. Publisher-authored
+   * text. `undefined` means no Trust facet, or a Trust facet carrying no level.
+   *
+   * ★ NEVER A VERDICT. It is reported so callers can SEE the gap between what was claimed
+   * and what was warranted; every decision reads {@link trustLevel}.
+   */
+  readonly claimedTrustLevel: TrustLevel | undefined;
+  /** What the verdict rests on. See {@link TrustBasis}. */
+  readonly basis: TrustBasis;
+  /**
+   * The reader's own findings. Always present when {@link basis} is `'evidence-checked'` or
+   * `'evidence-refuted'`; possible on `'no-claim'` (a descriptor can carry a proof and no
+   * Trust facet); never present on `'unwarranted'`, where the word means nothing reached
+   * this reader.
+   */
+  readonly evidence?: TrustEvidence;
+  /**
+   * ★ TRUE ONLY WHEN A READER'S OWN CHECK ESTABLISHED `CryptographicallyVerified`. It is
+   * `false` for every unchecked claim no matter how strong the claim's wording, which is the
+   * single line that closes the forgery above.
+   */
   readonly verified: boolean;
   readonly lastVerified: string;
   readonly confidence: number;
+  /**
+   * One sentence saying why {@link trustLevel} is what it is — always populated, so a caller
+   * rendering a trust badge has the reason to hand without re-deriving it.
+   */
+  readonly warrantNote: string;
 }
 
 /**

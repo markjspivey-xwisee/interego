@@ -25,6 +25,11 @@
 
 import type { IRI, ContextDescriptorData, CompositionOperator } from '../model/types.js';
 import type { ManifestEntry } from '../manifest/types.js';
+// Type-only: erased at compile time, so the kernel's type surface takes on no runtime
+// dependency on the RDF layer. The ReplayProof carries this exact shape rather than a
+// `string | null` of its own so that "there is no digest" always arrives with the reason
+// attached — the union makes a bare, unexplained null unrepresentable.
+import type { GraphDigestResult } from '../rdf/graph-digest.js';
 import type { LatticeLevel as Level } from '../lattice/adapter.js';
 export type { LatticeLevel as Level } from '../lattice/adapter.js';
 
@@ -434,22 +439,93 @@ export interface ReplayCheckpoint {
   readonly index: number;
   readonly afterLinkCid: string;
   readonly stateCid: string;
+  /**
+   * Graph-identity twin of `stateCid` — same accumulator state, hashed as triples
+   * rather than as characters. See {@link ReplayProof} for why both are carried.
+   */
+  readonly stateGraphDigest: GraphDigestResult;
 }
 
 /**
  * Verifiable replay witness. Independent verification protocol:
- *   1. Re-fetch every CID in `chainCids` from any pod or IPFS gateway.
- *   2. Re-fetch the reducer by `reducerCid`.
- *   3. Replay the fold with the same `maxChain` bound.
- *   4. Assert that every `chainCid`, the `reducerCid`, every
+ *   1. Re-fetch every chain link and the reducer artifact by IRI, and
+ *      recompute their CIDs — see the note below on what a
+ *      `urn:iep:cid:` value is and is not.
+ *   2. Replay the fold with the same `maxChain` bound.
+ *   3. Assert that every `chainCid`, the `reducerCid`, every
  *      checkpoint `stateCid`, and the final head CID match. Mismatch
  *      at any step localizes the divergence (chain tampering vs
  *      reducer drift vs fold non-determinism).
+ *   4. Where step 3 mismatches, compare the graph digests before
+ *      reporting tampering — a mismatch on the CID with agreement on
+ *      the digest is a re-serialization, not a changed graph. ★ The
+ *      `reducerCid` has no digest to compare against, so a mismatch
+ *      THERE is unresolved rather than confirmed — see that field.
+ *
+ * ★ A `urn:iep:cid:` VALUE HERE IS NOT AN IPFS ADDRESS. It is `sha256(s)` truncated
+ * to 40 hex characters, minted by `reduceCid` in kernel/index.ts. A real CIDv1 —
+ * the base32 multihash `computeCid` (crypto/ipfs.ts) produces and the relay computes
+ * over descriptor bodies — is a different address space, so nothing resolves these
+ * strings from a pod or a gateway. They are comparison values: a verifier fetches
+ * the chain by IRI, re-folds, and checks that the CIDs it recomputes agree.
+ *
+ * ★ TWO HASHES, TWO DIFFERENT QUESTIONS — NEVER COMPARE ACROSS THEM. A `urn:iep:cid:`
+ * value addresses BYTES: sha256 over the exact character stream the fold emitted. A
+ * `graph-nquads-sha256:` value addresses what those bytes SAY: the parsed triples,
+ * prefixes expanded and statements sorted (rdf/graph-digest.ts). Neither subsumes
+ * the other, so a verifier compares CID to CID and digest to digest, positionally.
+ *
+ * ★ WHY THE DIGESTS ARE HERE AT ALL. The byte CIDs cannot survive a
+ * re-serialization. Two chains stating identical triples but written with a
+ * different prefix alias, a different statement order or different indentation fold
+ * to DIFFERENT `headStateCid` values and the SAME `headStateGraphDigest`
+ * (measured in `tests/kernel-reduce.test.ts`). Without the digest, a proof of chain
+ * state is a proof about one serialization of it. That is latent rather than
+ * breaking today — one deterministic serializer is in play, so a replay on this
+ * build reproduces the CIDs exactly — but the substrate already rewrites payloads
+ * on the way through `publish()`/`wrapAsTriG` (@prefix lines hoisted to document
+ * scope, body lines re-indented), which is precisely the class of change the byte
+ * CID cannot absorb. The same reasoning is spelled out at length in
+ * rdf/graph-digest.ts, which is where the authorship path hit this first.
+ *
+ * ★ THE CIDs ARE NOT REDEFINED, AND THAT IS DELIBERATE. `headStateCid` is the
+ * published verification contract (docs/ns/iep.ttl `iep:ReplayProof`); recomputing
+ * it over canonical triples would silently invalidate every proof already issued
+ * against a fold nobody changed. The digests are ADDED alongside.
  */
 export interface ReplayProof {
   /** Chain link CIDs, oldest → newest. */
   readonly chainCids: readonly string[];
-  /** Content-address of the reducer artifact. */
+  /**
+   * Graph-identity twin of each `chainCids` entry, INDEX-PARALLEL with it —
+   * `chainGraphDigests[i]` digests the same link body `chainCids[i]` addresses.
+   * Present per link because `headStateGraphDigest` alone would leave the other
+   * half of the proof byte-fragile: a verifier that re-serializes still has to
+   * localize which link diverged.
+   */
+  readonly chainGraphDigests: readonly GraphDigestResult[];
+  /**
+   * Content-address of the reducer artifact.
+   *
+   * ★ THE ONE CID HERE WITH NO GRAPH DIGEST BESIDE IT — AND FOR `shacl-transform`
+   * THAT IS AN OPEN GAP, NOT A DECISION. "No digest" means "not attested", never
+   * "attested by bytes".
+   *
+   * For `turtle-template` a digest is barely available: the template is substituted
+   * as TEXT before anything parses, and the usual idioms put a placeholder where a
+   * term or a whole statement belongs, so the template itself generally does not
+   * parse as Turtle.
+   *
+   * For `shacl-transform` the shape IS parsed — `runShaclRules` reads it into triples
+   * — so its alias, statement order and indentation never reach the fold. Measured
+   * with one projecting shape serialized two ways: identical `head`, identical
+   * `headStateCid`, identical `headStateGraphDigest`, DIFFERENT `reducerCid`. A
+   * verifier re-fetching a republished shape sees a reducer mismatch on a fold that
+   * did not change, which is the false-tampering report the digests exist to prevent.
+   * ★ SO DO NOT TREAT A `reducerCid` MISMATCH AS TAMPERING ON ITS OWN: check
+   * `headStateGraphDigest` first. Closing the gap means a `reducerGraphDigest` field
+   * here (a refusal-with-reason for the template kind), which is a wire-shape change.
+   */
   readonly reducerCid: string;
   /** Which kind of reducer was applied. */
   readonly reducerKind: 'turtle-template' | 'shacl-transform';
@@ -459,6 +535,18 @@ export interface ReplayProof {
   readonly checkpoints: readonly ReplayCheckpoint[];
   /** CID of the final folded state — anchors the head end of the proof. */
   readonly headStateCid: string;
+  /**
+   * Graph-identity digest of the final folded state, or the REASON there is none.
+   *
+   * ★ A NULL HERE IS A NAMED REFUSAL, NOT A ZERO. A fold whose state does not parse
+   * (a `{?prior}` placed in term position produces exactly that) carries
+   * `{ digest: null, reason }` rather than falling back to the byte hash. Falling
+   * back would put a real-looking value in this field that attests bytes no
+   * independent implementation can reproduce — the same "three shapes, one CID"
+   * ambiguity the shacl-transform branch already refuses by rethrowing rather than
+   * unioning.
+   */
+  readonly headStateGraphDigest: GraphDigestResult;
 }
 
 /** Result of `reduce(chainHeadIri, options?)`. */

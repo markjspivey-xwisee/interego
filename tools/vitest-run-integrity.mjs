@@ -243,7 +243,7 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // `npm run lint:all` as an invocation — a gate credited to a sentence describing its absence.
 // 316 -> 317: `tests/the-sweep-missed-the-signed-positions.test.ts`, from the raw-IRI
 // interpolation sweep — the signed positions the first pass walked past.
-export const MIN_TEST_MODULES = 317;
+export const MIN_TEST_MODULES = 318;
 export const FLOOR_ALLOWANCE = 10;
 
 /**

@@ -20,6 +20,8 @@ export type {
   DelegationScope,
   AgentCapability,
   TrustPolicy,
+  TrustBasis,
+  TrustEvidence,
   CausalAffordanceEffect,
   OODAPhase,
   Orientation,
@@ -44,7 +46,11 @@ export type {
 } from './types.js';
 
 // Core computation (Gibson + Norman)
-export { computeAffordances } from './compute.js';
+// `evaluateTrust` + `trustEvidenceFromAuthorship` are exported because a trust verdict is
+// something callers must be able to compute and INSPECT on its own — a consumer deciding
+// whether to act needs `warrantNote` and `claimedTrustLevel`, not just the boolean an
+// affordance came back with.
+export { computeAffordances, evaluateTrust, trustEvidenceFromAuthorship } from './compute.js';
 // `computeCognitiveStrategy` + `CognitiveStrategy` moved to `@interego/pgsl`
 // (cognitive-strategy module) — they consult PGSL retrieval primitives.
 

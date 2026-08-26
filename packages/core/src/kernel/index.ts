@@ -71,6 +71,13 @@ import {
 // installed dep (production). If `@interego/solid` isn't reachable,
 // `dereference` surfaces a clear error pointing at the missing package.
 import { parseTrig } from '../rdf/turtle-parser.js';
+// The graph-identity half of the reduce verb's ReplayProof. A sibling of the
+// turtle-parser import above and depends on nothing beyond it and node:crypto, so this
+// costs the kernel no new dependency and cannot close an import cycle — the "no
+// @interego/core circular import" note on `reduceCid` is about the package entrypoint,
+// not about reaching a module inside the same package.
+import { canonicalGraphDigestResult, canonicalGraphTriples } from '../rdf/graph-digest.js';
+import type { GraphDigestResult } from '../rdf/graph-digest.js';
 import { runShaclRules, ShaclRuleError } from '../validation/shacl-engine.js';
 
 interface SolidModule {
@@ -1563,10 +1570,30 @@ export function decompose(fragmentIri: IRI): DecomposeResult | null {
 //
 //  Trustlessness: the ReplayProof carries (a) the CID of every chain
 //  link in walk order, (b) the CID of the reducer artifact itself,
-//  and (c) periodic checkpoint state-CIDs. Any third party can fetch
-//  the same CIDs from any pod or IPFS gateway and replay the fold —
-//  no trust in the original kernel is needed. Mismatches localize
-//  exactly which link or which checkpoint diverged.
+//  and (c) periodic checkpoint state-CIDs. Any third party re-fetches
+//  the chain and the reducer BY IRI, replays the fold, and asserts the
+//  CIDs it recomputes agree — no trust in the original kernel is
+//  needed. Mismatches localize exactly which link or which checkpoint
+//  diverged.
+//
+//  ★ THESE CIDs ARE COMPARISON VALUES, NOT FETCHABLE ADDRESSES. This
+//  block used to say a verifier could "fetch the same CIDs from any
+//  pod or IPFS gateway". `reduceCid` mints a truncated sha-256 in the
+//  kernel's own `urn:iep:cid:` space; a real CIDv1 is the base32
+//  multihash `computeCid` (crypto/ipfs.ts) produces and the relay
+//  computes over descriptor bodies. Nothing in this repo resolves a
+//  `urn:iep:cid:` string, so an operator following that sentence would
+//  have concluded the substrate was broken rather than the sentence.
+//
+//  ★ AND THE CIDs ANSWER A NARROWER QUESTION THAN THEY LOOK LIKE THEY
+//  DO — see `reduceCid` below and the ReplayProof doc in types.ts.
+//  Each is a hash of BYTES, so it moves when a graph is re-serialized
+//  without being changed. So (a) and (c) each carry a
+//  graph-nquads-sha256 digest beside them: that is the half that
+//  answers "is this the same graph". (b), the reducer, does not — for
+//  a `shacl-transform` reducer that is a MEASURED GAP and not a
+//  decision, so a `reducerCid` mismatch alone is not evidence of
+//  tampering. The fold loop below carries the measurement.
 //
 //  Substrate-honest reducer: the reducer is declarative (Turtle
 //  template OR SHACL transformation), never arbitrary code. This
@@ -1583,9 +1610,79 @@ const REDUCE_CG_REDUCER = 'https://markjspivey-xwisee.github.io/interego/ns/iep#
  * sha256 helper so this module has no @interego/core circular import.
  * The CID format is `urn:iep:cid:<hex-prefix>` — same scheme the rest
  * of the kernel uses for content-addressed identifiers.
+ *
+ * ★ THIS ADDRESSES BYTES, AND THAT IS THE WHOLE OF WHAT IT CLAIMS. `s` is hashed as
+ * a character stream: no parse, no prefix expansion, no statement sort. So two
+ * documents stating the IDENTICAL triples with a different prefix alias, a
+ * different line order or different indentation get DIFFERENT values here. That is
+ * correct for the question a byte address asks ("is this the same document") and
+ * wrong for the one a reader of a ReplayProof usually means ("is this the same
+ * graph"), which is why {@link reduce} pairs the chain-link and state CIDs it mints
+ * here with a {@link reduceGraphDigest} rather than replacing them with one.
+ *
+ * Both are kept because they are not interchangeable and because `headStateCid` is
+ * the published verification contract — recomputing it over canonical triples would
+ * invalidate every proof already issued. Compare CID to CID, digest to digest.
  */
 function reduceCid(s: string): string {
   return `urn:iep:cid:${sha256Hex(s).slice(0, 40)}`;
+}
+
+/**
+ * The graph-identity digest of one piece of the fold — `what` names the piece — or the
+ * reason there is none. The companion to {@link reduceCid}: same input, the other
+ * question.
+ *
+ * ★ THE DIGEST COMES FROM `canonicalGraphDigestResult` AND ONLY THE SENTENCE IS
+ * REWRITTEN. That function spells its failure for the publish path it was built for: it
+ * tells the reader that an authorship proof over the payload "will report contentBinding
+ * unbound permanently" and that readers are told such a proof predates content binding.
+ * Every word of that is true where it was written and none of it is true here — a fold
+ * signs nothing and issues no authorship proof — so an operator acting on it would go
+ * hunting for a proof that does not exist. Re-deriving the hash locally instead was the
+ * other option and is worse: two formulas for one digest drift apart silently, and the
+ * half that drifts is the half nobody re-reads.
+ */
+function reduceGraphDigest(what: string, turtle: string): GraphDigestResult {
+  const result = canonicalGraphDigestResult(turtle);
+  if (result.digest !== null) return result;
+  // Failure path only, and it costs a SECOND PARSE of a string that just failed one.
+  // The only thing bought is the parser's own message with its byte offset — "which
+  // shape defeated it" is a question about a position in one specific document and no
+  // generic label answers it — so the honest accounting is: an unparseable state is
+  // canonicalised twice, once per checkpoint that refuses.
+  //
+  // ★ THE OBVIOUS SAVINGS ARE BOTH WORSE, WHICH IS WHY THIS STANDS. Hashing the
+  // canonical triples here instead would parse once and put a SECOND formula behind one
+  // `graph-nquads-sha256:` label — a cross-implementation contract with two definitions
+  // drifts silently and the half that drifts is the half nobody re-reads. Slicing the
+  // message back out of `result.reason` would key this refusal on another module's prose
+  // layout. Dropping the message leaves an operator a refusal with no position in it.
+  // The remaining bound is that the parser is not open-ended: it refuses at the first
+  // offending token and caps blank-node nesting at 256 with a named ParseError, so this
+  // is a diagnostic re-run, not an amplifier.
+  try {
+    canonicalGraphTriples(turtle);
+  } catch (err) {
+    return {
+      digest: null,
+      reason:
+        `${what} did not parse as Turtle/TriG in this build, so this ReplayProof carries no `
+        + 'graph-identity digest for it — only a byte CID, which any re-serialization moves '
+        + 'and which therefore attests nothing an independent implementation can reproduce: '
+        + `${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+  // Unreachable while the two agree: `canonicalGraphDigestResult` returns a null digest
+  // only when this same call throws on this same string, and the parser is deterministic.
+  // Kept as a branch rather than a non-null assertion so that if they ever stop agreeing
+  // the refusal says so, instead of a cause-less null or a crash.
+  return {
+    digest: null,
+    reason:
+      `${what} produced no graph-identity digest, yet re-running the canonicaliser over the `
+      + 'same bytes did not reproduce the failure — the digest path and the parse path disagree',
+  };
 }
 
 /**
@@ -1914,11 +2011,20 @@ function applyReducerStep(
  *      a body starting with `@prefix` or containing `sh:` as a
  *      shacl-transform; anything else is treated as a turtle-template.
  *
- * Independent verification: a third party with `replayProof.chainCids`
- * + `replayProof.reducerCid` re-fetches them (CIDs are content-
- * addressed across all federated pods + IPFS gateways), replays the
- * same fold with the same `maxChain`, and asserts every checkpoint
- * `stateCid` matches. Mismatch at index `i` localizes the divergence.
+ * Independent verification: a third party re-fetches the chain and the
+ * reducer BY IRI, replays the same fold with the same `maxChain`, and
+ * asserts every checkpoint `stateCid` matches. Mismatch at index `i`
+ * localizes the divergence.
+ *
+ * ★ A `urn:iep:cid:` IS NOT FETCHABLE — this said the verifier re-fetches
+ * "by CID … across all federated pods + IPFS gateways", which no store can
+ * do with a truncated sha-256 in a private URN space. See the header note
+ * above `reduceCid`.
+ *
+ * ★ WHERE A CID MISMATCHES, READ THE DIGEST BEFORE CALLING IT TAMPERING.
+ * `replayProof.chainGraphDigests[i]` and `headStateGraphDigest` hash the
+ * triples rather than the characters, so CID-differs-plus-digest-agrees is
+ * a re-serialization of the same graph, not a changed one.
  */
 export async function reduce(
   chainHeadIri: IRI,
@@ -1981,35 +2087,108 @@ export async function reduce(
 
   // 3. Fold left-to-right (oldest → newest), emitting CIDs and
   //    periodic checkpoints as we go.
+  //
+  //    ★ EVERY CHAIN-LINK AND STATE CID GETS A GRAPH DIGEST BESIDE IT. The CIDs hash
+  //    bytes, so a link that is republished through a different writer — `publish()`
+  //    alone hoists @prefix lines and re-indents bodies — moves every downstream
+  //    value in this proof without a single triple changing. The digest is what stays
+  //    put, and it is emitted per link as well as per checkpoint so a verifier that
+  //    re-serializes can still localize WHICH link diverged rather than only learning
+  //    that the head did.
+  //
+  //    ★ `reducerCid` IS THE ONE CID WITH NO DIGEST, AND FOR ONE OF THE TWO REDUCER
+  //    KINDS THAT IS A GAP, NOT A DECISION. Read "no digest" as "not attested", never
+  //    as "attested by bytes".
+  //
+  //      - `turtle-template`: a digest is not simply available. The template is pasted
+  //        as TEXT before anything parses, and the common idioms put a placeholder
+  //        where a term or a whole statement belongs, so the template itself usually
+  //        does not parse as Turtle — measured, neither `# {?prior}\n{?current}` (the
+  //        one template every in-repo fold uses: scripts/test-relay-reduce.mjs,
+  //        scripts/verify-shacl-and-traversal.mjs, tests/kernel-reduce.test.ts) nor a
+  //        `{?current}` on a line of its own does. A byte address is the only address
+  //        such a body has here.
+  //
+  //      - `shacl-transform`: THE BYTE CID OVER-REPORTS, and it over-reports in exactly
+  //        the direction this proof exists to prevent. `applyReducerStep` hands the
+  //        shape to `runShaclRules`, which PARSES it, so the shape's alias, statement
+  //        order and indentation never reach the fold. MEASURED with one projecting
+  //        shape serialized two ways: `head` byte-identical, `headStateCid` identical
+  //        (urn:iep:cid:3b64d829169d63a2e8be44e78102b67dbb862104), head graph digest
+  //        identical — and `reducerCid` DIFFERENT (…edbb6795… vs …3036dce4…). A
+  //        verifier that re-fetched a republished shape would report a reducer mismatch
+  //        on a fold nothing changed. An earlier version of this comment said "for a
+  //        reducer, bytes ARE the identity" and told the reader a digest here "would
+  //        invite a verifier to accept a substitution that changes the result"; both
+  //        are false of this kind, and the second is backwards — the substitution
+  //        changes nothing and it is the byte CID that reports a change.
+  //
+  //    Closing it means emitting a `reducerGraphDigest` for the shacl kind and a NAMED
+  //    refusal (the `reduceGraphDigest` shape) for the template kind — a wire-shape
+  //    addition, so it is not made here. Until then: a `reducerCid` mismatch is not
+  //    evidence of tampering on its own. Compare `headStateGraphDigest` first.
+  //
+  //    The digest is over the raw body/state, NOT the `state:`-prefixed string the
+  //    CID hashes: that prefix keeps a link body and an accumulator with the same
+  //    bytes from colliding in one hash space, and it would not parse. The digests
+  //    are never pooled — a verifier compares them field-for-field — so they need no
+  //    such separation.
   const chainCids: string[] = [];
+  const chainGraphDigests: GraphDigestResult[] = [];
   const checkpoints: ReplayCheckpoint[] = [];
   let state = '';
+  let headStateGraphDigest: GraphDigestResult | undefined;
   for (let i = 0; i < chain.length; i++) {
     const link = chain[i]!;
     const linkCid = reduceCid(link.body);
     chainCids.push(linkCid);
+    chainGraphDigests.push(reduceGraphDigest(`chain link <${link.iri}>`, link.body));
     state = applyReducerStep(state, link.body, spec);
     // Checkpoint cadence — every k-th link AND the final link
     // (so the verifier always has the head end to anchor on).
     const isCheckpoint = (i + 1) % checkpointEvery === 0;
     const isLast = i === chain.length - 1;
     if (isCheckpoint || isLast) {
+      // Parsing the accumulator is the largest cost this adds — the accumulator is
+      // longer than any single link and, under a template that references `{?prior}`,
+      // grows with the chain — so it happens only where a checkpoint is already being
+      // minted, and the final checkpoint's digest IS the head's rather than a second
+      // parse of the same, largest, string.
+      const stateGraphDigest = reduceGraphDigest(
+        isLast ? 'the folded head state' : `the accumulator state after chain link ${i}`,
+        state,
+      );
+      if (isLast) headStateGraphDigest = stateGraphDigest;
       checkpoints.push({
         index: i,
         afterLinkCid: linkCid,
         stateCid: reduceCid(`state:${state}`),
+        stateGraphDigest,
       });
     }
+  }
+
+  // `chain.length > 0` is enforced above and `isLast` is true on the final iteration,
+  // so the loop always assigned this. Asserted rather than filled in with a `??`
+  // fallback: a future change to the checkpoint cadence that stopped checkpointing the
+  // last link must fail loudly here, not ship a proof whose head is addressed by bytes
+  // and attested by nothing.
+  if (!headStateGraphDigest) {
+    throw new TypeError(
+      `reduce(${chainHeadIri}) folded ${chain.length} link(s) without checkpointing the last one, so the head state has no graph digest`,
+    );
   }
 
   const headStateCid = reduceCid(`state:${state}`);
   const replayProof: ReplayProof = {
     chainCids,
+    chainGraphDigests,
     reducerCid,
     reducerKind: spec.kind,
     chainLength: chain.length,
     checkpoints,
     headStateCid,
+    headStateGraphDigest,
   };
 
   return {

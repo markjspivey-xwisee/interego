@@ -336,3 +336,252 @@ ex:item3 ex:value "v3-gamma" .
     expect(fullAgain.replayProof.headStateCid).toBe(full.replayProof.headStateCid);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════
+//  The ReplayProof's two hashes
+//
+//  ★ THE DEFECT THESE EXIST FOR. `reduceCid` hashes the fold's output as a
+//  CHARACTER STREAM — no parse, no prefix expansion, no statement sort — and
+//  `headStateCid` was the only anchor at the head end of the proof. So two chains
+//  stating the IDENTICAL triples, differing only in which prefix alias they bind,
+//  what order their statements appear in, and how they are indented, folded to
+//  DIFFERENT proofs. A "proof of chain state" was a proof about one serialization
+//  of that state, and a verifier who re-serialized the same graph would have been
+//  told it had been tampered with.
+//
+//  The substrate already rewrites payloads exactly that way: `publish()` sends
+//  bodies through `wrapAsTriG`, which hoists caller @prefix lines to document
+//  scope and re-indents body lines. rdf/graph-digest.ts exists because the
+//  AUTHORSHIP path hit this first and hashing the triples is what made both sides
+//  agree; the fold simply was not calling it.
+//
+//  ★ BE PRECISE ABOUT THE SEVERITY. This was latent, not breaking: one
+//  deterministic serializer is in play today, so a replay on this build reproduces
+//  the CIDs exactly. These tests hold the fix ahead of the day that stops being
+//  true — a link republished through a second writer, a mirror, or an independent
+//  implementation of the same fold.
+// ═══════════════════════════════════════════════════════════════
+
+// The same three links as the chain above — same IRIs, same triples — written by a
+// different hand. `q:` instead of `ex:` and `sup:` instead of `iep:`; the payload
+// statement moved ahead of the supersedes statement; the two head statements split
+// out of a `;` list; indentation and blank lines changed throughout. Every one of
+// those is a serialization difference and none of them changes a single triple.
+const G1_BODY_RESERIALIZED = `
+@prefix q: <https://example.org/test#> .
+
+     q:item1
+         q:value   "alpha" .
+`.trim();
+
+const G2_BODY_RESERIALIZED = `
+@prefix sup: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix q:   <https://example.org/test#> .
+
+q:item2    q:value    "beta" .
+
+  <${G2}>
+      sup:supersedes  <${G1}> .
+`.trim();
+
+const G3_BODY_RESERIALIZED = `
+@prefix sup: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix q:   <https://example.org/test#> .
+
+q:item3   q:value   "gamma" .
+
+<${G3}>  sup:reducer     <${REDUCER_IRI}> .
+<${G3}>  sup:supersedes  <${G2}> .
+`.trim();
+
+function makeReserializedFetcher(): (iri: IRI) => Promise<string | null> {
+  const map: Record<string, string> = {
+    [G1]: G1_BODY_RESERIALIZED,
+    [G2]: G2_BODY_RESERIALIZED,
+    [G3]: G3_BODY_RESERIALIZED,
+    [REDUCER_IRI]: REDUCER_BODY,
+  };
+  return async (iri) => map[iri] ?? null;
+}
+
+describe('kernel.reduce — the ReplayProof carries a graph digest beside every byte CID', () => {
+  it('two chains stating identical triples in different serializations: the CIDs differ, the graph digests agree', async () => {
+    const spec = { kind: 'turtle-template', template: REDUCER_BODY } as const;
+    const a = await reduce(G3, { fetch: makeFetcher(), reducerSpec: spec });
+    const b = await reduce(G3, { fetch: makeReserializedFetcher(), reducerSpec: spec });
+
+    // Both walkers reached the origin. Asserted because the re-serialized chain binds
+    // the iep: namespace to a different alias, and a walker that only regex-scanned for
+    // the literal string `iep:supersedes` would silently truncate the chain — which
+    // would make every comparison below a comparison of the wrong things.
+    expect(a.chainLength).toBe(3);
+    expect(b.chainLength).toBe(3);
+
+    // ★ THE MEASUREMENT. Same triples, different bytes → different byte address.
+    expect(b.replayProof.headStateCid).not.toBe(a.replayProof.headStateCid);
+    expect(b.replayProof.chainCids).not.toEqual(a.replayProof.chainCids);
+
+    // ★ AND THE FIX. The graph digests are equal, and equal to a REAL digest — asserted
+    // against the algorithm's own shape first, because "both are null" would otherwise
+    // satisfy `toEqual` and report a green test for a fold that digested nothing.
+    const digestShape = /^graph-nquads-sha256:[0-9a-f]{64}$/;
+    expect(a.replayProof.headStateGraphDigest.digest).toMatch(digestShape);
+    expect(b.replayProof.headStateGraphDigest.digest).toBe(
+      a.replayProof.headStateGraphDigest.digest,
+    );
+
+    // Per link too — `headStateGraphDigest` alone would leave the other half of the
+    // proof byte-fragile, so a verifier who re-serialized could tell that something
+    // diverged but not which link.
+    for (const d of a.replayProof.chainGraphDigests) {
+      expect(d.digest).toMatch(digestShape);
+    }
+    expect(b.replayProof.chainGraphDigests.map((d) => d.digest)).toEqual(
+      a.replayProof.chainGraphDigests.map((d) => d.digest),
+    );
+
+    // ...and per checkpoint, which is what lets a verifier localize a divergence to a
+    // position in the chain rather than only to the head.
+    expect(b.replayProof.checkpoints.map((c) => c.stateGraphDigest.digest)).toEqual(
+      a.replayProof.checkpoints.map((c) => c.stateGraphDigest.digest),
+    );
+    // The byte CIDs at those same checkpoints do NOT agree — the pair of assertions is
+    // the whole point: one anchor per checkpoint moved, the other did not.
+    expect(b.replayProof.checkpoints.map((c) => c.stateCid)).not.toEqual(
+      a.replayProof.checkpoints.map((c) => c.stateCid),
+    );
+  });
+
+  it('an indentation-only change to one link moves the CIDs and leaves the graph digests fixed', async () => {
+    // Narrower than the test above and closer to what actually happens in production:
+    // `wrapAsTriG` re-indents body lines on the way through `publish()`, so a link that
+    // is republished comes back with the same triples and different leading whitespace.
+    const spec = { kind: 'turtle-template', template: REDUCER_BODY } as const;
+    const reindented = G2_BODY.split('\n').map((l) => `    ${l}`).join('\n');
+    const map: Record<string, string> = {
+      [G1]: G1_BODY, [G2]: reindented, [G3]: G3_BODY, [REDUCER_IRI]: REDUCER_BODY,
+    };
+
+    const before = await reduce(G3, { fetch: makeFetcher(), reducerSpec: spec });
+    const after = await reduce(G3, { fetch: async (iri) => map[iri] ?? null, reducerSpec: spec });
+
+    expect(after.chainLength).toBe(3);
+    expect(after.replayProof.headStateCid).not.toBe(before.replayProof.headStateCid);
+    expect(before.replayProof.headStateGraphDigest.digest).toMatch(/^graph-nquads-sha256:/);
+    expect(after.replayProof.headStateGraphDigest.digest).toBe(
+      before.replayProof.headStateGraphDigest.digest,
+    );
+  });
+
+  it('the digests are index-parallel with the CIDs, and the last checkpoint anchors the head', async () => {
+    const r = await reduce(G3, {
+      fetch: makeFetcher(),
+      reducerSpec: { kind: 'turtle-template', template: REDUCER_BODY },
+      checkpointEvery: 1,
+    });
+
+    // A parallel array is only usable if it is the same length as the array it
+    // parallels; nothing in the type system enforces that.
+    expect(r.replayProof.chainGraphDigests).toHaveLength(r.replayProof.chainCids.length);
+    expect(r.replayProof.checkpoints).toHaveLength(3);
+    for (const c of r.replayProof.checkpoints) {
+      expect(c.stateGraphDigest.digest).toMatch(/^graph-nquads-sha256:[0-9a-f]{64}$/);
+    }
+    // The final link is always checkpointed, so the head's digest is that checkpoint's.
+    const last = r.replayProof.checkpoints[r.replayProof.checkpoints.length - 1]!;
+    expect(last.stateGraphDigest.digest).toBe(r.replayProof.headStateGraphDigest.digest);
+    // The two hashes stay distinguishable: a CID is never mistaken for a digest.
+    expect(r.replayProof.headStateCid).toMatch(/^urn:iep:cid:[0-9a-f]{40}$/);
+  });
+
+  it('★ GOLDEN VALUES — the CIDs and the digest are pinned, not just shape-matched', async () => {
+    /**
+     * ★★ EVERY OTHER ASSERTION IN THIS FILE COMPARES A CID TO ANOTHER CID OR TO A REGEX, SO AN
+     * EDIT THAT MOVED EVERY ALREADY-ISSUED `urn:iep:cid:` WAS INVISIBLE. Proved: changing
+     * `reduceCid` to hash `s + '\n'` — which reissues every CID the substrate has ever minted,
+     * while keeping the byte-sensitivity the relative tests check — left the whole file green.
+     * `headStateCid` is the published verification contract (docs/ns/iep.ttl `iep:ReplayProof`);
+     * a proof issued against a fold nobody changed has to keep verifying, and a relative
+     * assertion cannot say so.
+     *
+     * These values are not guesses. They are what `reduce` returns today AND what the
+     * pre-digest formula at HEAD returns for the same fixture — sha256 of `link.body`, of
+     * `state:` + head, and of `reducer:<kind>:<source>`, each sliced to 40 hex characters —
+     * recomputed independently and compared field for field. So this test also pins the claim
+     * the graph-digest change was landed under: the digests were ADDED and no CID moved.
+     *
+     * ★ IF YOU ARE HERE BECAUSE THIS TEST FAILED: the fix is almost never to update the
+     * constants. A changed value means every ReplayProof already issued now reports tampering
+     * on a fold that did not change. Updating them is a migration with a version discriminator
+     * on the proof, not a test edit.
+     *
+     * The graph digest is pinned for the same reason in the other direction: it is a
+     * cross-implementation contract (`graph-nquads-sha256` over sorted, prefix-expanded
+     * N-Triples), so an independent verifier must compute this exact string or the algorithm
+     * label is a lie. Rewriting the canonicaliser silently is what this catches.
+     */
+    const r = await reduce(G3, {
+      fetch: makeFetcher(),
+      reducerSpec: { kind: 'turtle-template', template: REDUCER_BODY },
+    });
+
+    expect(r.replayProof.chainCids).toEqual([
+      'urn:iep:cid:0b228b22221a3dde409c777ae6413dd23b393a37', // G1_BODY
+      'urn:iep:cid:1315ca1350cf6a479cfd9414306ff23749b0d757', // G2_BODY
+      'urn:iep:cid:41e7aa490ed52da5bf332e2615f8f04c8a922463', // G3_BODY
+    ]);
+    expect(r.replayProof.reducerCid).toBe('urn:iep:cid:c821dd2c175171a379588489d28be94ad0d20eba');
+    expect(r.replayProof.headStateCid).toBe('urn:iep:cid:c6ff3947cb45572f2f7566b415602eda6caa1fe0');
+    expect(r.replayProof.headStateGraphDigest.digest).toBe(
+      'graph-nquads-sha256:9870e76c96cf0c55ab4a92c7790f7db9837d0954b052df4fb0466fae91848837',
+    );
+    // The single checkpoint (default cadence 8, chain of 3, so only the mandatory final one)
+    // anchors the same two values — pinned here because a checkpoint that drifted away from the
+    // head would break replay at the position a verifier reports, not at the head.
+    expect(r.replayProof.checkpoints).toHaveLength(1);
+    expect(r.replayProof.checkpoints[0]!.stateCid).toBe(r.replayProof.headStateCid);
+    expect(r.replayProof.checkpoints[0]!.afterLinkCid).toBe(r.replayProof.chainCids[2]);
+
+    // ★ AND THE DISCOVERED-REDUCER PATH MINTS THE SAME PROOF. `iep:reducer` on the chain head
+    // resolves to the same body, so passing no `reducerSpec` must not change a single value —
+    // otherwise which lookup path a verifier used would decide whether the proof verifies.
+    const discovered = await reduce(G3, { fetch: makeFetcher() });
+    expect(discovered.replayProof).toEqual(r.replayProof);
+  });
+
+  it('a state that does not parse yields a NAMED refusal, not a null and not a byte-hash fallback', async () => {
+    // `{?prior}` in object position is the idiom an author writes when they believe the
+    // placeholder binds an IRI. It does not — it binds the whole accumulator document —
+    // so the materialized state pastes @prefix directives where a term belongs and the
+    // result is not parseable Turtle. The fold still completes and still issues a CID.
+    const termPositionTemplate = `
+@prefix ex: <https://example.org/test#> .
+<urn:iep:test:fold-head> ex:derivedFrom {?prior} .
+{?current}
+`.trim();
+
+    const r = await reduce(G3, {
+      fetch: makeFetcher(),
+      reducerSpec: { kind: 'turtle-template', template: termPositionTemplate },
+    });
+
+    // The byte CID is still minted — it addresses bytes and the bytes exist.
+    expect(r.replayProof.headStateCid).toMatch(/^urn:iep:cid:[0-9a-f]{40}$/);
+    // ★ The digest refuses, and the refusal carries its cause. A silent fall-back to the
+    // byte hash here would put a real-looking `graph-nquads-sha256:` value in the proof
+    // that no independent implementation could ever reproduce — the same "three shapes,
+    // one CID" ambiguity the shacl-transform branch refuses by rethrowing.
+    expect(r.replayProof.headStateGraphDigest.digest).toBeNull();
+    const reason = r.replayProof.headStateGraphDigest.reason ?? '';
+    expect(reason).toMatch(/did not parse/);
+    // It names WHICH piece of the fold failed and it does NOT narrate the authorship
+    // path's consequences, which are false of a fold: nothing here signs anything.
+    expect(reason).toMatch(/folded head state/);
+    expect(reason).not.toMatch(/contentBinding|authorship proof/);
+    // The link bodies themselves parse fine — only the materialized state is broken —
+    // so a reader can localize the failure to the fold rather than to the chain.
+    for (const d of r.replayProof.chainGraphDigests) {
+      expect(d.digest).toMatch(/^graph-nquads-sha256:[0-9a-f]{64}$/);
+    }
+  });
+});

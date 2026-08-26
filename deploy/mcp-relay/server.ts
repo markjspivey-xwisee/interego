@@ -228,7 +228,7 @@ import {
 // discoverable via /ns/maintainer/vault-ld — not an MCP tool.
 import { ingestVault, VAULT_LD_PROFILE } from '@interego/mdvault';
 // Private-note HyperMarkdown projection (extracted for unit-testability; server.ts is self-starting).
-import { noteToHyperMarkdown, inlineRenderedForDescriptor, viewerControls } from './note-view.js';
+import { noteToHyperMarkdown, inlineRenderedForDescriptor, viewerControls, publishableAuthority } from './note-view.js';
 // The generic HyperMarkdown MCP-App renderer (served as a ui:// resource).
 import { HMD_APP_HTML } from './hmd-app.js';
 
@@ -3931,8 +3931,67 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
       const IEP_NS = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
       const viewUrl = `${publishRelayBase}/render/${encodeURIComponent(descriptor.id as string)}`;
       const enc = (result.encrypted ?? false);
+      /**
+       * ── ★★ THE AUTHORITY IS THE DESCRIPTOR, AND THIS LINE USED TO NAME `/render` ──────────
+       *
+       * `authority` becomes the document's `descriptorUrl` — the URL a reader is told to hand
+       * to `invoke_affordance`, and the target of the "Signed descriptor (authority)" link. It
+       * was `viewUrl`, i.e. `/render/<id>`, and that is wrong twice over: `/render` is a
+       * PROJECTION (markdown or plaintext Turtle), never a descriptor carrying `iep:Affordance`
+       * blocks, and it is bearer-gated (the route's first statement is `verifyBearerToken`)
+       * while `invoke_affordance` attaches the caller's bearer only for same-origin `/amep`
+       * targets. So following the footer 401'd, every control, always — reported from the
+       * outside as "4 controls rendered, 0 invocable".
+       *
+       * ★ AND WIDENING invoke_affordance's CATCH WOULD NOT HAVE FIXED IT. The 401 surfaces from
+       * follow.ts as a plain `Error` rather than `AffordanceNotFoundError`, so the signed-graph
+       * fallback never engages — but that fallback is `resolveGraphAffordanceForInvoke`, which
+       * re-resolves by calling `handleGetDescriptor(descriptorUrl)` on the SAME URL. With a
+       * `/render` URL in that field the fallback has nothing to resolve against either. The
+       * defect is the pointer, so the pointer is what changes here.
+       *
+       * ★ PUBLIC SPELLING, AND SCREENED — BUT NOT BY THE SCREEN. The descriptor's fetch URL is
+       * the INTERNAL store origin (`css.railway.internal`), which must never enter a
+       * store-and-forward projection's bytes — identity out, routing in (`publicStoreSpelling`).
+       * `asPublicPodUrl` gives the outward spelling; `publishableAuthority` applies the rule.
+       *
+       * ★★ AND THE INTERNAL HOST IS KEPT OUT BY `publishableAuthority`'s OWN `hasInternalHostLabel`
+       * PROBE, NOT BY `isFollowableTarget`. An earlier draft of this note credited the screen with
+       * that work ("so the document can only ever name an authority invoke would accept"), and the
+       * measurement says otherwise: `isFollowableTarget` runs `assertInvokeTargetAllowed`, which
+       * returns `'pinned'` for this relay's own CSS origin BEFORE its internal-label check — so
+       * `isFollowableTarget('http://css.railway.internal:3456/…')` is TRUE, by design, because the
+       * relay must be able to fetch its own store. The screen's job here is the narrower one it
+       * can do: refuse a non-http(s) or SSRF-refused candidate, and keep this document's authority
+       * from being one `invoke_affordance` would reject at follow time. Both conditions are
+       * load-bearing and neither implies the other.
+       *
+       * The rule lives in note-view because all four projections must reach the same answer; when
+       * no public spelling is configured (dev: CSS_PUBLIC_URL defaults to the loopback CSS_URL) it
+       * refuses and we keep the previous value rather than an internal host.
+       */
+      const authority = publishableAuthority(
+        asPublicPodUrl(result.descriptorUrl),
+        viewUrl,
+        isFollowableTarget,
+      );
       // Minimal descriptor turtle carrying the note's real affordances (the same
       // ones the persisted descriptor advertises) so its controls render inline.
+      //
+      // ★ IT MUST ALSO CARRY THE NOTE'S POLICY, because the function it is handed to reads
+      // policy OFF A DESCRIPTOR. `noteToHyperMarkdown` decides public-vs-private from
+      // `iep:visibility` / `iep:encrypted`, exactly as `packages/solid/src/client.ts` writes
+      // them into the persisted descriptor. This block emitted neither, so both probes failed
+      // unconditionally and EVERY note handed back here — a world-readable `visibility:
+      // "public"` one included — took the private branch: `state: "private"`, the footer "the
+      // note stays private", and the title "Private note" for a note carrying none of its own.
+      // A reader told their public note is private is being actively misled, so the two triples
+      // are not decoration. `isPublic` below says the same thing from the argument we already
+      // hold; these make the synthesized descriptor honest to anyone who reads it as one.
+      //
+      // ★ `visibility` is the NARROWED union from computePublishRecipients ('public' |
+      // 'private' | 'shared'), not `args.visibility` — no caller bytes reach the Turtle, which
+      // is the same rule the ★ note below states for `descriptor_id`.
       //
       // ★ THE SUBJECT IS THE CALLER'S `descriptor_id`, and this Turtle is hand-built —
       // it never passes the descriptor serializer that percent-encodes IRI bodies. A
@@ -3943,15 +4002,77 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
       // rather than the string is what keeps that true if this block is ever moved.
       // (`viewUrl` is not: it is this relay's own base plus an encodeURIComponent of the
       // id, so its interpolation below cannot carry a delimiter.)
+      //
+      // ── ★★ AND IT MUST CLAIM THE AFFORDANCES THE PERSISTED DESCRIPTOR ACTUALLY ADVERTISES ──
+      //
+      // This Turtle is not just read for policy: `noteToHyperMarkdown` renders a `:::control`
+      // for every affordance in it, and decides which of them to leave UNMARKED — i.e. which the
+      // document says `invoke_affordance` can re-resolve. But the reader re-resolves against
+      // `authority` above, which is now the PERSISTED descriptor whenever it is publishable —
+      // and these two accounts of the same note disagreed:
+      //
+      //   * this block emitted `<#renderView>` unconditionally, while
+      //     packages/solid/src/client.ts emits `iep:renderView` only for an encrypted,
+      //     not-publisher-sealed payload. So a PUBLIC note's hand-back offered
+      //     `control-renderview` unmarked, and invoking it against the authority the same
+      //     document names answers `AffordanceNotFoundError`.
+      //   * this block never emitted the fetch affordance at all, so the ONE control that does
+      //     work for a public note — `iep:canFetchPayload` — was missing from the hand-back
+      //     while `get_descriptor`'s projection of the same note listed it. Two projections of
+      //     one note, disagreeing about its controls, which the byte-shape-identical invariant
+      //     forbids.
+      //
+      // Same class as the policy defect above and as the `/render` authority: decide from bytes
+      // we author, then point the reader at a different authority. client.ts's own note states
+      // the rule this broke — "a document promising a capability that is guaranteed to fail …
+      // is worse than silence". So the branches below mirror client.ts's, and there is a source
+      // check in tests/note-projection-honesty.test.ts §6 that they still do.
+      //
+      // ★ THE TARGET IS THE OUTWARD SPELLING, and it never reaches the document: the target's
+      // whole job here is to be asked of `isFollowableTarget` (`controlsFromAffordances` drops
+      // `hydra:target` on the floor — that is the projection's security cut). The outward
+      // spelling is used anyway so that no later change which DOES emit this Turtle can leak the
+      // store host. `turtleIriRef` refuses a value that cannot be an IRI reference, and the
+      // affordance is then omitted rather than emitted broken — client.ts's precedent for
+      // exactly this position.
+      const fetchAction = enc ? 'canDecrypt' : 'canFetchPayload';
+      const fetchTargetRef = turtleIriRef(asPublicPodUrl(result.graphUrl) ?? result.graphUrl);
+      // `sealed` = the publisher sealed the bytes, so the relay is not a recipient and `/render`
+      // would answer 403 NotARecipient. client.ts omits renderView for exactly this case.
+      const offersRenderView = enc && !sealed;
+      const affordanceRefs = [
+        ...(fetchTargetRef ? [`<#${fetchAction}>`] : []),
+        ...(offersRenderView ? ['<#renderView>'] : []),
+      ];
       const affTurtle = [
         `@prefix iep: <${IEP_NS}> .`,
         `@prefix hydra: <http://www.w3.org/ns/hydra/core#> .`,
         `@prefix dcat: <http://www.w3.org/ns/dcat#> .`,
-        `${descIdRef} a iep:ContextDescriptor ; iep:affordance ${enc ? '<#canDecrypt>, ' : ''}<#renderView> .`,
-        ...(enc ? [`<#canDecrypt> a iep:Affordance ; iep:action <${IEP_NS}canDecrypt> ; hydra:target <${viewUrl}> ; hydra:method "GET" .`] : []),
-        `<#renderView> a iep:Affordance ; iep:action <${IEP_NS}renderView> ; hydra:target <${viewUrl}> ; hydra:method "GET" ; dcat:mediaType "text/markdown; charset=UTF-8; variant=CommonMark" .`,
+        `${descIdRef} a iep:ContextDescriptor ; iep:encrypted ${enc ? 'true' : 'false'}`
+          + `${visibility === 'public' || visibility === 'private' ? ` ; iep:visibility "${visibility}"` : ''}`
+          + `${affordanceRefs.length > 0 ? ` ; iep:affordance ${affordanceRefs.join(', ')}` : ''} .`,
+        ...(fetchTargetRef
+          ? [`<#${fetchAction}> a iep:Affordance ; iep:action <${IEP_NS}${fetchAction}> ; hydra:target ${fetchTargetRef} ; hydra:method "GET" .`]
+          : []),
+        ...(offersRenderView
+          ? [`<#renderView> a iep:Affordance ; iep:action <${IEP_NS}renderView> ; hydra:target <${viewUrl}> ; hydra:method "GET" ; dcat:mediaType "text/markdown; charset=UTF-8; variant=CommonMark" .`]
+          : []),
       ].join('\n');
-      renderedNote = noteToHyperMarkdown({ viewUrl, authority: viewUrl, descriptorTurtle: affTurtle, plaintextTurtle: graphContentStr, graphIri: (descriptor.describes?.[0] as string | undefined) });
+      renderedNote = noteToHyperMarkdown({
+        viewUrl,
+        authority,
+        descriptorTurtle: affTurtle,
+        plaintextTurtle: graphContentStr,
+        graphIri: (descriptor.describes?.[0] as string | undefined),
+        // ★ THE CALLER KNOWS; IT SHOULD NOT MAKE THE PROJECTION GUESS. This handler HAS the
+        // audience class as a value. Passing it means the publish path no longer depends on a
+        // regex over a serialization this same block writes — the shape that let the policy
+        // triples go missing with a green suite over the projection the whole time.
+        isPublic: visibility === 'public',
+        // The SAME screen invoke_affordance applies, so a control this document leaves
+        // unmarked is one invoke would accept a target for. See `isFollowable` in note-view.
+        isFollowable: isFollowableTarget,
+      });
     } catch { /* leave empty — the response is still complete without it */ }
   }
 
@@ -4941,10 +5062,17 @@ async function handleGetDescriptor(args: ToolArgs): Promise<string> {
   // inside the helper (never the internal pod host). Not cached.
   const inline = inlineRenderedForDescriptor({
     descriptorUrl: url,
+    // ★ THE SAME AUTHORITY FIX AS THE PUBLISH HAND-BACK, because the two projections are
+    // required to be byte-shape-identical and an authority that differed between them would
+    // be a second defect wearing the first one's clothes. `url` is the INTERNAL fetch target;
+    // this is its outward spelling, screened by the helper before it is allowed into the
+    // document (see `authorityUrl` in note-view).
+    authorityUrl: asPublicPodUrl(url),
     descriptorTurtle: turtle,
     plaintextTurtle: graph?.content ?? null,
     publicBase: PUBLIC_BASE_URL,
     port: PORT,
+    isFollowable: isFollowableTarget,
   });
 
   return JSON.stringify({
@@ -14667,8 +14795,24 @@ app.get('/render/:descriptorIri', async (req, res) => {
       } catch { /* projection falls back to an empty body below */ }
       try {
         const viewUrl = `${(PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/+$/, '')}/render/${encodeURIComponent(descriptorIri)}`;
-        const authority = publishableDescriptorUrl(descriptorUrl, viewUrl);
-        const md = noteToHyperMarkdown({ viewUrl, authority, descriptorTurtle: descTurtle, plaintextTurtle: publicGraph });
+        // ★★ THE SAME AUTHORITY RULE AS THE OTHER THREE PROJECTIONS — see `publishableAuthority`.
+        // This branch used `publishableDescriptorUrl(descriptorUrl, viewUrl)`, whose fallback is
+        // the graph IRI passed as its second argument: with `descriptorUrl` on the internal store
+        // host `assertPublicPodUrl` throws and the document ends up naming `/render/<id>` as its
+        // own authority — the bearer-gated projection, invocable by nothing. That is the defect
+        // the publish hand-back was repaired for, still standing on the surface a raw HTTP reader
+        // gets, because the repair was applied per-call-site instead of as the rule.
+        const authority = publishableAuthority(asPublicPodUrl(descriptorUrl), viewUrl, isFollowableTarget);
+        const md = noteToHyperMarkdown({
+          viewUrl,
+          authority,
+          descriptorTurtle: descTurtle,
+          plaintextTurtle: publicGraph,
+          // Without this the marking falls back to a bare http(s) test and can mark executable a
+          // target `guardedInvokeFetch` would refuse — the divergence `isFollowableTarget`'s own
+          // doc comment forbids. `/render` omitted it while the other two projections passed it.
+          isFollowable: isFollowableTarget,
+        });
         res.setHeader('Link', `${HMD_PROFILE_LINK_HEADER}, <${authority}>; rel="describedby"; type="text/turtle"`);
         res.status(200).type(HYPERMEDIA_MARKDOWN_MEDIA_TYPE).send(md);
       } catch {
@@ -14781,8 +14925,19 @@ app.get('/render/:descriptorIri', async (req, res) => {
     if (kind === 'markdown') {
       try {
         const viewUrl = `${(PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/+$/, '')}/render/${encodeURIComponent(descriptorIri)}`;
-        const authority = publishableDescriptorUrl(descriptorUrl, viewUrl);
-        const md = noteToHyperMarkdown({ viewUrl, authority, descriptorTurtle: descTurtle, plaintextTurtle: plaintext });
+        // ★★ THE SAME AUTHORITY RULE AS THE OTHER THREE PROJECTIONS. See the public-note branch
+        // above and `publishableAuthority` in note-view.ts. This is the decrypted half of the
+        // same route and it made the same mistake: with `/render/<id>` in the document's
+        // `descriptorUrl`, no control it renders could be re-resolved against anything.
+        const authority = publishableAuthority(asPublicPodUrl(descriptorUrl), viewUrl, isFollowableTarget);
+        const md = noteToHyperMarkdown({
+          viewUrl,
+          authority,
+          descriptorTurtle: descTurtle,
+          plaintextTurtle: plaintext,
+          // The same screen invoke applies — see the public-note branch above.
+          isFollowable: isFollowableTarget,
+        });
         res.setHeader('Link', `${HMD_PROFILE_LINK_HEADER}, <${authority}>; rel="describedby"; type="text/turtle"`);
         res.status(200).type(HYPERMEDIA_MARKDOWN_MEDIA_TYPE).send(md);
         return;

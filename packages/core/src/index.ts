@@ -453,6 +453,8 @@ export type { ManifestEntry } from './manifest/index.js';
 // ── Affordance Engine ────────────────────────────────────────
 export {
   computeAffordances,
+  evaluateTrust,
+  trustEvidenceFromAuthorship,
   createAgentState,
   assimilateDescriptor,
   addDesire,
@@ -481,6 +483,8 @@ export type {
   AgentProfile,
   AgentCapability,
   TrustPolicy,
+  TrustBasis,
+  TrustEvidence,
   CausalAffordanceEffect,
   OODAPhase,
   Orientation,

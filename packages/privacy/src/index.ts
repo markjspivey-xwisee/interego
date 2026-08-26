@@ -156,6 +156,35 @@ const DETECTORS: readonly Detector[] = [
   {
     kind: 'iban',
     description: 'International Bank Account Number (IBAN)',
+    /**
+     * ★★ THE SAME HEX-COLLISION CLASS AS THE PHONE RULE BELOW, FOUND BY GOING LOOKING FOR IT.
+     * `[A-Z]` is satisfied by A-F, so an UPPERCASE hex token simply IS an IBAN-shaped token:
+     * measured over 100k random samples per length, uppercase hex of 8-34 characters matched
+     * 5.4-5.6% of the time — a higher rate than the phone rule's, at MEDIUM severity, which is the
+     * tier that tells the user to "confirm before publishing".
+     *
+     * ★ AND IT ALREADY HAD A LIVE FALSE POSITIVE THAT IS NOT HEX AT ALL. Over the git-tracked tree
+     * — 2,664 text files, this one and tests/privacy.test.ts excluded because both now carry
+     * specimens of their own — this detector matches exactly four distinct strings: `PT22M14S`,
+     * `PT12M30S` and `PT15M30S`, ISO 8601 DURATIONS of the kind xAPI writes into `result.duration`
+     * and this substrate emits by the statement, plus `VA75713W`, a fragment of a sha512 integrity
+     * hash in package-lock.json. `PT` + `22` + `M14S` walks straight through
+     * `[A-Z]{2}\d{2}[A-Z0-9]{4,30}`. Not one is an account number, so every single flag this rule
+     * has ever raised here was wrong. (An earlier version of this sentence said the durations were
+     * the ONLY match, "across 3892 files". Both halves were wrong — `VA75713W` is tracked and is
+     * not a duration, and the file count described one working tree, ignored directories included,
+     * rather than the repo. Quote a corpus a reader can reproduce: `git ls-files`.)
+     *
+     * ★ THE MISSING CONSTRAINT IS THE ONE A BANK ACCOUNT ACTUALLY HAS, exactly as the ISO/IEC 7812
+     * industry identifier was for the card rule: an IBAN carries an ISO 7064 MOD-97-10 check, and
+     * ISO 13616 fixes a per-country length starting at 15 (Norway). See `ibanCheckValid`. Both
+     * halves are needed and neither subsumes the other: a duration is 8 characters and dies on the
+     * length bound, while a hex token long enough to clear that bound dies on mod-97 96 times in
+     * 97. `ibanCheckValid` carries the measurement of what each half actually rejects.
+     *
+     * The pattern stays loose on purpose — it is the cheap prefilter, and the arithmetic below is
+     * what decides, the same division of labour the credit-card rule uses.
+     */
     pattern: /\b[A-Z]{2}\d{2}[A-Z0-9]{4,30}\b/g,
     severity: 'medium',
   },
@@ -192,8 +221,46 @@ const DETECTORS: readonly Detector[] = [
      *
      * A leading country code is written `+1` or `1-`, never as three digits jammed against the
      * number. Requiring either the `+` or a separator keeps every real spelling and drops the run.
+     *
+     * ★★ AND THEN THE BOUNDARY GUARDS TURNED OUT TO KNOW ONLY BASE TEN, WHICH IS THE WRONG RADIX
+     * ON A CONTENT-ADDRESSED SUBSTRATE. `(?<!\d)` and `(?!\d)` exist to say "this run of digits is
+     * not a slice of a longer number" — but inside a hex identifier the letters a-f ARE digits of
+     * that number, and they satisfied a base-10 guard, so any ten-digit window inside a hash was
+     * accepted as a phone number. MEASURED here over 200k random samples each: a 40-hex CID flagged
+     * 4.35% of the time, a 64-hex sha256 7.18%, a v4-shaped UUID 1.27%. Per artifact that is small,
+     * but it compounds — a graph carrying ~20 digests is odds-on to raise at least one spurious
+     * phone flag, so the screen ends up crying wolf on the substrate's own identifiers. Over the
+     * git-tracked tree (2,664 text files, this one and tests/privacy.test.ts excluded) the old
+     * pattern raises 59 raw matches and the guarded one 10; the 49 it drops are ten-digit windows
+     * inside pod ids (`u-eth-0123456789ab`) and Ethereum addresses. That they are all hex is not a
+     * corpus accident: the guard alphabet is the ONLY difference between the two patterns, so
+     * anything dropped is by construction a run bounded by a hex letter.
+     *
+     * ★ THE GUARD IS WIDENED FROM RADIX 10 TO RADIX 16, NOT SUPPLEMENTED WITH A CARVE-OUT FOR
+     * HASHES. `[0-9A-Fa-f]` is a strict superset of `\d`, so everything the old guard rejected is
+     * still rejected and the rule is still a property of the thing being detected: a telephone
+     * number is a token in its own right, never welded to the inside of a longer identifier. Hex is
+     * the only common identifier encoding dense enough in digits for this to bite — 10 of its 16
+     * symbols are digits, against 9 of base58's 58 and 6 of base32's 32, where the arithmetic puts
+     * the same ten-digit window below 1e-7 per position and nothing shows up in practice.
+     *
+     * ★ THE THING NOT TO DO HERE IS QUIETEN IT FURTHER. A privacy screen trimmed until it stops
+     * being annoying is worse than a noisy one, because a screen nobody believes is not a screen.
+     * So every spelling this caught before still has to be caught, and tests/privacy.test.ts pins
+     * them: `+1 415 555 2671`, `(415) 555-2671`, `415-555-2671`, `415 555 2671`, `4155552671`,
+     * `1-415-555-2671`. Real numbers are bounded by whitespace or punctuation, so the guard costs
+     * none of them. (`415.555.2671` is a real spelling this detector has never matched — the
+     * separator class is `[ -]`, with no `.` — and it still does not; see the pinned gap in the
+     * test file. That is a pre-existing miss, not something this guard took away.)
+     *
+     * ★ AND 16 IS PINNED, NOT JUST ARGUED. The paragraph above is a reason, and a reason holds
+     * nothing on its own: widening one notch further to `[0-9A-Za-z]` used to leave the whole
+     * suite green, because on this repo's own content base 36 is QUIETER — the extra strings it
+     * suppresses here are all false positives. What it also suppresses is `x4155552671` and
+     * `ext4155552671`, the telephone-extension notation, which is why the test named "THE RADIX
+     * IS 16 AND NOT 36" exists. Do not delete it to make a further tightening pass.
      */
-    pattern: /(?<!\d)(?:\+\d{1,3}[ -]?|\d{1,3}[ -])?\(?\d{3}\)?[ -]?\d{3}[ -]?\d{4}(?!\d)/g,
+    pattern: /(?<![0-9A-Fa-f])(?:\+\d{1,3}[ -]?|\d{1,3}[ -])?\(?\d{3}\)?[ -]?\d{3}[ -]?\d{4}(?![0-9A-Fa-f])/g,
     severity: 'low',
   },
   {
@@ -237,6 +304,63 @@ function luhnValid(digits: string): boolean {
 }
 
 /**
+ * ISO 7064 MOD-97-10 check for an IBAN candidate — the analogue of `luhnValid`
+ * above, and for the same reason: the regex is a cheap prefilter and something
+ * has to carry a real property of the thing being detected.
+ *
+ * ★ THE MINIMUM LENGTH IS LOAD-BEARING, AND A MUTANT IS WHAT PROVED IT — the first
+ * version of this comment claimed the wrong reason. The shortest national IBAN
+ * format is Norway's, at 15 characters. Deleting that line left the whole suite
+ * GREEN, because the durations the test then asserted on fail mod-97 anyway
+ * (`PT14M22S` → 62, `PT22M14S` → 4, `PT12M30S` → 29, `PT15M30S` → 32), so the test
+ * that was meant to pin the bound passed for a reason that had nothing to do with
+ * it.
+ *
+ * The bound matters all the same, because mod-97 accepts 1 candidate in 97 by
+ * construction: of the 6,000 two-digit `PT<mm>M<ss>S` durations with `ss` in 00-59,
+ * 63 satisfy it — `PT00M31S`, `PT01M25S`, `PT14M44S` — as do 896 of the 86,400
+ * `PT<hh>H<mm>M<ss>S` clock durations. Every one of those is rejected by the length
+ * bound and by nothing else, so without it roughly one xAPI `result.duration` in a
+ * hundred is reported to the user as a bank account. tests/privacy.test.ts pins
+ * `PT00M31S` specifically for this.
+ *
+ * ★ THERE IS NO UPPER BOUND HERE, AND THAT IS THE CORRECTION OF A DEAD ONE. This
+ * used to also reject `candidate.length > 34` — ISO 13616's ceiling — and no input
+ * could ever reach it: the only caller passes a match of `\b[A-Z]{2}\d{2}[A-Z0-9]
+ * {4,30}\b`, which emits at most 2 + 2 + 30 = 34 characters (measured: max match
+ * length 34 over 200k random uppercase-alphanumeric tokens up to 75 characters).
+ * Mutating it to `> 40` left the suite green because nothing could exercise it,
+ * while the comment beside it read as though both ends of the bound were live.
+ * ★ SO THE CEILING NOW LIVES ONLY IN THAT `{4,30}` QUANTIFIER: widening it past 30
+ * must bring the 34 back here, or over-long candidates start reaching the modulo.
+ * (34 is the standard's ceiling, incidentally, not any country's length — the
+ * registry specimens pinned in tests/privacy.test.ts run 15 to 27 — so do not read
+ * it as naming a country.)
+ *
+ * The `value` range check inside the loop is NOT dead in the same way and stays: it
+ * guards the ARITHMETIC rather than restating a domain fact, since one non-alphanumeric
+ * character would fold a garbage digit into the remainder and could make mod-97 accept.
+ *
+ * The remainder is accumulated digit-by-digit because the rearranged string is
+ * up to 34 characters wide, which as an integer overflows a JS number long
+ * before the modulo would be reached.
+ */
+function ibanCheckValid(candidate: string): boolean {
+  if (candidate.length < 15) return false;
+  // Move the country code + check digits to the end, then map A-Z to 10-35.
+  const rearranged = candidate.slice(4) + candidate.slice(0, 4);
+  let remainder = 0;
+  for (const ch of rearranged) {
+    const code = ch.charCodeAt(0);
+    // 'A'-'Z' → 10-35 (two decimal places), '0'-'9' → 0-9 (one).
+    const value = code >= 65 && code <= 90 ? code - 55 : code - 48;
+    if (value < 0 || value > 35) return false;
+    remainder = (remainder * (value > 9 ? 100 : 10) + value) % 97;
+  }
+  return remainder === 1;
+}
+
+/**
  * Screen a string for sensitive content. Returns flagged matches.
  * Empty array means "no obvious red flags" — does NOT mean "safe."
  */
@@ -270,6 +394,18 @@ export function screenForSensitiveContent(content: string): readonly Sensitivity
        * detected rather than a carve-out for the thing that annoyed us.
        */
       if (detector.kind === 'credit-card' && !/^[2-6]/.test(match.replace(/\D/g, ''))) continue;
+      /**
+       * ── ★★ AN xAPI DURATION IS NOT A BANK ACCOUNT ──
+       *
+       * The IBAN pattern's `[A-Z]{2}\d{2}` prefix is satisfied by `PT22M…`, and over the
+       * git-tracked tree ISO 8601 durations are all but one of what it matches — at medium
+       * severity, the tier whose advice is "confirm with the user before publishing". Same class as
+       * the hex-run phone false positive: a guard keyed on a character class the substrate's own
+       * vocabulary happens to satisfy. `ibanCheckValid` supplies the ISO 7064 check digit and the
+       * minimum length, which is what an account number has and a duration does not. The detector
+       * comment above carries the full corpus measurement and the one non-duration match.
+       */
+      if (detector.kind === 'iban' && !ibanCheckValid(match)) continue;
 
       flags.push({
         kind: detector.kind,

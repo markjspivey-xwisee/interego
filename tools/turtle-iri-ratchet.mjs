@@ -35,11 +35,31 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
  *
  * ★ MEASURED, NOT CHOSEN. Lower it whenever sites are fixed — the gate prints the number to write.
  */
-export const MAX_RAW_IRI_INTERPOLATIONS = 691;
+export const MAX_RAW_IRI_INTERPOLATIONS = 674;
 
 /** How far below the budget the real count may sit before the budget is stale and must be lowered. */
 const SLACK = 10;
 
+/**
+ * ★★ TEST FILES ARE NOT IN SCOPE, AND THIS IS A CORRECTION RATHER THAN A CONCESSION.
+ *
+ * The population this gate exists to shrink is Turtle built from values a CALLER can influence —
+ * see the header. A fixture interpolating a literal constant into `<${…}>` to build an input for
+ * an assertion is not that, and never becomes that.
+ *
+ * ★ THE TOOL ALREADY BELIEVED THIS AND APPLIED IT INCONSISTENTLY. The repository's own `tests/`
+ * tree has never been counted — it is simply not in ROOTS below. But `deploy/mcp-relay/tests/`
+ * WAS counted, purely because it lives under a root that is. So one test tree was in scope and
+ * another was not, for no reason anybody chose. Measured 2026-08-26: 706 sites, of which 32 were
+ * in test files and 674 were production.
+ *
+ * ★★ AND THE BUDGET WENT DOWN, NOT UP. The occasion for this was a new relay test file carrying
+ * 22 fixture interpolations, which pushed the total past the budget. Raising the budget by 22 to
+ * admit them would have been exactly the laundering this file's own header warns against — the
+ * ratchet would then have had 22 sites of slack for real ones. Scoping to production and banking
+ * the measured production count instead makes the gate STRICTER on the code that matters: the
+ * effective allowance for caller-reachable sites falls from 691 to 674.
+ */
 const ROOTS = ['applications', 'packages', 'deploy'];
 /** `<${foo}>`, `<${a.b}>`, `<${x?.y}>` — an IRI reference built by interpolation. */
 const RAW_IRI = /<\$\{[A-Za-z_][A-Za-z0-9_.?[\]']*\}>/g;
@@ -54,8 +74,8 @@ function tsFilesUnder(dir) {
       const p = join(d, e);
       let s;
       try { s = statSync(p); } catch { continue; }
-      if (s.isDirectory()) walk(p);
-      else if (p.endsWith('.ts') && !p.endsWith('.d.ts')) out.push(p);
+      if (s.isDirectory()) { if (e !== 'tests') walk(p); continue; }
+      if (p.endsWith('.ts') && !p.endsWith('.d.ts') && !p.endsWith('.test.ts')) out.push(p);
     }
   };
   walk(dir);
