@@ -136,6 +136,7 @@ COPY deploy/mcp-relay/activitypub.ts ./
 COPY deploy/mcp-relay/reachability.ts ./
 COPY deploy/mcp-relay/alternate-turtle.ts ./
 COPY deploy/mcp-relay/shape-body.ts ./
+COPY deploy/mcp-relay/shapes-declared.ts ./
 COPY deploy/mcp-relay/supersession-frontier.ts ./
 COPY deploy/mcp-relay/required-args.ts ./
 COPY deploy/mcp-relay/turtle-iri-args.ts ./

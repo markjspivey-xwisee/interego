@@ -341,6 +341,16 @@ import {
   type ShapeFetchFailure,
   type FetchedShapeRepresentation,
 } from './shape-body.js';
+// Whether the document a caller named as its shapes graph WAS one. Same extraction rationale
+// as the import above — a decision written in this file cannot be executed by any test, and
+// "which caller gets refused" is exactly that kind of decision.
+import {
+  refusesEmptyShapesGraph,
+  emptyShapesGraphViolation,
+  summarizeConformance,
+  iriObjectsOf,
+  type ShapeCoverage,
+} from './shapes-declared.js';
 import {
   supersessionFrontier, classifyCasRequest, casRefusal,
   priorVersionsFor, reDecidedSupersedes, linearSupersedesFor,
@@ -1752,9 +1762,17 @@ async function fetchContainerShapes(podUrl: string): Promise<readonly string[]> 
     const r = await guardedInvokeFetch(containerShapeUrl, { method: 'GET', headers: { 'Accept': 'text/turtle' } });
     if (r.ok) {
       const body = await r.text();
-      for (const m of body.matchAll(/iep:conformsTo\s+<([^>]+)>/g)) shapes.add(m[1]!);
-      for (const m of body.matchAll(/dct:conformsTo\s+<([^>]+)>/g)) shapes.add(m[1]!);
-      for (const m of body.matchAll(/iep:declares-shape\s+<([^>]+)>/g)) shapes.add(m[1]!);
+      // ★★ SAME SCANNER AS `owl:imports`, FOR THE SAME REASON. These were three
+      // `/…\s+<([^>]+)>/g` regexes, which read every OCCURRENCE of the predicate but only the
+      // FIRST object of each — so a container declaring `dct:conformsTo <a> , <b> , <c>` had
+      // two of its three contracts never fetched and never run, while the publish still
+      // answered that the gate had passed. A pass for a contract nobody read is this round's
+      // whole defect class. The token boundary in `iriObjectsOf` is also what keeps
+      // `iep:conformsToShape` — which descriptors in this repo really do carry — from being
+      // read as a container declaration and sent to the fetcher as a `urn:`.
+      for (const p of ['iep:conformsTo', 'dct:conformsTo', 'iep:declares-shape']) {
+        for (const iri of iriObjectsOf(body, p)) shapes.add(iri);
+      }
     }
   } catch { /* ignore — fall through to manifest scan */ }
 
@@ -1768,13 +1786,40 @@ async function fetchContainerShapes(podUrl: string): Promise<readonly string[]> 
         // we only want CONTAINER-level conformance, not random conformsTo
         // triples on individual ManifestEntry rows (which belong to
         // descriptors, not to the container).
+        //
+        // ── ★★ AND "ITS OWN SUBJECT" IS WHAT THE MATCH HAD TO BE MADE TO MEAN ─────────
+        //
+        // This was `<url>[\s\S]*?(?=\n<|$)` — unanchored, so it found the FIRST occurrence
+        // of the URL anywhere in the document, in object position as readily as in subject
+        // position. DRIVEN against the real relay: a manifest whose descriptor row read
+        // `<…/ctx/row> a iep:ContextDescriptor ; dct:isPartOf <manifestUrl> ; dct:conformsTo
+        // <decoy> .` ABOVE the collection's own statement made the "collection block" the
+        // tail of that row — `<manifestUrl> ;\n dct:conformsTo <decoy> .` — and the publish
+        // came back 422 on a MinCount violation from the DECOY, one descriptor's contract,
+        // while the collection's real contract was never fetched. Both failure directions
+        // at once: closed on a contract nobody declared at container level, open on the one
+        // that was. Relay-written manifests put the collection subject first and so were
+        // safe, but this branch exists for the hand-authored and foreign manifests where
+        // document order is not ours.
+        //
+        // ★ TWO GUARDS, BOTH ABOUT SUBJECT POSITION, NEITHER A PARSE. `(?:^|\n)` requires
+        // the URL to start a line — the same assumption the terminator `(?=\n<)` has always
+        // made about where the NEXT subject starts, so the two halves now agree. And an IRI
+        // at the start of a line can still be an object (a wrapped list); a subject is
+        // always followed by a predicate, so the lookahead refuses `;` `,` `.` `]`, which
+        // is every punctuation an object position can be followed by. What neither guard
+        // buys is a second statement block about the same subject later in the document:
+        // `.match` reads the first, as it always has.
         const escapedManifest = manifestUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const collectionBlock = body.match(
-          new RegExp(`<${escapedManifest}>[\\s\\S]*?(?=\\n<|$)`),
-        )?.[0];
+          new RegExp(`(?:^|\\n)(<${escapedManifest}>(?=\\s*[^\\s;,.\\]])[\\s\\S]*?)(?=\\n<|$)`),
+        )?.[1];
         if (collectionBlock) {
-          for (const m of collectionBlock.matchAll(/iep:conformsTo\s+<([^>]+)>/g)) shapes.add(m[1]!);
-          for (const m of collectionBlock.matchAll(/dct:conformsTo\s+<([^>]+)>/g)) shapes.add(m[1]!);
+          // Object-list aware, like the container-shape scan above — a manifest collection
+          // that declares two profiles in one list must not have the second one dropped.
+          for (const p of ['iep:conformsTo', 'dct:conformsTo']) {
+            for (const iri of iriObjectsOf(collectionBlock, p)) shapes.add(iri);
+          }
         }
       }
     } catch { /* ignore — pod has no manifest yet */ }
@@ -1867,7 +1912,34 @@ interface FetchedShapeBody {
   readonly failure: ShapeFetchFailure | null;
 }
 
-async function fetchShapeBody(shapeIri: string): Promise<FetchedShapeBody> {
+/**
+ * ★★ AN UNFETCHABLE IMPORT MUST NOT BE LOGGED AS A REFUSAL, BECAUSE IT IS NOT ONE.
+ *
+ * `shape-body.ts` ends its give-up path with "Publish is REFUSED (422 shapeUnfetchable); the
+ * gate fails closed." — true for a shape the caller NAMED, and false for an `owl:imports`
+ * target, which `withImports` drops as non-fatal. Observed on a live run of the very call this
+ * round was repairing: `docs/ns/harness.ttl` imports `http://www.w3.org/ns/prov-o`, the egress
+ * guard refuses `http:`, and the operator log read
+ *
+ *     WARN … could not fetch shape http://www.w3.org/ns/prov-o … Publish is REFUSED (422 …)
+ *     WARN … owl:imports http://www.w3.org/ns/prov-o … unreachable — continuing without it
+ *
+ * — a refusal announced on one line and contradicted on the next, on a publish that returned
+ * 200. An operator who greps for the first line goes hunting a 422 that never happened. Same
+ * class as everything else in this round: a message answering a question nobody asked here.
+ *
+ * Rewritten at THIS call site rather than in `shape-body.ts`, because the sentence is correct
+ * for that module's other caller and the thing that differs is who is asking.
+ */
+function importLog(line: string): void {
+  log(line.replace(
+    /Publish is REFUSED \(422 shapeUnfetchable\); the gate fails closed\./,
+    'This is an owl:imports target, so it is DROPPED and the publish continues — see the '
+    + 'next line for what was lost.',
+  ));
+}
+
+async function fetchShapeBody(shapeIri: string, forImport = false): Promise<FetchedShapeBody> {
   let failure: ShapeFetchFailure | null = null;
   const body = await fetchShapeBodyWith(shapeIri, {
     fetchRepresentation: fetchShapeRepresentation,
@@ -1876,12 +1948,13 @@ async function fetchShapeBody(shapeIri: string): Promise<FetchedShapeBody> {
     // hypothetical: GitHub Pages ignores Accept and serves HTML for our own shape IRIs.
     parsesAsShapesGraph: (body: string) => validateAgainstShape('', body).results
       .every(r => r.constraintComponent !== `${'http://www.w3.org/ns/shacl#'}ShapeGraphParseFailure`),
-    log,
+    log: forImport ? importLog : log,
     cache: shapeBodyCache,
     cacheMax: CONTAINER_SHAPE_CACHE_MAX,
     freshTtlMs: CONTAINER_SHAPE_CACHE_TTL_MS,
     knownGoodTtlMs: KNOWN_GOOD_TTL_MS,
-    // Fires only on the paths that return null, i.e. only when the gate will refuse.
+    // Fires only on the paths that return null — for a caller- or container-named shape that
+    // means the gate is about to refuse; for an import it means the import is dropped.
     recordFailure: f => { failure = f; },
   });
   return { body, failure };
@@ -1909,12 +1982,18 @@ async function fetchShapeBody(shapeIri: string): Promise<FetchedShapeBody> {
  * publish the way losing the shape does.
  */
 const MAX_IMPORTS = 8;
-const OWL_IMPORTS = /owl:imports\s+<([^>]+)>/g;
 async function withImports(shapeTurtle: string | null, shapeIri: string): Promise<string | null> {
   if (!shapeTurtle) return shapeTurtle;
   const targets: string[] = [];
-  for (const m of shapeTurtle.matchAll(OWL_IMPORTS)) {
-    const t = m[1];
+  // ★★ THE OBJECT LIST, NOT ONLY ITS FIRST MEMBER. This read
+  // `shapeTurtle.matchAll(/owl:imports\s+<([^>]+)>/g)`, which collects one object per
+  // OCCURRENCE of the predicate and therefore stopped at the first comma. `docs/ns/harness.ttl`
+  // imports prov-o, pgsl and iep as one list, so only prov-o was followed — and prov-o is
+  // `http:`, refused by the egress guard on scheme and then dropped as non-fatal. The merged
+  // body was harness.ttl alone, `shapesDeclared` was 0, and the caller-side refusal below fired
+  // on our own writers. Driven against this server with a fixture pod: 422 before, published
+  // with declared=41 after. See `iriObjectsOf` for the measurement and the parser's bounds.
+  for (const t of iriObjectsOf(shapeTurtle, 'owl:imports')) {
     if (t && t !== shapeIri && !targets.includes(t)) targets.push(t);
     if (targets.length >= MAX_IMPORTS) break;
   }
@@ -1924,7 +2003,7 @@ async function withImports(shapeTurtle: string | null, shapeIri: string): Promis
     // An import's failure REASON is deliberately dropped: losing an import is non-fatal
     // (see the header), so there is no refusal for it to explain. The log line below is
     // the whole of the operator's signal here.
-    const { body } = await fetchShapeBody(t);
+    const { body } = await fetchShapeBody(t, true);
     // ★ AN IMPORT THAT IS NOT TURTLE MUST BE DROPPED, NOT APPENDED.
     //
     // Content negotiation does not save us: GitHub Pages ignores Accept and serves HTML
@@ -1979,7 +2058,18 @@ async function runConformanceGate(
   graphContent: string,
   callerShapeIris: readonly string[] = [],
 ): Promise<
-  | { conforms: true; resolvedShapes: readonly { shapeIri: string; shapeTurtle: string }[] }
+  | {
+      conforms: true;
+      resolvedShapes: readonly { shapeIri: string; shapeTurtle: string }[];
+      /**
+       * What each resolved shape ACTUALLY constrained — so the response can tell a clean pass
+       * from a pass against nothing. See the header of `shapes-declared.ts` for the measured
+       * defect: before this existed, `conforms: true` with no results meant either, and the
+       * caller had no field anywhere to tell them which. A success that ends the enquiry
+       * without answering it is worse than a failure, because a failure sends you back to look.
+       */
+      coverage: readonly ShapeCoverage[];
+    }
   | { conforms: false; shape: string; violations: readonly ShaclResult[] }
 > {
   const containerShapeIris = await fetchContainerShapes(podUrl);
@@ -1991,7 +2081,14 @@ async function runConformanceGate(
   for (const s of callerShapeIris) {
     if (!seen.has(s)) { seen.add(s); allShapes.push(s); }
   }
-  if (allShapes.length === 0) return { conforms: true, resolvedShapes: [] };
+  if (allShapes.length === 0) return { conforms: true, resolvedShapes: [], coverage: [] };
+  // ★ ATTRIBUTED BY MEMBERSHIP, NOT BY WHICH LOOP ADDED IT. The de-dup above keeps the
+  // CONTAINER's copy when a shape appears in both sources, so reading the source off insertion
+  // order would silently downgrade a caller-named document to the container's lenient
+  // treatment — and the whole refuse/report split in `shapes-declared.ts` turns on that
+  // attribution. If the caller named it, the caller owns it, however it also got here.
+  const namedByCaller = new Set(callerShapeIris);
+  const coverage: ShapeCoverage[] = [];
   const resolvedShapes: { shapeIri: string; shapeTurtle: string }[] = [];
   for (const shapeIri of allShapes) {
     // Per-iteration, per-call: `failure` never leaves this frame, so a concurrent publish
@@ -2065,8 +2162,72 @@ async function runConformanceGate(
     // they are advice, and the caller below already carries the notes forward.
     const report = validateAgainstShape(graphContent, shapeTurtle,
       { entailment: 'rdfs', conformanceDisallows: ['Violation'] });
+    // ★★ WHAT THIS SHAPE ACTUALLY CONSTRAINED, RECORDED BEFORE THE VERDICT IS READ.
+    //
+    // `report.conforms` alone answered a question adjacent to the one asked: a document that
+    // declares no shapes conforms trivially and reports IDENTICALLY to a real clean pass —
+    // same `true`, same empty `results`, same `fullyChecked` — so a caller who named the
+    // wrong URL was told their contract held when it had never run. Measured, one turn record
+    // missing its required outcome: against `harness-shapes.ttl` conforms=false, against
+    // `harness.ttl` (the ontology, 0 shapes) conforms=true.
+    //
+    // `declared` is taken here and not recomputed later because a second pass over the same
+    // body is free to drift from this one, and nothing would fail when it did — the same
+    // reason the engine records `liveShapeIds` inside its own validation loop.
+    //
+    // ★★ AND IT IS READ ONLY AFTER `report.conforms`, WHICH IS NOT COSMETIC ORDERING. An
+    // UNPARSEABLE DATA GRAPH returns `conforms:false` with `shapesDeclared: 0`, because the
+    // engine gives up before compiling anything. Testing the zero first — which is how this
+    // block was first written — answered a malformed graph with "the shape you named declares
+    // no shapes", sending the caller to fix a shape IRI that was never the problem. That is
+    // the very defect class this unit exists to close, reintroduced one line further down, so
+    // the real verdict is returned first and zero-declared is only ever read on a pass.
     if (!report.conforms) {
       return { conforms: false, shape: shapeIri, violations: report.results };
+    }
+    const cover: ShapeCoverage = {
+      shapeIri,
+      source: namedByCaller.has(shapeIri) ? 'caller' : 'container',
+      declared: report.shapesDeclared,
+      applied: report.shapesApplied,
+    };
+    coverage.push(cover);
+    if (refusesEmptyShapesGraph(cover)) {
+      // ★ REFUSED, NOT COUNTED — and only for a shape the CALLER named. A count is something
+      // the caller must remember to assert on, and a caller who already suspected the problem
+      // would not have named the wrong document in the first place; the refusal reaches
+      // everyone who does not suspect it, which is the whole population this defect had.
+      //
+      // The container-declared side is deliberately NOT refused here: `dct:conformsTo` on a
+      // pod is a profile assertion that in this system routinely names an ontology (23 of the
+      // 33 documents in `docs/ns/` declare zero shapes — re-measured with the engine over every
+      // one of them, because the figure this comment used to carry had never been run), the pod
+      // owner is not the caller, and the repair would be a pod write this very 422 has just
+      // locked out. It travels in `coverage.unenforced` instead — see `shapes-declared.ts` for
+      // the measurement, and for the imports bug that made this refusal fire on our own writers.
+      //
+      // ★ THE FIGURE IS CHECKED, NOT JUST STATED. `tests/shapes-declared-not-silent.test.ts` §9
+      // re-counts it and compares it to this sentence, because the wrong number sat here through
+      // a review purely on the strength of reading well.
+      const violation = emptyShapesGraphViolation(shapeIri);
+      log(`WARN conformance gate: ${shapeIri} was fetched and parsed but declares NO SHACL shapes; the publish is REFUSED (422 shapeDeclaresNoShapes) rather than reporting a pass nothing was tested for.`);
+      return {
+        conforms: false,
+        shape: shapeIri,
+        violations: [{
+          focusNode: shapeIri,
+          sourceShape: shapeIri,
+          constraintComponent: violation.constraintComponent,
+          severity: 'Violation',
+          message: violation.message,
+        }],
+      };
+    }
+    if (cover.declared === 0) {
+      // Container-declared and shapeless: allowed through, but never silently. The operator
+      // reading this line is the pod owner who can correct the declaration; the CALLER learns
+      // the same fact from `conformance.unenforced` in the response.
+      log(`WARN conformance gate: container-declared ${shapeIri} declares NO SHACL shapes, so it constrained nothing on this publish. Allowed because a pod's dct:conformsTo is a profile assertion and refusing it would lock the pod out of the write that would fix it.`);
     }
     // ★ Carry the Info notes forward. The engine emits UnsupportedConstraint precisely
     // so `conforms` cannot be mistaken for `was actually checked` — dropping them here
@@ -2105,7 +2266,7 @@ async function runConformanceGate(
     }
     resolvedShapes.push({ shapeIri, shapeTurtle });
   }
-  return { conforms: true, resolvedShapes };
+  return { conforms: true, resolvedShapes, coverage };
 }
 
 // ── Scope gate ──────────────────────────────────────────────
@@ -4076,6 +4237,10 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     } catch { /* leave empty — the response is still complete without it */ }
   }
 
+  // Computed once. `summarizeConformance` returns undefined when no shape ran, so a publish
+  // that declared none does not grow a block claiming it was gated.
+  const conformanceSummary = summarizeConformance(conformance.coverage);
+
   return JSON.stringify({
     published: true,
     // The complete HyperMarkdown note, ready to DISPLAY INLINE (prose + fields +
@@ -4114,6 +4279,22 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     pod: podUrl,
     descriptorUrl: result.descriptorUrl,
     graphUrl: result.graphUrl,
+    /**
+     * ★★ WHAT THE SHAPE GATE ACTUALLY ENFORCED — present only when it ran at all.
+     *
+     * `published: true` used to be the entire answer, and it could not distinguish "validated,
+     * clean" from "validated against a document that declares no shapes". Both produced a
+     * conforming report with no results. A caller who named the wrong URL — and the two URLs
+     * two lines above are exactly what gets named, with every HyperMarkdown projection
+     * labelling `descriptorUrl` "Signed descriptor (authority)" and typing it `text/turtle`
+     * while `graphUrl` is the one that can hold shapes — was handed a success that ended the
+     * enquiry without answering it.
+     *
+     * `validated` carries `declared` and `applied` per shape; `unenforced` appears ONLY when
+     * a shape constrained nothing, so it is met by accident rather than by remembering to look.
+     * A caller-named shapeless document never reaches here — it is a 422.
+     */
+    ...(conformanceSummary ? { conformance: conformanceSummary } : {}),
     encrypted: result.encrypted ?? false,
     // The note's DEREFERENCEABLE view: GET it (with your bearer) as
     // text/markdown for the complete HyperMarkdown document — prose + fields +
@@ -5263,15 +5444,189 @@ async function fetchIdentityAgents(identityToken: string): Promise<IdentityAgent
   }
 }
 
-// Best-effort surface-slug extraction from an agent id like
-// "chatgpt-u-pk-b03a054d6915" → "chatgpt". Walks back from the userId
-// prefix ("u-pk-", "u-eth-", "u-did-") since the slug itself may
-// contain hyphens (e.g. "claude-mobile-u-pk-..."). If no userId prefix
-// is found, returns undefined.
+/**
+ * ── ★★ WHAT AN IDENTITY IS, READ OFF THE NAME THE MESH ALREADY GAVE IT ──────────────────
+ *
+ * Every agent here is minted as `<surface>-<podId>` and carries the DID
+ * `did:web:<identity host>:agents:<surface>-<podId>`. That name is not decoration: it is
+ * the ONLY thing the substrate publishes that says what an identity IS.
+ * `interego-discord-u-eth-053ad15f9633` says "the Discord bot";
+ * `claude-code-vscode-u-pk-…` says which client is on the other end.
+ *
+ * ★★ MEASURED, 2026-08-24, AND THE REASON THESE THREE HELPERS ARE THE ONLY READING OF IT.
+ * An external agent addressed findings to "the maintainer", read `list_known_pods`, and
+ * picked `u-eth-053ad15f9633` because its `surface` said `interego` — the project's own
+ * name, and so the most maintainer-looking string on offer. It is the Discord bot. The
+ * directory had not been misleading on purpose: the auto-registration hook derived the
+ * surface with `sessId.split('-')[0]`, a SECOND spelling of this derivation that keeps the
+ * first hyphen-delimited token and throws away exactly the part that distinguishes
+ * `interego-discord` from `interego`, and `claude-code-vscode` from `claude`. The truncated
+ * value was then persisted to the federation store and served in the WebFinger/ActivityPub
+ * card. `notify_agent` answered `delivered: true` and the message reached nobody.
+ *
+ * ★ SO THE POD ID IS MATCHED AS A SUFFIX, NOT AS A PREFIX BOUNDARY. The pod id is the tail
+ * of the name and the surface is everything before it — including its own hyphens. The
+ * previous regex (`^(.+?)-u-(?:pk|eth|did)-`) got this right and the `split` did not, which
+ * is the whole argument for there being one function rather than two.
+ */
+const AGENT_POD_ID_SUFFIX = /-(?:u-)?(?:pk|eth|did)-[0-9a-z]+$/i;
+// A pod id ON ITS OWN is not an agent name and has no surface to read. Checked FIRST
+// because the `u-` above is optional, so `u-eth-053ad15f9633` matches the suffix pattern
+// starting at index 1 — leaving `u` as the "surface". Found by this fix's own regression
+// suite, which is the argument for a suite that runs the function rather than grepping it.
+const AGENT_POD_ID_ONLY = /^(?:u-)?(?:pk|eth|did)-[0-9a-z]+$/i;
+
+// "chatgpt-u-pk-b03a054d6915" → "chatgpt"; "interego-discord-u-eth-053ad15f9633" →
+// "interego-discord". Undefined when the id carries no pod-id tail to cut at — a name
+// this function cannot read is reported as unread, never as its first token.
 function surfaceSlugFromAgentId(agentId: string | undefined): string | undefined {
-  if (!agentId) return undefined;
-  const m = agentId.match(/^(.+?)-u-(?:pk|eth|did)-/);
-  return m?.[1];
+  if (!agentId || AGENT_POD_ID_ONLY.test(agentId)) return undefined;
+  const m = AGENT_POD_ID_SUFFIX.exec(agentId);
+  return m && m.index > 0 ? agentId.slice(0, m.index) : undefined;
+}
+
+/**
+ * The agent name inside a `did:web:<host>:agents:<name>` DID, or undefined for any other
+ * DID method or shape. Deliberately narrower than `bareAgentId` below, which answers
+ * "last colon segment" and so reads `did:web:example.com` as the agent name `example.com`.
+ * A directory row is only allowed to SAY what an identity is on the strength of a DID that
+ * actually names an agent.
+ */
+function agentSlugFromDid(did: string | undefined): string | undefined {
+  if (!did || !did.startsWith('did:web:')) return undefined;
+  const parts = did.split(':');
+  // did : web : <host> : agents : <name>  — the `agents` segment must be the penultimate
+  // one, so a did:web with a different path (or none) yields nothing rather than a guess.
+  if (parts.length < 5 || parts[parts.length - 2] !== 'agents') return undefined;
+  const slug = parts[parts.length - 1];
+  if (!slug) return undefined;
+  try { return decodeURIComponent(slug); } catch { return slug; }
+}
+
+/** What a directory row can be said to BE, and on what evidence. Never a role claim. */
+interface DirectoryIdentity {
+  /** The full mesh name the DID publishes, e.g. "interego-discord-u-eth-053ad15f9633".
+   *  ★ Set ONLY from evidence this relay recorded itself — never from `owner`. */
+  agent?: string;
+  /** The role-bearing head of that name, e.g. "interego-discord". Same restriction. */
+  surface?: string;
+  /** Which fact the fields above were read off — see RELAY_OBSERVED_EVIDENCE. */
+  identifiedBy: 'did:web agent name' | 'registered surface' | 'unverified owner claim' | 'nothing';
+  /** A mesh name the row's `owner` string SPELLS, which nothing here backs. Deliberately
+   *  not `agent`: a reader skimming for who a pod is must not find a stranger's typing. */
+  claimedAgent?: string;
+  /** The role-bearing head of `claimedAgent`. Same reason it is not `surface`. */
+  claimedSurface?: string;
+  /** Who can write `owner`, present whenever `claimedAgent` is. */
+  claimNote?: string;
+  /** Present only when nothing identifies the row — says so instead of leaving a blank. */
+  identityNote?: string;
+}
+
+/**
+ * ★★ THE EVIDENCE VALUES THIS RELAY RECORDED ITSELF, AND THE ONLY WAY TO ASK FOR THEM.
+ *
+ * `did`, `webId` and `surface` are written at exactly two sites — `autoRegisterAgentCard`
+ * and `handleSetReachability` — both from the SERVER-AUTHORITATIVE session identity, and
+ * read back by `knownPodFromStoredEntry` from a store only those two write those fields
+ * to. `owner` is not like them: `add_pod` takes it verbatim from `args.owner` and
+ * `discover_directory` from an imported foreign row, so it carries two provenances that
+ * the field itself cannot distinguish.
+ *
+ * ★ ASK THROUGH THIS PREDICATE, NEVER `identifiedBy !== 'nothing'`. That spelling was what
+ * `recipientKnown` used, and it silently accepts whatever evidence value is added next —
+ * the one added next was a string a stranger can type. A closed positive list has to be
+ * edited on purpose to widen.
+ */
+const RELAY_OBSERVED_EVIDENCE: ReadonlyArray<DirectoryIdentity['identifiedBy']> = [
+  'did:web agent name',
+  'registered surface',
+];
+function identityIsObserved(identity: DirectoryIdentity): boolean {
+  return RELAY_OBSERVED_EVIDENCE.includes(identity.identifiedBy);
+}
+
+/**
+ * Project a federation-directory row into "what is this". Composes only what this relay
+ * recorded when the pod's own agent authenticated — an agent-naming did:web from the row's
+ * card (`did`/`webId`), then its registered surface — and when neither exists it SAYS so
+ * rather than returning a row that looks identified.
+ *
+ * ★ IT PREFERS THE DID OVER THE STORED `surface` ON PURPOSE. Entries written before the
+ * truncation above was fixed carry the wrong surface durably in the federation store, and
+ * they are only rewritten when that agent next authenticates. Deriving at read time is
+ * what makes those rows read correctly without a backfill of the store.
+ *
+ * ── ★★ AND `owner` IS A CLAIM, NOT AN IDENTIFICATION. DRIVEN, ON THE REAL RELAY ─────────
+ *
+ * A previous round read `owner` as a third source for `agent`/`surface`, on the argument
+ * that it was "the one identifying field the generic persist path has never dropped".
+ * Driven against this server booted for real: an ordinary authenticated stranger called
+ * `add_pod {pod_url: <a pod it does not control>, owner: "did:web:…:agents:maintainer-u-eth-8f3b8e939600"}`,
+ * got HTTP 200, and `list_known_pods` then published that row as
+ * `identifiedBy: "did:web agent name", agent: "maintainer-…", surface: "maintainer"` with
+ * `did: undefined` — while `notify_agent` answered `recipientKnown: true` and the
+ * ActivityPub actor served `summary: "Interego agent (maintainer)"`. Durable across a
+ * restart. The narrowness of `agentSlugFromDid` was no defence at all: a caller who wants
+ * that shape simply types that shape.
+ *
+ * So the name is still READ — a row the relay cannot identify should not hide what it
+ * holds, and an operator needs to see a squatted `owner` to act on it — but it is reported
+ * under `claimedAgent`/`claimedSurface` and a distinct `identifiedBy`. Every downstream
+ * one-liner (`resolvedTo`, `recipientKnown`, the AP actor summary, the directory row) reads
+ * `agent`/`surface`, so a claim cannot reach any of them by being read here.
+ *
+ * ★ AND THE CLAIM IS REPORTED ON AN IDENTIFIED ROW TOO, when it disagrees with the DID the
+ * relay recorded. `autoRegisterAgentCard` sets `owner` to that same DID, so an `owner` that
+ * says something ELSE is somebody's edit of a row the relay had already identified, which
+ * is worth seeing rather than shadowing.
+ */
+function describeDirectoryEntry(
+  e: {
+    did?: string | undefined; webId?: string | undefined; owner?: string | undefined;
+    surface?: string | undefined; via?: string | undefined;
+  },
+): DirectoryIdentity {
+  const recordedDid = e.did ?? e.webId;
+  const claimSlug = e.owner !== undefined && e.owner !== recordedDid
+    ? agentSlugFromDid(e.owner)
+    : undefined;
+  const claimSurface = claimSlug ? surfaceSlugFromAgentId(claimSlug) : undefined;
+  const claim = claimSlug
+    ? {
+      claimedAgent: claimSlug,
+      ...(claimSurface ? { claimedSurface: claimSurface } : {}),
+      claimNote: '`owner` is a free-text field any authenticated caller can write on any '
+        + 'pod\'s row (add_pod, or a directory this relay imported), so this name is one '
+        + 'somebody typed — not an identity this relay observed. Compare it against `did`.',
+    }
+    : {};
+  const slug = agentSlugFromDid(e.did) ?? agentSlugFromDid(e.webId);
+  if (slug) {
+    const surface = surfaceSlugFromAgentId(slug) ?? e.surface;
+    return {
+      agent: slug,
+      ...(surface ? { surface } : {}),
+      identifiedBy: 'did:web agent name',
+      ...claim,
+    };
+  }
+  if (e.surface) return { surface: e.surface, identifiedBy: 'registered surface', ...claim };
+  return {
+    identifiedBy: claimSlug ? 'unverified owner claim' : 'nothing',
+    ...claim,
+    // ★ "no agent card HERE", not "no agent card". This says what THIS directory's record
+    // for the pod holds — the pod may well publish a card on its own pod or in another
+    // relay's directory. Saying more than that would be the same error the whole file is
+    // about: an answer confident about a question wider than the one that was checked.
+    identityNote: e.via === 'self'
+      ? 'your own pod for this session'
+      : claimSlug
+        ? 'nothing this relay recorded identifies this pod — the name under `claimedAgent` '
+          + 'was typed into `owner` by whoever added the row, so addressing it is a guess'
+        : 'this directory\'s record for the pod holds no did:web naming an agent, so nothing '
+          + 'here says who or what it is and addressing it is a guess',
+  };
 }
 
 // Extract the bare agent id from either a bare id or a did:web form.
@@ -6010,7 +6365,10 @@ async function handleVerifyAgent(args: ToolArgs): Promise<string> {
 type KnownPodVia = 'manual' | 'directory' | 'webfinger' | 'self' | 'auto';
 interface KnownPodEntry {
   url: string;
+  /** Free text. NOT identity evidence: whoever can add the pod can write it. */
   label?: string;
+  /** Free text of the same kind — see `describeDirectoryEntry` for why a did:web here is
+   *  reported as a claim rather than as the row's identity. */
   owner?: string;
   via: KnownPodVia;
   /** ISO-8601 — when this entry first landed in the federation. */
@@ -6025,6 +6383,82 @@ interface KnownPodEntry {
   updatedAt?: string;
 }
 const knownPods: Map<string, KnownPodEntry> = new Map();
+
+/**
+ * Which kind of writer is producing a directory row. `own-agent` means this relay
+ * authenticated the pod's own agent on this very call (`autoRegisterAgentCard`,
+ * `set_reachability`); `third-party` is everybody else — `add_pod`, an imported
+ * `discover_directory` entry, a `resolve_webfinger` result — none of which proved anything
+ * about the pod they are writing to.
+ */
+type RowWriter = 'own-agent' | 'third-party';
+
+/**
+ * ── ★★ ONE MERGE, BECAUSE A WRITER MUST NOT DELETE WHAT IT DOES NOT KNOW ───────────────
+ *
+ * `add_pod`, `discover_directory` and `resolve_webfinger` each REPLACED the whole
+ * `KnownPodEntry` with a fresh `{url, label, owner, via, addedAt}` and then whole-file-PUT
+ * it. Driven against the real relay: with the Discord bot's full card in the store, an
+ * ordinary authenticated stranger's `add_pod {pod_url: <the bot's pod>}` returned HTTP 200
+ * and left the store holding `did=<none> webId=<none> owner=<none> surface=<none>
+ * handle=<none> channels=<none>`. The row then read `identifiedBy: "nothing"` —
+ * "addressing it is a guess" — for a pod that had published a card seconds earlier; the
+ * ActivityPub actor lost its `interego:did` and its `publicKey`; and `notify_agent`
+ * addressed to the bot's own DID answered `could not resolve recipient … to a pod`. It
+ * does not self-heal: `_autoRegistered` is process-local, so the victim re-authenticating
+ * in the same relay process is a no-op.
+ *
+ * ★ THE RULE, AND IT IS THE WHOLE FUNCTION. For any field this relay records from an
+ * authenticated session, the pod's OWN agent replaces it and a third party may only fill
+ * it when it is empty. That closes the erasure AND the quieter half of it: a third party
+ * overwriting an `owner` the relay itself recorded.
+ *
+ * ★ `writer` IS A PARAMETER AND NOT INFERRED FROM THE ROW. Inferring it (say, from `via`,
+ * or from "does `existing.owner` equal `existing.did`") would make the security rule a
+ * function of caller-writable data — which is the defect this whole area is about. Each
+ * call site states which it is, because each call site is the only thing that knows.
+ */
+function mergeDirectoryRow(
+  existing: KnownPodEntry | undefined,
+  incoming: KnownPodEntry,
+  writer: RowWriter,
+): KnownPodEntry {
+  if (!existing) return incoming;
+  const keep = <T>(fresh: T | undefined, recorded: T | undefined): T | undefined =>
+    (writer === 'own-agent' ? (fresh ?? recorded) : (recorded ?? fresh));
+  // `label` is free text and never identity evidence, but it goes through the SAME rule as
+  // the rest: fill-only for a third party. It is displayed next to the identity in
+  // `list_known_pods` and inside `notify_agent`'s `recipient`, so letting a stranger
+  // rewrite the label a pod's own agent chose would put their words where a reader looks
+  // for that agent's — a smaller version of the `owner` defect, in the field beside it.
+  const label = keep(incoming.label, existing.label);
+  const owner = keep(incoming.owner, existing.owner);
+  const did = keep(incoming.did, existing.did);
+  const webId = keep(incoming.webId, existing.webId);
+  const inbox = keep(incoming.inbox, existing.inbox);
+  const surface = keep(incoming.surface, existing.surface);
+  const handle = keep(incoming.handle, existing.handle);
+  const channels = keep(incoming.channels, existing.channels);
+  const updatedAt = keep(incoming.updatedAt, existing.updatedAt);
+  return {
+    url: incoming.url,
+    // ★ `auto` is this relay's own statement that it watched the pod's agent authenticate.
+    // A stranger's `add_pod` must not be able to relabel that provenance as `manual`.
+    via: writer === 'own-agent' || existing.via !== 'auto' ? incoming.via : existing.via,
+    // First-seen time, never rewritten — the property the per-caller `existing?.addedAt ??
+    // now` at each call site was already reaching for.
+    addedAt: existing.addedAt,
+    ...(label !== undefined ? { label } : {}),
+    ...(owner !== undefined ? { owner } : {}),
+    ...(did !== undefined ? { did } : {}),
+    ...(webId !== undefined ? { webId } : {}),
+    ...(inbox !== undefined ? { inbox } : {}),
+    ...(surface !== undefined ? { surface } : {}),
+    ...(handle !== undefined ? { handle } : {}),
+    ...(channels !== undefined ? { channels } : {}),
+    ...(updatedAt !== undefined ? { updatedAt } : {}),
+  };
+}
 
 // Federation store config — same service-account pod the OAuth token
 // store already writes to, under a sibling `federation/` subcontainer.
@@ -6068,7 +6502,45 @@ let federationHydrateSourceCount: number = 0;
 // (each pod has its own file keyed by sha256(url)) so this only
 // elides redundant writes to the SAME URL during the same burst.
 const FEDERATION_PERSIST_DEBOUNCE_MS = 250;
-const _federationPendingWrites: Map<string, NodeJS.Timeout> = new Map();
+/**
+ * A pending debounced write, AND the settler its caller is still holding.
+ *
+ * ── ★★ THIS MAP HELD A BARE TIMER, AND CANCELLING ONE HUNG THE REQUEST ─────────────────
+ *
+ * All three cancel paths below did `clearTimeout(handle)` and nothing else. The `resolve`
+ * captured inside that timer's callback was therefore never called, so the promise
+ * `persistFederationEntryDebounced` had already handed its caller could never settle —
+ * and `handleDiscoverDirectory` does `await Promise.allSettled(pendingWrites)`.
+ *
+ * DRIVEN against the real relay: a directory document listing the SAME pod URL TWICE hung
+ * `discover_directory` forever. The second entry cancelled the first, and the HTTP request
+ * was still open at 25s; the control (three distinct pod URLs) answered 200 in 318ms. No
+ * race and no second caller were needed — one call, one foreign document, any authenticated
+ * caller, and the document is written by whoever the caller points at. Four such calls left
+ * the relay serving `/health` normally, which is what made it nasty: each leaks one
+ * held-open connection and one never-settling promise rather than crashing anything an
+ * operator would look at.
+ *
+ * ★ SO THE SETTLER TRAVELS WITH THE TIMER. Cancelling is allowed; abandoning the caller is
+ * not. `cancelPendingFederationWrite` hands the settler back and every cancel path invokes
+ * it — see there for WHEN, which is not the same question as whether.
+ */
+/**
+ * ★★ A FLAT LIST, NOT A CHAIN, AND THE DIFFERENCE IS A PROCESS ABORT.
+ *
+ * The first version carried ONE settler per pending write and each new one closed over the one
+ * it superseded (`const settle = () => { superseded?.(); resolve(); }`). That settles everybody,
+ * but by RECURSION: N duplicate entries for one URL build an N-deep call chain and invoking the
+ * last one walks it. Driven against the real relay, a 318 KiB directory document from an
+ * ordinary authenticated caller produced `RangeError: Maximum call stack size exceeded` and the
+ * child exited code 1 — the whole relay, not one request. Strictly worse than the hang it
+ * replaced, which leaked a promise and left the process serving.
+ *
+ * ★ The suite missed it because its deepest case was five entries. A recursion-depth defect is
+ * invisible until the depth is real, so the fixture that matters is the big one.
+ */
+type PendingFederationWrite = { timer: NodeJS.Timeout; settlers: (() => void)[] };
+const _federationPendingWrites: Map<string, PendingFederationWrite> = new Map();
 
 // Per-URL in-flight write promise. Serializes concurrent writes to
 // the SAME pod URL so a rapid add_pod → remove_pod → add_pod sequence
@@ -6090,6 +6562,38 @@ function withFederationUrlMutex<T>(podUrl: string, task: () => Promise<T>): Prom
 }
 
 /**
+ * Cancel the pending debounced write for `podUrl` and hand back the settler its caller is
+ * still waiting on, or `undefined` when there was nothing pending.
+ *
+ * ★ THE CALLER OF THIS FUNCTION OWNS THAT SETTLER AND MUST INVOKE IT — a cancel path that
+ * forgets is the hang described on `PendingFederationWrite`, in a different function.
+ *
+ * ★ AND IT INVOKES IT WHEN THE SUPERSEDING WRITE LANDS, NOT AT CANCEL TIME. Every cancel
+ * here happens because THIS call is about to write (or delete) the same URL, so the write
+ * the cancelled caller is waiting for is the one now in flight. Settling at cancel time
+ * would also close the hang, and would make the debounced entry point's documented promise
+ * — "resolves when the eventual write completes, so the caller can await durability" —
+ * false of every promise it cancels: they would resolve with nothing yet written.
+ * `handleDiscoverDirectory` would not notice, because its `Promise.allSettled` is gated by
+ * the LAST entry either way; that is a property of that one caller, not of the promise, so
+ * the promise is the thing kept honest. Asserted directly in §10(a) of
+ * tests/addr-directory-identity.test.ts, which watches the cancelled promise on its own and
+ * records how many writes had landed when it resolved.
+ */
+/** Drain a settler list ITERATIVELY. Never invoke one settler from inside another — see the type. */
+function settleAll(settlers: readonly (() => void)[]): void {
+  for (const s of settlers) s();
+}
+
+function cancelPendingFederationWrite(podUrl: string): (() => void)[] | undefined {
+  const pending = _federationPendingWrites.get(podUrl);
+  if (!pending) return undefined;
+  clearTimeout(pending.timer);
+  _federationPendingWrites.delete(podUrl);
+  return pending.settlers;
+}
+
+/**
  * Run the actual persistence write under the per-URL mutex. Returns a
  * promise that resolves when the PUT completes (success OR transport
  * failure — best-effort, the in-memory map is the live source of truth).
@@ -6099,6 +6603,14 @@ function withFederationUrlMutex<T>(podUrl: string, task: () => Promise<T>): Prom
  * Shared by both the synchronous (`persistFederationEntry`) and the
  * debounced (`persistFederationEntryDebounced`) entry points so the
  * write semantics are identical regardless of caller.
+ *
+ * ★★ THE ONE WRITER PROJECTION, MIRRORING `knownPodFromStoredEntry`'S ONE READER. It used
+ * to persist url/via/addedAt/label/owner and drop every agent-card field — so even after
+ * `mergeDirectoryRow` stopped `add_pod` erasing a card IN MEMORY, the very next PUT would
+ * have erased it in the STORE and the next deploy would have loaded the hole back. The two
+ * registration sites also spelled this projection out a third time inline; they now go
+ * through here, which additionally puts their writes under the same per-URL mutex the
+ * add/remove paths use rather than racing them.
  */
 function runFederationPersist(entry: KnownPodEntry): Promise<void> {
   return withFederationUrlMutex(entry.url, async () => {
@@ -6108,6 +6620,13 @@ function runFederationPersist(entry: KnownPodEntry): Promise<void> {
       addedAt: entry.addedAt,
       ...(entry.label !== undefined ? { label: entry.label } : {}),
       ...(entry.owner !== undefined ? { owner: entry.owner } : {}),
+      ...(entry.did !== undefined ? { did: entry.did } : {}),
+      ...(entry.webId !== undefined ? { webId: entry.webId } : {}),
+      ...(entry.inbox !== undefined ? { inbox: entry.inbox } : {}),
+      ...(entry.surface !== undefined ? { surface: entry.surface } : {}),
+      ...(entry.handle !== undefined ? { handle: entry.handle } : {}),
+      ...(entry.channels !== undefined ? { channels: entry.channels } : {}),
+      ...(entry.updatedAt !== undefined ? { updatedAt: entry.updatedAt } : {}),
     };
     try {
       await saveFederationEntry(persistEntry, federationStoreCfg);
@@ -6133,12 +6652,12 @@ function runFederationPersist(entry: KnownPodEntry): Promise<void> {
  */
 function persistFederationEntry(entry: KnownPodEntry): Promise<void> {
   if (entry.via === 'self') return Promise.resolve();
-  const pending = _federationPendingWrites.get(entry.url);
-  if (pending) {
-    clearTimeout(pending);
-    _federationPendingWrites.delete(entry.url);
-  }
-  return runFederationPersist(entry);
+  const superseded = cancelPendingFederationWrite(entry.url);
+  const done = runFederationPersist(entry);
+  // The write we just cancelled is superseded by this one, so its caller settles when THIS
+  // PUT lands — their `await` then means what it says. See `cancelPendingFederationWrite`.
+  if (superseded) void done.then(() => settleAll(superseded), () => settleAll(superseded));
+  return done;
 }
 
 /**
@@ -6153,14 +6672,27 @@ function persistFederationEntry(entry: KnownPodEntry): Promise<void> {
  */
 function persistFederationEntryDebounced(entry: KnownPodEntry): Promise<void> {
   if (entry.via === 'self') return Promise.resolve();
-  const existing = _federationPendingWrites.get(entry.url);
-  if (existing) clearTimeout(existing);
+  const superseded = cancelPendingFederationWrite(entry.url);
   return new Promise<void>((resolve) => {
-    const handle = setTimeout(() => {
+    // ★ THE COALESCED CALLERS SETTLE TOGETHER, SIDE BY SIDE. Whoever we just cancelled is waiting
+    // on a write of this same URL, which is now this timer's — so their settlers ride along in one
+    // FLAT list rather than nesting inside ours. A directory listing one URL N times settles N
+    // callers behind one PUT, which is the point of the debounce; before this the first N-1 never
+    // settled at all, and the first attempt at fixing that nested them and aborted the process.
+    const settlers: (() => void)[] = [...(superseded ?? []), resolve];
+    const settle = (): void => { settleAll(settlers); };
+    const timer = setTimeout(() => {
       _federationPendingWrites.delete(entry.url);
-      runFederationPersist(entry).then(resolve, resolve);
+      // ★ THE LIVE ROW, NOT THE ONE CAPTURED 250ms AGO. `saveEntry` is a whole-file PUT, so
+      // persisting a snapshot writes away whatever another writer added to that row in the
+      // meantime — a delayed replay of the erasure `mergeDirectoryRow` exists to stop, on a
+      // window an agent authenticating during a `discover_directory` import falls straight
+      // into. The map is the source of truth for the live process; write what it holds.
+      // Falls back to the captured entry only when the row is gone from memory, which is
+      // exactly what this line did before, so a deletion race behaves as it always has.
+      runFederationPersist(knownPods.get(entry.url) ?? entry).then(settle, settle);
     }, FEDERATION_PERSIST_DEBOUNCE_MS);
-    _federationPendingWrites.set(entry.url, handle);
+    _federationPendingWrites.set(entry.url, { timer, settlers });
   });
 }
 
@@ -6172,12 +6704,8 @@ function persistFederationEntryDebounced(entry: KnownPodEntry): Promise<void> {
  * resurrect the entry.
  */
 function unpersistFederationEntry(podUrl: string): Promise<void> {
-  const pending = _federationPendingWrites.get(podUrl);
-  if (pending) {
-    clearTimeout(pending);
-    _federationPendingWrites.delete(podUrl);
-  }
-  return withFederationUrlMutex(podUrl, async () => {
+  const superseded = cancelPendingFederationWrite(podUrl);
+  const done = withFederationUrlMutex(podUrl, async () => {
     try {
       await removeFederationEntry(podUrl, federationStoreCfg);
       federationLastPersistedAt = new Date().toISOString();
@@ -6185,6 +6713,12 @@ function unpersistFederationEntry(podUrl: string): Promise<void> {
       log(`[federation-store] unpersistFederationEntry(${podUrl}) failed: ${(err as Error).message}`);
     }
   });
+  // Same rule as `persistFederationEntry`, opposite direction: the add we just cancelled is
+  // superseded by this DELETE, so its caller settles when the DELETE lands. Their entry ends
+  // up removed rather than written, which is the outcome this call asked for — and a promise
+  // that never settles is the one outcome that is never right.
+  if (superseded) void done.then(() => settleAll(superseded), () => settleAll(superseded));
+  return done;
 }
 
 // Hydrate from the federation store. Cold-start safe: a missing
@@ -6197,6 +6731,49 @@ function unpersistFederationEntry(podUrl: string): Promise<void> {
 // container roll froze the entire relay process in import — health
 // checks failed, container restarted, hydration retried from scratch.
 // Mirrors `startInitialIndexRebuild` in identity/server.ts:1142.
+/**
+ * ONE READER OF A STORED DIRECTORY ROW: projects a persisted `FederationEntry` back into
+ * the in-memory `KnownPodEntry` it was written from.
+ *
+ * ★★ IT CARRIES THE AGENT-CARD FIELDS, AND THAT IS THE ENTIRE REASON IT EXISTS. At HEAD
+ * (`git show HEAD:deploy/mcp-relay/server.ts`, the hydrate loop) this copied
+ * url/via/addedAt/label/owner and dropped `did`, `webId`, `inbox`, `surface`, `handle`,
+ * `channels` and `updatedAt` — every field `autoRegisterAgentCard` had just persisted
+ * alongside them. (An earlier draft of this paragraph said SIX and omitted `updatedAt`;
+ * the set is now enumerated in the suite's §6, which runs this function and fails on any
+ * one of them, so the count is re-derived rather than restated.) So on the FIRST request
+ * after every deploy, a pod that HAD published an agent card came back as a row with no
+ * card: `describeDirectoryEntry` answered `identifiedBy: "nothing"` and the directory told
+ * the caller that addressing it was a guess, while the DID naming the agent sat one field
+ * over in the same object as `owner`. Driven, this server booted for real against a store
+ * seeded with a full agent card and, with this fix reverted, the row came back
+ * `identifiedBy: "nothing"` on a `hydrateSourceCount` that said the entry HAD loaded. The
+ * published ActivityPub actor for the same pod served `summary: "Interego agent"` with no
+ * `interego:did` and no `publicKey` at all, because memory held neither.
+ *
+ * ★ That is the class the directory projection above was written to close, on the one path
+ * that matters most. "What has this pod published?" was answered with "what is in
+ * `knownPods` right now", and the whole gap between the two questions was a dropped
+ * spread. A derived answer is only ever as good as the field it derives from surviving the
+ * trip, which is why the projection and the load now sit in one another's comments.
+ */
+function knownPodFromStoredEntry(entry: FederationEntry): KnownPodEntry {
+  return {
+    url: entry.url,
+    via: entry.via,
+    addedAt: entry.addedAt,
+    ...(entry.label !== undefined ? { label: entry.label } : {}),
+    ...(entry.owner !== undefined ? { owner: entry.owner } : {}),
+    ...(entry.did !== undefined ? { did: entry.did } : {}),
+    ...(entry.webId !== undefined ? { webId: entry.webId } : {}),
+    ...(entry.inbox !== undefined ? { inbox: entry.inbox } : {}),
+    ...(entry.surface !== undefined ? { surface: entry.surface } : {}),
+    ...(entry.handle !== undefined ? { handle: entry.handle } : {}),
+    ...(entry.channels !== undefined ? { channels: entry.channels } : {}),
+    ...(entry.updatedAt !== undefined ? { updatedAt: entry.updatedAt } : {}),
+  };
+}
+
 let federationHydrateReady: Promise<void> | null = null;
 function startFederationHydrate(): Promise<void> {
   return (federationHydrateReady ??= loadFederationEntries(federationStoreCfg).then(loaded => {
@@ -6204,13 +6781,7 @@ function startFederationHydrate(): Promise<void> {
       // Defensive: loadEntries already filters via:'self', but double-
       // check at the insertion point so future writers can't sneak one in.
       if (entry.via === 'self') continue;
-      knownPods.set(entry.url, {
-        url: entry.url,
-        via: entry.via,
-        addedAt: entry.addedAt,
-        ...(entry.label !== undefined ? { label: entry.label } : {}),
-        ...(entry.owner !== undefined ? { owner: entry.owner } : {}),
-      });
+      knownPods.set(entry.url, knownPodFromStoredEntry(entry));
     }
     // Record successful hydrate completion so `list_known_pods` +
     // `/relay/federation-status` can distinguish 'never wrote since
@@ -6396,6 +6967,29 @@ async function requireOwnPod(args: ToolArgs, targetPodUrl: string, tool: string)
     });
   }
   return null;
+}
+
+/**
+ * Which kind of directory-row writer THIS CALL is, for a row about `podUrl` —
+ * `own-agent` only when the relay's own session identity says the caller IS that pod.
+ *
+ * ★ IT ASKS THE SESSION, NEVER THE ROW. `mergeDirectoryRow` takes `writer` as a parameter
+ * precisely so the rule is not a function of caller-writable data, and `callerOwnPod` reads
+ * `_session_user_id` — stripped from the wire and re-injected from verified auth — so this
+ * is the same kind of answer rather than a weakening of it. A call site that can name its
+ * writer kind statically still should; this exists for the sites that cannot, because the
+ * answer depends on WHICH pod the caller named.
+ *
+ * ★ AND IT IS NOT `requireOwnPod`. That gate is about relay-credentialed writes INTO a
+ * pod, which is why `RELAY_ALLOW_CROSS_POD_WRITES` can relax it. This one is about the
+ * relay's own shared federation directory, where an escape hatch would hand every caller
+ * back the erasure the merge rule exists to stop; unproven identity reads as `third-party`
+ * rather than refusing, since a third party may still do the things a third party may do.
+ */
+async function directoryRowWriter(args: ToolArgs, podUrl: string): Promise<RowWriter> {
+  const own = await callerOwnPod(args).catch(() => undefined);
+  if (!own) return 'third-party';
+  return canonicalPodKey(podUrl) === canonicalPodKey(own) ? 'own-agent' : 'third-party';
 }
 
 /**
@@ -6757,15 +7351,26 @@ async function handleListKnownPods(args: ToolArgs): Promise<string> {
   const callerDid = (args._session_agent_did as string | undefined)
     ?? (args._session_agent_id as string | undefined);
   const callerKey = callerPod ? canonicalPodKey(callerPod) : undefined;
+  // ★★ EVERY ROW SAYS WHAT IT IS, OR SAYS THAT NOTHING SAYS. Before this projection a row
+  // was the stored entry spread verbatim — a pod URL, an opaque `eth-`/`u-eth-` slug, a
+  // `surface` string, and an `owner` DID when the store happened to carry one. Nothing in
+  // it said WHICH of those identified the pod, and nothing at all was said when none of
+  // them did, so a caller choosing between four such rows was guessing — which is how
+  // findings addressed to the maintainer were delivered to the Discord bot with
+  // `delivered: true`. `agent` and `surface` are DERIVED from the row's own published
+  // did:web (see describeDirectoryEntry); they are not a new field in the store and not a
+  // claim anyone made about themselves.
   const redactedPods = pods.map(p => {
+    const identity = describeDirectoryEntry(p);
     const isOwner = (!!callerKey && canonicalPodKey(p.url) === callerKey)
       || (!!callerDid && (p.did === callerDid || p.webId === callerDid));
-    if (isOwner || !Array.isArray(p.channels)) return p;
+    if (isOwner || !Array.isArray(p.channels)) return { ...p, ...identity };
     return {
       ...p,
       channels: p.channels.map(c => (NATIVE_CHANNELS.includes(c.type)
         ? c
         : { type: c.type, value: '[redacted — visible to the owning agent only]' })),
+      ...identity,
     };
   });
   return JSON.stringify({
@@ -6774,6 +7379,33 @@ async function handleListKnownPods(args: ToolArgs): Promise<string> {
     lastHydratedAt: federationLastHydratedAt,
     hydrateSourceCount: federationHydrateSourceCount,
     hydrateSource: oauthStorePodUrl,
+    // ★ Said here rather than left to be inferred: this directory answers "who is here",
+    // never "who is in charge". `agent`/`surface` are read off each row's own DID; no row
+    // is marked as maintaining, operating or speaking for this deployment, and a caller
+    // looking for a particular person should address the identity they can verify (a DID,
+    // an acct: handle) rather than the pod whose name reads best.
+    // ★★ THIS NOTE IS SCOPED TO WHAT THIS DIRECTORY HOLDS, and the previous wording was
+    // not: it said `identifiedBy: "nothing"` "means the pod has published no agent card
+    // here", which a driven run falsified — two pods that HAD published cards read
+    // "nothing" because the hydrate path dropped the card fields on load. Even with that
+    // fixed, this relay knows only its own record: it does not dereference the DID and
+    // cannot see what a pod published elsewhere. So the note says what was checked, and
+    // stops there.
+    // ★★ AND IT NOW SEPARATES THE TWO PROVENANCES, because that separation is the only
+    // reason a reader can act on `agent` at all. `did`/`webId`/`surface` are written from
+    // the authenticated session; `owner` and `label` are free text any authenticated
+    // caller can write on any peer row via add_pod. A driven run published
+    // `surface: "maintainer"` off a stranger's `owner` string before that split existed.
+    note: '`agent` and `surface` are derived from the did:web name (<surface>-<podId>) '
+      + 'THIS relay recorded when that agent last authenticated here; the relay does not '
+      + 'dereference or re-verify the DID. `owner` and `label` are FREE TEXT that any '
+      + 'authenticated caller can write on any pod\'s row (add_pod, or a directory this '
+      + 'relay imported) — never identity evidence; an agent name spelled in `owner` is '
+      + 'reported separately as `claimedAgent`/`claimedSurface` with `identifiedBy: '
+      + '"unverified owner claim"`, and it is a claim, not a match. `identifiedBy: '
+      + '"nothing"` means this directory holds no did:web naming an agent for that pod — '
+      + 'the pod may still publish a card elsewhere, so it is unidentified here rather '
+      + 'than known to be nameless. No row asserts a role or authority.',
   });
 }
 
@@ -6921,7 +7553,10 @@ function autoRegisterAgentCard(
     { type: 'acct', value: handle },
   ];
   const externalChannels = (existing?.channels ?? []).filter(c => !['ldn', 'activitypub', 'acct'].includes(c.type));
-  const entry: KnownPodEntry = {
+  // ★ `own-agent`: this hook only ever runs for a caller whose identity the relay just
+  // authenticated, writing that caller's OWN pod — so its `did`/`owner` REPLACE whatever a
+  // third party left behind, which is how a squatted `owner` gets corrected.
+  const entry = mergeDirectoryRow(existing, {
     url: podUrl,
     via: existing && existing.via !== 'self' ? existing.via : 'auto',
     label: label ?? existing?.label,
@@ -6934,39 +7569,55 @@ function autoRegisterAgentCard(
     handle,
     channels: [...nativeChannels, ...externalChannels],
     ...(surface ? { surface } : existing?.surface ? { surface: existing.surface } : {}),
-  };
+  }, 'own-agent');
   knownPods.set(podUrl, entry);
   evictCanonicalDuplicates(podUrl);
-  void saveFederationEntry(
-    {
-      url: podUrl,
-      via: entry.via as FederationEntry['via'],
-      addedAt: entry.addedAt,
-      ...(entry.label ? { label: entry.label } : {}),
-      owner: did,
-      did,
-      webId: did,
-      inbox,
-      handle,
-      channels: entry.channels,
-      ...(surface ? { surface } : {}),
-      updatedAt: now,
-    },
-    federationStoreCfg,
-  ).then(() => { federationLastPersistedAt = new Date().toISOString(); }).catch(() => {});
+  // Through the shared projection so the store gets what every other writer writes — this
+  // site used to spell the FederationEntry out by hand, which is how a field added to one
+  // and not the other becomes a row that loads back half-identified. It also puts this
+  // write under the same per-URL mutex the add/remove paths use, instead of racing them.
+  //
+  // ★ `runFederationPersist` AND NOT `persistFederationEntry`. The cancelling entry point
+  // exists to SUPERSEDE a pending debounced write; this hook has nothing to supersede. It
+  // fires on every authenticated request, so routing it through the cancelling path would
+  // tear down the coalescing timer of any `discover_directory` batch in flight — one PUT
+  // per authenticated request instead of one per burst — for no gain, since the debounced
+  // timer already persists the LIVE row this hook has just written into `knownPods`.
+  // Historically this choice also avoided a hang: cancelling used to drop the cancelled
+  // write's `resolve`, so `handleDiscoverDirectory`'s `await Promise.allSettled(...)` never
+  // returned. That is closed at the source now — see `cancelPendingFederationWrite` — so
+  // what is left here is a write-semantics argument, not a hazard.
+  void runFederationPersist(entry).catch(() => {});
 }
 
 /**
- * Resolve a notify target (DID, pod URL, or acct: handle) to a pod URL.
- * Prefers a directory match (so handles + DIDs work); falls back to
- * treating a u-pk-/eth-/did-shaped id as a pod under CSS_URL.
+ * How a recipient string became a pod. Reported to the sender because the routes are not
+ * equally trustworthy: `directory-*` means an agent card the recipient published matched
+ * what was typed, while `pod-id*` and `did:ethr` mean the relay DERIVED a pod from a
+ * string shape and matched no identity at all. A sender who typed a pod id has been
+ * guessing, and only the first three routes are evidence they guessed right.
  */
-function resolveTargetPodUrl(to: string): string | undefined {
+type RecipientRoute =
+  | 'directory-did' | 'directory-handle' | 'directory-webid'
+  | 'pod-id-in-url' | 'pod-id' | 'did:ethr-derived' | 'external-url';
+
+/**
+ * Resolve a notify target (DID, pod URL, or acct: handle) to a pod URL, AND to the route
+ * that got there. Prefers a directory match (so handles + DIDs work); falls back to
+ * treating a u-pk-/eth-/did-shaped id as a pod under CSS_URL.
+ *
+ * ★ THE ROUTE IS RETURNED, NOT DISCARDED, BECAUSE THE CALLER'S CONFIRMATION NEEDS IT.
+ * `notify_agent` used to answer `delivered: true` plus the pod URL the sender had already
+ * typed — a confirmation of the write, not of the recipient. See handleNotifyAgent.
+ */
+function resolveTargetPodUrl(to: string): { pod: string; via: RecipientRoute } | undefined {
   if (!to) return undefined;
   // A registered agent (by did/handle/webId) resolves to its canonical pod URL —
   // checked FIRST so a WebID never short-circuits to a profile-local inbox.
   for (const e of knownPods.values()) {
-    if (e.did === to || e.handle === to || e.webId === to) return e.url;
+    if (e.did === to) return { pod: e.url, via: 'directory-did' };
+    if (e.handle === to) return { pod: e.url, via: 'directory-handle' };
+    if (e.webId === to) return { pod: e.url, via: 'directory-webid' };
   }
   // An Interego WebID/profile URL carries the agent's pod id (u-pk-/u-did-/eth-)
   // in its path. Resolve to the CSS pod root — its /inbox/ is the OPERATIONAL
@@ -6976,14 +7627,14 @@ function resolveTargetPodUrl(to: string): string | undefined {
   // dead-lettered into …/profile/inbox/, which no one polls).
   const idm = to.match(/(u-pk-|u-did-|u-eth-|eth-)[0-9a-z]+/i);
   if (/^https?:\/\//.test(to)) {
-    if (idm) return `${CSS_URL}${idm[0].toLowerCase()}/`;
-    return to;   // external / non-Interego URL — best-effort, delivered as given
+    if (idm) return { pod: `${CSS_URL}${idm[0].toLowerCase()}/`, via: 'pod-id-in-url' };
+    return { pod: to, via: 'external-url' };   // external / non-Interego — best-effort, as given
   }
   // Bare id (e.g. "u-pk-…", "eth-…").
-  if (/^(u-pk-|u-did-|u-eth-|eth-)/.test(to)) return `${CSS_URL}${to}/`;
+  if (/^(u-pk-|u-did-|u-eth-|eth-)/.test(to)) return { pod: `${CSS_URL}${to}/`, via: 'pod-id' };
   // did:ethr → eth-<slug> pod.
   const m = to.match(/^did:ethr:0x([0-9a-fA-F]{40})$/);
-  if (m) return `${CSS_URL}eth-${m[1]!.slice(0, 12).toLowerCase()}/`;
+  if (m) return { pod: `${CSS_URL}eth-${m[1]!.slice(0, 12).toLowerCase()}/`, via: 'did:ethr-derived' };
   return undefined;
 }
 
@@ -7001,8 +7652,9 @@ async function handleNotifyAgent(args: ToolArgs): Promise<string> {
   const summary = (args.summary ?? args.subject) as string | undefined;
   if (!to || typeof to !== 'string') return JSON.stringify({ delivered: false, error: 'notify_agent requires `to` (DID, pod URL, or acct: handle)' });
   if (!summary || typeof summary !== 'string') return JSON.stringify({ delivered: false, error: 'notify_agent requires `summary`' });
-  const targetPod = resolveTargetPodUrl(to);
-  if (!targetPod) return JSON.stringify({ delivered: false, error: `could not resolve recipient "${to}" to a pod` });
+  const resolution = resolveTargetPodUrl(to);
+  if (!resolution) return JSON.stringify({ delivered: false, error: `could not resolve recipient "${to}" to a pod` });
+  const targetPod = resolution.pod;
   // Server-authoritative sender (never the forgeable args.agent_id) — this is
   // the AS2 `actor` the recipient sees and trusts.
   const from = callerAgentId(args) ?? 'urn:unknown';
@@ -7041,18 +7693,98 @@ async function handleNotifyAgent(args: ToolArgs): Promise<string> {
   // CSS-pod inbox, so a best-effort external delivery can't masquerade as a sure
   // hand-off (f-foxxi-webid-inbox-routing).
   const canonicalInbox = isCanonicalPodTarget(targetPod);
+  /**
+   * ── ★★ A CONFIRMATION MUST NAME WHO IT REACHED, NOT ONLY THAT IT WROTE ──────────────
+   *
+   * The answer used to be `delivered: true` plus `to` (the string the sender typed) and
+   * `targetPod` (a URL ending in an opaque slug). Both are true and neither answers the
+   * question the sender asked, which is "did this reach the agent I meant". Measured
+   * 2026-08-24: an external agent addressed findings to the maintainer, resolved to
+   * `u-eth-053ad15f9633`, got `delivered: true`, and the message sat in the DISCORD BOT's
+   * inbox. Nothing in the response could have told them, so nothing sent them back to look.
+   *
+   * So the response now states what it resolved FROM (`to`), BY WHAT ROUTE (`resolvedVia`),
+   * and TO WHOM (`recipient`, read off the recipient's own published DID — never a claim
+   * this relay invents). `resolvedTo` is the one-line form, because a sender skimming a
+   * success reads one line: seeing `interego-discord-u-eth-053ad15f9633` where they meant
+   * the maintainer is the whole fix.
+   *
+   * ★ IT IS `resolvedTo` AND NOT `deliveredTo`, WHICH IS NOT PEDANTRY IN THIS FILE. Resolution
+   * happens before the write and is true whichever way the write goes; a field named for the
+   * delivery would sit next to `delivered: false` asserting a delivery that did not happen —
+   * a field that reads as a confirmation of something adjacent to what it reports, which is
+   * the exact defect above wearing the other shoe.
+   *
+   * ★ AND A POD IS NOT AN IDENTITY. `resolvedVia` distinguishes the routes where an agent
+   * card MATCHED what was typed from the routes where the relay merely derived a pod out of
+   * a string's shape. The second kind is a guess, and it is warned about even when it
+   * succeeds — a delivery to an unidentified pod is exactly the success that ends the
+   * enquiry without answering it.
+   */
+  const identityCard = cardMatches.find(e => e.did)
+    ?? cardMatches.find(e => e.webId ?? e.owner)
+    ?? card;
+  const recipient = describeDirectoryEntry(identityCard ?? {});
+  /**
+   * ★★ `recipientKnown` MEANS THE RECIPIENT IS IDENTIFIED — NOT THAT A ROW EXISTS. It was
+   * `!!identityCard`, i.e. "there is an entry for this URL in `knownPods`", and a driven
+   * run put `recipientKnown: true` directly above `identifiedBy: "nothing"` and
+   * "addressing it is a guess" IN THE SAME OBJECT. That is this handler's own defect class
+   * a second time: a field that answers a question adjacent to the one the sender is
+   * reading it as. A row in a directory is not knowledge of who is there, so the row's mere
+   * existence is reported separately under a name that claims only that.
+   */
+  const inDirectory = !!identityCard;
+  // ★★ AND IT ASKS THE CLOSED LIST, NOT `!== 'nothing'`. That spelling meant "the evidence
+  // is not literally the string `nothing`", which was the same answer for the evidence
+  // value added right after it — `unverified owner claim`, a did:web a stranger typed into
+  // `owner` via add_pod. Driven, that shape answered `recipientKnown: true, resolvedTo:
+  // "maintainer-u-eth-8f3b8e939600"` on a pod nobody had ever authenticated from.
+  const recipientKnown = identityIsObserved(recipient);
+  const addressedAnIdentity = resolution.via.startsWith('directory-');
+  // ★ AN UNIDENTIFIED POD MUST NOT GET A NAME-SHAPED ANSWER. This read
+  // `${podLocalPart(targetPod)} — unidentified`, and once interpolated into the warning
+  // below it came out as: the agent "eth-8f3b8e939600 — unidentified" — rendering the word
+  // `unidentified` as if it were part of somebody's name. Lead with the absence instead, so
+  // the slug can only be read as the pod it is.
+  const resolvedTo = recipient.agent
+    ?? (recipient.surface ? `${recipient.surface} (${podLocalPart(targetPod)})` : undefined)
+    ?? `no identified agent — pod ${podLocalPart(targetPod)}`;
+  const warnings: string[] = [];
+  if (ldn?.ok && !canonicalInbox) {
+    warnings.push(`delivered to ${targetPod} but this is not a recognized CSS-pod inbox the recipient is known to poll — confirm the recipient reads this inbox, or address them by did:ethr / pod-id / a registered WebID.`);
+  }
+  if (!recipientKnown) {
+    // ★ The three reasons are distinguished because they need different next steps: a pod
+    // with no row at all may simply never have authenticated here; a pod WITH a row that
+    // names nobody is the case the old `recipientKnown: true` hid entirely; and a row
+    // carrying a name in `owner` is the one a sender is MOST likely to have acted on,
+    // because list_known_pods shows them that name — so it must be named back to them as
+    // the claim it is, rather than reported as "nothing here says who or what that pod is",
+    // which they can see is not true of the row they read.
+    warnings.push(recipient.claimedAgent
+      ? `this federation directory has a row for ${targetPod} whose \`owner\` field spells the agent name "${recipient.claimedAgent}", but that field is writable by any authenticated caller and this relay never observed that pod authenticate as it — nothing here identifies the recipient, so this may not be the agent you meant. Check list_known_pods.`
+      : inDirectory
+        ? `this federation directory has a row for ${targetPod} but it holds no did:web naming an agent, so nothing here says who or what that pod is — this may not be the agent you meant. Check list_known_pods.`
+        : `no row in this federation directory covers ${targetPod} at all — nothing here says who or what it is, so this may not be the agent you meant. Check list_known_pods.`);
+  } else if (!addressedAnIdentity) {
+    warnings.push(`you addressed a pod, not an identity: "${to}" was resolved by ${resolution.via} to the agent "${resolvedTo}". If that is not who you meant, address them by their DID or acct: handle from list_known_pods.`);
+  }
   return JSON.stringify({
     delivered: ldn?.ok ?? false,
+    resolvedTo,
     canonicalInbox,
     to,
+    resolvedVia: resolution.via,
+    recipientKnown,
+    inDirectory,
+    recipient: { pod: targetPod, ...(identityCard?.did ? { did: identityCard.did } : {}), ...(identityCard?.handle ? { handle: identityCard.handle } : {}), ...(identityCard?.label ? { label: identityCard.label } : {}), ...recipient },
     targetPod,
     inbox: inboxUrlFor(targetPod),
     notificationUrl: ldn?.detail,
     channels: results,
     from,
-    ...(ldn?.ok && !canonicalInbox
-      ? { warning: `delivered to ${targetPod} but this is not a recognized CSS-pod inbox the recipient is known to poll — confirm the recipient reads this inbox, or address them by did:ethr / pod-id / a registered WebID.` }
-      : {}),
+    ...(warnings.length ? { warning: warnings.join(' ') } : {}),
   });
 }
 
@@ -7270,7 +8002,10 @@ async function handleSetReachability(args: ToolArgs): Promise<string> {
   const merged = [...native, ...incoming];
   const now = new Date().toISOString();
   const lp = podLocalPart(podUrl);
-  const updated: KnownPodEntry = {
+  // ★ `own-agent`: `callerOwnPod` proved the pod and `callerAgentId` is session-derived, so
+  // this is the pod's own agent describing itself — the one writer allowed to replace what
+  // the relay recorded. Same shared persist as every other writer.
+  const updated = mergeDirectoryRow(existing, {
     url: podUrl,
     via: existing && existing.via !== 'self' ? existing.via : 'auto',
     label: existing?.label,
@@ -7283,13 +8018,13 @@ async function handleSetReachability(args: ToolArgs): Promise<string> {
     handle: `acct:${lp}@${RELAY_HANDLE_HOST}`,
     channels: merged,
     ...(existing?.surface ? { surface: existing.surface } : {}),
-  };
+  }, 'own-agent');
   knownPods.set(podUrl, updated);
   evictCanonicalDuplicates(podUrl);
-  void saveFederationEntry(
-    { url: podUrl, via: updated.via as FederationEntry['via'], addedAt: updated.addedAt, owner: did, did, webId: did, inbox: updated.inbox, handle: updated.handle, channels: merged, updatedAt: now, ...(updated.surface ? { surface: updated.surface } : {}) },
-    federationStoreCfg,
-  ).then(() => { federationLastPersistedAt = new Date().toISOString(); }).catch(() => {});
+  // `runFederationPersist`, not `persistFederationEntry` — same reason as
+  // `autoRegisterAgentCard`: this hook has no pending write to supersede, and cancelling
+  // one would only defeat a concurrent import's coalescing.
+  void runFederationPersist(updated).catch(() => {});
   return JSON.stringify({ ok: true, pod: podUrl, channels: merged });
 }
 
@@ -7384,13 +8119,17 @@ async function handleAddPod(args: ToolArgs): Promise<string> {
   // label) so the audit trail stays meaningful — first-seen time, not
   // most-recent-edit time.
   const existing = knownPods.get(url);
-  const entry: KnownPodEntry = {
+  // ★★ `third-party`: `targetOnly` means this pod is a PEER — the caller proved nothing
+  // about it. Before the merge, this literal replaced the whole row and deleted the
+  // target's `did`/`webId`/`surface`/`handle`/`inbox`/`channels` AND its `owner`, durably
+  // and with no in-process way back (see mergeDirectoryRow's header for the driven run).
+  const entry = mergeDirectoryRow(existing, {
     url,
     label: args.label as string | undefined,
     owner: args.owner as string | undefined,
     via: 'manual',
     addedAt: existing?.addedAt ?? new Date().toISOString(),
-  };
+  }, 'third-party');
   knownPods.set(url, entry);
   // AWAIT the persist before returning — add_pod is a control-plane
   // mutator and durability of a single PUT (~300-800ms against an
@@ -7413,6 +8152,57 @@ async function handleRemovePod(args: ToolArgs): Promise<string> {
   const sel = resolvePodSubject(args as Record<string, unknown>, { cssUrl: CSS_URL, tool: 'remove_pod', targetOnly: true });
   if (sel.refusal) return JSON.stringify(sel.refusal);
   const url = sel.subject.podUrl;
+  // ── ★★ THE ERASURE, ONE TOOL OVER FROM WHERE `mergeDirectoryRow` CLOSED IT ────────────
+  //
+  // `mergeDirectoryRow` stopped a third party's `add_pod` from emptying a registered
+  // agent's row. This tool deleted the whole row and its store file, ungated. DRIVEN: any
+  // authenticated caller, `remove_pod {pod_url: <a peer's registered pod>}` → 200
+  // `{removed: true}`; `notify_agent` addressed to that agent's OWN DID then answered
+  // `delivered: false, "could not resolve recipient … to a pod"`, and `GET
+  // /agents/<localpart>` 404'd — the identity gone from the relay's own domain. It does not
+  // self-heal in-process: `_autoRegistered` is process-local, so the victim
+  // re-authenticating changed nothing. One authenticated stranger could unregister anybody.
+  //
+  // ★ SAME DISTINCTION AS THE MERGE, DECIDED AT THE CALL SITE. The pod's own agent may
+  // remove its own row — de-registering is a thing an agent is entitled to do. A third
+  // party may remove a row this relay never identified: a dead peer somebody added by hand
+  // or an import brought in, and a squat, which is a real and useful thing to be able to
+  // drop. What a third party may not do is delete an identity the relay itself observed.
+  //
+  // ★ AND THE REFUSAL SAYS THERE IS NOWHERE ELSE FOR IT TO GO, rather than no-op'ing
+  // politely. There is no per-caller view of this directory to drop a peer from: one map,
+  // one store, served to every caller and to the WebFinger/ActivityPub surfaces. A tool
+  // that answered `{removed: true}` while changing nothing would be this project's own
+  // recurring defect — an answer about a different question than the one asked.
+  //
+  // ★ AND IT NARROWS THE OPERATOR TOO, WHICH IS THE PRICE AND IS STATED RATHER THAN HIDDEN.
+  // The `RELAY_MCP_API_KEY` credential resolves to `RELAY_MAINTAINER_POD_NAME`, so it is a
+  // third party to every other pod and this refuses it as well. That is deliberate — an
+  // escape hatch here would hand every caller back the erasure — and the operator's route
+  // for a row that genuinely must go is the federation store itself (delete the entry file,
+  // then restart, since the in-memory map is the live authority for a running process). If
+  // that ever needs to be a tool, it should be a NEW one that says operator in its name,
+  // not a widening of the one any authenticated agent can call.
+  const existing = knownPods.get(url);
+  const writer = await directoryRowWriter(args, url);
+  const identity = existing ? describeDirectoryEntry(existing) : undefined;
+  if (writer === 'third-party' && identity && identityIsObserved(identity)) {
+    return JSON.stringify({
+      removed: false,
+      url,
+      error: 'remove_pod: forbidden — this row carries an identity this relay observed when '
+        + 'that pod\'s own agent authenticated, and you are not that agent',
+      detail: 'This federation directory is one shared record, not your view of it: removing '
+        + 'the row unregisters that agent for every caller, and takes its WebFinger handle, '
+        + 'its ActivityPub actor and its notify_agent reachability with it, durably. So there '
+        + 'is nothing here you can drop it from privately — only the pod\'s own agent can '
+        + 'remove its row. Rows this relay never identified (identifiedBy "nothing" or '
+        + '"unverified owner claim" in list_known_pods) stay removable by anyone, which is '
+        + 'what covers a dead peer or a squatted entry.',
+      identifiedBy: identity.identifiedBy,
+      ...(identity.agent !== undefined ? { agent: identity.agent } : {}),
+    });
+  }
   const removed = knownPods.delete(url);
   // AWAIT the DELETE before returning so a restart in the unpersist
   // window doesn't resurrect the entry on next load. Same durability
@@ -7433,13 +8223,16 @@ async function handleDiscoverDirectory(args: ToolArgs): Promise<string> {
   for (const entry of directory.entries) {
     if (!knownPods.has(entry.podUrl)) added++;
     const existing = knownPods.get(entry.podUrl);
-    const next: KnownPodEntry = {
+    // ★★ `third-party`, and the most third-party writer there is: these fields come from a
+    // FOREIGN directory document this relay fetched. Importing a directory that happens to
+    // list one of our own agents' pods used to delete that agent's card wholesale.
+    const next = mergeDirectoryRow(existing, {
       url: entry.podUrl,
       label: entry.label,
       owner: entry.owner,
       via: 'directory',
       addedAt: existing?.addedAt ?? new Date().toISOString(),
-    };
+    }, 'third-party');
     knownPods.set(entry.podUrl, next);
     pendingWrites.push(persistFederationEntryDebounced(next));
   }
@@ -7483,13 +8276,14 @@ async function handleResolveWebfinger(args: ToolArgs): Promise<string> {
   const result = await resolveWebFinger(args.resource as string, { fetch: solidFetch });
   if (result.podUrl) {
     const existing = knownPods.get(result.podUrl);
-    const entry: KnownPodEntry = {
+    // ★ `third-party`: resolving somebody's WebFinger says where their pod is, not who they
+    // are. This site already hand-carried `label` and `owner`; the merge is what carries
+    // the six card fields it did not know to.
+    const entry = mergeDirectoryRow(existing, {
       url: result.podUrl,
       via: 'webfinger',
       addedAt: existing?.addedAt ?? new Date().toISOString(),
-      ...(existing?.label !== undefined ? { label: existing.label } : {}),
-      ...(existing?.owner !== undefined ? { owner: existing.owner } : {}),
-    };
+    }, 'third-party');
     knownPods.set(result.podUrl, entry);
     // AWAIT the persist for parity with add_pod — webfinger resolution
     // is a single-entry user-facing add, same durability argument.
@@ -9013,6 +9807,43 @@ const PUBLISH_CONTEXT_OUTPUT = mcpOutputSchema({
     pod: { type: 'string', description: 'Pod URL the descriptor was written to' },
     descriptorUrl: { type: 'string', description: 'URL of the published descriptor .ttl' },
     graphUrl: { type: 'string', description: 'URL of the graph payload (.trig or .envelope.jose.json)' },
+    /**
+     * ★ DECLARED, NOT MERELY EMITTED. A response field a caller cannot discover from the
+     * schema is one they never look for — which is the exact failure this field exists to
+     * end, so shipping it undocumented would have reproduced the defect in the remedy.
+     */
+    conformance: {
+      type: 'object',
+      description: 'What the SHACL gate actually enforced — present only when at least one shape ran. `published: true` alone cannot distinguish "validated, clean" from "validated against a document that declares no shapes", because both conform with no results. `validated` lists every shape the gate resolved with `declared` (shapes compiled from the document) and `applied` (how many selected a node in THIS graph). `unenforced` appears ONLY when a shape constrained nothing, each entry carrying `why`: "declares-no-shapes" (the document is not a shapes graph — reachable only for a pod\'s own container declaration, since a caller-named one is refused 422 iep:shapeDeclaresNoShapes) or "targets-nothing-here" (a caller-named shapes graph none of whose shapes matched this payload — commonly an ontology IRI named where its separate -shapes document belongs).',
+      properties: {
+        validated: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              shapeIri: { type: 'string' },
+              source: { type: 'string', enum: ['caller', 'container'] },
+              declared: { type: 'number' },
+              applied: { type: 'number' },
+            },
+          },
+        },
+        unenforced: {
+          type: 'array',
+          description: 'Shapes that constrained nothing. Absent when there are none.',
+          items: {
+            type: 'object',
+            properties: {
+              shapeIri: { type: 'string' },
+              source: { type: 'string', enum: ['caller', 'container'] },
+              declared: { type: 'number' },
+              applied: { type: 'number' },
+              why: { type: 'string', enum: ['declares-no-shapes', 'targets-nothing-here'] },
+            },
+          },
+        },
+      },
+    },
     encrypted: { type: 'boolean', description: 'True when the graph was wrapped in a JOSE envelope' },
     visibility: {
       type: 'string',
@@ -9203,12 +10034,30 @@ const LIST_KNOWN_PODS_OUTPUT = mcpOutputSchema({
         type: 'object',
         properties: {
           url: { type: 'string' },
-          label: { type: 'string' },
-          owner: { type: 'string', description: 'Owner WebID when known' },
-          via: { type: 'string', description: 'How the pod entered the registry (manual / directory / webfinger / home)' },
+          label: { type: 'string', description: 'Free text. NOT identity evidence: any authenticated caller can write it on any pod\'s row via add_pod, or it can arrive in an imported directory' },
+          owner: { type: 'string', description: 'Free text of the same kind — NOT proof of ownership and never the row\'s identity. A did:web spelled here is reported as `claimedAgent`, not as `agent`' },
+          via: { type: 'string', description: 'How the pod entered the registry (manual / directory / webfinger / home / auto — `auto` means this relay itself registered the pod\'s agent)' },
           isHome: { type: 'boolean' },
           lastSeen: { type: 'string' },
           subscribed: { type: 'boolean' },
+          // ★ Declared, not just returned — and for the record, NOT because the schema was
+          // bare. `git show HEAD` shows url/label/owner/via/isHome/lastSeen/subscribed were
+          // all already declared, so an earlier version of this comment ("could previously
+          // see only `url` and `label`") was simply false. What those seven never said is
+          // WHICH of them identifies the pod, or that none of them does — so a caller
+          // reading the schema to decide how to address someone still had only slugs to
+          // choose between. The NINE below are the row's statement about itself, plus the
+          // evidence it rests on and — since a driven `add_pod` published `surface:
+          // "maintainer"` off a stranger's `owner` string — what merely got typed at it.
+          did: { type: 'string', description: 'The did:web this directory recorded for the pod when its agent last authenticated here — not re-fetched or verified per call' },
+          handle: { type: 'string', description: 'acct: handle resolvable via WebFinger' },
+          agent: { type: 'string', description: 'Mesh agent name read off that did:web, e.g. "interego-discord-u-eth-053ad15f9633". Set only from evidence this relay recorded — never from `owner`' },
+          surface: { type: 'string', description: 'Role-bearing head of that name, e.g. "interego-discord" — NOT a claim of authority' },
+          identifiedBy: { type: 'string', description: '"did:web agent name" | "registered surface" | "unverified owner claim" | "nothing". The first two are evidence THIS relay recorded from an authenticated session; "unverified owner claim" means the only agent name here was typed into the caller-writable `owner` field; "nothing" means this directory holds no name at all for the pod — which does not stop the pod publishing a card elsewhere' },
+          claimedAgent: { type: 'string', description: 'An agent name the row\'s `owner` field SPELLS and nothing here backs. Deliberately not `agent` — treat it as a lead to verify (fetch the DID, or ask the agent), never as the recipient' },
+          claimedSurface: { type: 'string', description: 'Role-bearing head of `claimedAgent`. Same standing: somebody typed it' },
+          claimNote: { type: 'string', description: 'Who can write `owner`, present whenever `claimedAgent` is' },
+          identityNote: { type: 'string', description: 'Why the row is unidentified here, when it is' },
         },
         required: ['url'],
       },
@@ -9582,7 +10431,7 @@ const TOOL_SCHEMAS = [
         conforms_to_shapes: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Optional list of SHACL shape IRIs the inbound graph_content MUST conform to. Each shape is fetched (text/turtle) and run against the payload BEFORE any pod write — non-conformance rejects with the same 422 envelope as the container-declared conformance gate ({ error: "shape_violation", code: 422, shape, violations: [...] }) and the descriptor + payload never land on the pod. Stacks on top of any iep:conformsTo / dct:conformsTo shapes the target container (or its manifest collection) already declares; ALL shapes (container-declared + caller-supplied) must conform — any one failing rejects. Use to enforce a per-publish shape contract from the MCP wire without relying on the pod\'s .well-known/container-shape file being present.',
+          description: 'Optional list of SHACL shape IRIs the inbound graph_content MUST conform to. Each shape is fetched (text/turtle) and run against the payload BEFORE any pod write — non-conformance rejects with the same 422 envelope as the container-declared conformance gate ({ error: "shape_violation", code: 422, shape, violations: [...] }) and the descriptor + payload never land on the pod. Naming a document that FETCHES AND PARSES BUT DECLARES NO SHAPES is also a 422, carrying the constraint component iep:shapeDeclaresNoShapes: an ontology named where a shapes graph was meant would otherwise validate everything by validating nothing, and reported success is the wrong answer to "enforce this contract". The same document declared by the pod\'s own container is REPORTED rather than refused (conformance.unenforced, why: "declares-no-shapes"), because the pod owner is not the caller. Stacks on top of any iep:conformsTo / dct:conformsTo shapes the target container (or its manifest collection) already declares; ALL shapes (container-declared + caller-supplied) must conform — any one failing rejects. Use to enforce a per-publish shape contract from the MCP wire without relying on the pod\'s .well-known/container-shape file being present.',
         },
       },
       required: ['graph_iri', 'graph_content'],
@@ -9853,7 +10702,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'list_known_pods',
-    description: 'Compatibility shim — local registry view; underlying entries are dereferenceable IRIs. Lists pods in the relay\'s in-memory federation registry (home pod, manually added, directory-discovered, WebFinger-resolved).',
+    description: 'Compatibility shim — local registry view; underlying entries are dereferenceable IRIs. Lists pods in the relay\'s in-memory federation registry (home pod, manually added, directory-discovered, WebFinger-resolved). Each row says WHAT it is AND ON WHAT EVIDENCE: `agent` is the did:web mesh name (<surface>-<podId>) this relay recorded when that agent authenticated here, `surface` its role-bearing head (e.g. "interego-discord"), and `identifiedBy` names which fact those were read off. Read that field before acting on a name: "nothing" means this directory holds no name for the pod, and "unverified owner claim" means the only name present was typed into `owner` — a field any authenticated caller can write on any peer row — and is reported as `claimedAgent`, not as `agent`. No row asserts a role or authority over this deployment — address a specific agent by DID or acct: handle, never by whichever pod slug reads best.',
     inputSchema: { type: 'object', properties: {} },
     outputSchema: LIST_KNOWN_PODS_OUTPUT,
     annotations: { title: 'List pods in federation', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -9871,13 +10720,13 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'add_pod',
-    description: 'Compatibility shim — updates local pod registry. Manually adds a pod to the federation registry.',
+    description: 'Compatibility shim — updates local pod registry. Manually adds a PEER pod to the federation registry. `label` and `owner` are your note about someone else\'s pod, not a statement about it: they are stored as free text, they never become the row\'s identity, and they can only fill fields the pod\'s own agent left empty — adding a pod can no longer overwrite or erase what that agent registered here.',
     inputSchema: {
       type: 'object',
       properties: {
         pod_url: { type: 'string', description: 'Pod URL to add' },
-        label: { type: 'string', description: 'Human-readable label' },
-        owner: { type: 'string', description: 'Owner WebID or name' },
+        label: { type: 'string', description: 'Human-readable label. Free text you are writing about someone else\'s pod' },
+        owner: { type: 'string', description: 'Who you believe owns the pod. Free text, NOT verified and NOT identity: a did:web spelled here is reported to every reader as `claimedAgent` — never as the row\'s `agent` — and on a row nothing else identifies it also sets `identifiedBy: "unverified owner claim"`. On a row this relay already identified, the claim is shown beside the identity it disagrees with, which does not become yours' },
       },
       required: ['pod_url'],
     },
@@ -9886,11 +10735,11 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'remove_pod',
-    description: 'Compatibility shim — updates local pod registry only. Removes a pod from the federation registry.',
+    description: 'Compatibility shim — updates local pod registry only. Removes a pod from the federation registry. This registry is ONE shared record, not your own view of it: removing a row unregisters that pod for every caller and takes its WebFinger handle, ActivityPub actor and notify_agent reachability with it. So a row whose agent registered here itself can only be removed by that agent; a row this relay never identified — a dead peer somebody added by hand, or a squatted entry — can be removed by anyone. A refused removal says so and changes nothing.',
     inputSchema: {
       type: 'object',
       properties: {
-        pod_url: { type: 'string', description: 'Pod URL to remove' },
+        pod_url: { type: 'string', description: 'Pod URL to remove. Refused unless the row is unidentified or the pod is your own — see the tool description' },
       },
       required: ['pod_url'],
     },
@@ -9938,7 +10787,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'notify_agent',
-    description: 'Send a notification to another agent on the Interego federation. Delivered as an ActivityStreams 2.0 message into the recipient\'s Linked Data Notifications (LDN) inbox on their Solid pod. Address the recipient by DID (did:ethr:0x…), pod URL, or acct: handle (acct:<id>@<relay-host>) — resolve via list_known_pods. Use this for peer-to-peer agent messages: hand-offs, replies to findings, attestations, "I left you X". The recipient reads it with read_inbox.',
+    description: 'Send a notification to another agent on the Interego federation. Delivered as an ActivityStreams 2.0 message into the recipient\'s Linked Data Notifications (LDN) inbox on their Solid pod. Address the recipient by DID (did:ethr:0x…), pod URL, or acct: handle (acct:<id>@<relay-host>) — resolve via list_known_pods. Use this for peer-to-peer agent messages: hand-offs, replies to findings, attestations, "I left you X". The recipient reads it with read_inbox. CHECK THE ANSWER: it reports `resolvedTo` (the agent name this relay recorded for that pod, or "no identified agent" when it recorded none), `resolvedVia` (whether an agent card matched what you typed, or a pod was merely derived from its shape), `recipientKnown` (whether this relay has evidence OF ITS OWN naming the recipient — see `recipient.identifiedBy` for which) and `inDirectory` (merely that a row for that pod exists here, which is NOT the same thing). `recipient.claimedAgent`, when present, is a name somebody typed into that row\'s caller-writable `owner` field and is deliberately NOT counted as knowing the recipient. A pod id that resolves is not proof it is the agent you meant.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -10847,14 +11696,28 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
       // authenticates becomes discoverable + notifiable without manual
       // add_pod. Use the caller's OWN pod (authContext.podUrl) — NOT
       // args.pod_url, which on tools like discover_context / read_inbox /
-      // notify_agent is a TARGET pod, not the caller's. Surface is
-      // derived from the session-agent slug prefix when available.
+      // notify_agent is a TARGET pod, not the caller's.
+      //
+      // ★★ THE SURFACE IS DERIVED BY `surfaceSlugFromAgentId`, THE ONE READER OF AN AGENT
+      // NAME, AND THIS LINE IS WHY THAT FUNCTION EXISTS. It used to keep the first
+      // hyphen-delimited token of the session slug, so the Discord bot
+      // (`interego-discord-u-eth-053ad15f9633`) registered as surface `interego` — the
+      // project's own name — and an external agent looking for the maintainer in
+      // `list_known_pods` picked it, reasonably. `claude-code-vscode-…` collapsed to
+      // `claude` the same way. See the helper's header for the measured incident.
       {
         const sessId = (args._session_agent_id as string | undefined) ?? '';
-        const surf = sessId.includes('-') ? sessId.split('-')[0] : undefined;
+        const surf = surfaceSlugFromAgentId(sessId);
+        // ★ NO `?? args.agent_id` FALLBACK. `_session_agent_did` is assigned from
+        // `authContext.agentId` twenty lines above, so the fallback was unreachable — but
+        // `args.agent_id` is caller wire input (the injection above only DEFAULTS it), and
+        // an unreachable read of it is one edit away from being the reachable one. The
+        // REST twin of this call site had exactly that read and it WAS reachable: a caller
+        // registered a did:web it does not own. If the session ever carries no DID the
+        // right answer is to register nothing.
         autoRegisterAgentCard(
           authContext.podUrl,
-          (args._session_agent_did as string | undefined) ?? (args.agent_id as string | undefined),
+          args._session_agent_did as string | undefined,
           surf,
           args.owner_name as string | undefined,
         );
@@ -11457,8 +12320,21 @@ function cardForLocalPart(localPart: string): AgentCardLite | undefined {
     e.via !== 'self' &&
     (podLocalPart(e.url) === localPart || e.handle === `acct:${localPart}@${RELAY_HANDLE_HOST}`));
   if (matches.length === 0) return undefined;
-  const e = matches.find(x => x.did) ?? matches[0]!;
-  return { url: e.url, did: e.did, handle: e.handle, inbox: e.inbox ?? inboxUrlFor(e.url), label: e.label, surface: e.surface };
+  const e = matches.find(x => x.did) ?? matches.find(x => x.webId ?? x.owner) ?? matches[0]!;
+  // ★ The surface is DERIVED from the card's own did:web rather than read from the stored
+  // field, for the same reason list_known_pods derives it: entries registered before the
+  // `split('-')[0]` truncation was fixed hold `interego` where the DID says
+  // `interego-discord`, and the store is only rewritten when that agent next authenticates.
+  // The WebFinger + AP actor documents are published artifacts, so they must not keep
+  // serving the short name.
+  //
+  // ★★ AND THIS IS ONLY TRUE BECAUSE THE ROW SURVIVES A RESTART WITH ITS DID ON IT. Before
+  // `knownPodFromStoredEntry` existed the hydrate path dropped `did` AND `surface`, so on a
+  // fresh process this actor served `summary: "Interego agent"` with no `interego:did` at
+  // all — derived from nothing, because memory held neither. A comment about what the STORE
+  // holds is not a comment about what this function READS; those became the same statement
+  // only when the load was fixed.
+  return { url: e.url, did: e.did, handle: e.handle, inbox: e.inbox ?? inboxUrlFor(e.url), label: e.label, surface: describeDirectoryEntry(e).surface };
 }
 
 app.get('/.well-known/webfinger', async (req, res) => {
@@ -15220,15 +16096,56 @@ app.post('/tool/:name', toolInvokeLimiter, async (req, res) => {
     injectRestVerifiedIdentity(req.body, auth, viaSignature);
     // Auto-register the authenticated participant into the directory
     // (idempotent, fire-and-forget) — REST/signed path counterpart of
-    // the MCP-path hook above. Use the caller's OWN pod derived from the
-    // bound identity (pod_name), NEVER req.body.pod_url — that is a
+    // the MCP-path hook above. NEVER req.body.pod_url — that is a
     // TARGET on tools like notify_agent / read_inbox / discover_context
     // and would mis-attribute the caller's DID to someone else's pod.
-    autoRegisterAgentCard(
-      req.body.pod_name ? `${CSS_URL}${req.body.pod_name}/` : undefined,
-      req.body.agent_id as string | undefined,
-      viaSignature ? 'signed' : undefined,
-    );
+    //
+    // ── ★★ AND NEVER `req.body.agent_id` / `req.body.pod_name` EITHER. DRIVEN ───────────
+    //
+    // Those two ARE caller wire args. Neither is reserved (both are legitimate arguments to
+    // ordinary tools), and `injectRestVerifiedIdentity` only DEFAULTS them on the bearer
+    // branch — `if (!target.agent_id) …`, `if (!target.pod_name) …` — so a value the caller
+    // sent survives injection. The comment this replaces said the pod came "from the bound
+    // identity (pod_name)", which is true only when the caller omitted it.
+    //
+    // Driven against this server booted for real: an ordinary bearer POSTing
+    // `/tool/add_pod {pod_name: "u-pk-victim0001", agent_id: "did:web:…:agents:maintainer-u-eth-8f3b8e939600"}`
+    // wrote and PERSISTED `did`/`webId`/`owner`/`surface: "maintainer"`/`handle` onto a pod
+    // row it did not control, minted the matching WebFinger + ActivityPub actor on this
+    // relay's own domain, and made `notify_agent {to: <that DID>}` deliver to that pod with
+    // `resolvedVia: "directory-did"` — the route the receipt reports as an agent card
+    // MATCHING what was typed. That defeats every provenance distinction downstream:
+    // `describeDirectoryEntry` calls `did`/`webId` relay-observed evidence precisely because
+    // only session identity writes them, and this site was writing them from the wire.
+    //
+    // `_session_agent_did` and `_session_user_id` are written by
+    // `injectRestVerifiedIdentity` from the verified auth and from nothing else, on both
+    // branches (recovered DID + derived pod for a signature, `auth.agentId` + `auth.userId`
+    // for a bearer). ★ THE LOAD-BEARING WORD IS "ONLY", NOT "ALWAYS": the bearer branch
+    // writes each one only when the auth resolved it (`if (auth.agentId)` / `if
+    // (auth.userId)`), so either can be ABSENT — what cannot happen is a caller-supplied
+    // value surviving, because both are in RESERVED_WIRE_FIELDS and `stripReservedWireFields`
+    // runs first. When the bearer resolved no agent the DID is absent and
+    // `autoRegisterAgentCard` returns early — an unregistered row, which is the honest
+    // outcome and was already the outcome for a caller who sent nothing.
+    //
+    // ★ THE SURFACE IS AN IDENTITY, NOT A TRANSPORT. This argument used to be the literal
+    // `'signed'` when the caller arrived over the signed-request path — so a directory field
+    // whose whole job is to say WHAT an agent is answered with how it had authenticated, and
+    // `list_known_pods` showed a row reading `surface: "signed"`. Nothing ever read that
+    // value; it only had to be looked at. Derived from the caller's own agent id instead, and
+    // left ABSENT rather than filled with a placeholder when the id carries no surface —
+    // `describeDirectoryEntry` reports an absent identity as absent, which is the honest
+    // answer and the one a caller can act on.
+    {
+      const sessionDid = req.body._session_agent_did as string | undefined;
+      const sessionPod = req.body._session_user_id as string | undefined;
+      autoRegisterAgentCard(
+        sessionPod ? `${CSS_URL}${sessionPod}/` : undefined,
+        sessionDid,
+        surfaceSlugFromAgentId(bareAgentId(sessionDid)),
+      );
+    }
   } else if (
     req.body && typeof req.body === 'object' &&
     typeof (req.body as Record<string, unknown>)._signed_payload === 'string'

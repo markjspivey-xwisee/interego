@@ -699,6 +699,54 @@ export interface ShaclReport {
    * caller's to write: a write gate should refuse; an inventory tool should not.
    */
   readonly fullyChecked: boolean;
+  /**
+   * How many shapes the SHAPES GRAPH declared — before any of them were matched against the
+   * data. Zero means the document handed in as a shapes graph is not one.
+   *
+   * ★★ THE REPORT COULD NOT SAY WHAT IT VALIDATED AGAINST, AND THAT IS A CONFIRMATION OF
+   * SOMETHING ADJACENT TO WHAT WAS ASKED. Measured on this engine before this field existed,
+   * against a data graph that a real shapes file rejects:
+   *
+   *     validateAgainstShape(badTurn, harness-shapes.ttl)  conforms=false results=1
+   *     validateAgainstShape(badTurn, harness.ttl)         conforms=true  results=0
+   *     validateAgainstShape(badTurn, a DESCRIPTOR doc)    conforms=true  results=0
+   *     validateAgainstShape(badTurn, "# nothing\n")       conforms=true  results=0
+   *
+   * The last three are byte-identical to a genuine clean pass — `conforms:true`,
+   * `fullyChecked:true`, no results — so a caller who named the wrong document got a
+   * success that ENDED THE ENQUIRY WITHOUT ANSWERING IT. A failure would have sent them
+   * back to look; this did not. Validating against an empty shapes graph is arguably
+   * correct SHACL (§1.5 — nothing is violated when nothing constrains), so the defect was
+   * never the verdict. It was the silence around it.
+   *
+   * ★ WHY A COUNT HERE AND A REFUSAL AT THE GATE, NOT A REFUSAL HERE. This function is also
+   * used as a PARSE PROBE — `deploy/mcp-relay/server.ts` calls `validateAgainstShape('',
+   * body)` purely to ask whether a fetched body is Turtle at all, and `shacl-rules.ts`
+   * validates `sh:condition` against fragments. Making zero shapes non-conforming would
+   * break both, and would also be a false statement about the DATA: the graph broke no
+   * rule. Whether zero shapes is acceptable is a property of the CALLER'S REQUEST, exactly
+   * as `conformanceDisallows` is, so the engine reports and the caller decides.
+   *
+   * Counts COMPILED shapes, which includes standalone property shapes and inline shapes
+   * reachable through sh:node / sh:qualifiedValueShape / sh:and / sh:or / sh:xone — the same
+   * set `compileShapes` hands the validation loop. A `sh:deactivated` shape still counts: its
+   * author wrote a shape and switched it off, which is a different fact from never having
+   * written one, and collapsing the two would put a smaller silence back in.
+   */
+  readonly shapesDeclared: number;
+  /**
+   * How many of those shapes actually SELECTED A FOCUS NODE in this data graph.
+   *
+   * ★ ZERO HERE IS NOT AN ERROR, and that is why it is reported separately from
+   * {@link shapesDeclared} rather than folded into it. A shapes file targeting twenty
+   * classes run against a graph carrying none of them applies zero shapes and conforms —
+   * ordinary, correct, and by far the common case for a container-declared contract. Only
+   * `shapesDeclared === 0` says the document was never a shapes graph.
+   *
+   * Taken from the SAME liveness set the unsupported-construct escalation reads, so the two
+   * cannot drift into disagreeing about which shapes ran.
+   */
+  readonly shapesApplied: number;
 }
 
 export interface ValidateAgainstShapeOptions {
@@ -4042,6 +4090,11 @@ function validateAgainstShapeInner(
       }],
       // Nothing ran at all, so nothing was fully checked either.
       fullyChecked: false,
+      // Nothing COMPILED either. Zero here is not the "you named a document that is not a
+      // shapes graph" signal the gate keys on — `conforms` is already false and carries a
+      // parse failure that says precisely why, which is the stronger and earlier answer.
+      shapesDeclared: 0,
+      shapesApplied: 0,
     };
   }
   let dataDoc: ParsedDocument;
@@ -4058,6 +4111,10 @@ function validateAgainstShapeInner(
         message: 'Data graph is not parseable as Turtle/TriG',
       }],
       fullyChecked: false,
+      // The SHAPES graph parsed, but nothing was compiled from it before this return, so the
+      // honest count is zero rather than a number this path never computed.
+      shapesDeclared: 0,
+      shapesApplied: 0,
     };
   }
 
@@ -4524,6 +4581,12 @@ function validateAgainstShapeInner(
     conformanceDisallows: disallows,
     results: all,
     fullyChecked,
+    // ★ FROM `shapes`, NOT FROM `shapeDoc.subjects`. A shapes file's subjects include its
+    // owl:Ontology header, its rdfs:label carriers and every blank node hanging off a
+    // constraint — counting those would report a healthy-looking number for a document that
+    // compiled to nothing, which is the exact silence this field exists to end.
+    shapesDeclared: shapes.length,
+    shapesApplied: liveShapeIds.size,
   };
 }
 
