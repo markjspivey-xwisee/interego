@@ -20,6 +20,7 @@
 @prefix skos: <http://www.w3.org/2004/02/skos/core#>.
 @prefix sh:   <http://www.w3.org/ns/shacl#>.
 @prefix vs:   <http://www.w3.org/2003/06/sw-vocab-status/ns#>.
+@prefix as:   <https://www.w3.org/ns/activitystreams#>.
 
 # ══════════════════════════════════════════════════════════════
 #  Interego 1.0 Ontology
@@ -2157,6 +2158,71 @@ iep:requiresVerifiedCaller a owl:DatatypeProperty ;
     rdfs:label "requiresVerifiedCaller" ;
     rdfs:comment "True when an affordance may only be invoked by a cryptographically verified caller (a signed request or an authenticated session), as opposed to being followable anonymously." ;
     rdfs:range xsd:boolean .
+
+# ── The agent-to-agent notification body ────────────────────────────────────
+# The rule below is the CONTRACT deploy/mcp-relay/server.ts validates every
+# notify_agent notification against before it writes one. It lives here, as
+# DATA, because the relay reads THIS DOCUMENT to enforce it — see
+# deploy/mcp-relay/notification-body.ts, which cuts iep:NotificationBodyShape
+# and its closure out of this file and validates against that alone. Editing
+# the pattern below changes what the relay refuses; editing a comment about the
+# pattern does not, which is the whole reason the rule is not a TypeScript `if`.
+
+iep:NotificationBody a owl:Class ;
+    rdfs:label "Notification body"@en ;
+    rdfs:comment "The as:object of an agent-to-agent notification — the node carrying the message itself, as distinct from the as:Create / as:Announce / as:Question / as:Offer activity that delivers it. ★ ASSERTED BY THE SENDING RELAY ON EXACTLY ONE NODE, POSITIONALLY. deploy/mcp-relay/notification-body.ts marks the activity's own as:object and nothing else, so iep:NotificationBodyShape can only ever judge the body. ★ AND IT IS A SEPARATE CLASS FROM as:Note BECAUSE as:Note IS NOT POSITIONAL. notify_agent lets a caller name the ACTIVITY type, and with type 'Note' the activity is an as:Note as well, while the body is on its as:object. Measured against an earlier draft of the shape below that targeted as:Note directly: a correct message carrying a real as:content was REFUSED, because the activity node was selected and the body was never on it. A class the relay asserts positionally cannot make that mistake."@en ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:NotificationBodyShape a sh:NodeShape ;
+    rdfs:label "Notification body shape"@en ;
+    rdfs:comment "The contract an agent-to-agent notification body (iep:NotificationBody — the as:object of an ActivityStreams 2.0 notification) must satisfy: a summary that says the detail travels WITH the message must be accompanied by that detail — inline as as:content, or by reference as iep:about. ★ CONDITIONAL BY CONSTRUCTION, BECAUSE REQUIRING A BODY OUTRIGHT WOULD BE AN OUTAGE. Most notifications on this substrate are correctly summary-only: an as:Question raised by a workspace deliberately carries no task text at all (an inbox on this relay is world-writable, so text delivered by inbox is text a forger could write) and points at a signed record with iep:about instead; an as:Announce, and a bare reachability probe, carry a summary and nothing else. A shape is the right tool precisely because the antecedent is a property of the MESSAGE rather than of its type. ★ THE DEFECT IT CLOSES: an external agent sent this maintainer findings summarised ‘P7 and P8 re-sent with FULL DETAIL’; the notification arrived with no as:content whatsoever and the relay answered delivered:true. It carried as:summary twice, once on the activity and once on its object, and THAT WAS NOT THE DEFECT: it is the normal configuration of every notification this relay writes, because the writer copies the caller's summary onto both nodes. The defect was the missing detail, and this shape judges the object alone. It was never sent because the MCP input schema declares content as an optional string and requires only to and summary: a permitted input, not a lost one. ★ iep:about MUST BE AN IRI, and sh:nodeKind sh:IRI is where that is written down rather than in the relay. The projection that feeds this shape emits a value that cannot be an IRI as the literal it actually is — dropping it would make the graph claim the field was absent — so without the nodeKind constraint an about of ‘no’ satisfied sh:minCount 1 and the message was accepted with nothing reachable. Measured: it conforms without the constraint and violates with it. ★ THE ANTECEDENT IS A sh:qualifiedValueShape AND NOT A sh:minCount BESIDE A sh:pattern, BECAUSE THE OBVIOUS SPELLING SAYS SOMETHING ELSE. sh:not of a property shape carrying sh:minCount 1 and sh:pattern P is satisfied when there is no value at all OR when SOME value fails P — so one extra as:summary VALUE ON THE BODY, the empty string included, negated the antecedent and the whole sh:or passed. Measured: a body carrying TWO as:summary VALUES ON THAT ONE NODE — one claiming, one empty — and no as:content, was DELIVERED. (Two values on the body node, which is a different thing from the one summary the activity carries and the one its object carries.) sh:qualifiedValueShape counts the values that DO match, so sh:qualifiedMinCount 1 is ‘at least one summary claims’ and its negation is ‘none does’. ★ THE PATTERN SPELLS ITS OWN CASE-INSENSITIVITY OUT IN CHARACTER CLASSES INSTEAD OF USING sh:flags, and that is not style. Measured against the engine that reads this file: sh:flags is NOT implemented, and it is IGNORED rather than fatal — the sh:pattern beside it still runs, case-SENSITIVELY, and the news arrives only as a separate Info result and a fullyChecked:false nothing on a refusal path reads. So the obvious tidy-up — lower-casing these phrases and adding sh:flags ‘i’ — produces a shape that CONFORMS for the very message it exists to refuse. deploy/mcp-relay/notification-body.ts runs seven canaries over this document at load and switches the gate off loudly when that happens, but a rule should not have to depend on being caught. ★ ITS PHRASES ARE THE ONES THAT CAN ONLY MEAN ‘the detail is in this message’: full detail(s), in full, verbatim, attached, enclosed, as follows, see below, and details/text/body/content/pasted immediately followed by below. Measured against every notify_agent caller in this repository before it was published — the workspace invitation Offer, the workspace ask Question, the artifact channel's ask and invite, both live-driver Question probes, and the ActivityPub route's synthesised summary — none of them match, so none of them are refused."@en ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> ;
+    sh:targetClass iep:NotificationBody ;
+    sh:message "This notification’s as:summary says the detail travels with it, and no detail travelled: its body carries neither an as:content with something in it nor an iep:about naming an IRI. Send the body as `content`, or send the IRI the detail is at as `about`. A summary that only summarises needs neither, and is not selected by this shape (iep:NotificationBodyShape)." ;
+    sh:or (
+        # (1) The antecedent, negated: NO as:summary on this body claims the detail travels
+        #     with it.
+        #     ★★ sh:qualifiedValueShape AND NOT sh:minCount + sh:pattern, AND THE DIFFERENCE
+        #     IS A DELIVERED MESSAGE. This branch used to read `sh:not [ sh:property [
+        #     sh:path as:summary ; sh:minCount 1 ; sh:pattern P ] ]`, which READS as "no
+        #     summary matches P" and does not MEAN it: the inner property shape raises a
+        #     violation when the value count is 0 or when ANY ONE value fails P, so its
+        #     negation is satisfied when there is no summary at all OR when SOME summary does
+        #     not match. One extra value — the empty string will do — satisfied it, the whole
+        #     sh:or then passed, and a claiming message with no body was DELIVERED. Measured
+        #     on the engine that reads this file, driven through the relay's own writer: a
+        #     body carrying as:summary twice, once claiming and once empty, and no as:content,
+        #     conformed. It is reachable, not theoretical — POST /agents/:localPart/inbox
+        #     builds its summary from a REMOTE document, and an array there arrives here as
+        #     two values. sh:qualifiedValueShape COUNTS the values that match, so
+        #     sh:qualifiedMinCount 1 is exactly "at least one summary claims", and sh:not of
+        #     that is exactly "none of them does".
+        [ sh:not [ sh:property [
+              sh:path as:summary ;
+              sh:qualifiedValueShape [ sh:pattern "([Ff][Uu][Ll][Ll] [Dd][Ee][Tt][Aa][Ii][Ll]|[Ii][Nn] [Ff][Uu][Ll][Ll]|[Vv][Ee][Rr][Bb][Aa][Tt][Ii][Mm]|[Aa][Tt][Tt][Aa][Cc][Hh][Ee][Dd]|[Ee][Nn][Cc][Ll][Oo][Ss][Ee][Dd]|[Aa][Ss] [Ff][Oo][Ll][Ll][Oo][Ww][Ss]|[Ss][Ee][Ee] [Bb][Ee][Ll][Oo][Ww]|([Dd][Ee][Tt][Aa][Ii][Ll][Ss]?|[Tt][Ee][Xx][Tt]|[Bb][Oo][Dd][Yy]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt]|[Pp][Aa][Ss][Tt][Ee][Dd]) [Bb][Ee][Ll][Oo][Ww])" ] ;
+              sh:qualifiedMinCount 1 ] ] ]
+        # (2) The detail travelled inline. The pattern is what makes a body of whitespace not
+        #     count as one; an empty string never reaches here, because the writer drops a
+        #     falsy content and the property is then simply absent.
+        #     ★★ "\\S", AND THE COMMENT THAT USED TO STAND HERE WAS FALSE IN BOTH HALVES. It
+        #     said a Turtle "\\S" "would have to survive an escape round trip to reach the
+        #     regex, and the character class does not". Measured on this parser and on the
+        #     re-serializer in deploy/mcp-relay/notification-body.ts that slices this shape
+        #     out: "\\S" survives that round trip exactly — it parses to \S and is written
+        #     back as "\\S" — and [^ \t\r\n] goes through the SAME round trip, because
+        #     \t, \r and \n are escapes too. What the class actually did was narrow the rule
+        #     to the four ASCII whitespace characters it names: driven over the wire with a
+        #     claiming summary, a body of U+00A0, U+3000, U+2028, U+000B or U+FEFF PASSED as a
+        #     body. The engine compiles sh:pattern with `new RegExp`, so \S is JavaScript's
+        #     whitespace set, and all five are refused. (U+200B ZERO WIDTH SPACE is NOT in that
+        #     set — measured — while U+FEFF is, so a body of U+200B still counts as a body.
+        #     That is the honest limit of a regex answer to "is there anything here".)
+        [ sh:property [ sh:path as:content ; sh:minCount 1 ; sh:nodeKind sh:Literal ; sh:pattern "\\S" ] ]
+        # (3) Or by reference — which is how a notification on this substrate is SUPPOSED to
+        #     carry detail it does not want forgeable. sh:nodeKind sh:IRI is load-bearing: it
+        #     is what makes `about: "no"` a refusal instead of a pass.
+        [ sh:property [ sh:path iep:about ; sh:minCount 1 ; sh:nodeKind sh:IRI ] ]
+    ) .
 
 iep:about a owl:ObjectProperty ;
     rdfs:label "about" ;

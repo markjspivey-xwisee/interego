@@ -127,9 +127,13 @@ import {
 import { corsMiddleware, MCP_ALLOW_HEADERS } from './cors-allowlist.js';
 import { normalizeCssUrl, assertPublicPodUrl, publicStoreSpelling } from './url-rewrite.js';
 import { mayUseRelayKey } from './relay-key-gate.js';
-// The action naming authority: the roster and the resolution rule, extracted so the test exercises
-// the shipped code rather than a restatement of it. See action-authority.ts for what that caught.
-import { buildActionRoster, resolveActionTarget } from './action-authority.js';
+// The /ns dereference surface — ~540 lines of route + projection logic that could not be
+// imported (and so could not be unit-tested) while it sat in this file. It carries the
+// iep:action route with it, because that route only resolves by being registered ahead of
+// the /ns/:owner/:slug/* wildcard. It also took the import of action-authority.ts with it:
+// ns-dereference.ts consumes `buildActionRoster` / `resolveActionTarget` and re-exports
+// nothing, so that module is no longer named anywhere in this file.
+import { createNsDereference } from './ns-dereference.js';
 // Pod authorization, extracted so the rule is importable: server.ts calls app.listen() at
 // module scope and cannot be imported, which is why this area only had source-text coverage.
 import { authorizePodUrl } from './pod-authorization.js';
@@ -188,7 +192,6 @@ import {
   mint as kernelMint,
   normalizePublishInputs,
   openEncryptedEnvelope,
-  parseTrig,
   pinToIpfs,
   promote as kernelPromote,
   removeAuthorizedAgent,
@@ -207,14 +210,11 @@ import {
   verifyDescriptorSignature,
   withTransientRetry,
   // HyperMarkdown projection (a VIEW of the signed descriptor; see nsMarkdown).
-  controlsFromAffordances,
   extractAffordancesFromTurtle,
-  renderHypermediaMarkdown,
   parseHypermediaMarkdown,
   AffordanceNotFoundError,
   negotiateRepresentation,
   HYPERMEDIA_MARKDOWN_MEDIA_TYPE,
-  HMD_PROFILE_IRI,
   HMD_PROFILE_LINK_HEADER,
   sameAction,
   ownPodSegment,
@@ -351,6 +351,17 @@ import {
   iriObjectsOf,
   type ShapeCoverage,
 } from './shapes-declared.js';
+// The published contract a notification body is validated against, for the same reason as the
+// import above it: `server.ts` opens a listener on import, so a refuse/report decision written
+// here could never be executed by a test.
+import {
+  prepareNotificationGate,
+  notificationBodyRefusal,
+  notificationBodyReport,
+  NOTIFICATION_BODY_SHAPE,
+  NOTIFICATION_SHAPE_CANDIDATES,
+  type NotificationGate,
+} from './notification-body.js';
 import {
   supersessionFrontier, classifyCasRequest, casRefusal,
   priorVersionsFor, reDecidedSupersedes, linearSupersedesFor,
@@ -7647,6 +7658,45 @@ function isCanonicalPodTarget(targetPod: string): boolean {
     || /(u-pk-|u-did-|u-eth-|eth-)[0-9a-z]+/i.test(targetPod);
 }
 
+/**
+ * The published contract every notification this relay writes is validated against.
+ *
+ * ★★ THE RULE IS THE SHAPE, NOT THIS FUNCTION. `iep:NotificationBodyShape` lives in
+ * `docs/ns/iep.ttl`; this reads that document and hands it to `notification-body.ts`, which cuts
+ * the shape and its closure out of it and hands THAT to the SHACL engine. Nothing here decides
+ * what a notification must carry — see notification-body.ts for the defect that motivated it,
+ * the measurement behind the conditional, and the four defects of the refuted first attempt.
+ *
+ * ★ LAZY AND CACHED, DELIBERATELY. Preparing the gate reads 208,787 characters of Turtle,
+ * isolates the shape into 28 triples, and runs fifteen canaries through the whole per-call
+ * decision — eight of them over ~70,000-character documents, which is what proves the size
+ * reduction still preserves this shape's verdicts before a caller depends on it. Re-measured at
+ * 70–122 ms across five cold processes, ONCE each. Every check after that is 0.85–1.5 ms mean /
+ * 0.57–1.18 ms median / 7.6–12.5 ms worst over 200 runs against a 2 KB body, because the
+ * isolated graph is 28 triples rather than the whole ontology; an over-bound notification that
+ * has to be reduced is 1.3–1.8 ms mean over 100 runs. Doing the preparation at module load
+ * would put it on the relay's boot path for a tool most processes never call; doing it per call
+ * would charge every notification the ~13 ms the whole-ontology parse costs.
+ *
+ * ★ AND `resolveDocFile` RETURNING null IS NOT A PASS. `prepareNotificationGate` answers
+ * `unenforced` for a document it could not read, which is reported as `bodyShape.enforced:
+ * false` and never as a conforming body.
+ */
+let NOTIFICATION_GATE: NotificationGate | undefined;
+function notificationGate(): NotificationGate {
+  if (NOTIFICATION_GATE) return NOTIFICATION_GATE;
+  const file = resolveDocFile(...NOTIFICATION_SHAPE_CANDIDATES.map(c => [...c]));
+  const body = file ? readFileSync(file, 'utf8') : null;
+  NOTIFICATION_GATE = prepareNotificationGate(body, validateAgainstShape);
+  if (NOTIFICATION_GATE.enforcing) {
+    log(`[notify] body gate enforcing ${NOTIFICATION_BODY_SHAPE} from ${file} `
+      + `(${NOTIFICATION_GATE.isolated?.triples ?? 0} triples isolated)`);
+  } else {
+    log(`WARN ${NOTIFICATION_GATE.why}`);
+  }
+  return NOTIFICATION_GATE;
+}
+
 async function handleNotifyAgent(args: ToolArgs): Promise<string> {
   const to = (args.to ?? args.recipient ?? args.agent) as string | undefined;
   const summary = (args.summary ?? args.subject) as string | undefined;
@@ -7671,6 +7721,30 @@ async function handleNotifyAgent(args: ToolArgs): Promise<string> {
     ...(typeof args.type === 'string' ? { type: args.type } : {}),
   };
   const notif = buildNotification(input, idSlug);
+  /**
+   * ── ★★ THE BODY IS CHECKED BEFORE ANYTHING IS WRITTEN OR FANNED OUT ────────────────
+   *
+   * An external agent sent this maintainer findings summarised `P7 and P8 re-sent with FULL
+   * DETAIL`; the notification arrived with `as:summary` twice and no `as:content` at all, and
+   * this handler answered `delivered: true`. It was schema-valid: `content` is declared
+   * optional and only `to` and `summary` are required, so a bodyless message is a PERMITTED
+   * INPUT rather than a lost one.
+   *
+   * ★ THE REFUSAL SITS HERE, ABOVE `reachFanOut`, SO NOTHING IS HALF-DELIVERED. Below this
+   * point the LDN write, the Discord webhook and the SMS adapter all fire; a check placed after
+   * them would refuse a message the recipient had already been shown.
+   *
+   * ★ AND THE RULE IS NOT HERE. It is `iep:NotificationBodyShape` in `docs/ns/iep.ttl`, which
+   * the relay reads at runtime: a summary claiming the detail travels with the message must be
+   * accompanied by that detail, inline as `content` or by reference as `about`. A summary-only
+   * notification is legitimate and stays legitimate — see notification-body.ts for the
+   * per-caller measurement behind that, and for why the gate answers `unenforced` rather than
+   * refusing when it cannot read its own contract.
+   */
+  const bodyVerdict = notificationGate().check(notif);
+  if (bodyVerdict.verdict === 'violates') {
+    return JSON.stringify(notificationBodyRefusal(bodyVerdict.violation, to));
+  }
   const internalPod = toInternalPodUrl(targetPod);
   // Fan out to the recipient's declared channels: native LDN is always
   // attempted; any external channels (discord/telegram/email/sms/voice)
@@ -7784,6 +7858,13 @@ async function handleNotifyAgent(args: ToolArgs): Promise<string> {
     notificationUrl: ldn?.detail,
     channels: results,
     from,
+    // ★ THE CONTRACT IS ON THE SUCCESS PATH TOO. A contract a caller only meets when they break
+    // it is a contract most callers never read; `conformsTo` is dereferenceable, so a sender
+    // whose message went through can follow it and see what the next one must satisfy. And when
+    // the check did not run — unreadable document, a shape that stopped deciding, a body past
+    // the gate's size bound — this says `enforced: false` rather than saying nothing, because
+    // saying nothing is indistinguishable from a clean pass.
+    bodyShape: notificationBodyReport(bodyVerdict),
     ...(warnings.length ? { warning: warnings.join(' ') } : {}),
   });
 }
@@ -9541,6 +9622,29 @@ function gateRequiredArgs(tools: Record<string, ToolEntry>): Record<string, Tool
   return tools;
 }
 
+// ── The /ns dereference surface ──────────────────────────────
+//
+// ★ CONSTRUCTED HERE, NOT AT THE ROUTES. `TOOLS` below is a module-scope const initializer
+// that reads `handleResolveLinkedData` as a value. It used to be a hoisted `function`
+// declared 4,700 lines further down; binding it to a factory result down there instead would
+// leave this reference in the temporal dead zone and the relay would throw at import and
+// never listen. Construction is pure and registers nothing — `nsDereference.mount(app)` does
+// that, at the position the route order depends on.
+const nsDereference = createNsDereference({
+  cssUrl: CSS_URL,
+  publicBaseUrl: PUBLIC_BASE_URL,
+  pgslNodeResolver: PGSL_NODE_RESOLVER,
+  solidFetch,
+});
+// Only the three members this file actually calls are lifted out. The rest of the surface —
+// `mount`, and `publishableDescriptorUrl` — is reached as `nsDereference.mount(app)` below and,
+// for the latter, not by this file at all: `publishableDescriptorUrl` is a module-scope export
+// of ns-dereference.ts, imported from there by tests/ns-dereference.test.ts and used inside the
+// routes. It was destructured here into a `void`-ed binding labelled "exported"; nothing in this
+// file exports anything (it calls app.listen() at module scope), so the binding was dead and the
+// label was wrong.
+const { nsMarkdown, resolveNsGraph, handleResolveLinkedData } = nsDereference;
+
 const TOOLS: Record<string, ToolEntry> = gateRequiredArgs({
   // ── Kernel verbs (first-class substrate access) ──
   // These delegate straight to @interego/core kernel exports. The 27
@@ -10787,13 +10891,13 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'notify_agent',
-    description: 'Send a notification to another agent on the Interego federation. Delivered as an ActivityStreams 2.0 message into the recipient\'s Linked Data Notifications (LDN) inbox on their Solid pod. Address the recipient by DID (did:ethr:0x…), pod URL, or acct: handle (acct:<id>@<relay-host>) — resolve via list_known_pods. Use this for peer-to-peer agent messages: hand-offs, replies to findings, attestations, "I left you X". The recipient reads it with read_inbox. CHECK THE ANSWER: it reports `resolvedTo` (the agent name this relay recorded for that pod, or "no identified agent" when it recorded none), `resolvedVia` (whether an agent card matched what you typed, or a pod was merely derived from its shape), `recipientKnown` (whether this relay has evidence OF ITS OWN naming the recipient — see `recipient.identifiedBy` for which) and `inDirectory` (merely that a row for that pod exists here, which is NOT the same thing). `recipient.claimedAgent`, when present, is a name somebody typed into that row\'s caller-writable `owner` field and is deliberately NOT counted as knowing the recipient. A pod id that resolves is not proof it is the agent you meant.',
+    description: 'Send a notification to another agent on the Interego federation. Delivered as an ActivityStreams 2.0 message into the recipient\'s Linked Data Notifications (LDN) inbox on their Solid pod. Address the recipient by DID (did:ethr:0x…), pod URL, or acct: handle (acct:<id>@<relay-host>) — resolve via list_known_pods. Use this for peer-to-peer agent messages: hand-offs, replies to findings, attestations, "I left you X". The recipient reads it with read_inbox. CHECK THE ANSWER: it reports `resolvedTo` (the agent name this relay recorded for that pod, or "no identified agent" when it recorded none), `resolvedVia` (whether an agent card matched what you typed, or a pod was merely derived from its shape), `recipientKnown` (whether this relay has evidence OF ITS OWN naming the recipient — see `recipient.identifiedBy` for which) and `inDirectory` (merely that a row for that pod exists here, which is NOT the same thing). `recipient.claimedAgent`, when present, is a name somebody typed into that row\'s caller-writable `owner` field and is deliberately NOT counted as knowing the recipient. A pod id that resolves is not proof it is the agent you meant. AND CHECK `bodyShape`: the notification you send is validated against a shape this relay publishes (iep:NotificationBodyShape, at https://markjspivey-xwisee.github.io/interego/ns/iep) BEFORE anything is written or fanned out, so a refusal names the constraint and the shape it failed, a success names what it conformed to, and `bodyShape.enforced: false` means the check did not run at all.',
     inputSchema: {
       type: 'object',
       properties: {
         to: { type: 'string', description: 'Recipient: a DID, pod URL, or acct: handle (see list_known_pods).' },
         summary: { type: 'string', description: 'One-line summary (shows in inbox previews).' },
-        content: { type: 'string', description: 'Optional longer message body.' },
+        content: { type: 'string', description: 'The message body. OPTIONAL IN THIS SCHEMA AND NOT OPTIONAL IN THE CONTRACT: every notification this relay writes is validated against iep:NotificationBodyShape, published at https://markjspivey-xwisee.github.io/interego/ns/iep, and a message whose summary says the detail travels with it is refused unless the detail is here or `about` names an IRI where it is. Dereference the shape for the rule itself — this sentence is a pointer to it, not a copy of it. A summary-only notification is legitimate and is not selected by the shape.' },
         about: { type: 'string', description: 'Optional IRI this is about (a finding, resolution, descriptor, or graph).' },
         in_reply_to: { type: 'string', description: 'Optional IRI this notification replies to.' },
         type: { type: 'string', description: 'ActivityStreams type: Create (default), Announce, Offer, Question, Update.' },
@@ -12398,17 +12502,88 @@ app.post('/agents/:localPart/inbox', async (req, res) => {
   const act = (req.body ?? {}) as Record<string, any>;
   const obj = (act.object ?? {}) as Record<string, any>;
   const idSlug = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  /**
+   * ★★ EVERY FIELD TAKEN OFF A REMOTE DOCUMENT IS TYPE-CHECKED, AND `summary` WAS THE ONE THAT
+   * WAS NOT. It read `(act.summary ?? obj.summary ?? …) as string` — a cast, not a check — while
+   * `content`, `about`, `actor` and `type` beside it all guard with `typeof`. `buildNotification`
+   * copies `summary` onto BOTH the activity and its object, so a foreign server sending
+   * `summary: ["… FULL DETAIL", ""]` put TWO `as:summary` values on the notification body, and
+   * two values were exactly what defeated the published shape's antecedent (see the
+   * sh:qualifiedValueShape note in docs/ns/iep.ttl). `notify_agent` masks the same class of input
+   * behind its MCP schema; this route has no schema in front of it.
+   *
+   * ★ AND THE SYNTHESISED FALLBACK IS THE RELAY'S OWN SENTENCE, so the type interpolated into it
+   * is guarded too: `${act.type}` on an object renders "[object Object] via ActivityPub", which
+   * would be this relay publishing garbage under its own name.
+   */
+  /**
+   * ★★ A TYPE GUARD THAT SUBSTITUTES MUST SAY WHAT IT SUBSTITUTED. This route REPORTS rather
+   * than refuses, and a guard that silently swaps a sender's own words for the relay's is a
+   * quieter version of the thing the guard was added to stop: the remote is told `accepted:
+   * true`, its inbox item reads `Create via ActivityPub`, and nothing anywhere records that the
+   * summary it actually sent was dropped. Every field taken off the remote document that fails
+   * its guard is named here, and the names travel back in the response and into the log.
+   */
+  const apBlindTo: string[] = [];
+  const remote = (field: string, value: unknown, what: string): boolean => {
+    if (value === undefined || value === null) return false;
+    if (typeof value === 'string') return true;
+    apBlindTo.push(`${field} (the remote sent ${Array.isArray(value) ? 'an array' : typeof value}; ${what})`);
+    return false;
+  };
+  const apType = remote('type', act.type, 'the relay used "Activity" in the summary it synthesised')
+    ? act.type as string : 'Activity';
+  const apSummary = remote('summary', act.summary, 'the relay looked at the object’s summary instead')
+    ? act.summary as string
+    : remote('object.summary', obj.summary, 'the relay substituted its own synthesised sentence')
+      ? obj.summary as string
+      : `${apType} via ActivityPub`;
+  const apContent = remote('object.content', obj.content, 'no as:content was carried') ? obj.content as string : undefined;
+  const apAbout = remote('object.id', obj.id, 'no iep:about was carried') ? obj.id as string : undefined;
+  const apActor = remote('actor', act.actor, 'the delivery is attributed to urn:activitypub:remote')
+    ? act.actor as string : 'urn:activitypub:remote';
   const notif = buildNotification({
-    from: typeof act.actor === 'string' ? act.actor : 'urn:activitypub:remote',
+    from: apActor,
     to: card.did ?? card.url,
-    summary: (act.summary ?? obj.summary ?? `${act.type ?? 'Activity'} via ActivityPub`) as string,
+    summary: apSummary,
     published: new Date().toISOString(),
-    ...(typeof obj.content === 'string' ? { content: obj.content } : {}),
-    ...(typeof obj.id === 'string' ? { about: obj.id } : {}),
+    ...(apContent !== undefined ? { content: apContent } : {}),
+    ...(apAbout !== undefined ? { about: apAbout } : {}),
     type: typeof act.type === 'string' ? act.type : 'Create',
   }, idSlug);
+  /**
+   * ★★ REPORTED, NOT REFUSED — the other half of the split `shapes-declared.ts` draws.
+   *
+   * `notify_agent` refuses a body that fails `iep:NotificationBodyShape`, because every field of
+   * that notification came off the wire from a caller who is present and holds the fix. This
+   * document is a foreign server's, authored against the AS2 specification and not against this
+   * substrate's profile — and its summary is partly OURS: the line above synthesises
+   * `${act.type} via ActivityPub` when the remote omits one, so a refusal here could fire on the
+   * relay's own words. Refusing standards-conformant ActivityPub for failing a profile its
+   * sender never agreed to is the kind of gate that reads as "federation broke".
+   *
+   * So the delivery stands and the answer carries the verdict, which is how a federated peer
+   * sending bodyless notifications can be told rather than silently indulged.
+   */
+  const apBody = notificationGate().check(notif);
+  if (apBody.verdict === 'violates') {
+    log(`[activitypub] inbound activity for ${req.params.localPart} does not satisfy `
+      + `${NOTIFICATION_BODY_SHAPE}: ${apBody.violation.message}`);
+  }
+  if (apBlindTo.length > 0) {
+    log(`[activitypub] inbound activity for ${req.params.localPart} carried ${apBlindTo.length} field(s) `
+      + `this relay could not use as sent: ${apBlindTo.join('; ')}`);
+  }
   const url = await deliverNotification(toInternalPodUrl(card.url), notif, idSlug, solidFetch, (mm) => log(mm));
-  res.status(url ? 202 : 502).json({ accepted: url !== null, stored: url });
+  res.status(url ? 202 : 502).json({
+    accepted: url !== null,
+    stored: url,
+    // ★ What the relay DID NOT CARRY from the document it was sent, and why. Present only when
+    // there is something — an empty array beside every ordinary delivery would train a reader to
+    // stop looking at it.
+    ...(apBlindTo.length > 0 ? { blindTo: apBlindTo } : {}),
+    bodyShape: notificationBodyReport(apBody),
+  });
 });
 
 // ── Shared next-step hint table for relay shim responses ──
@@ -13949,547 +14124,36 @@ app.get(['/.well-known/security.txt', '/security.txt'], (_req, res) => {
   res.send(SECURITY_TXT_BODY);
 });
 
-// ── /ns/:owner/:slug — the RDF-projection dereference surface ─────────────
+// ── /ns/* — the dereference surface, in ns-dereference.ts ────────────────
 //
-// Base Interego is a SUPERSET of RDF: holons are payload-agnostic identities
-// that project to any representation. This route affords "what people expect
-// from RDF" WHERE a holon is used as RDF — a clean, stable IRI that HTTP-
-// dereferences to content-negotiated linked data (Turtle / JSON-LD / HTML),
-// with #fragment terms resolving in-document and rdfs:isDefinedBy / owl:imports
-// following-your-nose. It is GENERIC: it dereferences ANY published PUBLIC graph
-// at this IRI — an ontology, a knowledge graph, a SHACL shape, a course — with
-// NO ontology special-casing. Publishing is the ordinary core publish (the
-// holon's RDF projection, written to the author's own pod); this is only the
-// dereference half. Read-only, public (CORS * incl null via corsMiddleware's
-// /ns carve-out), no auth. Serves the signed projection bytes, never rewrites
-// them. Verticals (agentic memory, Foxxi, Weft) are polygranular CONSUMERS of
-// this surface — the same holon in many hyperedges.
-const RELAY_NS_ROOT = `${(PUBLIC_BASE_URL || 'https://relay.interego.xwisee.com').replace(/\/+$/, '')}/ns`;
-const NS_OWL_ONTOLOGY = 'http://www.w3.org/2002/07/owl#Ontology';
-
-/** Clean standalone Turtle from a stored `-graph.trig` (publish() wraps the
- *  named graph as `<graphIri> { …indented… }` under hoisted prefixes). Pure
- *  string transform so blank nodes / SHACL lists survive byte-for-byte. */
-function nsExtractGraphTurtle(trig: string, graphIri: string): string | null {
-  const open = trig.indexOf(`<${graphIri}> {`);
-  if (open < 0) return null;
-  const bodyStart = trig.indexOf('{', open) + 1;
-  const n = trig.length;
-  // Quote/comment-AWARE brace matcher: only count braces OUTSIDE Turtle string
-  // literals ("…"/'…'/"""…"""/'''…''') and # comments, so a lone/unbalanced `{`
-  // or `}` inside an rdfs:comment (arbitrary agent content) cannot desync the
-  // depth counter and truncate the served graph.
-  let depth = 1, i = bodyStart;
-  while (i < n && depth > 0) {
-    const c = trig[i];
-    if (c === '#') { while (i < n && trig[i] !== '\n') i++; continue; }
-    if (c === '"' || c === "'") {
-      const q = c; const triple = trig[i + 1] === q && trig[i + 2] === q;
-      i += triple ? 3 : 1;
-      while (i < n) {
-        if (trig[i] === '\\') { i += 2; continue; }
-        if (triple) { if (trig[i] === q && trig[i + 1] === q && trig[i + 2] === q) { i += 3; break; } i++; }
-        else { if (trig[i] === q) { i++; break; } if (trig[i] === '\n') { break; } i++; }
-      }
-      continue;
-    }
-    if (c === '{') depth++;
-    else if (c === '}') depth--;
-    i++;
-  }
-  const inner = trig.slice(bodyStart, i - 1);
-  const prefixLines = trig.split('\n').filter(l => /^\s*(@prefix|@base)\s/i.test(l));
-  const deindented = inner.split('\n').map(l => l.replace(/^ {4}/, '')).join('\n').trim();
-  return `${prefixLines.join('\n')}\n\n${deindented}\n`;
-}
-
-/** Flattened JSON-LD projection of the clean Turtle (best-effort; caller falls
- *  back to Turtle if this throws). */
-function nsTurtleToJsonLd(turtle: string): Record<string, unknown> {
-  const doc = parseTrig(turtle);
-  const ctx: Record<string, string> = {};
-  for (const [p, iri] of doc.prefixes) ctx[p] = iri as string;
-  const graph = doc.subjects.map(s => {
-    const id = typeof s.subject === 'string' ? s.subject : `_:${s.subject.bnode}`;
-    const node: Record<string, unknown> = { '@id': id };
-    for (const [pred, terms] of s.properties) {
-      node[pred as string] = terms.map(t =>
-        t.kind === 'iri' ? { '@id': t.iri }
-          : t.kind === 'bnode' ? { '@id': `_:${t.id}` }
-            // ★ An RDF 1.2 triple term needs its own encoding, and JSON-LD 1.1 has no
-            // standard one — RDF 1.2's JSON-LD serialization is still in progress. The
-            // chain below used to end in a bare `else` that treated ANY non-IRI, non-bnode
-            // term as a literal, so a triple term would have been published as
-            // `{"@value": undefined}`: a well-formed-looking JSON-LD node asserting
-            // nothing, on a route whose whole job is to serve the vocabulary faithfully.
-            //
-            // Until there is a standard, this emits the three parts under our own
-            // namespace rather than guessing at one. It is unmistakably not a literal, it
-            // round-trips the information, and a reader that does not know the term simply
-            // sees a nested node instead of silently reading a null value as fact.
-            : t.kind === 'triple'
-              ? {
-                // `@type: "@json"` is standard JSON-LD 1.1, so this needs no new
-                // vocabulary — which matters, because three minted terms for a
-                // serialization gap would join the undeclared-term debt this repo already
-                // carries. It is also unmistakably structured: a reader that does not know
-                // RDF 1.2 sees a JSON object, not a string it might treat as a value.
-                '@type': '@json',
-                '@value': {
-                  subject: t.subject.kind === 'iri' ? t.subject.iri : `_:${t.subject.id}`,
-                  predicate: t.predicate,
-                  object: t.object.kind === 'iri' ? t.object.iri
-                    : t.object.kind === 'bnode' ? `_:${t.object.id}`
-                      : t.object.kind === 'literal' ? t.object.value
-                        : '[nested triple term]',
-                },
-              }
-              : { '@value': t.value, ...(t.datatype ? { '@type': t.datatype } : {}), ...(t.language ? { '@language': t.language } : {}) });
-    }
-    return node;
-  });
-  return { '@context': ctx, '@graph': graph };
-}
-
-function nsHtml(iri: string, turtle: string, meta: { owner: string; slug: string; descriptorUrl: string; isOntology: boolean }): string {
-  const esc = (s: string): string => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  return `<!doctype html><meta charset="utf-8"><title>${esc(meta.slug)}</title>`
-    + `<body style="font-family:system-ui;max-width:60rem;margin:2rem auto;line-height:1.5;padding:0 1rem">`
-    + `<h1>${esc(meta.slug)}</h1>`
-    + `<p><b>IRI:</b> <code>${esc(iri)}</code>${meta.isOntology ? ' · <b>owl:Ontology</b>' : ''}</p>`
-    + `<p>A published Interego holon, dereferenced here as linked data — the RDF projection of a signed, discoverable substrate object (<a href="${esc(publishableDescriptorUrl(meta.descriptorUrl, iri))}">descriptor</a>) on <code>${esc(meta.owner)}</code>'s pod. Terms are hash fragments (<code>${esc(iri)}#&lt;term&gt;</code>) resolving in-document.</p>`
-    + `<p><b>Projections:</b> <a href="?format=turtle">Turtle</a> · <a href="?format=jsonld">JSON-LD</a></p>`
-    + `<h2>Source (Turtle)</h2><pre style="background:#f6f8fa;padding:1rem;overflow:auto;border-radius:6px">${esc(turtle)}</pre>`
-    + `</body>`;
-}
-
-/** Render a published graph as hypermedia Markdown — a THIRD projection beside
- *  Turtle and JSON-LD, for the channels RDF cannot cross (a README, a pasted
- *  message, an MCP resource, an LLM's context window).
- *
- *  This is a VIEW. The signed descriptor is the AUTHORITY. The document names
- *  WHAT may be done (each :::control block's `rel`) and WHERE THE AUTHORITY
- *  LIVES (`descriptorUrl`) — never WHERE TO POST: `controlsFromAffordances()`
- *  drops `hydra:target` on the floor and the renderer computes every emitted
- *  target inside the document's own resource (authority closure), so untrusted
- *  prose can never steer an auto-approved `invoke_affordance` at an
- *  attacker-chosen URL (MCP approves per-TOOL, not per-TARGET). The live target
- *  is re-resolved from the signed Turtle by followAffordance() at execution time.
- *
- *  Reuses the SAME resolveNsGraph() core as the Turtle/JSON-LD branches, so the
- *  SSRF host-pinning (nsToOwnerPodInternal) and the CORS carve-out come free. */
-/**
- * The descriptor URL a document may PUBLISH.
- *
- * `resolveNsGraph` hands back whatever indexed the graph, and on the convention
- * path that is the internal CSS URL (`http://css.railway.internal:3456/...`).
- * That is correct as an internal fetch target but useless as a published one:
- * nobody outside the private network can dereference it. It matters most in the
- * Markdown projection, whose whole safety story is "the target is not here — go
- * re-resolve it from descriptorUrl": an authority you cannot reach is not an
- * authority. So when the resolved descriptor is not publicly dereferenceable,
- * publish the graph's own IRI instead. That IRI dereferences (here, through this
- * route) to the same Turtle, carrying the same affordances with their targets —
- * so re-resolution still works, over a URL the reader can actually fetch.
- */
-function publishableDescriptorUrl(descriptorUrl: string, graphIri: string): string {
-  try {
-    assertPublicPodUrl(descriptorUrl);
-    return descriptorUrl;
-  } catch {
-    return graphIri;
-  }
-}
-
-function nsMarkdown(iri: string, turtle: string, meta: { owner: string; slug: string; descriptorUrl: string; isOntology: boolean }): string {
-  const descriptorUrl = publishableDescriptorUrl(meta.descriptorUrl, iri);
-  const controls = controlsFromAffordances(extractAffordancesFromTurtle(turtle, descriptorUrl, { requireTarget: false }));
-  // NOTE: no embedded Turtle. The signed source (which legitimately carries
-  // hydra:target transport endpoints) is one conneg request away via the
-  // rel="alternate" links — embedding it would put those endpoints into
-  // store-and-forward bytes, the exact leak the projection exists to avoid.
-  const body = [
-    `# ${meta.slug}`,
-    ``,
-    `A published Interego holon on \`${meta.owner}\`'s pod, projected as a HyperMarkdown`,
-    `document. The Turtle / JSON-LD projections linked below are the same graph`,
-    `resource — request them by content negotiation.`,
-    ...(meta.isOntology ? [``, 'This graph is an `owl:Ontology`; its terms resolve as `#fragment`s of this IRI.'] : []),
-    ...(controls.length === 0 ? [``, `This graph publishes no controls.`] : []),
-  ].join('\n');
-
-  return renderHypermediaMarkdown({
-    id: iri,
-    // hmd:Document typing lives on the frontmatter's document node, not the resource.
-    type: meta.isOntology ? 'owl:Ontology' : 'iep:ContextDescriptor',
-    descriptorUrl,
-    title: meta.slug,
-    // /ns serves only the current non-superseded PUBLIC graph, so this
-    // lifecycle snapshot is honest by construction.
-    state: 'published',
-    fields: { 'dct:publisher': meta.owner },
-    links: [
-      { label: 'Signed descriptor (authority)', href: descriptorUrl, rel: 'describedby', type: 'text/turtle' },
-      { label: 'Turtle', href: `${iri}?format=turtle`, rel: 'alternate', type: 'text/turtle' },
-      { label: 'JSON-LD', href: `${iri}?format=jsonld`, rel: 'alternate', type: 'application/ld+json' },
-    ],
-    controls,
-    body,
-  });
-}
-
-/** Reduce any descriptor-supplied URL to the FIXED internal CSS host + the
- *  owner's own pod path — an SSRF-safe target rewrite (host is never attacker-
- *  controlled) constrained to `/<owner>/`. Returns null for a cross-owner /
- *  off-pod / unparseable URL so the caller uses the safe internal convention.
- *  Rewrites the fetch TARGET, never the served bytes (signatures verify). */
-function nsToOwnerPodInternal(u: string, owner: string): string | null {
-  try {
-    const cssOrigin = new URL(CSS_URL).origin;
-    const p = new URL(u).pathname;
-    const first = p.split('/').filter(Boolean)[0] ?? '';
-    if (decodeURIComponent(first) !== owner) return null;
-    return `${cssOrigin}${p}`;
-  } catch { return null; }
-}
-
-/** A fetchGraphContent()/solidFetch() error whose HTTP status is 404/410 —
- *  i.e. the target graph is ABSENT, not an upstream failure. Coupled to
- *  fetchGraphContent's throw format `Failed to GET <url>: <status> <text>`;
- *  the `: <status>` token (colon-space) can only be the status separator
- *  (a URL has no space), so it never false-matches on the URL itself. */
-function isAbsentGraphError(e: unknown): boolean {
-  const m = (e as Error)?.message ?? String(e);
-  return /:\s(?:404|410)\b/.test(m);
-}
-
-/** Shared /ns resolver core — used by BOTH the public GET route and the
- *  resolve_linked_data MCP tool. Discovers the current non-superseded published
- *  graph at <RELAY_NS_ROOT>/<owner>/<slug>, follows the descriptor (SSRF-safe:
- *  every fetch URL reduced to the FIXED internal CSS host + the owner's own pod
- *  path), and returns the clean projected Turtle. Generic — NO conformsTo filter,
- *  serves any published PUBLIC graph. */
-async function resolveNsGraph(owner: string, slug: string): Promise<
-  | { ok: true; turtle: string; ontologyIri: string; isOntology: boolean; descriptorUrl: string }
-  | { ok: false; status: number; error: string; ontologyIri: string }> {
-  const graphIri = `${RELAY_NS_ROOT}/${encodeURIComponent(owner)}/${encodeURIComponent(slug)}`;
-  const podUrl = `${CSS_URL}${encodeURIComponent(owner)}/`;
-  const convGraphUrl = `${podUrl}ontologies/${encodeURIComponent(slug)}-graph.trig`;
-  // Fetch a graph URL + build the served result (null when empty / encrypted-non-public).
-  const serve = async (graphUrl: string, descriptorUrl: string, conformsTo: readonly string[] | undefined) => {
-    let fetched: Awaited<ReturnType<typeof fetchGraphContent>>;
-    try {
-      fetched = await fetchGraphContent(graphUrl, { fetch: solidFetch });
-    } catch (e) {
-      // An ABSENT graph (CSS 404/410) is a genuine not-found, not an upstream
-      // failure: return null so the caller falls through to the clean 404 instead
-      // of the outer catch's 502. Any other error (5xx / network / abort/timeout)
-      // still throws → 502, the correct status for a real bad gateway. This is what
-      // makes the intended `return { status: 404 }` reachable for an unpublished
-      // slug whose convention graph does not exist (the 0589752 fallback regression).
-      if (isAbsentGraphError(e)) return null;
-      throw e;
-    }
-    const trig = fetched.content ?? '';
-    if (!trig || (fetched.encrypted && !fetched.content)) return null;
-    const turtle = nsExtractGraphTurtle(trig, graphIri) ?? trig;
-    const isOntology = (conformsTo ?? []).some(c => c === NS_OWL_ONTOLOGY) || /\bowl:Ontology\b/.test(turtle);
-    return { ok: true as const, turtle, ontologyIri: graphIri, isOntology, descriptorUrl };
-  };
-  try {
-    const entries = await discover(podUrl, { graphIri }, { fetch: solidFetch });
-    const superseded = new Set(entries.flatMap(e => (e.supersedes ?? []) as string[]));
-    const head = entries.find(e => !superseded.has(e.descriptorUrl)) ?? entries[0];
-    if (head) {
-      const descUrlSafe = nsToOwnerPodInternal(head.descriptorUrl, owner);
-      let dist: ReturnType<typeof parseDistributionFromDescriptorTurtle> = null;
-      if (descUrlSafe) {
-        const descResp = await solidFetch(descUrlSafe, { headers: { Accept: 'text/turtle' } });
-        dist = parseDistributionFromDescriptorTurtle(descResp.ok ? await descResp.text() : '');
-      }
-      if (dist?.encrypted) return { ok: false, status: 409, error: `Graph ${graphIri} is a non-public (encrypted) projection; only public RDF projections dereference here.`, ontologyIri: graphIri };
-      const graphUrl = (dist?.accessURL ? nsToOwnerPodInternal(dist.accessURL, owner) : null) ?? convGraphUrl;
-      const served = await serve(graphUrl, head.descriptorUrl, head.conformsTo);
-      if (served) return served;
-    }
-    // FALLBACK — no manifest entry indexes this IRI (or its graph was unreadable).
-    // Try the ontologies/<slug> CONVENTION graph directly. This makes an ontology
-    // written to the convention dereference even when the pod's manifest could not
-    // be indexed — e.g. an oversized manifest whose write fails (a large pod), or a
-    // publisher that wrote the descriptor+graph but no manifest entry. Bounded: one
-    // internal-host, owner-pod-path GET (SSRF-safe, same as the primary path).
-    const served = await serve(convGraphUrl, convGraphUrl, undefined);
-    if (served) return served;
-    return { ok: false, status: 404, error: `No published graph at ${graphIri} on ${owner}'s pod.`, ontologyIri: graphIri };
-  } catch (err) {
-    return { ok: false, status: 502, error: `Failed to dereference ${graphIri}: ${(err as Error).message}`, ontologyIri: graphIri };
-  }
-}
-
-/**
- * ★ EVERY SUBJECT MINTED UNDER A PUBLISHED DOCUMENT DEREFERENCES TO THE VERSION THAT
- * DESCRIBES IT — the generic half of "every identifier is a dereferenceable URL".
- *
- * `/ns/:owner/:slug` serves the CURRENT head of a graph. That is right for an ontology and
- * wrong for an append-only log: a stream publishes each entry into the same graph IRI,
- * superseding the last, and mints each entry at `<stream>/e/<seq>`. Those entry IRIs are the
- * subjects a work shape targets, the objects of every citation, the things a SKOS term is
- * attached to — and all but the newest answered 404, because the head document says nothing
- * about them. The report that claimed "all 14 IRIs return 200 to an anonymous curl" had
- * quietly substituted the storage-layer `.ttl` addresses for them.
- *
- * The relay already holds the whole lineage (`discover` returns every descriptor that
- * indexed the graph IRI), so this walks it newest-first and serves the version whose graph
- * actually mentions the requested subject. Generic: it knows nothing about streams, entries
- * or any vertical — it answers "which published version of this document describes this
- * subject", which is the same question for any document in the substrate.
- *
- * Bounded on purpose: a lineage is unbounded and each step is one internal GET, so a deep
- * log must not turn one anonymous request into hundreds. Past the bound the answer is an
- * honest 404 naming the bound rather than a slow success.
- */
-const NS_SUBJECT_LINEAGE_LIMIT = 64;
-
-async function resolveNsSubject(owner: string, slug: string, subjectIri: string): Promise<
-  | { ok: true; turtle: string; descriptorUrl: string }
-  | { ok: false; status: number; error: string }> {
-  const graphIri = `${RELAY_NS_ROOT}/${encodeURIComponent(owner)}/${encodeURIComponent(slug)}`;
-  const podUrl = `${CSS_URL}${encodeURIComponent(owner)}/`;
-  let entries: Awaited<ReturnType<typeof discover>>;
-  try {
-    entries = await discover(podUrl, { graphIri }, { fetch: solidFetch });
-  } catch (err) {
-    return { ok: false, status: 502, error: `Failed to read the lineage of ${graphIri}: ${(err as Error).message}` };
-  }
-  if (entries.length === 0) return { ok: false, status: 404, error: `No published graph at ${graphIri} on ${owner}'s pod.` };
-
-  // Newest first: a subject re-described by a later version should resolve to the later one.
-  const superseded = new Set(entries.flatMap(e => (e.supersedes ?? []) as string[]));
-  const ordered = [...entries].sort((a, b) => {
-    const ah = superseded.has(a.descriptorUrl) ? 1 : 0;
-    const bh = superseded.has(b.descriptorUrl) ? 1 : 0;
-    if (ah !== bh) return ah - bh;
-    return String(b.validFrom ?? '').localeCompare(String(a.validFrom ?? ''));
-  });
-
-  const needle = `<${subjectIri}>`;
-  let looked = 0;
-  for (const e of ordered) {
-    if (looked >= NS_SUBJECT_LINEAGE_LIMIT) {
-      return { ok: false, status: 404, error: `<${subjectIri}> was not described by any of the ${NS_SUBJECT_LINEAGE_LIMIT} most recent versions of ${graphIri}; this route does not walk further.` };
-    }
-    looked++;
-    const descUrlSafe = nsToOwnerPodInternal(e.descriptorUrl, owner);
-    if (!descUrlSafe) continue;
-    let graphUrl: string | null = null;
-    try {
-      const descResp = await solidFetch(descUrlSafe, { headers: { Accept: 'text/turtle' } });
-      const dist = parseDistributionFromDescriptorTurtle(descResp.ok ? await descResp.text() : '');
-      // A non-public projection is not served here, exactly as at the document route.
-      if (dist?.encrypted) continue;
-      graphUrl = dist?.accessURL ? nsToOwnerPodInternal(dist.accessURL, owner) : null;
-    } catch { continue; }
-    if (!graphUrl) continue;
-    let trig: string;
-    try {
-      const fetched = await fetchGraphContent(graphUrl, { fetch: solidFetch });
-      if (fetched.encrypted && !fetched.content) continue;
-      trig = fetched.content ?? '';
-    } catch { continue; }
-    if (trig === '') continue;
-    const turtle = nsExtractGraphTurtle(trig, graphIri) ?? trig;
-    // The subject must appear as a full IRIREF. A substring test on the bare IRI would match
-    // `<…/e/1>` inside `<…/e/11>` and serve the wrong version.
-    if (!turtle.includes(needle)) continue;
-    return { ok: true, turtle, descriptorUrl: e.descriptorUrl };
-  }
-  return { ok: false, status: 404, error: `No published version of ${graphIri} describes <${subjectIri}>.` };
-}
-
-/** MCP tool handler — resolve a published /ns graph/ontology as linked data for
- *  MCP-only clients that cannot GET the URL over raw HTTP. Accepts the full
- *  <relay>/ns/<owner>/<slug> IRI OR explicit owner+slug, + optional format
- *  (turtle | jsonld). Read-only; wraps resolveNsGraph (the same core the public
- *  GET route uses). */
-async function handleResolveLinkedData(args: ToolArgs): Promise<string> {
-  let owner = (args['owner'] as string | undefined)?.trim();
-  let slug = (args['slug'] as string | undefined)?.trim();
-  const iri = (args['iri'] as string | undefined)?.trim();
-  if ((!owner || !slug) && iri) {
-    const m = /\/ns\/([^/]+)\/([^/?#]+)/.exec(iri);
-    if (m) { owner = decodeURIComponent(m[1]!); slug = decodeURIComponent(m[2]!); }
-  }
-  if (!owner || !slug) return JSON.stringify({ error: 'Provide { iri: "<relay>/ns/<owner>/<slug>" } OR { owner, slug }.' });
-  const r = await resolveNsGraph(owner, slug);
-  if ('error' in r) return JSON.stringify({ iri: r.ontologyIri, error: r.error });
-  const format = String(args['format'] ?? 'turtle').toLowerCase();
-  if (format === 'jsonld') {
-    try { return JSON.stringify({ iri: r.ontologyIri, contentType: 'application/ld+json', isOntology: r.isOntology, content: nsTurtleToJsonLd(r.turtle) }); }
-    catch { /* fall through to turtle */ }
-  }
-  // HyperMarkdown projection — the affordance set as prose the MODEL reads
-  // natively, instead of Turtle only a parser can see. Controls carry no
-  // transport endpoint; act via invoke_affordance(descriptorUrl, rel).
-  if (format === 'markdown' || format === 'md' || format === 'hmd') {
-    try {
-      return JSON.stringify({
-        iri: r.ontologyIri,
-        contentType: HYPERMEDIA_MARKDOWN_MEDIA_TYPE,
-        profile: HMD_PROFILE_IRI,
-        isOntology: r.isOntology,
-        content: nsMarkdown(r.ontologyIri, r.turtle, { owner, slug, descriptorUrl: r.descriptorUrl, isOntology: r.isOntology }),
-      });
-    } catch { /* fall through to Turtle — same posture as the HTTP route */ }
-  }
-  return JSON.stringify({ iri: r.ontologyIri, contentType: 'text/turtle', isOntology: r.isOntology, content: r.turtle });
-}
-
-// ── /ns/pgsl/:kind/:hash — the canonical PGSL node identifier authority ───────
+// ★ MOUNTED HERE, CONSTRUCTED FAR ABOVE. Construction is separate and much earlier because the
+// TOOLS table above needs `handleResolveLinkedData` as a VALUE; see invariant 1 in
+// ns-dereference.ts.
 //
-// A PGSL node id is content-addressed (urn:pgsl:<kind>:<hash>) — a perfect DENOTATION
-// (same content, same id on every pod) but not itself fetchable. describeNode /
-// projectHolon now publish a location-INDEPENDENT canonical URL for each node under
-// THIS authority: https://<relay>/ns/pgsl/<kind>/<hash>. This route makes that id
-// actually RESOLVE, so a node both denotes (the id) and resolves to connotation (its
-// description) — the standing "every id is a dereferenceable URL" principle.
+// ★★ WHAT THE POSITION OF THIS LINE ACTUALLY CONTROLS — measured, not assumed. The relay was
+// booted and its live router stack dumped: 79 layers, of which 71 are route registrations and 8
+// are path-agnostic `app.use` middlewares. Every one was asked `layer.match(p)` for each of the
+// four /ns path shapes mount() registers. FOURTEEN match at least one: the 6 /ns routes
+// themselves, and all 8 of the `app.use` middlewares, which match every path there is —
+// Express's own `query` and `expressInit`, the HSTS header middleware, the two body parsers,
+// `corsMiddleware`, the CORS-freeze wrapper and the OAuth router mounted at '/'. Of the 65 route
+// registrations in this file that are NOT /ns routes, NONE matches a /ns path, and no /ns route
+// matches any of theirs; live GETs against that same booted relay were answered by these routes'
+// own handlers. So this call may sit anywhere among the other routes; what it may NOT do is move
+// above `app.use(corsMiddleware({…}))`, which is where — and only where — a /ns response gets
+// `Access-Control-Allow-Origin: *` and `Access-Control-Expose-Headers: Link, ETag`. Ahead of
+// that middleware the routes still answer 200 and are simply unreadable to every cross-origin
+// browser agent. `mount()` refuses to register at all unless a layer carrying the CORS
+// carve-out's tag is installed AND Express's own `match` says it runs for every /ns path shape.
 //
-// ★ THE RELAY DOES HOLD A LATTICE. The comment that stood here claimed otherwise and
-// had been false since the shim/kernel fusion. But that lattice is NOT what this route
-// serves: it is untenanted scratch written by the unauthenticated mint / promote /
-// pgsl_ingest tools, and this route is unauthenticated with ACAO:*. Serving it by hash
-// would be a cross-tenant guess-and-check disclosure oracle over every caller's content
-// — worse for encrypted atoms, whose id is addressed from the PLAINTEXT while the
-// stored value is a placeholder, so a public hash resolver confirms plaintext guesses
-// without leaking a byte.
+// That constraint is ENFORCED rather than described: `mount()` reads this app's installed
+// middleware stack and throws if the tagged carve-out is not on it yet, so the bad position is a
+// boot crash naming the fix instead of a silent regression. tests/ns-dereference.test.ts §8
+// pins both directions.
 //
-// THE INVARIANT: resolvable ⟺ PUBLISHED. Three tiers:
-//   1. the relay's durable published-node store — 200
-//   2. PGSL_NODE_RESOLVER, a fail-closed public-lattice resolver holding a DISJOINT
-//      corpus (the Foxxi bridge's ontology terms + memory commons) — 302
-//   3. uniform 404, byte-identical for never-minted, minted-but-unpublished, and
-//      private — no existence signal.
-// Tier 1 reads the DURABLE store (its in-memory commons is a strict subset), so a
-// local-first write can never shadow what other replicas can see.
-// 4 path segments, so no collision with the 3-segment /ns/:owner/:slug below.
-// The handler lives in pgsl-node-store.ts and is mounted here. It is exported as a
-// factory precisely so the regression test can mount THE SAME FUNCTION — a test that
-// re-implemented it would assert a composition we do not ship, which is how the
-// 302-into-a-foreign-404 survived a suite already containing a test named
-// "…resolves at its authority".
-app.options('/ns/pgsl/:kind/:hash', (_req, res) => { res.status(204).end(); });
-app.get('/ns/pgsl/:kind/:hash', publishedNodes.nodeRouteHandler({
-  resolverBase: PGSL_NODE_RESOLVER,
-  publicBase: PUBLIC_BASE_URL,
-}));
-
-// The naming authority for iep:action identifiers. An action's canonical id is
-// https://relay.interego.xwisee.com/ns/iep/action/<vertical>/<verb>; it 302-redirects to
-// the vertical's affordance manifest, where that action is defined (matchable by iep:action).
-// This is what makes an action id a dereferenceable URL — a term, not a word. Fixed
-// vertical→host map (env-overridable), so there is no open redirect.
-// A value may carry a PATH, not just a host: the relay's own operations are
-// described by /.well-known/operations rather than a vertical's /affordances. That
-// makes the relay's own actions dereferenceable too, which is the precondition for
-// any interop projection whose capability ids must be real URLs rather than urns.
-/**
- * ★★ The roster and the resolution rule live in `action-authority.ts`, not here.
- *
- * They were inline, and the rule was therefore only reachable through an HTTP server — so it was
- * never tested, and it was wrong: a plain object literal plus a bare index meant every member of
- * `Object.prototype` answered as a registered vertical. Measured on the live relay,
- * `GET /ns/iep/action/constructor/publish_context` returned 302 rather than 404. See that module
- * for the full measurement and `tests/action-authority.test.ts` for the cases.
- */
-const IEP_ACTION_VERTICALS: Record<string, string> = buildActionRoster(
-  {
-    foxxi: 'https://foxxi-bridge.interego.xwisee.com/affordances',
-    relay: `${(PUBLIC_BASE_URL || '').replace(/\/$/, '')}/.well-known/operations`,
-  },
-  process.env.IEP_ACTION_VERTICALS,
-);
-app.get('/ns/iep/action/:vertical/:verb', (req, res) => {
-  // CORS (ACAO:*) via the /ns/* public linked-data carve-out.
-  const vertical = String(req.params.vertical);
-  const verb = String(req.params.verb);
-  // One rule, in one place, imported by the test that pins it. Underscores are allowed in both
-  // segments because substrate operation names use them (publish_context, get_descriptor, …);
-  // without that every relay action id 404s and the interop card would have to drop them all.
-  const resolved = resolveActionTarget(IEP_ACTION_VERTICALS, vertical, verb);
-  if (!resolved.ok || resolved.target === undefined) {
-    res.status(404).json({ error: 'no such action', reason: resolved.reason });
-    return;
-  }
-  res.redirect(302, resolved.target);
-});
-
-app.options('/ns/:owner/:slug', (_req, res) => { res.status(204).end(); });
-app.get('/ns/:owner/:slug', async (req, res) => {
-  const owner = String(req.params['owner'] ?? '');
-  const slug = String(req.params['slug'] ?? '');
-  const r = await resolveNsGraph(owner, slug);
-  if ('error' in r) { res.status(r.status).type('text/plain').send(r.error); return; }
-  const { turtle, ontologyIri, isOntology, descriptorUrl } = r;
-  // ONE conneg rule for every projection route (q-aware; explicit ?format wins;
-  // ties broken turtle > jsonld > html > markdown; default here = Turtle).
-  const kind = negotiateRepresentation(
-    String(req.query['format'] ?? '') || undefined,
-    String(req.headers['accept'] ?? '') || undefined,
-  );
-  res.setHeader('Vary', 'Accept');
-  if (kind === 'jsonld') {
-    try { res.type('application/ld+json').send(JSON.stringify(nsTurtleToJsonLd(turtle), null, 2)); return; } catch { /* fall back to Turtle */ }
-  }
-  if (kind === 'html') {
-    res.type('text/html').send(nsHtml(ontologyIri, turtle, { owner, slug, descriptorUrl, isOntology })); return;
-  }
-  if (kind === 'markdown') {
-    // HyperMarkdown: registered media type (RFC 7763 — charset REQUIRED,
-    // variant names the SYNTAX flavor) + RFC 6906 profile Link for the
-    // semantic dialect. The same profile claim rides in-band (the frontmatter
-    // document node) because headers die at the first copy-paste.
-    // try/catch like the jsonld branch: the renderer validates strictly, and
-    // /ns serves ARBITRARY user-published graphs on an async Express 4 route
-    // — an uncaught throw here would be an unhandled rejection (process exit
-    // on Node 22), i.e. a one-GET DoS from one odd published graph.
-    try {
-      const md = nsMarkdown(ontologyIri, turtle, { owner, slug, descriptorUrl, isOntology });
-      res.setHeader('Link', `${HMD_PROFILE_LINK_HEADER}, <${publishableDescriptorUrl(descriptorUrl, ontologyIri)}>; rel="describedby"; type="text/turtle"`);
-      res.type(HYPERMEDIA_MARKDOWN_MEDIA_TYPE).send(md);
-      return;
-    } catch { /* fall back to Turtle */ }
-  }
-  res.type('text/turtle').send(turtle);
-});
-
-// ── /ns/:owner/:slug/* — any SUBJECT minted under a published document ────────
-//
-// See `resolveNsSubject`. Registered AFTER /ns/:owner/:slug so the document route keeps
-// priority, and it serves the containing document rather than a synthesised sub-graph: the
-// bytes a reader gets are bytes that were actually published and signed, and the subject
-// they asked about is one of the subjects in them.
-app.get('/ns/:owner/:slug/*', async (req, res) => {
-  const owner = String(req.params['owner'] ?? '');
-  const slug = String(req.params['slug'] ?? '');
-  // Express 4 exposes a trailing `*` capture under the key '0'.
-  const raw = (req.params as unknown as Record<string, unknown>)['0'];
-  const rest = Array.isArray(raw) ? raw.join('/') : String(raw ?? '');
-  const subjectIri = `${RELAY_NS_ROOT}/${encodeURIComponent(owner)}/${encodeURIComponent(slug)}/${rest}`;
-  const r = await resolveNsSubject(owner, slug, subjectIri);
-  res.setHeader('Vary', 'Accept');
-  if (r.ok !== true) { res.status(r.status).type('text/plain').send(r.error); return; }
-  const kind = negotiateRepresentation(
-    String(req.query['format'] ?? '') || undefined,
-    String(req.headers['accept'] ?? '') || undefined,
-  );
-  // The served document describes MORE than the requested subject, and saying so is the
-  // difference between "here is your resource" and "here is the document it lives in".
-  res.setHeader('Content-Location', `${RELAY_NS_ROOT}/${encodeURIComponent(owner)}/${encodeURIComponent(slug)}`);
-  res.setHeader('Link', `<${publishableDescriptorUrl(r.descriptorUrl, subjectIri)}>; rel="describedby"; type="text/turtle"`);
-  if (kind === 'jsonld') {
-    try { res.type('application/ld+json').send(JSON.stringify(nsTurtleToJsonLd(r.turtle), null, 2)); return; } catch { /* fall back to Turtle */ }
-  }
-  res.type('text/turtle').send(r.turtle);
-});
+// The line is kept where the routes have always been — identical registration order to the
+// pre-extraction file: security.txt, then these six, then mountAmep, then mountAgentInterop.
+nsDereference.mount(app);
 
 // ── /amep/* — AMEP engine (Interego is the reference implementation) ──
 //

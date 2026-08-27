@@ -43,10 +43,22 @@ console.log('\nstripComments removes comments and NOTHING else');
 {
   const SERVER = readFileSync(join(here, '..', 'server.ts'), 'utf8');
   const code = stripComments(SERVER, 'server.ts');
-  for (const probe of ['const RELAY_POD_HOST_ALLOWLIST', 'const vertical = String(req.params.vertical)']) {
-    ok(SERVER.includes(probe) && code.includes(probe),
-      `server.ts keeps \`${probe.slice(0, 40)}…\` after stripping`,
-      `in source: ${SERVER.includes(probe)}, in stripped: ${code.includes(probe)}`);
+  // Each probe is a code line sitting inside a span that a `//` comment containing `/*` opened
+  // — the exact shape the regex stripper swallowed. The iep:action probe moved to
+  // ns-dereference.ts with the /ns extraction, and it is checked THERE rather than dropped:
+  // its opening comment (`// CORS (ACAO:*) via the /ns/* public linked-data carve-out.`) moved
+  // with it, so the hazard is unchanged — only its address is. Dropping it would have quietly
+  // shrunk this gate to one probe.
+  const PROBES: ReadonlyArray<readonly [string, string]> = [
+    ['server.ts', 'const RELAY_POD_HOST_ALLOWLIST'],
+    ['ns-dereference.ts', 'const vertical = String(req.params.vertical)'],
+  ];
+  for (const [file, probe] of PROBES) {
+    const src = file === 'server.ts' ? SERVER : readFileSync(join(here, '..', file), 'utf8');
+    const stripped = file === 'server.ts' ? code : stripComments(src, file);
+    ok(src.includes(probe) && stripped.includes(probe),
+      `${file} keeps \`${probe.slice(0, 40)}…\` after stripping`,
+      `in source: ${src.includes(probe)}, in stripped: ${stripped.includes(probe)}`);
   }
   // A stripper that returns its input unchanged would pass everything above.
   ok(code.length < SERVER.length * 0.85,

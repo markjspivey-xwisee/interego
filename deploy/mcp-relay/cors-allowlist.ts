@@ -217,10 +217,36 @@ export type MinimalReq = { headers: Record<string, string | string[] | undefined
 export type MinimalRes = { setHeader: (name: string, value: string) => void };
 export type NextFn = () => void;
 
-export function corsMiddleware(opts: CorsHeaderOptions = {}): (req: MinimalReq, res: MinimalRes, next: NextFn) => void {
+/**
+ * ★★ THE ORDERING TAG. Stamped on every middleware `corsMiddleware()` returns, so a route
+ * module can ASK an Express app whether the public linked-data carve-out is already installed
+ * on it — before registering routes that depend on it.
+ *
+ * Why a tag rather than a comment: Express decides by REGISTRATION ORDER, and it offers no way
+ * to declare "I must run after that". The /ns/* routes (ns-dereference.ts) are the surface that
+ * depends on this: their `Access-Control-Allow-Origin: *` and their `Access-Control-Expose-
+ * Headers: Link, ETag` are set HERE, in the `url.startsWith('/ns/')` branch above, and nowhere
+ * else. Register those routes ahead of this middleware and every /ns response ships with no
+ * CORS headers at all — a browser-invisible surface, 200 on the wire, no test failure. That is
+ * the shape of regression this tag exists to convert into a startup crash. See
+ * `assertPublicLinkedDataCorsInstalled` in ns-dereference.ts for the consumer.
+ *
+ * `Symbol.for` (the global registry) rather than a fresh `Symbol()`: two module instances of
+ * this file — a dist/ copy and a src/ copy, a duplicated dependency — would mint two private
+ * symbols and the check would fail on a correctly ordered app. The registry makes the tag
+ * identity-stable across every copy in the process.
+ */
+export const PUBLIC_LINKED_DATA_CORS = Symbol.for('interego.cors.publicLinkedDataCarveOut');
+
+/** The tagged shape of a `corsMiddleware()` result. */
+export type TaggedCorsMiddleware =
+  ((req: MinimalReq, res: MinimalRes, next: NextFn) => void)
+  & { readonly [PUBLIC_LINKED_DATA_CORS]: true };
+
+export function corsMiddleware(opts: CorsHeaderOptions = {}): TaggedCorsMiddleware {
   const ownOrigin = normalizeOrigin(opts.ownOrigin ?? '') ?? 'https://relay.interego.xwisee.com';
   const allowlist = buildCorsAllowlist(opts);
-  return (req, res, next) => {
+  const middleware = (req: MinimalReq, res: MinimalRes, next: NextFn): void => {
     // Public linked-data surface: the /ns/* RDF-projection dereference resolver
     // serves world-readable, no-credential, content-negotiated RDF (a holon
     // used as RDF dereferences the way LOD + browser tools expect), so it is
@@ -275,6 +301,10 @@ export function corsMiddleware(opts: CorsHeaderOptions = {}): (req: MinimalReq, 
     }
     next();
   };
+  // Stamp the ordering tag. `Object.defineProperty` rather than assignment so the mark is
+  // non-enumerable and non-writable: it is an identity claim about this function, not state.
+  Object.defineProperty(middleware, PUBLIC_LINKED_DATA_CORS, { value: true });
+  return middleware as TaggedCorsMiddleware;
 }
 
 /**

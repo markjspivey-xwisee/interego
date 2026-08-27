@@ -71,6 +71,14 @@ COPY docs/ns/eu-ai-act.ttl /relay-docs/ns/eu-ai-act.ttl
 # docs/ns in every other image is skipped entirely once that variable is set, so anything
 # @interego/pgsl needs has to be in this directory or it silently falls back.
 COPY docs/ns/pgsl-lexicon.ttl /relay-docs/ns/pgsl-lexicon.ttl
+# ★ The L1 protocol ontology, because the relay now ENFORCES a rule that lives in it:
+# `iep:NotificationBodyShape` is the contract every notify_agent notification is validated
+# against before it is written (deploy/mcp-relay/notification-body.ts). Publishing the rule and
+# enforcing it from the same bytes is the point — an image that shipped the code without this
+# file would silently stop enforcing, and the only signal would be a WARN line at first use. So
+# tests/notification-body-shape.test.ts asserts this line exists AND that its destination is
+# exactly where the running module's first candidate path looks from /app/dist.
+COPY docs/ns/iep.ttl /relay-docs/ns/iep.ttl
 
 # ────────────────────────────────────────────────────────────
 #  Build stage: install relay deps + compile server.ts
@@ -137,6 +145,10 @@ COPY deploy/mcp-relay/reachability.ts ./
 COPY deploy/mcp-relay/alternate-turtle.ts ./
 COPY deploy/mcp-relay/shape-body.ts ./
 COPY deploy/mcp-relay/shapes-declared.ts ./
+# The gate that validates a notification body against the published shape, and the AS2 -> Turtle
+# projection that lets a SHACL engine see one. Extracted for the usual reason: server.ts opens a
+# listener on import, so "which caller gets refused" could not otherwise be run by a test.
+COPY deploy/mcp-relay/notification-body.ts ./
 COPY deploy/mcp-relay/supersession-frontier.ts ./
 COPY deploy/mcp-relay/required-args.ts ./
 COPY deploy/mcp-relay/turtle-iri-args.ts ./
@@ -157,6 +169,11 @@ COPY deploy/mcp-relay/authorship-content-binding.ts ./
 # testable. tests/image-copies-every-source.test.ts fails if a module server.ts imports is missing
 # from this list — it caught exactly that on this file, which is what the gate is for.
 COPY deploy/mcp-relay/action-authority.ts ./
+# The /ns dereference surface: the RDF-projection routes, the PGSL node authority, the
+# iep:action route, and the pure Turtle/JSON-LD/HTML/HyperMarkdown projections. Extracted
+# from server.ts so the projections are importable; server.ts imports it, so this per-file
+# COPY is mandatory — image-copies-every-source.test.ts walks the real import graph.
+COPY deploy/mcp-relay/ns-dereference.ts ./
 # Pod authorization: which pod URLs a bearer may act on, and which of them the relay minted
 # itself. Extracted for the same reason — server.ts is unimportable, so the rule was untested.
 COPY deploy/mcp-relay/pod-authorization.ts ./
