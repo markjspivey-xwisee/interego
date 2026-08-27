@@ -28,7 +28,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -91,18 +91,33 @@ describe('★★★ the rule is DATA — the engine reads a graph it does not em
     // This is the whole claim, and the only way to demonstrate it is to do it. If this ever fails,
     // the rule has quietly moved back into the source.
     const original = readFileSync(RULE_TTL, 'utf8');
-    try {
-      expect(parseProficiencyBands(original).find((b) => b.name === 'Proficient')?.minReliability).toBe(0.60);
-      const stricter = original.replace(
-        'tla:awardsLevel tla:LevelProficient ;\n    tla:minReliability "0.60"^^xsd:decimal ;',
-        'tla:awardsLevel tla:LevelProficient ;\n    tla:minReliability "0.90"^^xsd:decimal ;',
-      );
-      expect(stricter, 'the substitution must actually apply').not.toBe(original);
-      const bands = parseProficiencyBands(stricter);
-      expect(bands.find((b) => b.name === 'Proficient')?.minReliability).toBe(0.90);
-    } finally {
-      writeFileSync(RULE_TTL, original);
-    }
+    // ★ NOTHING IS WRITTEN TO DISK, AND THAT IS DELIBERATE. This used to read the file, write a
+    // MUTATED copy over it, assert, and restore in a `finally`. The mutation moved in-memory long
+    // ago — `stricter` is only ever parsed as a string — but the restoring write stayed behind,
+    // rewriting a TRACKED file with its own identical content on every run. It restored a change
+    // that no longer happens.
+    //
+    // Removing it is right under the current single-fork pool, where it was merely pointless I/O
+    // on a file more than ten other modules read. It matters more if file parallelism is ever
+    // enabled (measured, and parked on wip/parallel-test-pool): a whole-file write is not atomic,
+    // so a concurrent reader could catch the truncated window.
+    //
+    // ★ SCOPE OF WHAT WAS CHECKED, because the first version of this note overstated it. A scan
+    // for writeFileSync/mkdirSync/renameSync/appendFileSync found 7 writers and called this the
+    // ONLY one touching a path another test reads. A widened scan found 11 — the first missed
+    // modules whose only removal verb is unlinkSync — and NO source-level scan can see through
+    // the 20 modules that spawn a child process, one of which reaches a tracked file via
+    // tools/build-workspace-artifact.mjs (safe only because its --check branch exits first).
+    // So: this was the only in-repo write THAT SCAN COULD SEE. Treat that as the claim.
+    // The demonstration is unchanged — a different graph still yields a different judgement.
+    expect(parseProficiencyBands(original).find((b) => b.name === 'Proficient')?.minReliability).toBe(0.60);
+    const stricter = original.replace(
+      'tla:awardsLevel tla:LevelProficient ;\n    tla:minReliability "0.60"^^xsd:decimal ;',
+      'tla:awardsLevel tla:LevelProficient ;\n    tla:minReliability "0.90"^^xsd:decimal ;',
+    );
+    expect(stricter, 'the substitution must actually apply').not.toBe(original);
+    const bands = parseProficiencyBands(stricter);
+    expect(bands.find((b) => b.name === 'Proficient')?.minReliability).toBe(0.90);
   });
 
   it('the published sentence is GENERATED from those triples, so it cannot drift', () => {
