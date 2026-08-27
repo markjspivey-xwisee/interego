@@ -169,7 +169,13 @@ const UNLINTED_FRONTIER = {
   // `git ls-files`, so a new file is invisible to this gate until it is COMMITTED. `npm run lint`
   // passed locally with all nine present and untracked, then failed on the first CI run after the
   // commit. A pre-commit lint cannot see a frontier change; re-run it once after committing.
-  deploy: { errors: 356, files: 122 },
+  // 122 -> 130: three files from the round that made validation say what it validated against and
+  // the directory say who it means — shapes-declared.ts plus its two driven relay suites. ERRORS
+  // did not move, which is the point of tracking the two separately.
+  // ★ THIS COUNTS GIT-TRACKED FILES, so `npm run lint` BEFORE `git add` reports a false green on
+  // this ceiling: the new files are invisible to it until they are staged. Measured 2026-08-27 —
+  // local lint:all exited 0, CI failed on the same tree, and the only difference was the commit.
+  deploy: { errors: 356, files: 130 },
   // The bulk of these are `no-console` in vertical bridges and CLI entry points — one config
   // decision, not a thousand defects. See the note above.
   // ★ 320 -> 337, and the ratchet caught it in CI rather than locally, which is the interesting
