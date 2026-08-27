@@ -237,19 +237,50 @@ These triggers are enforced by the transplant test at review time. Ontology-lint
 
 ## Commands
 
+`package.json` defines 26 scripts; `node -e "console.log(Object.keys(require('./package.json').scripts))"` is the authority. The ones that matter:
+
 ```bash
-npm install          # Install devDependencies
-npm run build        # Compile TypeScript → dist/
-npm test             # Run vitest test suite
-npm run test:watch   # Watch mode
-npm run lint         # ESLint
+npm install          # devDependencies
+npm run build        # core, then leaves — writes packages/*/dist/
+npm test             # vitest run, THEN test:deploy (identity + relay workspaces)
+npm run test:watch   # vitest, watch mode
+npm run lint         # NOT eslint — tools/lint-gate.mjs (the coverage gate; see below)
+npm run lint:raw     # plain eslint over packages + tests
+npm run lint:all     # what CI runs: lint + ontology + derivation + docs + changelog + ...
+npm run conformance  # spec/conformance/runner.mjs
 ```
+
+**`npm run lint` is a gate, not a linter.** `tools/lint-gate.mjs` runs eslint and then asserts
+things *about* the run — that it examined enough files, that every top-level directory is
+accounted for, and that no banked frontier grew. eslint exits 0 when it lints nothing, which is
+the failure it exists to catch. Two consequences worth knowing before you trust it:
+
+- It counts **git-tracked** files. Run it before `git add` and a new file is invisible — it will
+  report `0 error(s)` and pass, then fail in CI. Stage first, or run `lint:all` after staging.
+- Read **its** exit code, not a pipe's. `npm run -s lint | tail -1` shows the eslint summary line
+  while the gate's own verdict is further up, and `rc` comes from `tail`.
 
 ## Test expectations
 
-- Tests are in `tests/context-graphs.test.ts`
-- All composition operator tests use `resetComposedIdCounter()` in `beforeEach` for deterministic IDs
-- Currently 40+ test cases covering: builder, composition, validation, Turtle, JSON-LD, namespaces, SPARQL, SHACL
+- **328 test modules**, not one file. `vitest.config.ts`'s `include` spans `tests/`,
+  `applications/*/tests/`, `integrations/*/tests/` and `mcp-server/tests/`; count them with
+  `git ls-files ':(glob)tests/**/*.test.ts' ...` — note `:(glob)` is required, because a git
+  pathspec is not a glob and the bare pattern silently matches nothing.
+  `tests/context-graphs.test.ts` is one 659-line module among them, covering the original
+  descriptor surface: builder, composition, validation, Turtle, JSON-LD, namespaces, SPARQL, SHACL.
+- All composition operator tests use `resetComposedIdCounter()` in `beforeEach` for deterministic IDs.
+- **vitest does not typecheck.** It strips types with esbuild and compiles nothing. The compiler in
+  that loop is the globalSetup at `tools/vitest-typecheck-setup.mjs` (~12s), which runs
+  `tsconfig.check.json`. Deleting a required bail-out from application source once left the whole
+  suite green while tsc caught it in one pass — do not skip it to save time.
+- **Most tests import built packages, not source.** All 20 packages export `./dist` only, so a
+  change under `packages/*/src` is invisible to its own test until `npm run build`. A green run
+  over a stale `dist/` is measuring last build's code; this has produced false mutation survivors.
+- Two gates keep written-down minimums, both now **proportional** (5% of the floor, minimum 5) via
+  `frontierTolerance`: `MIN_FILES` in `tools/lint-gate.mjs` and `MIN_TEST_MODULES` in
+  `tools/vitest-run-integrity.mjs`. They guard against a glob quietly matching nothing — they are
+  not coverage logs, so **do not raise them by hand**. Each names the number to write when it
+  genuinely fires, and `tests/vitest-run-integrity.test.ts` fails if either is left without slack.
 
 ## Conventions
 

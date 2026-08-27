@@ -591,14 +591,35 @@ export const MIN_FILES = 510;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.
- * Same mechanism, same reasoning and the same number as `tools/vitest-run-integrity.mjs`'s
- * FLOOR_ALLOWANCE: enough to absorb ordinary file deletion, not enough to hide a directory.
+ * Same mechanism and same reasoning as `tools/vitest-run-integrity.mjs`'s FLOOR_ALLOWANCE:
+ * enough to absorb ordinary file deletion, not enough to hide a directory.
+ *
+ * ★★ IT IS NO LONGER THE SAME NUMBER AS THAT ONE, AND IT IS NO LONGER A NUMBER AT ALL.
+ * It was a flat 10 against a floor of 510, and a flat 10 against a growing tree is a tripwire
+ * that arms itself: on 0f78e56a a census measured 520 linted files against MIN_FILES = 510,
+ * so the slack was EXACTLY zero and the next lintable file added anywhere in the repo would
+ * have failed CI — while `tools/vitest-run-integrity.mjs` sat at 328 against 318, armed the
+ * same way, on the same commit. Two independent gates, both one file from red, neither
+ * because anything was wrong. That is a floor firing on GROWTH, which is this repo's normal
+ * state, rather than on DISAPPEARANCE, which is the only thing it was ever meant to catch.
+ *
+ * ★ SO IT NOW USES {@link frontierTolerance}, THE RULE THIS FILE ALREADY APPLIES to all six
+ * UNLINTED_FRONTIER roots — 5% with a floor of 5, which those roots have used since they
+ * landed without anyone having to touch them. Nothing about what is GUARDED changes: the
+ * `report.length < MIN_FILES` check above is untouched, and a directory that vanishes still
+ * reds exactly as before. What changes is that the allowance grows with the tree it measures,
+ * so the gate stops demanding a commit for having done nothing wrong. 510 -> 26 of slack.
+ *
+ * ★ THIS DOES NOT REPLACE THE FLOOR WITH A DERIVED SET, which was the other candidate and
+ * is refused on purpose: a set comparison derived from the same glob the linter uses shrinks
+ * on BOTH sides when that glob breaks, so it cannot see the disappearance the floor exists
+ * for. A written-down number is still the only defence against that, and it stays.
  *
  * Exported with MIN_FILES so `tests/lint-gate.test.ts` derives its fixtures from them rather
  * than restating the numbers — two sources of truth for one number is what the gate exists
  * to prevent, and a self-test is not exempt from it.
  */
-export const FILE_FLOOR_ALLOWANCE = 10;
+export const FILE_FLOOR_ALLOWANCE = frontierTolerance(MIN_FILES);
 
 /**
  * The workflow whose job NAME is this gate's public label — the one line about it that a

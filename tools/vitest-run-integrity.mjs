@@ -244,7 +244,39 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // 316 -> 317: `tests/the-sweep-missed-the-signed-positions.test.ts`, from the raw-IRI
 // interpolation sweep — the signed positions the first pass walked past.
 export const MIN_TEST_MODULES = 318;
-export const FLOOR_ALLOWANCE = 10;
+
+/**
+ * How far below the real module count MIN_TEST_MODULES may sit before that is itself a
+ * failure — the same rule `tools/lint-gate.mjs` applies to its six UNLINTED_FRONTIER roots
+ * and, since the same commit as this, to MIN_FILES: 5% of the floor, never less than 5.
+ *
+ * ★★ IT WAS A FLAT 10, AND A FLAT ALLOWANCE AGAINST A GROWING TREE ARMS ITSELF. On
+ * 0f78e56a the tree held 328 modules against a floor of 318, so `treeTotal - floor` was
+ * EXACTLY 10 and the check is `> 10`: the next test module added anywhere under the include
+ * globs would have failed CI, for the crime of existing. `tools/lint-gate.mjs` was armed
+ * identically on the same commit (520 files against MIN_FILES = 510). Neither had anything
+ * wrong with it. A cardinality floor fires on GROWTH — which is this repo's normal state,
+ * +79% of tracked files in the 26 days to 2026-08-26 — while the only thing it is FOR is
+ * DISAPPEARANCE. Proportional slack fires on neither. 318 -> 16 of slack.
+ *
+ * ★ AND MOST OF THE EDITS IT COST WERE NEVER DEMANDED. A census of the last 250 commits
+ * found 34 that changed only this line, and reconstructing the gate's own arithmetic against
+ * each shows the great majority were under the allowance and would have passed untouched —
+ * the floor was being kept in step by hand as a coverage log, not raised because the gate
+ * asked. The gate NAMES the number to write when it genuinely fires; until it does, leaving
+ * this alone is correct and always was.
+ *
+ * ★ DUPLICATED FROM lint-gate.mjs RATHER THAN IMPORTED, DELIBERATELY. That module imports
+ * `eslint`; this one imports node builtins and nothing else, and it runs as a vitest reporter
+ * inside every single run. Pulling a linter into this module graph to share a one-line
+ * formula would trade a gate's independence for a de-duplication — and a gate that stops
+ * resolving is a gate that stops gating. The two are pinned equal by
+ * `tests/vitest-run-integrity.test.ts` instead, which is the layer where the dependency is
+ * free. If you change the rule, change it there and let that test tell you about this one.
+ */
+const floorTolerance = pin => Math.max(5, Math.ceil(pin * 0.05));
+
+export const FLOOR_ALLOWANCE = floorTolerance(MIN_TEST_MODULES);
 
 /**
  * States that mean the module was actually taken to a conclusion. `pending` and `queued` are

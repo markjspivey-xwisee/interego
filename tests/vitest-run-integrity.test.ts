@@ -20,6 +20,7 @@
 import { describe, it, expect } from 'vitest';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 
 // Dynamic import through a URL expression: `tools/vitest-run-integrity.mjs` is untyped JS
 // and a static specifier would be TS7016 under tsconfig.check.json, which compiles this
@@ -253,5 +254,67 @@ describe("the README's Test Suites table", () => {
     // No rows matched at all, so the shape failure fires — not nineteen phantom-file failures.
     expect(out).toHaveLength(1);
     expect(out[0]).toMatch(/no longer contains a "Test Suites" table/);
+  });
+});
+
+/**
+ * ★★ THE TWO FLOORS, AS A PAIR. Both `tools/vitest-run-integrity.mjs` and
+ * `tools/lint-gate.mjs` keep a written-down minimum with an allowance above it, and on
+ * 0f78e56a BOTH allowances were a flat 10 and BOTH were consumed to exactly zero — 328
+ * modules against 318, and 520 linted files against 510. Either gate would have failed CI on
+ * the next file added anywhere in the repo, and nothing would have been wrong. Neither gate
+ * could see it, because each one only ever compares itself to itself.
+ *
+ * ★ SO THIS IS THE ONLY PLACE THE TWO ARE READ TOGETHER, and it is the reason
+ * vitest-run-integrity.mjs is allowed to DUPLICATE the 5%-with-a-floor-of-5 rule rather than
+ * import it: lint-gate.mjs pulls in `eslint`, and that module graph does not belong inside a
+ * reporter that loads on every run. A test pays that import for free. If the rule ever
+ * changes in one file and not the other, the first case below reds — which is the whole
+ * point of tolerating the duplication.
+ */
+describe('neither floor is armed to zero', () => {
+  it('applies the same tolerance rule in both gates', async () => {
+    const { frontierTolerance, MIN_FILES, FILE_FLOOR_ALLOWANCE } = await import(
+      new URL('../tools/lint-gate.mjs', import.meta.url).href
+    ) as {
+      frontierTolerance: (pin: number) => number;
+      MIN_FILES: number; FILE_FLOOR_ALLOWANCE: number;
+    };
+    const { floor, allowance } = await loadFloor();
+
+    expect(FILE_FLOOR_ALLOWANCE, 'lint-gate stopped deriving its allowance').toBe(
+      frontierTolerance(MIN_FILES));
+    expect(allowance, "vitest-run-integrity drifted from the lint-gate tolerance rule")
+      .toBe(frontierTolerance(floor));
+  });
+
+  /**
+   * ★ NON-VACUITY. Equality of two formulas proves nothing about the tree they measure —
+   * a flat 10 in both files would have satisfied a naive parity check while both gates sat at
+   * zero slack. So this counts the REAL modules the same way the reporter does and asserts
+   * the slack is actually there. It is deliberately a HEADROOM check, not an exact number:
+   * pinning the count would make this the twenty-second hand-maintained integer in the repo,
+   * which is the thing being fixed.
+   */
+  it('leaves real headroom above the module floor as the tree stands', async () => {
+    const { floor, allowance } = await loadFloor();
+    // ★ `:(glob)` IS LOAD-BEARING. A git pathspec is NOT a glob by default — its wildcards
+    // are fnmatch without FNM_PATHNAME, and the four `include` patterns matched ZERO tracked
+    // files when passed bare. The count came back 0, which is silently BELOW the floor and
+    // would have read as "plenty of headroom" — the `toBeGreaterThan(0)` below is the only
+    // reason that did not ship as a green vacuous pass. With the magic, this returns 328,
+    // which is what CI reported for the same commit.
+    const tracked = execFileSync('git', ['ls-files', '-z', ...INCLUDE.map((g) => `:(glob)${g}`)], {
+      cwd: ROOT, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024,
+    }).split(' ').filter((f) => f.endsWith('.test.ts'));
+
+    // The reporter fails when `treeTotal - floor > allowance`. Assert we are not AT the edge:
+    // one new test module must not be able to red the build.
+    const consumed = tracked.length - floor;
+    expect(tracked.length, 'git found no test modules — the pathspec, not the tree, is wrong')
+      .toBeGreaterThan(0);
+    expect(consumed, `${tracked.length} modules, floor ${floor}, allowance ${allowance} — `
+      + 'the next test module added would fail CI. Raise MIN_TEST_MODULES.')
+      .toBeLessThan(allowance);
   });
 });
