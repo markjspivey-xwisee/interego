@@ -306,7 +306,14 @@ describe('neither floor is armed to zero', () => {
     // which is what CI reported for the same commit.
     const tracked = execFileSync('git', ['ls-files', '-z', ...INCLUDE.map((g) => `:(glob)${g}`)], {
       cwd: ROOT, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024,
-    }).split(' ').filter((f) => f.endsWith('.test.ts'));
+      // ★ THE SEPARATOR IS BUILT AT RUNTIME, and it is not a style choice. Writing it as an
+      // escape is how a RAW NUL BYTE reached this source and turned master red: a patch script
+      // emitted the byte the escape denotes instead of the two characters that denote it, and git
+      // then treats the file as BINARY — no reviewable diff. tests/line-endings-are-normalised
+      // caught it, but only in CI: it is one of the two hygiene tests that read the whole tree,
+      // so a targeted local run never executes it. Constructing the byte means no control
+      // character can live in this file at all, which is stronger than testing for one.
+    }).split(String.fromCharCode(0)).filter((f) => f.endsWith('.test.ts'));
 
     // The reporter fails when `treeTotal - floor > allowance`. Assert we are not AT the edge:
     // one new test module must not be able to red the build.
