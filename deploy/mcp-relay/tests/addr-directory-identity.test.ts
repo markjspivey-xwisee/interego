@@ -140,11 +140,22 @@ const loadTo = SERVER.indexOf(LOAD_TO, loadFrom + 1);
 // honest twice over while the WRITERS went on replacing whole rows: a stranger's `add_pod`
 // deleted the agent card of the pod it named. A projection that reports what a row holds
 // is worth nothing next to a writer that empties the row.
+// ★★ AND THE ADDRESS-OWNERSHIP TEST, sliced fourth. §12 exists because `cardForLocalPart`
+// matched a federation row by its LAST PATH SEGMENT with no test that the row could OWN that
+// address, while `add_pod` accepts an ARBITRARY url from any authenticated caller — so a
+// stranger could squat a PUBLISHED identity and have the relay serve that address's WebFinger
+// and ActivityPub actor from its own domain. Four clients recompose that handle to find a
+// member's pod before sealing a private workspace record to them.
+const OWNS_FROM = 'function podOwnsLocalPart(';
+const OWNS_TO = 'function podLocalPart(';
+const ownsFrom = SERVER.indexOf(OWNS_FROM);
+const ownsTo = SERVER.indexOf(OWNS_TO, ownsFrom + 1);
 const MERGE_FROM = 'function mergeDirectoryRow(';
 const MERGE_TO = '// Federation store config';
 const mergeFrom = SERVER.indexOf(MERGE_FROM);
 const mergeTo = SERVER.indexOf(MERGE_TO, mergeFrom + 1);
-if (from < 0 || to < 0 || loadFrom < 0 || loadTo < 0 || mergeFrom < 0 || mergeTo < 0) {
+if (from < 0 || to < 0 || loadFrom < 0 || loadTo < 0 || mergeFrom < 0 || mergeTo < 0
+  || ownsFrom < 0 || ownsTo < 0) {
   console.error(`\nFAIL — cannot locate the identity helpers in server.ts (from=${from}, to=${to}, load=${loadFrom}/${loadTo}, merge=${mergeFrom}/${mergeTo}).`);
   console.error('  If they were renamed or moved, this suite is testing nothing. Re-anchor it.');
   process.exit(1);
@@ -158,6 +169,7 @@ type DirectoryIdentity = {
   identityNote?: string;
 };
 type StoredRow = Record<string, unknown> & { url: string; via: string; addedAt: string };
+let podOwnsLocalPart: (podUrl: string, localPart: string) => boolean;
 let surfaceSlugFromAgentId: (id: string | undefined) => string | undefined;
 let agentSlugFromDid: (did: string | undefined) => string | undefined;
 let describeDirectoryEntry: (e: {
@@ -182,8 +194,10 @@ try {
       + `type RowWriter = 'own-agent' | 'third-party';\n`
       + `type StoredRow = Record<string, unknown> & { url: string; via: string; addedAt: string };\n`
       + `${SERVER.slice(from, to)}\n${SERVER.slice(loadFrom, loadTo)}\n${SERVER.slice(mergeFrom, mergeTo)}\n`
+      + `${SERVER.slice(ownsFrom, ownsTo)}
+`
       + `export { surfaceSlugFromAgentId, agentSlugFromDid, describeDirectoryEntry, `
-      + `knownPodFromStoredEntry, identityIsObserved, mergeDirectoryRow };\n`,
+      + `knownPodFromStoredEntry, identityIsObserved, mergeDirectoryRow, podOwnsLocalPart };\n`,
     'utf8',
   );
   const mod = await import(pathToFileURL(tmpModule).href) as {
@@ -193,9 +207,11 @@ try {
     knownPodFromStoredEntry: typeof knownPodFromStoredEntry;
     identityIsObserved: typeof identityIsObserved;
     mergeDirectoryRow: typeof mergeDirectoryRow;
+    podOwnsLocalPart: typeof podOwnsLocalPart;
   };
   surfaceSlugFromAgentId = mod.surfaceSlugFromAgentId;
   agentSlugFromDid = mod.agentSlugFromDid;
+  podOwnsLocalPart = mod.podOwnsLocalPart;
   describeDirectoryEntry = mod.describeDirectoryEntry;
   knownPodFromStoredEntry = mod.knownPodFromStoredEntry;
   identityIsObserved = mod.identityIsObserved;
@@ -1352,6 +1368,62 @@ _:pod1 iep:podUrl <${pod.base}/u-eth-eeee88889999/> .
     }
   }
 }
+
+// ── §12  AN ADDRESS IS OWNED BY A POD, NOT BY ANY ROW THAT ENDS WITH IT ───────────────
+//
+// ★★ THE INCIDENT. `cardForLocalPart` matched on `podLocalPart(e.url) === localPart` — the LAST
+// PATH SEGMENT of whatever url a row happens to carry. `add_pod` and `discover_directory` accept
+// an ARBITRARY url from any authenticated caller (`resolvePodSubject` validates neither origin
+// nor path shape, and no container has to exist), so `add_pod { pod_url:
+// "https://anything/x/u-eth-VICTIM/" }` created a durable row that answered to the victim's
+// address. GET /.well-known/webfinger and GET /agents/:localPart are PUBLIC and unauthenticated,
+// so the relay served a stranger's row as that identity from its own domain.
+//
+// ★ WHY IT IS WORTH A SECTION RATHER THAN A LINE. channel.html's `resolveInvitee` resolves that
+// handle, treats the profile-page href as the member's pod, and reads that pod's registry owner
+// as the WebID it seals a private workspace record to — including on the E2EE re-seal path. The
+// same derivation is reimplemented in the desktop renderer, desktop/index.html and the Discord
+// workspace module, so the relay's answer is load-bearing in four places it does not control.
+//
+// ★ WHAT USED TO LIMIT IT, AND WHY THAT IS NOT A GATE. `mergeDirectoryRow` gives a third-party
+// writer fill-only semantics, so a squatted row carries no did and no handle, and the caller
+// prefers a did-bearing match — the squat only won while the victim had no did-bearing row: before
+// their first authentication here, and inside the 50 ms cold-start hydrate budget.
+console.log('');
+console.log('§12  address ownership');
+{
+  const POD = 'http://css.railway.internal:3456/u-eth-8f3b8e939600/';
+  check('the pod at /<localPart>/ owns that address — the case every live pod is',
+    podOwnsLocalPart(POD, 'u-eth-8f3b8e939600') === true);
+
+  // ★ THE SQUAT. Any authenticated caller can create this row; nothing else refuses it.
+  check('a row NESTED under another path does not own the address it ends with',
+    podOwnsLocalPart('https://anything.example/x/u-eth-8f3b8e939600/', 'u-eth-8f3b8e939600') === false,
+    'a stranger row would answer the WebFinger and ActivityPub actor of another agent');
+  check('depth does not help — one extra segment is enough to refuse',
+    podOwnsLocalPart('http://css.railway.internal:3456/team/u-eth-8f3b8e939600/', 'u-eth-8f3b8e939600') === false);
+
+  // ★★ AND IT DOES NOT LOWER-CASE, WHICH IS THE HALF THAT IS EASY TO GET WRONG. The obvious
+  // spelling of this fix compares `canonicalPodKey(e.url)` — which lower-cases its pathname — to
+  // `/${localPart.toLowerCase()}/`. That closes the nesting squat and OPENS a case squat: a row at
+  // /U-ETH-VICTIM/ would answer for `u-eth-victim`, which the ORIGINAL code correctly refused.
+  // Every userId is lower-case by construction (derive-userid.ts builds u-eth- from `addressLower`
+  // and u-pk-/u-did- from sha256 hex), so nothing legitimate needs the widening.
+  check('a case-variant row does not own the address — closing a squat must not open one',
+    podOwnsLocalPart('http://css.railway.internal:3456/U-ETH-8F3B8E939600/', 'u-eth-8f3b8e939600') === false);
+  check('and the exact-case match is unchanged from the original last-segment test',
+    podOwnsLocalPart('http://css.railway.internal:3456/U-ETH-8F3B8E939600/', 'U-ETH-8F3B8E939600') === true);
+
+  check('an origin with no path owns nothing', podOwnsLocalPart('https://example.test/', 'u-eth-x') === false);
+  check('a url that will not parse owns nothing', podOwnsLocalPart('not a url', 'u-eth-x') === false);
+
+  // ★ NON-VACUITY. If the slice stopped resolving, every case above would answer `false` and four
+  // of the six would still pass. This is the one that reds when the harness is testing nothing.
+  check('★ the sliced helper is the real one and it can say yes',
+    typeof podOwnsLocalPart === 'function' && podOwnsLocalPart(POD, 'u-eth-8f3b8e939600'),
+    'the slice anchors moved — re-anchor §12 rather than deleting it');
+}
+
 
 console.log(failures === 0
   ? '\nAll checks passed.\n'

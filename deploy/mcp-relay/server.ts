@@ -7522,6 +7522,49 @@ const RELAY_HANDLE_HOST = (() => {
   catch { return `localhost:${PORT}`; }
 })();
 
+/**
+ * Does this pod URL OWN the agent address `localPart` - as opposed to merely ending with it?
+ *
+ * ★★ THE DEFECT. `cardForLocalPart` used `podLocalPart(e.url) === localPart`, the LAST PATH
+ * SEGMENT, with no test that the row is eligible to own that address. `add_pod` and
+ * `discover_directory` let ANY authenticated caller create a durable federation row at an
+ * ARBITRARY url - `resolvePodSubject` validates neither origin nor path shape, and no container
+ * has to exist. So `add_pod { pod_url: "https://anything/x/u-eth-VICTIM/" }` produced a row whose
+ * last segment is the victim's, and the relay then served that address's WebFinger and
+ * ActivityPub actor FROM ITS OWN DOMAIN. Those are public, unauthenticated routes.
+ *
+ * ★ AND IT REACHES PAST THE RELAY. Four clients recompose `acct:<podName>@<relayHost>`
+ * independently - applications/shared-workspace/artifact/channel.html (a published artifact),
+ * the desktop renderer, desktop/index.html and discord/src/workspace.ts. channel.html's
+ * `resolveInvitee` resolves that handle, treats the profile-page href as the member's pod, and
+ * reads that pod's registry owner as the WebID it seals a private workspace record to -
+ * including on the E2EE re-seal path. A wrong answer here is a disclosure there.
+ *
+ * ★ WHAT SAVED IT UNTIL NOW, AND WHY THAT IS NOT ENOUGH. `mergeDirectoryRow` gives a
+ * `third-party` writer fill-only semantics, so a squatted row can carry no did and no handle,
+ * and `cardForLocalPart` prefers a did-bearing match. The squat therefore only wins while the
+ * victim has NO did-bearing row - before their first authentication here, and inside the 50 ms
+ * `awaitFederationHydrateWithBudget` window at cold start. "Usually loses" is not a gate.
+ *
+ * ★★ STRICTLY NARROWING, DELIBERATELY. Every pod this relay derives is `${CSS_URL}${userId}/`
+ * and userId is a slash-free lowercase slug (deploy/identity/derive-userid.ts: `u-eth-` is built
+ * from `addressLower`, `u-pk-`/`u-did-` from lowercase sha256 hex), so for EVERY pod that exists
+ * a single-segment path with an exact-case last segment is the same test the old code ran. Only
+ * rows that are not single-segment pods stop matching. No live address changes.
+ *
+ * ★ IT DOES NOT LOWER-CASE, AND THAT IS THE POINT. `canonicalPodKey` lower-cases its pathname,
+ * so the obvious spelling - comparing it to `/${localPart.toLowerCase()}/` - would make matching
+ * case-INSENSITIVE and hand a squatter the case variants: a row at `/U-ETH-VICTIM/` would match a
+ * request for `u-eth-victim`, which the old code correctly refused. Widening the match to close a
+ * squat would have re-opened it one spelling over.
+ */
+function podOwnsLocalPart(podUrl: string, localPart: string): boolean {
+  try {
+    const segs = new URL(podUrl).pathname.split('/').filter(Boolean);
+    return segs.length === 1 && segs[0] === localPart;
+  } catch { return false; }
+}
+
 function podLocalPart(podUrl: string): string {
   try {
     const segs = new URL(podUrl).pathname.split('/').filter(Boolean);
@@ -12422,7 +12465,7 @@ function cardForLocalPart(localPart: string): AgentCardLite | undefined {
   // and prefer the richest — one that actually carries a DID.
   const matches = [...knownPods.values()].filter(e =>
     e.via !== 'self' &&
-    (podLocalPart(e.url) === localPart || e.handle === `acct:${localPart}@${RELAY_HANDLE_HOST}`));
+    (podOwnsLocalPart(e.url, localPart) || e.handle === `acct:${localPart}@${RELAY_HANDLE_HOST}`));
   if (matches.length === 0) return undefined;
   const e = matches.find(x => x.did) ?? matches.find(x => x.webId ?? x.owner) ?? matches[0]!;
   // ★ The surface is DERIVED from the card's own did:web rather than read from the stored
