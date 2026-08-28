@@ -44,6 +44,7 @@ import { createHash } from 'node:crypto';
 import type {
   FetchFn,
 } from '@interego/core';
+import { mapBounded, POD_HYDRATE_CONCURRENCY } from './bounded-map.js';
 
 // ── Configuration ────────────────────────────────────────────
 
@@ -337,7 +338,7 @@ export async function loadEntries(
     return out;
   }
 
-  await Promise.allSettled(urls.map(async url => {
+  await mapBounded(urls, POD_HYDRATE_CONCURRENCY, async url => {
     try {
       const r = await fetchFn(url, { method: 'GET' });
       if (!r.ok) {
@@ -374,7 +375,7 @@ export async function loadEntries(
     } catch (err) {
       log(`[federation-store] failed to read ${url}: ${(err as Error).message}`);
     }
-  }));
+  });
 
   log(`[federation-store] loaded ${out.length} federation entry/entries from ${containerUrl}`);
   return out;

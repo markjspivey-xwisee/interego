@@ -73,6 +73,7 @@ import {
 // halves are never reachable separately.
 import { descriptorWriteCollisionRefusal } from './supersession-frontier.js';
 import { normalizeCssUrl } from './url-rewrite.js';
+import { mapBounded, POD_HYDRATE_CONCURRENCY } from './bounded-map.js';
 
 // ── Scenario namespace ──────────────────────────────────────
 // Deliberately under a non-owned namespace per the codebase's ontology-
@@ -532,7 +533,10 @@ export async function loadClients(
     return out;
   }
 
-  await Promise.allSettled(ours.map(async entry => {
+  // ★ The parameter is typed from `ours` because `entries` above is declared
+  // `let entries;` — an evolving `any` — so the generic resolves T to `unknown`
+  // where `.map`’s contextual typing used to cover for it.
+  await mapBounded(ours, POD_HYDRATE_CONCURRENCY, async (entry: (typeof ours)[number]) => {
     // Each descriptor publishes one graph IRI — derive the graph URL
     // from the descriptor URL using the slug convention publish() uses.
     // The descriptor's distribution block also points at it, but the
@@ -574,7 +578,7 @@ export async function loadClients(
     } catch (err) {
       log(`[oauth-client-store] failed to read ${graphUrl}: ${(err as Error).message}; skipping.`);
     }
-  }));
+  });
 
   log(`[oauth-client-store] loaded ${out.size} OAuth client registration(s) from ${cfg.podUrl}.`);
   return out;

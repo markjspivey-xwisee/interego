@@ -49,6 +49,7 @@ import {
 } from '@interego/core';
 
 import type { InteregoAuthInfo, ResolvedIdentity } from './oauth-provider.js';
+import { mapBounded, POD_HYDRATE_CONCURRENCY } from './bounded-map.js';
 
 // ── Configuration ────────────────────────────────────────────
 
@@ -480,7 +481,7 @@ export async function loadAccessTokens(
   }
 
   const nowSec = Math.floor(Date.now() / 1000);
-  await Promise.allSettled(urls.map(async url => {
+  await mapBounded(urls, POD_HYDRATE_CONCURRENCY, async url => {
     try {
       const r = await fetchFn(url, { method: 'GET' });
       if (!r.ok) {
@@ -523,7 +524,7 @@ export async function loadAccessTokens(
     } catch (err) {
       log(`[oauth-token-store] failed to read ${url}: ${(err as Error).message}`);
     }
-  }));
+  });
 
   log(`[oauth-token-store] loaded ${out.size} access token(s) from ${containerUrl}`);
   return out;
@@ -550,7 +551,7 @@ export async function loadRefreshTokens(
   }
 
   const nowMs = Date.now();
-  await Promise.allSettled(urls.map(async url => {
+  await mapBounded(urls, POD_HYDRATE_CONCURRENCY, async url => {
     try {
       const r = await fetchFn(url, { method: 'GET' });
       if (!r.ok) {
@@ -582,7 +583,7 @@ export async function loadRefreshTokens(
     } catch (err) {
       log(`[oauth-token-store] failed to read ${url}: ${(err as Error).message}`);
     }
-  }));
+  });
 
   log(`[oauth-token-store] loaded ${out.size} refresh token(s) from ${containerUrl}`);
   return out;
