@@ -23,13 +23,30 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', 'applications', 'foxxi-content-intelligence');
 const server = readFileSync(join(ROOT, 'bridge', 'server.ts'), 'utf8');
 const learnerRecord = readFileSync(join(ROOT, 'src', 'learner-record.ts'), 'utf8');
+const affordancesSrc = readFileSync(join(ROOT, 'affordances.ts'), 'utf8');
 
 /** The affordance object the bridge publishes for review-record. */
 const affordance = (() => {
-  const at = server.indexOf('const REVIEW_RECORD_AFFORDANCE');
-  expect(at, 'affordance not found').toBeGreaterThan(-1);
-  const rest = server.slice(at);
-  return rest.slice(0, rest.indexOf('\n};\n') + 4);
+  // ★ THE CANONICAL DECLARATION MOVED. This affordance used to be declared TWICE — here in
+  // bridge/server.ts as `const REVIEW_RECORD_AFFORDANCE`, and again in affordances.ts, which is
+  // what `GET /affordances` publishes. The two had DRIFTED on the live wire: only this copy
+  // declared a `read_pod_url` input and a three-store `iep:reads` block, and the published
+  // manifest carried neither — a grep for read_pod_url over its 205 KB returned 0 — while the
+  // relay's action authority 302-redirects agents to that manifest, i.e. to the poorer document.
+  // The richer half was merged into affordances.ts and this copy deleted, so the assertions
+  // below now read the ONE declaration, which is also the one that publishes.
+  const at = affordancesSrc.indexOf("action: 'urn:iep:action:foxxi:review-record'");
+  expect(at, 'review-record not found in affordances.ts').toBeGreaterThan(-1);
+  const open = affordancesSrc.lastIndexOf('{', at);
+  let depth = 0;
+  for (let i = open; i < affordancesSrc.length; i += 1) {
+    if (affordancesSrc[i] === '{') depth += 1;
+    else if (affordancesSrc[i] === '}') {
+      depth -= 1;
+      if (depth === 0) return affordancesSrc.slice(open, i + 1);
+    }
+  }
+  throw new Error('unbalanced review-record literal');
 })();
 
 describe('the code still decides what this test says it decides', () => {

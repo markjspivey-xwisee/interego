@@ -277,16 +277,54 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     action: 'urn:iep:action:foxxi:review-record' as IRI,
     toolName: 'foxxi.review_record',
     title: 'Review your own performance record (ELR + CLR) as yourself',
-    description: 'Assemble + return your OWN IEEE P2997 Enterprise Learner Record (and, by default, your verified 1EdTech CLR wallet) over the substrate, authenticated by your delegation — the agent-drivable ELR read. Reads the canonical PGSL lattice (∪ lens ∪ durable RDF fallback) on your own pod. A different subject_did is honored only because agent-capability records are discoverable. Externally routed: act via HTTP POST with a rev-196 signed-request envelope ({ _signature, _signed_payload }).',
+    description: 'Review your IEEE P2997 Enterprise Learner Record + 1EdTech CLR 2.0 credential wallet, virtualized by Foxxi entirely over your OWN pod. Authenticate with a rev-196 signed-request envelope — Foxxi verifies your own signature and binds identity to the recovered did:ethr (no relay, no separate login). Defaults to your own record. '
+      + 'HOW A COMPETENCY IS EARNED, so an empty judgement is readable before you spend a signature: a performance record counts toward a competency only if it carries a DOMAIN activity type, or asserts an outcome (success true/false). A record whose only type is a protocol envelope — AssertedContext, ProductionTask, SignedAuthorship, any *Facet — declares no skill, and auto-projected trajectory steps carry exactly that and no outcome, so any number of them yields zero competencies by design rather than by fault. The other two routes are a mastery-verb learning experience, and an alignment on a verified credential. Competence is a judgement about work; volume of work is not one. '
+      + 'WHO IS READABLE, which is a separate question from what counts: a subject is classified from its OWN signed statements, and a subject with none classifies HUMAN, whose record is private to its holder. That is why a brand-new agent cannot be read by anybody, and it is the correct answer rather than a fault — you are what you have done. ONE authenticated performance recorded as actor_kind agent is what flips it, and from that moment the record is a PUBLIC capability record any signed caller can read by naming your DID. Nothing you declare about yourself changes this: a self-declaration would let an agent assert its way into a public class without evidence, which is the opposite of every other rule here. '
+      + 'CROSS-POD READS: pass subject_did to read another subject\'s discoverable agent-capability record — on every route, including through the relay. Two fields that used to be one: subject_pod_url answers WHOSE POD AM I (stamped from your session by sign_request, and never a read target), while the record you are asking for is resolved from subject_did and, when that subject has enrolled, from the pod the enrolment register says it actually writes to. If the subject holds a pod here that its identity does not resolve to, name it with read_pod_url — that carries no authority, only selects among pods this deployment already reads, and is refused with the reason if it names anything else. Every answer reports subject.podChosenBy so you can tell which pod was read and why. A HUMAN learner record stays private to its holder; agent capability records are public.',
     method: 'POST',
     targetTemplate: '{base}/agent/review-record',
     mediaType: 'application/json',
     externallyRouted: true,
     annotations: { title: 'Review your performance record', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
-      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, subject_did?, subject_pod_url?, subject_name?, actor_kind?, source?, include_clr? }). subject_did defaults to your own DID; source="pgsl" reads only the canonical lattice; include_clr=false skips the wallet read.' },
-      { name: '_signature', type: 'string', required: true, description: 'secp256k1 over sha256:<hex(sha256(_signed_payload))> by the wallet matching agent_id (DIRECT signer, or relay sign_request for a DELEGATED agent).' },
-    ],
+    /**
+     * ★ THE PROJECTION IS ADVERTISED, because a parameter a caller cannot see does not exist. A
+     * delegate hit a 1.2 MB response, looked for a narrower view, found nothing in hydra:expects
+     * beyond the two envelope fields, and correctly reported that as the blocker. The response is
+     * bounded by default now; the way to widen or page it belongs where the caller is already
+     * reading.
+     */
+    // ★ THE PROJECTION IS ADVERTISED, because a parameter a caller cannot see does not exist — the
+    // same failure as a read-side declared in a descriptor and dropped before any caller saw it.
+    { name: '_signed_payload', type: 'string', required: true, description: "JSON.stringify({ agent_id: 'did:ethr:<addr>', timestamp: <ISO 8601, within ±60s>, subject_did?, read_pod_url?, subject_pod_url?, subject_name?, actor_kind?, include_clr?, projection?: 'inline'|'links' }). DEFAULT 'links' returns the JUDGEMENT (competencies, credentials, counts — bounded by vocabulary, not by history) with evidence as hydra:Collection references carrying hydra:totalItems and a self-scoped address you can dereference with this same envelope. Pass 'inline' to embed every experience and performance record instead — that grows without bound with the subject's history and has been measured over 1.2 MB." },
+    // ★ NAMED AS ITS OWN INPUT because the two questions it separates were indistinguishable while
+    // one field answered both, and a caller reading `subject_pod_url?` in the line above has no way
+    // to learn that the field is stamped over on the relay route.
+    { name: 'read_pod_url', type: 'string', required: false, description: 'WHOSE RECORD AM I ASKING FOR, when the subject holds a pod that its identity does not resolve to (one wallet has both an eth-<hex> pod and a relay-mediated u-eth-<hex> one). Untrusted: it carries no authority, selects only among pods this deployment already reads, and a pod outside that space is REFUSED with the reason rather than silently swapped for a derived one. Usually unnecessary — an enrolled subject is found from subject_did alone, via the enrolment register. Distinct from subject_pod_url, which answers WHOSE POD AM I, is stamped from your session by sign_request, and is never a read target.' },
+    { name: '_signature', type: 'string', required: true, description: 'secp256k1 signature over the canonical message sha256:<hex(sha256(_signed_payload))>, signed with the wallet matching agent_id.' },
+  ],
+    reads: [
+        {
+          store: 'https://relay.interego.xwisee.com/ns/iep/store/foxxi/mesh-lens',
+          label: 'the subject\'s per-agent mesh lens (lens:<agent>)',
+          populatedBy: 'https://foxxi-bridge.interego.xwisee.com/agent/mesh-event',
+          admits: 'Trajectory steps swept from ENROLLED pods, or pushed directly to /agent/mesh-event. A step whose modal status is Hypothetical is an intention and is not evidence of performance. ADMITTED IS NOT COUNTED: a step enters this store and still earns no competency unless it carries a domain activity type or an asserted outcome — see the judgement rule in this affordance\'s description. An auto-projected step carries neither, so a long trajectory can produce a full performance record and an empty judgement.',
+          // ★ THE FACT THAT LIVED IN AN ENV VAR, now a resource an agent can GET and read for itself.
+          enrolmentRegister: 'https://foxxi-bridge.interego.xwisee.com/agent/mesh/enrolment',
+        },
+        {
+          store: 'https://relay.interego.xwisee.com/ns/iep/store/foxxi/shared-lattice',
+          label: 'the shared PGSL lattice, cold-loaded from the subject\'s pod',
+          populatedBy: 'https://foxxi-bridge.interego.xwisee.com/xapi/statements',
+          admits: 'xAPI statement content atoms resident for this subject.',
+        },
+        {
+          store: 'https://relay.interego.xwisee.com/ns/iep/store/foxxi/durable-pod-record',
+          label: 'durable xAPI statements recorded on the subject\'s own pod',
+          populatedBy: 'https://foxxi-bridge.interego.xwisee.com/xapi/statements',
+          admits: 'Statements durably written to the subject pod, readable without any enrolment.',
+        },
+      ],
     appliesTo: { collections: ['profiles'] },
     outputs: {
       description: 'Your assembled ELR (+ CLR by default) with the subject + statement-source trace. 401 when the signature/delegation does not verify.',

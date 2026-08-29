@@ -216,8 +216,26 @@ describe('the three signed read sites all reach this rule, and none of them keep
   });
 
   it('and the descriptor tells a reader that the two fields are different questions', () => {
-    const at = src.indexOf('const REVIEW_RECORD_AFFORDANCE');
-    const aff = src.slice(at, src.indexOf('\n};\n', at) + 4);
+    // ★ READ THE ONE DECLARATION. This was `src.indexOf('const REVIEW_RECORD_AFFORDANCE')` while
+    // the affordance was declared twice — in bridge/server.ts AND affordances.ts — and only this
+    // file's copy carried `read_pod_url`, while the manifest the relay redirects agents to carried
+    // none. Merged and de-duplicated, so this now reads what actually publishes.
+    const affSrc = readFileSync(join(
+      dirname(fileURLToPath(import.meta.url)), '..', 'applications', 'foxxi-content-intelligence',
+      'affordances.ts',
+    ), 'utf8');
+    const at = affSrc.indexOf("action: 'urn:iep:action:foxxi:review-record'");
+    expect(at, 'review-record not found in affordances.ts').toBeGreaterThan(-1);
+    const open = affSrc.lastIndexOf('{', at);
+    let depth = 0;
+    let aff = '';
+    for (let i = open; i < affSrc.length; i += 1) {
+      if (affSrc[i] === '{') depth += 1;
+      else if (affSrc[i] === '}') {
+        depth -= 1;
+        if (depth === 0) { aff = affSrc.slice(open, i + 1); break; }
+      }
+    }
     expect(aff, 'the read-target input must be advertised').toContain('read_pod_url');
     expect(aff, 'and what subject_pod_url actually answers').toMatch(/WHOSE POD AM I/);
     // The claim was scoped ("does NOT work through the relay") for one deploy while that was true.

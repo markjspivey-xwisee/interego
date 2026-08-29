@@ -29,8 +29,23 @@ const SERVER = join(
 );
 const src = readFileSync(SERVER, 'utf8');
 
+/**
+ * ★ THE ADVERTISEMENT LIVES IN affordances.ts, NOT IN THE BRIDGE. `review-record` used to be
+ * declared twice — as a standalone literal in bridge/server.ts and again in affordances.ts, which
+ * is what `GET /affordances` publishes — and only the bridge copy documented `projection`. That is
+ * exactly the failure this suite exists for: an agent plans against what the affordance says about
+ * itself, and the document it can actually fetch said nothing about the parameter that bounds a
+ * response measured over 1.2 MB. The two were merged and de-duplicated, so the advertisement is
+ * asserted where it publishes from.
+ */
+const affordancesSrc = readFileSync(join(
+  dirname(fileURLToPath(import.meta.url)),
+  '..', 'applications', 'foxxi-content-intelligence', 'affordances.ts',
+), 'utf8');
+
 /** Source lines that are not comments — a docstring mentioning a shape is not the code choosing it. */
-const codeLines = src.split('\n').filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l));
+const NEWLINE = String.fromCharCode(10);
+const codeLines = (src + NEWLINE + affordancesSrc).split(NEWLINE)  .filter(l => !/^[ ]*(\/\/|[*]|\/[*])/.test(l));
 
 describe('the links projection is the DEFAULT, not an opt-in', () => {
   it('the fallback branch is links — an absent `projection` yields the bounded shape', () => {

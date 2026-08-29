@@ -109,10 +109,34 @@ for (const d of all) {
 
 describe('one target, one identifier', () => {
   it('parses declarations from both files — a vacuous pass would hide every case below', () => {
-    expect(all.length, 'parsed no declarations at all').toBeGreaterThan(30);
+    // ★ THE FLOOR MOVED 30 -> 20, AND THE REASON IS THE POINT. It was calibrated while THIRTEEN
+    // affordances were declared TWICE — once here in affordances.ts, which is what
+    // `GET /affordances` publishes, and again as standalone literals in bridge/server.ts, which
+    // the hand-coded `/agent/*` descriptor routes served. The two copies had DRIFTED on the live
+    // wire: every reachable pair published a different rdfs:comment for the same subject IRI, and
+    // only the bridge copy of review-record carried `read_pod_url` and a three-store `iep:reads`
+    // block. The duplicates were merged into affordances.ts and deleted, which removed 11
+    // declarations from the parsed population — the count fell because the DEFECT was removed, not
+    // because parsing broke.
+    //
+    // ★ THIS IS STILL A NON-VACUITY GUARD, so it must stay well under the real count and well
+    // above zero: a parser that silently matched nothing would answer 0 and pass any floor of 0.
+    expect(all.length, 'parsed no declarations at all').toBeGreaterThan(20);
     expect(all.some(d => d.from === 'affordances.ts')).toBe(true);
-    expect(all.some(d => d.from === 'bridge/server.ts'), 'parsed no INLINE declarations, so a '
-      + 'divergence between the two files could not be seen').toBe(true);
+
+    // ★★ INVERTED, BECAUSE THE DIVERGENCE IT WATCHED FOR IS NOW UNREPRESENTABLE. This used to
+    // require bridge/server.ts to contain inline declarations, so that a drift between the two
+    // files COULD be seen. It could be seen, and it was there: thirteen affordances were declared
+    // in both places, every reachable pair published a different rdfs:comment for the identical
+    // subject IRI, and only the bridge copy of review-record carried `read_pod_url` and a
+    // three-store `iep:reads` block — while the relay's action authority 302-redirects agents to
+    // the manifest, i.e. to the poorer document.
+    //
+    // The richer halves were merged into affordances.ts and the duplicates deleted, so the
+    // stronger property now holds and is what gets asserted: there is exactly ONE declaration
+    // site. A second one reappearing is the defect, and it fails here rather than on the wire.
+    expect(all.some(d => d.from === 'bridge/server.ts'), 'bridge/server.ts declares an affordance '
+      + 'inline again — affordances.ts is the one declaration site, because it is what GET /affordances publishes; add it there and let the route read it through canonicalAffordance()').toBe(false);
   });
 
   it('never gives one target two action IRIs', () => {
