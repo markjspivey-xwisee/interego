@@ -104,7 +104,9 @@ Read the tier sections below with that split in mind: Tier 3 and Tier 3b are gat
 - LRS rejects malformed Statements (missing required `actor` field) with 400-class error — confirms the LRS is doing real xAPI 2.0 §4.1 validation
 - Non-existent statement IDs return 404 per xAPI 2.0 §4.2.1
 
-Skips automatically if Lrsql isn't running locally on `:8080`; `SKIP_LRSQL_TESTS=1` forces the skip. In CI, `lrs-adapter-conformance.yml` provisions the container and sets `LRSQL_IT=1`, under which an unreachable LRS FAILS the job instead of skipping — a `SKIP_LRSQL_TESTS=1` exported into that job cannot make it green. Locally, run the `docker run` above (pin the same `v0.9.5` tag, or the recipe stops reproducing CI) and export `LRSQL_IT=1` to get the same fail-closed behaviour.
+Skips automatically if Lrsql isn't running locally on `:8080`; declaring `SKIP_LRSQL_TESTS` forces the skip. In CI, `lrs-adapter-conformance.yml` provisions the container and sets `LRSQL_IT` (to the literal `1`), under which an unreachable LRS FAILS the job instead of skipping — a `SKIP_LRSQL_TESTS` exported into that job cannot make it green. Locally, run the `docker run` above (pin the same `v0.9.5` tag, or the recipe stops reproducing CI) and export `LRSQL_IT=1` to get the same fail-closed behaviour.
+
+Both names are read through [`applications/_shared/tests/env-flag.ts`](../_shared/tests/env-flag.ts), so "declared" is a contract rather than a single spelling: `1`/`true`/`yes`/`on` declare, `0`/`false`/`no`/`off` and an empty value decline, and any other value throws naming those spellings instead of being read as "no". That file exists because the previous `=== '1'` comparison meant `SKIP_POD_TESTS=true` did not skip and did not complain — it dialled the live pod.
 
 **Tier 3b** — [`tests/tier3b-xapi-conformance.test.ts`](tests/tier3b-xapi-conformance.test.ts) deepens xAPI 2.0 conformance against the real Lrsql:
 - **cmi5 profile** — `launched` + `completed` Statements with cmi5 `contextActivities.category` (`https://w3id.org/xapi/cmi5/context/categories/cmi5` + `moveon`) + `sessionid` extension, accepted as a 2-Statement batch

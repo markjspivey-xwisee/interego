@@ -11,8 +11,8 @@
  * What it did NOT fix is that `probePod()` still collapses two different kinds of "no" into
  * one `{ usable: false }`:
  *
- *   DECLARED  — SKIP_POD_TESTS=1, or no INTEREGO_POD_WRITE_SECRET configured. A human said
- *               "not here". Skipping is the correct answer.
+ *   DECLARED  — SKIP_POD_TESTS declared (1/true/yes/on), or no INTEREGO_POD_WRITE_SECRET
+ *               configured. A human said "not here". Skipping is the correct answer.
  *   DISCOVERED — the pod is unreachable, or the container answers 404, or the gate refuses
  *               the write. Nobody chose this. The evidence has stopped existing.
  *
@@ -34,7 +34,12 @@
  * tsconfig.check.json includes `applications/**\/tests/**\/*.ts`.
  */
 
-import { POD_HOST, TEST_POD_BASE, podWriteHeaders, probePod } from './pod-target.js';
+// POD_HOST is NOT imported here: nothing in this file's body uses it, and it reaches the suites
+// through the re-export below. Importing it as well was an unused binding eslint flags — one
+// this file already carried before this change. `npm run lint` DOES reach it: the gate at
+// tools/lint-gate.mjs lints every tracked file under `applications/` on every invocation and
+// banks the count in UNLINTED_FRONTIER, so this was already inside a pinned total.
+import { TEST_POD_BASE, podTestsDeclaredOff, podWriteHeaders, probePod } from './pod-target.js';
 
 /** Re-exported so a suite needs one import, not two, to state where it was pointed. */
 export { POD_HOST, TEST_POD_BASE, podFetch, podWriteHeaders } from './pod-target.js';
@@ -44,11 +49,14 @@ export { POD_HOST, TEST_POD_BASE, podFetch, podWriteHeaders } from './pod-target
  * be produced by the pod behaving badly.
  */
 export type DeclaredSkip =
-  | 'SKIP_POD_TESTS/SKIP_AZURE_TESTS=1'
+  | 'SKIP_POD_TESTS/SKIP_AZURE_TESTS declared'
   | 'INTEREGO_POD_WRITE_SECRET unset';
 
 export const DECLARED_SKIPS: readonly DeclaredSkip[] = [
-  'SKIP_POD_TESTS/SKIP_AZURE_TESTS=1',
+  // Was `…=1` until `podTestsDeclaredOff()` learned the other spellings. A reason printed to an
+  // operator has to describe what actually happened: after accepting `true`/`yes`/`on`, a skip
+  // reading "=1" states a value that was very likely not the one they set.
+  'SKIP_POD_TESTS/SKIP_AZURE_TESTS declared',
   'INTEREGO_POD_WRITE_SECRET unset',
 ];
 
@@ -66,8 +74,13 @@ export type PodGate =
  * what is configured, which is the class of defect this whole area was built out of.
  */
 function declaredSkip(): DeclaredSkip | null {
-  if (process.env['SKIP_AZURE_TESTS'] === '1' || process.env['SKIP_POD_TESTS'] === '1') {
-    return 'SKIP_POD_TESTS/SKIP_AZURE_TESTS=1';
+  // Through `podTestsDeclaredOff()` rather than `=== '1'` here, for the same reason the
+  // credential half goes through `podWriteHeaders()`: two files disagreeing about what is
+  // configured is the class of defect this whole area was built out of, and this one had it —
+  // the off switch was checked in two places against a literal, so widening it in one would
+  // have made `probePod()` and this function answer differently for `SKIP_POD_TESTS=true`.
+  if (podTestsDeclaredOff()) {
+    return 'SKIP_POD_TESTS/SKIP_AZURE_TESTS declared';
   }
   if (!('Authorization' in podWriteHeaders())) return 'INTEREGO_POD_WRITE_SECRET unset';
   return null;
@@ -92,7 +105,7 @@ export async function openRealPod(): Promise<PodGate> {
       + 'Refusing to skip. A write credential is set, so somebody meant these round-trips to '
       + 'run, and they are the only real-HTTP publish/fetch/parse assertions in this repo. '
       + 'Point INTEREGO_POD_BASE/INTEREGO_TEST_POD at a live container, or declare the skip '
-      + 'with SKIP_POD_TESTS=1.',
+      + 'with SKIP_POD_TESTS set to 1/true/yes/on.',
     );
   }
   return { ok: true };

@@ -262,10 +262,14 @@ the failure it exists to catch. Two consequences worth knowing before you trust 
 
 ## Test expectations
 
-- **328 test modules**, not one file. `vitest.config.ts`'s `include` spans `tests/`,
+- **Hundreds of test modules**, not one file. `vitest.config.ts`'s `include` spans `tests/`,
   `applications/*/tests/`, `integrations/*/tests/` and `mcp-server/tests/`; count them with
   `git ls-files ':(glob)tests/**/*.test.ts' ...` — note `:(glob)` is required, because a git
-  pathspec is not a glob and the bare pattern silently matches nothing.
+  pathspec is not a glob and the bare pattern silently matches nothing. The number is
+  deliberately not written down here: it moved 328 → 329 the week this line said 328, and the
+  tree's own guard is a FLOOR with headroom (`MIN_TEST_MODULES` in
+  `tools/vitest-run-integrity.mjs`, checked by `tests/vitest-run-integrity.test.ts`), so run the
+  count rather than quoting one.
   `tests/context-graphs.test.ts` is one 659-line module among them, covering the original
   descriptor surface: builder, composition, validation, Turtle, JSON-LD, namespaces, SPARQL, SHACL.
 - All composition operator tests use `resetComposedIdCounter()` in `beforeEach` for deterministic IDs.

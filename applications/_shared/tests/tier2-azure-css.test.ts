@@ -19,7 +19,10 @@
  *   - INTEREGO_POD_WRITE_SECRET is unset (the gate requires a bearer on every write;
  *     the allow-all CSS these were written against no longer exists)
  *   - The pod is unreachable or absent
- *   - SKIP_POD_TESTS=1 / SKIP_AZURE_TESTS=1 is set (CI without internet)
+ *   - SKIP_POD_TESTS or SKIP_AZURE_TESTS is declared (CI without internet). Any of
+ *     1/true/yes/on declares it; 0/false/no/off and an empty value decline; anything else
+ *     THROWS rather than being read as "no" — see applications/_shared/tests/env-flag.ts for
+ *     what a silent `=== '1'` cost.
  */
 
 import { describe, it, expect, beforeAll, afterEach } from 'vitest';
@@ -85,7 +88,7 @@ async function fetchTurtle(url: string): Promise<string | null> {
 // Seeded with a DECLARED skip so that a beforeAll which throws cannot leave behind a value
 // that looks like a legitimate opt-out — openRealPod() throwing is what must turn this file
 // red, and vitest fails every body in a file whose beforeAll throws.
-let pod: PodGate = { ok: false, declaredSkip: 'SKIP_POD_TESTS/SKIP_AZURE_TESTS=1' };
+let pod: PodGate = { ok: false, declaredSkip: 'SKIP_POD_TESTS/SKIP_AZURE_TESTS declared' };
 let podReachable = false;
 
 beforeAll(async () => {

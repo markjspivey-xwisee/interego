@@ -50,20 +50,41 @@ export default defineConfig({
     // killed it, and `Test Files 2 passed (185)` was the entire report of a run that never
     // executed 183 files. See tools/vitest-run-integrity.mjs.
     reporters: ['default', './tools/vitest-run-integrity.mjs'],
-    // Pod-touching tests (Tier 2 + Tier 8 vertical tests) all hit the
-    // same shared Azure CSS pod. publish() is now CAS-safe via HTTP
-    // If-Match (see src/solid/client.ts), so concurrent writes don't
-    // clobber the manifest — but each retry is a network roundtrip,
-    // so serializing pod-touching tests is faster than retry-storms
-    // and gives more deterministic timing for CI gates.
+    // ★ THE REASON THESE ARE PINNED IS NOT IN THIS FILE, AND IT USED TO BE UNFINDABLE.
+    // This comment said "the same shared Azure CSS pod" for months after Azure was
+    // deliberately destroyed, so it read as a description of something gone — while the
+    // hazard had simply MIGRATED to Railway with the rest of the stack, keeping its shape:
+    // one container, five suites. Anyone re-asking "can we drop singleFork?" reads
+    // `poolOptions` and nothing else, and the answer lives in a helper two directories away
+    // that no grep over `*.test.ts` reaches. So the answer is written down, in one place:
+    //
+    //     applications/_shared/tests/shared-live-externals.ts
+    //
+    // It names every live thing outside this process that more than one collected module
+    // shares, with the switch that arms each, the switch that turns it off, and the MEASURED
+    // fact of whether CI throws either. `shared-live-externals.test.ts` keeps every field of
+    // it true and derives the completeness of the set from a rule rather than from memory —
+    // the first version of that registry said "three" and omitted the only one CI arms.
+    // (It also asserts this pointer still exists, so deleting these lines is red.)
     poolOptions: {
       threads: {
-        // Single-threaded pool eliminates cross-file parallelism without
-        // disabling within-file parallelism. ~10s slower in best case;
-        // dramatically more reliable for the pod-touching tests.
+        // Single-threaded pool: no cross-file parallelism, within-file parallelism untouched.
         singleThread: true,
       },
       forks: {
+        // ★★ PARALLELISM WAS TRIED AND REJECTED, on evidence, and this is not a placeholder
+        // for someone to flip. The round that tried it reported two findings and both cut
+        // against it: CI runners are 2-core, so a local multi-fork profile does not transfer
+        // to the machine that actually gates, and it made WALL-CLOCK assertions flake — a test
+        // asserting three polls inside a 40 ms window failed under fork contention and passed
+        // alone. Making every timing assertion in this repo deterministic is a much larger
+        // programme than a local saving justifies. Those two numbers are that round's, not
+        // re-driven here; what IS re-driven here is everything below about the pod.
+        //
+        // While this stays true, every module in a run shares one process, which is why
+        // `vi.stubEnv` without a restore leaks across FILES — see the `afterEach` note in
+        // shared-live-externals.test.ts, where a leaked SKIP_POD_TESTS would silently empty
+        // the five pod suites.
         singleFork: true,
       },
     },

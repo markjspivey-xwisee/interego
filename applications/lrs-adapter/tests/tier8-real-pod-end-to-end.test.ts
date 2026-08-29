@@ -48,6 +48,7 @@ const SCORM_CLOUD_SECRET = process.env['SCORM_CLOUD_SECRET'];
 // DECLARED opt-out and a DISCOVERED failure (unreachable, 404 container, refused write) into
 // one `usable: false` and both reached ctx.skip(), which is green. openRealPod() throws on the
 // discovered kind, so a pod that has stopped existing reds this file instead of emptying it.
+import { envFlag } from '../../_shared/tests/env-flag.js';
 import {
   TEST_POD_BASE, POD_HOST as AZURE_CSS_BASE, podWriteHeaders,
   openRealPod, DECLARED_SKIPS, type PodGate,
@@ -62,7 +63,10 @@ function uniquePodUrl(): string {
 // ── Reachability + cleanup ───────────────────────────────────────────
 
 async function lrsqlReachable(): Promise<boolean> {
-  if (process.env.SKIP_LRSQL_TESTS === '1') return false;
+  // Through `envFlag` for the same reason as everywhere else: the warning this file prints
+  // advertises SKIP_LRSQL_TESTS by name and states no value, so `=true` has to mean what it
+  // plainly means. See env-flag.ts.
+  if (envFlag('SKIP_LRSQL_TESTS', process.env.SKIP_LRSQL_TESTS)) return false;
   try {
     const r = await fetch(`${LRSQL_ENDPOINT}/about`, {
       headers: {
@@ -105,7 +109,7 @@ async function cleanup(): Promise<void> {
 // genuine localhost dependency whose absence is a legitimate skip; the pod is not, once a
 // write credential says somebody meant these round-trips to run. Keeping them apart is what
 // lets the pod half fail loudly while the LRS half still skips honestly.
-let pod: PodGate = { ok: false, declaredSkip: 'SKIP_POD_TESTS/SKIP_AZURE_TESTS=1' };
+let pod: PodGate = { ok: false, declaredSkip: 'SKIP_POD_TESTS/SKIP_AZURE_TESTS declared' };
 let lrsUp = false;
 let canRun = false;
 beforeAll(async () => {
@@ -138,14 +142,24 @@ describe('Tier 8 — lrs-adapter production end-to-end', () => {
   it('real-pod precondition: skipping is allowed only for a DECLARED reason', () => {
     // Was `expect(typeof canRun).toBe('boolean')` — true of `false`, so the only test in this
     // file that ever "passed" passed for every possible state of both dependencies.
+    // ★★ THE POD HALF FIRST, AND WITH NO `return` ABOVE IT. This used to bail out on `!lrsUp`
+    // before reaching the pod assertion — and `!lrsUp` is the NORMAL state, since nothing in CI
+    // and no laptop without Docker has an Lrsql on 8080. So the one assertion in this file that
+    // constrains WHY the pod may be skipped had never been evaluated on any run anybody has
+    // seen. Visible in the output rather than deduced: on 471b7497 the other four pod suites
+    // each printed "INTEREGO_POD_WRITE_SECRET unset" and this file printed only its LRS line.
+    //
+    // The two dependencies are deliberately kept as separate values (see the note above
+    // `let pod`), so an early return for one of them disarming the check on the other is
+    // exactly the coupling that separation exists to prevent. Neither branch returns now.
+    if (!pod.ok) {
+      console.warn(`Tier 8 LRS skipped — ${pod.declaredSkip} (pod host: ${AZURE_CSS_BASE})`);
+      expect(DECLARED_SKIPS).toContain(pod.declaredSkip);
+    }
     if (!lrsUp) {
       console.warn(`Tier 8 LRS skipped: no Lrsql at ${LRSQL_ENDPOINT} `
-        + '(a localhost dependency — set SKIP_LRSQL_TESTS=1 to say so explicitly)');
-      return;
+        + '(a localhost dependency — set SKIP_LRSQL_TESTS to 1/true/yes/on to say so explicitly)');
     }
-    if (pod.ok) return;
-    console.warn(`Tier 8 LRS skipped — ${pod.declaredSkip} (pod host: ${AZURE_CSS_BASE})`);
-    expect(DECLARED_SKIPS).toContain(pod.declaredSkip);
   });
 
   it('ingest single Statement: real LRS → real pod → audit', { timeout: 60000 }, async (ctx) => {

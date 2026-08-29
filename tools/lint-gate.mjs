@@ -175,7 +175,7 @@ const UNLINTED_FRONTIER = {
   // ★ THIS COUNTS GIT-TRACKED FILES, so `npm run lint` BEFORE `git add` reports a false green on
   // this ceiling: the new files are invisible to it until they are staged. Measured 2026-08-27 —
   // local lint:all exited 0, CI failed on the same tree, and the only difference was the commit.
-  deploy: { errors: 356, files: 130 },
+  deploy: { errors: 356, files: 138 },
   // The bulk of these are `no-console` in vertical bridges and CLI entry points — one config
   // decision, not a thousand defects. See the note above.
   // ★ 320 -> 337, and the ratchet caught it in CI rather than locally, which is the interesting
@@ -201,7 +201,22 @@ const UNLINTED_FRONTIER = {
   // This round contributed the Discord bot's `address.ts` and `webhook.ts` with their tests, and
   // the desktop's `drive-delegate-list-live.ts` — four `no-console` CLI/driver files and two
   // source files in a vertical that is not on the linted frontier.
-  applications: { errors: 1323, files: 394 },
+  //
+  // ★★ 394 -> 415, AND THIS ONE WAS CAUGHT BY ARITHMETIC RATHER THAN BY CI, which is the note
+  // above being used for once instead of re-learned. The shared-live-externals unit adds three
+  // files under `applications/_shared/tests/` — `env-flag.ts`, `shared-live-externals.ts` and
+  // its test. `npm run lint` passed with all three present and UNTRACKED, reporting 412 files,
+  // exactly as this comment predicts it would; the tracked count after they land is 415, which
+  // is 21 past the pin of 394 and one over the 20 of slack. Driven by calling
+  // `frontierFailures('applications', {errors:1323,files:394}, {errors:1378,files:415})`, which
+  // returns the failure and names 415 as the number to write.
+  //
+  // The three files carry ZERO eslint errors — measured directly with
+  // `npx eslint applications/_shared/tests/` — so the error pin does not move, and the 1378 the
+  // gate reports today is the same pre-existing debt it reported before this unit. 415 is
+  // written rather than 412 deliberately: it is correct after the commit and, before it, a fall
+  // of 3 that sits well inside the same 20 of slack, so the gate is green in both states.
+  applications: { errors: 1323, files: 415 },
   benchmarks: { errors: 193, files: 31 },
   demos: { errors: 48, files: 37 },
   // A declared npm workspace (see package.json `workspaces`), never linted.

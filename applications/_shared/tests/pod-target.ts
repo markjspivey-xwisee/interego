@@ -37,6 +37,27 @@
  * whose cause has to be rediscovered.
  */
 
+import { envFlag } from './env-flag.js';
+
+/**
+ * Did a human declare these off?
+ *
+ * ★ THE OFF SWITCH WAS ADVERTISED BY NAME AND IMPLEMENTED AS A LITERAL `'1'`, which is worse
+ * than having no off switch — see `env-flag.ts` for what that cost and what the contract is
+ * now. Both names are evaluated rather than short-circuited, so an unreadable value in the
+ * second is still reported when the first is set.
+ *
+ * The two `process.env` reads stay HERE, at the deciding site, rather than moving behind a
+ * `process.env[name]` inside `envFlag`. The registry's census asks whether a name this module
+ * advertises is a name this module actually reads, and a dynamic lookup would erase the
+ * evidence that question is answered from.
+ */
+export function podTestsDeclaredOff(): boolean {
+  const pod = envFlag('SKIP_POD_TESTS', process.env['SKIP_POD_TESTS']);
+  const azure = envFlag('SKIP_AZURE_TESTS', process.env['SKIP_AZURE_TESTS']);
+  return pod || azure;
+}
+
 /** The live css-gate. Override for a local CSS or an alternate gate deployment. */
 export const POD_HOST = process.env['AZURE_CSS_BASE']
   ?? process.env['INTEREGO_POD_BASE']
@@ -80,10 +101,17 @@ export interface PodAvailability {
 
 /**
  * Decide whether the pod suites can actually run, and say why not when they cannot.
- * Never throws — a probe that throws would turn a skip into a red on an unrelated PR.
+ *
+ * A probe that throws would turn a skip into a red on an unrelated PR, so nothing about the
+ * pod's behaviour can throw here — an unreachable host, a 404 container and a refused write all
+ * come back as reasons. The ONE exception is `podTestsDeclaredOff()`, which throws on a value
+ * of an off switch that this gate cannot interpret. That is not the pod misbehaving; it is this
+ * machine's own environment saying something the code cannot honour, only the operator who set
+ * it sees it, and the alternative is running the suite against infrastructure they told it to
+ * leave alone.
  */
 export async function probePod(): Promise<PodAvailability> {
-  if (process.env['SKIP_AZURE_TESTS'] === '1' || process.env['SKIP_POD_TESTS'] === '1') {
+  if (podTestsDeclaredOff()) {
     return { usable: false, reason: 'SKIP_POD_TESTS/SKIP_AZURE_TESTS is set' };
   }
   if (!WRITE_SECRET) {

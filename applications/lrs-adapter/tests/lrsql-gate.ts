@@ -27,6 +27,8 @@
  * everything else.
  */
 
+import { envFlag } from '../../_shared/tests/env-flag.js';
+
 export const LRS_BASE = 'http://localhost:8080/xapi';
 export const AUTH_HEADER = 'Basic ' + Buffer.from('testapikey:testapisecret').toString('base64');
 export const XAPI_VERSION = '2.0.0';
@@ -38,7 +40,7 @@ export const COMMON_HEADERS: Record<string, string> = {
 };
 
 /** Set only by .github/workflows/lrs-adapter-conformance.yml, which provisions the container. */
-export const LRSQL_REQUIRED = process.env['LRSQL_IT'] === '1';
+export const LRSQL_REQUIRED = envFlag('LRSQL_IT', process.env['LRSQL_IT']);
 
 /**
  * Returns WHY, not just whether. The old probes returned a bare boolean, so the CI log for a
@@ -47,13 +49,17 @@ export const LRSQL_REQUIRED = process.env['LRSQL_IT'] === '1';
 async function probe(): Promise<{ ok: boolean; why: string }> {
   // `&& !LRSQL_REQUIRED` is DIAGNOSTIC, not a verdict guard — measured by deleting it, which
   // left the run just as red. The verdict is protected further down by `!ok && LRSQL_REQUIRED`:
-  // a shell that exports SKIP_LRSQL_TESTS=1 into the provisioning job cannot make it green
+  // a shell that exports SKIP_LRSQL_TESTS into the provisioning job cannot make it green
   // either way, because this early return still yields `ok: false`. What the clause buys is the
-  // REASON: without it a run under LRSQL_IT=1 fails saying "but: SKIP_LRSQL_TESTS=1", which
-  // reads as the operator's own doing and sends them to the wrong file. With it the probe is
-  // actually attempted, so the failure names what really went wrong with the container.
-  if (process.env['SKIP_LRSQL_TESTS'] === '1' && !LRSQL_REQUIRED) {
-    return { ok: false, why: 'SKIP_LRSQL_TESTS=1' };
+  // REASON: without it a run under LRSQL_IT=1 fails saying "but: SKIP_LRSQL_TESTS declared",
+  // which reads as the operator's own doing and sends them to the wrong file. With it the probe
+  // is actually attempted, so the failure names what really went wrong with the container.
+  //
+  // Both names go through `envFlag` rather than `=== '1'`: the message below advertises
+  // SKIP_LRSQL_TESTS by name and never states a value, so `SKIP_LRSQL_TESTS=true` has to mean
+  // what the operator plainly meant. See env-flag.ts.
+  if (envFlag('SKIP_LRSQL_TESTS', process.env['SKIP_LRSQL_TESTS']) && !LRSQL_REQUIRED) {
+    return { ok: false, why: 'SKIP_LRSQL_TESTS declared' };
   }
   try {
     const ac = new AbortController();

@@ -7371,21 +7371,58 @@ async function handleListKnownPods(args: ToolArgs): Promise<string> {
   // `delivered: true`. `agent` and `surface` are DERIVED from the row's own published
   // did:web (see describeDirectoryEntry); they are not a new field in the store and not a
   // claim anyone made about themselves.
+  // ★★ THE OWNER INDEX IS BUILT ONCE FOR THE WHOLE LISTING, AND THAT IS A CORRECTNESS
+  // PROPERTY AS WELL AS A COST ONE. `directoryRowAffordances` asks, per row, which rows own
+  // that row's agent address; asking `knownPods` directly made one listing O(rows squared) -
+  // MEASURED by slicing the shipped declarations out of this file and driving this map over
+  // 574 identified fixture rows, the live directory size, median of 9 runs: 660,100 `new URL`
+  // constructions and 853 ms before, 2,870 and 9-11 ms after — and 5,000 constructions at
+  // 1,000 rows, so the count is linear in the directory rather than merely smaller.
+  // Building it HERE, after the awaits above and from the same `knownPods` the rows were
+  // projected from, is also what makes every row's link answer from ONE snapshot of the
+  // directory rather than from whatever the map held when that row's turn came.
+  const ownerIndex = buildAgentAddressOwnerIndex();
   const redactedPods = pods.map(p => {
     const identity = describeDirectoryEntry(p);
+    // ★★ AND EVERY ROW THIS RELAY CAN NAME CARRIES THE WAY TO ACT ON IT. The identity fields
+    // above say WHO a row is; they still left the caller to work out WHICH string to retype
+    // into `notify_agent`, which is the compose step every misaddressing came through.
+    // `directoryRowAffordances` emits the followable form, and emits NOTHING for a row whose
+    // address the resolver would not resolve back to it - so the set of rows carrying a link is
+    // exactly the set of rows where following one reaches the row you followed it from.
+    const affordances = directoryRowAffordances(p, ownerIndex);
+    const acts = affordances.length > 0 ? { affordances } : {};
     const isOwner = (!!callerKey && canonicalPodKey(p.url) === callerKey)
       || (!!callerDid && (p.did === callerDid || p.webId === callerDid));
-    if (isOwner || !Array.isArray(p.channels)) return { ...p, ...identity };
+    if (isOwner || !Array.isArray(p.channels)) return { ...p, ...identity, ...acts };
     return {
       ...p,
       channels: p.channels.map(c => (NATIVE_CHANNELS.includes(c.type)
         ? c
         : { type: c.type, value: '[redacted — visible to the owning agent only]' })),
       ...identity,
+      ...acts,
     };
   });
   return JSON.stringify({
     pods: redactedPods,
+    // ★★ ADDRESSING IS A LINK YOU FOLLOW, NOT A FIELD YOU PICK. Said once here rather than per
+    // row, and said as a POINTER INTO the row's own data rather than as the rule itself - a
+    // sentence restating the rule instead of naming where it lives would be the same
+    // prose-instead-of-affordance defect this field exists to end.
+    addressing: 'To message a row, do not compose an address out of its fields: take that '
+      + 'row\u2019s `affordances` entry and POST its `arguments` to its `target`, adding your own '
+      + '`summary` (and `content`). A followed address is the only form of `to` whose receipt '
+      + 'can report `resolvedVia: "followed-affordance"`, and this relay returns that route '
+      + 'only for a recipient it identified, so `recipientKnown: true` comes with it. A row '
+      + 'with NO `affordances` is one this relay either cannot name or cannot mint a resolvable '
+      + 'address for; addressing it by hand still works, but it is a guess. Composing `to` '
+      + 'yourself is still accepted — a did:ethr, a did:web, an acct: handle, a bare pod id, '
+      + 'a pod ROOT on this store, its inbox or its WebID. What is no longer accepted is a target '
+      + 'this relay cannot deliver to: another origin, or a path on this store that is not one of '
+      + 'those three forms. Those are now REFUSED with a receipt naming the accepted forms, where '
+      + 'they used to be shortened to the part of the path that named some container here and '
+      + 'reported as `delivered: true`.',
     lastPersistedAt: federationLastPersistedAt ?? '<no mutations since startup>',
     lastHydratedAt: federationLastHydratedAt,
     hydrateSourceCount: federationHydrateSourceCount,
@@ -7473,15 +7510,23 @@ function evictCanonicalDuplicates(keepUrl: string): void {
  *      host under a path beginning with your own pod segment, ask for it, and the relay decrypts it
  *      for you with its one process-wide key. Same class as the unauth decryption oracle closed in
  *      the round-26 audit, reappearing at a site that comparison never covered.
- *   2. A PREDICATE THAT COULD NOT SAY NO. `isCanonicalPodTarget` asked
- *      `toInternalPodUrl(target).startsWith(toInternalPodUrl(CSS_URL))`, and the right-hand side
- *      reduces to the store ROOT — so every path starts with it and the answer was always true.
- *      `notify_agent` reported `delivered: true` for exactly the unpolled dead-letter the function
- *      was added to distinguish.
- *   3. AN EXTERNAL DELIVERY TARGET PULLED INTO OUR STORE. `handleNotifyAgent` sends to
- *      `toInternalPodUrl(targetPod)`, and `resolveTargetPodUrl` passes an external URL through
- *      untouched by design — so a best-effort external notification became a relay-credentialed
- *      write into our own store at a caller-chosen path.
+ *   2. A PREDICATE THAT COULD NOT SAY NO — ★ CLOSED, AT THE PREDICATE. `isCanonicalPodTarget`
+ *      asked `toInternalPodUrl(target).startsWith(toInternalPodUrl(CSS_URL))`, and the right-hand
+ *      side reduces to the store ROOT — so every path starts with it and the answer was always
+ *      true. `notify_agent` reported `delivered: true` for exactly the unpolled dead-letter the
+ *      function was added to distinguish. It now asks for a pod ROOT on a member ORIGIN and never
+ *      consults this helper; see its own note.
+ *   3. AN EXTERNAL DELIVERY TARGET PULLED INTO OUR STORE — ★ CLOSED FOR `notify_agent`, ABOVE THE
+ *      WRITE, NOT HERE. `handleNotifyAgent` sends to `toInternalPodUrl(targetPod)`, so a target on
+ *      somebody else's origin became a relay-credentialed write into our own store at a
+ *      caller-chosen path — and, because `canonicalPodKey` is path-only, a fan-out to the channels
+ *      of whichever local pod that path happened to name. That handler now REFUSES a target that is
+ *      not a pod root on this store, before either. This helper is unchanged and still launders any
+ *      host handed to it: its four remaining callers are `handleReadInbox`,
+ *      `handleRebuildManifest`, `GET /agents/:localPart/outbox` and `POST /agents/:localPart/inbox`
+ *      (the last two reaching it through a `knownPods` card, which `add_pod` will seed with any
+ *      URL), and each still needs its own origin-aware gate — see the ★★★ note below for why that
+ *      is a change of its own and not a rider here.
  *
  * ★★★ AND THE OBVIOUS FIX — "fold only our origins, pass anything else through" — WAS WRITTEN,
  * REVIEWED BY SIX HOSTILE READERS, AND REVERTED. It closes (1) and creates something worse, because
@@ -7521,6 +7566,22 @@ const RELAY_HANDLE_HOST = (() => {
   try { return PUBLIC_BASE_URL ? new URL(PUBLIC_BASE_URL).host : `localhost:${PORT}`; }
   catch { return `localhost:${PORT}`; }
 })();
+
+/**
+ * The base every relay-hosted agent address is minted from - this deployment's own public
+ * origin, or the loopback port when none is configured.
+ *
+ * ★ DECLARED HERE, BESIDE `RELAY_HANDLE_HOST`, RATHER THAN BESIDE THE WEBFINGER ROUTES IT USED
+ * TO SIT IN. Three surfaces mint or invert `${RELAY_AP_BASE}/agents/<localPart>`: the
+ * WebFinger JRD and ActivityPub actor documents (5,000 lines below), the `activitypub` channel
+ * `autoRegisterAgentCard` writes onto every auto-registered row, and the notify affordance
+ * `list_known_pods` publishes - and the last two run from code that appears far earlier in this
+ * file than the old declaration. Reading a `const` declared further down is a temporal-dead-zone
+ * hazard for anything that ever runs at module scope, and "every caller today happens to be a
+ * request handler" is an argument that has to be re-made after every edit rather than a property
+ * of the file. Moving the declaration removes the argument.
+ */
+const RELAY_AP_BASE = (PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
 
 /**
  * Does this pod URL OWN the agent address `localPart` - as opposed to merely ending with it?
@@ -7572,6 +7633,344 @@ function podLocalPart(podUrl: string): string {
   } catch { return 'agent'; }
 }
 
+/**
+ * The relay-hosted address of the agent at a pod - this deployment's own ActivityPub actor URL
+ * for it, and the ONE place that string is built.
+ *
+ * ★★ ONE MINTER, BECAUSE THE SAME STRING IS PUBLISHED FROM THREE PLACES AND RESOLVED IN A
+ * FOURTH. `autoRegisterAgentCard` writes it onto every auto-registered row as that row's
+ * `activitypub` channel - a NATIVE channel, so `list_known_pods` never redacts it;
+ * `directoryRowAffordances` publishes it again as the bound recipient of the row's notify
+ * affordance; `apBuildWebfinger` / `apBuildActor` / `apBuildOutbox` mint it from the localPart
+ * in the REQUEST; and `relayAgentAddressLocalPart` below reads it back. Four spellings of one
+ * construction is how the address a caller follows and the address the relay resolves come
+ * apart, which is the defect class this whole area carries.
+ */
+function relayAgentAddress(podUrl: string): string {
+  return apActorUrl(RELAY_AP_BASE, podLocalPart(podUrl));
+}
+
+/**
+ * The `localPart` of an address THIS relay minted, or undefined for anything else.
+ *
+ * ★ IT INVERTS `relayAgentAddress` BY THE PREFIX THE MINTER BUILDS, rather than by re-parsing
+ * the URL. `apActorUrl` is `${base}/agents/${encodeURIComponent(localPart)}`; comparing origins
+ * and re-deriving a path would be a SECOND reading of that construction, and the two readings
+ * would then have to be kept equal by hand - the defect named directly above. Prefix-matching
+ * the exact string the minter builds is one reading, and the round trip is driven in
+ * tests/follow-the-directory.test.ts.
+ *
+ * ★ A FOREIGN HOST IS NOT OURS TO INTERPRET. `https://other-relay.example/agents/x` is identical
+ * in shape and names an agent on THEIR relay; it does not match this prefix, and falls through
+ * to the routes that treat it as the external URL it is.
+ *
+ * ★ AND A MALFORMED PERCENT-ESCAPE RETURNS UNDEFINED RATHER THAN THE RAW TAIL. Returning the
+ * tail would introduce a second spelling of one localPart - `%zz` naming whatever `%zz` decoded
+ * would have named - and a second spelling is how two addresses come to select one row.
+ */
+function relayAgentAddressLocalPart(to: string): string | undefined {
+  const prefix = `${RELAY_AP_BASE}/agents/`;
+  if (!to.startsWith(prefix)) return undefined;
+  const tail = to.slice(prefix.length).replace(/\/$/, '');
+  if (!tail || /[/?#]/.test(tail)) return undefined;
+  try { return decodeURIComponent(tail); } catch { return undefined; }
+}
+
+/** The fields these functions read off a row. Structural, so the synthetic `self`
+ *  projection `knownPodsWithSelf` builds and a stored `KnownPodEntry` are both accepted. */
+type DirectoryRowLike = {
+  url: string; via?: string; did?: string; webId?: string; owner?: string; surface?: string;
+};
+
+/**
+ * Which agent address does THIS row own - `<relay>/agents/<localPart>` for the localPart
+ * returned here, and none at all for `undefined`. The ONE evaluation of the ownership
+ * question, read both by the documents that DEREFERENCE an address (`cardForLocalPart`) and by
+ * the resolver that DELIVERS to it.
+ *
+ * -- ★★ WHY OWNERSHIP IS A SET OF ROWS, AND WHY THE SET IS ONE POD ----------------------
+ *
+ * A bound address is only worth publishing if resolving it can return exactly the pod it was
+ * minted from. Three conjuncts make that a property of the data rather than of a preference
+ * order:
+ *
+ *   1. ON ONE OF THIS DEPLOYMENT'S STORE ORIGINS - `isStoreOriginUrl`, whole-origin membership
+ *      against `STORE_ORIGINS`, never a prefix (see its declaration for the round-26 leak a
+ *      prefix test caused). This is the conjunct the first attempt at this affordance did not
+ *      have, and it is the one that mattered: `add_pod` lets ANY authenticated caller create a
+ *      durable row at an ARBITRARY url - `resolvePodSubject` validates neither origin nor path
+ *      shape and no container has to exist - so `https://elsewhere.example/u-eth-VICTIM/` is a
+ *      row a stranger can plant, and it has exactly one path segment.
+ *   2. THAT SEGMENT IS THE WHOLE PATH, EXACT CASE - `podOwnsLocalPart`, which cf4f03ad added
+ *      for the nested squat (`https://anything/x/u-eth-VICTIM/`) and for its case variant.
+ *   3. NOT THE SYNTHETIC `via: 'self'` ROW, which is a per-call projection of the CALLER's own
+ *      pod, is never in `knownPods`, and is not a row anyone else can see or follow.
+ *
+ * ★★ AND (1) + (2) TOGETHER ARE THE INJECTIVITY, WHICH IS THE WHOLE CLAIM. Every url that
+ * satisfies them for one `localPart` has the pathname `/<localPart>` or `/<localPart>/`, so
+ * every one of them has the SAME `canonicalPodKey` - this relay's own definition of "the same
+ * pod", already the key that `evictCanonicalDuplicates`, the `list_known_pods` de-dup and
+ * `handleNotifyAgent`'s card lookup use. So the owner set is never two agents: at most it is
+ * the two host spellings of one pod. tests/follow-the-directory.test.ts §2 drives the
+ * two-rows-one-localPart case and §4 drives it again over the wire against the booted relay,
+ * rather than asserting it from this paragraph.
+ *
+ * ★ IT DOES NOT ASK WHETHER THE ROW IS IDENTIFIED, deliberately. "Which pod owns this address"
+ * and "can this relay name who is behind it" are different questions: the WebFinger and actor
+ * surface has always answered for a row carrying nothing but a url. The affordance adds the
+ * identity conjunct on top - see `rowPublishesAgentAddress` - at the resolve, where it belongs.
+ *
+ * ★★ AND IT IS ASKED OF A ROW, NOT OF A (row, localPart) PAIR, WHICH IS WHAT MAKES THE
+ * DIRECTORY LINEAR. `agentAddressOwners` used to re-filter the whole map per localPart, and
+ * `list_known_pods` asks the question once per row: at the live directory size that was 574
+ * scans of 574 rows. MEASURED on this machine by slicing these declarations out of this file
+ * and driving `list_known_pods`' mint map over 574 identified fixture rows, median of 9 runs:
+ * 660,100 `new URL` constructions and 853 ms before this change, 2,870 and 9-11 ms after —
+ * five parses per row (three in the index build, two in the mint) instead of 1,150. At 1,000
+ * rows it is 5,000, so the count is linear in the directory and not merely smaller. The
+ * predicate is unchanged - this function composes the same
+ * `isStoreOriginUrl` and `podOwnsLocalPart` in the same order, and `buildAgentAddressOwnerIndex`
+ * below is nothing but this function applied once per row instead of once per row per row.
+ */
+function agentAddressOwnerLocalPart(entry: DirectoryRowLike): string | undefined {
+  if (entry.via === 'self') return undefined;
+  if (!isStoreOriginUrl(entry.url)) return undefined;
+  const lp = podLocalPart(entry.url);
+  return podOwnsLocalPart(entry.url, lp) ? lp : undefined;
+}
+
+/**
+ * The owner sets of every localPart in the directory, built in one pass.
+ *
+ * ★ IT IS A CACHE OF ONE HANDLER INVOCATION, NEVER A MODULE-LEVEL ONE. `knownPods` is mutated
+ * by auto-registration, `add_pod`, `remove_pod` and every federation hydrate; an index that
+ * outlived a request would answer from a directory that no longer exists, and a stale answer
+ * HERE is a link published for a row that is no longer the owner - the exact misdelivery this
+ * area exists to close. `handleListKnownPods` builds one after its awaits and drops it, so the
+ * snapshot it indexes is the same snapshot it lists.
+ */
+type AgentAddressOwnerIndex = ReadonlyMap<string, ReadonlyArray<KnownPodEntry>>;
+
+function buildAgentAddressOwnerIndex(): AgentAddressOwnerIndex {
+  const index = new Map<string, KnownPodEntry[]>();
+  for (const e of knownPods.values()) {
+    const lp = agentAddressOwnerLocalPart(e);
+    if (lp === undefined) continue;
+    const bucket = index.get(lp);
+    if (bucket) bucket.push(e); else index.set(lp, [e]);
+  }
+  return index;
+}
+
+/**
+ * Every directory row that OWNS the agent address `<relay>/agents/<localPart>`.
+ *
+ * ★ THE INDEX IS AN ARGUMENT, NOT A SECOND RULE. With one, this is a lookup into the buckets
+ * `buildAgentAddressOwnerIndex` grouped by `agentAddressOwnerLocalPart`; without one it filters
+ * the map by that same function. The two branches cannot disagree, because the membership test
+ * in both IS that function - there is no second spelling of the predicate to keep in step.
+ * Callers that ask once (`cardForLocalPart`, `followedAgentAddressRow`) pass nothing; the caller
+ * that asks once per row (`list_known_pods`) passes an index.
+ */
+function agentAddressOwners(
+  localPart: string, index?: AgentAddressOwnerIndex,
+): KnownPodEntry[] {
+  if (index) return [...(index.get(localPart) ?? [])];
+  const owners: KnownPodEntry[] = [];
+  for (const e of knownPods.values()) {
+    if (agentAddressOwnerLocalPart(e) === localPart) owners.push(e);
+  }
+  return owners;
+}
+
+/**
+ * Does THIS row publish the followed agent address for its own pod? The ONE predicate, called
+ * by the resolver below and by the mint that publishes the address - not two rules that agree.
+ *
+ * ★★ MEMBERSHIP OF THE OWNER SET, NEVER A `canonicalPodKey` COMPARISON, AND THAT DISTINCTION
+ * IS NOT COSMETIC. The first draft of the mint asked "does the address I minted resolve to a row
+ * with the same canonical key as this one" - and `canonicalPodKey` is PATH-ONLY, so a row at
+ * `https://elsewhere.example/u-eth-VICTIM/` has the SAME key as the victim's row on this store.
+ * MEASURED, on that draft: tests/follow-the-directory.test.ts §3 failed - a link WAS published on
+ * the stranger's row, bound to the address §2 of the same suite shows resolves to the victim. So
+ * the directory would have advertised, on a row labelled as somebody else, a link that reaches
+ * the pod that row shadows: the misdelivery this whole change exists to close, committed inside
+ * its own fix, by reaching for the path-only comparator that IS the defect. Asking whether the
+ * row is literally IN the set the resolver reads cannot make that mistake, because the set is
+ * built from the origin as well as the path.
+ *
+ * ★ AND THE IDENTITY CONJUNCT IS HERE RATHER THAN IN `agentAddressOwnerLocalPart`, because
+ * ownership and identification are different questions: the WebFinger and actor documents answer
+ * the first for a row carrying nothing but a url, while a followable address is only worth
+ * publishing for a pod this relay can NAME. `identityIsObserved` is the closed positive list - a
+ * row named only by the caller-writable `owner` field is not identified and gets no link and no
+ * followed route.
+ */
+function rowPublishesAgentAddress(
+  entry: DirectoryRowLike, index?: AgentAddressOwnerIndex,
+): boolean {
+  return identityIsObserved(describeDirectoryEntry(entry))
+    && agentAddressOwners(podLocalPart(entry.url), index).some(o => o.url === entry.url);
+}
+
+/**
+ * The row a FOLLOWED agent address delivers to: the owners above, narrowed to rows this relay
+ * identified ITSELF. Undefined for every string that is not one of our minted addresses, and
+ * for a minted address whose pod this relay cannot name.
+ *
+ * ★★ THE GATE RUNS HERE, AT RESOLVE, AND THE MINT CALLS THIS SAME FUNCTION. The first attempt at
+ * this affordance gated only the mint: three checks ran when a row was LISTED, and delivery
+ * re-resolved through a different path and applied one of them. A gate in front of one of two
+ * readers is not a gate. `directoryRowAffordances` publishes an address for a row only when
+ * `rowPublishesAgentAddress` - the predicate this function filters by - holds of that row, so
+ * "mintable" is DEFINED as "resolvable" instead of being intended to agree with it.
+ *
+ * ★ `identityIsObserved`, THE CLOSED POSITIVE LIST, never `identifiedBy !== 'nothing'`. The
+ * evidence has to be something this relay recorded when the pod's own agent authenticated;
+ * `owner` is free text any authenticated caller can write on any peer's row, and a row named
+ * only by it carries no affordance and resolves through no followed route. That absence is the
+ * honest answer and the one a reader can act on.
+ *
+ * ★ THE PREFERENCE PICKS A SPELLING, NOT A POD. By the injectivity above every candidate here is
+ * the same pod, so preferring the did-bearing row decides which host form and which recorded
+ * card the receipt describes - it cannot decide a different recipient.
+ */
+function followedAgentAddressRow(to: string): KnownPodEntry | undefined {
+  const localPart = relayAgentAddressLocalPart(to);
+  if (localPart === undefined) return undefined;
+  const owners = agentAddressOwners(localPart).filter(e => rowPublishesAgentAddress(e));
+  return owners.find(e => e.did) ?? owners[0];
+}
+/**
+ * What a caller can DO with one directory row, as a link they FOLLOW rather than a field they
+ * copy out of.
+ *
+ * -- ★★ THE RULE WAS PROSE, WHICH IS WHERE IT DRIFTED -----------------------------------
+ *
+ * `notify_agent`'s `to` is declared `{ type: 'string' }` and its description said "resolve via
+ * list_known_pods". A well-formed address for the WRONG agent satisfies that schema exactly,
+ * which is how an external agent sending this maintainer findings got `delivered: true` three
+ * times without the findings arriving. Addressing has been a COMPOSE operation - read a row,
+ * decide which of `url` / `did` / `handle` / `owner` is the address, retype it into another call
+ * - and every misaddressing this substrate has suffered came through that step. So the row now
+ * carries the address as DATA: `iep:agentIdentity`, the published term for the identity IRI of
+ * an agent, and `arguments`, the request body to POST at `target` with a summary added.
+ *
+ * ★ AND THIS RELAY WAS ALREADY PUBLISHING THAT ADDRESS WITHOUT BINDING IT TO THE ROW IT WAS
+ * PRINTED ON. `autoRegisterAgentCard` has written it onto every auto-registered row as the
+ * `activitypub` channel since long before this change, and it is a native channel, so it is
+ * never redacted. What it did at 843fc4fa, DRIVEN by extracting that commit's
+ * `resolveTargetPodUrl` and running it: for a pod whose name is a derived slug,
+ * `notify_agent { to: "<relay>/agents/u-eth-aaaa11112222" }` resolved to
+ * `{ pod: "<CSS>u-eth-aaaa11112222/", via: "pod-id-in-url" }` - it reached the right inbox, but
+ * only because the UNANCHORED pod-id regex found the slug inside the path of an address on a
+ * DIFFERENT origin. The same string for a pod whose name is not a slug
+ * (`<relay>/agents/maintainer`) resolved to `via: "external-url"`, and the old handler wrote
+ * that anyway: `toInternalPodUrl` folds the path onto this store and `inboxUrlFor` appends
+ * `inbox/`, so the bytes went to `<CSS>/agents/maintainer/inbox/`. So the published address
+ * worked by the collapse the sibling unit removed, for some rows and not others, and never
+ * because anything bound it to the row it appeared on.
+ *
+ * ★ WHICH IS WHY THE FOLLOWED ROUTE IS ADDITIVE HERE AND NOW. With the collapse gone and the
+ * followed branch mutated back out of the shipped file, the same call over the wire answers
+ * `resolvedVia: "external-url"`, `canonicalInbox: false`, and writes nothing: this relay's own
+ * origin is not a store origin, so the target is one `handleNotifyAgent` refuses. The followed
+ * branch converts that refusal into a delivery, and there is no input it can take away.
+ *
+ * -- ★★ AND IT IS MINTED ONLY WHERE FOLLOWING IT CANNOT GO WRONG ------------------------
+ *
+ * The gate is MEMBERSHIP OF THE SET THE RESOLVER READS, not a second copy of the resolver's
+ * rules and not a comparison of the two answers: `rowPublishesAgentAddress` asks whether THIS
+ * row is literally in `agentAddressOwners` for the localPart printed on it, and that is the one
+ * predicate `followedAgentAddressRow` filters by. So a row whose url is multi-segment
+ * (`<CSS>/team/u-eth-VICTIM/`, whose last segment is somebody else's whole pod), a row on a
+ * foreign origin, and a row this relay cannot name all get no link.
+ *
+ * ★★ AND IT IS NOT A `canonicalPodKey` COMPARISON, WHICH IS THE FORM THIS GATE WAS FIRST
+ * WRITTEN IN AND THE FORM THAT FAILED. That draft minted the address, asked the resolver what it
+ * resolved to, and accepted the row when the answer had the same `canonicalPodKey` - a
+ * comparator that is PATH-ONLY, so `https://elsewhere.example/u-eth-VICTIM/` compared equal to
+ * the victim's row on this store and a link was published on the stranger's row bound to the
+ * victim's address. See `rowPublishesAgentAddress` for the measurement that caught it. Set
+ * membership cannot make that mistake, because the set is built from the origin as well as the
+ * path.
+ *
+ * ★ NOTHING HERE IS A REFUSAL. An unlinked row still accepts a hand-composed `to` and still
+ * delivers exactly as before; it simply gets no link. The affordance is the path that cannot go
+ * wrong, not a replacement that strands the callers passing `to` today.
+ *
+ * -- @ WHAT IT EMITS, AND WHAT IT DELIBERATELY DOES NOT ---------------------------------
+ *
+ * `action` / `target` / `method` / `expects` / `returns` are the keys `GET /tools` already
+ * publishes for every operation, and each is aliased in `KERNEL_JSONLD_CONTEXT` (`target`,
+ * `action`, `expects` and `returns` with `@type: '@id'`), so this affordance and that catalog
+ * describe one operation the same way.
+ *
+ * ★★ `iep:agentIdentity` CARRIES A NODE OBJECT, NOT A STRING, AND THAT IS A FIX RATHER THAN A
+ * STYLE. It is an `owl:ObjectProperty`, so its object must be an IRI; a prefixed key with a
+ * plain string value expands to a LITERAL, which is what the first attempt emitted. `{ '@id':
+ * ... }` is an IRI under any context, so the value cannot be read as a literal wherever this
+ * fragment is processed as JSON-LD. (`pods` is not itself a defined term in this response's
+ * context today, so nothing nested under it expands at all - which is exactly why the fix is
+ * written into the VALUE and is not a claim about the document.)
+ *
+ * ★★ AND THERE IS NO `hydra:mapping`. The first attempt used one to say which argument the
+ * address fills; `hydra:mapping`'s domain is `hydra:IriTemplate` and this is a fixed-target
+ * `hydra:Operation`, so that was a domain violation - the same defect as a literal where an IRI
+ * belongs, one property over. `iep:operand` was considered as a replacement and rejected for the
+ * same reason: its declared domain is `iep:ComposedDescriptor`. What replaces it is not a
+ * different vocabulary term but a PRE-FILLED BODY: `arguments` is the JSON to POST at `target`,
+ * so a client adds its own `summary` and sends it rather than mapping a variable onto a
+ * parameter. That is plain JSON making no RDF claim, which is the honest form for a request
+ * body, and it is strictly less for a client to get wrong than a mapping.
+ */
+function directoryRowAffordances(
+  entry: DirectoryRowLike, index?: AgentAddressOwnerIndex,
+): ReadonlyArray<Record<string, unknown>> {
+  // ★★ ONE PREDICATE, ASKED HERE AND BY THE RESOLVER. `rowPublishesAgentAddress` is what
+  // `followedAgentAddressRow` filters by, so a link is published for a row exactly when that
+  // row is one the resolver would return for the address printed on it. "Mintable" is DEFINED
+  // as "resolvable" rather than intended to agree with it, which is the half the first attempt
+  // at this affordance did not have: its three gates ran when a row was LISTED, and delivery
+  // re-resolved through a different path and applied one of them.
+  //
+  // ★ THE INDEX IS THE SAME PREDICATE, PRE-GROUPED. It changes how the owner set is FOUND, never
+  // what is in it - see `agentAddressOwners`. Callers that mint for one row may omit it; the
+  // directory, which mints for every row, must not, because without it this line rescans the
+  // whole map once per row.
+  if (!rowPublishesAgentAddress(entry, index)) return [];
+  const identity = describeDirectoryEntry(entry);
+  const address = relayAgentAddress(entry.url);
+  const base = RELAY_AP_BASE;
+  // The same lookup `GET /tools` does, at request time. (`TOOL_SCHEMAS` is declared further
+  // down; every caller of this function is a request handler, which cannot run before module
+  // evaluation completes.)
+  const schema = TOOL_SCHEMAS.find(t => t.name === 'notify_agent') as
+    { inputSchema?: unknown; outputSchema?: unknown } | undefined;
+  const contract = operationContract(base, 'notify_agent', schema);
+  return [{
+    '@type': ['iep:Affordance', 'hydra:Operation'],
+    // The relay's OWN naming authority - the same action id `/.well-known/operations` publishes
+    // for this tool, so a caller matching one surface against the other matches. Never
+    // `urn:iep:action:...`: an id that dereferences to nothing is a word rather than a term.
+    action: operationActionUrl(base, 'notify_agent'),
+    target: `${base}/tool/notify_agent`,
+    method: 'POST',
+    title: 'notify_agent',
+    description: `Message ${identity.agent ?? identity.surface ?? podLocalPart(entry.url)}, the agent THIS row names. POST this entry's arguments to its target, with your own summary (and content) added.`,
+    // ★ THE BOUND IDENTITY, AND WHERE IT CAME FROM. Derived from this row's pod url through the
+    // relay's one address minter, and emitted only for a row the relay observed authenticate. It
+    // is never read from `owner` or `label` - the two fields any authenticated caller can write
+    // on any peer's row, and the ones a driven `add_pod` used to publish `surface: "maintainer"`
+    // off a stranger's typing.
+    'iep:agentIdentity': { '@id': address },
+    // The request body, pre-filled: add `summary` and POST it to `target`.
+    arguments: { to: address },
+    ...(contract.expects ? { expects: contract.expects } : {}),
+    ...(contract.returns ? { returns: contract.returns } : {}),
+  }];
+}
+
 // Process-local guard so we persist each agent card at most once per
 // process unless something changed — keeps the auto-register hook on the
 // hot path effectively free after first contact.
@@ -7601,9 +8000,33 @@ function autoRegisterAgentCard(
   const inbox = inboxUrlFor(podUrl);
   // Native channels every agent carries; merge any externally-declared
   // (non-native) channels the agent set via set_reachability.
+  /**
+   * -- ★★ THE SITE THAT PUBLISHES THE AGENT ADDRESS, UNGATED, ON EVERY ROW ---------------
+   *
+   * This channel is the address `directoryRowAffordances` binds, written from here onto every
+   * auto-registered row. `activitypub` is a NATIVE channel, so `list_known_pods` shows its value
+   * to every caller rather than redacting it - which means gating the affordance mint alone
+   * would have been decoration: the same string is public one field over.
+   *
+   * ★ SO IT IS MINTED BY THE ONE MINTER, and only when the pod it is minted FOR actually owns
+   * it. The two conjuncts are `agentAddressOwnerLocalPart`'s first two, asked here directly
+   * because at this moment the row is being written and is not yet in `knownPods` to be found.
+   * `podUrl` reaches this function from exactly two call sites: the MCP `tools/call` hook, which
+   * passes `authContext.podUrl` - the identity server's own value, threaded through
+   * `resolveAuthContext`, which today derives it from `userId` and is honoured rather than
+   * reconstructed precisely so a future identity server can move a pod - and the signed-request
+   * hook, which builds `${CSS_URL}${_session_user_id}/` literally. Both conjuncts hold for every
+   * pod either site produces today, and if the identity server ever stops deriving it that way
+   * this line stops publishing an address rather than publishing an unresolvable one. It is the
+   * same channel list it has always written. What it stops is publishing an address for a pod
+   * shape whose address `cardForLocalPart` and `followedAgentAddressRow` would both decline to
+   * resolve. A published address nobody can resolve is the thing this whole change is about, and
+   * it is not a claim about the live directory: no census of it was run for this line.
+   */
+  const ownsItsAddress = isStoreOriginUrl(podUrl) && podOwnsLocalPart(podUrl, lp);
   const nativeChannels: Array<{ type: string; value: string }> = [
     { type: 'ldn', value: inbox },
-    { type: 'activitypub', value: apActorUrl((PUBLIC_BASE_URL || `http://localhost:${PORT}`), lp) },
+    ...(ownsItsAddress ? [{ type: 'activitypub', value: relayAgentAddress(podUrl) }] : []),
     { type: 'acct', value: handle },
   ];
   const externalChannels = (existing?.channels ?? []).filter(c => !['ldn', 'activitypub', 'acct'].includes(c.type));
@@ -7647,25 +8070,221 @@ function autoRegisterAgentCard(
 /**
  * How a recipient string became a pod. Reported to the sender because the routes are not
  * equally trustworthy: `directory-*` means an agent card the recipient published matched
- * what was typed, while `pod-id*` and `did:ethr` mean the relay DERIVED a pod from a
- * string shape and matched no identity at all. A sender who typed a pod id has been
+ * what was typed, while `pod-id*`, `pod-url` and `did:ethr` mean the relay DERIVED a pod
+ * from a string shape and matched no identity at all. A sender who typed a pod id has been
  * guessing, and only the first three routes are evidence they guessed right.
  */
 type RecipientRoute =
+  | 'followed-affordance'
   | 'directory-did' | 'directory-handle' | 'directory-webid'
-  | 'pod-id-in-url' | 'pod-id' | 'did:ethr-derived' | 'external-url';
+  | 'pod-id-in-url' | 'pod-url' | 'pod-id' | 'did:ethr-derived' | 'external-url'
+  // ★ NOT A ROUTE TO A POD - a route to a REFUSAL, reported so the sender can see WHY. It is
+  // returned for a URL on this deployment's own store whose path names no pod: a deeper path
+  // than an agent address (`<CSS>/team/u-eth-VICTIM/`), the store root, or a first segment
+  // carrying a percent-escape. `handleNotifyAgent` never delivers on it, and `resolution.pod`
+  // is the caller's own string, unchanged, so the receipt echoes what was sent rather than a
+  // pod derived from part of it.
+  | 'store-path-not-a-pod';
+
+/**
+ * ★★ THE ROUTES ON WHICH AN IDENTITY WAS MATCHED, AS A CLOSED POSITIVE LIST.
+ *
+ * This was `resolution.via.startsWith('directory-')` - a spelling that says "the route's name
+ * begins with a word", which is a fact about the string and not about the evidence. It is the
+ * same shape as the `identifiedBy !== 'nothing'` reading that `identityIsObserved` exists to
+ * replace: it silently admits whatever route is added next, and the route added next could as
+ * easily be a derivation as a match. A closed list has to be edited on purpose to widen, and
+ * adding `followed-affordance` here IS that edit.
+ */
+const IDENTITY_MATCHED_ROUTES: ReadonlyArray<RecipientRoute> = [
+  'followed-affordance',
+  'directory-did',
+  'directory-handle',
+  'directory-webid',
+];
+function routeMatchedAnIdentity(via: RecipientRoute): boolean {
+  return IDENTITY_MATCHED_ROUTES.includes(via);
+}
+
+/**
+ * A pod-id slug as this deployment mints one, WHOLE and on its own — never a substring.
+ *
+ * `deploy/identity/derive-userid.ts` builds `u-eth-` from `addressLower` and `u-pk-`/`u-did-`
+ * from lowercase sha256 hex, so every id this relay derives is one slash-free lowercase token.
+ * Anchored (`^…$`) because the unanchored form of this same pattern is the defect below.
+ * Case-insensitive on the way IN so a caller who typed an id in mixed case still reaches the
+ * real pod — the match is lower-cased before it is used as a path, and there is nothing here
+ * to steal by case: this DERIVES an address rather than choosing between existing rows, which
+ * is why `podOwnsLocalPart` above must NOT lower-case and this may.
+ */
+const POD_ID_SLUG = /^(u-pk-|u-did-|u-eth-|eth-)[0-9a-z]+$/i;
+
+/**
+ * A single path segment that can NAME a pod on this store, as it appears on the wire.
+ *
+ * ★★ A PERCENT-ESCAPE IS NOT A POD NAME, AND THAT IS THE WHOLE POINT OF THE ALPHABET. The
+ * reviewer drove `notify_agent { to: "<CSS>/u-eth-aaaa11112222%2finbox/" }` end to end and got
+ * `delivered: true, canonicalInbox: true` with the relay issuing
+ * `PUT /u-eth-aaaa11112222%2finbox/inbox/<id>.jsonld`, the escape still on the wire. Re-driven
+ * here by reconstructing the pre-rule resolver from the characters this change replaced: it
+ * answered `{ pod: "<CSS>u-eth-aaaa11112222%2finbox/", via: "pod-url" }`, `isCanonicalPodTarget`
+ * answered `true` for it, and `toInternalPodUrl` composes that same escaped path as the write
+ * target. `%2F` and the double-encoded `%252f` behaved identically. The
+ * pathname of a URL is NOT decoded by `new URL`, so `%2f` survives the split and counts as ONE
+ * segment here while a store may decode it and count TWO - and a rule that means different
+ * things to the checker and to the store is not a rule. Every pod name this deployment can
+ * hold is unreserved characters only (`deploy/identity/derive-userid.ts` mints slash-free
+ * lowercase slugs; the chosen names are `maintainer`, `foxxi`, `u-try-…`), so the honest test
+ * is that the segment needs no decoding at all: no `%`, and nothing else reserved.
+ *
+ * ★ IT IS DELIBERATELY NARROWER THAN `POD_ID_SLUG` IS SPECIFIC. `POD_ID_SLUG` says "this is an
+ * id this relay derives"; this says "this is a segment that means itself". Both are asked, in
+ * that order on the URL and bare-id routes.
+ *
+ * ★ IT IS NOT ASKED ON EVERY ROUTE, AND SAYING SO WAS A FALSE COMMENT ON ITS OWN HEADER.
+ * The followed-affordance route resolves through `agentAddressOwnerLocalPart` /
+ * `podOwnsLocalPart`, neither of which consults this pattern — so an identified row stored
+ * at `<CSS>/u-eth-x%2finbox/` still owns the local part `u-eth-x%2finbox`. That is harmless
+ * today because such a row can only be created by a caller who already controls the pod it
+ * names, and it addresses ITSELF — but the claim of universality was wrong, and the gap is
+ * real. Widening the ownership predicate is a separate change with its own blast radius.
+ */
+const POD_NAME_SEGMENT = /^[A-Za-z0-9._~-]+$/;
+
+/**
+ * The paths BELOW a pod root that still ADDRESS that pod's agent, as the empty string (the
+ * root itself) plus the two live deep forms.
+ *
+ * ★★ A CLOSED LIST, BECAUSE THE OPEN READING IS THE DEFECT. "The first path segment is the
+ * pod" accepted `<CSS>/team/u-eth-VICTIM/` and silently delivered it to a container called
+ * `team` - a pod the sender never named, chosen by truncating the address they typed. The two
+ * entries here are the only deep forms this substrate actually publishes: `<pod>/inbox/`, the
+ * canonical inbox `read_inbox` reports and `packages/core/src/model/agent.ts` publishes as an
+ * agent's ask route, and `<pod>/profile/card`, the WebID (which must reach the pod inbox and
+ * not the profile-local one - f-foxxi-webid-inbox-routing).
+ *
+ * ★ ANYTHING ELSE ON THIS STORE IS REFUSED RATHER THAN TRUNCATED, and the refusal names these
+ * forms. Truncation answers a question the sender did not ask; a refusal hands the question
+ * back to them with the answer attached.
+ */
+const POD_INTERIOR_ADDRESSES: ReadonlySet<string> = new Set(['', 'inbox', 'profile/card']);
+
+/** Is this URL on one of THIS deployment's store origins? Whole-origin membership against
+ *  `STORE_ORIGINS` (see its declaration for why a prefix test is not enough). */
+function isStoreOriginUrl(url: string): boolean {
+  try { return STORE_ORIGINS.has(new URL(url).origin); } catch { return false; }
+}
+
+/**
+ * The pod a URL on THIS store addresses, or undefined for a path on this store that addresses
+ * no pod. Never a truncation: it returns a pod only for a URL that is that pod's root or one
+ * of the two agent addresses inside it.
+ */
+function storePathPodSegment(url: string): string | undefined {
+  let segs: string[];
+  try { segs = new URL(url).pathname.split('/').filter(Boolean); } catch { return undefined; }
+  const seg = segs[0];
+  if (seg === undefined || !POD_NAME_SEGMENT.test(seg)) return undefined;
+  return POD_INTERIOR_ADDRESSES.has(segs.slice(1).join('/')) ? seg : undefined;
+}
 
 /**
  * Resolve a notify target (DID, pod URL, or acct: handle) to a pod URL, AND to the route
- * that got there. Prefers a directory match (so handles + DIDs work); falls back to
- * treating a u-pk-/eth-/did-shaped id as a pod under CSS_URL.
+ * that got there. Prefers a directory match (so handles + DIDs work); falls back to reading
+ * the pod out of a URL ON THIS STORE, or to treating a u-pk-/eth-/did-shaped id as a pod.
  *
  * ★ THE ROUTE IS RETURNED, NOT DISCARDED, BECAUSE THE CALLER'S CONFIRMATION NEEDS IT.
  * `notify_agent` used to answer `delivered: true` plus the pod URL the sender had already
  * typed — a confirmation of the write, not of the recipient. See handleNotifyAgent.
+ *
+ * ── ★★ THE URL ROUTE USED TO COLLAPSE ANY URL ONTO ONE POD SEGMENT ──────────────────────
+ *
+ * The http(s) branch was `to.match(/(u-pk-|u-did-|u-eth-|eth-)[0-9a-z]+/i)` — UNANCHORED,
+ * matching ANYWHERE in the string — and rebuilt the target as `${CSS_URL}${match}/`. The
+ * ORIGIN and every other path segment were discarded, not checked, so:
+ *
+ *   1. ★★ A POD SEGMENT ANYWHERE IN THE PATH CHOSE THE RECIPIENT.
+ *      `notify_agent { to: "<CSS>/team/u-eth-VICTIM/" }` wrote into `<CSS>/u-eth-VICTIM/inbox/`
+ *      — a DIFFERENT pod from the one named — and answered `delivered: true`. So did
+ *      `.../projects/u-eth-VICTIM/notes.ttl`, and anything else with that token in it.
+ *   2. A FOREIGN ORIGIN SILENTLY RETARGETED TO US. `https://attacker.example/u-eth-VICTIM/`
+ *      resolved to the LOCAL victim's pod, because the host was never looked at.
+ *
+ * That is the address squat of cf4f03ad one function over: there `cardForLocalPart` matched a
+ * federation row by its LAST PATH SEGMENT, here the delivery target was chosen by a token in
+ * ANY segment. The fix has the same shape and the same discipline — strictly narrowing, and
+ * measured against the live directory before it was written.
+ *
+ * ★ WHAT THE RULE IS NOW: on THIS deployment's store, a URL addresses a pod only when it IS
+ * that pod's root or one of the two published addresses inside it. `storePathPodSegment` is
+ * the rule; `POD_INTERIOR_ADDRESSES` is the closed list. That keeps the two forms live callers
+ * actually send: the canonical inbox address `read_inbox` reports (`<CSS>/<pod>/inbox/`, which
+ * `packages/core/src/model/agent.ts` publishes as an agent's ask route and
+ * `drive-agents-live.ts` delivers to), and a WebID (`<CSS>/<pod>/profile/card#me`, which must
+ * reach the pod inbox and not the profile-local one — f-foxxi-webid-inbox-routing: that
+ * dead-letter returned `delivered: true` and no one polls `…/profile/inbox/`).
+ *
+ * ★★ AND "THE FIRST PATH SEGMENT IS THE POD" — WHICH IS WHAT THIS FUNCTION SAID AND DID UNTIL
+ * THE REVIEW — WAS THE SAME DEFECT ONE STEP SMALLER. It resolved `<CSS>/team/u-eth-VICTIM/` to
+ * `<CSS>/team/` and answered `delivered: true` for a write into `<CSS>/team/inbox/`: not the
+ * victim's pod, but not the sender's target either. A truncation cannot be right, because the
+ * caller who typed a path we do not understand is exactly the caller who must be told so. Any
+ * other path on this store now takes `store-path-not-a-pod` and is refused with a receipt that
+ * names the three accepted forms.
+ *
+ * ★ AND A URL SOMEWHERE ELSE IS LEFT WHERE IT WAS POINTED, not pulled onto our store — the
+ * ROUTE reports `external-url` and `resolution.pod` is the caller's own string. Delivery is a
+ * separate decision and `handleNotifyAgent` REFUSES it: it holds no credentials it is willing
+ * to spend on a caller-chosen host, so the honest receipt is a refusal naming what to send
+ * instead. The two foreign rows the live directory holds are unreachable by notify either way;
+ * before this change they were not delivered to either, they were relocated onto this store and
+ * reported as delivered.
+ *
+ * ★ MEASURED BEFORE CHANGING ANYTHING (production, 2026-08-28, `GET /relay/federation-status`
+ * = 578 entries; `POST /tool/list_known_pods` = 574 rows after host de-dup): ZERO rows have a
+ * multi-segment path and ZERO have a pod id anywhere but their whole first segment. 569 first
+ * segments match POD_ID_SLUG exactly; the other five are `u-try-d064879aba54`, `maintainer`
+ * and `foxxi` (single-segment pods on our own store, which the `pod-url` route below carries),
+ * plus two genuinely foreign rows — `https://foxxi-bridge.interego.xwisee.com/` (no path at
+ * all) and `https://10-0-0-5.nip.io/x/` — which take the `external-url` route exactly as they
+ * did before. Both spellings of our store (`css.railway.internal:3456` and
+ * `gate.interego.xwisee.com`) are in STORE_ORIGINS; no third spelling appears in live data.
  */
-function resolveTargetPodUrl(to: string): { pod: string; via: RecipientRoute } | undefined {
+function resolveTargetPodUrl(
+  to: string,
+): { pod: string; via: RecipientRoute; entry?: KnownPodEntry } | undefined {
   if (!to) return undefined;
+  /**
+   * -- ★★ A FOLLOWED ADDRESS FIRST, BECAUSE IT IS THE ONE THAT CANNOT HAVE BEEN COMPOSED ----
+   *
+   * `list_known_pods` publishes this URL on a row only when `followedAgentAddressRow` - the
+   * function called right here - resolves it back to that same row, so a sender arriving with
+   * one did not derive it from a slug or type it from memory: they followed the link on the row
+   * they picked. Mint and resolve are the same predicate over the same map, not two functions
+   * that agree today.
+   *
+   * ★★ AND THE ROW IS RETURNED, NOT JUST THE POD, so `handleNotifyAgent` describes the row that
+   * MATCHED rather than re-finding one by pod key downstream. That is what makes
+   * `resolvedVia: 'followed-affordance'` imply `recipientKnown: true` structurally: one row, one
+   * `identityIsObserved`, evaluated twice with the same input.
+   *
+   * ★ IT FALLS THROUGH RATHER THAN REFUSING when the address names a row this relay cannot
+   * identify or no longer holds - a row removed between the listing and the send. The strong
+   * route is simply not claimed, and the address resolves exactly as it did before this branch
+   * existed — on the SHIPPED file that is `external-url` (this relay's public origin is not a
+   * store origin), which `handleNotifyAgent` refuses, so this branch can only turn a refusal
+   * into a delivery. It is NOT what 843fc4fa did: driven by extracting that commit's resolver,
+   * `<relay>/agents/u-eth-aaaa11112222` took `pod-id-in-url` there, because the unanchored
+   * pod-id regex read a slug out of the middle of an address on another origin. The additivity
+   * claim is about this file, not about that one.
+   *
+   * ★ IT IS FIRST, and the order is load-bearing only where this relay's public origin is also
+   * one of the store's spellings - a deployment in which `<base>/agents/<lp>` would otherwise be
+   * read as a pod named `agents`. That is not this deployment, and the precedence is right
+   * either way: an address we minted is the strongest evidence available about who was meant.
+   */
+  const followed = followedAgentAddressRow(to);
+  if (followed) return { pod: followed.url, via: 'followed-affordance', entry: followed };
   // A registered agent (by did/handle/webId) resolves to its canonical pod URL —
   // checked FIRST so a WebID never short-circuits to a profile-local inbox.
   for (const e of knownPods.values()) {
@@ -7673,32 +8292,86 @@ function resolveTargetPodUrl(to: string): { pod: string; via: RecipientRoute } |
     if (e.handle === to) return { pod: e.url, via: 'directory-handle' };
     if (e.webId === to) return { pod: e.url, via: 'directory-webid' };
   }
-  // An Interego WebID/profile URL carries the agent's pod id (u-pk-/u-did-/eth-)
-  // in its path. Resolve to the CSS pod root — its /inbox/ is the OPERATIONAL
-  // inbox the recipient's read_inbox polls — NOT the profile-local inbox a raw
-  // WebID would otherwise be delivered to (f-foxxi-webid-inbox-routing: a
-  // WebID-addressed notification returned delivered:true but silently
-  // dead-lettered into …/profile/inbox/, which no one polls).
-  const idm = to.match(/(u-pk-|u-did-|u-eth-|eth-)[0-9a-z]+/i);
+  const base = ensureTrailingSlashLocal(CSS_URL);
   if (/^https?:\/\//.test(to)) {
-    if (idm) return { pod: `${CSS_URL}${idm[0].toLowerCase()}/`, via: 'pod-id-in-url' };
+    if (isStoreOriginUrl(to)) {
+      // ── ★★ ON OUR OWN STORE, A PATH THAT IS NOT A POD ADDRESS IS REFUSED, NOT TRUNCATED ──
+      //
+      // `storePathPodSegment` returns a pod only for that pod's ROOT or for one of the two
+      // agent addresses inside it (`inbox/`, `profile/card`); `new URL` normalises `.` / `..`
+      // before the split, so a dot-segment path is judged by the path it actually addresses.
+      // Everything else on this store takes `store-path-not-a-pod`, which `handleNotifyAgent`
+      // refuses with a receipt naming the accepted forms.
+      //
+      // ★★ THE FIRST FIX FOR THE UNANCHORED-REGEX COLLAPSE READ THE FIRST SEGMENT AS THE POD,
+      // AND THAT WAS STILL A TRUNCATION. DRIVEN in two halves, because one end-to-end run of
+      // the removed code is not available once it is removed: reconstructing the pre-fix
+      // resolver from the characters this change replaced, `to: "<CSS>/team/u-eth-VICTIM/"`
+      // answered `{ pod: "<CSS>team/", via: "pod-url" }` with `isCanonicalPodTarget` true, so
+      // the delivery gate passed; and addressing `<CSS>/team/` on its own over the wire against
+      // the booted relay (tests/notify-target-collapse.test.ts §5(e)) writes into
+      // `<CSS>/team/inbox/` and answers `delivered: true`. That container is where the bytes
+      // went - one the sender never named, one segment away from the pod they thought they had
+      // addressed. The victim's inbox was untouched, which is what the first suite asked; where
+      // the bytes DID land is the question it did not ask.
+      const seg = storePathPodSegment(to);
+      if (seg === undefined) return { pod: to, via: 'store-path-not-a-pod' };
+      return POD_ID_SLUG.test(seg)
+        ? { pod: `${base}${seg.toLowerCase()}/`, via: 'pod-id-in-url' }
+        // A pod on this store whose name is not a derived id (`maintainer`, `foxxi`, the
+        // service pods). Left exactly as spelled: CSS paths are case-sensitive and these are
+        // names somebody chose, not slugs this relay derived.
+        : { pod: `${base}${seg}/`, via: 'pod-url' };
+    }
     return { pod: to, via: 'external-url' };   // external / non-Interego — best-effort, as given
   }
-  // Bare id (e.g. "u-pk-…", "eth-…").
-  if (/^(u-pk-|u-did-|u-eth-|eth-)/.test(to)) return { pod: `${CSS_URL}${to}/`, via: 'pod-id' };
+  // Bare id (e.g. "u-pk-…", "eth-…"), WHOLE — a trailing slash is tolerated because it is a
+  // spelling of the same id, and anything else with a `/` in it is not an id at all. The old
+  // prefix-only test let `eth-x/../u-eth-VICTIM` through, which `new URL` then normalised at
+  // fetch time into the victim's inbox: the same collapse as the URL branch, one route over.
+  const bareId = to.replace(/\/$/, '');
+  if (POD_ID_SLUG.test(bareId)) return { pod: `${base}${bareId.toLowerCase()}/`, via: 'pod-id' };
   // did:ethr → eth-<slug> pod.
   const m = to.match(/^did:ethr:0x([0-9a-fA-F]{40})$/);
-  if (m) return { pod: `${CSS_URL}eth-${m[1]!.slice(0, 12).toLowerCase()}/`, via: 'did:ethr-derived' };
+  if (m) return { pod: `${base}eth-${m[1]!.slice(0, 12).toLowerCase()}/`, via: 'did:ethr-derived' };
   return undefined;
 }
 
-/** Whether a resolved target is the recipient's canonical CSS-pod inbox (the one
- *  read_inbox polls) vs a best-effort external URL. Lets notify_agent qualify
- *  delivered:true instead of reporting an unpolled dead-letter as success. */
+/**
+ * Whether a resolved target is the recipient's canonical pod inbox — the one `read_inbox`
+ * polls — rather than a best-effort address nobody is known to read. Lets notify_agent
+ * qualify `delivered: true` instead of reporting an unpolled dead-letter as success.
+ *
+ * ★★ IT USED TO BE TRUE FOR EVERYTHING, WHICH IS WHY IT COULD NOT DO ITS JOB. The three
+ * disjuncts were `startsWith(CSS_URL)`, `toInternalPodUrl(target).startsWith(
+ * toInternalPodUrl(CSS_URL))` and a pod-id regex matching ANYWHERE in the string. The second
+ * reduces to "starts with the store ROOT" — every path does, because `toInternalPodUrl`
+ * pastes the path onto our own origin — so the function answered `true` for the exact
+ * unpolled dead-letter it was added to distinguish, including for `https://foxxi-bridge.
+ * interego.xwisee.com/`, a live directory row that is not on this store at all. The third
+ * would have answered `true` for a foreign URL with a pod token buried in it.
+ *
+ * ★ THE QUESTION IT ASKS NOW is the one the name states: a pod ROOT on one of this
+ * deployment's store origins — exactly one path segment, and a segment that NAMES ITSELF.
+ * Both live spellings satisfy it; the store root itself does not, because nobody polls
+ * `<CSS>/inbox/` on anyone's behalf.
+ *
+ * ★★ AND "EXACTLY ONE SEGMENT" ALONE WAS NOT ENOUGH, WHICH IS WHY `POD_NAME_SEGMENT` IS HERE
+ * TOO. `new URL` does not decode a pathname, so `<CSS>/u-eth-aaaa11112222%2finbox/` has ONE
+ * segment by this split and TWO to a store that decodes it — and driven against the pre-rule
+ * predicate, reconstructed from the characters this change replaced, it answered `true`. See
+ * `POD_NAME_SEGMENT` for the rest of that measurement. This predicate is read by
+ * `handleNotifyAgent` INDEPENDENTLY of the resolver's own refusal, and a gate in front of one
+ * of two readers is not a gate — so the segment rule is asked in both.
+ */
 function isCanonicalPodTarget(targetPod: string): boolean {
-  return targetPod.startsWith(CSS_URL)
-    || toInternalPodUrl(targetPod).startsWith(toInternalPodUrl(CSS_URL))
-    || /(u-pk-|u-did-|u-eth-|eth-)[0-9a-z]+/i.test(targetPod);
+  try {
+    const u = new URL(targetPod);
+    const segs = u.pathname.split('/').filter(Boolean);
+    return STORE_ORIGINS.has(u.origin)
+      && segs.length === 1
+      && POD_NAME_SEGMENT.test(segs[0]!);
+  } catch { return false; }
 }
 
 /**
@@ -7710,7 +8383,7 @@ function isCanonicalPodTarget(targetPod: string): boolean {
  * what a notification must carry — see notification-body.ts for the defect that motivated it,
  * the measurement behind the conditional, and the four defects of the refuted first attempt.
  *
- * ★ LAZY AND CACHED, DELIBERATELY. Preparing the gate reads 208,787 characters of Turtle,
+ * ★ LAZY AND CACHED, DELIBERATELY. Preparing the gate reads 209,157 characters of Turtle,
  * isolates the shape into 28 triples, and runs fifteen canaries through the whole per-call
  * decision — eight of them over ~70,000-character documents, which is what proves the size
  * reduction still preserves this shape's verdicts before a caller depends on it. Re-measured at
@@ -7788,6 +8461,66 @@ async function handleNotifyAgent(args: ToolArgs): Promise<string> {
   if (bodyVerdict.verdict === 'violates') {
     return JSON.stringify(notificationBodyRefusal(bodyVerdict.violation, to));
   }
+  /**
+   * ── ★★ A TARGET THIS RELAY CANNOT DELIVER TO IS REFUSED, NOT "DELIVERED" SOMEWHERE ELSE ──
+   *
+   * DRIVEN, and it is why narrowing `resolveTargetPodUrl` alone was not the fix. With the
+   * resolver correctly refusing to resolve `https://elsewhere.example/u-eth-VICTIM/` to the
+   * victim, the notification STILL landed in `<CSS>/u-eth-VICTIM/inbox/` — because
+   * `toInternalPodUrl` below discards the host and pastes the PATH onto this store, and
+   * `canonicalPodKey` (the card lookup two lines down) is path-only as well, so the victim's
+   * discord/sms channels matched too. Two downstream sites re-derived from the path exactly
+   * what the resolver had just declined to derive. A gate in front of one of three readers is
+   * not a gate.
+   *
+   * ★ SO THE REFUSAL SITS HERE, ABOVE BOTH — the same placement argument as the body gate
+   * above it: below this point the LDN write and every external adapter fire, and a check
+   * after them would refuse a message the recipient had already been shown.
+   *
+   * ★ AND IT REFUSES ONLY WHAT NEVER WORKED. `isCanonicalPodTarget` is satisfied by every pod
+   * root on either spelling of this store, so a DID, an acct: handle, a bare pod id, a pod
+   * URL, an inbox URL and a WebID all still deliver. What it stops is a target on somebody
+   * else's origin, or a path on ours that is not a pod: those were never delivered to the
+   * address named — the clamp relocated them into a container on this store that nobody polls
+   * — and answered `delivered: true` for it. Live directory rows of that shape, measured
+   * 2026-08-28: two of 574 (`https://foxxi-bridge.interego.xwisee.com/` and
+   * `https://10-0-0-5.nip.io/x/`), and no caller in this repo notifies either.
+   *
+   * ★ WHAT IT DOES NOT DO is make the relay fetch a foreign origin. Delivering there would
+   * mean handing `solidFetch` — the UNSCREENED pool — a caller-chosen host with relay
+   * credentials. Refusing is the honest report of a capability this deployment does not have,
+   * and the message says what to send instead.
+   *
+   * ── ★★ AND A PATH ON OUR OWN STORE IS ITS OWN REFUSAL, WITH ITS OWN SENTENCE ────────
+   *
+   * `store-path-not-a-pod` and a failed `isCanonicalPodTarget` are asked as a DISJUNCTION
+   * rather than one being trusted to imply the other. They are two readings of the same
+   * question at two removes — the resolver's, over the string the caller sent, and the
+   * predicate's, over whatever came back — and this project's recurring failure is a gate that
+   * covers one of its readers. Either says no and nothing is written.
+   *
+   * ★ THE TWO CASES GET DIFFERENT PROSE BECAUSE THEY HAVE DIFFERENT NEXT STEPS. "Your target
+   * is on somebody else's origin" and "your target is on this store but is not an address" are
+   * answered by different corrections, and a receipt that says "not a pod on this store" to
+   * someone who WAS on this store tells them nothing they can act on. The store-path message
+   * names the three accepted spellings literally, with the pod segment the caller actually
+   * typed left out of them — naming a pod back to a sender who mis-addressed one is how a
+   * truncation becomes a suggestion.
+   */
+  if (resolution.via === 'store-path-not-a-pod' || !isCanonicalPodTarget(targetPod)) {
+    const onOurStore = resolution.via === 'store-path-not-a-pod';
+    return JSON.stringify({
+      delivered: false,
+      to,
+      resolvedVia: resolution.via,
+      targetPod,
+      canonicalInbox: false,
+      error: onOurStore
+        ? `"${to}" is on this deployment's store but does not address a pod. Nothing was written, and this relay does not shorten an address to the part of it that happens to name a container. A pod is addressed as its ROOT ("<store>/<pod>/"), as its inbox ("<store>/<pod>/inbox/"), or as its WebID ("<store>/<pod>/profile/card#me") — one path segment naming the pod, and nothing but those two forms below it. A did:ethr, a did:web, an acct: handle and a bare pod id are accepted too; list_known_pods carries all of those, and every row it can name also carries a followable address under \`affordances\`.`
+        : `"${to}" does not name a pod on this deployment's store, and this relay delivers only to pods it hosts — it makes no credentialed write to another origin. Nothing was written. Address the recipient by their did:ethr, their did:web, their acct: handle, their pod id, or their pod URL on this store; list_known_pods carries all of those.`,
+      bodyShape: notificationBodyReport(bodyVerdict),
+    });
+  }
   const internalPod = toInternalPodUrl(targetPod);
   // Fan out to the recipient's declared channels: native LDN is always
   // attempted; any external channels (discord/telegram/email/sms/voice)
@@ -7805,10 +8538,12 @@ async function handleNotifyAgent(args: ToolArgs): Promise<string> {
     { deliverLdn: () => deliverNotification(internalPod, notif, idSlug, solidFetch, (m) => log(m)) },
   );
   const ldn = results.find(r => r.type === 'ldn');
-  // delivered:true must mean the recipient's REAL (polled) inbox was reached, not
-  // that some inbox was written. Qualify it when the target isn't the canonical
-  // CSS-pod inbox, so a best-effort external delivery can't masquerade as a sure
-  // hand-off (f-foxxi-webid-inbox-routing).
+  // `delivered: true` must mean the recipient's REAL (polled) inbox was reached, not that
+  // some inbox was written (f-foxxi-webid-inbox-routing). This is now TRUE on every path that
+  // reaches here, because the gate above returns rather than delivering when it is false — it
+  // is reported anyway, and computed rather than written as a literal, because clients read it
+  // (discord/tools/drive-agents-live.ts asserts it) and because a field whose value is decided
+  // by a `return` thirty lines up must not be able to disagree with it.
   const canonicalInbox = isCanonicalPodTarget(targetPod);
   /**
    * ── ★★ A CONFIRMATION MUST NAME WHO IT REACHED, NOT ONLY THAT IT WROTE ──────────────
@@ -7838,7 +8573,28 @@ async function handleNotifyAgent(args: ToolArgs): Promise<string> {
    * succeeds — a delivery to an unidentified pod is exactly the success that ends the
    * enquiry without answering it.
    */
-  const identityCard = cardMatches.find(e => e.did)
+  /**
+   * -- ★★ ON THE FOLLOWED ROUTE, THE ROW THAT MATCHED IS THE ROW THAT IS DESCRIBED ---------
+   *
+   * The chain below re-finds the recipient by pod key and takes whichever duplicate happens to
+   * carry a DID, discarding the row the resolver actually matched. For a followed address that
+   * would be a second, independent answer to a question the resolver had already answered - and
+   * `cardMatches` keys on `canonicalPodKey`, which is PATH-ONLY, so it can contain a row on a
+   * foreign origin that merely shares the path. Carrying the matched row through is what makes
+   * `resolvedVia: 'followed-affordance'` and `recipientKnown: true` one fact rather than two
+   * that usually agree.
+   *
+   * ★ IT IS MONOTONE, AND ONLY THE FOLLOWED ROUTE USES IT. The matched row is taken only when
+   * `identityIsObserved` holds of it, and the previous chain is untouched as the fallback and as
+   * the whole behaviour of every other route - so this can add an identification and can never
+   * take one away from a caller who has one today.
+   */
+  const matchedRow = resolution.entry
+    && identityIsObserved(describeDirectoryEntry(resolution.entry))
+    ? resolution.entry
+    : undefined;
+  const identityCard = matchedRow
+    ?? cardMatches.find(e => e.did)
     ?? cardMatches.find(e => e.webId ?? e.owner)
     ?? card;
   const recipient = describeDirectoryEntry(identityCard ?? {});
@@ -7858,7 +8614,7 @@ async function handleNotifyAgent(args: ToolArgs): Promise<string> {
   // `owner` via add_pod. Driven, that shape answered `recipientKnown: true, resolvedTo:
   // "maintainer-u-eth-8f3b8e939600"` on a pod nobody had ever authenticated from.
   const recipientKnown = identityIsObserved(recipient);
-  const addressedAnIdentity = resolution.via.startsWith('directory-');
+  const addressedAnIdentity = routeMatchedAnIdentity(resolution.via);
   // ★ AN UNIDENTIFIED POD MUST NOT GET A NAME-SHAPED ANSWER. This read
   // `${podLocalPart(targetPod)} — unidentified`, and once interpolated into the warning
   // below it came out as: the agent "eth-8f3b8e939600 — unidentified" — rendering the word
@@ -7868,9 +8624,14 @@ async function handleNotifyAgent(args: ToolArgs): Promise<string> {
     ?? (recipient.surface ? `${recipient.surface} (${podLocalPart(targetPod)})` : undefined)
     ?? `no identified agent — pod ${podLocalPart(targetPod)}`;
   const warnings: string[] = [];
-  if (ldn?.ok && !canonicalInbox) {
-    warnings.push(`delivered to ${targetPod} but this is not a recognized CSS-pod inbox the recipient is known to poll — confirm the recipient reads this inbox, or address them by did:ethr / pod-id / a registered WebID.`);
-  }
+  /**
+   * ★★ THERE IS NO "delivered to <X> but that may not be an inbox" WARNING HERE ANY MORE, AND
+   * ITS ABSENCE IS THE POINT. It used to read `delivered to ${targetPod} but this is not a
+   * recognized CSS-pod inbox…`, which was false twice over: nothing had been written at
+   * `targetPod` (the clamp had relocated it onto this store), and a warning next to
+   * `delivered: true` is a hand-off the sender will act on. A target nobody polls is now
+   * refused above, before anything is written, instead of being delivered with a caveat.
+   */
   if (!recipientKnown) {
     // ★ The three reasons are distinguished because they need different next steps: a pod
     // with no row at all may simply never have authenticated here; a pod WITH a row that
@@ -10175,6 +10936,7 @@ const LIST_KNOWN_PODS_OUTPUT = mcpOutputSchema({
   type: 'object',
   description: 'Federation pod registry snapshot. The stdio server returns a human-readable list; the relay returns the array directly under `pods`/at the top level.',
   properties: {
+    addressing: { type: 'string', description: 'How to address a row: follow its `affordances`; do not compose an address out of its other fields' },
     pods: {
       type: 'array',
       items: {
@@ -10205,6 +10967,29 @@ const LIST_KNOWN_PODS_OUTPUT = mcpOutputSchema({
           claimedSurface: { type: 'string', description: 'Role-bearing head of `claimedAgent`. Same standing: somebody typed it' },
           claimNote: { type: 'string', description: 'Who can write `owner`, present whenever `claimedAgent` is' },
           identityNote: { type: 'string', description: 'Why the row is unidentified here, when it is' },
+          affordances: {
+            type: 'array',
+            description:
+              'What you can DO with this row, as a link you follow rather than fields you retype. '
+              + 'Each entry is an iep:Affordance / hydra:Operation carrying `arguments` (the '
+              + 'request body to POST at `target`, already addressed to THIS row\u2019s agent) and '
+              + '`iep:agentIdentity` (the same address as an IRI, dereferenceable so you can see '
+              + 'whose it is before you send). PRESENT ONLY on a row this relay identified AND '
+              + 'can mint a resolvable address for: absence means there is nothing here to '
+              + 'follow, not that the pod cannot be messaged.',
+            items: {
+              type: 'object',
+              properties: {
+                action: { type: 'string', description: 'The action id, under this relay\u2019s naming authority — it dereferences' },
+                target: { type: 'string', description: 'The invokable endpoint for the operation (POST /tool/notify_agent)' },
+                method: { type: 'string' },
+                arguments: { type: 'object', description: 'The request body, pre-filled with `to`. Add `summary` and POST it to `target`' },
+                'iep:agentIdentity': { type: 'object', description: 'The bound recipient address as a JSON-LD node object ({"@id": …}) — derived from what this relay observed, never from `owner` or `label`' },
+                expects: { type: 'string', description: 'URL of the operation\u2019s request JSON Schema' },
+                returns: { type: 'string', description: 'URL of the operation\u2019s response JSON Schema' },
+              },
+            },
+          },
         },
         required: ['url'],
       },
@@ -10934,11 +11719,11 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'notify_agent',
-    description: 'Send a notification to another agent on the Interego federation. Delivered as an ActivityStreams 2.0 message into the recipient\'s Linked Data Notifications (LDN) inbox on their Solid pod. Address the recipient by DID (did:ethr:0x…), pod URL, or acct: handle (acct:<id>@<relay-host>) — resolve via list_known_pods. Use this for peer-to-peer agent messages: hand-offs, replies to findings, attestations, "I left you X". The recipient reads it with read_inbox. CHECK THE ANSWER: it reports `resolvedTo` (the agent name this relay recorded for that pod, or "no identified agent" when it recorded none), `resolvedVia` (whether an agent card matched what you typed, or a pod was merely derived from its shape), `recipientKnown` (whether this relay has evidence OF ITS OWN naming the recipient — see `recipient.identifiedBy` for which) and `inDirectory` (merely that a row for that pod exists here, which is NOT the same thing). `recipient.claimedAgent`, when present, is a name somebody typed into that row\'s caller-writable `owner` field and is deliberately NOT counted as knowing the recipient. A pod id that resolves is not proof it is the agent you meant. AND CHECK `bodyShape`: the notification you send is validated against a shape this relay publishes (iep:NotificationBodyShape, at https://markjspivey-xwisee.github.io/interego/ns/iep) BEFORE anything is written or fanned out, so a refusal names the constraint and the shape it failed, a success names what it conformed to, and `bodyShape.enforced: false` means the check did not run at all.',
+    description: 'Send a notification to another agent on the Interego federation. Delivered as an ActivityStreams 2.0 message into the recipient\'s Linked Data Notifications (LDN) inbox on their Solid pod. Address the recipient by FOLLOWING their list_known_pods row: POST that row\'s `affordances` entry\'s `arguments` (its `to` is already filled in) to that entry\'s `target`. A DID (did:ethr:0x…), pod id or acct: handle (acct:<id>@<relay-host>) you compose yourself still works, as does a pod URL on this deployment\'s store in one of three forms: the pod root, its inbox, or its WebID. A target on another origin, or a path on this store that is none of those, is REFUSED — the receipt names the accepted forms and nothing is written. Use this for peer-to-peer agent messages: hand-offs, replies to findings, attestations, "I left you X". The recipient reads it with read_inbox. CHECK THE ANSWER: it reports `resolvedTo` (the agent name this relay recorded for that pod, or "no identified agent" when it recorded none), `resolvedVia` (`followed-affordance` when you sent an address this relay published on a directory row — the one route it returns only for a recipient it identified; a `directory-*` route when an agent card matched what you typed; anything else means a pod was merely derived from a string\'s shape and no identity was matched at all), `recipientKnown` (whether this relay has evidence OF ITS OWN naming the recipient — see `recipient.identifiedBy` for which) and `inDirectory` (merely that a row for that pod exists here, which is NOT the same thing). `recipient.claimedAgent`, when present, is a name somebody typed into that row\'s caller-writable `owner` field and is deliberately NOT counted as knowing the recipient. A pod id that resolves is not proof it is the agent you meant. AND CHECK `bodyShape`: the notification you send is validated against a shape this relay publishes (iep:NotificationBodyShape, at https://markjspivey-xwisee.github.io/interego/ns/iep) BEFORE anything is written or fanned out, so a refusal names the constraint and the shape it failed, a success names what it conformed to, and `bodyShape.enforced: false` means the check did not run at all.',
     inputSchema: {
       type: 'object',
       properties: {
-        to: { type: 'string', description: 'Recipient: a DID, pod URL, or acct: handle (see list_known_pods).' },
+        to: { type: 'string', description: 'Recipient. PREFER THE FOLLOWED FORM: take the row you mean from list_known_pods and send its `affordances` entry\'s `arguments` verbatim — `to` is already bound to an https address this relay minted for THAT row, which you can GET to see whose it is before sending. It is the only form whose receipt reports `resolvedVia: "followed-affordance"`, and this relay returns that route only for a recipient it identified, so `recipientKnown: true` comes with it. A row with no `affordances` has no such address. A DID, pod id or acct: handle you compose yourself is still accepted, as is a pod URL on this deployment\'s store written as the pod ROOT ("<store>/<pod>/"), its inbox ("<store>/<pod>/inbox/") or its WebID ("<store>/<pod>/profile/card#me"). Any other path on this store, and any target on another origin, is REFUSED with a receipt naming those forms — this relay no longer shortens an address to the part of it that names some container here, which is how a message addressed to "<store>/team/<pod>/" was reported `delivered: true` after being written to "<store>/team/inbox/". And note that a well-formed address for the wrong agent satisfies this schema too, which is how findings have been delivered to the wrong inbox with `delivered: true`.' },
         summary: { type: 'string', description: 'One-line summary (shows in inbox previews).' },
         content: { type: 'string', description: 'The message body. OPTIONAL IN THIS SCHEMA AND NOT OPTIONAL IN THE CONTRACT: every notification this relay writes is validated against iep:NotificationBodyShape, published at https://markjspivey-xwisee.github.io/interego/ns/iep, and a message whose summary says the detail travels with it is refused unless the detail is here or `about` names an IRI where it is. Dereference the shape for the rule itself — this sentence is a pointer to it, not a copy of it. A summary-only notification is legitimate and is not selected by the shape.' },
         about: { type: 'string', description: 'Optional IRI this is about (a finding, resolution, descriptor, or graph).' },
@@ -12458,15 +13243,49 @@ app.post('/vault/ingest', vaultIngestLimiter, (req, res) => {
 // the same agent cards the agent-mesh auto-registration maintains, so an
 // agent becomes a resolvable acct: handle + ActivityPub actor the moment
 // it first authenticates — no extra registration step.
-const RELAY_AP_BASE = (PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
+//
+// `RELAY_AP_BASE` — the one base every relay-hosted agent address is minted from — is declared
+// with `RELAY_HANDLE_HOST`, beside the agent-mesh helpers; see the note there for why it moved.
 
 function cardForLocalPart(localPart: string): AgentCardLite | undefined {
-  // Collect all matches (there can be host-form duplicates pre-eviction)
-  // and prefer the richest — one that actually carries a DID.
-  const matches = [...knownPods.values()].filter(e =>
-    e.via !== 'self' &&
-    (podOwnsLocalPart(e.url, localPart) || e.handle === `acct:${localPart}@${RELAY_HANDLE_HOST}`));
+  /**
+   * ── ★★ THE ROW THIS DOCUMENT DESCRIBES AND THE ROW A NOTIFICATION REACHES ARE ONE ROW ──
+   *
+   * This selection used to be spelled here and nowhere else, which was harmless while nothing
+   * but the WebFinger JRD and the ActivityPub actor read it. It stops being harmless the moment
+   * a directory row publishes an ADDRESS a caller FOLLOWS: an address is only worth following
+   * if the agent it DEREFERENCES to (`GET /agents/<localPart>`, built from this card) and the
+   * agent it DELIVERS to (`resolveTargetPodUrl`'s followed route) are the same one, and two
+   * independent readings of "who owns this address" can only ever happen to agree.
+   * `agentAddressOwners` is that one reading; both surfaces project the rows it returns, so the
+   * agreement is structural rather than lucky.
+   *
+   * ★★ AND IT NARROWS BY ORIGIN, WHICH THIS ROUTE DID NOT DO. `podOwnsLocalPart` (cf4f03ad)
+   * closed the NESTED squat - a row at `https://anything/x/u-eth-VICTIM/` no longer answers for
+   * `u-eth-VICTIM` - but said nothing about the HOST, and one path segment on somebody else's
+   * origin is a row any authenticated caller can create with `add_pod`. DRIVEN against this
+   * server booted from the tree this change was written on, before it:
+   * `add_pod { pod_url: "https://elsewhere.example/u-eth-cccc55556666/" }` was accepted, and
+   * `GET /agents/u-eth-cccc55556666` then served a 200 ActivityPub actor document for that
+   * stranger's row from this relay's own domain, for a localPart no pod on this store has ever
+   * held. Requiring `STORE_ORIGINS` membership is what makes the published identity one this
+   * deployment can actually speak for. tests/follow-the-directory.test.ts §4 now holds it at
+   * 404, and mutating this conjunct back out reopens it.
+   *
+   * ★ THE `handle` DISJUNCT IS GONE BECAUSE IT WAS SUBSUMED, NOT BECAUSE IT WAS IN THE WAY.
+   * It read `e.handle === acct:${localPart}@${RELAY_HANDLE_HOST}`. `handle` is written at
+   * exactly two sites - `autoRegisterAgentCard` and `handleSetReachability` - and both spell it
+   * `acct:${podLocalPart(podUrl)}@${RELAY_HANDLE_HOST}` for that row's OWN url, so a row whose
+   * handle names this localPart is a row whose url ends in it. The disjunct could therefore only
+   * ever add a row that fails the ownership test above: a multi-segment or foreign-origin url,
+   * which is precisely what is being refused. Keeping it would have been a second door into the
+   * set this function exists to define.
+   */
+  const matches = agentAddressOwners(localPart);
   if (matches.length === 0) return undefined;
+  // Prefer the richest of the host-form duplicates - one that actually carries a DID. By the
+  // injectivity argument on `agentAddressOwners` every candidate here is the SAME pod, so this
+  // chooses which spelling and which recorded card to project, never which agent.
   const e = matches.find(x => x.did) ?? matches.find(x => x.webId ?? x.owner) ?? matches[0]!;
   // ★ The surface is DERIVED from the card's own did:web rather than read from the stored
   // field, for the same reason list_known_pods derives it: entries registered before the

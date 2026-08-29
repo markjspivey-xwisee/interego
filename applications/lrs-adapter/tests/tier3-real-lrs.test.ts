@@ -18,12 +18,17 @@
  * stops reproducing CI. v0.9.5 is what `:latest` resolved to when this was written.)
  *
  * Runs, skips, or FAILS — the gate is applications/lrs-adapter/tests/lrsql-gate.ts:
- *   - LRSQL_IT=1 (set by .github/workflows/lrs-adapter-conformance.yml, the job that stands
- *     the container up): an unreachable LRS is a FAILURE, never a skip.
+ *   - LRSQL_IT declared (.github/workflows/lrs-adapter-conformance.yml, the job that stands the
+ *     container up, writes the literal '1'): an unreachable LRS is a FAILURE, never a skip.
  *   - LRSQL_IT unset: unreachable skips, so a laptop without Docker — and the whole-root-suite
  *     step in bridge-typecheck.yml — still runs the rest.
- *   - SKIP_LRSQL_TESTS=1: skips, unless LRSQL_IT=1 contradicts it, in which case the
+ *   - SKIP_LRSQL_TESTS declared: skips, unless LRSQL_IT contradicts it, in which case the
  *     declaration wins.
+ *
+ * "Declared" is a CONTRACT, not a literal: 1/true/yes/on declare, 0/false/no/off and an empty
+ * value decline, and anything else throws naming the spellings rather than being read as "no".
+ * Both names go through applications/_shared/tests/env-flag.ts, which exists because the
+ * previous `=== '1'` meant `SKIP_POD_TESTS=true` did not skip — it dialled the live pod.
  *
  * What this proves:
  *   - lrs-adapter's projected xAPI 2.0 Statements are accepted by a real

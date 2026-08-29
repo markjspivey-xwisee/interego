@@ -21,8 +21,11 @@
  *   8. ASK an unanswerable question; get null (honest no-data)
  *   9. CLEANUP — DELETE every test descriptor we wrote
  *
- * Skips automatically if Azure CSS is unreachable (network failure)
- * or if SKIP_AZURE_TESTS=1.
+ * Skips automatically if the pod is unreachable (network failure) or if SKIP_AZURE_TESTS /
+ * SKIP_POD_TESTS is declared — 1/true/yes/on declare, 0/false/no/off decline, anything else
+ * throws (applications/_shared/tests/env-flag.ts). The host named "Azure CSS" here is the
+ * Railway css-gate: Azure was destroyed, the hazard migrated with the rest of the stack, and
+ * the variable kept its name.
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
@@ -177,7 +180,7 @@ function buildScormZip(uniqueSuffix: string): Buffer {
 // Seeded with a DECLARED skip so a beforeAll that throws cannot leave a value resembling a
 // legitimate opt-out; vitest fails every body in a file whose beforeAll throws, which is the
 // intent.
-let pod: PodGate = { ok: false, declaredSkip: 'SKIP_POD_TESTS/SKIP_AZURE_TESTS=1' };
+let pod: PodGate = { ok: false, declaredSkip: 'SKIP_POD_TESTS/SKIP_AZURE_TESTS declared' };
 let podReachable = false;
 
 beforeAll(async () => {

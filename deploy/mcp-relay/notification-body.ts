@@ -41,7 +41,7 @@
  *     this shape and what it reaches, so "mine" is not a test that can be wrong — there is
  *     nothing else in the graph to confuse it with.
  *
- *  2. ★ IT PARSED THE WHOLE 208,787-CHARACTER ONTOLOGY ON THE EVENT LOOP, PER NOTIFICATION.
+ *  2. ★ IT PARSED THE WHOLE 209,157-CHARACTER ONTOLOGY ON THE EVENT LOOP, PER NOTIFICATION.
  *     Re-measured on this machine, median of 9–15 runs, against `docs/ns/iep.ttl` as the
  *     shapes graph: 13 ms for an empty body, 12–18 ms up to 64 KB, 99 ms at 1 MB, 343 ms at
  *     3.9 MB — against `express.json`'s 4 mb limit and a 1.0-CPU service floor.
@@ -377,7 +377,7 @@ function objectTerm(term: ParsedTerm): string | null {
  * every result in the report was raised by it.
  *
  * ★ IT ALSO MAKES THE PER-MESSAGE COST SMALL, FOR AN ORDINARY MESSAGE. `docs/ns/iep.ttl` is
- * 208,787 characters of Turtle as shipped and the engine reparses the shapes graph on every
+ * 209,157 characters of Turtle as shipped and the engine reparses the shapes graph on every
  * call; the closure of this one shape is 28 triples in 7,210 characters, most of which is the
  * two published prose fields the refusal quotes. Measured, median of 9–15 runs: 13 ms per call against the whole ontology
  * against 0.4–1.3 ms against the slice, for any body up to 64 KB. Past ~256 KB of data the
@@ -1118,7 +1118,7 @@ function violations(report: ShaclLike): ShaclLike['results'] {
  * The canaries run HERE and not per-call: the shape is isolated once, and the table above is
  * fifteen decisions against the 7,210-character slice — seven over a few hundred bytes each, and
  * eight over documents of ~70,000 characters, which are the rows that prove the size reduction
- * still preserves this shape's verdicts. Read the 208,787-character ontology, isolate, run all
+ * still preserves this shape's verdicts. Read the 209,157-character ontology, isolate, run all
  * fifteen: 70–122 ms across five cold processes on this machine — once per process, not once per
  * notification. (Seven small rows alone were 47–62 ms; the eight large ones are what the rest
  * buys, and they buy the property that the bypass cannot reopen silently.)

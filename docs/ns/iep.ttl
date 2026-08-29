@@ -521,7 +521,7 @@ iep:agentRole a owl:ObjectProperty ;
 
 iep:agentIdentity a owl:ObjectProperty ;
     rdfs:label "agent identity" ;
-    rdfs:comment "The identity IRI (DID, WebID) of an agent." ;
+    rdfs:comment "The identity IRI of an agent - a DID, a WebID, or a relay-hosted ActivityPub actor URL the deployment publishes for that agent and resolves back to it. Named on an iep:Affordance, it is the recipient that affordance is BOUND to: an address a caller follows off a directory row rather than one they compose out of its other fields, which is the compose step every misaddressing on this substrate has come through." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
 
 iep:authorizedAgent a owl:ObjectProperty ;

@@ -80,7 +80,7 @@ async function cleanup(): Promise<void> {
 // Seeded with a DECLARED skip so a beforeAll that throws cannot leave a value resembling a
 // legitimate opt-out; vitest fails every body in a file whose beforeAll throws, which is the
 // intent.
-let pod: PodGate = { ok: false, declaredSkip: 'SKIP_POD_TESTS/SKIP_AZURE_TESTS=1' };
+let pod: PodGate = { ok: false, declaredSkip: 'SKIP_POD_TESTS/SKIP_AZURE_TESTS declared' };
 let reachable = false;
 beforeAll(async () => {
   pod = await openRealPod();
