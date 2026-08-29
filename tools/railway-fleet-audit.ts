@@ -37,6 +37,45 @@
  * behind". It can only ever turn a red green when the image would be identical, and it
  * fails closed in every other case.
  *
+ * ── ★★ AND IT NOW ASKS THE SERVICES, BECAUSE IT USED TO REPORT THE PIN ───────
+ *
+ * OBSERVED during the 2026-08-29 rollout: this tool printed "Every service is running the
+ * image master would build for it." and exited 0 while `bridge` was serving the PREVIOUS
+ * commit — and the new axis was then DRIVEN against the live fleet with that row's tag
+ * rewritten in memory, where the real /health answer made it NOT-RUNNING.
+ *
+ * Every axis above is a statement about the POINTER — `tools/railway-pins.mjs` showed
+ * bridge as DEPLOYING with FRESH=current, and "current" means Railway is pointed at the
+ * right image, not that a container built from it is answering. Nothing here had ever
+ * asked a service what it was running, and the headline claimed the answer.
+ *
+ * `tools/railway-running-build.ts` adds that axis, using the SAME derivation and the SAME
+ * predicate `tools/railway-redeploy.mjs` §7a uses at deploy time — the service's own
+ * /health `build` field, at a URL derived by `verifyUrlFor()` from Railway's `domains`
+ * answer, never typed. It distinguishes three live states, which the pin axis alone cannot:
+ *
+ *     running     · asked, and it answered with the build its pin names
+ *     ROLLING     · asked, answered with something else, and a deploy is IN FLIGHT
+ *     NOT-RUNNING · asked, answered with something else, and the deployment has settled —
+ *                   the pointer moved and the container did not
+ *
+ * plus `unaskable` for the four services that have no such surface at all (`css` and
+ * `discord` bind no reachable health path; `postgres` and `redis` are upstream images).
+ * Those are named, are excluded from the green sentence rather than folded into it, and
+ * are NOT disagreements — four rows that can never go green is the permanent red this
+ * workflow was split out to escape.
+ *
+ * ★ IT IS DELIBERATELY NOT IN `hasDisagreement`, AND `tools/railway-deploy-check.ts` DOES
+ * NOT GAIN IT. `hasDisagreement` is a PURE fold over a row that several callers apply with
+ * no network at all (`railway-pins.mjs --check` holds no health URL and makes no HTTP
+ * request), and `tests/railway-scoped-check-is-not-weaker.test.ts` pins it as exactly the
+ * disjunction of its per-row verdicts. Reaching out to a service from inside it would break
+ * both. The scoped deploy gate does not need it either: `railway-redeploy.mjs` §7a has just
+ * polled that one service's /health until it reported the sha, or §7b its boot line, and
+ * refused to exit 0 otherwise. Adding a second copy of that poll to the gate that runs
+ * immediately after it would assert the same thing twice, which is how one of the two
+ * quietly becomes the weaker one.
+ *
  * Usage:
  *   RAILWAY_PROJECT_TOKEN=... npx tsx tools/railway-fleet-audit.ts
  *
@@ -50,6 +89,9 @@ import { fileURLToPath } from 'node:url';
 import { refineFreshness } from './deploy-bundle-scope.js';
 import type { RefinedRow } from './deploy-bundle-scope.js';
 import { collectPins, gitFacts, hasDisagreement, railwayGql } from './railway-pins.mjs';
+import type { PinRow } from './railway-pins.mjs';
+import { askRunningBuilds, isRunningDisagreement, runningHeadline } from './railway-running-build.js';
+import type { RunningReport } from './railway-running-build.js';
 import { singletonViolations } from './railway-services.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -69,9 +111,37 @@ const gql = railwayGql(token());
 const result = await collectPins(gql, gitFacts(ROOT));
 const rows: RefinedRow[] = result.rows.map((r) => refineFreshness(r, ROOT));
 
+/**
+ * The hosts Railway reports for ONE service.
+ *
+ * `projectId` is REQUIRED on this query — omitting it returns a GraphQL error rather than
+ * an empty list — and the custom domain comes first because `verifyUrlFor` takes hosts[0],
+ * which is the same order tools/railway-redeploy.mjs §1b builds.
+ *
+ * It THROWS rather than returning [] on a failed query, and that distinction is the point:
+ * an empty list means "this service has no domain", which is a real and different finding
+ * from "Railway would not tell us". Collapsing them prints a confident wrong reason.
+ */
+async function domainsFor(row: PinRow): Promise<string[]> {
+  const d = await gql(
+    'query($p:String!,$s:String!,$e:String!){ domains(projectId:$p,serviceId:$s,environmentId:$e){'
+    + ' serviceDomains{ domain } customDomains{ domain } } }',
+    { p: result.projectId, s: row.serviceId, e: result.environmentId }) as {
+      domains?: { serviceDomains?: { domain?: string }[]; customDomains?: { domain?: string }[] };
+    };
+  return [
+    ...(d?.domains?.customDomains ?? []),
+    ...(d?.domains?.serviceDomains ?? []),
+  ].map((x) => String(x?.domain ?? '')).filter(Boolean);
+}
+
+const running: RunningReport[] = await askRunningBuilds(rows, domainsFor);
+const runningOf = new Map(running.map((r) => [r.service, r]));
+
 const pad = (s: string, n: number): string => (s.length >= n ? `${s.slice(0, n - 1)} ` : s.padEnd(n));
 process.stdout.write(`project ${result.project}\n\n`);
-process.stdout.write(`${pad('SERVICE', 20)}${pad('PIN', 14)}${pad('FRESH', 14)}SHIPPED-FILES-CHANGED\n`);
+process.stdout.write(
+  `${pad('SERVICE', 20)}${pad('PIN', 14)}${pad('FRESH', 14)}${pad('RUNNING', 16)}SHIPPED-FILES-CHANGED\n`);
 
 const bad: RefinedRow[] = [];
 for (const row of rows) {
@@ -81,13 +151,39 @@ for (const row of rows) {
     : row.freshness === 'current' ? '—'
       : row.freshness === 'BEHIND' ? `${changed}${row.bundleReason && changed === 0 ? ' (unresolved)' : ''}`
         : '';
+  const run = runningOf.get(row.service);
   process.stdout.write(
-    `${pad(row.service, 20)}${pad((row.tag ?? 'none').slice(0, 12), 14)}${pad(row.freshness ?? '?', 14)}${note}\n`);
-  if (hasDisagreement([row])) bad.push(row);
+    `${pad(row.service, 20)}${pad((row.tag ?? 'none').slice(0, 12), 14)}${pad(row.freshness ?? '?', 14)}`
+    + `${pad(run?.verdict ?? '?', 16)}${note}\n`);
+  if (hasDisagreement([row]) || (run !== undefined && isRunningDisagreement(run))) bad.push(row);
+}
+
+/**
+ * WHY EACH UNASKABLE SERVICE COULD NOT BE ASKED — printed on BOTH exit paths.
+ *
+ * Naming them is not enough on its own. An operator who reads "css and discord were not
+ * asked" and is not told WHY has to go and find out, and the finding-out is where somebody
+ * decides to give one of them a health path and reintroduces a documented outage (css 500s
+ * on any Host but its internal one). The reason travels with the name.
+ */
+function writeUnasked(write: (s: string) => void): void {
+  const unasked = running.filter((r) => r.verdict === 'unaskable');
+  if (!unasked.length) return;
+  write(`\n${unasked.length} service(s) could not be asked what they are running:\n`);
+  for (const r of unasked) write(`  ${pad(r.service, 12)}${r.reason}\n`);
 }
 
 if (bad.length === 0) {
-  process.stdout.write('\nEvery service is running the image master would build for it.\n');
+  // ★ TWO SENTENCES, ONE PER AXIS THAT ACTUALLY CHECKED SOMETHING. The old single line —
+  // "Every service is running the image master would build for it." — was one claim
+  // covering two questions, and the tool had only ever asked the first of them. The pin
+  // sentence is what `hasDisagreement` + `refineFreshness` established over every row; the
+  // running sentence is built by runningHeadline() from the reports themselves and names
+  // the services it could not ask rather than absorbing them.
+  process.stdout.write(
+    '\nEvery pin is master, or differs from master only in files that service does not ship.\n');
+  process.stdout.write(`${runningHeadline(running)}\n`);
+  writeUnasked((s) => process.stdout.write(s));
   process.exit(0);
 }
 
@@ -116,6 +212,19 @@ for (const row of bad) {
     process.stderr.write('    the live deployment PREDATES the pinned commit — the pin was written but never shipped\n');
   }
   if (row.deployAgreement === 'UNVERIFIED') process.stderr.write('    the deploy axis could not be verified\n');
+  const run = runningOf.get(row.service);
+  if (run !== undefined && isRunningDisagreement(run)) {
+    process.stderr.write(`    ${run.verdict}: ${run.reason}\n`);
+    if (run.verdict === 'NOT-RUNNING') {
+      process.stderr.write(
+        `    fix: confirm ${row.tag?.slice(0, 12)} was actually PUSHED, then\n`
+        + `         node tools/railway-redeploy.mjs ${row.service} ${row.tag}\n`);
+    }
+    if (run.verdict === 'UNREACHABLE') {
+      process.stderr.write('    a service that cannot be asked cannot be reported as fine. Check whether it is\n'
+        + '    answering at all: node tools/fleet-liveness.mjs\n');
+    }
+  }
   if (row.limitVerdict && row.limitVerdict !== 'ok' && row.limitVerdict !== 'none') {
     process.stderr.write(`    limits ${row.limitVerdict}: ${row.limitReason ?? ''}\n`);
   }
@@ -124,5 +233,9 @@ for (const row of bad) {
     process.stderr.write('    fix: npx tsx tools/railway-singleton-settings.ts --apply\n');
   }
 }
+
+// An operator reading a failure still needs to know which services this run could NOT ask:
+// they are not covered by the findings above any more than they were by the green sentence.
+writeUnasked((s) => process.stderr.write(s));
 process.stderr.write('\nFull live table: node tools/railway-pins.mjs\n');
 process.exit(1);

@@ -26,12 +26,27 @@ name: Railway fleet audit
 # ── WHAT A RED RUN MEANS ─────────────────────────────────────────────────────
 #
 # That some service's live state contradicts something this repository asserts: a pin
-# behind master, a mutable tag, a pin written but never shipped, a cap below a measured
-# floor, or a singleton whose one-container invariant rests on a platform default rather
-# than a setting. Every one of those is a real condition with a real remedy — read the
-# report, which names the service and the axis, and fix the FLEET. ★ Do not reach for a
-# threshold or an exemption: the defect class this whole toolchain exists to kill is a
-# report that answered a weaker question than it appeared to.
+# behind master, a mutable tag, a pin written but never shipped, a service SERVING a build
+# other than the one it is pinned to, a cap below a measured floor, or a singleton whose
+# one-container invariant rests on a platform default rather than a setting. Every one of
+# those is a real condition with a real remedy — read the report, which names the service
+# and the axis, and fix the FLEET. ★ Do not reach for a threshold or an exemption: the
+# defect class this whole toolchain exists to kill is a report that answered a weaker
+# question than it appeared to.
+#
+# ★★ ONE OF THOSE AXES IS NEW BECAUSE THIS WORKFLOW WENT GREEN OVER A STALE SERVICE.
+# It printed "Every service is running the image master would build for it." and exited 0
+# while `bridge` served the PREVIOUS commit: every axis it had described the POINTER, and
+# `railway-pins.mjs` correctly showed bridge as DEPLOYING with FRESH=current — "current"
+# meaning Railway is aimed at the right image, not that a container built from it is
+# answering. The audit now asks each service's own /health what build it is serving, the
+# same assertion tools/railway-redeploy.mjs makes at deploy time. A ROLLING row is a
+# rollout in flight and clears by re-running; a NOT-RUNNING row does not clear on its own.
+#
+# ★ AND FOUR SERVICES CANNOT BE ASKED — `css` and `discord` bind no reachable health path,
+# `postgres` and `redis` are upstream images. They are reported as `unaskable`, named in
+# the summary, and are NOT failures. Four permanently red rows would recreate exactly the
+# always-red step this workflow was split out of deploy-railway.yml to escape.
 #
 # REQUIRES ONE SECRET: RAILWAY_PROJECT_TOKEN — a Railway PROJECT token, not an account
 # token. The two use different HTTP headers, and the wrong one answers 200 with "Project
@@ -45,7 +60,10 @@ on:
     - cron: '0 7 * * *'
   workflow_dispatch:
 
-# Talks only to Railway.
+# Talks to Railway, and — since the audit began asking services what they are RUNNING
+# rather than reporting their pins — to each service's own public health URL, derived from
+# Railway's `domains` answer. Nothing is written on either side; both are GETs and a
+# read-only GraphQL query. No GitHub token is needed for any of it.
 permissions: {}
 
 # One audit at a time. Two concurrent runs would report the same drift twice and, on a
@@ -86,7 +104,11 @@ jobs:
       # bundles, and turned all sixteen rows red. tools/railway-fleet-audit.ts asks whether
       # the drift touches anything each service actually SHIPS, reading that from the
       # service's own Dockerfile, and fails closed on every uncertainty. It calls the same
-      # unmodified `hasDisagreement`, so no axis is dropped.
+      # unmodified `hasDisagreement`, so no axis is dropped — and then asks every service
+      # that exposes a health endpoint what build it is ACTUALLY serving, which is the
+      # question the step above cannot answer for any of them. The askable count is derived
+      # at run time and printed in the headline; it is deliberately not written down here,
+      # because a number in prose beside code that computes it is a number that goes stale.
       - name: Fail if any service is not running the image master would build for it
         env:
           RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}

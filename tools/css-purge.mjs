@@ -22,8 +22,10 @@
  *    finishes the job instead of erroring out.
  *
  * Auth: the css-gate operator bearer, read from `.interego/css-gate-write-secret.txt` (gitignored).
- * This is the gate's intended infrastructure path — NOT the relay's `RELAY_ALLOW_CROSS_POD_WRITES`
- * publish-scope bypass, which stays off and is not used here.
+ * This is the gate's intended infrastructure path — an operator credential the gate itself issues,
+ * not a bypass around the relay's ownership checks. (This sentence used to contrast it with the
+ * relay's `RELAY_ALLOW_CROSS_POD_WRITES` publish-scope hatch; that variable was censused dead on
+ * all four surfaces and REMOVED, so naming it here would send a reader looking for nothing.)
  *
  * Usage:
  *   node tools/css-purge.mjs --pods <file.json>              # dry run, one name per array entry

@@ -50,24 +50,23 @@
  * — an UPPER BOUND on a probe the relay makes in-cluster over a pooled connection, not the
  * production figure.
  *
- * ── §4 WHAT IS NOT CLOSED HERE, RECORDED SO IT IS NOT MISTAKEN FOR CLOSED ────────────────────
+ * ── §4 WHAT THIS PASS LEFT OPEN, AND WHERE IT WAS CLOSED ─────────────────────────────────────
  *
- * `add_pod` is UNCHANGED, deliberately — see its own note. But a store-origin row for a pod that
- * has never existed still gets a WebFinger JRD, an ActivityPub actor and an outbox from this
- * relay's own domain: DRIVEN, `add_pod { pod_url: "<store>/no-such-pod-at-all/" }` by any
- * authenticated caller, then `GET /agents/no-such-pod-at-all` -> 200. That is the same
- * "existence" question §3 answers for delivery, at a surface that cannot answer it the same way:
- * those routes are UNAUTHENTICATED, so a per-request HEAD there is an amplifier, and three
- * writers reach `knownPods` with caller-influenced URLs (`add_pod`, `discover_directory`,
- * `resolve_webfinger`) so gating one of them would be exactly the "gate in front of one of three
- * readers" this area keeps producing. It needs a cache and its own review; it is not fixed here.
+ * `add_pod` is UNCHANGED, deliberately — see its own note. This pass left two things open and
+ * recorded them rather than pretending otherwise: a store-origin row for a pod that has never
+ * existed still got a WebFinger JRD, an ActivityPub actor and an outbox from this relay's own
+ * domain (`add_pod { pod_url: "<store>/no-such-pod-at-all/" }` then
+ * `GET /agents/no-such-pod-at-all` -> 200), and `POST /agents/:localPart/inbox` reached
+ * `deliverNotification` with no existence probe, so under `RELAY_FEDERATION_ACCEPT_UNSIGNED=1`
+ * it would manufacture a container for a ghost row.
  *
- * ★ THE SAME GAP HAS A SECOND MOUTH, NAMED SO IT IS NOT DISCOVERED AS A SURPRISE:
- * `POST /agents/:localPart/inbox` delivers to `cardForLocalPart(...).url` WITHOUT the existence
- * probe §3 adds to `notify_agent`, so under `RELAY_FEDERATION_ACCEPT_UNSIGNED=1` it would still
- * manufacture a container for a ghost row. That flag is off by default and the route is
- * fail-closed without it (§2 drives the 401), which is why this is recorded rather than fixed in
- * the same pass: the probe belongs at `cardForLocalPart`, with the rest of this paragraph.
+ * BOTH ARE NOW CLOSED, in tests/an-identity-needs-a-pod.test.ts, exactly where this paragraph
+ * said they belonged: one memoised probe inside `cardForLocalPart` — the reader all four
+ * /agents-family routes share, so it is not a gate in front of one of them — plus a refusal
+ * inside `deliverNotification` itself, the function that owns the PUT and has two callers.
+ * Which rule to gate on was decided by censusing the live directory (identity would have 404'd
+ * 83 real pods and kept publishing 37 dead ones; existence 404s the 39 with no container and
+ * nothing touched in the last 14 days); that file carries the numbers.
  *
  * ── WITH WHICH INSTRUMENT ────────────────────────────────────────────────────────────────────
  *
@@ -142,8 +141,12 @@ console.log('\n0. every caller of toInternalPodUrl binds its result and refuses 
   }
   // A zero result must FAIL this check rather than satisfy it: a census that found nothing is a
   // census that is testing nothing, and the whole point of §0 is to notice a NEW caller.
-  check(`§0 ★★ the census found call sites at all (found ${sites.length}, expected 5)`,
-    sites.length === 5, sites.map(s => s.line.trim()).join(' | ').slice(0, 400));
+  // ★ SIX SINCE tests/an-identity-needs-a-pod.test.ts: `cardForLocalPart` now folds the card's
+  // pod url itself, to probe the store for the pod ROOT before publishing an identity for it.
+  // The number is raised only when a new caller is READ and found to refuse `undefined` — the
+  // count is the trigger for that reading, never a thing to make green.
+  check(`§0 ★★ the census found call sites at all (found ${sites.length}, expected 6)`,
+    sites.length === 6, sites.map(s => s.line.trim()).join(' | ').slice(0, 400));
 
   for (const site of sites) {
     const m = /const\s+([A-Za-z_$][\w$]*)\s*=\s*toInternalPodUrl\(/.exec(site.line);
@@ -596,9 +599,17 @@ console.log('\n3. driven: notify_agent will not create the pod it is delivering 
     // because "no write at all" would have been a check that passes for the wrong reason the day
     // the auto-register moves.
     const isMutation = (r: string): boolean => /^(PUT|POST|PATCH|DELETE) /.test(r);
+    // ★ TWO WRITES BY THE RELAY'S OWN STARTUP ARE NAMED, NOT FILTERED BY SHAPE. The caller's own
+    // federation row, which `autoRegisterAgentCard` persists on the first authenticated tool call
+    // of the process; and `seedRelease42`, an AMEP seed fired after `app.listen` whose PUT lands
+    // whenever it lands — MEASURED as an intermittent failure of this very check, appearing inside
+    // the mark window on roughly one run in three and absent on the next two. Both are named
+    // literally rather than excluded by a pattern, because "no write at all" would be a check that
+    // passes for the wrong reason the day the auto-register moves.
+    const OWN_STARTUP_WRITES = [FED_DIR, '/amep/state/'];
     const strayWrites = [...since(m), ...rawSince(m)]
       .filter(isMutation)
-      .filter(r => !r.includes(FED_DIR));
+      .filter(r => !OWN_STARTUP_WRITES.some(p => r.includes(p)));
     check('§3 ★★ …and NOTHING was written anywhere under it, raw or decoded',
       strayWrites.length === 0
       && ![...since(m), ...rawSince(m)].some(r => isMutation(r) && r.includes(`/${GHOST}/`))

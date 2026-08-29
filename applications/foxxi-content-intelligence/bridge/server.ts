@@ -378,6 +378,7 @@ import { attachHypermediaRoutes } from '../src/hypermedia-resources.js';
 import { callerIsOperator } from '../src/operator-auth.js';
 import { assertSafeFetchTarget, safePublicUrlOrUndefined, safeFetch, guardedFetchFn } from '../src/ssrf-guard.js';
 import { resolveSubjectPodUrlPure, explicitPodRoot, hasControlChars } from '../src/subject-pod-url.js';
+import { configureStoreSpelling } from '../src/store-origins.js';
 import { resolveReadTarget, type ReadTargetDecision } from '../src/read-target.js';
 import { retireRow, activeRows, isRetired } from '../src/enrolment-register.js';
 import { bindPerformanceToEvidence, EVIDENCE_BINDING_EXT, EVIDENCE_SHAPE_EXT } from '../src/performance-evidence.js';
@@ -390,6 +391,8 @@ import type {
 
 const tenantPodUrl = process.env.FOXXI_TENANT_POD_URL ?? '';
 
+/** The env-internal spelling, named once so the two readers below cannot disagree about it. */
+const cssInternalPodUrl = process.env.FOXXI_CSS_INTERNAL_URL ?? 'http://css.railway.internal:3456/';
 /**
  * The origins that are the SAME store in this deployment, spelled two ways.
  *
@@ -417,10 +420,24 @@ const tenantPodUrl = process.env.FOXXI_TENANT_POD_URL ?? '';
  * public from internal ingress.
  */
 const SAME_STORE_ORIGINS: ReadonlySet<string> = new Set(
-  [tenantPodUrl, process.env.FOXXI_CSS_INTERNAL_URL ?? 'http://css.railway.internal:3456/']
+  [tenantPodUrl, cssInternalPodUrl]
     .map((u) => { try { return new URL(u).origin; } catch { return ''; } })
     .filter((o) => o !== ''),
 );
+/**
+ * ★ THE SAME TWO NAMES, HANDED TO src/. `toAdvertisedHolonUrl` in src/foundation-persist.ts has to
+ * know which origins are this store in order to advertise an encrypted holon at an address a
+ * cross-seat reader can resolve, and it used to guess from the SHAPE of the host — a guess that
+ * matched Azure's internal FQDN and stopped matching anything when the fleet moved to Railway.
+ *
+ * ★ IT IS PUSHED FROM HERE RATHER THAN READ THERE, and that is the part worth keeping. A module
+ * under src/ that reads FOXXI_TENANT_POD_URL to make a decision is a module no test can drive:
+ * applications/_shared/tests/shared-live-externals.test.ts records that name as a live address
+ * nothing in this tree supplies, and re-measures it over every tracked file, so a test that set it
+ * would red that guard. The deployment edge is the only place that legitimately knows both names,
+ * and this is the deployment edge.
+ */
+configureStoreSpelling({ publicPodUrl: tenantPodUrl, internalPodUrl: cssInternalPodUrl });
 
 /**
  * Are these two URLs the same store? True when the origins are equal, or when BOTH are known

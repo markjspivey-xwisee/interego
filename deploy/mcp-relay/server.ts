@@ -104,8 +104,10 @@ import {
   inboxUrlFor,
   buildNotification,
   deliverNotification,
+  podRootPresence,
   readInbox as readAgentInbox,
   type NotificationInput,
+  type PodRootPresence,
 } from './agent-mesh.js';
 import {
   actorUrl as apActorUrl,
@@ -6953,18 +6955,35 @@ async function callerOwnPod(args: ToolArgs): Promise<string | undefined> {
  * outright rather than defaulting to some pod.
  */
 async function requireOwnPod(args: ToolArgs, targetPodUrl: string, tool: string): Promise<string | null> {
-  // Escape hatch, secure-by-DEFAULT. The audit flagged the register_agent check as
-  // breaking for scripts that register agents onto a shared demo pod with the
-  // maintainer's token. Rather than ship it log-only (which leaves the hole open by
-  // default), enforcement is ON and RELAY_ALLOW_CROSS_POD_WRITES=1 restores the old
-  // behavior for one release if a demo breaks — loudly, so it cannot go unnoticed.
-  if (process.env.RELAY_ALLOW_CROSS_POD_WRITES === '1') {
-    const own = await callerOwnPod(args).catch(() => undefined);
-    if (!own || canonicalPodKey(targetPodUrl) !== canonicalPodKey(own)) {
-      log(`[SECURITY] cross-pod ${tool} ALLOWED by RELAY_ALLOW_CROSS_POD_WRITES=1 — target=${targetPodUrl} caller-pod=${own ?? '<unproven>'}`);
-    }
-    return null;
-  }
+  /**
+   * ── ★★ THE `RELAY_ALLOW_CROSS_POD_WRITES=1` ESCAPE HATCH IS GONE, AND IT WAS DEAD ────────
+   *
+   * It sat at the top of this function and returned `null` — every gate below skipped, for
+   * `register_agent`, `revoke_agent`, `publish_directory`, `rebuild_manifest`, `pgsl_ingest`
+   * and `publish_context`'s self-grant at once — on one environment variable, with a log line
+   * as the whole of its accountability. It was added "for one release" so a demo script that
+   * registered agents onto a shared pod with the maintainer's token would keep working.
+   *
+   * CENSUSED BEFORE REMOVAL, on the three places it could have been set and one it could not
+   * be guessed from:
+   *   · the tracked tree — `git grep` over every tracked file: five hits, all of them the
+   *     reader itself, an assertion ABOUT the reader, and two comments in tools/ saying "this
+   *     is NOT that flag". Nothing sets it.
+   *   · all 24 tracked files under `.github/` — every one a workflow; none names it.
+   *   · `deploy/railway/services.json` — the relay service declares six env keys and this is
+   *     not one of them.
+   *   · THE LIVE RELAY, which is the only authority on live env and which none of the above
+   *     can answer for: the Railway variable set for the `relay` service was read on
+   *     2026-08-29 and enumerated — 42 variables, and neither `RELAY_ALLOW_CROSS_POD_WRITES`
+   *     nor `RELAY_FEDERATION_ACCEPT_UNSIGNED` is among them.
+   *
+   * So it was never on anywhere, and a dormant one-variable bypass around an ownership gate
+   * is worth less than the line it costs: it is a config change away from being live, in a
+   * relay whose `solidFetch` is root-equivalent against the internal store. If a shared-pod
+   * demo ever needs this again, the honest shape is the one `remove_pod`'s refusal already
+   * argues for — a NEW capability that says operator in its name and proves who is asking —
+   * not a global off-switch on "you may only write your own pod".
+   */
   const own = await callerOwnPod(args);
   if (!own) {
     return JSON.stringify({
@@ -6992,10 +7011,11 @@ async function requireOwnPod(args: ToolArgs, targetPodUrl: string, tool: string)
  * answer depends on WHICH pod the caller named.
  *
  * ★ AND IT IS NOT `requireOwnPod`. That gate is about relay-credentialed writes INTO a
- * pod, which is why `RELAY_ALLOW_CROSS_POD_WRITES` can relax it. This one is about the
- * relay's own shared federation directory, where an escape hatch would hand every caller
- * back the erasure the merge rule exists to stop; unproven identity reads as `third-party`
- * rather than refusing, since a third party may still do the things a third party may do.
+ * pod; this one is about the relay's own shared federation directory, where the answer is
+ * not a refusal at all — unproven identity reads as `third-party` rather than refusing,
+ * since a third party may still do the things a third party may do. Neither has an escape
+ * hatch any more: the one `requireOwnPod` carried was censused dead and removed, and one
+ * here would hand every caller back the erasure the merge rule exists to stop.
  */
 async function directoryRowWriter(args: ToolArgs, podUrl: string): Promise<RowWriter> {
   const own = await callerOwnPod(args).catch(() => undefined);
@@ -8491,8 +8511,9 @@ function resolveTargetPodUrl(
 }
 
 /**
- * Does the pod ROOT at `internalPodUrl` already exist on this store — asked of the store itself,
- * before anything writes into it.
+ * This deployment's binding of `podRootPresence`: the same question, asked of THIS store with
+ * the relay's own credential. The rule itself lives beside the PUT it guards, in agent-mesh —
+ * see the note there for why the refusal moved to the function that owns the write.
  *
  * ── ★★ WHY: `delivered: true` MEANT "I INVENTED A DESTINATION" ───────────────────────────────
  *
@@ -8538,17 +8559,83 @@ function resolveTargetPodUrl(
  * the thing probed and the thing written are the same resource rather than two that usually
  * agree.
  */
-async function storePodRootPresence(internalPodUrl: string): Promise<
-  { exists: true } | { exists: false; status: number } | { exists: 'unknown'; because: string }
-> {
-  try {
-    const r = await solidFetch(internalPodUrl, { method: 'HEAD' });
-    if (r.status === 404 || r.status === 410) return { exists: false, status: r.status };
-    if (r.ok) return { exists: true };
-    return { exists: 'unknown', because: `the store answered ${r.status} ${r.statusText}` };
-  } catch (err) {
-    return { exists: 'unknown', because: `the probe failed: ${(err as Error).message}` };
+async function storePodRootPresence(internalPodUrl: string): Promise<PodRootPresence> {
+  return podRootPresence(internalPodUrl, solidFetch);
+}
+
+/**
+ * The same question, asked from an UNAUTHENTICATED, CACHEABLE, PUBLIC route — where the
+ * uncached probe above would be an amplifier rather than a cost.
+ *
+ * ── ★★ WHY A CACHE IS THE DIFFERENCE BETWEEN THE TWO CALLERS ────────────────────────────────
+ *
+ * `notify_agent` is an authenticated MUTATION and pays one HEAD per send, which is the figure
+ * 96d89dc4 measured and which this change does not touch — a send asks the store fresh. The
+ * WebFinger JRD, the ActivityPub actor and the outbox are anonymous GETs that anything on the
+ * internet may issue at any rate, so a per-request probe there would turn one inbound request
+ * into one outbound one. This memoises the answer instead.
+ *
+ * ★★ AND THE KEY SPACE IS BOUNDED BY THE DIRECTORY, NOT BY REQUEST VARIETY, which is what makes
+ * a cache safe here at all. The only caller is `cardForLocalPart`, and it probes only AFTER
+ * `agentAddressOwners` has already matched a row — so an anonymous caller asking for a million
+ * distinct localParts produces a million 404s and ZERO probes and ZERO entries. The number of
+ * distinct keys this map can ever hold is the number of store-origin pod roots in `knownPods`
+ * (574 live rows on 2026-08-29, measured over all 578 persisted federation files). The cap below
+ * is therefore a guard against a directory that grows, not against a caller.
+ *
+ * ★ THE THREE TTLs DIFFER, AND THE SHORTEST ONE IS THE REFUSAL. A cached `true` costs nothing
+ * if it is stale — the pod was there a moment ago. A cached `false` is a 404 on somebody's
+ * public identity, and the row that is legitimately absent-then-present is a REAL one: the
+ * relay auto-registers an agent's row in the same request that bootstraps its pod, so a brand
+ * new agent can be a row without a container for the width of one call. Thirty seconds bounds
+ * how long that agent's actor stays 404 after its pod appears. `'unknown'` is shorter still,
+ * so a store hiccup is re-asked promptly rather than pinned.
+ */
+const POD_PRESENCE_TTL_PRESENT_MS = 300_000;
+const POD_PRESENCE_TTL_ABSENT_MS = 30_000;
+const POD_PRESENCE_TTL_UNKNOWN_MS = 15_000;
+/** Bounded because `knownPods` is unbounded in principle; see the note above for why it is not
+ *  reachable from the request path. Oldest INSERTION is dropped, never a random entry, so the
+ *  eviction order is the same one a reader would predict. */
+const POD_PRESENCE_CACHE_MAX = 2_048;
+const podPresenceCache = new Map<string, { expiresAt: number; value: PodRootPresence }>();
+/**
+ * ★★ SINGLE-FLIGHT, BECAUSE A CACHE ALONE ONLY BOUNDS THE SECOND REQUEST. A cache is consulted
+ * before the probe and written after it, so every request that arrives while one probe is in
+ * flight misses and starts its own: twenty concurrent anonymous GETs of a cold localPart were
+ * twenty outbound HEADs, which is the amplifier this cache exists to prevent, arriving in the
+ * one shape an attacker would actually use. Concurrent callers now await the SAME promise. The
+ * relay has paid for this exact omission once already — the hourly Discord token rejection,
+ * where live watches raced the same re-mint until `open()` was made single-flight.
+ */
+const podPresenceInFlight = new Map<string, Promise<PodRootPresence>>();
+
+async function cachedStorePodRootPresence(internalPodUrl: string): Promise<PodRootPresence> {
+  const hit = podPresenceCache.get(internalPodUrl);
+  if (hit && hit.expiresAt > Date.now()) return hit.value;
+  const flying = podPresenceInFlight.get(internalPodUrl);
+  if (flying) return flying;
+  const probe = storePodRootPresence(internalPodUrl);
+  podPresenceInFlight.set(internalPodUrl, probe);
+  let value: PodRootPresence;
+  // `finally`, not "after the await": `storePodRootPresence` cannot reject today — it catches
+  // everything and answers `'unknown'` — but a probe left in this map by a rejection would make
+  // every later caller for that pod await a promise that has already failed, forever. The slot
+  // is released on the way out whichever way the probe leaves.
+  try { value = await probe; } finally { podPresenceInFlight.delete(internalPodUrl); }
+  const ttl = value.exists === true
+    ? POD_PRESENCE_TTL_PRESENT_MS
+    : value.exists === false ? POD_PRESENCE_TTL_ABSENT_MS : POD_PRESENCE_TTL_UNKNOWN_MS;
+  // Delete first so a refresh re-inserts at the END of the insertion order — otherwise the most
+  // recently refreshed entry keeps the eviction position of its first insertion.
+  podPresenceCache.delete(internalPodUrl);
+  podPresenceCache.set(internalPodUrl, { expiresAt: Date.now() + ttl, value });
+  while (podPresenceCache.size > POD_PRESENCE_CACHE_MAX) {
+    const oldest = podPresenceCache.keys().next();
+    if (oldest.done) break;
+    podPresenceCache.delete(oldest.value);
   }
+  return value;
 }
 
 /**
@@ -8780,7 +8867,10 @@ async function handleNotifyAgent(args: ToolArgs): Promise<string> {
   const results = await reachFanOut(
     channels,
     { summary, from, ...(typeof args.content === 'string' ? { content: args.content } : {}), ...(typeof args.about === 'string' ? { about: args.about } : {}) },
-    { deliverLdn: () => deliverNotification(internalPod, notif, idSlug, solidFetch, (m) => log(m)) },
+    // ★ `presence` is the answer this handler ALREADY got, thirty lines up, above the fan-out.
+    // `deliverNotification` refuses an absent pod on its own now; handing it the verdict already
+    // in hand is what keeps the cost at exactly ONE HEAD per send rather than two.
+    { deliverLdn: () => deliverNotification(internalPod, notif, idSlug, solidFetch, (m) => log(m), presence) },
   );
   const ldn = results.find(r => r.type === 'ldn');
   // `delivered: true` must mean the recipient's REAL (polled) inbox was reached, not that
@@ -9297,16 +9387,19 @@ async function handleAddPod(args: ToolArgs): Promise<string> {
    *   · it cannot be LAUNDERED onto this store: `toInternalPodUrl` returns `undefined` for it,
    *     at the function, for all five of its callers at once.
    *
-   * ★★ WHAT IS NOT CLOSED, AND WHY NOT HERE. A row on THIS STORE for a pod that has never existed
-   * still yields an ActivityPub actor, an outbox and a WebFinger JRD from this relay's own domain
-   * — DRIVEN: `{ pod_url: "<store>/no-such-pod-at-all/" }` then `GET /agents/no-such-pod-at-all`
-   * -> 200. Gating it HERE would be this area's own recurring defect: three writers reach
-   * `knownPods` with caller-influenced urls — this tool, `handleDiscoverDirectory` (fields off a
-   * FOREIGN directory document) and `handleResolveWebfinger` (a podUrl off a foreign JRD) — so a
-   * check in one of them is a gate in front of one of three writers. The reader that acts on it is
-   * `cardForLocalPart`, and it serves UNAUTHENTICATED routes, so the per-request existence probe
-   * `notify_agent` can afford is an amplifier there. It needs a cached probe at the reader and its
-   * own review. Recorded in tests/the-writers-are-gated.test.ts §4, not fixed.
+   * ★★ AND THE ROW THIS TOOL PLANTS ON THIS STORE'S OWN ORIGIN IS ANSWERED THE SAME WAY. A pod
+   * that has never existed passes every conjunct above — it IS a store origin, it IS one path
+   * segment — and used to yield an ActivityPub actor, an outbox and a WebFinger JRD from this
+   * relay's own domain: DRIVEN, `{ pod_url: "<store>/no-such-pod-at-all/" }` then
+   * `GET /agents/no-such-pod-at-all` -> 200. Gating it HERE would be this area's own recurring
+   * defect, because three writers reach `knownPods` with caller-influenced urls — this tool,
+   * `handleDiscoverDirectory` (fields off a FOREIGN directory document) and
+   * `handleResolveWebfinger` (a podUrl off a foreign JRD) — so a check in one of them is a gate
+   * in front of one of three writers. It is answered at the reader instead: `cardForLocalPart`,
+   * shared by all four /agents-family routes, asks the STORE whether the pod is there. Because
+   * those routes are UNAUTHENTICATED that probe is memoised, which the per-send probe in
+   * `notify_agent` does not need to be. See its header for the live census that chose existence
+   * over identity, and tests/an-identity-needs-a-pod.test.ts for the driven run.
    */
   const sel = resolvePodSubject(args as Record<string, unknown>, { cssUrl: CSS_URL, tool: 'add_pod', targetOnly: true });
   if (sel.refusal) return JSON.stringify(sel.refusal);
@@ -13564,7 +13657,74 @@ app.post('/vault/ingest', vaultIngestLimiter, (req, res) => {
 // `RELAY_AP_BASE` — the one base every relay-hosted agent address is minted from — is declared
 // with `RELAY_HANDLE_HOST`, beside the agent-mesh helpers; see the note there for why it moved.
 
-function cardForLocalPart(localPart: string): AgentCardLite | undefined {
+async function cardForLocalPart(localPart: string): Promise<AgentCardLite | undefined> {
+  /**
+   * ── ★★ AN IDENTITY FOR A POD THAT NEVER EXISTED ─────────────────────────────────────────
+   *
+   * DRIVEN against this server booted from the tree this change was written on: any
+   * authenticated caller ran `add_pod { pod_url: "<store>/no-such-pod-at-all/" }`, and
+   * `GET /agents/no-such-pod-at-all` then served a 200 ActivityPub actor and
+   * `/.well-known/webfinger?resource=acct:no-such-pod-at-all@<host>` a 200 JRD, from this
+   * relay's own domain. The actor was SYNTHESISED from the pod URL's local part —
+   * `preferredUsername`, `name`, `inbox`, `outbox`, `interego:pod` all built out of a string
+   * the caller chose — for a row with no did, no handle, no channels and no container behind
+   * it. `notify_agent` had already stopped delivering to such a row (96d89dc4); the documents
+   * that PUBLISH the same row's identity had not.
+   *
+   * ── WHY EXISTENCE AND NOT IDENTIFICATION, CENSUSED RATHER THAN ASSUMED ──────────────────
+   *
+   * The obvious alternative was `identityIsObserved` — the closed evidence list the notify
+   * affordance already gates on. It was measured against the LIVE directory before being
+   * rejected: all 578 persisted federation files fetched and parsed on 2026-08-29, 574
+   * canonical pods, 572 of them owning an agent address on this store. 487 carry an identity
+   * this relay observed; 85 do not. Then the decisive question, which the identity fields
+   * cannot answer: an unauthenticated `HEAD <gate>/<localPart>/` against the live store for
+   * every one of those 572 addresses. Two statuses came back and only two — 533 answered 200
+   * and 39 answered 404; no 401 and no 403, so no row is hidden from that probe by an ACL
+   * rather than absent. (The relay's own probe is the credentialed one against the internal
+   * host, which this could not issue from outside the cluster; the census is therefore about
+   * what the public gate says, and the two agree on every case anyone has been able to check.)
+   *
+   *   · 83 of the 85 UNIDENTIFIED rows are pods that REALLY EXIST. They arrived through
+   *     `discover_directory` in one import on 2026-07-29, name themselves only by a
+   *     `did:ethr` in the caller-writable `owner` field, and hold a real container on this
+   *     store. Gating on identity would have 404'd 83 live pods to close a hole that is
+   *     about a pod that is not there — an outage, not a fix.
+   *   · 39 addresses have NO container. 37 of those are rows this relay DID identify:
+   *     ephemeral demo and test agents (`interego-delegate`, `interego-workspace-live-driver`,
+   *     `blast-radius-probe`, `g0805-*`, `gate-coldstart`) whose pods were later deleted. An
+   *     identity gate would have kept publishing every one of them.
+   *
+   * So the two rules do not approximate each other: they 404 almost disjoint sets, and only
+   * the container test 404s the thing this defect is about. Existence it is.
+   *
+   * ★ AND IT IS NOT AN OUTAGE, MEASURED THE SAME WAY. Of the 572 addresses, 81 were touched
+   * (`updatedAt`, else `addedAt`) in the 14 days to 2026-08-29 and EVERY ONE of them has a
+   * container — zero. The 39 this rule newly 404s were last touched between 2026-07-29 and
+   * 2026-08-09 and none since.
+   *
+   * ★ AND THE DEFECT ITSELF WAS CONFIRMED IN PRODUCTION, not only on a fixture: against the live
+   * relay at the deployed sha on 2026-08-29, four of those 39 answered `GET /agents/<localPart>`
+   * with a 200 actor and a 200 WebFinger JRD while the store answered 404 for their pod root,
+   * and a control row whose pod is there answered 200 on both. Four of the 83 unidentified rows
+   * were checked the same way and served 200 actors carrying no `interego:did` — which is the
+   * live form of what rule (a) would have withdrawn.
+   *
+   * ★ THOSE 39 ARE ALREADY UNDELIVERABLE, which is what makes this agreement rather than a new
+   * refusal — composed from two measurements rather than driven end to end on the live relay:
+   * every one of them answers 404 for its pod root, and `notify_agent` has refused a 404 pod
+   * root since 96d89dc4 (driven on the fixture in tests/the-writers-are-gated.test.ts §3, and
+   * here in §1 and §5 for the identified-row-with-no-pod case).
+   *
+   * ★ ONE READER, NOT FOUR GATES. The WebFinger JRD, the actor, the outbox and the AP inbox
+   * all dereference an address through THIS function, so the probe is here and not in any of
+   * them. That also closes the second mouth 96d89dc4 recorded: `POST /agents/:lp/inbox` used
+   * to reach `deliverNotification` for a ghost row under
+   * `RELAY_FEDERATION_ACCEPT_UNSIGNED=1`, and it now has no card to deliver to.
+   *
+   * ★ ONLY A DEFINITE 404/410 REFUSES — see `podRootPresence`. A store that answers 5xx, or
+   * that cannot be reached at all, leaves the identity published exactly as before.
+   */
   /**
    * ── ★★ THE ROW THIS DOCUMENT DESCRIBES AND THE ROW A NOTIFICATION REACHES ARE ONE ROW ──
    *
@@ -13604,6 +13764,20 @@ function cardForLocalPart(localPart: string): AgentCardLite | undefined {
   // injectivity argument on `agentAddressOwners` every candidate here is the SAME pod, so this
   // chooses which spelling and which recorded card to project, never which agent.
   const e = matches.find(x => x.did) ?? matches.find(x => x.webId ?? x.owner) ?? matches[0]!;
+  // ★★ THE POD HAS TO BE THERE — see the header. Asked of the INTERNAL spelling, which is the
+  // resource the outbox route will read and the inbox route would write, so the thing probed and
+  // the thing used are one resource rather than two that usually agree.
+  //
+  // ★ AND `undefined` REFUSES, in the same shape every other caller of `toInternalPodUrl` uses.
+  // `agentAddressOwners` already required STORE_ORIGINS membership and this helper tests exactly
+  // that membership, so the branch is unreachable — but "unreachable, therefore write something
+  // different here" is how a census of six call sites becomes a census of five, and `strict:false`
+  // means the compiler will not notice. A card whose pod this relay cannot address is not an
+  // identity it can speak for, which is the same answer the two routes below give.
+  const internalPod = toInternalPodUrl(e.url);
+  if (internalPod === undefined) return undefined;
+  const presence = await cachedStorePodRootPresence(internalPod);
+  if (presence.exists === false) return undefined;
   // ★ The surface is DERIVED from the card's own did:web rather than read from the stored
   // field, for the same reason list_known_pods derives it: entries registered before the
   // `split('-')[0]` truncation was fixed hold `interego` where the DID says
@@ -13626,21 +13800,21 @@ app.get('/.well-known/webfinger', async (req, res) => {
   const m = resource.match(/^acct:([^@]+)@(.+)$/);
   if (!m) { res.status(400).json({ error: 'resource must be acct:<user>@<host>' }); return; }
   const localPart = m[1]!;
-  const card = cardForLocalPart(localPart);
+  const card = await cardForLocalPart(localPart);
   if (!card) { res.status(404).json({ error: `no agent for ${resource}` }); return; }
   res.type('application/jrd+json').json(apBuildWebfinger(resource, RELAY_AP_BASE, localPart, card));
 });
 
 app.get('/agents/:localPart', async (req, res) => {
   await awaitFederationHydrateWithBudget(50);
-  const card = cardForLocalPart(req.params.localPart);
+  const card = await cardForLocalPart(req.params.localPart);
   if (!card) { res.status(404).json({ error: 'unknown agent' }); return; }
   res.type('application/activity+json').json(apBuildActor(RELAY_AP_BASE, req.params.localPart, card));
 });
 
 app.get('/agents/:localPart/outbox', async (req, res) => {
   await awaitFederationHydrateWithBudget(50);
-  const card = cardForLocalPart(req.params.localPart);
+  const card = await cardForLocalPart(req.params.localPart);
   if (!card) { res.status(404).json({ error: 'unknown agent' }); return; }
   // `cardForLocalPart` returns a row from `agentAddressOwners`, whose first conjunct is
   // `isStoreOriginUrl` — so a row planted on a foreign origin through `add_pod` is never this
@@ -13683,7 +13857,7 @@ app.post('/agents/:localPart/inbox', async (req, res) => {
     return;
   }
   await awaitFederationHydrateWithBudget(50);
-  const card = cardForLocalPart(req.params.localPart);
+  const card = await cardForLocalPart(req.params.localPart);
   if (!card) { res.status(404).json({ error: 'unknown agent' }); return; }
   const act = (req.body ?? {}) as Record<string, any>;
   const obj = (act.object ?? {}) as Record<string, any>;
@@ -13761,8 +13935,14 @@ app.post('/agents/:localPart/inbox', async (req, res) => {
       + `this relay could not use as sent: ${apBlindTo.join('; ')}`);
   }
   // Same conjunct as the outbox route, at the site that WRITES. A 502 rather than a 404 because
-  // the signature gate and the agent lookup have already both passed: the failure is this relay's
-  // inability to address the recipient's pod, not the sender's request.
+  // IF it fired the failure would be this relay's inability to address the recipient's pod rather
+  // than anything about the sender's request.
+  //
+  // ★ IT CANNOT FIRE TODAY, AND THAT IS STATED RATHER THAN LEFT TO BE INFERRED: `cardForLocalPart`
+  // now folds the same url through the same helper and returns undefined when it comes back
+  // undefined, so this branch is a SECOND READING of a rule already applied above — kept for the
+  // same reason `isCanonicalPodTarget` is asked independently of the resolver's own refusal, and
+  // because this is the line that produces the value the write actually uses.
   const cardPod = toInternalPodUrl(card.url);
   if (cardPod === undefined) {
     res.status(502).json({ accepted: false, error: 'undeliverable', detail: `this relay cannot address "${card.url}" on its own store, so nothing was written` });

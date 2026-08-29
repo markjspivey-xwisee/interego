@@ -13,8 +13,9 @@
  * index predates that fix comes back byte-bounded rather than merely row-bounded.
  *
  * Auth is the css-gate operator bearer (`.interego/css-gate-write-secret.txt`, gitignored): the
- * gate's intended infrastructure path. This is NOT the relay's `RELAY_ALLOW_CROSS_POD_WRITES`
- * publish-scope bypass, which stays off and is not used here.
+ * gate's intended infrastructure path — an operator credential the gate issues, not a bypass
+ * around the relay's ownership checks. (It used to be contrasted here with the relay's
+ * `RELAY_ALLOW_CROSS_POD_WRITES` hatch, which has since been censused dead and removed.)
  *
  * Usage:
  *   node tools/css-rebuild-manifest.mjs <podSegment>            # dry run: report only

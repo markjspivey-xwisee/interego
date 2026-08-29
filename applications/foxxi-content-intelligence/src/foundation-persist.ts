@@ -30,6 +30,9 @@ import {
 import type { IRI, ManifestEntry } from '@interego/core';
 import type { EncryptionKeyPair } from '@interego/core';
 import type { FetchFn } from '@interego/core/http';
+// One answer to 'is this URL on our own store, and how is it spelled publicly'. The rule lives in
+// that module; bridge/server.ts supplies it the two names at start-up.
+import { publicSpellingOf, storeSpelling } from './store-origins.js';
 
 export interface FoundationPersistOptions {
   /** Subject agent identity (WebID / pod URL) whose Type Index resolves placement. */
@@ -71,32 +74,65 @@ function holonResourceUrlFor(container: string, holonUri: string): string {
 }
 
 /**
- * The ADVERTISED (dereference) host for a holon URL. The canonical write target
- * is the env-internal CSS host (placement.target, reachable in-env), but a
- * iep:encryptedHolon link is meant to be fetched cross-seat — including by a
- * direct (non-relay) consumer doing owner-decrypt, for whom the env-internal
- * host is unreachable. So the ADVERTISED url is rewritten to the public pod
- * origin (the write-gate) when one is configured (FOXXI_TENANT_POD_URL's
- * origin). The WRITE target is unchanged; only the link embedded in the
- * projection is rewritten. This is signature-safe: the iep:Projection carries NO
- * authorship proof, and the encrypted-holon JWE bytes at the URL are never
- * touched (the path is identical — only the host differs, and the gate routes
- * the path to the same CSS resource). No-op when no public origin is configured
- * or the url is not an env-internal host.
+ * The ADVERTISED (dereference) host for a holon URL. The canonical write target is the env-internal
+ * CSS host (placement.target, reachable in-env), but a iep:encryptedHolon link is meant to be
+ * fetched cross-seat — including by a direct (non-relay) consumer doing owner-decrypt, for whom the
+ * env-internal host is unreachable. So the ADVERTISED url is re-spelled onto the public pod origin
+ * (the write-gate). The WRITE target is unchanged; only the link embedded in the projection is
+ * rewritten. Signature-safe: the iep:Projection carries NO authorship proof, and the encrypted-holon
+ * JWE bytes at the URL are never touched (the path is identical — only the host differs, and the
+ * gate routes the path to the same CSS resource).
+ *
+ * ── ★★ IT ASKED "DOES THE HOST CONTAIN '.internal.'", AND THAT WAS WRONG BOTH WAYS ──────────
+ *
+ * MEASURED by executing this function's own shipped body over the hosts this deployment actually
+ * has:
+ *
+ *   "http://css.railway.internal:3456/eth-abc/x.holon.json"   -> unchanged   (should be rewritten)
+ *   "https://a.internal.evil.example/eth-VICTIM/x.holon.json" -> REWRITTEN onto our public origin
+ *
+ * ★ THE FALSE NEGATIVE IS THE LIVE ONE, and it is a provider migration nobody could see. The dotted
+ * ".internal." appears in an Azure Container Apps internal FQDN
+ * ("interego-css.internal.livelysky-<id>.eastus.azurecontainerapps.io"), which is what this test was
+ * written against. Railway's internal host is "css.railway.internal:3456" — ".internal" is the final
+ * label, so nothing follows the second dot and the substring never matches. The fleet moved and this
+ * quietly stopped doing anything, with no error on either side of it.
+ *
+ * ★ WHO IS AFFECTED, stated as what was actually established rather than as a production count.
+ * `placement.target` follows the pod URL this is given, and a relay-stamped `subject_pod_url`
+ * arrives in the internal spelling — `selfBoundPod` in bridge/server.ts honours exactly that
+ * spelling as the caller's own pod, which was driven against the shipped function. So for a caller
+ * whose pod arrives that way the holon is written to the in-env host, and the advertised link kept
+ * it: the failure this function was added to fix, with the function inert. What has not been
+ * measured here is how many live records that is.
+ *
+ * ★ THE FALSE POSITIVE IS THE RELAY'S OWN DEFECT, IN THIS TREE. placement.target is an ABSOLUTE url
+ * read verbatim out of the agent's own Solid Type Index (packages/solid/src/type-index.ts returns
+ * `new URL(target, tiUrl).toString()`), so an agent that writes its own registration chooses this
+ * input. A host of the form "a.internal.evil.example" then had its origin replaced with ours and its
+ * PATH carried across — a foreign address laundered into a link that names our store, which is what
+ * the relay's `toInternalPodUrl` was doing when it discarded the host and pasted the path onto the
+ * local store.
+ *
+ * ★ SO IT IS ASKED AS WHOLE-ORIGIN MEMBERSHIP — see src/store-origins.ts, which holds the rule and
+ * reads no environment variable. A URL on any other origin is returned untouched, and with no
+ * spelling configured at all nothing is re-spelled onto us either.
+ *
+ * ★ AND THE BRIDGE STILL HAS ITS OWN ANSWER, WHICH IS NOT THE SAME AS SAYING IT DISAGREES.
+ * bridge/server.ts builds SAME_STORE_ORIGINS from the same two names and the same default, and its
+ * `canonicalPublicPodUrl` is this rule for pod URLs; the two were run side by side over fourteen
+ * inputs — a foreign origin, a lookalike origin, an opaque scheme, an unparseable string, a default
+ * port, userinfo, and both spellings of this store — and agreed on all fourteen. Collapsing them
+ * into one call is the right end state and is NOT done here: the pin in
+ * tests/the-identifier-is-not-the-question.test.ts is on that function's body TEXT, so the collapse
+ * edits a file outside this vertical.
+ *
+ * ★ THE ENV FALLBACK STAYS ONLY AS A FALLBACK. bridge/server.ts calls `configureStoreSpelling` at
+ * start-up with both names; the read below is what a deployment that never configured one still
+ * gets, and is the same variable this function already read.
  */
 function toAdvertisedHolonUrl(url: string): string {
-  const tenant = process.env.FOXXI_TENANT_POD_URL;
-  if (!tenant) return url;
-  try {
-    const pub = new URL(tenant);
-    const u = new URL(url);
-    if (u.host.includes('.internal.') && u.host !== pub.host) {
-      u.protocol = pub.protocol;
-      u.host = pub.host;
-      return u.toString();
-    }
-  } catch { /* leave as-is on parse failure */ }
-  return url;
+  return publicSpellingOf(url, storeSpelling(process.env.FOXXI_TENANT_POD_URL ?? ''));
 }
 
 /**

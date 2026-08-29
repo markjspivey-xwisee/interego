@@ -97,10 +97,62 @@ export function buildNotification(input: NotificationInput, idSlug: string): Rec
 }
 
 /**
+ * What the STORE says about a pod root: it holds it, it definitely does not, or this process
+ * cannot tell.
+ *
+ * ★★ ONLY A DEFINITE NO IS A NO. 404 and 410 mean "there is no pod here". Every other
+ * answer — 2xx, 401, 403, 405, 5xx, a network error, a timeout — is `'unknown'`, and every
+ * reader treats `'unknown'` exactly as it treated the world before this probe existed. The
+ * only way to produce a FALSE refusal is for the store to 404 a container it holds, which is
+ * a contradiction; a fail-closed rule would instead turn any hiccup on this probe into an
+ * outage on delivery and on every published agent identity.
+ */
+export type PodRootPresence =
+  | { exists: true }
+  | { exists: false; status: number }
+  | { exists: 'unknown'; because: string };
+
+/**
+ * Does the pod ROOT at `podRootUrl` already exist on the store — asked of the store itself,
+ * before anything writes into it or publishes an identity for it.
+ *
+ * ★ ASKED OF THE SPELLING THE WRITE WILL USE. Callers pass the internal URL, so the thing
+ * probed and the thing written are the same resource rather than two that usually agree.
+ */
+export async function podRootPresence(
+  podRootUrl: string,
+  fetchFn: FetchFn = defaultFetch(),
+): Promise<PodRootPresence> {
+  try {
+    const r = await fetchFn(podRootUrl, { method: 'HEAD' });
+    if (r.status === 404 || r.status === 410) return { exists: false, status: r.status };
+    if (r.ok) return { exists: true };
+    return { exists: 'unknown', because: `the store answered ${r.status} ${r.statusText}` };
+  } catch (err) {
+    return { exists: 'unknown', because: `the probe failed: ${(err as Error).message}` };
+  }
+}
+
+/**
  * Deliver a notification into a target pod's LDN inbox. The relay's
- * fetch (service creds) writes the file; CSS auto-creates the `inbox/`
- * container on first PUT. Returns the notification URL, or null on
+ * fetch (service creds) writes the file. Returns the notification URL, or null on
  * failure (best-effort — delivery failures never fail the caller).
+ *
+ * ── ★★ THE WRITE ITSELF REFUSES TO MANUFACTURE ITS DESTINATION ──────────────────────────────
+ *
+ * CSS auto-creates a container on first PUT, and this is a PUT to
+ * `<pod>/inbox/<slug>.jsonld`. So for as long as this function would write wherever it was
+ * pointed, "does that pod exist" was a question each CALLER had to remember to ask — and 96d89dc4
+ * closed it at `handleNotifyAgent` while `POST /agents/:localPart/inbox`, the other caller, kept
+ * calling straight through. A gate in front of one of two callers is the mistake this area keeps
+ * making, so the refusal is HERE, at the function that owns the credential and the PUT: a third
+ * caller cannot reintroduce it by not knowing about it.
+ *
+ * ★ `presence` IS AN ANSWER ALREADY OBTAINED, NOT A PERMISSION TO SKIP THE QUESTION.
+ * `handleNotifyAgent` must decide BEFORE its channel fan-out — a refusal after the Discord and
+ * Telegram adapters have run would refuse a message the recipient has already been shown — so it
+ * probes above them and hands the answer down here. That keeps the cost at exactly one HEAD per
+ * send, the figure 96d89dc4 measured, instead of two. A caller that passes nothing is probed.
  */
 export async function deliverNotification(
   targetPodUrl: string,
@@ -108,7 +160,14 @@ export async function deliverNotification(
   idSlug: string,
   fetchFn: FetchFn = defaultFetch(),
   log: (m: string) => void = () => {},
+  presence?: PodRootPresence,
 ): Promise<string | null> {
+  const known = presence ?? await podRootPresence(targetPodUrl, fetchFn);
+  if (known.exists === false) {
+    log(`[agent-mesh] deliver refused: the store answered ${known.status} for the pod root `
+      + `"${targetPodUrl}", so there is no pod to deliver to and nothing was written`);
+    return null;
+  }
   const url = `${inboxUrlFor(targetPodUrl)}${idSlug}.jsonld`;
   // EVERYTHING IS A URL: the notification's id IS the resource it becomes. This was
   // previously `urn:interego:notif:<slug>` — an identifier that dereferenced to

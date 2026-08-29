@@ -377,11 +377,17 @@ console.log('\n16. R2 — relay-credentialed writes require a PROVEN own pod');
 // solidFetch is root-equivalent against the internal CSS origin, so any handler that
 // derived its write target from args.pod_name/pod_url was an "any caller writes any
 // pod" primitive.
+// ★ THESE THREE ASK `SERVER_CODE`, NOT `SERVER`, AND THAT IS NOT A DETAIL. A window measured
+// in characters from a function name shrinks and grows with the PROSE above the code, so the
+// comment-bearing spelling made the gate's own regression check a hostage to documentation
+// length: writing down why the escape hatch was removed pushed `canonicalPodKey` past 1600
+// characters and turned a passing check red with the gate untouched. Comments stripped, the
+// windows measure code.
 check('requireOwnPod() exists and is fail-closed on an unproven caller',
-  /async function requireOwnPod\(/.test(SERVER)
-  && /requireOwnPod[\s\S]{0,1400}authentication required/.test(SERVER));
+  /async function requireOwnPod\(/.test(SERVER_CODE)
+  && /requireOwnPod[\s\S]{0,1400}authentication required/.test(SERVER_CODE));
 check('it compares canonical pod keys',
-  /requireOwnPod[\s\S]{0,1600}canonicalPodKey\(targetPodUrl\) !== canonicalPodKey\(own\)/.test(SERVER));
+  /requireOwnPod[\s\S]{0,1600}canonicalPodKey\(targetPodUrl\) !== canonicalPodKey\(own\)/.test(SERVER_CODE));
 for (const tool of ['register_agent', 'revoke_agent', 'publish_directory', 'rebuild_manifest', 'pgsl_ingest']) {
   check(`${tool} is own-pod gated`,
     new RegExp(`requireOwnPod\\(args, podUrl, '${tool}'\\)`).test(SERVER));
@@ -391,9 +397,37 @@ check('publish_context restricts the SELF-GRANT (not the publish) to the own pod
   && /if \(!me && selfGrantOk\)/.test(SERVER));
 check('set_reachability derives its pod from callerOwnPod, not selfPodUrl',
   /const podUrl = await callerOwnPod\(args\);/.test(SERVER));
-check('the cross-pod escape hatch is OFF by default and logs loudly',
-  /RELAY_ALLOW_CROSS_POD_WRITES === '1'/.test(SERVER)
-  && /\[SECURITY\] cross-pod \$\{tool\} ALLOWED/.test(SERVER));
+// ★★ THE ESCAPE HATCH IS GONE, NOT "OFF BY DEFAULT". This used to assert that
+// `RELAY_ALLOW_CROSS_POD_WRITES=1` existed, was off by default and logged loudly — an
+// assertion that a one-variable bypass around this gate REMAINS. It was censused dead (the
+// tracked tree, all 24 tracked .github files, deploy/railway/services.json, and the LIVE
+// relay's 42 Railway variables read on 2026-08-29) and removed.
+//
+// ★ ASKED OF THE CODE, BECAUSE THE REMOVAL NOTE NAMES THE VARIABLE IT REMOVED. Testing the
+// raw file for the string would fail on the paragraph in server.ts that explains why the
+// hatch is gone — a check that forbids writing down its own reason. What must be absent is
+// a READ of it, and `SERVER_CODE` is the file with the prose taken out.
+check('★★ there is NO environment escape hatch around the own-pod gate',
+  !/RELAY_ALLOW_CROSS_POD_WRITES/.test(SERVER_CODE)
+  && !/process\.env(\.|\[)[^\n]*ALLOW_CROSS_POD/.test(SERVER_CODE));
+{
+  // ★ ASKED OF THE BODY, NOT OF THE FILE. "The string is absent" would also pass if the
+  // hatch were renamed, so this reads the function itself: `requireOwnPod` must pass a
+  // caller ONLY by falling off the end, which means exactly ONE `return null` and it after
+  // both refusals. Comments are stripped first so a `return null` written in prose — which
+  // the removal note above the function could easily acquire — cannot fail this.
+  const code = SERVER_CODE;
+  const at = code.indexOf('async function requireOwnPod(');
+  const end = code.indexOf('\n}\n', at);
+  check('the requireOwnPod body is found, so this check is not vacuous', at > -1 && end > at);
+  const body = code.slice(at, end);
+  const passes = body.split('return null;').length - 1;
+  check('★★ requireOwnPod passes a caller in exactly ONE place, after both refusals',
+    passes === 1
+    && body.indexOf('authentication required') < body.lastIndexOf('return null;')
+    && body.indexOf('you may only write to your own pod') < body.lastIndexOf('return null;'),
+    `${passes} return-null site(s)`);
+}
 
 console.log('\n17. R3 — state-mutating tools are auth-gated; the dead PUBLIC_TOOLS set is gone');
 const authSet = (/const AUTH_REQUIRED_TOOLS = new Set\(\[([\s\S]*?)\]\);/.exec(SERVER) ?? [])[1] ?? '';
