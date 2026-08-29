@@ -1188,6 +1188,26 @@ console.log('\n11. driven: two real identities against one shared directory');
       return;
     }
     if (q.method === 'DELETE') { stored.delete(key); s.status(205).end(); return; }
+    // -- CONTAINER EXISTENCE, WHICH THIS FIXTURE USED TO GET WRONG --------------------------
+    //
+    // `notify_agent` now HEADs the pod ROOT before it writes, because CSS auto-creates a
+    // container on first PUT and `delivered: true` was therefore reachable for a pod that had
+    // never existed. This fixture answered 404 for EVERY container, which is not what the store
+    // does: measured unauthenticated against the live deployment on 2026-08-29,
+    // `HEAD https://gate.interego.xwisee.com/eth-8f3b8e939600/` is 200 and
+    // `HEAD .../definitely-not-a-pod-xyz9/` is 404. Left as it was, every legitimate delivery in
+    // this suite would have read as refused for the wrong reason.
+    //
+    // MEMBERSHIP IS DELIBERATELY NOT MODELLED. An empty container carries the same information to
+    // every reader in this suite as the old 404 did -- `readAgentInbox`, `discover` and the
+    // manifest walk all end up with nothing either way -- so no assertion here changes meaning.
+    // A suite that wants a pod to be ABSENT says so; see tests/the-writers-are-gated.test.ts,
+    // which drives that case.
+    if (key.endsWith('/') && stored.get(key) === undefined) {
+      if (q.method === 'HEAD') { s.type('text/turtle').status(200).end(); return; }
+      s.type('text/turtle').status(200).send('@prefix ldp: <http://www.w3.org/ns/ldp#>. <> a ldp:Container, ldp:BasicContainer, ldp:Resource.');
+      return;
+    }
     const hit = stored.get(key);
     if (hit === undefined) { s.status(404).end(); return; }
     if (q.method === 'HEAD') { s.type('text/turtle').status(200).end(); return; }
@@ -1404,7 +1424,8 @@ console.log('§12  address ownership');
     podOwnsLocalPart('http://css.railway.internal:3456/team/u-eth-8f3b8e939600/', 'u-eth-8f3b8e939600') === false);
 
   // ★★ AND IT DOES NOT LOWER-CASE, WHICH IS THE HALF THAT IS EASY TO GET WRONG. The obvious
-  // spelling of this fix compares `canonicalPodKey(e.url)` — which lower-cases its pathname — to
+  // spelling of this fix compares `canonicalPodKey(e.url)` — which lower-cased its pathname when
+  // this was written, and no longer does, for this same reason — to
   // `/${localPart.toLowerCase()}/`. That closes the nesting squat and OPENS a case squat: a row at
   // /U-ETH-VICTIM/ would answer for `u-eth-victim`, which the ORIGINAL code correctly refused.
   // Every userId is lower-case by construction (derive-userid.ts builds u-eth- from `addressLower`

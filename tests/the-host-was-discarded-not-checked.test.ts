@@ -6,11 +6,16 @@
  *
  *     toInternalPodUrl(target).startsWith(toInternalPodUrl(own))
  *
- * and `toInternalPodUrl` DISCARDS the host — it pastes the path onto our own store. So both sides
+ * and `toInternalPodUrl` DISCARDED the host — it pasted the path onto our own store. So both sides
  * of that comparison were caller-controlled. A victim's ciphertext is public bytes: copy it, serve
  * it from your own host at `/eth-<your-own-12hex>/anything.jose.json`, ask the relay to read it,
  * and it decrypts somebody else's private graph for you. Same class as the unauth decryption oracle
  * closed in the round-26 audit, at a site that fix never reached.
+ *
+ * ★ THAT HELPER HAS SINCE STOPPED LAUNDERING — it returns `undefined` for anything not on a
+ * `STORE_ORIGINS` member — and the last assertion here pins that instead. The gate under test is
+ * unaffected either way, deliberately: it screens the RAW target and does not call that helper at
+ * all, which is what the second-to-last assertion holds.
  *
  * ── ★★★ THIS FILE EXISTS IN ITS SECOND FORM, AND THE FIRST ONE IS THE LESSON ────────────────
  *
@@ -134,16 +139,36 @@ describe('the relay uses this gate, and screens the RAW target', () => {
     expect(decl).not.toMatch(/startsWith|endsWith|includes\(/);
   });
 
-  it('★★ and toInternalPodUrl still CLAMPS, because that clamp is load-bearing elsewhere', () => {
-    // Reverted deliberately after review. `canonicalPodKey` discards the host too and is the sole
-    // comparator in `requireOwnPod` and the read_inbox gate; those gates are survivable only
-    // because every consumer then forces the target back onto our store before fetching. Letting a
-    // foreign origin through here would hand `solidFetch` — the UNSCREENED pool — an authenticated
-    // GET at a caller-chosen host with the body reflected, and a GET+PUT+DELETE at another.
+  it('★★ toInternalPodUrl REFUSES a foreign origin, and hands nothing back', () => {
+    // This assertion used to pin the OPPOSITE — that the helper still clamped EVERY host onto our
+    // store — and it named the two things that had to be true before that could change. Both are
+    // now discharged, which is why it is inverted rather than deleted:
+    //
+    //   · half one: `canonicalPodKey` discarded the host too, and it is the sole comparator in
+    //     `requireOwnPod` and the read_inbox gate, so those gates were survivable only because
+    //     every consumer forced the target back onto our store before fetching. It now keys this
+    //     store's two spellings together and every other origin separately, so those two gates
+    //     refuse a foreign origin on their own — driven over the wire, with the fixture store
+    //     recording ZERO requests for either tool.
+    //   · half two: letting a foreign origin THROUGH here would hand `solidFetch` — the
+    //     UNSCREENED pool — an authenticated GET at a caller-chosen host with the body reflected
+    //     (`read_inbox`) and a GET + PUT + DELETE at one (`rebuild_manifest`). That objection was
+    //     to the PASS-THROUGH and it is still correct, which is exactly why the helper now returns
+    //     `undefined` instead of the caller's URL. Nothing foreign leaves it, so nothing foreign
+    //     can reach a fetch. `return url` in this body would be the reverted fix, re-landed.
+    //
+    // The behavioural half of this — what the shipped characters actually answer for each origin,
+    // and what the five call sites do with `undefined` — is driven in
+    // deploy/mcp-relay/tests/the-writers-are-gated.test.ts. This is the source pin that stops the
+    // clamp coming back by accident.
     const fn = body('function toInternalPodUrl');
-    expect(fn).toMatch(/\$\{CSS_URL\.replace\(\/\\\/\$\/, ''\)\}\$\{new URL\(url\)\.pathname\}/);
-    expect(fn, 'do not make this origin-aware without fixing canonicalPodKey and the fetch sites')
-      .not.toMatch(/STORE_ORIGINS/);
+    expect(fn, 'the origin must be compared against STORE_ORIGINS').toMatch(/STORE_ORIGINS/);
+    expect(fn, 'a non-member origin must yield undefined').toMatch(/return undefined;/);
+    expect(fn, 'never hand the caller url back — that is the pass-through that was reverted')
+      .not.toMatch(/return url\b/);
+    // And the fold itself is unchanged for a url that IS ours: same path, internal host.
+    expect(fn).toMatch(/CSS_URL\.replace/);
+    expect(fn).toMatch(/\$\{u\.pathname\}/);
   });
 });
 

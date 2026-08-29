@@ -7125,7 +7125,8 @@ function encryptionKeyToRecord(supplied: unknown, existing?: string | null): str
  * ── ★★ IT WAS A DECRYPTION ORACLE, AND THE HOST IS WHY ──────────────────────────────────────
  *
  * This was one line: `toInternalPodUrl(target).startsWith(toInternalPodUrl(own))`. That helper
- * DISCARDS the host and pastes the path onto our store, so the comparison reduced to a path-prefix
+ * DISCARDED the host and pasted the path onto our store - it now returns `undefined` for anything
+ * not on a STORE_ORIGINS member - so the comparison reduced to a path-prefix
  * test whose both sides a caller controls. `relayAgentKey` is ONE process-wide X25519 key that
  * every graph published here is encrypted to, and a victim's ciphertext is public bytes — so:
  * copy it, serve it from your own host at `/eth-<your-own-12>/anything.jose.json`, ask the relay to
@@ -7337,10 +7338,23 @@ async function handleListKnownPods(args: ToolArgs): Promise<string> {
   //     can sanity-check that the relay is reading from the expected
   //     service-account pod.
   await awaitFederationHydrateWithBudget(50);
-  // De-dup on display by canonical host form (gate vs internal differ as
-  // map keys but are the same pod) so the directory reads cleanly even
-  // when an entry was added manually (gate URL) and auto-registered
-  // (internal URL).
+  // De-dup on display by `canonicalPodKey` — the gate and internal spellings of one pod
+  // differ as map keys but are the same pod — so the directory reads cleanly when an entry
+  // was added manually (gate URL) and auto-registered (internal URL). Live on 2026-08-29 that
+  // is four pairs out of 578 stored rows.
+  //
+  // ★★ IT KEEPS THE FIRST INSERTION, AND THE KEY IS WHAT MAKES THAT SAFE. This filter drops
+  // rows; while the key was path-only, a row on ANY origin sharing a local pod's path won the
+  // race by hydrating first and the victim's real row vanished from every caller's listing.
+  // The key now separates origins that are not this store, so a planted row can no longer be
+  // in the same bucket as the pod it names — both rows are listed and the planted one carries
+  // its own foreign URL, no derived identity and no affordance. Driven, both orderings, in
+  // §2 of tests/same-pod-means-same-pod.test.ts.
+  //
+  // ★ FIRST-INSERTION IS LEFT AS THE TIE-BREAK BECAUSE THE MEASUREMENT DOES NOT ASK FOR MORE:
+  // all four live pairs are informationally identical (same `owner`, no `did`, no `channels`
+  // on either side), so no ordering of them loses a field. A preference rule would be an
+  // unmeasured second change to a filter that deletes rows.
   const seen = new Set<string>();
   const pods = (await knownPodsWithSelf(args)).filter(p => {
     const key = canonicalPodKey(p.url);
@@ -7458,27 +7472,116 @@ async function handleListKnownPods(args: ToolArgs): Promise<string> {
 }
 
 // ── Agent mesh: auto-registration, agent cards, notify, inbox ───────
-//
-// Canonical key for de-duping pod URLs that differ only by host
-// (interego-css-gate.* public host vs interego-css.internal.* host) or
-// trailing slash. Used for directory de-dup + target resolution.
+
+/**
+ * THE RELAY'S NOTION OF "THE SAME POD" — read by every ownership gate here, by the directory
+ * de-dup, by `evictCanonicalDuplicates`, and by the notify fan-out's card lookup.
+ *
+ * One pod has two legitimate spellings: the internal host `solidFetch` reads and writes
+ * against, and the public gate host an identifier is handed out under. Those must compare
+ * EQUAL or an honest owner is refused their own row and their own inbox. Every other origin
+ * is a different thing and must compare unequal.
+ *
+ * ── ★★ IT USED TO BE THE PATHNAME ALONE, WITH THE ORIGIN NOT COMPARED AT ALL ────────────
+ *
+ * The body was `ensureTrailingSlashLocal(u.pathname).toLowerCase()`. So a row on ANY origin
+ * that merely spelled a local pod's path WAS that pod, to every reader of this key at once,
+ * and two of those readers act on the answer destructively:
+ *
+ *   1. ★★ `handleListKnownPods` DE-DUPS ON IT AND KEEPS THE FIRST INSERTION. Plant
+ *      `https://elsewhere.example/u-eth-VICTIM/` with `add_pod`, restart so that file
+ *      hydrates first, and the victim's real row was SWALLOWED — a third party listing the
+ *      directory saw the planted row, carrying the planter's `owner` and `label`, and no
+ *      sign the real row existed. The victim was not impersonated, they were HIDDEN.
+ *   2. ★ `evictCanonicalDuplicates` keys the same way and DELETES THE LOSER'S PERSISTED
+ *      FEDERATION FILE, so the collision destroyed a stored row rather than shadowing it.
+ *      That is the half a restart does not undo.
+ *
+ * Both are DRIVEN over the wire against a booted relay in tests/same-pod-means-same-pod.test.ts
+ * — §2 in both hydration orderings, §3 on the persisted files — because the receipt and the
+ * in-memory map were exactly what could not see this.
+ *
+ * ── WHY THE FIX IS NOT "COMPARE THE ORIGIN TOO" ─────────────────────────────────────────
+ *
+ * That would break the de-dup this key exists for. MEASURED FROM THE LIVE STORE rather than
+ * read off the config (2026-08-29: all 578 persisted federation files fetched directly from
+ * `https://gate.interego.xwisee.com/svc-relay-dcr/federation/` and parsed). Four origins are
+ * present — `http://css.railway.internal:3456` (571 rows), `https://gate.interego.xwisee.com`
+ * (5), `https://foxxi-bridge.interego.xwisee.com` (1), `https://10-0-0-5.nip.io` (1) — and
+ * there are exactly FOUR path-only collisions, every one of them the gate spelling paired
+ * with the internal spelling of the same `eth-` pod. Both members of every real collision are
+ * STORE_ORIGINS members; no live collision involves a foreign origin.
+ *
+ * So: this deployment's store is ONE bucket however it is spelled, every other origin is its
+ * own. Replayed over those same 578 urls, the old key and this one produce 574 buckets and
+ * the IDENTICAL partition — this changes nothing about the live directory, and changes
+ * everything about a planted row.
+ *
+ * ★ THE BRANCHES CARRY DISJOINT PREFIXES, so no input handled by one can forge a key
+ * belonging to another. A comparator whose branches can collide is this same defect one level
+ * down, and the `raw|` branch is why an opaque origin is not simply pasted in: every
+ * non-special scheme reports `origin === 'null'`, so `foo://a/x/` and `bar://b/x/` would
+ * otherwise share a bucket.
+ *
+ * ★ AND THE ORIGIN TEST IS WHOLE-ORIGIN `STORE_ORIGINS` MEMBERSHIP — `isStoreOriginUrl`'s
+ * entire body, asked here against the URL this function has already parsed rather than by
+ * re-parsing it, because the directory de-dup calls this once per row. Never a prefix; see
+ * the STORE_ORIGINS declaration for the round-26 leak that was.
+ *
+ * ── ★★ AND THE PATH IS NO LONGER LOWER-CASED, WHICH IS THE SAME DEFECT A SECOND TIME ─────
+ *
+ * The origin was one widening in this comparator; `.toLowerCase()` on the PATHNAME was
+ * another, with the same two consequences through the same door. A Solid container path is
+ * case-SENSITIVE, so `<store>/U-ETH-VICTIM/` is a different pod from `<store>/u-eth-victim/`
+ * — but they keyed the same, so a row planted at the case variant through `add_pod` could
+ * hide the victim's row in the listing exactly as a foreign-origin row could, and be treated
+ * as the same pod by every gate that compares this key. `podOwnsLocalPart` already refuses to
+ * lower-case, and says why, for precisely this reason; the comparator beside it should not
+ * have been softer than the predicate.
+ *
+ * ★ AND IT IS FREE, MEASURED ON THE SAME 578 LIVE ROWS: ZERO of them have a pathname that is
+ * not already lower-case, and the store's rows partition into 578 distinct origin+path keys
+ * whether the path is compared case-sensitively or not. Every pod id is lower-case by
+ * construction (`derive-userid.ts` builds `u-eth-` from an `addressLower` and `u-pk-`/`u-did-`
+ * from sha256 hex, and the `eth-` pods are lower-case hex), so nothing legitimate depended on
+ * the fold. The host halves still compare case-insensitively without help: `URL` normalises
+ * scheme and host, so `HTTP://CSS.Railway.Internal:3456/` still yields a member origin.
+ */
 function canonicalPodKey(url: string): string {
   try {
     const u = new URL(url);
-    return ensureTrailingSlashLocal(u.pathname).toLowerCase();
+    // An opaque origin first, so a pathological CSS_URL cannot put `null` in STORE_ORIGINS
+    // and thereby make every non-special-scheme url "this store".
+    if (u.origin === 'null' || u.origin === '') return `raw|${url}`;
+    const path = ensureTrailingSlashLocal(u.pathname);
+    return STORE_ORIGINS.has(u.origin) ? `store|${path}` : `origin|${u.origin}|${path}`;
   } catch {
-    return url.toLowerCase();
+    return `raw|${url}`;
   }
 }
 function ensureTrailingSlashLocal(s: string): string {
   return s.endsWith('/') ? s : `${s}/`;
 }
 
-// Evict any OTHER knownPods entries that are the same pod as `keepUrl`
-// (same canonical path, different host form — e.g. a gate-host entry
-// added manually vs the internal-host entry written by auto-register).
-// Also deletes their persisted federation files so the dup doesn't
-// re-hydrate on restart. Keeps the directory one-entry-per-pod.
+/**
+ * Evict any OTHER knownPods entries that are the SAME POD as `keepUrl` — this store's other
+ * host spelling, plus trailing-slash and case variation. Also deletes their persisted
+ * federation files so the dup doesn't re-hydrate on restart. Keeps the directory
+ * one-entry-per-pod.
+ *
+ * ★★ IT IS DESTRUCTIVE, WHICH IS WHY THE COMPARATOR ABOVE HAD TO CHANGE FIRST. While
+ * `canonicalPodKey` was the pathname alone, "the same pod" included every row on every other
+ * origin that merely spelled the same path, and this loop DELETED their stored file — the one
+ * effect in this family that a restart does not undo. Rows of exactly that shape are live:
+ * measured 2026-08-29, the federation store holds `https://10-0-0-5.nip.io/x/`, whose path is
+ * the single segment `/x/` like every pod's. §3 of tests/same-pod-means-same-pod.test.ts
+ * drives that shape on the PERSISTED FILES, both ways — the foreign row survives an
+ * authenticated call from a store pod with the same path, and a genuine gate-vs-internal
+ * duplicate of that pod is still evicted, so the surviving row is not survival-by-doing-nothing.
+ *
+ * ★ `keepUrl` is never caller-chosen: both call sites (`autoRegisterAgentCard`,
+ * `handleSetReachability`) pass a pod the relay proved, which is `${CSS_URL}${userId}/`.
+ */
 function evictCanonicalDuplicates(keepUrl: string): void {
   const key = canonicalPodKey(keepUrl);
   for (const [u] of [...knownPods.entries()]) {
@@ -7493,7 +7596,9 @@ function evictCanonicalDuplicates(keepUrl: string): void {
  * Map a pod URL ON THIS DEPLOYMENT'S STORE (the public gate host, or the legacy host) to the
  * relay's internal CSS host, which `solidFetch` reads and writes against — the gate enforces
  * per-user auth and rejects the relay's service writes, while the internal origin is the relay's
- * allow-all path. The path (the userId / `eth-` pod segment) is preserved exactly.
+ * allow-all path. The path (the userId / `eth-` pod segment) is preserved exactly. Anything that
+ * is NOT on one of this deployment's store origins is `undefined`: not our store, no internal
+ * spelling of it, no answer.
  *
  * ── ★★ IT USED TO REWRITE *ANY* HOST ONTO OUR STORE, AND THAT IS THREE BUGS IN ONE HELPER ────
  *
@@ -7509,56 +7614,94 @@ function evictCanonicalDuplicates(keepUrl: string): void {
  *      caller's own pod. Copy any victim's ciphertext (it is public bytes), serve it from your own
  *      host under a path beginning with your own pod segment, ask for it, and the relay decrypts it
  *      for you with its one process-wide key. Same class as the unauth decryption oracle closed in
- *      the round-26 audit, reappearing at a site that comparison never covered.
- *   2. A PREDICATE THAT COULD NOT SAY NO — ★ CLOSED, AT THE PREDICATE. `isCanonicalPodTarget`
+ *      the round-26 audit, reappearing at a site that comparison never covered. CLOSED at
+ *      `recipientKeyFor`, which screens the RAW target before anything folds it, and which must
+ *      stay that way: a check downstream of a laundering is decoration.
+ *   2. A PREDICATE THAT COULD NOT SAY NO — CLOSED, AT THE PREDICATE. `isCanonicalPodTarget`
  *      asked `toInternalPodUrl(target).startsWith(toInternalPodUrl(CSS_URL))`, and the right-hand
  *      side reduces to the store ROOT — so every path starts with it and the answer was always
  *      true. `notify_agent` reported `delivered: true` for exactly the unpolled dead-letter the
  *      function was added to distinguish. It now asks for a pod ROOT on a member ORIGIN and never
  *      consults this helper; see its own note.
- *   3. AN EXTERNAL DELIVERY TARGET PULLED INTO OUR STORE — ★ CLOSED FOR `notify_agent`, ABOVE THE
- *      WRITE, NOT HERE. `handleNotifyAgent` sends to `toInternalPodUrl(targetPod)`, so a target on
- *      somebody else's origin became a relay-credentialed write into our own store at a
- *      caller-chosen path — and, because `canonicalPodKey` is path-only, a fan-out to the channels
- *      of whichever local pod that path happened to name. That handler now REFUSES a target that is
- *      not a pod root on this store, before either. This helper is unchanged and still launders any
- *      host handed to it: its four remaining callers are `handleReadInbox`,
- *      `handleRebuildManifest`, `GET /agents/:localPart/outbox` and `POST /agents/:localPart/inbox`
- *      (the last two reaching it through a `knownPods` card, which `add_pod` will seed with any
- *      URL), and each still needs its own origin-aware gate — see the ★★★ note below for why that
- *      is a change of its own and not a rider here.
+ *   3. AN EXTERNAL DELIVERY TARGET PULLED INTO OUR STORE. `handleNotifyAgent` sends to
+ *      `toInternalPodUrl(targetPod)`, so a target on somebody else's origin became a
+ *      relay-credentialed write into our own store at a caller-chosen path. Closed twice over:
+ *      once at that handler, which refuses a target that is not a pod root on this store ABOVE
+ *      both the LDN write and the fan-out, and now here.
  *
- * ★★★ AND THE OBVIOUS FIX — "fold only our origins, pass anything else through" — WAS WRITTEN,
- * REVIEWED BY SIX HOSTILE READERS, AND REVERTED. It closes (1) and creates something worse, because
- * THIS CLAMP IS ALSO A CONTAINMENT, and nothing said so:
+ * ── ★★★ THE OBVIOUS FIX WAS "FOLD OUR ORIGINS, PASS ANYTHING ELSE THROUGH", AND IT WAS RIGHTLY
+ *        REVERTED. THIS IS NOT THAT FIX ────────────────────────────────────────────────────────
  *
- *   `canonicalPodKey` (below) discards the host too, and it is the sole comparator in
- *   `requireOwnPod` and the `read_inbox` gate. Those gates pass for
- *   `https://attacker.example/eth-<caller12>/` today — and that has been HARMLESS only because
- *   every consumer then ran the target through THIS function, which forced it back onto our store
- *   before the fetch. Let a foreign origin through here and the same gates hand `solidFetch` — the
- *   UNSCREENED pool; the address screen only rides on `guardedInvokeFetchLanded`'s dispatcher — an
- *   authenticated GET at a caller-chosen host with the body reflected to the caller (`read_inbox`),
- *   and a GET + PUT + DELETE at one (`rebuild_manifest`). `GET /agents/:localPart/outbox` is worse
- *   still: it is UNAUTHENTICATED and reaches here via a `knownPods` card, which `add_pod` will
- *   happily seed with any URL.
+ * That version was written, reviewed by six hostile readers, and reverted, because THE CLAMP WAS
+ * ALSO A CONTAINMENT: letting a foreign origin through here would hand `solidFetch` — the
+ * UNSCREENED pool; the address screen only rides on `guardedInvokeFetchLanded`'s dispatcher — an
+ * authenticated GET at a caller-chosen host with the body reflected to the caller (`read_inbox`),
+ * and a GET + PUT + DELETE at one (`rebuild_manifest`). The objection was to the PASS-THROUGH, and
+ * it is still correct.
  *
- * So the clamp stays until those gates are origin-aware. The decryption oracle is closed AT THE
- * GATE instead — `recipientKeyFor` screens the RAW target's origin before anything folds it, which
- * is the only place the check can live while this function still launders hosts. Fixing (2) and (3)
- * means fixing `canonicalPodKey`, the two fetch sites and `add_pod`'s pod-space check together, and
- * that is a change worth its own review rather than a rider on this one.
+ * ★★ SO THIS RETURNS `undefined`, WHICH IS NEITHER OF THE TWO THINGS THAT WERE WRONG. It does not
+ * fold a stranger's host onto our store (bug 3) and it does not hand a stranger's host to
+ * `solidFetch` (the reverted fix). A caller holding `undefined` has nothing to fetch. That is the
+ * whole distinction, and it is why the containment argument does not carry over: the containment
+ * existed to stop a foreign URL reaching a fetch, and no foreign URL leaves this function.
  *
- * ★ THE THING TO REMEMBER: the laundering WAS the bug and WAS the containment. A fix that removes
- * a suspicious mechanism without asking what has been leaning on it trades one defect for three,
- * and every one of the three is reachable from the internet.
+ * ★★ AND IT IS `string | undefined` RATHER THAN A FOURTH GATE IN FRONT OF A FIFTH CALLER, WHICH IS
+ * THE POINT. The previous shape of this note ENUMERATED four callers that "each still needs its
+ * own origin-aware gate" — an obligation written in a COMMENT, which is exactly the shape that
+ * produced this file's recurring defect of a gate in front of one of three readers.
+ *
+ * ★★ AND `tsc` IS NOT WHAT ENFORCES IT HERE, WHICH IS WORTH SAYING BECAUSE IT IS THE OBVIOUS
+ * ASSUMPTION AND IT IS FALSE. This package compiles with `strict: false` (deploy/mcp-relay/
+ * tsconfig.json), so `strictNullChecks` is OFF and `string | undefined` is assignable to `string`
+ * without a word. MEASURED with a control rather than assumed: inserting
+ * `const x: string = toInternalPodUrl('https://x.example/y/');` into this file left
+ * `tsc --noEmit -p tsconfig.json` at EXIT=0. An unguarded caller would therefore not fail to
+ * compile — it would interpolate the string "undefined" into a URL and fetch it.
+ *
+ * ★ SO THE OBLIGATION IS CARRIED BY A SOURCE CENSUS, in §0 of
+ * tests/the-writers-are-gated.test.ts: every call of this function in server.ts must bind its
+ * result and refuse `undefined` before the value is used. That check fails when a sixth caller
+ * lands without a guard, which is the property the comment could only ask for.
+ *
+ * ── THE CENSUS THAT SAYS THIS CHANGES NOTHING LIVE, DRIVEN RATHER THAN READ ──────────────────
+ *
+ * Five call sites, every one driven over the wire against this server booted as a child process
+ * against a fixture store that records every request by raw and decoded path (§1 of
+ * tests/the-writers-are-gated.test.ts, and the same measurement before the change):
+ *
+ *   · `handleReadInbox` — a foreign `pod_url` was ALREADY refused, by `canonicalPodKey`, which
+ *     compares this store's two spellings equal and every other origin separately. Driven: the
+ *     receipt is `read_inbox: forbidden` and the fixture store recorded ZERO requests.
+ *   · `handleRebuildManifest` — same, through `requireOwnPod`, which compares the same key.
+ *     Driven: `rebuild_manifest: forbidden`, ZERO requests.
+ *   · `GET /agents/:localPart/outbox` and `POST /agents/:localPart/inbox` — both reach here with
+ *     `cardForLocalPart(...).url`, and that card comes from `agentAddressOwners`, whose first
+ *     conjunct is `isStoreOriginUrl`. A row planted at `https://elsewhere.example/<victim>/`
+ *     through `add_pod` cannot be in it. Driven: with such a row planted, the outbox route reads
+ *     the VICTIM'S OWN pod on this store and the planted row is not consulted.
+ *   · `handleNotifyAgent` — refuses above the write, and `isCanonicalPodTarget` requires a member
+ *     origin.
+ *
+ * So no legitimate call loses an answer: both live store spellings are members, and the driven
+ * regression cases are the public gate spelling through `notify_agent` and through `read_inbox`,
+ * which both still fold and still work. What changes is that the property is now the function's,
+ * not five distant gates' — and the four `undefined` branches at the call sites are refusals, not
+ * fall-throughs, because a caller that cannot address the store must not proceed as if it could.
+ *
+ * ★ THE OPAQUE-ORIGIN GUARD IS FIRST, for the same reason `canonicalPodKey` carries one: every
+ * non-special scheme reports `origin === 'null'`, so a pathological `CSS_URL` could otherwise put
+ * `null` into `STORE_ORIGINS` and make every `foo://…` url "this store".
+ *
+ * ★ MEMBERSHIP, NEVER A PREFIX — `isStoreOriginUrl`'s entire body, asked against the URL already
+ * parsed here rather than by re-parsing it. See the `STORE_ORIGINS` declaration for the round-26
+ * leak a prefix test caused.
  */
-function toInternalPodUrl(url: string): string {
-  try {
-    return `${CSS_URL.replace(/\/$/, '')}${new URL(url).pathname}`;
-  } catch {
-    return url;
-  }
+function toInternalPodUrl(url: string): string | undefined {
+  let u: URL;
+  try { u = new URL(url); } catch { return undefined; }
+  if (u.origin === 'null' || u.origin === '') return undefined;
+  if (!STORE_ORIGINS.has(u.origin)) return undefined;
+  return `${CSS_URL.replace(/\/$/, '')}${u.pathname}`;
 }
 
 // Relay host used to mint WebFinger-style acct: handles.
@@ -7613,11 +7756,16 @@ const RELAY_AP_BASE = (PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\
  * a single-segment path with an exact-case last segment is the same test the old code ran. Only
  * rows that are not single-segment pods stop matching. No live address changes.
  *
- * ★ IT DOES NOT LOWER-CASE, AND THAT IS THE POINT. `canonicalPodKey` lower-cases its pathname,
- * so the obvious spelling - comparing it to `/${localPart.toLowerCase()}/` - would make matching
+ * ★ IT DOES NOT LOWER-CASE, AND THAT IS THE POINT. The obvious spelling - comparing
+ * `canonicalPodKey(e.url)` to `/${localPart.toLowerCase()}/` - would make matching
  * case-INSENSITIVE and hand a squatter the case variants: a row at `/U-ETH-VICTIM/` would match a
  * request for `u-eth-victim`, which the old code correctly refused. Widening the match to close a
  * squat would have re-opened it one spelling over.
+ *
+ * ★ THAT ARGUMENT IS NOW HISTORY ON ONE SIDE: `canonicalPodKey` folded case at the time and no
+ * longer does - the same change that made it origin-qualified removed the fold, for this reason
+ * and citing this function. The conclusion here is unchanged and this test is still the one that
+ * decides ownership; only the trap that motivated it is closed at both ends.
  */
 function podOwnsLocalPart(podUrl: string, localPart: string): boolean {
   try {
@@ -7789,8 +7937,12 @@ function agentAddressOwners(
  *
  * ★★ MEMBERSHIP OF THE OWNER SET, NEVER A `canonicalPodKey` COMPARISON, AND THAT DISTINCTION
  * IS NOT COSMETIC. The first draft of the mint asked "does the address I minted resolve to a row
- * with the same canonical key as this one" - and `canonicalPodKey` is PATH-ONLY, so a row at
- * `https://elsewhere.example/u-eth-VICTIM/` has the SAME key as the victim's row on this store.
+ * with the same canonical key as this one" - and `canonicalPodKey` was PATH-ONLY at the time, so a
+ * row at `https://elsewhere.example/u-eth-VICTIM/` had the SAME key as the victim's row on this
+ * store. (That comparator has since been narrowed to this store's origins, which would now make
+ * that draft answer correctly. This gate is deliberately NOT rewritten back onto it: a set the
+ * resolver itself reads cannot disagree with the resolver, whereas a key comparison agrees with it
+ * only for as long as the key's rule and the resolver's rule stay the same rule.)
  * MEASURED, on that draft: tests/follow-the-directory.test.ts §3 failed - a link WAS published on
  * the stranger's row, bound to the address §2 of the same suite shows resolves to the victim. So
  * the directory would have advertised, on a row labelled as somebody else, a link that reaches
@@ -7889,7 +8041,8 @@ function followedAgentAddressRow(to: string): KnownPodEntry | undefined {
  * ★★ AND IT IS NOT A `canonicalPodKey` COMPARISON, WHICH IS THE FORM THIS GATE WAS FIRST
  * WRITTEN IN AND THE FORM THAT FAILED. That draft minted the address, asked the resolver what it
  * resolved to, and accepted the row when the answer had the same `canonicalPodKey` - a
- * comparator that is PATH-ONLY, so `https://elsewhere.example/u-eth-VICTIM/` compared equal to
+ * comparator that WAS PATH-ONLY at the time (it is origin-qualified now, narrowed for exactly
+ * this reason), so `https://elsewhere.example/u-eth-VICTIM/` compared equal to
  * the victim's row on this store and a link was published on the stranger's row bound to the
  * victim's address. See `rowPublishesAgentAddress` for the measurement that caught it. Set
  * membership cannot make that mistake, because the set is built from the origin as well as the
@@ -8338,6 +8491,67 @@ function resolveTargetPodUrl(
 }
 
 /**
+ * Does the pod ROOT at `internalPodUrl` already exist on this store — asked of the store itself,
+ * before anything writes into it.
+ *
+ * ── ★★ WHY: `delivered: true` MEANT "I INVENTED A DESTINATION" ───────────────────────────────
+ *
+ * CSS auto-creates a container on first PUT, and the LDN write is a PUT to
+ * `<pod>/inbox/<slug>.jsonld`. So `notify_agent { to: "<store>/nosuchpod/" }` MANUFACTURED
+ * `<store>/nosuchpod/inbox/` on the relay's own credential and answered `delivered: true,
+ * canonicalInbox: true` — a pod that had never existed, named by the sender, created by us.
+ * DRIVEN before the fix, over the wire against this server booted as a child process: the
+ * fixture store recorded exactly one request, `PUT /nosuchpod/inbox/<slug>.jsonld`, and the
+ * receipt said delivered. The bare-id route does the same for `to: "u-eth-000000000000"`.
+ * The receipt already carried `recipientKnown: false` and a warning that no directory row
+ * covers the pod, but "I do not know who is there" and "there is nobody there, and there was
+ * no there" are different statements, and only the first was being made.
+ *
+ * ── WHAT IT COSTS, MEASURED ─────────────────────────────────────────────────────────────────
+ *
+ * One HEAD per `notify_agent` send, on the pod ROOT. Against the LIVE store through its public
+ * gate host (`curl -I`, this machine, nine runs): 0.308–0.378 s wall, median 0.337 s — that
+ * figure is a public-internet round trip including a fresh TLS handshake each time, and is an
+ * UPPER BOUND, not the production cost: the relay probes `css.railway.internal:3456` from
+ * inside the same cluster over a pooled keep-alive connection. Against the in-process fixture
+ * store the added work is one request, which is what §3 of tests/the-writers-are-gated.test.ts
+ * asserts by counting recorded requests rather than by timing anything.
+ *
+ * ── ★★ AND IT REFUSES ONLY A DEFINITE NO ────────────────────────────────────────────────────
+ *
+ * 404 and 410 are the only answers that mean "there is no pod here". Everything else — 2xx,
+ * 401, 403, 405, 5xx, a network error, a timeout — means THIS RELAY DOES NOT KNOW, and is
+ * reported as `'unknown'` and delivered exactly as before. That asymmetry is deliberate and it
+ * is what makes the change safe to ship without being able to drive every CSS configuration:
+ * the only way to produce a FALSE refusal is for the store to answer 404 for a container it
+ * holds, which is a contradiction, whereas a fail-closed rule would have turned any hiccup on
+ * this probe into an outage on delivery.
+ *
+ * ★ THE STORE'S ACTUAL BEHAVIOUR WAS MEASURED, NOT ASSUMED FROM THE FIXTURE — a fixture that
+ * stands in for a dependency cannot tell you what the dependency does. Unauthenticated, against
+ * the live deployment on 2026-08-29: `HEAD https://gate.interego.xwisee.com/eth-8f3b8e939600/`
+ * -> 200 with `Accept-Post`, `HEAD .../u-eth-053ad15f9633/` -> 200, and
+ * `HEAD .../definitely-not-a-pod-xyz9/` -> 404 with `Accept-Put` — the 404 literally advertising
+ * the create-on-PUT affordance this defect was riding. GET agrees with HEAD on all three.
+ *
+ * ★ IT IS ASKED OF THE INTERNAL SPELLING, which is the origin the write will actually go to, so
+ * the thing probed and the thing written are the same resource rather than two that usually
+ * agree.
+ */
+async function storePodRootPresence(internalPodUrl: string): Promise<
+  { exists: true } | { exists: false; status: number } | { exists: 'unknown'; because: string }
+> {
+  try {
+    const r = await solidFetch(internalPodUrl, { method: 'HEAD' });
+    if (r.status === 404 || r.status === 410) return { exists: false, status: r.status };
+    if (r.ok) return { exists: true };
+    return { exists: 'unknown', because: `the store answered ${r.status} ${r.statusText}` };
+  } catch (err) {
+    return { exists: 'unknown', because: `the probe failed: ${(err as Error).message}` };
+  }
+}
+
+/**
  * Whether a resolved target is the recipient's canonical pod inbox — the one `read_inbox`
  * polls — rather than a best-effort address nobody is known to read. Lets notify_agent
  * qualify `delivered: true` instead of reporting an unpolled dead-letter as success.
@@ -8468,8 +8682,8 @@ async function handleNotifyAgent(args: ToolArgs): Promise<string> {
    * resolver correctly refusing to resolve `https://elsewhere.example/u-eth-VICTIM/` to the
    * victim, the notification STILL landed in `<CSS>/u-eth-VICTIM/inbox/` — because
    * `toInternalPodUrl` below discards the host and pastes the PATH onto this store, and
-   * `canonicalPodKey` (the card lookup two lines down) is path-only as well, so the victim's
-   * discord/sms channels matched too. Two downstream sites re-derived from the path exactly
+   * `canonicalPodKey` (the card lookup two lines down) was path-only as well at the time, so the
+   * victim's discord/sms channels matched too. Two downstream sites re-derived from the path exactly
    * what the resolver had just declined to derive. A gate in front of one of three readers is
    * not a gate.
    *
@@ -8507,7 +8721,8 @@ async function handleNotifyAgent(args: ToolArgs): Promise<string> {
    * typed left out of them — naming a pod back to a sender who mis-addressed one is how a
    * truncation becomes a suggestion.
    */
-  if (resolution.via === 'store-path-not-a-pod' || !isCanonicalPodTarget(targetPod)) {
+  const internalPod = toInternalPodUrl(targetPod);
+  if (resolution.via === 'store-path-not-a-pod' || internalPod === undefined || !isCanonicalPodTarget(targetPod)) {
     const onOurStore = resolution.via === 'store-path-not-a-pod';
     return JSON.stringify({
       delivered: false,
@@ -8521,7 +8736,37 @@ async function handleNotifyAgent(args: ToolArgs): Promise<string> {
       bodyShape: notificationBodyReport(bodyVerdict),
     });
   }
-  const internalPod = toInternalPodUrl(targetPod);
+  /**
+   * ── ★★ A DELIVERY MUST NOT MANUFACTURE ITS OWN DESTINATION ────────────────────────────
+   *
+   * Asked HERE, above the LDN write AND above the fan-out, for the same reason the target gate
+   * ten lines up is: below this point the PUT fires and every external adapter fires, and a
+   * check after them would refuse a message the recipient has already been shown. See
+   * `storePodRootPresence` for the measurement, and for why only 404/410 refuse.
+   *
+   * ★ THE REFUSAL NAMES WHAT TO SEND, because "that pod does not exist" is only actionable
+   * next to the reason a sender usually arrives here: they typed a pod id or a pod URL instead
+   * of following an identity. `list_known_pods` carries every address that does exist.
+   *
+   * ★ AND IT IS NOT ASKED OF THE DIRECTORY. `inDirectory` is computed further down and would
+   * have been the cheaper test, but a federation row is not evidence a pod exists: `add_pod`,
+   * `discover_directory` and `resolve_webfinger` all create rows from caller-supplied or
+   * foreign-document URLs with no container required. The store is the only authority on what
+   * the store holds.
+   */
+  const presence = await storePodRootPresence(internalPod);
+  if (presence.exists === false) {
+    return JSON.stringify({
+      delivered: false,
+      to,
+      resolvedVia: resolution.via,
+      targetPod,
+      canonicalInbox: false,
+      podExists: false,
+      error: `"${to}" resolves to <${targetPod}>, and no such pod exists on this store — it answered ${presence.status} for that container. Nothing was written. This relay does not create a pod in order to deliver to it: a notification put there would sit in a container the named recipient does not hold and nobody polls. If the recipient has authenticated here, address them by their did:ethr, their did:web or their acct: handle from list_known_pods, which lists only pods this relay has records for.`,
+      bodyShape: notificationBodyReport(bodyVerdict),
+    });
+  }
   // Fan out to the recipient's declared channels: native LDN is always
   // attempted; any external channels (discord/telegram/email/sms/voice)
   // the recipient registered via set_reachability are delivered through
@@ -8579,8 +8824,12 @@ async function handleNotifyAgent(args: ToolArgs): Promise<string> {
    * The chain below re-finds the recipient by pod key and takes whichever duplicate happens to
    * carry a DID, discarding the row the resolver actually matched. For a followed address that
    * would be a second, independent answer to a question the resolver had already answered - and
-   * `cardMatches` keys on `canonicalPodKey`, which is PATH-ONLY, so it can contain a row on a
-   * foreign origin that merely shares the path. Carrying the matched row through is what makes
+   * `cardMatches` keys on `canonicalPodKey`, which was PATH-ONLY when this was written, so it
+   * could contain a row on a foreign origin that merely shared the path. That comparator is now
+   * origin-aware for everything that is not this store, so `cardMatches` no longer can — and this
+   * stays as written anyway, because "the row the resolver matched" and "a row that keys the same"
+   * are two answers to one question, and the reason to carry one through is not that the other
+   * happens to be wrong. Carrying the matched row through is what makes
    * `resolvedVia: 'followed-affordance'` and `recipientKnown: true` one fact rather than two
    * that usually agree.
    *
@@ -8658,6 +8907,13 @@ async function handleNotifyAgent(args: ToolArgs): Promise<string> {
     inDirectory,
     recipient: { pod: targetPod, ...(identityCard?.did ? { did: identityCard.did } : {}), ...(identityCard?.handle ? { handle: identityCard.handle } : {}), ...(identityCard?.label ? { label: identityCard.label } : {}), ...recipient },
     targetPod,
+    // ★ WHAT THE STORE SAID ABOUT THE POD BEFORE THE WRITE, never inferred from the write
+    // succeeding — the write succeeds either way, which is the whole defect. `true` means the
+    // container was already there; `'unknown'` means the probe could not decide (see
+    // `storePodRootPresence`) and the delivery went ahead rather than being refused on a
+    // question this relay could not answer. `false` never appears here: it returns above.
+    podExists: presence.exists,
+    ...(presence.exists === 'unknown' ? { podExistsNote: presence.because } : {}),
     inbox: inboxUrlFor(targetPod),
     notificationUrl: ldn?.detail,
     channels: results,
@@ -8939,7 +9195,19 @@ async function handleReadInbox(args: ToolArgs): Promise<string> {
   const podUrl = explicit ?? ownPod;
   if (!podUrl) return JSON.stringify({ error: 'read_inbox: no pod_url and could not derive your own pod' });
   const limit = typeof args.limit === 'number' ? args.limit : 50;
-  const items = await readAgentInbox(toInternalPodUrl(podUrl), solidFetch, limit);
+  // The gate above already required `explicit` to be the caller's own pod by `canonicalPodKey`,
+  // which separates every origin that is not this store's — so this asks the same question where
+  // the value is USED rather than only where it was decided. `undefined` here means the pod is
+  // not on this store and there is no internal spelling of it to read: refuse rather than fetch
+  // a URL built by interpolating the word "undefined".
+  const internal = toInternalPodUrl(podUrl);
+  if (internal === undefined) {
+    return JSON.stringify({
+      error: 'read_inbox: forbidden — that pod is not on the store this deployment hosts',
+      detail: 'This relay reads inboxes it hosts. Omit pod_url to read the inbox of the authenticated caller.',
+    });
+  }
+  const items = await readAgentInbox(internal, solidFetch, limit);
   return JSON.stringify({ inbox: inboxUrlFor(podUrl), count: items.length, items });
 }
 
@@ -8957,7 +9225,16 @@ async function handleRebuildManifest(args: ToolArgs): Promise<string> {
   // unconditionally, silently dropping descriptors it cannot GET, so a rebuild
   // fired at a foreign pod permanently deletes rows from its index.
   { const denied = await requireOwnPod(args, podUrl, 'rebuild_manifest'); if (denied) return denied; }
+  // Same question `requireOwnPod` just answered with `canonicalPodKey`, asked where the value is
+  // used. This one writes — `rebuildManifestFromPod` GETs, PUTs and DELETEs — so an unaddressable
+  // pod must stop here rather than reach a fetch.
   const internal = toInternalPodUrl(podUrl);
+  if (internal === undefined) {
+    return JSON.stringify({
+      ok: false, pod: podUrl,
+      error: 'rebuild_manifest: that pod is not on the store this deployment hosts, and this relay rebuilds only manifests it hosts',
+    });
+  }
   try {
     const r = await rebuildManifestFromPod(internal, { fetch: solidFetch, log: (m) => log(m) });
     manifestCache.delete(internal);
@@ -8991,6 +9268,46 @@ async function handleAddPod(args: ToolArgs): Promise<string> {
   // auth context anyway, and because the required-args gate wraps the handler it runs
   // AFTER that injection and so never saw an absent argument. `targetOnly` is what lets
   // "you named no pod" mean it. See handleRemovePod for what the defaulting cost there.
+  /**
+   * ── ★★ `add_pod` STILL ACCEPTS AN ARBITRARY URL FROM ANY AUTHENTICATED CALLER, AND THAT IS A
+   *        DECISION, NOT AN OVERSIGHT ────────────────────────────────────────────────────────
+   *
+   * `resolvePodSubject` validates neither origin nor path shape, and no container has to exist.
+   * DRIVEN against this server: `{ pod_url: "https://elsewhere.example/<victim>/" }`,
+   * `{ pod_url: "<store>/team/<victim>/" }` and `{ pod_url: "<store>/no-such-pod-at-all/" }` are
+   * all accepted and all persist a durable federation row.
+   *
+   * ★ NARROWING IT TO STORE ORIGINS WOULD BE A WORSE DEFECT THAN THE ONE IT CLOSES. Federating a
+   * pod this relay does not host is the FEATURE — `discover_directory` exists to learn about other
+   * people's pods, and the live directory holds genuinely foreign rows (measured 2026-08-29 over
+   * all 578 persisted federation files: `https://foxxi-bridge.interego.xwisee.com` and
+   * `https://10-0-0-5.nip.io`). A refusal here would break federation to close nothing.
+   *
+   * ★★ AND "WHAT A FOREIGN ROW IS ALLOWED TO DO" IS ANSWERED AT THE READERS, WHERE IT BELONGS —
+   * every one of them measured over the wire rather than read off the code:
+   *
+   *   · it cannot OWN an agent address: `agentAddressOwnerLocalPart`'s first conjunct is
+   *     `isStoreOriginUrl`, so `GET /agents/<victim>` and the WebFinger JRD answer from the
+   *     victim's real row on this store and never from the plant.
+   *   · it cannot HIDE a real row: `canonicalPodKey` buckets this store's two spellings together
+   *     and every other origin separately, so the `list_known_pods` de-dup and
+   *     `evictCanonicalDuplicates` can no longer put a plant and its victim in one bucket.
+   *   · it cannot be a DELIVERY TARGET: `isCanonicalPodTarget` requires a member origin, above
+   *     both the LDN write and the fan-out.
+   *   · it cannot be LAUNDERED onto this store: `toInternalPodUrl` returns `undefined` for it,
+   *     at the function, for all five of its callers at once.
+   *
+   * ★★ WHAT IS NOT CLOSED, AND WHY NOT HERE. A row on THIS STORE for a pod that has never existed
+   * still yields an ActivityPub actor, an outbox and a WebFinger JRD from this relay's own domain
+   * — DRIVEN: `{ pod_url: "<store>/no-such-pod-at-all/" }` then `GET /agents/no-such-pod-at-all`
+   * -> 200. Gating it HERE would be this area's own recurring defect: three writers reach
+   * `knownPods` with caller-influenced urls — this tool, `handleDiscoverDirectory` (fields off a
+   * FOREIGN directory document) and `handleResolveWebfinger` (a podUrl off a foreign JRD) — so a
+   * check in one of them is a gate in front of one of three writers. The reader that acts on it is
+   * `cardForLocalPart`, and it serves UNAUTHENTICATED routes, so the per-request existence probe
+   * `notify_agent` can afford is an amplifier there. It needs a cached probe at the reader and its
+   * own review. Recorded in tests/the-writers-are-gated.test.ts §4, not fixed.
+   */
   const sel = resolvePodSubject(args as Record<string, unknown>, { cssUrl: CSS_URL, tool: 'add_pod', targetOnly: true });
   if (sel.refusal) return JSON.stringify(sel.refusal);
   const url = sel.subject.podUrl;
@@ -13325,9 +13642,16 @@ app.get('/agents/:localPart/outbox', async (req, res) => {
   await awaitFederationHydrateWithBudget(50);
   const card = cardForLocalPart(req.params.localPart);
   if (!card) { res.status(404).json({ error: 'unknown agent' }); return; }
+  // `cardForLocalPart` returns a row from `agentAddressOwners`, whose first conjunct is
+  // `isStoreOriginUrl` — so a row planted on a foreign origin through `add_pod` is never this
+  // card. Asked again here because this is where the URL becomes a fetch, and answered as the
+  // same 404 an unknown localPart gets: a card whose pod this relay cannot address is not an
+  // agent it can speak for, and a distinct status would be an enumeration signal.
+  const cardPod = toInternalPodUrl(card.url);
+  if (cardPod === undefined) { res.status(404).json({ error: 'unknown agent' }); return; }
   let descriptors: Array<{ descriptorUrl?: string; graphIri?: string; validFrom?: string; modalStatus?: string }> = [];
   try {
-    const entries = await discover(toInternalPodUrl(card.url), { sort: 'newest-first', limit: 50 } as Parameters<typeof discover>[1], { fetch: solidFetch });
+    const entries = await discover(cardPod, { sort: 'newest-first', limit: 50 } as Parameters<typeof discover>[1], { fetch: solidFetch });
     descriptors = entries.map(e => ({ descriptorUrl: e.descriptorUrl, graphIri: (e as { graphIri?: string }).graphIri, validFrom: e.validFrom, modalStatus: (e as { modalStatus?: string }).modalStatus }));
   } catch { /* empty outbox on read failure */ }
   res.type('application/activity+json').json(apBuildOutbox(RELAY_AP_BASE, req.params.localPart, card, descriptors));
@@ -13436,7 +13760,15 @@ app.post('/agents/:localPart/inbox', async (req, res) => {
     log(`[activitypub] inbound activity for ${req.params.localPart} carried ${apBlindTo.length} field(s) `
       + `this relay could not use as sent: ${apBlindTo.join('; ')}`);
   }
-  const url = await deliverNotification(toInternalPodUrl(card.url), notif, idSlug, solidFetch, (mm) => log(mm));
+  // Same conjunct as the outbox route, at the site that WRITES. A 502 rather than a 404 because
+  // the signature gate and the agent lookup have already both passed: the failure is this relay's
+  // inability to address the recipient's pod, not the sender's request.
+  const cardPod = toInternalPodUrl(card.url);
+  if (cardPod === undefined) {
+    res.status(502).json({ accepted: false, error: 'undeliverable', detail: `this relay cannot address <${card.url}> on its own store, so nothing was written` });
+    return;
+  }
+  const url = await deliverNotification(cardPod, notif, idSlug, solidFetch, (mm) => log(mm));
   res.status(url ? 202 : 502).json({
     accepted: url !== null,
     stored: url,

@@ -15,7 +15,7 @@
  * ── AND THE FIRST ATTEMPT AT THIS REGRESSED, WHICH IS WHY §2 EXISTS ──────────
  *
  * `wip/dogfood-messaging-refuted` (0d6d90bc) bound `<base>/agents/` + `podLocalPart(url)` — the
- * LAST PATH SEGMENT — while `canonicalPodKey` is the whole pathname, so two distinct pods shared
+ * LAST PATH SEGMENT — while `canonicalPodKey` was then the whole pathname, so two distinct pods shared
  * one address; its three gates ran when a row was LISTED and delivery re-resolved through
  * another path. Driven then: the victim's own published address delivered to an attacker with
  * `resolvedVia: followed-affordance`, `recipientKnown: true` and no warning, where before the
@@ -70,12 +70,14 @@ function check(name: string, cond: boolean, detail = ''): void {
 // Three slices. The address helpers are contiguous (`relayAgentAddress` through
 // `directoryRowAffordances`); `podOwnsLocalPart` sits immediately above them with
 // `podLocalPart` between, and the two small helpers they compose — `canonicalPodKey` and
-// `ensureTrailingSlashLocal` — live ~140 lines further up beside the directory de-dup.
+// `ensureTrailingSlashLocal` — live ~140 lines further up beside the directory de-dup. The
+// key slice ends at `evictCanonicalDuplicates`'s own declaration rather than at the prose
+// above it: an anchor inside a comment is an anchor that a comment edit can silently move.
 const OWNS_FROM = 'function podOwnsLocalPart(';
 const ADDR_FROM = '/**\n * The relay-hosted address of the agent at a pod';
 const ADDR_TO = '// Process-local guard so we persist each agent card';
 const KEY_FROM = 'function canonicalPodKey(';
-const KEY_TO = '// Evict any OTHER knownPods entries';
+const KEY_TO = 'function evictCanonicalDuplicates(';
 const ownsFrom = SERVER.indexOf(OWNS_FROM);
 const addrFrom = SERVER.indexOf(ADDR_FROM);
 const addrTo = SERVER.indexOf(ADDR_TO, addrFrom + 1);
@@ -275,11 +277,29 @@ console.log('\n2. ★★ two rows sharing one local part');
 }
 
 /** `canonicalPodKey`'s question, restated for the assertions above. Deliberately a SECOND
- *  reading: if the sliced one ever stops agreeing with "the lower-cased pathname", the check
- *  above is the thing that notices. */
+ *  reading: if the sliced one ever stops agreeing with the rule written out here, the checks
+ *  above are what notices.
+ *
+ *  ★ THE RULE IS "THIS STORE IS ONE BUCKET, EVERY OTHER ORIGIN IS ITS OWN": the path for a url
+ *  on `CSS`/`PUB`, origin-qualified otherwise, and an opaque origin kept whole so a pathological
+ *  store url cannot put `null` in the store set and swallow every non-special scheme. It used to
+ *  be the pathname for everything, which is what let a foreign row be "the same pod" as a local
+ *  one; tests/same-pod-means-same-pod.test.ts drives that.
+ *
+ *  ★★ AND IT DOES NOT FOLD CASE, WHICH THIS FUNCTION USED TO GET WRONG. It carried
+ *  `pathname.toLowerCase()` after the shipped key had already dropped the fold — so as a second
+ *  reading it would have AGREED WITH a case-folding regression rather than caught it, which is
+ *  the one thing a second reading exists not to do. Solid container paths are case-sensitive:
+ *  `<store>/U-ETH-V/` is a different pod from `<store>/u-eth-v/`, and `podOwnsLocalPart` refuses
+ *  to fold for the same reason. Scheme and host still compare case-insensitively without help,
+ *  because `new URL` normalises those. */
 function canonicalKey(url: string): string {
-  const p = new URL(url).pathname.toLowerCase();
-  return p.endsWith('/') ? p : `${p}/`;
+  let u: URL;
+  try { u = new URL(url); } catch { return `raw|${url}`; }
+  if (u.origin === 'null' || u.origin === '') return `raw|${url}`;
+  const p = u.pathname.endsWith('/') ? u.pathname : `${u.pathname}/`;
+  const store = [new URL(CSS).origin, new URL(PUB).origin];
+  return store.includes(u.origin) ? `store|${p}` : `origin|${u.origin}|${p}`;
 }
 
 // ── §3 WHAT IS MINTED, AND FOR WHOM ──────────────────────────────────────────
@@ -430,6 +450,26 @@ console.log('\n4. driven: list_known_pods -> follow the link -> notify_agent');
       return;
     }
     if (q.method === 'DELETE') { stored.delete(key); s.status(205).end(); return; }
+    // -- CONTAINER EXISTENCE, WHICH THIS FIXTURE USED TO GET WRONG --------------------------
+    //
+    // `notify_agent` now HEADs the pod ROOT before it writes, because CSS auto-creates a
+    // container on first PUT and `delivered: true` was therefore reachable for a pod that had
+    // never existed. This fixture answered 404 for EVERY container, which is not what the store
+    // does: measured unauthenticated against the live deployment on 2026-08-29,
+    // `HEAD https://gate.interego.xwisee.com/eth-8f3b8e939600/` is 200 and
+    // `HEAD .../definitely-not-a-pod-xyz9/` is 404. Left as it was, every legitimate delivery in
+    // this suite would have read as refused for the wrong reason.
+    //
+    // MEMBERSHIP IS DELIBERATELY NOT MODELLED. An empty container carries the same information to
+    // every reader in this suite as the old 404 did -- `readAgentInbox`, `discover` and the
+    // manifest walk all end up with nothing either way -- so no assertion here changes meaning.
+    // A suite that wants a pod to be ABSENT says so; see tests/the-writers-are-gated.test.ts,
+    // which drives that case.
+    if (key.endsWith('/') && stored.get(key) === undefined) {
+      if (q.method === 'HEAD') { s.type('text/turtle').status(200).end(); return; }
+      s.type('text/turtle').status(200).send('@prefix ldp: <http://www.w3.org/ns/ldp#>. <> a ldp:Container, ldp:BasicContainer, ldp:Resource.');
+      return;
+    }
     const hit = stored.get(key);
     if (hit === undefined) { s.status(404).end(); return; }
     if (q.method === 'HEAD') { s.type('text/turtle').status(200).end(); return; }
@@ -584,17 +624,28 @@ console.log('\n4. driven: list_known_pods -> follow the link -> notify_agent');
       check('§4 …and nothing was written under the squat\'s own path',
         writesUnder('/elsewhere').length === 0, JSON.stringify([...stored.keys()]));
 
-      // ★ AND THE SQUAT ROW IS NOT EVEN LISTED — for a reason that is a SEPARATE, UNFIXED
-      // DEFECT and not this change's doing: `list_known_pods` de-dups on `canonicalPodKey`,
-      // which is PATH-ONLY, keeping the FIRST insertion. The victim's row was inserted first,
-      // so the squat is swallowed here — but insert the squat first and it is the VICTIM'S row
-      // that disappears from the directory. Asserted as observed, so this line fails loudly if
-      // that de-dup is ever changed, rather than quietly becoming a check of nothing.
+      // ★★ AND BOTH ROWS ARE LISTED, WHICH IS A CHANGE FROM WHAT THIS LINE USED TO ASSERT.
+      // It used to record — as an observed, separate, then-unfixed defect — that the squat was
+      // SWALLOWED by the `list_known_pods` de-dup, because `canonicalPodKey` was PATH-ONLY and
+      // the filter keeps the FIRST insertion: the victim's row happened to be inserted first
+      // here, and inserting the squat first made the VICTIM'S row disappear instead. That key
+      // now separates a foreign origin from this store, so the de-dup can no longer put the two
+      // in one bucket. The victim's row must be present and identified; the squat may be listed
+      // and must be plainly itself — its own foreign url, and no minted affordance.
+      // tests/same-pod-means-same-pod.test.ts §2 drives both hydration orderings.
       const listedAfterSquat = await callTool('list_known_pods', 'token-sender', {});
       const rowsAfterSquat = (listedAfterSquat['pods'] ?? []) as Array<Record<string, unknown>>;
-      check('§4 the squat row is hidden by the PATH-ONLY listing de-dup (a separate defect)',
-        !rowsAfterSquat.some(r => String(r['url']) === squatUrl),
+      const victimAfterSquat = rowsAfterSquat.find(r => String(r['url']) === `${cssUrl}${VICTIM}/`);
+      check('§4 ★★ the victim\'s own row is still listed with the squat present — not swallowed',
+        victimAfterSquat !== undefined
+        && Array.isArray(victimAfterSquat['affordances'])
+        && (victimAfterSquat['affordances'] as unknown[]).length === 1,
         JSON.stringify(rowsAfterSquat.map(r => r['url'])).slice(0, 300));
+      const squatAfterSquat = rowsAfterSquat.find(r => String(r['url']) === squatUrl);
+      check('§4 …and the squat, if listed, is plainly itself: foreign url, no affordance',
+        squatAfterSquat === undefined
+        || (!('affordances' in squatAfterSquat) && String(squatAfterSquat['url']) === squatUrl),
+        JSON.stringify(squatAfterSquat ?? '(not listed)').slice(0, 300));
 
       // ── (d) A LOCAL PART ONLY A FOREIGN ROW HOLDS IS NOT AN IDENTITY HERE ────
       //
@@ -614,7 +665,7 @@ console.log('\n4. driven: list_known_pods -> follow the link -> notify_agent');
       // only way to exercise the OWNER INDEX the shipped `list_known_pods` mints every row's
       // link through. §3b holds that path against these rows in isolation; this holds it in the
       // handler, where the index is actually built. The GHOST row is used rather than the squat
-      // above because its path is unique, so the path-only listing de-dup does not swallow it.
+      // above because its path is unique, so no reading of the listing de-dup can drop it.
       const listedWithGhost = await callTool('list_known_pods', 'token-sender', {});
       const rowsWithGhost = (listedWithGhost['pods'] ?? []) as Array<Record<string, unknown>>;
       const ghostRow = rowsWithGhost.find(r => String(r['url']) === `https://elsewhere.example/${GHOST}/`);

@@ -80,11 +80,13 @@ function check(name: string, cond: boolean, detail = ''): void {
 // ── §1. Load the SHIPPED declarations ────────────────────────────────────────
 //
 // Two slices. The resolver and its canonical-target predicate are contiguous; the
-// trailing-slash helper they compose lives ~230 lines above, beside the directory de-dup.
+// trailing-slash helper they compose lives ~230 lines above, beside the directory de-dup. That
+// slice ENDS at `evictCanonicalDuplicates`'s own declaration rather than at the prose above it:
+// an anchor inside a comment is an anchor that a comment edit can silently move, and one did.
 const SLICE_FROM = 'const POD_ID_SLUG';
 const SLICE_TO = 'let NOTIFICATION_GATE';
 const SLASH_FROM = 'function ensureTrailingSlashLocal(';
-const SLASH_TO = '// Evict any OTHER knownPods entries';
+const SLASH_TO = 'function evictCanonicalDuplicates(';
 // ★★ AND THE AGENT-ADDRESS HELPERS, SLICED THIRD, BECAUSE THE RESOLVER NOW CALLS ONE OF THEM.
 // `resolveTargetPodUrl`'s first branch asks `followedAgentAddressRow` whether `to` is an address
 // this relay published on a directory row. Stubbing that out here would make §1 a test of a
@@ -384,6 +386,26 @@ console.log('\n5. driven: the real relay, a real notify_agent, and the victim\'s
       return;
     }
     if (q.method === 'DELETE') { stored.delete(key); s.status(205).end(); return; }
+    // -- CONTAINER EXISTENCE, WHICH THIS FIXTURE USED TO GET WRONG --------------------------
+    //
+    // `notify_agent` now HEADs the pod ROOT before it writes, because CSS auto-creates a
+    // container on first PUT and `delivered: true` was therefore reachable for a pod that had
+    // never existed. This fixture answered 404 for EVERY container, which is not what the store
+    // does: measured unauthenticated against the live deployment on 2026-08-29,
+    // `HEAD https://gate.interego.xwisee.com/eth-8f3b8e939600/` is 200 and
+    // `HEAD .../definitely-not-a-pod-xyz9/` is 404. Left as it was, every legitimate delivery in
+    // this suite would have read as refused for the wrong reason.
+    //
+    // MEMBERSHIP IS DELIBERATELY NOT MODELLED. An empty container carries the same information to
+    // every reader in this suite as the old 404 did -- `readAgentInbox`, `discover` and the
+    // manifest walk all end up with nothing either way -- so no assertion here changes meaning.
+    // A suite that wants a pod to be ABSENT says so; see tests/the-writers-are-gated.test.ts,
+    // which drives that case.
+    if (key.endsWith('/') && stored.get(key) === undefined) {
+      if (q.method === 'HEAD') { s.type('text/turtle').status(200).end(); return; }
+      s.type('text/turtle').status(200).send('@prefix ldp: <http://www.w3.org/ns/ldp#>. <> a ldp:Container, ldp:BasicContainer, ldp:Resource.');
+      return;
+    }
     const hit = stored.get(key);
     if (hit === undefined) { s.status(404).end(); return; }
     if (q.method === 'HEAD') { s.type('text/turtle').status(200).end(); return; }
@@ -536,7 +558,8 @@ console.log('\n5. driven: the real relay, a real notify_agent, and the victim\'s
       // narrowed — it correctly refuses to resolve this URL to the victim, and §1 proves it —
       // this call STILL put the notification in `/u-eth-aaaa11112222/inbox/`, because
       // `toInternalPodUrl` discards the host and pastes the PATH onto this store, and the
-      // card lookup keys on `canonicalPodKey`, which is path-only too. Two downstream readers
+      // card lookup keys on `canonicalPodKey`, which was path-only too at that point (it is now
+      // narrowed to this store's origins — see its declaration). Two downstream readers
       // re-derived what the resolver had just declined to. Nothing in §1–§4 could see it.
       const foreign = await callTool('notify_agent', 'token-sender',
         { to: `https://elsewhere.example/${VICTIM}/`, summary: 'a probe from a foreign origin' });

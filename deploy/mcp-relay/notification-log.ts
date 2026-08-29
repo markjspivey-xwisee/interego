@@ -101,9 +101,22 @@ export const MAX_PODS_TRACKED = 512;
  * a caller authenticated under one host form would read an empty ring while their events
  * accumulated under the other, and the fix would present as "notifications stopped working".
  *
- * Deliberately identical in behaviour to `canonicalPodKey` in `server.ts`, which every
- * ownership gate in the relay already compares with. A store that keyed pods differently
- * from the gates that authorize them is a store whose scoping is decided by URL spelling.
+ * ★ IT AGREES WITH `canonicalPodKey` IN `server.ts` — the key every ownership gate in the relay
+ * compares with, and the key the read gate on this log's own reader uses — FOR EVERY URL EITHER
+ * OF THEM SEES HERE. A store that keyed pods differently from the gates that authorize them is a
+ * store whose scoping is decided by URL spelling.
+ *
+ * ★ WHERE THEY NOW DIFFER, AND WHY THAT IS NOT A DIVERGENCE IN PRACTICE. `canonicalPodKey` was
+ * narrowed so that only THIS DEPLOYMENT'S store origins collapse to one bucket and every other
+ * origin keys separately; it needs `STORE_ORIGINS`, which is relay config this module
+ * deliberately does not import (it is a store, not a gate). They now differ TWICE, not once:
+ * `canonicalPodKey` is origin-qualified AND no longer folds case, while this key is the
+ * lower-cased path alone. Both divergences are invisible here for the same reason — this module
+ * never sees a url the relay did not derive: the four
+ * producers of `record()` all pass a pod the relay itself derived, and the two readers pass a
+ * pod that `canonicalPodKey` has already had to match against `callerOwnPod`, which is always
+ * `${CSS_URL}${userId}/`. If a producer of a foreign-origin pod url is ever added, this key must
+ * take the origin too — two foreign pods sharing a path would otherwise share one ring.
  */
 export function podKey(podUrl: string): string {
   try {

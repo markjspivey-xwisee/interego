@@ -170,13 +170,16 @@ function withTrailingSlash(s: string): string {
  * Origin + path, lowercased, trailing slash normalised — the identity used to decide
  * whether two spellings name the SAME pod.
  *
- * ★ THE ORIGIN IS PART OF IT, unlike `canonicalPodKey` in `server.ts`, which compares the
- * path alone so that the css-gate public host and the css internal host de-dupe to one
- * federation entry. That is right for de-duping and wrong here: it would call
+ * ★ THE FULL ORIGIN IS PART OF IT, which is STRICTER than `canonicalPodKey` in `server.ts`.
+ * That key collapses the css-gate public host and the css internal host to one bucket — they
+ * are two spellings of one store, and de-duping the federation directory requires it — while
+ * keying every OTHER origin separately. (It used to compare the path alone, which called
  * `pod_name: "u-eth-alice"` and `pod_url: "https://elsewhere.example/u-eth-alice/"` an
- * AGREEMENT and then answer about elsewhere.example while the caller read the request as
- * being about their own relay's pod. Comparing the origin too makes that a disagreement,
- * which refuses. The cost of the stricter comparison is a false refusal when a caller
+ * AGREEMENT and would then have answered about elsewhere.example while the caller read the
+ * request as being about their own relay's pod; that is closed there too now.) This one keeps
+ * even the two store spellings apart, because a caller who names a pod twice in one call
+ * should be answered about the thing they actually typed rather than about a host-variant of
+ * it. The cost of the stricter comparison is a false refusal when a caller
  * passes a host-variant URL together with a matching `pod_name`; no caller in this repo
  * passes both to any of these tools (grepped: the only `pod_name` consumers of a read tool
  * are `applications/shared-workspace/src/membership.ts:1208,1449`, which pass `pod_name`

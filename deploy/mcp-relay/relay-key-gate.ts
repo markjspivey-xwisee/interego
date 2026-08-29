@@ -8,7 +8,9 @@
  *
  *     toInternalPodUrl(target).startsWith(toInternalPodUrl(own))
  *
- * and `toInternalPodUrl` DISCARDS the host — it pastes the path onto our own store. So the
+ * and `toInternalPodUrl` DISCARDED the host — it pasted the path onto our own store. (It now
+ * returns `undefined` for anything not on a STORE_ORIGINS member, so that laundering is closed at
+ * the function; this gate does not depend on that and stays.) So the
  * comparison reduced to a path-prefix test whose both sides the caller controls. A victim's
  * ciphertext is public bytes: copy it, serve it from your own host at
  * `/eth-<your-own-12hex>/anything.jose.json`, ask the relay to read it, and it decrypts somebody

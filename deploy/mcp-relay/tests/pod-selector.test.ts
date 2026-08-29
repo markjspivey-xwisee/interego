@@ -84,7 +84,9 @@ console.log('\npod selector — honoured, never silently dropped, always named')
     r.subject?.podUrl === theirsUrl, `got ${JSON.stringify(r)}`);
 }
 // ★ Same path on a foreign ORIGIN is a DISAGREEMENT, not an agreement. server.ts's
-// canonicalPodKey compares paths only (right for de-dup, wrong here).
+// canonicalPodKey collapses only this store's two host spellings (right for de-dup); this
+// comparator keeps even those apart, because a caller who names a pod twice should be
+// answered about the string they typed.
 {
   const r = resolvePodSubject(
     { pod_name: THEIRS, pod_url: `https://elsewhere.example/${THEIRS}/` },
