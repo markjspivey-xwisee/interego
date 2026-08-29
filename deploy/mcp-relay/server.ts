@@ -8763,7 +8763,7 @@ async function handleNotifyAgent(args: ToolArgs): Promise<string> {
       targetPod,
       canonicalInbox: false,
       podExists: false,
-      error: `"${to}" resolves to <${targetPod}>, and no such pod exists on this store — it answered ${presence.status} for that container. Nothing was written. This relay does not create a pod in order to deliver to it: a notification put there would sit in a container the named recipient does not hold and nobody polls. If the recipient has authenticated here, address them by their did:ethr, their did:web or their acct: handle from list_known_pods, which lists only pods this relay has records for.`,
+      error: `"${to}" resolves to "${targetPod}", and no such pod exists on this store — it answered ${presence.status} for that container. Nothing was written. This relay does not create a pod in order to deliver to it: a notification put there would sit in a container the named recipient does not hold and nobody polls. If the recipient has authenticated here, address them by their did:ethr, their did:web or their acct: handle from list_known_pods, which lists only pods this relay has records for.`,
       bodyShape: notificationBodyReport(bodyVerdict),
     });
   }
@@ -13765,7 +13765,7 @@ app.post('/agents/:localPart/inbox', async (req, res) => {
   // inability to address the recipient's pod, not the sender's request.
   const cardPod = toInternalPodUrl(card.url);
   if (cardPod === undefined) {
-    res.status(502).json({ accepted: false, error: 'undeliverable', detail: `this relay cannot address <${card.url}> on its own store, so nothing was written` });
+    res.status(502).json({ accepted: false, error: 'undeliverable', detail: `this relay cannot address "${card.url}" on its own store, so nothing was written` });
     return;
   }
   const url = await deliverNotification(cardPod, notif, idSlug, solidFetch, (mm) => log(mm));
