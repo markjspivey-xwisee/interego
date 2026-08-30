@@ -873,6 +873,25 @@ iep:affordance a owl:ObjectProperty ;
     rdfs:comment "Declares an affordance (capability) that this resource supports." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
 
+# --- Affordance advertisement, published ---------------------------------------------
+# Both were held in TypeScript and consumed at request time while the published manifest said
+# nothing about either, so the document a caller can fetch described a set of affordances
+# without saying which apply where, or which are actable only over HTTP.
+
+iep:appliesToCollection a owl:DatatypeProperty ;
+    rdfs:label "applies to collection" ;
+    rdfs:comment "A resource collection this affordance is advertised on - the collection name a bridge is rendering ('courses', 'policies', 'profiles'), or the sentinel 'entry' for the entry point. Repeatable, and its ABSENCE means unscoped: an affordance declaring none is advertised everywhere. Published because the manifest lists every affordance a vertical has while affordancesFor() filters them per resource at request time, so a reader of the document alone could not tell that some of them will never appear on the resource it is looking at. 47 declarations carrying 56 values across five distinct collections in this fleet ('profiles' 33, 'courses' 17, 'integrations' 3, 'policies' 2, 'groups' 1)." ;
+    rdfs:domain iep:Affordance ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:externallyRouted a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "externally routed" ;
+    rdfs:comment "True when the affordance is DECLARED for discovery but the bridge registers no HTTP route and requires no handler for it - the capability is served by a pre-existing hand-coded route at its target, typically one with bespoke signed-delegation auth. It matters to a caller rather than to the deployment: such an affordance is actable over HTTP at its hydra:target, but the named MCP tools/call shim is UNAVAILABLE for it because there is no handler behind the name. An MCP client that reads the manifest and plans a tools/call would otherwise discover that only by failing." ;
+    rdfs:domain iep:Affordance ;
+    rdfs:range xsd:boolean ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
 # --- MCP tool-annotation hints, published --------------------------------------------
 # Declared because 143 affordances x 5 hints were held in TypeScript and reached the MCP
 # tool schema, while the Turtle and JSON-LD an agent can actually dereference carried

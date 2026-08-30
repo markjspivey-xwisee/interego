@@ -273,9 +273,22 @@ async function main(): Promise<void> {
 
   // ── §5 Source checks for the two things a unit test cannot execute ─────────
   {
-    const server = readFileSync(join(here, '..', 'server.ts'), 'utf8');
-    const gate = server.slice(server.indexOf('async function runConformanceGate'));
-    const body = gate.slice(0, gate.indexOf('\n// ── Scope gate'));
+    // ★★ THE GATE MOVED OUT OF server.ts — 555 lines to conformance-gate.ts, a region chosen by
+    // measuring inbound coupling across every banner section rather than by size. These two
+    // assertions stay source-text for the reason given above (they are about ORDERING inside a
+    // function a unit test cannot execute), but they now read the file that holds it.
+    //
+    // ★ THE END ANCHOR IS THE FACTORY'S RETURN LINE. The old one was a banner comment that does
+    // not exist in the new module, and an indexOf that finds nothing returns -1 — which makes a
+    // slice silently become almost-the-whole-file rather than fail. That shape has cost this repo
+    // real time twice, so both ends are asserted below before anything is sliced.
+    const gateSrc = readFileSync(join(here, '..', 'conformance-gate.ts'), 'utf8');
+    const at = gateSrc.indexOf('async function runConformanceGate');
+    ok(at > -1, '§5 runConformanceGate is findable in conformance-gate.ts',
+      'the extraction moved or renamed it — re-anchor rather than deleting these checks');
+    const end = gateSrc.indexOf('  return { fetchContainerShapes', at);
+    ok(end > at, '§5 and the slice has a real end anchor, so it is not the rest of the file');
+    const body = gateSrc.slice(at, end);
 
     // ★★ ORDERING, AND IT IS THE HAZARD THIS UNIT NEARLY SHIPPED. An UNPARSEABLE DATA GRAPH
     // returns conforms:false with shapesDeclared:0, because the engine gives up before
@@ -469,7 +482,10 @@ async function main(): Promise<void> {
       .join(' ')
       .replace(/\s+/g, ' ');
 
-    for (const src of ['../shapes-declared.ts', '../server.ts']) {
+    // ★ conformance-gate.ts, not server.ts: the prose carrying these figures moved with the 555
+    // lines it describes. The check failed with `comment says []` — and a file that no longer
+    // states the number cannot state it wrongly, which is a pass this test must not give.
+    for (const src of ['../shapes-declared.ts', '../conformance-gate.ts']) {
       const quoted = [...prose(src).matchAll(/(\d+) of (?:the )?33\b/g)].map(m => Number(m[1]));
       ok(quoted.length > 0 && quoted.every(q => q === zero.length),
         `§9 every "N of 33" figure in ${src.replace('../', '')} equals the engine's own count`,

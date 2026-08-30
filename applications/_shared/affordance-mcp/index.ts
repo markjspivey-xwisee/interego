@@ -629,6 +629,35 @@ export const AFFORDANCE_TURTLE_PREFIXES = `@prefix iep:    <https://markjspivey-
 # manifest is served to strangers.
 @prefix dct:   <http://purl.org/dc/terms/> .`;
 
+/**
+ * Where an affordance is advertised, and whether the MCP shim can call it.
+ *
+ * ★★ BOTH WERE CONSUMED AT REQUEST TIME AND PUBLISHED NOWHERE. `affordancesFor()` filters by
+ * `appliesTo` per resource, so the manifest lists every affordance a vertical has while a reader
+ * of that document alone cannot tell which will never appear on the resource in front of it. And
+ * `externallyRouted` decides whether a handler exists at all: such an affordance IS actable over
+ * HTTP at its hydra:target, but the named MCP tools/call shim is unavailable for it. An MCP client
+ * that reads the manifest and plans a call would otherwise learn that only by failing.
+ *
+ * ★ ABSENCE STATES NOTHING, as everywhere here. No collection means UNSCOPED — advertised
+ * everywhere — which is why the property is emitted only when the affordance actually narrows
+ * itself, rather than emitting a wildcard that a reader would have to know to ignore.
+ *
+ * ★ THE `modalStatus` HALF OF AffordanceScope IS DECLARED IN TYPESCRIPT AND USED BY NOTHING — 47
+ * uses across the fleet, every one of them `collections` only — so nothing is emitted for it.
+ * Publishing an empty dimension would assert a distinction no affordance draws.
+ */
+function advertisementBlock(affordance: Affordance): string {
+  const lines: string[] = [];
+  for (const c of affordance.appliesTo?.collections ?? []) {
+    lines.push(`    iep:appliesToCollection "${escapeLit(c)}"`);
+  }
+  if (typeof affordance.externallyRouted === 'boolean') {
+    lines.push(`    iep:externallyRouted ${affordance.externallyRouted ? 'true' : 'false'}`);
+  }
+  return lines.length > 0 ? `${lines.join(` ;${NEWLINE}`)} ;${NEWLINE}` : '';
+}
+
 export function affordanceToTurtle(affordance: Affordance, deploymentUrl: string): string {
   const target = affordance.targetTemplate.replace('{base}', deploymentUrl);
   // The action's canonical identity is a dereferenceable URL now. Emit the URL form as the
@@ -667,7 +696,7 @@ ${affordance.returns ? '' : returnsBlock(affordance)}
 ${inputProps}`
       : ''}
     ] ;
-${annotationsBlock(affordance)}${readsBlock(affordance)}    iep:encrypted false .`;
+${annotationsBlock(affordance)}${advertisementBlock(affordance)}${readsBlock(affordance)}    iep:encrypted false .`;
 }
 
 /** Multi-affordance turtle document with prefixes and a common manifest IRI. */

@@ -134,6 +134,7 @@ COPY deploy/mcp-relay/dpop.ts ./
 COPY deploy/mcp-relay/cors-allowlist.ts ./
 COPY deploy/mcp-relay/bounded-map.ts ./
 COPY deploy/mcp-relay/federation-store.ts ./
+COPY deploy/mcp-relay/conformance-gate.ts ./
 COPY deploy/mcp-relay/url-rewrite.ts ./
 COPY deploy/mcp-relay/relay-key-gate.ts ./
 COPY deploy/mcp-relay/egress.ts ./

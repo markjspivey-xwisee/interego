@@ -49,6 +49,31 @@ export default defineConfig({
     // What it caught: AXIS A blocked the single worker for 66.8s, vitest's 60s birpc deadline
     // killed it, and `Test Files 2 passed (185)` was the entire report of a run that never
     // executed 183 files. See tools/vitest-run-integrity.mjs.
+    /**
+     * ★★ A CHOSEN BUDGET, REPLACING AN ACCIDENTAL ONE. There was no `testTimeout` here, so all
+     * 331 modules inherited vitest's 5,000 ms default — a number nobody picked for a suite whose
+     * tests spawn child processes, read the whole tracked tree, and make real HTTP round trips.
+     *
+     * ★ IT COST THREE FAILURES IN ONE SESSION, none of them a defect in the code under test:
+     *   · tests/line-endings-are-normalised reads ~2,700 files: 2.6 s alone, 5,862 ms under full
+     *     suite load. It failed by 862 ms on a perfectly clean tree.
+     *   · tests/railway-running-build asserts on `readRunningBuild`, whose OWN deadline is
+     *     15,000 ms — THREE TIMES its test budget. vitest killed round trips the tool considered
+     *     healthy; 24/24 in isolation, three failures in the suite with an empty request log.
+     *   · tests/bounded-manifest has bodies at 15.5 s and 9 s.
+     * A test cannot have a shorter deadline than the operation it asserts on, or it stops
+     * measuring the operation and starts measuring the machine.
+     *
+     * ★ 20 s IS NOT 'RELAXING A DEADLINE', which this repo refuses elsewhere and should. Nothing
+     * deliberate is being widened: 5,000 ms was vitest's default, not a decision. The 21 files
+     * that state their OWN budget still do — an explicit `}, 30_000)` beside a test that spawns a
+     * process is a claim about that test, and it overrides this. This only stops a body nobody
+     * ever budgeted from failing because another suite was busy.
+     *
+     * ★ IT STILL FAILS A HANG. A test that never settles takes 20 s to say so instead of 5. That
+     * is the whole cost, and it buys not training people to re-run instead of read.
+     */
+    testTimeout: 20_000,
     reporters: ['default', './tools/vitest-run-integrity.mjs'],
     // ★ THE REASON THESE ARE PINNED IS NOT IN THIS FILE, AND IT USED TO BE UNFINDABLE.
     // This comment said "the same shared Azure CSS pod" for months after Azure was
