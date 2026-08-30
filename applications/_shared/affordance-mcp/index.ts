@@ -469,6 +469,166 @@ function readsBlock(affordance: Affordance): string {
   return `    iep:reads\n${blocks} ;\n`;
 }
 
+const NEWLINE = String.fromCharCode(10);
+
+/**
+ * The value constraints an input declares, as published SHACL + RDFS.
+ *
+ * ★★ THE SERIALIZER USED TO STOP AT label + required + comment. Every input already carried a
+ * JSON-Schema `type`, and 19 carried an `enum`, 26 an `itemType`, 6 a `minItems` and 5 numeric
+ * bounds — 613 inputs' worth of machine-readable shape that reached the MCP tool schema and the
+ * JSON-LD, and was DROPPED on the way to Turtle. An agent dereferencing the action authority got
+ * prose where a type belonged, so "which values does this accept" was answerable only by reading
+ * an English sentence.
+ *
+ * ★ IT INVENTS NO VOCABULARY. `rdfs:range` says what a property ranges over, which is exactly the
+ * datatype question; SHACL says the rest, and this repository already publishes SHACL shapes
+ * (iep:VisibilityShape, iep:EvidenceSourceShape) and runs a SHACL engine, so `sh:` is a vocabulary
+ * this fleet already speaks rather than a new one to declare and gate.
+ */
+function valueConstraints(spec: {
+  readonly type?: string;
+  readonly itemType?: string;
+  readonly enum?: readonly string[];
+  readonly minimum?: number;
+  readonly maximum?: number;
+  readonly minItems?: number;
+}, indent: string): string {
+  const xsd = (t: string): string => {
+    if (t === 'string') return 'xsd:string';
+    if (t === 'number') return 'xsd:decimal';
+    if (t === 'integer') return 'xsd:integer';
+    if (t === 'boolean') return 'xsd:boolean';
+    return '';
+  };
+  const lines: string[] = [];
+  // ★ An array's ITEM type is the useful one; `xsd:` has no list datatype, so an array says what
+  // its members are rather than mis-stating itself as a scalar.
+  const scalar = spec.type === 'array' ? xsd(String(spec.itemType ?? '')) : xsd(String(spec.type ?? ''));
+  if (scalar) lines.push(`${indent}sh:datatype ${scalar}`);
+  if (spec.enum && spec.enum.length > 0) {
+    lines.push(`${indent}sh:in ( ${spec.enum.map((v) => `"${escapeLit(String(v))}"`).join(' ')} )`);
+  }
+  if (typeof spec.minimum === 'number') lines.push(`${indent}sh:minInclusive ${spec.minimum}`);
+  if (typeof spec.maximum === 'number') lines.push(`${indent}sh:maxInclusive ${spec.maximum}`);
+  if (typeof spec.minItems === 'number') lines.push(`${indent}sh:minCount ${spec.minItems}`);
+  return lines.length > 0 ? ` ;${NEWLINE}${lines.join(` ;${NEWLINE}`)}` : '';
+}
+
+/**
+ * The RETURN payload, as a hydra:Class mirroring how hydra:expects already describes the input.
+ *
+ * ★★ 448 OUTPUT PROPERTIES — 33.7 KB of declared result shape across the fleet — reached the MCP
+ * outputSchema and never the wire. A caller could learn exactly what to SEND and nothing about what
+ * it would GET, which is half a contract. `hydra:returns` is where a Hydra reader already looks.
+ *
+ * ★ The IRI form of `hydra:returns` is preserved for an affordance that sets `returns` explicitly:
+ * that field is declared in the type and used by nothing today, so this must not quietly take its
+ * place if it is ever used.
+ */
+function returnsBlock(affordance: Affordance): string {
+  const out = affordance.outputs;
+  if (!out) return '';
+  const props = Object.entries(out.properties ?? {});
+  const required = new Set(out.required ?? []);
+  const rows = props.map(([name, spec]) => {
+    const comment = typeof spec.description === 'string' && spec.description.length > 0
+      ? ` ;${NEWLINE}            rdfs:comment "${escapeLit(spec.description)}"`
+      : '';
+    return `        [
+            a hydra:SupportedProperty ;
+            hydra:property [ a rdf:Property ; rdfs:label "${escapeLit(name)}" ] ;
+            hydra:required ${required.has(name) ? 'true' : 'false'}${comment}${valueConstraints(spec, '            ')}
+        ]`;
+  }).join(` ,${NEWLINE}`);
+  const label = `${escapeLit(affordance.toolName)}-output`;
+  const desc = typeof out.description === 'string' && out.description.length > 0
+    ? ` ;${NEWLINE}        rdfs:comment "${escapeLit(out.description)}"`
+    : '';
+  const supported = rows
+    ? ` ;${NEWLINE}        hydra:supportedProperty${NEWLINE}${rows}`
+    : '';
+  return `    hydra:returns [
+        a hydra:Class ;
+        rdfs:label "${label}"${desc}${supported}
+    ] ;
+`;
+}
+
+/**
+ * The MCP annotation hints, published.
+ *
+ * ★★ 143 AFFORDANCES x 5 HINTS REACHED THE MCP TOOL SCHEMA AND NOTHING ELSE. An agent that talks
+ * MCP got them; an agent that dereferenced the action authority and read Turtle got none, so the
+ * two surfaces described the same operation with different amounts of truth.
+ *
+ * ★ THE HTTP METHOD CANNOT CARRY THIS, which is why it needs saying. 142 of the 143 are POST, so
+ * `review-record` — which assembles and returns a record and writes nothing — is indistinguishable
+ * on method alone from one that mutates. Whether a step may be retried, reordered or dropped is
+ * exactly what a planning agent needs and exactly what POST refuses to tell it.
+ *
+ * ★ FOUR NEW iep: TERMS, DECLARED RATHER THAN IMPROVISED, because no standard vocabulary carries
+ * operation safety: Hydra Core has no safe/idempotent property, and the W3C HTTP vocabulary
+ * describes messages, not operation semantics. They are in docs/ns/iep.ttl with domain
+ * iep:Affordance and range xsd:boolean, projected into iep.html, and the term count moved with
+ * them — all three gated.
+ *
+ * ★ THE SHORT CARD NAME GOES TO rdfs:label, NOT A NEW TERM. `annotations.title` is a 1-5 word name
+ * distinct from the full `hydra:title` already emitted, and the affordance subject carried no
+ * rdfs:label, so the standard term was free and fits.
+ *
+ * ★ ABSENCE STATES NOTHING, as everywhere in this vocabulary: an affordance declaring no hint has
+ * not declared itself safe. MCP clients that receive no annotations default to the worst case
+ * (write + destructive + open-world), so silence is already read pessimistically by the caller.
+ */
+function annotationsBlock(affordance: Affordance): string {
+  const a = affordance.annotations;
+  if (!a) return '';
+  const lines: string[] = [];
+  if (typeof a.title === 'string' && a.title.length > 0) {
+    lines.push(`    rdfs:label "${escapeLit(a.title)}"`);
+  }
+  const hint = (name: string, v: boolean | undefined): void => {
+    if (typeof v === 'boolean') lines.push(`    iep:${name} ${v ? 'true' : 'false'}`);
+  };
+  hint('readOnlyHint', a.readOnlyHint);
+  hint('destructiveHint', a.destructiveHint);
+  hint('idempotentHint', a.idempotentHint);
+  hint('openWorldHint', a.openWorldHint);
+  return lines.length > 0 ? `${lines.join(` ;${NEWLINE}`)} ;${NEWLINE}` : '';
+}
+
+/**
+ * Every prefix `affordanceToTurtle` can emit, in one place.
+ *
+ * ★★ EXPORTED BECAUSE A SECOND COPY DRIFTED THE MOMENT THIS GREW. `affordanceToTurtle` emits a
+ * BODY, not a document, so a caller serializing one affordance on its own has to supply prefixes —
+ * and tests/affordance-declares-its-read-side.test.ts kept its own hand-written list. Adding
+ * `sh:` and `xsd:` to the serializer made everything it produced UNPARSEABLE against that list,
+ * and the failure read as "Data graph is not parseable as Turtle/TriG" rather than as "your
+ * prefix list is stale", which is a long way from the cause.
+ *
+ * A prefix the serializer emits and the document does not declare is not a style problem: this
+ * manifest is served to strangers, and an undeclared prefix makes the whole document unreadable.
+ * One list, exported, so a caller cannot hold a different one.
+ */
+export const AFFORDANCE_TURTLE_PREFIXES = `@prefix iep:    <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix ieh:   <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+@prefix hydra: <http://www.w3.org/ns/hydra/core#> .
+@prefix dcat:  <http://www.w3.org/ns/dcat#> .
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+# SHACL and XSD, for the value constraints every input already declared and this manifest used to
+# drop. Neither is new to this fleet: SHACL shapes are published under docs/ns and a SHACL engine
+# runs against them; a document emitting a prefix it does not declare is unparseable, and this one
+# is served to strangers.
+@prefix sh:    <http://www.w3.org/ns/shacl#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+# Dublin Core, for the DCAT-native reading of an evidence source's description. Added with the
+# read-side terms: a document that emits dct: without declaring it is unparseable, and this
+# manifest is served to strangers.
+@prefix dct:   <http://purl.org/dc/terms/> .`;
+
 export function affordanceToTurtle(affordance: Affordance, deploymentUrl: string): string {
   const target = affordance.targetTemplate.replace('{base}', deploymentUrl);
   // The action's canonical identity is a dereferenceable URL now. Emit the URL form as the
@@ -485,7 +645,7 @@ export function affordanceToTurtle(affordance: Affordance, deploymentUrl: string
             a hydra:SupportedProperty ;
             hydra:property [ a rdf:Property ; rdfs:label "${escapeLit(input.name)}" ] ;
             hydra:required ${input.required ? 'true' : 'false'} ;
-            rdfs:comment "${escapeLit(input.description)}"
+            rdfs:comment "${escapeLit(input.description)}"${valueConstraints(input, '            ')}
         ]`;
   }).join(' ,\n');
 
@@ -498,6 +658,7 @@ export function affordanceToTurtle(affordance: Affordance, deploymentUrl: string
     dcat:accessURL <${target}> ;
     ${affordance.mediaType ? `dcat:mediaType "${affordance.mediaType}" ;` : ''}
     ${affordance.returns ? `hydra:returns <${affordance.returns}> ;` : ''}
+${affordance.returns ? '' : returnsBlock(affordance)}
     hydra:expects [
         a hydra:Class ;
         rdfs:label "${escapeLit(affordance.toolName)}-input"${inputProps.trim()
@@ -506,7 +667,7 @@ export function affordanceToTurtle(affordance: Affordance, deploymentUrl: string
 ${inputProps}`
       : ''}
     ] ;
-${readsBlock(affordance)}    iep:encrypted false .`;
+${annotationsBlock(affordance)}${readsBlock(affordance)}    iep:encrypted false .`;
 }
 
 /** Multi-affordance turtle document with prefixes and a common manifest IRI. */
@@ -516,16 +677,7 @@ export function affordancesManifestTurtle(
   deploymentUrl: string,
   options?: { verticalLabel?: string; rdfsComment?: string },
 ): string {
-  const prefixes = `@prefix iep:    <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
-@prefix ieh:   <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
-@prefix hydra: <http://www.w3.org/ns/hydra/core#> .
-@prefix dcat:  <http://www.w3.org/ns/dcat#> .
-@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
-@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
-# Dublin Core, for the DCAT-native reading of an evidence source's description. Added with the
-# read-side terms: a document that emits dct: without declaring it is unparseable, and this
-# manifest is served to strangers.
-@prefix dct:   <http://purl.org/dc/terms/> .`;
+  const prefixes = AFFORDANCE_TURTLE_PREFIXES;
 
   const manifestBlock = `<${manifestIri}> a hydra:Collection ;
     rdfs:label "${escapeLit(options?.verticalLabel ?? 'Vertical capability manifest')}" ;

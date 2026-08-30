@@ -321,6 +321,18 @@ describe('reading a build over the wire', () => {
       const s = script[raw] ?? { status: 404, body: '{}' };
       res.writeHead(s.status, { 'content-type': s.type ?? 'application/json' });
       res.end(s.body);
+  /**
+   * ★★ AN EXPLICIT BUDGET, BECAUSE THE DEFAULT IS SHORTER THAN THE CODE UNDER TEST IS ALLOWED
+   * TO TAKE. `readRunningBuild` gives each attempt `timeoutMs ?? 15_000`, and vitest.config.ts
+   * sets no `testTimeout`, so every case here inherited vitest's 5,000 ms default. On a loaded
+   * machine that kills a round trip the tool considers perfectly healthy — observed in a full
+   * `npx vitest run`, where three cases failed with an empty request log and `ok: false` while
+   * the same file passed 24/24 in isolation.
+   *
+   * ★ A TEST CANNOT HAVE A SHORTER DEADLINE THAN THE OPERATION IT ASSERTS ON, or it stops
+   * measuring the operation and starts measuring the machine. Nothing here is weakened: the
+   * server, the request and every assertion on the RAW recorded path are unchanged.
+   */
     });
     await new Promise<void>((r) => { server.listen(0, '127.0.0.1', r); });
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -335,13 +347,13 @@ describe('reading a build over the wire', () => {
     // The path is asserted raw AND decoded: an encoding bug that turns /health into
     // /%68ealth still reaches the same handler and would pass an assertion on the receipt.
     expect(seen).toEqual([{ raw: '/health', decoded: '/health' }]);
-  });
+  }, 30_000);
 
   it('a 200 with no build field reads as no build, not as an error', async () => {
     script['/nobuild'] = { status: 200, body: JSON.stringify({ ok: true }) };
     const out = await readRunningBuild(`${base}/nobuild`, { attempts: 1 });
     expect(out).toEqual({ ok: true, build: null });
-  });
+  }, 30_000);
 
   it('a 200 whose body is not JSON is reported once and NOT retried', async () => {
     // Asking an HTML page four more times produces four more pages of HTML.
@@ -350,7 +362,7 @@ describe('reading a build over the wire', () => {
     const out = await readRunningBuild(`${base}/html`, { attempts: 3, sleep: async () => {} });
     expect(out.ok).toBe(false);
     expect(seen.filter((s) => s.raw === '/html')).toHaveLength(1);
-  });
+  }, 30_000);
 
   it('a failing service is retried the declared number of times, then reported', async () => {
     script['/down'] = { status: 503, body: 'unavailable' };
@@ -362,12 +374,12 @@ describe('reading a build over the wire', () => {
     // ★ COUNTED AT THE SERVER. "It retried" asserted from the return value is a claim
     // about the message; this is a claim about the requests.
     expect(seen.filter((s) => s.raw === '/down')).toHaveLength(3);
-  });
+  }, 30_000);
 
   it('a service that answers on the first try is asked exactly once', async () => {
     script['/once'] = { status: 200, body: JSON.stringify({ build: MASTER }) };
     seen.length = 0;
     await readRunningBuild(`${base}/once`, { attempts: 3, sleep: async () => {} });
     expect(seen.filter((s) => s.raw === '/once')).toHaveLength(1);
-  });
+  }, 30_000);
 });

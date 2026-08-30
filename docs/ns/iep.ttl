@@ -873,6 +873,43 @@ iep:affordance a owl:ObjectProperty ;
     rdfs:comment "Declares an affordance (capability) that this resource supports." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
 
+# --- MCP tool-annotation hints, published --------------------------------------------
+# Declared because 143 affordances x 5 hints were held in TypeScript and reached the MCP
+# tool schema, while the Turtle and JSON-LD an agent can actually dereference carried
+# none of them. No standard vocabulary expresses operation safety: Hydra Core has no
+# safe/idempotent property, and the W3C HTTP vocabulary describes MESSAGES rather than
+# operation semantics. These four are the smallest set that answers "may I retry this,
+# may I reorder it, and can it fail for reasons neither of us controls".
+
+iep:readOnlyHint a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "read only hint" ;
+    rdfs:comment "True when acting this affordance performs no observable state change. Published because the HTTP method cannot carry it: 142 of the 143 affordances in this fleet are POST, and a POST that only assembles and returns a record (review-record) is indistinguishable on method alone from one that writes. An agent planning a sequence needs to know which steps it may retry, reorder or drop." ;
+    rdfs:domain iep:Affordance ;
+    rdfs:range xsd:boolean ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:destructiveHint a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "destructive hint" ;
+    rdfs:comment "True when a non-read-only affordance performs an IRREVERSIBLE change. Its absence states nothing, in keeping with every other optional term here: an affordance that declares no hint has not declared that it is safe. MCP clients that receive no annotations default to the worst case (write, destructive, open-world), so silence is read pessimistically by the caller rather than optimistically." ;
+    rdfs:domain iep:Affordance ;
+    rdfs:range xsd:boolean ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:idempotentHint a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "idempotent hint" ;
+    rdfs:comment "True when repeating the call with the same arguments produces the same end state. This is the property a retry depends on, and it is not derivable from the method here for the same reason as iep:readOnly: the fleet is almost entirely POST." ;
+    rdfs:domain iep:Affordance ;
+    rdfs:range xsd:boolean ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:openWorldHint a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "open world hint" ;
+    rdfs:comment "True when acting this affordance interacts with entities outside the deployment - other pods, a chain, the public web. False when it is purely local computation or configuration. It bounds what a caller can conclude from a failure: an open-world affordance can fail for reasons neither party controls." ;
+    rdfs:domain iep:Affordance ;
+    rdfs:range xsd:boolean ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+
 iep:action a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "action" ;
     rdfs:comment "Names the iep:Affordance individual this affordance block instantiates (e.g. iep:canFetchPayload, iep:canDecrypt, iep:canPublish). Lets a Hydra operation carry a stable iep: identifier alongside the operation-specific hydra:method / hydra:target, so discovery clients can reference the affordance vocabulary without string-matching free-text titles." ;

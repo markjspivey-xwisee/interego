@@ -73,6 +73,19 @@ describe('the working tree matches the index CI checks out', () => {
     }
   });
 
+  /**
+   * ★★ THESE TWO READ THE WHOLE TRACKED TREE, AND 5,000 ms WAS NEVER A BUDGET ANYONE CHOSE FOR
+   * THAT. vitest.config.ts sets no `testTimeout`, so all 331 modules inherit vitest's default.
+   * Measured on this machine: the file runs in ~2.6 s ALONE and the CR scan took 5,862 ms inside a
+   * full `npx vitest run` — it failed by 862 ms, on a tree that was perfectly clean, while the
+   * pool was busy. A whole-tree scan is not slow because something is wrong; it is slow because
+   * it reads ~2,700 files, and it gets slower when the machine is loaded.
+   *
+   * ★ THIS IS NOT RELAXING AN ASSERTION. Neither check is weakened: every tracked file is still
+   * read and a single CR or control byte still fails. What changed is that the deadline now
+   * reflects the work, so a green tree cannot be reported as a defect because another suite was
+   * running — which is the failure that trains people to re-run instead of read.
+   */
   it('holds no CR in any tracked text file', () => {
     const offenders: string[] = [];
     for (const f of files) {
@@ -88,7 +101,7 @@ describe('the working tree matches the index CI checks out', () => {
         + 'is LF. Re-check out the tree so local runs read the bytes CI reads:\n'
         + '  git checkout-index -a -f\n  ' + offenders.slice(0, 20).join('\n  '),
     ).toEqual([]);
-  });
+  }, 30_000);
 
   it('holds no control byte that would make a source file binary to git', () => {
     const offenders: string[] = [];
@@ -104,5 +117,5 @@ describe('the working tree matches the index CI checks out', () => {
         + 'reviewable diff and greps as "Binary file … matches". Spell it as an escape '
         + 'instead — the string is identical:\n  ' + offenders.join('\n  '),
     ).toEqual([]);
-  });
+  }, 30_000);
 });

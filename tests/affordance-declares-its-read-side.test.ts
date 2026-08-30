@@ -28,7 +28,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { validateAgainstShape } from '@interego/core';
 import {
-  affordanceToTurtle, affordancesManifestTurtle, type Affordance,
+  affordanceToTurtle, affordancesManifestTurtle, AFFORDANCE_TURTLE_PREFIXES, type Affordance,
 } from '../applications/_shared/affordance-mcp/index.js';
 
 const ROOT = process.cwd();
@@ -54,16 +54,12 @@ const base = (over: Partial<Affordance> = {}): Affordance => ({
  * the prefixes in production. So a bare-serializer case has to supply them to be parseable, and the
  * manifest case below proves the real served document needs no such help.
  */
-const PREFIXES = [
-  '@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .',
-  '@prefix ieh:   <https://markjspivey-xwisee.github.io/interego/ns/harness#> .',
-  '@prefix hydra: <http://www.w3.org/ns/hydra/core#> .',
-  '@prefix dcat:  <http://www.w3.org/ns/dcat#> .',
-  '@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .',
-  '@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .',
-  '@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .',
-  '@prefix dct:   <http://purl.org/dc/terms/> .',
-].join('\n') + '\n\n';
+// ★★ READ FROM THE SERIALIZER, NOT RESTATED. This was a hand-written list, and it went stale the
+// moment affordanceToTurtle learned to emit `sh:` and `xsd:` for the value constraints every
+// input already declared. The symptom was every case here failing with 'Data graph is not
+// parseable as Turtle/TriG' — a long way from 'your prefix list is missing two entries'. The
+// serializer knows what it emits; a second copy is a second thing to keep true.
+const PREFIXES = AFFORDANCE_TURTLE_PREFIXES + String.fromCharCode(10);  // a STRING: it is concatenated onto a body below, and an array would join with commas.
 
 const conforms = (ttl: string): { ok: boolean; why: string } => {
   const doc = ttl.trimStart().startsWith('@prefix') ? ttl : PREFIXES + ttl;

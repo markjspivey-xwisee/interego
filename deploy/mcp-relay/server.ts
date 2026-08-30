@@ -8684,7 +8684,7 @@ function isCanonicalPodTarget(targetPod: string): boolean {
  * what a notification must carry — see notification-body.ts for the defect that motivated it,
  * the measurement behind the conditional, and the four defects of the refuted first attempt.
  *
- * ★ LAZY AND CACHED, DELIBERATELY. Preparing the gate reads 209,157 characters of Turtle,
+ * ★ LAZY AND CACHED, DELIBERATELY. Preparing the gate reads 212,136 characters of Turtle,
  * isolates the shape into 28 triples, and runs fifteen canaries through the whole per-call
  * decision — eight of them over ~70,000-character documents, which is what proves the size
  * reduction still preserves this shape's verdicts before a caller depends on it. Re-measured at
