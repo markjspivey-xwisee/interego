@@ -72,6 +72,14 @@ export const SERVICES = {
   // that the agent's key, its storage and its runtime are three separable things — see
   // deploy/Dockerfile.wsp-bridge.
   'wsp-bridge': { repo: 'interego-wsp-bridge', health: '/health' },
+  // The agp: theory-of-performance layer. Its own service so Foxxi can drop the seven
+  // transitional shims and become pure-standards — and so its nine affordances have
+  // something that ANSWERS them: the manifest is only true once the service exists.
+  // Added AFTER creating the service, not before: this table is diffed against the live
+  // API, and a row for a service that does not exist is the same lie in the other
+  // direction. `railway-pins.mjs` reported it `UNTRACKED` in between, which is the check
+  // doing its job.
+  'agp-bridge': { repo: 'interego-agp-bridge', health: '/health' },
   bridge: { repo: 'interego-bridge', health: '/health' },
   dashboard: { repo: 'interego-dashboard', health: '/health' },
   'pgsl-browser': { repo: 'interego-pgsl-browser', health: '/health' },

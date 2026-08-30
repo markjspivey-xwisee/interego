@@ -1167,6 +1167,48 @@ export function sameIgnoringWholeLineComments(before: string, after: string): bo
   return strip(before) === strip(after);
 }
 
+/**
+ * Did THIS image's own row in `deploy/images.json` change between two commits?
+ *
+ * ★ WHY THE WHOLE FILE IS THE WRONG UNIT. `deploy/images.json` is a recipe input and is in
+ * scope on purpose — it decides which Dockerfile builds an image and whether the leg carries
+ * a prebuild, so leaving it out would let "repointed at a different Dockerfile" pass as
+ * equivalent. But the file holds a row PER IMAGE, and registering a NEW image marked all
+ * sixteen existing services BEHIND, each citing this one file, for a row that is not theirs.
+ * Sixteen rebuilds and redeploys that would have changed no behaviour anywhere.
+ *
+ * ★ AND "IT IS NEVER READ AT RUNTIME" WAS THE WRONG REASON, TRIED FIRST. Nothing that runs
+ * opens this file, which is true and irrelevant: it shapes the BUILD, and the safety property
+ * being protected is about the build. Excluding it wholesale on runtime-inertness grounds
+ * would have re-opened exactly the repointing miss the file was added to catch. The unit is
+ * the ROW, not the file and not the whole tree.
+ *
+ * Fails CLOSED: unreadable or unparseable at either end means "assume it changed".
+ */
+function imageRowChanged(image: string, from: string, to: string, root: string): boolean {
+  const rowAt = (rev: string): string | undefined => {
+    try {
+      const text = execFileSync('git', ['show', `${rev}:${IMAGES_REL}`],
+        { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+      const parsed: unknown = JSON.parse(text);
+      const rows: unknown[] = Array.isArray(parsed)
+        ? parsed
+        : ((parsed as { images?: unknown[] })?.images ?? []);
+      const row = rows.find((r) => (r as { image?: string })?.image === image);
+      return row === undefined ? undefined : JSON.stringify(row);
+    } catch {
+      return undefined;
+    }
+  };
+  const before = rowAt(from);
+  const after = rowAt(to);
+  // An absent row at either end is a real change (added, removed, or the file stopped
+  // parsing) — never silently "unchanged".
+  if (before === undefined || after === undefined) return true;
+  return before !== after;
+}
+
+
 /** True when `p` shapes an image without ever being copied into one. Exported for the tests. */
 export const isRecipePath = (p: string): boolean => RECIPE_RX.test(p);
 
@@ -1205,7 +1247,21 @@ export function bundleDriftFor(service: string, pinSha: string, root = ROOT, hea
   }
 
   const changed = out.split('\n').map((s) => s.trim()).filter(Boolean);
-  if (changed.length && recipeOnlyCommentChange(changed, pinSha, head, root)) {
+  // `deploy/images.json` counts only when THIS image's own row moved. Stripped before the
+  // recipe test rather than folded into it: "a row that is not mine" is not "a comment-only
+  // edit", and reporting one as the other puts a false reason in front of the next reader.
+  // The image this service runs, from the one tracked table. `css` runs `interego-css-pgsl`,
+  // so deriving it as `interego-${service}` is exactly the assumption that table exists to kill.
+  const leg = (SERVICES as Record<string, { repo?: string } | undefined>)[service]?.repo;
+  const ownRowMoved = leg === undefined || imageRowChanged(leg, pinSha, head, root);
+  const material = ownRowMoved ? changed : changed.filter((c) => c !== IMAGES_REL);
+  if (changed.length && material.length === 0) {
+    return {
+      confident: true, changed, equivalent: true,
+      reason: `${IMAGES_REL} changed, but not this image's row (${leg ?? 'unknown'})`,
+    };
+  }
+  if (material.length && recipeOnlyCommentChange(material, pinSha, head, root)) {
     // Reported as changed-but-equivalent rather than as no change at all: the files DID move,
     // and a reader comparing this against `git diff` must not be told otherwise.
     return { confident: true, changed, equivalent: true, reason: 'the only paths that changed are build recipes, and only in whole-line comments — nothing that reaches the image' };

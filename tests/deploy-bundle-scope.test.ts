@@ -731,11 +731,27 @@ describe('refineFreshness — may only ever downgrade, and only on certainty', (
   // across real commits, and require BOTH classes to be non-empty so the sweep cannot pass
   // by finding nothing to judge.
 
-  /** What css genuinely ships, transcribed by hand. The thing the derivation must equal. */
+  /**
+   * What a change to css must be judged against, transcribed by hand — the thing the
+   * derivation must equal.
+   *
+   * ★ NOT ONLY WHAT IT COPIES. The last four entries are RECIPE INPUTS: `.dockerignore`
+   * decides what reaches the build context, `.gitattributes` the eol applied to it,
+   * `build-ghcr.yml` the build args, and `deploy/images.json` WHICH DOCKERFILE builds this
+   * image and whether its leg carries a prebuild. None of them is copied into the image and
+   * all of them can change what the image is.
+   *
+   * `deploy/images.json` was missing here after it was added to the derivation, and nothing
+   * noticed until a commit finally touched it: this sweep went red on exactly one merge, the
+   * one that registered a new image, `derived=true oracle=false`. Both sides were locally
+   * right — css does not SHIP the file, and the scope counts it because it shapes the build —
+   * which is why the missing entry read as a contradiction rather than as an omission.
+   */
   const CSS_SHIPS = [
     'packages/pgsl-store/', 'packages/core/', 'packages/abac/', 'packages/pgsl/',
     'integrations/pgsl-css-accessor/', 'package.json', 'package-lock.json', 'tsconfig.base.json',
     '.dockerignore', '.gitattributes', '.github/workflows/build-ghcr.yml', '.npmrc',
+    'deploy/images.json',
   ];
   const shipsByOracle = (files: string[]): boolean =>
     files.some((f) => CSS_SHIPS.some((p) => (p.endsWith('/') ? f.startsWith(p) : f === p)));
