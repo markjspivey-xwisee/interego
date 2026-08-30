@@ -8,6 +8,23 @@ import {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  /**
+   * ★ `restoreAllMocks()` DOES NOT UNDO `vi.stubGlobal`. They are separate registries, and
+   * this file stubs the GLOBAL fetch twice (below) with a double that throws
+   * `new Error('network down')`.
+   *
+   * vitest.config.ts pins `singleFork: true` and says why it matters: "every module in a run
+   * shares one process, which is why `vi.stubEnv` without a restore leaks across FILES". A
+   * global fetch left installed here is installed for every test file that runs after this
+   * one, and it fails them with a message that reads like a real outage.
+   *
+   * That string turned up in `tests/railway-running-build.test.ts`, twice, in full-suite runs
+   * only — that file binds a REAL localhost server on an ephemeral port and fetches it, so
+   * "network down" cannot come from its own fixture. Pairing the two files did not reproduce
+   * it, so this is not proven to be the cause of those failures. It is an unrestored global
+   * with exactly the observed signature, and it should not be left installed either way.
+   */
+  vi.unstubAllGlobals();
 });
 
 describe('createConnector — type dispatch', () => {

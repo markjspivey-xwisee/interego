@@ -183,11 +183,11 @@ import { FOXXI_NS } from '../src/foxxi-vocab.js';
 import {
   buildTrajectory, trajectoryShape, projectTrajectoryToXapi,
   type AgentTrajectory, type TrajectoryStepInput,
-} from '../src/agent-trajectory.js';
+} from '../../agentic-performance-practice/src/agent-trajectory.js';
 import {
   assessDisposition, buildProbe, computeCausalRead, snapshot,
   type PerformanceProbe, type ProbeCoherence,
-} from '../src/agent-disposition.js';
+} from '../../agentic-performance-practice/src/agent-disposition.js';
 import { ingestExternalRun, type ExternalRunInput, type ToolCallInput, type HarnessMeta } from '../src/agent-run-ingest.js';
 import { projectMeshEntry, actorForPod, type MeshDiscoverEntry, type ProjectedMeshEvent } from '../src/mesh-event-projector.js';
 import {
@@ -383,8 +383,8 @@ import { attachContentDeliveryRoutes } from '../src/content-delivery.js';
 // emergent, learnable standards-extension capability the agp layer affords by
 // composing Foxxi's own standards. + the shared in-flow performance-support primitive.
 import { proposeStandardsExtension, EXTEND_STANDARDS_GUIDANCE, type ExtensionKind as AgpExtensionKind } from '../../agentic-performance-practice/src/standards-extension.js';
-import { diagnose as diagnoseSituation, recommendInterventions } from '../src/performance-architecture.js';
-import { expandOutcomeCorpus, buildCalibrationProfile, composeCalibrationProfiles, federationView, calibrationReadout, type OutcomeSpec, type CalibrationProfile } from '../src/performance-calibration.js';
+import { diagnose as diagnoseSituation, recommendInterventions } from '../../agentic-performance-practice/src/performance-architecture.js';
+import { expandOutcomeCorpus, buildCalibrationProfile, composeCalibrationProfiles, federationView, calibrationReadout, type OutcomeSpec, type CalibrationProfile } from '../../agentic-performance-practice/src/performance-calibration.js';
 import { attachGuidanceServing, type GuidedAffordanceEntry as FoxxiGuidedEntry } from '../../_shared/guided-affordance/index.js';
 import { SAMPLE_COURSE, SAMPLE_JOB_AID } from '../src/sample-content.js';
 import type { DeliveryChannel } from '../src/content-channels.js';
