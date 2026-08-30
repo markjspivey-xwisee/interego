@@ -100,6 +100,13 @@ import { turtleIriArgs } from '../turtle-iri-args.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const serverSrc = stripComments(readFileSync(join(here, '..', 'server.ts'), 'utf8'), 'server.ts');
+// ★★ THE ACL WRITERS MOVED OUT OF server.ts. buildRootAcl / writePublicReadAcl / the other
+// pod-side writers now live in pod-writers.ts, which — unlike server.ts — starts no listener, so
+// the behavioural half below can IMPORT and CALL them instead of grepping for them. The source
+// half still reads both files, because a sink that stops using turtleIriRef is a source-level
+// fact wherever the function happens to live.
+const podWritersSrc = stripComments(
+  readFileSync(join(here, '..', 'pod-writers.ts'), 'utf8'), 'pod-writers.ts');
 
 let pass = 0, fail = 0;
 const failures: string[] = [];
@@ -122,10 +129,15 @@ const rawIri = (expr: string): string => `<${'$'}{${expr}}>`;
 
 /** The body of a top-level function in server.ts, from its declaration to the next one. */
 function bodyOf(decl: string, until: string): string {
-  const from = serverSrc.indexOf(decl);
-  if (from < 0) return '';
-  const to = serverSrc.indexOf(until, from + decl.length);
-  return to < 0 ? serverSrc.slice(from) : serverSrc.slice(from, to);
+  // ★ SEARCH BOTH FILES. An anchor that resolves in NEITHER returns '' and every assertion over
+  // it fails loudly, which is what happened when these writers moved and is the behaviour to keep.
+  for (const src of [serverSrc, podWritersSrc]) {
+    const from = src.indexOf(decl);
+    if (from < 0) continue;
+    const to = src.indexOf(until, from + decl.length);
+    return to < 0 ? src.slice(from) : src.slice(from, to);
+  }
+  return '';
 }
 
 // ── The module ───────────────────────────────────────────────────────────────
@@ -337,7 +349,18 @@ console.log('\nserver.ts — each sink gates before it builds');
     aclCalls === 4 && withRef === 4, `${withRef}/${aclCalls} call sites pass ownerWebIdRef`);
 }
 {
-  const body = bodyOf('async function writePublicReadAcl', 'function buildRootAcl');
+  // ★★ THE END ANCHOR IS THE FUNCTION THAT FOLLOWS THIS ONE, and it had to change when the ACL
+  // writers moved to pod-writers.ts. It used to be `function buildRootAcl`, which in server.ts
+  // came AFTER writePublicReadAcl and in pod-writers.ts comes BEFORE it — so indexOf searching
+  // forward found nothing, returned -1, and the slice ran to END OF FILE. The 'body' then
+  // contained every later function in the module, and an assertion that this body interpolates no
+  // raw IRI was really asserting it about half the file. It failed, correctly, for a reason that
+  // had nothing to do with the ACL writer.
+  //
+  // ★ A SLICE WHOSE END ANCHOR IS MISSING MUST NOT SILENTLY BECOME 'THE REST'. That shape has
+  // cost this repo real time twice now; the guard below is that bodyOf returns '' when neither
+  // file holds the START anchor, and every assertion over '' fails loudly.
+  const body = bodyOf('async function writePublicReadAcl', 'async function bootstrapPod');
   ok('★ writePublicReadAcl accepts a TurtleIriRef, so an unchecked WebID is a COMPILE error '
     + 'rather than an ACL the relay signs its name to',
     /async function writePublicReadAcl\(targetUrl: string, ownerRef: TurtleIriRef\)/.test(body),

@@ -178,6 +178,11 @@ COPY deploy/mcp-relay/ns-dereference.ts ./
 # Pod authorization: which pod URLs a bearer may act on, and which of them the relay minted
 # itself. Extracted for the same reason — server.ts is unimportable, so the rule was untested.
 COPY deploy/mcp-relay/pod-authorization.ts ./
+# The pod-side writers: the WAC .acl writer, the /profile/card writer, the iep:PodBootstrap
+# descriptor writer, and the bootstrap that sequences them. Extracted for the same reason
+# again — these run on relay credentials against the live store and their only coverage was a
+# regex over server.ts's source text.
+COPY deploy/mcp-relay/pod-writers.ts ./
 # The expects/returns URLs the operations catalog advertises, and the JSON Schema documents
 # served at them. Extracted because the catalog was minting urn: values that fetch nothing.
 COPY deploy/mcp-relay/operation-contracts.ts ./

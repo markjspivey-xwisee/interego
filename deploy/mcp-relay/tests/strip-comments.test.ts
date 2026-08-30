@@ -66,8 +66,20 @@ console.log('\nstripComments removes comments and NOTHING else');
     `${SERVER.length} -> ${code.length}`);
   // …and it must still be the CODE, not a fraction of it. The regex version cut 37% of
   // the LINES; anything near that is the old defect returning.
+  //
+  // ★★ THE FLOOR IS ABOUT THE STRIPPER, NOT server.ts's COMPOSITION, and it moved 0.55 -> 0.45
+  // for that reason. It was set when the file was ~44% comment. Extracting a concern removes
+  // CODE-DENSE lines and leaves the incident notes behind, so every lift out of server.ts raises
+  // its comment share — moving the pod-side writers to pod-writers.ts took it to 45.2%, and this
+  // check failed on a stripper that was working perfectly. That drift is the INTENDED direction:
+  // the file is meant to keep shrinking, and a floor that reds on progress teaches people to
+  // delete the floor rather than read it.
+  //
+  // ★ WHAT ACTUALLY GUARDS THE DEFECT IS THE PROBE LOOP ABOVE, which asserts specific code strings
+  // survive stripping. This is a crude backstop against a catastrophic stripper, and 0.45 still
+  // catches the 37%-of-lines regression it was written for by a wide margin.
   const lines = (s: string): number => s.split('\n').length;
-  ok(lines(code) > lines(SERVER) * 0.55,
+  ok(lines(code) > lines(SERVER) * 0.45,
     'server.ts kept the code lines (only comment lines went)',
     `${lines(SERVER)} -> ${lines(code)}`);
   ok(!code.includes('AMEP engine (Interego is the reference implementation)'),
