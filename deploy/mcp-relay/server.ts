@@ -10038,18 +10038,38 @@ async function handleKernelAct(args: ToolArgs): Promise<string> {
    *
    * The branch decides the URL now, so the authorisation and the fetch cannot disagree.
    *
-   * ★ AND THIS IS THE NARROW FIX, NOT THE COMPLETE ONE. A descriptor on the caller's own pod may
-   * still name a `hydra:target` anywhere, and the kernel follows it holding this key — so the
-   * remaining hole is "authorise on a descriptor I control, decrypt what it points at". Closing
-   * that means replacing the `recipientKeyPair` option with a `mayDecrypt(url)` callback so every
-   * decrypt site must ASK about the URL it actually fetched. That option threads through
-   * packages/solid and packages/pgsl and is its own change; it is not a rider on this one. Recorded
-   * rather than half-done.
+   * ★ THE OTHER HALF NOW LANDED, BELOW. This branch decides which URL the key is authorised
+   * FOR; it could not decide what the kernel would later fetch. A descriptor on the caller's own
+   * pod may still name a `hydra:target` anywhere, and the kernel follows it holding this key —
+   * "authorise on a descriptor I control, decrypt what it points at". The `mayDecrypt(url)`
+   * callback on the kernel's act options closes that by asking the same question again about the
+   * URL actually fetched; see the note on the `kernelAct` call below. Both halves are needed:
+   * this one refuses to LEND the key, that one refuses to USE it on the wrong resource.
    */
   const keyAuthorisedFor = 'descriptorUrl' in affordance ? affordance.descriptorUrl : affordance.target;
+  /**
+   * ★★ THE SAME RULE, ASKED AGAIN ABOUT THE URL THE KERNEL ACTUALLY FETCHED.
+   *
+   * `recipientKeyFor` answers "may this caller borrow the relay key FOR `keyAuthorisedFor`" —
+   * a descriptor URL when one was supplied. The kernel then resolves that descriptor and
+   * follows its `hydra:target`, which the descriptor's author chose and which this gate never
+   * saw. That is the hole the header on `mayDecrypt` describes: authorise on a descriptor I
+   * control, decrypt what it points at.
+   *
+   * `mayUseRelayKey` is the RIGHT predicate here and the wrong one for `requireOwnPod`: it
+   * ends in a prefix test, and "is this RESOURCE inside my pod" is exactly the decryption
+   * question, where `requireOwnPod` asks the equality question "is this POD my pod". Reusing
+   * it there would loosen a gate; reusing it here asks the question already being asked, of
+   * the URL that actually matters.
+   *
+   * Fails CLOSED without an own-pod: no pod, no borrowed key, nothing to authorise.
+   */
+  const ownPodForDecrypt = await callerOwnPod(args);
   const r = await kernelAct(affordance as Parameters<typeof kernelAct>[0], actPayload, {
     fetch: actFetch,
     recipientKeyPair: await recipientKeyFor(args, keyAuthorisedFor),
+    mayDecrypt: (fetchedUrl: string) => ownPodForDecrypt !== undefined
+      && mayUseRelayKey({ targetUrl: fetchedUrl, ownPodUrl: ownPodForDecrypt, storeOrigins: STORE_ORIGINS }),
     ...(authorization ? { authorization } : {}),
   });
   return JSON.stringify(decorateKernelResult(r as unknown as Record<string, unknown>, {

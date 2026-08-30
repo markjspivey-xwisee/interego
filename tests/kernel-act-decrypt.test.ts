@@ -173,6 +173,52 @@ describe('kernel.act + iep:canDecrypt server-side decrypt', () => {
     expect(result.affordance.method).toBe('GET');
   });
 
+  it('★★ mayDecrypt is asked about the URL FETCHED, not the descriptor authorised', async () => {
+    /**
+     * The hole this closes: a host may hold a key on behalf of callers and authorise its use
+     * against a DESCRIPTOR the caller legitimately controls. The descriptor's `hydra:target`
+     * is chosen by its author and can name a resource anywhere, and the kernel follows it
+     * holding that key. "Authorise on a descriptor I control, decrypt what it points at."
+     *
+     * So the callback is handed `envelopeUrl` — what was actually fetched — and refusing it
+     * leaves the envelope sealed. Refusing is not a new failure mode: the caller sees exactly
+     * what a non-recipient sees, the raw envelope JSON.
+     */
+    const author = generateKeyPair();
+    const envelope = createEncryptedEnvelope(plaintext, [author.publicKey], author);
+    const envelopeBody = JSON.stringify(envelope);
+    const fetch = buildMockFetch({ descriptorUrl, envelopeUrl, envelopeBody });
+
+    const asked: string[] = [];
+    const result = await act(
+      { descriptorUrl, actionIri: CG_CAN_DECRYPT_FULL },
+      undefined,
+      {
+        fetch,
+        recipientKeyPair: author,
+        mayDecrypt: (url: string) => { asked.push(url); return false; },
+      },
+    );
+
+    // The key was held and the recipient WAS entitled to the content — the only reason this
+    // stays sealed is that the fetched URL was refused. That is the whole assertion.
+    expect(asked).toEqual([envelopeUrl]);
+    expect(result.body).not.toBe(plaintext);
+    expect(JSON.parse(result.body)).toMatchObject({ wrappedKeys: expect.any(Array) });
+  });
+
+  it('mayDecrypt returning true leaves the entitled path working', async () => {
+    const author = generateKeyPair();
+    const envelope = createEncryptedEnvelope(plaintext, [author.publicKey], author);
+    const fetch = buildMockFetch({ descriptorUrl, envelopeUrl, envelopeBody: JSON.stringify(envelope) });
+    const result = await act(
+      { descriptorUrl, actionIri: CG_CAN_DECRYPT_FULL },
+      undefined,
+      { fetch, recipientKeyPair: author, mayDecrypt: () => true },
+    );
+    expect(result.body).toBe(plaintext);
+  });
+
   it('descriptor-resolved form: non-recipient → raw envelope JSON', async () => {
     const author = generateKeyPair();
     const stranger = generateKeyPair();

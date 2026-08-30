@@ -1179,6 +1179,26 @@ export interface ActOptions {
    * the plaintext as the `body`. Without the key the raw envelope JSON
    * is returned (so existing decrypt-on-client callers still work). */
   readonly recipientKeyPair?: EncryptionKeyPair;
+  /**
+   * ★★ ASKED ABOUT THE URL THE KERNEL ACTUALLY FETCHED, BEFORE THE KEY IS USED ON IT.
+   *
+   * `recipientKeyPair` alone says "hold this key while you work". It does not say WHAT the
+   * key may be used on, and the two are not the same question once a descriptor is involved:
+   * a caller may legitimately be authorised against a descriptor on its own pod, while that
+   * descriptor's `hydra:target` names a resource ANYWHERE. The kernel then follows the target
+   * holding the key, and decrypts whatever comes back — "authorise on a descriptor I control,
+   * decrypt what it points at".
+   *
+   * So this callback is handed the URL that was fetched, not the one that was authorised,
+   * and returning `false` leaves the envelope sealed (the caller sees the raw envelope JSON,
+   * which is the same thing a non-recipient sees — no new failure mode).
+   *
+   * Omitting it keeps the previous behaviour, because this is a library option and a
+   * decrypt-on-client caller has no separate authorisation step to disagree with. A HOST
+   * holding a key on behalf of others must supply it; the relay does, and a relay test holds
+   * that conjunct in place.
+   */
+  readonly mayDecrypt?: (fetchedUrl: string) => boolean;
 }
 
 // The set of iep:action IRIs (and their prefixed equivalents) that mean
@@ -1339,7 +1359,9 @@ export async function act(
     // the caller supplied a recipientKeyPair AND we recognize an
     // envelope shape, unwrap before returning. Non-recipients see the
     // raw envelope JSON (current behavior).
-    if (isCanDecryptAction(affordance.action) && options?.recipientKeyPair) {
+    if (isCanDecryptAction(affordance.action) && options?.recipientKeyPair
+      // ★ The URL FETCHED, not the affordance that was authorised. See `mayDecrypt`.
+      && (options.mayDecrypt?.(affordance.target) ?? true)) {
       const plaintext = tryUnwrapEnvelopeBody(responseBody, options.recipientKeyPair);
       if (typeof plaintext === 'string') {
         return {
@@ -1378,7 +1400,10 @@ export async function act(
     fromDescriptor: affordance.descriptorUrl,
   };
   // iep:canDecrypt semantics — see the symmetrical branch above.
-  if (isCanDecryptAction(resolved.action) && options?.recipientKeyPair) {
+  if (isCanDecryptAction(resolved.action) && options?.recipientKeyPair
+    // ★★ `resolved.target` came out of the DESCRIPTOR, so this is the branch the hole lived
+    // in: the descriptor may be one the caller controls while the target is not.
+    && (options.mayDecrypt?.(resolved.target) ?? true)) {
     const plaintext = tryUnwrapEnvelopeBody(result.body, options.recipientKeyPair);
     if (typeof plaintext === 'string') {
       return {
