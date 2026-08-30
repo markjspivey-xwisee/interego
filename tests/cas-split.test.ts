@@ -318,6 +318,36 @@ describe('★ if_match must name a live head, not merely an ancestor', () => {
     expect(pass.ok).toBe(true);
   });
 
+  it('the if_match assertion itself may be spelled differently from the observed target', async () => {
+    /**
+     * ★★ THE SIBLING TEST ABOVE DID NOT COVER THIS, AND THE GATE WAS RAW.
+     *
+     * "host-form differences do not turn a live head into a refusal" passes `ifMatchSupersedes`
+     * in the SAME spelling the observed list holds, so it exercises only the `currentHeads`
+     * frontier comparison — which normalised. The membership gate one field earlier compared
+     * `o.descriptorUrl === ifMatchSupersedes` RAW, so it was never asked a question it could
+     * get wrong.
+     *
+     * Here the caller asserts the head in the INTERNAL spelling while the declared supersedes
+     * targets are public-form — exactly what happens when the assertion comes back from a
+     * relay response and the list comes from content. Both name one descriptor. Compared raw,
+     * the caller is told its head "is not among the declared supersedes targets" while looking
+     * at a list that contains it.
+     */
+    const INTERNAL_V1 = V1.replace('https://alice.pod/', 'http://css.internal:3456/');
+    const pass = await checkSupersessionPrecondition({
+      supersedesList: ALL_PRIORS,
+      fetchFn: makeRecordingFetch().fetch as unknown as typeof globalThis.fetch,
+      headCidLookup: lookup,
+      ifMatchSupersedes: INTERNAL_V1,
+      normalizeUrl: (u: string) => u.replace('https://alice.pod/', 'http://css.internal:3456/'),
+    });
+    expect(pass.ok).toBe(true);
+    // And it resolved to the real target, not merely "did not throw".
+    expect(pass.preconditionWitness.via).toBe('supersedes');
+    expect(pass.resolvedHeadUrl).toBe(V1);
+  });
+
   it('without currentHeads the old membership test still applies — and is still wrong', async () => {
     // Pinned deliberately. Callers whose supersedes list is content-authored semantic
     // supersession have no frontier to compute, so the option cannot be mandatory at this

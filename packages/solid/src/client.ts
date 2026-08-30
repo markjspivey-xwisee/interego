@@ -2325,7 +2325,23 @@ export async function checkSupersessionPrecondition(input: {
   let resolvedHeadCid: string | null = null;
 
   if (ifMatchSupersedes !== undefined) {
-    const hit = observed.find((o) => o.descriptorUrl === ifMatchSupersedes);
+    /**
+     * ★★ NORMALISED, LIKE THE FRONTIER CHECK 60 LINES BELOW — THIS COMPARED RAW.
+     *
+     * `normalizeUrl` exists because a manifest entry and an `iep:supersedes` target can carry
+     * either the internal-FQDN host or the legacy public one, and its own doc comment states
+     * the consequence of comparing those raw: a live head looks absent from its own frontier
+     * and a LEGITIMATE publish is rejected. The `currentHeads` check at the bottom of this
+     * function was written that way. This gate, deciding the SAME question one field earlier,
+     * was not: it took the caller's `ifMatchSupersedes` and the observed descriptor URLs and
+     * compared them with `===`.
+     *
+     * So the precondition disagreed with itself depending on which spelling each side happened
+     * to hold. Both spellings are well-formed and both name the same descriptor, which is why
+     * this fails SILENTLY rather than loudly: the caller is told its head is "not among the
+     * declared supersedes targets" while looking at a list that visibly contains it.
+     */
+    const hit = observed.find((o) => normalizeUrl(o.descriptorUrl) === normalizeUrl(ifMatchSupersedes));
     if (!hit) {
       throw new PublishPreconditionFailedError(
         `publish: ifMatchSupersedes precondition failed — ${ifMatchSupersedes} is not among the declared supersedes targets [${supersedesList.join(', ')}].`,
