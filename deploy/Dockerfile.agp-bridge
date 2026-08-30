@@ -1,0 +1,145 @@
+# agentic-performance-practice (agp:) bridge.
+#
+# Built from Dockerfile.wsp-bridge, which is the sibling that already proves this
+# workspace's build shape: every package.json copied before `npm ci` so the layer
+# caches, then sources, then one `npm run build`.
+#
+# WHY agp GETS ITS OWN IMAGE. The engine already moved out of Foxxi
+# (agentic-performance-practice/src/), but Foxxi still re-exports it through seven
+# transitional shims, so today ONE process serves both an L1 standards vertical and
+# an L2 theory-of-performance vertical. Giving agp its own image is what lets those
+# shims go and Foxxi become pure-standards, which is the point of the separation.
+#
+# ★ AND IT IS WHY agp's AFFORDANCES MAY PUBLISH AT ALL. Nine of them describe
+# capabilities; publishing a manifest for a vertical with no running service would
+# advertise targets nothing answers, which is the defect
+# demos/interego-bridge/availability.test.mjs exists to prevent. The order matters:
+# the service exists first, THEN the manifest is true.
+ARG NODE_BASE=node:22-slim
+FROM ${NODE_BASE} AS build
+
+ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip
+
+WORKDIR /app
+
+# Workspace manifests — npm ci requires every declared workspace's package.json
+# to exist before it can resolve the tree. This list mirrors the root
+# package.json `workspaces` field exactly; shared-workspace/bridge is
+# deliberately NOT one of them (it declares no dependencies of its own, and
+# adding it would oblige every other image's Dockerfile to grow a COPY line or
+# fail `npm ci` — a coupling worth not creating for a directory that needs
+# nothing).
+COPY package.json package-lock.json tsconfig.base.json tsconfig.json ./
+COPY packages/abac/package.json ./packages/abac/
+COPY packages/compliance/package.json ./packages/compliance/
+COPY packages/connectors/package.json ./packages/connectors/
+COPY packages/constitutional/package.json ./packages/constitutional/
+COPY packages/core/package.json ./packages/core/
+COPY packages/extractors/package.json ./packages/extractors/
+COPY packages/ops/package.json ./packages/ops/
+COPY packages/p2p/package.json ./packages/p2p/
+COPY packages/passport/package.json ./packages/passport/
+COPY packages/pgsl/package.json ./packages/pgsl/
+COPY packages/privacy/package.json ./packages/privacy/
+COPY packages/registry/package.json ./packages/registry/
+COPY packages/security-txt/package.json ./packages/security-txt/
+COPY packages/skills/package.json ./packages/skills/
+COPY packages/solid/package.json ./packages/solid/
+COPY packages/transactions/package.json ./packages/transactions/
+# ★ ADDED WHEN `affordances.ts` STARTED IMPORTING IT. The action IRI this bridge advertises is
+# defined in the vertical's client package, because four things name it and three of them are
+# bundled for a browser or an Electron renderer and cannot reach `applications/…/affordances.ts`
+# without crossing a `rootDir`. Without this line `npm ci` never registers the workspace, the
+# symlink below has nothing to point at, and the bridge fails to resolve it AT RUNTIME — after a
+# green build, which is the worst place to find out.
+COPY packages/workspace-client/package.json ./packages/workspace-client/
+COPY mcp-server/package.json ./mcp-server/
+COPY deploy/mcp-relay/package.json ./deploy/mcp-relay/
+COPY deploy/identity/package.json ./deploy/identity/
+COPY deploy/validator/package.json ./deploy/validator/
+COPY applications/foxxi-content-intelligence/bridge/package.json ./applications/foxxi-content-intelligence/bridge/
+COPY applications/agentic-performance-practice/bridge/package.json ./applications/agentic-performance-practice/bridge/
+COPY applications/learner-performer-companion/bridge/package.json ./applications/learner-performer-companion/bridge/
+COPY applications/agent-collective/bridge/package.json ./applications/agent-collective/bridge/
+COPY applications/agent-development-practice/bridge/package.json ./applications/agent-development-practice/bridge/
+COPY applications/organizational-working-memory/bridge/package.json ./applications/organizational-working-memory/bridge/
+COPY applications/lrs-adapter/bridge/package.json ./applications/lrs-adapter/bridge/
+RUN npm ci
+
+# tsx for the runtime — the vertical ships as TS.
+RUN npm install --no-save tsx@4.22.0
+
+# Only what this bridge transitively needs:
+#   packages/                     the @interego/* substrate it imports
+#   applications/_shared/         vertical-bridge + affordance-mcp
+#   applications/shared-workspace the vertical itself
+COPY packages/ ./packages/
+
+# ★ The retrieval lexicon, as DATA. @interego/pgsl reads docs/ns/pgsl-lexicon.ttl at runtime
+# for query expansion (synonyms, IS-A, part-of, causal relations). Without it the package
+# silently selects its frozen FALLBACK_* tables — behaviour is identical today, because the
+# published file is generated from them and a test pins that, but the whole point of moving
+# the knowledge out of TypeScript is that a deployment reads the published copy. Landing it
+# at /app/docs/ns is enough: the package walks up from its own dist/ and finds it there, so
+# no INTEREGO_NS_DIR is needed here.
+COPY docs/ns/pgsl-lexicon.ttl ./docs/ns/pgsl-lexicon.ttl
+COPY applications/_shared/ ./applications/_shared/
+COPY applications/shared-workspace/ ./applications/shared-workspace/
+# The vertical itself, plus Foxxi: agp/src/agent-trajectory.ts composes Foxxi's
+# PERFORMED_VERB/PERF_EXT (the correct L2 -> L1 edge, not a cycle), so the image
+# that runs agp must carry Foxxi's source too.
+COPY applications/agentic-performance-practice/ ./applications/agentic-performance-practice/
+COPY applications/foxxi-content-intelligence/ ./applications/foxxi-content-intelligence/
+
+# Compile the @interego/* packages to their dist/ — every package's exports map
+# resolves there, so this is load-bearing at runtime, not a lint pass.
+RUN npm run build
+
+# Make the packages resolvable by name from anywhere under /app. npm ci already
+# creates these; explicit and idempotent, mirroring the other bridge images.
+RUN mkdir -p node_modules/@interego \
+  && ln -sfn /app/packages/core node_modules/@interego/core \
+  && ln -sfn /app/packages/solid node_modules/@interego/solid \
+  && ln -sfn /app/packages/pgsl node_modules/@interego/pgsl \
+  && ln -sfn /app/packages/workspace-client node_modules/@interego/workspace-client
+
+# ────────────────────────────────────────────────────────────
+#  Runtime stage
+# ────────────────────────────────────────────────────────────
+FROM ${NODE_BASE}
+
+WORKDIR /app
+
+COPY --from=build /app /app
+
+EXPOSE 6030
+ENV PORT=6030
+ENV NODE_NO_WARNINGS=1
+
+# The relay this agent signs in to, and the identity server that issues its
+# SIWE nonce. Both public hosts — this bridge is an ordinary OAuth public
+# client and holds no privileged credential against either.
+
+# ★ THE AGENT'S OWN WALLET. Unset here on purpose: baking a key into an image
+# publishes it to everyone who can pull the image. With it unset the process
+# still boots and /health still answers — it simply is NOT ANYBODY, and every
+# call refuses saying so, which is why /wsp/identity exists as a separate
+# check. Set it on the service at deploy time.
+
+# The public URL this bridge is reachable at, substituted into every
+# affordance's hydra:target. Without it the manifest advertises localhost and
+# `invoke_affordance` follows a target nobody can reach.
+ENV BRIDGE_DEPLOYMENT_URL=
+
+# The commit this image was built from, surfaced at /health by the shared
+# createVerticalBridge factory so a deploy can be VERIFIED rather than assumed.
+# Runtime stage on purpose: ARG does not cross a FROM, and earlier would bust
+# the cache on every commit.
+ARG GIT_SHA=unset
+ENV INTEREGO_BUILD_SHA=$GIT_SHA
+
+# The agp bridge serves /affordances, the named MCP tools, and the dereferenceable
+# agp: ontology at /ns/agp (+ /term/:name, /shapes).
+ENV AGP_DEFAULT_POD_URL=
+ENV AGP_DEFAULT_OPERATOR_DID=
+CMD ["npx", "tsx", "applications/agentic-performance-practice/bridge/server.ts"]

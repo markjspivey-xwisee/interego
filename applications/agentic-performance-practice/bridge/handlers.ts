@@ -12,6 +12,12 @@
 import { diagnose, recommendInterventions, evaluateIntervention } from '../src/performance-architecture.js';
 import { AGP_ONTOLOGY_IRI } from '../src/ontology.js';
 import { proposeStandardsExtension, type ExtensionKind } from '../src/standards-extension.js';
+// ★ COMPOSED, NOT REBUILT. The blocker recorded on this handler was "no pod
+// container-enumeration helper". The substrate already walks a pod's manifest chain over
+// the LDP membership each container ADVERTISES (`ldp:contains`), and exports it. Adding a
+// second enumerator here would have been a private reimplementation of a published one —
+// and a filename-shaped one, which is exactly what silently dropped %-encoded names there.
+import { fetchAllManifestEntries } from '@interego/solid';
 import {
   coerceSituation, coerceDiagnosis, coercePlan, fetchJson,
   publishAgpArtifact, agpEvaluationProperties, deterministicIri, AGP,
@@ -40,14 +46,29 @@ const METHOD_IRI: Record<string, string> = {
  * The reason is now a required argument at each call site, so a stale one cannot
  * be copy-pasted in from a sibling.
  */
+/**
+ * A handler that cannot do its job yet, carrying the reason WHY as a required argument.
+ *
+ * ★ THE MARKER IS A PROPERTY, NOT A BEHAVIOUR. The bridge's boot banner used to list the
+ * pending tools by hand and went stale the moment one became real. The obvious replacement —
+ * call each handler with `{}` and see which answers with a `pending` field — is WRONG, and
+ * measurably so: it classified `diagnose` and `plan_intervention` as pending, because a REAL
+ * handler given no input also declines. "Refused empty input" and "is a stub" are different
+ * questions and only this tag answers the second one.
+ */
+export const PENDING_BLOCKER = Symbol.for('agp.pendingBlocker');
+
 function pendingHandler(toolName: string, required: string[], blocker: string, reason: string) {
-  return async (args: Record<string, unknown>) => {
+  const fn = async (args: Record<string, unknown>) => {
     const missing = required.filter(k => args[k] === undefined || args[k] === null || args[k] === '');
     if (missing.length) throw new Error(`${toolName}: missing required input(s): ${missing.join(', ')}`);
     return { pending: blocker, tool: toolName, note: reason, ontology: AGP_ONTOLOGY_IRI, received: args };
   };
+  return Object.assign(fn, { [PENDING_BLOCKER]: blocker });
 }
 
+/** The agp: namespace, for deciding which manifest entries are this vertical's. */
+const AGP_NS_FOR_LIST = 'https://markjspivey-xwisee.github.io/interego/applications/agentic-performance-practice/agp#';
 const str = (v: unknown): string => String(v ?? '');
 const strList = (v: unknown): string[] => (Array.isArray(v) ? v.map(String).filter(Boolean) : []);
 
@@ -285,10 +306,62 @@ export function createAgpHandlers(deps: { fetchFn?: typeof fetch } = {}): Record
       return { evaluationIri, verdict: ev.verdict, levels: ev.levels, supersedes: ev.supersedes, nextAction: ev.nextAction, descriptorUrl, persisted: !!descriptorUrl, pending: null };
     },
 
-    'agp.list_practice': pendingHandler(
-      'agp.list_practice', [], 'no-container-enumeration',
-      'Not published/read: this bridge has no pod container-enumeration helper — bridge/pod-helpers.ts exposes only fetchJson (a single-resource GET), so the operator\'s agp: state cannot be listed without fabricating it. Blocked on a container-listing read, NOT on the engine move (that shipped).',
-    ),
+    /**
+     * REAL. Reads the operator's agp: state by walking the pod's own manifest chain and
+     * keeping the entries whose declared type is in the agp: namespace.
+     *
+     * ★ THE BLOCKER WAS REAL BUT ALREADY SOLVED UPSTREAM. It read: "this bridge has no pod
+     * container-enumeration helper — pod-helpers.ts exposes only fetchJson". True of THIS
+     * bridge, and the reason it stayed a stub. But `@interego/solid` exports
+     * `fetchAllManifestEntries`, which walks the manifest chain (hot + archives) built from
+     * the `ldp:contains` membership each container publishes. So the honest fix is to compose
+     * it, not to add a ninth enumerator that would have to relearn the same lessons — the
+     * substrate's own note records that a filename regex there "silently dropped %-encoded
+     * credential names and whole containers".
+     *
+     * Grouped by declared type rather than by filename, and it reports `complete` from the
+     * walk instead of implying the list is exhaustive: a bounded or partially-unreachable
+     * chain is a DIFFERENT answer from an empty practice, and collapsing the two is the
+     * "a read that FAILED is not a thing that is missing" defect this repo has hit before.
+     */
+    'agp.list_practice': async (args) => {
+      const podUrl = str(args.pod_url ?? args.podUrl);
+      if (!podUrl) throw new Error('agp.list_practice: missing required input(s): pod_url');
+      const manifestUrl = new URL('manifest.ttl', podUrl.endsWith('/') ? podUrl : `${podUrl}/`).toString();
+      const walk = await fetchAllManifestEntries(manifestUrl, deps.fetchFn ?? globalThis.fetch);
+      // Grouped by the agp: term each entry DECLARES conformance to. `conformsTo` is the
+      // entry's own statement about what it is; `describes` names the subject it is about.
+      // Neither is inferred from the filename — see the import note.
+      const byType: Record<string, { subjects: string[]; descriptorUrl: string }[]> = {};
+      let agpEntries = 0;
+      for (const e of walk.entries) {
+        const agpTerms = (e.conformsTo ?? []).filter(t => t.startsWith(AGP_NS_FOR_LIST));
+        if (agpTerms.length === 0) continue;
+        agpEntries += 1;
+        for (const t of agpTerms) {
+          (byType[t.slice(AGP_NS_FOR_LIST.length)] ??= []).push({
+            subjects: [...e.describes],
+            descriptorUrl: e.descriptorUrl,
+          });
+        }
+      }
+      return {
+        podUrl,
+        manifestUrl,
+        ontology: AGP_ONTOLOGY_IRI,
+        practice: byType,
+        agpEntries,
+        entriesWalked: walk.entries.length,
+        // ★ THE WALK'S OWN VERDICT, FORWARDED RATHER THAN FLATTENED — AND ITS STATUS WITH IT.
+        // The substrate answers `complete: true` for a 404, deliberately: no manifest is a
+        // DEFINITE empty practice, not an unreadable one. Only a non-404 failure means "could
+        // not tell". Both are reported, because a caller that sees an empty `practice` needs
+        // to know which of the two it is looking at, and `complete` alone cannot say.
+        complete: walk.complete,
+        manifestStatus: walk.hotStatus,
+        ...(walk.archivesUnreachable.length ? { archivesUnreachable: walk.archivesUnreachable } : {}),
+      };
+    },
 
     // REAL: pure + composes Foxxi's standards, so it needs no pod write to produce
     // a conformant, self-descriptive, guided artifact.

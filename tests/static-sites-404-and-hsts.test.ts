@@ -217,14 +217,20 @@ const HSTS_SOURCE: Record<string, string | typeof NOT_PUBLIC> = {
   'interego-dashboard': 'examples/dashboard/server.ts',
   'interego-pgsl-browser': 'examples/pgsl-browser/server.ts',
   'interego-bridge': 'demos/interego-bridge/server.ts',
-  // Seven vertical bridges share this factory; foxxi-bridge is the deployed one, so fixing
-  // it in the vertical would have fixed one of seven.
+  // Seven vertical bridges share this factory. foxxi-bridge was the only DEPLOYED one when
+  // that mattered, so fixing HSTS in the vertical would have fixed one of seven; it is fixed
+  // in the factory instead. Three of the seven are now deployed — see the two rows below.
   'interego-foxxi-bridge': 'applications/_shared/vertical-bridge/index.ts',
   // The eighth, and the second to be DEPLOYED — the runtime a shared-workspace member that
   // is an agent runs in. Same factory, same header, and it is named here rather than
   // inheriting the row above because this table is keyed by IMAGE: an image that shares a
   // source file still has to be listed, which is exactly the check that caught it.
   'interego-wsp-bridge': 'applications/_shared/vertical-bridge/index.ts',
+  // The ninth image and the THIRD deployed vertical bridge: the agp: theory-of-performance
+  // layer, given its own service so Foxxi can drop the seven transitional shims and become
+  // pure-standards. Listed explicitly for the same reason wsp-bridge is — this table is
+  // keyed by IMAGE, so sharing a source file with a row above earns no exemption.
+  'interego-agp-bridge': 'applications/_shared/vertical-bridge/index.ts',
   'interego-microsite': SHARED_CONF,
   'interego-main': SHARED_CONF,
   'interego-foxxi-dashboard': SHARED_CONF,

@@ -9,14 +9,20 @@
  * author-AND-serve pattern the survey found missing in sibling verticals.
  *
  * Status: the engine lives HERE (src/performance-architecture.ts; Foxxi
- * re-exports it via a shim) and eight of the nine affordances run real code and
- * publish real, SHACL-validated artifacts. The one remaining stub is
- * agp.list_practice, and it names the blocker that is actually unmet — no pod
- * container-enumeration read — rather than a stage label. The previous header
- * claimed the whole bridge was pending "when the engine is moved out of Foxxi";
- * that move had already shipped, and nothing could detect the sentence had gone
- * false because it was a literal, not a derived fact. Handler reasons are now a
- * required argument (bridge/handlers.ts), so a stale one cannot be copy-pasted.
+ * re-exports it via a shim) and ALL NINE affordances run real code. The last
+ * stub, agp.list_practice, is gone: its recorded blocker was "no pod
+ * container-enumeration read", which was true of THIS bridge and false of the
+ * system — `@interego/solid` exports `fetchAllManifestEntries`, a walk over the
+ * `ldp:contains` membership each container publishes. It is composed, not
+ * reimplemented.
+ *
+ * ★ THIS PARAGRAPH IS A LITERAL AND WILL GO STALE THE SAME WAY ITS PREDECESSORS
+ * DID. Two versions ago it claimed the bridge was pending "when the engine is
+ * moved out of Foxxi" after that move had shipped; one version ago it named a
+ * stub that no longer exists. Nothing detects either, because a sentence is not
+ * a derived fact. Handler reasons are a required argument (bridge/handlers.ts)
+ * so a stale REASON cannot be copy-pasted, but prose here is on its own — if you
+ * are reading this and the count is wrong, the count is wrong.
  *
  * Run:
  *   PORT=6030 BRIDGE_DEPLOYMENT_URL=https://agp.example/ \
@@ -39,7 +45,7 @@ import { EXTEND_STANDARDS_GUIDANCE } from '../src/standards-extension.js';
 // same engine via its shim (arrow: foxxi → agp). The handlers themselves live in
 // ./handlers.ts, NOT here: this module calls app.listen() at import time, so any
 // handler defined in it is unreachable from a test.
-import { createAgpHandlers } from './handlers.js';
+import { createAgpHandlers, PENDING_BLOCKER } from './handlers.js';
 
 const handlers = createAgpHandlers();
 
@@ -95,6 +101,27 @@ app.listen(PORT, () => {
   console.log(`  Ontology: http://localhost:${PORT}/ns/agp  |  Shapes: http://localhost:${PORT}/ns/agp/shapes`);
   console.log(`  xAPI Profile: http://localhost:${PORT}/xapi/profile  (id: ${AGP_PROFILE_ID})`);
   console.log(`  Performance support (in the flow): http://localhost:${PORT}/guidance`);
-  console.log(`  Handlers — REAL (engine + SHACL-validated publish): contextualize_situation, define_capability, map_affordance, actualize, diagnose, plan_intervention, evaluate_intervention, extend_standards`);
-  console.log(`  Handlers — pending: list_practice (blocked on a pod container-enumeration read, not on any stage)`);
+  /**
+   * ★ DERIVED, BECAUSE BOTH PREDECESSORS OF THIS BANNER WERE WRONG WHEN READ.
+   *
+   * These two lines were hand-written lists. They named `list_practice` as pending for as
+   * long as it was, and then for one commit longer — the handler became a real manifest
+   * walk and the banner went on announcing a stub, because a literal cannot notice that the
+   * code moved underneath it. The same sentence in this file's header had already gone
+   * stale twice for the same reason.
+   *
+   * A pending handler is the one thing here with a machine-readable signature: it answers
+   * with a `pending` field naming its blocker. So ask the handlers, and let the banner be
+   * a REPORT rather than a claim. If this list is ever wrong now, the handlers are wrong.
+   */
+  const pendingTools: string[] = [];
+  const realTools: string[] = [];
+  for (const [tool, fn] of Object.entries(handlers)) {
+    const blocker = (fn as unknown as Record<symbol, unknown>)[PENDING_BLOCKER];
+    (typeof blocker === 'string' ? pendingTools : realTools).push(tool.replace(/^agp\./, ''));
+  }
+  console.log(`  Handlers — REAL: ${realTools.sort().join(', ')}`);
+  console.log(pendingTools.length
+    ? `  Handlers — pending: ${pendingTools.sort().join(', ')}`
+    : '  Handlers — pending: none');
 });

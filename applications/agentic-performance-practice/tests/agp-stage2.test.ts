@@ -217,7 +217,10 @@ describe('agp publishes graphs that satisfy its own SHACL shapes', () => {
       // subject — the sweep is about the ANSWER SHAPE of every handler.
       'agp.plan_intervention': { diagnosis: { situationId: 'urn:agp:situation:s', domain: 'Evident', regimeSource: 'asserted', method: 'apply-practice', rootCauses: [], skillDeficiency: false, reasoning: [] }, situation: { id: 'urn:agp:situation:s', workContext: 'w', competency: 'c', observed: 'o' } },
       'agp.evaluate_intervention': { intervention_iri: 'urn:agp:intervention:i' },
-      'agp.list_practice': {},
+      // Needs the pod it reads: list_practice stopped being a stub that echoed its inputs
+      // and became a real manifest walk, so "which pod" is now a required question rather
+      // than a field it could ignore. The sweep is about the ANSWER SHAPE, so it supplies one.
+      'agp.list_practice': { pod_url: 'https://pod.example/alice/' },
       'agp.extend_standards': { kind: 'LerTerm', name: 'n', definition: 'd' },
     };
     for (const [tool, args] of Object.entries(inputs)) {
