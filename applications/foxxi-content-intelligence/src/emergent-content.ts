@@ -41,7 +41,7 @@ import { createHash } from 'node:crypto';
 import {
   type Performer, type PerformerKind, type PerformanceDirection,
   directionOf, describeDirection, type InterventionPlan,
-} from './performance-architecture.js';
+} from '../../agentic-performance-practice/src/performance-architecture.js';
 
 // ── Grounding fragments — the atomic content unit ───────────────────
 

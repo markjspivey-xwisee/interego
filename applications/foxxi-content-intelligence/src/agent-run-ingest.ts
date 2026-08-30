@@ -28,7 +28,7 @@
 import {
   buildTrajectory, projectTrajectoryToXapi,
   type AgentTrajectory, type TrajectoryStepInput,
-} from './agent-trajectory.js';
+} from '../../agentic-performance-practice/src/agent-trajectory.js';
 import { PERFORMED_VERB, PERF_EXT } from './learner-record.js';
 import { FOXXI_NS } from './foxxi-vocab.js';
 

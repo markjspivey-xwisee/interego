@@ -243,7 +243,17 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // `npm run lint:all` as an invocation — a gate credited to a sentence describing its absence.
 // 316 -> 317: `tests/the-sweep-missed-the-signed-positions.test.ts`, from the raw-IRI
 // interpolation sweep — the signed positions the first pass walked past.
-export const MIN_TEST_MODULES = 318;
+// 318 -> 334: the floor was not raised for a while, so this jump is sixteen modules and only
+// THREE of them are from the round that tripped it. Named honestly rather than attributed to
+// one change: `every-published-ontology-parses` (an unparseable ontology shipped past two green
+// gates — neither owns a parser), `list-practice-reads-the-pod` (the agp handler that stopped
+// being a stub, plus the case that a 404 manifest is a DEFINITE empty practice while a 5xx is
+// "could not tell"), and `images-json-counts-only-your-own-row` (a recipe input judged per row,
+// after the first fix excluded the whole file on runtime-inertness grounds and would have let a
+// repointed Dockerfile deploy as "no change"). The other thirteen accumulated across earlier
+// rounds without anyone moving the floor, which is exactly what this allowance check is for:
+// it went red BEFORE the next addition broke CI, not after.
+export const MIN_TEST_MODULES = 334;
 
 /**
  * How far below the real module count MIN_TEST_MODULES may sit before that is itself a

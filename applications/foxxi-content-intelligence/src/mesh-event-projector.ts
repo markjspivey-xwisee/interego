@@ -36,7 +36,7 @@ import { createHash } from 'node:crypto';
 import { FOXXI_NS } from './foxxi-vocab.js';
 import { verbRequiresObjectType, verbIsDeclared } from './xapi-profile.js';
 import { PERFORMED_VERB, INTENDED_VERB, CONSIDERED_VERB, PERF_EXT, isDomainActivityType } from './learner-record.js';
-import type { TrajectoryStepInput, TrajectoryModalStatus } from './agent-trajectory.js';
+import type { TrajectoryStepInput, TrajectoryModalStatus } from '../../agentic-performance-practice/src/agent-trajectory.js';
 
 /** xAPI core voiding verb (ADL) — the protocol-native mapping for a Retracted descriptor. */
 const ADL_VOIDED = 'http://adlnet.gov/expapi/verbs/voided';

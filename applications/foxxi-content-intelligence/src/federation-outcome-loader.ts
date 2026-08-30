@@ -24,7 +24,7 @@ import {
 import type {
   IRI,
 } from '@interego/core';
-import type { OutcomeRecord, CauseKey } from './performance-calibration.js';
+import type { OutcomeRecord, CauseKey } from '../../agentic-performance-practice/src/performance-calibration.js';
 import { verifySignature } from './outcome-descriptor-publisher.js';
 import { FOXXI_NS } from './foxxi-vocab.js';
 

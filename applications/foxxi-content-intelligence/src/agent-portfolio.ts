@@ -39,8 +39,8 @@
  * Layer: L3 vertical.
  */
 
-import { assessDisposition, type WorkRegime, type TeamDisposition } from './agent-disposition.js';
-import type { AgentTrajectory } from './agent-trajectory.js';
+import { assessDisposition, type WorkRegime, type TeamDisposition } from '../../agentic-performance-practice/src/agent-disposition.js';
+import type { AgentTrajectory } from '../../agentic-performance-practice/src/agent-trajectory.js';
 import type { AgentEvaluation, CandidateRun, HarnessMeta } from './agent-evaluation.js';
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;

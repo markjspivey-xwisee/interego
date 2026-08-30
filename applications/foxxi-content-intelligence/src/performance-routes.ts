@@ -20,23 +20,23 @@
  */
 
 import type { Express, Request, Response } from 'express';
-import type { WorkRegime } from './agent-disposition.js';
+import type { WorkRegime } from '../../agentic-performance-practice/src/agent-disposition.js';
 import {
   diagnose, recommendInterventions, rollUpPortfolio,
   type PerformanceSituation, type Performer, type DiagnoseInput, type PortfolioEntry,
-} from './performance-architecture.js';
+} from '../../agentic-performance-practice/src/performance-architecture.js';
 import {
   buildCalibrationProfile, expandOutcomeCorpus, composeCalibrationProfiles,
   calibrate, calibrationReadout, federationView,
   type OutcomeRecord, type CauseKey,
-} from './performance-calibration.js';
-import { SAMPLE_OUTCOMES, SAMPLE_PEER_OUTCOMES } from './sample-outcomes.js';
+} from '../../agentic-performance-practice/src/performance-calibration.js';
+import { SAMPLE_OUTCOMES, SAMPLE_PEER_OUTCOMES } from '../../agentic-performance-practice/src/sample-outcomes.js';
 import {
   frameTeachingIntervention, verifyCapabilityTransfer,
   transferAttestation, teachingToOutcome,
   type TeachingPackageRef, type BehaviourSignature, type OlkeStage,
-} from './agent-teaching.js';
-import { buildTrajectory, type AgentTrajectory, type TrajectoryStepInput } from './agent-trajectory.js';
+} from '../../agentic-performance-practice/src/agent-teaching.js';
+import { buildTrajectory, type AgentTrajectory, type TrajectoryStepInput } from '../../agentic-performance-practice/src/agent-trajectory.js';
 import {
   authorFragment, authorLesson, authorModule, composeCourse,
   personalize, forAudience, courseToCmi5Outline, scaffoldFromPlan,
@@ -45,7 +45,7 @@ import {
 } from './emergent-content.js';
 import {
   mapKnowledge, type KnowledgeComponent, type ComponentInput,
-} from './knowledge-architecture.js';
+} from '../../agentic-performance-practice/src/knowledge-architecture.js';
 import {
   publishOutcomeDescriptor, publishSituationDescriptor, publishTeachingPackageDescriptor,
   publishTeachingAttestationDescriptor, publishCalibrationSnapshotDescriptor,

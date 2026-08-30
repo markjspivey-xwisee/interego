@@ -1,16 +1,18 @@
 /**
- * Stage-2 engine-move runtime smoke: proves the theory engine now LIVES in
- * agp/src and that Foxxi's transitional shims re-export the SAME functions at
- * runtime (so Foxxi behaves identically), and that the relocated engine still
- * composes Foxxi's xAPI vocab across the new vertical boundary.
+ * Stage-2 engine-move runtime smoke: proves the theory engine LIVES in agp/src and that the
+ * relocated engine still composes Foxxi's xAPI vocab across the vertical boundary.
+ *
+ * ★ THE SHIM HALF IS GONE BECAUSE THE SHIMS ARE. This used to import each engine module
+ * through `foxxi/src/<name>.ts` as well and assert the two were the IDENTICAL function
+ * reference — the check that made the transitional re-exports safe. Those seven files are
+ * deleted and Foxxi's fourteen import sites now name agp directly, so there is no second
+ * spelling left to compare: the assertion would be `agpPA.diagnose === agpPA.diagnose`, which
+ * is true of everything and evidence of nothing. Deleted rather than left passing.
  *
  * Run from context-graphs/: npx tsx applications/agentic-performance-practice/tools/verify-stage2-move.ts
  */
-import * as foxxiPA from '../../foxxi-content-intelligence/src/performance-architecture.js';
 import * as agpPA from '../src/performance-architecture.js';
-import * as foxxiAD from '../../foxxi-content-intelligence/src/agent-disposition.js';
 import * as agpAD from '../src/agent-disposition.js';
-import * as foxxiKA from '../../foxxi-content-intelligence/src/knowledge-architecture.js';
 import * as agpKA from '../src/knowledge-architecture.js';
 import { PERFORMED_VERB } from '../../foxxi-content-intelligence/src/learner-record.js';
 import { projectTrajectoryToXapi, buildTrajectory } from '../src/agent-trajectory.js';
@@ -23,10 +25,13 @@ const check = (n: string, c: boolean, d = ''): void => {
   else { fail++; console.log(`  ✗ ${n}${d ? ' — ' + d : ''}`); }
 };
 
-check('shim re-exports diagnose (identical ref)', foxxiPA.diagnose === agpPA.diagnose && typeof agpPA.diagnose === 'function');
-check('shim re-exports recommendInterventions (identical ref)', foxxiPA.recommendInterventions === agpPA.recommendInterventions);
-check('shim re-exports assessDisposition (identical ref)', foxxiAD.assessDisposition === agpAD.assessDisposition && typeof agpAD.assessDisposition === 'function');
-check('shim re-exports mapKnowledge (identical ref)', foxxiKA.mapKnowledge === agpKA.mapKnowledge);
+// What the deleted shim-identity checks were incidentally proving: the engine is real and
+// callable at its canonical home. Asserted directly now, of agp only.
+check('agp exports a callable diagnose', typeof agpPA.diagnose === 'function');
+check('agp exports a callable recommendInterventions', typeof agpPA.recommendInterventions === 'function');
+check('agp exports a callable assessDisposition', typeof agpAD.assessDisposition === 'function');
+check('agp exports a callable mapKnowledge', typeof agpKA.mapKnowledge === 'function');
+
 check('relocated engine composes Foxxi PERFORMED_VERB at runtime', typeof PERFORMED_VERB === 'string' && PERFORMED_VERB.includes('performed'), PERFORMED_VERB);
 check('projectTrajectoryToXapi + buildTrajectory importable from agp', typeof projectTrajectoryToXapi === 'function' && typeof buildTrajectory === 'function');
 

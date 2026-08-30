@@ -25,7 +25,7 @@
  * Layer: L3 vertical. No new ontology term.
  */
 
-import type { AgentTrajectory } from './agent-trajectory.js';
+import type { AgentTrajectory } from '../../agentic-performance-practice/src/agent-trajectory.js';
 import type { HarnessMeta } from './agent-run-ingest.js';
 
 export type { HarnessMeta };
