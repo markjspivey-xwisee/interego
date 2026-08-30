@@ -35,6 +35,7 @@
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { Parser } from 'n3';
 import { FRAMEWORK_CONTROLS } from '@interego/compliance';
 
 /**
@@ -90,6 +91,36 @@ function projections(): { base: string; ttl: string; html: string; prefix: strin
 function declaredTerms(ttl: string, prefix: string): string[] {
   const re = new RegExp(`(?:^|\\n)${prefix}:([A-Za-z][A-Za-z0-9_-]*(?:\\.[0-9]+)*)\\s+a\\s`, 'g');
   return [...new Set([...ttl.matchAll(re)].map(m => m[1] ?? ''))];
+}
+
+/**
+ * HTML entities this vocabulary's prose actually uses, plus numeric references. Decoding is
+ * what makes the comparison in the last case here trustworthy: without it, every description
+ * mentioning an IRI, a `>=`, or an em dash reads as drift.
+ */
+const ENTITIES: Readonly<Record<string, string>> = {
+  amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ',
+  mdash: '—', ndash: '–', middot: '·', hellip: '…',
+  lsquo: '‘', rsquo: '’', ldquo: '“', rdquo: '”',
+};
+
+/** Decode entities and flatten whitespace, so wrapping and indentation are not differences. */
+function normaliseProse(s: string): string {
+  return s
+    .replace(/&([a-zA-Z]+);/g, (m, name: string) => ENTITIES[name] ?? m)
+    .replace(/&#(\d+);/g, (_m, d: string) => String.fromCodePoint(Number(d)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_m, h: string) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** The IRI a ttl binds to its OWN namespace — the subjects this page is responsible for. */
+function selfNamespace(ttl: string, base: string): string | undefined {
+  for (const m of ttl.matchAll(/@prefix\s+[A-Za-z][A-Za-z0-9_-]*:\s*<([^>]+)>/g)) {
+    const iri = m[1] ?? '';
+    if (iri.endsWith(`/${base}#`) || iri.endsWith(`/${base}`)) return iri;
+  }
+  return undefined;
 }
 
 /** Anchors the HTML projection defines. */
@@ -176,5 +207,67 @@ describe.each(FOUND.map(p => [p.base, p] as const))('%s namespace', (framework, 
     const stated = /&middot;\s*(\d+)\s*terms?/.exec(html)?.[1];
     expect(stated, `docs/ns/${framework}.html states no term count`).toBeDefined();
     expect(Number(stated)).toBe(projectedTerms(html).size);
+  });
+
+  /**
+   * ★★ AND IT PROJECTS WHAT THE TERM ACTUALLY SAYS, NOT JUST THAT IT EXISTS.
+   *
+   * Every check above is about the SET of terms — present, not extra, counted. All of them
+   * pass while a page shows a term's description as it was written months ago. Measured when
+   * this was added: 883 subjects carry an rdfs:comment across the 24 projections and TEN of
+   * them had drifted, in six namespaces — `harness:Agent` projected 104 of its 455 characters,
+   * `cts:Occurrence` 318 of 712, and `pgsl:AtomShape`, `FragmentShape` and `PullbackSquareShape`
+   * carried no description div at all while the Turtle described each in 278. A reader
+   * dereferencing those hash IRIs got a page that named the term and misdescribed it.
+   *
+   * WHY THIS COMPARES THE WAY IT DOES. The naive forms of this check are all wrong, and each
+   * wrong one was measured here before this landed:
+   *
+   *   - raw `html.includes(comment)` reports ~17 false drifts per namespace: the HTML escapes
+   *     `<` and `>`, so every comment naming an IRI or a `>=` looks changed. Hence decoding.
+   *   - decoding only `&amp;`/`&lt;`/`&gt;` still fails on `&mdash;`, which this vocabulary
+   *     uses constantly. Hence the entity table plus numeric references.
+   *   - comparing per-TRIPLE rather than per-SUBJECT reports 15 more: fifteen subjects here
+   *     carry TWO rdfs:comment values and the page legitimately shows one. Hence `.some`.
+   *
+   * Those three mistakes turned one real answer (10) into 51, then 106. A gate that cries wolf
+   * at that rate gets muted, so the normalisation is the load-bearing part, not the assertion.
+   * It stays deliberately one-directional: the Turtle is authoritative and the page must carry
+   * its text SOMEWHERE, which lets the page add its own framing around a description without
+   * this failing.
+   */
+  it('projects what each term actually says, not merely that it exists', () => {
+    const ns = selfNamespace(ttl, framework);
+    expect(ns, `docs/ns/${framework}.ttl binds no prefix to its own namespace`).toBeDefined();
+
+    let quads;
+    try {
+      quads = new Parser().parse(ttl);
+    } catch (err) {
+      // Unparseable Turtle is tests/every-published-ontology-parses.test.ts's verdict to give,
+      // not this one's — but it must not be swallowed into a vacuous pass here either.
+      throw new Error(`docs/ns/${framework}.ttl does not parse: ${(err as Error).message}`);
+    }
+
+    const COMMENT = 'http://www.w3.org/2000/01/rdf-schema#comment';
+    const byTerm = new Map<string, string[]>();
+    for (const q of quads) {
+      if (q.predicate.value !== COMMENT) continue;
+      if (!q.subject.value.startsWith(ns!)) continue;
+      const local = q.subject.value.slice(ns!.length);
+      byTerm.set(local, [...(byTerm.get(local) ?? []), q.object.value]);
+    }
+
+    const page = normaliseProse(html);
+    const stale = [...byTerm.entries()]
+      .filter(([, comments]) => !comments.some(c => page.includes(normaliseProse(c))))
+      .map(([term]) => term);
+
+    expect(
+      stale,
+      `docs/ns/${framework}.html does not carry the description docs/ns/${framework}.ttl gives `
+        + `for ${stale.length} term(s), so the page names them and describes them differently `
+        + `from the ontology it projects: ${stale.join(', ')}`,
+    ).toEqual([]);
   });
 });
