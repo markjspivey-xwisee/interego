@@ -226,16 +226,48 @@ export async function publishAgpArtifact(args: {
 }): Promise<string | null> {
   // Built OUTSIDE the try: an unsafe IRI is a caller defect and must throw,
   // not be reported as a pod outage.
-  const built = agpArtifactGraph(args);
+  /**
+   * The caller's unverified `operator_did`, carried as a CLAIM in the graph rather than as an
+   * identity in the provenance. Appended here, not in `agpArtifactGraph`, so the graph builder
+   * stays a pure projection of what it was given.
+   */
+  const claimed = args.author?.id;
+  const built = agpArtifactGraph(claimed
+    ? { ...args, properties: [...(args.properties ?? []), {
+        predicate: `${AGP}claimedOperator`,
+        object: { literal: String(claimed) },
+      }] }
+    : args);
   const graphIri = built.graphIri as IRI;
   const graphContent = built.graphContent;
   try {
     const now = new Date().toISOString();
-    const authorId = (args.author?.id ?? 'urn:agp:bridge:agent') as IRI;
+    /**
+     * ★★ THE BRIDGE IS WHAT ASSERTED THIS. THE CALLER'S `operator_did` IS A CLAIM.
+     *
+     * This read `args.author?.id ?? 'urn:agp:bridge:agent'`, and `args.author.id` is the
+     * `operator_did` a caller put in the request body. This bridge authenticates NOBODY, so an
+     * anonymous request chose the published `prov:wasAttributedTo`, the `assertingAgent`
+     * identity, AND the Trust facet's issuer — with `trustLevel: SelfAsserted`, which means
+     * "the subject asserted this about itself". Nobody had. A reader dereferencing the
+     * descriptor saw an identity that had done nothing.
+     *
+     * That is the shape recorded as #168: a caller-supplied `issuer_did` deciding what the
+     * substrate then states as fact. It cost a signing key there; here it costs attribution,
+     * which is the thing descriptors exist to carry.
+     *
+     * So the three identity-bearing facets name the BRIDGE — true, and it makes
+     * `iep:SelfAsserted` honest, since the bridge really is asserting about itself. The
+     * caller's claim is kept, as `agp:claimedOperator`: a STRING, explicitly unverified,
+     * where a reader can see it is a claim rather than an identity.
+     */
+    const BRIDGE_AGENT = 'urn:agp:bridge:agent' as IRI;
+    const claimedOperator = args.author?.id;
+    const authorId = BRIDGE_AGENT;
     const facets: ContextFacetData[] = [
       { type: 'Temporal', validFrom: now },
       { type: 'Provenance', wasAttributedTo: authorId, generatedAtTime: now },
-      { type: 'Agent', assertingAgent: { id: authorId, identity: authorId, isSoftwareAgent: (args.author?.kind ?? 'agent') === 'agent', ...(args.author?.role ? { label: args.author.role } : {}) } },
+      { type: 'Agent', assertingAgent: { id: authorId, identity: authorId, isSoftwareAgent: true } },
       { type: 'AccessControl', authorizations: [{ agentClass: 'http://xmlns.com/foaf/0.1/Agent' as IRI, mode: ['Read'] }] },
       { type: 'Semiotic', modalStatus: 'Asserted', groundTruth: true },
       { type: 'Trust', trustLevel: 'SelfAsserted', issuer: authorId },

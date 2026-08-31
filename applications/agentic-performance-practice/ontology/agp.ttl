@@ -374,6 +374,11 @@ agp:verdict a owl:DatatypeProperty ;
     rdfs:domain agp:InterventionEvaluation ;
     rdfs:range xsd:string .
 
+agp:claimedOperator a owl:DatatypeProperty ;
+    rdfs:label "claimed operator" ;
+    rdfs:comment "An operator identity the CALLER supplied and this bridge did not verify. A string, deliberately - not an IRI and not an agent identity - because publishing it as either would state as fact something nobody proved. This bridge authenticates no caller, so an `operator_did` in a request body is a claim about who is asking, and the descriptor says exactly that. The provenance, the asserting agent and the trust issuer all name the BRIDGE, which is what actually asserted the artifact; `iep:SelfAsserted` is then true of the thing it describes rather than a borrowed identity. Before this existed the caller's string went straight into prov:wasAttributedTo and into the Trust facet's issuer, so an anonymous request could publish a descriptor reading 'X self-asserted this' about an X that had done nothing - the same shape as the caller-supplied issuer_did that chose a signing key in #168." ;
+    rdfs:range xsd:string .
+
 agp:regimeSource a owl:DatatypeProperty ;
     rdfs:label "regime source" ;
     rdfs:comment "Provenance of a situation's placed regime: 'derived' (from trajectory evidence — the only source that may gap-analyse or accrue calibration), 'asserted' (a human/operator claim), 'default-gap-intent' (a fallback gap-intent), or 'unclassified'. Load-bearing: the calibration loop excludes non-derived regimes." ;
