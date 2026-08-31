@@ -40,10 +40,27 @@ const MANIFEST = [
   '    dct:conformsTo <https://example.org/other#Thing> .',
 ].join(String.fromCharCode(10));
 
+/**
+ * ★ URL-AWARE ON PURPOSE. The first version of this double answered with the manifest
+ * whatever URL was asked for, so the PATH was never a variable under test — and the handler
+ * shipped asking for `<pod>manifest.ttl`, which is not where a manifest lives. Against every
+ * real pod that 404s, and a 404 is correctly reported as "no manifest, therefore no
+ * practice", so the bug looked exactly like a healthy empty result. A fixture that answers
+ * everything cannot fail an implementation that asks for the wrong thing.
+ *
+ * `packages/solid` keeps the manifest at `.well-known/context-graphs` and exports
+ * `predictManifestUrl`. This serves the body ONLY there.
+ */
+const MANIFEST_SUFFIX = '.well-known/context-graphs';
+
 function fetchReturning(body: string, status = 200): typeof fetch {
-  return (async () => new Response(body, {
-    status, headers: { 'content-type': 'text/turtle' },
-  })) as unknown as typeof fetch;
+  return (async (input: RequestInfo | URL) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    if (!url.endsWith(MANIFEST_SUFFIX)) {
+      return new Response('not the manifest path', { status: 404 });
+    }
+    return new Response(body, { status, headers: { 'content-type': 'text/turtle' } });
+  }) as unknown as typeof fetch;
 }
 
 describe('agp.list_practice', () => {
@@ -58,7 +75,8 @@ describe('agp.list_practice', () => {
       practice: Record<string, { descriptorUrl: string }[]>;
       agpEntries: number; complete: boolean; manifestUrl: string;
     };
-    expect(out.manifestUrl).toBe(`${POD}manifest.ttl`);
+    // The path the SUBSTRATE defines, not one this vertical invented.
+    expect(out.manifestUrl).toBe(`${POD}${MANIFEST_SUFFIX}`);
     // Grouped by DECLARED conformance, and the foreign vertical's entry is not ours.
     expect(Object.keys(out.practice).sort()).toEqual(['Capability', 'PerformanceSituation']);
     expect(out.agpEntries).toBe(2);

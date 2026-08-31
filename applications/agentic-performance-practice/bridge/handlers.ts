@@ -17,7 +17,7 @@ import { proposeStandardsExtension, type ExtensionKind } from '../src/standards-
 // the LDP membership each container ADVERTISES (`ldp:contains`), and exports it. Adding a
 // second enumerator here would have been a private reimplementation of a published one —
 // and a filename-shaped one, which is exactly what silently dropped %-encoded names there.
-import { fetchAllManifestEntries } from '@interego/solid';
+import { fetchAllManifestEntries, predictManifestUrl } from '@interego/solid';
 import {
   coerceSituation, coerceDiagnosis, coercePlan, fetchJson,
   publishAgpArtifact, agpEvaluationProperties, deterministicIri, AGP,
@@ -237,9 +237,33 @@ export function createAgpHandlers(deps: { fetchFn?: typeof fetch } = {}): Record
           slug: `diagnosis-${diagnosisIri.split(':').pop()}`,
         });
       }
+      /**
+       * ★★ THE RESULT MUST BE ACCEPTED BY THE AFFORDANCE THAT COMES NEXT.
+       *
+       * This projection used to drop `situationId` and `factors`, keeping only
+       * `rootCauses[0]` as `factor`. Those are exactly the two fields the NEXT tool needs:
+       * `coerceDiagnosis` refuses a diagnosis with no `situationId`, and
+       * `recommendInterventions` reads `factors.<key>.adequate` on the Knowable branch.
+       *
+       * So an agent doing the obvious thing — call `agp.diagnose`, feed the result to
+       * `agp.plan_intervention` — got `pending: inputs-not-resolvable`, and a hand-built
+       * diagnosis with an ARRAY of factor strings crashed the engine with
+       * "Cannot read properties of undefined (reading 'adequate')". Driven against the live
+       * bridge; neither failure is reachable from the unit tests, which pass a diagnosis
+       * built by hand to the shape the coercer wants.
+       *
+       * A vertical whose thesis is that agents chain published affordances cannot publish two
+       * that do not compose. Both fields are restored here, additively — every existing key
+       * keeps its meaning.
+       */
       return {
-        diagnosisIri, regime: d.domain ?? null, regimeSource: d.regimeSource, method: d.method,
+        diagnosisIri,
+        // Carried so the diagnosis this returns is the diagnosis `plan_intervention` accepts.
+        situationId: situation.id,
+        regime: d.domain ?? null, regimeSource: d.regimeSource, method: d.method,
         ...(d.domain === 'Knowable' && d.rootCauses.length ? { factor: d.rootCauses[0] } : {}),
+        // The six-factor reading, not just its top row — the planner branches on all of it.
+        ...(d.factors ? { factors: d.factors } : {}),
         skillDeficiency: d.skillDeficiency, exemplary: d.exemplary ?? null, reasoning: d.reasoning,
         caveat: d.caveat ?? null, descriptorUrl, persisted: !!descriptorUrl, pending: null,
       };
@@ -327,7 +351,19 @@ export function createAgpHandlers(deps: { fetchFn?: typeof fetch } = {}): Record
     'agp.list_practice': async (args) => {
       const podUrl = str(args.pod_url ?? args.podUrl);
       if (!podUrl) throw new Error('agp.list_practice: missing required input(s): pod_url');
-      const manifestUrl = new URL('manifest.ttl', podUrl.endsWith('/') ? podUrl : `${podUrl}/`).toString();
+      /**
+       * ★ ASKED OF THE SUBSTRATE, NOT GUESSED. This read `new URL('manifest.ttl', pod)`, which
+       * is not where a manifest lives: `packages/solid` keeps it at `.well-known/context-graphs`
+       * and exports `predictManifestUrl` to say so. The guess 404s on every real pod, and a 404
+       * is reported — correctly — as "no manifest, therefore no practice", so the handler
+       * answered `{}` for every operator with a completely healthy-looking result.
+       *
+       * The unit tests could not catch it: their fixture fetch answers with a manifest whatever
+       * URL is asked for, so the path was never the variable under test. It surfaced only
+       * against a live pod, where `.well-known/context-graphs` returns 14 KB and `manifest.ttl`
+       * returns 404.
+       */
+      const manifestUrl = predictManifestUrl(podUrl.endsWith('/') ? podUrl : `${podUrl}/`);
       const walk = await fetchAllManifestEntries(manifestUrl, deps.fetchFn ?? globalThis.fetch);
       // Grouped by the agp: term each entry DECLARES conformance to. `conformsTo` is the
       // entry's own statement about what it is; `describes` names the subject it is about.

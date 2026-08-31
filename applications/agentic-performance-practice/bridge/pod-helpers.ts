@@ -53,6 +53,26 @@ export function coerceDiagnosis(raw: unknown): Diagnosis | null {
   if (!raw || typeof raw !== 'object') return null;
   const d = raw as Record<string, unknown>;
   if (!d.situationId || !d.method || !d.regimeSource) return null;
+  /**
+   * ★ REFUSE A `factors` THE ENGINE WILL CRASH ON, RATHER THAN LET IT CRASH.
+   *
+   * `recommendInterventions` reads `factors.instrumentation.adequate` and its five siblings on
+   * the Knowable branch. This function used to cast straight through, so a caller passing the
+   * natural-looking `factors: ['no shared model of the topology']` — an array of strings — got
+   * `Cannot read properties of undefined (reading 'adequate')` back over HTTP: an internal
+   * TypeError as an API response, from a bridge whose every other handler declines honestly.
+   *
+   * Absent `factors` stays legal: the engine treats an unsupplied factor as adequate, and the
+   * non-Knowable methods never read them. What is refused is a PRESENT one of the wrong shape,
+   * which is the only case that reaches the dereference.
+   */
+  if (d.factors !== undefined) {
+    const f = d.factors;
+    const wrongShape = typeof f !== 'object' || f === null || Array.isArray(f)
+      || !Object.values(f as Record<string, unknown>).every(
+        v => typeof v === 'object' && v !== null && 'adequate' in (v as Record<string, unknown>));
+    if (wrongShape) return null;
+  }
   return d as unknown as Diagnosis;
 }
 
