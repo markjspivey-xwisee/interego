@@ -27,7 +27,7 @@
 
 import {
   diagnose, recommendInterventions, evaluateIntervention, rollUpPortfolio,
-} from '../src/performance-architecture.js';
+} from '../../agentic-performance-practice/src/performance-architecture.js';
 import {
   authorFragment, authorLesson, authorModule, composeCourse,
   personalize, forAudience, authorJobAid, scaffoldFromPlan, courseToCmi5Outline,

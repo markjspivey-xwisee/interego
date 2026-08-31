@@ -19,8 +19,8 @@
 import {
   frameTeachingIntervention, verifyCapabilityTransfer,
   transferAttestation, teachingToOutcome,
-} from '../src/agent-teaching.js';
-import { buildCalibrationProfile, calibrationReadout } from '../src/performance-calibration.js';
+} from '../../agentic-performance-practice/src/agent-teaching.js';
+import { buildCalibrationProfile, calibrationReadout } from '../../agentic-performance-practice/src/performance-calibration.js';
 
 let pass = 0, fail = 0;
 const check = (label, cond, detail) => {

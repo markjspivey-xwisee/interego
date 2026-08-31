@@ -12,12 +12,12 @@
  * Exits non-zero if any assertion fails.
  */
 
-import { diagnose, recommendInterventions, evaluateIntervention } from '../src/performance-architecture.js';
+import { diagnose, recommendInterventions, evaluateIntervention } from '../../agentic-performance-practice/src/performance-architecture.js';
 import {
   buildCalibrationProfile, expandOutcomeCorpus, calibrate, recordOutcome,
   composeCalibrationProfiles, federationView, calibrationReadout,
-} from '../src/performance-calibration.js';
-import { SAMPLE_OUTCOMES, SAMPLE_PEER_OUTCOMES } from '../src/sample-outcomes.js';
+} from '../../agentic-performance-practice/src/performance-calibration.js';
+import { SAMPLE_OUTCOMES, SAMPLE_PEER_OUTCOMES } from '../../agentic-performance-practice/src/sample-outcomes.js';
 
 let pass = 0, fail = 0;
 const check = (label, cond, detail) => {

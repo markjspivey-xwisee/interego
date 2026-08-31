@@ -38,9 +38,9 @@
  */
 
 import { Wallet, verifyMessage } from 'ethers';
-import { evaluateIntervention } from '../src/performance-architecture.js';
-import { dominantCause } from '../src/performance-calibration.js';
-import { SAMPLE_OUTCOMES } from '../src/sample-outcomes.js';
+import { evaluateIntervention } from '../../agentic-performance-practice/src/performance-architecture.js';
+import { dominantCause } from '../../agentic-performance-practice/src/performance-calibration.js';
+import { SAMPLE_OUTCOMES } from '../../agentic-performance-practice/src/sample-outcomes.js';
 import { createHash } from 'node:crypto';
 
 // Canonical signing for outcomes — matches the bridge's verifySignature().

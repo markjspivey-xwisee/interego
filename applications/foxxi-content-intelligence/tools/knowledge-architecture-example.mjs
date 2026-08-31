@@ -24,8 +24,8 @@ import {
   decomposeCompetence, knowledgeStrategy, mapKnowledge,
   codifyKnowledge, connectKnowledge, narrateKnowledge,
   knowledgeAwareScaffold, KNOWLEDGE_PRINCIPLES,
-} from '../src/knowledge-architecture.js';
-import { diagnose, recommendInterventions } from '../src/performance-architecture.js';
+} from '../../agentic-performance-practice/src/knowledge-architecture.js';
+import { diagnose, recommendInterventions } from '../../agentic-performance-practice/src/performance-architecture.js';
 
 let pass = 0, fail = 0;
 const check = (label, cond, detail) => {
@@ -128,11 +128,11 @@ const gapE = {
   frequency: 'frequent', criticality: 'high', modalStatus: 'Asserted', domain: 'Knowable',
 };
 const diagE = diagnose({
-  gap: gapE,
+  situation: gapE,
   couldPerformUnderIdealConditions: false,
   factorEvidence: { knowledgeSkill: { adequate: false, evidence: 'the rep has not been taught de-escalation' } },
 });
-const planE = recommendInterventions({ diagnosis: diagE, gap: gapE });
+const planE = recommendInterventions({ diagnosis: diagE, situation: gapE });
 const kmE = mapKnowledge({ competency: gapE.competency, regime: 'Knowable', components: decompB.components });
 const scaffoldE = knowledgeAwareScaffold(planE, kmE);
 console.log(`\n   diagnosis warranted instruction: ${scaffoldE.instructionWarranted}`);

@@ -29,8 +29,8 @@
 
 import {
   buildTrajectory, composeTrajectories, projectTrajectoryToXapi,
-} from '../src/agent-trajectory.js';
-import { assessDisposition, buildProbe, snapshot, computeCausalRead } from '../src/agent-disposition.js';
+} from '../../agentic-performance-practice/src/agent-trajectory.js';
+import { assessDisposition, buildProbe, snapshot, computeCausalRead } from '../../agentic-performance-practice/src/agent-disposition.js';
 
 const SCOUT = 'did:web:acme.example:agents:scout';
 const DRAFTER = 'did:web:acme.example:agents:drafter';

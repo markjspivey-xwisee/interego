@@ -24,8 +24,8 @@
 
 import { chromium } from 'playwright';
 import { mintSessionToken } from '../src/auth.ts';
-import { evaluateIntervention } from '../src/performance-architecture.js';
-import { recordOutcome } from '../src/performance-calibration.js';
+import { evaluateIntervention } from '../../agentic-performance-practice/src/performance-architecture.js';
+import { recordOutcome } from '../../agentic-performance-practice/src/performance-calibration.js';
 import { SAMPLE_COURSE, SAMPLE_JOB_AID } from '../src/sample-content.js';
 import { Wallet } from 'ethers';
 import { createHash } from 'node:crypto';

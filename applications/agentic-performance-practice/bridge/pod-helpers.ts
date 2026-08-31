@@ -107,11 +107,23 @@ export async function fetchJson(iri: string, podUrl?: string, fetchFn: typeof fe
   try {
     const url = iri.startsWith('http') ? iri : (podUrl ? new URL(iri.replace(/^urn:[^:]+:/, ''), podUrl).toString() : null);
     if (!url) return null;
-  // ★ A CALLER-SUPPLIED IRI IS A CALLER-CHOSEN FETCH TARGET. Same rule as the publish
-  // path below: screen before connecting. This bridge authenticates nobody, so 'the caller'
-  // is anyone.
-  try { await assertSafeFetchTarget(url); } catch { return null; }
-    const r = await fetchFn(url, { headers: { accept: 'application/json, application/ld+json' } });
+    /**
+     * ★★ THE REDIRECT CHAIN IS PART OF THE TARGET, AND A PRE-CHECK DOES NOT COVER IT.
+     *
+     * This screened `url` and then handed it to a RAW fetch, whose default is
+     * `redirect: 'follow'`. So a public host that 302s to `http://169.254.169.254/` or
+     * `http://10.0.0.5/` was followed and its body returned into the handler — the exact
+     * gap the sibling sites in this same commit close by composing `guardedFetchFn`, whose
+     * `safeFetch` sets `redirect: 'manual'` and re-runs the screen on every `Location`.
+     * Reached from `agp.diagnose` (`situation_iri`) and `agp.plan_intervention`
+     * (`diagnosis_iri`) on a bridge that authenticates nobody.
+     *
+     * The pre-check is KEPT as well as the wrapper: it refuses the first hop before a socket
+     * opens, which is what makes a private target fail fast rather than hang.
+     */
+    try { await assertSafeFetchTarget(url); } catch { return null; }
+    const guarded = guardedFetchFn(fetchFn);
+    const r = await guarded(url, { headers: { accept: 'application/json, application/ld+json' } });
     if (!r.ok) return null;
     return await r.json();
   } catch { return null; }
@@ -212,6 +224,41 @@ export function agpArtifactGraph(args: {
   return { graphIri, graphContent: `${iriTerm(graphIri)} ${triples.join(' ;\n  ')} .\n` };
 }
 
+/**
+ * The identity-bearing facets of an agp artifact. PURE and exported, so what this bridge
+ * CLAIMS about who asserted a descriptor is testable without a pod, a network, or the egress
+ * screen.
+ *
+ * ★ IT TAKES NO AUTHOR ARGUMENT, AND THAT IS THE POINT. A caller's `operator_did` reached
+ * `prov:wasAttributedTo`, the `assertingAgent` identity and the Trust issuer — with
+ * `trustLevel: SelfAsserted`, which asserts the subject said this about itself. This bridge
+ * authenticates nobody, so an anonymous request could publish a claim attributed to any DID it
+ * named. That is the #168 shape (project_credential_issuer_binding): a caller-supplied
+ * identity deciding what the substrate then states as fact.
+ *
+ * The bridge is what asserted the artifact, so the bridge is what these name — which also makes
+ * `iep:SelfAsserted` honest rather than borrowed. The caller's claim is not discarded: it is
+ * published as `agp:claimedOperator`, a string and explicitly unverified, in the graph.
+ *
+ * ★ EXTRACTED BECAUSE THE TEST FOR IT COULD NOT REACH IT. The first test asserted on
+ * `agpArtifactGraph`, a helper BESIDE this decision, so the whole fix could be reverted with
+ * the suite green; and driving `publishAgpArtifact` directly now stops at
+ * `assertSafeFetchTarget`, which does a DNS lookup no offline test can satisfy. The security
+ * fix and the testability of the thing it guards were in tension — this resolves it by making
+ * the ATTRIBUTION a pure function rather than a side effect of publishing.
+ */
+export function agpAttributionFacets(now: string): ContextFacetData[] {
+  const BRIDGE_AGENT = 'urn:agp:bridge:agent' as IRI;
+  return [
+    { type: 'Temporal', validFrom: now },
+    { type: 'Provenance', wasAttributedTo: BRIDGE_AGENT, generatedAtTime: now },
+    { type: 'Agent', assertingAgent: { id: BRIDGE_AGENT, identity: BRIDGE_AGENT, isSoftwareAgent: true } },
+    { type: 'AccessControl', authorizations: [{ agentClass: 'http://xmlns.com/foaf/0.1/Agent' as IRI, mode: ['Read'] }] },
+    { type: 'Semiotic', modalStatus: 'Asserted', groundTruth: true },
+    { type: 'Trust', trustLevel: 'SelfAsserted', issuer: BRIDGE_AGENT },
+  ] as ContextFacetData[];
+}
+
 /** Best-effort REAL publish of an agp artifact as a signed-authorship-free
  *  ContextDescriptor + a graph carrying the domain triples its class's SHACL
  *  shape requires. Returns the descriptor URL on success, null on a TRANSPORT
@@ -261,17 +308,7 @@ export async function publishAgpArtifact(args: {
      * caller's claim is kept, as `agp:claimedOperator`: a STRING, explicitly unverified,
      * where a reader can see it is a claim rather than an identity.
      */
-    const BRIDGE_AGENT = 'urn:agp:bridge:agent' as IRI;
-    const claimedOperator = args.author?.id;
-    const authorId = BRIDGE_AGENT;
-    const facets: ContextFacetData[] = [
-      { type: 'Temporal', validFrom: now },
-      { type: 'Provenance', wasAttributedTo: authorId, generatedAtTime: now },
-      { type: 'Agent', assertingAgent: { id: authorId, identity: authorId, isSoftwareAgent: true } },
-      { type: 'AccessControl', authorizations: [{ agentClass: 'http://xmlns.com/foaf/0.1/Agent' as IRI, mode: ['Read'] }] },
-      { type: 'Semiotic', modalStatus: 'Asserted', groundTruth: true },
-      { type: 'Trust', trustLevel: 'SelfAsserted', issuer: authorId },
-    ] as ContextFacetData[];
+    const facets = agpAttributionFacets(now);
     const descriptor: ContextDescriptorData = { id: args.iri, describes: [graphIri], facets, conformsTo: [args.typeIri as IRI], version: 1 };
     // ★ THE GATE THAT WAS NEVER ARMED. publish() has taken a conformsToShapes list
     // since the shape-gate work; this call never passed one, and this bridge writes

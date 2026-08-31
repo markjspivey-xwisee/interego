@@ -222,10 +222,25 @@ export function createVerticalBridge(opts: VerticalBridgeOptions): Express {
           ? declared
           : KERNEL_RESULT_STATUS[kind] ?? 200;
 
+        /**
+         * ★★ THE NODE MUST BE TYPED AS WHAT IT IS, OR THE SHAPE TARGETS NOTHING.
+         *
+         * Advertising `conformsToShape: iep:RefusalShape` while `@type` stayed
+         * `[iep:ActResult, iep:ToolResult, …]` made the shape INERT: it declares
+         * `sh:targetClass iep:Refusal`, `iep:Refusal rdfs:subClassOf iep:KernelResult` gives no
+         * entailment from `iep:ActResult`, so a SHACL processor loading the advertised shape
+         * selected ZERO nodes and both `sh:minCount 1` constraints validated nothing. The
+         * substrate's own convention shows the fix: `resolveTypes('mint')` emits
+         * `[iep:MintResult, iep:Holon]` precisely so `HolonShape`'s targetClass matches.
+         */
+        const REFUSAL_CLASS = 'https://markjspivey-xwisee.github.io/interego/ns/iep#Refusal';
         const decorated = decorateShim(payload, {
           tool: affordance.toolName,
           shape,
-          types: [affordance.returns ?? `urn:iep:type:${affordance.toolName}-result`],
+          types: [
+            ...(kind === 'refusal' ? [REFUSAL_CLASS] : []),
+            affordance.returns ?? `urn:iep:type:${affordance.toolName}-result`,
+          ],
           nextSteps: [
             {
               action: 'urn:iep:action:discover-affordances',

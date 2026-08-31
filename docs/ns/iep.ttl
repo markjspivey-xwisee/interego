@@ -1969,8 +1969,8 @@ iep:RefusalShape a sh:NodeShape ;
     rdfs:comment "What a refusal must carry to be one. A declined call has to be distinguishable from a successful one BY ITS TYPE, because the dispatcher derives the HTTP status from the declared kind and must not sniff the payload for an 'error' key. It must also carry the way out: iep:resolvedBy names the affordance that obtains what the caller lacks, which is the half a prose message cannot do - an agent can follow an affordance and cannot follow a sentence." ;
     sh:property [ sh:path iep:refusalReason ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ;
                   sh:description "One sentence, for a human. Required so a refusal is never bare." ] ;
-    sh:property [ sh:path iep:resolvedBy ; sh:minCount 1 ;
-                  sh:description "The affordance that resolves this refusal. Required: a refusal with no way out is a dead end, and the caller cannot act on it." ] ;
+    sh:property [ sh:path iep:resolvedBy ; sh:maxCount 1 ;
+                  sh:description "The affordance that obtains what this refusal lacks, WHEN ONE EXISTS. Required at first, and that was wrong: a missing credential has a way out (mint one) but an authorization denial does not - the caller is simply not the principal the resource allows, and there is no affordance that changes that. Forcing every refusal to name one would have meant inventing a fake exit for the 403 case, which is worse than an honest silence. Measured: of the five refusals the tenant-auth path constructs, one could satisfy this and four could not. `iep:refusalReason` stays required, because WHY is always answerable." ] ;
     sh:property [ sh:path iep:refusalStatus ; sh:datatype xsd:integer ; sh:maxCount 1 ;
                   sh:description "Optional override of the kind's default status - 403 where a credential was held but insufficient, rather than 401 where none was sent." ] ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .

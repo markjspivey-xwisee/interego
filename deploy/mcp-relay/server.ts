@@ -128,6 +128,7 @@ import {
 } from './dpop.js';
 import { corsMiddleware, MCP_ALLOW_HEADERS } from './cors-allowlist.js';
 import { normalizeCssUrl, assertPublicPodUrl, publicStoreSpelling } from './url-rewrite.js';
+import { winnowDiscoverResults } from './discover-winnow.js';
 import { createConformanceGate } from './conformance-gate.js';
 import { mayUseRelayKey } from './relay-key-gate.js';
 // The /ns dereference surface — ~540 lines of route + projection logic that could not be
@@ -6730,8 +6731,29 @@ async function handleDiscoverAll(args: ToolArgs): Promise<string> {
     }
   }));
 
-  return JSON.stringify({ pods: results.length, results });
+  /**
+   * ★ AN EMPTY POD IS SCAFFOLDING, NOT A RESULT — SO IT IS OMITTED, BUT ITS ABSENCE IS COUNTED.
+   *
+   * Measured against the live federation: 578 pods, and a `discover_all` with `limit: 3`
+   * returned 849,399 characters — because the response was sized by the POD count, not the
+   * result count. Even filtered to a graph_iri that matched nothing, it returned 578 rows of
+   * `entries: []`. A published tool whose stated purpose is a federation-wide scan could not
+   * be called by any agent with a context budget: this is the "a tool too big to call" class.
+   *
+   * A row that found nothing carries no information the `pods` count does not already give.
+   * So a pod with zero entries AND no error is dropped from `results`. The count of what was
+   * dropped is reported as `omittedEmpty`, because a silently shorter list is the "a read that
+   * failed is not a thing that is missing" defect in the other direction — a caller must be
+   * able to tell "scanned 578, 3 had matches" from "scanned 3".
+   *
+   * ★ A ROW WITH AN ERROR IS KEPT. An unreachable or refused pod is a DIFFERENT answer from
+   * an empty one — the same distinction `list_practice`'s manifestStatus draws — and dropping
+   * it would hide a federation fault as if the pod simply had nothing.
+   */
+  const { material, omittedEmpty } = winnowDiscoverResults(results);
+  return JSON.stringify({ pods: results.length, omittedEmpty, results: material });
 }
+
 
 /**
  * Which shapes does the fleet actually declare?
@@ -8153,7 +8175,7 @@ function isCanonicalPodTarget(targetPod: string): boolean {
  * what a notification must carry — see notification-body.ts for the defect that motivated it,
  * the measurement behind the conditional, and the four defects of the refuted first attempt.
  *
- * ★ LAZY AND CACHED, DELIBERATELY. Preparing the gate reads 218,188 characters of Turtle,
+ * ★ LAZY AND CACHED, DELIBERATELY. Preparing the gate reads 218,668 characters of Turtle,
  * isolates the shape into 28 triples, and runs fifteen canaries through the whole per-call
  * decision — eight of them over ~70,000-character documents, which is what proves the size
  * reduction still preserves this shape's verdicts before a caller depends on it. Re-measured at
@@ -11515,7 +11537,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'discover_all',
-    description: 'Compatibility shim — `Promise.all(knownPods.map(p => dereference(p + manifest)))` + result merge. Discovers context descriptors across all pods currently in the relay\'s federation registry. Use add_pod or discover_directory first to populate. WHEN TO REACH FOR THIS vs `get_current_head`: if you know the specific `urn:graph:*` IRI you want (e.g. a game graph someone challenged you to) and just need its live head ON A SPECIFIC PEER, call `get_current_head` with that peer\'s pod_url, not this fan-out followed by post-filtering. Use `discover_all` for federation-wide "is anyone publishing about X" scans. Same filter set as discover_context — `graph_iri` is the most useful narrowing arg; default `sort: "newest-first"` per pod.',
+    description: 'Compatibility shim — `Promise.all(knownPods.map(p => dereference(p + manifest)))` + result merge. Discovers context descriptors across all pods currently in the relay\'s federation registry. Use add_pod or discover_directory first to populate. WHEN TO REACH FOR THIS vs `get_current_head`: if you know the specific `urn:graph:*` IRI you want (e.g. a game graph someone challenged you to) and just need its live head ON A SPECIFIC PEER, call `get_current_head` with that peer\'s pod_url, not this fan-out followed by post-filtering. Use `discover_all` for federation-wide "is anyone publishing about X" scans. Same filter set as discover_context — `graph_iri` is the most useful narrowing arg; default `sort: "newest-first"` per pod. RESPONSE: `{pods, omittedEmpty, results}` — `pods` is how many were scanned, `results` lists only pods that had matches or a fetch error, and `omittedEmpty` is how many were dropped for having neither. Filtering by `graph_iri` therefore returns a SMALL response even across a large federation, instead of one row per pod.',
     inputSchema: {
       type: 'object',
       properties: {

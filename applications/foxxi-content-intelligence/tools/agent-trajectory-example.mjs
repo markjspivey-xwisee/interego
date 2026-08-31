@@ -22,7 +22,7 @@ import { mintSessionToken } from '../src/auth.ts';
 import {
   buildTrajectory, composeTrajectories, restrictTrajectory,
   trajectoryShape, projectTrajectoryToXapi,
-} from '../src/agent-trajectory.ts';
+} from '../../agentic-performance-practice/src/agent-trajectory.ts';
 
 const BRIDGE = process.env.FOXXI_BRIDGE_URL
   ?? 'https://foxxi-bridge.interego.xwisee.com';

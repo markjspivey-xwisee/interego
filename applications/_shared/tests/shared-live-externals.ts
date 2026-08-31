@@ -422,6 +422,22 @@ export const COLLECTED_ROOTS: readonly string[] = ['tests', 'applications', 'int
  * waved through. Adding a line is a decision; the test refuses to let it be an omission.
  */
 export const SHARED_BUT_NOT_LIVE: readonly { readonly name: string; readonly why: string }[] = [
+  // ★ THE FIRST GENUINE OCCUPANT, AND THE LIST WAS KEPT OPEN FOR EXACTLY THIS.
+  //
+  // `PORT` entered the collected closure when tests/a-refusal-answers-a-refusing-status.test.ts
+  // began importing `createVerticalBridge` in order to drive the dispatcher over REAL HTTP —
+  // written because the two earlier refusal tests asserted on constants and source text, so
+  // deleting `res.status(status)` (restoring the "every affordance answers 200" bug) left both
+  // green. Measured: every reader is a bridge doing `parseInt(process.env.PORT ?? '<local
+  // default>')` to hand to `app.listen`, plus one building a `http://localhost:${PORT}` default
+  // for BRIDGE_DEPLOYMENT_URL. agent-collective:83, agent-development-practice:101,
+  // agentic-performance-practice:70, foxxi:4466 and :7695, learner-performer-companion:182,
+  // lrs-adapter:81, organizational-working-memory:152.
+  //
+  // It names a LOCAL BIND PORT. Nothing it addresses is outside this process: the test binds
+  // port 0 and reads the assigned port back off the server, so it never reads this name at all.
+  { name: 'PORT', why: 'a local bind port every bridge parses with its own default and hands to app.listen; the one non-listen read builds a http://localhost default. It addresses nothing outside the process, and the test that pulled it into the closure binds port 0 and never reads it.' },
+
   // ★ EMPTY, AND THAT IS A MEASUREMENT RATHER THAN AN OVERSIGHT. Re-measured on the widened
   // closure: 34 names are read by two or more collected modules, 13 of them belong to an entry
   // above, and the other 21 are shared ONLY through production code the tests import — they are

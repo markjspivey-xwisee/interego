@@ -82,6 +82,50 @@ describe('diagnose -> plan_intervention composes', () => {
       .toBeUndefined();
   });
 
+  it('★★ the WHOLE chain composes: diagnose -> plan -> evaluate, each fed forward verbatim', async () => {
+    /**
+     * The test above pinned diagnose -> plan. That pair was fixed and this one was not, because
+     * a two-link test proves nothing about the third node: `plan_intervention` renamed
+     * `selected` to `interventions`, projected it down to `{type, rationale}` and dropped
+     * `diagnosis` — the two fields `coercePlan` requires — so evaluate refused plan's own
+     * answer with `pending: inputs-not-resolvable`.
+     *
+     * An agent chaining published affordances has only what the previous one returned. So each
+     * step here passes the WHOLE prior answer, with no reshaping, and the assertion is simply
+     * that the next tool accepts it.
+     */
+    const h = handlers();
+    const d = await h['agp.diagnose']!({
+      situation: SITUATION,
+      factor_evidence: {
+        knowledgeSkill: { adequate: false, evidence: 'nobody can name the topology unaided' },
+        instrumentation: { adequate: false, evidence: 'the console needs an unfamiliar query language' },
+      },
+    }) as Record<string, unknown>;
+
+    const p = await h['agp.plan_intervention']!({ diagnosis: d, situation: SITUATION }) as Record<string, unknown>;
+    expect(p.pending, `plan refused diagnose's output: ${String(p.note ?? '')}`).toBeFalsy();
+
+    // The link that was broken: plan's own answer must satisfy coercePlan.
+    expect(p.diagnosis, 'plan dropped `diagnosis` — coercePlan requires it').toBeDefined();
+    expect(Array.isArray(p.selected), 'plan dropped `selected` — coercePlan requires an array').toBe(true);
+
+    const e = await h['agp.evaluate_intervention']!({
+      intervention_iri: 'urn:agp:intervention:chain-test',
+      plan: p,                 // verbatim, exactly as a chaining agent would
+      situation: SITUATION,
+      new_observed: 'median 12 minutes to first hypothesis over the following 5 incidents',
+      outcome_success: true,
+    }) as Record<string, unknown>;
+
+    expect(
+      e.pending,
+      `evaluate refused plan's own output — the chain is still broken one link on: ${String(e.note ?? '')}`,
+    ).toBeFalsy();
+    expect(e.error, `evaluate threw on plan's output: ${String(e.error ?? '')}`).toBeUndefined();
+    expect(e.evaluationIri, 'evaluate produced no verdict from a well-formed chain').toBeDefined();
+  });
+
   it('a malformed factors is DECLINED, not crashed on', async () => {
     // The natural wrong guess — factors as a list of prose strings. It used to reach
     // `factors.instrumentation.adequate` and surface a TypeError as the API response.

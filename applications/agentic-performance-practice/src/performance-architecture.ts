@@ -822,7 +822,11 @@ export function evaluateIntervention(input: EvaluateInput): InterventionEvaluati
   let nextAction = 'Continue tracking — transfer (to real work) and outcome (situation re-measured) evidence is not yet in.';
 
   if (input.newObserved !== undefined) {
-    const gapClosed = (exemplary !== undefined
+    // ★ `!= null`, NOT `!== undefined`: the bridge normalises a missing exemplary to NULL
+    // (`exemplary: d.exemplary ?? null`), and `null !== undefined` is true, so this called
+    // .trim() on null and threw a TypeError out of the engine. Latent until the full
+    // diagnose -> plan -> evaluate chain was driven end to end; a two-link test never reached it.
+    const gapClosed = (exemplary != null
         && input.newObserved.trim().toLowerCase() === exemplary.trim().toLowerCase())
       || (input.transfer?.transferred === true && input.capability?.passed === true);
     levels.outcome = { gapClosed, before: situation.observed, after: input.newObserved };

@@ -289,8 +289,31 @@ export function createAgpHandlers(deps: { fetchFn?: typeof fetch } = {}): Record
         // rather than inventing predicates the ontology does not require.
         descriptorUrl = await pub({ iri: planIri, typeIri: `${AGP}InterventionPlan`, label: `Intervention plan for ${diagnosis.situationId}`, podUrl: str(args.pod_url), author, slug: `plan-${planIri.split(':').pop()}` });
       }
+      /**
+       * ★★ THE SAME SEAM DEFECT AS diagnose->plan, ONE LINK FURTHER ALONG.
+       *
+       * This returned `interventions` — `plan.selected` renamed AND projected down to
+       * `{type, rationale}` — and dropped `diagnosis` entirely. Those are exactly the two
+       * fields `coercePlan` requires (`if (!p.diagnosis || !Array.isArray(p.selected)) return
+       * null`), so feeding this handler's own answer into `agp.evaluate_intervention` returned
+       * `pending: inputs-not-resolvable`.
+       *
+       * The diagnose->plan seam was fixed earlier the same day and a test written for THAT
+       * PAIR. The chain is diagnose -> plan -> evaluate, and verifying one link of two is how
+       * this survived the fix aimed at its own defect class. The companion test now walks the
+       * whole chain, feeding each answer forward verbatim.
+       *
+       * `interventions` is KEPT: it is the readable projection callers already use, and
+       * removing it would break them to fix a different problem. `selected` and `diagnosis`
+       * are ADDED beside it, so the answer is both readable and re-feedable.
+       */
       return {
-        planIri, interventions: plan.selected.map(o => ({ type: o.type, rationale: o.rationale })),
+        planIri,
+        interventions: plan.selected.map(o => ({ type: o.type, rationale: o.rationale })),
+        // What the next affordance in the chain requires, carried verbatim.
+        selected: plan.selected,
+        diagnosis,
+        situationId: diagnosis.situationId,
         contentWarranted: plan.contentWarranted, direction: plan.direction, summary: plan.summary,
         descriptorUrl, persisted: !!descriptorUrl, pending: null,
       };

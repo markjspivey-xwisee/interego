@@ -1980,13 +1980,13 @@ async function resolveCaller(args: Record<string, unknown>): Promise<{ ctx: Call
   let signedSigner: string | null = null;
   if (typeof args._signature === 'string' && typeof args._signed_payload === 'string') {
     const rec = recoverSignedRequest(args);
-    if (!rec.ok) return { kind: 'refusal' as const, error: `auth: ${rec.reason}` };
+    if (!rec.ok) return { kind: 'refusal' as const, 'iep:refusalReason': 'the caller could not be authenticated', error: `auth: ${rec.reason}` };
     if (rec.payload && typeof rec.payload === 'object') Object.assign(args, rec.payload);
     signedSigner = rec.signer;
   }
 
   const admin = await autoFetchAdmin(args);
-  if (!admin) return { kind: 'refusal' as const, error: 'tenant pod is not seeded or cannot be decrypted; auth resolution requires the directory' };
+  if (!admin) return { kind: 'refusal' as const, 'iep:refusalReason': 'the tenant pod could not be read, so the caller could not be authenticated', error: 'tenant pod is not seeded or cannot be decrypted; auth resolution requires the directory' };
 
   const addressMap = trustedAddressMap(admin.users ?? []);
 
@@ -2030,7 +2030,7 @@ async function resolveCaller(args: Record<string, unknown>): Promise<{ ctx: Call
         auditDelegatedAdmin(da.agentDid, 'foxxi.resolveCaller', podChecked);
         return { ctx: delegatedAdminContext(da.agentDid), admin };
       }
-      return { kind: 'refusal' as const, error: `auth: signer ${signedSigner} is not a member of the tenant at ${podChecked} (proof-of-possession).${usedDefault ? ` No tenant_pod_url was supplied, so the bridge checked its DEFAULT tenant — pass tenant_pod_url = your own pod to be checked against YOUR self-sovereign membership, and self-enroll first via foxxi.register_self_sovereign_learner.` : ` Self-enroll first via foxxi.register_self_sovereign_learner, then retry.`}${da.reason ? ` (delegated-admin fallback also declined: ${da.reason})` : ''}` };
+      return { kind: 'refusal' as const, 'iep:refusalReason': 'the request signature is valid but the signer is not a member of this tenant', error: `auth: signer ${signedSigner} is not a member of the tenant at ${podChecked} (proof-of-possession).${usedDefault ? ` No tenant_pod_url was supplied, so the bridge checked its DEFAULT tenant — pass tenant_pod_url = your own pod to be checked against YOUR self-sovereign membership, and self-enroll first via foxxi.register_self_sovereign_learner.` : ` Self-enroll first via foxxi.register_self_sovereign_learner, then retry.`}${da.reason ? ` (delegated-admin fallback also declined: ${da.reason})` : ''}` };
     }
     const ctx = resolveCallerContext({
       callerWebId: member.webId,
@@ -2085,7 +2085,7 @@ async function resolveCaller(args: Record<string, unknown>): Promise<{ ctx: Call
   }
 
   const verified = verifySessionToken(token, addressMap);
-  if (!verified.ok) return { kind: 'refusal' as const, error: `auth: ${verified.reason}` };
+  if (!verified.ok) return { kind: 'refusal' as const, 'iep:refusalReason': 'the caller could not be authenticated', error: `auth: ${verified.reason}` };
 
   const ctx = resolveCallerContext({
     callerWebId: verified.callerDid,
@@ -2444,7 +2444,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       const isDirectReport = !!(targetUser && ctx.directReports.has(targetUser.user_id));
       if (!isDirectReport) {
         const trace = emitAccessDecision({ ctx, tool: 'foxxi.discover_assigned_courses', decision: 'deny', appliedPolicies: ['learner-self', 'manager-direct-reports'] });
-        return { error: `forbidden — caller ${ctx.webId} (role: ${ctx.role}) cannot query enrollments for ${requestedLearnerDid}`, accessDecision: trace };
+        return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: `forbidden — caller ${ctx.webId} (role: ${ctx.role}) cannot query enrollments for ${requestedLearnerDid}`, accessDecision: trace };
       }
     }
 
@@ -2764,7 +2764,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const { ctx } = resolved;
     if (ctx.role !== 'admin') {
       const trace = emitAccessDecision({ ctx, tool: 'foxxi.issue_completion_credential', decision: 'deny', appliedPolicies: ['admin-full-access'] });
-      return { error: `forbidden — only admins can issue completion credentials (caller role: ${ctx.role})`, accessDecision: trace };
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: `forbidden — only admins can issue completion credentials (caller role: ${ctx.role})`, accessDecision: trace };
     }
     if (!issuerKeySeed) {
       return { error: 'bridge is not configured to issue credentials — FOXXI_ISSUER_KEY_SEED is unset' };
@@ -2807,7 +2807,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const requestedLearnerDid = args.learner_did as string;
     if (ctx.role !== 'admin' && requestedLearnerDid !== ctx.webId) {
       const trace = emitAccessDecision({ ctx, tool: 'foxxi.export_clr', decision: 'deny', appliedPolicies: ['learner-self'] });
-      return { error: `forbidden — non-admins can only export their own CLR`, accessDecision: trace };
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: `forbidden — non-admins can only export their own CLR`, accessDecision: trace };
     }
     // Read the holder's OWN self-sovereign pod wallet — never the Foxxi tenant pod.
     const learnerPodUrl = resolveSubjectPodUrl(requestedLearnerDid, args.learner_pod_url as string | undefined);
@@ -2892,6 +2892,9 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     if (subjectKind === 'human' && ctx.role !== 'admin' && !isSelf) {
       const trace = emitAccessDecision({ ctx, tool: 'foxxi.assemble_learner_record', decision: 'deny', appliedPolicies: ['learner-self'] });
       return {
+        kind: 'refusal' as const,
+        'iep:refusalStatus': 403,
+        'iep:refusalReason': 'the caller is authenticated but not permitted this operation',
         error: 'forbidden — non-admins can only assemble their own human learner record',
         detail: 'classification comes from the subject own signed statements, not from actor_kind on the request; with no evidence declaring it an agent, a record stays private',
         accessDecision: trace,
@@ -3488,7 +3491,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // other tenant-directory member calling get() would otherwise read a rival's
     // evaluation. The appliedPolicies label below is only truthful once this runs.
     if (state.evaluation.openedBy !== ctx.webId) {
-      return { error: `forbidden — only the evaluation opener (${state.evaluation.openedBy}) may read this cohort` };
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: `forbidden — only the evaluation opener (${state.evaluation.openedBy}) may read this cohort` };
     }
     const trace = emitAccessDecision({ ctx, tool: 'foxxi.get_agent_evaluation', decision: 'allow', appliedPolicies: ['agent-evaluation-owner'] });
     return {
@@ -3514,7 +3517,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // quality) across every accepted candidate — the most competitively sensitive read
     // in the cohort. Restrict to the opener, mirroring get_agent_evaluation + decide().
     if (state.evaluation.openedBy !== ctx.webId) {
-      return { error: `forbidden — only the evaluation opener (${state.evaluation.openedBy}) may compare this cohort` };
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: `forbidden — only the evaluation opener (${state.evaluation.openedBy}) may compare this cohort` };
     }
     const accepted = state.candidates.filter(c => c.status === 'accepted');
     if (accepted.length === 0) {
@@ -3539,7 +3542,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // AuthZ: caller is the learner OR an admin acting on their behalf.
     const learnerDid = (args.learner_did as string) || ctx.webId;
     if (ctx.role !== 'admin' && learnerDid !== ctx.webId) {
-      return { error: `forbidden — caller cannot emit cmi5 statements on behalf of ${learnerDid}` };
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: `forbidden — caller cannot emit cmi5 statements on behalf of ${learnerDid}` };
     }
     const trace = buildPassedSessionTrace({
       // Exactly ONE Inverse Functional Identifier (account, the WebID) per xAPI §4.1.2.1 —
@@ -3584,7 +3587,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     if (ctx.role !== 'admin') {
-      return { error: 'forbidden — federated xAPI queries are admin-only (per learner privacy policy)' };
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — federated xAPI queries are admin-only (per learner privacy policy)' };
     }
     const endpoints = (args.endpoints as Array<{ label: string; endpoint: string; username: string; password: string }>).map<FederatedLrsEndpoint>(e => ({
       label: e.label,
@@ -3599,7 +3602,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     if ('error' in resolved) return resolved;
     const { ctx, admin } = resolved;
     if (ctx.role !== 'admin') {
-      return { error: 'forbidden — only admins can push frameworks to CaSS' };
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — only admins can push frameworks to CaSS' };
     }
     // Synthesize a framework from the tenant catalog (same as export_case_framework).
     const audienceTags = new Set<string>();
@@ -3627,7 +3630,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const { ctx } = resolved;
     const requestedLearnerDid = args.learner_did as string;
     if (ctx.role !== 'admin' && requestedLearnerDid !== ctx.webId) {
-      return { error: 'forbidden — non-admins can only export their own CLR' };
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — non-admins can only export their own CLR' };
     }
     const envelope = await exportClr({
       // Bind the pod to the LEARNER's own derived pod (origin + segment). Was
@@ -3648,7 +3651,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const { ctx, admin } = resolved;
     if (ctx.role !== 'admin') {
       const trace = emitAccessDecision({ ctx, tool: 'foxxi.export_case_framework', decision: 'deny', appliedPolicies: ['admin-full-access'] });
-      return { error: `forbidden — only admins can export the competency framework`, accessDecision: trace };
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: `forbidden — only admins can export the competency framework`, accessDecision: trace };
     }
     // For the demo, synthesize a framework from the tenant's catalog
     // audience-tag taxonomy. Real deployments would pull from a
@@ -3681,7 +3684,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
-    if (ctx.role !== 'admin') return { error: `forbidden — only admins can issue BBS+ credentials` };
+    if (ctx.role !== 'admin') return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: `forbidden — only admins can issue BBS+ credentials` };
     if (!issuerKeySeed) return { error: 'FOXXI_ISSUER_KEY_SEED unset' };
     const issued = await issueBbsCompletionCredential({
       subject: {
@@ -3779,7 +3782,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const learnerDid = (args.learner_did as string) || ctx.webId;
     if (ctx.role !== 'admin' && learnerDid !== ctx.webId) {
       const trace = emitAccessDecision({ ctx, tool: 'foxxi.prove_competency', decision: 'deny', appliedPolicies: ['learner-self'] });
-      return { error: 'forbidden — non-admins can only prove their own competencies', accessDecision: trace };
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — non-admins can only prove their own competencies', accessDecision: trace };
     }
     if (!issuerKeySeed) {
       return { error: 'bridge is not configured to issue credentials — FOXXI_ISSUER_KEY_SEED is unset' };
@@ -3851,7 +3854,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const { ctx } = resolved;
     const learnerDid = (args.learner_did as string) || ctx.webId;
     if (ctx.role !== 'admin' && learnerDid !== ctx.webId) {
-      return { error: 'forbidden — caller cannot launch on behalf of another learner' };
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — caller cannot launch on behalf of another learner' };
     }
     return launchAuWithPrereqCheck({
       learnerDid,
@@ -3881,7 +3884,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
-    if (ctx.role !== 'admin') return { error: 'forbidden — only admins can countersign assessments' };
+    if (ctx.role !== 'admin') return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — only admins can countersign assessments' };
     return countersignAssessment({
       assessment: args.assessment as CompetencyAssessment,
       humanIssuerSeed: args.human_seed as string,
@@ -3892,7 +3895,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
-    if (ctx.role !== 'admin') return { error: 'forbidden — audit trails are admin-only' };
+    if (ctx.role !== 'admin') return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — audit trails are admin-only' };
     return composeAuditTrail({
       learnerDid: args.learner_did as string,
       learnerPodUrl: (args.learner_pod_url as string) || tenantPodUrl,
@@ -3905,7 +3908,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
-    if (ctx.role !== 'admin') return { error: 'forbidden — only admins can declare framework alignments' };
+    if (ctx.role !== 'admin') return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — only admins can declare framework alignments' };
     const alignment: FrameworkAlignment = {
       ownItemIri: args.own_item_iri as string,
       ownItemLabel: args.own_item_label as string,
@@ -3930,7 +3933,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
-    if (!isAdminEquivalent(ctx.role)) return { error: 'forbidden — cohort analytics are admin-only' };
+    if (!isAdminEquivalent(ctx.role)) return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — cohort analytics are admin-only' };
     let learnerPods = (args.learner_pod_urls as string[]) ?? [];
     let access: AccessDecisionTrace | undefined;
     if (ctx.role === 'delegated-admin') {
@@ -4206,7 +4209,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
-    if (ctx.role !== 'admin') return { error: 'forbidden — admin only' };
+    if (ctx.role !== 'admin') return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — admin only' };
     const appId = process.env.FOXXI_SCORM_CLOUD_APP_ID;
     const secretKey = process.env.FOXXI_SCORM_CLOUD_SECRET_KEY;
     if (!appId || !secretKey) {
@@ -4232,7 +4235,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
-    if (ctx.role !== 'admin') return { error: 'forbidden — admin only' };
+    if (ctx.role !== 'admin') return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — admin only' };
     const appId = process.env.FOXXI_SCORM_CLOUD_APP_ID;
     const secretKey = process.env.FOXXI_SCORM_CLOUD_SECRET_KEY;
     if (!appId || !secretKey) return { error: 'SCORM Cloud credentials not configured.' };
@@ -4255,7 +4258,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // Writes course content into the configured tenant pod — restrict to an
     // authoring role. Was: any directory MEMBER of any role (e.g. a plain learner)
     // could write a SCORM package into the acme tenant pod (round-26).
-    if (!isAdminEquivalent(ctx.role)) return { error: `forbidden — uploading a SCORM package to the tenant requires an admin / learning-engineer (caller role: ${ctx.role})` };
+    if (!isAdminEquivalent(ctx.role)) return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: `forbidden — uploading a SCORM package to the tenant requires an admin / learning-engineer (caller role: ${ctx.role})` };
     return uploadScormPackage({
       tenantPodUrl: tenantPodUrl,
       zipBase64: args.zip_base64 as string,
@@ -4331,7 +4334,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
-    if (ctx.role !== 'admin') return { error: 'forbidden — DPIA generation is admin-only' };
+    if (ctx.role !== 'admin') return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — DPIA generation is admin-only' };
     const chain = await composeAuditTrail({
       learnerDid: args.learner_did as string,
       learnerPodUrl: (args.learner_pod_url as string) || tenantPodUrl,
@@ -4345,7 +4348,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
-    if (ctx.role !== 'manager' && ctx.role !== 'admin') return { error: 'forbidden — manager or admin role required' };
+    if (ctx.role !== 'manager' && ctx.role !== 'admin') return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — manager or admin role required' };
     return buildManagerTeamView({
       managerWebId: args.manager_web_id as string,
       reportPodUrls: args.report_pods as Array<{ webId: string; name?: string; podUrl: string }>,
@@ -4364,7 +4367,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
-    if (ctx.role !== 'admin') return { error: 'forbidden — backup is admin-only' };
+    if (ctx.role !== 'admin') return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — backup is admin-only' };
     return backupTenantPod({ podUrl: tenantPodUrl });
   },
 
@@ -4375,7 +4378,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     if (ctx.role !== 'learning-engineer' && ctx.role !== 'admin') {
-      return { error: 'forbidden — learning-engineer or admin role required' };
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — learning-engineer or admin role required' };
     }
     return designAbExperiment({
       variantA: args.variant_a as { courseId: string; courseTitle?: string },
@@ -4394,7 +4397,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     if (ctx.role !== 'learning-engineer' && ctx.role !== 'admin') {
-      return { error: 'forbidden — learning-engineer or admin role required' };
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — learning-engineer or admin role required' };
     }
     // Fetch the course package for its concept + prereq graph.
     const courseId = args.course_id as string;
@@ -4415,7 +4418,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     if (ctx.role !== 'learning-engineer' && ctx.role !== 'admin') {
-      return { error: 'forbidden — learning-engineer or admin role required' };
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — learning-engineer or admin role required' };
     }
     return analyzeLearningCurve({
       conceptId: args.concept_id as string,
@@ -4429,7 +4432,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     if (ctx.role !== 'learning-engineer' && ctx.role !== 'admin') {
-      return { error: 'forbidden — learning-engineer or admin role required' };
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — learning-engineer or admin role required' };
     }
     return calibrateMasteryThreshold({
       records: args.records as Array<{ scoreScaled: number; downstreamSuccess: boolean }>,
@@ -4442,7 +4445,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     if (ctx.role !== 'learning-engineer' && ctx.role !== 'admin') {
-      return { error: 'forbidden — learning-engineer or admin role required' };
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — learning-engineer or admin role required' };
     }
     return frameworkGapAnalysis({
       frameworkSkills: args.framework_skills as Array<{ id: string; label?: string }>,
@@ -5929,6 +5932,9 @@ app.post('/agent/review-record', async (req, res) => {
     const subjectKind = classifySubjectKind({ isSelf, statements, subjectPodUrl, actorKindHint: p.actor_kind });
     if (subjectKind === 'human' && !isSelf) {
       res.status(403).json({
+        kind: 'refusal' as const,
+        'iep:refusalStatus': 403,
+        'iep:refusalReason': 'the caller is authenticated but not permitted this operation',
         error: 'forbidden — a human learner record is private; you may only review your own (set subject_did to your own DID). Agent capability records are public.',
         detail: 'classification comes from the subject own signed statements, not from actor_kind on the request',
       });
@@ -6410,6 +6416,9 @@ app.post('/agent/verify-extension', async (req, res) => {
     const subjectKind = classifySubjectKind({ isSelf, statements, subjectPodUrl, actorKindHint: p.actor_kind });
     if (subjectKind === 'human' && !isSelf) {
       res.status(403).json({
+        kind: 'refusal' as const,
+        'iep:refusalStatus': 403,
+        'iep:refusalReason': 'the caller is authenticated but not permitted this operation',
         error: 'forbidden — a human learner record is private; you may only verify your own (set subject_did to your own DID). Agent capability records are public.',
         detail: 'classification comes from the subject own signed statements, not from actor_kind on the request',
       });
