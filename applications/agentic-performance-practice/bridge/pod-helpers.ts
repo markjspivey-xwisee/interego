@@ -12,7 +12,21 @@
  * persisted:false (descriptorUrl:null) when it cannot — never a fabricated URL.
  */
 import { createHash } from 'node:crypto';
-import { type IRI, type ContextDescriptorData, type ContextFacetData } from '@interego/core';
+import {
+  type IRI, type ContextDescriptorData, type ContextFacetData,
+  // ★ THE CALLER CHOOSES THE POD, SO THE CALLER CHOOSES THE FETCH TARGET. Every handler
+  // here takes `pod_url` from the request body and this bridge authenticates nobody, so an
+  // unauthenticated request decided where the process connected. Driven against the deployed
+  // service: `pod_url: http://169.254.169.254/latest/meta-data/` and `http://10.0.0.5/pod/`
+  // were both ATTEMPTED (they hung until timeout); `http://127.0.0.1:3456/` connected and
+  // came back `persisted: false`. Blind, and carrying no credential — this bridge writes with
+  // a plain fetch, so there is no authority to lend — but it is still a caller-directed
+  // outbound connection, which is exactly what the substrate's own rule forbids.
+  //
+  // Composed, not re-invented: `guardedFetchFn` re-guards the target AND every redirect hop,
+  // which is the part a one-off pre-check misses. Foxxi already uses it.
+  guardedFetchFn, assertSafeFetchTarget,
+} from '@interego/core';
 import { publish, PublishShapeViolationError } from '@interego/solid';
 import { readShapesTurtle, AGP_SHAPES_NS } from '../src/ontology.js';
 import type { PerformanceSituation, Diagnosis, InterventionPlan } from '../src/performance-architecture.js';
@@ -93,6 +107,10 @@ export async function fetchJson(iri: string, podUrl?: string, fetchFn: typeof fe
   try {
     const url = iri.startsWith('http') ? iri : (podUrl ? new URL(iri.replace(/^urn:[^:]+:/, ''), podUrl).toString() : null);
     if (!url) return null;
+  // ★ A CALLER-SUPPLIED IRI IS A CALLER-CHOSEN FETCH TARGET. Same rule as the publish
+  // path below: screen before connecting. This bridge authenticates nobody, so 'the caller'
+  // is anyone.
+  try { await assertSafeFetchTarget(url); } catch { return null; }
     const r = await fetchFn(url, { headers: { accept: 'application/json, application/ld+json' } });
     if (!r.ok) return null;
     return await r.json();
@@ -231,8 +249,11 @@ export async function publishAgpArtifact(args: {
     // Diagnosis, PerformanceSituation, Capability, PerformanceAffordance,
     // Actualization and InterventionEvaluation, and agp.diagnose has been publishing
     // invalid agp:Diagnosis nodes for real.
+    // Refuse a private / link-local / loopback target BEFORE connecting, then hand the
+    // walker a fetch that re-guards every hop it makes.
+    await assertSafeFetchTarget(args.podUrl);
     const r = await publish(descriptor, graphContent, args.podUrl, {
-      fetch: args.fetchFn ?? globalThis.fetch.bind(globalThis),
+      fetch: guardedFetchFn(args.fetchFn ?? globalThis.fetch.bind(globalThis)),
       containerPath: args.containerPath ?? 'agp/work-products/',
       descriptorSlug: args.slug,
       graphSlug: `${args.slug}-graph`,

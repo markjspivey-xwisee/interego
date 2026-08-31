@@ -18,6 +18,7 @@ import { proposeStandardsExtension, type ExtensionKind } from '../src/standards-
 // second enumerator here would have been a private reimplementation of a published one —
 // and a filename-shaped one, which is exactly what silently dropped %-encoded names there.
 import { fetchAllManifestEntries, predictManifestUrl } from '@interego/solid';
+import { guardedFetchFn, assertSafeFetchTarget } from '@interego/core';
 import {
   coerceSituation, coerceDiagnosis, coercePlan, fetchJson,
   publishAgpArtifact, agpEvaluationProperties, deterministicIri, AGP,
@@ -364,7 +365,20 @@ export function createAgpHandlers(deps: { fetchFn?: typeof fetch } = {}): Record
        * returns 404.
        */
       const manifestUrl = predictManifestUrl(podUrl.endsWith('/') ? podUrl : `${podUrl}/`);
-      const walk = await fetchAllManifestEntries(manifestUrl, deps.fetchFn ?? globalThis.fetch);
+      /**
+       * ★ THE POD IS THE CALLER'S TO NAME, SO THE FETCH IS THE CALLER'S TO AIM. This handler
+       * takes `pod_url` from the request body and this bridge authenticates nobody, so an
+       * unauthenticated request chose where the process connected. I wrote this handler today
+       * and shipped it with the same gap the publish path had — the census found it, a fix of
+       * the one site I had been looking at would not have.
+       *
+       * Screen the pod before the first hop, then hand the manifest walker a fetch that
+       * re-guards every hop after it: a chain walk follows archive links, and a pre-check on
+       * the first URL says nothing about the fifth.
+       */
+      await assertSafeFetchTarget(podUrl);
+      const walk = await fetchAllManifestEntries(
+        manifestUrl, guardedFetchFn(deps.fetchFn ?? globalThis.fetch));
       // Grouped by the agp: term each entry DECLARES conformance to. `conformsTo` is the
       // entry's own statement about what it is; `describes` names the subject it is about.
       // Neither is inferred from the filename — see the import note.
