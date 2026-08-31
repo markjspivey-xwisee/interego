@@ -1953,7 +1953,23 @@ function channelWebhooks(): Partial<Record<DeliveryChannel, ChannelWebhook>> {
  * wallet_address fields, which were attached at publish time via the
  * same deterministic-derivation function the dashboard uses to sign.
  */
-async function resolveCaller(args: Record<string, unknown>): Promise<{ ctx: CallerContext; admin: FoxxiAdminPayload } | { error: string }> {
+/**
+ * A declined call, as a TYPED state rather than an error string.
+ *
+ * `kind` is what the shared bridge reads to derive the HTTP status (see iep:Refusal and
+ * KERNEL_RESULT_STATUS); it is not sniffed from the payload. `iep:resolvedBy` is the
+ * affordance that obtains what the caller lacks — a refusal that only says NO is a dead end,
+ * and a generic agent cannot follow prose.
+ */
+interface Refusal {
+  readonly kind: 'refusal';
+  readonly error: string;
+  readonly 'iep:refusalReason'?: string;
+  readonly 'iep:resolvedBy'?: Record<string, unknown>;
+  readonly 'iep:refusalStatus'?: number;
+}
+
+async function resolveCaller(args: Record<string, unknown>): Promise<{ ctx: CallerContext; admin: FoxxiAdminPayload } | Refusal> {
   // ── Real proof-of-possession (rev-196 signed request) — the substrate-native
   //    auth path, composing Interego's recoverSignedRequest (the SAME envelope the
   //    signed /agent/* affordances use). The caller signs {...args, agent_id,
@@ -1964,13 +1980,13 @@ async function resolveCaller(args: Record<string, unknown>): Promise<{ ctx: Call
   let signedSigner: string | null = null;
   if (typeof args._signature === 'string' && typeof args._signed_payload === 'string') {
     const rec = recoverSignedRequest(args);
-    if (!rec.ok) return { error: `auth: ${rec.reason}` };
+    if (!rec.ok) return { kind: 'refusal' as const, error: `auth: ${rec.reason}` };
     if (rec.payload && typeof rec.payload === 'object') Object.assign(args, rec.payload);
     signedSigner = rec.signer;
   }
 
   const admin = await autoFetchAdmin(args);
-  if (!admin) return { error: 'tenant pod is not seeded or cannot be decrypted; auth resolution requires the directory' };
+  if (!admin) return { kind: 'refusal' as const, error: 'tenant pod is not seeded or cannot be decrypted; auth resolution requires the directory' };
 
   const addressMap = trustedAddressMap(admin.users ?? []);
 
@@ -2014,7 +2030,7 @@ async function resolveCaller(args: Record<string, unknown>): Promise<{ ctx: Call
         auditDelegatedAdmin(da.agentDid, 'foxxi.resolveCaller', podChecked);
         return { ctx: delegatedAdminContext(da.agentDid), admin };
       }
-      return { error: `auth: signer ${signedSigner} is not a member of the tenant at ${podChecked} (proof-of-possession).${usedDefault ? ` No tenant_pod_url was supplied, so the bridge checked its DEFAULT tenant — pass tenant_pod_url = your own pod to be checked against YOUR self-sovereign membership, and self-enroll first via foxxi.register_self_sovereign_learner.` : ` Self-enroll first via foxxi.register_self_sovereign_learner, then retry.`}${da.reason ? ` (delegated-admin fallback also declined: ${da.reason})` : ''}` };
+      return { kind: 'refusal' as const, error: `auth: signer ${signedSigner} is not a member of the tenant at ${podChecked} (proof-of-possession).${usedDefault ? ` No tenant_pod_url was supplied, so the bridge checked its DEFAULT tenant — pass tenant_pod_url = your own pod to be checked against YOUR self-sovereign membership, and self-enroll first via foxxi.register_self_sovereign_learner.` : ` Self-enroll first via foxxi.register_self_sovereign_learner, then retry.`}${da.reason ? ` (delegated-admin fallback also declined: ${da.reason})` : ''}` };
     }
     const ctx = resolveCallerContext({
       callerWebId: member.webId,
@@ -2036,11 +2052,40 @@ async function resolveCaller(args: Record<string, unknown>): Promise<{ ctx: Call
         admin,
       };
     }
-    return { error: 'missing credential — pass a rev-196 signed-request envelope ({_signature,_signed_payload}) for proof-of-possession, or Authorization: Bearer <session token>' };
+    /**
+     * ★ A REFUSAL IS A TYPED HYPERMEDIA STATE, NOT PROSE IN A SUCCESS ENVELOPE.
+     *
+     * This returned `{error: '…'}` and nothing else. The REST dispatch sets no status of
+     * its own, so it went out as HTTP 200 — an unauthenticated call to a published affordance
+     * reporting SUCCESS to every caller that reads a status code, including the 17 places in
+     * our own clients that branch on `.ok`.
+     *
+     * `kind: 'refusal'` is what the dispatcher reads (see iep:Refusal); it does not sniff for
+     * an `error` key. And `resolvedBy` is the half prose cannot do: the sentence below tells a
+     * HUMAN to send a rev-196 envelope, while this names the affordance that MINTS one, so an
+     * agent can follow its nose out of the refusal instead of being told about it. Same
+     * discipline the interrogative router already applies when it answers `partial` and names
+     * the primitive that can answer the rest.
+     */
+    return {
+      kind: 'refusal',
+      error: 'missing credential — pass a rev-196 signed-request envelope ({_signature,_signed_payload}) for proof-of-possession, or Authorization: Bearer <session token>',
+      'iep:refusalReason': 'the request carried no proof-of-possession envelope and no session token',
+      'iep:resolvedBy': {
+        action: 'urn:iep:action:sign-request',
+        title: 'Sign a request as your bound identity',
+        // The relay origin, from the same env the ns base is derived from — not a second
+        // spelling of the host, which is how one address ends up meaning two things.
+        target: `${(process.env.INTEREGO_RELAY_URL ?? 'https://relay.interego.xwisee.com').replace(/\/+$/, '')}/mcp`,
+        method: 'POST',
+        toolName: 'sign_request',
+        note: 'Produces the {_signature,_signed_payload} envelope this endpoint requires.',
+      },
+    };
   }
 
   const verified = verifySessionToken(token, addressMap);
-  if (!verified.ok) return { error: `auth: ${verified.reason}` };
+  if (!verified.ok) return { kind: 'refusal' as const, error: `auth: ${verified.reason}` };
 
   const ctx = resolveCallerContext({
     callerWebId: verified.callerDid,

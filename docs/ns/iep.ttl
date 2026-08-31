@@ -1936,6 +1936,45 @@ iep:HolonShape a sh:NodeShape ; sh:deactivated true ; rdfs:comment "DECLARED, NO
     sh:targetClass iep:Holon ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
+iep:Refusal a owl:Class ;
+    rdfs:label "Refusal" ;
+    rdfs:subClassOf iep:KernelResult ;
+    rdfs:comment "A kernel result that declines to act, and says so as a FIRST-CLASS TYPED STATE rather than as prose in a success envelope. The kernel has ten typed ways to succeed - holon, descriptor, manifest, act, dereference and the rest - and had no typed way to refuse: a handler that declined returned an ordinary result whose only signal was an 'error' string, which the REST dispatch then sent with HTTP 200. An unauthenticated call to a published affordance therefore reported SUCCESS to every caller that reads a status code, and a generic agent following a hydra:target could not tell it had been refused. That asymmetry is the gap this class closes. A refusal declares its kind, so the status is DERIVED from what the result says it is rather than sniffed from its payload." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:refusalReason a owl:DatatypeProperty ;
+    rdfs:label "refusal reason" ;
+    rdfs:comment "Why the act was declined, in one sentence, for a human reading the response. It is the SECOND thing a refusal carries, never the first: prose cannot be followed. See iep:resolvedBy for the part an agent can act on." ;
+    rdfs:domain iep:Refusal ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:resolvedBy a owl:ObjectProperty ;
+    rdfs:label "resolved by" ;
+    rdfs:comment "The affordance that obtains what this refusal lacks - the machine-followable way OUT of the refused state. A refusal is a hypermedia state, not a dead end: the same discipline iep:interrogativeRouter already applies when it answers 'partial' and names the primitive that can answer the rest, instead of telling the caller in prose what to do. A missing-credential refusal points at the affordance that mints one." ;
+    rdfs:domain iep:Refusal ;
+    rdfs:range iep:Affordance ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:refusalStatus a owl:DatatypeProperty ;
+    rdfs:label "refusal status" ;
+    rdfs:comment "The HTTP status this refusal projects to, published as DATA so the dispatcher maps a declared kind to a code rather than branching on the payload. Conformance here is profile-driven like everywhere else in this substrate: the engine reads the mapping, it does not encode it." ;
+    rdfs:domain iep:Refusal ;
+    rdfs:range xsd:integer ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:RefusalShape a sh:NodeShape ;
+    rdfs:label "Refusal SHACL shape" ;
+    sh:targetClass iep:Refusal ;
+    rdfs:comment "What a refusal must carry to be one. A declined call has to be distinguishable from a successful one BY ITS TYPE, because the dispatcher derives the HTTP status from the declared kind and must not sniff the payload for an 'error' key. It must also carry the way out: iep:resolvedBy names the affordance that obtains what the caller lacks, which is the half a prose message cannot do - an agent can follow an affordance and cannot follow a sentence." ;
+    sh:property [ sh:path iep:refusalReason ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ;
+                  sh:description "One sentence, for a human. Required so a refusal is never bare." ] ;
+    sh:property [ sh:path iep:resolvedBy ; sh:minCount 1 ;
+                  sh:description "The affordance that resolves this refusal. Required: a refusal with no way out is a dead end, and the caller cannot act on it." ] ;
+    sh:property [ sh:path iep:refusalStatus ; sh:datatype xsd:integer ; sh:maxCount 1 ;
+                  sh:description "Optional override of the kind's default status - 403 where a credential was held but insufficient, rather than 401 where none was sent." ] ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
 iep:KernelResultShape a sh:NodeShape ; sh:deactivated true ; rdfs:comment "DECLARED, NOT YET SPECIFIED. This shape carries no constraints, so it validated nothing while reading — from its name, its rdfs:isDefinedBy and its dereferenceable IRI — as though it enforced the invariant it is named for. sh:deactivated says so in data: a SHACL processor now correctly produces no results for it, rather than producing none by accident. Remove this flag in the same change that gives it constraints." ; ;
     rdfs:label "Kernel result envelope SHACL shape" ;
     sh:targetClass iep:KernelResult ;

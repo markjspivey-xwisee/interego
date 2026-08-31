@@ -101,7 +101,32 @@ export const KERNEL_RESULT_SHAPES = Object.freeze({
   dereference: `${CG}DereferenceResultShape` as IRI,
   reduce:      `${CG}ReduceResultShape`    as IRI,
   result:      `${CG}KernelResultShape`    as IRI,
+  /**
+   * ★ THE ONE KIND THAT IS NOT A SUCCESS. Ten kinds above describe ways to succeed and
+   * there was no way to DECLINE, so a handler that refused returned an ordinary result whose
+   * only signal was an `error` string. The REST dispatch, which sets no status of its own,
+   * then sent it as HTTP 200: an unauthenticated call to a published affordance reported
+   * SUCCESS to every caller that reads a status code. See `iep:Refusal` in docs/ns/iep.ttl.
+   */
+  refusal:     `${CG}RefusalShape`         as IRI,
 }) as Readonly<Record<string, IRI>>;
+
+/**
+ * Which HTTP status each kernel result kind projects to.
+ *
+ * ★ DATA, NOT A BRANCH — AND THAT IS THE POINT. The dispatcher must not sniff a payload for
+ * an `error` key to decide a status; that is the `if (x)` this substrate refuses everywhere
+ * else, and the note above `KERNEL_RESULT_SHAPES` already states the rule: "each kernel verb
+ * hands its own kind so we don't have to sniff the payload". A verb that DECLINES hands
+ * `refusal`, and the code falls out of this table.
+ *
+ * Absent from this map means 200. Only the kinds that are not successes need an entry, and
+ * `refusal` carries its own `iep:refusalStatus` when it needs to be more specific than the
+ * default here (401 for a missing credential, 403 for a held-but-insufficient one).
+ */
+export const KERNEL_RESULT_STATUS = Object.freeze({
+  refusal: 401,
+}) as Readonly<Record<string, number>>;
 
 // ── Hypermedia decoration ──
 

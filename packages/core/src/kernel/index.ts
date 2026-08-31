@@ -191,6 +191,7 @@ export {
   hydraEntryPoint,
   KERNEL_JSONLD_CONTEXT,
   KERNEL_RESULT_SHAPES,
+  KERNEL_RESULT_STATUS,
 } from './hypermedia.js';
 export type {
   HypermediaAffordance,

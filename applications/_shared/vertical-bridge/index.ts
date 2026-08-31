@@ -42,6 +42,7 @@ import {
   decorateShim,
   KERNEL_JSONLD_CONTEXT,
   KERNEL_RESULT_SHAPES,
+  KERNEL_RESULT_STATUS,
   toStructuredContent,
   protocolMembersOnly,
   acceptForSdkTransport,
@@ -201,9 +202,29 @@ export function createVerticalBridge(opts: VerticalBridgeOptions): Express {
         const payload = (result && typeof result === 'object' && !Array.isArray(result))
           ? result as Record<string, unknown>
           : { result };
+        /**
+         * ★ THE RESULT DECLARES ITS KIND; THIS READS IT. It does not sniff for an `error`
+         * key — `KERNEL_RESULT_SHAPES`' own note is the rule ("each kernel verb hands its own
+         * kind so we don't have to sniff the payload"), and a dispatcher that guessed would be
+         * the `if (x)` this substrate refuses everywhere else.
+         *
+         * Until this existed, EVERY handler answer was HTTP 200, because the only status set
+         * on this route is the 400 in the catch below — which a handler that RETURNS rather
+         * than THROWS never reaches. So an unauthenticated call to any published affordance on
+         * any deployed bridge answered 200 with `{error: 'missing credential …'}`, and the 17
+         * places in our own clients that branch on `.ok` read it as success.
+         */
+        const kind = typeof payload['kind'] === 'string' ? payload['kind'] : 'result';
+        const shape = KERNEL_RESULT_SHAPES[kind] ?? KERNEL_RESULT_SHAPES['result']!;
+        // A refusal may name its own code (401 vs 403); otherwise the kind's default stands.
+        const declared = payload['iep:refusalStatus'] ?? payload['refusalStatus'];
+        const status = typeof declared === 'number'
+          ? declared
+          : KERNEL_RESULT_STATUS[kind] ?? 200;
+
         const decorated = decorateShim(payload, {
           tool: affordance.toolName,
-          shape: KERNEL_RESULT_SHAPES['result']!,
+          shape,
           types: [affordance.returns ?? `urn:iep:type:${affordance.toolName}-result`],
           nextSteps: [
             {
@@ -221,7 +242,7 @@ export function createVerticalBridge(opts: VerticalBridgeOptions): Express {
             },
           ],
         });
-        res.type('application/ld+json').json(decorated);
+        res.status(status).type('application/ld+json').json(decorated);
       } catch (err) {
         res.status(400).type('application/ld+json').json({
           '@context': KERNEL_JSONLD_CONTEXT,
