@@ -2428,7 +2428,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
   // ── Learner-side ────────────────────────────────────────────────────
   'foxxi.discover_assigned_courses': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx, admin } = resolved;
 
     // AuthZ: caller can only ask about themselves, their direct reports, or any if admin.
@@ -2484,7 +2484,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.ask_course_question_agentic': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
 
     // Per-IP rate limit — protects the operator's Anthropic bill when
@@ -2553,7 +2553,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.retrieve_course_context': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     args.learner_did = ctx.webId; // bind to authenticated identity
 
@@ -2591,7 +2591,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // that is authenticated, and an unauthenticated egress trigger is the class this
     // vertical has been bitten by before.
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const courseId = courseIdFrom(args);
     if (!courseId) {
       return { error: 'course_iri required — the ingested course IRI (…/courses/<course_id>#package), or pass course_id directly.' };
@@ -2760,7 +2760,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.issue_completion_credential': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     if (ctx.role !== 'admin') {
       const trace = emitAccessDecision({ ctx, tool: 'foxxi.issue_completion_credential', decision: 'deny', appliedPolicies: ['admin-full-access'] });
@@ -2802,7 +2802,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.export_clr': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     const requestedLearnerDid = args.learner_did as string;
     if (ctx.role !== 'admin' && requestedLearnerDid !== ctx.webId) {
@@ -2822,7 +2822,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.assemble_learner_record': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     const requestedLearnerDid = (args.learner_did as string) || ctx.webId;
     // VIRTUALIZE over the SUBJECT'S OWN pod — Foxxi is a lens, not a store. Read
@@ -2933,7 +2933,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.record_performance': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     // Bind the performer to the AUTHENTICATED caller. A caller-supplied actor_did for
     // ANOTHER agent is honored ONLY for a privileged operator — otherwise an attacker who
@@ -3103,7 +3103,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.record_agent_trajectory': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     const agentTrajectories = agentTrajectoriesByTenant.for(callTenant(args));
     const agentDid = args.agent_did as string;
@@ -3162,7 +3162,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.get_agent_trajectory': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     const agentTrajectories = agentTrajectoriesByTenant.for(callTenant(args));
     const agentDid = args.agent_did as string;
@@ -3200,7 +3200,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.assess_agent_disposition': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     const agentTrajectories = agentTrajectoriesByTenant.for(callTenant(args));
     const performanceProbes = performanceProbesByTenant.for(callTenant(args));
@@ -3230,7 +3230,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.run_performance_probe': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     const agentTrajectories = agentTrajectoriesByTenant.for(callTenant(args));
     const performanceProbes = performanceProbesByTenant.for(callTenant(args));
@@ -3284,7 +3284,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.record_external_agent_run': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     const tenant = callTenant(args);
     const agentTrajectories = agentTrajectoriesByTenant.for(tenant);
@@ -3408,7 +3408,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       };
     }
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     const evaluationRegistry = evaluationRegistryByTenant.for(callTenant(args));
     const name = args.name as string;
@@ -3428,7 +3428,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.request_evaluation_enrollment': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     const evaluationRegistry = evaluationRegistryByTenant.for(callTenant(args));
     const evaluationId = args.evaluation_id as string;
@@ -3454,7 +3454,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.decide_evaluation_candidate': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     const evaluationRegistry = evaluationRegistryByTenant.for(callTenant(args));
     const evaluationId = args.evaluation_id as string;
@@ -3476,7 +3476,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.get_agent_evaluation': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     const evaluationRegistry = evaluationRegistryByTenant.for(callTenant(args));
     const evaluationId = args.evaluation_id as string;
@@ -3503,7 +3503,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.compare_agent_evaluation': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     const evaluationRegistry = evaluationRegistryByTenant.for(callTenant(args));
     const evaluationId = args.evaluation_id as string;
@@ -3534,7 +3534,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.emit_cmi5_session': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     // AuthZ: caller is the learner OR an admin acting on their behalf.
     const learnerDid = (args.learner_did as string) || ctx.webId;
@@ -3581,7 +3581,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.query_experience_index': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     if (ctx.role !== 'admin') {
       return { error: 'forbidden — federated xAPI queries are admin-only (per learner privacy policy)' };
@@ -3596,7 +3596,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.push_to_cass': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx, admin } = resolved;
     if (ctx.role !== 'admin') {
       return { error: 'forbidden — only admins can push frameworks to CaSS' };
@@ -3623,7 +3623,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.export_clr_v1': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     const requestedLearnerDid = args.learner_did as string;
     if (ctx.role !== 'admin' && requestedLearnerDid !== ctx.webId) {
@@ -3644,7 +3644,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.export_case_framework': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx, admin } = resolved;
     if (ctx.role !== 'admin') {
       const trace = emitAccessDecision({ ctx, tool: 'foxxi.export_case_framework', decision: 'deny', appliedPolicies: ['admin-full-access'] });
@@ -3679,7 +3679,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.issue_bbs_credential': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     if (ctx.role !== 'admin') return { error: `forbidden — only admins can issue BBS+ credentials` };
     if (!issuerKeySeed) return { error: 'FOXXI_ISSUER_KEY_SEED unset' };
@@ -3774,7 +3774,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.prove_competency': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     const learnerDid = (args.learner_did as string) || ctx.webId;
     if (ctx.role !== 'admin' && learnerDid !== ctx.webId) {
@@ -3847,7 +3847,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.launch_au_with_prereq_check': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     const learnerDid = (args.learner_did as string) || ctx.webId;
     if (ctx.role !== 'admin' && learnerDid !== ctx.webId) {
@@ -3879,7 +3879,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.countersign_assessment': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     if (ctx.role !== 'admin') return { error: 'forbidden — only admins can countersign assessments' };
     return countersignAssessment({
@@ -3890,7 +3890,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.audit_compliance_trail': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     if (ctx.role !== 'admin') return { error: 'forbidden — audit trails are admin-only' };
     return composeAuditTrail({
@@ -3903,7 +3903,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.declare_framework_alignment': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     if (ctx.role !== 'admin') return { error: 'forbidden — only admins can declare framework alignments' };
     const alignment: FrameworkAlignment = {
@@ -3928,7 +3928,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.cohort_concept_intelligence': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     if (!isAdminEquivalent(ctx.role)) return { error: 'forbidden — cohort analytics are admin-only' };
     let learnerPods = (args.learner_pod_urls as string[]) ?? [];
@@ -4204,7 +4204,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.scorm_cloud_pull': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     if (ctx.role !== 'admin') return { error: 'forbidden — admin only' };
     const appId = process.env.FOXXI_SCORM_CLOUD_APP_ID;
@@ -4230,7 +4230,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.scorm_cloud_register': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     if (ctx.role !== 'admin') return { error: 'forbidden — admin only' };
     const appId = process.env.FOXXI_SCORM_CLOUD_APP_ID;
@@ -4250,7 +4250,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.upload_scorm_package': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     // Writes course content into the configured tenant pod — restrict to an
     // authoring role. Was: any directory MEMBER of any role (e.g. a plain learner)
@@ -4329,7 +4329,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.generate_dpia': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     if (ctx.role !== 'admin') return { error: 'forbidden — DPIA generation is admin-only' };
     const chain = await composeAuditTrail({
@@ -4343,7 +4343,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.manager_team_view': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     if (ctx.role !== 'manager' && ctx.role !== 'admin') return { error: 'forbidden — manager or admin role required' };
     return buildManagerTeamView({
@@ -4362,7 +4362,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.backup_tenant_pod': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     if (ctx.role !== 'admin') return { error: 'forbidden — backup is admin-only' };
     return backupTenantPod({ podUrl: tenantPodUrl });
@@ -4372,7 +4372,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.le_design_ab_experiment': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     if (ctx.role !== 'learning-engineer' && ctx.role !== 'admin') {
       return { error: 'forbidden — learning-engineer or admin role required' };
@@ -4391,7 +4391,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.le_estimate_concept_difficulty': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     if (ctx.role !== 'learning-engineer' && ctx.role !== 'admin') {
       return { error: 'forbidden — learning-engineer or admin role required' };
@@ -4412,7 +4412,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.le_analyze_learning_curve': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     if (ctx.role !== 'learning-engineer' && ctx.role !== 'admin') {
       return { error: 'forbidden — learning-engineer or admin role required' };
@@ -4426,7 +4426,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.le_calibrate_mastery_threshold': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     if (ctx.role !== 'learning-engineer' && ctx.role !== 'admin') {
       return { error: 'forbidden — learning-engineer or admin role required' };
@@ -4439,7 +4439,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.le_framework_gap_analysis': async (args) => {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return { error: resolved.error };
+    if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     if (ctx.role !== 'learning-engineer' && ctx.role !== 'admin') {
       return { error: 'forbidden — learning-engineer or admin role required' };
