@@ -350,9 +350,31 @@ export function createVerticalBridge(opts: VerticalBridgeOptions): Express {
       // `content[0].text` KEEPS its stringified payload. The foxxi dashboard SPA and
       // the interego microsite both read and JSON.parse it, so this is strictly an
       // addition — removing or reshaping the text block would break them silently.
+      /**
+       * ★★ THE SAME REFUSAL WAS A 401 ON REST AND A PLAIN SUCCESS HERE.
+       *
+       * This factory serves every vertical on TWO surfaces. The REST route below derives its
+       * status from the result's `kind` — that work is why an unauthenticated call now answers
+       * 401 instead of 200. This leg returned the identical payload with no `isError`, and
+       * `isError` is MCP's protocol-level signal: a client that branches on it (which is what
+       * the SDK exposes) read every refusal as a completed call.
+       *
+       * That is the same defect the REST leg was fixed for, on the surface nobody drove — and
+       * the gate written to prove the REST fix drove only REST, so it could never have noticed.
+       * One handler result, one meaning, both surfaces.
+       *
+       * The payload is unchanged: `kind`, `iep:refusalStatus` and `iep:resolvedBy` were always
+       * inside `structuredContent`, so a client that parsed deeply could already see the
+       * refusal. `isError` is what a client should not have to parse deeply to find.
+       */
+      const declaresRefusal = Boolean(
+        result && typeof result === 'object' && !Array.isArray(result)
+          && (result as Record<string, unknown>)['kind'] === 'refusal',
+      );
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(result) }],
         structuredContent: toStructuredContent(result),
+        ...(declaresRefusal ? { isError: true as const } : {}),
       };
     });
 

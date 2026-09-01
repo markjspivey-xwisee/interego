@@ -19,6 +19,7 @@ import { proposeStandardsExtension, type ExtensionKind } from '../src/standards-
 // and a filename-shaped one, which is exactly what silently dropped %-encoded names there.
 import { fetchAllManifestEntries, predictManifestUrl } from '@interego/solid';
 import { guardedFetchFn, assertSafeFetchTarget } from '@interego/core';
+import { refuse } from '../../_shared/vertical-bridge/refusal.js';
 import {
   coerceSituation, coerceDiagnosis, coercePlan, fetchJson,
   publishAgpArtifact, agpEvaluationProperties, deterministicIri, AGP,
@@ -211,7 +212,19 @@ export function createAgpHandlers(deps: { fetchFn?: typeof fetch } = {}): Record
       const raw = args.situation ?? (args.situation_iri ? await readJson(str(args.situation_iri), args.pod_url ? str(args.pod_url) : undefined) : null);
       const situation = coerceSituation(raw);
       if (!situation) {
-        return { pending: 'situation-not-resolvable', tool: 'agp.diagnose', note: 'Pass an inline `situation` object, or a `situation_iri` resolvable against `pod_url`. The engine ran nothing because no situation could be resolved.', received: args };
+      /**
+       * ★★ THIS ANSWERED HTTP 200 AND THE ENGINE HAD RUN NOTHING.
+       *
+       * A repo-wide census cleared this file twice: its key was error|reason|refused|denied and
+       * this payload contains none of those words. `pending` was a THIRD spelling of "no", after
+       * `error` and `reason`, and no word list would have anticipated it. Found by POSTing.
+       *
+       * 400: the caller brought neither a resolvable situation nor an inline one. `pending` and
+       * `received` are kept — they are the useful half — but the STATUS now says declined.
+       */
+        return { ...refuse(400, 'Pass an inline `situation` object, or a `situation_iri` resolvable against `pod_url`. The engine ran nothing because no situation could be resolved.',
+          'no situation could be resolved from the arguments supplied'),
+          pending: 'situation-not-resolvable', tool: 'agp.diagnose', received: args };
       }
       const factorEvidence = (args.factor_evidence ?? args.factorEvidence) as Record<string, { adequate: boolean; evidence: string }> | undefined;
       const d = diagnose({
@@ -277,7 +290,9 @@ export function createAgpHandlers(deps: { fetchFn?: typeof fetch } = {}): Record
       const diagnosis = coerceDiagnosis(rawDiag);
       const situation = coerceSituation(args.situation ?? null);
       if (!diagnosis || !situation) {
-        return { pending: 'inputs-not-resolvable', tool: 'agp.plan_intervention', note: 'Pass an inline `diagnosis` AND `situation` object (or a resolvable diagnosis_iri + the situation). The engine ran nothing.', received: args };
+        return { ...refuse(400, 'Pass an inline `diagnosis` AND `situation` object (or a resolvable diagnosis_iri + the situation). The engine ran nothing.',
+          'no diagnosis and situation pair could be resolved from the arguments supplied'),
+          pending: 'inputs-not-resolvable', tool: 'agp.plan_intervention', received: args };
       }
       const author = args.operator_did ? { id: str(args.operator_did), kind: 'agent' as const, role: 'performance consultant' } : undefined;
       const plan = recommendInterventions({ diagnosis, situation, author });
@@ -326,7 +341,9 @@ export function createAgpHandlers(deps: { fetchFn?: typeof fetch } = {}): Record
       const plan = coercePlan(args.plan ?? null);
       const situation = coerceSituation(args.situation ?? null);
       if (!plan || !situation) {
-        return { pending: 'inputs-not-resolvable', tool: 'agp.evaluate_intervention', note: 'Pass an inline `plan` (an agp:InterventionPlan with its `diagnosis` and `selected`) AND the `situation` it targeted. The engine ran nothing and nothing was published.', received: args };
+        return { ...refuse(400, 'Pass an inline `plan` (an agp:InterventionPlan with its `diagnosis` and `selected`) AND the `situation` it targeted. The engine ran nothing and nothing was published.',
+          'no plan and situation pair could be resolved from the arguments supplied'),
+          pending: 'inputs-not-resolvable', tool: 'agp.evaluate_intervention', received: args };
       }
       const ev = evaluateIntervention({
         plan, situation,

@@ -478,6 +478,17 @@ export const SHARED_ONLY_THROUGH_IMPORTED_CODE: readonly {
   readonly why: string;
 }[] = [
   {
+    name: 'INTEREGO_BUILD_SHA',
+    readIn: 'applications/_shared/vertical-bridge/index.ts',
+    why: 'the build sha this process reports at /health, read once to answer that route. It '
+      + 'entered the collected closure the same way PORT did — a second suite '
+      + '(every-vertical-declines-with-a-status) began importing createVerticalBridge in order '
+      + "to DRIVE each vertical's dispatcher rather than pattern-match its source, after a "
+      + 'source census cleared three verticals that were answering HTTP 200 to declined calls. '
+      + 'It names a stamp this deployment prints about itself; it addresses nothing outside the '
+      + 'process, and no module in the test tree reads it.',
+  },
+  {
     name: 'PORT',
     readIn: 'applications/_shared/vertical-bridge/index.ts',
     why: 'a local bind port. It entered the collected closure when a refusal test began '

@@ -137,7 +137,19 @@ describe('diagnose -> plan_intervention composes', () => {
       },
       situation: SITUATION,
     }) as Record<string, unknown>;
-    expect(p.error, 'an internal TypeError was returned as the API response').toBeUndefined();
+    // ★ THIS ASSERTED `p.error` WAS ABSENT, WHICH WAS A PROXY, NOT THE PROPERTY.
+    //
+    // The property is that no INTERNAL TypeError is returned as the API response. Absence of an
+    // `error` field stood in for that only while a decline carried no error field at all — and
+    // once declines became typed refusals, an honest decline carries one by design. Kept as
+    // written, this test would have failed the fix that made the decline answer HTTP 400.
+    //
+    // So it now asserts the thing itself: whatever is returned, it is not a crash.
+    expect(
+      String(p.error ?? ''),
+      'an internal TypeError was returned as the API response',
+    ).not.toMatch(/Cannot read propert|undefined is not|is not a function|TypeError/i);
     expect(p.pending, 'a malformed diagnosis should be declined honestly').toBeTruthy();
+    expect(p.kind, 'the decline is untyped, so the dispatcher answers HTTP 200').toBe('refusal');
   });
 });
