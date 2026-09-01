@@ -106,10 +106,27 @@ export type RespondOutcome =
       readonly message: string;
     }
   | {
+      /**
+       * ★ EVERY REFUSAL BELOW ANSWERED HTTP 200.
+       *
+       * `wsp.respond_as_member` spreads this straight into its answer, and the shared
+       * dispatcher derives status from `kind` — which this union did not carry. So `not-seated`
+       * (the agent is not a member) and `ceiling` (its role forbids the write) told the caller
+       * the call SUCCEEDED. A repo-wide source census had cleared this file: its key matched
+       * both `outcome: 'refused'` and `reason`, but its phrase list knew nothing of
+       * "not-seated". Found by POSTing to the bridge.
+       *
+       * `outcome` and `reason` are unchanged — callers branch on them. The three added fields
+       * are what the dispatcher reads, and they are optional so the union stays assignable
+       * where a refusal is constructed without them.
+       */
       readonly outcome: 'refused';
       readonly reason: 'not-seated' | 'ceiling' | 'unreadable-workspace' | 'append-failed';
       readonly message: string;
       readonly read: RespondReading | null;
+      readonly kind?: 'refusal';
+      readonly 'iep:refusalStatus'?: number;
+      readonly 'iep:refusalReason'?: string;
     };
 
 /** Everything the agent actually read, returned so a caller can check the derivation. */
@@ -258,7 +275,7 @@ export async function respondAsMember(
   // ── 1. the workspace record, dereferenced (never handed to us) ─────────────
   const evidence = await dereferenceWorkspaceRecord(workspace, deps);
   if (evidence.kind === 'unreadable') {
-    return { outcome: 'refused', reason: 'unreadable-workspace', message: evidence.why, read: null };
+    return { outcome: 'refused' as const, reason: 'unreadable-workspace' as const, kind: 'refusal' as const, 'iep:refusalStatus': 502, 'iep:refusalReason': 'the workspace record could not be read, so membership could not be established; nothing about the caller failed', message: evidence.why, read: null };
   }
   const record = evidence.record;
   consulted.push(record.head);
@@ -267,7 +284,7 @@ export async function respondAsMember(
     ?? null;
   if (convenerPod === null) {
     return {
-      outcome: 'refused', reason: 'unreadable-workspace', read: null,
+      outcome: 'refused' as const, reason: 'unreadable-workspace' as const, kind: 'refusal' as const, 'iep:refusalStatus': 502, 'iep:refusalReason': 'the workspace record could not be read, so membership could not be established; nothing about the caller failed', read: null,
       message: `the record names convener <${record.convener}>, which this reader cannot resolve to a pod, `
         + 'so it does not know where the grants that would seat anybody live',
     };
@@ -277,7 +294,7 @@ export async function respondAsMember(
   const roleEvidence = await dereferenceRoleProfile(record.roleProfile, deps);
   if (roleEvidence.kind === 'unreadable') {
     return {
-      outcome: 'refused', reason: 'unreadable-workspace', read: null,
+      outcome: 'refused' as const, reason: 'unreadable-workspace' as const, kind: 'refusal' as const, 'iep:refusalStatus': 502, 'iep:refusalReason': 'the workspace record could not be read, so membership could not be established; nothing about the caller failed', read: null,
       message: `the workspace declares role profile <${record.roleProfile}> and it could not be read, `
         + `so no ceiling can be computed and this agent will not write: ${roleEvidence.why}`,
     };
@@ -289,7 +306,7 @@ export async function respondAsMember(
   const readCap = opts.grantReadCap ?? GRANT_READ_CAP;
   const scan = await grantHeads({ workspace, convenerPod, deps, readCap });
   if (scan.why !== null) {
-    return { outcome: 'refused', reason: 'unreadable-workspace', message: scan.why, read: null };
+    return { outcome: 'refused' as const, reason: 'unreadable-workspace' as const, kind: 'refusal' as const, 'iep:refusalStatus': 502, 'iep:refusalReason': 'the workspace record could not be read, so membership could not be established; nothing about the caller failed', message: scan.why, read: null };
   }
   const grants: Grant[] = [];
   const acceptances: Acceptance[] = [];
@@ -415,7 +432,7 @@ export async function respondAsMember(
   // ── 6. am I seated, and does my role permit writing? ───────────────────────
   if (seat === null) {
     return {
-      outcome: 'refused', reason: 'not-seated', read: reading,
+      outcome: 'refused' as const, reason: 'not-seated' as const, kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but holds no seat in this workspace', read: reading,
       message: `this agent (${me}) is not seated in <${workspace}>. Both halves are required: a `
         + `wsp:MembershipGrant on the convener's pod '${convenerPod}' naming it, and a `
         + `wsp:MembershipAcceptance on its own pod '${session.identity.podName}' naming that grant. `
@@ -424,7 +441,7 @@ export async function respondAsMember(
   }
   if (!may(roster, me, APPEND)) {
     return {
-      outcome: 'refused', reason: 'ceiling', read: reading,
+      outcome: 'refused' as const, reason: 'ceiling' as const, kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller holds a seat whose role ceiling does not permit this write', read: reading,
       message: `the role ceiling refuses this write. ${explain(roster, me, APPEND)} `
         + 'Nothing could stop this agent writing to its own pod — it is its own pod — so this is a '
         + 'refusal it imposes on itself. An entry written anyway would exist and be inert: the fold '
@@ -483,7 +500,7 @@ export async function respondAsMember(
 
   if (appended.outcome !== 'appended') {
     return {
-      outcome: 'refused', reason: 'append-failed', read: reading,
+      outcome: 'refused' as const, reason: 'append-failed' as const, kind: 'refusal' as const, 'iep:refusalStatus': 502, "iep:refusalReason": "the entry could not be appended to the pod the caller owns", read: reading,
       message: `the append did not land (${appended.outcome}): ${'message' in appended ? appended.message : ''}`,
     };
   }

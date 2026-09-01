@@ -138,4 +138,32 @@ describe('a declined call answers a refusing status on every vertical', () => {
         + '(extract a factory) instead of updating this assertion',
     ).toContain('return adapter.navigate(verb, verbArgs);');
   });
+  /**
+   * wsp's refusals are built by `respondAsMember`, which is exported and pure enough to call
+   * directly. The bridge spreads its result into the answer, so what this asserts is the thing
+   * the dispatcher will read. Driving the whole handler would need a live relay and an agent
+   * key; the STATUS decision lives here, and here is where it is checked.
+   */
+  it('★ wsp: a refusal built by respondAsMember carries a status the dispatcher can use', async () => {
+    const { respondAsMember } = await import('../applications/shared-workspace/src/respond.js');
+    // respondAsMember(session, opts). The session carries the deps it reads through, so an
+    // unreadable workspace is produced by making the dereference fail — the real first branch.
+    const session = {
+      identity: { podName: 'p', podUrl: 'https://pod.invalid/p/', webId: 'https://pod.invalid/p/#me', agentDid: 'did:x:1', scope: 'ReadWrite', address: '0x0' },
+      deps: { getCurrentHead: async () => { throw new Error('unresolvable'); } },
+    };
+    const result = await respondAsMember(
+      session as never,
+      { workspace: 'https://relay.invalid/ns/nobody/ws', body: 'hello' } as never,
+    ) as Record<string, unknown>;
+
+    expect(result['outcome'], 'expected a refusal from an unreadable workspace').toBe('refused');
+    expect(
+      result['kind'],
+      `a wsp refusal (${String(result['reason'])}) carries no kind, so the bridge spreads it `
+        + 'into an answer the dispatcher serves as HTTP 200 — a caller that is not a member is '
+        + 'told the write succeeded',
+    ).toBe('refusal');
+    expect(REFUSING).toContain(result['iep:refusalStatus']);
+  });
 });
