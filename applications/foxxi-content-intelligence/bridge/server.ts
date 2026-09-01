@@ -821,6 +821,24 @@ function signRequestRefusal(error: string, reason: string): Refusal {
   };
 }
 
+/**
+ * Propagate a producer's refusal instead of flattening it.
+ *
+ * ★ `return { error: c.error }` DROPPED the status the producer had already decided, and the
+ * dispatcher then answered 200 — the same shape as `assertTenantOwnerWrite` discarding
+ * resolveCaller's typed Refusal, and as the tool handler discarding `evidence.status` while the
+ * /agent route honoured it. Three separate places, one habit: unwrapping a typed answer to
+ * re-wrap it as prose. Default 400 only when the producer named nothing.
+ */
+function propagateRefusal(r: { error: string; status?: number }, reason: string): Refusal {
+  return {
+    kind: 'refusal',
+    'iep:refusalStatus': r.status ?? 400,
+    'iep:refusalReason': reason,
+    error: r.error,
+  };
+}
+
 /** A 502: an UPSTREAM write or read this bridge depends on failed. The caller's request was
  *  well-formed and permitted; something behind the bridge did not answer. */
 function upstreamFailed(error: string): Refusal {
@@ -2278,6 +2296,13 @@ async function resolveCaller(args: Record<string, unknown>): Promise<{ ctx: Call
  */
 function notImplemented(tool: string, detail: string): Record<string, unknown> {
   return {
+    // 501. This bridge PUBLISHES the affordance and cannot run it; that is a defect in the
+    // deployment, never something the caller can fix by changing arguments. At 200 it was
+    // indistinguishable from success — the exact shape of "advertise only what you can run",
+    // stated in HTTP.
+    kind: 'refusal' as const,
+    'iep:refusalStatus': 501,
+    'iep:refusalReason': 'the affordance is declared by this deployment but has no implementation behind it',
     error: `${tool} is declared but not implemented — nothing was read, written or emitted`,
     implemented: false,
     detail,
@@ -2765,7 +2790,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // Accept a PoP envelope (so a self-sovereign caller's tenant_pod_url is read
     // from the signed payload) and ingest an already-parsed package.
     let signer: string | null = null;
-    try { signer = mergeSignedEnvelope(args); } catch (e) { return { error: (e as Error).message }; }
+    try { signer = mergeSignedEnvelope(args); } catch (e) { return signRequestRefusal(`auth: ${(e as Error).message}`, 'the signed-request envelope could not be parsed'); }
     const pod = (args.tenant_pod_url as string) || tenantPodUrl;
     if (!pod) return invalidArguments('tenant_pod_url required (or set FOXXI_TENANT_POD_URL)');
     // Only the self-sovereign tenant's OWNER (or, for the configured tenant, an
@@ -2776,6 +2801,9 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     if (ownerErr) return ownerErr;   // the typed Refusal IS the payload — wrapping it as {error} drops `kind` and the status goes back to 200
     if (!args.parsed) {
       return {
+        kind: 'refusal' as const,
+        'iep:refusalStatus': 400,
+        'iep:refusalReason': 'the request omitted a required argument or supplied one this affordance cannot use',
         error: 'supply args.parsed — a ParsedFoxxiPackage: { courseId (required), title?, standard?, authoringTool?, stats?:{slides,scenes,audioSeconds,conceptsTotal,conceptsFreeStanding,prereqEdges}, concepts?:[{id,label,confidence,tier}], audience_tags?:[…] }. Only courseId is strictly required; other fields default. The zip→Python-parser path (args.zip_base64) is not wired in this deployment.',
       };
     }
@@ -2809,7 +2837,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // request whose signer owns the target pod). Was unauthenticated: any caller could write a
     // forged policy into the closed (acme) tenant pod with the bridge's write bearer.
     let policySigner: string | null;
-    try { policySigner = mergeSignedEnvelope(args); } catch (e) { return { error: (e as Error).message }; }
+    try { policySigner = mergeSignedEnvelope(args); } catch (e) { return signRequestRefusal(`auth: ${(e as Error).message}`, 'the signed-request envelope could not be parsed'); }
     if (!policySigner) {
       return signRequestRefusal(
         'a signed request is required — an authoring policy is a tenant-owner pod write',
@@ -2840,7 +2868,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // default (acme) pod. With the envelope merged, configOrThrow also picks up
     // the signed tenant_pod_url → the policy lands on the CALLER's own pod.
     let signer: string | null = null;
-    try { signer = mergeSignedEnvelope(args); } catch (e) { return { error: (e as Error).message }; }
+    try { signer = mergeSignedEnvelope(args); } catch (e) { return signRequestRefusal(`auth: ${(e as Error).message}`, 'the signed-request envelope could not be parsed'); }
     const pod = (args.tenant_pod_url as string) || tenantPodUrl;
     if (!pod) return invalidArguments('tenant_pod_url required (or set FOXXI_TENANT_POD_URL)');
     // Only the self-sovereign tenant's OWNER (or, for the configured tenant, an
@@ -2996,7 +3024,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       subjectIdentity: typeof args.learner_did === 'string' ? args.learner_did : undefined,
       namedPodUrl: (args.learner_pod_url ?? args.subject_pod_url ?? args.tenant_pod_url) as string | undefined,
     });
-    if (!target.ok) return { error: target.error };
+    if (!target.ok) return propagateRefusal(target, 'the caller named a read target outside the pod space this deployment reads for them');
     const subjectPodUrl = target.podUrl;
     // ★ FROM THE POD, AFTER IT IS RESOLVED — see readIsSelf. `learner_did` defaults to the caller
     // while `learner_pod_url` names the pod, so comparing DIDs let a caller read another pod under
@@ -3233,6 +3261,9 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const declaredType = typeof args.activity_type === 'string' ? args.activity_type.trim() : '';
     if (declaredType && !/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(declaredType)) {
       return {
+        kind: 'refusal' as const,
+        'iep:refusalStatus': 400,
+        'iep:refusalReason': 'the request omitted a required argument or supplied one this affordance cannot use',
         error: `activity_type must be an IRI (it becomes object.definition.type, which xAPI requires to be an IRI). Received "${declaredType}".`,
         hint: `Use an absolute IRI you own, e.g. ${bridgeBaseUrl}/ns/foxxi/competency/${declaredType.toLowerCase().replace(/[^a-z0-9]+/g, '-')}. Omitting activity_type is also valid — the competency then keys off task_name.`,
       };
@@ -3240,6 +3271,12 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const statementId = storeStatementInternal(statement, lensTenantFor(perfLabel));
     if (!statementId) {
       return {
+        // ★ THE SAME FAILURE ANSWERS 500 ON THE /agent ROUTE. Its own hint says "a bug in
+        // the emitter, not in your arguments" — so a 4xx blames the caller for ours, and 200
+        // reported a performance that was never stored as recorded.
+        kind: 'refusal' as const,
+        'iep:refusalStatus': 500,
+        'iep:refusalReason': 'the statement this bridge emitted failed conformance validation; the caller supplied nothing wrong',
         error: 'the performance was not recorded — the emitted xAPI statement failed conformance validation and the LRS refused it',
         hint: 'This is a bug in the emitter, not in your arguments; the bridge log names the violated constraint. Nothing was stored, so no evidence pointer was minted.',
       };
@@ -3548,7 +3585,18 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
         ? evaluationRegistry.get(runInput.evaluationId)?.candidates.find(c => c.candidateId === runInput.candidateId)
         : evaluationRegistry.findCandidateByAgent(runInput.evaluationId, agentDid);
       if (!candidate) {
-        return { error: `agent ${agentDid} is not a candidate of ${runInput.evaluationId} — request + accept enrollment first` };
+        return {
+          kind: 'refusal' as const,
+          'iep:refusalStatus': 403,
+          'iep:refusalReason': 'the caller is authenticated but is not enrolled as a candidate of this evaluation',
+          error: `agent ${agentDid} is not a candidate of ${runInput.evaluationId} — request + accept enrollment first`,
+          'iep:resolvedBy': {
+            action: 'urn:iep:action:request-evaluation-enrollment',
+            title: 'Request enrollment in this evaluation',
+            toolName: 'foxxi.request_evaluation_enrollment',
+            note: 'The opener must then accept before runs can be recorded.',
+          },
+        };
       }
       // Candidate ownership (round-55): the run is agentDid's performance (agentDid is forced
       // to the caller's own DID above, unless operator). The explicit candidate_id path looks
@@ -3559,7 +3607,12 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       // for the auto-resolve path); operators may still record on anyone's behalf.
       if (candidate.agentDid !== agentDid
         && !(ctx.role === 'admin' || ctx.role === 'learning-engineer' || ctx.role === 'delegated-admin')) {
-        return { error: `candidate ${candidate.candidateId} belongs to another agent — you may only record runs into your own candidacy (omit candidate_id to auto-resolve yours)` };
+        return {
+          kind: 'refusal' as const,
+          'iep:refusalStatus': 403,
+          'iep:refusalReason': 'the caller is authenticated but may not write into another agent\'s candidacy',
+          error: `candidate ${candidate.candidateId} belongs to another agent — you may only record runs into your own candidacy (omit candidate_id to auto-resolve yours)`,
+        };
       }
       const run: CandidateRun = {
         trajectory: ingested.trajectory,
@@ -3570,7 +3623,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
         recordedAt: new Date().toISOString(),
       };
       const added = evaluationRegistry.addRun(runInput.evaluationId, candidate.candidateId, run);
-      if ('error' in added) return { error: added.error };
+      if ('error' in added) return propagateRefusal(added, 'the evaluation registry declined to record this run');
       boundTo = `${runInput.evaluationId} / ${candidate.candidateId}`;
     }
     const trace = emitAccessDecision({ ctx, tool: 'foxxi.record_external_agent_run', decision: 'allow', appliedPolicies: ['external-agent-run-ingest'] });
@@ -3635,7 +3688,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       podUrl: args.pod_url as string | undefined,
       requestedBy: ctx.webId,
     });
-    if ('error' in c) return { error: c.error };
+    if ('error' in c) return propagateRefusal(c, 'the evaluation registry declined this request');
     const trace = emitAccessDecision({ ctx, tool: 'foxxi.request_evaluation_enrollment', decision: 'allow', appliedPolicies: ['cross-pod-delegation-request'] });
     return {
       requested: true, candidateId: c.candidateId, status: c.status,
@@ -3655,7 +3708,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     if (!evaluationId || !candidateId) return invalidArguments('evaluation_id and candidate_id are required');
     if (decision !== 'accept' && decision !== 'decline') return invalidArguments('decision must be accept | decline');
     const c = evaluationRegistry.decide(evaluationId, candidateId, decision, ctx.webId);
-    if ('error' in c) return { error: c.error };
+    if ('error' in c) return propagateRefusal(c, 'the evaluation registry declined this request');
     const trace = emitAccessDecision({ ctx, tool: 'foxxi.decide_evaluation_candidate', decision: 'allow', appliedPolicies: ['agent-evaluation-owner'] });
     return {
       decided: true, candidateId: c.candidateId, status: c.status, agentDid: c.agentDid,
@@ -4383,7 +4436,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // signer OWNS that pod. Was unauthenticated: any caller could plant a forged TenantMetadata
     // descriptor (arbitrary DID/slug/admin) into any pod with the bridge's write bearer.
     let bootSigner: string | null;
-    try { bootSigner = mergeSignedEnvelope(args); } catch (e) { return { error: (e as Error).message }; }
+    try { bootSigner = mergeSignedEnvelope(args); } catch (e) { return signRequestRefusal(`auth: ${(e as Error).message}`, 'the signed-request envelope could not be parsed'); }
     if (!bootSigner) {
       return signRequestRefusal(
         'a signed request is required — bootstrap_tenant writes TenantMetadata to your pod',

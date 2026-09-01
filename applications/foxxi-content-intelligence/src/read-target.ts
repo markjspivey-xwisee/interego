@@ -51,7 +51,14 @@ export type ReadTargetDecision =
     /** Another pod of the same principal that this deployment also reads — see otherPodForPrincipal. */
     readonly alsoHeld?: string;
   }
-  | { readonly ok: false; readonly error: string };
+  /**
+   * ★ THE STATUS IS DECIDED HERE, WHERE THE REASON IS KNOWN. The bridge answered
+   * `{ error: target.error }`, which the dispatcher served as HTTP 200 — a refusal to read
+   * another principal's pod reported to the caller as a successful read. Every refusal below is
+   * a SCOPE refusal: the request is well-formed and the caller is authenticated; what they named
+   * is outside what this deployment will read for them. That is 403, not 400 and not 404.
+   */
+  | { readonly ok: false; readonly error: string; readonly status?: number };
 
 export interface ReadTargetInput {
   /** WHOSE POD AM I: the pod bound to the signer. Authoritative; never a read target by itself. */
@@ -106,12 +113,12 @@ export function resolveReadTarget(input: ReadTargetInput): ReadTargetDecision {
     // identity instead, which is the right SSRF behaviour and the wrong reporting behaviour: the
     // caller asked to read pod A, was given pod B, and had no way to find out.
     if (!namedPodUrl) {
-      return { ok: false, error: `the pod you named (${namedAs}) is not a safe public target, so it was not read — name a pod on this deployment's own store, or omit it and let the subject's identity resolve its pod` };
+      return { ok: false, status: 403, error: `the pod you named (${namedAs}) is not a safe public target, so it was not read — name a pod on this deployment's own store, or omit it and let the subject's identity resolve its pod` };
     }
     // The name carries no authority. It selects among pods this deployment already reads; it can
     // never point a server-side read at a host of the caller's choosing.
     if (!inPodSpace(namedPodUrl)) {
-      return { ok: false, error: `the pod you named (${namedAs}) is outside the pod space this deployment reads — a named pod selects among pods here, it does not authorise a read anywhere else` };
+      return { ok: false, status: 403, error: `the pod you named (${namedAs}) is outside the pod space this deployment reads — a named pod selects among pods here, it does not authorise a read anywhere else` };
     }
     podUrl = namedPodUrl;
     basis = 'named-pod';
@@ -141,7 +148,7 @@ export function resolveReadTarget(input: ReadTargetInput): ReadTargetDecision {
    * for free; naming a pod, or naming no subject while naming somebody else's pod, does not.
    */
   if (!samePrincipal(podUrl, subjectPodUrl)) {
-    return { ok: false, error: `the subject named and the pod read are different principals (${subjectPodUrl} vs ${podUrl}) — a record that names one party and reports another's work is an attribution, not a record. Name the subject whose pod you are reading, or omit the pod and let the subject's identity resolve it.` };
+    return { ok: false, status: 403, error: `the subject named and the pod read are different principals (${subjectPodUrl} vs ${podUrl}) — a record that names one party and reports another's work is an attribution, not a record. Name the subject whose pod you are reading, or omit the pod and let the subject's identity resolve it.` };
   }
 
   const isSelf = samePrincipal(podUrl, callerPodUrl);
@@ -150,11 +157,11 @@ export function resolveReadTarget(input: ReadTargetInput): ReadTargetDecision {
   // last-resort answer is the SHARED tenant pod. Reading it would answer a question about one
   // subject with a store belonging to everybody.
   if (!isSelf && samePrincipal(podUrl, tenantPodUrl)) {
-    return { ok: false, error: 'that identity does not resolve to a pod of its own, and the fallback is the shared tenant pod — which is nobody\'s record. Name the pod explicitly if the subject holds one here.' };
+    return { ok: false, status: 403, error: 'that identity does not resolve to a pod of its own, and the fallback is the shared tenant pod — which is nobody\'s record. Name the pod explicitly if the subject holds one here.' };
   }
 
   if (!inPodSpace(podUrl)) {
-    return { ok: false, error: `that subject's pod resolves outside the pod space this deployment reads (${podUrl}) — records here are read only from pods on this store` };
+    return { ok: false, status: 403, error: `that subject's pod resolves outside the pod space this deployment reads (${podUrl}) — records here are read only from pods on this store` };
   }
 
   const alsoHeld = otherPodForPrincipal(podUrl);

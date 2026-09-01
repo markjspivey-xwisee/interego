@@ -73,11 +73,45 @@ function errorReturns(code: string): string[] {
   return [...code.matchAll(new RegExp('return[^]{0,4}[{][^}]*error[^}]*[}]', 'g'))].map(m => m[0]);
 }
 
-/** Those of them that answer without a refusal kind and without an explicit Express status. */
+/**
+ * Those that answer without a refusal kind and without an explicit status.
+ *
+ * `{ ok: false, error }` is EXCLUDED, and the exclusion is measured rather than assumed: all 29
+ * such returns in the bridge sit inside a named helper function with a discriminated-union
+ * return type, never inside a handler entry, and their callers set a status of their own
+ * (validateTourRun's does `res.status(400)`). The gate below re-checks that property, so the
+ * exclusion cannot quietly start hiding a real handler.
+ */
 function untypedErrorReturns(code: string): string[] {
   return errorReturns(code)
     .filter(r => !r.includes("kind: 'refusal'"))
+    .filter(r => !r.trimStart().startsWith('return { ok: false'))
     .filter(r => !new RegExp('status:[ ]*[0-9]{3}').test(r));
+}
+
+/** Every `return { ok: false` line, paired with the nearest enclosing declaration above it. */
+function okFalseSites(code: string): Array<{ line: number; enclosing: string }> {
+  const lines = code.split(String.fromCharCode(10));
+  const out: Array<{ line: number; enclosing: string }> = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!lines[i]!.includes('return { ok: false')) continue;
+    let enclosing = '(top level)';
+    for (let j = i; j >= 0; j--) {
+      const fn = new RegExp('^(?:async )?function ([A-Za-z0-9_]+)').exec(lines[j]!);
+      const handler = new RegExp("^\\s*'([a-z0-9_.]+)': async").exec(lines[j]!);
+      // A nested callback property — `verifyCaller: async (token): Promise<CallerVerification>`
+      // — has its own contract and its own consumer, which sets the status (context-chat.ts
+      // answers 401 on a failed verification). Without this the scan walks past it to the
+      // enclosing handler and reports three false positives, which is how a gate that flags
+      // explainable things stops being believed.
+      const callback = new RegExp('^\\s*[A-Za-z0-9_]+: (?:async )?\\(').exec(lines[j]!);
+      if (handler) { enclosing = 'HANDLER ' + handler[1]; break; }
+      if (callback) { enclosing = 'callback'; break; }
+      if (fn) { enclosing = fn[1]!; break; }
+    }
+    out.push({ line: i + 1, enclosing });
+  }
+  return out;
 }
 
 const AFFORDANCES = [
@@ -235,24 +269,46 @@ describe('a refusal answers over HTTP as a refusal', () => {
   });
 
   /**
-   * 81 -> 21. The deferred pass ran: 60 declined calls that answered HTTP 200 now answer the
-   * status they mean — 400 invalidArguments (the caller's arguments, with iep:resolvedBy
-   * pointing at the affordance's own published input contract rather than restating it),
-   * 404 notFound, 503 notConfigured, 502 upstreamFailed, 403 wrongPod.
+   * 81 -> 0. Every declined call this bridge returns now answers the status it means.
    *
-   * One of them was not a status change but a contradiction: `bindPerformanceToEvidence`
-   * returns a `status`, honoured at the /agent route and DROPPED by the tool handler, so one
-   * binding failure answered 400 on one surface and 200 on the other.
+   * The pass ran in three rounds because each one revealed a class the previous had not
+   * considered, and the classes are the useful record:
    *
-   * Of the 21 left, SEVEN are `validateTourRun`'s `{ok:false,error}` — an internal helper with
-   * a discriminated-union return that no dispatcher ever sees. They are counted because this
-   * gate reads source and cannot tell a helper from a handler, so the budget bottoms out
-   * around 7 rather than 0. The rest are 4 catch-block `(e as Error).message` (500-class), 4
-   * propagations of an inner helper's error string, and a handful needing a judgement about
-   * what they mean. Each is a decision, not a sweep.
+   *   round 1  60 sites: 400 invalidArguments (iep:resolvedBy points at the affordance's own
+   *            published input contract instead of restating it), 404 notFound, 503
+   *            notConfigured, 502 upstreamFailed, 403 wrongPod.
+   *   round 2  a live signed request showed two refusals with the WRONG status rather than
+   *            none — see a-refusal-status-names-what-actually-failed.test.ts.
+   *   round 3  the last 14. Four `catch { (e as Error).message }` around mergeSignedEnvelope
+   *            turned out to be AUTH failures, not internals — 401 naming sign_request.
+   *            `notImplemented` became 501: a bridge that PUBLISHES an affordance it cannot run
+   *            was answering success, which is "advertise only what you can run" stated in HTTP.
+   *            Two authorization denials in the evaluation path answered 200. And the xAPI
+   *            emitter failure answered 200 on the tool surface while its /agent twin answered
+   *            500 — the third instance of one failure giving two different answers.
+   *
+   * The propagations were fixed at the SOURCE rather than the call site: `agent-evaluation.ts`
+   * and `read-target.ts` now name a status on each refusal, and the bridge propagates it. A
+   * caller that guessed 404 from the words "no evaluation" would break the first time someone
+   * reworded the message.
    */
+    it('★ §C the excluded `{ok:false}` idiom stays inside helpers, never a handler', () => {
+    // §B ignores `return { ok: false, error }` because every one of them is an internal helper
+    // with a union return type whose CALLER sets the status. That is only true while it is
+    // true: wire one into a handler and it would answer HTTP 200 while this gate reported zero.
+    const inHandlers = okFalseSites(bridgeCode()).filter(s => s.enclosing.startsWith('HANDLER'));
+    expect(
+      inHandlers.map(s => `L${s.line} ${s.enclosing}`),
+      'a `{ok:false}` return sits in a HANDLER, where the dispatcher will serve it as 200 — '
+        + 'either give it a refusal kind or move it into a helper whose caller sets the status',
+    ).toEqual([]);
+    // And the exclusion must still be reading something, or §B is silently unbounded.
+    expect(okFalseSites(bridgeCode()).length, 'no ok:false sites found — this leg is vacuous')
+      .toBeGreaterThan(20);
+  });
+
   it('★ §B the untyped-return count ratchets down, never up', () => {
-    const UNTYPED_BUDGET = 21;
+    const UNTYPED_BUDGET = 0;
     const code = bridgeCode();
     const untyped = untypedErrorReturns(code);
     expect(

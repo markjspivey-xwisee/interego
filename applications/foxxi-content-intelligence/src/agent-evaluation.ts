@@ -103,7 +103,18 @@ export interface EnrollmentRequestInput {
   requestedBy: string;
 }
 
-type Result<T> = T | { error: string };
+/**
+ * A registry answer, or a refusal that NAMES ITS OWN STATUS.
+ *
+ * ★ The status belongs to the PRODUCER. Three bridge handlers used to do `return { error:
+ * c.error }` — flattening this into an untyped string, which the dispatcher then answered with
+ * HTTP 200. The obvious repair is for the caller to guess a code from the wording ("no …" means
+ * 404), but a caller that sniffs a message is a caller that breaks when the message is reworded.
+ * This module knows whether a thing was absent, a caller unauthorised, or a state conflicting,
+ * so it says so — the same rule the kernel applies with `kind` ("each verb hands its own kind so
+ * we don't have to sniff the payload").
+ */
+type Result<T> = T | { error: string; status?: number };
 
 /**
  * The in-memory cohort registry. One instance per bridge process; the
@@ -155,14 +166,14 @@ export class EvaluationRegistry {
    */
   requestEnrollment(evaluationId: string, input: EnrollmentRequestInput): Result<EvaluationCandidate> {
     const state = this.evaluations.get(evaluationId);
-    if (!state) return { error: `no evaluation ${evaluationId}` };
-    if (!input.agentDid || !input.team) return { error: 'agentDid and team are required' };
+    if (!state) return { error: `no evaluation ${evaluationId}`, status: 404 };
+    if (!input.agentDid || !input.team) return { error: 'agentDid and team are required', status: 400 };
     const existing = state.candidates.find(
       c => c.agentDid === input.agentDid && c.status !== 'declined' && c.status !== 'withdrawn',
     );
-    if (existing) return { error: `agent ${input.agentDid} is already a candidate (${existing.status})` };
+    if (existing) return { error: `agent ${input.agentDid} is already a candidate (${existing.status})`, status: 409 };
     if (state.candidates.length >= EvaluationRegistry.CANDIDATES_MAX) {
-      return { error: `evaluation ${evaluationId} has reached its candidate limit` };
+      return { error: `evaluation ${evaluationId} has reached its candidate limit`, status: 409 };
     }
     const candidate: EvaluationCandidate = {
       candidateId: `${evaluationId}:candidate-${state.candidates.length}`,
@@ -192,17 +203,17 @@ export class EvaluationRegistry {
     decidedBy: string,
   ): Result<EvaluationCandidate> {
     const state = this.evaluations.get(evaluationId);
-    if (!state) return { error: `no evaluation ${evaluationId}` };
+    if (!state) return { error: `no evaluation ${evaluationId}`, status: 404 };
     // OWNER LOCK (round-42): only the agent that OPENED the evaluation may accept/decline
     // candidates. Without this, any tenant co-member could self-accept its own candidate into a
     // rival's evaluation and decline the rival's — a caller-keyed-identity privilege escalation.
     if (decidedBy !== state.evaluation.openedBy) {
-      return { error: `only the evaluation opener (${state.evaluation.openedBy}) may decide candidates` };
+      return { error: `only the evaluation opener (${state.evaluation.openedBy}) may decide candidates`, status: 403 };
     }
     const candidate = state.candidates.find(c => c.candidateId === candidateId);
-    if (!candidate) return { error: `no candidate ${candidateId}` };
+    if (!candidate) return { error: `no candidate ${candidateId}`, status: 404 };
     if (candidate.status !== 'requested') {
-      return { error: `candidate ${candidateId} is ${candidate.status}, not awaiting a decision` };
+      return { error: `candidate ${candidateId} is ${candidate.status}, not awaiting a decision`, status: 409 };
     }
     candidate.status = decision === 'accept' ? 'accepted' : 'declined';
     candidate.decidedBy = decidedBy;
@@ -213,11 +224,11 @@ export class EvaluationRegistry {
   /** Append a completed run to an accepted candidate. */
   addRun(evaluationId: string, candidateId: string, run: CandidateRun): Result<EvaluationCandidate> {
     const state = this.evaluations.get(evaluationId);
-    if (!state) return { error: `no evaluation ${evaluationId}` };
+    if (!state) return { error: `no evaluation ${evaluationId}`, status: 404 };
     const candidate = state.candidates.find(c => c.candidateId === candidateId);
-    if (!candidate) return { error: `no candidate ${candidateId}` };
+    if (!candidate) return { error: `no candidate ${candidateId}`, status: 404 };
     if (candidate.status !== 'accepted') {
-      return { error: `candidate ${candidateId} is ${candidate.status} — accept it before recording runs` };
+      return { error: `candidate ${candidateId} is ${candidate.status} — accept it before recording runs`, status: 409 };
     }
     if (candidate.runs.length >= EvaluationRegistry.RUNS_MAX) candidate.runs.shift();
     candidate.runs.push(run);
