@@ -2537,6 +2537,9 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       const rl = checkAgenticRateLimit(ip);
       if (!rl.ok) {
         return {
+          kind: 'refusal' as const,
+          'iep:refusalStatus': 429,
+          'iep:refusalReason': 'the caller exceeded the per-IP rate budget for this affordance',
           error: `rate limit exceeded — ${RL_AGENTIC_MAX} agentic ask calls per ${Math.round(RL_AGENTIC_WINDOW_MS / 60000)} min per IP. Retry in ${rl.retryAfterSeconds}s, or supply your own key via llm_api_key (BYOK is rate-limit-exempt).`,
           retryAfterSeconds: rl.retryAfterSeconds,
         };
@@ -2698,7 +2701,12 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // forged policy into the closed (acme) tenant pod with the bridge's write bearer.
     let policySigner: string | null;
     try { policySigner = mergeSignedEnvelope(args); } catch (e) { return { error: (e as Error).message }; }
-    if (!policySigner) return { error: 'a signed request is required — an authoring policy is a tenant-owner pod write' };
+    if (!policySigner) {
+      return signRequestRefusal(
+        'a signed request is required — an authoring policy is a tenant-owner pod write',
+        'the request carried no proof-of-possession envelope',
+      );
+    }
     const config = configOrThrow(args);
     const policyOwnerErr = await assertTenantOwnerWrite(args, config.tenantPodUrl, policySigner);
     if (policyOwnerErr) return policyOwnerErr;   // the typed Refusal IS the payload — wrapping it as {error} drops `kind` and the status goes back to 200
@@ -2990,7 +2998,12 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const requestedActor = (args.actor_did as string | undefined)?.trim();
     const isPrivilegedObserver = ctx.role === 'admin' || ctx.role === 'learning-engineer' || ctx.role === 'delegated-admin';
     if (requestedActor && requestedActor !== ctx.webId && !isPrivilegedObserver) {
-      return { error: 'recording a performance for another agent requires an operator role (admin / learning-engineer) or that agent\'s delegation; omit actor_did to record for yourself' };
+      return {
+        kind: 'refusal' as const,
+        'iep:refusalStatus': 403,
+        'iep:refusalReason': "the caller is authenticated but may not write on another agent's behalf",
+        error: 'recording a performance for another agent requires an operator role (admin / learning-engineer) or that agent\'s delegation; omit actor_did to record for yourself',
+      };
     }
     const performerDid = requestedActor || ctx.webId;
     const taskName = args.task_name as string;
@@ -3155,7 +3168,12 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // Bind the trajectory actor to the authenticated caller unless privileged — else a
     // caller could attribute a fabricated trajectory to another agent's DID/record.
     if (agentDid !== ctx.webId && !(ctx.role === 'admin' || ctx.role === 'learning-engineer' || ctx.role === 'delegated-admin')) {
-      return { error: 'recording a trajectory for another agent requires an operator role (admin / learning-engineer) or that agent\'s delegation; set agent_did to your own DID to record for yourself' };
+      return {
+        kind: 'refusal' as const,
+        'iep:refusalStatus': 403,
+        'iep:refusalReason': "the caller is authenticated but may not write on another agent's behalf",
+        error: 'recording a trajectory for another agent requires an operator role (admin / learning-engineer) or that agent\'s delegation; set agent_did to your own DID to record for yourself',
+      };
     }
     const rawSteps = args.steps as Array<Record<string, unknown>> | undefined;
     if (!Array.isArray(rawSteps) || rawSteps.length === 0) {
@@ -3337,7 +3355,12 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     if (!agentDid) return { error: 'agent_did is required' };
     // Bind the run's actor to the authenticated caller unless privileged (no cross-agent forge).
     if (agentDid !== ctx.webId && !(ctx.role === 'admin' || ctx.role === 'learning-engineer' || ctx.role === 'delegated-admin')) {
-      return { error: 'recording an external run for another agent requires an operator role (admin / learning-engineer) or that agent\'s delegation; set agent_did to your own DID' };
+      return {
+        kind: 'refusal' as const,
+        'iep:refusalStatus': 403,
+        'iep:refusalReason': "the caller is authenticated but may not write on another agent's behalf",
+        error: 'recording an external run for another agent requires an operator role (admin / learning-engineer) or that agent\'s delegation; set agent_did to your own DID',
+      };
     }
     const taskName = args.task_name as string;
     if (!taskName || !taskName.trim()) return { error: 'task_name is required' };
@@ -3447,6 +3470,9 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const evalRl = checkAgenticRateLimit(evalIp);
     if (!evalRl.ok) {
       return {
+        kind: 'refusal' as const,
+        'iep:refusalStatus': 429,
+        'iep:refusalReason': 'the caller exceeded the per-IP rate budget for this affordance',
         error: `rate limit exceeded — too many open_agent_evaluation calls per IP. Retry in ${evalRl.retryAfterSeconds}s.`,
         retryAfterSeconds: evalRl.retryAfterSeconds,
       };
@@ -4236,7 +4262,12 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // descriptor (arbitrary DID/slug/admin) into any pod with the bridge's write bearer.
     let bootSigner: string | null;
     try { bootSigner = mergeSignedEnvelope(args); } catch (e) { return { error: (e as Error).message }; }
-    if (!bootSigner) return { error: 'a signed request is required — bootstrap_tenant writes TenantMetadata to your pod' };
+    if (!bootSigner) {
+      return signRequestRefusal(
+        'a signed request is required — bootstrap_tenant writes TenantMetadata to your pod',
+        'the request carried no proof-of-possession envelope',
+      );
+    }
     const bootPod = args.pod_url as string;
     if (typeof bootPod !== 'string' || !bootPod) return { error: 'pod_url is required' };
     const bootOwnerErr = await assertTenantOwnerWrite(args, bootPod, bootSigner);

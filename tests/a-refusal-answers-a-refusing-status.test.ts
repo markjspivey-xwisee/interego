@@ -34,6 +34,48 @@ import { createVerticalBridge } from '../applications/_shared/vertical-bridge/in
 
 const IEP = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
 
+/** The foxxi bridge with comments stripped, so a denial DESCRIBED in prose is never mistaken
+ *  for a denial RETURNED by a handler — the way a sibling gate matched its own documentation. */
+function bridgeCode(): string {
+  return readFileSync(
+    new URL('../applications/foxxi-content-intelligence/bridge/server.ts', import.meta.url), 'utf8',
+  ).split('\n').filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+}
+
+/**
+ * Every `return { ... error ... }` statement in the bridge, as strings.
+ *
+ * ★★ THE FIRST VERSION OF THIS GATE WAS BLIND, AND THE CAUSE IS NOT ESTABLISHED.
+ *
+ * Both halves below were written inline, each running its own `code.matchAll(/…/g)`. Planted
+ * defects — one auth denial reverted to an untyped `{ error }`, one new untyped denial in
+ * wording the vocabulary does not know — passed 6/6. Instrumented, the same test printed
+ * `totalMatches= 135` from the first `matchAll` and `untypedLen= 0` from the second, on the
+ * same string in the same test body.
+ *
+ * I do not know why. The obvious explanation — two identical `/…/g` literals sharing one
+ * object, leaking `lastIndex` — is DISPROVEN: in plain node, separate literals are distinct
+ * objects AND a deliberately shared one still yields 3 then 3, because `matchAll` clones its
+ * argument. So the mechanism is something about this file under the test transform that I have
+ * not isolated, and this comment does not invent one.
+ *
+ * What IS established: routing both halves through this single helper, which builds its regex
+ * with `new RegExp` per call and returns plain STRINGS, makes each half fail on its own mutant
+ * by name (§A found the untyped denial; §B reported 83 against a budget of 81). That is the
+ * property the gate needs, so it is what the gate rests on — but the underlying hazard is
+ * unexplained and may still be reachable from other multi-`matchAll` code in this tree.
+ */
+function errorReturns(code: string): string[] {
+  return [...code.matchAll(new RegExp('return[^]{0,4}[{][^}]*error[^}]*[}]', 'g'))].map(m => m[0]);
+}
+
+/** Those of them that answer without a refusal kind and without an explicit Express status. */
+function untypedErrorReturns(code: string): string[] {
+  return errorReturns(code)
+    .filter(r => !r.includes("kind: 'refusal'"))
+    .filter(r => !new RegExp('status:[ ]*[0-9]{3}').test(r));
+}
+
 const AFFORDANCES = [
   {
     action: 'urn:iep:action:test:refuse-auth',
@@ -143,43 +185,66 @@ describe('a refusal answers over HTTP as a refusal', () => {
   });
 
   /**
-   * ★★ THE CENSUS, NOT THE INSTANCE.
+   * ★★ THE CENSUS, NOT THE INSTANCE — AND A RATCHET FOR WHAT THE CENSUS CANNOT NAME.
    *
-   * The typed-refusal sweep was declared complete twice and was not, both times because it
-   * fixed the sites in front of it. The first pass converted 41 handler returns and left 28
-   * authorization denials at HTTP 200. The second converted those and left six more — the ones
-   * routed through `assertTenantOwnerWrite` / `assertSelfSovereignOwner`, which returned a bare
-   * STRING that every caller re-wrapped as `{ error }`, so an unauthenticated write to the
-   * configured tenant still answered 200 with `res.ok === true`.
+   * The typed-refusal sweep has now been declared complete FOUR times and was wrong each time,
+   * each time because it fixed the sites in front of it:
    *
-   * A count in prose cannot catch the next one. This reads the bridge and fails on any handler
-   * return whose text is an authorization or authentication denial but which carries no `kind`.
+   *   pass 1  converted 41 handler returns, left 28 authorization denials at HTTP 200
+   *   pass 2  converted those, left 6 reached through `assertTenantOwnerWrite` /
+   *           `assertSelfSovereignOwner`, which returned a bare STRING every caller re-wrapped
+   *   pass 3  the first version of THIS gate found 2 more within the hour
+   *   pass 4  a live probe of the deployed bridge found `a signed request is required` answering
+   *           200 — and this gate did not flag it, because its vocabulary was a list of the
+   *           phrasings I happened to have seen. A census that guesses vocabulary writes a
+   *           FALSE all-clear, which is worse than no census.
+   *
+   * So the gate has two halves, and the second exists because the first cannot be trusted:
+   *
+   *   §A  VOCABULARY — every denial matching a known auth/refusal phrasing must be typed. This
+   *       catches what can be named, and is zero-tolerance.
+   *   §B  RATCHET — the total count of untyped `return { error }` may only ever go DOWN. A new
+   *       denial of a phrasing nobody anticipated fails §B even when §A is blind to it. Same
+   *       instrument as the turtle IRI ratchet (674, never rises).
    */
-  it('★ no denial in the foxxi bridge returns without a refusal kind', () => {
-    const src = readFileSync(
-      new URL('../applications/foxxi-content-intelligence/bridge/server.ts', import.meta.url), 'utf8',
-    )
-      // A denial described in a comment is not a denial returned by a handler. Stripping is
-      // what a sibling gate failed to do, and it then matched its own documentation.
-      .split('\n').filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+  it('★ §A no denial in the foxxi bridge returns without a refusal kind', () => {
+    const code = bridgeCode();
+    const DENIAL = new RegExp([
+      'forbidden', 'auth: ', 'requires an admin caller', 'is not the owner of',
+      'signed request is required', 'requires an operator role', 'proof-of-possession',
+      'rate limit exceeded', 'unauthorized', 'not permitted', 'permission denied',
+      'requires a signature', 'credential required',
+    ].join('|'), 'i');
 
-    const DENIAL = /forbidden —|auth: |requires an admin caller|is not the owner of/;
-    const offenders: string[] = [];
-    for (const m of src.matchAll(/return\s*\{[^}]*\}/g)) {
-      const stmt = m[0];
-      if (!DENIAL.test(stmt)) continue;
-      if (stmt.includes("kind: 'refusal'")) continue;
-      offenders.push(stmt.replace(/\s+/g, ' ').slice(0, 140));
-    }
+    const offenders = untypedErrorReturns(code)
+      .filter(r => DENIAL.test(r))
+      .map(r => r.replace(new RegExp('[ ]+', 'g'), ' ').slice(0, 150));
     expect(
       offenders,
       `${offenders.length} handler return(s) refuse a caller without a refusal kind, so the `
         + 'dispatcher answers 200 and every client that branches on res.ok reads success:'
-        + `\n  ${offenders.join(String.fromCharCode(10) + '  ')}`,
+        + `${String.fromCharCode(10)}  ${offenders.join(String.fromCharCode(10) + '  ')}`,
     ).toEqual([]);
 
-    // The gate must be reading real returns, or an empty offender list means nothing.
-    const typed = src.match(/kind: 'refusal'/g)?.length ?? 0;
-    expect(typed, 'no typed refusals found — this gate is not reading the bridge').toBeGreaterThan(20);
+    const typed = code.match(/kind: 'refusal'/g)?.length ?? 0;
+    expect(typed, 'no typed refusals found — this gate is not reading the bridge').toBeGreaterThan(30);
+  });
+
+  /**
+   * The 81 remaining untyped returns are overwhelmingly VALIDATION errors ("task_name is
+   * required"), which belong at 400 rather than 200 — a real defect of the same family, but a
+   * deliberate separate pass rather than something to fold in silently here. This number is
+   * what makes that pass measurable, and stops a NEW untyped denial from hiding among them.
+   */
+  it('★ §B the untyped-return count ratchets down, never up', () => {
+    const UNTYPED_BUDGET = 81;
+    const code = bridgeCode();
+    const untyped = untypedErrorReturns(code);
+    expect(
+      untyped.length,
+      `${untyped.length} untyped error returns, budget ${UNTYPED_BUDGET}. If this ROSE, a new `
+        + 'declined call answers HTTP 200 — type it as a refusal. If it FELL, lower the budget '
+        + 'in this file; the ratchet only holds while it is tight.',
+    ).toBeLessThanOrEqual(UNTYPED_BUDGET);
   });
 });
