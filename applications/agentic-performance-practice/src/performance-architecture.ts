@@ -621,7 +621,9 @@ export interface RecommendInput {
 export function recommendInterventions(input: RecommendInput): InterventionPlan {
   const { diagnosis, situation } = input;
   const author: Performer = input.author ?? { id: 'urn:foxxi:agent:performance-consultant', kind: 'agent', role: 'performance consultant' };
-  const direction = directionOf(author.kind, situation.performer.kind);
+  // A situation with no `performer` is a caller error, not a crash: read the direction as
+  // unknown-counterpart rather than dereferencing a field the request may simply omit.
+  const direction = directionOf(author.kind, situation.performer?.kind ?? 'human');
 
   const select = new Set<InterventionType>();
   const rationale = new Map<InterventionType, string>();
@@ -714,7 +716,12 @@ export function recommendInterventions(input: RecommendInput): InterventionPlan 
           rationale.set('practice', 'The performer has done this well before — fluency has decayed rather than the skill being absent. Pair instruction with deliberate practice to restore it.');
         }
       }
-    } else if (!envDeficient.length && diagnosis.rootCauses[0]?.startsWith('no deficiency')) {
+    // `rootCauses` is REQUIRED by the Diagnosis type but a caller-supplied JSON body is not
+    // type-checked, and coerceDiagnosis did not demand it — so this indexed straight into
+    // undefined and returned `Cannot read properties of undefined (reading '0')` as the API
+    // response. Reached by the most ordinary payload there is: a gap-analysis diagnosis with
+    // no factors and no rootCauses, which is exactly what a first-time caller sends.
+    } else if (!envDeficient.length && diagnosis.rootCauses?.[0]?.startsWith('no deficiency')) {
       select.add('no-intervention');
       rationale.set('no-intervention', 'No deficiency was isolated. The gap may be acceptable variance or the exemplary state mis-stated. Building content here would be waste.');
     }
