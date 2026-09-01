@@ -70,7 +70,15 @@ function bridgeCode(): string {
  * on measured behaviour, not on a diagnosis.
  */
 function errorReturns(code: string): string[] {
-  return [...code.matchAll(new RegExp('return[^]{0,4}[{][^}]*error[^}]*[}]', 'g'))].map(m => m[0]);
+  // ★ `error` IS NOT THE ONLY SPELLING. This keyed on `error` alone until a repo-wide census
+  // with a widened pattern found TWELVE returns in this tree using `reason:` instead — three of
+  // them in the foxxi bridge. Those were invisible to §A and §B: a handler could decline with
+  // `{ reason: 'not permitted' }`, answer HTTP 200, and this gate would report a clean zero.
+  // I fixed the three sites the day I found them and left the gate keyed on `error`, which is
+  // fixing the instance and leaving the class — the exact habit these gates exist to catch.
+  const key = ['error', 'reason', 'refused', 'denied'].join('|');
+  return [...code.matchAll(new RegExp('return[^]{0,4}[{][^}]*(?:' + key + ')[^}]*[}]', 'g'))]
+    .map(m => m[0]);
 }
 
 /**
