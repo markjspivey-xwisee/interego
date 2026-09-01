@@ -796,9 +796,34 @@ async function upsertCatalogEntry(podUrl: string, source: IRI, entry: Record<str
  *  else's self-sovereign tenant via the bridge's cross-pod write key. The
  *  configured tenant keeps its own (admin/session) gate and is exempt here.
  *  Returns an error string, or null when authorized. */
-async function assertSelfSovereignOwner(podUrl: string, identity: string | null): Promise<string | null> {
+/**
+ * A 401 refusal that NAMES THE WAY OUT.
+ *
+ * The relay target is derived here once. It was spelled inline in resolveCaller, and a second
+ * inline copy is how one address quietly becomes two — the failure recorded as a gate narrower
+ * than its readers. Every missing-credential refusal in this bridge composes this.
+ */
+function signRequestRefusal(error: string, reason: string): Refusal {
+  return {
+    kind: 'refusal',
+    error,
+    'iep:refusalReason': reason,
+    'iep:resolvedBy': {
+      action: 'urn:iep:action:sign-request',
+      title: 'Sign a request as your bound identity',
+      // The relay origin, from the same env the ns base is derived from — not a second
+      // spelling of the host, which is how one address ends up meaning two things.
+      target: `${(process.env.INTEREGO_RELAY_URL ?? 'https://relay.interego.xwisee.com').replace(/\/+$/, '')}/mcp`,
+      method: 'POST',
+      toolName: 'sign_request',
+      note: 'Produces the {_signature,_signed_payload} envelope this endpoint requires.',
+    },
+  };
+}
+
+async function assertSelfSovereignOwner(podUrl: string, identity: string | null): Promise<Refusal | null> {
   if (samePod(podUrl, tenantPodUrl)) return null; // configured (closed) tenant: existing gate applies
-  if (!identity) return 'auth: proof-of-possession (or delegation) required — the bridge must verify you own this self-sovereign tenant.';
+  if (!identity) return signRequestRefusal('auth: proof-of-possession (or delegation) required — the bridge must verify you own this self-sovereign tenant.', 'the request carried no proof-of-possession envelope, so ownership of this pod could not be checked');
   const id = identity.toLowerCase();
   const ethAddr = /^did:ethr:(0x[0-9a-f]{40})/.exec(id)?.[1]; // a wallet DID → its address
   let members: Array<{ wallet_address?: string; web_id?: string; user_id?: string }> = [];
@@ -807,7 +832,20 @@ async function assertSelfSovereignOwner(podUrl: string, identity: string | null)
     if (Array.isArray(mem?.users)) members = mem.users;
   } catch { /* no membership yet */ }
   if (members.length === 0) {
-    return `this self-sovereign tenant has no owner yet — self-enroll first (register_self_sovereign_learner) to establish ownership of ${podUrl}.`;
+    // A refusal that only says NO is a dead end. The way OUT of this one is an
+    // affordance this same bridge publishes, so name it rather than describe it.
+    return {
+      kind: 'refusal' as const,
+      'iep:refusalStatus': 403,
+      'iep:refusalReason': 'the pod has no membership record, so no caller can be its owner yet',
+      error: `this self-sovereign tenant has no owner yet — self-enroll first (register_self_sovereign_learner) to establish ownership of ${podUrl}.`,
+      'iep:resolvedBy': {
+        action: 'urn:iep:action:establish-ownership',
+        title: 'Establish ownership of this pod by self-enrolling',
+        toolName: 'foxxi.register_self_sovereign_learner',
+        note: 'The first enrollee becomes the owner; this call then succeeds.',
+      },
+    };
   }
   // The identity may be a wallet address (PoP signer), a wallet DID, a WebID, or
   // a user_id — match any, so both the PoP and delegated routes verify ownership.
@@ -816,7 +854,12 @@ async function assertSelfSovereignOwner(podUrl: string, identity: string | null)
     return w === id || (Boolean(ethAddr) && w === ethAddr)
       || (m.web_id ?? '').toLowerCase() === id || (m.user_id ?? '').toLowerCase() === id;
   });
-  if (!isOwner) return `auth: ${identity} is not the owner of the self-sovereign tenant at ${podUrl} — only its owner may ingest / assign / enroll here.`;
+  if (!isOwner) return {
+    kind: 'refusal' as const,
+    'iep:refusalStatus': 403,
+    'iep:refusalReason': 'the caller is authenticated but is not the owner of this pod',
+    error: `auth: ${identity} is not the owner of the self-sovereign tenant at ${podUrl} — only its owner may ingest / assign / enroll here.`,
+  };
   return null;
 }
 
@@ -831,12 +874,21 @@ async function assertSelfSovereignOwner(podUrl: string, identity: string | null)
  *  for a self-sovereign tenant, require the PoP signer to be the tenant owner.
  *  `args` still carries the {_signature,_signed_payload} envelope, which
  *  resolveCaller re-recovers (mergeSignedEnvelope does not strip it). */
-async function assertTenantOwnerWrite(args: Record<string, unknown>, targetPod: string, signer: string | null): Promise<string | null> {
+async function assertTenantOwnerWrite(args: Record<string, unknown>, targetPod: string, signer: string | null): Promise<Refusal | null> {
   if (samePod(targetPod, tenantPodUrl)) {
     const resolved = await resolveCaller(args);
-    if ('error' in resolved) return resolved.error;
+    // ★★ THIS RETURNED `resolved.error` — A BARE STRING — DISCARDING THE TYPED REFUSAL.
+    // resolveCaller already answers a missing credential with kind/refusalReason and the
+    // `sign_request` exit; flattening it to prose put the 401 back at HTTP 200 for every
+    // affordance gated here, and dropped the one field an agent can act on. Propagate it.
+    if ('error' in resolved) return resolved;
     if (resolved.ctx.role !== 'admin') {
-      return `forbidden — writing to the configured tenant at ${targetPod} requires an admin caller (role: ${resolved.ctx.role}). A self-signed wallet cannot write tenant metadata / authoring policy into the closed tenant.`;
+      return {
+        kind: 'refusal' as const,
+        'iep:refusalStatus': 403,
+        'iep:refusalReason': 'the caller is authenticated but not permitted this operation',
+        error: `forbidden — writing to the configured tenant at ${targetPod} requires an admin caller (role: ${resolved.ctx.role}). A self-signed wallet cannot write tenant metadata / authoring policy into the closed tenant.`,
+      };
     }
     return null;
   }
@@ -2067,21 +2119,10 @@ async function resolveCaller(args: Record<string, unknown>): Promise<{ ctx: Call
      * discipline the interrogative router already applies when it answers `partial` and names
      * the primitive that can answer the rest.
      */
-    return {
-      kind: 'refusal',
-      error: 'missing credential — pass a rev-196 signed-request envelope ({_signature,_signed_payload}) for proof-of-possession, or Authorization: Bearer <session token>',
-      'iep:refusalReason': 'the request carried no proof-of-possession envelope and no session token',
-      'iep:resolvedBy': {
-        action: 'urn:iep:action:sign-request',
-        title: 'Sign a request as your bound identity',
-        // The relay origin, from the same env the ns base is derived from — not a second
-        // spelling of the host, which is how one address ends up meaning two things.
-        target: `${(process.env.INTEREGO_RELAY_URL ?? 'https://relay.interego.xwisee.com').replace(/\/+$/, '')}/mcp`,
-        method: 'POST',
-        toolName: 'sign_request',
-        note: 'Produces the {_signature,_signed_payload} envelope this endpoint requires.',
-      },
-    };
+    return signRequestRefusal(
+      'missing credential — pass a rev-196 signed-request envelope ({_signature,_signed_payload}) for proof-of-possession, or Authorization: Bearer <session token>',
+      'the request carried no proof-of-possession envelope and no session token',
+    );
   }
 
   const verified = verifySessionToken(token, addressMap);
@@ -2620,7 +2661,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // authorized for the configured tenant, so — like bootstrap_tenant — calling
     // it alone left an UNAUTHENTICATED write into the acme catalog (round-25).
     const ownerErr = await assertTenantOwnerWrite(args, pod, signer);
-    if (ownerErr) return { error: ownerErr };
+    if (ownerErr) return ownerErr;   // the typed Refusal IS the payload — wrapping it as {error} drops `kind` and the status goes back to 200
     if (!args.parsed) {
       return {
         error: 'supply args.parsed — a ParsedFoxxiPackage: { courseId (required), title?, standard?, authoringTool?, stats?:{slides,scenes,audioSeconds,conceptsTotal,conceptsFreeStanding,prereqEdges}, concepts?:[{id,label,confidence,tier}], audience_tags?:[…] }. Only courseId is strictly required; other fields default. The zip→Python-parser path (args.zip_base64) is not wired in this deployment.',
@@ -2660,7 +2701,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     if (!policySigner) return { error: 'a signed request is required — an authoring policy is a tenant-owner pod write' };
     const config = configOrThrow(args);
     const policyOwnerErr = await assertTenantOwnerWrite(args, config.tenantPodUrl, policySigner);
-    if (policyOwnerErr) return { error: policyOwnerErr };
+    if (policyOwnerErr) return policyOwnerErr;   // the typed Refusal IS the payload — wrapping it as {error} drops `kind` and the status goes back to 200
     const policy: AuthoringPolicy = {
       acceptedTools: (args.accepted_tools as string[]) ?? [],
       acceptedStandards: (args.accepted_standards as string[]) ?? [],
@@ -2690,7 +2731,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // assertSelfSovereignOwner alone left an UNAUTHENTICATED write into the acme
     // TenantAssignments (the short-circuit authorizes the configured tenant) (round-25).
     const assignOwnerErr = await assertTenantOwnerWrite(args, pod, signer);
-    if (assignOwnerErr) return { error: assignOwnerErr };
+    if (assignOwnerErr) return assignOwnerErr;   // the typed Refusal IS the payload — wrapping it as {error} drops `kind` and the status goes back to 200
     const courseIri = typeof args.course_iri === 'string' ? args.course_iri.trim() : '';
     const audienceTag = typeof args.audience_tag === 'string' ? args.audience_tag.trim() : '';
     if (!courseIri) return { error: 'course_iri required — the ingested course IRI (e.g. <pod>/courses/<course_id>#package). Sign it inside _signed_payload.' };
@@ -3977,7 +4018,10 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     //      overlay an admin-managed directory, so this can't grant access to acme et al.
     const rec = recoverSignedRequest(args);
     if (!rec.ok) {
-      return { error: `auth: self-enrollment needs proof-of-possession — pass a rev-196 signed-request envelope ({_signature,_signed_payload}). (${rec.reason})` };
+      return signRequestRefusal(
+        `auth: self-enrollment needs proof-of-possession — pass a rev-196 signed-request envelope ({_signature,_signed_payload}). (${rec.reason})`,
+        'the request carried no verifiable proof-of-possession envelope',
+      );
     }
     const signer = rec.signer;
     const p = (rec.payload ?? {}) as Record<string, unknown>;
@@ -4094,7 +4138,10 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // someone else's pod via the bridge's cross-pod write key.
     const rec = recoverSignedRequest(args);
     if (!rec.ok) {
-      return { error: `auth: publishing an ontology needs proof-of-possession — pass a rev-196 signed-request envelope ({_signature,_signed_payload}). (${rec.reason})` };
+      return signRequestRefusal(
+        `auth: publishing an ontology needs proof-of-possession — pass a rev-196 signed-request envelope ({_signature,_signed_payload}). (${rec.reason})`,
+        'the request carried no verifiable proof-of-possession envelope',
+      );
     }
     const signer = rec.signer;
     const p = (rec.payload ?? {}) as Record<string, unknown>;
@@ -4125,7 +4172,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       // A genuine "no directory" → self-sovereign pod → proceed to the owner check.
     }
     const ownerErr = await assertSelfSovereignOwner(podUrl, `did:ethr:${signer}`);
-    if (ownerErr) return { error: ownerErr };
+    if (ownerErr) return ownerErr;   // the typed Refusal IS the payload — wrapping it as {error} drops `kind` and the status goes back to 200
 
     // The owner slug is the pod's userId (first path segment) so the ontology's
     // IRI resolves back to the same pod at GET <bridge>/ns/pod/<owner>/<slug>.
@@ -4193,7 +4240,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const bootPod = args.pod_url as string;
     if (typeof bootPod !== 'string' || !bootPod) return { error: 'pod_url is required' };
     const bootOwnerErr = await assertTenantOwnerWrite(args, bootPod, bootSigner);
-    if (bootOwnerErr) return { error: bootOwnerErr };
+    if (bootOwnerErr) return bootOwnerErr;   // the typed Refusal IS the payload — wrapping it as {error} drops `kind` and the status goes back to 200
     return bootstrapTenant({
       tenantSlug: args.tenant_slug as string,
       tenantDid: args.tenant_did as string,
@@ -7920,7 +7967,13 @@ app.post('/agent/ingest-course', async (req, res) => {
       const hint = !podArg
         ? ` — no subject_pod_url/tenant_pod_url was given, so the bridge derived your pod as ${authorPod} from your DID; if your pod is elsewhere (e.g. a u-pk-… pod), pass subject_pod_url = your pod URL in the SIGNED payload.`
         : '';
-      res.status(403).json({ ok: false, error: ownerErr + hint, resolvedPod: authorPod });
+      // ★ `ownerErr + hint` string-concatenated a Refusal OBJECT once this helper became
+      // typed — it would have shipped the literal text "[object Object]" to the caller.
+      // Spread the refusal so `kind` / `iep:resolvedBy` survive, and append the hint to its
+      // sentence rather than to the object.
+      res.status(ownerErr['iep:refusalStatus'] ?? 403).json({
+        ok: false, ...ownerErr, error: ownerErr.error + hint, resolvedPod: authorPod,
+      });
       return;
     }
     const source = sourceForPod(authorPod);

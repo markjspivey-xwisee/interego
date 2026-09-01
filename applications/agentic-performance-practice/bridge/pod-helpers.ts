@@ -76,9 +76,14 @@ export function coerceDiagnosis(raw: unknown): Diagnosis | null {
    * `Cannot read properties of undefined (reading 'adequate')` back over HTTP: an internal
    * TypeError as an API response, from a bridge whose every other handler declines honestly.
    *
-   * Absent `factors` stays legal: the engine treats an unsupplied factor as adequate, and the
-   * non-Knowable methods never read them. What is refused is a PRESENT one of the wrong shape,
-   * which is the only case that reaches the dereference.
+   * Absent and PARTIAL `factors` are legal — but only because the engine was made to mean it.
+   * This comment previously asserted "the engine treats an unsupplied factor as adequate" while
+   * `recommendInterventions` still ran `diagnosis.factors!` and dereferenced `.information` on
+   * it, so a diagnosis with no factors, or with three of the six, returned the same internal
+   * TypeError this guard exists to prevent. The engine now reads every factor through an
+   * absence-tolerant helper, which is what the rest of that branch already assumed by testing
+   * `=== false`. What is refused here is a PRESENT `factors` of the wrong SHAPE (an array, a
+   * string, entries without `adequate`) — a caller error worth declining rather than guessing.
    */
   if (d.factors !== undefined) {
     const f = d.factors;

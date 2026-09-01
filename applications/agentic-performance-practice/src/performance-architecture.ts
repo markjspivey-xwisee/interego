@@ -665,8 +665,23 @@ export function recommendInterventions(input: RecommendInput): InterventionPlan 
     }
   } else {
     // ── Knowable regime — gap-analysis selection. ──
-    const factors = diagnosis.factors!;
-    const envDeficient = [factors.information, factors.instrumentation, factors.incentives].filter(c => !c.adequate);
+    /**
+     * ★★ `diagnosis.factors!` ASSERTED A VALUE THAT AN API CALLER DECIDES.
+     *
+     * A diagnosis arriving over HTTP with no `factors`, or with only some of the six, reached
+     * here and threw `Cannot read properties of undefined (reading 'information')` — an
+     * internal TypeError returned as the API response. The non-null assertion said the field
+     * was guaranteed; nothing guaranteed it.
+     *
+     * The intent below is already "absent means adequate" — every test in this branch compares
+     * `=== false`, so an unstated factor never triggers an intervention. Only `envDeficient`
+     * broke that rule by dereferencing `.adequate` on a missing entry. So make the absent case
+     * mean what the rest of the branch already means, rather than refusing the call: a partial
+     * diagnosis is a legitimate thing to reason from, and the engine has an answer for it.
+     */
+    const factors = (diagnosis.factors ?? {}) as Partial<NonNullable<Diagnosis['factors']>>;
+    const adequate = (c?: { adequate?: boolean }): boolean => c?.adequate !== false;
+    const envDeficient = [factors.information, factors.instrumentation, factors.incentives].filter(c => !adequate(c));
 
     // 0. An unverified situation is verified before anything is built.
     if (situation.modalStatus === 'Hypothetical') {
@@ -675,11 +690,11 @@ export function recommendInterventions(input: RecommendInput): InterventionPlan 
     }
 
     // 1. Environmental deficiencies dominate — fix the workplace.
-    if (factors.instrumentation.adequate === false || factors.incentives.adequate === false) {
+    if (!adequate(factors.instrumentation) || !adequate(factors.incentives)) {
       select.add('environmental-fix');
-      rationale.set('environmental-fix', `Environmental deficiency in ${[!factors.instrumentation.adequate ? 'tools/process' : '', !factors.incentives.adequate ? 'incentives/consequences' : ''].filter(Boolean).join(' + ')}. The workplace is the lever — a course cannot fix a broken tool or a misaligned incentive.`);
+      rationale.set('environmental-fix', `Environmental deficiency in ${[!adequate(factors.instrumentation) ? 'tools/process' : '', !adequate(factors.incentives) ? 'incentives/consequences' : ''].filter(Boolean).join(' + ')}. The workplace is the lever — a course cannot fix a broken tool or a misaligned incentive.`);
     }
-    if (factors.information.adequate === false) {
+    if (!adequate(factors.information)) {
       select.add('performance-support');
       rationale.set('performance-support', 'The Information factor is deficient — expectations or guidance are not available at the moment of performance. A job aid delivers the information in the flow of work; it does not require it to be carried in memory.');
     }
@@ -705,14 +720,14 @@ export function recommendInterventions(input: RecommendInput): InterventionPlan 
     }
 
     // 3. Motivation — coaching, not content.
-    if (factors.motives.adequate === false) {
+    if (!adequate(factors.motives)) {
       select.add('coaching');
       rationale.set('coaching', 'The Motives factor is deficient — the performer can perform but is not choosing to. A course cannot install motivation; a coaching feedback loop addresses it.');
       ruledOut.set('instruction', (ruledOut.get('instruction') ?? '') + ' A motivation gap is not closed by teaching what is already known.');
     }
 
     // 4. Capacity — an environmental/selection matter, not content.
-    if (factors.capacity.adequate === false) {
+    if (!adequate(factors.capacity)) {
       select.add('environmental-fix');
       rationale.set('environmental-fix', (rationale.get('environmental-fix') ? rationale.get('environmental-fix') + ' ' : '') + 'The Capacity factor is deficient — the fit between performer and task is wrong. This is a selection / job-design matter, not a content matter.');
     }

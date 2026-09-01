@@ -61,13 +61,43 @@ const situation = {
   workContext: 'resolving customer refund disputes',
   competency: 'resolving refund disputes within policy',
   observed: 'over-escalates disputes a rep may resolve',
-  frequency: 'continuous', criticality: 'moderate', modalStatus: 'Asserted', domain: 'Knowable',
+  frequency: 'continuous', criticality: 'moderate', modalStatus: 'Asserted',
 };
+// ★ THE REGIME IS READ OFF THE WORK, NOT DECLARED.
+//
+// This demo used to set `domain: 'Knowable'` on the situation, which makes regimeSource
+// 'asserted' — and BOTH calibrate() and recordOutcome() exclude an asserted regime from the
+// calibration track on purpose, so a caller cannot frame its way into a track record. The
+// demo therefore printed three failed checks and then died dereferencing the null that
+// recordOutcome correctly returned. The engine was right; the demo was asking it to
+// contradict itself.
+//
+// Structured, low-exploration, reliable steps place this in Knowable by DERIVATION, which is
+// what earns calibration authority. See placeRegime: structured share >= 0.25 and tool-call
+// success >= 0.6, with exploration < 0.12 and plan revision < 0.25.
+const t = (n) => `2026-07-29T00:${String(n).padStart(2, '0')}:00.000Z`;
+const knowableTrajectory = [{
+  agentDid: 'did:web:acme#rep',
+  agentName: 'support rep',
+  steps: [
+    { modalStatus: 'Asserted', granularity: 'task', verb: 'opened', objectId: 'd:1', objectName: 'a refund dispute', recordedAt: t(0) },
+    { modalStatus: 'Asserted', granularity: 'subtask', verb: 'applied', objectId: 'd:2', objectName: 'the refund policy decision tree', recordedAt: t(1) },
+    { modalStatus: 'Asserted', granularity: 'subtask', verb: 'checked', objectId: 'd:3', objectName: 'the order history', recordedAt: t(2) },
+    { modalStatus: 'Asserted', granularity: 'tool-call', verb: 'looked-up', objectId: 'd:4', objectName: 'order record', recordedAt: t(3), result: { success: true } },
+    { modalStatus: 'Asserted', granularity: 'tool-call', verb: 'looked-up', objectId: 'd:5', objectName: 'policy table', recordedAt: t(4), result: { success: true } },
+    { modalStatus: 'Asserted', granularity: 'tool-call', verb: 'issued', objectId: 'd:6', objectName: 'partial refund', recordedAt: t(5), result: { success: true } },
+    { modalStatus: 'Asserted', granularity: 'tool-call', verb: 'escalated', objectId: 'd:7', objectName: 'an in-policy dispute', recordedAt: t(6), result: { success: false } },
+    { modalStatus: 'Asserted', granularity: 'tool-call', verb: 'closed', objectId: 'd:8', objectName: 'the dispute', recordedAt: t(7), result: { success: true } },
+  ],
+}];
 const dg = diagnose({
   situation, exemplary: 'resolves in-policy disputes on first contact',
   couldPerformUnderIdealConditions: false,
+  trajectories: knowableTrajectory,
   factorEvidence: { knowledgeSkill: { adequate: false, evidence: 'cannot recall the decision tree' } },
 });
+check('the regime is DERIVED from the work, not asserted by the caller',
+  dg.regimeSource === 'derived' && dg.domain === 'Knowable', `${dg.domain}/${dg.regimeSource}`);
 const pl = recommendInterventions({ diagnosis: dg, situation });
 const note = calibrate(dg, pl, tenant);
 console.log(`\n   fresh plan: ${pl.selected.map(o => o.type).join(', ')}`);
@@ -78,7 +108,8 @@ check('the fresh instruction plan is flagged poorly-supported by the evidence',
 check('the calibration note states the real closure rate', /4[0-9]%/.test(note.message), note.message);
 check('the calibration note names the common re-diagnosis', /incentives/i.test(note.message));
 
-// An Emergent plan — calibration declines to grade what names no cause.
+// An Emergent plan — calibration declines to grade what names no cause. (Its domain is
+// asserted, which is a second reason it is untested; the check below holds either way.)
 const emSituation = { ...situation, id: 'urn:foxxi:situation:em', performer: { id: 'a', kind: 'agent' }, domain: 'Emergent' };
 const emNote = calibrate(diagnose({ situation: emSituation }), recommendInterventions({ diagnosis: diagnose({ situation: emSituation }), situation: emSituation }), tenant);
 check('calibration declines to grade a regime that names no cause', emNote.verdict === 'untested', emNote.verdict);

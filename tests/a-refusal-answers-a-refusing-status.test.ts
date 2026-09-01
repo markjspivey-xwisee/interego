@@ -18,7 +18,9 @@
  *
  *  · a `kind: 'refusal'` handler result answers 401 (the kind's default from KERNEL_RESULT_STATUS)
  *  · an explicit `iep:refusalStatus` overrides it — 403 for "authenticated but not permitted",
- *    which is 28 sites in the foxxi bridge
+ *    which is what the foxxi bridge's authorization denials use (the count is derived by the
+ *    census below rather than stated here, because a stated one drifts the moment a site is
+ *    added — an earlier version of this line said 28 when the code said 31)
  *  · the node is TYPED `iep:Refusal`, without which the advertised RefusalShape targets nothing
  *    and its constraints validate zero nodes
  *  · an ordinary result still answers 200 — a gate that refused everything would "fix" the
@@ -27,6 +29,7 @@
 import { describe, it, expect } from 'vitest';
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
+import { readFileSync } from 'node:fs';
 import { createVerticalBridge } from '../applications/_shared/vertical-bridge/index.js';
 
 const IEP = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
@@ -114,7 +117,6 @@ describe('a refusal answers over HTTP as a refusal', () => {
   it('an explicit iep:refusalStatus wins over the kind default', async () => {
     await withBridge(async (base) => {
       const { status } = await post(base, '/test/refuse_forbidden');
-      // 28 authorization denials in the foxxi bridge rely on exactly this.
       expect(status).toBe(403);
     });
   });
@@ -138,5 +140,46 @@ describe('a refusal answers over HTTP as a refusal', () => {
       expect(status).toBe(200);
       expect(body['value']).toBe(42);
     });
+  });
+
+  /**
+   * ★★ THE CENSUS, NOT THE INSTANCE.
+   *
+   * The typed-refusal sweep was declared complete twice and was not, both times because it
+   * fixed the sites in front of it. The first pass converted 41 handler returns and left 28
+   * authorization denials at HTTP 200. The second converted those and left six more — the ones
+   * routed through `assertTenantOwnerWrite` / `assertSelfSovereignOwner`, which returned a bare
+   * STRING that every caller re-wrapped as `{ error }`, so an unauthenticated write to the
+   * configured tenant still answered 200 with `res.ok === true`.
+   *
+   * A count in prose cannot catch the next one. This reads the bridge and fails on any handler
+   * return whose text is an authorization or authentication denial but which carries no `kind`.
+   */
+  it('★ no denial in the foxxi bridge returns without a refusal kind', () => {
+    const src = readFileSync(
+      new URL('../applications/foxxi-content-intelligence/bridge/server.ts', import.meta.url), 'utf8',
+    )
+      // A denial described in a comment is not a denial returned by a handler. Stripping is
+      // what a sibling gate failed to do, and it then matched its own documentation.
+      .split('\n').filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+
+    const DENIAL = /forbidden —|auth: |requires an admin caller|is not the owner of/;
+    const offenders: string[] = [];
+    for (const m of src.matchAll(/return\s*\{[^}]*\}/g)) {
+      const stmt = m[0];
+      if (!DENIAL.test(stmt)) continue;
+      if (stmt.includes("kind: 'refusal'")) continue;
+      offenders.push(stmt.replace(/\s+/g, ' ').slice(0, 140));
+    }
+    expect(
+      offenders,
+      `${offenders.length} handler return(s) refuse a caller without a refusal kind, so the `
+        + 'dispatcher answers 200 and every client that branches on res.ok reads success:'
+        + `\n  ${offenders.join(String.fromCharCode(10) + '  ')}`,
+    ).toEqual([]);
+
+    // The gate must be reading real returns, or an empty offender list means nothing.
+    const typed = src.match(/kind: 'refusal'/g)?.length ?? 0;
+    expect(typed, 'no typed refusals found — this gate is not reading the bridge').toBeGreaterThan(20);
   });
 });
