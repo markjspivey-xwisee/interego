@@ -84,3 +84,36 @@ describe('the planner declines rather than crashing on a caller-supplied diagnos
     }
   });
 });
+
+describe('the summary states only what the analysis actually found', () => {
+  /**
+   * ★ The non-warranted branch ended in a hard-coded "the analysis isolated an environmental /
+   * motivational / capacity cause". For a diagnosis with no factors, no root causes and no
+   * skill finding, nothing was isolated — so the field a human reads asserted a conclusion the
+   * engine had not computed. Found by reading the LIVE response after the crash was fixed:
+   * HTTP 200 with an empty plan is not a silent nothing, but it was a false something.
+   */
+  it('★ an empty diagnosis is not reported as an isolated environmental cause', () => {
+    const out = plan({
+      situationId: 'urn:agp:situation:probe', method: 'gap-analysis',
+      regimeSource: 'asserted', domain: 'Knowable',
+    }) as { summary: string; selected: unknown[] };
+    expect(out.selected).toEqual([]);
+    expect(
+      out.summary,
+      'the summary claims a cause was isolated when the diagnosis carried no finding at all',
+    ).not.toContain('isolated an environmental');
+    expect(out.summary).toContain('No cause was isolated');
+  });
+
+  it('a diagnosis that DID find a cause still says so', () => {
+    const out = plan({
+      situationId: 'urn:agp:situation:probe', method: 'gap-analysis',
+      regimeSource: 'asserted', domain: 'Knowable',
+      factors: { incentives: { adequate: false } }, rootCauses: ['Incentives'],
+    }) as { summary: string };
+    // A real environmental finding must keep the sentence that describes it — a gate that
+    // removed the claim everywhere would "fix" the symptom by making the API say less.
+    expect(out.summary).toContain('isolated an environmental');
+  });
+});

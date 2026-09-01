@@ -765,6 +765,19 @@ export function recommendInterventions(input: RecommendInput): InterventionPlan 
   const selected = paradigm.filter(o => o.selected);
   const contentWarranted = selected.some(o => !!o.authoring);
 
+  /**
+   * ★ A SUMMARY MUST NOT ASSERT A FINDING THE ANALYSIS DID NOT REACH.
+   *
+   * The non-warranted branch below ended in a hard-coded "the analysis isolated an
+   * environmental / motivational / capacity cause". For a diagnosis carrying NO factors, NO
+   * root causes and NO skill finding, nothing was isolated at all — so the API stated a
+   * conclusion it had not computed, in the one field a human actually reads. Measured live on
+   * the deployed bridge with the most ordinary gap-analysis payload there is.
+   */
+  const diagnosisCarriedAFinding = Boolean(diagnosis.skillDeficiency)
+    || (diagnosis.rootCauses?.length ?? 0) > 0
+    || Object.values(diagnosis.factors ?? {}).some(f => (f as { adequate?: boolean } | undefined)?.adequate === false);
+
   const headline = selected.length === 0
     ? 'no intervention selected'
     : selected.map(o => o.type).join(' + ');
@@ -777,7 +790,9 @@ export function recommendInterventions(input: RecommendInput): InterventionPlan 
         ? 'The Emergent regime calls for probes, not courses.'
         : diagnosis.method === 'stabilise-first'
           ? 'Turbulent work must be stabilised before anything can be designed.'
-          : 'The analysis isolated an environmental / motivational / capacity cause that no course can fix — the common finding that most performance situations are environmental.'}`;
+          : diagnosisCarriedAFinding
+            ? 'The analysis isolated an environmental / motivational / capacity cause that no course can fix — the common finding that most performance situations are environmental.'
+            : 'No cause was isolated — the diagnosis supplied no deficient factor, no root cause and no skill finding, so there is nothing yet to design against. Supply factor evidence, or answer the discriminating question, and re-plan.'}`;
 
   return {
     situationId: situation.id,
