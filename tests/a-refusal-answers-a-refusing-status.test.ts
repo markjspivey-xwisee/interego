@@ -45,25 +45,29 @@ function bridgeCode(): string {
 /**
  * Every `return { ... error ... }` statement in the bridge, as strings.
  *
- * ★★ THE FIRST VERSION OF THIS GATE WAS BLIND, AND THE CAUSE IS NOT ESTABLISHED.
+ * ★★ THE FIRST VERSION OF THIS GATE WAS BLIND. THE CAUSE IS STILL NOT KNOWN.
  *
- * Both halves below were written inline, each running its own `code.matchAll(/…/g)`. Planted
- * defects — one auth denial reverted to an untyped `{ error }`, one new untyped denial in
- * wording the vocabulary does not know — passed 6/6. Instrumented, the same test printed
- * `totalMatches= 135` from the first `matchAll` and `untypedLen= 0` from the second, on the
- * same string in the same test body.
+ * Both halves below were once written inline, each running its own `code.matchAll(/…/g)`.
+ * Planted defects — one auth denial reverted to an untyped `{ error }`, one new untyped denial
+ * in wording the vocabulary does not know — passed 6/6. Instrumented, the same test body
+ * printed `totalMatches= 135` from its first `matchAll` and `untypedLen= 0` from its second,
+ * over the same string.
  *
- * I do not know why. The obvious explanation — two identical `/…/g` literals sharing one
- * object, leaking `lastIndex` — is DISPROVEN: in plain node, separate literals are distinct
- * objects AND a deliberately shared one still yields 3 then 3, because `matchAll` clones its
- * argument. So the mechanism is something about this file under the test transform that I have
- * not isolated, and this comment does not invent one.
+ * TWO explanations have been tried and BOTH are disproven, so neither is written here as fact:
  *
- * What IS established: routing both halves through this single helper, which builds its regex
- * with `new RegExp` per call and returns plain STRINGS, makes each half fail on its own mutant
- * by name (§A found the untyped denial; §B reported 83 against a budget of 81). That is the
- * property the gate needs, so it is what the gate rests on — but the underlying hazard is
- * unexplained and may still be reachable from other multi-`matchAll` code in this tree.
+ *   · "identical /…/g literals share one object and leak lastIndex" — in plain node, separate
+ *     literals are distinct objects, and a deliberately SHARED one still yields 3 then 3,
+ *     because `matchAll` clones its argument.
+ *   · "something about this file under the test transform" — a scratch suite reproducing the
+ *     exact shape (for-of, spread, and both in one body, identical literals, same string) under
+ *     vitest returned 133 / 133 / 133. `matchAll` reuse is NOT a hazard in this tree, and the
+ *     four other files that reuse a matchAll literal are not at risk from it.
+ *
+ * So the mechanism is unexplained and this comment does not invent a third story. What IS
+ * established is narrow and sufficient: routing both halves through this one helper, which
+ * builds its regex per call and returns plain STRINGS, makes each half fail on its own mutant
+ * by name (§A named the untyped denial; §B reported 83 against a budget of 81). The gate rests
+ * on measured behaviour, not on a diagnosis.
  */
 function errorReturns(code: string): string[] {
   return [...code.matchAll(new RegExp('return[^]{0,4}[{][^}]*error[^}]*[}]', 'g'))].map(m => m[0]);
@@ -231,13 +235,24 @@ describe('a refusal answers over HTTP as a refusal', () => {
   });
 
   /**
-   * The 81 remaining untyped returns are overwhelmingly VALIDATION errors ("task_name is
-   * required"), which belong at 400 rather than 200 — a real defect of the same family, but a
-   * deliberate separate pass rather than something to fold in silently here. This number is
-   * what makes that pass measurable, and stops a NEW untyped denial from hiding among them.
+   * 81 -> 21. The deferred pass ran: 60 declined calls that answered HTTP 200 now answer the
+   * status they mean — 400 invalidArguments (the caller's arguments, with iep:resolvedBy
+   * pointing at the affordance's own published input contract rather than restating it),
+   * 404 notFound, 503 notConfigured, 502 upstreamFailed, 403 wrongPod.
+   *
+   * One of them was not a status change but a contradiction: `bindPerformanceToEvidence`
+   * returns a `status`, honoured at the /agent route and DROPPED by the tool handler, so one
+   * binding failure answered 400 on one surface and 200 on the other.
+   *
+   * Of the 21 left, SEVEN are `validateTourRun`'s `{ok:false,error}` — an internal helper with
+   * a discriminated-union return that no dispatcher ever sees. They are counted because this
+   * gate reads source and cannot tell a helper from a handler, so the budget bottoms out
+   * around 7 rather than 0. The rest are 4 catch-block `(e as Error).message` (500-class), 4
+   * propagations of an inner helper's error string, and a handful needing a judgement about
+   * what they mean. Each is a decision, not a sweep.
    */
   it('★ §B the untyped-return count ratchets down, never up', () => {
-    const UNTYPED_BUDGET = 81;
+    const UNTYPED_BUDGET = 21;
     const code = bridgeCode();
     const untyped = untypedErrorReturns(code);
     expect(

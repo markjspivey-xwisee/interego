@@ -821,6 +821,87 @@ function signRequestRefusal(error: string, reason: string): Refusal {
   };
 }
 
+/** A 502: an UPSTREAM write or read this bridge depends on failed. The caller's request was
+ *  well-formed and permitted; something behind the bridge did not answer. */
+function upstreamFailed(error: string): Refusal {
+  return {
+    kind: 'refusal',
+    'iep:refusalStatus': 502,
+    'iep:refusalReason': 'a pod or upstream service this affordance composes did not complete the operation',
+    error,
+  };
+}
+
+/** A 403 for "not HERE" — the operation is legitimate, on a different pod. The way out is an
+ *  address, so it is named rather than described. */
+function wrongPod(error: string): Refusal {
+  return {
+    kind: 'refusal',
+    'iep:refusalStatus': 403,
+    'iep:refusalReason': 'this pod is administered elsewhere; the operation belongs on a pod the caller owns',
+    error,
+    'iep:resolvedBy': {
+      action: 'urn:iep:action:use-your-own-pod',
+      title: 'Re-issue this call against your own self-sovereign pod',
+      toolName: 'foxxi.register_self_sovereign_learner',
+      note: 'Pass your own pod URL; a pod you own is the one this bridge can write for you.',
+    },
+  };
+}
+
+/** A 503: the BRIDGE is missing configuration, so the caller cannot fix it by retrying with
+ *  different arguments. Answering 200 told a client the operation had succeeded; answering 400
+ *  would tell it to change its request, which is also false. */
+function notConfigured(error: string): Refusal {
+  return {
+    kind: 'refusal',
+    'iep:refusalStatus': 503,
+    'iep:refusalReason': 'the deployment lacks configuration this affordance requires; the request itself is well-formed',
+    error,
+  };
+}
+
+/** A 404: the thing named does not exist here. Distinct from a refusal to act on something
+ *  that does — "a read that failed is not a thing that is missing", and the inverse holds too. */
+function notFound(error: string): Refusal {
+  return {
+    kind: 'refusal',
+    'iep:refusalStatus': 404,
+    'iep:refusalReason': 'the referenced resource does not exist in this deployment',
+    error,
+  };
+}
+
+/**
+ * A 400 refusal: the caller's ARGUMENTS are wrong, and the affordance already says which.
+ *
+ * ★ A VALIDATION FAILURE ANSWERED HTTP 200 ON EVERY DEPLOYED BRIDGE. The dispatcher derives
+ * status from `kind`, and a handler that returns `{ error: 'task_name is required' }` declares
+ * no kind — so a client reading `res.ok` was told the call SUCCEEDED and had to know to look
+ * inside the body for an `error` key it was never promised. Same defect as the authorization
+ * denials, one severity down and thirty-three sites wide.
+ *
+ * `iep:resolvedBy` names the affordance's own published input contract rather than restating
+ * it: every one of these arguments is already declared in affordances.ts with `required: true`
+ * and a description, and /affordances serves it. A refusal that points at the contract is
+ * followable; one that paraphrases it drifts from it.
+ */
+function invalidArguments(error: string, reason = 'the request omitted a required argument or supplied one this affordance cannot use'): Refusal {
+  return {
+    kind: 'refusal',
+    'iep:refusalStatus': 400,
+    'iep:refusalReason': reason,
+    error,
+    'iep:resolvedBy': {
+      action: 'urn:iep:action:read-input-contract',
+      title: 'Read the declared inputs for this affordance',
+      target: `${(process.env.BRIDGE_DEPLOYMENT_URL ?? '').replace(/\/+$/, '')}/affordances`,
+      method: 'GET',
+      note: 'Each affordance declares its inputs with name, type, required and description.',
+    },
+  };
+}
+
 async function assertSelfSovereignOwner(podUrl: string, identity: string | null): Promise<Refusal | null> {
   if (samePod(podUrl, tenantPodUrl)) return null; // configured (closed) tenant: existing gate applies
   if (!identity) return signRequestRefusal('auth: proof-of-possession (or delegation) required — the bridge must verify you own this self-sovereign tenant.', 'the request carried no proof-of-possession envelope, so ownership of this pod could not be checked');
@@ -1638,13 +1719,13 @@ async function siblingPodSpelling(pod: string): Promise<string | undefined> {
  *  the rule existed. */
 function enrolmentOriginCheck(pod: string): { ok: true } | { error: string } {
   const trusted = (() => { try { return new URL(tenantPodUrl).origin; } catch { return ''; } })();
-  if (!trusted) return { error: 'this deployment has no tenant pod configured, so it cannot resolve which pod space to trust' };
+  if (!trusted) return notConfigured('this deployment has no tenant pod configured, so it cannot resolve which pod space to trust');
   const podOrigin = (() => { try { return new URL(pod).origin; } catch { return ''; } })();
   // ★ Both spellings of this deployment's own store are the same pod space — see
   // SAME_STORE_ORIGINS. Comparing raw origins refused an identity whose pod was named the way the
   // relay itself writes it, which is the form a delegated caller actually has.
   if (!sameStore(pod, tenantPodUrl)) {
-    return { error: `the projector only reads pods on ${trusted}, and this resolves to ${podOrigin || 'an unparseable origin'} — enrol an identity whose pod is in this deployment's pod space, or push steps directly to /agent/mesh-event` };
+    return wrongPod(`the projector only reads pods on ${trusted}, and this resolves to ${podOrigin || 'an unparseable origin'} — enrol an identity whose pod is in this deployment's pod space, or push steps directly to /agent/mesh-event`);
   }
   return { ok: true };
 }
@@ -2638,12 +2719,12 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     if ('error' in resolved) return resolved;
     const courseId = courseIdFrom(args);
     if (!courseId) {
-      return { error: 'course_iri required — the ingested course IRI (…/courses/<course_id>#package), or pass course_id directly.' };
+      return invalidArguments('course_iri required — the ingested course IRI (…/courses/<course_id>#package), or pass course_id directly.');
     }
     const payload = await autoFetchCourse(args, courseId);
     if (!payload) {
       // Not the same answer as "this course has no concepts": say which it is.
-      return { error: `no fxa:CoursePackageBundle for course_id="${courseId}" on ${(args.tenant_pod_url as string) || tenantPodUrl} — ingest it first via foxxi.ingest_content_package.` };
+      return notFound(`no fxa:CoursePackageBundle for course_id="${courseId}" on ${(args.tenant_pod_url as string) || tenantPodUrl} — ingest it first via foxxi.ingest_content_package.`);
     }
     return buildConceptNavGraph(payload, {
       focusConceptId: typeof args.focus_concept_id === 'string' ? args.focus_concept_id : undefined,
@@ -2658,7 +2739,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     let signer: string | null = null;
     try { signer = mergeSignedEnvelope(args); } catch (e) { return { error: (e as Error).message }; }
     const pod = (args.tenant_pod_url as string) || tenantPodUrl;
-    if (!pod) return { error: 'tenant_pod_url required (or set FOXXI_TENANT_POD_URL)' };
+    if (!pod) return invalidArguments('tenant_pod_url required (or set FOXXI_TENANT_POD_URL)');
     // Only the self-sovereign tenant's OWNER (or, for the configured tenant, an
     // admin) may write to its catalog. assertSelfSovereignOwner short-circuits to
     // authorized for the configured tenant, so — like bootstrap_tenant — calling
@@ -2733,7 +2814,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     let signer: string | null = null;
     try { signer = mergeSignedEnvelope(args); } catch (e) { return { error: (e as Error).message }; }
     const pod = (args.tenant_pod_url as string) || tenantPodUrl;
-    if (!pod) return { error: 'tenant_pod_url required (or set FOXXI_TENANT_POD_URL)' };
+    if (!pod) return invalidArguments('tenant_pod_url required (or set FOXXI_TENANT_POD_URL)');
     // Only the self-sovereign tenant's OWNER (or, for the configured tenant, an
     // admin) may publish assignment policies. Like ingest_content_package, calling
     // assertSelfSovereignOwner alone left an UNAUTHENTICATED write into the acme
@@ -2742,8 +2823,8 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     if (assignOwnerErr) return assignOwnerErr;   // the typed Refusal IS the payload — wrapping it as {error} drops `kind` and the status goes back to 200
     const courseIri = typeof args.course_iri === 'string' ? args.course_iri.trim() : '';
     const audienceTag = typeof args.audience_tag === 'string' ? args.audience_tag.trim() : '';
-    if (!courseIri) return { error: 'course_iri required — the ingested course IRI (e.g. <pod>/courses/<course_id>#package). Sign it inside _signed_payload.' };
-    if (!audienceTag) return { error: 'audience_tag required — the audience to assign (e.g. "engineering").' };
+    if (!courseIri) return invalidArguments('course_iri required — the ingested course IRI (e.g. <pod>/courses/<course_id>#package). Sign it inside _signed_payload.');
+    if (!audienceTag) return invalidArguments('audience_tag required — the audience to assign (e.g. "engineering").');
     const requirementType = (args.requirement_type as 'required' | 'recommended') ?? 'recommended';
     const dueRelativeDays = Number.isFinite(Number(args.due_relative_days)) ? Number(args.due_relative_days) : 30;
     const source = sourceForPod(pod);
@@ -2816,7 +2897,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: `forbidden — only admins can issue completion credentials (caller role: ${ctx.role})`, accessDecision: trace };
     }
     if (!issuerKeySeed) {
-      return { error: 'bridge is not configured to issue credentials — FOXXI_ISSUER_KEY_SEED is unset' };
+      return notConfigured('bridge is not configured to issue credentials — FOXXI_ISSUER_KEY_SEED is unset');
     }
     const learnerPodUrl = (args.learner_pod_url as string) || tenantPodUrl;
     const subject: CourseCompletionSubject = {
@@ -3007,8 +3088,8 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     }
     const performerDid = requestedActor || ctx.webId;
     const taskName = args.task_name as string;
-    if (!taskName || !taskName.trim()) return { error: 'task_name is required' };
-    if (typeof args.success !== 'boolean') return { error: 'success (boolean) is required' };
+    if (!taskName || !taskName.trim()) return invalidArguments('task_name is required');
+    if (typeof args.success !== 'boolean') return invalidArguments('success (boolean) is required');
     const taskId = productionTaskIri(args.task_id, taskName);
     // ★ THE CLAIM IS BOUND TO EVIDENCE BEFORE IT IS RECORDED — see performance-evidence.ts
     // for the live reproduction (six fabricated task_ids, all 404, all recorded, rolled up
@@ -3018,12 +3099,25 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       taskId,
       evidenceShapeIri: typeof args.evidence_shape === 'string' ? args.evidence_shape : undefined,
     });
-    if (!evidence.ok) return { error: evidence.error, detail: evidence.detail, ...(evidence.violations ? { violations: evidence.violations } : {}) };
+    if (!evidence.ok) {
+      // ★ `evidence.status` IS CARRIED BY THIS RESULT and is honoured at the /agent route
+      // (res.status(evidence.status ?? 400)). Here the same field was dropped and the same
+      // failure answered 200 — one binding, two contradictory answers depending on which
+      // surface the caller reached.
+      return {
+        kind: 'refusal' as const,
+        'iep:refusalStatus': evidence.status ?? 400,
+        'iep:refusalReason': 'the performance could not be bound to the evidence shape it cites',
+        error: evidence.error,
+        detail: evidence.detail,
+        ...(evidence.violations ? { violations: evidence.violations } : {}),
+      };
+    }
     const actorKind: 'human' | 'agent' = (args.actor_kind as string) === 'agent' ? 'agent' : 'human';
     const quality = typeof args.quality === 'number' ? args.quality : undefined;
     // result.score.scaled MUST be in [-1,1] (xAPI §4.1.5.1). Reject a bad quality
     // BEFORE it reaches the durable pod / shared lattice / forwarded LRS sinks.
-    if (quality !== undefined && (quality < -1 || quality > 1)) return { error: 'quality (result.score.scaled) must be in [-1,1]' };
+    if (quality !== undefined && (quality < -1 || quality > 1)) return invalidArguments('quality (result.score.scaled) must be in [-1,1]');
     // The performer is the xAPI actor; the authenticated caller is the
     // attesting observer (provenance). Any authenticated caller may
     // record a performance event — the observer is on the record.
@@ -3164,7 +3258,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const { ctx } = resolved;
     const agentTrajectories = agentTrajectoriesByTenant.for(callTenant(args));
     const agentDid = args.agent_did as string;
-    if (!agentDid) return { error: 'agent_did is required' };
+    if (!agentDid) return invalidArguments('agent_did is required');
     // Bind the trajectory actor to the authenticated caller unless privileged — else a
     // caller could attribute a fabricated trajectory to another agent's DID/record.
     if (agentDid !== ctx.webId && !(ctx.role === 'admin' || ctx.role === 'learning-engineer' || ctx.role === 'delegated-admin')) {
@@ -3177,7 +3271,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     }
     const rawSteps = args.steps as Array<Record<string, unknown>> | undefined;
     if (!Array.isArray(rawSteps) || rawSteps.length === 0) {
-      return { error: 'steps (non-empty array) is required' };
+      return invalidArguments('steps (non-empty array) is required');
     }
     // Map the caller's snake_case step inputs to the native shape.
     const stepInputs: TrajectoryStepInput[] = rawSteps.map(s => ({
@@ -3228,9 +3322,9 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const { ctx } = resolved;
     const agentTrajectories = agentTrajectoriesByTenant.for(callTenant(args));
     const agentDid = args.agent_did as string;
-    if (!agentDid) return { error: 'agent_did is required' };
+    if (!agentDid) return invalidArguments('agent_did is required');
     const trajectory = agentTrajectories.get(agentDid);
-    if (!trajectory) return { error: `no trajectory recorded for ${agentDid}` };
+    if (!trajectory) return notFound(`no trajectory recorded for ${agentDid}`);
     const projection = projectTrajectoryToXapi(trajectory, { authoritativeSource });
     const shape = trajectoryShape(trajectory);
     const trace = emitAccessDecision({ ctx, tool: 'foxxi.get_agent_trajectory', decision: 'allow', appliedPolicies: ['agent-trajectory-public'] });
@@ -3268,13 +3362,13 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const performanceProbes = performanceProbesByTenant.for(callTenant(args));
     const agentDids = args.agent_dids as string[] | undefined;
     if (!Array.isArray(agentDids) || agentDids.length === 0) {
-      return { error: 'agent_dids (non-empty array) is required' };
+      return invalidArguments('agent_dids (non-empty array) is required');
     }
     const trajectories = agentDids
       .map(d => agentTrajectories.get(d))
       .filter((t): t is AgentTrajectory => !!t);
     if (trajectories.length === 0) {
-      return { error: 'no recorded trajectories for any agent in the team — record_agent_trajectory first' };
+      return notFound('no recorded trajectories for any agent in the team — record_agent_trajectory first');
     }
     const disposition = assessDisposition(trajectories);
     // If the team has a probe portfolio, fold in the interventional + counterfactual causal read.
@@ -3298,20 +3392,20 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const performanceProbes = performanceProbesByTenant.for(callTenant(args));
     const agentDids = args.agent_dids as string[] | undefined;
     if (!Array.isArray(agentDids) || agentDids.length === 0) {
-      return { error: 'agent_dids (non-empty array) is required' };
+      return invalidArguments('agent_dids (non-empty array) is required');
     }
     for (const f of ['constraint_target', 'change', 'coherence', 'hypothesized_effect', 'amplify_signal', 'dampen_signal']) {
-      if (!args[f] || typeof args[f] !== 'string') return { error: `${f} (string) is required` };
+      if (!args[f] || typeof args[f] !== 'string') return invalidArguments(`${f} (string) is required`);
     }
     const coherence = args.coherence as string;
     if (!['coherent', 'oblique', 'contradictory'].includes(coherence)) {
-      return { error: 'coherence must be one of: coherent | oblique | contradictory' };
+      return invalidArguments('coherence must be one of: coherent | oblique | contradictory');
     }
     const trajectories = agentDids
       .map(d => agentTrajectories.get(d))
       .filter((t): t is AgentTrajectory => !!t);
     if (trajectories.length === 0) {
-      return { error: 'no recorded trajectories for the team — record_agent_trajectory before probing' };
+      return notFound('no recorded trajectories for the team — record_agent_trajectory before probing');
     }
     // Snapshot the disposition before the change — the causal baseline.
     const preDisposition = snapshot(assessDisposition(trajectories));
@@ -3352,7 +3446,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const agentTrajectories = agentTrajectoriesByTenant.for(tenant);
     const evaluationRegistry = evaluationRegistryByTenant.for(tenant);
     const agentDid = args.agent_did as string;
-    if (!agentDid) return { error: 'agent_did is required' };
+    if (!agentDid) return invalidArguments('agent_did is required');
     // Bind the run's actor to the authenticated caller unless privileged (no cross-agent forge).
     if (agentDid !== ctx.webId && !(ctx.role === 'admin' || ctx.role === 'learning-engineer' || ctx.role === 'delegated-admin')) {
       return {
@@ -3363,13 +3457,13 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       };
     }
     const taskName = args.task_name as string;
-    if (!taskName || !taskName.trim()) return { error: 'task_name is required' };
-    if (typeof args.success !== 'boolean') return { error: 'success (boolean) is required' };
+    if (!taskName || !taskName.trim()) return invalidArguments('task_name is required');
+    if (typeof args.success !== 'boolean') return invalidArguments('success (boolean) is required');
     const rawToolCalls = args.tool_calls as Array<Record<string, unknown>> | undefined;
     const rawSteps = args.steps as Array<Record<string, unknown>> | undefined;
     if ((!Array.isArray(rawToolCalls) || rawToolCalls.length === 0)
       && (!Array.isArray(rawSteps) || rawSteps.length === 0)) {
-      return { error: 'provide tool_calls (simple form) or steps (rich modal form)' };
+      return invalidArguments('provide tool_calls (simple form) or steps (rich modal form)');
     }
     const runInput: ExternalRunInput = {
       agentDid,
@@ -3483,8 +3577,8 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const evaluationRegistry = evaluationRegistryByTenant.for(callTenant(args));
     const name = args.name as string;
     const decisionQuestion = args.decision_question as string;
-    if (!name || !name.trim()) return { error: 'name is required' };
-    if (!decisionQuestion || !decisionQuestion.trim()) return { error: 'decision_question is required' };
+    if (!name || !name.trim()) return invalidArguments('name is required');
+    if (!decisionQuestion || !decisionQuestion.trim()) return invalidArguments('decision_question is required');
     const rawTasks = args.task_set as Array<Record<string, unknown> | string> | undefined;
     const taskSet = Array.isArray(rawTasks)
       ? rawTasks.map(t => typeof t === 'string'
@@ -3504,7 +3598,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const evaluationId = args.evaluation_id as string;
     const agentDid = args.agent_did as string;
     const team = args.team as string;
-    if (!evaluationId || !agentDid || !team) return { error: 'evaluation_id, agent_did and team are required' };
+    if (!evaluationId || !agentDid || !team) return invalidArguments('evaluation_id, agent_did and team are required');
     const c = evaluationRegistry.requestEnrollment(evaluationId, {
       agentDid,
       agentName: (args.agent_name as string) || agentDid,
@@ -3530,8 +3624,8 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const evaluationId = args.evaluation_id as string;
     const candidateId = args.candidate_id as string;
     const decision = args.decision as string;
-    if (!evaluationId || !candidateId) return { error: 'evaluation_id and candidate_id are required' };
-    if (decision !== 'accept' && decision !== 'decline') return { error: 'decision must be accept | decline' };
+    if (!evaluationId || !candidateId) return invalidArguments('evaluation_id and candidate_id are required');
+    if (decision !== 'accept' && decision !== 'decline') return invalidArguments('decision must be accept | decline');
     const c = evaluationRegistry.decide(evaluationId, candidateId, decision, ctx.webId);
     if ('error' in c) return { error: c.error };
     const trace = emitAccessDecision({ ctx, tool: 'foxxi.decide_evaluation_candidate', decision: 'allow', appliedPolicies: ['agent-evaluation-owner'] });
@@ -3550,9 +3644,9 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const { ctx } = resolved;
     const evaluationRegistry = evaluationRegistryByTenant.for(callTenant(args));
     const evaluationId = args.evaluation_id as string;
-    if (!evaluationId) return { error: 'evaluation_id is required' };
+    if (!evaluationId) return invalidArguments('evaluation_id is required');
     const state = evaluationRegistry.get(evaluationId);
-    if (!state) return { error: `no evaluation ${evaluationId}` };
+    if (!state) return notFound(`no evaluation ${evaluationId}`);
     // OWNER LOCK (round-47): read sibling of the round-42 decide() lock. A cohort's
     // candidate roster (agent DIDs, teams, harnesses) is private to the opener — any
     // other tenant-directory member calling get() would otherwise read a rival's
@@ -3577,9 +3671,9 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const { ctx } = resolved;
     const evaluationRegistry = evaluationRegistryByTenant.for(callTenant(args));
     const evaluationId = args.evaluation_id as string;
-    if (!evaluationId) return { error: 'evaluation_id is required' };
+    if (!evaluationId) return invalidArguments('evaluation_id is required');
     const state = evaluationRegistry.get(evaluationId);
-    if (!state) return { error: `no evaluation ${evaluationId}` };
+    if (!state) return notFound(`no evaluation ${evaluationId}`);
     // OWNER LOCK (round-47): compare returns full run evidence (trajectories, cost,
     // quality) across every accepted candidate — the most competitively sensitive read
     // in the cohort. Restrict to the opener, mirroring get_agent_evaluation + decide().
@@ -3588,7 +3682,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     }
     const accepted = state.candidates.filter(c => c.status === 'accepted');
     if (accepted.length === 0) {
-      return { error: 'no accepted candidates — request, accept, and record runs for at least two candidates first' };
+      return notFound('no accepted candidates — request, accept, and record runs for at least two candidates first');
     }
     const evidence: CandidateEvidence[] = accepted.map(c => ({
       candidateId: c.candidateId,
@@ -3632,7 +3726,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.resolve_did': async (args) => {
     const did = args.did as string;
-    if (typeof did !== 'string' || !did) return { error: 'did required' };
+    if (typeof did !== 'string' || !did) return invalidArguments('did required');
     // UNAUTH endpoint: a did:web host is decoded from the caller-supplied DID and
     // fetched server-side (…/.well-known/did.json). Guard EVERY fetch resolveDid
     // makes — assertSafeFetchTarget (DNS-resolving, blocks private/link-local) +
@@ -3752,7 +3846,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     if (ctx.role !== 'admin') return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: `forbidden — only admins can issue BBS+ credentials` };
-    if (!issuerKeySeed) return { error: 'FOXXI_ISSUER_KEY_SEED unset' };
+    if (!issuerKeySeed) return notConfigured('FOXXI_ISSUER_KEY_SEED unset');
     const issued = await issueBbsCompletionCredential({
       subject: {
         learnerDid: args.learner_did as string,
@@ -3852,7 +3946,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — non-admins can only prove their own competencies', accessDecision: trace };
     }
     if (!issuerKeySeed) {
-      return { error: 'bridge is not configured to issue credentials — FOXXI_ISSUER_KEY_SEED is unset' };
+      return notConfigured('bridge is not configured to issue credentials — FOXXI_ISSUER_KEY_SEED is unset');
     }
     // DERIVE the proficiency from the subject's REAL learner record — never accept a
     // caller-asserted level (the old default 'Intermediate' let an agent claim any
@@ -3878,7 +3972,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       return label.replace(/[^a-z0-9]+/g, '-') === wantSlug || String(c.aboutCompetency ?? '').toLowerCase().includes(wantSlug);
     });
     if (!held) {
-      return { error: `no competency matching "${args.competency_name}" is asserted in ${learnerDid}'s record — you can only prove a demonstrated competency, not a claimed one` };
+      return notFound(`no competency matching "${args.competency_name}" is asserted in ${learnerDid}'s record — you can only prove a demonstrated competency, not a claimed one`);
     }
     // Dreyfus level (the published framework) → the BBS credential's proficiency scale.
     const DREYFUS_TO_CRED: Record<string, 'Novice' | 'Beginner' | 'Intermediate' | 'Advanced' | 'Expert'> =
@@ -4057,7 +4151,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const podUrl = canonicalPodUrl((p.tenant_pod_url as string) || (args.tenant_pod_url as string)
       || (p.learner_pod_url as string) || (args.learner_pod_url as string) || '');
     if (!podUrl) {
-      return { error: 'tenant_pod_url (or learner_pod_url) required — the pod that hosts your self-sovereign tenant membership' };
+      return invalidArguments('tenant_pod_url (or learner_pod_url) required — the pod that hosts your self-sovereign tenant membership');
     }
     // Invariant 2: refuse to overlay a CLOSED (admin-managed) tenant — fail-closed.
     //   (a) the bridge's own configured tenant is closed by fiat; and
@@ -4065,17 +4159,17 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     //       whether or not this bridge can decrypt it — so a stale/undecryptable
     //       directory can't be downgraded to self-enrollable.
     if (samePod(podUrl, tenantPodUrl)) {
-      return { error: 'this pod is the bridge\'s configured (closed) tenant — enrollment is via the tenant admin, not self-enrollment' };
+      return wrongPod('this pod is the bridge\'s configured (closed) tenant — enrollment is via the tenant admin, not self-enrollment');
     }
     try {
       await fetchSection(TENANT_TYPES.TenantDirectory, { ...fetcherConfig(), podUrl });
       // Resolved → an encrypted directory exists (and decrypted) → closed tenant.
-      return { error: 'this pod is an admin-managed (closed) tenant — enrollment is via the tenant admin, not self-enrollment' };
+      return wrongPod('this pod is an admin-managed (closed) tenant — enrollment is via the tenant admin, not self-enrollment');
     } catch (e) {
       const msg = String((e as Error)?.message ?? e);
       if (!/No descriptor with conformsTo=.*found/i.test(msg)) {
         // A directory descriptor EXISTS but is encrypted/unreadable → still closed.
-        return { error: 'this pod has an admin-managed directory this bridge cannot serve — enrollment is via the tenant admin, not self-enrollment' };
+        return wrongPod('this pod has an admin-managed directory this bridge cannot serve — enrollment is via the tenant admin, not self-enrollment');
       }
       // Only a genuine "no directory descriptor" → self-sovereign pod → proceed.
     }
@@ -4107,7 +4201,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // the open-join hole — nobody can inject themselves into someone else's
     // self-sovereign tenant via the bridge's cross-pod write key.
     if (members.length > 0 && !existing) {
-      return { error: `this self-sovereign tenant already has an owner — enroll on your OWN pod (tenant_pod_url = your pod), not ${podUrl}.` };
+      return notFound(`this self-sovereign tenant already has an owner — enroll on your OWN pod (tenant_pod_url = your pod), not ${podUrl}.`);
     }
     if (!existing) {
       members.push({ user_id: learnerId, web_id: webId, wallet_address: signer, audience_tags: audienceTags });
@@ -4133,7 +4227,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       descriptorUrl = result.descriptorUrl;
       invalidateTenantCache(podUrl);
     } catch (err) {
-      return { error: `failed to publish public membership to ${podUrl}: ${(err as Error).message}` };
+      return upstreamFailed(`failed to publish public membership to ${podUrl}: ${(err as Error).message}`);
     }
     return {
       enrolled: { user_id: learnerId, wallet_address: signer, web_id: webId, already: Boolean(existing) },
@@ -4180,20 +4274,20 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const slug = String((p.slug as string) || (args.slug as string) || '')
       .trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
     const ontologyTurtle = String((p.ontology_turtle as string) || (args.ontology_turtle as string) || '');
-    if (!podUrl) return { error: 'owner_pod_url (your pod) required — the self-sovereign pod that will host + serve your ontology.' };
-    if (!slug) return { error: 'slug required — a short name for the ontology (e.g. "hmd"); it becomes part of the ontology\'s resolvable IRI.' };
-    if (!ontologyTurtle.trim()) return { error: 'ontology_turtle required — the OWL/SHACL Turtle to publish (a vocabulary is just RDF).' };
+    if (!podUrl) return invalidArguments('owner_pod_url (your pod) required — the self-sovereign pod that will host + serve your ontology.');
+    if (!slug) return invalidArguments('slug required — a short name for the ontology (e.g. "hmd"); it becomes part of the ontology\'s resolvable IRI.');
+    if (!ontologyTurtle.trim()) return invalidArguments('ontology_turtle required — the OWL/SHACL Turtle to publish (a vocabulary is just RDF).');
 
     if (samePod(podUrl, tenantPodUrl)) {
-      return { error: 'this pod is the bridge\'s configured (closed) tenant — publish your ontology to your OWN self-sovereign pod.' };
+      return wrongPod('this pod is the bridge\'s configured (closed) tenant — publish your ontology to your OWN self-sovereign pod.');
     }
     try {
       await fetchSection(TENANT_TYPES.TenantDirectory, { ...fetcherConfig(), podUrl });
-      return { error: 'this pod is an admin-managed (closed) tenant — publish your ontology to your OWN self-sovereign pod.' };
+      return wrongPod('this pod is an admin-managed (closed) tenant — publish your ontology to your OWN self-sovereign pod.');
     } catch (e) {
       const msg = String((e as Error)?.message ?? e);
       if (!/No descriptor with conformsTo=.*found/i.test(msg)) {
-        return { error: 'this pod has an admin-managed directory this bridge cannot serve — publish your ontology to your OWN self-sovereign pod.' };
+        return wrongPod('this pod has an admin-managed directory this bridge cannot serve — publish your ontology to your OWN self-sovereign pod.');
       }
       // A genuine "no directory" → self-sovereign pod → proceed to the owner check.
     }
@@ -4204,7 +4298,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // IRI resolves back to the same pod at GET <bridge>/ns/pod/<owner>/<slug>.
     let owner = '';
     try { owner = new URL(podUrl).pathname.split('/').filter(Boolean)[0] ?? ''; } catch { /* derive below */ }
-    if (!owner) return { error: `could not derive an owner slug from ${podUrl} — expected a pod like <host>/<userId>/.` };
+    if (!owner) return invalidArguments(`could not derive an owner slug from ${podUrl} — expected a pod like <host>/<userId>/.`);
     const ontologyIri = ontologyResolverIri(owner, slug);
 
     // PUBLIC (no encrypt) signed descriptor; the named graph == the ontology
@@ -4242,7 +4336,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       graphUrl = result.graphUrl;
       invalidateTenantCache(podUrl);
     } catch (err) {
-      return { error: `failed to publish ontology to ${podUrl}: ${(err as Error).message}` };
+      return upstreamFailed(`failed to publish ontology to ${podUrl}: ${(err as Error).message}`);
     }
     return {
       published: { slug, owner, ontologyIri, conformsTo: OWL_ONTOLOGY_IRI },
@@ -4269,7 +4363,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       );
     }
     const bootPod = args.pod_url as string;
-    if (typeof bootPod !== 'string' || !bootPod) return { error: 'pod_url is required' };
+    if (typeof bootPod !== 'string' || !bootPod) return invalidArguments('pod_url is required');
     const bootOwnerErr = await assertTenantOwnerWrite(args, bootPod, bootSigner);
     if (bootOwnerErr) return bootOwnerErr;   // the typed Refusal IS the payload — wrapping it as {error} drops `kind` and the status goes back to 200
     return bootstrapTenant({
@@ -4291,7 +4385,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const appId = process.env.FOXXI_SCORM_CLOUD_APP_ID;
     const secretKey = process.env.FOXXI_SCORM_CLOUD_SECRET_KEY;
     if (!appId || !secretKey) {
-      return { error: 'SCORM Cloud credentials not configured. Set FOXXI_SCORM_CLOUD_APP_ID + FOXXI_SCORM_CLOUD_SECRET_KEY on the bridge.' };
+      return notConfigured('SCORM Cloud credentials not configured. Set FOXXI_SCORM_CLOUD_APP_ID + FOXXI_SCORM_CLOUD_SECRET_KEY on the bridge.');
     }
     const config: ScormCloudConfig = { appId, secretKey };
     try {
@@ -4305,7 +4399,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[foxxi:scorm_cloud_pull]', err instanceof Error ? (err.stack ?? err.message) : err);
-      return { error: 'SCORM Cloud pull failed — see bridge logs' };
+      return upstreamFailed('SCORM Cloud pull failed — see bridge logs');
     }
   },
 
@@ -4316,7 +4410,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     if (ctx.role !== 'admin') return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — admin only' };
     const appId = process.env.FOXXI_SCORM_CLOUD_APP_ID;
     const secretKey = process.env.FOXXI_SCORM_CLOUD_SECRET_KEY;
-    if (!appId || !secretKey) return { error: 'SCORM Cloud credentials not configured.' };
+    if (!appId || !secretKey) return notConfigured('SCORM Cloud credentials not configured.');
     return createScormCloudRegistration({
       registrationId: args.registration_id as string,
       courseId: args.course_id as string,
@@ -4481,7 +4575,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const courseId = args.course_id as string;
     const coursePayload = await autoFetchCourse(args, courseId);
     if (!coursePayload) {
-      return { error: `course package not found on pod for course_id=${courseId}` };
+      return notFound(`course package not found on pod for course_id=${courseId}`);
     }
     const cp = coursePayload as unknown as { concepts?: Array<{ id: string; label?: string }>; prereq_edges?: Array<{ from: string; to: string }> };
     return estimateConceptDifficulty({
