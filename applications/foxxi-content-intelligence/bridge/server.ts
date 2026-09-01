@@ -2113,13 +2113,28 @@ async function resolveCaller(args: Record<string, unknown>): Promise<{ ctx: Call
   let signedSigner: string | null = null;
   if (typeof args._signature === 'string' && typeof args._signed_payload === 'string') {
     const rec = recoverSignedRequest(args);
-    if (!rec.ok) return { kind: 'refusal' as const, 'iep:refusalReason': 'the caller could not be authenticated', error: `auth: ${rec.reason}` };
+    // ★ 401 is CORRECT here — the envelope really did fail to verify. What was missing is the
+    // way out: a refusal that only says "your signature is bad" is a dead end for an agent,
+    // which cannot infer that `sign_request` on the relay is what mints a good one.
+    if (!rec.ok) return signRequestRefusal(`auth: ${rec.reason}`, 'the signed-request envelope did not verify');
     if (rec.payload && typeof rec.payload === 'object') Object.assign(args, rec.payload);
     signedSigner = rec.signer;
   }
 
   const admin = await autoFetchAdmin(args);
-  if (!admin) return { kind: 'refusal' as const, 'iep:refusalReason': 'the tenant pod could not be read, so the caller could not be authenticated', error: 'tenant pod is not seeded or cannot be decrypted; auth resolution requires the directory' };
+  // ★ 503, NOT 401. Nothing about the CALLER failed here — the tenant directory could not be
+  // read, so authentication could not be ATTEMPTED. Answering 401 tells a client its credentials
+  // were rejected and sends it to obtain new ones, which will fail identically while the
+  // dependency is down; it also makes a real outage look like a permissions problem in every
+  // client log. This was the last refusal in the bridge relying on the kind's 401 default.
+  if (!admin) {
+    return {
+      kind: 'refusal' as const,
+      'iep:refusalStatus': 503,
+      'iep:refusalReason': 'the tenant directory could not be read, so authentication could not be attempted; the caller supplied nothing wrong',
+      error: 'tenant pod is not seeded or cannot be decrypted; auth resolution requires the directory',
+    };
+  }
 
   const addressMap = trustedAddressMap(admin.users ?? []);
 
@@ -2163,7 +2178,19 @@ async function resolveCaller(args: Record<string, unknown>): Promise<{ ctx: Call
         auditDelegatedAdmin(da.agentDid, 'foxxi.resolveCaller', podChecked);
         return { ctx: delegatedAdminContext(da.agentDid), admin };
       }
-      return { kind: 'refusal' as const, 'iep:refusalReason': 'the request signature is valid but the signer is not a member of this tenant', error: `auth: signer ${signedSigner} is not a member of the tenant at ${podChecked} (proof-of-possession).${usedDefault ? ` No tenant_pod_url was supplied, so the bridge checked its DEFAULT tenant — pass tenant_pod_url = your own pod to be checked against YOUR self-sovereign membership, and self-enroll first via foxxi.register_self_sovereign_learner.` : ` Self-enroll first via foxxi.register_self_sovereign_learner, then retry.`}${da.reason ? ` (delegated-admin fallback also declined: ${da.reason})` : ''}` };
+      // ★ 403, NOT 401. The signature VERIFIED — this caller is authenticated; what they lack
+      // is membership. Answering 401 tells a client to go and obtain credentials it already
+      // has, and sends an agent back to sign_request in a loop it cannot exit. Found by
+      // signing a real request against the live bridge and reading the answer.
+      // The way out is enrolment, so `iep:resolvedBy` names the affordance that does it.
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 403,
+        'iep:resolvedBy': {
+          action: 'urn:iep:action:self-enroll',
+          title: 'Enroll yourself on your own pod, then retry',
+          toolName: 'foxxi.register_self_sovereign_learner',
+          note: 'Pass tenant_pod_url = your own pod; the first enrollee owns it.',
+        },
+        'iep:refusalReason': 'the request signature is valid but the signer is not a member of this tenant', error: `auth: signer ${signedSigner} is not a member of the tenant at ${podChecked} (proof-of-possession).${usedDefault ? ` No tenant_pod_url was supplied, so the bridge checked its DEFAULT tenant — pass tenant_pod_url = your own pod to be checked against YOUR self-sovereign membership, and self-enroll first via foxxi.register_self_sovereign_learner.` : ` Self-enroll first via foxxi.register_self_sovereign_learner, then retry.`}${da.reason ? ` (delegated-admin fallback also declined: ${da.reason})` : ''}` };
     }
     const ctx = resolveCallerContext({
       callerWebId: member.webId,
@@ -2207,7 +2234,8 @@ async function resolveCaller(args: Record<string, unknown>): Promise<{ ctx: Call
   }
 
   const verified = verifySessionToken(token, addressMap);
-  if (!verified.ok) return { kind: 'refusal' as const, 'iep:refusalReason': 'the caller could not be authenticated', error: `auth: ${verified.reason}` };
+  // Same dead end as the envelope check above, on the delegated path.
+  if (!verified.ok) return signRequestRefusal(`auth: ${verified.reason}`, 'the signed-request envelope did not verify');
 
   const ctx = resolveCallerContext({
     callerWebId: verified.callerDid,
