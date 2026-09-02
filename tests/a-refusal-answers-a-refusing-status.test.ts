@@ -31,6 +31,7 @@ import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { createVerticalBridge } from '../applications/_shared/vertical-bridge/index.js';
+import { returnObjects } from './return-object-scan.js';
 
 const IEP = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
 
@@ -70,15 +71,16 @@ function bridgeCode(): string {
  * on measured behaviour, not on a diagnosis.
  */
 function errorReturns(code: string): string[] {
-  // ★ `error` IS NOT THE ONLY SPELLING. This keyed on `error` alone until a repo-wide census
-  // with a widened pattern found TWELVE returns in this tree using `reason:` instead — three of
-  // them in the foxxi bridge. Those were invisible to §A and §B: a handler could decline with
-  // `{ reason: 'not permitted' }`, answer HTTP 200, and this gate would report a clean zero.
-  // I fixed the three sites the day I found them and left the gate keyed on `error`, which is
-  // fixing the instance and leaving the class — the exact habit these gates exist to catch.
-  const key = ['error', 'reason', 'refused', 'denied'].join('|');
-  return [...code.matchAll(new RegExp('return[^]{0,4}[{][^}]*(?:' + key + ')[^}]*[}]', 'g'))]
-    .map(m => m[0]);
+  // ★ SCANNED, NOT MATCHED. This was a regex until an audit showed `[^}]*` cannot cross a
+  // NESTED object — so every refusal carrying `iep:resolvedBy: { … }`, which is every refusal
+  // that names a way out, was invisible to §A and §B. Three earlier bounds failed the same way
+  // (see tests/return-object-scan.ts for all four and why each moved the blindness rather than
+  // removing it). The keys stay a list because "what counts as a decline" is a judgement; where
+  // the object ENDS is not, and that is now counted rather than guessed.
+  const key = ['error', 'reason', 'refused', 'denied'];
+  return returnObjects(code)
+    .map(r => r.text)
+    .filter(t => key.some(k => new RegExp('[{,]\\s*(?:readonly\\s+)?' + k + '\\s*[:,}]').test(t)));
 }
 
 /**
@@ -93,8 +95,31 @@ function errorReturns(code: string): string[] {
 function untypedErrorReturns(code: string): string[] {
   return errorReturns(code)
     .filter(r => !r.includes("kind: 'refusal'"))
-    .filter(r => !r.trimStart().startsWith('return { ok: false'))
-    .filter(r => !new RegExp('status:[ ]*[0-9]{3}').test(r));
+    // Whitespace-tolerant: `return {\n  ok: false,` is the same idiom, and a startsWith() on the
+    // single-line spelling silently let every multi-line one through.
+    .filter(r => !new RegExp('^return\\s*\\{\\s*ok:\\s*false').test(r.trimStart()))
+    // ★ A BARE `status:` USED TO EXCUSE A RETURN, AND IT EXCUSES NOTHING.
+    //
+    // The dispatcher reads `payload['iep:refusalStatus'] ?? payload['refusalStatus']` and
+    // nothing else, so `return { error, status: 403 }` answers HTTP 200 — while this filter
+    // dropped it from the census, making it invisible to §A and §B at the same time. That is
+    // not a hypothetical spelling: `agent-evaluation.ts` returns `{ error, status }` as its
+    // producer idiom and `propagateRefusal` exists to translate it, so a handler that returned
+    // the producer's value directly would have re-created the whole bug silently.
+    //
+    // The `ok: false` filter above already covers the helper returns this was written for, and
+    // §C polices that those stay inside helpers.
+    .filter(r => !new RegExp("(?:iep:)?refusalStatus'?\\s*:").test(r))
+    // An Express route sets the status on the RESPONSE, one call to the left of the object —
+    // `res.status(403).json({ … })`. The scanner captures that prefix precisely so this can
+    // tell an honest Express answer from an un-statused handler return; without it, all 138
+    // routes in this bridge read as defects and the gate becomes noise nobody acts on.
+    .filter(r => !new RegExp('res\\s*\\.\\s*status\\s*\\(').test(r))
+    // ★ A RESPONSE THAT DECLARES SUCCESS IS NOT A DECLINE, whatever words it contains. Three
+    // `ok: true` payloads carry a `reason` — why a credential verified, why a descriptor was
+    // not projectable — and the key list cannot tell that from a refusal. `ok: true` can, and
+    // it is the answer's own statement about itself rather than a guess about its prose.
+    .filter(r => !new RegExp('[{,]\\s*ok:\\s*true').test(r));
 }
 
 /** Every `return { ok: false` line, paired with the nearest enclosing declaration above it. */
