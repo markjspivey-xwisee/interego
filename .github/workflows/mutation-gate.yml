@@ -1,0 +1,62 @@
+name: Mutation Gate
+
+# Every refusal gate is made to FAIL before it is believed.
+#
+# The three gates this job mutates (tests/a-refusal-answers-a-refusing-status.test.ts,
+# tests/a-refusal-status-names-what-actually-failed.test.ts,
+# tests/every-vertical-declines-with-a-status.test.ts) all passed, at some point, on the exact
+# defect they were written to catch. That was found four times, by four adversarial audits,
+# each costing roughly 30M subagent tokens and hours of wall-clock. `tools/mutation-gate.mjs`
+# applies those seventeen defects mechanically and requires each named gate to go red. It takes
+# about six minutes.
+#
+# ── WHY THERE IS NO `paths:` FILTER ──────────────────────────────────────────
+#
+# This job's subject is a RELATIONSHIP between files, not a directory: the gate files, the four
+# application files the mutants edit, `tools/mutation-gate.data.mjs`, the harness itself,
+# `applications/_shared/vertical-bridge/**` (which derives the status and `isError` every gate
+# asserts on), `tests/return-object-scan.ts` (the parser two of the three gates census with),
+# `vitest.config.ts` and the typecheck globalSetup. Any filter narrower than that set writes a
+# false all-clear, and the repo has now paid for that lesson twice:
+# `applications/organizational-working-memory/affordances.ts` shipped an undeclared control IRI
+# because ontology-lint.yml named three files where its own SCAN_PATHS said a directory, and
+# tools/docs-claim-lint.mjs could not live behind a filter at all because its subject is the
+# LINK TARGET. A lint's coverage and its trigger are independent facts; widening one reads like
+# widening both.
+#
+# So this runs on every push and PR, like lint.yml and the conformance runner, which are here
+# for the same reason. Six minutes is cheaper than one audit round finding one decorative gate.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  mutation-gate:
+    # ★ NO COUNT IN THE NAME. "17 defects" would be a hand-maintained number in a check name —
+    # drift with a green tick beside it, the same argument that removed "47 files pinned" from
+    # the ESLint job. The authoritative list is MUTANTS in tools/mutation-gate.data.mjs, which
+    # the harness prints on every run.
+    name: "Every refusal gate fails on its own defect"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with: { node-version: '20' }
+      - run: npm ci
+      # The gates import built packages, not source — @interego/* export ./dist only. A mutant
+      # in packages/*/src would otherwise be invisible to the gate that should catch it, which
+      # has already produced false survivors in this tree.
+      - run: npm run build
+      - name: Apply each known defect and require its gate to go red
+        run: npm run mutation-gate
+      # The harness restores every file it touched from an in-memory copy, in a `finally`. If
+      # that ever stops working, the next job on this runner would silently test mutated source
+      # — so prove the tree came back rather than assuming it.
+      - name: The harness left the tree exactly as it found it
+        run: git diff --exit-code

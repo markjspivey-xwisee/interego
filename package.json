@@ -41,6 +41,7 @@
     "lint:changelog": "node tools/changelog-lint.mjs",
     "lint:emergence-boundary": "node tools/emergence-boundary-lint.mjs",
     "conformance": "node spec/conformance/runner.mjs",
+    "mutation-gate": "node tools/mutation-gate.mjs",
     "check:foxxi-affordances": "node tools/check-foxxi-affordances.mjs",
     "check:turtle-iri-ratchet": "node tools/turtle-iri-ratchet.mjs",
     "lint:all": "npm run lint && npm run lint:ontology && npm run lint:derivation && npm run lint:security-txt && npm run lint:docs-drift && npm run lint:docs-claims && npm run lint:changelog && npm run lint:emergence-boundary && npm run check:foxxi-affordances && npm run check:turtle-iri-ratchet",
