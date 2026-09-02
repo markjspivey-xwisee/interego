@@ -166,4 +166,38 @@ describe('a declined call answers a refusing status on every vertical', () => {
     ).toBe('refusal');
     expect(REFUSING).toContain(result['iep:refusalStatus']);
   });
+  /**
+   * ★ A HANDLER THAT THROWS IS THE FOURTH SPELLING OF "NO".
+   *
+   * agp validates required inputs by throwing (`missing required input(s): …`). On REST the
+   * dispatcher's catch answers 400 with a typed AffordanceFailure — honest. This asks what the
+   * MCP leg of the SAME factory does with the same throw. An honest answer is either a JSON-RPC
+   * `error` object or a result with `isError: true`; a plain `result` is the defect this file
+   * exists for, on the surface nobody drove.
+   */
+  it('★ a handler that THROWS is an error on the MCP leg too, not a plain result', async () => {
+    const affordance = [{
+      action: 'urn:iep:action:test:throws', toolName: 'test.throws', title: 'Throws', method: 'POST',
+      description: 'Validates by throwing.', targetTemplate: '{base}/test/throws', inputs: [],
+    }];
+    const handlers = { 'test.throws': async () => { throw new Error('test.throws: missing required input(s): x'); } };
+    await withBridge(
+      { vertical: 'test', affordances: affordance as never, handlers: handlers as never, deploymentUrl: 'http://127.0.0.1' } as never,
+      async (base) => {
+        const r = await fetch(`${base}/mcp`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'test.throws', arguments: {} } }),
+        });
+        const text = await r.text();
+        const m = /data:\s*(\{[\s\S]*\})/.exec(text);
+        const body = JSON.parse(m ? m[1]! : text) as { error?: unknown; result?: { isError?: boolean } };
+        const honest = Boolean(body.error) || body.result?.isError === true;
+        expect(
+          honest,
+          `a thrown handler error reached the MCP client as a plain successful result: ${text.slice(0, 200)}`,
+        ).toBe(true);
+      },
+    );
+  });
 });
