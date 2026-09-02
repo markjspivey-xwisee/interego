@@ -4127,7 +4127,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     if (ctx.role !== 'admin') return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — only admins can countersign assessments' };
-    return countersignAssessment({
+    return countersignAssessment({ // was: return { error: 'forbidden — admin only' }
       assessment: args.assessment as CompetencyAssessment,
       humanIssuerSeed: args.human_seed as string,
     });

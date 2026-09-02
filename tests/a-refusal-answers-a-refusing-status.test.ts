@@ -35,50 +35,39 @@ import { returnObjects } from './return-object-scan.js';
 
 const IEP = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
 
-/** The foxxi bridge with comments stripped, so a denial DESCRIBED in prose is never mistaken
- *  for a denial RETURNED by a handler — the way a sibling gate matched its own documentation. */
+/**
+ * The foxxi bridge, read by the PARSER — not stripped, not pattern-matched.
+ *
+ * This used to strip full-line comments before matching, which produced two defects at once: a
+ * TRAILING `// was: return { error: … }` was censused as a real handler return, and every line
+ * number reported was off by the number of comment lines above it (1,454 lines off in one case,
+ * so §C named a site nobody could find). The parser does not see comments at all and reports
+ * positions in the file as written, so both go away by not doing the stripping.
+ */
 function bridgeCode(): string {
   return readFileSync(
     new URL('../applications/foxxi-content-intelligence/bridge/server.ts', import.meta.url), 'utf8',
-  ).split('\n').filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+  );
 }
 
 /**
- * Every `return { ... error ... }` statement in the bridge, as strings.
+ * Every answer in the bridge that carries a decline-shaped key.
  *
- * ★★ THE FIRST VERSION OF THIS GATE WAS BLIND. THE CAUSE IS STILL NOT KNOWN.
+ * This helper has been rewritten four times and each rewrite is recorded in the scanner's
+ * header, because the pattern of failure matters more than any one of them: a regex, then a
+ * wider regex, then a hand-rolled brace counter, then the TypeScript parser. Only the last is
+ * correct by construction, and it is the only one whose correctness does not rest on me having
+ * thought of the right special cases.
  *
- * Both halves below were once written inline, each running its own `code.matchAll(/…/g)`.
- * Planted defects — one auth denial reverted to an untyped `{ error }`, one new untyped denial
- * in wording the vocabulary does not know — passed 6/6. Instrumented, the same test body
- * printed `totalMatches= 135` from its first `matchAll` and `untypedLen= 0` from its second,
- * over the same string.
- *
- * TWO explanations have been tried and BOTH are disproven, so neither is written here as fact:
- *
- *   · "identical /…/g literals share one object and leak lastIndex" — in plain node, separate
- *     literals are distinct objects, and a deliberately SHARED one still yields 3 then 3,
- *     because `matchAll` clones its argument.
- *   · "something about this file under the test transform" — a scratch suite reproducing the
- *     exact shape (for-of, spread, and both in one body, identical literals, same string) under
- *     vitest returned 133 / 133 / 133. `matchAll` reuse is NOT a hazard in this tree, and the
- *     four other files that reuse a matchAll literal are not at risk from it.
- *
- * So the mechanism is unexplained and this comment does not invent a third story. What IS
- * established is narrow and sufficient: routing both halves through this one helper, which
- * builds its regex per call and returns plain STRINGS, makes each half fail on its own mutant
- * by name (§A named the untyped denial; §B reported 83 against a budget of 81). The gate rests
- * on measured behaviour, not on a diagnosis.
+ * (An earlier version of this comment described a blindness whose cause was "still not known".
+ * That investigation is closed: the gate was a regex, and the mechanism was the regex.)
  */
 function errorReturns(code: string): string[] {
-  // ★ SCANNED, NOT MATCHED. This was a regex until an audit showed `[^}]*` cannot cross a
-  // NESTED object — so every refusal carrying `iep:resolvedBy: { … }`, which is every refusal
-  // that names a way out, was invisible to §A and §B. Three earlier bounds failed the same way
-  // (see tests/return-object-scan.ts for all four and why each moved the blindness rather than
-  // removing it). The keys stay a list because "what counts as a decline" is a judgement; where
-  // the object ENDS is not, and that is now counted rather than guessed.
+  // The KEYS stay a judgement — "what counts as a decline" is one. Where an object BEGINS and
+  // ENDS is not a judgement, and is now the parser's answer rather than a pattern's guess.
   const key = ['error', 'reason', 'refused', 'denied'];
   return returnObjects(code)
+    .filter(r => r.statusCall === null)
     .map(r => r.text)
     .filter(t => key.some(k => new RegExp('[{,]\\s*(?:readonly\\s+)?' + k + '\\s*[:,}]').test(t)));
 }
@@ -97,62 +86,33 @@ function errorReturns(code: string): string[] {
 function untypedErrorReturns(code: string): string[] {
   return errorReturns(code)
     .filter(r => !r.includes("kind: 'refusal'"))
-    // Whitespace-tolerant: `return {\n  ok: false,` is the same idiom, and a startsWith() on the
-    // single-line spelling silently let every multi-line one through.
-    .filter(r => !new RegExp('^return\\s*\\{\\s*ok:\\s*false').test(r.trimStart()))
-    // ★ A BARE `status:` USED TO EXCUSE A RETURN, AND IT EXCUSES NOTHING.
-    //
-    // The dispatcher reads `payload['iep:refusalStatus'] ?? payload['refusalStatus']` and
-    // nothing else, so `return { error, status: 403 }` answers HTTP 200 — while this filter
-    // dropped it from the census, making it invisible to §A and §B at the same time. That is
-    // not a hypothetical spelling: `agent-evaluation.ts` returns `{ error, status }` as its
-    // producer idiom and `propagateRefusal` exists to translate it, so a handler that returned
-    // the producer's value directly would have re-created the whole bug silently.
-    //
-    // The `ok: false` filter above already covers the helper returns this was written for, and
-    // §C polices that those stay inside helpers.
-    .filter(r => !new RegExp("(?:iep:)?refusalStatus'?\\s*:").test(r))
-    // An Express route sets the status on the RESPONSE, one call to the left of the object —
-    // `res.status(403).json({ … })`. The scanner captures that prefix precisely so this can
-    // tell an honest Express answer from an un-statused handler return; without it, all 138
-    // routes in this bridge read as defects and the gate becomes noise nobody acts on.
-    .filter(r => !new RegExp('res\\s*\\.\\s*status\\s*\\(').test(r))
-    // ★ A RESPONSE THAT DECLARES SUCCESS IS NOT A DECLINE, whatever words it contains. Three
-    // `ok: true` payloads carry a `reason` — why a credential verified, why a descriptor was
-    // not projectable — and the key list cannot tell that from a refusal. `ok: true` can, and
-    // it is the answer's own statement about itself rather than a guess about its prose.
+    .filter(r => !new RegExp('^\\{\\s*ok:\\s*false').test(r.trimStart()))
+    // The dispatcher reads ONLY `iep:refusalStatus` / `refusalStatus`. A bare `status:` sets
+    // nothing and excuses nothing — it used to do both, hiding the producer idiom
+    // `{ error, status }` from §A and §B while it answered 200.
+    // Both quotings, because both are written in this tree — `'iep:refusalStatus':` in the foxxi
+    // bridge and `"iep:refusalStatus":` in wsp. A filter that knew only one would have called
+    // every wsp refusal untyped the moment one was read by this gate: the narrowest-filter
+    // mistake again, one level down from where it was last found.
+    .filter(r => !new RegExp("['\"]?(?:iep:)?refusalStatus['\"]?\\s*:").test(r))
+    // A response that DECLARES success is not a decline, whatever words it carries: three
+    // `ok: true` payloads hold a `reason` (why a credential verified, why a descriptor was not
+    // projectable). Routes that set a status are excluded structurally in errorReturns.
     .filter(r => !new RegExp('[{,]\\s*ok:\\s*true').test(r));
 }
 
 /**
- * Every `return { ok: false … }` in the bridge, paired with the nearest enclosing declaration.
+ * Every `{ ok: false … }` answer, with where it sits.
  *
- * ★ TWO DEFECTS THE AUDIT FOUND IN THE FIRST VERSION, BOTH OF THE "LOOKS RIGHT" KIND:
- *   · it found the returns by LINE, so `return {` newline `ok: false,` was invisible. Now the
- *     scanner reads the whole literal and this asks whether it STARTS with `ok: false`.
- *   · its callback classifier was `^\s*name: (async )?\(`, which matches any property whose
- *     value merely begins with a parenthesis — a cast, a parenthesised expression. Fifty-seven
- *     such lines sit inside handlers, so a `{ok:false}` below any of them was filed as
- *     'callback' and excused. A callback has an ARROW; the classifier now requires one.
+ * Both previous versions misclassified. The first found returns by LINE, so the multi-line form
+ * was invisible; the second called any property whose value began with `(` a "callback" — a
+ * cast, a parenthesised expression — and 57 such lines sit inside handlers, so a `{ok:false}`
+ * below any of them was excused. The parser answers "which function is this in" directly.
  */
 function okFalseSites(code: string): Array<{ line: number; enclosing: string }> {
-  const lines = code.split(String.fromCharCode(10));
-  const out: Array<{ line: number; enclosing: string }> = [];
-  for (const r of returnObjects(code)) {
-    if (!new RegExp('^return\\s*\\{\\s*ok:\\s*false').test(r.text)) continue;
-    let enclosing = '(top level)';
-    for (let j = r.line - 1; j >= 0; j--) {
-      const fn = new RegExp('^(?:async )?function ([A-Za-z0-9_]+)').exec(lines[j]!);
-      const handler = new RegExp("^\\s*'([a-z0-9_.]+)': async").exec(lines[j]!);
-      // A real callback: `name: async (…) =>` / `name: (…) =>` / `name: async function`.
-      const callback = new RegExp('^\\s*[A-Za-z0-9_]+:\\s*(?:async\\s*)?(?:\\([^)]*\\)\\s*(?::[^=]+)?=>|function\\b)').exec(lines[j]!);
-      if (handler) { enclosing = 'HANDLER ' + handler[1]; break; }
-      if (callback) { enclosing = 'callback'; break; }
-      if (fn) { enclosing = fn[1]!; break; }
-    }
-    out.push({ line: r.line, enclosing });
-  }
-  return out;
+  return returnObjects(code)
+    .filter(r => new RegExp('^\\{\\s*ok:\\s*false').test(r.text.trimStart()))
+    .map(r => ({ line: r.line, enclosing: r.enclosing }));
 }
 
 const AFFORDANCES = [

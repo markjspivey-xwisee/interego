@@ -113,7 +113,15 @@ export function createAgpHandlers(deps: { fetchFn?: typeof fetch } = {}): Record
       if (!d.domain) {
         // PerformanceSituationShape requires agp:regime minCount 1. Publishing
         // here would emit an invalid node; saying so is the honest answer.
+        // ★ 400, NOT 200. I left this one untyped in the round that typed its three siblings,
+        // reasoning it was a PARTIAL success: the engine really did run, and situationIri and
+        // method are real output. An audit disagreed and is right — `persisted: false` and
+        // `descriptorUrl: null` mean the thing this affordance EXISTS to do did not happen, and
+        // the note below says the caller can fix it by supplying evidence. That is a declined
+        // call whose analysis is returned with it, not a success with a footnote.
         return {
+          ...refuse(400, 'Situation not published: a conformant agp:PerformanceSituation MUST carry a regime, and no evidence placed one. Assert `regime`, or diagnose with trajectories/factor evidence first.',
+            'the arguments carried no evidence that could place the situation in a work regime'),
           situationIri, regime: null, regimeSource, method: d.method,
           descriptorUrl: null, persisted: false,
           pending: 'no-regime-evidence',

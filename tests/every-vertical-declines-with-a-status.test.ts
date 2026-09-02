@@ -139,33 +139,76 @@ describe('a declined call answers a refusing status on every vertical', () => {
     ).toContain('return adapter.navigate(verb, verbArgs);');
   });
   /**
-   * wsp's refusals are built by `respondAsMember`, which is exported and pure enough to call
-   * directly. The bridge spreads its result into the answer, so what this asserts is the thing
-   * the dispatcher will read. Driving the whole handler would need a live relay and an agent
-   * key; the STATUS decision lives here, and here is where it is checked.
+   * ★★ EVERY wsp REFUSAL, NOT THE ONE MY HARNESS HAPPENED TO REACH.
+   *
+   * The first version of this leg called `respondAsMember` with a session whose deps were
+   * `{ getCurrentHead }` — a name `StreamDeps` does not declare (it declares publish / discover
+   * / get_descriptor). So the dereference failed for an unrelated reason and the leg landed on
+   * the FIRST return by accident, pinning `unreadable-workspace` alone. It never touched
+   * `not-seated` or `ceiling` — the authorization refusals the commit was named for, and the
+   * two that matter most, since they are the ones that told an unauthorised caller HTTP 200.
+   *
+   * Reaching those by driving needs a readable workspace record, a seated roster and a role
+   * profile — a fixture larger than the thing it would check. The property is simpler than the
+   * path to it: EVERY refusal this module can return must carry the two fields the dispatcher
+   * reads. That is a fact about the source, so the parser answers it for all seven at once,
+   * including the ones no harness of mine has reached.
    */
-  it('★ wsp: a refusal built by respondAsMember carries a status the dispatcher can use', async () => {
+  it('★ wsp: every refusal respondAsMember can return carries a kind and a status', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { returnObjects } = await import('./return-object-scan.js');
+    const src = readFileSync(
+      new URL('../applications/shared-workspace/src/respond.js'.replace('.js', '.ts'), import.meta.url), 'utf8',
+    );
+    const refusals = returnObjects(src).filter(r => /outcome:\s*'refused'/.test(r.text));
+    expect(refusals.length, 'no wsp refusals found — this leg is not reading respond.ts').toBeGreaterThanOrEqual(7);
+
+    const untyped = refusals
+      .filter(r => !r.text.includes("kind: 'refusal'") || !/iep:refusalStatus/.test(r.text))
+      .map(r => `L${r.line} ${r.text.replace(/\s+/g, ' ').slice(0, 110)}`);
+    expect(
+      untyped,
+      'a wsp refusal carries no kind/status, so the bridge spreads it into an answer the '
+        + 'dispatcher serves as HTTP 200 — for not-seated and ceiling that means an '
+        + 'unauthorised caller is told the write succeeded:'
+        + String.fromCharCode(10) + '  ' + untyped.join(String.fromCharCode(10) + '  '),
+    ).toEqual([]);
+
+    // And the statuses must mean what the reasons say: authorization is 4xx, a failed READ is
+    // 5xx. "A read that failed is not a thing that is missing" cuts both ways.
+    const wrong: string[] = [];
+    for (const r of refusals) {
+      const reason = /reason:\s*'([a-z-]+)'/.exec(r.text)?.[1] ?? '?';
+      const status = Number(/['"]iep:refusalStatus['"]:\s*([0-9]{3})/.exec(r.text)?.[1] ?? 0);
+      const want = (reason === 'not-seated' || reason === 'ceiling') ? 403 : 502;
+      if (status !== want) wrong.push(`L${r.line} ${reason}: ${status}, expected ${want}`);
+    }
+    expect(wrong, 'a wsp refusal answers a status its reason contradicts').toEqual([]);
+  });
+
+  /**
+   * The driven half, with the deps the code ACTUALLY reads, so it fails for the reason it names
+   * rather than because a stub was misnamed.
+   */
+  it('★ wsp: an unreadable workspace is refused through the real dependency surface', async () => {
     const { respondAsMember } = await import('../applications/shared-workspace/src/respond.js');
-    // respondAsMember(session, opts). The session carries the deps it reads through, so an
-    // unreadable workspace is produced by making the dereference fail — the real first branch.
     const session = {
       identity: { podName: 'p', podUrl: 'https://pod.invalid/p/', webId: 'https://pod.invalid/p/#me', agentDid: 'did:x:1', scope: 'ReadWrite', address: '0x0' },
-      deps: { getCurrentHead: async () => { throw new Error('unresolvable'); } },
+      deps: {
+        publish: async () => ({}),
+        discover: async () => { throw new Error('unresolvable'); },
+        getDescriptor: async () => ({}),
+      },
     };
     const result = await respondAsMember(
       session as never,
       { workspace: 'https://relay.invalid/ns/nobody/ws', body: 'hello' } as never,
     ) as Record<string, unknown>;
-
-    expect(result['outcome'], 'expected a refusal from an unreadable workspace').toBe('refused');
-    expect(
-      result['kind'],
-      `a wsp refusal (${String(result['reason'])}) carries no kind, so the bridge spreads it `
-        + 'into an answer the dispatcher serves as HTTP 200 — a caller that is not a member is '
-        + 'told the write succeeded',
-    ).toBe('refusal');
+    expect(result['outcome']).toBe('refused');
+    expect(result['kind'], `a wsp refusal (${String(result['reason'])}) carries no kind`).toBe('refusal');
     expect(REFUSING).toContain(result['iep:refusalStatus']);
   });
+
   /**
    * ★ A HANDLER THAT THROWS IS THE FOURTH SPELLING OF "NO".
    *

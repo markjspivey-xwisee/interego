@@ -27,11 +27,19 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { returnObjects } from './return-object-scan.js';
 
-/** The bridge with comments stripped, so a status DESCRIBED in prose is never read as one SET. */
+/**
+ * The bridge, read by the PARSER — not stripped, not pattern-matched.
+ *
+ * This used to strip full-line comments before matching, which produced two defects at once: a
+ * TRAILING `// was: return { error: … }` was censused as a real handler return, and every line
+ * number reported was off by the number of comment lines above it (1,454 lines off in one case,
+ * so §C named a site nobody could find). The parser does not see comments at all and reports
+ * positions in the file as written, so both go away by not doing the stripping.
+ */
 function bridgeCode(): string {
   return readFileSync(
     new URL('../applications/foxxi-content-intelligence/bridge/server.ts', import.meta.url), 'utf8',
-  ).split('\n').filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+  );
 }
 
 /**
@@ -41,11 +49,8 @@ function bridgeCode(): string {
  * one moved the blindness rather than removing it, is recorded in the scanner's own header.
  */
 function refusalLiterals(code: string): string[] {
-  // Five regex bounds were tried here and each was blind somewhere (the history is in
-  // tests/return-object-scan.ts). The scanner counts braces and skips strings, so a refusal is
-  // read whole whatever it contains — a nested `iep:resolvedBy`, a `;` inside a message, a
-  // `res.status(…).json({…})` form — and the `interface Refusal { kind: 'refusal'; … }` type
-  // declaration is excluded by not being a return at all.
+  // Includes refusals reached through a variable (`const r = {…}; return r;`), which the
+  // literal-only scan could not see, so legs 2-4 never examined them.
   return returnObjects(code).map(r => r.text).filter(t => t.includes("kind: 'refusal'"));
 }
 
@@ -86,7 +91,7 @@ describe('a refusal names the status that matches what failed', () => {
     // neighbouring literal, and reading "some 403 appears nearby" would be exactly the kind of
     // check that passes for the wrong reason.
     const ownStatus = (r: string): string | undefined =>
-      new RegExp("iep:refusalStatus':[ ]*([0-9]{3})").exec(r)?.[1];
+      new RegExp("['\"]iep:refusalStatus['\"]:[ ]*([0-9]{3})").exec(r)?.[1];
     const bad = refusalLiterals(bridgeCode())
       .filter(r => /signature is valid|is authenticated but|is not a member|not the owner of/i.test(r))
       .filter(r => !['403', '404'].includes(ownStatus(r) ?? ''))
@@ -101,7 +106,7 @@ describe('a refusal names the status that matches what failed', () => {
     // "could not be read", "not seeded", "not configured" are all conditions no argument and no
     // credential can change. 4xx tells the caller to change the request; only 5xx is true.
     const own = (r: string): string | undefined =>
-      new RegExp("iep:refusalStatus':[ ]*([0-9]{3})").exec(r)?.[1];
+      new RegExp("['\"]iep:refusalStatus['\"]:[ ]*([0-9]{3})").exec(r)?.[1];
     const bad = refusalLiterals(bridgeCode())
       .filter(r => /could not be read|not seeded|cannot be decrypted|not configured|is unset/i.test(r))
       .filter(r => !(own(r) ?? '').startsWith('5'))
@@ -157,7 +162,7 @@ describe('a refusal names the status that matches what failed', () => {
       expect(start, `helper ${name} not found — renamed? update this table`).toBeGreaterThan(-1);
       const body = returnObjects(code.slice(start)).find(r => r.text.includes("kind: 'refusal'"));
       expect(body, `helper ${name} no longer returns a refusal literal`).toBeTruthy();
-      const m = new RegExp("iep:refusalStatus':[ ]*([0-9]{3})").exec(body!.text);
+      const m = new RegExp("['\"]iep:refusalStatus['\"]:[ ]*([0-9]{3})").exec(body!.text);
       const got = m ? Number(m[1]) : 'default-401';
       if (got !== want) wrong.push(`${name}: declares ${got}, should be ${want}`);
     }
