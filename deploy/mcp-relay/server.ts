@@ -141,6 +141,10 @@ import { createNsDereference } from './ns-dereference.js';
 // Pod authorization, extracted so the rule is importable: server.ts calls app.listen() at
 // module scope and cannot be imported, which is why this area only had source-text coverage.
 import { authorizePodUrl } from './pod-authorization.js';
+// A delegated cross-pod descriptor is on behalf of the pod it lands on, not the owner of
+// the calling agent's session.  Kept importable so that fail-closed attribution is exercised
+// without importing this self-starting server module.
+import { resolvePublishOwnerAttribution } from './publish-owner-attribution.js';
 // Operation contracts: the expects/returns URLs the catalog advertises, and the documents
 // served at them. Extracted because the catalog was minting urn: values that fetch nothing.
 import { contractDocument, operationActionUrl, operationContract } from './operation-contracts.js';
@@ -2032,7 +2036,11 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   const podName = (args.pod_name as string) ?? 'default';
   const podUrl = `${CSS_URL}${podName}/`;
   const agentId = callerAgentId(args) ?? 'urn:agent:remote:unknown';
-  const ownerWebId = (args.owner_webid as string) ?? `https://id.example.com/${podName}/profile#me`;
+  // Initially this is the authenticated SESSION owner.  After the target-pod scope gate it
+  // is deliberately replaced with the owner published by the TARGET pod's registry.  The
+  // distinction matters for delegated cross-pod writes: the session owner identifies whose
+  // agent is calling, while the target owner is who the descriptor is on behalf of.
+  let ownerWebId = (args.owner_webid as string) ?? `https://id.example.com/${podName}/profile#me`;
   /**
    * ★ AN EMPTY `descriptor_id` IS "THE CALLER NAMED NONE", NOT A VALUE TO REFUSE. This read
    * `??` until the IRI gate below existed, so an empty string survived as the id and a
@@ -2111,7 +2119,8 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     agent_id: agentId,
   });
   if (!iriArgs.ok) return JSON.stringify(iriArgs.refusal);
-  const { owner_webid: ownerWebIdRef, descriptor_id: descIdRef } = iriArgs.refs;
+  const { owner_webid: sessionOwnerWebIdRef, descriptor_id: descIdRef } = iriArgs.refs;
+  let ownerWebIdRef = sessionOwnerWebIdRef;
 
   // The URL this publish will land on. Deterministic from (podUrl, descId), so it is
   // knowable here — before the manifest read that has to compare against it. Hoisted from
@@ -2610,6 +2619,58 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     }
   }
 
+  // ★ AUTHORIZE FIRST, THEN ASK THE TARGET POD WHO THE DESCRIPTOR IS ON BEHALF OF.
+  //
+  // Before this ordering, a delegated cross-pod publish passed the correct scope gate but
+  // had already been assembled with the calling agent's SESSION owner.  The content and CAS
+  // chain were sound, yet `get_descriptor` correctly refused descriptor binding because the
+  // proof's owner differed from the owner of the pod serving it.  Scope is the authority to
+  // write; the target registry is the authority on whose behalf that write is hosted.
+  const scopeCheck = await runScopeGate(agentId, podUrl);
+  if (scopeCheck.allowed === false) {
+    return JSON.stringify({
+      error: 'scope_violation',
+      code: 403,
+      scope: scopeCheck.scope,
+      requiredScope: ['ReadWrite', 'PublishOnly'],
+      reason: scopeCheck.reason,
+    });
+  }
+
+  const sessionOwnerWebId = ownerWebId;
+  const attribution = await resolvePublishOwnerAttribution({
+    authorized: scopeCheck.allowed,
+    sessionOwnerWebId,
+    readTargetOwnerWebId: async () =>
+      (await readAgentRegistry(podUrl, { fetch: solidFetch }))?.webId ?? null,
+  });
+  if (!attribution.ok) {
+    return JSON.stringify({
+      error: attribution.error,
+      code: attribution.code,
+      reason: attribution.reason,
+    });
+  }
+  ownerWebId = attribution.ownerWebId!;
+  if (attribution.differsFromSessionOwner) {
+    log(`[publish/attribution] delegated writer ${agentId}: session owner ${sessionOwnerWebId} -> target pod owner ${ownerWebId}`);
+  }
+
+  // The target registry is pod state rather than caller input, but it still reaches hand-built
+  // Turtle in the public ACL path.  Validate the effective value and report a server-side
+  // attribution failure instead of blaming the caller or silently falling back.
+  const targetOwnerIri = turtleIriArgs('publish_context:target-owner', {
+    owner_webid: ownerWebId,
+  });
+  if (!targetOwnerIri.ok) {
+    return JSON.stringify({
+      error: 'target_owner_unavailable',
+      code: 503,
+      reason: 'The target pod publishes an owner WebID that cannot be represented safely.',
+    });
+  }
+  ownerWebIdRef = targetOwnerIri.refs.owner_webid;
+
   const builder = ContextDescriptor.create(descId)
 .describes((args.graph_iri as string) as IRI)
 .temporal({ validFrom: (args.valid_from as string) ?? now, validUntil: args.valid_until as string })
@@ -2761,17 +2822,6 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   const callerShapeIris: string[] = Array.isArray(callerShapesRaw)
     ? (callerShapesRaw as unknown[]).filter((s): s is string => typeof s === 'string' && s.length > 0)
     : [];
-  const scopeCheck = await runScopeGate(agentId, podUrl);
-  if (scopeCheck.allowed === false) {
-    return JSON.stringify({
-      error: 'scope_violation',
-      code: 403,
-      scope: scopeCheck.scope,
-      requiredScope: ['ReadWrite', 'PublishOnly'],
-      reason: scopeCheck.reason,
-    });
-  }
-
   const conformance = await runConformanceGate(
     podUrl,
     (args.graph_content as string) ?? '',
