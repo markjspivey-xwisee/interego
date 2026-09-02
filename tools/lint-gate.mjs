@@ -175,7 +175,11 @@ const UNLINTED_FRONTIER = {
   // ★ THIS COUNTS GIT-TRACKED FILES, so `npm run lint` BEFORE `git add` reports a false green on
   // this ceiling: the new files are invisible to it until they are staged. Measured 2026-08-27 —
   // local lint:all exited 0, CI failed on the same tree, and the only difference was the commit.
-  deploy: { errors: 356, files: 138 },
+  // 138 -> 147: the refusal-gate audit added seven tracked deploy fixtures and the delegated
+  // publish repair adds one importable owner-attribution rule plus its regression suite. The
+  // latter two lint clean; the measured aggregate is 368, still inside the pin's documented
+  // tolerance, so only the independently-failed file floor moves here.
+  deploy: { errors: 356, files: 147 },
   // The bulk of these are `no-console` in vertical bridges and CLI entry points — one config
   // decision, not a thousand defects. See the note above.
   // ★ 320 -> 337, and the ratchet caught it in CI rather than locally, which is the interesting

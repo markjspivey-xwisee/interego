@@ -180,6 +180,9 @@ COPY deploy/mcp-relay/ns-dereference.ts ./
 # Pod authorization: which pod URLs a bearer may act on, and which of them the relay minted
 # itself. Extracted for the same reason — server.ts is unimportable, so the rule was untested.
 COPY deploy/mcp-relay/pod-authorization.ts ./
+# Publish attribution: after the delegation gate, resolve every owner-bearing descriptor field
+# from the target pod registry rather than from a cross-pod caller's session owner.
+COPY deploy/mcp-relay/publish-owner-attribution.ts ./
 # The pod-side writers: the WAC .acl writer, the /profile/card writer, the iep:PodBootstrap
 # descriptor writer, and the bootstrap that sequences them. Extracted for the same reason
 # again — these run on relay credentials against the live store and their only coverage was a
