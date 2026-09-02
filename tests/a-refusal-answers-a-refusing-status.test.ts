@@ -86,11 +86,13 @@ function errorReturns(code: string): string[] {
 /**
  * Those that answer without a refusal kind and without an explicit status.
  *
- * `{ ok: false, error }` is EXCLUDED, and the exclusion is measured rather than assumed: all 29
- * such returns in the bridge sit inside a named helper function with a discriminated-union
- * return type, never inside a handler entry, and their callers set a status of their own
- * (validateTourRun's does `res.status(400)`). The gate below re-checks that property, so the
- * exclusion cannot quietly start hiding a real handler.
+ * `{ ok: false, error }` is EXCLUDED. The exclusion was described here as "measured: all 29 sit
+ * inside a named helper … and their callers set a status". An audit found that sentence wrong
+ * in three ways — some sit in an anonymous callback, one was invisible to the matcher, and
+ * nothing anywhere checked that callers set a status. So the claim is now the WEAKER one that
+ * §C actually enforces: no `{ok:false}` return sits directly in a handler entry, where the
+ * dispatcher would serve it as 200. Whether a helper's caller sets a status is not asserted by
+ * this file, and this comment no longer says it is.
  */
 function untypedErrorReturns(code: string): string[] {
   return errorReturns(code)
@@ -122,27 +124,33 @@ function untypedErrorReturns(code: string): string[] {
     .filter(r => !new RegExp('[{,]\\s*ok:\\s*true').test(r));
 }
 
-/** Every `return { ok: false` line, paired with the nearest enclosing declaration above it. */
+/**
+ * Every `return { ok: false … }` in the bridge, paired with the nearest enclosing declaration.
+ *
+ * ★ TWO DEFECTS THE AUDIT FOUND IN THE FIRST VERSION, BOTH OF THE "LOOKS RIGHT" KIND:
+ *   · it found the returns by LINE, so `return {` newline `ok: false,` was invisible. Now the
+ *     scanner reads the whole literal and this asks whether it STARTS with `ok: false`.
+ *   · its callback classifier was `^\s*name: (async )?\(`, which matches any property whose
+ *     value merely begins with a parenthesis — a cast, a parenthesised expression. Fifty-seven
+ *     such lines sit inside handlers, so a `{ok:false}` below any of them was filed as
+ *     'callback' and excused. A callback has an ARROW; the classifier now requires one.
+ */
 function okFalseSites(code: string): Array<{ line: number; enclosing: string }> {
   const lines = code.split(String.fromCharCode(10));
   const out: Array<{ line: number; enclosing: string }> = [];
-  for (let i = 0; i < lines.length; i++) {
-    if (!lines[i]!.includes('return { ok: false')) continue;
+  for (const r of returnObjects(code)) {
+    if (!new RegExp('^return\\s*\\{\\s*ok:\\s*false').test(r.text)) continue;
     let enclosing = '(top level)';
-    for (let j = i; j >= 0; j--) {
+    for (let j = r.line - 1; j >= 0; j--) {
       const fn = new RegExp('^(?:async )?function ([A-Za-z0-9_]+)').exec(lines[j]!);
       const handler = new RegExp("^\\s*'([a-z0-9_.]+)': async").exec(lines[j]!);
-      // A nested callback property — `verifyCaller: async (token): Promise<CallerVerification>`
-      // — has its own contract and its own consumer, which sets the status (context-chat.ts
-      // answers 401 on a failed verification). Without this the scan walks past it to the
-      // enclosing handler and reports three false positives, which is how a gate that flags
-      // explainable things stops being believed.
-      const callback = new RegExp('^\\s*[A-Za-z0-9_]+: (?:async )?\\(').exec(lines[j]!);
+      // A real callback: `name: async (…) =>` / `name: (…) =>` / `name: async function`.
+      const callback = new RegExp('^\\s*[A-Za-z0-9_]+:\\s*(?:async\\s*)?(?:\\([^)]*\\)\\s*(?::[^=]+)?=>|function\\b)').exec(lines[j]!);
       if (handler) { enclosing = 'HANDLER ' + handler[1]; break; }
       if (callback) { enclosing = 'callback'; break; }
       if (fn) { enclosing = fn[1]!; break; }
     }
-    out.push({ line: i + 1, enclosing });
+    out.push({ line: r.line, enclosing });
   }
   return out;
 }

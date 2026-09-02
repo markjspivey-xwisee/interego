@@ -25,6 +25,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { returnObjects } from './return-object-scan.js';
 
 /** The bridge with comments stripped, so a status DESCRIBED in prose is never read as one SET. */
 function bridgeCode(): string {
@@ -34,51 +35,18 @@ function bridgeCode(): string {
 }
 
 /**
- * Every refusal literal in the bridge, as a bounded window of text around its `kind`.
+ * Every refusal literal in the bridge, read WHOLE by the scanner in tests/return-object-scan.ts.
  *
- * ★ NOT BRACE-MATCHED, DELIBERATELY. The first version was `[{][^{}]*kind: 'refusal'[^{}]*[}]`,
- * which cannot see any refusal whose message uses a template literal — `${podChecked}` puts
- * braces inside the object and ends the match early. MEASURED: it missed the exact
- * "signer is not a member of ${podUrl}" refusal that motivated this file, so leg 2 passed on a
- * mutant restoring that defect. The most interesting refusals interpolate, because they name
- * the thing they are refusing about.
- *
- * A fixed window from the `kind` marker to the end of the statement reads all of them. Fresh
- * RegExp per call: a `g` regex carries mutable state, and two call sites reaching one instance
- * is how the sibling gate in this directory went blind.
+ * Five regex bounds preceded it and each was blind somewhere — that history, and why every
+ * one moved the blindness rather than removing it, is recorded in the scanner's own header.
  */
 function refusalLiterals(code: string): string[] {
-  // Both spellings occur: helper bodies write `kind: 'refusal',` and call sites write
-  // `kind: 'refusal' as const,`. Requiring the comma excludes the TYPE DECLARATION
-  // (`interface Refusal { readonly kind: 'refusal'; … }`), which is not a refusal and would be
-  // a permanent false positive — and a gate with one of those stops being read. Requiring the
-  // comma WITHOUT allowing `as const` cut the census from 36 to 6; the vacuity check above is
-  // what caught that, which is the reason it is there.
-  //
-  // ★ A FIXED WINDOW, NOT ONE BOUNDED BY `;`. The previous version ended each literal at the
-  // first semicolon, and one refusal's own `note` reads "your own pod; the first enrollee owns
-  // it." — so the window closed BEFORE its refusalReason and the phrase test below could not
-  // see it. MEASURED: with that bound, declaring an explicit and wrong `401` on the
-  // not-a-member refusal passed 4/4. A punctuation mark inside a message is not a statement
-  // boundary, and this file exists because that kind of silent truncation keeps happening.
-  //
-  // The bound is `};` — the end of the object literal — not a bare `;` and not a fixed length.
-  // Both of those were tried and both were wrong in a way worth recording:
-  //   · bare `;`  truncated at a semicolon INSIDE a message ("your own pod; the first
-  //     enrollee owns it."), hiding the refusalReason from the phrase tests. Leg 2 then passed
-  //     on an explicit, wrong 401.
-  //   · fixed 900 chars overran into neighbouring code and reported FOUR correct 403s as
-  //     deployment failures, because the words "not configured" happened to appear after them.
-  // A `;` preceded by `}` is a statement end; a `;` inside prose is not.
-  //
-  // ★ THE CAP IS A SAFETY VALVE, NOT A BOUND, AND IT MUST BE GENEROUS. At 900 the lazy match
-  // could not reach the closing `};` of the LONGEST refusal — the not-a-member one, whose error
-  // spends 400 characters explaining the default-tenant case — so that literal matched nothing
-  // and vanished from the census entirely. A gate that silently stops seeing its most important
-  // subject is the failure mode this whole file is about: measured, the explicit-401 mutant on
-  // that very refusal passed 4/4. The `};` does the bounding; this number only stops a
-  // pathological scan.
-  return [...code.matchAll(new RegExp("kind: 'refusal'(?: as const)?,[^]{0,3000}?\\};", 'g'))].map(m => m[0]);
+  // Five regex bounds were tried here and each was blind somewhere (the history is in
+  // tests/return-object-scan.ts). The scanner counts braces and skips strings, so a refusal is
+  // read whole whatever it contains — a nested `iep:resolvedBy`, a `;` inside a message, a
+  // `res.status(…).json({…})` form — and the `interface Refusal { kind: 'refusal'; … }` type
+  // declaration is excluded by not being a return at all.
+  return returnObjects(code).map(r => r.text).filter(t => t.includes("kind: 'refusal'"));
 }
 
 describe('a refusal names the status that matches what failed', () => {
@@ -92,9 +60,14 @@ describe('a refusal names the status that matches what failed', () => {
     // and "directory unreadable" (nothing to do with the caller) both claimed a credentials
     // failure. A site may still rely on the default — but only where 401 is the truth, and
     // then it owes the caller the affordance that mints one.
+    // ★ ONLY the credential-minting exit justifies the 401 default. This exempted any literal
+    // containing `iep:resolvedBy` — but `wrongPod` names an ENROLMENT affordance as its way
+    // out, so deleting its 403 left seven authenticated callers told their credentials failed,
+    // with leg 2 green. A resolvedBy that points at sign_request is a 401 refusal; one that
+    // points anywhere else is a refusal that has forgotten to say what it is.
     const offenders = refusalLiterals(bridgeCode())
       .filter(r => !r.includes('iep:refusalStatus'))
-      .filter(r => !r.includes('iep:resolvedBy') && !r.includes('signRequestRefusal'))
+      .filter(r => !/toolName:\s*'sign_request'/.test(r) && !r.includes('signRequestRefusal'))
       .map(r => r.replace(new RegExp('[ ]+', 'g'), ' ').slice(0, 150));
 
     expect(
@@ -138,5 +111,61 @@ describe('a refusal names the status that matches what failed', () => {
       'a deployment-side failure answers a 4xx, which tells the caller to fix a request that '
         + 'was never the problem',
     ).toEqual([]);
+  });
+  /**
+   * ★★ THE SIX HELPERS ARE CHECKED BY NAME, NOT BY THE WORDS IN THEIR MESSAGES.
+   *
+   * Legs 2–4 select refusals by phrases in their text ("is not a member", "not configured").
+   * The central helpers — `notFound`, `notConfigured`, `upstreamFailed`, `wrongPod`,
+   * `invalidArguments` — are worded in their OWN terms, so no leg selected them, and an audit
+   * showed all three of `notFound`/`notConfigured`/`upstreamFailed` flipped to 401 passing
+   * every assertion in this file. Those helpers stand behind 26 call sites: "SCORM Cloud
+   * credentials not configured" would have answered 401 and sent an agent back to
+   * sign_request in the exact loop this file's docblock says it exists to prevent.
+   *
+   * A helper's status is a fact about a named function, so it is asserted as one — no
+   * vocabulary, nothing to drift. If a helper is renamed or added, this table is the place
+   * that must change, and the vacuity check makes forgetting it loud.
+   */
+  it('★ each status helper declares the status its name promises', () => {
+    const code = bridgeCode();
+    const EXPECT: Record<string, number | 'default-401'> = {
+      invalidArguments: 400,
+      notFound: 404,
+      wrongPod: 403,
+      upstreamFailed: 502,
+      notConfigured: 503,
+      // No literal status: it relies on the kind's 401 default, and that is CORRECT for the
+      // one case it serves — a caller who genuinely holds no credential — because it also
+      // names the way out. See leg 2.
+      signRequestRefusal: 'default-401',
+    };
+    // propagateRefusal carries no literal of its own: its whole job is to hand on the status the
+    // PRODUCER decided. A hard-coded 401 in its body passed every leg here, so it is checked
+    // for the read rather than for a number.
+    const prop = code.indexOf('function propagateRefusal(');
+    expect(prop, 'propagateRefusal not found').toBeGreaterThan(-1);
+    const propBody = returnObjects(code.slice(prop)).find(r => r.text.includes("kind: 'refusal'"));
+    expect(
+      propBody?.text ?? '',
+      'propagateRefusal no longer propagates: it must set iep:refusalStatus from `r.status`, '
+        + 'or every producer decision (404 absent, 409 conflict, 403 unauthorised) is discarded',
+    ).toMatch(/iep:refusalStatus':\s*r\.status/);
+    const wrong: string[] = [];
+    for (const [name, want] of Object.entries(EXPECT)) {
+      const start = code.indexOf(`function ${name}(`);
+      expect(start, `helper ${name} not found — renamed? update this table`).toBeGreaterThan(-1);
+      const body = returnObjects(code.slice(start)).find(r => r.text.includes("kind: 'refusal'"));
+      expect(body, `helper ${name} no longer returns a refusal literal`).toBeTruthy();
+      const m = new RegExp("iep:refusalStatus':[ ]*([0-9]{3})").exec(body!.text);
+      const got = m ? Number(m[1]) : 'default-401';
+      if (got !== want) wrong.push(`${name}: declares ${got}, should be ${want}`);
+    }
+    expect(
+      wrong,
+      'a status helper answers the wrong status, and every call site that composes it answers '
+        + 'it too:' + String.fromCharCode(10) + '  ' + wrong.join(String.fromCharCode(10) + '  '),
+    ).toEqual([]);
+    expect(Object.keys(EXPECT).length, 'the helper table is empty — vacuous').toBeGreaterThan(4);
   });
 });

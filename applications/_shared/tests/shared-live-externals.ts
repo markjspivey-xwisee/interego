@@ -495,8 +495,9 @@ export const SHARED_ONLY_THROUGH_IMPORTED_CODE: readonly {
       + 'importing createVerticalBridge to drive the dispatcher over real HTTP; that test binds '
       + 'port 0 and reads the assigned port back off the server, so NO module in the test tree '
       + 'reads this name — which is why it belongs here rather than in SHARED_BUT_NOT_LIVE, '
-      + 'whose criterion is two or more readers in the test tree. Ten modules under the '
-      + 'collected roots read it, eight handing a parsed value to app.listen and TWO building a '
+      + 'whose criterion is two or more readers in the test tree. Ten READ SITES in nine modules under the '
+      + 'collected roots (foxxi bridge/server.ts is two of them), eight handing a parsed value to '
+      + 'app.listen and TWO building a '
       + 'http://localhost default (vertical-bridge/index.ts and foxxi bridge/server.ts). It '
       + 'names a port this process binds; it addresses nothing outside it.',
   },

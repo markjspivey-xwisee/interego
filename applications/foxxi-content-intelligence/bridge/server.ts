@@ -1683,7 +1683,7 @@ let meshProjectionRunning = false;
  * attacker does not control. It also restores the property the PUSH path (/agent/mesh-event) already
  * had by binding to the recovered address rather than to `agent_id`.
  */
-function enrolmentPodFor(callerDid: string, explicit?: string): { pod: string } | { error: string } {
+function enrolmentPodFor(callerDid: string, explicit?: string): { pod: string } | Refusal {
   const pod = selfBoundPod(callerDid, explicit);
   const check = enrolmentOriginCheck(pod);
   return 'error' in check ? check : { pod };
@@ -1735,7 +1735,7 @@ async function siblingPodSpelling(pod: string): Promise<string | undefined> {
 /** Is this pod in the pod space this deployment trusts? Shared by the write path and the reload, so
  *  a row that could not be enrolled today cannot be honoured tomorrow by having been written before
  *  the rule existed. */
-function enrolmentOriginCheck(pod: string): { ok: true } | { error: string } {
+function enrolmentOriginCheck(pod: string): { ok: true } | Refusal {
   const trusted = (() => { try { return new URL(tenantPodUrl).origin; } catch { return ''; } })();
   if (!trusted) return notConfigured('this deployment has no tenant pod configured, so it cannot resolve which pod space to trust');
   const podOrigin = (() => { try { return new URL(pod).origin; } catch { return ''; } })();
@@ -4282,7 +4282,12 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // the open-join hole — nobody can inject themselves into someone else's
     // self-sovereign tenant via the bridge's cross-pod write key.
     if (members.length > 0 && !existing) {
-      return notFound(`this self-sovereign tenant already has an owner — enroll on your OWN pod (tenant_pod_url = your pod), not ${podUrl}.`);
+      // ★ 409, NOT 404. The tenant EXISTS and is owned — that is a conflict with the caller's
+      // request, not an absence. 404 told a caller "no such tenant" about a pod that is very
+      // much there, which is both false and, to an agent retrying, an invitation to try again.
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 409,
+        'iep:refusalReason': 'the pod already has an owner, and a second signer may not join a single-owner tenant',
+        error: `this self-sovereign tenant already has an owner — enroll on your OWN pod (tenant_pod_url = your pod), not ${podUrl}.` };
     }
     if (!existing) {
       members.push({ user_id: learnerId, web_id: webId, wallet_address: signer, audience_tags: audienceTags });
@@ -5704,7 +5709,7 @@ app.post('/agent/mesh/enrolment', async (req, res) => {
     // pod that is not. An explicit `pod_url` is honoured only when it IS the caller's own.
     const resolved = enrolmentPodFor(bound.callerDid, typeof b.pod_url === 'string' ? b.pod_url : undefined);
     if ('error' in resolved) {
-      res.status(403).json({ ok: false, error: resolved.error, enrolledAs: bound.callerDid, authMode: bound.authMode });
+      res.status(resolved['iep:refusalStatus'] ?? 403).json({ ok: false, ...resolved, enrolledAs: bound.callerDid, authMode: bound.authMode });
       return;
     }
     const pod = resolved.pod;
@@ -5835,7 +5840,7 @@ app.delete('/agent/mesh/enrolment', async (req, res) => {
     if (!bound.ok) { res.status(bound.status).json({ ok: false, error: bound.error, ...(bound.hint ? { hint: bound.hint } : {}) }); return; }
 
     const resolved = enrolmentPodFor(bound.callerDid, typeof (bound.payload.pod_url) === 'string' ? bound.payload.pod_url as string : undefined);
-    if ('error' in resolved) { res.status(403).json({ ok: false, error: resolved.error }); return; }
+    if ('error' in resolved) { res.status(resolved['iep:refusalStatus'] ?? 403).json({ ok: false, ...resolved }); return; }
     const pod = resolved.pod;
 
     const wasConfigured = CONFIGURED_MESH_PODS.some((p) => podKey(p) === podKey(pod));
@@ -6149,7 +6154,10 @@ app.post('/agent/review-record', async (req, res) => {
       subjectIdentity: typeof p.subject_did === 'string' ? p.subject_did : undefined,
       namedPodUrl: typeof p.read_pod_url === 'string' ? p.read_pod_url : undefined,
     });
-    if (!target.ok) { res.status(400).json({ error: target.error }); return; }
+    // The producer decided 403 (a scope refusal); a hard-coded 400 told the caller to fix a
+    // request that was well-formed. One of this result's three consumers honoured the status
+    // and two discarded it — the same failure, two answers, by surface.
+    if (!target.ok) { res.status(target.status ?? 400).json({ kind: 'refusal', 'iep:refusalStatus': target.status ?? 400, error: target.error }); return; }
     const subjectPodUrl = target.podUrl;
     // ★ AFTER the pod is resolved, and FROM it — see readIsSelf. Deciding this from `subjectDid`
     // (which defaults to the caller) while the data came from `subject_pod_url` is the bypass.
@@ -6645,7 +6653,10 @@ app.post('/agent/verify-extension', async (req, res) => {
       subjectIdentity: subjectDid,
       namedPodUrl: typeof p.read_pod_url === 'string' ? p.read_pod_url : undefined,
     });
-    if (!target.ok) { res.status(400).json({ error: target.error }); return; }
+    // The producer decided 403 (a scope refusal); a hard-coded 400 told the caller to fix a
+    // request that was well-formed. One of this result's three consumers honoured the status
+    // and two discarded it — the same failure, two answers, by surface.
+    if (!target.ok) { res.status(target.status ?? 400).json({ kind: 'refusal', 'iep:refusalStatus': target.status ?? 400, error: target.error }); return; }
     const subjectPodUrl = target.podUrl;
     const subjectLabel = actorForPod(subjectPodUrl, MESH_ACTOR_LABELS);
     // PII gate (round-49) — mirror the /agent/review-record + foxxi.assemble_learner_record
@@ -7236,7 +7247,7 @@ app.post('/agent/lattice/self', async (req, res) => {
     if (!bound.ok) { res.status(bound.status).json({ ok: false, error: bound.error, ...(bound.hint ? { hint: bound.hint } : {}) }); return; }
 
     const own = enrolmentPodFor(bound.callerDid);
-    if ('error' in own) { res.status(403).json({ ok: false, error: own.error }); return; }
+    if ('error' in own) { res.status(own['iep:refusalStatus'] ?? 403).json({ ok: false, ...own }); return; }
     const label = actorForPod(own.pod, MESH_ACTOR_LABELS);
 
     if (!isResident(label)) {
@@ -9290,7 +9301,7 @@ app.post('/agent/mesh-event', async (req, res) => {
     // caller derive a pod on their own host whose last path segment picks any victim's lens, which is
     // the same forgery route the enrolment path was just closed against.
     const callerPodME = enrolmentPodFor(boundME.callerDid);
-    if ('error' in callerPodME) { res.status(403).json({ ok: false, error: callerPodME.error }); return; }
+    if ('error' in callerPodME) { res.status(callerPodME['iep:refusalStatus'] ?? 403).json({ ok: false, ...callerPodME }); return; }
     if (actorForPod(originPod, MESH_ACTOR_LABELS) !== actorForPod(callerPodME.pod, MESH_ACTOR_LABELS)) {
       res.status(403).json({ ok: false, error: 'signer is not the agent of originPod — a mesh event may only be pushed for your own pod' });
       return;
