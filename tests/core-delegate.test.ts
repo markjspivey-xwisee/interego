@@ -520,7 +520,7 @@ describe('a descriptor is attributed to whoever asserted it', () => {
 
 describe('a delegate name is refused rather than repaired', () => {
   it('a control character is refused, not stripped', () => {
-    expect(delegateNameProblem('ab')).toMatch(/control character/);
+    expect(delegateNameProblem('a\u0007b')).toMatch(/control character/);
     expect(delegateNameProblem('ok name')).toBeNull();
   });
   it('empty and over-long are refused', () => {

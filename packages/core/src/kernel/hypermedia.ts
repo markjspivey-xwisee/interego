@@ -128,6 +128,36 @@ export const KERNEL_RESULT_STATUS = Object.freeze({
   refusal: 401,
 }) as Readonly<Record<string, number>>;
 
+/**
+ * Does a response BODY declare itself an `iep:Refusal`?
+ *
+ * ── WHY A RETRY LAYER NEEDS THIS ─────────────────────────────────────────────
+ *
+ * A refusal is a DECISION. `followAffordance` throws on `status >= 500` so that
+ * `withTransientRetry` will retry it, which is right for an infrastructure 5xx and wrong for a
+ * vertical that has already decided: `unreadable-workspace`, `append-failed` and foxxi's
+ * `upstreamFailed` all answer 502 BY DESIGN, and sending the same request three more times
+ * cannot change any of them. Measured before this existed: one declined call cost four
+ * attempts across ~15s of backoff and was refused identically four times.
+ *
+ * The test is the same one the dispatcher applies — the declared `kind`, never a sniff for an
+ * `error` key. A body that is not JSON, or is JSON without that kind, is not a refusal, and
+ * the caller keeps whatever policy it had.
+ */
+export function declaresRefusal(body: string): boolean {
+  // Cheap reject first: parsing every 5xx body to answer "no" is the common case.
+  if (!body || body.length > 1_000_000 || !body.includes('"refusal"')) return false;
+  try {
+    const parsed: unknown = JSON.parse(body);
+    return Boolean(
+      parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        && (parsed as Record<string, unknown>)['kind'] === 'refusal',
+    );
+  } catch {
+    return false;
+  }
+}
+
 // ── Hypermedia decoration ──
 
 /**

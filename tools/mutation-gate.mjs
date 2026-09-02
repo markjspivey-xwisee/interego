@@ -71,7 +71,7 @@ function runGates(files) {
     { encoding: 'utf8', env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' } },
   );
   // eslint-disable-next-line no-control-regex -- stripping ANSI is the point
-  const out = `${r.stdout ?? ''}${r.stderr ?? ''}`.replace(/\[[0-9;]*m/g, '');
+  const out = `${r.stdout ?? ''}${r.stderr ?? ''}`.replace(/\u001b\[[0-9;]*m/g, '');
   const summaryLine = /Tests\s+.*$/m.exec(out)?.[0]?.trim();
   const ranAssertions = Boolean(summaryLine);
   return {

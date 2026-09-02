@@ -166,7 +166,7 @@ export function extractAffordancesFromTurtle(
     // dereference. Matched on the RAW expects (same parse → same subject key).
     const fields = rawExpects ? shapeFieldsFor(byKey, rawExpects, sourceDescriptor) : undefined;
 
-    const dedup = `${action}${target}${method}`;
+    const dedup = `${action}\u0001${target}\u0001${method}`;
     if (seen.has(dedup)) continue;
     seen.add(dedup);
 

@@ -13,10 +13,15 @@ const FOXXI = 'applications/foxxi-content-intelligence/bridge/server.ts';
 const WSP = 'applications/shared-workspace/src/respond.ts';
 const AGP = 'applications/agentic-performance-practice/bridge/handlers.ts';
 const OWM = 'applications/organizational-working-memory/source-adapters/web.ts';
+const RETRY = 'packages/core/src/http/retry.ts';
+const FOLLOW = 'packages/core/src/affordance/follow.ts';
+const HYPER = 'packages/core/src/kernel/hypermedia.ts';
 
 const REFUSAL_GATE = 'tests/a-refusal-answers-a-refusing-status.test.ts';
 const STATUS_GATE = 'tests/a-refusal-status-names-what-actually-failed.test.ts';
 const VERTICAL_GATE = 'tests/every-vertical-declines-with-a-status.test.ts';
+const RETRY_GATE = 'tests/a-refusal-is-never-retried-as-a-blip.test.ts';
+const BYTES_GATE = 'tests/line-endings-are-normalised.test.ts';
 
 /** An untyped decline planted in a real handler, in each shape that has defeated a census. */
 const plant = (name, body, why) => ({
@@ -133,5 +138,47 @@ export const MUTANTS = [
     replace: "      };",
     mustFail: [VERTICAL_GATE],
     why: 'an SSRF refusal answering 200 - the caller cannot tell it from a successful fetch',
+  },
+
+  // ── a considered "no" is not a network blip ────────────────────────
+  {
+    name: 'transient-matcher-unanchored-again',
+    file: RETRY,
+    find: "const HTTP_5XX_IN_MESSAGE = /(?:\\bHTTP\\b\\s*|\\bstatus\\b\\W{0,2}|\\breturned\\s+|:\\s*)5\\d\\d(?![0-9A-Za-z])/i;",
+    replace: "const HTTP_5XX_IN_MESSAGE = /5\\d\\d/;",
+    mustFail: [RETRY_GATE],
+    why: 'the original: 59% of sha1 addresses and 77% of sha256 ones contain a 5-digit-digit run, so a permanent 403 on a content-addressed descriptor was retried four times',
+  },
+  {
+    name: 'follower-retries-a-declared-refusal',
+    file: FOLLOW,
+    find: "    if (r.status >= 500 && !declaresRefusal(text)) {",
+    replace: "    if (r.status >= 500 && !declaresRefusal('')) {",
+    mustFail: [RETRY_GATE],
+    why: 'still CALLS declaresRefusal, so it compiles and the import stays used - but never on the body, so every 502 refusal is resent three more times',
+  },
+  {
+    name: 'declaresRefusal-tests-the-wrong-word',
+    file: HYPER,
+    find: "        && (parsed as Record<string, unknown>)['kind'] === 'refusal',",
+    replace: "        && (parsed as Record<string, unknown>)['kind'] === 'refused',",
+    mustFail: [RETRY_GATE],
+    why: 'the predicate itself: one letter turns every refusal back into a blip, and nothing else in the tree reads this function yet',
+  },
+
+  // ── a control byte spelled as itself ───────────────────────────────
+  {
+    name: 'a-raw-backspace-in-source',
+    file: RETRY,
+    // Verbatim the defect that produced this mutant: generating this regex through a layer of
+    // escaping turned every `\\b` into a real 0x08, which deleted the word boundaries while
+    // leaving a regex that still compiled. Invisible in the diff, the terminal and the grep.
+    //
+    // The escape below is deliberate: written as a raw byte, THIS FILE would trip the very
+    // gate the mutant is meant to prove. JS reads it back as the same single character.
+    find: "(?:\\bHTTP",
+    replace: "(?:\u0008HTTP",
+    mustFail: [BYTES_GATE],
+    why: 'the gate said "control byte" and checked only NUL, so 0x01, 0x07, 0x1b and five 0x08 all sat in tracked source',
   },
 ];

@@ -51,6 +51,7 @@ import {
 } from '../rdf/turtle-parser.js';
 import { CG, IEH, CGH_LEGACY, HYDRA, DCAT } from '../rdf/namespaces.js';
 import { sameAction, actionUrl, actionUrn } from '../kernel/action-identity.js';
+import { declaresRefusal } from '../kernel/hypermedia.js';
 
 // ── Error types ──────────────────────────────────────────────
 
@@ -322,18 +323,20 @@ export async function followAffordance(
   const hasPayload = payload !== undefined && payload !== null;
   const body = (!bodyless && hasPayload) ? (typeof payload === 'string' ? payload : JSON.stringify(payload)) : undefined;
 
-  const response = await withTransientRetry(async () => {
+  // ★ THE BODY IS READ INSIDE THE RETRY, because whether to retry DEPENDS ON IT.
+  //
+  // A bare 5xx is a blip and is retried. A 5xx whose body declares `iep:Refusal` is a
+  // DECISION — `unreadable-workspace`, `append-failed`, foxxi's `upstreamFailed` — and
+  // resending it three more times cannot change the answer; it only makes the caller wait
+  // ~15s to be refused four times. 4xx stays informative and is surfaced as data, unchanged.
+  const { response, responseBody } = await withTransientRetry(async () => {
     const r = await fetchImpl(target, { method, headers, body });
-    // 5xx is transient — let withTransientRetry retry. 4xx is informative
-    // (caller wants to see "forbidden" / "validation failed"), so we
-    // surface it as data, not an exception.
-    if (r.status >= 500) {
+    const text = await r.text();
+    if (r.status >= 500 && !declaresRefusal(text)) {
       throw new Error(`Affordance target ${target} returned ${r.status} ${r.statusText}`);
     }
-    return r;
+    return { response: r, responseBody: text };
   });
-
-  const responseBody = await response.text();
   // FetchResponse intentionally doesn't expose headers as a typed map —
   // probe via the underlying `.headers.get` when present (Node fetch /
   // browser fetch), fall back to undefined otherwise.

@@ -108,14 +108,27 @@ describe('the working tree matches the index CI checks out', () => {
     for (const f of files) {
       if (BINARY.test(f)) continue;
       const buf = readFileSync(join(REPO, f));
-      const at = buf.indexOf(0);
-      if (at !== -1) offenders.push(`${f} (first NUL at byte ${at})`);
+      // ★ EVERY C0 CONTROL BYTE, NOT JUST NUL. This read `buf.indexOf(0)` while its own
+      // name said "control byte", and three slipped past it: a 0x01 dedup separator in
+      // kernel/affordance-extraction.ts, a 0x07 inside a test asserting on control characters,
+      // and a 0x1b heading an ANSI-strip regex. A fourth arrived the day this was widened -
+      // five 0x08 bytes generated into the isTransientNetworkError pattern, which silently
+      // ate its word-boundary escapes and left a regex that still compiled and matched the
+      // wrong thing. NUL is the only one git calls binary; the rest are worse in a different
+      // way, because they are invisible in the diff, the terminal and the grep, so the file
+      // reads as correct while behaving otherwise. TAB / LF / CR are the three that belong.
+      const at = buf.findIndex((c) => c < 32 && c !== 9 && c !== 10 && c !== 13);
+      if (at !== -1) {
+        offenders.push(`${f} (0x${buf[at]?.toString(16).padStart(2, '0')} at byte ${at})`);
+      }
     }
     expect(
       offenders,
-      'a raw NUL makes git treat the file as binary: it lands as `Bin 0 -> N bytes` with no '
-        + 'reviewable diff and greps as "Binary file … matches". Spell it as an escape '
-        + 'instead — the string is identical:\n  ' + offenders.join('\n  '),
+      'a raw control byte is invisible in the diff, the terminal and the grep, so the source '
+        + 'reads as correct while behaving otherwise - and a raw NUL additionally makes git '
+        + 'treat the file as binary (`Bin 0 -> N bytes`, no reviewable diff, "Binary file ... '
+        + 'matches"). Spell it as an escape instead - the string is identical:\n  '
+        + offenders.join('\n  '),
     ).toEqual([]);
   }, 30_000);
 });

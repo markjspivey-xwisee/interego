@@ -55,7 +55,30 @@ export interface TransientRetryOptions {
  * status codes appearing inside thrown error messages (the pod clients
  * throw `Error("Failed to ...: 503 Service Unavailable")` style strings).
  */
-const TRANSIENT_PATTERN = /ECONNRESET|ETIMEDOUT|UND_ERR_CONNECT|UND_ERR_SOCKET|fetch failed|5\d\d/;
+const TRANSIENT_PATTERN = /ECONNRESET|ETIMEDOUT|UND_ERR_CONNECT|UND_ERR_SOCKET|fetch failed/;
+
+/**
+ * A 5xx STATUS in a thrown message — not merely three digits that begin with a five.
+ *
+ * ── WHY THIS IS NOT `5\d\d` ──────────────────────────────────────────────────
+ *
+ * It was, unanchored, inside the alternation above. That fires on any such run ANYWHERE in the
+ * message, including inside a longer number and inside a hex address. Measured on this
+ * matcher: 59.3% of sha1-length hex addresses and 76.6% of sha256-length ones contain one.
+ * This substrate addresses nearly everything by content hash, and the messages handed to this
+ * function quote the address that failed — `followAffordance` throws
+ * `Failed to fetch descriptor <url>: 403 Forbidden`. So a PERMANENT 403 or 404 on a
+ * content-addressed descriptor was classified transient most of the time and retried four
+ * times across ~15s of backoff, to be refused identically four times. `descriptor 1523 not
+ * found`, `chunk of 512 bytes rejected` and `entry 2500 conflicts with head` all matched too,
+ * and the last is worse than slow: resending a conflict re-collides.
+ *
+ * The status must therefore be INTRODUCED as one. Every site that throws these writes it the
+ * same two ways — `...: 503 Service Unavailable` and `... returned 502 Bad Gateway` — so the
+ * introducer is what is matched, and the trailing lookahead keeps it from biting off the head
+ * of a longer number. A message that merely CONTAINS a number is not a status report.
+ */
+const HTTP_5XX_IN_MESSAGE = /(?:\bHTTP\b\s*|\bstatus\b\W{0,2}|\breturned\s+|:\s*)5\d\d(?![0-9A-Za-z])/i;
 
 /** Undici exposes structured causes (`err.cause.code`) for some failures. */
 const TRANSIENT_CAUSE_CODES: ReadonlySet<string> = new Set([
@@ -89,7 +112,8 @@ export function isTransientNetworkError(err: unknown): boolean {
   // Message pattern — covers thrown Error strings from our pod clients
   // (`Failed to ...: 5xx ...`) plus the standard fetch/undici messages.
   const message = (err as { message?: unknown }).message;
-  if (typeof message === 'string' && TRANSIENT_PATTERN.test(message)) return true;
+  if (typeof message === 'string'
+    && (TRANSIENT_PATTERN.test(message) || HTTP_5XX_IN_MESSAGE.test(message))) return true;
   return false;
 }
 
