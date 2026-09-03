@@ -169,6 +169,7 @@ COPY deploy/mcp-relay/hmd-app-logic.ts ./
 # are imported by server.ts, so per-file image assembly must carry both.
 COPY deploy/mcp-relay/application-lab-app.ts ./
 COPY deploy/mcp-relay/application-lab-runtime.ts ./
+COPY deploy/mcp-relay/application-actor.ts ./
 COPY deploy/mcp-relay/pgsl-node-store.ts ./
 COPY deploy/mcp-relay/engagement-store.ts ./
 COPY deploy/mcp-relay/authorship-content-binding.ts ./
