@@ -79,9 +79,9 @@ invariant, nor ride a borrowed track record.
 
 | Concern | Code |
 |---|---|
-| classify → recommend | [`src/performance-architecture.ts`](src/performance-architecture.ts) |
-| reflexive calibration loop | [`src/performance-calibration.ts`](src/performance-calibration.ts) |
-| `GET /performance` (self-describing schema), `POST /performance/plan`, signed `contextualize-and-plan` affordance | [`src/performance-routes.ts`](src/performance-routes.ts) |
+| classify → recommend (owned by AGP) | [`agentic-performance-practice/src/performance-architecture.ts`](../agentic-performance-practice/src/performance-architecture.ts) |
+| reflexive calibration loop (owned by AGP) | [`agentic-performance-practice/src/performance-calibration.ts`](../agentic-performance-practice/src/performance-calibration.ts) |
+| legacy `GET /performance` / `POST /performance/plan` compatibility surface | [`src/performance-routes.ts`](src/performance-routes.ts) |
 | durable multi-recipient records + cross-seat holon resolution | [`src/durable-records.ts`](src/durable-records.ts), [`src/foundation-holon-altitude.ts`](src/foundation-holon-altitude.ts), [`src/foundation-persist.ts`](src/foundation-persist.ts) |
 
 The architecture was built and then **used on the team that built it** — the first

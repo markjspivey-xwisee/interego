@@ -12,6 +12,7 @@
 import { diagnose, recommendInterventions, evaluateIntervention } from '../src/performance-architecture.js';
 import { AGP_ONTOLOGY_IRI } from '../src/ontology.js';
 import { proposeStandardsExtension, type ExtensionKind } from '../src/standards-extension.js';
+import { preparePerformanceReadiness } from '../src/readiness-attestation.js';
 // ★ COMPOSED, NOT REBUILT. The blocker recorded on this handler was "no pod
 // container-enumeration helper". The substrate already walks a pod's manifest chain over
 // the LDP membership each container ADVERTISES (`ldp:contains`), and exports it. Adding a
@@ -515,6 +516,44 @@ export function createAgpHandlers(deps: { fetchFn?: typeof fetch } = {}): Record
         complete: walk.complete,
         manifestStatus: walk.hotStatus,
         ...(walk.archivesUnreachable.length ? { archivesUnreachable: walk.archivesUnreachable } : {}),
+      };
+    },
+
+    /**
+     * Pure evidence preparation. The bridge derives the decision and returns
+     * the exact bytes, but it cannot borrow the caller's identity or publish a
+     * trusted descriptor on their behalf. The authenticated Interego agent is
+     * the subsequent signer/publisher; Release Control verifies that boundary.
+     */
+    'agp.prepare_readiness_evidence': async (args) => {
+      const required = [
+        'candidate_digest', 'regime', 'evaluation_suite_digest', 'total_cases', 'passed_cases', 'issued_at',
+        'diagnosis_descriptor_url', 'evaluation_descriptor_urls', 'xapi_statement_ids',
+        'portable_record_descriptor_url',
+      ];
+      const missing = required.filter(k => args[k] === undefined || args[k] === null || args[k] === '');
+      if (missing.length) throw new Error(`agp.prepare_readiness_evidence: missing required input(s): ${missing.join(', ')}`);
+      const prepared = preparePerformanceReadiness({
+        candidateDigest: str(args.candidate_digest),
+        regime: str(args.regime) as 'Evident' | 'Knowable' | 'Emergent' | 'Turbulent',
+        evaluationSuiteDigest: str(args.evaluation_suite_digest),
+        totalCases: Number(args.total_cases),
+        passedCases: Number(args.passed_cases),
+        diagnosisDescriptorUrl: str(args.diagnosis_descriptor_url),
+        evaluationDescriptorUrls: strList(args.evaluation_descriptor_urls),
+        xapiStatementIds: strList(args.xapi_statement_ids),
+        portableRecordDescriptorUrl: str(args.portable_record_descriptor_url),
+        issuedAt: str(args.issued_at),
+        ...(args.minimum_cases === undefined ? {} : { minimumCases: Number(args.minimum_cases) }),
+        ...(args.allowed_failures === undefined ? {} : { allowedFailures: Number(args.allowed_failures) }),
+      });
+      return {
+        ...prepared,
+        ready: prepared.document.ready,
+        modalStatus: prepared.document.modalStatus,
+        persisted: false,
+        publishRequired: true,
+        note: 'Prepared only. Review these exact bytes, then publish through an authenticated Interego signed-descriptor action; this bridge did not sign or mutate a pod.',
       };
     },
 

@@ -8,9 +8,9 @@
  * at GET /ns/agp/term/:name, and the SHACL shapes at GET /ns/agp/shapes — the
  * author-AND-serve pattern the survey found missing in sibling verticals.
  *
- * Status: the engine lives HERE (src/performance-architecture.ts; Foxxi
- * re-exports it via a shim) and ALL NINE affordances run real code. The last
- * stub, agp.list_practice, is gone: its recorded blocker was "no pod
+ * Status: the engine lives HERE (src/performance-architecture.ts; legacy Foxxi
+ * routes import it as a compatibility surface) and ALL TEN affordances run real
+ * code. The last stub, agp.list_practice, is gone: its recorded blocker was "no pod
  * container-enumeration read", which was true of THIS bridge and false of the
  * system — `@interego/solid` exports `fetchAllManifestEntries`, a walk over the
  * `ldp:contains` membership each container publishes. It is composed, not
@@ -41,8 +41,8 @@ import {
 } from '../src/ontology.js';
 import { buildAgpProfileDoc, AGP_PROFILE_ID } from '../src/xapi-profile.js';
 import { EXTEND_STANDARDS_GUIDANCE } from '../src/standards-extension.js';
-// The REAL engine runs IN this bridge (its canonical home); Foxxi re-exports the
-// same engine via its shim (arrow: foxxi → agp). The handlers themselves live in
+// The REAL engine runs IN this bridge (its canonical home); legacy Foxxi routes
+// import it rather than owning a copy (arrow: foxxi → agp). The handlers live in
 // ./handlers.ts, NOT here: this module calls app.listen() at import time, so any
 // handler defined in it is unreachable from a test.
 import { createAgpHandlers, PENDING_BLOCKER } from './handlers.js';
@@ -64,6 +64,12 @@ const GUIDANCE: GuidedAffordanceEntry[] = [
     whenToUse: 'When latent capability + an offered affordance actually became performance — the measurable event.',
     teaches: `${AGP_NS}Actualization`,
     requires: ['A defined capability (agp.define_capability) and a mapped affordance (agp.map_affordance).'],
+  } },
+  { action: 'urn:iep:action:agp:prepare-readiness-evidence', toolName: 'agp.prepare_readiness_evidence', guidance: {
+    summary: 'Derive a portable readiness decision from held-out performance plus FOXXI standards evidence.',
+    whenToUse: 'After an intervention has been evaluated on held-out work and the corresponding xAPI + LER/CLR evidence exists.',
+    teaches: `${AGP_NS}PerformanceReadinessAttestation`,
+    requires: ['A signed AGP diagnosis and evaluation, Foxxi xAPI statement IRIs, a portable LER/CLR descriptor, and the exact candidate digest.'],
   } },
 ];
 

@@ -243,6 +243,7 @@ import { HMD_APP_HTML } from './hmd-app.js';
 import { APPLICATION_LAB_APP_HTML } from './application-lab-app.js';
 import {
   prepareApplicationAction,
+  resolveApplicationActionEvidence,
   resolveApplicationLab,
   type ApplicationLabReads,
   type LabDescriptor,
@@ -5010,12 +5011,20 @@ async function handleExecuteApplicationAction(args: ToolArgs): Promise<string> {
     const reads = applicationLabReads(args);
     const resolved = await resolveApplicationLab(resolveInput, reads);
     const now = new Date().toISOString();
+    // The payload contributes descriptor URLs only. The resolver independently
+    // fetches, verifies, head-checks and snapshots every evidence dependency
+    // declared by the signed contract before the pure action runtime sees it.
+    const verifiedEvidence = await resolveApplicationActionEvidence(resolved, {
+      actionIri,
+      payload: (payload ?? {}) as Record<string, unknown>,
+    }, reads);
     const prepared = prepareApplicationAction(resolved, {
       actionIri,
       payload: (payload ?? {}) as Record<string, unknown>,
       actor,
       now,
       expectedHead,
+      evidence: verifiedEvidence,
     });
     const writePodName = podNameOf(resolved.podUrl);
     if (!writePodName) {
