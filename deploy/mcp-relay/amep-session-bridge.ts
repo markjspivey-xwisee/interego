@@ -234,6 +234,14 @@ export function withAmepSession(
     const method = (init?.method ?? 'GET').toUpperCase();
     if (method === 'POST' && ((u && u.pathname === '/amep/acts') || applicationAction)) {
       const headers: Record<string, string> = { ...(init?.headers ?? {}) };
+      // MCP Streamable HTTP requires the client to advertise both response
+      // representations. The generic kernel deliberately mirrors an
+      // affordance's media type into Accept, so repair that transport header
+      // only after the exact Application Lab JSON-RPC predicate has passed.
+      if (applicationAction) {
+        for (const key of Object.keys(headers)) if (key.toLowerCase() === 'accept') delete headers[key];
+        headers['Accept'] = 'application/json, text/event-stream';
+      }
       if (!Object.keys(headers).some((k) => k.toLowerCase() === 'authorization')) {
         headers['Authorization'] = `Bearer ${sessionBearer}`;
       }
