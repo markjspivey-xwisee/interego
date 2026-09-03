@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   canonicalJson,
   descriptorTrusted,
@@ -161,5 +162,9 @@ assert.ok(APPLICATION_LAB_APP_HTML.includes("callTool('execute_application_actio
 assert.ok(!APPLICATION_LAB_APP_HTML.includes('Release Control'));
 assert.ok(!/<script\s+src=|<link\s+href=|@import/i.test(APPLICATION_LAB_APP_HTML));
 assert.ok(!/\son[a-z]+\s*=/.test(APPLICATION_LAB_APP_HTML));
+
+const relaySource = readFileSync(new URL('./server.ts', import.meta.url), 'utf8');
+assert.match(relaySource, /const writePodName = podNameOf\(resolved\.podUrl\);/);
+assert.match(relaySource, /pod_name: writePodName,/);
 
 console.log('application-lab: canonical binding, two-epoch replay, CAS preparation, and generic MCP App verified');
