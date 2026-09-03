@@ -1,7 +1,7 @@
 // Unit tests for the AMEP same-origin session bridge — the security-critical
 // gate that decides when the relay auto-forwards a caller's OAuth bearer to
 // POST /amep/acts and stamps act.actor. Run: tsx _amep-session-bridge-test.ts
-import { amepSameOriginUrl, withAmepSession, principalIri, isIriLike } from './amep-session-bridge.js';
+import { applicationActionSameOriginUrl, amepSameOriginUrl, withAmepSession, principalIri, isIriLike } from './amep-session-bridge.js';
 import type { FetchFn } from '@interego/core';
 
 const BASE = 'https://relay.interego.xwisee.com';
@@ -21,6 +21,14 @@ check('userinfo@host still same origin (harmless, fetch ignores it)', !!amepSame
 check('unset base → null (fail closed)', amepSameOriginUrl(`${BASE}/amep/acts`, '') === null);
 check('malformed url → null', amepSameOriginUrl('::::not a url', BASE) === null);
 check('external host with base as path segment → null (no prefix bypass)', amepSameOriginUrl('https://relay.interego.xwisee.com.evil.com/amep/acts', BASE) === null);
+
+// ── Application action endpoint: exact same-origin gate ────────────────
+const APP_ACTION = `${BASE}/tool/execute_application_action`;
+check('same-origin Application Lab executor → matched', !!applicationActionSameOriginUrl(APP_ACTION, BASE));
+check('external Application Lab lookalike → null', applicationActionSameOriginUrl('https://evil.example.com/tool/execute_application_action', BASE) === null);
+check('another same-origin tool → null', applicationActionSameOriginUrl(`${BASE}/tool/publish_context`, BASE) === null);
+check('executor path suffix → null', applicationActionSameOriginUrl(`${APP_ACTION}/extra`, BASE) === null);
+check('tool-path traversal → null', applicationActionSameOriginUrl(`${BASE}/tool/x/../publish_context`, BASE) === null);
 
 // ── principalIri: the AMEP actor IRI (never the bare userId slug) ──
 check('isIriLike: did:/https: true, bare slug false', isIriLike('did:web:x') && isIriLike('https://x/c#me') && !isIriLike('u-pk-a') && !isIriLike(undefined));
@@ -94,6 +102,32 @@ const authHdr = (init: any) => Object.entries(init?.headers ?? {}).find(([k]) =>
 {
   const { payload } = withAmepSession(`${BASE}/amep/acts`, 'act:\n  actType: amep:Compose\n', { sessionBearer: 'T', principalId: 'u-pk-bob' }, DEPS(recorder().fn));
   check('yaml-string payload → parsed + actor stamped', (payload as any)?.act?.actor === 'u-pk-bob');
+}
+
+// ── Application Lab executor session bridge ──────────────────────────────
+// 10. Exact same-origin POST → bearer attached and redirect disabled.
+{
+  const rec = recorder();
+  const { fetch } = withAmepSession(APP_ACTION, {}, { sessionBearer: 'LABTOK' }, DEPS(rec.fn));
+  await fetch(APP_ACTION, { method: 'POST', body: '{}' });
+  check('Application action POST → bearer auto-attached', authHdr(rec.calls[0]?.init) === 'Bearer LABTOK');
+  check('Application action POST → redirect:manual set', rec.calls[0]?.init?.redirect === 'manual');
+}
+// 11. GET, another same-origin tool, and an external lookalike never receive it.
+{
+  const rec = recorder();
+  const { fetch } = withAmepSession(APP_ACTION, {}, { sessionBearer: 'LABTOK' }, DEPS(rec.fn));
+  await fetch(APP_ACTION, { method: 'GET' });
+  await fetch(`${BASE}/tool/publish_context`, { method: 'POST', body: '{}' });
+  await fetch('https://evil.example.com/tool/execute_application_action', { method: 'POST', body: '{}' });
+  check('Application bridge refuses GET/other-tool/off-origin', rec.calls.every((c) => authHdr(c.init) === undefined));
+}
+// 12. Explicit authorization suppresses session forwarding.
+{
+  const rec = recorder();
+  const { fetch } = withAmepSession(APP_ACTION, {}, { sessionBearer: 'LABTOK', explicitAuth: 'Bearer CALLER' }, DEPS(rec.fn));
+  await fetch(APP_ACTION, { method: 'POST', body: '{}' });
+  check('Application action explicit auth → no auto-forward', authHdr(rec.calls[0]?.init) === undefined);
 }
 
 console.log(`\n${ok}/${ok + bad} session-bridge checks passed`);

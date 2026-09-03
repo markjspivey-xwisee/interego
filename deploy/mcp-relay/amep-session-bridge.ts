@@ -143,6 +143,22 @@ export function amepSameOriginUrl(rawUrl: string, publicBaseUrl: string): URL | 
   return u;
 }
 
+/**
+ * Returns the parsed URL only for the Application Lab's exact, same-origin
+ * action-executor REST endpoint.  This is deliberately narrower than a generic
+ * `/tool/*` bridge: forwarding a session bearer to an arbitrary tool selected
+ * through `act` would collapse the per-tool authorization boundary.
+ */
+export function applicationActionSameOriginUrl(rawUrl: string, publicBaseUrl: string): URL | null {
+  if (!publicBaseUrl || !rawUrl) return null;
+  let u: URL;
+  let base: URL;
+  try { u = new URL(rawUrl); base = new URL(publicBaseUrl); } catch { return null; }
+  if (u.origin !== base.origin) return null;
+  if (u.pathname !== '/tool/execute_application_action') return null;
+  return u;
+}
+
 export interface AmepSessionOpts {
   /** Raw OAuth access token the MCP client presented (relay-injected, never from the wire). */
   sessionBearer?: string;
@@ -154,9 +170,10 @@ export interface AmepSessionOpts {
 
 /**
  * Given the act's target and payload, returns the fetch + payload to hand to
- * kernelAct: a fetch that auto-attaches the caller's bearer to a same-origin
- * POST /amep/acts, and a payload whose act.actor is stamped to the principal id
- * (only when same-origin /amep and the caller left actor absent).
+ * kernelAct: a fetch that auto-attaches the caller's bearer to the exact
+ * same-origin POST /amep/acts or POST /tool/execute_application_action endpoint,
+ * and a payload whose act.actor is stamped to the principal id (only when
+ * same-origin /amep and the caller left actor absent).
  */
 export function withAmepSession(
   targetForActor: string,
@@ -189,13 +206,20 @@ export function withAmepSession(
     } catch { /* unparseable payload → leave as-is; amep returns a clear error */ }
   }
 
-  // (b) Credential injection — ONLY a POST to the exact /amep/acts write endpoint,
-  // ONLY when the caller supplied no explicit authorization.
+  // (b) Credential injection — ONLY a POST to one of two exact same-origin
+  // endpoints, and ONLY when the caller supplied no explicit authorization:
+  //   - /amep/acts (the original AMEP bridge), or
+  //   - /tool/execute_application_action (the signed-domain executor).
+  // The latter keeps kernel `act` usable when a connector's cached tool catalog
+  // predates the live Application Lab tool. It does NOT generalize to /tool/*;
+  // the executor still performs every graph, guard, actor, effect, CAS and
+  // complete-replay check itself.
   if (!sessionBearer || explicitAuth) return { fetch: solidFetch, payload: outPayload };
   const wireFetch: FetchFn = async (url, init) => {
     const u = amepSameOriginUrl(url, publicBaseUrl);
+    const applicationAction = applicationActionSameOriginUrl(url, publicBaseUrl);
     const method = (init?.method ?? 'GET').toUpperCase();
-    if (u && method === 'POST' && u.pathname === '/amep/acts') {
+    if (method === 'POST' && ((u && u.pathname === '/amep/acts') || applicationAction)) {
       const headers: Record<string, string> = { ...(init?.headers ?? {}) };
       if (!Object.keys(headers).some((k) => k.toLowerCase() === 'authorization')) {
         headers['Authorization'] = `Bearer ${sessionBearer}`;
