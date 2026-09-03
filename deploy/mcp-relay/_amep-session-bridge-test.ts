@@ -50,6 +50,7 @@ function recorder() {
 }
 const DEPS = (solidFetch: FetchFn) => ({ solidFetch, publicBaseUrl: BASE });
 const authHdr = (init: any) => Object.entries(init?.headers ?? {}).find(([k]) => k.toLowerCase() === 'authorization')?.[1];
+const acceptHdr = (init: any) => Object.entries(init?.headers ?? {}).find(([k]) => k.toLowerCase() === 'accept')?.[1];
 
 // 1. same-origin POST /amep/acts, no explicit auth → Authorization auto-attached + redirect manual
 {
@@ -116,6 +117,7 @@ const authHdr = (init: any) => Object.entries(init?.headers ?? {}).find(([k]) =>
   const { fetch } = withAmepSession(MCP, {}, { sessionBearer: 'LABTOK' }, DEPS(rec.fn));
   await fetch(MCP, RPC_INIT);
   check('Application action MCP call → bearer auto-attached', authHdr(rec.calls[0]?.init) === 'Bearer LABTOK');
+  check('Application action MCP call → Streamable HTTP Accept', acceptHdr(rec.calls[0]?.init) === 'application/json, text/event-stream');
   check('Application action MCP call → redirect:manual set', rec.calls[0]?.init?.redirect === 'manual');
 }
 // 11. GET, another nested tool, REST shortcut, and external MCP never receive it.
@@ -126,7 +128,7 @@ const authHdr = (init: any) => Object.entries(init?.headers ?? {}).find(([k]) =>
   await fetch(MCP, { method: 'POST', body: APP_RPC.replace('execute_application_action', 'publish_context') });
   await fetch(`${BASE}/tool/execute_application_action`, RPC_INIT);
   await fetch('https://evil.example.com/mcp', RPC_INIT);
-  check('Application bridge refuses GET/other-tool/REST/off-origin', rec.calls.every((c) => authHdr(c.init) === undefined));
+  check('Application bridge refuses GET/other-tool/REST/off-origin', rec.calls.every((c) => authHdr(c.init) === undefined && acceptHdr(c.init) === undefined));
 }
 // 12. Explicit authorization suppresses session forwarding.
 {
