@@ -473,3 +473,104 @@ ex:PersonShape a sh:NodeShape ; sh:targetClass ex:Person ; sh:severity sh:Info ;
     expect(fired.every(r => r.severity === 'Info')).toBe(true);
   });
 });
+
+// ── ★★★ AND THE FIX FOR THAT WENT TOO FAR, IN THE OTHER DIRECTION ──
+//
+// Replacing the four `some(r => r.severity === 'Violation')` reads with `.length > 0` closed the
+// §3.6 hole and opened three more, each of which the TOP-LEVEL rule spells out explicitly:
+//
+//   - sh:Debug and sh:Trace do not defeat conformance. W3C misc/severity-004 and -005 are
+//     approved fixtures saying exactly that, and `.length > 0` counted them.
+//   - An ADVISORY result is engine instrumentation, not a finding about the data, so it counts
+//     only at Violation severity. `.length > 0` read an Info-severity "this construct was not
+//     evaluated" marker as a failure of the shape - turning "could not check" into "does not
+//     conform", and under sh:not into "conforms".
+//   - A caller may NARROW the set. deploy/mcp-relay/conformance-gate.ts passes ['Violation'] and
+//     its comment explains why: a shape author's deliberate sh:Warning must not refuse a publish.
+//     `.length > 0` ignored that one level down, so the relay's publish gate silently became
+//     stricter than it declares - a behaviour change in production, from a fix about a boolean.
+//
+// nodeSatisfiesShape's own comment had already named this shape: a shape must not "say 'conforms'
+// at top level and 'does not' when referenced through sh:node - which, under an sh:not, would have
+// inverted a softened rule into a hard one". The overshoot reintroduced that asymmetry inverted,
+// which is the third time in one batch that a fix re-committed the class it was closing.
+//
+// Both readings come from ONE predicate now. These legs are what keeps them from drifting apart
+// again, and each is a case where the two answers differ.
+describe('nested conformance uses the SAME reading as top level, not a stricter one', () => {
+  const data = `${PREFIXES}
+ex:alice a ex:Person ; ex:friend ex:bob .
+ex:bob a ex:Thing .
+`;
+  /** Outer shape delegating to an inner one whose only failure carries `sev`. */
+  const nested = (sev: string): string => `${PREFIXES}
+ex:PersonShape a sh:NodeShape ; sh:targetClass ex:Person ;
+  sh:property [ sh:path ex:friend ; sh:node ex:FriendShape ] .
+ex:FriendShape a sh:NodeShape ;
+  sh:property [ sh:path ex:name ; sh:severity ${sev} ; sh:minCount 1 ] .
+`;
+
+  it('★ sh:Debug inside a nested shape does NOT make sh:node fire', () => {
+    // W3C misc/severity-004: a Debug result leaves sh:conforms TRUE. If the inner shape conforms,
+    // the outer sh:node has nothing to report.
+    const report = validateAgainstShape(data, nested('sh:Debug'));
+    expect(report.results.filter(r => /NodeConstraintComponent/.test(r.constraintComponent)),
+      'a Debug result one level down was counted as non-conformance').toEqual([]);
+  });
+
+  it('★ sh:Trace inside a nested shape does NOT make sh:node fire', () => {
+    const report = validateAgainstShape(data, nested('sh:Trace'));
+    expect(report.results.filter(r => /NodeConstraintComponent/.test(r.constraintComponent)))
+      .toEqual([]);
+  });
+
+  it('sh:Info inside a nested shape DOES, which is the hole this all started from', () => {
+    const report = validateAgainstShape(data, nested('sh:Info'));
+    expect(report.results.some(r => /NodeConstraintComponent/.test(r.constraintComponent)))
+      .toBe(true);
+  });
+
+  it('★ a caller narrowing conformanceDisallows is honoured one level down too', () => {
+    // The relay's publish gate passes exactly this. Under ['Violation'], an inner sh:Warning is
+    // advice, so the inner shape conforms and the outer sh:node must stay silent.
+    const narrow = validateAgainstShape(data, nested('sh:Warning'),
+      { conformanceDisallows: ['Violation'] });
+    expect(narrow.results.filter(r => /NodeConstraintComponent/.test(r.constraintComponent)),
+      'the caller asked for Violations only and the nested evaluator refused anyway').toEqual([]);
+    // …and the default set still counts it, so the leg above is not passing by accident.
+    const wide = validateAgainstShape(data, nested('sh:Warning'));
+    expect(wide.results.some(r => /NodeConstraintComponent/.test(r.constraintComponent))).toBe(true);
+  });
+
+  /**
+   * ★★ THIS LEG PASSES UNDER BOTH READINGS, AND SAYING SO IS THE POINT.
+   *
+   * The three legs above were each verified to go RED against the `.length > 0` overshoot. This one
+   * did not, and the reason is structural: the unsupported-construct advisory is produced by the
+   * DRIVER's own scan, not inside `conformsToShapeInner`, so no advisory result currently reaches
+   * the nested evaluator at all and the two readings cannot differ here.
+   *
+   * It is kept, labelled, because it pins a property that must hold if one ever does - the shared
+   * predicate handles the advisory case at every depth - and because a leg that cannot distinguish
+   * the readings is worth nothing as coverage and is actively misleading if counted as some. The
+   * discriminating legs are the three above.
+   */
+  it('an ADVISORY result below Violation does not make a nested shape non-conforming (non-discriminating)', () => {
+    // An unsupported construct is the engine saying "not evaluated", not the data failing. Read as
+    // a failure it inverts under sh:not, so a construct this engine cannot check would make a
+    // negation pass.
+    const shapes = `${PREFIXES}
+ex:PersonShape a sh:NodeShape ; sh:targetClass ex:Person ;
+  sh:property [ sh:path ex:friend ; sh:node ex:FriendShape ] .
+ex:FriendShape a sh:NodeShape ; sh:someConstraintInventedLater "x" .
+`;
+    const report = validateAgainstShape(data, shapes);
+    const advisories = report.results.filter(r => r.advisory === true);
+    expect(advisories.length, 'no advisory result was produced, so this leg asserts nothing')
+      .toBeGreaterThan(0);
+    expect(advisories.every(r => r.severity !== 'Violation'), 'the advisory is already a Violation, '
+      + 'so it SHOULD refuse and this leg cannot distinguish the readings').toBe(true);
+    expect(report.results.filter(r => /NodeConstraintComponent/.test(r.constraintComponent)),
+      'an un-evaluated construct one level down was reported as the shape failing').toEqual([]);
+  });
+});

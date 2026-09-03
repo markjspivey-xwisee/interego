@@ -44,12 +44,13 @@
     "mutation-gate": "node tools/mutation-gate.mjs",
     "check:foxxi-affordances": "node tools/check-foxxi-affordances.mjs",
     "check:turtle-iri-ratchet": "node tools/turtle-iri-ratchet.mjs",
-    "lint:all": "npm run lint && npm run lint:ontology && npm run lint:derivation && npm run lint:security-txt && npm run lint:docs-drift && npm run lint:docs-claims && npm run lint:changelog && npm run lint:emergence-boundary && npm run check:foxxi-affordances && npm run check:turtle-iri-ratchet",
+    "lint:all": "npm run lint && npm run lint:ontology && npm run lint:derivation && npm run lint:security-txt && npm run lint:docs-drift && npm run lint:docs-claims && npm run lint:changelog && npm run lint:emergence-boundary && npm run check:foxxi-affordances && npm run check:turtle-iri-ratchet && npm run check:tracked-bytes",
     "clean": "rm -rf packages/*/dist/",
     "ops:wipe-pods": "bash scripts/ops/wipe-pods.sh",
     "ops:wipe-pod": "bash scripts/ops/wipe-pod-one.sh",
     "ops:wipe-parallel": "bash scripts/ops/wipe-parallel.sh",
-    "build:artifact": "node tools/build-workspace-artifact.mjs"
+    "build:artifact": "node tools/build-workspace-artifact.mjs",
+    "check:tracked-bytes": "node tools/tracked-bytes-lint.mjs"
   },
   "keywords": [
     "rdf",

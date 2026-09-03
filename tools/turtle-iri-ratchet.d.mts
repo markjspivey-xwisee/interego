@@ -32,4 +32,16 @@ export declare function countRawIriInterpolations(root?: string): {
   excluded: RatchetFileCount[];
   /** How many test-run files the derivation found; a collapse here means it broke. */
   testRunCount: number;
+  /**
+   * Files the parser could not fully read, with the diagnostic count for each.
+   *
+   * The parser RECOVERS rather than throwing, so such a file contributes fewer sites than it
+   * holds and the total is an undercount — the direction that loosens the gate.
+   */
+  syntaxErrors: RatchetFileCount[];
+  /**
+   * Whether `parseDiagnostics` was observable at all. `false` means the guard above is disarmed
+   * by a TypeScript change, and the gate refuses rather than reporting a number it cannot trust.
+   */
+  diagnosticsSeen: boolean;
 };

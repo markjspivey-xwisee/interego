@@ -239,9 +239,16 @@ describe('whole-tree gates run in a workflow with no paths filter', () => {
   // tracked text file - while running only inside `npx vitest run`, which is invoked from a
   // workflow WITH a `paths:` list. A hand-written list of the gates that must not be filtered
   // is exactly the shape of drift this file exists to catch, one level up.
+  //
+  // ★ THE BYTE GATE IS NAMED AS A TOOL, NOT A TEST FILE, AND THAT IS THE FIX FOR ITS FIRST
+  // WIRING. Running `npx vitest run tests/line-endings-are-normalised.test.ts` in the ESLint job
+  // fired vitest's globalSetup TYPECHECK gate in a job that runs only `npm ci`, so 1,616
+  // `@interego/*` imports resolved to a `dist` nothing had built. The scan lives in
+  // tools/tracked-bytes-lint.mjs now and the test drives the same module, so the unfiltered step
+  // needs no compiler and there is still only one implementation.
   for (const tool of ['tools/docs-claim-lint.mjs', 'tools/lint-gate.mjs',
     'spec/conformance/runner.mjs', 'tools/docs-drift-lint.mjs',
-    'tests/line-endings-are-normalised.test.ts']) {
+    'tools/tracked-bytes-lint.mjs']) {
     it(`runs ${tool} on every push and pull request`, () => {
       expect(
         commands.includes(tool),

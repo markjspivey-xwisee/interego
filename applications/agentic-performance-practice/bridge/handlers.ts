@@ -193,8 +193,32 @@ export function createAgpHandlers(deps: { fetchFn?: typeof fetch } = {}): Record
        * REFUSED rather than clamped: the affordance advertises [-1,1], and quietly rounding a
        * caller's number into range would publish a measurement nobody took.
        */
-      const success = args.success === undefined || args.success === null
-        ? undefined : Boolean(args.success);
+      /**
+       * ★★★ `Boolean(args.success)` WAS HERE, AND IT IS THE DEFECT THIS HANDLER JUST CLOSED,
+       * REINTRODUCED SIX LINES ABOVE ITS OWN FIX. `Boolean('false')` is `true` — so a caller
+       * sending the string "false", which is what a REST form field or a loosely-typed client
+       * sends, had the OPPOSITE of their observation recorded and was told it succeeded. Refusing
+       * an out-of-range score in the next branch while coercing an unparseable boolean here is the
+       * same asymmetry that produced the original bug: one input got a decision, the other got a
+       * cast. Both are decisions now.
+       *
+       * The two boolean STRINGS are accepted because JSON over a form body genuinely produces
+       * them and their meaning is unambiguous. Anything else is refused rather than guessed.
+       */
+      let success: boolean | undefined;
+      if (args.success !== undefined && args.success !== null) {
+        const v = args.success;
+        if (v === true || v === 'true') success = true;
+        else if (v === false || v === 'false') success = false;
+        else {
+          return refuse(400,
+            `agp.actualize: success must be a boolean, got ${JSON.stringify(v)}. Nothing was `
+              + 'published — coercing this would record an outcome you did not report, and '
+              + `${JSON.stringify(v)} is exactly as likely to have meant false as true.`,
+            'the outcome flag is not a boolean and guessing which one it meant would publish an '
+              + 'observation the caller never made');
+        }
+      }
       let scoreScaled: number | undefined;
       if (args.score_scaled !== undefined && args.score_scaled !== null) {
         const n = Number(args.score_scaled);

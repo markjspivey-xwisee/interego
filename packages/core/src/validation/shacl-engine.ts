@@ -3074,7 +3074,7 @@ function nodeSatisfiesShape(
   // sh:node — which, under an sh:not, would have inverted a softened rule into a hard one.
   if (target.nodeLevelShape
     && evaluatePropertyShape(data, focusFor(data, term), target, target.nodeLevelShape,
-      byId, depth, subclassClosure).length > 0) {
+      byId, depth, subclassClosure).some(countsAsNonConformance)) {
     return false;
   }
   // ★ "NOT DESCRIBED" IS NOT "DOES NOT CONFORM". This used to return
@@ -3157,6 +3157,50 @@ const RECURSION_STACK = new Set<string>();
 let ACTIVE_COMPONENTS: readonly ConstraintComponentDef[] = [];
 
 /**
+ * Which severities defeat conformance for the run in progress — the CALLER'S choice, reaching the
+ * nested evaluator.
+ *
+ * ── ★★★ WHY THIS EXISTS: A FIX THAT MADE NESTED STRICTER THAN TOP LEVEL ─────────────────────
+ *
+ * `conformsToShapeInner` decided nested conformance with `.some(r => r.severity === 'Violation')`,
+ * so an inner failure at sh:Info or sh:Warning read as CONFORMANCE and sh:node never fired — the
+ * §3.6 misreading corrected at the top level and left one level down. Replacing those with
+ * `.length > 0` fixed that and OVERSHOT, in a way the top-level rule spells out and the nested one
+ * then contradicted:
+ *
+ *   - sh:Debug and sh:Trace results do NOT defeat conformance. W3C misc/severity-004 and -005 are
+ *     approved fixtures saying so. `.length > 0` counted them.
+ *   - An ADVISORY result is engine instrumentation, not a finding about the data, so it counts
+ *     only at Violation severity. `.length > 0` counted an Info-severity "this construct was not
+ *     evaluated" marker as a failure of the shape — turning "we could not check" into "does not
+ *     conform", and under sh:not into "conforms".
+ *   - A caller may narrow the set: `deploy/mcp-relay/conformance-gate.ts` declares
+ *     `['Violation']`, and its comment explains that a shape author's deliberate sh:Warning must
+ *     not refuse a publish. `.length > 0` ignored that request one level down, so the relay's
+ *     publish gate silently became stricter than it declares.
+ *
+ * ★ AND THIS FILE ALREADY WARNED ABOUT THAT SHAPE. `nodeSatisfiesShape` says a shape must not
+ * "say 'conforms' at top level and 'does not' when referenced through sh:node — which, under an
+ * sh:not, would have inverted a softened rule into a hard one". The first fix reintroduced exactly
+ * that asymmetry in the opposite direction.
+ *
+ * So both readings now come from ONE predicate, `countsAsNonConformance`, and the caller's set
+ * reaches the nested evaluator the way ACTIVE_COMPONENTS does — for the reason given above it:
+ * threading a parameter through eight mutually recursive calls is the change where the one site
+ * that forgets reintroduces the bug in silence.
+ */
+let ACTIVE_DISALLOWS: ReadonlySet<ShaclSeverity> = new Set<ShaclSeverity>(['Info', 'Warning', 'Violation']);
+
+/**
+ * Whether one result defeats conformance, for the run in progress.
+ *
+ * The single reading, applied at top level and at every nesting depth. See ACTIVE_DISALLOWS.
+ */
+function countsAsNonConformance(r: { readonly severity: ShaclSeverity; readonly advisory?: boolean }): boolean {
+  return r.advisory === true ? r.severity === 'Violation' : ACTIVE_DISALLOWS.has(r.severity);
+}
+
+/**
  * The SHAPES document of the run in progress, for the two places that need to read a shape
  * while holding only the data graph: a `sh:targetNode [ sh:select … ]` selector, and the
  * prefixes it is written against. Run-scoped for the same reason as the two above.
@@ -3189,7 +3233,8 @@ function conformsToShapeInner(
   // asymmetry this engine already warns about for targeting: fire on the subclass, then
   // refuse it for failing an exact-parent sh:class. Both call sites already pass the
   // closure in correctly; it died here.
-  if (logicalResults(data, subj, target, byId, depth, subclassClosure).length > 0) return false;
+  if (logicalResults(data, subj, target, byId, depth, subclassClosure)
+    .some(countsAsNonConformance)) return false;
   // ★ A SPARQL CONSTRAINT IS A CONSTRAINT WHEREVER THE SHAPE IS REACHED. `sparqlConstraints`
   // was read at exactly one site — the top-level driver — so `sh:node ex:Inner` where
   // ex:Inner's only constraint is an sh:sparql enforced NOTHING, and so did the same shape
@@ -3204,7 +3249,7 @@ function conformsToShapeInner(
       sourceShape: target.id,
       severity: target.severity,
       ...(target.message !== undefined ? { shapeMessage: target.message } : {}),
-    }).length > 0) {
+    }).some(countsAsNonConformance)) {
     return false;
   }
   // ★ AND A CONSTRAINT COMPONENT IS A CONSTRAINT WHEREVER THE SHAPE IS REACHED, for exactly
@@ -3212,12 +3257,12 @@ function conformsToShapeInner(
   // shapes, so a component's parameters on a shape reached through sh:node — or on that
   // shape's property shapes — activated nothing at all.
   if (ACTIVE_COMPONENTS.length > 0
-    && componentResults(data, subj, target, ACTIVE_COMPONENTS).length > 0) {
+    && componentResults(data, subj, target, ACTIVE_COMPONENTS).some(countsAsNonConformance)) {
     return false;
   }
   for (const ps of target.propertyShapes) {
     if (evaluatePropertyShape(data, subj, target, ps, byId, depth + 1, subclassClosure)
-      .length > 0) return false;
+      .some(countsAsNonConformance)) return false;
   }
   if (target.closed) {
     // ★ Only a PREDICATE path contributes a permitted predicate. A sequence or inverse
@@ -4043,11 +4088,18 @@ export function validateAgainstShape(
   // beside it.
   const savedComponents = ACTIVE_COMPONENTS;
   const savedShapeDoc = ACTIVE_SHAPE_DOC;
+  // Restored on every path for the same reason as the two above: this decides what "conforms"
+  // MEANS, so a leaked value would make a later, unrelated run answer with the wrong caller's
+  // policy - and order-dependently, which is the hazard that note describes.
+  const savedDisallows = ACTIVE_DISALLOWS;
+  ACTIVE_DISALLOWS = new Set<ShaclSeverity>(
+    options.conformanceDisallows ?? ['Info', 'Warning', 'Violation']);
   try {
     return validateAgainstShapeInner(dataTurtle, shapeTurtle, options);
   } finally {
     ACTIVE_COMPONENTS = savedComponents;
     ACTIVE_SHAPE_DOC = savedShapeDoc;
+    ACTIVE_DISALLOWS = savedDisallows;
   }
 }
 
@@ -4568,14 +4620,13 @@ function validateAgainstShapeInner(
   //   misc/severity-005 — one sh:Trace   result, sh:conforms TRUE
   const disallows: readonly ShaclSeverity[] = options.conformanceDisallows
     ?? ['Info', 'Warning', 'Violation'];
-  const countsAgainst = new Set<ShaclSeverity>(disallows);
   return {
-    // An ADVISORY result is engine instrumentation, not a finding about the data, so the
-    // caller's severity choice does not apply to it: a Violation-severity advisory is
-    // fail-closed by construction and refuses regardless.
-    conforms: !all.some(r => r.advisory === true
-      ? r.severity === 'Violation'
-      : countsAgainst.has(r.severity)),
+    // ★ ONE PREDICATE, TOP LEVEL AND NESTED. An ADVISORY result is engine instrumentation, not a
+    // finding about the data, so the caller's severity choice does not apply to it: a
+    // Violation-severity advisory is fail-closed by construction and refuses regardless. That
+    // rule, and the caller's chosen set, now reach `conformsToShapeInner` too — see
+    // ACTIVE_DISALLOWS for the asymmetry that existed in both directions before it.
+    conforms: !all.some(countsAsNonConformance),
     conformanceDisallows: disallows,
     results: all,
     fullyChecked,

@@ -43,25 +43,32 @@
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+/**
+ * ★★ THE SCAN MOVED TO A TOOL, AND THIS FILE DRIVES IT RATHER THAN REPEATING IT.
+ *
+ * Its subject is `git ls-files` — the whole tree — so it must run on every push, and it ran only
+ * inside `npx vitest run`, invoked from a workflow behind a `paths:` list. A step was added to the
+ * ESLint job to run this one file unfiltered, and CI failed at once: that job runs `npm ci` and
+ * nothing else, while `npx vitest run` fires the globalSetup TYPECHECK gate, so with no build
+ * `@interego/*` resolved to a missing `dist` and the job reported 1,616 type errors that were all
+ * one absent `npm run build`. A byte scan had dragged a compiler into a lint job.
+ *
+ * A second copy of the scan is where two implementations drift — which is the defect class this
+ * file's own header is about. So there is ONE implementation in tools/tracked-bytes-lint.mjs, the
+ * workflow runs it directly, and every assertion below drives it. Same shape as the turtle IRI
+ * ratchet, for the same reason.
+ */
+import { scanTrackedBytes } from '../tools/tracked-bytes-lint.mjs';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-/** Extensions .gitattributes marks `binary`; bytes there mean nothing to these checks. */
-const BINARY = /\.(png|jpe?g|gif|ico|webp|pdf|zip|gz|woff2?|ttf|eot|mp4|wasm)$/i;
-/** Extensions .gitattributes pins to CRLF on purpose. */
-const CRLF_BY_DESIGN = /\.(bat|cmd)$/i;
-
-function trackedFiles(): string[] {
-  const r = spawnSync('git', ['ls-files', '-z'], { cwd: REPO, encoding: 'buffer' });
-  if (r.status !== 0) throw new Error(`git ls-files failed: ${r.stderr?.toString() ?? ''}`);
-  return r.stdout.toString('utf8').split('\0').filter(Boolean);
-}
-
 describe('the working tree matches the index CI checks out', () => {
-  const files = trackedFiles();
+  // ONE pass over ~2,700 files, shared by every leg below, from the same module the workflow runs.
+  // The binary-extension exemption lives there too, so the two entry points cannot disagree.
+  const scan = scanTrackedBytes(REPO);
+  const files = scan.files;
 
   it('finds tracked files at all', () => {
     // Guards the guard: an empty listing makes both scans below vacuous, which is the
@@ -94,14 +101,7 @@ describe('the working tree matches the index CI checks out', () => {
    * running — which is the failure that trains people to re-run instead of read.
    */
   it('holds no CR in any tracked text file', () => {
-    const offenders: string[] = [];
-    for (const f of files) {
-      if (BINARY.test(f) || CRLF_BY_DESIGN.test(f)) continue;
-      const buf = readFileSync(join(REPO, f));
-      // A NUL means "git thinks this is binary"; the next check owns that case.
-      if (buf.includes(0)) continue;
-      if (buf.includes(0x0d)) offenders.push(f);
-    }
+    const offenders = scan.cr;
     expect(
       offenders.slice(0, 20),
       `${offenders.length} tracked text file(s) hold CRLF in the working tree while the index `
@@ -111,24 +111,16 @@ describe('the working tree matches the index CI checks out', () => {
   }, 30_000);
 
   it('holds no control byte that would make a source file binary to git', () => {
-    const offenders: string[] = [];
-    for (const f of files) {
-      if (BINARY.test(f)) continue;
-      const buf = readFileSync(join(REPO, f));
-      // ★ EVERY C0 CONTROL BYTE, NOT JUST NUL. This read `buf.indexOf(0)` while its own
-      // name said "control byte", and three slipped past it: a 0x01 dedup separator in
-      // kernel/affordance-extraction.ts, a 0x07 inside a test asserting on control characters,
-      // and a 0x1b heading an ANSI-strip regex. A fourth arrived the day this was widened -
-      // five 0x08 bytes generated into the isTransientNetworkError pattern, which silently
-      // ate its word-boundary escapes and left a regex that still compiled and matched the
-      // wrong thing. NUL is the only one git calls binary; the rest are worse in a different
-      // way, because they are invisible in the diff, the terminal and the grep, so the file
-      // reads as correct while behaving otherwise. TAB / LF / CR are the three that belong.
-      const at = buf.findIndex((c) => c < 32 && c !== 9 && c !== 10 && c !== 13);
-      if (at !== -1) {
-        offenders.push(`${f} (0x${buf[at]?.toString(16).padStart(2, '0')} at byte ${at})`);
-      }
-    }
+    // ★ EVERY C0 CONTROL BYTE, NOT JUST NUL — the rule lives in tools/tracked-bytes-lint.mjs and
+    // its history is worth keeping here, because the narrow version of it is what let four
+    // through: a 0x01 dedup separator in kernel/affordance-extraction.ts, a 0x07 inside a test
+    // asserting on control characters, a 0x1b heading an ANSI-strip regex, and then five 0x08
+    // bytes generated into the isTransientNetworkError pattern, which silently ate its
+    // word-boundary escapes and left a regex that still compiled and matched the wrong thing. NUL
+    // is the only one git calls binary; the rest are worse in a different way, because they are
+    // invisible in the diff, the terminal and the grep, so the file reads as correct while
+    // behaving otherwise. TAB / LF / CR are the three that belong.
+    const offenders = scan.controlBytes;
     expect(
       offenders,
       'a raw control byte is invisible in the diff, the terminal and the grep, so the source '
@@ -149,26 +141,11 @@ describe('the working tree matches the index CI checks out', () => {
    * is the whole reason .gitattributes sets `diff` on source at all.
    */
   it('★ every tracked text extension is declared in .gitattributes', () => {
-    const ga = readFileSync(join(REPO, '.gitattributes'), 'utf8');
-    const declared = new Set([...ga.matchAll(/^\*\.([A-Za-z0-9]+)/gm)].map(m => m[1] as string));
-    expect(declared.size, 'no extensions parsed out of .gitattributes - the scan is broken')
+    // Driven from the shared scan, so the two entry points cannot disagree about which
+    // extensions count or which dotfile pseudo-extensions are exempt.
+    expect(scan.declared.size, 'no extensions parsed out of .gitattributes - the scan is broken')
       .toBeGreaterThan(20);
-
-    const counts = new Map<string, number>();
-    for (const f of files) {
-      if (BINARY.test(f)) continue;
-      const m = /\.([A-Za-z0-9]+)$/.exec(f);
-      if (!m) continue;                       // no extension: nothing to declare
-      const ext = (m[1] ?? '').toLowerCase();
-      counts.set(ext, (counts.get(ext) ?? 0) + 1);
-    }
-    // Dotfiles read as an "extension" (.gitignore, .nojekyll) and are not a file type.
-    const DOTFILES = new Set(['gitignore', 'gitattributes', 'dockerignore', 'nojekyll', 'example',
-      'dashboard', 'discord', 'identity', 'relay', 'validator']);
-    const undeclared = [...counts.entries()]
-      .filter(([ext]) => !declared.has(ext) && !DOTFILES.has(ext))
-      .sort((a, b) => b[1] - a[1])
-      .map(([ext, n]) => `*.${ext} (${n} tracked file(s))`);
+    const undeclared = scan.undeclaredExtensions;
     expect(
       undeclared,
       'these extensions are tracked and undeclared, so git gives them diff: unspecified and a '
@@ -187,17 +164,12 @@ describe('the working tree matches the index CI checks out', () => {
    * a vendored SCORM asset served to browsers - and it was stripped.
    */
   it('★ holds no UTF-8 BOM, which no editor shows and no diff renders', () => {
-    const offenders: string[] = [];
-    for (const f of files) {
-      if (BINARY.test(f)) continue;
-      const buf = readFileSync(join(REPO, f));
-      if (buf[0] === 0xEF && buf[1] === 0xBB && buf[2] === 0xBF) offenders.push(f);
-    }
+    const offenders = scan.bom;
     expect(
       offenders,
       'a UTF-8 BOM at the head of a text file is invisible in review and changes how a CSS or '
         + 'script consumer parses the first line:\n  ' + offenders.join('\n  '),
     ).toEqual([]);
-  }, 30_000);
+  });
 
 });

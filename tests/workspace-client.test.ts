@@ -19,6 +19,35 @@ import {
 } from '@interego/workspace-client';
 
 const RELAY = 'https://relay.interego.xwisee.com';
+
+/**
+ * Wait until `condition` holds, or fail saying what never happened.
+ *
+ * ── ★★ WHY: A TEST THAT ASSUMED HOW FAST THE MACHINE IS ─────────────────────────────────────
+ *
+ * The watch legs below drove a poller at `refetchInterval: 5`, slept a fixed 20–40 ms, and
+ * asserted a COUNT. That is an assumption about the host, not about the transport: inside a full
+ * 359-module parallel run one of them got a single poll where it wanted three and reported
+ * "expected 1 to be 2" on code that was working — green 3/3 when the file ran alone.
+ *
+ * A flaky gate is worse than a slow one, because it teaches people to re-run instead of read, and
+ * the next real failure arrives looking exactly like the noise. Waiting for the condition removes
+ * the assumption without weakening any assertion: the counts are still asserted, and a fixed wait
+ * is still used where the claim is that NOTHING further happens, because there is no condition to
+ * wait for there.
+ *
+ * The timeout is generous on purpose — it bounds a hang, it does not measure a rate.
+ */
+async function waitUntil(condition: () => boolean, what: string, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) {
+      throw new Error(`waited ${timeoutMs}ms for ${what} and it never happened`);
+    }
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
 const trig = (iri: string, body: string): string =>
   `@prefix wsp: <${WSP}> .\n@prefix dct: <http://purl.org/dc/terms/> .\n`
   + `<urn:iep:x> dct:title "DESCRIPTOR LEVEL" .\n<${iri}> {\n${body}\n}\n`;
@@ -374,9 +403,22 @@ describe('the transport declares which credential drives it', () => {
       expect(stop).not.toBe(null);
       // Three polls: the immediate one, an identical answer, then a changed one. An unchanged
       // answer must not fire — a consumer cannot tell a repeat from a change if it does.
+      //
+      // ★★ THIS SLEPT 40 ms AND ASSERTED A COUNT, WHICH IS AN ASSUMPTION ABOUT THE MACHINE'S
+      // SPEED RATHER THAN ABOUT THE TRANSPORT. `refetchInterval: 5` needs three polls inside that
+      // budget; inside a full 359-module parallel run it got one, and the suite reported
+      // "expected 1 to be 2" on a transport that was working correctly. Measured: green 3/3 when
+      // the file runs alone. Re-running is what that trains, and a gate people re-run is a gate
+      // they stop reading.
+      //
+      // ★ NOTHING IS RELAXED. It still requires EXACTLY two events, and the second poll returning
+      // an identical answer must still produce none — the grace period below is what checks that,
+      // because by then the answer has stopped changing and any further event is a duplicate.
+      // What changed is that the deadline now waits for the work instead of predicting it.
+      await waitUntil(() => got.length >= 2, 'two data events');
       await new Promise((r) => setTimeout(r, 40));
       (stop as () => void)();
-      expect(got.length).toBe(2);
+      expect(got.length, 'an unchanged answer fired an event').toBe(2);
       expect(got[0]).toEqual({ entries: [1] });
       expect(got[1]).toEqual({ entries: [1, 2] });
     });
@@ -384,22 +426,28 @@ describe('the transport declares which credential drives it', () => {
       const tx = new RelayMcpTransport(RELAY, bearer, async () => { throw new Error('socket closed'); });
       const events: string[] = [];
       const stop = tx.watchTool('discover_context', {}, (ev) => { events.push(ev.type); }, { refetchInterval: 5 });
-      await new Promise((r) => setTimeout(r, 20));
+      // Same correction as the leg above: waits for the second error rather than assuming 20 ms
+      // buys two polls. The property is unchanged — an error that persists must be delivered every
+      // time rather than deduplicated into silence, which is why one is not enough.
+      await waitUntil(() => events.filter((e) => e === 'error').length > 1, 'two error events');
       (stop as () => void)();
       expect(events[0]).toBe('error');
-      // An error that persists is a condition the consumer has to keep showing, so unlike a
-      // payload it is delivered every time rather than deduplicated into silence.
       expect(events.filter((e) => e === 'error').length).toBeGreaterThan(1);
     });
     it('stops reading once unsubscribed', async () => {
       let calls = 0;
       const tx = new RelayMcpTransport(RELAY, bearer, async () => { calls++; return answer({ entries: [] }); });
       const stop = tx.watchTool('discover_context', {}, () => { /* ignored */ }, { refetchInterval: 5 });
-      await new Promise((r) => setTimeout(r, 20));
+      // Wait for the poller to be demonstrably RUNNING before stopping it: unsubscribing a watch
+      // that had not yet polled would prove nothing, and "calls did not grow" is satisfied
+      // trivially by a watch that never started.
+      await waitUntil(() => calls > 0, 'at least one poll before unsubscribing');
       (stop as () => void)();
       const after = calls;
-      await new Promise((r) => setTimeout(r, 30));
-      expect(calls).toBe(after);
+      // A fixed wait is correct HERE, and only here: the assertion is that nothing happens, and
+      // there is no condition to wait for. Several poll intervals is the evidence.
+      await new Promise((r) => setTimeout(r, 60));
+      expect(calls, 'the watch kept reading after it was unsubscribed').toBe(after);
     });
   });
   it('unwraps a refusal that arrived as a rejection', () => {

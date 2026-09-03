@@ -234,7 +234,16 @@ export const MUTANTS = [
     // gate the mutant is meant to prove. JS reads it back as the same single character.
     find: "(?:\\bHTTP",
     replace: "(?:\u0008HTTP",
-    mustFail: [BYTES_GATE],
+    // ★★ BOTH ENTRY POINTS, BECAUSE THE SCAN NOW HAS TWO. It moved into
+    // tools/tracked-bytes-lint.mjs so an unfiltered CI step could run it without a compiler — the
+    // vitest step that ran it before fired the typecheck globalSetup in a job that never builds,
+    // and reported 1,616 phantom errors. A move like that is exactly where a check quietly stops
+    // running at one of its callers, so the defect must go red at both.
+    //
+    // A mutant that NARROWED the scan back to `indexOf(0)` was tried instead and REMOVED: the tree
+    // holds no non-NUL control byte, so both readings agree and it discriminated nothing. This one
+    // plants the byte, so it does.
+    mustFail: [BYTES_GATE, 'tools/tracked-bytes-lint.mjs'],
     why: 'the gate said "control byte" and checked only NUL, so 0x01, 0x07, 0x1b and five 0x08 all sat in tracked source',
   },
 

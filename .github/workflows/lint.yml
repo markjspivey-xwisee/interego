@@ -98,10 +98,17 @@ jobs:
       # The byte gate reads `git ls-files` - every tracked text file - so it is whole-tree for
       # the same reason. It normally runs inside `npx vitest run`, which is invoked from
       # bridge-typecheck.yml BEHIND a `paths:` list; a control byte in a file type that list
-      # does not name would not start it. Running the one file here closes that, and
+      # does not name would not start it. Running it here closes that, and
       # tests/workflow-trigger-covers-the-suite.test.ts asserts this step exists.
+      #
+      # ★★ AND IT RAN `npx vitest run` FOR ONE FILE, WHICH FAILED THIS JOB IMMEDIATELY. This job
+      # runs `npm ci` and nothing else, while `npx vitest run` fires vitest's globalSetup - the
+      # TYPECHECK gate over tsconfig.check.json. With no `npm run build`, every `@interego/*`
+      # import resolved to a `dist` that does not exist and the job reported 1,616 type errors that
+      # were all one missing build. A byte scan does not need a compiler; the scan is now a tool
+      # that the test drives too, so there is one implementation and this step needs no build.
       - name: No tracked source file holds a raw control byte
-        run: npx vitest run tests/line-endings-are-normalised.test.ts
+        run: node tools/tracked-bytes-lint.mjs
       # ★ CHANGELOG.md's preamble asserted "Commit hashes link back to the git history" over
       # 78 citations, NONE of which resolve — the history they were written against is not
       # the one this repository has. That is a false sentence at HEAD in the second paragraph
