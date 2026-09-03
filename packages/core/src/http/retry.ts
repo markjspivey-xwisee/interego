@@ -73,12 +73,40 @@ const TRANSIENT_PATTERN = /ECONNRESET|ETIMEDOUT|UND_ERR_CONNECT|UND_ERR_SOCKET|f
  * found`, `chunk of 512 bytes rejected` and `entry 2500 conflicts with head` all matched too,
  * and the last is worse than slow: resending a conflict re-collides.
  *
- * The status must therefore be INTRODUCED as one. Every site that throws these writes it the
- * same two ways — `...: 503 Service Unavailable` and `... returned 502 Bad Gateway` — so the
- * introducer is what is matched, and the trailing lookahead keeps it from biting off the head
- * of a longer number. A message that merely CONTAINS a number is not a status report.
+ * The status must therefore be recognisable AS one. A message that merely CONTAINS a number is
+ * not a status report.
+ *
+ * ── ★★ AND "EVERY SITE WRITES IT THE SAME TWO WAYS" WAS WRONG ────────────────
+ *
+ * That sentence stood here, and it was a census I asserted rather than ran. There is a third
+ * spelling with no introducer at all:
+ *
+ *     applications/foxxi-content-intelligence/src/lrs-forwarding.ts:252
+ *     throw new Error(`forward POST ${resp.status} ${resp.statusText}`)   // "forward POST 503 …"
+ *
+ * No colon, no `HTTP`, no `status`, no `returned`. Of the 23 in-repo 5xx throws that sit inside
+ * a `withTransientRetry` callback, 22 matched the introducer form and that one did not — so
+ * anchoring the matcher SILENTLY DISABLED retry for the xAPI forwarding path. A downstream LRS
+ * 503 then dead-letters every forwarded statement on its first attempt, into an in-memory
+ * buffer capped at 200 that drops the oldest and is re-driven only by an operator call.
+ * Over-narrowing cost exactly what the over-matching did, in the other direction.
+ *
+ * So the second alternative below matches the status by its REASON PHRASE instead — `503
+ * Service Unavailable`, `502 Bad Gateway` — which is how HTTP renders one and is what every
+ * spelling has in common. It cannot fire on a content address (a hex run is not followed by a
+ * capitalised phrase) and both alternatives keep the digit-boundary guards, so `1523`, `512
+ * bytes` and `2500 conflicts` stay out on either path.
+ *
+ * ★ TWO REGEXES, NOT ONE ALTERNATION, BECAUSE THE FLAGS DIFFER. The introducer form is
+ * case-insensitive (`http`, `HTTP`, `Status`). The reason-phrase form MUST NOT be: under `i`,
+ * `[A-Z][A-Za-z]+` matches `bytes`, and `chunk of 512 bytes rejected` is transient again —
+ * putting back the exact false positive the anchoring was for. Two constants keep the flags
+ * honest; one combined pattern cannot.
  */
-const HTTP_5XX_IN_MESSAGE = /(?:\bHTTP\b\s*|\bstatus\b\W{0,2}|\breturned\s+|:\s*)5\d\d(?![0-9A-Za-z])/i;
+/** Introduced as a status: `...: 503`, `HTTP 503`, `status=503`, `returned 502`. */
+const HTTP_5XX_INTRODUCED = /(?:\bHTTP\b\s*|\bstatus\b\W{0,2}|\breturned\s+|:\s*)5\d\d(?![0-9A-Za-z])/i;
+/** Rendered with its reason phrase: `forward POST 503 Service Unavailable`. Case-SENSITIVE. */
+const HTTP_5XX_WITH_REASON = /(?<![0-9A-Za-z])5\d\d\s+[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*/;
 
 /** Undici exposes structured causes (`err.cause.code`) for some failures. */
 const TRANSIENT_CAUSE_CODES: ReadonlySet<string> = new Set([
@@ -113,7 +141,9 @@ export function isTransientNetworkError(err: unknown): boolean {
   // (`Failed to ...: 5xx ...`) plus the standard fetch/undici messages.
   const message = (err as { message?: unknown }).message;
   if (typeof message === 'string'
-    && (TRANSIENT_PATTERN.test(message) || HTTP_5XX_IN_MESSAGE.test(message))) return true;
+    && (TRANSIENT_PATTERN.test(message)
+      || HTTP_5XX_INTRODUCED.test(message)
+      || HTTP_5XX_WITH_REASON.test(message))) return true;
   return false;
 }
 

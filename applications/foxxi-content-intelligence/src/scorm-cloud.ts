@@ -13,6 +13,8 @@
  * Reference: https://cloud.scorm.com/docs/v2/reference/swagger/
  */
 
+import { refuse } from '../../_shared/vertical-bridge/refusal.js';
+
 export interface ScormCloudConfig {
   appId: string;
   secretKey: string;
@@ -141,10 +143,17 @@ export async function createScormCloudRegistration(
       }),
     });
     if (r.status === 409) return { status: 'exists' };
-    if (!r.ok) return { status: 'failed', error: `${r.status} ${r.statusText}` };
+    if (!r.ok) {
+      // ★★ 502, BECAUSE THE UPSTREAM FAILED AND THE CALLER DID NOT. This returned a bare
+      // `{status:'failed', error}` that the dispatcher cannot key on, so the handler - which
+      // returns this verbatim - answered HTTP 200 for work that never happened. Its sibling
+      // twenty lines away already answered 502 through upstreamFailed(); two handlers against the
+      // same upstream disagreed about what a failure is.
+      return { ...refuse(502, `${r.status} ${r.statusText}`, 'a pod or upstream service this affordance composes did not complete the operation'), status: 'failed' };
+    }
     return { status: 'created' };
   } catch (err) {
-    return { status: 'failed', error: (err as Error).message };
+    return { ...refuse(502, (err as Error).message, 'a pod or upstream service this affordance composes did not complete the operation'), status: 'failed' };
   }
 }
 

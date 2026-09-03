@@ -93,6 +93,8 @@ import type { PinRow } from './railway-pins.mjs';
 import { askRunningBuilds, isRunningDisagreement, runningHeadline } from './railway-running-build.js';
 import type { RunningReport } from './railway-running-build.js';
 import { singletonViolations } from './railway-services.mjs';
+import { verifyByDigest, isDigestDisagreement, digestHeadline } from './railway-image-digest.js';
+import type { DigestReport } from './railway-image-digest.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -138,10 +140,43 @@ async function domainsFor(row: PinRow): Promise<string[]> {
 const running: RunningReport[] = await askRunningBuilds(rows, domainsFor);
 const runningOf = new Map(running.map((r) => [r.service, r]));
 
+/**
+ * ★ THE THIRD AXIS, FOR THE SERVICES THE SECOND ONE CANNOT REACH.
+ *
+ * `askRunningBuilds` reports `unaskable` for css and discord, which bind no reachable health
+ * path, and that was previously the end of it: two rows permanently outside every claim this
+ * tool makes. They can still be checked, just not by asking them - Railway records the digest
+ * it resolved for the live container, and GHCR serves the digest for the pinned tag.
+ *
+ * Only rows pinned to a sha of an image THIS repository builds are eligible. postgres and
+ * redis are upstream images with no build of ours to compare against and stay `n/a`; a mutable
+ * tag would compare a moving target and is left alone for the reason its own block already
+ * gives. Everything else - no token, no digest, an unreachable registry - reports
+ * `digest-unavailable` WITH the reason and is never counted as covered.
+ */
+// ★ `tagKind`, NOT `kind`. The first version of this filter read `row.kind`, which no row
+// carries, so every service failed the test and the pass silently checked NOTHING while the
+// audit printed a clean run - the exact fail-open this file exists to catch, in the code added
+// to close a hole. The `eligibleButUnchecked` line below is why that cannot recur silently.
+const digestEligible = rows.filter((row) =>
+  runningOf.get(row.service)?.verdict === 'unaskable'
+  && row.tagKind === 'sha'
+  && row.builtHere !== false);
+const digests: DigestReport[] = [];
+for (const row of digestEligible) {
+  digests.push(await verifyByDigest(
+    gql,
+    { service: row.service, deployId: row.deployId, repo: row.repo, tag: row.tag, kind: row.tagKind },
+    process.env['GITHUB_TOKEN'] ?? process.env['GH_TOKEN'],
+  ));
+}
+const digestOf = new Map(digests.map((d) => [d.service, d]));
+
+
 const pad = (s: string, n: number): string => (s.length >= n ? `${s.slice(0, n - 1)} ` : s.padEnd(n));
 process.stdout.write(`project ${result.project}\n\n`);
 process.stdout.write(
-  `${pad('SERVICE', 20)}${pad('PIN', 14)}${pad('FRESH', 14)}${pad('RUNNING', 16)}SHIPPED-FILES-CHANGED\n`);
+  `${pad('SERVICE', 20)}${pad('PIN', 14)}${pad('FRESH', 14)}${pad('RUNNING', 18)}SHIPPED-FILES-CHANGED\n`);
 
 const bad: RefinedRow[] = [];
 for (const row of rows) {
@@ -152,10 +187,16 @@ for (const row of rows) {
       : row.freshness === 'BEHIND' ? `${changed}${row.bundleReason && changed === 0 ? ' (unresolved)' : ''}`
         : '';
   const run = runningOf.get(row.service);
+  // An unaskable row prints what the digest axis found instead of `unaskable`, so the column
+  // never reads as "nothing is known" about a service something IS known about.
+  const dig = digestOf.get(row.service);
+  const verdict = (run?.verdict === 'unaskable' && dig) ? dig.verdict : (run?.verdict ?? '?');
   process.stdout.write(
     `${pad(row.service, 20)}${pad((row.tag ?? 'none').slice(0, 12), 14)}${pad(row.freshness ?? '?', 14)}`
-    + `${pad(run?.verdict ?? '?', 16)}${note}\n`);
-  if (hasDisagreement([row]) || (run !== undefined && isRunningDisagreement(run))) bad.push(row);
+    + `${pad(verdict, 18)}${note}\n`);
+  if (hasDisagreement([row])
+    || (run !== undefined && isRunningDisagreement(run))
+    || (dig !== undefined && isDigestDisagreement(dig))) bad.push(row);
 }
 
 /**
@@ -170,7 +211,15 @@ function writeUnasked(write: (s: string) => void): void {
   const unasked = running.filter((r) => r.verdict === 'unaskable');
   if (!unasked.length) return;
   write(`\n${unasked.length} service(s) could not be asked what they are running:\n`);
-  for (const r of unasked) write(`  ${pad(r.service, 12)}${r.reason}\n`);
+  for (const r of unasked) {
+    // ★ SAY WHAT DID COVER IT. Listing a service here under "could not be asked" while the
+    // digest axis has just verified it reads as an open hole, and an operator who believes
+    // that goes looking for one. The reason for not being ASKABLE still travels with the
+    // name - that is why this block exists - but it is no longer the last word.
+    const d = digestOf.get(r.service);
+    write(`  ${pad(r.service, 12)}${r.reason}\n`);
+    if (d) write(`  ${pad('', 12)}└ ${d.verdict}: ${d.reason}\n`);
+  }
 }
 
 if (bad.length === 0) {
@@ -182,7 +231,9 @@ if (bad.length === 0) {
   // the services it could not ask rather than absorbing them.
   process.stdout.write(
     '\nEvery pin is master, or differs from master only in files that service does not ship.\n');
-  process.stdout.write(`${runningHeadline(running)}\n`);
+  process.stdout.write(`${runningHeadline(running, new Set(digests.filter((d) => d.verdict !== 'digest-unavailable').map((d) => d.service)))}\n`);
+  const dh = digestHeadline(digests);
+  if (dh) process.stdout.write(`${dh}\n`);
   writeUnasked((s) => process.stdout.write(s));
   process.exit(0);
 }
@@ -191,6 +242,10 @@ process.stderr.write(`\n★ ${bad.length} service(s) disagree with what this rep
 for (const row of bad) {
   process.stderr.write(`  ${row.service}\n`);
   if (row.error) process.stderr.write(`    unreadable: ${row.error}\n`);
+  // A row can be here BECAUSE of the digest axis, and a failure that does not name its
+  // own reason sends the reader to the wrong check.
+  const dg = digestOf.get(row.service);
+  if (dg && isDigestDisagreement(dg)) process.stderr.write(`    ${dg.verdict}: ${dg.reason}\n`);
   if (row.agreement && row.agreement !== 'ok') process.stderr.write(`    repo agreement: ${row.agreement}\n`);
   if (row.freshness === 'BEHIND') {
     const changed = row.bundleChanged ?? [];

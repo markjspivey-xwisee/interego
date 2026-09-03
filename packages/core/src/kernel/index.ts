@@ -161,6 +161,8 @@ import { CG, IEH } from '../rdf/namespaces.js';
 
 import { extractAffordancesFromTurtle } from './affordance-extraction.js';
 import { sameAction } from './action-identity.js';
+// Imported (not merely re-exported below): the second invoke leg CALLS this.
+import { declaresRefusal } from './hypermedia.js';
 
 import type {
   Affordance,
@@ -187,6 +189,7 @@ export { extractAffordancesFromTurtle } from './affordance-extraction.js';
 export {
   decorate as decorateKernelResult,
   decorateShim,
+  declaresRefusal,
   hydraAffordance,
   hydraEntryPoint,
   KERNEL_JSONLD_CONTEXT,
@@ -1347,14 +1350,23 @@ export async function act(
     // double-encoded and a strict JSON body-parser rejects the quoted string
     // (f-act-payload-double-encode, which blocked POSTing to review_foxxi_record).
     const body = (!bodyless && hasPayload) ? (typeof payload === 'string' ? payload : JSON.stringify(payload)) : undefined;
-    const response = await withTransientRetry(async () => {
+    // ★★ THE SECOND INVOKE LEG. `act()` reaches a target two ways: the descriptor-resolved leg
+    // delegates to `followAffordance`, which reads the body inside the retry and does not resend
+    // a declared refusal. THIS leg — a caller supplying a pre-resolved target — was left
+    // unguarded, and read the body only after the retry, so it structurally could not consult
+    // `declaresRefusal`. Measured against dist with a 502 carrying shared-workspace's
+    // `unreadable-workspace` body: 4 fetches, ~7s, and the refusal then arrived as a THROWN
+    // exception rather than as data with its `iep:refusalReason`. Same call, same refusal, two
+    // different outcomes depending on which argument the caller passed. Reached from
+    // `invoke_affordance` on both the relay and the stdio server.
+    const { response, responseBody } = await withTransientRetry(async () => {
       const r = await fetchImpl(affordance.target, { method: affordance.method, headers, body });
-      if (r.status >= 500) {
+      const text = await r.text();
+      if (r.status >= 500 && !declaresRefusal(text)) {
         throw new Error(`Affordance target ${affordance.target} returned ${r.status} ${r.statusText}`);
       }
-      return r;
+      return { response: r, responseBody: text };
     });
-    const responseBody = await response.text();
     // iep:canDecrypt semantics: the GET fetches an envelope; the kernel's
     // contract is to surface its plaintext to authorized recipients. If
     // the caller supplied a recipientKeyPair AND we recognize an

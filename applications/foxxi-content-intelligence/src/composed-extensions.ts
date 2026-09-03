@@ -65,6 +65,7 @@ import AdmZip from 'adm-zip';
 import { unwrapScormPackage, type ScormPackageFormat } from '../../_shared/scorm/index.js';
 import { fingerprintAuthoringTool, type ScormStandardInfo } from './scorm-fingerprint.js';
 import { manifestToAgenticCourse, type ManifestCourseResult } from './course-graph.js';
+import { refuse } from '../../_shared/vertical-bridge/refusal.js';
 
 // ── A. Multi-tenant onboarding ────────────────────────────────
 
@@ -590,6 +591,22 @@ export interface ScormUploadResult {
   parsed?: ScormParseResult;
   error?: string;
   note?: string;
+  /**
+   * ★★ PRESENT WHEN THIS RESULT IS A DECLINE, AND IT HAD TO BE ADDED.
+   *
+   * `foxxi.upload_scorm_package`'s handler types its own authorization decline and then
+   * returns `uploadScormPackage(...)` verbatim - so these three `status:'failed'` returns WERE
+   * the HTTP response, and carried no `kind`. Executed against the real dispatcher, a rejected
+   * upload answered HTTP 200 with isError=false: a caller branching on `res.ok` was told a
+   * SCORM package had been accepted when nothing was asserted about it.
+   *
+   * `status: 'failed'` is kept because callers read it; it is simply not a thing any status
+   * code is derived from.
+   */
+  kind?: 'refusal';
+  'iep:refusalStatus'?: number;
+  'iep:refusalReason'?: string;
+  'iep:resolvedBy'?: Record<string, unknown>;
 }
 
 /** Base64 chars accepted. The bridge's own express body limit is 50mb, so a larger
@@ -661,12 +678,16 @@ export async function uploadScormPackage(args: {
   fetch?: FetchFn;
 }): Promise<ScormUploadResult> {
   if (args.zipBase64.length > MAX_ZIP_BASE64_CHARS) {
-    return { status: 'failed', error: `Payload too large (${args.zipBase64.length} base64 chars; max ${MAX_ZIP_BASE64_CHARS}).` };
+    return { ...refuse(413,
+      `Payload too large (${args.zipBase64.length} base64 chars; max ${MAX_ZIP_BASE64_CHARS}).`,
+      'the upload exceeds the size this deployment accepts'), status: 'failed' };
   }
   // Light header inspection — read the first 512 bytes for a PK signature.
   const head = Buffer.from(args.zipBase64.slice(0, 1024), 'base64').slice(0, 4);
   if (head[0] !== 0x50 || head[1] !== 0x4B) {
-    return { status: 'failed', error: 'Payload does not look like a zip file (no PK header).' };
+    return { ...refuse(400,
+      'Payload does not look like a zip file (no PK header).',
+      'the bytes supplied are not a zip archive, so no SCORM package could be read'), status: 'failed' };
   }
   const zipBuffer = Buffer.from(args.zipBase64, 'base64');
   const packageId = `scorm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -741,12 +762,19 @@ export async function uploadScormPackage(args: {
       launchable: pkg.resources.filter(r => r.isLaunchable).map(r => r.path),
     };
   } catch (err) {
+    // 422, not 400: the bytes ARE a zip (the PK check above passed) and this deployment is
+    // healthy - what could not be processed is the SCORM package inside it. The receipt stays
+    // Hypothetical on the pod, which is the honest record of exactly that.
     return {
+      ...refuse(
+        422,
+        `SCORM parse failed: ${(err as Error).message}`,
+        'the archive was readable but its SCORM manifest could not be parsed, so nothing was asserted about the package',
+      ),
       status: 'failed',
       packageId,
       packageTitle: args.hintedTitle,
       descriptorUrl: receipt.descriptorUrl,
-      error: `SCORM parse failed: ${(err as Error).message}`,
       note: 'The upload receipt is on the pod as a Hypothetical fxs:PackageUpload and stays that way. Nothing was asserted about the package because it could not be read.',
     };
   }

@@ -7,6 +7,8 @@ export interface PinRow {
   image?: string | null;
   status?: string | null;
   deployedAt?: string | null;
+  /** Live deployment id, so tools/railway-image-digest.ts can read its imageDigest. */
+  deployId?: string | null;
   pinnedCommitAt?: string | null;
   error?: string;
   missingFromRailway?: boolean;

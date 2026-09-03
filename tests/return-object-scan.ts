@@ -52,19 +52,49 @@ export interface ReturnObject {
 
 const HANDLER_KEY = /^[a-z][a-z0-9]*\.[a-z0-9_]+$/i;
 
+/**
+ * ★★ STOP AT THE FIRST FUNCTION, NOT THE FIRST NAME.
+ *
+ * This walked up until it found something NAMED, so a return inside an anonymous callback
+ * argument — `endpoints.map(async ep => { … return { ep, statements: [], error: msg }; })` —
+ * was attributed to the enclosing `queryFederatedStatements`. It is not that function's answer;
+ * it is one row the function aggregates. Measured: four such rows were reported as untyped
+ * declines from three files, every one of them ordinary data (a per-endpoint federated result,
+ * a `verified: false` verification outcome, two gap records whose `reason` says why something
+ * is a GAP rather than why a call was refused).
+ *
+ * A permanent false positive is as damaging as a false negative, so the walk now stops at the
+ * first function-like ancestor and names it only if that function itself is named. Anything
+ * anonymous — a call argument, an IIFE — is `callback`, which every census here already
+ * excludes.
+ */
 function enclosingOf(node: ts.Node): string {
-  for (let n: ts.Node | undefined = node.parent; n; n = n.parent) {
-    if (ts.isPropertyAssignment(n)) {
+  // ★ START AT THE NODE, NOT ITS PARENT. For the `=> ({…})` arrow-body form the node handed in
+  // IS the arrow, so starting one level up steps straight over the function that owns the
+  // literal — which is how three `.map(s => ({ … reason: … }))` rows were attributed to the
+  // named function containing the map, and reported as its untyped declines.
+  for (let n: ts.Node | undefined = node; n; n = n.parent) {
+    // `at` is sometimes the function itself, so its parent is the property assignment and no
+    // function node is ever visited. Kept ahead of the function branches for that case.
+    if (ts.isPropertyAssignment(n)
+      && (ts.isArrowFunction(n.initializer) || ts.isFunctionExpression(n.initializer))) {
       const named = ts.isStringLiteralLike(n.name) ? n.name.text
         : ts.isIdentifier(n.name) ? n.name.text : '';
-      const isFn = ts.isArrowFunction(n.initializer) || ts.isFunctionExpression(n.initializer);
-      if (isFn) return HANDLER_KEY.test(named) ? `HANDLER ${named}` : 'callback';
+      return HANDLER_KEY.test(named) ? `HANDLER ${named}` : 'callback';
     }
-    if (ts.isFunctionDeclaration(n) && n.name) return n.name.text;
-    if (ts.isMethodDeclaration(n) && ts.isIdentifier(n.name)) return n.name.text;
-    if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name)
-      && n.initializer && (ts.isArrowFunction(n.initializer) || ts.isFunctionExpression(n.initializer))) {
-      return n.name.text;
+    if (ts.isFunctionDeclaration(n)) return n.name ? n.name.text : 'callback';
+    if (ts.isMethodDeclaration(n)) return ts.isIdentifier(n.name) ? n.name.text : 'callback';
+    if (ts.isArrowFunction(n) || ts.isFunctionExpression(n)) {
+      const p = n.parent;
+      if (p && ts.isPropertyAssignment(p)) {
+        const named = ts.isStringLiteralLike(p.name) ? p.name.text
+          : ts.isIdentifier(p.name) ? p.name.text : '';
+        return HANDLER_KEY.test(named) ? `HANDLER ${named}` : 'callback';
+      }
+      if (p && ts.isVariableDeclaration(p) && ts.isIdentifier(p.name)) return p.name.text;
+      // A named function expression (`const f = function g() {}`) still names itself.
+      if (ts.isFunctionExpression(n) && n.name) return n.name.text;
+      return 'callback';
     }
   }
   return '(top level)';

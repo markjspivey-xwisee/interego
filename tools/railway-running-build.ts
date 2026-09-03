@@ -370,7 +370,18 @@ export async function askRunningBuilds(
  * reports know nothing about; the audit states it separately, from the axis that checked
  * it. One sentence per thing actually measured.
  */
-export function runningHeadline(reports: readonly RunningReport[]): string {
+/**
+ * @param coveredElsewhere services that another axis DID establish something about (today:
+ *   tools/railway-image-digest.ts, which compares the live container's image digest for the
+ *   services that bind no health path). Naming them here as covered by "nothing" was true when
+ *   nothing else existed and became false the moment something did - and a headline that
+ *   understates coverage trains its reader to skip it just as surely as one that overstates.
+ *   They are still not counted as ANSWERED, because a digest is a weaker claim than a reply.
+ */
+export function runningHeadline(
+  reports: readonly RunningReport[],
+  coveredElsewhere: ReadonlySet<string> = new Set(),
+): string {
   const total = reports.length;
   const answered = reports.filter((r) => r.asked);
   const matched = answered.filter((r) => r.verdict === 'running');
@@ -389,9 +400,18 @@ export function runningHeadline(reports: readonly RunningReport[]): string {
       + `${mismatched.map((r) => r.service).join(', ')}.`);
   }
   if (unasked.length) {
-    lines.push(
-      `${unasked.length} service(s) were NOT asked, and nothing here covers them: `
-      + `${unasked.map((r) => r.service).join(', ')}.`);
+    const uncovered = unasked.filter((r) => !coveredElsewhere.has(r.service));
+    const covered = unasked.filter((r) => coveredElsewhere.has(r.service));
+    if (uncovered.length) {
+      lines.push(
+        `${uncovered.length} service(s) were NOT asked, and nothing here covers them: `
+        + `${uncovered.map((r) => r.service).join(', ')}.`);
+    }
+    if (covered.length) {
+      lines.push(
+        `${covered.length} service(s) could not be asked and are covered on another axis below: `
+        + `${covered.map((r) => r.service).join(', ')}.`);
+    }
   }
   if (other.length) {
     lines.push(

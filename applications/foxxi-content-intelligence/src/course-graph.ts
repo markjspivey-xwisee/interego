@@ -17,6 +17,9 @@ import { parseManifest, type ScormActivityTree, type Activity } from './scorm-se
 // `import type` is LOAD-BEARING, not a style choice: bridge/server.ts imports both this
 // module and agentic-rag.js, so a value import here would close a real runtime cycle.
 import type { FoxxiAgenticCourse, FoxxiAgenticPayload } from './agentic-rag.js';
+// The ONE import for declining. See applications/_shared/vertical-bridge/refusal.ts: the
+// dispatcher keys on `kind`, and every vertical that invented its own shape answered 200.
+import { refuse, type BridgeRefusal } from '../../_shared/vertical-bridge/refusal.js';
 
 const slug = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'x';
 
@@ -276,7 +279,7 @@ export interface ConceptNavGraph {
 export function buildConceptNavGraph(
   payload: FoxxiAgenticPayload,
   opts: { focusConceptId?: string; maxDepth?: number } = {},
-): ConceptNavGraph | { error: string } {
+): ConceptNavGraph | BridgeRefusal {
   const allEdges: ConceptNavEdge[] = [
     ...(payload.prereq_edges ?? []).map(e => ({
       from: e.from, to: e.to, kind: 'prerequisite' as const,
@@ -308,7 +311,17 @@ export function buildConceptNavGraph(
   }
   if (!byId.has(focus)) {
     // Honest null. See the ★ above: [] here would read as "no concept map".
-    return { error: `focus_concept_id "${focus}" is not a concept in course ${payload.packageMeta.course_id} — it has ${payload.concepts.length} concept(s). Omit focus_concept_id for the full graph.` };
+    //
+    // ★★ AND AN HONEST NULL STILL HAS TO ANSWER A STATUS. This returned a bare `{error}`,
+    // which the dispatcher cannot key on, so a bad focus_concept_id reached the caller as
+    // HTTP 200 with no MCP isError - while the SAME handler's two other declines (a missing
+    // course_iri, an absent bundle) answered 400 and 404 twenty lines up. Three spellings of
+    // "the caller's argument was wrong", two of them honest.
+    return refuse(
+      400,
+      `focus_concept_id "${focus}" is not a concept in course ${payload.packageMeta.course_id} — it has ${payload.concepts.length} concept(s). Omit focus_concept_id for the full graph.`,
+      'the caller named a focus concept that this course does not contain',
+    );
   }
   // Prerequisite edges are traversed UNDIRECTED: the affordance promises "follow
   // prerequisite edges up/down", so a focus must reach both what it requires and

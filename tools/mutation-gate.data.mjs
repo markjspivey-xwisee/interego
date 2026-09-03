@@ -14,9 +14,12 @@ const WSP = 'applications/shared-workspace/src/respond.ts';
 const AGP = 'applications/agentic-performance-practice/bridge/handlers.ts';
 const OWM = 'applications/organizational-working-memory/source-adapters/web.ts';
 const LRS = 'applications/lrs-adapter/bridge/server.ts';
+const AC_SRC = 'applications/agent-collective/src/pod-publisher.ts';
+const FOXXI_SRC = 'applications/foxxi-content-intelligence/src/composed-extensions.ts';
 const RETRY = 'packages/core/src/http/retry.ts';
 const FOLLOW = 'packages/core/src/affordance/follow.ts';
 const HYPER = 'packages/core/src/kernel/hypermedia.ts';
+const KERNEL = 'packages/core/src/kernel/index.ts';
 
 const REFUSAL_GATE = 'tests/a-refusal-answers-a-refusing-status.test.ts';
 const STATUS_GATE = 'tests/a-refusal-status-names-what-actually-failed.test.ts';
@@ -145,8 +148,8 @@ export const MUTANTS = [
   {
     name: 'transient-matcher-unanchored-again',
     file: RETRY,
-    find: "const HTTP_5XX_IN_MESSAGE = /(?:\\bHTTP\\b\\s*|\\bstatus\\b\\W{0,2}|\\breturned\\s+|:\\s*)5\\d\\d(?![0-9A-Za-z])/i;",
-    replace: "const HTTP_5XX_IN_MESSAGE = /5\\d\\d/;",
+    find: "const HTTP_5XX_INTRODUCED = /(?:\\bHTTP\\b\\s*|\\bstatus\\b\\W{0,2}|\\breturned\\s+|:\\s*)5\\d\\d(?![0-9A-Za-z])/i;",
+    replace: "const HTTP_5XX_INTRODUCED = /5\\d\\d/;",
     mustFail: [RETRY_GATE],
     why: 'the original: 59% of sha1 addresses and 77% of sha256 ones contain a 5-digit-digit run, so a permanent 403 on a content-addressed descriptor was retried four times',
   },
@@ -192,5 +195,76 @@ export const MUTANTS = [
     replace: "const handlers = {\n  'lrs.zz_mutant': async (_a: Record<string, unknown>) => ({ error: 'forbidden - admin only' }),\n  'lrs.ingest_statement': async (args: Record<string, unknown>) =>",
     mustFail: [VERTICAL_GATE],
     why: 'the gate titled "on every vertical" drove three of the eight that mount the dispatcher',
+  },
+
+  {
+    name: 'untyped-decline-in-a-delegated-src-function',
+    file: AC_SRC,
+    // ★ NOT IN THE BRIDGE. `ac.author_tool` is a one-line delegator, so THIS function's return
+    // value IS the HTTP response - and every census before the delegation leg read only
+    // bridge/server.ts, which holds one return object literal in total.
+    //
+    // The cast keeps it compiling against the declared return type, and is not a way of
+    // dodging the census: returnObjects unwraps as/satisfies/parens/angle-bracket assertions,
+    // which is asserted in tests/return-object-scan.test.ts.
+    find: "export async function authorTool(args: AuthorToolArgs, config: PublishConfig): Promise<AuthorToolResult> {",
+    replace: "export async function authorTool(args: AuthorToolArgs, config: PublishConfig): Promise<AuthorToolResult> {\n  if (args.toolName === '__mutant') return { error: 'forbidden - admin only' } as unknown as AuthorToolResult;",
+    mustFail: [VERTICAL_GATE],
+    why: 'the answer is built in src/, and reading bridge/** reads the argument marshalling and none of the decisions',
+  },
+
+  {
+    name: 'kernel-act-preresolved-retries-a-refusal',
+    file: KERNEL,
+    // ★★ act() reaches a target TWO ways and the first fix landed on one of them. The
+    // descriptor leg delegates to followAffordance; a caller passing a PRE-RESOLVED target
+    // took this leg, which had its own copy of the throw and read the body only after the
+    // retry. Measured before the fix: 4 fetches, ~7s, and the refusal arrived as a THROWN
+    // exception rather than as data.
+    find: "      if (r.status >= 500 && !declaresRefusal(text)) {",
+    replace: "      if (r.status >= 500 && !declaresRefusal('')) {",
+    mustFail: [RETRY_GATE],
+    why: 'a fix applied to one of two identical legs is not a fix to the class',
+  },
+  {
+    name: 'retry-matcher-loses-the-reason-phrase-form',
+    file: RETRY,
+    // The third spelling has NO introducer: `forward POST 503 Service Unavailable`. Of the 23
+    // in-repo 5xx throws inside a withTransientRetry callback, 22 matched the introducer form
+    // and that one did not - so anchoring silently disabled retry for xAPI forwarding.
+    find: "      || HTTP_5XX_WITH_REASON.test(message))) return true;",
+    replace: "      || false)) return true;",
+    mustFail: [RETRY_GATE],
+    why: 'over-narrowing a matcher costs exactly what over-matching did, in the other direction',
+  },
+
+  {
+    name: 'decline-note-key',
+    file: AGP,
+    // ★★ THE FOURTH SPELLING, PLANTED IN A DRIVEN VERTICAL ON PURPOSE.
+    //
+    // `note` is NOT in the census word list and deliberately never will be - adding it flags
+    // nine successes that carry an advisory note. So the source census cannot catch this
+    // mutant, and that is exactly what it is here to demonstrate: the leg that DRIVES agp
+    // through the real dispatcher catches it anyway, because a driven leg asks what STATUS a
+    // client sees and has no vocabulary to be out-spelled.
+    find: "        return { ...refuse(400, 'Pass an inline `situation` object, or a `situation_iri` resolvable against `pod_url`. The engine ran nothing because no situation could be resolved.',\n          'no situation could be resolved from the arguments supplied'),\n          pending: 'situation-not-resolvable', tool: 'agp.diagnose', received: args };",
+    replace: "        return { note: 'stub: pass an inline `situation` object, or a resolvable `situation_iri`.' };",
+    mustFail: [VERTICAL_GATE],
+    why: 'three foxxi handlers declined a required-input failure with `note` at HTTP 200; a word list has now lost four times',
+  },
+
+  {
+    name: 'untyped-decline-behind-a-multi-statement-handler',
+    file: FOXXI_SRC,
+    // ★★ THE SHAPE THE DELEGATION CENSUS USED TO SKIP. `foxxi.upload_scorm_package` checks
+    // authorization first and THEN returns uploadScormPackage(...) - two statements - and the
+    // reach required a single-statement body, so this function and three others were never
+    // followed. An audit found four untyped declines living in exactly that gap; verbatim the
+    // pre-fix line here is one of them.
+    find: "    return { ...refuse(400,\n      'Payload does not look like a zip file (no PK header).',\n      'the bytes supplied are not a zip archive, so no SCORM package could be read'), status: 'failed' };\n",
+    replace: "    return { status: 'failed', error: 'Payload does not look like a zip file (no PK header).' };\n",
+    mustFail: [VERTICAL_GATE],
+    why: 'a rejected SCORM upload answered HTTP 200 with isError=false, so a caller was told a package it never accepted had been accepted',
   },
 ];

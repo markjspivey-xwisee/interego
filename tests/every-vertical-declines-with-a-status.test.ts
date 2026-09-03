@@ -31,6 +31,8 @@ import type { Server } from 'node:http';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { createVerticalBridge } from '../applications/_shared/vertical-bridge/index.js';
 import { returnObjects } from './return-object-scan.js';
+import { delegationsIn } from './handler-delegation-reach.js';
+import { fileURLToPath } from 'node:url';
 
 /** Statuses a DECLINE may answer with. 200 is the whole point: it is never one of them. */
 const REFUSING = [400, 401, 403, 404, 409, 422, 429, 500, 501, 502, 503];
@@ -286,6 +288,21 @@ describe('a declined call answers a refusing status on every vertical', () => {
         + 'census that finds nothing reports no defects',
     ).toBeGreaterThanOrEqual(8);
 
+    // ★★ `note` IS THE FOURTH SPELLING OF "NO", AND IT IS DELIBERATELY NOT IN THIS LIST.
+    // The spellings that have defeated a census here, in order: `error`, `reason`, `pending`,
+    // and then `note` - three foxxi retrieval handlers declined a MISSING REQUIRED input with
+    // `{note: 'stub: pass args.course_content …'}` at HTTP 200 (now fixed to invalidArguments).
+    //
+    // Adding `note` was tried and REVERTED: it flags nine SUCCESSES that carry an advisory
+    // note - `{recorded: true, …, note: 'Safe-to-fail probe recorded …'}` and eight like it.
+    // The word does not carry the meaning; the same key says "why I declined" and "what I just
+    // did". A permanent false positive is as damaging as a false negative, because a gate that
+    // always fails is a gate nobody reads.
+    //
+    // So a word list has now lost four times and cannot be repaired by adding words. It is
+    // kept for the shapes it does catch; the legs that DRIVE a bridge are what cannot be
+    // out-spelled, and a mutant below plants a `note:` decline in a DRIVEN vertical to keep
+    // proving that difference.
     const DECLINE = /\b(error|reason|refused|denied|forbidden|unauthori[sz]ed|invalid|pending|rejected|conflict|unavailable)\b/i;
     const offenders: string[] = [];
     let handlerReturns = 0;
@@ -309,9 +326,16 @@ describe('a declined call answers a refusing status on every vertical', () => {
           if (!DECLINE.test(claimed)) continue;
           if (o.statusCall !== null && !Number.isNaN(o.statusCall) && o.statusCall >= 400) continue;
           // An empty RESULT is not a refusal: the caller's arguments were fine and the query
-          // simply matched nothing. `ok: true` is the marker, and it is load-bearing - a
-          // handler that declines must not claim ok.
-          if (/\bok:\s*true\b/.test(o.text)) continue;
+          // simply matched nothing. An OUTCOME FLAG is the marker and it is load-bearing - a
+          // handler that declines does not report a verdict on work it did not do.
+          //
+          // ★ `true` OR `ok`, not `ok: true` alone. `verifyCompletionPresentation` answers
+          // `{verified: ok, reason: ok ? undefined : 'BBS+ proof verification failed'}` - the
+          // call SUCCEEDED and the verdict is 'invalid', which is a correct 200, and the
+          // `reason` there annotates a result rather than refusing a call. Matching the shape
+          // `<key>: true|ok` keeps this mechanical instead of growing a second vocabulary of
+          // outcome nouns beside the decline one.
+          if (/\b\w+:\s*(?:true|ok)\b/.test(o.text)) continue;
           offenders.push(`${rel}:${o.line} [${o.enclosing}] ${o.text.replace(/\s+/g, ' ').slice(0, 120)}`);
         }
       }
@@ -328,6 +352,93 @@ describe('a declined call answers a refusing status on every vertical', () => {
       'these handler returns say no without declaring a refusal, so createVerticalBridge '
         + 'answers them 200 and the caller cannot tell them from success:\n  '
         + offenders.join('\n  '),
+    ).toEqual([]);
+  });
+
+  /**
+   * ★★ THE LEG ABOVE READS THE BRIDGE, AND THE BRIDGE IS NOT WHERE THE ANSWER IS BUILT.
+   *
+   * Most handler maps are a wall of thin delegators — `'ac.author_tool': async (args) =>
+   * authorTool({…}, ctx(args))` — so the value the dispatcher reads is constructed in `src/`,
+   * and a census of `bridge/**` reads the argument marshalling and none of the decisions.
+   * Measured: `agent-collective/bridge/server.ts` holds ONE return object literal in total.
+   *
+   * That was a real hole in the leg above, and writing it into a comment there did not close
+   * it. `delegationsIn` names the function each handler hands its answer to and resolves the
+   * module, so the census follows. Depth ONE only, and deliberately: the function a handler
+   * directly returns produces the HTTP response by construction, while something three calls
+   * down may build an `{error}` its caller inspects and never returns — reporting that is the
+   * false-positive class that makes a gate unreadable. A decline built deeper and passed up
+   * unchanged is still not covered, and this name says so rather than implying otherwise.
+   *
+   * Measured when added: 40 delegating handlers, 38 resolved, 35 returns censused, 0 untyped.
+   */
+  it('★ follows each handler into the src/ function it delegates its answer to (depth one)', () => {
+    // ★★ `note` IS THE FOURTH SPELLING OF "NO", AND IT IS DELIBERATELY NOT IN THIS LIST.
+    // The spellings that have defeated a census here, in order: `error`, `reason`, `pending`,
+    // and then `note` - three foxxi retrieval handlers declined a MISSING REQUIRED input with
+    // `{note: 'stub: pass args.course_content …'}` at HTTP 200 (now fixed to invalidArguments).
+    //
+    // Adding `note` was tried and REVERTED: it flags nine SUCCESSES that carry an advisory
+    // note - `{recorded: true, …, note: 'Safe-to-fail probe recorded …'}` and eight like it.
+    // The word does not carry the meaning; the same key says "why I declined" and "what I just
+    // did". A permanent false positive is as damaging as a false negative, because a gate that
+    // always fails is a gate nobody reads.
+    //
+    // So a word list has now lost four times and cannot be repaired by adding words. It is
+    // kept for the shapes it does catch; the legs that DRIVE a bridge are what cannot be
+    // out-spelled, and a mutant below plants a `note:` decline in a DRIVEN vertical to keep
+    // proving that difference.
+    const DECLINE = /\b(error|reason|refused|denied|forbidden|unauthori[sz]ed|invalid|pending|rejected|conflict|unavailable)\b/i;
+    const appsDir = new URL('../applications/', import.meta.url);
+    const verticals = readdirSync(appsDir).filter((d) => d !== '_shared');
+
+    const offenders: string[] = [];
+    let delegations = 0;
+    let resolvedModules = 0;
+    let censusedReturns = 0;
+
+    for (const v of verticals) {
+      for (const rel of [`${v}/bridge/server.ts`, `${v}/bridge/handlers.ts`]) {
+        const url = new URL(`../applications/${rel}`, import.meta.url);
+        if (!existsSync(url)) continue;
+        for (const d of delegationsIn(fileURLToPath(url))) {
+          delegations += 1;
+          if (!d.module) continue;
+          resolvedModules += 1;
+          for (const o of returnObjects(readFileSync(d.module, 'utf8'))) {
+            if (o.enclosing !== d.fn) continue;
+            censusedReturns += 1;
+            if (/\.\.\.\s*refuse\s*\(/.test(o.text)) continue;
+            if (o.text.includes("kind: 'refusal'")) continue;
+            const claimed = o.text.replace(/\b\w+\s*:\s*(?:null|undefined|false)\b/g, '');
+            if (!DECLINE.test(claimed)) continue;
+            if (o.statusCall !== null && !Number.isNaN(o.statusCall) && o.statusCall >= 400) continue;
+            // Same outcome-flag rule as the leg above, and for the same measured reason:
+            // `{verified: ok, reason: ok ? undefined : '…'}` is a verdict, not a refusal.
+            if (/\b\w+:\s*(?:true|ok)\b/.test(o.text)) continue;
+            offenders.push(`${d.tool} -> ${d.fn}() at line ${o.line}: `
+              + o.text.replace(/\s+/g, ' ').slice(0, 120));
+          }
+        }
+      }
+    }
+
+    // ★ THREE FLOORS, BECAUSE THIS LEG HAS THREE WAYS TO SILENTLY READ NOTHING: find no
+    // handlers, resolve no modules, or census no returns inside the functions it resolved.
+    // Each collapses to "0 offenders" and each is a different broken step.
+    expect(delegations, 'no delegating handlers found - the handler-map matcher is broken')
+      .toBeGreaterThan(30);
+    expect(resolvedModules, 'no delegated module resolved - the import resolver is broken')
+      .toBeGreaterThan(30);
+    expect(censusedReturns, 'no returns censused inside any delegated function - the enclosing '
+      + 'name from returnObjects no longer matches the delegated function name')
+      .toBeGreaterThan(25);
+
+    expect(
+      offenders,
+      'these src/ functions build a decline that a handler returns VERBATIM, so it reaches the '
+        + 'caller as HTTP 200:\n  ' + offenders.join('\n  '),
     ).toEqual([]);
   });
 

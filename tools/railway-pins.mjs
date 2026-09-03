@@ -179,6 +179,10 @@ export async function collectPins(gql, git = null, commitAt = gitCommitAt) {
       row.overlapSeconds = si?.overlapSeconds ?? null;
       row.drainingSeconds = si?.drainingSeconds ?? null;
       row.status = si?.latestDeployment?.status ?? null;
+      // Kept so a service that cannot be ASKED what it is running can still be checked by
+      // image digest: tools/railway-image-digest.ts needs this id to read
+      // deployment.meta.imageDigest. It was queried here already and thrown away.
+      row.deployId = si?.latestDeployment?.id ?? null;
       row.deployedAt = si?.latestDeployment?.createdAt ?? null;
       // Resolved HERE and not in annotate() so annotate() stays pure — this file already
       // relies on that ("Pure, so it is cheap to mutation-check"), and a git subprocess

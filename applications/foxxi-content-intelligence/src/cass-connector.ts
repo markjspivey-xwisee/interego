@@ -23,6 +23,7 @@
 
 import type { CaseDocument } from './case-exporter.js';
 import { safeFetch } from './ssrf-guard.js';
+import { refuse } from '../../_shared/vertical-bridge/refusal.js';
 
 export interface CassConfig {
   /** CaSS server base URL (e.g. https://cass.example.org). */
@@ -49,11 +50,18 @@ export async function pushFrameworkToCass(framework: CaseDocument, config: CassC
       method: 'POST', headers,
       body: JSON.stringify(framework),
     }, fetchFn as never);
-    if (!r.ok) return { status: 'failed', error: `CaSS POST /api/framework: ${r.status} ${r.statusText}` };
+    if (!r.ok) {
+      // ★★ 502, BECAUSE THE UPSTREAM FAILED AND THE CALLER DID NOT. This returned a bare
+      // `{status:'failed', error}` that the dispatcher cannot key on, so the handler - which
+      // returns this verbatim - answered HTTP 200 for work that never happened. Its sibling
+      // twenty lines away already answered 502 through upstreamFailed(); two handlers against the
+      // same upstream disagreed about what a failure is.
+      return { ...refuse(502, `CaSS POST /api/framework: ${r.status} ${r.statusText}`, 'a pod or upstream service this affordance composes did not complete the operation'), status: 'failed' };
+    }
     const body = await r.json().catch(() => ({})) as { id?: string; uri?: string };
     return { status: 'created', frameworkUrl: body.uri ?? body.id ?? `${config.endpoint}/api/framework/${framework.identifier}` };
   } catch (err) {
-    return { status: 'failed', error: (err as Error).message };
+    return { ...refuse(502, (err as Error).message, 'a pod or upstream service this affordance composes did not complete the operation'), status: 'failed' };
   }
 }
 
@@ -89,10 +97,12 @@ export async function pushAssertionToCass(assertion: CassAssertion, config: Cass
       method: 'POST', headers,
       body: JSON.stringify(assertion),
     }, fetchFn as never);
-    if (!r.ok) return { status: 'failed', error: `CaSS POST /api/assertion: ${r.status} ${r.statusText}` };
+    if (!r.ok) {
+      return { ...refuse(502, `CaSS POST /api/assertion: ${r.status} ${r.statusText}`, 'a pod or upstream service this affordance composes did not complete the operation'), status: 'failed' };
+    }
     const body = await r.json().catch(() => ({})) as { id?: string; uri?: string };
     return { status: 'asserted', assertionUrl: body.uri ?? body.id };
   } catch (err) {
-    return { status: 'failed', error: (err as Error).message };
+    return { ...refuse(502, (err as Error).message, 'a pod or upstream service this affordance composes did not complete the operation'), status: 'failed' };
   }
 }

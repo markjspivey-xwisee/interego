@@ -2646,9 +2646,14 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.ask_course_question': async (args) => {
     if (!args.course_content) {
-      return {
-        note: 'stub: pass args.course_content (FoxxiCourseContent — transcripts + concepts). Real bridge fetches from tenant pod via published fxs/fxk descriptors.',
-      };
+      // ★★ `note` WAS A FOURTH SPELLING OF "NO". `course_content` is declared required in
+      // affordances.ts, so this is the very condition invalidArguments() exists for - its own
+      // header records the class as "a validation failure answered HTTP 200 on every deployed
+      // bridge, thirty-three sites wide". Three siblings kept saying it in a word no census
+      // and no dispatcher was looking for, after `error`, `reason` and `pending`.
+      return invalidArguments(
+        'pass args.course_content (FoxxiCourseContent — transcripts + concepts), or seed the tenant pod so the bridge can discover it via the published fxs/fxk descriptors.',
+      );
     }
     return askCourseQuestion({
       learnerDid: args.learner_did as IRI,
@@ -2691,7 +2696,9 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     }
     if (!primaryPayload && !args.course_content) {
       return {
-        note: 'No course payload available. Supply args.primary (FoxxiAgenticPayload) inline, OR pass args.course_id and seed the tenant pod via tools/publish-tenant.ts so the bridge can discover it via iep:discover() filtered on dct:conformsTo=fxa:CoursePackageBundle.',
+        ...invalidArguments(
+          'No course payload available. Supply args.primary (FoxxiAgenticPayload) inline, OR pass args.course_id and seed the tenant pod via tools/publish-tenant.ts so the bridge can discover it via iep:discover() filtered on dct:conformsTo=fxa:CoursePackageBundle.',
+        ),
         podUrl: (args.tenant_pod_url as string) || tenantPodUrl,
       };
     }
@@ -2744,7 +2751,9 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     let primaryPayload: FoxxiAgenticPayload | undefined = rcCourseId ? (await autoFetchCourse(args, rcCourseId) ?? undefined) : undefined;
     if (!primaryPayload) primaryPayload = args.primary as FoxxiAgenticPayload | undefined;
     if (!primaryPayload) {
-      return { note: 'No course payload available. Supply args.course_id / course_iri (pod-native, preferred) or args.primary (ad-hoc content).' };
+      return invalidArguments(
+        'No course payload available. Supply args.course_id / course_iri (pod-native, preferred) or args.primary (ad-hoc content).',
+      );
     }
     const primary = payloadToAgenticCourse(primaryPayload, (args.authoritative_source as IRI) ?? authoritativeSource);
     const federation = (Array.isArray(args.federation) ? args.federation as FoxxiAgenticPayload[] : []).map(p =>
