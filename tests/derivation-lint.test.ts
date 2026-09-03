@@ -48,27 +48,44 @@ const loadGate = async (): Promise<{
   l1Prefixes: (text: string) => { prefixes?: Set<string>; error?: string };
 };
 
-describe('derivation-lint: the gate and the prose state one number', () => {
-  it('passes, and says so only after checking the prose', () => {
+describe('derivation-lint: the gate is the authority, and the prose states the invariant', () => {
+  /**
+   * ★★ THIS FILE USED TO REQUIRE THE OPPOSITE, AND TWO GATES WERE IN CONTRADICTION.
+   *
+   * It asserted that `spec/LAYERS.md` states the measured count and that the PASS line says so.
+   * `tools/docs-drift-lint.mjs` BANS that shape - "derivation-lint computes this; state the
+   * invariant instead" - because a hand-maintained N/N can only ever be wrong, and it had gone
+   * stale twice (91/91 against a measured 97, then 105/105 against 106).
+   *
+   * The two rules never collided because docs-drift scanned exactly README.md and STATUS.md,
+   * and LAYERS.md was in neither. Widening that scan to every tracked markdown put them in the
+   * same room. docs-drift's rule wins, and derivation-lint's own comment had already offered
+   * the resolution: "or delete the number the way README did."
+   *
+   * What is asserted now is the property that actually matters and cannot go stale: the gate
+   * FAILS on the first ungrounded class, so a green run IS the invariant.
+   */
+  it('passes, and publishes the count it measured', () => {
     const { status, out } = runGate();
     expect(status, out).toBe(0);
-    // The PASS line is worded to name what it verified. If it reverts to the bare
-    // "every L2/L3 class is grounded", the doc check has been removed and this fails.
-    expect(out).toContain('spec/LAYERS.md states the same count');
+    expect(out, 'the gate no longer prints the total it measured, so nothing publishes the '
+      + 'number that LAYERS.md deliberately does not state')
+      .toMatch(/Total: \d+\/\d+ L2\/L3 classes grounded/);
   });
 
-  it('spec/LAYERS.md states exactly the count the gate measured', () => {
-    // Read independently of the gate, so this case fails even if someone deletes the
-    // gate's own doc check — the two assertions are not the same assertion twice.
-    const { out } = runGate();
-    const measured = /Total: (\d+)\/(\d+) L2\/L3 classes grounded/.exec(out);
-    expect(measured, `no total in gate output:\n${out}`).not.toBeNull();
+  it('spec/LAYERS.md states the invariant and pins NO count', () => {
     const layers = readFileSync(resolve(REPO, 'spec/LAYERS.md'), 'utf8');
-    // `\s+`, not a literal space: the sentence wraps mid-claim and this repo checks out
-    // CRLF on Windows and LF in CI. A literal space matches in neither reliably.
-    const claim = /Current status: \*\*(\d+)\/(\d+)\s+classes grounded\*\*/.exec(layers);
-    expect(claim, 'spec/LAYERS.md no longer states a grounding count at all').not.toBeNull();
-    expect([claim?.[1], claim?.[2]]).toEqual([measured?.[1], measured?.[2]]);
+    expect(
+      /Current status: \*\*(\d+)\/(\d+)\s+classes grounded\*\*/.test(layers),
+      'spec/LAYERS.md has re-pinned a grounding count in prose. It went stale twice; '
+        + 'docs-drift-lint.mjs bans the shape, and the gate failing on the first ungrounded '
+        + 'class is what enforces the invariant.',
+    ).toBe(false);
+    expect(
+      layers,
+      'LAYERS.md no longer states the grounding invariant at all, so nothing in the prose says '
+        + 'what the gate is for',
+    ).toMatch(/every L2\/L3 class is grounded/i);
   });
 
   it('★ enumerates docs/ns/ rather than a hand-written list — every .ttl on disk is reported', () => {

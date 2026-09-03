@@ -26,9 +26,34 @@
  */
 
 import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 
-/** Files whose claims describe the CURRENT deployment. */
-const FILES = ['README.md', 'STATUS.md'];
+/**
+ * Files whose claims describe the CURRENT deployment.
+ *
+ * ★★ EVERY TRACKED MARKDOWN, NOT TWO OF THEM. This read `['README.md', 'STATUS.md']` while
+ * the banned strings describe a platform the whole tree still talks about. A census of tracked
+ * markdown found 66 present-tense dead-Azure lines across 26 files outside this scan —
+ * spec/OPS-RUNBOOK.md alone had 14, describing the entire production fleet as Azure Container
+ * Apps with az-CLI rollback and backup procedures, and spec/SOC2-PREPARATION.md 9. Railway is
+ * named in none of them. deploy/mcp-relay/OAUTH-SETUP.md, linked twice from README.md, still
+ * instructs readers to run `deploy/azure-deploy.sh`, which is still tracked and still does
+ * `az acr create` against the deleted registry.
+ *
+ * The lint had the right rules and looked at 2 of 28 places they applied — a gate narrower than
+ * its own subject, which is what its findings were about.
+ *
+ * CHANGELOG.md is excluded deliberately: it is a DATED HISTORICAL NARRATIVE, and "deployed to
+ * Azure" is true of the day it records. So is anything under `docs/archive/`.
+ */
+const EXCLUDE = /^(?:CHANGELOG\.md|docs\/archive\/)/;
+function trackedMarkdown() {
+  return execFileSync('git', ['ls-files', '*.md'], { encoding: 'utf8', maxBuffer: 1 << 28 })
+    .split(String.fromCharCode(10))
+    .filter(Boolean)
+    .filter((f) => !EXCLUDE.test(f));
+}
+const FILES = trackedMarkdown();
 
 /**
  * Strings that assert a dead platform in the present tense.
@@ -173,4 +198,17 @@ if (failures > 0) {
   console.error(`\n★ DOCS DRIFT — ${failures} claim(s) describe infrastructure that no longer exists.`);
   process.exit(1);
 }
-console.log(`✓ docs drift: ${FILES.join(', ')} describe the live fleet (Railway + ghcr.io), no dead-platform claims.`);
+// ★ A FLOOR, NOT A LIST. Naming all 138 files made the success line unreadable, and an
+// unreadable success line is one nobody checks — but the COUNT is load-bearing: this scan
+// looked at two files while the rules applied to twenty-eight, and a silent return to a narrow
+// scan is exactly how that happened. So it reports how many were read, and refuses to call
+// itself clean over a handful.
+const MIN_DOCS = 100;
+if (FILES.length < MIN_DOCS) {
+  console.error(`\n★ DOCS DRIFT SCAN TOO NARROW — read ${FILES.length} markdown file(s), expected `
+    + `at least ${MIN_DOCS}. This lint once scanned 2 of 28 places its own rules applied; a scan `
+    + 'that shrinks reports "clean" about a tree it did not look at.');
+  process.exit(1);
+}
+console.log(`✓ docs drift: ${FILES.length} tracked markdown file(s) describe the live fleet `
+  + '(Railway + ghcr.io), no dead-platform claims in the present tense.');

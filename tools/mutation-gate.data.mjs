@@ -18,6 +18,7 @@ const AC_SRC = 'applications/agent-collective/src/pod-publisher.ts';
 const FOXXI_SRC = 'applications/foxxi-content-intelligence/src/composed-extensions.ts';
 const LPC_TTL = 'docs/applications/learner-performer-companion/lpc.ttl';
 const STATUS_MD = 'STATUS.md';
+const RUNBOOK = 'spec/OPS-RUNBOOK.md';
 const RELAY = 'deploy/mcp-relay/server.ts';
 const LPC_IMPL = 'applications/learner-performer-companion/src/institutional-publisher.ts';
 const ADP_SHAPES = 'applications/agent-development-practice/ontology/adp-shapes.ttl';
@@ -50,6 +51,8 @@ const TERMS_GATE = 'tests/every-published-term-is-declared.test.ts';
 const NS_GATE = 'tests/shape-namespaces-resolve.test.ts';
 const ADVERTISED_GATE = 'tests/advertised-commands-do-something.test.ts';
 const OAUTH_SCOPE_GATE = 'deploy/mcp-relay/tests/oauth-read-scope-is-read-only.test.ts';
+const CALLER_URL_GATE = 'deploy/mcp-relay/tests/caller-urls-go-through-the-guard.test.ts';
+const DRIFT_GATE = 'tools/docs-drift-lint.mjs';
 const PRIVACY_GATE = 'tests/an-advertised-privacy-mode-is-implemented-or-refused.test.ts';
 
 /** An untyped decline planted in a real handler, in each shape that has defeated a census. */
@@ -85,7 +88,7 @@ export const MUTANTS = [
     replace: "  'foxxi.zz_mutant': async (_a) => ({ error: 'forbidden — admin only' }),\n"
       + "  'foxxi.coverage_query': async (args) => {",
     mustFail: [REFUSAL_GATE],
-    why: 'an expression-bodied handler `=> ({…})`; 23 handler entries use that form',
+    why: 'an expression-bodied handler `=> ({…})`. The "23 handler entries" once quoted here was a misread grep - 22 of those hits are .map() callbacks and one is a local helper; an AST census finds ZERO such handler entries. The form is still worth a mutant: a parser must handle it, and nothing stops the next handler being written that way',
   },
   {
     name: 'okfalse-moved-into-handler',
@@ -355,5 +358,42 @@ export const MUTANTS = [
     replace: "  if (mode === 'zzz-not-a-mode') {",
     mustFail: [PRIVACY_GATE],
     why: 'the published affordance is the only contract an aggregating institution has for what protection it is getting',
+  },
+
+  {
+    name: 'a-caller-url-skips-the-egress-screen',
+    file: RELAY,
+    // Verbatim the pre-fix line. `resolve_webfinger` was the one of three named caller-URL
+    // directory paths that kept solidFetch, which dials the global pool - and egress.ts is
+    // explicit that the address screen attaches per-request, never globally.
+    find: "  const result = await resolveWebFinger(args.resource as string, { fetch: guardedInvokeFetch });",
+    replace: "  const result = await resolveWebFinger(args.resource as string, { fetch: solidFetch });",
+    mustFail: [CALLER_URL_GATE],
+    why: 'a census in a comment named all three and nothing re-checked that all three were done',
+  },
+  {
+    name: 'the-singleton-write-loses-its-credential',
+    file: RELAY,
+    // `POST /tool/mint` ran with no credential at all while the READ of the same singleton was
+    // gated for exactly the reason mint makes worse: it grows an in-process lattice with no
+    // size cap, on a relay with an OOM history.
+    find: "  'mint', 'promote',",
+    replace: "  'promote',",
+    mustFail: [CALLER_URL_GATE],
+    why: 'the disclosure half of the shared-singleton problem was closed and the mutation half left open',
+  },
+
+  {
+    name: 'a-runbook-tells-you-to-deploy-to-a-dead-platform',
+    file: RUNBOOK,
+    // ★★ Verbatim what spec/OPS-RUNBOOK.md said. `docs-drift-lint.mjs` had the rule that bans
+    // it and scanned exactly README.md and STATUS.md - 2 of the 28 places the rule applied -
+    // so 66 present-tense dead-Azure lines across 26 files sat outside it, 14 of them in this
+    // runbook, describing the whole production fleet as Azure Container Apps with az-CLI
+    // rollback and backup procedures. Railway was named in none of them.
+    find: "   node tools/railway-redeploy.mjs <service> <40-hex-sha>",
+    replace: "   bash deploy/azure-deploy.sh <component>",
+    mustFail: [DRIFT_GATE],
+    why: 'an operator following the runbook would run a script that provisions a deleted registry and repoints every service at it',
   },
 ];

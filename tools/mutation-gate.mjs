@@ -73,16 +73,21 @@ const selected = only ? MUTANTS.filter(m => m.name.includes(only)) : MUTANTS;
  * which stays INCONCLUSIVE exactly as it does for vitest.
  */
 function runScriptGate(file) {
-  const r = spawnSync(process.execPath, ['node_modules/tsx/dist/cli.mjs', file], {
+  // A `.mjs` tool runs on node directly; a `.ts` relay test needs tsx.
+  const argv = file.endsWith('.mjs') ? [file] : ['node_modules/tsx/dist/cli.mjs', file];
+  const r = spawnSync(process.execPath, argv, {
     encoding: 'utf8',
     env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' },
   });
   // eslint-disable-next-line no-control-regex -- stripping ANSI is the point
   const out = `${r.stdout ?? ''}${r.stderr ?? ''}`.replace(/\u001b\[[0-9;]*m/g, '');
-  const failed = /^\s*FAIL\s/m.test(out);
-  const asserted = failed || /^\s*ok\s/m.test(out);
-  const okCount = (out.match(/^\s*ok\s/gm) ?? []).length;
-  const failCount = (out.match(/^\s*FAIL\s/gm) ?? []).length;
+  // Two marker styles in this tree: the relay tests print `ok` / `FAIL `, the tools/ linters
+  // print U+2713 / U+2717. Both are read, because a harness that knows only one of them reports
+  // a gate as INCONCLUSIVE for the sole reason that it phrases success differently.
+  const failed = /^\s*(?:FAIL\s|✗)/m.test(out) || /^★\s/m.test(out);
+  const asserted = failed || /^\s*(?:ok\s|✓)/m.test(out);
+  const okCount = (out.match(/^\s*(?:ok\s|✓)/gm) ?? []).length;
+  const failCount = (out.match(/^\s*(?:FAIL\s|✗)/gm) ?? []).length;
   return {
     exitedNonZero: r.status !== 0,
     assertionsFailed: failed,
@@ -94,7 +99,7 @@ function runScriptGate(file) {
   };
 }
 
-const isScriptGate = (f) => f.startsWith('deploy/');
+const isScriptGate = (f) => f.startsWith('deploy/') || f.startsWith('tools/');
 
 function runGates(files) {
   if (files.every(isScriptGate)) {

@@ -260,9 +260,17 @@ describe('a declined call answers a refusing status on every vertical', () => {
    * the untyped refusals it was written to catch, a green tick standing in for coverage that
    * was never there.
    *
-   * Driving all eight is not available cheaply: every bridge server but agp's calls
-   * `app.listen()` at import time, so importing one to reach its handler map starts a
-   * listener. What IS available is to READ every mount, which this leg does - and to derive
+   * Driving all eight is not available cheaply. ★ NOT for the reason first written here —
+   * "every bridge server but agp's calls `app.listen()` at import time" is false, and agp's own
+   * source says so: grepping every `applications/<vertical>/bridge/server.ts` for a
+   * column-zero `app.listen` returns one hit in all EIGHT, agp included. (Written that way
+   * rather than as a glob: a `*` followed by a `/` closes this comment block, which is the
+   * same delimiter-inside-its-own-delimiter trap that has broken a template literal here
+   * before.) What agp actually does differently is keep its handler MAP in a
+   * separate `bridge/handlers.ts`, which is importable without starting anything — and that,
+   * not the listen call, is why agp alone can be driven here. Extracting the other seven the
+   * same way is the work that would make this leg unnecessary.
+   * What IS available meanwhile is to READ every mount, which this leg does - and to derive
    * the list from the filesystem rather than writing it down, because a hand-written list is
    * precisely how "every vertical" came to mean three.
    *

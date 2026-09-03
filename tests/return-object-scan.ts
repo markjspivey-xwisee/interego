@@ -15,8 +15,15 @@
  *     dropped the literal or overran into the next one. The overrun swallowed a later
  *     `kind: 'refusal'`, which made the census EXCUSE the untyped denial it had just eaten.
  *     Four planted `forbidden` denials passed 7/7. Two such idioms already exist in the bridge.
- *   · `return ({ … })` and `async (args) => ({ … })` were invisible — 23 sites in the handler
- *     map use the second form.
+ *   · `return ({ … })` and `async (args) => ({ … })` were invisible.
+ *     ★ THE "23 HANDLER ENTRIES USE THE SECOND FORM" THAT STOOD HERE WAS A MISREAD GREP.
+ *     `grep -c "=> ({" foxxi/bridge/server.ts` is 23, but 22 of those are `.map(x => ({…}))`
+ *     array callbacks and the 23rd is a local helper; an AST census of handler entries across
+ *     every bridge gives 83 block bodies, 34 concise bodies, and ZERO concise bodies that are
+ *     object literals. `return ({…})` has no sites either. The forms are still handled — a
+ *     parser costs nothing to be complete, and `.map(x => ({…}))` bodies are exactly what the
+ *     enclosing-name fix later had to attribute correctly — but the blast radius quoted for
+ *     them was a count of something else, which is the measurement error this file is about.
  *   · `res.status([^)]*)` cannot cross a nested paren, so `res.status(Number(400))` lost its
  *     prefix and a correctly-statused route read as un-statused.
  *   · comments were stripped by LINE, so a trailing `// was: return { error: … }` was censused

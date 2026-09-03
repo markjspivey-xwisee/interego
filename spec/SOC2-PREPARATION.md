@@ -43,7 +43,7 @@ Not pursued initially: Processing Integrity (P1), Privacy (P1–P8). Both are re
 |---|---|
 | Org headcount | One operator |
 | Code review | Self-review on personal repo |
-| Deploys | `azure-deploy.sh` from operator's workstation, no CD gating |
+| Deploys | `build-ghcr.yml` (GitHub Actions) builds and pushes to ghcr.io; `tools/railway-redeploy.mjs` repoints and verifies. CI gates the build; the repoint is operator-invoked |
 | Access | Operator holds all admin credentials; no RBAC; no MFA enforcement on every system |
 | Logging | Application logs to stdout → Azure log analytics; no centralized SIEM |
 | Backups | Manual snapshots before destructive ops; no scheduled backup policy |

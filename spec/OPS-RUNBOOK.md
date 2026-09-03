@@ -22,13 +22,15 @@
 | pgsl-browser | Azure Container App `pgsl-browser` (eastus) | Public PGSL exploration UI |
 | CSS pods | Azure Container App `css` (eastus) + Azure Files share `css-data` | Per-customer Solid pod hosting |
 
-All container apps share a Container Apps environment in `eastus`. Public ingress today uses Azure-assigned `*.azurecontainerapps.io` hostnames with Azure-managed TLS certificates. Custom-domain mapping (e.g., `relay.interego.dev`, `identity.interego.dev`) is on the roadmap for production launch — when added, point the apex of the chosen domain at the Azure Container Apps environment IP and request managed certs per [Azure custom domain docs](https://learn.microsoft.com/en-us/azure/container-apps/custom-domains-certificates). Until then the `*.azurecontainerapps.io` hostnames are the canonical URLs (set as `PUBLIC_BASE_URL` env var on each app).
+★ THE FLEET MOVED TO RAILWAY. Every service below runs as a Railway service in the `robust-integrity` project, and public ingress is on `*.interego.xwisee.com` (Cloudflare DNS, Railway-managed TLS); `main` is on the apex `interego.xwisee.com` and css-gate on `gate.interego.xwisee.com`. The Azure Container Apps environment was decommissioned and its registry was deleted, so those hostnames no longer exists as anything reachable. The platform column below is stale and is corrected in STATUS.md, which tracks the live fleet. Custom-domain mapping (e.g., `relay.interego.dev`, `identity.interego.dev`) is on the roadmap for production launch — when added, point the apex of the chosen domain at the Azure Container Apps environment IP and request managed certs per [Azure custom domain docs](https://learn.microsoft.com/en-us/azure/container-apps/custom-domains-certificates). Until then the `*.azurecontainerapps.io` hostnames are the canonical URLs (set as `PUBLIC_BASE_URL` env var on each app).
 
 ## 2. Deploy
 
 ### Current state (2026-04-25)
 
-- Operator runs `deploy/azure-deploy.sh` from local workstation
+- Images are built by `gh workflow run build-ghcr.yml` (all 16 legs at HEAD when no `-f image=` is given) and pushed to `ghcr.io/markjspivey-xwisee/interego-<image>:<40-hex-sha>`
+- A service is repointed and redeployed with `node tools/railway-redeploy.mjs <service> <sha>`, which verifies the pin took BEFORE deploying and then polls the service's own `/health` until it reports that build
+- ★ `deploy/azure-deploy.sh` used to deploy this fleet and MUST NOT be run now: the `contextgraphsacr` registry it provisions was deleted, and running it repoints every service at a registry that no longer exists
 - Deploys current `main` after manual `git pull` + `npm test`
 - No CI gating on deploy
 - No automated deploy event log
@@ -56,7 +58,7 @@ All container apps share a Container Apps environment in `eastus`. Public ingres
    ```
 3. Run the deploy script:
    ```bash
-   bash deploy/azure-deploy.sh <component>
+   node tools/railway-redeploy.mjs <service> <40-hex-sha>
    ```
    where `<component>` is one of: `relay`, `identity`, `validator`, `dashboard`, `pgsl-browser`, `css`, or `all`.
 
@@ -455,7 +457,7 @@ curl -s "https://<relay>/audit/compliance/soc2?pod=<podUrl>" | jq
 | Gap | Plan | Target |
 |---|---|---|
 | No CI deploy gating | Add GitHub Action triggered by tag push | Q3 2026 |
-| No automated deploy descriptors | Wrap `azure-deploy.sh` in publisher | Q3 2026 |
+| No automated deploy descriptors | Wrap `tools/railway-redeploy.mjs` in publisher | Q3 2026 |
 | No cross-region redundancy | Document; add when scale warrants | Backlog |
 | No SIEM | Centralize logs in Log Analytics + alert rules | Q3 2026 |
 | No automated backup policy | Configure Azure Backup Vault | Q2 2026 |

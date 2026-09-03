@@ -789,6 +789,16 @@ const AUTH_REQUIRED_TOOLS = new Set([
   // an address of the caller's choosing is not a pure read.
   'discover_directory', 'remove_pod', 'subscribe_all', 'unsubscribe_from_pod',
   'pgsl_ingest',
+  // ★★ THE MUTATION HALF OF THE SHARED-SINGLETON PROBLEM, LEFT OPEN WHEN THE DISCLOSURE HALF
+  // WAS CLOSED. `pgsl_to_turtle` was gated here because it serialises the ENTIRE process-wide
+  // kernel singleton to whoever asks, and `pgsl_ingest` because it is a relay-credentialed
+  // write. `mint` and `promote` mutate that SAME singleton - kernel mint(kind:'atom') calls
+  // `getKernelLatticeAdapter().mint(...)` and mint(kind:'fragment') calls `adapter.promote(...)`
+  // - and were in neither set, so `POST /tool/mint` ran with no credential at all. There is no
+  // cap on lattice size anywhere in packages/core or packages/pgsl, and this relay has an OOM
+  // history; the nodes an anonymous caller seeded were then visible to every authenticated
+  // reader and promotable to durable, world-readable state by publish_node.
+  'mint', 'promote',
 ]);
 
 // NOTE: a `PUBLIC_TOOLS` set used to sit here and was DEAD CODE — never read by any
@@ -9337,7 +9347,17 @@ async function handlePublishDirectory(args: ToolArgs): Promise<string> {
 }
 
 async function handleResolveWebfinger(args: ToolArgs): Promise<string> {
-  const result = await resolveWebFinger(args.resource as string, { fetch: solidFetch });
+  // ★★ `guardedInvokeFetch`, NOT `solidFetch`. This was the ONE of three caller-URL directory
+  // paths that skipped the R4 screen - handleDiscoverDirectory and handleSubscribeToPod both
+  // pass guardedInvokeFetch with a "caller URL (R4)" comment, and this file's own census names
+  // all three together. `resolveWebFinger` builds the target from the caller's string (the part
+  // after '@' for an acct:, else the URL hostname) and fetches
+  // `https://<that>/.well-known/webfinger`, so the hostname is the caller's choice. solidFetch
+  // normalises and then dials the global pool, and egress.ts is explicit that the address screen
+  // attaches per-request and NEVER as the global dispatcher - so neither the name screen nor the
+  // connect-time screen ran. The recorded bypasses apply verbatim: 10-0-0-5.nip.io -> 10.0.0.5,
+  // localtest.me -> 127.0.0.1.
+  const result = await resolveWebFinger(args.resource as string, { fetch: guardedInvokeFetch });
   if (result.podUrl) {
     const existing = knownPods.get(result.podUrl);
     // ★ `third-party`: resolving somebody's WebFinger says where their pod is, not who they

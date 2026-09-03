@@ -124,7 +124,11 @@ describe('a refusal names the status that matches what failed', () => {
    * The central helpers — `notFound`, `notConfigured`, `upstreamFailed`, `wrongPod`,
    * `invalidArguments` — are worded in their OWN terms, so no leg selected them, and an audit
    * showed all three of `notFound`/`notConfigured`/`upstreamFailed` flipped to 401 passing
-   * every assertion in this file. Those helpers stand behind 26 call sites: "SCORM Cloud
+   * every assertion in this file. Those helpers stand behind SEVENTY-ODD call sites — an AST
+   * census of calls to the six names counts 73 today and counted 70 at the commit that first
+   * claimed "26", so that figure was wrong when written, by 2.7x, under every reading. It is
+   * the argument for why the hole mattered: it says how many answers one mis-typed helper
+   * corrupts, and understating it made the fix look narrower than it was. Concretely: "SCORM Cloud
    * credentials not configured" would have answered 401 and sent an agent back to
    * sign_request in the exact loop this file's docblock says it exists to prevent.
    *

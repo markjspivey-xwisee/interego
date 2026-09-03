@@ -316,12 +316,20 @@ console.log(`Total: ${totalGrounded}/${totalChecked} L2/L3 classes grounded `
 //
 // CHANGELOG.md is deliberately NOT on this list. Its 41/41, 86/86 and 91/91 entries are
 // history and were correct when written; "fixing" them would falsify the record.
-const DOC_CLAIMS = [
-  // `\s+` and not a literal space: LAYERS.md wraps the sentence mid-claim, and this repo
-  // checks out CRLF on Windows, so the separator is "\r\n" there and "\n" in CI. A
-  // literal-space pattern silently never matches and turns this check into a no-op.
-  { file: 'spec/LAYERS.md', re: /Current status: \*\*(\d+)\/(\d+)\s+classes grounded\*\*/ },
-];
+// ★★ NOW EMPTY, AND THAT RESOLVES A CONTRADICTION BETWEEN TWO GATES.
+//
+// This required spec/LAYERS.md to state the count and keep it current. `docs-drift-lint.mjs`
+// BANS that shape — "derivation-lint computes this; state the invariant instead" — reasoning
+// that a hand-maintained number can only ever be wrong. The two rules could never collide
+// because docs-drift scanned exactly README.md and STATUS.md, and LAYERS.md was in neither.
+// Widening that scan to every tracked markdown put them in the same room, and docs-drift's rule
+// is the stronger one: the comment above already offers it — "or delete the number the way
+// README did."
+//
+// Nothing is lost. The gate FAILS on the first ungrounded class, so "every L2/L3 class is
+// grounded" is enforced by the run itself; the prose states that invariant, and the count is
+// printed by the tool that measures it.
+const DOC_CLAIMS = [];
 
 let docDrift = 0;
 for (const { file, re } of DOC_CLAIMS) {
@@ -348,7 +356,10 @@ for (const b of blindSpots) {
 // count, so the two failures point in opposite directions and only one of them is honest.
 if (totalUngrounded > 0 || docDrift > 0 || blindSpots.length > 0) process.exit(1);
 console.log(`\nPASS: all ${files.length} ontologies under docs/ns/ were enumerated and read, every`
-  + ' L2/L3 class is grounded, and spec/LAYERS.md states the same count.');
+  // The "and spec/LAYERS.md states the same count" that ended this sentence became false the
+  // moment DOC_CLAIMS was emptied — a success message is a claim like any other.
+  + ' L2/L3 class is grounded. spec/LAYERS.md states the invariant rather than a count, and'
+  + ' this line is where the count is published.');
 }
 
 // Direct invocation — `node tools/derivation-lint.mjs`. Importing this module for its

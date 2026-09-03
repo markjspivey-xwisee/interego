@@ -172,7 +172,7 @@ fighting stdio.
 
 ### Where data lives
 
-- **Pod:** Azure CSS at `https://interego-css-gate.livelysky-….azurecontainerapps.io/u-pk-…/`,
+- **Pod:** the hosted CSS behind `https://gate.interego.xwisee.com/u-pk-…/`,
   scoped per scenario via a unique sub-container path. Cleanup runs
   in the scenario's `finally` block — pods don't accumulate cruft.
 - **Bridges:** child processes, killed on scenario exit.

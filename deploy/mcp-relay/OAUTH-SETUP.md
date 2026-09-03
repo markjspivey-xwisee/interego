@@ -349,7 +349,7 @@ npm start
 
 The relay needs the identity server + CSS pod-server to be reachable;
 both ship as separate Dockerfiles in `deploy/`. See
-`deploy/azure-deploy.sh` for the Azure Container Apps recipe used by
+`tools/railway-redeploy.mjs` for the deploy path used by
 the hosted reference.
 
 ## Troubleshooting

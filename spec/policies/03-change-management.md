@@ -54,7 +54,7 @@ For solo-operator periods, the Author and Operator are the same; the Reviewer is
 ### 4.5 Deploy gating
 
 - Production deploys are run from a clean checkout of `main` after the PR has merged + tests have passed in CI.
-- Deploy script (`deploy/azure-deploy.sh`) MUST be invoked from the Operator's workstation with the active subscription confirmed (`az account show`).
+- Deploys MUST go through `build-ghcr.yml` (image) and `tools/railway-redeploy.mjs` (repoint + verify), invoked by the Operator with the Railway PROJECT token; the script refuses to deploy unless the pin it just wrote reads back as the sha requested. The former `deploy/azure-deploy.sh` MUST NOT be run — it provisions a registry that was deleted. Active subscription confirmed (`az account show`).
 - Deploy events MUST publish a compliance descriptor with `dct:conformsTo soc2:CC8.1` containing: commit SHA, deployer DID, target environment, components changed, rollback plan.
 
 ### 4.6 Rollback

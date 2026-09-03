@@ -209,7 +209,11 @@ checked at all — and it refuses any file whose `a owl:Class` count and
 its own parsed-class count disagree, because a file the scanner cannot
 read reports zero ungrounded classes and looks clean. Which prefixes
 are exempt is read out of §3 above, not restated in the tool. CI blocks
-on ungrounded classes. Current status: **106/106 classes grounded**.
+on ungrounded classes, so the invariant is simply that **every L2/L3 class is grounded** —
+the gate cannot be green otherwise. No count is written here on purpose: a hand-typed
+N/N went stale twice (91/91 while the tool printed 97/97, then 105/105 against 106), and
+`tools/docs-drift-lint.mjs` now bans the shape outright. Run `npm run lint:derivation`
+for the current figure.
 
 Why: the whole point of L1 being the normative protocol is that
 higher constructs EMERGE from it via composition. A

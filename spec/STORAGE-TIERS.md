@@ -110,7 +110,7 @@ You'll want HTTPS even on a LAN once you're carrying any sensitive content — `
 
 **Run CSS on your own VPS with DNS + TLS.**
 
-This is exactly what `deploy/Dockerfile.css` + `deploy/azure-deploy.sh` build, but on your own infra:
+This is exactly what `deploy/Dockerfile.css` builds and `tools/railway-redeploy.mjs` deploys, but on your own infra:
 
 ```bash
 docker build -f deploy/Dockerfile.css -t my-pod .

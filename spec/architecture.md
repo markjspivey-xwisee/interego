@@ -1550,7 +1550,7 @@ Auto-starts Community Solid Server. Everything works offline.
 ### 9.2 Azure Container Apps
 
 ```bash
-cd deploy && bash azure-deploy.sh
+gh workflow run build-ghcr.yml   # then: node tools/railway-redeploy.mjs <service> <sha>
 ```
 
 Deploys 4 services:

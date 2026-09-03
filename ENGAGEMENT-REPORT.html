@@ -387,7 +387,9 @@ methodology review; boozer owns pod-execution + evidence + owner-decrypt attesta
 | `f14864db` | `recipients` arg — multi-recipient durable-key encryption |
 | `9495ae3c` | **Confidentiality** — redact cleartext xAPI when `recipients` set (current) |
 
-Build path: `az acr build … Dockerfile.foxxi-bridge` → `az containerapp update`. Single-revision
+> Build path AT THE TIME, on Azure, which was decommissioned since: `az acr build …
+> Dockerfile.foxxi-bridge` → `az containerapp update`. Today the same step is
+> `build-ghcr.yml` → `tools/railway-redeploy.mjs`. Single-revision
 mode kept Foxxi serving throughout (a failed new revision keeps the old one live).
 
 ---
@@ -457,7 +459,8 @@ These are no longer polled — the 1-minute heartbeat was stood down once the co
   signed descriptor `…/u-pk-00181cd5dbee/context-graphs/1781454874844.ttl`; 4-recipient holon
   `…/u-pk-00181cd5dbee/foxxi-records/holon-686f7b41…holon.json`.
 - **Endpoints:** bridge `interego-foxxi-bridge…`, gate `interego-css-gate…`, relay
-  `interego-relay…` (all `…livelysky-8b81abb0.eastus.azurecontainerapps.io`).
+  `interego-relay…` (all on the Azure environment that was decommissioned since; the same
+  services are now `foxxi-bridge`, `gate` and `relay` under `interego.xwisee.com`).
 
 ---
 *Maintainer-authored retrospective. The substantive result — regime-first performance
