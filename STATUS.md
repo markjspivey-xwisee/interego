@@ -130,7 +130,24 @@ Railway SERVICE name (`foxxi-bridge`).
 
 ## Test + validation hygiene
 
-- **`npx tsc -p tsconfig.json --noEmit`** — currently clean across the repo + each sub-project (mcp-server, deploy/identity, etc.).
+- **`npx tsc --noEmit -p tsconfig.check.json`** — the repo-wide typecheck, 1,500+ files. It also
+  runs automatically as the vitest globalSetup (`tools/vitest-typecheck-setup.mjs`), so
+  `npx vitest run` fails on a type error anywhere.
+  ★ This line used to advertise `tsc -p tsconfig.json --noEmit` (not bolded here on purpose:
+  bold-code in this section means RUN THIS, and tests/advertised-commands-do-something.test.ts
+  reads that marker), described as "currently clean across the
+  repo + each sub-project". That command compiles **nothing**: the root `tsconfig.json` is
+  `{"files": [], "references": [...]}`, and without `--build` the references contribute no
+  files — measured, `--listFilesOnly` prints 0 lines and exits 0, against 1,514 for
+  `tsconfig.check.json`. Neither sub-project the sentence named (`mcp-server`,
+  `deploy/identity`) is even in the references list. A maintainer running the advertised
+  command before pushing got exit 0 over an empty program and read it as "the repo typechecks",
+  which is the pre-push false green `tsconfig.check.json` exists to prevent.
+  `tests/advertised-commands-do-something.test.ts` now fails if this line names a tsconfig whose
+  program is empty.
+- **The bridges are NOT in `tsconfig.check.json`** — `applications/*/bridge/tsconfig.json` are
+  separate programs. Typecheck them before pushing: `for cfg in applications/*/bridge/tsconfig.json;
+  do npx tsc --noEmit -p "$cfg"; done`.
 - **`npx vitest run`** — the whole root suite, green, with a small number skipped on network / external dependencies. No pass count is transcribed here: this line said **1522/1522** while `npx vitest list` collected roughly twice that, because a hand-typed total goes stale on the next commit that adds a test and nothing re-derives it. Run `npx vitest list` for the current figure; `tools/vitest-run-integrity.mjs` is what asserts the run actually covered the tree. Four walkthrough regression tests (v3-distribution, v4-partial-vss, v5-distributed-blinding, v6-distributed-values) run the narrative scripts end-to-end as child processes to catch any drift in the composed primitives.
 - **`node tools/ontology-lint.mjs`** — every owned-namespace reference in TS is defined in the corresponding `docs/ns/<prefix>.ttl` or allowlisted. CI-gated.
 - **`node tools/smoke-try-flow.mjs`** — 12-check end-to-end contract test of the `/try → claim` activation funnel against any live deployment.

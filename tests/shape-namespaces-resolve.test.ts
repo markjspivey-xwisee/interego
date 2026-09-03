@@ -14,9 +14,10 @@
  * reference. This test pins that the path keeps existing.
  */
 import { describe, it, expect } from 'vitest';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PAGES_BASE = 'https://markjspivey-xwisee.github.io/interego/';
@@ -92,19 +93,33 @@ const WEBID_FRAGMENTS = ['me', 'this', 'agent', 'i'] as const;
 
 function discoveredNamespaces(): Map<string, string[]> {
   const found = new Map<string, string[]>();
-  const walk = (dir: string): string[] => {
-    if (!existsSync(dir)) return [];
-    const out: string[] = [];
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (entry.name === 'node_modules' || entry.name === 'dist') continue;
-      const p = join(dir, entry.name);
-      if (entry.isDirectory()) out.push(...walk(p));
-      else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.d.ts')) out.push(p);
-    }
-    return out;
-  };
-  for (const top of ['packages', 'applications', 'deploy', 'mcp-server', 'integrations']) {
-    for (const file of walk(join(REPO, top))) {
+  /**
+   * ★★ EVERY TRACKED FILE, NOT FIVE DIRECTORIES OF `.ts`.
+   *
+   * This walked ['packages','applications','deploy','mcp-server','integrations'] and kept only
+   * `.ts` — so tools/, scripts/, demos/, benchmarks/, examples/, quickstart/, docs/, spec/ and
+   * every .ttl/.mjs/.js/.md were outside it, while the describe said "referenced anywhere in
+   * the tree". Measured: the old scan saw 27 namespaces and 17 more appeared only outside it,
+   * two of which resolved to nothing:
+   *
+   *   · `…/ns/align#` bound in demos/scenarios/23-zero-copy-semantic-layer.ts and emitted into
+   *     Turtle there, while the published document declares `…/ns/alignment#` — the same
+   *     prefix expanding to two IRIs, one of which 404s.
+   *   · `…/applications/agent-development-practice/adp/shapes`, declared as its own ontology
+   *     IRI in a .ttl, published nowhere — byte-for-byte the AGP_SHAPES_NS defect this file was
+   *     created to pin, one vertical over, in a file type it could not read.
+   *
+   * `git ls-files` is the source of truth rather than a directory list, because a directory
+   * list is a thing that goes stale silently and a tracked-file list cannot.
+   */
+  const tracked = execFileSync('git', ['ls-files'], { cwd: REPO, encoding: 'utf8', maxBuffer: 1 << 28 })
+    .split(String.fromCharCode(10)).filter(Boolean);
+  const SKIP = /(?:^|[/])(?:node_modules|dist)[/]|[.](?:png|jpg|jpeg|gif|ico|pdf|woff2?|ttf|zip|gz|jar|exe|dll|node|wasm|mp4|webm|bin|snap)$/i;
+  {
+    for (const rel0 of tracked) {
+      if (SKIP.test(rel0)) continue;
+      const file = join(REPO, rel0);
+      if (!existsSync(file)) continue;
       const src = readFileSync(file, 'utf8');
       const pattern = new RegExp(
         `${PAGES_BASE.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}([A-Za-z0-9._/-]+)#([A-Za-z0-9_-]*)`, 'g');
@@ -126,7 +141,12 @@ describe('every namespace referenced anywhere in the tree resolves', () => {
   it('discovers namespaces at all', () => {
     // A scan that matched nothing would report full coverage while checking nothing —
     // the same vacuous pass the DECLARED regexes were once guilty of.
-    expect(discovered.size).toBeGreaterThan(20);
+    //
+    // ★ 40, NOT 20. The old floor was set when the scan read five directories of `.ts` and saw
+    // 27; walking every tracked file finds 44. Leaving it at 20 would have let the scan narrow
+    // back to a fifth of the tree without a word — which is exactly how it got narrow the first
+    // time. Raise this when the real count rises; it is a floor with headroom, not a tally.
+    expect(discovered.size).toBeGreaterThan(40);
   });
 
   it('every one of them has a published document', () => {

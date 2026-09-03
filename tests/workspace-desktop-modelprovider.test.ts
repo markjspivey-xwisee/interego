@@ -21,7 +21,21 @@ import {
   DENIED_BUILTINS, TURN_EFFORT, TURN_MODEL, childEnv, neutralCwd, resolveClaudeCli, turnArgv,
 } from '../applications/shared-workspace/desktop/src/modelprovider.js';
 
-const WIN = process.platform === 'win32';
+/**
+ * ★★ THE PLATFORM IS SUPPLIED, NOT DETECTED.
+ *
+ * This file had `const WIN = process.platform === 'win32'` and both ★ tests below opened with
+ * `if (!WIN) { expect(true).toBe(true); return; }`. CI runs the root suite on ubuntu-latest
+ * (.github/workflows/bridge-typecheck.yml), so on every machine that gates a merge those two
+ * asserted a literal tautology and never called the resolver at all — while this file's header
+ * claimed they were pinned "from the pure functions written to be injectable for exactly this".
+ * The only place they executed was the maintainer's own Windows checkout, which is precisely
+ * the coverage the header says it is not relying on.
+ *
+ * `resolveClaudeCli` now takes the platform as its third injectable, beside `env` and `exists`,
+ * so the Windows behaviour is exercised everywhere.
+ */
+const WIN32: NodeJS.Platform = 'win32';
 
 describe('finding the CLI without a shell', () => {
   it('★ prefers claude.exe over claude.cmd when both exist', () => {
@@ -30,11 +44,10 @@ describe('finding the CLI without a shell', () => {
     // a shim and an executable, and the shim sorts first in APPDATA/npm, so a naive PATH walk finds
     // the unusable one. If this ever flips, every Windows user gets "Claude Code could not be
     // started: spawn EINVAL" and no indication that their subscription is fine.
-    if (!WIN) { expect(true).toBe(true); return; }
     const env = { APPDATA: 'C:\\A', PATH: 'C:\\A\\npm' };
     const both = (p: string): boolean => p === 'C:\\A\\npm\\claude.cmd'
       || p === 'C:\\A\\npm\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe';
-    const got = resolveClaudeCli(env, both);
+    const got = resolveClaudeCli(env, both, WIN32);
     expect(got?.path).toContain('claude.exe');
     expect(got?.shimOnly).toBe(false);
   });
@@ -43,9 +56,8 @@ describe('finding the CLI without a shell', () => {
     // Absence is not evidence, in its executable form: a shim IS evidence Claude Code is
     // installed, which is worth telling the user — but it is not something this app will run, and
     // reporting it as usable would produce an EINVAL the user cannot act on.
-    if (!WIN) { expect(true).toBe(true); return; }
     const env = { APPDATA: 'C:\\A', PATH: 'C:\\A\\npm' };
-    const got = resolveClaudeCli(env, (p) => p === 'C:\\A\\npm\\claude.cmd');
+    const got = resolveClaudeCli(env, (p) => p === 'C:\\A\\npm\\claude.cmd', WIN32);
     expect(got?.shimOnly).toBe(true);
     expect(got?.path).toContain('claude.cmd');
   });
@@ -58,13 +70,25 @@ describe('finding the CLI without a shell', () => {
     // A GUI-launched app does not inherit a terminal's PATH — on macOS a bundle opened from Finder
     // gets a minimal one. A resolver that trusted PATH alone would report "not installed" to every
     // user who did not launch from a terminal, which is nearly all of them.
-    const env = WIN
-      ? { APPDATA: 'C:\\A', PATH: '' }
-      : { HOME: '/home/x', PATH: '' };
-    const target = WIN
-      ? 'C:\\A\\npm\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe'
-      : '/usr/local/bin/claude';
-    expect(resolveClaudeCli(env, (p) => p === target)?.path).toBe(target);
+    // ★ BOTH PLATFORMS, NOT WHICHEVER ONE IS RUNNING. This branched on the host, so each run
+    // asserted half of it and CI only ever saw the POSIX half — the same coverage gap as the
+    // two tautologies above, one step less obvious because both branches did assert something.
+    // ★ The expected paths are built with `join`, not written out. `resolveClaudeCli` composes
+    // its known locations with `join`, which uses the HOST separator — so a hard-coded
+    // '/usr/local/bin/claude' never matches when the suite runs on Windows, and that is exactly
+    // why the original branched on the host and only ever checked half of itself.
+    const cases: ReadonlyArray<readonly [NodeJS.Platform, NodeJS.ProcessEnv, string]> = [
+      ['win32', { APPDATA: 'C:\\A', PATH: '' },
+        join('C:\\A', 'npm', 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe')],
+      ['linux', { HOME: '/home/x', PATH: '' }, join('/usr/local/bin', 'claude')],
+      ['darwin', { HOME: '/home/x', PATH: '' }, join('/opt/homebrew/bin', 'claude')],
+    ];
+    for (const [platform, env, target] of cases) {
+      expect(
+        resolveClaudeCli(env, (p) => p === target, platform)?.path,
+        `${platform}: a known install location was not searched with an empty PATH`,
+      ).toBe(target);
+    }
   });
 });
 

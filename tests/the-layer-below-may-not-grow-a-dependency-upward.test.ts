@@ -105,11 +105,39 @@ describe('the standards vertical does not deepen its dependency on the theory ve
   it('the CORRECT direction is not restricted', () => {
     // agp composing foxxi is the architecture working. Asserted so a future reader does not
     // "fix" the ratchet by making it symmetric, which would forbid the intended arrow.
+    //
+    // ★★ THIS ASSERTED `length >= 0` AND COULD NOT FAIL. `Array.prototype.length` is never
+    // negative, so it held for every possible value — including the `''` its own catch left
+    // behind when git was absent. `upwardMentions()` was never called and symmetry was never
+    // exercised, so the edit the comment above says this guards against would have passed with
+    // a green tick. Its sibling two tests up is titled "is measuring something — a ratchet over
+    // an empty set passes forever", so the class was named in this very file and this leg
+    // shipped anyway.
+    //
+    // What makes it falsifiable: the correct direction must be BOTH real (agp does reference
+    // foxxi) and UNCOUNTED by the ratchet (making the ratchet symmetric would sweep these in).
     let out = '';
     try {
       out = execFileSync('git', ['grep', '-lF', '--', 'foxxi-content-intelligence', '--',
         `applications/${AGP}/src`], { cwd: ROOT, encoding: 'utf8' });
     } catch { /* none is also fine */ }
-    expect(out.split('\n').filter(Boolean).length).toBeGreaterThanOrEqual(0);
+    const downward = out.split('\n').filter(Boolean);
+    expect(
+      downward.length,
+      'agp no longer references foxxi anywhere in src/, so this leg is asserting nothing about '
+        + 'the permitted direction — re-point it at whatever the intended arrow is now.',
+    ).toBeGreaterThan(0);
+
+    // And the ratchet must not be counting them. `upwardMentions` scans FOXXI_SHIPPED for
+    // mentions of agp; a symmetric version would also report these agp→foxxi files, so their
+    // absence from byFile is the property "the correct direction is not restricted".
+    const { byFile } = upwardMentions();
+    const wronglyCounted = downward.filter(f => Object.keys(byFile).includes(f));
+    expect(
+      wronglyCounted,
+      'the ratchet has become symmetric: it is now counting the PERMITTED agp → foxxi arrow as '
+        + 'upward drift, which forbids the architecture instead of protecting it:\n  '
+        + wronglyCounted.join('\n  '),
+    ).toEqual([]);
   });
 });

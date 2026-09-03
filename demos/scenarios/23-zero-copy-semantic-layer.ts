@@ -348,7 +348,7 @@ Step 3. Publish ONE align:NamespaceBridge descriptor on the pod (modal=Hypotheti
 
 Use this turtle template (substitute the bridge IRI):
 
-  @prefix align: <https://markjspivey-xwisee.github.io/interego/ns/align#> .
+  @prefix align: <https://markjspivey-xwisee.github.io/interego/ns/alignment#> .
   @prefix owl: <http://www.w3.org/2002/07/owl#> .
   @prefix skos: <http://www.w3.org/2004/02/skos/core#> .
   @prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
@@ -492,7 +492,7 @@ Step 4. Output ONLY: {"attester":"${player.short}","axis":"accuracy","rating":<y
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 
-<${promotedBridgeIri}> a <https://markjspivey-xwisee.github.io/interego/ns/align#NamespaceBridge> ;
+<${promotedBridgeIri}> a <https://markjspivey-xwisee.github.io/interego/ns/alignment#NamespaceBridge> ;
   rdfs:label "LRS xAPI ↔ Warehouse training (Asserted)" ;
   iep:supersedes <${alignerOutput.bridge_iri}> ;
   iep:modalStatus iep:Asserted ;

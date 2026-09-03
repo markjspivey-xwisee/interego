@@ -33,6 +33,7 @@ import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { parseTrig } from '@interego/core';
 
 const NS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'docs', 'ns');
@@ -40,10 +41,33 @@ const OWL_ONTOLOGY = 'http://www.w3.org/2002/07/owl#Ontology';
 const RDF_TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
 const VANN_PREF = 'http://purl.org/vocab/vann/preferredNamespaceUri';
 
+/**
+ * ★★ EVERY PUBLISHED TURTLE DOCUMENT, NOT JUST docs/ns.
+ *
+ * This read `readdirSync(NS_DIR)` — 33 files — while `git ls-files "docs/**" + ".ttl"` returns
+ * 46. The 13 it never opened are every VERTICAL vocabulary (wsp, agp, lpc, owm, ac, adp, lrs
+ * and their shape files) plus docs/orgb. Two undeclared owned terms were living in them:
+ *
+ *   · `passport:Achievement`, cited as a SUPERCLASS at
+ *     docs/applications/learner-performer-companion/lpc.ttl — byte-for-byte the class this
+ *     file's own header boasts about catching (`ieh:Agent`, "cited as a SUPERCLASS by two
+ *     ontologies"), in a document it could not read.
+ *   · `iep:payload`, used as a predicate in docs/orgb/context-graphs/e0.ttl and e1.ttl.
+ *
+ * OWNERSHIP is still decided by docs/ns alone — those are the documents that declare a
+ * namespace as ours via owl:Ontology + vann:preferredNamespaceUri — but REFERENCES are now
+ * collected from every published document, because a citation from a vertical is exactly as
+ * dereferenceable, and exactly as broken, as one from the core.
+ */
+const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const FILES = readdirSync(NS_DIR).filter(f => f.endsWith('.ttl'));
-const DOCS = FILES.map(f => {
-  try { return { f, doc: parseTrig(readFileSync(join(NS_DIR, f), 'utf8')) }; }
-  catch { return { f, doc: undefined }; }
+/** Every tracked .ttl under docs/, relative to the repo root. */
+const ALL_TTL = execFileSync('git', ['ls-files', 'docs'], { cwd: REPO, encoding: 'utf8', maxBuffer: 1 << 28 })
+  .split(String.fromCharCode(10))
+  .filter(p => p.endsWith('.ttl'));
+const DOCS = ALL_TTL.map(rel => {
+  try { return { f: rel, doc: parseTrig(readFileSync(join(REPO, rel), 'utf8')) }; }
+  catch { return { f: rel, doc: undefined }; }
 });
 
 /** Namespaces a document in this directory declares as its OWN. */

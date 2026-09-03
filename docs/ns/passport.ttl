@@ -70,6 +70,13 @@ passport:StatedValue a owl:Class ;
     rdfs:label "Stated Value" ;
     rdfs:comment "A value the agent commits to (e.g. \"prefer cited sources\", \"refuse off-topic requests\", \"escalate uncertain claims to human review\"). Carried in the passport as Asserted-modal SemioticFacet so violators are detectable post-hoc by comparing actions to stated values." .
 
+passport:Achievement a owl:Class ;
+    rdfs:subClassOf iep:ContextDescriptor ;
+    rdfs:label "Achievement" ;
+    rdfs:comment "A recognition that an agent or person demonstrated something — a verifiable credential, an Open Badge assertion, a CLR record, an IEEE LER recognition record. The passport's biography is built from what an agent HAS DEMONSTRATED, so the recognitions themselves need a class here: passport:CapabilityAcquisition records the moment a capability was first shown, and an Achievement is the durable, transferable artifact that says so and can be presented to a third party. Declared because it was already being cited: docs/applications/learner-performer-companion/lpc.ttl subclasses lpc:Credential from it, and for some time the superclass resolved to a document that never mentioned the term — the exact defect tests/every-published-term-is-declared.test.ts exists to catch, in a vertical vocabulary that gate could not read." ;
+    rdfs:seeAlso passport:CapabilityAcquisition ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/passport#> .
+
 passport:DelegationCredential a owl:Class ;
     rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Delegation Credential" ;

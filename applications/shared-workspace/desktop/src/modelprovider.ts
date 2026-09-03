@@ -96,8 +96,21 @@ export interface Resolved {
  * launched from Finder gets a minimal one — so the well-known install locations are searched
  * explicitly and first. Exported for the test that pins the `.exe`-before-`.cmd` ordering.
  */
-export function resolveClaudeCli(env: NodeJS.ProcessEnv = process.env, exists: (p: string) => boolean = existsSync): Resolved | null {
-  const win = process.platform === 'win32';
+export function resolveClaudeCli(
+  env: NodeJS.ProcessEnv = process.env,
+  exists: (p: string) => boolean = existsSync,
+  // ★★ PLATFORM IS INJECTED FOR THE SAME REASON `env` AND `exists` ARE.
+  //
+  // It was read straight from `process.platform` here, so the two ★ tests pinning the
+  // .exe-before-.cmd ordering opened with `if (!WIN) { expect(true).toBe(true); return; }` -
+  // and CI runs the root suite on ubuntu-latest. Both therefore asserted a literal tautology
+  // on the only machine that runs them, while the file's header claimed they were "written to
+  // be injectable for exactly this". The regression they exist for - spawning a .cmd shim,
+  // which fails as `spawn EINVAL` and is reported to the user as if their subscription were
+  // the problem - could be reintroduced and merged with two green ticks.
+  platform: NodeJS.Platform = process.platform,
+): Resolved | null {
+  const win = platform === 'win32';
   const known = win
     ? [
         join(env['APPDATA'] ?? '', 'npm', 'node_modules', '@anthropic-ai', 'claude-code', 'bin'),

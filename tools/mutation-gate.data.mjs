@@ -16,6 +16,25 @@ const OWM = 'applications/organizational-working-memory/source-adapters/web.ts';
 const LRS = 'applications/lrs-adapter/bridge/server.ts';
 const AC_SRC = 'applications/agent-collective/src/pod-publisher.ts';
 const FOXXI_SRC = 'applications/foxxi-content-intelligence/src/composed-extensions.ts';
+const LPC_TTL = 'docs/applications/learner-performer-companion/lpc.ttl';
+const STATUS_MD = 'STATUS.md';
+const RELAY = 'deploy/mcp-relay/server.ts';
+const ADP_SHAPES = 'applications/agent-development-practice/ontology/adp-shapes.ttl';
+
+/**
+ * ★ BUILT BY CONCATENATION SO THE IRI NEVER APPEARS WHOLE IN THIS FILE.
+ *
+ * `tests/shape-namespaces-resolve.test.ts` now walks EVERY TRACKED FILE, tools/ included - so
+ * an unpublished namespace written out literally here trips, on a clean tree, the very gate
+ * this mutant exists to drive. The harness reported "the gates are already red before any
+ * mutation was applied" and was exactly right.
+ *
+ * Same shape as the control-byte mutant spelling its 0x08 as an escape: a mutation table is
+ * INPUT to the gates it drives, and a defect written plainly in it is a defect in the tree.
+ * The gate's own path pattern stops at the quote, so the split IRI matches nothing.
+ */
+const UNPUBLISHED_NS = 'https://markjspivey-xwisee.github.io/interego/applications/'
+  + 'agent-development-practice/adp/no' + 'where#';
 const RETRY = 'packages/core/src/http/retry.ts';
 const FOLLOW = 'packages/core/src/affordance/follow.ts';
 const HYPER = 'packages/core/src/kernel/hypermedia.ts';
@@ -26,6 +45,10 @@ const STATUS_GATE = 'tests/a-refusal-status-names-what-actually-failed.test.ts';
 const VERTICAL_GATE = 'tests/every-vertical-declines-with-a-status.test.ts';
 const RETRY_GATE = 'tests/a-refusal-is-never-retried-as-a-blip.test.ts';
 const BYTES_GATE = 'tests/line-endings-are-normalised.test.ts';
+const TERMS_GATE = 'tests/every-published-term-is-declared.test.ts';
+const NS_GATE = 'tests/shape-namespaces-resolve.test.ts';
+const ADVERTISED_GATE = 'tests/advertised-commands-do-something.test.ts';
+const OAUTH_SCOPE_GATE = 'deploy/mcp-relay/tests/oauth-read-scope-is-read-only.test.ts';
 
 /** An untyped decline planted in a real handler, in each shape that has defeated a census. */
 const plant = (name, body, why) => ({
@@ -266,5 +289,55 @@ export const MUTANTS = [
     replace: "    return { status: 'failed', error: 'Payload does not look like a zip file (no PK header).' };\n",
     mustFail: [VERTICAL_GATE],
     why: 'a rejected SCORM upload answered HTTP 200 with isError=false, so a caller was told a package it never accepted had been accepted',
+  },
+
+  // ── a published document nothing reads ─────────────────────────────
+  {
+    name: 'undeclared-owned-term-in-a-vertical-vocabulary',
+    file: LPC_TTL,
+    // The terms gate read docs/ns alone - 33 of the 46 published Turtle documents - so every
+    // VERTICAL vocabulary was outside it, and `passport:Achievement` sat cited-as-a-superclass
+    // and declared nowhere: byte-for-byte the class the gate's header boasts about catching.
+    find: "    rdfs:subClassOf passport:Achievement ;",
+    replace: "    rdfs:subClassOf passport:Achievement, passport:UndeclaredThing ;",
+    mustFail: [TERMS_GATE],
+    why: 'a consumer dereferencing the superclass lands on a document that never mentions it',
+  },
+  {
+    name: 'namespace-declared-in-a-ttl-and-published-nowhere',
+    file: ADP_SHAPES,
+    // The namespace gate walked five directories of .ts, so a namespace declared in a .ttl was
+    // invisible - which is how adp/shapes went unpublished while its sibling agp/shapes was
+    // the very defect the gate had been written for.
+    find: "@prefix adpsh: <https://markjspivey-xwisee.github.io/interego/applications/agent-development-practice/adp/shapes#> .",
+    replace: `@prefix adpsh: <${UNPUBLISHED_NS}> .`,
+    mustFail: [NS_GATE],
+    why: 'every adpsh: shape IRI 404d at its own declared authority',
+  },
+
+  // ── a command, and a grant, that check nothing ─────────────────────────
+  {
+    name: 'status-advertises-an-empty-typecheck',
+    file: STATUS_MD,
+    // Verbatim what STATUS.md advertised: a tsc invocation whose program is EMPTY. It exits 0
+    // having read nothing, and a maintainer running it before pushing reads that as a clean
+    // repo. Measured: --listFilesOnly prints 0 lines for tsconfig.json, 1,514 for the real one.
+    find: "- **`npx tsc --noEmit -p tsconfig.check.json`** \u2014 the repo-wide typecheck, 1,500+ files.",
+    replace: "- **`npx tsc -p tsconfig.json --noEmit`** \u2014 the repo-wide typecheck, 1,500+ files.",
+    mustFail: [ADVERTISED_GATE],
+    why: 'the document that tells people how to check their work handed out a false green',
+  },
+  {
+    name: 'a-pod-writer-slips-onto-the-read-side',
+    file: RELAY,
+    // ★★ record_trajectory_step's handler ends in handlePublishContext(…) with sign_authorship
+    // defaulting true. Under the OLD hand-maintained WRITE_SIDE_TOOLS list it was simply absent
+    // and therefore ungated; under default-deny the only way back in is to name it read-side,
+    // which is what this plants. A bearer narrowed to mcp:read could publish a signed
+    // descriptor - the read-only grant was not read-only.
+    find: "  'analyze_question', 'interrogative_route', 'check_balance',",
+    replace: "  'analyze_question', 'interrogative_route', 'check_balance', 'record_trajectory_step',",
+    mustFail: [OAUTH_SCOPE_GATE],
+    why: 'the old list missed nine mutating tools and named two that do not exist',
   },
 ];

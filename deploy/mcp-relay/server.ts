@@ -750,7 +750,8 @@ const AUTH_REQUIRED_TOOLS = new Set([
   // route change closes at the HTTP layer, closed here in the same round.
   'pgsl_to_turtle',
   // ── R3: state-MUTATING tools that ran anonymously ──────────────────
-  // This set is the ONLY runtime classifier. WRITE_SIDE_TOOLS lists some of
+  // This set is the ONLY runtime classifier. READ_SIDE_TOOLS lists the tools that mutate
+  // nothing, and is the complement of
   // these but is consulted only in the /mcp CallTool handler, so on
   // /tool/:name and /messages they executed with no credential at all.
   //
@@ -1824,35 +1825,56 @@ const OAUTH_SCOPE_FULL = 'mcp';
 const OAUTH_SCOPE_READ = 'mcp:read';
 const OAUTH_SCOPE_WRITE = 'mcp:write';
 const ALL_MCP_OAUTH_SCOPES = new Set<string>([OAUTH_SCOPE_FULL, OAUTH_SCOPE_READ, OAUTH_SCOPE_WRITE]);
-// Tools that mutate pod state. A bearer with only `mcp:read` is refused
-// here BEFORE the substrate scope gate runs. (Read-side tools —
-// discover_context, get_descriptor, list_known_pods, etc. — are not in
-// this set, so a read-only bearer reaches them normally.)
+// Scopes that satisfy the write gate below.
 const WRITE_SIDE_OAUTH_SCOPES = new Set<string>([OAUTH_SCOPE_FULL, OAUTH_SCOPE_WRITE]);
-const WRITE_SIDE_TOOLS = new Set<string>([
-  'publish_context',
-  'execute_application_action',
-  'remember',
-  'register_agent',
-  'revoke_agent',
-  'compose_contexts',
-  'add_pod',
-  'remove_pod',
-  'subscribe_to_pod',
-  'unsubscribe_from_pod',
-  'subscribe_all',
-  'pgsl_ingest',
-  'publish_node',
-  'publish_context_descriptor',
-  'publish_directory',
-  'link_wallet',
-  'setup_identity',
-  'invoke_affordance',
-  // `act` is now a first-class write path (it POSTs AMEP acts to /amep/acts with
-  // the caller's auto-forwarded session), so a read-only OAuth bearer must be
-  // refused at the early scope gate, consistently with invoke_affordance.
-  'act',
+// ★ `execute_application_action` (Application Lab, #356-#361) needed no edit here. It is not
+// on the read-side allowlist, so default-deny gates it by construction — which is exactly what
+// the old hand-maintained WRITE_SIDE_TOOLS list could not do for the nine tools it had missed.
+
+/**
+ * ★★ READ-SIDE, NOT WRITE-SIDE: THE GATE IS NOW DEFAULT-DENY.
+ *
+ * This was `WRITE_SIDE_TOOLS`, a hand-maintained list of 18 names, and the gate asked
+ * `WRITE_SIDE_TOOLS.has(name)` — so ANY tool nobody remembered to add was ungated. An
+ * adversarial pass measured the drift: nine pod- or state-mutating tools were missing,
+ * including `record_trajectory_step`, whose handler ends in `handlePublishContext(…)` with
+ * `sign_authorship` defaulting true; `set_reachability`, which durably rewrites the caller's
+ * federation directory row; `rebuild_manifest`, which rewrites a pod's manifest; and
+ * `sign_request`, which signs payloads as the caller. Two of the eighteen entries
+ * (`compose_contexts`, `publish_context_descriptor`) name tools that do not exist anywhere
+ * else in this file — the list had been edited by hand and had gone stale in both directions.
+ *
+ * A bearer deliberately narrowed to `mcp:read` — the scope this relay advertises, and the one
+ * an external verifier is told to drive end to end — could therefore still write pod state.
+ * The read-only grant was not read-only.
+ *
+ * An allowlist of READS fails the safe way. A new tool is write-gated until somebody decides,
+ * in this file, that it mutates nothing; forgetting costs a read-only caller a 403 on a read,
+ * which is visible and reported, instead of silently granting a write.
+ *
+ * Membership here means "mutates no pod, no lattice, no directory, and signs nothing as the
+ * caller". `promote` and `mint` are absent because they write the process-wide PGSL singleton;
+ * `read_inbox`, `notify_agent` and `resolve_webfinger` because they touch inbox or directory
+ * state. `tests/oauth-read-scope-is-read-only.test.ts` fails if any registered tool is left
+ * unclassified, so this list cannot quietly stop covering the surface.
+ */
+const READ_SIDE_TOOLS = new Set<string>([
+  // Kernel algebra — pure functions over descriptors, nothing persisted.
+  'dereference', 'compose', 'restrict', 'extend', 'decompose', 'reduce_chain',
+  // Discovery and reads.
+  'discover_context', 'discover_all', 'discover_directory', 'get_descriptor',
+  'get_encrypted_graph', 'get_current_head', 'get_pod_status', 'list_known_pods',
+  'list_declared_shapes', 'render_hmd', 'resolve_linked_data', 'verify_agent',
+  // Analysis and routing — answer questions, write nothing.
+  'analyze_question', 'interrogative_route', 'check_balance',
+  // PGSL reads. `pgsl_ingest` and `pgsl_decide` are absent: they write the lattice.
+  'pgsl_resolve', 'pgsl_lattice_status', 'pgsl_meet', 'pgsl_to_turtle',
 ]);
+
+/** The gate's question, phrased so the DEFAULT is refusal. */
+function isWriteSideTool(name: string): boolean {
+  return !READ_SIDE_TOOLS.has(name);
+}
 
 /** Any scope acceptable as a /mcp resource bearer. */
 function hasAnyMcpScope(scopes: readonly string[] | undefined): boolean {
@@ -12779,7 +12801,7 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
     // scope claim to gate on.
     if (
       authContext?.oauthScopes
-      && WRITE_SIDE_TOOLS.has(name)
+      && isWriteSideTool(name)
       && !hasWriteOauthScope(authContext.oauthScopes)
     ) {
       return {
@@ -14769,7 +14791,7 @@ mountAgentInterop(app, {
     const verb = capability.split('/').pop() ?? '';
     const tool = TOOLS[verb] ?? dynamicTools.get(verb);
     if (!tool) return { ok: false as const, reason: `unknown capability: ${verb}` };
-    if (AUTH_REQUIRED_TOOLS.has(verb) || WRITE_SIDE_TOOLS.has(verb)) {
+    if (AUTH_REQUIRED_TOOLS.has(verb) || isWriteSideTool(verb)) {
       return { ok: false as const, reason:
         `capability "${verb}" writes on behalf of its caller and is not yet reachable through this interop surface; ` +
         `invoke it directly at /tool/${verb} with a bearer token or a signed request` };

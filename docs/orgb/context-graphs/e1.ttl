@@ -9,4 +9,4 @@
     iep:trustLevel iep:SelfAsserted ;
     iep:issuer <https://markjspivey-xwisee.github.io/interego/orgb/carol#me> ;
     iep:supersedes <https://markjspivey-xwisee.github.io/interego/orgb/context-graphs/e0.ttl> ;
-    iep:payload <https://markjspivey-xwisee.github.io/interego/orgb/context-graphs/e1-graph.trig> .
+    iep:graphUrl "https://markjspivey-xwisee.github.io/interego/orgb/context-graphs/e1-graph.trig"^^xsd:anyURI .

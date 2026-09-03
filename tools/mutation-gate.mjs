@@ -60,7 +60,54 @@ const selected = only ? MUTANTS.filter(m => m.name.includes(only)) : MUTANTS;
  * (The typecheck gate has no opt-out by design — "an escape hatch on a gate is the gate" — so
  * this pays ~6s per invocation rather than trying to skip it.)
  */
+/**
+ * ★ THE RELAY'S GATES ARE NOT VITEST FILES, AND THEY STILL HAVE TO BE MUTABLE.
+ *
+ * `deploy/mcp-relay/tests/*.ts` are plain tsx scripts that print `ok`/`FAIL` and exit non-zero.
+ * They carry some of the sharpest checks in the tree — the OAuth read-scope gate among them —
+ * and a harness that could only drive vitest would leave every one of them unverified, which is
+ * the same hole as a gate nobody mutates.
+ *
+ * They report differently, so they are read differently: a `FAIL ` line IS the assertion
+ * failing, and the absence of any `ok`/`FAIL` line means the script died before asserting,
+ * which stays INCONCLUSIVE exactly as it does for vitest.
+ */
+function runScriptGate(file) {
+  const r = spawnSync(process.execPath, ['node_modules/tsx/dist/cli.mjs', file], {
+    encoding: 'utf8',
+    env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' },
+  });
+  // eslint-disable-next-line no-control-regex -- stripping ANSI is the point
+  const out = `${r.stdout ?? ''}${r.stderr ?? ''}`.replace(/\u001b\[[0-9;]*m/g, '');
+  const failed = /^\s*FAIL\s/m.test(out);
+  const asserted = failed || /^\s*ok\s/m.test(out);
+  const okCount = (out.match(/^\s*ok\s/gm) ?? []).length;
+  const failCount = (out.match(/^\s*FAIL\s/gm) ?? []).length;
+  return {
+    exitedNonZero: r.status !== 0,
+    assertionsFailed: failed,
+    countsParsed: asserted,
+    ranAssertions: asserted,
+    summary: asserted
+      ? `Tests  ${failCount} failed | ${okCount} passed (${okCount + failCount})`
+      : '(the script produced no ok/FAIL line)',
+  };
+}
+
+const isScriptGate = (f) => f.startsWith('deploy/');
+
 function runGates(files) {
+  if (files.every(isScriptGate)) {
+    // One script per gate entry; combine so the caller's three-state contract is unchanged.
+    const each = files.map(runScriptGate);
+    return {
+      exitedNonZero: each.some(x => x.exitedNonZero),
+      assertionsFailed: each.some(x => x.assertionsFailed),
+      countsParsed: each.every(x => x.countsParsed),
+      ranAssertions: each.every(x => x.ranAssertions),
+      summary: each.map(x => x.summary).join('; '),
+    };
+  }
   const r = spawnSync(
     process.execPath,
     ['node_modules/vitest/vitest.mjs', 'run', ...files, '--reporter=dot'],
