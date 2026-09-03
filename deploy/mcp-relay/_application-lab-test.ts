@@ -77,7 +77,17 @@ const s0Graph = signedJsonGraph(STATE_G, 'application-state', s0);
 const s1Graph = signedJsonGraph(STATE_G, 'application-state', s1);
 const s2Graph = signedJsonGraph(STATE_G, 'application-state', s2);
 const governance = signedJsonGraph(GOV_G, 'application-governance-state', {
-  applicationId: `${APP}:governance`, data: { activeEpoch: { applicationId: APP, contractDescriptorUrl: url('v2-contract'), contractDigest: v2Graph.digest, contractGraphIri: V2_G }, targetApplicationId: APP }, schema: 'interego.application.state/v1', version: 1,
+  applicationId: `${APP}:governance`, data: { activeEpoch: {
+    applicationId: APP,
+    contractCid: 'cid-c2',
+    contractDescriptorUrl: url('v2-contract'),
+    contractDigest: v2Graph.digest,
+    contractGraphIri: V2_G,
+    definitionCid: 'cid-def',
+    definitionDescriptorUrl: url('definition'),
+    definitionDigest: defGraph.digest,
+    definitionGraphIri: DEF_G,
+  }, targetApplicationId: APP }, schema: 'interego.application.state/v1', version: 1,
 });
 const catalog = signedJsonGraph(CATALOG, 'application-catalog', {
   applications: [{
@@ -98,7 +108,13 @@ const bodies = new Map<string, string>([
   [url('governance'), governance.graphContent], [url('s0'), s0Graph.graphContent],
   [url('s1'), s1Graph.graphContent], [url('s2'), s2Graph.graphContent],
 ]);
-const descriptor = (u: string): LabDescriptor => ({ url: u, content: bodies.get(u), authorship: trusted });
+const descriptorCids = new Map<string, string>([
+  [url('catalog'), 'cid-cat'], [url('definition'), 'cid-def'],
+  [url('v1-contract'), 'cid-c1'], [url('v2-contract'), 'cid-c2'],
+  [url('governance'), 'cid-gov'], [url('s0'), 'cid-0'],
+  [url('s1'), 'cid-1'], [url('s2'), 'cid-2'],
+]);
+const descriptor = (u: string): LabDescriptor => ({ url: u, cid: descriptorCids.get(u), content: bodies.get(u), authorship: trusted });
 const heads = new Map<string, { descriptorUrl: string; cid: string }>([
   [CATALOG, { descriptorUrl: url('catalog'), cid: 'cid-cat' }], [DEF_G, { descriptorUrl: url('definition'), cid: 'cid-def' }],
   [V1_G, { descriptorUrl: url('v1-contract'), cid: 'cid-c1' }], [V2_G, { descriptorUrl: url('v2-contract'), cid: 'cid-c2' }],
