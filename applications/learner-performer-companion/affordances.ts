@@ -275,14 +275,32 @@ const LPC_ENTERPRISE_AFFORDANCES: ReadonlyArray<Affordance> = [
     action: 'urn:iep:action:lpc:publish-authoritative-content' as IRI,
     toolName: 'lpc.publish_authoritative_content',
     title: '[institutional] Publish authoritative training content',
-    description: 'Institution-side: unwrap a SCORM 1.2 / SCORM 2004 / cmi5 / TLA-LAP-catalog-entry package, mint atoms, and publish lpc:TrainingContent + lpc:LearningObjective descriptors to the INSTITUTION\'s own pod (NOT the learner\'s). Learners\' agents discover via federated discovery and pull selectively into their own wallets per their own consent. The institution is a peer, not a hub.',
+    // ★★ THIS DESCRIBED A CONTENT-INGEST PIPELINE THAT DOES NOT EXIST. It claimed to "unwrap a
+    // SCORM 1.2 / SCORM 2004 / cmi5 / TLA-LAP-catalog-entry package, mint atoms" — and
+    // `publishAuthoritativeContent` contains no zip handling and no atom minting; the only
+    // match for /zip|atom/ in that whole file is a comment. It builds Turtle directly from
+    // caller-supplied strings. The `zip_base64` it declared REQUIRED is not a member of
+    // `PublishAuthoritativeContentArgs` at all, while the function's first two guards are
+    // `if (!args.content_iri) throw` and `if (!args.title?.trim()) throw` — neither declared.
+    // Driven with exactly the declared inputs: `content_iri is required`. The outputs block was
+    // already contradicting the inputs block, describing contentIri as "matches the
+    // caller-supplied content_iri".
+    //
+    // Foxxi is where SCORM is actually unwrapped (`foxxi.upload_scorm_package` →
+    // `uploadScormPackage`). This affordance publishes a CATALOG ENTRY, and now says so.
+    description: 'Institution-side: publish lpc:TrainingContent + lpc:LearningObjective descriptors to the INSTITUTION\'s own pod (NOT the learner\'s) from a caller-supplied catalog entry — a stable content IRI, a title, and optional objectives, launch URL, format and ADL TLA LAP metadata. It does NOT parse a content package: the descriptor is minted from what the caller states, so nothing here is content-addressed or verified against a package. To unwrap a SCORM / cmi5 archive first, use foxxi.upload_scorm_package and publish its resulting IRI here. Learners\' agents discover via federated discovery and pull selectively into their own wallets per their own consent. The institution is a peer, not a hub.',
     method: 'POST',
     targetTemplate: '{base}/lpc/publish_authoritative_content',
     annotations: { title: 'Publish authoritative training content', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
-      { name: 'zip_base64', type: 'string', required: true, description: 'Content package (SCORM / cmi5 / TLA LAP entry), base64-encoded.' },
+      { name: 'content_iri', type: 'string', required: true, description: 'Stable IRI naming the content — a SCORM activity, a TLA LAP entry, or any dereferenceable identifier the institution controls. Echoed back as contentIri; nothing is fetched from it here.' },
+      { name: 'title', type: 'string', required: true, description: 'Human-readable name. Required: the handler refuses an empty one.' },
       { name: 'institution_pod_url', type: 'string', required: true, description: 'Pod URL of the publishing institution.' },
       { name: 'issuer_did', type: 'string', required: true, description: 'DID of the institution\'s authoritative-content signing key.' },
+      { name: 'description', type: 'string', required: false, description: 'One-paragraph summary; surfaces to learners\' agents.' },
+      { name: 'learning_objectives', type: 'array', required: false, description: 'Objective strings the content covers. Each becomes an lpc:LearningObjective IRI in objectiveIris.' },
+      { name: 'launch_url', type: 'string', required: false, description: 'Where learners actually launch the content.' },
+      { name: 'format', type: 'string', required: false, description: 'SCORM 1.2 / SCORM 2004 / cmi5 / pdf / video / tla-lap-entry. A LABEL the caller states — no package is read to confirm it.' },
       { name: 'tla_lap_metadata', type: 'object', required: false, description: 'Optional ADL TLA Learning Activity Provider metadata for catalog discoverability.' },
     ],
     outputs: {
@@ -331,7 +349,7 @@ const LPC_ENTERPRISE_AFFORDANCES: ReadonlyArray<Affordance> = [
     action: 'urn:iep:action:lpc:aggregate-cohort-query' as IRI,
     toolName: 'lpc.aggregate_cohort_query',
     title: '[institutional] Run an aggregate-privacy query over a cohort',
-    description: 'Institution-side: query aggregate metrics over consenting learners\' pods — completion counts, score distributions, competency-coverage thresholds — without seeing individuals. Five privacy modes layered on the same surface: v1 abac (default) | v2 merkle-attested-opt-in (verifiable count + Merkle inclusion proofs) | v3 zk-aggregate (homomorphic Pedersen sum + DP-Laplace noise) | v3.1 + require_signed_bounds (regulator-grade attribution) | v3.2 + epsilon_budget_max (cumulative ε discipline). See applications/_shared/aggregate-privacy/. Refuses any query that would expose an individual record under the chosen mode.',
+    description: 'Institution-side: query aggregate metrics over consenting learners\' pods — completion counts, score distributions, competency-coverage thresholds — without seeing individuals. Privacy modes on this surface: v1 abac (default) | v2 merkle-attested-opt-in (verifiable count + Merkle inclusion proofs) | v3 zk-aggregate (homomorphic Pedersen sum + DP-Laplace noise) | v3.1 + require_signed_bounds (regulator-grade attribution) | v3.2 + epsilon_budget_max (cumulative ε discipline). zk-distribution (v3 histogram) is NOT implemented here and is refused with 501 rather than answered on the weaker path — it is wired in the foxxi vertical. See applications/_shared/aggregate-privacy/. Refuses any query that would expose an individual record under the chosen mode.',
     method: 'POST',
     targetTemplate: '{base}/lpc/aggregate_cohort_query',
     annotations: { title: 'Aggregate-privacy cohort query', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -374,8 +392,25 @@ const LPC_ENTERPRISE_AFFORDANCES: ReadonlyArray<Affordance> = [
     annotations: { title: 'Project learning experience to LRS', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'descriptor_iri', type: 'string', required: true, description: 'IRI of the lpc:LearningExperience descriptor to project.' },
-      { name: 'target_lrs_url', type: 'string', required: true, description: 'Statements endpoint of the target LRS.' },
-      { name: 'lrs_auth_header', type: 'string', required: true, description: 'Authorization header for the LRS (typically Basic).' },
+      // ★★ THIS LIST DID NOT MATCH THE HANDLER, SO THE AFFORDANCE WAS UNINVOKABLE FROM ITS OWN
+      // PUBLISHED DESCRIPTION. It declared `lrs_auth_header`, which `ProjectToLrsArgs` has no
+      // member for and the implementation never reads — auth is built in
+      // institutional-publisher.ts as `{ username: args.lrs_username, password: args.lrs_password }`
+      // — and omitted six inputs the function requires. Driven with exactly the four declared
+      // inputs, the call threw `lrs_username + lrs_password are required`. The contract of this
+      // vertical is that an agent walks /affordances and POSTs what it finds; any agent that did
+      // so got a 400 on every call, and was told the wrong credential shape besides.
+      { name: 'target_lrs_url', type: 'string', required: true, description: 'Statements endpoint of the target LRS (e.g. https://cloud.scorm.com/lrs/<APP>/sandbox/statements).' },
+      { name: 'lrs_username', type: 'string', required: true, description: 'Basic-auth username — the xAPI activity-provider key.' },
+      { name: 'lrs_password', type: 'string', required: true, description: 'Basic-auth password — the xAPI activity-provider secret.' },
+      { name: 'learner_pod_url', type: 'string', required: true, description: 'Pod URL hosting the learner\'s lpc:LearningExperience descriptor.' },
+      { name: 'learner_did', type: 'string', required: true, description: 'Learner\'s DID — used as the xAPI actor on the projected Statement.' },
+      { name: 'verb_id', type: 'string', required: true, description: 'xAPI verb IRI (e.g. http://adlnet.gov/expapi/verbs/completed).' },
+      { name: 'object_id', type: 'string', required: true, description: 'xAPI object IRI, typically the lpc:TrainingContent IRI.' },
+      { name: 'verb_display', type: 'string', required: false, description: 'Optional human-readable verb display string.' },
+      { name: 'object_name', type: 'string', required: false, description: 'Optional human-readable object name.' },
+      { name: 'modal_status', type: 'string', required: false, description: 'Modal status of the source descriptor. The adapter skips Counterfactual unconditionally, and Hypothetical unless allow_hypothetical is set.' },
+      { name: 'allow_hypothetical', type: 'boolean', required: false, description: 'Project a Hypothetical source anyway, with audit-loud lossy markers.' },
       { name: 'learner_consent_descriptor_iri', type: 'string', required: true, description: 'IRI of the per-graph share_with policy descriptor on the learner\'s pod authorizing this projection.' },
     ],
     outputs: {

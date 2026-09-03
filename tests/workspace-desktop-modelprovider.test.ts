@@ -44,9 +44,14 @@ describe('finding the CLI without a shell', () => {
     // a shim and an executable, and the shim sorts first in APPDATA/npm, so a naive PATH walk finds
     // the unusable one. If this ever flips, every Windows user gets "Claude Code could not be
     // started: spawn EINVAL" and no indication that their subscription is fine.
-    const env = { APPDATA: 'C:\\A', PATH: 'C:\\A\\npm' };
-    const both = (p: string): boolean => p === 'C:\\A\\npm\\claude.cmd'
-      || p === 'C:\\A\\npm\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe';
+    // ★ The candidate paths are built with `join`, exactly as the resolver builds them, because
+    // `join` uses the HOST separator. Hard-coding `C:\A\npm\claude.cmd` matches on Windows and
+    // nothing on Linux — which is where CI runs, so the first version of this un-guarded test
+    // failed there. The platform under test is injected; the path syntax still is not.
+    const env = { APPDATA: 'C:\\A', PATH: join('C:\\A', 'npm') };
+    const cmd = join('C:\\A', 'npm', 'claude.cmd');
+    const exe = join('C:\\A', 'npm', 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe');
+    const both = (p: string): boolean => p === cmd || p === exe;
     const got = resolveClaudeCli(env, both, WIN32);
     expect(got?.path).toContain('claude.exe');
     expect(got?.shimOnly).toBe(false);
@@ -56,8 +61,9 @@ describe('finding the CLI without a shell', () => {
     // Absence is not evidence, in its executable form: a shim IS evidence Claude Code is
     // installed, which is worth telling the user — but it is not something this app will run, and
     // reporting it as usable would produce an EINVAL the user cannot act on.
-    const env = { APPDATA: 'C:\\A', PATH: 'C:\\A\\npm' };
-    const got = resolveClaudeCli(env, (p) => p === 'C:\\A\\npm\\claude.cmd', WIN32);
+    const env = { APPDATA: 'C:\\A', PATH: join('C:\\A', 'npm') };
+    const cmd = join('C:\\A', 'npm', 'claude.cmd');
+    const got = resolveClaudeCli(env, (p) => p === cmd, WIN32);
     expect(got?.shimOnly).toBe(true);
     expect(got?.path).toContain('claude.cmd');
   });

@@ -20,9 +20,21 @@
  *
  * Proving "every caller-derived URL reaches a guard" needs dataflow analysis this repo does
  * not have. What IS checkable, cheaply and without false comfort: a bridge that fetches at all
- * must have the guard in scope. A bridge with no fetch surface needs nothing — `shared-workspace`
- * makes zero fetch calls and declares no url-shaped input, and demanding an unused import there
- * would be decoration.
+ * must have the guard in scope.
+ *
+ * ★★ "A BRIDGE WITH NO FETCH SURFACE NEEDS NOTHING — shared-workspace MAKES ZERO FETCH CALLS
+ * AND DECLARES NO URL-SHAPED INPUT" STOOD HERE, AND BOTH HALVES WERE FALSE.
+ *
+ * The census behind that sentence read only `applications/<vertical>/bridge/*.ts`, and wsp's
+ * bridge does contain no `fetch(` — while line 37 of that same file imports `openAgentSession`
+ * from `../src/agent-session.js`, which has seven, one of them fetching a URL the CALLER
+ * supplies. `workspace` is a required caller-controlled input in wsp's own affordances.ts. It
+ * was wrong when written rather than stale: the import and the fetches were both present at the
+ * commit that wrote it. So a deployed, internet-facing bridge sat exempted by the gate built to
+ * catch exactly that, on a sentence in the gate's own header.
+ *
+ * The census now follows the bridge's LOCAL IMPORTS one hop — which is where a thin bridge
+ * keeps its outbound calls, and the shape every vertical here uses.
  *
  * So this is a NECESSARY condition, not a sufficient one. It would have failed on agp before
  * the fix, which is the case it exists for. It cannot tell you the guard is applied at every
@@ -78,10 +90,57 @@ function importsAGuard(text: string): boolean {
 function bridgeSources(vertical: string): { file: string; text: string }[] {
   const dir = join(ROOT, 'applications', vertical, 'bridge');
   if (!existsSync(dir)) return [];
-  return readdirSync(dir)
+  const out = readdirSync(dir)
     .filter(f => f.endsWith('.ts'))
     .map(f => ({ file: `${vertical}/bridge/${f}`, text: readFileSync(join(dir, f), 'utf8') }));
+
+  // ★ ONE HOP INTO THE MODULES THE BRIDGE IMPORTS. A bridge is usually a wall of thin
+  // delegators; reading only its own directory reads the argument marshalling and none of the
+  // outbound calls. wsp's bridge has zero `fetch(` and imports a module with seven.
+  const seen = new Set(out.map(o => o.file));
+  for (const { text } of [...out]) {
+    for (const m of text.matchAll(/from\s+'(\.\.?\/[^']+)'/g)) {
+      const spec = (m[1] ?? '').replace(/\.js$/, '');
+      for (const cand of [`${spec}.ts`, `${spec}/index.ts`]) {
+        const abs = join(dir, cand);
+        const rel = `${vertical}/bridge/${cand}`;
+        if (seen.has(rel) || !existsSync(abs)) continue;
+        seen.add(rel);
+        out.push({ file: rel, text: readFileSync(abs, 'utf8') });
+      }
+    }
+  }
+  return out;
 }
+
+describe('the census reaches what a thin bridge delegates to', () => {
+  /**
+   * ★★ THE VACUITY CHECK FOR THE ONE-HOP WIDENING.
+   *
+   * The gate SKIPS a vertical whose sources contain no `fetch(`, so a census that stopped
+   * following imports would silently return to exempting shared-workspace - which is the exact
+   * false all-clear this file shipped with, and a skip leaves no trace in the output.
+   *
+   * Naming the regression rather than counting in the abstract: wsp's bridge has zero fetches
+   * of its own and imports a module with seven.
+   */
+  it('★ sees the fetches wsp keeps one import away from its bridge', () => {
+    const sources = bridgeSources('shared-workspace');
+    const reached = sources.map(s => s.file);
+    expect(
+      reached.some(f => f.includes('agent-session')),
+      'the census no longer follows the bridge into ../src/agent-session.ts, so wsp is exempt '
+        + `again on a fetch count of zero. Reached: ${reached.join(', ')}`,
+    ).toBe(true);
+
+    const all = sources.map(s => s.text).join('\n');
+    const fetches = (all.match(/\bfetch\s*\(/g) ?? []).length;
+    expect(
+      fetches,
+      'wsp now censuses zero outbound calls, which is what got it skipped before',
+    ).toBeGreaterThan(3);
+  });
+});
 
 describe('the predicate itself', () => {
   /**

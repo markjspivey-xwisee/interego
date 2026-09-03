@@ -19,6 +19,7 @@ const FOXXI_SRC = 'applications/foxxi-content-intelligence/src/composed-extensio
 const LPC_TTL = 'docs/applications/learner-performer-companion/lpc.ttl';
 const STATUS_MD = 'STATUS.md';
 const RELAY = 'deploy/mcp-relay/server.ts';
+const LPC_IMPL = 'applications/learner-performer-companion/src/institutional-publisher.ts';
 const ADP_SHAPES = 'applications/agent-development-practice/ontology/adp-shapes.ttl';
 
 /**
@@ -49,6 +50,7 @@ const TERMS_GATE = 'tests/every-published-term-is-declared.test.ts';
 const NS_GATE = 'tests/shape-namespaces-resolve.test.ts';
 const ADVERTISED_GATE = 'tests/advertised-commands-do-something.test.ts';
 const OAUTH_SCOPE_GATE = 'deploy/mcp-relay/tests/oauth-read-scope-is-read-only.test.ts';
+const PRIVACY_GATE = 'tests/an-advertised-privacy-mode-is-implemented-or-refused.test.ts';
 
 /** An untyped decline planted in a real handler, in each shape that has defeated a census. */
 const plant = (name, body, why) => ({
@@ -339,5 +341,19 @@ export const MUTANTS = [
     replace: "  'analyze_question', 'interrogative_route', 'check_balance', 'record_trajectory_step',",
     mustFail: [OAUTH_SCOPE_GATE],
     why: 'the old list missed nine mutating tools and named two that do not exist',
+  },
+
+
+  {
+    name: 'an-advertised-privacy-mode-silently-degrades',
+    file: LPC_IMPL,
+    // ★★ Removing the only mention of the mode from the handler puts back exactly what an
+    // audit found: `zk-distribution` matched no branch, fell into the v1 ABAC path, and the
+    // caller who asked for the strongest advertised privacy over cohort data got an unblinded
+    // exact count with no DP noise and no error.
+    find: "  if (mode === 'zk-distribution') {",
+    replace: "  if (mode === 'zzz-not-a-mode') {",
+    mustFail: [PRIVACY_GATE],
+    why: 'the published affordance is the only contract an aggregating institution has for what protection it is getting',
   },
 ];

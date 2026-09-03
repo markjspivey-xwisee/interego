@@ -30,6 +30,7 @@
 import { Wallet } from 'ethers';
 import { createHash, randomBytes } from 'node:crypto';
 import type { StreamDeps } from './stream.js';
+import { assertSafeFetchTarget, guardedFetchFn } from '@interego/core';
 
 /** Everything the relay told us about who this process is. Read back, never composed. */
 export interface AgentIdentity {
@@ -269,8 +270,29 @@ export async function openAgentSession(opts: OpenSessionOptions): Promise<AgentS
     discover: async args => call('discover_context', args),
     getDescriptor: async args => call('get_descriptor', args),
     currentHead: async args => call('get_current_head', args),
+    /**
+     * ★★ THE ONE CALLER-INFLUENCED FETCH ON THIS BRIDGE, AND IT WAS UNGUARDED.
+     *
+     * `tests/a-bridge-that-fetches-imports-a-guard.test.ts` exempted shared-workspace on the
+     * stated census "wsp makes no outbound calls at all". That census read only
+     * `applications/shared-workspace/bridge/server.ts`, which indeed contains no `fetch(` —
+     * while line 37 of that same file imports `openAgentSession` from here, and this module has
+     * seven. It was wrong when it was written, not stale: the import and the fetches were both
+     * present at the commit that wrote the sentence.
+     *
+     * This one takes a URL the CALLER supplies: `workspace` is a required, caller-controlled
+     * input (affordances.ts) and reaches `membership.ts` as the profile/role IRI, screened only
+     * by `startsWith('https://')` — which admits `https://10.0.0.5/` and
+     * `https://metadata.google.internal/`. The other six fetches in this file address the
+     * operator-configured relay and identity hosts, not anything a caller names.
+     *
+     * `assertSafeFetchTarget` resolves the hostname before the request, so a public name that
+     * resolves into private space is refused too, and `guardedFetchFn` re-screens every redirect
+     * hop — which matters because this follows them.
+     */
     fetchDocument: opts.fetchDocument ?? (async (url: string) => {
-      const r = await fetch(url, { headers: { Accept: 'text/turtle, text/html;q=0.8' } });
+      await assertSafeFetchTarget(url);
+      const r = await guardedFetchFn(globalThis.fetch)(url, { headers: { Accept: 'text/turtle, text/html;q=0.8' } });
       return {
         status: r.status,
         url: r.url,

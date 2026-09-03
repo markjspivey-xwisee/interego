@@ -56,6 +56,7 @@ import {
 import { createHash } from 'node:crypto';
 // The one Turtle-literal escaper. See packages/core/src/rdf/escape.ts.
 import { escapeTurtleLiteral } from '@interego/core';
+import { refuse } from '../../_shared/vertical-bridge/refusal.js';
 
 const OWM_NS = 'https://markjspivey-xwisee.github.io/interego/applications/organizational-working-memory/owm#';
 
@@ -94,7 +95,15 @@ export interface AggregateDecisionsQueryArgs {
    *     individual contribution values; the published noisySum
    *     leaks O(1/ε) bits per query.
    */
-  privacy_mode?: 'abac' | 'merkle-attested-opt-in' | 'zk-aggregate';
+  /**
+   * ★★ `zk-distribution` IS AN ACCEPTED INPUT AND AN UNIMPLEMENTED ONE, AND THE TYPE NOW SAYS
+   * BOTH. It was absent from this union while the published affordance advertised it — so at
+   * the type level the mode did not exist, and at runtime, where the argument arrives as JSON,
+   * it fell through every branch into the v1 ABAC path and answered with an unblinded exact
+   * count. Naming it here is what makes the refusal in the handler reachable rather than a
+   * comparison TypeScript calls impossible.
+   */
+  privacy_mode?: 'abac' | 'merkle-attested-opt-in' | 'zk-aggregate' | 'zk-distribution';
   /** DP ε budget for 'zk-aggregate' mode. Required when privacy_mode='zk-aggregate'. */
   epsilon?: number;
   /**
@@ -196,6 +205,33 @@ export async function aggregateDecisionsQuery(
   const mode = args.privacy_mode ?? 'abac';
   let attestation: AttestedAggregateResult | undefined;
   let homomorphic: AttestedHomomorphicSumResult | undefined;
+  // ★★ A MODE ADVERTISED AND NOT IMPLEMENTED MUST REFUSE, NOT DEGRADE.
+  //
+  // `zk-distribution` is offered in this vertical's published affordance, with
+  // `distribution_edges` and `distribution_max_value` documented as "Required when
+  // privacy_mode=zk-distribution" and a promise that "the bundle returned in the response
+  // advertises which path was taken". Nothing here implemented it: the mode fell through every
+  // branch into the v1 ABAC path, and the result reported `privacyMode: 'abac'`. A caller
+  // asking for the STRONGEST advertised privacy over cohort data received an unblinded exact
+  // count, no DP noise, no commitment bundle - and no error. The response did advertise the
+  // path taken, which is the only reason it was not silent, and no caller reads that field to
+  // discover their privacy guarantee was dropped.
+  //
+  // The primitive exists (applications/_shared/aggregate-privacy, wired in foxxi's publisher),
+  // so this is a wiring gap. Until it is wired HERE, refusing is the honest answer: 501 says
+  // the surface does not implement what it named, and names where it does.
+  if (mode === 'zk-distribution') {
+    return refuse(
+      501,
+      'privacy_mode "zk-distribution" is not implemented on this surface. It is wired in the '
+        + 'foxxi vertical (foxxi.aggregate_* via applications/_shared/aggregate-privacy). Use '
+        + '"zk-aggregate" here for a Pedersen-committed sum with DP-Laplace noise, or run the '
+        + 'histogram query against foxxi.',
+      'the caller requested an advertised privacy mode this handler does not implement; '
+        + 'answering with the weaker ABAC path would hand back an unblinded exact count under '
+        + 'the name of the strongest mode offered',
+    ) as never;
+  }
   if (mode === 'zk-aggregate') {
     // v3: Pedersen homomorphic sum + DP-Laplace noise. Only
     // 'decision-count' is supported here in v3 — sum-of-revisions
