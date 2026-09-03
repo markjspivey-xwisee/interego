@@ -213,7 +213,15 @@ ex:PersonShape a sh:NodeShape ;
 // which constraint the author happened to write under it. That split is also what made the
 // unsupported-construct cap above unbelievable — it promised to respect a severity the
 // engine itself only half respected.
-describe('sh:severity is honoured by every constraint component, not half of them', () => {
+//
+// ★ THE SCOPE IS NAMED PRECISELY. This said "every constraint component" while exercising the
+// eight that had been broken. It now covers the fourteen VALUE constraints - cardinality,
+// datatype/class/nodeKind, pattern/in/hasValue, string-length and value-range - which is the
+// family severity is expressed on. The five structural components the engine also maps
+// (sh:property, sh:node, node-by-expression, sh:expression, reifier-shape) compose OTHER
+// shapes rather than testing a value, and carry severity through the shape they delegate to;
+// they are out of scope here and the title no longer implies otherwise.
+describe('sh:severity is honoured by every VALUE-CONSTRAINT component, not half of them', () => {
   const dataWrongType = `${PREFIXES}
 ex:alice a ex:Person ; ex:age "not-a-number" .
 `;
@@ -224,6 +232,14 @@ ex:PersonShape a sh:NodeShape ;
   sh:property [ sh:path ex:age ; sh:severity sh:Info ; ${component} ] .
 `;
 
+  // ★★ THE EIGHT BELOW WERE THE BROKEN ONES, AND THE DESCRIBE SAYS "EVERY COMPONENT".
+  //
+  // Those eight hardcoded `severity: 'Violation'`, so they are the ones the fix was for - but a
+  // list of the components that were once broken is not "every component", and the name claimed
+  // the stronger thing. The engine's own COMPONENT map names more; the value-range and
+  // string-length families are added here, each with a shape that genuinely FIRES against the
+  // fixture (the leg below asserts that, so a component that silently stops firing fails rather
+  // than passing on an empty result set).
   it.each([
     ['sh:datatype', 'sh:datatype xsd:integer'],
     ['sh:minCount', 'sh:minCount 5'],
@@ -233,6 +249,12 @@ ex:PersonShape a sh:NodeShape ;
     ['sh:pattern', 'sh:pattern "^[0-9]+$"'],
     ['sh:in', 'sh:in ( "a" "b" )'],
     ['sh:hasValue', 'sh:hasValue "zzz"'],
+    ['sh:minLength', 'sh:minLength 50'],
+    ['sh:maxLength', 'sh:maxLength 3'],
+    ['sh:minInclusive', 'sh:minInclusive 5'],
+    ['sh:maxInclusive', 'sh:maxInclusive 1'],
+    ['sh:minExclusive', 'sh:minExclusive 5'],
+    ['sh:maxExclusive', 'sh:maxExclusive 1'],
   ])('%s under sh:severity sh:Info reports Info — and still does not conform', (_name, component) => {
     const report = validateAgainstShape(dataWrongType, shapeWith(component));
     const fired = report.results.filter(r => r.constraintComponent.startsWith('http://www.w3.org/ns/shacl#'));

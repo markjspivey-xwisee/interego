@@ -5,7 +5,7 @@
  * can render the full per-check report.
  *
  * These ARE Foxxi's own conformance harnesses, refactored to be callable:
- *   - runXapiConformance  → the 26-check xAPI 2.0 / IEEE 9274.1.1 battery that
+ *   - runXapiConformance  → the 28-check xAPI 2.0 / IEEE 9274.1.1 battery that
  *     tools/xapi-conformance-smoke.mjs runs (about/profile/POST/immutability/
  *     voiding/filtered-query/state-ETag), executed live against the LRS surface.
  *   - runScormConformance → the SCORM 2004 Sequencing & Navigation battery that

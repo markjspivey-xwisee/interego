@@ -236,7 +236,16 @@ describe('SDK', () => {
       agentId: 'urn:agent:test',
       ownerWebId: 'https://example.com/alice/profile#me',
     });
+    // ★ `expect(new X()).toBeDefined()` cannot fail: a constructor either returns an object or
+    // throws, and a throw fails the test on its own line. The name says "with config", so what
+    // is asserted is that the config REACHED the instance.
     expect(cg).toBeDefined();
+    expect(
+      (cg as unknown as { podUrl?: string }).podUrl
+        ?? (cg as unknown as { config?: { podUrl?: string } }).config?.podUrl,
+      'the SDK did not retain the podUrl it was constructed with, so "creates SDK instance with '
+        + 'config" was asserting only that `new` returned something',
+    ).toBe('https://example.com/alice/');
     cg.close();
   });
 

@@ -18,7 +18,9 @@
  *      the lines around it. The lint answers "are the declared terms consistent with the
  *      code that references them", which is a real question, and NOT "is this RDF".
  *
- *   2. `tests/the-projection-matches-the-ontology.test.ts` — 97 cases comparing
+ *   2. `tests/the-projection-matches-the-ontology.test.ts` — a `describe.each` over every
+ *      namespace discovered under docs/ns, six cases each, so the total MOVES whenever a
+ *      namespace is added. It said 97 and is now 121; no number is written here. Comparing
  *      `docs/ns/iep.html` against `docs/ns/iep.ttl`. It is blind for a sharper reason than
  *      "no parser": it compares DECLARED TERM NAMES and the HTML's anchors, both pulled out
  *      with regexes, and never reads a comment's text at all — so a broken literal inside one

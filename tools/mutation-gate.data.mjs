@@ -19,6 +19,7 @@ const FOXXI_SRC = 'applications/foxxi-content-intelligence/src/composed-extensio
 const LPC_TTL = 'docs/applications/learner-performer-companion/lpc.ttl';
 const STATUS_MD = 'STATUS.md';
 const RUNBOOK = 'spec/OPS-RUNBOOK.md';
+const LPC_README = 'applications/learner-performer-companion/bridge/README.md';
 const RELAY = 'deploy/mcp-relay/server.ts';
 const LPC_IMPL = 'applications/learner-performer-companion/src/institutional-publisher.ts';
 const ADP_SHAPES = 'applications/agent-development-practice/ontology/adp-shapes.ttl';
@@ -53,6 +54,7 @@ const ADVERTISED_GATE = 'tests/advertised-commands-do-something.test.ts';
 const OAUTH_SCOPE_GATE = 'deploy/mcp-relay/tests/oauth-read-scope-is-read-only.test.ts';
 const CALLER_URL_GATE = 'deploy/mcp-relay/tests/caller-urls-go-through-the-guard.test.ts';
 const DRIFT_GATE = 'tools/docs-drift-lint.mjs';
+const README_COUNT_GATE = 'tests/a-readme-count-matches-what-the-bridge-mounts.test.ts';
 const PRIVACY_GATE = 'tests/an-advertised-privacy-mode-is-implemented-or-refused.test.ts';
 
 /** An untyped decline planted in a real handler, in each shape that has defeated a census. */
@@ -108,7 +110,7 @@ export const MUTANTS = [
     find: "    'iep:refusalStatus': 404,\n    'iep:refusalReason': 'the referenced resource",
     replace: "    'iep:refusalStatus': 401,\n    'iep:refusalReason': 'the referenced resource",
     mustFail: [STATUS_GATE],
-    why: 'the six status helpers stand behind 26 call sites and were selected by no leg',
+    why: 'the six status helpers stand behind seventy-odd call sites (an AST census counts 73; the "26" once written here was wrong by 2.7x when written) and were selected by no leg',
   },
   {
     name: 'helper-notConfigured-becomes-401',
@@ -447,5 +449,19 @@ export const MUTANTS = [
     replace: "  if (args['__mutant']) return { error: 'this pod is sealed for the quarter' };\n  const token = (args.__caller_token as string | undefined);",
     mustFail: [REFUSAL_GATE],
     why: 'the untyped-return ratchet can be relaxed and every other mutant still passes, because all of them also trip the word list',
+  },
+
+  {
+    name: 'a-readme-understates-its-own-surface',
+    file: LPC_README,
+    // The LPC bridge README said the vertical had 6 affordances. affordances.ts exports TWO
+    // arrays - 7 learner-side and 4 institution-side - and the bridge concatenates them per
+    // LPC_AUDIENCE, default `both`, so it mounts 11. Even the narrowest audience is 7. The
+    // three sibling bridge READMEs all checked out, so this was one row going stale rather than
+    // a convention nobody follows - the case a gate is for, and the case invisible without one.
+    find: "After reload the vertical's tools are available. With the default `LPC_AUDIENCE=both` that is ",
+    replace: "After reload, 6 tools available. With the default `LPC_AUDIENCE=both` that is ",
+    mustFail: [README_COUNT_GATE],
+    why: 'a README stating a smaller surface than the vertical declares is how a reader concludes a capability does not exist',
   },
 ];

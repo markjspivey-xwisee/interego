@@ -4,7 +4,7 @@
 
 ## What this is
 
-A small Express + MCP server that exposes the LPC vertical's 6 affordances as named MCP tools (`lpc.ingest_training_content`, `lpc.grounded_answer`, etc.) for clients that prefer named-tool ergonomics over generic affordance discovery.
+A small Express + MCP server that exposes the LPC vertical's affordances as named MCP tools — 11 by default. `affordances.ts` exports TWO arrays and the bridge concatenates them per `LPC_AUDIENCE` (default `both`): `lpcAffordances` (7, learner-side) and `lpcEnterpriseAffordances` (4, institution-side). The narrowest audience is 7, never 6; the count here said 6 from before `lpc.opt_into_cohort` and the enterprise array existed (`lpc.ingest_training_content`, `lpc.grounded_answer`, etc.) for clients that prefer named-tool ergonomics over generic affordance discovery.
 
 The bridge is **independent** of the generic Interego personal-bridge — it runs on its own port (default `6010`), depends on `@interego/core`, and serves only the LPC capability surface. Run multiple per-vertical bridges side by side if you want.
 
@@ -50,7 +50,7 @@ Once running:
 }
 ```
 
-After reload, 6 tools available: `lpc.ingest_training_content`, `lpc.import_credential`, `lpc.record_performance_review`, `lpc.record_learning_experience`, `lpc.grounded_answer`, `lpc.list_wallet`.
+After reload the vertical's tools are available. With the default `LPC_AUDIENCE=both` that is 11: the seven learner-side ones — `lpc.ingest_training_content`, `lpc.import_credential`, `lpc.record_performance_review`, `lpc.record_learning_experience`, `lpc.grounded_answer`, `lpc.list_wallet`, `lpc.opt_into_cohort` — plus the four institution-side ones from `lpcEnterpriseAffordances`. This line listed six, from before `lpc.opt_into_cohort` and the enterprise array existed.
 
 ## Configuration
 

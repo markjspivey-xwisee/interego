@@ -1616,8 +1616,14 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
       { name: 'competency_name', type: 'string', required: true, description: 'The competency / course title to prove (becomes Achievement.name on the BBS+ credential).' },
       { name: 'course_id', type: 'string', required: false, description: 'Optional course identifier; derived from competency_name if omitted.' },
       { name: 'learner_name', type: 'string', required: false, description: 'Optional learner display name (a hidden claim — never disclosed by default).' },
-      { name: 'score_scaled', type: 'number', required: false, description: 'Optional normalized score 0..1 (a hidden claim — kept private by default). Default 1.0.' },
-      { name: 'proficiency_level', type: 'string', required: false, description: 'Novice | Beginner | Intermediate | Advanced | Expert. Default Intermediate.' },
+      // ★★ REMOVED AS INPUTS, BECAUSE THE HANDLER DERIVES BOTH AND SAYS WHY. bridge/server.ts
+      // sets `scoreScaled: derivedScore, proficiencyLevel: derivedLevel` from the holder's
+      // assembled record, with the comment "DERIVE the proficiency from the subject's REAL
+      // learner record - never accept a caller-asserted level (the old default 'Intermediate'
+      // let an agent claim any proficiency)", and it refuses outright when the competency is
+      // not in that record. Advertising them as inputs - with defaults of 1.0 and
+      // 'Intermediate' - described exactly the backdoor that was closed. The sibling
+      // foxxi.prove_competency_signed already documents this correctly.
       { name: 'reveal_paths', type: 'array', required: false, description: 'Optional claim paths to disclose; defaults to the minimal privacy-preserving set (issuer + achievement.name + achievement.proficiencyLevel).' },
       { name: 'presentation_context', type: 'string', required: false, description: 'Optional verifier/occasion binding (BBS+ presentation header).' },
     ],

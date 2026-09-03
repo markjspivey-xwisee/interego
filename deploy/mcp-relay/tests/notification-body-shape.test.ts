@@ -25,7 +25,7 @@
  *
  *   §3  it asked "is this violation mine?" with `sourceShape === NOTIFICATION_BODY_SHAPE`, and
  *       that is blind to every constraint hung off an ordinary `sh:property`
- *   §4  it ran a synchronous SHACL parse over the whole 218,668-character ontology plus an
+ *   §4  it ran a synchronous SHACL parse over the whole 219,630-character ontology plus an
  *       unbounded body
  *   §5  it accepted `about: 'no'` where an IRI is required
  *   §6  it targeted `as:Note`, which on `type: 'Note'` selects the ACTIVITY as well and refused

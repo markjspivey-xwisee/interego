@@ -699,7 +699,7 @@ package step fails loudly rather than packaging against a runtime nobody tested.
 
 | | |
 |---|---|
-| `tests/workspace-desktop-renderer.test.ts` | **the renderer, driven as a real script in a real DOM.** esbuild bundles `src/renderer.ts` the same way `npm run build` does, jsdom loads the shipping `index.html`, and the whole of `@interego/workspace-client` runs unstubbed. Exactly one thing is scripted: `window.interego`, the IPC channel. 34 cases, each one a sentence the shell must or must not be able to put on screen. |
+| `tests/workspace-desktop-renderer.test.ts` | **the renderer, driven as a real script in a real DOM.** esbuild bundles `src/renderer.ts` the same way `npm run build` does, jsdom loads the shipping `index.html`, and the whole of `@interego/workspace-client` runs unstubbed. Exactly one thing is scripted: `window.interego`, the IPC channel. one case per sentence the shell must or must not be able to put on screen. No count is written here: it said 34 from the commit that created the file and the suite has since grown past 160. `npx vitest list tests/workspace-desktop-renderer.test.ts` is the answer. |
 | `tests/workspace-client-membership.test.ts` | the writers, grant verification, the canvas outcomes, the role-label rule. |
 | `tools/drive-membership-live.ts` | the same module functions against the **live fleet**, two real identities, two real pods. |
 

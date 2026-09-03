@@ -97,7 +97,7 @@ const AGP_AFFORDANCES: ReadonlyArray<Affordance> = [
     action: 'urn:iep:action:agp:actualize' as IRI,
     toolName: 'agp.actualize',
     title: 'Record an actualization (capability x situation x affordance -> performance)',
-    description: 'Record an agp:Actualization — a capability engaging a situation\'s affordance to yield agp:Performance — and project the performance to a single xAPI `performed` statement in Foxxi\'s LRS (with capability / actualizedAffordance / regime as context extensions, per the vertical\'s custom xAPI Profile). SHACL requires the actualization to reference capability, situation, affordance, AND the yielded performance.',
+    description: 'Record an agp:Actualization — a capability engaging a situation\'s affordance to yield agp:Performance — ★ This does NOT project to an LRS. The handler returns `xapiStatementId: null` unconditionally, because projecting into Foxxi\'s LRS from agp would invert the dependency arrow between the two verticals — its own comment says so. A custom xAPI Profile carrying capability / actualizedAffordance / regime as context extensions is the intended shape if that projection is ever wired, and it would be wired at the Foxxi end. SHACL requires the actualization to reference capability, situation, affordance, AND the yielded performance.',
     method: 'POST',
     targetTemplate: '{base}/agp/actualize',
     annotations: { title: 'Record an actualization', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -106,8 +106,15 @@ const AGP_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'capability_iri', type: 'string', required: true, description: 'IRI of the agp:Capability engaged.' },
       { name: 'affordance_iri', type: 'string', required: true, description: 'IRI of the agp:PerformanceAffordance actualized.' },
       { name: 'performance_statement', type: 'string', required: true, description: 'What was performed.' },
-      { name: 'success', type: 'boolean', required: false, description: 'Outcome, if observed. Omit if not actually known (never fabricated).' },
-      { name: 'score_scaled', type: 'number', required: false, description: 'Scaled score in [-1,1], if observed.' },
+      // ★★ NEITHER OF THESE IS READ, AND THE HANDLER SAYS SO. bridge/handlers.ts returns
+      // `xapiStatementId: null` unconditionally with the comment "projecting to Foxxi's LRS
+      // from here would invert the dependency arrow", and grepping both names across
+      // handlers.ts and pod-helpers.ts finds no read site. Driven for real with
+      // success:true, score_scaled:0.9, neither value appears in the result or in the
+      // published triples. They are kept as ACCEPTED-AND-IGNORED rather than deleted
+      // because callers send them, and are now described as what they are.
+      { name: 'success', type: 'boolean', required: false, description: 'Outcome, if observed. ACCEPTED BUT NOT YET RECORDED: this vertical does not project to an LRS (see the description), and nothing reads this field today.' },
+      { name: 'score_scaled', type: 'number', required: false, description: 'Scaled score in [-1,1], if observed. ACCEPTED BUT NOT YET RECORDED, as with `success`.' },
       ...POD_INPUTS,
     ],
     outputs: {
@@ -120,7 +127,7 @@ const AGP_AFFORDANCES: ReadonlyArray<Affordance> = [
     action: 'urn:iep:action:agp:diagnose' as IRI,
     toolName: 'agp.diagnose',
     title: 'Diagnose a performance situation (regime-routed)',
-    description: 'Read a situation\'s regime and route to the regime-appropriate method. For the Knowable regime ONLY (and only when the regime is derived), run the six-factor cause analysis and name the dominant factor. Never surfaces gap-analysis for a non-Knowable or non-derived situation.',
+    description: 'Read a situation\'s regime and route to the regime-appropriate method. For the Knowable regime ONLY, run the six-factor cause analysis — ★ the "and only when the regime is derived" that used to stand here is not what the engine does. The Knowable branch runs `buildFactors(...)` for ANY Knowable regardless of source, and the handler emits `factor` on a Knowable domain alone; driven with an asserted Knowable and no trajectories it gap-analyses. The derived-only gate that DOES exist is on CALIBRATION, in performance-calibration.ts, not on gap analysis. The six-factor analysis names the dominant factor, and gap-analysis is never surfaced for a non-Knowable situation.',
     method: 'POST',
     targetTemplate: '{base}/agp/diagnose',
     annotations: { title: 'Diagnose a situation', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },

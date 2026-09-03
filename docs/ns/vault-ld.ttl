@@ -200,17 +200,24 @@ vldp:EntailmentAuthorityShape a sh:NodeShape ;
 
   # ★ THE CLASS-CHAIN BRANCH, IN SHACL CORE — because until now this shape enforced NOTHING.
   #
-  # It was sh:sparql-only, and SHACL-SPARQL is not implemented by the engine that runs it, so
-  # the anti-authority-smuggling defence was a dereferenceable name over an empty check. The
-  # transitive class chain is exactly a zero-or-more alternative path, which SHACL Core has
-  # always been able to express and this engine could not evaluate until complex paths landed.
+  # It WAS sh:sparql-only at a time when SHACL-SPARQL was not implemented by the engine that
+  # runs it, so the anti-authority-smuggling defence was a dereferenceable name over an empty
+  # check. The transitive class chain is exactly a zero-or-more alternative path, which SHACL
+  # Core has always been able to express and this engine could not evaluate until complex paths
+  # landed — so the Core branch below was added to enforce the first third of it for real.
   #
-  # ★ COVERAGE IS PARTIAL, AND SAYING SO IS THE POINT. This covers the FIRST of the SPARQL
-  # query's three branches — rdf:type reaching an authority class. The other two quantify over
-  # "any predicate of this node", and SHACL Core has no wildcard-predicate path (no negated
-  # property set, no variable predicate), so they remain SPARQL-only and remain unenforced
-  # here. Partial real enforcement beats total pretend enforcement; claiming the whole thing
-  # was covered would recreate the facade in a new place.
+  # ★★ THE PARAGRAPH THAT USED TO FOLLOW IS NOW FALSE, AND THAT IS GOOD NEWS. It said the
+  # other two branches "remain SPARQL-only and remain unenforced here". `sh:sparql` IS
+  # implemented now — shacl-engine.ts moved SH_SPARQL out of the unsupported-feature sweep and
+  # compiles and runs these constraints. Measured against this very file:
+  #
+  #   ex:p rdfs:subPropertyOf hydra:target . ex:n a ex:Note ; ex:p "x" .   -> conforms=false
+  #   ex:n a ex:Note ; ex:mentions hydra:Operation .                       -> conforms=false
+  #
+  # Both fire, with the EntailmentAuthorityShape SPARQL message, and a plain note still
+  # conforms. tests/the-authority-shape-enforces.test.ts says the same in code. The Core branch
+  # below is kept: it is a second, independent enforcement of the class-chain third, and a
+  # shape that holds under two mechanisms is not worse for it.
   sh:property [
     sh:path ( rdf:type [ sh:zeroOrMorePath [ sh:alternativePath (
       rdfs:subClassOf owl:equivalentClass owl:sameAs ) ] ] ) ;

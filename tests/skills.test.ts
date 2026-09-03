@@ -311,6 +311,15 @@ describe('substrate composition — what falls out for free', () => {
     const out = skillBundleToDescriptor(bundle, { authoringAgentDid: AUTHOR });
     const prov = out.descriptor.facets.find(f => f.type === 'Provenance');
     expect(prov).toBeDefined();
+    // ★★ THE NAME SAYS "RECORDS SIGNED AUTHORSHIP" AND THIS ONLY ASSERTED A FACET EXISTS.
+    // A Provenance facet attributing the descriptor to nobody, or to the wrong agent, passed -
+    // which is every failure the name is about. What makes it falsifiable: the facet must name
+    // the AUTHORING AGENT that was passed in, since that attribution is the whole claim.
+    expect(
+      (prov as { wasAttributedTo?: unknown }).wasAttributedTo,
+      'the Provenance facet does not attribute the descriptor to the authoring agent, so '
+        + '"records signed authorship" is asserting only that a facet is present',
+    ).toBe(AUTHOR);
   });
 
   it('skill IRI is stable enough to attest against (existing amta: flow works without changes)', () => {

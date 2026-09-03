@@ -1225,7 +1225,7 @@ ieh:measuresFederationSlice a owl:ObjectProperty ;
 
 ieh:PromotionConstraint a owl:Class ;
     rdfs:label "Promotion Constraint" ;
-    rdfs:comment "A typed rule that operational promotion primitives (ac.promote_tool, etc.) consult before granting Asserted status. Subtype of iep:ContextDescriptor; the descriptor's iep:modalStatus MUST be Asserted to be in force. Constraints accumulate — multiple constraints all apply (logical AND). Supersedes-chain to revise: publish a new constraint that supersedes the old one to amend the rule." ;
+    rdfs:comment "A typed rule that operational promotion primitives (ac.promote_tool, etc.) consult before granting Asserted status. ★ OPT-IN, NOT SUBSTRATE-ENFORCED: the only promotion primitive in the repo is promoteTool(), whose entire constraint block sits behind `if (args.enforceConstitutionalConstraints)`, and nothing sets a default - the bridge passes the caller's value straight through and the affordance declares `enforce_constitutional_constraints` as an OPTIONAL input. With the flag omitted, discoverPromotionConstraints() is never called and constraintsApplied comes back empty. So a published constraint binds the callers who ask to be bound; it is a governance record a promoter can honour, not a gate the substrate applies. Subtype of iep:ContextDescriptor; the descriptor's iep:modalStatus MUST be Asserted to be in force. Constraints accumulate — multiple constraints all apply (logical AND). Supersedes-chain to revise: publish a new constraint that supersedes the old one to amend the rule." ;
     rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
 
@@ -1254,7 +1254,7 @@ ieh:appliesToToolType a owl:ObjectProperty ;
     rdfs:label "applies to tool type" ;
     rdfs:domain ieh:PromotionConstraint ;
     rdfs:range iep:ContextDescriptor ;
-    rdfs:comment "Optional scope IRI — if present, the constraint only applies to tools of this type. If absent, the constraint applies to ALL promotion attempts." ;
+    rdfs:comment "Optional scope IRI - if present, the constraint is INTENDED to apply only to tools of this type; if absent, to all promotion attempts. ★ DECLARED BUT UNREAD: no implementation consults it. discoverPromotionConstraints() in agent-collective binds PromotionConstraint, requiresAttestationAxis, requiresMinimumPeerAttestations, requiresMinimumSelfAttestations and ratifiedBy, and the apply loop iterates every discovered constraint with no scope test - so a constraint scoped to one tool type is applied to every promotion. Two demos WRITE this property and nothing READS it. Stated here rather than quietly dropped, because a scoping rule that does not scope is worse than an absent one: a publisher who sets it believes their constraint is narrow." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
 
 ieh:ratifiedBy a owl:ObjectProperty ;
