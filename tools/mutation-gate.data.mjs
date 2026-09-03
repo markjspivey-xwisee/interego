@@ -584,22 +584,14 @@ export const MUTANTS = [
     // in deleted comments, so a new caller-reachable site could be added at a flat total. This
     // mutant restores that whole-file match; the gate below is what noticed, and the leg that
     // catches it is the one asserting a mention in a comment counts zero.
-    find: `export function countSitesIn(text, fileName = 'file.ts') {
-  const source = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, false, ts.ScriptKind.TS);
-  let found = 0;
-  const visit = (node) => {
-    if (ts.isTemplateExpression(node)) {
-      found += (node.getText(source).match(RAW_IRI) ?? []).length;
-      return;
-    }
-    ts.forEachChild(node, visit);
-  };
-  ts.forEachChild(source, visit);
-  return found;
-}`,
-    replace: `export function countSitesIn(text) {
-  return (text.match(RAW_IRI) ?? []).length;
-}`,
+    // ★ ANCHORED ON THE SIGNATURE, NOT THE BODY, AND THAT IS A CORRECTION. The first version of
+    // this mutant quoted the whole function. Adding the parse-failure guard to it made the anchor
+    // stale, and CI reported "the table is stale, so the gate it verifies is unchecked" — which is
+    // the harness working, and also a mutant that quotes prose it does not depend on. One line
+    // that cannot drift, and an early `return` restores the whole-file match exactly.
+    find: "export function countSitesIn(text, fileName = 'file.ts') {",
+    replace: "export function countSitesIn(text, fileName = 'file.ts') {\n"
+      + "  return (text.match(RAW_IRI) ?? []).length;",
     mustFail: [IRI_COUNTER_GATE],
     why: 'a gate that cannot be documented in the files it governs, whose allowance was part prose',
   },
@@ -686,7 +678,11 @@ export const MUTANTS = [
     // it inverts: a rule its author softened to advice became a hard rejection one level up. The
     // same function was already inconsistent with itself, checking nodeLevelShape three lines
     // above with `.length > 0`.
-    find: "  for (const ps of target.propertyShapes) {\n    if (evaluatePropertyShape(data, subj, target, ps, byId, depth + 1, subclassClosure)\n      .length > 0) return false;\n  }",
+    // ★ RE-ANCHORED. This quoted `.length > 0`, which was the FIRST fix and itself an overshoot —
+    // it counted sh:Debug, sh:Trace and engine advisories that the top-level rule excludes. Both
+    // readings come from `countsAsNonConformance` now, so the mutant reverts THAT, which is the
+    // reading the §3.6 hole actually consisted of.
+    find: "  for (const ps of target.propertyShapes) {\n    if (evaluatePropertyShape(data, subj, target, ps, byId, depth + 1, subclassClosure)\n      .some(countsAsNonConformance)) return false;\n  }",
     replace: "  for (const ps of target.propertyShapes) {\n    if (evaluatePropertyShape(data, subj, target, ps, byId, depth + 1, subclassClosure)\n      .some(r => r.severity === 'Violation')) return false;\n  }",
     mustFail: [SEVERITY_GATE],
     why: 'a severity is how loudly a result speaks, not whether it counts - and one level down it decided whether the result existed at all',

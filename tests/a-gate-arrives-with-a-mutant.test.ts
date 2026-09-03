@@ -24,7 +24,7 @@
  * its mutant; nothing else should touch it.
  */
 import { describe, it, expect } from 'vitest';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MUTANTS } from '../tools/mutation-gate.data.mjs';
@@ -34,7 +34,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 /**
  * Distinct gate files the table drives.
  *
- * ★ 23 measured 2026-09-03. This is a FLOOR: it rises when a gate arrives with its mutant, and
+ * ★ 24 measured 2026-09-03. This is a FLOOR: it rises when a gate arrives with its mutant, and
  * a fall means mutants were dropped and the harness now proves less than it did. It is not a
  * coverage log — do not lower it to make a run green.
  *
@@ -42,7 +42,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
  * gate's mutants be dropped in silence, which is the exact failure this leg exists to catch; the
  * cost of no slack is that adding a gate means editing this line, and that edit is the point.
  */
-const MIN_GATE_FILES = 23;
+const MIN_GATE_FILES = 24;
 
 describe('a gate arrives with a mutant', () => {
   const gateFiles = [...new Set(MUTANTS.flatMap((m) => m.mustFail as string[]))];
@@ -72,6 +72,38 @@ describe('a gate arrives with a mutant', () => {
         + 'did — which is silent, unlike a stale anchor. Raise the floor only when a gate arrives '
         + `WITH its mutant.\n  currently: ${gateFiles.sort().join('\n  ')}`,
     ).toBeGreaterThanOrEqual(MIN_GATE_FILES);
+  });
+
+  /**
+   * ★★★ EVERY ANCHOR STILL EXISTS — CHECKED HERE BECAUSE THE PLACE THAT CHECKS IT TAKES 25 MINUTES.
+   *
+   * `tools/mutation-gate.mjs` FAILS on a stale anchor rather than skipping, which is right and is
+   * the whole reason the table can be trusted. But it only discovers one by applying every mutant,
+   * so the feedback arrives from a CI job that runs for half an hour — and it arrived exactly that
+   * way: two anchors went stale in a commit that edited the two files they quote
+   * (`tools/turtle-iri-ratchet.mjs` gained a parse-failure guard, and four sites in
+   * `shacl-engine.ts` changed from `.length > 0` to a shared predicate). Both had been verified
+   * INDIVIDUALLY after those edits and the full table had not been re-run, so the local evidence
+   * was pieces rather than the whole.
+   *
+   * This is the same check, one second instead of 25 minutes, in the suite that runs before a push.
+   * It cannot replace the harness — it proves the anchor is FINDABLE, not that the gate goes red —
+   * but a stale anchor is the failure that wastes the most time, and it is pure string containment.
+   */
+  it('★ every mutant\'s `find` anchor is still present in the file it names', () => {
+    const stale = MUTANTS
+      .filter((m) => {
+        const path = join(ROOT, m.file);
+        if (!existsSync(path)) return true;
+        return !readFileSync(path, 'utf8').includes(m.find);
+      })
+      .map((m) => `${m.name}\n      in ${m.file}\n      looking for: ${JSON.stringify(m.find.slice(0, 90))}`);
+    expect(
+      stale,
+      'these mutants quote source that has moved, so the gates they verify are UNCHECKED. '
+        + 'Re-anchor them — do not delete them, and prefer an anchor that cannot drift (a '
+        + 'signature line over a body full of comments):\n    ' + stale.join('\n    '),
+    ).toEqual([]);
   });
 
   it('★ every mutant names a gate, a file, and a defect it claims to catch', () => {
