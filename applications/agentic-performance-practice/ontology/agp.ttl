@@ -259,6 +259,11 @@ agp:CalibrationProfile a owl:Class ;
     rdfs:label "Calibration Profile" ;
     rdfs:comment "The reflexive track-record: per (regime × cause × intervention) cell, the closure/effective rate and its modal status (Hypothetical until enough evidence, then Asserted). Federates across orgs by union with k-anonymity withholding. Only DERIVED Knowable regimes accrue calibration authority." .
 
+agp:PerformanceReadinessAttestation a owl:Class ;
+    rdfs:subClassOf amta:Attestation ;
+    rdfs:label "Performance Readiness Attestation" ;
+    rdfs:comment "A signed, portable decision about one exact candidate digest, derived from a declared held-out evaluation rule and linked to the AGP consulting trace, xAPI experience evidence, and an IEEE-LER/CLR portable record. It is evidence for another application to discover; it neither deploys infrastructure nor claims that instruction caused the result." .
+
 # ── Object properties ────────────────────────────────────────────────────
 
 agp:regime a owl:ObjectProperty ;
@@ -366,6 +371,21 @@ agp:evaluates a owl:ObjectProperty ;
     rdfs:domain agp:InterventionEvaluation ;
     rdfs:range agp:Intervention .
 
+agp:evaluatedRegime a owl:ObjectProperty ;
+    rdfs:label "evaluated regime" ;
+    rdfs:comment "The work regime under which a readiness decision was evaluated." ;
+    rdfs:domain agp:PerformanceReadinessAttestation ;
+    rdfs:range agp:WorkRegime .
+
+agp:portableRecord a owl:ObjectProperty ;
+    rdfs:label "portable record" ;
+    rdfs:comment "The signed IEEE-LER/CLR/Open Badges record included in the readiness evidence trail." ;
+    rdfs:domain agp:PerformanceReadinessAttestation ;
+    # A P2997 ELR is a composed descriptor, while a CLR/Open Badge may be a
+    # passport achievement. Their honest common substrate type is the signed
+    # context descriptor — narrowing this to Achievement falsely typed ELRs.
+    rdfs:range iep:ContextDescriptor .
+
 # ── Datatype properties ──────────────────────────────────────────────────
 
 agp:verdict a owl:DatatypeProperty ;
@@ -403,6 +423,51 @@ agp:explicitClaimNotMade a owl:DatatypeProperty ;
     rdfs:label "explicit claim not made" ;
     rdfs:comment "What a diagnosis / evaluation is explicitly NOT claiming. Carries humility forward (mirrors adp:explicitDecisionNotMade) so a regime placement or an intervention recommendation is not over-read." ;
     rdfs:range xsd:string .
+
+agp:subjectDigest a owl:DatatypeProperty ;
+    rdfs:label "subject digest" ;
+    rdfs:comment "SHA-256 digest of the exact candidate whose performance was evaluated." ;
+    rdfs:domain agp:PerformanceReadinessAttestation ;
+    rdfs:range xsd:string .
+
+agp:readinessDecision a owl:DatatypeProperty ;
+    rdfs:label "readiness decision" ;
+    rdfs:comment "Boolean result derived from the attestation's declared held-out evaluation rule; never supplied independently by a caller." ;
+    rdfs:domain agp:PerformanceReadinessAttestation ;
+    rdfs:range xsd:boolean .
+
+agp:evaluationSuiteDigest a owl:DatatypeProperty ;
+    rdfs:label "evaluation suite digest" ;
+    rdfs:comment "SHA-256 digest of the held-out suite used for the readiness evaluation." ;
+    rdfs:domain agp:PerformanceReadinessAttestation ;
+    rdfs:range xsd:string .
+
+agp:heldOutCases a owl:DatatypeProperty ;
+    rdfs:label "held-out cases" ;
+    rdfs:domain agp:PerformanceReadinessAttestation ;
+    rdfs:range xsd:nonNegativeInteger .
+
+agp:passedCases a owl:DatatypeProperty ;
+    rdfs:label "passed cases" ;
+    rdfs:domain agp:PerformanceReadinessAttestation ;
+    rdfs:range xsd:nonNegativeInteger .
+
+agp:failedCases a owl:DatatypeProperty ;
+    rdfs:label "failed cases" ;
+    rdfs:domain agp:PerformanceReadinessAttestation ;
+    rdfs:range xsd:nonNegativeInteger .
+
+agp:minimumCases a owl:DatatypeProperty ;
+    rdfs:label "minimum cases" ;
+    rdfs:comment "Evidence-sufficiency floor declared by this readiness decision rule." ;
+    rdfs:domain agp:PerformanceReadinessAttestation ;
+    rdfs:range xsd:nonNegativeInteger .
+
+agp:allowedFailures a owl:DatatypeProperty ;
+    rdfs:label "allowed failures" ;
+    rdfs:comment "Maximum failed held-out cases permitted by this readiness decision rule." ;
+    rdfs:domain agp:PerformanceReadinessAttestation ;
+    rdfs:range xsd:nonNegativeInteger .
 
 # ── Emergent standards-extension capability (agp re-integrates with Foxxi) ──
 # A learnable, teachable capability: an agent EXTENDS a standard (IEEE-LER /

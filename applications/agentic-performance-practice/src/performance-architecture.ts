@@ -1,5 +1,5 @@
 /**
- * Foxxi Performance Architecture — the contextualize → method spine.
+ * Agentic Performance Practice — the contextualize → method spine.
  *
  * Traditional learning systems start with content ("here is a course").
  * This module starts with PERFORMANCE: a typed description of a

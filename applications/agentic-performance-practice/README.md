@@ -105,8 +105,9 @@ relevant shape; the container declares the shapes so the relay conformance gate
   the same capabilities as `agp.*` tools (port 6030 by default).
 
 Both invoke the same publishers under `src/`. Teams of agents continue to use **Foxxi**
-for the xAPI side — including authoring a custom xAPI Profile for performance tracking
-(the `agp:` Profile is authored against Foxxi's profile machinery in Stage 2).
+for the xAPI side. The `agp:` Profile is authored through Foxxi's parameterized profile
+machinery, so the standards implementation is shared without moving performance theory
+back into Foxxi.
 
 ## What this is NOT
 
@@ -117,33 +118,27 @@ for the xAPI side — including authoring a custom xAPI Profile for performance 
   the method follows the regime.
 - NOT the L0 affordance layer. `agp:PerformanceAffordance` ≠ `iep:Affordance`.
 
-## Status — staged extraction
+## Status — independent and composable
 
-This vertical is being carved out of `foxxi-content-intelligence`, where the
-regime engine + performance architecture currently live, **without breaking Foxxi**.
+The extraction is complete at the ownership boundary: the regime, diagnosis,
+intervention, evaluation, calibration, knowledge, teaching, and trajectory engines live
+in this vertical's `src/`. Foxxi imports those modules only where a backwards-compatible
+route or standards projection composes AGP; it does not own a second performance theory.
+The `agp:` ontology, SHACL shapes, xAPI Profile, guidance, HTTP affordances, and named MCP
+tools are all served by the AGP bridge.
 
-- **Stage 1 (this scaffold — done):** the vertical exists; the `agp:` ontology (OWL +
-  SHACL) is authored and served dereferenceably; the affordance manifest + MCP surface
-  are live.
-- **Stage 1.5 (done):** eight of the nine capability handlers now **run and publish** —
-  `contextualize_situation`, `define_capability`, `map_affordance`, `actualize`,
-  `diagnose`, `plan_intervention`, `evaluate_intervention` and `extend_standards` — in
-  `bridge/handlers.ts`. This paragraph used to say every handler "returns an explicit
-  `pending: 'stage-2'` marker", and it was **false for eight of the nine**; only
-  `agp.list_practice` is still a stub, blocked on container enumeration rather than on
-  the engine move. ★ `pending` did not disappear, it became **specific**: a handler that
-  could not resolve its inputs returns a named blocker (`situation-not-resolvable`,
-  `inputs-not-resolvable`, `no-regime-evidence`, `no-container-enumeration`) and says
-  the engine ran nothing, and a handler that DID run returns `pending: null`. A single
-  hard-coded marker could not distinguish "not built yet" from "you passed me nothing",
-  which is what made this sentence outlive its truth. Handlers still do **not** fabricate
-  results.
-- **Stage 2 (next):** move the engine modules (`agent-disposition`,
-  `performance-architecture`, `performance-calibration`, `knowledge-architecture`,
-  `agent-portfolio`, `agent-teaching`, `agent-trajectory`) out of Foxxi into this
-  vertical's `src/`; add the publishers; parameterize Foxxi's xAPI-Profile builder so
-  `agp:` authors its **own** custom Profile; and rewire Foxxi to compose this vertical.
-  Seven specific seams (the `emergent-content` coupling, the `PERFORMED_VERB`
-  namespace, the profile-authoring refactor, runtime-store ownership, conformance-IRI
-  preservation, the ADP/AC `owl:equivalentClass` mappings, and the SHACL-serving route)
-  are tracked from the extraction survey and resolved before any Foxxi code moves.
+All ten declared handlers execute real code. Mutation affordances publish validated AGP
+artifacts; `agp.list_practice` performs the substrate's manifest walk; and
+`agp.prepare_readiness_evidence` is intentionally a pure preparer. That last tool derives
+a readiness decision for one exact candidate from held-out results and binds the AGP
+diagnosis/evaluations to Foxxi xAPI and portable-record evidence. It does not sign or
+publish on behalf of the caller: an authenticated Interego agent reviews and publishes
+the prepared graph through the normal descriptor path.
+
+The executable
+[`FOXXI × AGP × Release Control cold-start proof`](../../examples/foxxi-agp-release-showcase/README.md)
+shows the boundary end to end. A cold agent fails a held-out suite; AGP selects a warranted
+A2A intervention; Foxxi emits SCORM, cmi5, xAPI, IEEE-LER, and TLA evidence; AGP derives a
+typed readiness attestation; and the generic Application Lab consumes that signed evidence
+without importing either vertical. Release Control advances declarative application state
+only—it does not deploy infrastructure.

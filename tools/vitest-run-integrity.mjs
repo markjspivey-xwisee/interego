@@ -253,7 +253,7 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // repointed Dockerfile deploy as "no change"). The other thirteen accumulated across earlier
 // rounds without anyone moving the floor, which is exactly what this allowance check is for:
 // it went red BEFORE the next addition broke CI, not after.
-export const MIN_TEST_MODULES = 342;
+export const MIN_TEST_MODULES = 344;
 
 /**
  * How far below the real module count MIN_TEST_MODULES may sit before that is itself a

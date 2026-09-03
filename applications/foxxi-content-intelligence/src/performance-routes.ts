@@ -1,7 +1,7 @@
 /**
- * Bridge routes for the Foxxi Performance & Knowledge Architecture.
+ * Backwards-compatible Foxxi routes that compose Agentic Performance Practice.
  *
- * Exposes the diagnosis → intervention spine (performance-architecture.ts),
+ * Exposes AGP's canonical diagnosis → intervention spine,
  * the emergent-content authoring tools (emergent-content.ts) and the
  * knowledge map (knowledge-architecture.ts) as HTTP endpoints. The
  * endpoints ARE the authoring tools: a human instructional designer
@@ -16,7 +16,8 @@
  *   GET  /knowledge                    self-describing knowledge index
  *   POST /knowledge/map                map a competency's knowledge
  *
- * Layer: L3 vertical. Thin HTTP adapter over the pure modules.
+ * Layer: compatibility adapter. Performance theory is owned by `agp:`; Foxxi
+ * owns the content and standards projections used by these legacy routes.
  */
 
 import type { Express, Request, Response } from 'express';
@@ -512,7 +513,7 @@ export function attachPerformanceRoutes(app: Express, config: {
   app.get('/performance', (_req: Request, res: Response) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.json({
-      system: 'Foxxi Performance Architecture',
+      system: 'Agentic Performance Practice via Foxxi compatibility adapter',
       principle: 'Performance is the unit, not content. The universal first step is to contextualize a performance situation — read its work regime — then route to that regime\'s method. Idealising an exemplary state and closing a gap to it is the method of one regime (Knowable), not a universal frame: Evident applies an established practice, Emergent runs dispositional probes, Turbulent stabilises first.',
       directionalities: ['H2H', 'H2A', 'A2H', 'A2A'],
       interventionParadigm: [

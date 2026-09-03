@@ -77,6 +77,60 @@ export interface ApplicationActionInput {
   readonly options?: readonly Json[];
 }
 
+/**
+ * A contract-declared external evidence dependency.
+ *
+ * The payload names only a descriptor URL.  The executor, never the caller,
+ * dereferences that URL and establishes every field exposed at `$evidence`.
+ * This keeps the Application Lab generic: a vertical may name any signed JSON
+ * document type and compare any of its fields in an ordinary declarative guard,
+ * while the runtime knows only descriptor integrity and graph-head semantics.
+ */
+export interface ApplicationEvidenceRequirement {
+  /** Name of a required `iri` action input containing the descriptor URL. */
+  readonly input: string;
+  readonly role?: string;
+  readonly documentType?: string;
+  readonly graphIri?: string;
+  /** Optional exact signer allow-list, declared by the contract. */
+  readonly signedBy?: readonly string[];
+  /** Default true. Set false only when a contract deliberately accepts history. */
+  readonly requireCurrentHead?: boolean;
+}
+
+export interface ApplicationEvidenceRecord {
+  readonly input: string;
+  readonly role: string;
+  readonly descriptorUrl: string;
+  readonly cid: string;
+  readonly graphIri: string;
+  readonly documentType: string;
+  readonly documentDigest: string;
+  readonly document: Record<string, Json>;
+  readonly signedBy: string;
+  readonly verificationMethod: string;
+}
+
+export interface VerifiedApplicationEvidence extends ApplicationEvidenceRecord {
+  /** In-memory brand. It is deliberately omitted from the signed receipt. */
+  readonly verified: true;
+}
+
+/**
+ * A JSON field is evidence for replay, not an authority token.  Only objects
+ * created by resolveApplicationActionEvidence enter this private identity set;
+ * `{ verified: true }` copied in from a caller is therefore insufficient.
+ */
+const verifiedEvidenceObjects = new WeakSet<object>();
+
+function deepFreeze<T>(value: T): T {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+
 export interface ApplicationAction {
   readonly actionIri: string;
   readonly label?: string;
@@ -87,6 +141,7 @@ export interface ApplicationAction {
   readonly guard?: Json;
   readonly effects?: readonly Record<string, Json>[];
   readonly inputs?: readonly ApplicationActionInput[];
+  readonly evidence?: readonly ApplicationEvidenceRequirement[];
 }
 
 export interface ApplicationContract {
@@ -145,6 +200,8 @@ export interface ReplayLink {
   readonly priorVerified: boolean;
   readonly guardVerified: boolean;
   readonly effectVerified: boolean;
+  readonly evidenceVerified: boolean;
+  readonly evidenceCount: number;
   readonly verified: boolean;
   readonly errors: readonly string[];
 }
@@ -188,7 +245,8 @@ export interface ResolveApplicationLabInput {
 }
 
 const DEFAULT_CATALOG_IRI = 'urn:graph:interego:application-catalog:v1';
-const SIGNED_DOMAIN_RUNTIME = 'urn:interego:runtime:signed-domain:v1';
+/** The only mutation runtime the generic Application Lab will execute. */
+export const SIGNED_DOMAIN_RUNTIME = 'urn:interego:runtime:signed-domain:v1';
 
 function isRecord(v: unknown): v is Record<string, Json> {
   return !!v && typeof v === 'object' && !Array.isArray(v);
@@ -479,10 +537,143 @@ export function validateActionPayload(action: ApplicationAction, payload: Record
   return errors;
 }
 
+type LoadedEvidenceArtifact = {
+  readonly descriptor?: LabDescriptor;
+  readonly envelope?: SignedJsonEnvelope;
+  readonly error?: string;
+};
+
+function receiptEvidenceRecord(e: VerifiedApplicationEvidence): ApplicationEvidenceRecord {
+  return {
+    input: e.input,
+    role: e.role,
+    descriptorUrl: e.descriptorUrl,
+    cid: e.cid,
+    graphIri: e.graphIri,
+    documentType: e.documentType,
+    documentDigest: e.documentDigest,
+    document: e.document,
+    signedBy: e.signedBy,
+    verificationMethod: e.verificationMethod,
+  };
+}
+
+function evidenceRecords(raw: unknown): { records: ApplicationEvidenceRecord[]; errors: string[] } {
+  if (raw === undefined) return { records: [], errors: [] };
+  if (!Array.isArray(raw)) return { records: [], errors: ['receipt evidence is not an array'] };
+  const records: ApplicationEvidenceRecord[] = [];
+  const errors: string[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const r = raw[i];
+    if (!isRecord(r)
+      || typeof r['input'] !== 'string'
+      || typeof r['role'] !== 'string'
+      || typeof r['descriptorUrl'] !== 'string'
+      || typeof r['cid'] !== 'string'
+      || typeof r['graphIri'] !== 'string'
+      || typeof r['documentType'] !== 'string'
+      || typeof r['documentDigest'] !== 'string'
+      || !isRecord(r['document'])
+      || typeof r['signedBy'] !== 'string'
+      || typeof r['verificationMethod'] !== 'string') {
+      errors.push(`receipt evidence ${i} is malformed`);
+      continue;
+    }
+    records.push(r as unknown as ApplicationEvidenceRecord);
+  }
+  return { records, errors };
+}
+
+function evidenceEnvironment(records: readonly ApplicationEvidenceRecord[]): Record<string, unknown> {
+  return Object.fromEntries(records.map(r => [r.input, r]));
+}
+
+/**
+ * Validate the immutable evidence snapshot carried by a receipt.  When the
+ * resolver supplies `loaded`, this also re-verifies the snapshot against the
+ * exact externally signed descriptor, so replay does not trust receipt prose.
+ */
+function validateEvidenceBindings(
+  action: ApplicationAction,
+  payload: Record<string, unknown>,
+  records: readonly ApplicationEvidenceRecord[],
+  loaded?: ReadonlyMap<string, LoadedEvidenceArtifact>,
+): string[] {
+  const errors: string[] = [];
+  const requirements = action.evidence ?? [];
+  if (records.length !== requirements.length) {
+    errors.push(`evidence count mismatch: contract requires ${requirements.length}, receipt carries ${records.length}`);
+  }
+  const byInput = new Map<string, ApplicationEvidenceRecord>();
+  for (const record of records) {
+    if (byInput.has(record.input)) errors.push(`duplicate evidence input: ${record.input}`);
+    byInput.set(record.input, record);
+  }
+  for (const requirement of requirements) {
+    const record = byInput.get(requirement.input);
+    if (!record) { errors.push(`required evidence is missing: ${requirement.input}`); continue; }
+    if (payload[requirement.input] !== record.descriptorUrl) errors.push(`evidence URL is not bound to payload input: ${requirement.input}`);
+    if (record.role !== (requirement.role ?? requirement.input)) errors.push(`evidence role mismatch: ${requirement.input}`);
+    if (requirement.documentType && record.documentType !== requirement.documentType) errors.push(`evidence document type mismatch: ${requirement.input}`);
+    if (requirement.graphIri && record.graphIri !== requirement.graphIri) errors.push(`evidence graph IRI mismatch: ${requirement.input}`);
+    if (requirement.signedBy && !requirement.signedBy.includes(record.signedBy)) errors.push(`evidence signer is not allowed: ${requirement.input}`);
+    let computed = '';
+    try { computed = sha256Hex(canonicalJson(record.document)); } catch (err) {
+      errors.push(`evidence document is not canonicalizable: ${requirement.input}: ${(err as Error).message}`);
+    }
+    if (computed && computed !== record.documentDigest) errors.push(`evidence document digest mismatch: ${requirement.input}`);
+    if (!loaded) continue;
+    const artifact = loaded.get(record.descriptorUrl);
+    if (!artifact || artifact.error || !artifact.descriptor || !artifact.envelope) {
+      errors.push(`evidence descriptor is unavailable: ${requirement.input}${artifact?.error ? `: ${artifact.error}` : ''}`);
+      continue;
+    }
+    const { descriptor, envelope } = artifact;
+    if (!descriptorTrusted(descriptor, envelope)) errors.push(`evidence descriptor trust binding failed: ${requirement.input}`);
+    if (!descriptor.cid || descriptor.cid !== record.cid) errors.push(`evidence descriptor CID mismatch: ${requirement.input}`);
+    if ((descriptor.authorship?.signedBy ?? '') !== record.signedBy) errors.push(`evidence signer snapshot mismatch: ${requirement.input}`);
+    if ((descriptor.authorship?.verificationMethod ?? '') !== record.verificationMethod) errors.push(`evidence verification method snapshot mismatch: ${requirement.input}`);
+    if (envelope.graphIri !== record.graphIri) errors.push(`evidence signed graph mismatch: ${requirement.input}`);
+    if ((envelope.documentType ?? '') !== record.documentType) errors.push(`evidence signed document type mismatch: ${requirement.input}`);
+    if (envelope.declaredDigest !== record.documentDigest) errors.push(`evidence signed digest mismatch: ${requirement.input}`);
+    if (!jsonEqual(envelope.document, record.document)) errors.push(`evidence signed document snapshot mismatch: ${requirement.input}`);
+  }
+  for (const record of records) {
+    if (!requirements.some(r => r.input === record.input)) errors.push(`undeclared evidence input: ${record.input}`);
+  }
+  return errors;
+}
+
 function asContract(doc: Record<string, Json>): ApplicationContract {
   if (typeof doc['schema'] !== 'string' || !String(doc['schema']).startsWith('interego.application.contract/')) throw new Error('contract schema is not interego.application.contract/*');
   if (typeof doc['applicationId'] !== 'string' || !Array.isArray(doc['actions'])) throw new Error('contract lacks applicationId/actions');
-  for (const a of doc['actions']) if (!isRecord(a) || typeof a['actionIri'] !== 'string') throw new Error('contract has a malformed action');
+  for (const a of doc['actions']) {
+    if (!isRecord(a) || typeof a['actionIri'] !== 'string') throw new Error('contract has a malformed action');
+    const inputs = Array.isArray(a['inputs']) ? a['inputs'].filter(isRecord) : [];
+    const requirements = a['evidence'];
+    if (requirements !== undefined && !Array.isArray(requirements)) throw new Error('contract action evidence must be an array');
+    const evidenceInputs = new Set<string>();
+    for (const raw of Array.isArray(requirements) ? requirements : []) {
+      if (!isRecord(raw) || typeof raw['input'] !== 'string') throw new Error('contract has a malformed evidence requirement');
+      if (evidenceInputs.has(raw['input'])) throw new Error(`contract has duplicate evidence requirement: ${raw['input']}`);
+      evidenceInputs.add(raw['input']);
+      for (const field of ['role', 'documentType', 'graphIri'] as const) {
+        if (raw[field] !== undefined && typeof raw[field] !== 'string') {
+          throw new Error(`evidence requirement ${raw['input']} has a malformed ${field}`);
+        }
+      }
+      if (raw['requireCurrentHead'] !== undefined && typeof raw['requireCurrentHead'] !== 'boolean') {
+        throw new Error(`evidence requirement ${raw['input']} has a malformed requireCurrentHead flag`);
+      }
+      if (raw['signedBy'] !== undefined && (!Array.isArray(raw['signedBy']) || raw['signedBy'].length === 0 || !raw['signedBy'].every(x => typeof x === 'string' && x.length > 0))) {
+        throw new Error(`evidence requirement ${String(raw['input'])} has a malformed signer allow-list`);
+      }
+      const input = inputs.find(i => i['name'] === raw['input']);
+      if (!input || input['type'] !== 'iri' || input['required'] !== true) {
+        throw new Error(`evidence requirement ${String(raw['input'])} must name a required iri input`);
+      }
+    }
+  }
   return doc as unknown as ApplicationContract;
 }
 
@@ -520,7 +711,8 @@ function contractRefFromGovernance(doc: Record<string, Json>, applicationId: str
 function actionView(contract: ApplicationContract, state: ApplicationState, actor: string | undefined, forked: boolean): Record<string, Json>[] {
   return contract.actions.map(a => {
     const guard = evaluateGuard(a.guard, { state: state.data, payload: {}, actor: actor ?? '', now: new Date().toISOString() });
-    const guardDeferred = canonicalJson(a.guard ?? true).includes('$payload');
+    const guardSource = canonicalJson(a.guard ?? true);
+    const guardDeferred = guardSource.includes('$payload') || guardSource.includes('$evidence');
     const executable = !forked
       && descriptorActionIsExecutable(a)
       && guard.supported
@@ -534,6 +726,7 @@ function actionView(contract: ApplicationContract, state: ApplicationState, acto
       target: a.target ?? '',
       goal: a.goal ?? '',
       inputs: (a.inputs ?? []) as unknown as Json,
+      evidence: (a.evidence ?? []) as unknown as Json,
       guard: (a.guard ?? true) as Json,
       guardPass: guard.pass,
       guardDeferred,
@@ -557,6 +750,7 @@ function receiptOf(state: ApplicationState): Record<string, Json> | undefined {
 export function verifyReplay(
   history: readonly { entry: LabManifestEntry; descriptor: LabDescriptor; envelope: SignedJsonEnvelope; state: ApplicationState }[],
   contractsByDigest: ReadonlyMap<string, { descriptor: LabDescriptor; envelope: SignedJsonEnvelope; contract: ApplicationContract }>,
+  loadedEvidence: ReadonlyMap<string, LoadedEvidenceArtifact> = new Map(),
 ): ReplayReport {
   const sorted = [...history].sort((a, b) => a.state.version - b.state.version || a.entry.descriptorUrl.localeCompare(b.entry.descriptorUrl));
   const links: ReplayLink[] = [];
@@ -574,6 +768,8 @@ export function verifyReplay(
     let priorVerified = index === 0;
     let guardVerified = index === 0;
     let effectVerified = index === 0;
+    let evidenceVerified = index === 0;
+    let evidenceCount = 0;
     let actionIri: string | undefined;
     let actor: string | undefined;
     let at: string | undefined;
@@ -589,6 +785,9 @@ export function verifyReplay(
       if (!transition || !prior || !receipt) {
         errors.push('transition/prior/receipt missing');
       } else {
+        const parsedEvidence = evidenceRecords(receipt['evidence']);
+        evidenceCount = parsedEvidence.records.length;
+        errors.push(...parsedEvidence.errors);
         actionIri = asString(receipt['actionIri']) ?? asString(transition['actionIri']);
         actor = asString(receipt['actor']);
         at = asString(receipt['at']) ?? asString(transition['at']);
@@ -614,11 +813,21 @@ export function verifyReplay(
             errors.push('receipt action is absent from bound contract');
           } else {
             const payload = asRecord(receipt['payload']) ?? {};
-            const guard = evaluateGuard(action.guard, { state: previous.state.data, payload, actor: actor ?? '', now: at ?? '' });
+            const evidenceErrors = validateEvidenceBindings(action, payload, parsedEvidence.records, loadedEvidence);
+            evidenceVerified = evidenceErrors.length === 0;
+            if (!evidenceVerified) errors.push(...evidenceErrors);
+            const env = {
+              state: previous.state.data,
+              payload,
+              evidence: evidenceEnvironment(parsedEvidence.records),
+              actor: actor ?? '',
+              now: at ?? '',
+            };
+            const guard = evaluateGuard(action.guard, env);
             guardVerified = guard.supported && guard.pass;
             if (!guardVerified) errors.push(`guard replay failed: ${guard.explanation}`);
             try {
-              const replayed = applyEffects(previous.state.data, action.effects ?? [], { payload, actor: actor ?? '', now: at ?? '' });
+              const replayed = applyEffects(previous.state.data, action.effects ?? [], env);
               effectVerified = jsonEqual(replayed, item.state.data);
               if (!effectVerified) errors.push('effect replay did not reproduce successor data');
             } catch (err) {
@@ -634,7 +843,7 @@ export function verifyReplay(
         }
       }
     }
-    const verified = errors.length === 0 && trusted && item.envelope.digestVerified && receiptVerified && priorVerified && guardVerified && effectVerified;
+    const verified = errors.length === 0 && trusted && item.envelope.digestVerified && receiptVerified && priorVerified && guardVerified && effectVerified && evidenceVerified;
     links.push({
       index,
       version: item.state.version,
@@ -651,6 +860,8 @@ export function verifyReplay(
       priorVerified,
       guardVerified,
       effectVerified,
+      evidenceVerified,
+      evidenceCount,
       verified,
       errors,
     });
@@ -815,7 +1026,25 @@ export async function resolveApplicationLab(input: ResolveApplicationLabInput, r
   if (!baseContractLoaded) throw new Error('catalog-pinned base contract could not be resolved');
   if (baseContractRef?.['documentDigest'] && baseContractRef['documentDigest'] !== baseContractLoaded.envelope.declaredDigest) throw new Error('catalog-pinned base contract digest does not match the fetched contract');
   if (baseContractRef?.['cid'] && baseContractLoaded.descriptor.cid && baseContractRef['cid'] !== baseContractLoaded.descriptor.cid) throw new Error('catalog-pinned base contract CID does not match the fetched contract');
-  const replay = verifyReplay(historyLoaded, contractsByDigest);
+  // External evidence is not trusted because a receipt copied some JSON into
+  // itself. Re-fetch every exact descriptor named by a receipt and give replay
+  // the independently verified artifact. The immutable URL + CID + JSON digest
+  // are all checked by validateEvidenceBindings.
+  const evidenceUrls = new Set<string>();
+  for (const h of historyLoaded) {
+    const raw = receiptOf(h.state)?.['evidence'];
+    for (const record of evidenceRecords(raw).records) evidenceUrls.add(record.descriptorUrl);
+  }
+  const loadedEvidence = new Map<string, LoadedEvidenceArtifact>();
+  await Promise.all([...evidenceUrls].map(async url => {
+    try {
+      const loaded = await loadEnvelope(reads, url);
+      loadedEvidence.set(url, loaded);
+    } catch (err) {
+      loadedEvidence.set(url, { error: (err as Error).message });
+    }
+  }));
+  const replay = verifyReplay(historyLoaded, contractsByDigest, loadedEvidence);
 
   const genesis = [...historyLoaded].sort((a, b) => a.state.version - b.state.version)[0];
   const genesisRef = artifactRef(catalogEntry, 'genesisState');
@@ -830,6 +1059,18 @@ export async function resolveApplicationLab(input: ResolveApplicationLabInput, r
     evidence('active-contract', activeContractLoaded.descriptor, activeContractLoaded.envelope, activeContractHead.head?.cid ?? baseContractRef?.['cid'] as string | undefined),
     evidence('state-head', stateLoaded.descriptor, stateLoaded.envelope, stateHeadCid),
     ...(governanceEvidence ? [governanceEvidence] : []),
+    ...[...loadedEvidence.entries()].map(([url, loaded], index) => loaded.descriptor && loaded.envelope
+      ? evidence(`action-evidence-${index + 1}`, loaded.descriptor, loaded.envelope, loaded.descriptor.cid)
+      : ({
+          role: `action-evidence-${index + 1}`,
+          descriptorUrl: url,
+          authorshipVerified: false,
+          contentBinding: 'unbound',
+          descriptorBinding: false,
+          digestVerified: false,
+          trusted: false,
+          reason: loaded.error ?? 'evidence descriptor unavailable',
+        } as ArtifactEvidence)),
   ];
   const manifestChecks = {
     contract: {
@@ -916,12 +1157,75 @@ export async function resolveApplicationLab(input: ResolveApplicationLabInput, r
   };
 }
 
+/**
+ * Resolve every contract-declared evidence input from the network and turn it
+ * into a verified, immutable snapshot. No field from the caller other than the
+ * descriptor URL survives this boundary.
+ */
+export async function resolveApplicationActionEvidence(
+  resolved: ResolvedApplicationLab,
+  input: { readonly actionIri: string; readonly payload: Record<string, unknown> },
+  reads: ApplicationLabReads,
+): Promise<readonly VerifiedApplicationEvidence[]> {
+  const action = resolved.activeContract.actions.find(a => a.actionIri === input.actionIri);
+  if (!action) throw new Error(`action is absent from the verified active contract: ${input.actionIri}`);
+  const payloadErrors = validateActionPayload(action, input.payload);
+  if (payloadErrors.length) throw new Error(`payload does not conform to the signed action inputs: ${payloadErrors.join('; ')}`);
+  const records = await Promise.all((action.evidence ?? []).map(async requirement => {
+    const descriptorUrl = input.payload[requirement.input];
+    if (typeof descriptorUrl !== 'string') throw new Error(`evidence input is not a descriptor URL: ${requirement.input}`);
+    const loaded = await loadEnvelope(reads, descriptorUrl);
+    const { descriptor, envelope } = loaded;
+    if (descriptor.url !== descriptorUrl) throw new Error(`evidence descriptor URL changed during resolution: ${requirement.input}`);
+    if (!descriptorTrusted(descriptor, envelope)) throw new Error(`evidence descriptor is not fully verified: ${requirement.input}`);
+    if (!descriptor.cid) throw new Error(`evidence descriptor has no content CID: ${requirement.input}`);
+    if (!descriptor.authorship?.signedBy || !descriptor.authorship.verificationMethod) throw new Error(`evidence descriptor has no verified signer identity: ${requirement.input}`);
+    if (!envelope.graphIri) throw new Error(`evidence document has no signed graph IRI: ${requirement.input}`);
+    if (!envelope.documentType) throw new Error(`evidence document has no signed document type: ${requirement.input}`);
+    if (requirement.documentType && envelope.documentType !== requirement.documentType) {
+      throw new Error(`evidence document type mismatch for ${requirement.input}: expected ${requirement.documentType}, observed ${envelope.documentType}`);
+    }
+    if (requirement.graphIri && envelope.graphIri !== requirement.graphIri) {
+      throw new Error(`evidence graph IRI mismatch for ${requirement.input}: expected ${requirement.graphIri}, observed ${envelope.graphIri}`);
+    }
+    if (requirement.requireCurrentHead !== false) {
+      const evidencePod = podFromDescriptorUrl(descriptorUrl);
+      const head = await reads.currentHead(evidencePod, envelope.graphIri);
+      if (head.forked) throw new Error(`evidence graph is forked: ${requirement.input}`);
+      if (head.head?.descriptorUrl !== descriptorUrl || head.head?.cid !== descriptor.cid) {
+        throw new Error(`evidence descriptor is not the singular current graph head: ${requirement.input}`);
+      }
+    }
+    const record = deepFreeze({
+      input: requirement.input,
+      role: requirement.role ?? requirement.input,
+      descriptorUrl,
+      cid: descriptor.cid,
+      graphIri: envelope.graphIri,
+      documentType: envelope.documentType,
+      documentDigest: envelope.declaredDigest,
+      // Detach from the parser result and freeze recursively: a consumer cannot
+      // resolve honest bytes and then alter the branded snapshot before prepare.
+      document: JSON.parse(envelope.canonical) as Record<string, Json>,
+      signedBy: descriptor.authorship.signedBy,
+      verificationMethod: descriptor.authorship.verificationMethod,
+      verified: true,
+    } satisfies VerifiedApplicationEvidence);
+    verifiedEvidenceObjects.add(record);
+    return record;
+  }));
+  const bindingErrors = validateEvidenceBindings(action, input.payload, records);
+  if (bindingErrors.length) throw new Error(`verified evidence does not satisfy the signed action declaration: ${bindingErrors.join('; ')}`);
+  return records;
+}
+
 export interface PrepareActionInput {
   readonly actionIri: string;
   readonly payload?: Record<string, unknown>;
   readonly actor: string;
   readonly now: string;
   readonly expectedHead?: string;
+  readonly evidence?: readonly VerifiedApplicationEvidence[];
 }
 
 /** Re-resolve first, then prepare the one exact descriptor-bound successor. */
@@ -942,9 +1246,17 @@ export function prepareApplicationAction(resolved: ResolvedApplicationLab, input
   const payload = input.payload ?? {};
   const payloadErrors = validateActionPayload(action, payload);
   if (payloadErrors.length) throw new Error(`payload does not conform to the signed action inputs: ${payloadErrors.join('; ')}`);
-  const guard = evaluateGuard(action.guard, { state: resolved.state.data, payload, actor: input.actor, now: input.now });
+  const verifiedEvidence = input.evidence ?? [];
+  if (verifiedEvidence.some(e => e.verified !== true || !verifiedEvidenceObjects.has(e))) {
+    throw new Error('action evidence was not produced by the verifier');
+  }
+  const receiptEvidence = verifiedEvidence.map(receiptEvidenceRecord);
+  const evidenceErrors = validateEvidenceBindings(action, payload, receiptEvidence);
+  if (evidenceErrors.length) throw new Error(`verified evidence does not satisfy the signed action declaration: ${evidenceErrors.join('; ')}`);
+  const env = { state: resolved.state.data, payload, evidence: evidenceEnvironment(receiptEvidence), actor: input.actor, now: input.now };
+  const guard = evaluateGuard(action.guard, env);
   if (!guard.supported || !guard.pass) throw new Error(`signed action guard refused: ${guard.explanation}`);
-  const nextData = applyEffects(resolved.state.data, action.effects ?? [], { payload, actor: input.actor, now: input.now });
+  const nextData = applyEffects(resolved.state.data, action.effects ?? [], env);
   const receipt: Record<string, Json> = {
     actionIri: action.actionIri,
     actor: input.actor,
@@ -955,6 +1267,7 @@ export function prepareApplicationAction(resolved: ResolvedApplicationLab, input
     expectedHead: resolved.stateHead.cid,
     goal: action.goal ?? '',
     payload: payload as unknown as Json,
+    ...(receiptEvidence.length ? { evidence: receiptEvidence as unknown as Json } : {}),
     stateVersion: resolved.state.version,
     version: 1,
   };
