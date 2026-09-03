@@ -193,6 +193,50 @@ describe('projection (derefBnode recovers nested substance)', () => {
     expect(valueAt(a, 'effectiveTrustLevel')).toBe('CryptographicallyVerified');
     expect(a.nextStep?.tool).toBe('pgsl_decide');
   });
+  /**
+   * ★★ authorshipVerified WITHOUT contentBinding IS THE COLLAPSE THIS PROJECTION EXISTED TO
+   * PREVENT, AND THE ROUTER SHIPPED IT.
+   *
+   * `get_descriptor`'s own tool description says it in as many words: "authorshipVerified alone
+   * says WHO SIGNED A DESCRIPTOR - read contentBinding to learn whether the signature also
+   * covers the graph served with it; the two are separate questions and a proof can verify
+   * while covering nothing." `unbound` is what every proof written before content binding
+   * existed still reports.
+   *
+   * The relay narrowed its cast to three fields and dropped contentBinding on the way in, so a
+   * reader asking a Whether/Who question got a verified-looking answer with no way to
+   * distinguish attested CONTENT from a signature over a URL.
+   *
+   * An adversarial pass reported this and all three of its refuters rejected it. It was right.
+   *
+   * ★ DRIVEN THROUGH `routeSrc`, THE SOURCE IMPORT, for the reason the context-gap block
+   * below already gives: '@interego/pgsl' resolves to packages/pgsl/dist, so a stale build
+   * reads a router that never had the projection and reports green over an unbuilt fix.
+   * Measured: with the dist import, the mutant that deletes this projection SURVIVED.
+   */
+  it('★ Whether: contentBinding is answered beside authorshipVerified, never instead of it', () => {
+    const bound = routeSrc({
+      turtle: FIXTURE, interrogatives: ['Whether'], target: 'urn:desc:1',
+      authorship: { effectiveTrustLevel: 'CryptographicallyVerified', authorshipVerified: true, contentBinding: 'bound' },
+    });
+    if (!bound.ok) throw new Error(bound.error);
+    expect(valueAt(bound.answers[0]!, 'contentBinding')).toBe('bound');
+
+    // The case that matters: a signature that verifies and covers NOTHING must say so here.
+    const unbound = routeSrc({
+      turtle: FIXTURE, interrogatives: ['Whether'], target: 'urn:desc:1',
+      authorship: { effectiveTrustLevel: 'CryptographicallyVerified', authorshipVerified: true, contentBinding: 'unbound' },
+    });
+    if (!unbound.ok) throw new Error(unbound.error);
+    const a = unbound.answers[0]!;
+    expect(valueAt(a, 'authorshipVerified')).toBe(true);
+    expect(
+      valueAt(a, 'contentBinding'),
+      'the router reports a verified signature and says nothing about whether it covers the '
+        + 'graph served with it, which is a verified-looking answer over unattested content',
+    ).toBe('unbound');
+  });
+
   it('What: pointer to the substrate (iep:describes), not a descriptor facet', () => {
     const a = answer('What');
     expect(a.status).toBe('pointer');

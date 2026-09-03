@@ -107,6 +107,41 @@ a2ap:stateTransitionHistory a owl:DatatypeProperty ; rdfs:label "stateTransition
 #  drifted from them fails here even if it were still schema-valid.
 # ══════════════════════════════════════════════════════════════
 
+# ★★ DECLARED HERE BECAUSE a2ap:CardShape CITES THEM AND NOTHING DEFINED THEM.
+#
+# The shape below targets a2ap:AgentCard and constrains a2ap:skillId and a2ap:conformanceClaim.
+# All three were undeclared, so a reader dereferencing any of them landed on a document that
+# never mentioned the term - the class tests/every-published-term-is-declared.test.ts exists to
+# catch, and which that gate could not see here: its ownership rule assumed the owl:Ontology
+# subject IS the namespace IRI, and this file types a2ap:Profile instead. The rule is fixed and
+# these are the three terms it then found.
+#
+# ★ AND NOTHING EMITS THEM YET, WHICH IS SAID RATHER THAN IMPLIED. The shape's own comment
+# reads "validates an emitted agent card"; no code in this repository writes a2ap:AgentCard,
+# a2ap:skillId or a2ap:conformanceClaim as RDF - the A2A projection speaks that protocol's JSON
+# wire format. So the shape states the invariants an RDF projection of a card MUST satisfy and
+# validates nothing today. Declaring the terms makes them dereferenceable; it does not make the
+# shape load-bearing, and calling it "validates" without this note would be the same
+# dereferenceable-name-over-an-empty-check that docs/ns/vault-ld.ttl records.
+
+a2ap:AgentCard a owl:Class ;
+    rdfs:label "A2A agent card" ;
+    rdfs:comment "The projection of an agent's advertised surface into the A2A card shape: who the agent is, which capabilities it offers, and what conformance it claims. Not a new kind of thing - iep:Agent's own definition already says it is 'projected into an interop protocol's agent-card document by a declarative profile', and this is that document's class. The substrate's record is the descriptor; a card is one view of it, computed from published affordances rather than hand-authored, so it cannot advertise a capability the substrate cannot serve." ;
+    iep:constructedFrom ( iep:Agent iep:Affordance ) ;
+    rdfs:isDefinedBy a2ap:Profile .
+
+a2ap:skillId a owl:ObjectProperty ;
+    rdfs:label "skill id" ;
+    rdfs:comment "Identifier of one capability an agent card advertises. MUST be a dereferenceable http(s) URL that resolves to the capability's own description, which is what a2ap:CardShape enforces: a urn:, a bare token or an opaque handle is a promise the substrate cannot keep, and the projection DROPS such capabilities rather than advertising them." ;
+    rdfs:domain a2ap:AgentCard ;
+    rdfs:isDefinedBy a2ap:Profile .
+
+a2ap:conformanceClaim a owl:ObjectProperty ;
+    rdfs:label "conformance claim" ;
+    rdfs:comment "A conformance assertion carried on a card. Constrained to sh:maxCount 0 by a2ap:CardShape while a2ap:conformanceStatus is \"unverified\": a card must not claim conformance the profile has not established, which is the same discipline the compliance surfaces apply - an unverified claim is worse than an absent one because a reader cannot tell them apart." ;
+    rdfs:domain a2ap:AgentCard ;
+    rdfs:isDefinedBy a2ap:Profile .
+
 a2ap:CardShape a sh:NodeShape ;
     rdfs:label "A2A card — substrate invariants" ;
     rdfs:comment "Validates an emitted agent card against the substrate's own promises: every advertised capability is identified by a DEREFERENCEABLE URL, and the card makes no conformance claim while the profile is unverified." ;

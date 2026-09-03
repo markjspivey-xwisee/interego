@@ -70,8 +70,16 @@ describe('a refusal survives the call site that receives it', () => {
   });
 
   it('the refusal it builds still carries a way out', () => {
-    // RefusalShape puts sh:minCount 1 on iep:resolvedBy, but SHACL cannot run over TypeScript.
-    // This is the source-side half: the constructed refusal names an affordance.
+    // ★ RefusalShape does NOT require iep:resolvedBy, and this comment said it did. The shape
+    // puts `sh:minCount 1` on `iep:refusalReason` only; `resolvedBy` carries `sh:maxCount 1`
+    // and no minimum, and the shape's own description explains why — "Required at first, and
+    // that was wrong: a missing credential has a way out (mint one) but an authorization denial
+    // does not", measured at one of five tenant-auth refusals able to satisfy it. Forcing every
+    // refusal to name an exit would mean inventing a fake one for the 403 case.
+    //
+    // So this leg is not the source-side half of a SHACL requirement. It asserts something
+    // narrower and still worth asserting: THIS refusal, the propagated one, does name an
+    // affordance — because it is the missing-credential case, which has a real way out.
     expect(src).toContain("kind: 'refusal'");
     expect(src, 'the refusal no longer names the affordance that resolves it')
       .toContain("'iep:resolvedBy'");

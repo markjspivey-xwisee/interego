@@ -152,6 +152,11 @@ COPY deploy/mcp-relay/shapes-declared.ts ./
 # projection that lets a SHACL engine see one. Extracted for the usual reason: server.ts opens a
 # listener on import, so "which caller gets refused" could not otherwise be run by a test.
 COPY deploy/mcp-relay/notification-body.ts ./
+# The SSE / webhook frame and the JSON-LD context that makes it mean anything. Extracted for the
+# same reason as the line above — server.ts listens on import, so nothing could check the frame the
+# relay actually emits — and it went unchecked against iep:NotificationShape, which it did not
+# satisfy: @context named the Turtle namespace IRI, which defines no terms.
+COPY deploy/mcp-relay/notification-event.ts ./
 COPY deploy/mcp-relay/supersession-frontier.ts ./
 COPY deploy/mcp-relay/required-args.ts ./
 COPY deploy/mcp-relay/turtle-iri-args.ts ./

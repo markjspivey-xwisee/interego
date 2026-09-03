@@ -119,17 +119,47 @@ export function mirrorTurtleFor(payloadTurtle: string, graphIri: string): { ok: 
     '@prefix prov: <http://www.w3.org/ns/prov#> .',
     '@prefix dct: <http://purl.org/dc/terms/> .',
   ];
+  /**
+   * ★★ TWO DEFECTS WERE HERE, AND THE COMMENT ABOVE THEM DESCRIBED NEITHER.
+   *
+   * 1. `graphIri` WAS NOT SCREENED AT ALL. Every triple below writes `<${graphIri}>` as its
+   *    subject, and a `>` in it closes the reference and opens the rest of the line to whatever
+   *    the caller supplied — the injection this package's other writers all refuse. The gate
+   *    `★ every interpolated IRI is refused rather than escaped` drove eight of this package's
+   *    twelve Turtle writers, and this was one of the four it did not.
+   * 2. AN UNSERIALIZABLE OBJECT IRI WAS SILENTLY DROPPED. `continue` is not refusal — it is the
+   *    quiet omission this very file rejects twenty lines up for revocation conditions ("the
+   *    record would outlive the thing that was supposed to retire it, and nothing would say
+   *    so"). A dropped `iep:supersedes` publishes a mirror asserting NO supersession, which is
+   *    that same failure with a different predicate.
+   *
+   * Both are refusals now, which this function's return type already expressed.
+   */
+  const UNSERIALIZABLE = /[\s<>"{}|\\^`]/;
+  if (UNSERIALIZABLE.test(graphIri)) {
+    return {
+      ok: false,
+      why: 'the graph IRI is not serializable as a Turtle IRI reference, and a reference ends at '
+        + 'the first `>` with no escape available — writing it would let the rest of the line be '
+        + `chosen by whoever supplied it: ${graphIri}`,
+    };
+  }
+  let refusal: string | undefined;
   const emit = (predicate: string, iris: readonly string[]): void => {
     for (const iri of iris) {
-      // Refused rather than escaped: an IRI reference ends at the first '>' and Turtle has no
-      // escape for it, so the only correct handling of an unserializable IRI is to not write it.
-      if (/[\s<>"{}|\\^`]/.test(iri)) continue;
+      // Refused rather than escaped OR dropped: an unserializable IRI must stop the document.
+      if (UNSERIALIZABLE.test(iri)) {
+        refusal ??= `a ${predicate} object is not serializable as a Turtle IRI reference, and `
+          + `omitting it would publish a mirror claiming the relation does not exist: ${iri}`;
+        continue;
+      }
       lines.push(`<${graphIri}> ${predicate} <${iri}> .`);
     }
   };
   emit('iep:supersedes', pre.supersedes);
   emit('prov:wasDerivedFrom', pre.wasDerivedFrom);
   emit('dct:conformsTo', pre.conformsTo);
+  if (refusal !== undefined) return { ok: false, why: refusal };
   // Nothing to mirror: an empty string is what `normalizePublishInputs` is happy to receive, and
   // three lonely prefix declarations would be a document that asserts nothing.
   return { ok: true, turtle: lines.length === 3 ? '' : lines.join('\n') };

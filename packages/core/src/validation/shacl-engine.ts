@@ -3189,8 +3189,7 @@ function conformsToShapeInner(
   // asymmetry this engine already warns about for targeting: fire on the subclass, then
   // refuse it for failing an exact-parent sh:class. Both call sites already pass the
   // closure in correctly; it died here.
-  if (logicalResults(data, subj, target, byId, depth, subclassClosure)
-    .some(r => r.severity === 'Violation')) return false;
+  if (logicalResults(data, subj, target, byId, depth, subclassClosure).length > 0) return false;
   // ★ A SPARQL CONSTRAINT IS A CONSTRAINT WHEREVER THE SHAPE IS REACHED. `sparqlConstraints`
   // was read at exactly one site — the top-level driver — so `sh:node ex:Inner` where
   // ex:Inner's only constraint is an sh:sparql enforced NOTHING, and so did the same shape
@@ -3205,7 +3204,7 @@ function conformsToShapeInner(
       sourceShape: target.id,
       severity: target.severity,
       ...(target.message !== undefined ? { shapeMessage: target.message } : {}),
-    }).some(r => r.severity === 'Violation')) {
+    }).length > 0) {
     return false;
   }
   // ★ AND A CONSTRAINT COMPONENT IS A CONSTRAINT WHEREVER THE SHAPE IS REACHED, for exactly
@@ -3213,13 +3212,12 @@ function conformsToShapeInner(
   // shapes, so a component's parameters on a shape reached through sh:node — or on that
   // shape's property shapes — activated nothing at all.
   if (ACTIVE_COMPONENTS.length > 0
-    && componentResults(data, subj, target, ACTIVE_COMPONENTS)
-      .some(r => r.severity === 'Violation')) {
+    && componentResults(data, subj, target, ACTIVE_COMPONENTS).length > 0) {
     return false;
   }
   for (const ps of target.propertyShapes) {
     if (evaluatePropertyShape(data, subj, target, ps, byId, depth + 1, subclassClosure)
-      .some(r => r.severity === 'Violation')) return false;
+      .length > 0) return false;
   }
   if (target.closed) {
     // ★ Only a PREDICATE path contributes a permitted predicate. A sequence or inverse

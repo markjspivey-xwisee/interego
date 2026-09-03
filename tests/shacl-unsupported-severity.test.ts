@@ -38,7 +38,20 @@
  * of the mechanism, not of any one construct.
  */
 import { describe, it, expect } from 'vitest';
-import { validateAgainstShape } from '@interego/core';
+/**
+ * ★★ FROM SOURCE, NOT FROM `@interego/core`, AND THE MUTATION HARNESS IS WHY.
+ *
+ * Every package here exports `./dist` only, so a gate importing `@interego/core` is reading the
+ * LAST BUILD. This file's subject is `packages/core/src/validation/shacl-engine.ts`, and measured:
+ * a mutant that reverted the nested-conformance rule to "count only Violations" was applied to
+ * that source and this gate stayed GREEN — it was validating a dist that still had the fix. A gate
+ * that cannot see a change to the file it is about is decoration, whatever it asserts.
+ *
+ * The W3C oracle suite (`tests/the-w3c-suite-is-the-oracle.test.ts`) deliberately keeps reading
+ * the built artifact: between them the shipped bytes and the source are both covered, which is
+ * the split that was missing rather than a preference for either.
+ */
+import { validateAgainstShape } from '../packages/core/src/validation/shacl-engine.js';
 
 const PREFIXES = `
 @prefix sh:  <http://www.w3.org/ns/shacl#> .
@@ -358,5 +371,105 @@ ex:PersonShape a sh:NodeShape ;
                 sh:order 1 ; sh:group ex:G ; sh:minCount 1 ] .
 `;
     expect(validateAgainstShape(PERSON_DATA, annotated).fullyChecked).toBe(true);
+  });
+});
+
+// ── the FIVE STRUCTURAL components, which the section above declared out of scope ──
+//
+// ★★ THAT SCOPE NOTE WAS A CLAIM, AND ONE HALF OF IT WAS FALSE.
+//
+// The note above reads: "The five structural components the engine also maps (sh:property,
+// sh:node, node-by-expression, sh:expression, reifier-shape) compose OTHER shapes rather than
+// testing a value, and carry severity through the shape they delegate to; they are out of scope
+// here and the title no longer implies otherwise."
+//
+// Naming a bound is better than implying none, and it is still not a check. Measured, the claim
+// held for severity declared on the OUTER shape and failed for the delegation itself:
+// `conformsToShapeInner` decided whether a nested shape conformed with
+// `.some(r => r.severity === 'Violation')` at four sites — logical constraints, sh:sparql,
+// constraint components and property shapes — so an inner failure at sh:Info or sh:Warning was
+// treated as CONFORMANCE and the outer sh:node did not fire at all.
+//
+// ★★★ THAT IS THE SAME §3.6 MISREADING THIS FILE EXISTS TO RECORD, LEFT IN THE NESTED PATH.
+// §3.6: conforms is true "if the validation did not produce any validation results" — ANY result,
+// at ANY severity. The top-level driver was corrected; the nested evaluator was not, and the same
+// function was already inconsistent with itself, checking `target.nodeLevelShape` with
+// `.length > 0` three lines above the four that asked about Violations.
+//
+// It matters beyond a missed result, because nesting INVERTS. Under sh:not, an inner Info failure
+// read as "conforms" makes the negation fire — a softened rule became a hard rejection, which is
+// precisely the inversion the comment on `nodeSatisfiesShape` warns about for deactivation.
+//
+// Every W3C SHACL Core, node-expression, SPARQL and 1.2 reifier fixture in this repo still passes
+// with the four sites reading `.length > 0`, which is the second oracle for the change: no
+// approved test distinguishes the readings, and the spec text decides.
+describe('sh:severity survives DELEGATION, not just direct value constraints', () => {
+  const outer = (inner: string, sev = ''): string => `${PREFIXES}
+ex:PersonShape a sh:NodeShape ; sh:targetClass ex:Person ;
+  sh:property [ sh:path ex:friend ; ${sev} sh:node ex:FriendShape ] .
+ex:FriendShape a sh:NodeShape ; sh:property [ sh:path ex:name ; ${inner} ] .
+`;
+  const data = `${PREFIXES}
+ex:alice a ex:Person ; ex:friend ex:bob .
+ex:bob a ex:Thing .
+`;
+
+  it('sh:node carries the severity declared on the shape that delegates', () => {
+    const report = validateAgainstShape(data, outer('sh:minCount 1', 'sh:severity sh:Info ;'));
+    const fired = report.results.filter(r => /NodeConstraintComponent/.test(r.constraintComponent));
+    expect(fired.length, 'the sh:node constraint did not fire at all').toBeGreaterThan(0);
+    expect(fired.every(r => r.severity === 'Info')).toBe(true);
+  });
+
+  it('★ an INNER failure at sh:Info means the inner shape does not conform, so sh:node fires', () => {
+    // The defect: this reported conforms=true with no results, because the nested evaluator
+    // counted only Violations. The outer result takes the OUTER shape's severity — Violation by
+    // default — which is what makes swallowing it a silent pass rather than a quieter one.
+    const report = validateAgainstShape(data, outer('sh:severity sh:Info ; sh:minCount 1'));
+    expect(report.conforms, 'an inner result at Info severity was treated as conformance').toBe(false);
+    expect(report.results.some(r => /NodeConstraintComponent/.test(r.constraintComponent)),
+      'sh:node did not fire for a value whose inner shape produced a result').toBe(true);
+  });
+
+  it('★ and nesting INVERTS, so sh:not must not fire when the inner shape produced a result', () => {
+    // Under the old rule the inner Info was "conformance", so sh:not reported a violation: a
+    // shape the author softened to advice became a hard rejection one level up.
+    const shapes = `${PREFIXES}
+ex:PersonShape a sh:NodeShape ; sh:targetClass ex:Person ;
+  sh:property [ sh:path ex:friend ; sh:not ex:FriendShape ] .
+ex:FriendShape a sh:NodeShape ; sh:property [ sh:path ex:name ; sh:severity sh:Info ; sh:minCount 1 ] .
+`;
+    const report = validateAgainstShape(data, shapes);
+    expect(report.results.filter(r => /NotConstraintComponent/.test(r.constraintComponent)),
+      'sh:not fired against a value whose inner shape did NOT conform').toEqual([]);
+  });
+
+  it('sh:expression carries the delegating shape severity', () => {
+    const shapes = `${PREFIXES}
+ex:PersonShape a sh:NodeShape ; sh:targetClass ex:Person ;
+  sh:property [ sh:path ex:age ; sh:severity sh:Info ;
+    sh:expression [ sh:not [ sh:exists [ sh:path ex:age ] ] ] ] .
+`;
+    // Its own fixture, not PERSON_DATA: with no ex:age the property shape has no value nodes,
+    // nothing is evaluated, and the leg would assert about an empty result set.
+    const withAge = `${PREFIXES}ex:alice a ex:Person ; ex:age "not-a-number" .
+`;
+    const fired = validateAgainstShape(withAge, shapes).results
+      .filter(r => /ExpressionConstraintComponent/.test(r.constraintComponent));
+    expect(fired.length, 'sh:expression did not fire').toBeGreaterThan(0);
+    expect(fired.every(r => r.severity === 'Info')).toBe(true);
+  });
+
+  it('a severity on the NODE shape reaches the results its property shapes produce', () => {
+    const shapes = `${PREFIXES}
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+ex:PersonShape a sh:NodeShape ; sh:targetClass ex:Person ; sh:severity sh:Info ;
+  sh:property [ sh:path ex:age ; sh:datatype xsd:integer ] .
+`;
+    const data2 = `${PREFIXES}ex:alice a ex:Person ; ex:age "not-a-number" .\n`;
+    const fired = validateAgainstShape(data2, shapes).results
+      .filter(r => r.constraintComponent.startsWith('http://www.w3.org/ns/shacl#'));
+    expect(fired.length, 'the datatype constraint did not fire').toBeGreaterThan(0);
+    expect(fired.every(r => r.severity === 'Info')).toBe(true);
   });
 });

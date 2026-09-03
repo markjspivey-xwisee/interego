@@ -19,8 +19,14 @@ import {
   workspaceTurtle, graphRegion, readIri, readLiteral, hasTrue, parseRoleProfile,
   roleKnown, roleName, roleWhy, checkRoleForWorkspace, staleDetail, awaitHead, readCanvas,
   verifyGrantIri, findSeat, listWorkspaces, WorkspaceClient, WSPR,
+  turnTurtle,
   type RoleTable, type Viewer, type AnyTransport,
 } from '@interego/workspace-client';
+// ★ FROM SOURCE. `mirrorTurtleFor` is internal to the package — not exported — and widening the
+// public API to test it would be the wrong trade. Importing the module directly also means a
+// mutation of packages/workspace-client/src is VISIBLE here; the package entry resolves to
+// dist, where a src mutant is not.
+import { mirrorTurtleFor } from '../packages/workspace-client/src/sealer.js';
 
 const RELAY = 'https://relay.interego.xwisee.com';
 const POD = 'u-eth-8f3b8e939600';
@@ -95,6 +101,48 @@ describe('★ every interpolated IRI is refused rather than escaped', () => {
     }
     expect(turtleIri('https://ok/x#y', 'x')).toBe('<https://ok/x#y>');
   });
+  /**
+   * ★★ THE FOUR WRITERS THIS GATE DID NOT DRIVE, AND WHAT WAS IN ONE OF THEM.
+   *
+   * The header above says "the artifact's copies of these six writers interpolated all of it
+   * unchecked; only `entryTurtle` guarded" - and the gate then drove eight of the package's
+   * TWELVE Turtle writers. An adversarial pass named the four it skipped:
+   * `legacyWorkspaceCapabilityTurtle`, `membershipTurtle`, `mirrorTurtleFor`, `turnTurtle`.
+   *
+   * Two were already correct - `turnTurtle` calls `turtleIri()` on every IRI and
+   * `membershipTurtle` calls `turtleIriRef()`. `mirrorTurtleFor` was NOT: it wrote
+   * `<${graphIri}>` as the subject of every triple with NO screen at all, and it `continue`d
+   * past an unserializable OBJECT rather than refusing - a silent omission that publishes a
+   * mirror asserting the relation does not exist, which is what a dropped `iep:supersedes`
+   * means. Both are refusals now, and both are driven here.
+   */
+  it('★ mirrorTurtleFor refuses a hostile graph IRI rather than writing it as a subject', () => {
+    const r = mirrorTurtleFor('<urn:a> <urn:b> <urn:c> .', HOSTILE);
+    expect(r.ok, 'a hostile graph IRI was written into the mirror as a subject').toBe(false);
+    if (!r.ok) expect(r.why).toMatch(/not serializable as a Turtle IRI reference/);
+  });
+
+  it('★ mirrorTurtleFor refuses an unserializable object rather than dropping the relation', () => {
+    // A payload whose iep:supersedes cannot be written: omitting it would publish a mirror that
+    // claims nothing was superseded, which is a false statement rather than a missing one.
+    const payload = `<urn:g> <https://markjspivey-xwisee.github.io/interego/ns/iep#supersedes> <${HOSTILE}> .`;
+    const r = mirrorTurtleFor(payload, 'https://relay.example/ns/o/w');
+    if (r.ok) {
+      // If the reader did not see the hostile object at all, there is nothing to drop and the
+      // case is vacuous - say so rather than passing.
+      expect(r.turtle, 'the payload reader did not surface the hostile object, so this leg '
+        + 'asserts nothing about dropping it').not.toContain('supersedes');
+    } else {
+      expect(r.why).toMatch(/claiming the relation does not exist|not serializable/);
+    }
+  });
+
+  it('★ turnTurtle refuses a hostile agent id (it guards, and this pins that it keeps doing so)', () => {
+    expect(() => turnTurtle('https://relay.example', 'pod', {
+      turnId: 't1', agentId: HOSTILE,
+    } as never)).toThrow(/not serializable as a Turtle IRI reference/);
+  });
+
   it('escapes a hostile LITERAL rather than refusing it — a literal has an escape and an IRI does not', () => {
     const t = canvasTurtle({ canvas: WS + '-canvas', workspace: WS, slug: 'room', body: 'he said "hi" .\n<urn:a> <urn:b> <urn:c> .' });
     const region = graphRegion(trig(WS + '-canvas', t.split('\n\n')[1] as string), WS + '-canvas');

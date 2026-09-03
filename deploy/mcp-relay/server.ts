@@ -382,6 +382,11 @@ import {
   type NotificationGate,
 } from './notification-body.js';
 import {
+  buildNotificationEvent,
+  type NotificationEvent,
+  type NotificationEventInput,
+} from './notification-event.js';
+import {
   supersessionFrontier, classifyCasRequest, casRefusal,
   priorVersionsFor, reDecidedSupersedes, linearSupersedesFor,
   // `casSelfOverwriteRefusal` and `foreignDescriptorOverwriteRefusal` are deliberately NOT
@@ -1079,16 +1084,11 @@ const notificationLog = new NotificationLog();
 // public token that doesn't leak pod path structure. The relay maps
 // slug -> podUrl in `podSlugToUrl`; clients receive the slug from
 // subscribe_to_pod and use it directly in the SSE URL.
-interface NotificationEvent {
-  readonly '@context': string;
-  readonly type: 'iep:Notification';
-  readonly eventType: 'created' | 'updated' | 'superseded';
-  readonly timestamp: string;
-  readonly podUrl: string;
-  readonly descriptorUrl: string;
-  readonly graphUrl?: string;
-  readonly author?: string;
-}
+// ★ THE FRAME AND ITS CONTEXT MOVED TO notification-event.ts, and not for tidiness: this file
+// calls app.listen() at module scope, so nothing could import it to check what the relay actually
+// emits. The frame therefore went unchecked against `iep:NotificationShape` — which it did not
+// satisfy, because `@context` pointed at the Turtle NAMESPACE IRI instead of the published JSON-LD
+// context document, so every key expanded to nothing. See that module's header.
 
 const sseSubscribers: Map<string, Set<express.Response>> = new Map();
 const notificationWebhooks: Map<string, Set<string>> = new Map();
@@ -1103,20 +1103,8 @@ function podSlug(podUrl: string): string {
   return slug;
 }
 
-function emitNotification(
-  podUrl: string,
-  partial: Omit<NotificationEvent, '@context' | 'type' | 'timestamp' | 'podUrl'> & { timestamp?: string },
-): void {
-  const event: NotificationEvent = {
-    '@context': 'https://markjspivey-xwisee.github.io/interego/ns/iep#',
-    type: 'iep:Notification',
-    timestamp: partial.timestamp ?? new Date().toISOString(),
-    podUrl,
-    eventType: partial.eventType,
-    descriptorUrl: partial.descriptorUrl,
-    ...(partial.graphUrl !== undefined ? { graphUrl: partial.graphUrl } : {}),
-    ...(partial.author !== undefined ? { author: partial.author } : {}),
-  };
+function emitNotification(podUrl: string, partial: NotificationEventInput): void {
+  const event: NotificationEvent = buildNotificationEvent(podUrl, partial);
   const slug = podSlug(podUrl);
   const payload = `data: ${JSON.stringify(event)}\n\n`;
 
@@ -8464,7 +8452,7 @@ function isCanonicalPodTarget(targetPod: string): boolean {
  * what a notification must carry — see notification-body.ts for the defect that motivated it,
  * the measurement behind the conditional, and the four defects of the refuted first attempt.
  *
- * ★ LAZY AND CACHED, DELIBERATELY. Preparing the gate reads 219,630 characters of Turtle,
+ * ★ LAZY AND CACHED, DELIBERATELY. Preparing the gate reads 221,960 characters of Turtle,
  * isolates the shape into 28 triples, and runs fifteen canaries through the whole per-call
  * decision — eight of them over ~70,000-character documents, which is what proves the size
  * reduction still preserves this shape's verdicts before a caller depends on it. Re-measured at
@@ -9617,7 +9605,11 @@ async function handleInterrogativeRoute(args: ToolArgs): Promise<string> {
   }
   const result = routeInterrogatives({
     turtle, question, interrogatives, all,
-    authorship: descJson.authorship as { effectiveTrustLevel?: string; authorshipVerified?: boolean; signedBy?: string } | undefined,
+    // ★ contentBinding IS FORWARDED. Narrowing this cast to three fields silently dropped it,
+    // so the router answered Who/Whether from a verified signature with no statement about
+    // whether it covered the graph - the exact collapse get_descriptor's own description warns
+    // about ("a proof can verify while covering nothing").
+    authorship: descJson.authorship as { effectiveTrustLevel?: string; authorshipVerified?: boolean; signedBy?: string; contentBinding?: string } | undefined,
     target,
   });
   return JSON.stringify(result);

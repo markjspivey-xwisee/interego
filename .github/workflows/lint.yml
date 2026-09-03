@@ -86,6 +86,22 @@ jobs:
       # header gives for the lint gate itself.
       - name: Docs claims resolve (relative links + named workflows)
         run: node tools/docs-claim-lint.mjs
+
+      # ★★ WHOLE-TREE, SO IT CANNOT LIVE BEHIND A `paths:` FILTER. `tools/docs-drift-lint.mjs`
+      # used to scan exactly README.md and STATUS.md; it now reads EVERY tracked markdown file
+      # (140 of them), so its subject is the tree and a filter over the linking side would let
+      # the commits that break it skip the check - the same argument that moved
+      # docs-claim-lint.mjs into this job.
+      - name: No document claims infrastructure that no longer exists
+        run: node tools/docs-drift-lint.mjs
+
+      # The byte gate reads `git ls-files` - every tracked text file - so it is whole-tree for
+      # the same reason. It normally runs inside `npx vitest run`, which is invoked from
+      # bridge-typecheck.yml BEHIND a `paths:` list; a control byte in a file type that list
+      # does not name would not start it. Running the one file here closes that, and
+      # tests/workflow-trigger-covers-the-suite.test.ts asserts this step exists.
+      - name: No tracked source file holds a raw control byte
+        run: npx vitest run tests/line-endings-are-normalised.test.ts
       # ★ CHANGELOG.md's preamble asserted "Commit hashes link back to the git history" over
       # 78 citations, NONE of which resolve — the history they were written against is not
       # the one this repository has. That is a false sentence at HEAD in the second paragraph

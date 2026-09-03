@@ -80,6 +80,14 @@ function declaredNamespaces(): Set<string> {
         .some(t => t.kind === 'iri' && t.iri === OWL_ONTOLOGY);
       if (isOntology && typeof s.subject === 'string') {
         out.add(s.subject.endsWith('#') ? s.subject : `${s.subject}#`);
+        // ★★ AND THE SUBJECT'S OWN NAMESPACE. The line above assumes the ontology subject IS
+        // the namespace IRI - the convention in docs/ns, where `<…/ns/iep#> a owl:Ontology`. It
+        // is not universal: docs/ns/a2a.ttl types `a2ap:Profile`, so appending `#` produced
+        // `…/a2a#Profile#`, `a2ap:` was never recognised as ours, and every undeclared a2ap:
+        // term was invisible to this gate. Measured: a2ap:AgentCard, a2ap:skillId and
+        // a2ap:conformanceClaim were all cited by a2ap:CardShape and declared nowhere.
+        const hash = s.subject.lastIndexOf('#');
+        if (hash > 0) out.add(s.subject.slice(0, hash + 1));
       }
       for (const t of s.properties.get(VANN_PREF as never) ?? []) {
         if (t.kind === 'literal') out.add(t.value);

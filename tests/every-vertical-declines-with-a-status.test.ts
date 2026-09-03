@@ -373,15 +373,22 @@ describe('a declined call answers a refusing status on every vertical', () => {
    *
    * That was a real hole in the leg above, and writing it into a comment there did not close
    * it. `delegationsIn` names the function each handler hands its answer to and resolves the
-   * module, so the census follows. Depth ONE only, and deliberately: the function a handler
-   * directly returns produces the HTTP response by construction, while something three calls
-   * down may build an `{error}` its caller inspects and never returns — reporting that is the
-   * false-positive class that makes a gate unreadable. A decline built deeper and passed up
-   * unchanged is still not covered, and this name says so rather than implying otherwise.
+   * module, so the census follows.
    *
-   * Measured when added: 40 delegating handlers, 38 resolved, 35 returns censused, 0 untyped.
+   * ★★ AND IT FOLLOWED EXACTLY ONE HOP, WITH THE BOUND WRITTEN DOWN INSTEAD OF CLOSED. The
+   * stated reason was that going deeper needs dataflow — something three calls down may build an
+   * `{error}` its caller inspects and never returns. True of calls in general; false of the only
+   * thing being followed. `return f(x)` hands f's value back UNEXAMINED, so the caller cannot
+   * branch on it, and that property is transitive: hop while every step is a pure tail call and
+   * the last one's return value is still the HTTP response by construction. The walk stops the
+   * moment a step examines the value, which is where the bridge-file leg above takes over.
+   *
+   * Measured after widening: 77 delegating handlers, 77 resolved hop modules, 8 chains longer
+   * than one hop — five owm handlers reaching `publishOwm`, `lrs.ingest_statement` reaching
+   * `publishIngestedStatement`, and two `extend_standards` reaching `withGuidance`. Those second
+   * hops were previously uncensused. 0 untyped declines in any of them.
    */
-  it('★ follows each handler into the src/ function it delegates its answer to (depth one)', () => {
+  it('★ follows each handler through every tail call its answer passes through', () => {
     // ★★ `note` IS THE FOURTH SPELLING OF "NO", AND IT IS DELIBERATELY NOT IN THIS LIST.
     // The spellings that have defeated a census here, in order: `error`, `reason`, `pending`,
     // and then `note` - three foxxi retrieval handlers declined a MISSING REQUIRED input with
@@ -405,6 +412,8 @@ describe('a declined call answers a refusing status on every vertical', () => {
     let delegations = 0;
     let resolvedModules = 0;
     let censusedReturns = 0;
+    /** Longest tail-call chain reached, so a walk that silently stopped at one hop is visible. */
+    let hopsCensused = 0;
 
     for (const v of verticals) {
       for (const rel of [`${v}/bridge/server.ts`, `${v}/bridge/handlers.ts`]) {
@@ -412,10 +421,15 @@ describe('a declined call answers a refusing status on every vertical', () => {
         if (!existsSync(url)) continue;
         for (const d of delegationsIn(fileURLToPath(url))) {
           delegations += 1;
-          if (!d.module) continue;
-          resolvedModules += 1;
-          for (const o of returnObjects(readFileSync(d.module, 'utf8'))) {
-            if (o.enclosing !== d.fn) continue;
+          // ★ EVERY HOP, NOT JUST THE FIRST. See handler-delegation-reach.ts: the chain is
+          // followed only while each step is a pure tail call, so each hop's return value is
+          // the HTTP response by the same construction that made depth one sound.
+          for (const hop of d.hops) {
+            if (!hop.module) continue;
+            resolvedModules += 1;
+            hopsCensused = Math.max(hopsCensused, d.hops.length);
+          for (const o of returnObjects(readFileSync(hop.module, 'utf8'))) {
+            if (o.enclosing !== hop.fn) continue;
             censusedReturns += 1;
             if (/\.\.\.\s*refuse\s*\(/.test(o.text)) continue;
             if (o.text.includes("kind: 'refusal'")) continue;
@@ -425,8 +439,10 @@ describe('a declined call answers a refusing status on every vertical', () => {
             // Same outcome-flag rule as the leg above, and for the same measured reason:
             // `{verified: ok, reason: ok ? undefined : '…'}` is a verdict, not a refusal.
             if (/\b\w+:\s*(?:true|ok)\b/.test(o.text)) continue;
-            offenders.push(`${d.tool} -> ${d.fn}() at line ${o.line}: `
+            offenders.push(`${d.tool} -> ${d.hops.slice(0, d.hops.findIndex((h) => h.fn === hop.fn) + 1)
+              .map((h) => `${h.fn}()`).join(' -> ')} at line ${o.line}: `
               + o.text.replace(/\s+/g, ' ').slice(0, 120));
+          }
           }
         }
       }
@@ -442,6 +458,13 @@ describe('a declined call answers a refusing status on every vertical', () => {
     expect(censusedReturns, 'no returns censused inside any delegated function - the enclosing '
       + 'name from returnObjects no longer matches the delegated function name')
       .toBeGreaterThan(25);
+    // ★ A FOURTH FLOOR, ON THE DEPTH ITSELF. Every widening of this leg has been reverted by a
+    // later edit at some point, and a tail-call walk that stops at one hop is indistinguishable
+    // from the depth-one version it replaced: same shape, same pass, less covered. Measured: 8
+    // chains longer than one hop, the longest being 2.
+    expect(hopsCensused, 'no handler chain longer than a single hop was followed - the tail-call '
+      + 'walk has collapsed back to depth one, which passes while covering less')
+      .toBeGreaterThan(1);
 
     expect(
       offenders,

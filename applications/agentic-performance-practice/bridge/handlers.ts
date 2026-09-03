@@ -22,7 +22,7 @@ import { guardedFetchFn, assertSafeFetchTarget } from '@interego/core';
 import { refuse } from '../../_shared/vertical-bridge/refusal.js';
 import {
   coerceSituation, coerceDiagnosis, coercePlan, fetchJson,
-  publishAgpArtifact, agpEvaluationProperties, deterministicIri, AGP,
+  publishAgpArtifact, agpEvaluationProperties, agpOutcomeProperties, deterministicIri, AGP,
   type AgpProperty,
 } from './pod-helpers.js';
 
@@ -187,6 +187,27 @@ export function createAgpHandlers(deps: { fetchFn?: typeof fetch } = {}): Record
     'agp.actualize': async (args) => {
       const missing = ['situation_iri', 'capability_iri', 'affordance_iri', 'performance_statement'].filter(k => !args[k]);
       if (missing.length) throw new Error(`agp.actualize: missing required input(s): ${missing.join(', ')}`);
+      /**
+       * ★★ `success` AND `score_scaled` ARE RECORDED. They were declared, accepted, and dropped —
+       * see `agpOutcomeProperties`, which carries the whole account. An out-of-range score is
+       * REFUSED rather than clamped: the affordance advertises [-1,1], and quietly rounding a
+       * caller's number into range would publish a measurement nobody took.
+       */
+      const success = args.success === undefined || args.success === null
+        ? undefined : Boolean(args.success);
+      let scoreScaled: number | undefined;
+      if (args.score_scaled !== undefined && args.score_scaled !== null) {
+        const n = Number(args.score_scaled);
+        if (!Number.isFinite(n) || n < -1 || n > 1) {
+          return refuse(400,
+            `agp.actualize: score_scaled must be a finite number in [-1,1], got `
+              + `${JSON.stringify(args.score_scaled)}. Nothing was published — a score outside the `
+              + 'declared range is refused rather than clamped, because a clamped score is a '
+              + 'measurement nobody took.',
+            'the scaled score is outside the range this affordance declares');
+        }
+        scoreScaled = n;
+      }
       const statement = str(args.performance_statement);
       const performanceIri = deterministicIri('performance', `${str(args.situation_iri)}|${statement}`);
       const actualizationIri = deterministicIri('actualization', `${str(args.capability_iri)}|${str(args.affordance_iri)}|${performanceIri}`);
@@ -201,6 +222,8 @@ export function createAgpHandlers(deps: { fetchFn?: typeof fetch } = {}): Record
             { predicate: `${AGP}inSituation`, object: { iri: str(args.situation_iri) } },
             { predicate: `${AGP}actualizes`, object: { iri: str(args.affordance_iri) } },
             { predicate: `${AGP}yields`, object: { iri: performanceIri } },
+            // The observed outcome, when the caller observed one. Nothing is emitted otherwise.
+            ...agpOutcomeProperties(success, scoreScaled),
           ],
           author: args.operator_did ? { id: str(args.operator_did), kind: 'agent' } : undefined,
           slug: `actualization-${actualizationIri.split(':').pop()}`,
@@ -209,7 +232,17 @@ export function createAgpHandlers(deps: { fetchFn?: typeof fetch } = {}): Record
       // xapiStatementId stays null: projecting to Foxxi's LRS from here would
       // invert the dependency arrow (it is foxxi → agp, never the reverse). It is
       // not in the affordance's outputs.required, so null is honest, not missing.
-      return { actualizationIri, performanceIri, xapiStatementId: null, descriptorUrl, persisted: !!descriptorUrl, pending: null };
+      return {
+        actualizationIri, performanceIri, xapiStatementId: null, descriptorUrl,
+        persisted: !!descriptorUrl, pending: null,
+        // Echoed so a caller can see WHICH outcome landed, and see nothing when it sent nothing.
+        // Absent from `outputs.required` for the same reason: an unobserved outcome is not a null
+        // one. Only meaningful when `persisted` is true - without a pod_url nothing was written.
+        recordedOutcome: (success === undefined && scoreScaled === undefined) ? null : {
+          ...(success === undefined ? {} : { success }),
+          ...(scoreScaled === undefined ? {} : { scoreScaled }),
+        },
+      };
     },
 
     // REAL: run the regime engine. Accepts an inline `situation` object (preferred)

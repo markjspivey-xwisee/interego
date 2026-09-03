@@ -204,6 +204,55 @@ export function agpEvaluationProperties(
 }
 
 /**
+ * The observed outcome of an `agp:Actualization`, as triples.
+ *
+ * ── ★★ WHY THIS EXISTS: TWO INPUTS THAT WERE ACCEPTED AND SILENTLY DROPPED ───────────────────
+ *
+ * `agp.actualize` declared `success` and `score_scaled`, and its own affordance description said
+ * so out loud — "ACCEPTED BUT NOT YET RECORDED … nothing reads this field today". Driven for real
+ * with `success: true, score_scaled: 0.9`, neither value appeared in the result or in the
+ * published triples, and the call answered 200. A caller that sends an outcome and is told the
+ * request succeeded has been told the outcome was recorded.
+ *
+ * That is the same defect as publishing an affordance with no service behind it, moved one level
+ * down: documenting it made the record honest and left the caller's data on the floor. So it is
+ * recorded, and the handler REFUSES a score outside the range it advertises rather than rounding
+ * or dropping it.
+ *
+ * ★ `iep:success` IS REUSED, NOT REMINTED. It is a protocol term with `rdfs:range xsd:boolean`
+ * and this vertical already writes it for interventions, three functions up. `agp:scoreScaled` is
+ * new because nothing in reach carried a scaled score; it mirrors xAPI's `result.score.scaled`,
+ * which is the shape a later LRS projection would read.
+ *
+ * ★ xsd:double, NOT xsd:decimal, and the reason is lexical. `String(1e-7)` is `"1e-7"`, which is
+ * not a valid `xsd:decimal` — forcing one would mean rounding to a fixed number of places, and
+ * publishing a number nobody sent is the failure this function exists to stop. Exponential
+ * notation is a valid `xsd:double`, so the value round-trips as given.
+ *
+ * An outcome nobody asserted must not become one a serializer invented, which is the rule
+ * `agpEvaluationProperties` already follows for `too-early`: `undefined` emits nothing.
+ */
+export function agpOutcomeProperties(
+  success: boolean | undefined,
+  scoreScaled: number | undefined,
+): readonly AgpProperty[] {
+  const out: AgpProperty[] = [];
+  if (success !== undefined) {
+    out.push({
+      predicate: `${IEP_NS}success`,
+      object: { literal: success ? 'true' : 'false', datatype: `${XSD_NS}boolean` },
+    });
+  }
+  if (scoreScaled !== undefined) {
+    out.push({
+      predicate: `${AGP}scoreScaled`,
+      object: { literal: String(scoreScaled), datatype: `${XSD_NS}double` },
+    });
+  }
+  return out;
+}
+
+/**
  * The Turtle body of one agp artifact — the ONLY place this vertical serializes one.
  *
  * ★ EXTRACTED SO NOTHING CAN HAND-WRITE AN AGP RECORD AND CALL IT ONE. A demo tool

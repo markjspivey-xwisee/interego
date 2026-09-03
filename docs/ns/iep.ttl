@@ -861,10 +861,21 @@ iep:hasPod a owl:ObjectProperty ;
     rdfs:domain iep:PodDirectory ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
 
-iep:podUrl a owl:ObjectProperty ;
-    rdfs:label "pod URL" ;
-    rdfs:comment "The URL of a Solid pod in a directory entry." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+# ★★ iep:podUrl IS DECLARED ONCE, BELOW, AND USED IN TWO SERIALIZATIONS.
+#
+# It was declared TWICE in this file: here as owl:ObjectProperty ("the URL of a Solid pod in a
+# directory entry") and again beside the notification terms as owl:DatatypeProperty with
+# rdfs:range xsd:anyURI. One IRI cannot be both in OWL DL, so the published ontology was
+# inconsistent, and a reader could not know whether to expect a node or a literal.
+#
+# Both uses are REAL, which is why this is not a typo to delete. packages/solid/src/directory.ts
+# writes `iep:podUrl <url>` — an IRI node — and the relay's notification frame carries
+# `"url"^^xsd:anyURI`, which is the form iep:NotificationShape constrains with sh:datatype.
+# Unifying them would rewrite either a published shape or directory documents already on pods, so
+# the single declaration below is typed rdf:Property — the honest supertype of both — and names
+# each use. Collapsing them to one form is a live-data migration, deliberately not bundled here.
+#
+# tests/no-term-is-declared-twice.test.ts is what stops the next duplicate arriving unnoticed.
 
 # ── Affordance properties ─────────────────────────────────────
 
@@ -1609,7 +1620,9 @@ iep:pinnedBy a owl:ObjectProperty ; rdfs:label "pinned by" ; rdfs:isDefinedBy <h
 iep:provider a owl:DatatypeProperty ; rdfs:label "provider" ; rdfs:range xsd:string ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
 iep:signature a owl:DatatypeProperty ; rdfs:label "signature" ; rdfs:range xsd:string ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
 iep:signedAt a owl:DatatypeProperty ; rdfs:label "signed at" ; rdfs:range xsd:dateTime ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
-iep:signerAddress a owl:DatatypeProperty ; rdfs:label "signer address" ; rdfs:range xsd:string ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+# iep:signerAddress was re-declared here, identically but without its comment. One declaration
+# stands, beside iep:created above, and it is the one that explains what verifiers do with the
+# value. A second copy is where a range or a comment silently drifts from the first.
 iep:encryptedAt a owl:DatatypeProperty ; rdfs:label "encrypted at" ; rdfs:range xsd:dateTime ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
 iep:recipientFingerprint a owl:DatatypeProperty ; rdfs:label "recipient fingerprint" ; rdfs:range xsd:string ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
 iep:owner a owl:ObjectProperty ; rdfs:label "owner" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
@@ -2132,11 +2145,9 @@ iep:eventType a owl:DatatypeProperty ;
     rdfs:range xsd:string ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
-iep:podUrl a owl:DatatypeProperty ;
+iep:podUrl a rdf:Property ;
     rdfs:label "pod URL" ;
-    rdfs:comment "The Solid pod URL the notification originated from. Combined with iep:descriptorUrl it locates the changed resource without requiring the consumer to maintain a separate pod-to-descriptor index." ;
-    rdfs:domain iep:Notification ;
-    rdfs:range xsd:anyURI ;
+    rdfs:comment "The URL of a Solid pod. TWO USES, ONE PREDICATE, AND TWO SERIALIZATIONS - see the note beside the affordance properties above. (1) In an iep:Notification it is the pod the event originated from; combined with iep:descriptorUrl it locates the changed resource without the consumer maintaining a pod-to-descriptor index, and iep:NotificationShape constrains it as a literal with sh:datatype xsd:anyURI, which is the form the relay emits. (2) In a directory entry it is the pod being listed, written by packages/solid/src/directory.ts as an IRI node. It was declared twice - owl:ObjectProperty for the directory and owl:DatatypeProperty here - which no OWL DL reasoner can accept and which left readers unable to tell a node from a literal. Typed rdf:Property because that is what it actually is across both uses; narrowing it to one form means rewriting either a published shape or directory documents already on pods, and is not bundled with the declaration fix." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
 iep:descriptorUrl a owl:DatatypeProperty ;
@@ -2153,7 +2164,7 @@ iep:graphUrl a owl:DatatypeProperty ;
 
 iep:NotificationShape a sh:NodeShape ;
     rdfs:label "Notification SHACL shape" ;
-    rdfs:comment "Validation shape for iep:Notification events delivered as JSON-LD webhook payloads. Every event MUST carry a podUrl, descriptorUrl and eventType (one of created / updated / superseded). ★ THE TIMESTAMP IS OPTIONAL IN THIS SHAPE AND THIS SENTENCE USED TO CALL IT A MUST - the dct:created property below declares sh:minCount 0, so an event with no timestamp conforms; the prose was the half that was wrong, and it is corrected rather than the shape tightened, because tightening a published shape retroactively invalidates events already emitted. graphUrl and wasAttributedTo are optional and RECOMMENDED. ★★ AND THE RELAY'S SSE PAYLOAD IS NOT THIS DOCUMENT. deploy/mcp-relay emits the keys `type`, `eventType`, `timestamp`, `podUrl`, `descriptorUrl`, `graphUrl`, `author`, with an @context set to this Turtle namespace IRI rather than to the published JSON-LD context at /ns/iep/v1.json - which defines none of podUrl, descriptorUrl, eventType, timestamp or author, and no alias of `type` to @type. So `timestamp` and `author` do NOT expand to dct:created and prov:wasAttributedTo, and an SSE frame is not this shape's instance until that mapping exists. Recorded here rather than fixed silently: changing either the emitted keys or the published context is a wire-format change for every existing consumer, and belongs to whoever owns that decision." ;
+    rdfs:comment "Validation shape for iep:Notification events delivered as JSON-LD webhook payloads. Every event MUST carry a podUrl, descriptorUrl and eventType (one of created / updated / superseded). ★ THE TIMESTAMP IS OPTIONAL IN THIS SHAPE AND THIS SENTENCE USED TO CALL IT A MUST - the dct:created property below declares sh:minCount 0, so an event with no timestamp conforms; the prose was the half that was wrong, and it is corrected rather than the shape tightened, because tightening a published shape retroactively invalidates events already emitted. graphUrl and wasAttributedTo are optional and RECOMMENDED. ★★ THE RELAY'S SSE PAYLOAD WAS NOT AN INSTANCE OF THIS SHAPE, AND NOW IS. deploy/mcp-relay emits the keys `type`, `eventType`, `timestamp`, `podUrl`, `descriptorUrl`, `graphUrl`, `author` - and set @context to this Turtle NAMESPACE IRI rather than to the published JSON-LD context document at /ns/iep/v1.json. A namespace IRI defines no terms, so every key was undefined, `timestamp` and `author` did not expand to dct:created and prov:wasAttributedTo, `type` was not aliased to @type, and the frame expanded to an anonymous node with no type and no properties - which validates against a NodeShape by conforming vacuously, so no gate could see it. ★ THE FIX CHANGED NO EMITTED KEY. This comment previously said the remedy was a wire-format decision belonging to somebody else; there was a third option, which is that the published context GAINS the term definitions and @context names the document that defines them. A consumer reading raw JSON sees byte-identical keys and values; a consumer that expands stops silently losing every field. deploy/mcp-relay/notification-event.ts is the one builder, and tests/a-notification-frame-is-an-instance-of-its-shape.test.ts expands a real frame against the real published context and validates it here - checking PRESENCE of the required properties first, because conformance alone is satisfied by the empty graph the old context produced." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> ;
     sh:targetClass iep:Notification ;
     sh:property [

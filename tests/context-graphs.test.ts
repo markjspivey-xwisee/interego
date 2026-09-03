@@ -601,14 +601,35 @@ describe('Namespaces', () => {
     expect(compact(`${PROV}Entity`)).toBe('prov:Entity');
   });
 
-  it('CGClass contains all class IRIs', () => {
-    expect(CGClass.ContextDescriptor).toBe(`${CG}ContextDescriptor`);
-    expect(CGClass.SemioticFacet).toBe(`${CG}SemioticFacet`);
+  /**
+   * ★★ THESE SAID "ALL" AND CHECKED TWO. `CGClass` has 22 members and `CGProp` 68; each of
+   * these asserted exactly two. Worse, each assertion RESTATED THE DEFINITION - `CGClass.X` is
+   * declared as `` `${CG}X` ``, so `expect(CGClass.X).toBe(`${CG}X`)` compares a constant to
+   * itself and cannot fail for any value of the map.
+   *
+   * What CAN fail, and is the property the name claims: every member expands under the owned
+   * namespace, every key round-trips through compact(), and no member was accidentally written
+   * against a foreign prefix. That holds over the whole map, so the name is now true.
+   */
+  it('★ CGClass: every member expands under the iep: namespace and round-trips', () => {
+    const entries = Object.entries(CGClass);
+    // Guards the guard: an empty map would satisfy every assertion below.
+    expect(entries.length, 'CGClass is empty - the import or the export shape changed')
+      .toBeGreaterThan(20);
+    const wrong = entries.filter(([, iri]) => !String(iri).startsWith(CG));
+    expect(wrong.map(([k]) => k), 'these members are not in the owned namespace').toEqual([]);
+    const notRoundTripping = entries.filter(([, iri]) => compact(String(iri)) !== `iep:${String(iri).slice(CG.length)}`);
+    expect(notRoundTripping.map(([k]) => k), 'these do not compact to an iep: name').toEqual([]);
   });
 
-  it('CGProp contains all property IRIs', () => {
-    expect(CGProp.describes).toBe(`${CG}describes`);
-    expect(CGProp.epistemicConfidence).toBe(`${CG}epistemicConfidence`);
+  it('★ CGProp: every member expands under the iep: namespace and round-trips', () => {
+    const entries = Object.entries(CGProp);
+    expect(entries.length, 'CGProp is empty - the import or the export shape changed')
+      .toBeGreaterThan(60);
+    const wrong = entries.filter(([, iri]) => !String(iri).startsWith(CG));
+    expect(wrong.map(([k]) => k), 'these properties are not in the owned namespace').toEqual([]);
+    const notRoundTripping = entries.filter(([, iri]) => compact(String(iri)) !== `iep:${String(iri).slice(CG.length)}`);
+    expect(notRoundTripping.map(([k]) => k), 'these do not compact to an iep: name').toEqual([]);
   });
 });
 

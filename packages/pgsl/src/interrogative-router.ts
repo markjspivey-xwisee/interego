@@ -307,7 +307,7 @@ function projectOne(
   doc: ParsedDocument,
   t: InterrogativeType,
   answeredBy: string[],
-  authorship: { effectiveTrustLevel?: string; authorshipVerified?: boolean; signedBy?: string } | undefined,
+  authorship: { effectiveTrustLevel?: string; authorshipVerified?: boolean; signedBy?: string; contentBinding?: string } | undefined,
 ): InterrogativeAnswer {
   const base = { interrogative: t, answeredBy } as const;
   const targets = describesTargets(doc);
@@ -401,6 +401,18 @@ function projectOne(
         // authorship proof + delegation chain, not merely the declared body.
         effectiveTrustLevel: authorship?.effectiveTrustLevel,
         authorshipVerified: authorship?.authorshipVerified,
+        // ★★ contentBinding TRAVELS WITH authorshipVerified, ALWAYS.
+        //
+        // `authorshipVerified` answers WHO SIGNED A DESCRIPTOR. It does not answer whether the
+        // signature covers the GRAPH served with it - get_descriptor's own tool description
+        // says so in as many words: "a proof can verify while covering nothing", and `unbound`
+        // is the value every proof written before content binding existed still carries.
+        //
+        // Projecting the one without the other is the collapse the content-binding work exists
+        // to prevent: a reader asking this router a Who/Whether question got a verified-looking
+        // answer with no way to tell attested content from a signature over a URL. They are two
+        // questions and this now returns both.
+        contentBinding: authorship?.contentBinding,
       });
       const hasAny = Object.keys(values).length > 0;
       return {
@@ -408,7 +420,7 @@ function projectOne(
         status: hasAny ? 'partial' : 'absent',
         values: hasAny ? values : undefined,
         nextStep: { tool: 'pgsl_decide', reason: 'permission/deontic "whether" (is it allowed?) is a ieh:PolicyDecision — not on the descriptor' },
-        caveat: 'certainty/modality answered from Trust/Semiotic facets + substrate-verified authorship; permission requires a policy decision',
+        caveat: 'certainty/modality answered from Trust/Semiotic facets + substrate-verified authorship; authorshipVerified names the SIGNER and contentBinding says whether that signature covers the graph served here (only `bound` licenses treating the content as attested); permission requires a policy decision',
       };
     }
     case 'Why': {
@@ -470,7 +482,7 @@ export interface RouteOptions {
   interrogatives?: string | readonly string[];
   /** Project ALL eleven (only honored when no question / interrogatives given). */
   all?: boolean;
-  authorship?: { effectiveTrustLevel?: string; authorshipVerified?: boolean; signedBy?: string };
+  authorship?: { effectiveTrustLevel?: string; authorshipVerified?: boolean; signedBy?: string; contentBinding?: string };
   /** The descriptor URL/IRI (for the response provenance + act `about`). */
   target?: string;
   /** Interrogatives the CALLER must have grounded in order to act. Supplying it

@@ -147,6 +147,11 @@ describe('engagement engine — owner scoping and bounds', () => {
     // notFound, NOT forbidden — a distinct 403 is an existence oracle.
     if (!asBob.ok) expect(asBob.error.kind).toBe('notFound');
     const missing = e.get('https://relay.example/engagements/nope', BOB);
+    // ★ THE GUARD IS ASSERTED BEFORE IT IS TRUSTED. Its two siblings above are preceded by
+    // `expect(x.ok).toBe(false)`, so a regression fails them; this one was not — if `get()` on
+    // an id that does not exist ever answered ok, the body never ran and nothing failed. An
+    // adversarial pass flagged all three and was right about exactly this one.
+    expect(missing.ok, 'reading an id that does not exist answered ok').toBe(false);
     if (!missing.ok) expect(missing.error.kind).toBe('notFound');
   });
 

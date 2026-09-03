@@ -111,6 +111,32 @@ export const CONTEXT_GRAPHS_JSONLD_CONTEXT = {
     syncProtocol: { '@id': 'iep:syncProtocol', '@type': '@id' },
     replicaOf: { '@id': 'iep:replicaOf', '@type': '@id' },
     lastSynced: { '@id': 'iep:lastSynced', '@type': 'xsd:dateTime' },
+
+    /**
+     * ── Notification terms, so an SSE / webhook frame EXPANDS ──────────────────────────────
+     *
+     * The relay emitted `{ type, eventType, timestamp, podUrl, descriptorUrl, graphUrl, author }`
+     * under an `@context` naming the Turtle NAMESPACE IRI, which defines no terms. So every key
+     * was undefined, `timestamp` and `author` did not reach `dct:created` and
+     * `prov:wasAttributedTo`, `type` was not aliased to `@type`, and the frame expanded to an
+     * anonymous untyped node — which validates against `iep:NotificationShape` by conforming
+     * VACUOUSLY, so nothing could see it.
+     *
+     * ★ NO EMITTED KEY CHANGED. These definitions are additive and `@context` now names the
+     * document that carries them, so a consumer reading raw JSON sees byte-identical frames while
+     * one that expands stops losing every field.
+     *
+     * `podUrl` / `descriptorUrl` / `graphUrl` are typed `xsd:anyURI` LITERALS rather than `@id`
+     * nodes, because that is the form `iep:NotificationShape` constrains with `sh:datatype`.
+     */
+    type: '@type',
+    Notification: 'iep:Notification',
+    podUrl: { '@id': 'iep:podUrl', '@type': 'xsd:anyURI' },
+    descriptorUrl: { '@id': 'iep:descriptorUrl', '@type': 'xsd:anyURI' },
+    graphUrl: { '@id': 'iep:graphUrl', '@type': 'xsd:anyURI' },
+    eventType: { '@id': 'iep:eventType' },
+    timestamp: { '@id': 'dct:created', '@type': 'xsd:dateTime' },
+    author: { '@id': 'prov:wasAttributedTo', '@type': '@id' },
   },
 } as const;
 

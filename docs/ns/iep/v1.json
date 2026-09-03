@@ -145,6 +145,32 @@
     "lastSynced": {
       "@id": "iep:lastSynced",
       "@type": "xsd:dateTime"
+    },
+
+    "type": "@type",
+    "Notification": "iep:Notification",
+    "podUrl": {
+      "@id": "iep:podUrl",
+      "@type": "xsd:anyURI"
+    },
+    "descriptorUrl": {
+      "@id": "iep:descriptorUrl",
+      "@type": "xsd:anyURI"
+    },
+    "graphUrl": {
+      "@id": "iep:graphUrl",
+      "@type": "xsd:anyURI"
+    },
+    "eventType": {
+      "@id": "iep:eventType"
+    },
+    "timestamp": {
+      "@id": "dct:created",
+      "@type": "xsd:dateTime"
+    },
+    "author": {
+      "@id": "prov:wasAttributedTo",
+      "@type": "@id"
     }
   }
 }

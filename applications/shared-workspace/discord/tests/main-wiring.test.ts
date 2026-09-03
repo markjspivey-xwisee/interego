@@ -827,7 +827,7 @@ describe('PerKeyQueue', () => {
   // ★ MEASURED, AND THE MEASUREMENT CORRECTS A CLAIM. `PerKeyQueue` guards this property TWICE
   // — `prior.then(fn, fn)` runs the next job on either settle path, and the stored tail is
   // `next.then(() => undefined, () => undefined)`, which never rejects in the first place. They
-  // are redundant: mutating EITHER one alone leaves all 20 tests here green, because with the
+  // are redundant: mutating EITHER one alone leaves every test here green (20 at the time that was measured; the file now holds 36, and the result is about the two mutations being individually survivable, not about the count), because with the
   // other still in place the observable behaviour is unchanged. Both were tried.
   //
   // That is not a hole in the test. Two implementations with identical observable behaviour

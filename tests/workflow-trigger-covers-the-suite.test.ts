@@ -233,7 +233,15 @@ describe('whole-tree gates run in a workflow with no paths filter', () => {
       .toBeGreaterThan(200);
   });
 
-  for (const tool of ['tools/docs-claim-lint.mjs', 'tools/lint-gate.mjs', 'spec/conformance/runner.mjs']) {
+  // ★★ THIS LIST IS THE THING IT GUARDS AGAINST. It named three whole-tree gates and two
+  // more had since become whole-tree without being added: `docs-drift-lint.mjs` was widened
+  // from two files to every tracked markdown, and the byte gate reads `git ls-files` - every
+  // tracked text file - while running only inside `npx vitest run`, which is invoked from a
+  // workflow WITH a `paths:` list. A hand-written list of the gates that must not be filtered
+  // is exactly the shape of drift this file exists to catch, one level up.
+  for (const tool of ['tools/docs-claim-lint.mjs', 'tools/lint-gate.mjs',
+    'spec/conformance/runner.mjs', 'tools/docs-drift-lint.mjs',
+    'tests/line-endings-are-normalised.test.ts']) {
     it(`runs ${tool} on every push and pull request`, () => {
       expect(
         commands.includes(tool),

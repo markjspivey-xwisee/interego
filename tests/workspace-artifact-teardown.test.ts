@@ -1599,13 +1599,47 @@ describe('every await on the record-and-roster path re-reads its Epoch', () => {
     return out;
   };
 
-  /** Signature → the exact guard statement that function is required to use. */
+  /**
+   * Signature → the exact guard statement that function is required to use.
+   *
+   * ★★ THE LIST IS PINNED **AND** DERIVED, because a hand-written list of the functions a rule
+   * covers is the rule quietly narrowing. These four are named so the guard STATEMENT each must
+   * use is explicit - `openWorkspace` takes `sameSubject`, the other three `current`, and those
+   * are different promises. The derived check below then requires the named set to be the WHOLE
+   * set: any other function in channel.html that calls `wsEpoch.current(` is a function this
+   * rule was meant to cover and does not.
+   *
+   * Measured when this was added: exactly `loadRoster`, `checkAffordance` and `checkDelegation`
+   * call `current(`, so the list was complete - but nothing said so, and the next one would have
+   * arrived unnoticed. (`post()` was reported as a gap by an adversarial pass; it uses `asOf` and
+   * `sameSubject`, a different discipline for a write path, so it is not under this rule.)
+   */
   const GUARDED: Array<[string, string]> = [
     ['async function openWorkspace(iri) {', 'if (!wsEpoch.sameSubject(e)) return;'],
     ['async function loadRoster() {', 'if (!wsEpoch.current(e)) return;'],
     ['async function checkAffordance(m, e) {', 'if (!wsEpoch.current(e)) return;'],
     ['async function checkDelegation(m, e) {', 'if (!wsEpoch.current(e)) return;'],
   ];
+
+  it('★ the named set is the WHOLE set of functions that interrogate the epoch', () => {
+    const named = new Set(GUARDED.map(([sig]) => /function (\w+)/.exec(sig)?.[1]).filter(Boolean));
+    const callers = new Set<string>();
+    for (const m of SOURCE.matchAll(/\n(?:async )?function (\w+)\s*\([^)]*\)\s*\{/g)) {
+      const at = SOURCE.indexOf(m[0]);
+      const end = SOURCE.indexOf('\n}\n', at);
+      if (end < 0) continue;
+      if (/wsEpoch\.current\(/.test(SOURCE.slice(at, end))) callers.add(m[1] as string);
+    }
+    // Guards the guard: a scan that finds no callers would report full coverage.
+    expect(callers.size, 'no function in channel.html calls wsEpoch.current( — the scan is broken')
+      .toBeGreaterThan(0);
+    const uncovered = [...callers].filter((f) => !named.has(f));
+    expect(
+      uncovered,
+      'these functions interrogate the epoch and are not covered by GUARDED, so nothing checks '
+        + 'that they guard every await they make:\n  ' + uncovered.join('\n  '),
+    ).toEqual([]);
+  });
 
   it.each(GUARDED)('%s guards every await it makes', (signature, guard) => {
     const lines = blank(fnBody(signature)).split('\n');

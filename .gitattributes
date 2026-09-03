@@ -63,6 +63,27 @@
 Dockerfile*    text eol=lf diff
 *.dockerfile   text eol=lf diff
 
+# ★★ ADDED 2026-09-03. These nine extensions were TRACKED and undeclared, so they got
+# `diff: unspecified` — which is the opposite of what the paragraph above says this file is for.
+# 271 files between them, the largest being the W3C conformance fixtures:
+#
+#   .srl 201  .nt 32  .xsd 27  .py 4  .ps1 2  .dtd 2  .trig 2  .conf 1  .tla 1
+#
+# `.srl`/`.nt`/`.trig` are RDF result and graph serialisations that the SHACL and RDF 1.2 suites
+# read byte-for-byte; `.py` and `.ps1` are the only scripts here whose runtime is not node, and
+# a stray CRLF or control byte in either is exactly the undiffable change this file exists to
+# prevent. tests/line-endings-are-normalised.test.ts now compares its own exemption list against
+# this one, so the next tracked extension cannot go undeclared in silence.
+*.srl    text eol=lf diff
+*.nt     text eol=lf diff
+*.trig   text eol=lf diff
+*.xsd    text eol=lf diff
+*.dtd    text eol=lf diff
+*.py     text eol=lf diff
+*.ps1    text eol=lf diff
+*.conf   text eol=lf diff
+*.tla    text eol=lf diff
+
 # ★ CRLF ON PURPOSE. cmd.exe reads batch files line by line and a `goto`/label in an
 # LF-only .bat can be mis-seeked; these are the only files in the tree whose runtime
 # is a Windows shell. Excluded from the normalisation gate by the same extension list.

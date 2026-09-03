@@ -13,7 +13,10 @@
 # ══════════════════════════════════════════════════════════════
 #
 #  Validates harness ontology instances:
-#    - AATs have at least one canPerceive AND one canAct
+#    - AATs have at least one canPerceive. ★ NOT canAct: this line used to require both, and
+#      the shape below deliberately declares `sh:minCount 0` on canAct with the description
+#      "May be empty for read-only AATs like Observer." A read-only observer is a real AAT
+#      and requiring it to act would forbid one; the header was the half that was wrong.
 #    - Policy rules have a mode + subject + action
 #    - Policy decisions reference at least one matched rule
 #    - PROV traces extend prov:Activity correctly

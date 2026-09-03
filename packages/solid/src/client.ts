@@ -2109,7 +2109,8 @@ async function fetchDescriptorTurtleForCas(
   // surface as 503 responses, not connection-reset throws, so we must
   // promote 5xx responses to throws INSIDE the lambda for the retry to
   // see them as transient. The thrown message embeds the status digits
-  // so withTransientRetry's TRANSIENT_PATTERN (/5\d\d/) matches.
+  // so withTransientRetry accepts it as transient: the transient matcher's HTTP_5XX_INTRODUCED form accepts it (that pattern used to be a bare
+  // /5\d\d/, which matched digits inside content addresses and was anchored).
   let attempts = 0;
   const resp = await withTransientRetry(async () => {
     attempts++;
@@ -3699,7 +3700,8 @@ export async function discoverPage(
   // caller relying on the manifest read, including the Phase A CAS pre-flight in the relay's
   // publish_context handler. The thrown message keeps its exact wording — callers and the
   // suite match on `Failed to fetch manifest from` — and embeds the status digits so the
-  // helper's TRANSIENT_PATTERN (/5\d\d/) matches.
+  // helper accepts it as transient: the transient matcher's HTTP_5XX_INTRODUCED form accepts it (that pattern used to be a bare
+  // /5\d\d/, which matched digits inside content addresses and was anchored).
   const all = await fetchAllManifestEntries(manifestUrl, fetchFn, {
     ...(options.readWindow !== undefined && options.readWindow >= 0
       ? { stopAfterEntries: options.readWindow }

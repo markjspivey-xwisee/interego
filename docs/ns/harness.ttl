@@ -1052,10 +1052,21 @@ ieh:ConversationMessage a owl:Class ;
     rdfs:comment "A single message in a conversation: sender, content, timestamp, and optional link to the PGSL chain that materialized the message." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
 
-ieh:AgentMemory a owl:Class ;
-    rdfs:label "Agent Memory" ;
-    rdfs:comment "Memory layer sizes for an agent: semantic (facts), episodic (events), procedural (skills). Used by the harness to budget retrieval and decay." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+# ★★ ieh:AgentMemory WAS DECLARED HERE TOO, MEANING SOMETHING ELSE. This declaration read
+# "Memory layer sizes for an agent: semantic (facts), episodic (events), procedural (skills). Used
+# by the harness to budget retrieval and decay" — a different class from the one further down,
+# which is "a typed memory entry persisted by an agent into a pod", rdfs:subClassOf prov:Entity.
+# Two classes under one IRI is not a duplicate to tidy: a consumer asking `?x a ieh:AgentMemory`
+# would have been answered with both retrieval budgets and memory entries.
+#
+# The entry survives because it is the one with instances — deploy/mcp-relay writes
+# `<graph> a ieh:AgentMemory, schema:NoteDigitalDocument` on every private note. The budget sense
+# had no RDF writer at all: `AgentMemory` in packages/pgsl/src/agent-framework.ts is a TypeScript
+# interface returned by getMemoryStats(), and emits no triples. Declaring a term nothing writes is
+# the same defect as publishing an affordance nothing serves, so it is removed rather than renamed
+# into a second unused term.
+#
+# tests/no-term-is-declared-twice.test.ts is what stops the next collision arriving unnoticed.
 
 # ── PresenceStatus SKOS concept scheme ────────────────────────
 
@@ -1254,7 +1265,7 @@ ieh:appliesToToolType a owl:ObjectProperty ;
     rdfs:label "applies to tool type" ;
     rdfs:domain ieh:PromotionConstraint ;
     rdfs:range iep:ContextDescriptor ;
-    rdfs:comment "Optional scope IRI - if present, the constraint is INTENDED to apply only to tools of this type; if absent, to all promotion attempts. ★ DECLARED BUT UNREAD: no implementation consults it. discoverPromotionConstraints() in agent-collective binds PromotionConstraint, requiresAttestationAxis, requiresMinimumPeerAttestations, requiresMinimumSelfAttestations and ratifiedBy, and the apply loop iterates every discovered constraint with no scope test - so a constraint scoped to one tool type is applied to every promotion. Two demos WRITE this property and nothing READS it. Stated here rather than quietly dropped, because a scoping rule that does not scope is worse than an absent one: a publisher who sets it believes their constraint is narrow." ;
+    rdfs:comment "Optional scope IRI - if present, the constraint applies only to tools declaring this type; if absent, to all promotion attempts. ★ IT WAS DECLARED AND UNREAD, AND IS NOW ENFORCED. discoverPromotionConstraints() in agent-collective bound every sibling predicate and not this one, and the apply loop iterated every discovered constraint with no scope test - so a constraint scoped to one tool type governed every promotion, while two demos WROTE the property believing it narrowed theirs. Recording that here made the vocabulary honest and left the enforcement wrong. promoteTool() now binds it and skips a constraint whose scope is not among the promotion's declared toolTypeIris. ★ AND AN UNDETERMINED SCOPE IS A REFUSAL, NOT A SKIP: a scoped constraint meeting a promotion that declares no types refuses, because treating it as inapplicable would make every scoped governance rule escapable by omitting one argument - the same defect inverted. A skipped constraint is reported in the result as constraintsNotApplicable with the scope that excluded it, so 'scoped away' and 'never read' no longer leave identical evidence." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
 
 ieh:ratifiedBy a owl:ObjectProperty ;

@@ -49,6 +49,30 @@ const only = process.argv.find(a => a.startsWith('--only='))?.slice('--only='.le
 const selected = only ? MUTANTS.filter(m => m.name.includes(only)) : MUTANTS;
 
 /**
+ * ★★ TRAP 6. AN EMPTY SELECTION IS A FAILURE, NOT A PASS.
+ *
+ * `--only=` with a value matching no mutant left `selected` empty, the loop ran nothing, and
+ * this printed `mutation gate: 0/0 defect(s) caught.` and exited 0. A gate reporting SUCCESS
+ * having verified nothing — in the file whose entire purpose is catching that.
+ *
+ * It is not hypothetical and it is not subtle: I hit that exact line twice while building this,
+ * once from a filter that was case-wrong (`--only=refus` missing `declaresRefusal`) and once
+ * from a name that had changed, and read past both. `0/0` looks like a tally, and a tally with
+ * a tick beside it reads as good news. Trap 1 already says a mutant that does not APPLY is a
+ * failure; a mutant that was never SELECTED is the same fact one step earlier.
+ *
+ * (An adversarial pass reported this and its three refuters all rejected it, because the
+ * report also claimed the run falls back to the whole suite — it does not. They refuted the
+ * wrong half and the defect stood. Worth remembering when reading a rejection.)
+ */
+if (only && selected.length === 0) {
+  console.error(`★ --only=${only} matched no mutant, so this run verified NOTHING and would `
+    + 'otherwise have exited 0 with "0/0 defect(s) caught".');
+  console.error(`  Available: ${MUTANTS.map(m => m.name).join(', ')}`);
+  process.exit(1);
+}
+
+/**
  * Run just the named gate files, and distinguish THREE outcomes, not two.
  *
  * ★ A NON-ZERO EXIT IS NOT THE SAME AS "THE GATE CAUGHT IT". A mutation can fail to COMPILE,

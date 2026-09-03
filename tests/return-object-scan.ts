@@ -40,7 +40,27 @@ import ts from 'typescript';
 
 /** One answer a module hands back: an object literal in return position, or a `.json({…})` arg. */
 export interface ReturnObject {
-  /** The object literal's source text, verbatim from the file. */
+  /**
+   * The object literal's source text, with any comments INSIDE it blanked to spaces.
+   *
+   * ── ★★ WHY NOT VERBATIM ─────────────────────────────────────────────────────────────────────
+   *
+   * Every caller of this module matches words against this text to decide whether an answer is a
+   * decline (`error|reason|refused|denied|…`). A comment explaining a property is part of the
+   * literal's source text, so prose landed in the evidence: a return object annotated
+   * "Absent from `outputs.required` for the same reason:" was reported as an untyped refusal by
+   * `every-vertical-declines-with-a-status`, on a handler that declines nothing.
+   *
+   * ★★ SECOND INSTANCE OF ONE CLASS, WHICH IS WHY THE FIX IS HERE AND NOT AT THE CALL SITE. The
+   * privacy-mode gate asked `code.includes(mode)` and was satisfied by a comment naming the mode
+   * above the branch that had been deleted — a false NEGATIVE. `tools/turtle-iri-ratchet.mjs`
+   * counted `<${…}>` in prose — a false POSITIVE, and an allowance payable in deleted comments.
+   * Both were fixed by asking the parser instead of the text. This is the same fix at the shared
+   * layer, so no caller has to remember it, and rewording a comment is never the remedy.
+   *
+   * Offsets and length are preserved — comments become spaces, newlines survive — so `line`
+   * still points where it did and slices still line up with the file.
+   */
   readonly text: string;
   /** 1-indexed line in the ORIGINAL source — no stripping, so this is the line you can open. */
   readonly line: number;
@@ -169,13 +189,40 @@ function statusInChain(call: ts.CallExpression): number | null {
  * Covered: `return {…}`, `return ({…})`, `return x` where x is a local object literal, an
  * arrow body `=> ({…})`, and `.json({…})` (with the status from its own call chain).
  */
+/**
+ * `node`'s source text with every comment inside it replaced by spaces, same length.
+ *
+ * The parser is what knows a comment from a `//` in a string or a `/` in a regex — see the note on
+ * `ReturnObject.text` for the two gates that got this wrong by asking the text instead. Comments
+ * within a literal attach as leading trivia to the token that follows them, so every descendant's
+ * trivia is collected; newlines are kept so reported line numbers stay usable.
+ */
+function textWithoutComments(node: ts.Node, sf: ts.SourceFile): string {
+  const full = sf.getFullText();
+  const start = node.getStart(sf);
+  const chars = full.slice(start, node.getEnd()).split('');
+  const blank = (from: number, to: number): void => {
+    for (let i = Math.max(from, start); i < Math.min(to, node.getEnd()); i++) {
+      const c = chars[i - start];
+      if (c !== '\n' && c !== '\r') chars[i - start] = ' ';
+    }
+  };
+  const walk = (n: ts.Node): void => {
+    for (const r of ts.getLeadingCommentRanges(full, n.pos) ?? []) blank(r.pos, r.end);
+    for (const r of ts.getTrailingCommentRanges(full, n.end) ?? []) blank(r.pos, r.end);
+    ts.forEachChild(n, walk);
+  };
+  walk(node);
+  return chars.join('');
+}
+
 export function returnObjects(src: string): ReturnObject[] {
   const sf = ts.createSourceFile('scan.ts', src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const out: ReturnObject[] = [];
 
   const push = (obj: ts.ObjectLiteralExpression, at: ts.Node, statusCall: number | null, viaVariable: boolean): void => {
     out.push({
-      text: obj.getText(sf),
+      text: textWithoutComments(obj, sf),
       line: sf.getLineAndCharacterOfPosition(at.getStart(sf)).line + 1,
       statusCall,
       enclosing: enclosingOf(at),

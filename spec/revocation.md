@@ -182,7 +182,7 @@ See [`../spec/conformance/fixtures/revocation/facet-form.ttl`](conformance/fixtu
 
 ### 4.3 SHACL
 
-Proposal B extends `iep:SemioticFacetModalTruthConsistencyShape` (already present in [`cg-shapes.ttl`](../docs/ns/cg-shapes.ttl)) with an `sh:property [ sh:path iep:revokedIf ; sh:class iep:RevocationCondition ; sh:maxCount 8 ]` — the max cardinality is a pragmatic cap; beyond that readers should use Proposal A with an external policy document.
+Proposal B extends `iep:SemioticFacetModalTruthConsistencyShape` (already present in [`iep-shapes.ttl`](../docs/ns/iep-shapes.ttl)) with an `sh:property [ sh:path iep:revokedIf ; sh:class iep:RevocationCondition ; sh:maxCount 8 ]` — the max cardinality is a pragmatic cap; beyond that readers should use Proposal A with an external policy document.
 
 ### 4.4 Example
 
@@ -247,5 +247,5 @@ The two proposals are compatible. A descriptor declaring both:
 - `spec/architecture.md` §5.2.1 — cleartext / ciphertext layering (normative)
 - `spec/LAYERS.md` — layering discipline
 - `docs/ns/cg.ttl` — shared `iep:RevocationCondition` + both proposals' terms
-- `docs/ns/cg-shapes.ttl` — `RevocationConditionNoSelfReferenceShape`
+- `docs/ns/iep-shapes.ttl` — `RevocationConditionNoSelfReferenceShape` (the file was named `cg-shapes.ttl` before the cg: → iep: rename and no longer exists under that name)
 - `spec/conformance/README.md` §6 — revocation-condition evaluation test category

@@ -204,6 +204,24 @@ export interface PromoteToolArgs {
    *  Demo 17's honest-scoping section: substrate-enforced
    *  downward causation rather than agent-mediated. */
   readonly enforceConstitutionalConstraints?: boolean;
+  /**
+   * What this tool IS — the type/protocol/policy IRIs a scoped constraint is matched against.
+   *
+   * ── ★★ WHY THIS ARGUMENT EXISTS ──────────────────────────────────────────────────────────
+   *
+   * `ieh:appliesToToolType` was declared, WRITTEN by two demos, and read by nothing: the apply
+   * loop below iterated every discovered constraint with no scope test, so a constraint scoped
+   * to one tool type was enforced against every promotion. The ontology said so out loud —
+   * "★ DECLARED BUT UNREAD" — which made the vocabulary honest and left the behaviour wrong.
+   * A publisher who sets a narrow scope believes their constraint is narrow.
+   *
+   * ★ AND IT IS FAIL-CLOSED WHEN OMITTED, WHICH IS THE HALF THAT IS EASY TO GET BACKWARDS.
+   * The obvious reading — "no declared type, so a scoped constraint does not apply" — turns
+   * every scoped governance rule into one a caller escapes by leaving a field out. So a scoped
+   * constraint whose applicability cannot be DETERMINED refuses the promotion instead. Skipping
+   * is only ever the answer when the types are known and do not match.
+   */
+  readonly toolTypeIris?: readonly IRI[];
 }
 
 export interface PromoteToolResult {
@@ -213,6 +231,16 @@ export interface PromoteToolResult {
   /** Constraint IRIs that were consulted (empty when
    *  enforceConstitutionalConstraints was false). For audit. */
   readonly constraintsApplied: readonly IRI[];
+  /**
+   * Constraints that were discovered and did NOT apply, with the scope that excluded each.
+   *
+   * ★ A SKIP HAS TO BE VISIBLE OR IT IS THE OLD BUG WITH THE SIGN FLIPPED. Reading
+   * `ieh:appliesToToolType` means some discovered constraints stop being enforced, and an
+   * auditor walking a promotion needs to see WHICH governance rules were held not to apply and
+   * why - otherwise "the constraint was scoped away" and "the constraint was never read" leave
+   * identical evidence, which is exactly the state this field exists to end.
+   */
+  readonly constraintsNotApplicable: readonly { readonly iri: IRI; readonly scope: IRI }[];
 }
 
 interface PromotionConstraint {
@@ -221,6 +249,8 @@ interface PromotionConstraint {
   readonly minimumPeerAttestations?: number;
   readonly minimumSelfAttestations?: number;
   readonly ratifiedBy?: IRI;
+  /** `ieh:appliesToToolType` - when present the constraint is scoped to that type. */
+  readonly appliesToToolType?: IRI;
 }
 
 /**
@@ -244,11 +274,21 @@ interface PromotionConstraint {
  * compute against — multi-step chains (A ← B ← C) are handled because
  * both A and B will be named as supersedes-targets within the set.
  */
-async function discoverPromotionConstraints(podUrl: string): Promise<PromotionConstraint[]> {
+async function discoverPromotionConstraints(
+  podUrl: string,
+  fetchFn?: typeof globalThis.fetch,
+): Promise<PromotionConstraint[]> {
   const debug = process.env['DEBUG_PROMOTION_CONSTRAINTS'] === '1';
+  // ★ THE INJECTED FETCH REACHES THE READ SIDE TOO, NOT ONLY THE WRITES. `PublishConfig.fetch`
+  // exists so a caller supplies pod credentials rather than this library reading them from the
+  // environment - and this function ignored it and used the ambient one, so on a gated pod the
+  // constraint discovery silently returned [] and every governance rule was skipped while
+  // `enforceConstitutionalConstraints: true` reported that they had been enforced. It also made
+  // the path untestable without patching globalThis.fetch, which pollutes a shared vitest realm.
+  const doFetch = fetchFn ?? globalThis.fetch;
   let entries;
   try {
-    entries = await discover(podUrl);
+    entries = await discover(podUrl, undefined, fetchFn ? { fetch: fetchFn } : {});
   } catch (err) {
     if (debug) console.error(`[constraint-discover] discover failed: ${(err as Error).message}`);
     return [];
@@ -262,6 +302,7 @@ async function discoverPromotionConstraints(podUrl: string): Promise<PromotionCo
   const REQUIRES_MIN_PEER = CGH('requiresMinimumPeerAttestations');
   const REQUIRES_MIN_SELF = CGH('requiresMinimumSelfAttestations');
   const RATIFIED_BY = CGH('ratifiedBy');
+  const APPLIES_TO_TOOL_TYPE = CGH('appliesToToolType');
 
   const out: PromotionConstraint[] = [];
   for (const entry of entries) {
@@ -271,7 +312,7 @@ async function discoverPromotionConstraints(podUrl: string): Promise<PromotionCo
     const graphUrl = entry.descriptorUrl.replace(/\.ttl$/, '-graph.trig');
     let trig: string;
     try {
-      const r = await fetch(graphUrl, { headers: { Accept: 'application/trig, text/turtle' } });
+      const r = await doFetch(graphUrl, { headers: { Accept: 'application/trig, text/turtle' } });
       if (!r.ok) { if (debug) console.error(`[constraint-discover]   graph fetch ${r.status}`); continue; }
       trig = await r.text();
     } catch (err) {
@@ -300,6 +341,7 @@ async function discoverPromotionConstraints(podUrl: string): Promise<PromotionCo
         minimumPeerAttestations: readIntegerValue(subj, REQUIRES_MIN_PEER),
         minimumSelfAttestations: readIntegerValue(subj, REQUIRES_MIN_SELF),
         ratifiedBy: readIriValue(subj, RATIFIED_BY),
+        appliesToToolType: readIriValue(subj, APPLIES_TO_TOOL_TYPE),
       });
     }
   }
@@ -326,9 +368,36 @@ export async function promoteTool(args: PromoteToolArgs, config: PublishConfig):
   // an additional check. The default-threshold policy above is
   // operation-level; constraints are governance-level.
   const constraintsApplied: IRI[] = [];
+  const constraintsNotApplicable: { iri: IRI; scope: IRI }[] = [];
   if (args.enforceConstitutionalConstraints) {
-    const constraints = await discoverPromotionConstraints(config.podUrl);
+    const constraints = await discoverPromotionConstraints(config.podUrl, config.fetch);
+    const declaredTypes = args.toolTypeIris ?? [];
     for (const c of constraints) {
+      /**
+       * ★★ THE SCOPE IS READ. `ieh:appliesToToolType` was declared, written by two demos, and
+       * consulted by nothing — this loop applied every discovered constraint to every promotion,
+       * so a rule its publisher scoped to one tool type governed all of them. The ontology
+       * recorded that as "★ DECLARED BUT UNREAD", which is an honest vocabulary and a wrong
+       * enforcement.
+       *
+       * ★ UNDETERMINED IS A REFUSAL, NOT A SKIP. If a scoped constraint met a promotion that
+       * declares no types, treating it as inapplicable would make every scoped governance rule
+       * escapable by omitting one argument — the same defect, inverted. So it refuses, and only
+       * a KNOWN non-match skips.
+       */
+      if (c.appliesToToolType !== undefined) {
+        if (declaredTypes.length === 0) {
+          throw new Error(`tool promotion REFUSED by constitutional constraint ${c.iri}: it is `
+            + `scoped to ${c.appliesToToolType} and this promotion declares no tool type, so `
+            + 'whether the constraint applies cannot be determined. Pass `toolTypeIris` naming '
+            + `what ${args.toolIri} is.`
+            + `${c.ratifiedBy ? ` (ratified by ${c.ratifiedBy})` : ''}`);
+        }
+        if (!declaredTypes.includes(c.appliesToToolType)) {
+          constraintsNotApplicable.push({ iri: c.iri, scope: c.appliesToToolType });
+          continue;
+        }
+      }
       for (const axis of c.requiredAxes) {
         if (!args.axesCovered.includes(axis)) {
           throw new Error(`tool promotion REFUSED by constitutional constraint ${c.iri}: requires "${axis}" axis attestation, not present in [${args.axesCovered.join(', ')}]${c.ratifiedBy ? ` (ratified by ${c.ratifiedBy})` : ''}`);
@@ -375,7 +444,7 @@ export async function promoteTool(args: PromoteToolArgs, config: PublishConfig):
 `;
 
   const result = await publish(desc, graphContent, config.podUrl, config.fetch ? { fetch: config.fetch } : {});
-  return { promotedToolIri: promotedIri, descriptorUrl: result.descriptorUrl, graphUrl: result.graphUrl, constraintsApplied };
+  return { promotedToolIri: promotedIri, descriptorUrl: result.descriptorUrl, graphUrl: result.graphUrl, constraintsApplied, constraintsNotApplicable };
 }
 
 // ── 4. Bundle teaching package (artifact + practice) ────────────────

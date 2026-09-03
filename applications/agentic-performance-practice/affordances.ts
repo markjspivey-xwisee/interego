@@ -97,7 +97,7 @@ const AGP_AFFORDANCES: ReadonlyArray<Affordance> = [
     action: 'urn:iep:action:agp:actualize' as IRI,
     toolName: 'agp.actualize',
     title: 'Record an actualization (capability x situation x affordance -> performance)',
-    description: 'Record an agp:Actualization — a capability engaging a situation\'s affordance to yield agp:Performance — ★ This does NOT project to an LRS. The handler returns `xapiStatementId: null` unconditionally, because projecting into Foxxi\'s LRS from agp would invert the dependency arrow between the two verticals — its own comment says so. A custom xAPI Profile carrying capability / actualizedAffordance / regime as context extensions is the intended shape if that projection is ever wired, and it would be wired at the Foxxi end. SHACL requires the actualization to reference capability, situation, affordance, AND the yielded performance.',
+    description: 'Record an agp:Actualization — a capability engaging a situation\'s affordance to yield agp:Performance. An observed `success` / `score_scaled` is recorded on the actualization as `iep:success` / `agp:scoreScaled`; omit them and nothing is asserted. ★ This does NOT project to an LRS. The handler returns `xapiStatementId: null` unconditionally, because projecting into Foxxi\'s LRS from agp would invert the dependency arrow between the two verticals — its own comment says so. A custom xAPI Profile carrying capability / actualizedAffordance / regime as context extensions is the intended shape if that projection is ever wired, and it would be wired at the Foxxi end. SHACL requires the actualization to reference capability, situation, affordance, AND the yielded performance.',
     method: 'POST',
     targetTemplate: '{base}/agp/actualize',
     annotations: { title: 'Record an actualization', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -106,20 +106,23 @@ const AGP_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'capability_iri', type: 'string', required: true, description: 'IRI of the agp:Capability engaged.' },
       { name: 'affordance_iri', type: 'string', required: true, description: 'IRI of the agp:PerformanceAffordance actualized.' },
       { name: 'performance_statement', type: 'string', required: true, description: 'What was performed.' },
-      // ★★ NEITHER OF THESE IS READ, AND THE HANDLER SAYS SO. bridge/handlers.ts returns
-      // `xapiStatementId: null` unconditionally with the comment "projecting to Foxxi's LRS
-      // from here would invert the dependency arrow", and grepping both names across
-      // handlers.ts and pod-helpers.ts finds no read site. Driven for real with
-      // success:true, score_scaled:0.9, neither value appears in the result or in the
-      // published triples. They are kept as ACCEPTED-AND-IGNORED rather than deleted
-      // because callers send them, and are now described as what they are.
-      { name: 'success', type: 'boolean', required: false, description: 'Outcome, if observed. ACCEPTED BUT NOT YET RECORDED: this vertical does not project to an LRS (see the description), and nothing reads this field today.' },
-      { name: 'score_scaled', type: 'number', required: false, description: 'Scaled score in [-1,1], if observed. ACCEPTED BUT NOT YET RECORDED, as with `success`.' },
+      // ★★ BOTH OF THESE ARE RECORDED NOW, AND DESCRIBING THEM AS IGNORED WAS NOT A FIX.
+      // They were declared, accepted, and dropped: driven with success:true, score_scaled:0.9,
+      // neither value reached the result or the published triples, and the call answered 200 —
+      // so a caller that sent an outcome was told it had been recorded. Writing "ACCEPTED BUT
+      // NOT YET RECORDED" here made the description honest and still left the caller's data on
+      // the floor. `agpOutcomeProperties` now emits `iep:success` (a protocol term, reused
+      // rather than re-minted) and `agp:scoreScaled`, and an out-of-range score is REFUSED.
+      { name: 'success', type: 'boolean', required: false, description: 'Outcome, if observed. Recorded on the actualization as `iep:success` (xsd:boolean). Omit it and nothing is asserted — an unobserved outcome is not a false one.' },
+      { name: 'score_scaled', type: 'number', required: false, description: 'Scaled score in [-1,1], if observed. Recorded as `agp:scoreScaled` (xsd:double), mirroring xAPI result.score.scaled. A value outside [-1,1] is REFUSED with 400 rather than clamped, because a clamped score is a measurement nobody took.' },
       ...POD_INPUTS,
     ],
     outputs: {
-      description: 'ActualizeResult — the agp:Actualization + agp:Performance IRIs and the projected xAPI statement id.',
-      properties: { actualizationIri: { type: 'string' }, performanceIri: { type: 'string' }, xapiStatementId: { type: 'string' }, descriptorUrl: { type: 'string' }, graphUrl: { type: 'string' } },
+      description: 'ActualizeResult — the agp:Actualization + agp:Performance IRIs, the outcome that was recorded, and the projected xAPI statement id.',
+      // `recordedOutcome` is null when the caller observed nothing, and is NOT required: an
+      // unobserved outcome is not a null one, and a schema that demanded the key would push
+      // every caller into asserting something about a measurement it did not take.
+      properties: { actualizationIri: { type: 'string' }, performanceIri: { type: 'string' }, xapiStatementId: { type: 'string' }, descriptorUrl: { type: 'string' }, graphUrl: { type: 'string' }, recordedOutcome: { type: 'object' } },
       required: ['actualizationIri', 'performanceIri'],
     },
   },
