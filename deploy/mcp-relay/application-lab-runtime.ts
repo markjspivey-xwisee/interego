@@ -14,6 +14,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { turtleIriRef } from '@interego/core';
 
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 
@@ -247,6 +248,8 @@ export function signedJsonGraph(graphIri: string, documentType: string, document
   readonly canonical: string;
   readonly digest: string;
 } {
+  const graphRef = turtleIriRef(graphIri);
+  if (graphRef === null) throw new Error(`application graph IRI cannot be serialized safely: ${graphIri}`);
   const canonical = canonicalJson(document);
   const digest = sha256Hex(canonical);
   const jsonBase64 = Buffer.from(canonical, 'utf8').toString('base64');
@@ -256,8 +259,8 @@ export function signedJsonGraph(graphIri: string, documentType: string, document
     graphContent: [
       '@prefix ia: <urn:interego:application:> .',
       '',
-      `<${graphIri}> {`,
-      `  <${graphIri}> a ia:SignedJsonDocument ;`,
+      `${graphRef} {`,
+      `  ${graphRef} a ia:SignedJsonDocument ;`,
       '    ia:format "canonical-json/v1" ;',
       `    ia:documentType ${JSON.stringify(documentType)} ;`,
       `    ia:sha256 ${JSON.stringify(digest)} ;`,
