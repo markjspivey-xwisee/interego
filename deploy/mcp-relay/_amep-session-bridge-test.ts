@@ -1,7 +1,7 @@
 // Unit tests for the AMEP same-origin session bridge — the security-critical
 // gate that decides when the relay auto-forwards a caller's OAuth bearer to
 // POST /amep/acts and stamps act.actor. Run: tsx _amep-session-bridge-test.ts
-import { applicationActionSameOriginUrl, amepSameOriginUrl, withAmepSession, principalIri, isIriLike } from './amep-session-bridge.js';
+import { applicationActionMcpRequest, amepSameOriginUrl, withAmepSession, principalIri, isIriLike } from './amep-session-bridge.js';
 import type { FetchFn } from '@interego/core';
 
 const BASE = 'https://relay.interego.xwisee.com';
@@ -22,13 +22,18 @@ check('unset base → null (fail closed)', amepSameOriginUrl(`${BASE}/amep/acts`
 check('malformed url → null', amepSameOriginUrl('::::not a url', BASE) === null);
 check('external host with base as path segment → null (no prefix bypass)', amepSameOriginUrl('https://relay.interego.xwisee.com.evil.com/amep/acts', BASE) === null);
 
-// ── Application action endpoint: exact same-origin gate ────────────────
-const APP_ACTION = `${BASE}/tool/execute_application_action`;
-check('same-origin Application Lab executor → matched', !!applicationActionSameOriginUrl(APP_ACTION, BASE));
-check('external Application Lab lookalike → null', applicationActionSameOriginUrl('https://evil.example.com/tool/execute_application_action', BASE) === null);
-check('another same-origin tool → null', applicationActionSameOriginUrl(`${BASE}/tool/publish_context`, BASE) === null);
-check('executor path suffix → null', applicationActionSameOriginUrl(`${APP_ACTION}/extra`, BASE) === null);
-check('tool-path traversal → null', applicationActionSameOriginUrl(`${BASE}/tool/x/../publish_context`, BASE) === null);
+// ── Application action MCP loopback: URL + body gate ───────────────
+const MCP = `${BASE}/mcp`;
+const APP_RPC = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'execute_application_action', arguments: {} } });
+const RPC_INIT = { method: 'POST', body: APP_RPC };
+check('same-origin exact Application Lab tools/call → matched', !!applicationActionMcpRequest(MCP, BASE, RPC_INIT));
+check('external MCP lookalike → null', applicationActionMcpRequest('https://evil.example.com/mcp', BASE, RPC_INIT) === null);
+check('same-origin REST shortcut → null', applicationActionMcpRequest(`${BASE}/tool/execute_application_action`, BASE, RPC_INIT) === null);
+check('MCP query string → null', applicationActionMcpRequest(`${MCP}?tool=execute_application_action`, BASE, RPC_INIT) === null);
+check('GET MCP → null', applicationActionMcpRequest(MCP, BASE, { method: 'GET', body: APP_RPC }) === null);
+check('another nested tool → null', applicationActionMcpRequest(MCP, BASE, { method: 'POST', body: APP_RPC.replace('execute_application_action', 'publish_context') }) === null);
+check('another JSON-RPC method → null', applicationActionMcpRequest(MCP, BASE, { method: 'POST', body: APP_RPC.replace('tools/call', 'tools/list') }) === null);
+check('malformed JSON-RPC body → null', applicationActionMcpRequest(MCP, BASE, { method: 'POST', body: '{' }) === null);
 
 // ── principalIri: the AMEP actor IRI (never the bare userId slug) ──
 check('isIriLike: did:/https: true, bare slug false', isIriLike('did:web:x') && isIriLike('https://x/c#me') && !isIriLike('u-pk-a') && !isIriLike(undefined));
@@ -105,28 +110,29 @@ const authHdr = (init: any) => Object.entries(init?.headers ?? {}).find(([k]) =>
 }
 
 // ── Application Lab executor session bridge ──────────────────────────────
-// 10. Exact same-origin POST → bearer attached and redirect disabled.
+// 10. Exact same-origin executor tools/call → bearer attached + redirect disabled.
 {
   const rec = recorder();
-  const { fetch } = withAmepSession(APP_ACTION, {}, { sessionBearer: 'LABTOK' }, DEPS(rec.fn));
-  await fetch(APP_ACTION, { method: 'POST', body: '{}' });
-  check('Application action POST → bearer auto-attached', authHdr(rec.calls[0]?.init) === 'Bearer LABTOK');
-  check('Application action POST → redirect:manual set', rec.calls[0]?.init?.redirect === 'manual');
+  const { fetch } = withAmepSession(MCP, {}, { sessionBearer: 'LABTOK' }, DEPS(rec.fn));
+  await fetch(MCP, RPC_INIT);
+  check('Application action MCP call → bearer auto-attached', authHdr(rec.calls[0]?.init) === 'Bearer LABTOK');
+  check('Application action MCP call → redirect:manual set', rec.calls[0]?.init?.redirect === 'manual');
 }
-// 11. GET, another same-origin tool, and an external lookalike never receive it.
+// 11. GET, another nested tool, REST shortcut, and external MCP never receive it.
 {
   const rec = recorder();
-  const { fetch } = withAmepSession(APP_ACTION, {}, { sessionBearer: 'LABTOK' }, DEPS(rec.fn));
-  await fetch(APP_ACTION, { method: 'GET' });
-  await fetch(`${BASE}/tool/publish_context`, { method: 'POST', body: '{}' });
-  await fetch('https://evil.example.com/tool/execute_application_action', { method: 'POST', body: '{}' });
-  check('Application bridge refuses GET/other-tool/off-origin', rec.calls.every((c) => authHdr(c.init) === undefined));
+  const { fetch } = withAmepSession(MCP, {}, { sessionBearer: 'LABTOK' }, DEPS(rec.fn));
+  await fetch(MCP, { method: 'GET' });
+  await fetch(MCP, { method: 'POST', body: APP_RPC.replace('execute_application_action', 'publish_context') });
+  await fetch(`${BASE}/tool/execute_application_action`, RPC_INIT);
+  await fetch('https://evil.example.com/mcp', RPC_INIT);
+  check('Application bridge refuses GET/other-tool/REST/off-origin', rec.calls.every((c) => authHdr(c.init) === undefined));
 }
 // 12. Explicit authorization suppresses session forwarding.
 {
   const rec = recorder();
-  const { fetch } = withAmepSession(APP_ACTION, {}, { sessionBearer: 'LABTOK', explicitAuth: 'Bearer CALLER' }, DEPS(rec.fn));
-  await fetch(APP_ACTION, { method: 'POST', body: '{}' });
+  const { fetch } = withAmepSession(MCP, {}, { sessionBearer: 'LABTOK', explicitAuth: 'Bearer CALLER' }, DEPS(rec.fn));
+  await fetch(MCP, RPC_INIT);
   check('Application action explicit auth → no auto-forward', authHdr(rec.calls[0]?.init) === undefined);
 }
 

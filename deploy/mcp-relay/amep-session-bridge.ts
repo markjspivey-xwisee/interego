@@ -2,13 +2,11 @@
  * AMEP same-origin session bridge.
  *
  * Lets an OAuth MCP caller drive AMEP acts (POST /amep/acts — e.g. Compose)
- * WITHOUT pasting a bearer: the relay reuses the caller's ALREADY-VERIFIED
- * session token, but ONLY when the act targets the relay's OWN /amep endpoint
- * (same parsed origin as PUBLIC_BASE_URL). This grants no authority the caller
- * lacked — they could already pass the same token via the `authorization` arg —
- * it just removes the paste. amep.ts still authenticates the real forwarded
- * token (introspect + write-scope gate + `act.actor === principal` binding), so
- * every AMEP authorization invariant still runs against a genuine credential.
+ * WITHOUT pasting a bearer. It also preserves one constrained MCP loopback for
+ * the generic Application Lab executor when a connector's cached tool catalog
+ * predates that live tool. The relay reuses the caller's ALREADY-VERIFIED
+ * session token only for its own exact endpoints and, for the MCP loopback,
+ * only when the JSON-RPC body selects `execute_application_action`.
  *
  * Security posture (from the adversarial design review):
  *   - Same-origin is decided by PARSED URL.origin, never a string prefix (so
@@ -144,18 +142,33 @@ export function amepSameOriginUrl(rawUrl: string, publicBaseUrl: string): URL | 
 }
 
 /**
- * Returns the parsed URL only for the Application Lab's exact, same-origin
- * action-executor REST endpoint.  This is deliberately narrower than a generic
- * `/tool/*` bridge: forwarding a session bearer to an arbitrary tool selected
- * through `act` would collapse the per-tool authorization boundary.
+ * Returns the parsed URL only for an exact same-origin MCP request whose body
+ * selects the Application Lab action executor. This is deliberately a request
+ * predicate, not a generic `/mcp` URL check: forwarding a session bearer to an
+ * arbitrary nested `tools/call` would collapse the per-tool authorization
+ * boundary.
  */
-export function applicationActionSameOriginUrl(rawUrl: string, publicBaseUrl: string): URL | null {
+export function applicationActionMcpRequest(
+  rawUrl: string,
+  publicBaseUrl: string,
+  init?: Parameters<FetchFn>[1],
+): URL | null {
   if (!publicBaseUrl || !rawUrl) return null;
   let u: URL;
   let base: URL;
   try { u = new URL(rawUrl); base = new URL(publicBaseUrl); } catch { return null; }
   if (u.origin !== base.origin) return null;
-  if (u.pathname !== '/tool/execute_application_action') return null;
+  if (u.pathname !== '/mcp' || u.search || u.username || u.password) return null;
+  if ((init?.method ?? 'GET').toUpperCase() !== 'POST') return null;
+  if (typeof init?.body !== 'string') return null;
+  let wire: unknown;
+  try { wire = JSON.parse(init.body); } catch { return null; }
+  if (!wire || typeof wire !== 'object' || Array.isArray(wire)) return null;
+  const rpc = wire as Record<string, unknown>;
+  const params = rpc['params'];
+  if (rpc['jsonrpc'] !== '2.0' || rpc['method'] !== 'tools/call') return null;
+  if (!params || typeof params !== 'object' || Array.isArray(params)) return null;
+  if ((params as Record<string, unknown>)['name'] !== 'execute_application_action') return null;
   return u;
 }
 
@@ -171,9 +184,9 @@ export interface AmepSessionOpts {
 /**
  * Given the act's target and payload, returns the fetch + payload to hand to
  * kernelAct: a fetch that auto-attaches the caller's bearer to the exact
- * same-origin POST /amep/acts or POST /tool/execute_application_action endpoint,
- * and a payload whose act.actor is stamped to the principal id (only when
- * same-origin /amep and the caller left actor absent).
+ * same-origin POST /amep/acts endpoint or one exact Application Lab JSON-RPC
+ * tools/call at POST /mcp, and a payload whose act.actor is stamped to the
+ * principal id (only when same-origin /amep and the caller left actor absent).
  */
 export function withAmepSession(
   targetForActor: string,
@@ -206,18 +219,18 @@ export function withAmepSession(
     } catch { /* unparseable payload → leave as-is; amep returns a clear error */ }
   }
 
-  // (b) Credential injection — ONLY a POST to one of two exact same-origin
-  // endpoints, and ONLY when the caller supplied no explicit authorization:
+  // (b) Credential injection — ONLY one of two exact same-origin requests, and
+  // ONLY when the caller supplied no explicit authorization:
   //   - /amep/acts (the original AMEP bridge), or
-  //   - /tool/execute_application_action (the signed-domain executor).
+  //   - /mcp with JSON-RPC tools/call selecting execute_application_action.
   // The latter keeps kernel `act` usable when a connector's cached tool catalog
-  // predates the live Application Lab tool. It does NOT generalize to /tool/*;
-  // the executor still performs every graph, guard, actor, effect, CAS and
-  // complete-replay check itself.
+  // predates the live Application Lab tool. The MCP verifier authenticates the
+  // forwarded token normally, and the executor still performs every graph,
+  // guard, actor, effect, CAS and complete-replay check itself.
   if (!sessionBearer || explicitAuth) return { fetch: solidFetch, payload: outPayload };
   const wireFetch: FetchFn = async (url, init) => {
     const u = amepSameOriginUrl(url, publicBaseUrl);
-    const applicationAction = applicationActionSameOriginUrl(url, publicBaseUrl);
+    const applicationAction = applicationActionMcpRequest(url, publicBaseUrl, init);
     const method = (init?.method ?? 'GET').toUpperCase();
     if (method === 'POST' && ((u && u.pathname === '/amep/acts') || applicationAction)) {
       const headers: Record<string, string> = { ...(init?.headers ?? {}) };
