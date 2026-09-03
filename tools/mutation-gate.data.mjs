@@ -396,4 +396,56 @@ export const MUTANTS = [
     mustFail: [DRIFT_GATE],
     why: 'an operator following the runbook would run a script that provisions a deleted registry and repoints every service at it',
   },
+
+  // ── the two legs written from the two live-found defects ────────────────────
+  //
+  // Running the four status mutants through the gate's five legs showed legs 3 and 4 were never
+  // made to fail by ANY of them - so the two assertions covering the only two defects that file
+  // was written from were as unverified as before the harness existed. Both legs select by
+  // PHRASES in a refusal's message, which is the fragile half: reword a reason and the leg
+  // silently selects nothing and passes over an empty set.
+  {
+    name: 'an-authenticated-non-member-is-told-401',
+    file: FOXXI,
+    // The defect itself, verbatim: the signature VERIFIED, so the caller is authenticated and
+    // what they lack is membership. 401 sends an agent back to sign_request for credentials it
+    // already holds, in a loop it cannot exit. Found by signing a real request against the live
+    // bridge and reading the answer.
+    find: "      return { kind: 'refusal' as const, 'iep:refusalStatus': 403,\n        'iep:resolvedBy': {\n          action: 'urn:iep:action:self-enroll',",
+    replace: "      return { kind: 'refusal' as const, 'iep:refusalStatus': 401,\n        'iep:resolvedBy': {\n          action: 'urn:iep:action:self-enroll',",
+    mustFail: [STATUS_GATE],
+    why: 'leg 3 selects 39 refusal literals by phrase and no mutant ever flipped one',
+  },
+  {
+    name: 'an-outage-is-reported-as-the-callers-fault',
+    file: FOXXI,
+    // The other live-found defect: the tenant directory could not be READ, which is our failure,
+    // and 401 makes a real outage look like a permissions problem in every client log.
+    find: "      'iep:refusalStatus': 503,\n      'iep:refusalReason': 'the tenant directory could not be read",
+    replace: "      'iep:refusalStatus': 401,\n      'iep:refusalReason': 'the tenant directory could not be read",
+    mustFail: [STATUS_GATE],
+    why: 'leg 4 selects exactly one literal and nothing in the table flipped it',
+  },
+
+  {
+    name: 'decline-in-a-vocabulary-no-word-list-anticipated',
+    file: FOXXI,
+    // ★★ THE ONLY MUTANT §B CATCHES AND §A DOES NOT, WHICH IS WHY IT EXISTS.
+    //
+    // Every other planted decline contains the word `forbidden`, the first alternative in §A's
+    // DENIAL list - and §A is zero-tolerance, so it fails each of them on its own. Measured
+    // through the gate's own predicates: all eight gave §A=1 alongside §B=1. The consequence,
+    // also measured: raise UNTYPED_BUDGET from 0 to 1 and every one of them is still caught by
+    // §A, so the harness printed a full pass with the ratchet one step looser. The ratchet's own
+    // message says it "only holds while it is tight", and the harness could not see it slacken.
+    //
+    // This phrasing contains no word any list anticipated - which is the case §B was written
+    // for, and the case that produced agp's `pending:` and foxxi's `note:` in production.
+    find: '  const token = (args.__caller_token as string | undefined);',
+    // `error:` is the KEY §B counts; the MESSAGE is what §A matches, and this one contains no
+    // word any denial list anticipated. That asymmetry is the point: §A=0, §B=1.
+    replace: "  if (args['__mutant']) return { error: 'this pod is sealed for the quarter' };\n  const token = (args.__caller_token as string | undefined);",
+    mustFail: [REFUSAL_GATE],
+    why: 'the untyped-return ratchet can be relaxed and every other mutant still passes, because all of them also trip the word list',
+  },
 ];

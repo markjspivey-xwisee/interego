@@ -24,8 +24,20 @@
  * Design notes:
  *   - One descriptor per client. Slug is `oauth-client-<client_id>`. The
  *     client_id is hex from randomBytes(16) and is therefore a safe slug.
- *   - All pod IO is wrapped in `withTransientRetry` from @interego/core
- *     so a transient CSS hiccup doesn't lose a registration.
+ *   - All pod IO retries on a transient CSS hiccup, so one does not lose a registration.
+ *     ★★ THAT RETRY IS THE ONE INSIDE @interego/solid, NOT A SECOND ONE HERE. Every call
+ *     below used to be wrapped in its OWN `withTransientRetry` while the function it wraps
+ *     already retries: `fetchGraphContent` retries its GET, `discover` its manifest GET at
+ *     {maxAttempts: 6}, and `publish` its PUTs at {maxAttempts: 6}. The matcher accepts the
+ *     inner throw (`Failed to GET <url>: 503 …`) at BOTH layers, so the attempts multiplied.
+ *     Measured against dist with a fetch that always 503s: 16 HTTP requests over 35.5s for ONE
+ *     durable failure, against the 4-attempt/~15s ceiling the retry module documents as its
+ *     contract.
+ *
+ *     `loadClients` runs at startup under `mapBounded(ours, POD_HYDRATE_CONCURRENCY)`, so a
+ *     slow CSS turned every registered OAuth client into 16-24 requests and half a minute of
+ *     blocking hydration — the amplification that previously left this directory EMPTY after
+ *     every restart.
  *   - On cold-start (no descriptors yet, manifest absent), `loadClients`
  *     returns an empty `Map` rather than throwing.
  *   - No new core/iep:/ieh:/pgsl: ontology terms are introduced. The
@@ -513,9 +525,9 @@ export async function loadClients(
 
   let entries;
   try {
-    entries = await withTransientRetry(
-      () => discover(cfg.podUrl, undefined, { fetch: cfg.fetch }),
-    );
+    // `discover` retries its own manifest GET at {maxAttempts: 6, baseMs: 500}; wrapping it
+    // again multiplied that, not hardened it.
+    entries = await discover(cfg.podUrl, undefined, { fetch: cfg.fetch });
   } catch (err) {
     log(`[oauth-client-store] discover() failed on ${cfg.podUrl}: ${(err as Error).message}. ` +
         `Starting with an empty client map.`);
@@ -551,8 +563,7 @@ export async function loadClients(
     const graphUrl = graphUrlForClient(cfg.podUrl, clientId);
 
     try {
-      const { content } = await withTransientRetry(() =>
-        fetchGraphContent(graphUrl, { fetch: cfg.fetch }));
+      const { content } = await fetchGraphContent(graphUrl, { fetch: cfg.fetch });
       if (!content) {
         log(`[oauth-client-store] graph at ${graphUrl} returned no content; skipping ${clientId}.`);
         return;
@@ -611,8 +622,7 @@ export async function loadOneClient(
   const log = cfg.log ?? (() => {});
   const graphUrl = graphUrlForClient(cfg.podUrl, clientId);
   try {
-    const { content } = await withTransientRetry(() =>
-      fetchGraphContent(graphUrl, { fetch: cfg.fetch }));
+    const { content } = await fetchGraphContent(graphUrl, { fetch: cfg.fetch });
     if (!content) return undefined;
     const doc = parseTrig(content);
     const subjects = findSubjectsOfType(doc, RELAY_OAUTH_CLIENT_TYPE);
@@ -764,12 +774,11 @@ export async function saveClient(
   );
   if (collision) throw new Error(`[oauth-client-store] refusing to save client ${clientId}: ${collision.message}`);
 
-  await withTransientRetry(async () => {
-    await publish(descriptor, graphContent, cfg.podUrl, {
-      fetch: cfg.fetch,
-      descriptorSlug: slugForClient(clientId),
-      graphSlug: `${slugForClient(clientId)}-graph`,
-    });
+  // `publish` retries its own PUTs at {maxAttempts: 6, baseMs: 500}.
+  await publish(descriptor, graphContent, cfg.podUrl, {
+    fetch: cfg.fetch,
+    descriptorSlug: slugForClient(clientId),
+    graphSlug: `${slugForClient(clientId)}-graph`,
   });
 
   log(`[oauth-client-store] saved client ${clientId} as ${descriptorUrlForClient(cfg.podUrl, clientId)}.`);

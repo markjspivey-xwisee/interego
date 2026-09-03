@@ -220,9 +220,18 @@ const UNLINTED_FRONTIER = {
   // gate reports today is the same pre-existing debt it reported before this unit. 415 is
   // written rather than 412 deliberately: it is correct after the commit and, before it, a fall
   // of 3 that sits well inside the same 20 of slack, so the gate is green in both states.
-  applications: { errors: 1323, files: 415 },
+  // ★★ THESE TWO ROWS MOVED BECAUSE `.tsx` AND `.jsx` JOINED `LINTABLE`, NOT BECAUSE DEBT
+  //    LANDED. The regex excluded them while eslint.config.js's rules matched them perfectly
+  //    well, so 64 tracked .tsx files - 55 under these two roots, carrying 71 errors - were
+  //    filtered out before eslint ever saw them. Nothing was added; a blind spot was removed,
+  //    and the ratchet's whole point is that it now holds over those files too.
+  //
+  //    applications 415 -> 464 files, 1323 -> 1452 errors; demos 37 -> 45 files, 48 unchanged
+  //    (its .tsx files are clean). Written here rather than argued about later: this is the one
+  //    kind of repin that is legitimate, and it is legitimate only because the SCAN widened.
+  applications: { errors: 1452, files: 464 },
   benchmarks: { errors: 193, files: 31 },
-  demos: { errors: 48, files: 37 },
+  demos: { errors: 48, files: 45 },
   // A declared npm workspace (see package.json `workspaces`), never linted.
   'mcp-server': { errors: 33, files: 4 },
   scripts: { errors: 7, files: 10 },
@@ -259,8 +268,22 @@ const CENSUS_EXEMPT = new Set([
   '.interego', '.vscode', '.husky',
 ]);
 
-/** Extensions eslint.config.js's rules apply to. */
-const LINTABLE = /\.(?:[cm]?ts|[cm]?js)$/;
+/**
+ * Extensions eslint.config.js's rules apply to.
+ *
+ * ★★ `.tsx` AND `.jsx` WERE MISSING, AND THE RULES DO APPLY TO THEM. `js.configs.recommended`
+ * and `tseslint.configs.recommended` both match `**` + `/*.tsx` in eslint.config.js, so eslint
+ * lints those files perfectly well - `lintTrackedUnder` simply filtered them out before they
+ * reached it. Measured at the time: 64 tracked .tsx files, and running eslint over the 55 under
+ * the two censused roots reported 71 errors that NEITHER the error ceiling nor the file floor
+ * could see.
+ *
+ * That is the ratchet's own blind spot, one file extension over: its stated job is that new
+ * debt in these roots cannot land unmeasured, and its file-count floor exists precisely so "a
+ * root that stopped being scanned" is distinguishable from a clean one. A whole front-end app
+ * could be added under applications/ with any quantity of lint errors and neither number moved.
+ */
+const LINTABLE = /\.(?:[cm]?ts|[cm]?js|tsx|jsx)$/;
 
 /**
  * Lint what the REPOSITORY holds under `root`, not what this disk holds.
@@ -606,7 +629,7 @@ const BASELINE = {};
 // further up, and `rc` came from `tail`, not from the gate. A gate whose verdict you read through
 // `| grep` or `| tail` is a gate you have partially disabled: run it plain and check ITS exit code.
 // Same shape as every other proxy this week — the summary line standing in for the verdict.
-export const MIN_FILES = 516;
+export const MIN_FILES = 517;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.
