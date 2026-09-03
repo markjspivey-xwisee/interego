@@ -495,7 +495,7 @@ function asState(doc: Record<string, Json>): ApplicationState {
   return doc as unknown as ApplicationState;
 }
 
-function contractRefFromGovernance(doc: Record<string, Json>, applicationId: string): { descriptorUrl?: string; graphIri?: string; digest?: string; cid?: string; definitionDescriptorUrl?: string } | null {
+function contractRefFromGovernance(doc: Record<string, Json>, applicationId: string): { descriptorUrl?: string; graphIri?: string; digest?: string; cid?: string; definitionDescriptorUrl?: string; definitionDigest?: string; definitionCid?: string; definitionGraphIri?: string } | null {
   const data = asRecord(doc['data']);
   if (!data) return null;
   const active = asRecord(data['activeEpoch']) ?? asRecord(data['activeContract']);
@@ -508,6 +508,9 @@ function contractRefFromGovernance(doc: Record<string, Json>, applicationId: str
     digest: asString(active['contractDigest']) ?? asString(active['documentDigest']),
     cid: asString(active['contractCid']) ?? asString(active['cid']),
     definitionDescriptorUrl: asString(active['definitionDescriptorUrl']),
+    definitionDigest: asString(active['definitionDigest']),
+    definitionCid: asString(active['definitionCid']),
+    definitionGraphIri: asString(active['definitionGraphIri']),
   };
 }
 
@@ -726,6 +729,7 @@ export async function resolveApplicationLab(input: ResolveApplicationLabInput, r
   let activeContractUrl = baseContractUrl;
   let governance: Record<string, Json> | null = null;
   let governanceEvidence: ArtifactEvidence | null = null;
+  let activeGovernanceRef: ReturnType<typeof contractRefFromGovernance> = null;
   const governanceGraphIri = asString(catalogEntry['governanceStateGraphIri'])
     ?? asString(asRecord(catalogEntry['governance'])?.['stateGraphIri']);
   if (governanceGraphIri) {
@@ -736,10 +740,19 @@ export async function resolveApplicationLab(input: ResolveApplicationLabInput, r
     governanceEvidence = evidence('governance-head', loaded.descriptor, loaded.envelope, gh.head.cid);
     if (!governanceEvidence.trusted) throw new Error('application governance head is not fully verified');
     governance = loaded.envelope.document;
-    const ref = contractRefFromGovernance(governance, applicationId);
-    if (!ref?.descriptorUrl) throw new Error('verified governance head does not select an active contract descriptor');
-    activeContractUrl = ref.descriptorUrl;
-    if (ref.definitionDescriptorUrl) definitionUrl = ref.definitionDescriptorUrl;
+    activeGovernanceRef = contractRefFromGovernance(governance, applicationId);
+    if (!activeGovernanceRef?.descriptorUrl
+      || !activeGovernanceRef.graphIri
+      || !activeGovernanceRef.digest
+      || !activeGovernanceRef.cid
+      || !activeGovernanceRef.definitionDescriptorUrl
+      || !activeGovernanceRef.definitionGraphIri
+      || !activeGovernanceRef.definitionDigest
+      || !activeGovernanceRef.definitionCid) {
+      throw new Error('verified governance head does not fully pin its active contract and definition epoch');
+    }
+    activeContractUrl = activeGovernanceRef.descriptorUrl;
+    definitionUrl = activeGovernanceRef.definitionDescriptorUrl;
   }
 
   const [definitionLoaded, activeContractLoaded] = await Promise.all([
@@ -753,10 +766,14 @@ export async function resolveApplicationLab(input: ResolveApplicationLabInput, r
   if (definition.id !== applicationId || activeContract.applicationId !== applicationId) throw new Error('catalog/definition/contract application IDs disagree');
   if (definitionRef?.['documentDigest'] && definitionRef['documentDigest'] !== definitionLoaded.envelope.declaredDigest && !governance) throw new Error('catalog-pinned definition digest does not match the fetched definition');
   if (definitionRef?.['cid'] && definitionLoaded.descriptor.cid && definitionRef['cid'] !== definitionLoaded.descriptor.cid && !governance) throw new Error('catalog-pinned definition CID does not match the fetched definition');
-  if (governance) {
-    const activeRef = contractRefFromGovernance(governance, applicationId);
-    if (activeRef?.digest && activeRef.digest !== activeContractLoaded.envelope.declaredDigest) throw new Error('governance-pinned active contract digest does not match the fetched contract');
-    if (activeRef?.cid && activeContractLoaded.descriptor.cid && activeRef.cid !== activeContractLoaded.descriptor.cid) throw new Error('governance-pinned active contract CID does not match the fetched contract');
+  if (activeGovernanceRef) {
+    if (activeGovernanceRef.graphIri !== activeContractLoaded.envelope.graphIri) throw new Error('governance-pinned active contract graph does not match the fetched contract');
+    if (activeGovernanceRef.digest !== activeContractLoaded.envelope.declaredDigest) throw new Error('governance-pinned active contract digest does not match the fetched contract');
+    if (activeGovernanceRef.cid !== activeContractLoaded.descriptor.cid) throw new Error('governance-pinned active contract CID does not match the fetched contract');
+    if (activeGovernanceRef.definitionDescriptorUrl !== definitionLoaded.descriptor.url) throw new Error('governance-pinned active definition URL does not match the fetched definition');
+    if (activeGovernanceRef.definitionGraphIri !== definitionLoaded.envelope.graphIri) throw new Error('governance-pinned active definition graph does not match the fetched definition');
+    if (activeGovernanceRef.definitionDigest !== definitionLoaded.envelope.declaredDigest) throw new Error('governance-pinned active definition digest does not match the fetched definition');
+    if (activeGovernanceRef.definitionCid !== definitionLoaded.descriptor.cid) throw new Error('governance-pinned active definition CID does not match the fetched definition');
   }
 
   const stateGraphIri = asString(catalogEntry['stateGraphIri']) ?? definition.stateGraphIri;
@@ -813,16 +830,16 @@ export async function resolveApplicationLab(input: ResolveApplicationLabInput, r
   ];
   const manifestChecks = {
     contract: {
-      descriptorUrl: baseContractUrl,
-      descriptorMatch: baseContractRef?.['descriptorUrl'] === baseContractUrl,
-      digestMatch: !baseContractRef?.['documentDigest'] || baseContractRef['documentDigest'] === baseContractLoaded.envelope.declaredDigest,
-      cidMatch: !baseContractRef?.['cid'] || !baseContractLoaded.descriptor.cid || baseContractRef['cid'] === baseContractLoaded.descriptor.cid,
+      descriptorUrl: activeContractUrl,
+      descriptorMatch: activeGovernanceRef ? activeGovernanceRef.descriptorUrl === activeContractUrl : baseContractRef?.['descriptorUrl'] === baseContractUrl,
+      digestMatch: activeGovernanceRef ? activeGovernanceRef.digest === activeContractLoaded.envelope.declaredDigest : !baseContractRef?.['documentDigest'] || baseContractRef['documentDigest'] === baseContractLoaded.envelope.declaredDigest,
+      cidMatch: activeGovernanceRef ? activeGovernanceRef.cid === activeContractLoaded.descriptor.cid : !baseContractRef?.['cid'] || !baseContractLoaded.descriptor.cid || baseContractRef['cid'] === baseContractLoaded.descriptor.cid,
     },
     definition: {
       descriptorUrl: definitionUrl,
-      descriptorMatch: definitionRef?.['descriptorUrl'] === definitionUrl || !!governance,
-      digestMatch: !definitionRef?.['documentDigest'] || definitionRef['documentDigest'] === definitionLoaded.envelope.declaredDigest || !!governance,
-      cidMatch: !definitionRef?.['cid'] || !definitionLoaded.descriptor.cid || definitionRef['cid'] === definitionLoaded.descriptor.cid || !!governance,
+      descriptorMatch: activeGovernanceRef ? activeGovernanceRef.definitionDescriptorUrl === definitionUrl : definitionRef?.['descriptorUrl'] === definitionUrl,
+      digestMatch: activeGovernanceRef ? activeGovernanceRef.definitionDigest === definitionLoaded.envelope.declaredDigest : !definitionRef?.['documentDigest'] || definitionRef['documentDigest'] === definitionLoaded.envelope.declaredDigest,
+      cidMatch: activeGovernanceRef ? activeGovernanceRef.definitionCid === definitionLoaded.descriptor.cid : !definitionRef?.['cid'] || !definitionLoaded.descriptor.cid || definitionRef['cid'] === definitionLoaded.descriptor.cid,
     },
     genesisState: {
       descriptorUrl: genesis?.entry.descriptorUrl ?? '',
