@@ -9993,6 +9993,7 @@ async function handleInvokeAffordance(args: ToolArgs): Promise<string> {
     payload,
     {
       sessionBearer: args['_session_bearer'] as string | undefined,
+      identityBearer: args['_identity_token'] as string | undefined,
       principalId: args['_session_principal'] as string | undefined,
       explicitAuth: authorization,
     },
@@ -10291,6 +10292,7 @@ async function handleKernelAct(args: ToolArgs): Promise<string> {
     normPayload,
     {
       sessionBearer: args['_session_bearer'] as string | undefined,
+      identityBearer: args['_identity_token'] as string | undefined,
       principalId: args['_session_principal'] as string | undefined,
       explicitAuth: authorization,
     },
