@@ -4996,8 +4996,13 @@ async function handleExecuteApplicationAction(args: ToolArgs): Promise<string> {
       now,
       expectedHead,
     });
+    const writePodName = podNameOf(resolved.podUrl);
+    if (!writePodName) {
+      throw new Error(`verified application pod has no writable pod name: ${resolved.podUrl}`);
+    }
     const writeArgs: ToolArgs = {
       ...applicationLabPodArgs(args, resolved.podUrl),
+      pod_name: writePodName,
       graph_iri: resolved.definition.stateGraphIri,
       graph_content: prepared.graphContent,
       if_match: resolved.stateHead.cid,
