@@ -13,6 +13,7 @@ const FOXXI = 'applications/foxxi-content-intelligence/bridge/server.ts';
 const WSP = 'applications/shared-workspace/src/respond.ts';
 const AGP = 'applications/agentic-performance-practice/bridge/handlers.ts';
 const OWM = 'applications/organizational-working-memory/source-adapters/web.ts';
+const LRS = 'applications/lrs-adapter/bridge/server.ts';
 const RETRY = 'packages/core/src/http/retry.ts';
 const FOLLOW = 'packages/core/src/affordance/follow.ts';
 const HYPER = 'packages/core/src/kernel/hypermedia.ts';
@@ -180,5 +181,16 @@ export const MUTANTS = [
     replace: "(?:\u0008HTTP",
     mustFail: [BYTES_GATE],
     why: 'the gate said "control byte" and checked only NUL, so 0x01, 0x07, 0x1b and five 0x08 all sat in tracked source',
+  },
+
+  {
+    name: 'untyped-decline-in-an-undriven-vertical',
+    file: LRS,
+    // lrs-adapter is one of the five verticals NO leg drives. Before the all-mounts census
+    // this planted decline reached a caller as HTTP 200 and nothing in the tree noticed.
+    find: "const handlers = {\n  'lrs.ingest_statement': async (args: Record<string, unknown>) =>",
+    replace: "const handlers = {\n  'lrs.zz_mutant': async (_a: Record<string, unknown>) => ({ error: 'forbidden - admin only' }),\n  'lrs.ingest_statement': async (args: Record<string, unknown>) =>",
+    mustFail: [VERTICAL_GATE],
+    why: 'the gate titled "on every vertical" drove three of the eight that mount the dispatcher',
   },
 ];

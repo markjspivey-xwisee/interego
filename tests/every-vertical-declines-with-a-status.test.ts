@@ -28,7 +28,9 @@
 import { describe, it, expect } from 'vitest';
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { createVerticalBridge } from '../applications/_shared/vertical-bridge/index.js';
+import { returnObjects } from './return-object-scan.js';
 
 /** Statuses a DECLINE may answer with. 200 is the whole point: it is never one of them. */
 const REFUSING = [400, 401, 403, 404, 409, 422, 429, 500, 501, 502, 503];
@@ -243,4 +245,89 @@ describe('a declined call answers a refusing status on every vertical', () => {
       },
     );
   });
+
+  /**
+   * ★★ "EVERY VERTICAL" MEANT THREE OF EIGHT.
+   *
+   * The three legs above DRIVE agp, owm and wsp. All EIGHT verticals mount
+   * `createVerticalBridge` - agent-collective, agent-development-practice, foxxi and
+   * lrs-adapter were named by nothing here, and by no other gate either: the two source
+   * censuses both read exactly one file, foxxi's bridge server. So this file's own title has
+   * been claiming a scope five verticals wider than it checked, which is the same defect class
+   * as the untyped refusals it was written to catch - a green tick standing in for coverage
+   * that was never there.
+   *
+   * Driving all eight is not available cheaply: every bridge server but agp's calls
+   * `app.listen()` at import time, so importing one to reach its handler map starts a
+   * listener. What IS available is to READ every mount, which this leg does - and to derive
+   * the list from the filesystem rather than writing it down, because a hand-written list is
+   * precisely how "every vertical" came to mean three.
+   *
+   * Measured when this was added: no untyped decline in any of the five. The four uncovered
+   * verticals delegate their handlers to `src/`, and the decline-shaped returns there are
+   * benign - `{ok:true, answer:null, reason:'no-data'}` is an empty result rather than a
+   * refusal, and `agent-collective/src/request-gate.ts` is imported by nothing but its own
+   * tests. The value here is that the NEXT one is caught by this file rather than by an audit.
+   */
+  it('★ every vertical that mounts the dispatcher is read, not just the three driven above', () => {
+    const appsDir = new URL('../applications/', import.meta.url);
+    const verticals = readdirSync(appsDir)
+      .filter((d) => d !== '_shared')
+      .filter((d) => {
+        const server = new URL(`../applications/${d}/bridge/server.ts`, import.meta.url);
+        return existsSync(server) && readFileSync(server, 'utf8').includes('createVerticalBridge(');
+      });
+
+    // Guards the guard: a discovery that stopped discovering would pass everything below.
+    expect(
+      verticals.length,
+      'fewer mounts found than the eight known to exist - the discovery is broken, and a '
+        + 'census that finds nothing reports no defects',
+    ).toBeGreaterThanOrEqual(8);
+
+    const DECLINE = /\b(error|reason|refused|denied|forbidden|unauthori[sz]ed|invalid|pending|rejected|conflict|unavailable)\b/i;
+    const offenders: string[] = [];
+    let handlerReturns = 0;
+
+    for (const v of verticals) {
+      for (const rel of [`${v}/bridge/server.ts`, `${v}/bridge/handlers.ts`]) {
+        const url = new URL(`../applications/${rel}`, import.meta.url);
+        if (!existsSync(url)) continue;
+        for (const o of returnObjects(readFileSync(url, 'utf8'))) {
+          if (!o.enclosing.startsWith('HANDLER')) continue;
+          handlerReturns += 1;
+          // A refusal built by the shared helper IS typed; the literal `kind` lives inside
+          // `refuse()`, not at the call site. Matching only the literal reported all six of
+          // agp's correctly-typed refusals as untyped on this leg's first run.
+          if (/\.\.\.\s*refuse\s*\(/.test(o.text)) continue;
+          if (o.text.includes("kind: 'refusal'")) continue;
+          // ★ A KEY SET TO null / undefined / false IS THE NEGATION OF THAT KEY. `pending: null`
+          // is a SUCCESS saying nothing is pending, and five agp successes were reported as
+          // declines because the word appeared. Strip the negated keys before asking.
+          const claimed = o.text.replace(/\b\w+\s*:\s*(?:null|undefined|false)\b/g, '');
+          if (!DECLINE.test(claimed)) continue;
+          if (o.statusCall !== null && !Number.isNaN(o.statusCall) && o.statusCall >= 400) continue;
+          // An empty RESULT is not a refusal: the caller's arguments were fine and the query
+          // simply matched nothing. `ok: true` is the marker, and it is load-bearing - a
+          // handler that declines must not claim ok.
+          if (/\bok:\s*true\b/.test(o.text)) continue;
+          offenders.push(`${rel}:${o.line} [${o.enclosing}] ${o.text.replace(/\s+/g, ' ').slice(0, 120)}`);
+        }
+      }
+    }
+
+    expect(
+      handlerReturns,
+      'no handler-enclosed return objects found across any mount - the scanner is reading '
+        + 'nothing and this leg is vacuous',
+    ).toBeGreaterThan(20);
+
+    expect(
+      offenders,
+      'these handler returns say no without declaring a refusal, so createVerticalBridge '
+        + 'answers them 200 and the caller cannot tell them from success:\n  '
+        + offenders.join('\n  '),
+    ).toEqual([]);
+  });
+
 });
