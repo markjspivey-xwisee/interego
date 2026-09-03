@@ -2,20 +2,23 @@ name: Mutation Gate
 
 # Every refusal gate is made to FAIL before it is believed.
 #
-# The three gates this job mutates (tests/a-refusal-answers-a-refusing-status.test.ts,
-# tests/a-refusal-status-names-what-actually-failed.test.ts,
-# tests/every-vertical-declines-with-a-status.test.ts) all passed, at some point, on the exact
-# defect they were written to catch. That was found four times, by four adversarial audits,
-# each costing roughly 30M subagent tokens and hours of wall-clock. `tools/mutation-gate.mjs`
-# applies those seventeen defects mechanically and requires each named gate to go red. It takes
-# about six minutes.
+# Gates in this tree have passed, at some point, on the exact defect they were written to
+# catch. That was found four times, by four adversarial audits, each costing roughly 30M
+# subagent tokens and hours of wall-clock. `tools/mutation-gate.mjs` applies each known defect
+# mechanically and requires the gate that names it to go red. It takes a few minutes.
+#
+# ★ NO COUNT HERE, AND NO LIST OF GATES. This comment said "the three gates this job mutates",
+# named them, and said "those seventeen defects" — all three numbers went stale within a day of
+# being written, because the table is meant to grow. MUTANTS in tools/mutation-gate.data.mjs is
+# the authority, and the harness prints its size on every run. Same argument as the check name
+# below, and as the prefix list in ontology-lint.yml.
 #
 # ── WHY THERE IS NO `paths:` FILTER ──────────────────────────────────────────
 #
-# This job's subject is a RELATIONSHIP between files, not a directory: the gate files, the four
-# application files the mutants edit, `tools/mutation-gate.data.mjs`, the harness itself,
-# `applications/_shared/vertical-bridge/**` (which derives the status and `isError` every gate
-# asserts on), `tests/return-object-scan.ts` (the parser two of the three gates census with),
+# This job's subject is a RELATIONSHIP between files, not a directory: every gate the table
+# names, every source file its mutants edit, `tools/mutation-gate.data.mjs`, the harness itself,
+# `applications/_shared/vertical-bridge/**` (which derives the status and `isError` the gates
+# assert on), `tests/return-object-scan.ts` (the parser the censuses are built on),
 # `vitest.config.ts` and the typecheck globalSetup. Any filter narrower than that set writes a
 # false all-clear, and the repo has now paid for that lesson twice:
 # `applications/organizational-working-memory/affordances.ts` shipped an undeclared control IRI

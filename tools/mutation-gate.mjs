@@ -67,7 +67,7 @@ function runGates(files) {
     // NO_COLOR because the summary is PARSED here. vitest colours even without a TTY, and
     // `Tests ␛[22m ␛[1m␛[32m1 failed` does not match /Tests\s+\d+\s+failed/ — so the first
     // version of this harness read every caught mutant as "stayed green" and reported that
-    // seventeen gates were decorative. Belt and braces: the env var, and the strip below.
+    // every gate in the table was decorative. Belt and braces: the env var, and the strip below.
     { encoding: 'utf8', env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' } },
   );
   // eslint-disable-next-line no-control-regex -- stripping ANSI is the point
@@ -100,7 +100,7 @@ if (clean.exitedNonZero) {
 }
 if (!clean.countsParsed) {
   // TRAP 5. The harness could not COUNT its own gate output. Every mutant below would then be
-  // reported as "stayed GREEN" - a claim about seventeen gates that is really one bug here.
+  // reported as "stayed GREEN" - a claim about every gate at once that is really one bug here.
   // Not hypothetical: the first version of this file did exactly that, because vitest colours
   // even without a TTY, and an ANSI-interrupted summary never matches the failure pattern.
   // It reported nine sound gates as decoration.

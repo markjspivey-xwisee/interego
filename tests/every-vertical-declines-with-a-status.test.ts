@@ -250,12 +250,13 @@ describe('a declined call answers a refusing status on every vertical', () => {
    * ★★ "EVERY VERTICAL" MEANT THREE OF EIGHT.
    *
    * The three legs above DRIVE agp, owm and wsp. All EIGHT verticals mount
-   * `createVerticalBridge` - agent-collective, agent-development-practice, foxxi and
-   * lrs-adapter were named by nothing here, and by no other gate either: the two source
-   * censuses both read exactly one file, foxxi's bridge server. So this file's own title has
-   * been claiming a scope five verticals wider than it checked, which is the same defect class
-   * as the untyped refusals it was written to catch - a green tick standing in for coverage
-   * that was never there.
+   * `createVerticalBridge`, so five are not driven here: agent-collective,
+   * agent-development-practice, foxxi, learner-performer-companion and lrs-adapter. Of those,
+   * only foxxi is reached by anything else - the two source censuses each read exactly one
+   * file, and that file is foxxi's bridge server. So FOUR verticals were covered by nothing in
+   * the tree, and this file's own title is what made that invisible: the same defect class as
+   * the untyped refusals it was written to catch, a green tick standing in for coverage that
+   * was never there.
    *
    * Driving all eight is not available cheaply: every bridge server but agp's calls
    * `app.listen()` at import time, so importing one to reach its handler map starts a
@@ -263,8 +264,8 @@ describe('a declined call answers a refusing status on every vertical', () => {
    * the list from the filesystem rather than writing it down, because a hand-written list is
    * precisely how "every vertical" came to mean three.
    *
-   * Measured when this was added: no untyped decline in any of the five. The four uncovered
-   * verticals delegate their handlers to `src/`, and the decline-shaped returns there are
+   * Measured when this was added: no untyped decline in any of the four. They delegate their
+   * handlers to `src/`, and the decline-shaped returns there are
    * benign - `{ok:true, answer:null, reason:'no-data'}` is an empty result rather than a
    * refusal, and `agent-collective/src/request-gate.ts` is imported by nothing but its own
    * tests. The value here is that the NEXT one is caught by this file rather than by an audit.
