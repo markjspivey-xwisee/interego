@@ -1,7 +1,7 @@
 // Unit tests for the AMEP same-origin session bridge — the security-critical
 // gate that decides when the relay auto-forwards a caller's OAuth bearer to
 // POST /amep/acts and stamps act.actor. Run: tsx _amep-session-bridge-test.ts
-import { applicationActionMcpRequest, amepSameOriginUrl, withAmepSession, principalIri, isIriLike } from './amep-session-bridge.js';
+import { applicationActionMcpRequest, applicationActionRestRequest, amepSameOriginUrl, withAmepSession, principalIri, isIriLike } from './amep-session-bridge.js';
 import type { FetchFn } from '@interego/core';
 
 const BASE = 'https://relay.interego.xwisee.com';
@@ -34,6 +34,18 @@ check('GET MCP → null', applicationActionMcpRequest(MCP, BASE, { method: 'GET'
 check('another nested tool → null', applicationActionMcpRequest(MCP, BASE, { method: 'POST', body: APP_RPC.replace('execute_application_action', 'publish_context') }) === null);
 check('another JSON-RPC method → null', applicationActionMcpRequest(MCP, BASE, { method: 'POST', body: APP_RPC.replace('tools/call', 'tools/list') }) === null);
 check('malformed JSON-RPC body → null', applicationActionMcpRequest(MCP, BASE, { method: 'POST', body: '{' }) === null);
+
+
+const REST = `${BASE}/tool/execute_application_action`;
+const REST_BODY = JSON.stringify({ catalog_descriptor_url: 'https://pod/catalog.ttl', application_id: 'urn:app', action_iri: 'urn:action', expected_head: 'cid', payload: {} });
+const REST_INIT = { method: 'POST', body: REST_BODY };
+check('same-origin exact Application Lab REST executor → matched', !!applicationActionRestRequest(REST, BASE, REST_INIT));
+check('external REST lookalike → null', applicationActionRestRequest('https://evil.example.com/tool/execute_application_action', BASE, REST_INIT) === null);
+check('adjacent REST tool → null', applicationActionRestRequest(`${BASE}/tool/publish_context`, BASE, REST_INIT) === null);
+check('REST query string → null', applicationActionRestRequest(`${REST}?tool=publish_context`, BASE, REST_INIT) === null);
+check('GET REST executor → null', applicationActionRestRequest(REST, BASE, { method: 'GET', body: REST_BODY }) === null);
+check('malformed REST body → null', applicationActionRestRequest(REST, BASE, { method: 'POST', body: '{' }) === null);
+check('array REST body → null', applicationActionRestRequest(REST, BASE, { method: 'POST', body: '[]' }) === null);
 
 // ── principalIri: the AMEP actor IRI (never the bare userId slug) ──
 check('isIriLike: did:/https: true, bare slug false', isIriLike('did:web:x') && isIriLike('https://x/c#me') && !isIriLike('u-pk-a') && !isIriLike(undefined));
@@ -136,6 +148,36 @@ const acceptHdr = (init: any) => Object.entries(init?.headers ?? {}).find(([k]) 
   const { fetch } = withAmepSession(MCP, {}, { sessionBearer: 'LABTOK', explicitAuth: 'Bearer CALLER' }, DEPS(rec.fn));
   await fetch(MCP, RPC_INIT);
   check('Application action explicit auth → no auto-forward', authHdr(rec.calls[0]?.init) === undefined);
+}
+
+
+// 13. Exact REST executor receives only the server-bound identity bearer.
+{
+  const rec = recorder();
+  const { fetch } = withAmepSession(REST, {}, { sessionBearer: 'OAUTH-DPOP', identityBearer: 'IDENTITY-TOKEN' }, DEPS(rec.fn));
+  await fetch(REST, REST_INIT);
+  check('Application action REST call → identity bearer auto-attached', authHdr(rec.calls[0]?.init) === 'Bearer IDENTITY-TOKEN');
+  check('Application action REST call → no MCP Accept rewrite', acceptHdr(rec.calls[0]?.init) === undefined);
+  check('Application action REST call → redirect:manual set', rec.calls[0]?.init?.redirect === 'manual');
+}
+// 14. Identity bearer never reaches MCP, AMEP, external, adjacent, query, or GET targets.
+{
+  const rec = recorder();
+  const { fetch } = withAmepSession(REST, {}, { identityBearer: 'IDENTITY-TOKEN' }, DEPS(rec.fn));
+  await fetch(MCP, RPC_INIT);
+  await fetch(`${BASE}/amep/acts`, { method: 'POST', body: '{}' });
+  await fetch('https://evil.example.com/tool/execute_application_action', REST_INIT);
+  await fetch(`${BASE}/tool/publish_context`, REST_INIT);
+  await fetch(`${REST}?x=1`, REST_INIT);
+  await fetch(REST, { method: 'GET', body: REST_BODY });
+  check('Identity bridge refuses MCP/AMEP/off-origin/other-tool/query/GET', rec.calls.every((c) => authHdr(c.init) === undefined));
+}
+// 15. Explicit authorization suppresses identity-token forwarding too.
+{
+  const rec = recorder();
+  const { fetch } = withAmepSession(REST, {}, { identityBearer: 'IDENTITY-TOKEN', explicitAuth: 'Bearer CALLER' }, DEPS(rec.fn));
+  await fetch(REST, REST_INIT);
+  check('Application REST explicit auth → no auto-forward', authHdr(rec.calls[0]?.init) === undefined);
 }
 
 console.log(`\n${ok}/${ok + bad} session-bridge checks passed`);

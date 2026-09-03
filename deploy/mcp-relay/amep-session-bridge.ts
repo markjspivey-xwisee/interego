@@ -172,9 +172,40 @@ export function applicationActionMcpRequest(
   return u;
 }
 
+
+/**
+ * Exact same-origin legacy REST route for the Application Lab executor.
+ *
+ * Relay OAuth access tokens may be sender-constrained (for example by DPoP) and
+ * therefore cannot be replayed into a nested /mcp request. The OAuth exchange
+ * already carries a separate identity-server bearer in verified server context.
+ * This predicate allows that bearer to reach only the one REST route that maps
+ * to execute_application_action; it is never accepted from wire input.
+ */
+export function applicationActionRestRequest(
+  rawUrl: string,
+  publicBaseUrl: string,
+  init?: Parameters<FetchFn>[1],
+): URL | null {
+  if (!publicBaseUrl || !rawUrl) return null;
+  let u: URL;
+  let base: URL;
+  try { u = new URL(rawUrl); base = new URL(publicBaseUrl); } catch { return null; }
+  if (u.origin !== base.origin) return null;
+  if (u.pathname !== '/tool/execute_application_action' || u.search || u.username || u.password) return null;
+  if ((init?.method ?? 'GET').toUpperCase() !== 'POST') return null;
+  if (typeof init?.body !== 'string') return null;
+  let body: unknown;
+  try { body = JSON.parse(init.body); } catch { return null; }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  return u;
+}
+
 export interface AmepSessionOpts {
   /** Raw OAuth access token the MCP client presented (relay-injected, never from the wire). */
   sessionBearer?: string;
+  /** Identity-server bearer carried inside the verified OAuth session (server-injected). */
+  identityBearer?: string;
   /** Authenticated principal id (= introspect(token).userId), used to stamp act.actor. */
   principalId?: string;
   /** An explicit `authorization` the caller supplied; when present we do NOT auto-forward. */
@@ -194,7 +225,7 @@ export function withAmepSession(
   opts: AmepSessionOpts,
   deps: { solidFetch: FetchFn; publicBaseUrl: string },
 ): { fetch: FetchFn; payload: unknown } {
-  const { sessionBearer, principalId, explicitAuth } = opts;
+  const { sessionBearer, identityBearer, principalId, explicitAuth } = opts;
   const { solidFetch, publicBaseUrl } = deps;
 
   // (a) Actor binding — same-origin /amep only. On the OAuth path amep REQUIRES
@@ -227,12 +258,15 @@ export function withAmepSession(
   // predates the live Application Lab tool. The MCP verifier authenticates the
   // forwarded token normally, and the executor still performs every graph,
   // guard, actor, effect, CAS and complete-replay check itself.
-  if (!sessionBearer || explicitAuth) return { fetch: solidFetch, payload: outPayload };
+  if ((!sessionBearer && !identityBearer) || explicitAuth) return { fetch: solidFetch, payload: outPayload };
   const wireFetch: FetchFn = async (url, init) => {
     const u = amepSameOriginUrl(url, publicBaseUrl);
     const applicationAction = applicationActionMcpRequest(url, publicBaseUrl, init);
+    const applicationActionRest = applicationActionRestRequest(url, publicBaseUrl, init);
     const method = (init?.method ?? 'GET').toUpperCase();
-    if (method === 'POST' && ((u && u.pathname === '/amep/acts') || applicationAction)) {
+    if (method === 'POST' && ((u && u.pathname === '/amep/acts') || applicationAction || applicationActionRest)) {
+      const forwardedBearer = applicationActionRest ? identityBearer : sessionBearer;
+      if (!forwardedBearer) return solidFetch(url, init);
       const headers: Record<string, string> = { ...(init?.headers ?? {}) };
       // MCP Streamable HTTP requires the client to advertise both response
       // representations. The generic kernel deliberately mirrors an
@@ -243,7 +277,7 @@ export function withAmepSession(
         headers['Accept'] = 'application/json, text/event-stream';
       }
       if (!Object.keys(headers).some((k) => k.toLowerCase() === 'authorization')) {
-        headers['Authorization'] = `Bearer ${sessionBearer}`;
+        headers['Authorization'] = `Bearer ${forwardedBearer}`;
       }
       // redirect:'manual' is not in the FetchFn init type, but solidFetch spreads
       // init into the underlying fetch, so the cast forwards it at runtime.
