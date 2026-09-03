@@ -248,6 +248,7 @@ import {
   type LabDescriptor,
   type LabManifestEntry,
 } from './application-lab-runtime.js';
+import { canonicalApplicationActorId } from './application-actor.js';
 
 // CONTENT-VERSIONED widget URI: hosts (ChatGPT) may cache the widget HTML by
 // resource URI, so a same-URI redeploy could serve a STALE widget. Deriving the URI
@@ -5005,7 +5006,7 @@ async function handleExecuteApplicationAction(args: ToolArgs): Promise<string> {
   if (!applicationId) return JSON.stringify({ error: 'application_id is required' });
   if (!actionIri) return JSON.stringify({ error: 'action_iri is required' });
   if (!expectedHead) return JSON.stringify({ error: 'expected_head is required' });
-  const actor = callerAgentId(args);
+  const actor = canonicalApplicationActorId(callerAgentId(args), IDENTITY_URL);
   if (!actor) return JSON.stringify({ error: 'authenticated actor is required' });
   const payload = a['payload'];
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
