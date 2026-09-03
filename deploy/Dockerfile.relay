@@ -165,6 +165,10 @@ COPY deploy/mcp-relay/amep-session-bridge.ts ./
 COPY deploy/mcp-relay/note-view.ts ./
 COPY deploy/mcp-relay/hmd-app.ts ./
 COPY deploy/mcp-relay/hmd-app-logic.ts ./
+# The generic Application Lab MCP App and its descriptor-defined runtime.  These
+# are imported by server.ts, so per-file image assembly must carry both.
+COPY deploy/mcp-relay/application-lab-app.ts ./
+COPY deploy/mcp-relay/application-lab-runtime.ts ./
 COPY deploy/mcp-relay/pgsl-node-store.ts ./
 COPY deploy/mcp-relay/engagement-store.ts ./
 COPY deploy/mcp-relay/authorship-content-binding.ts ./
