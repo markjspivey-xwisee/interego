@@ -269,6 +269,7 @@ bodies.set(url('readiness'), originalEvidenceBody);
 assert.ok(APPLICATION_LAB_APP_HTML.startsWith('<!doctype html>'));
 assert.ok(APPLICATION_LAB_APP_HTML.includes("callTool('open_application_lab'"));
 assert.ok(APPLICATION_LAB_APP_HTML.includes("callTool('execute_application_action'"));
+assert.ok(APPLICATION_LAB_APP_HTML.includes('catalog_graph_iri:d.catalog.graphIri'));
 assert.ok(!APPLICATION_LAB_APP_HTML.includes('Release Control'));
 assert.ok(!/<script\s+src=|<link\s+href=|@import/i.test(APPLICATION_LAB_APP_HTML));
 assert.ok(!/\son[a-z]+\s*=/.test(APPLICATION_LAB_APP_HTML));
@@ -276,5 +277,7 @@ assert.ok(!/\son[a-z]+\s*=/.test(APPLICATION_LAB_APP_HTML));
 const relaySource = readFileSync(new URL('./server.ts', import.meta.url), 'utf8');
 assert.match(relaySource, /const writePodName = podNameOf\(resolved\.podUrl\);/);
 assert.match(relaySource, /pod_name: writePodName,/);
+const executorDeclaration = relaySource.slice(relaySource.indexOf("name: 'execute_application_action'"));
+assert.match(executorDeclaration, /catalog_graph_iri: \{ type: 'string'/);
 
 console.log('application-lab: canonical binding, two-epoch replay, CAS preparation, and generic MCP App verified');
