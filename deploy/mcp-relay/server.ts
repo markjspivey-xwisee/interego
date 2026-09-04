@@ -12245,6 +12245,7 @@ const TOOL_SCHEMAS = [
     inputSchema: {
       type: 'object',
       properties: {
+        catalog_graph_iri: { type: 'string', description: 'Application catalog graph IRI. Defaults to urn:graph:interego:application-catalog:v1.' },
         catalog_descriptor_url: { type: 'string', description: 'Exact signed catalog descriptor that names the application.' },
         application_id: { type: 'string', description: 'Exact application ID inside that verified catalog.' },
         action_iri: { type: 'string', description: 'Exact action IRI from the active verified contract.' },
