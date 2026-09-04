@@ -149,7 +149,11 @@ check('the helper sets _session_user_id in BOTH branches (the field the ownershi
   && /if \(auth\.userId\) target\._session_user_id = auth\.userId;/.test(SERVER));
 check('the helper sets the _session_agent_did attribution identity in both branches',
   /target\._session_agent_did = auth\.recoveredDid;/.test(SERVER)
-  && /if \(auth\.agentId\) target\._session_agent_did = auth\.agentId;/.test(SERVER));
+  && /const sessionAgentIri = canonicalApplicationActorId\(auth\.agentId, IDENTITY_URL\);/.test(SERVER)
+  && /if \(sessionAgentIri\) target\._session_agent_did = sessionAgentIri;/.test(SERVER));
+check('bearer attribution never publishes a relative identity slug',
+  /if \(!target\.agent_id && sessionAgentIri\) target\.agent_id = sessionAgentIri;/.test(SERVER)
+  && !/target\._session_agent_did = auth\.agentId;/.test(SERVER));
 check('/tool routes through the helper with NO inline _session_user_id copy left to drift',
   /injectRestVerifiedIdentity\(req\.body, auth, viaSignature\)/.test(SERVER)
   && !/req\.body\._session_user_id = auth\.userId/.test(SERVER));
@@ -158,6 +162,8 @@ check('/messages routes through the helper — this is what fixes its requireOwn
   && !/args\._session_agent_did = auth\.recoveredDid/.test(SERVER));
 check('/mcp still injects _session_agent_did for every tool',
   /args\._session_agent_did = authContext\.agentId;/.test(SERVER));
+check('the generic application executor signs with the same canonical actor used by its receipt',
+  /const writeArgs: ToolArgs = \{[\s\S]{0,500}_session_agent_did: actor,[\s\S]{0,500}graph_iri: resolved\.definition\.stateGraphIri/.test(SERVER));
 // ★ THIS USED TO MATCH AN INLINE `for (const reserved of ['_session_bearer', …])` LOOP,
 // of which there were two — one on /mcp and one on /tool — each a hand-copy of
 // RESERVED_WIRE_FIELDS. The check passed while the constant it was really about was NOT
@@ -329,7 +335,8 @@ console.log('\n13. R8 — the bearer branch injects the attribution identity');
 // The helper's bearer branch (shared by /tool + /messages) sets _session_agent_did from
 // the resolved agent, so callerAgentId() cannot fall through to a forgeable value.
 check('the shared helper sets _session_agent_did from the resolved agent on the bearer path',
-  /if \(auth\.agentId\) target\._session_agent_did = auth\.agentId;/.test(SERVER));
+  /const sessionAgentIri = canonicalApplicationActorId\(auth\.agentId, IDENTITY_URL\);/.test(SERVER)
+  && /if \(sessionAgentIri\) target\._session_agent_did = sessionAgentIri;/.test(SERVER));
 
 console.log('\n14. R4 — the egress guard screens EVERY redirect hop, not just the first URL');
 // solidFetch calls fetch() with no `redirect` option → undici follows up to 20 hops
