@@ -117,6 +117,13 @@ function check(name: string, cond: boolean, detail = ''): void {
   console.error(`  FAIL ${name}${detail ? ` — ${detail}` : ''}`);
 }
 
+function topLevelFunctionBody(source: string, declaration: string): string {
+  const start = source.indexOf(declaration);
+  if (start < 0) return '';
+  const end = source.indexOf('\n}\n', start);
+  return end < 0 ? '' : source.slice(start, end + 2);
+}
+
 console.log('\n1. callerAgentId() exists and is the single attribution helper');
 check('callerAgentId is defined', /function callerAgentId\(args: ToolArgs\)/.test(SERVER));
 check('it prefers the wire-stripped session identity',
@@ -162,8 +169,19 @@ check('/messages routes through the helper — this is what fixes its requireOwn
   && !/args\._session_agent_did = auth\.recoveredDid/.test(SERVER));
 check('/mcp still injects _session_agent_did for every tool',
   /args\._session_agent_did = authContext\.agentId;/.test(SERVER));
+const executeApplicationActionBody = topLevelFunctionBody(
+  SERVER_CODE,
+  'async function handleExecuteApplicationAction(args: ToolArgs): Promise<string> {',
+);
+const applicationWriteArgsAt = executeApplicationActionBody.indexOf('const writeArgs: ToolArgs = {');
+const applicationActorAt = executeApplicationActionBody.indexOf('_session_agent_did: actor,');
+const applicationStateGraphAt = executeApplicationActionBody.indexOf(
+  'graph_iri: resolved.definition.stateGraphIri,',
+);
 check('the generic application executor signs with the same canonical actor used by its receipt',
-  /const writeArgs: ToolArgs = \{[\s\S]{0,500}_session_agent_did: actor,[\s\S]{0,500}graph_iri: resolved\.definition\.stateGraphIri/.test(SERVER));
+  applicationWriteArgsAt >= 0
+  && applicationActorAt > applicationWriteArgsAt
+  && applicationStateGraphAt > applicationActorAt);
 // ★ THIS USED TO MATCH AN INLINE `for (const reserved of ['_session_bearer', …])` LOOP,
 // of which there were two — one on /mcp and one on /tool — each a hand-copy of
 // RESERVED_WIRE_FIELDS. The check passed while the constant it was really about was NOT
