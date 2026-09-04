@@ -5037,6 +5037,10 @@ async function handleExecuteApplicationAction(args: ToolArgs): Promise<string> {
     }
     const writeArgs: ToolArgs = {
       ...applicationLabPodArgs(args, resolved.podUrl),
+      // The guard and receipt already use this canonical, authenticated actor.
+      // Sign the descriptor with that exact identity too, independent of how a
+      // particular transport represented the session principal.
+      _session_agent_did: actor,
       pod_name: writePodName,
       graph_iri: resolved.definition.stateGraphIri,
       graph_content: prepared.graphContent,
@@ -6840,10 +6844,16 @@ function injectRestVerifiedIdentity(
     if (!target.owner_webid) target.owner_webid = auth.recoveredDid;
     target._session_user_id = ownPod;
   } else {
-    if (!target.agent_id) target.agent_id = auth.agentId;
+    // Bearer introspection may return either the canonical agent IRI or its local
+    // slug. A slug can locate a registry row, but publishing it produces a
+    // relative RDF identity while receipts use the full did:web value.
+    // Canonicalize once at this authenticated ingress boundary so every
+    // downstream attribution sink receives the same identity space.
+    const sessionAgentIri = canonicalApplicationActorId(auth.agentId, IDENTITY_URL);
+    if (!target.agent_id && sessionAgentIri) target.agent_id = sessionAgentIri;
     // Session identity WINS over the forgeable caller agent_id at every attribution sink
     // (callerAgentId), so set it whenever the bearer resolved an agent.
-    if (auth.agentId) target._session_agent_did = auth.agentId;
+    if (sessionAgentIri) target._session_agent_did = sessionAgentIri;
     if (!target.owner_webid) target.owner_webid = `${IDENTITY_URL}/users/${auth.userId}/profile#me`;
     if (!target.pod_name) { target.pod_name = auth.userId; target[POD_NAME_INJECTED] = true; }
     // ★ THE FIX. The field requireOwnPod / callerOwnPod / recipientKeyFor read to prove the
