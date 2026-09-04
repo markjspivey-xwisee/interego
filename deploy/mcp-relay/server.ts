@@ -250,6 +250,11 @@ import {
   type LabManifestEntry,
 } from './application-lab-runtime.js';
 import { canonicalApplicationActorId } from './application-actor.js';
+import {
+  buildToolSurface,
+  mcpServerVersion,
+  TOOL_SURFACE_META_KEY,
+} from './tool-surface.js';
 
 // CONTENT-VERSIONED widget URI: hosts (ChatGPT) may cache the widget HTML by
 // resource URI, so a same-URI redeploy could serve a STALE widget. Deriving the URI
@@ -7892,10 +7897,10 @@ function directoryRowAffordances(
   const identity = describeDirectoryEntry(entry);
   const address = relayAgentAddress(entry.url);
   const base = RELAY_AP_BASE;
-  // The same lookup `GET /tools` does, at request time. (`TOOL_SCHEMAS` is declared further
+  // The same materialized lookup `GET /tools` uses. (`TOOL_SURFACE` is declared further
   // down; every caller of this function is a request handler, which cannot run before module
   // evaluation completes.)
-  const schema = TOOL_SCHEMAS.find(t => t.name === 'notify_agent') as
+  const schema = TOOL_SURFACE.tools.find(t => t.name === 'notify_agent') as
     { inputSchema?: unknown; outputSchema?: unknown } | undefined;
   const contract = operationContract(base, 'notify_agent', schema);
   return [{
@@ -10743,9 +10748,10 @@ const TOOLS: Record<string, ToolEntry> = gateRequiredArgs({
 // ── Tier-4: dynamic relay-tool registry over ac:AgentTool ────
 //
 // Tools authored via ac.author_tool, attested to threshold, and
-// promoted to Asserted via ac.promote_tool can be loaded into the
-// running relay's tool surface — without a redeploy. The substrate is
-// using its own promote-by-attestation pipeline to grow the relay.
+// promoted to Asserted via ac.promote_tool can be loaded into an
+// experimental alias registry — without a redeploy. They do not alter the
+// declared MCP schema surface; clients discover their source descriptors and
+// follow their affordances through the generic kernel verbs.
 //
 // Trust boundary: only ONE pod is scanned (RELAY_DYNAMIC_TOOLS_POD,
 // default = the relay's own service pod). The pod owner controls
@@ -10874,9 +10880,11 @@ async function loadDynamicTools(): Promise<number> {
   return loaded;
 }
 
-// Schedule initial load: don't block module evaluation, but don't
-// await either — fire-and-forget like the federation hydrate. Subsequent
-// reloads can be triggered via the admin endpoint added below.
+// Dynamic aliases are an experimental, descriptor-discovery path kept separate
+// from the relay's declared MCP contract. They remain reachable by an informed
+// caller, while portable clients discover and follow the underlying affordance
+// through the generic act/invoke_affordance path. Replacing this AC-specific
+// loader with a neutral extension contract is tracked separately.
 if (RELAY_DYNAMIC_TOOLS_POD) {
   void loadDynamicTools().catch(err => {
     log(`[dynamic-tools] initial load failed: ${(err as Error).message}`);
@@ -12260,6 +12268,15 @@ const TOOL_SCHEMAS = [
   },
 ] as const;
 
+// One materialized, content-addressed DECLARED tool surface for every transport.
+// The named MCP registry and its schemas must be a bijection: fail relay startup
+// instead of letting one endpoint silently publish an obsolete or empty contract.
+// The digest makes stale and refreshed lists distinguishable, but cannot force a
+// host to refresh an already-cached tools/list response.
+const TOOL_SURFACE = buildToolSurface(TOOLS, TOOL_SCHEMAS);
+const TOOL_SURFACE_DIGEST = TOOL_SURFACE.digest;
+const MCP_SERVER_VERSION = mcpServerVersion(TOOL_SURFACE_DIGEST);
+
 // ── MCP discoverability: instructions, doc resources, prompts ──
 //
 // Mirrors what mcp-server/server.ts ships locally, so a remote agent
@@ -12604,19 +12621,20 @@ just demo a publish + discover round-trip on their own pod.`,
 
 function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; userId?: string; podUrl?: string; identityToken?: string; oauthScopes?: readonly string[]; accessToken?: string } | null): Server {
   const server = new Server(
-    { name: '@interego/mcp-relay', version: '0.3.0' },
+    { name: '@interego/mcp-relay', version: MCP_SERVER_VERSION },
     {
       capabilities: { tools: {}, resources: {}, prompts: {} },
       instructions: SERVER_INSTRUCTIONS,
     },
   );
 
-  // Asserted to the SDK's own `Tool` type. TOOL_SCHEMAS is built with `as const`, so its
+  // Asserted to the SDK's own `Tool` type. TOOL_SURFACE is built from TOOL_SCHEMAS, whose
   // enum members are `readonly` tuples, which the SDK's structural JSON-Schema value type
   // rejects — the schemas themselves are conformant (every inputSchema carries
   // `type: 'object'`), it is only the deep readonly-ness that does not line up.
   server.setRequestHandler('tools/list', async () => ({
-    tools: TOOL_SCHEMAS.map((t) => ({ ...t })) as unknown as Tool[],
+    tools: TOOL_SURFACE.tools.map((t) => ({ ...t })) as unknown as Tool[],
+    _meta: { [TOOL_SURFACE_META_KEY]: TOOL_SURFACE_DIGEST },
   }));
 
   // ── Resources: doc:// URIs serve protocol documentation ────
@@ -13350,8 +13368,8 @@ app.get('/.well-known/oauth-protected-resource', (req, res) => {
 // FIX 4 from the survey: publish a discoverable Hydra collection of
 // every named substrate operation (8 kernel verbs + each thin-facade
 // MCP tool) so HTTP-only / hypermedia clients can reach the same
-// surface MCP clients see. One source of truth (the in-process TOOLS
-// registry + TOOL_SCHEMAS), two access paths (MCP JSON-RPC at /mcp,
+// surface MCP clients see. One materialized source of truth (TOOL_SURFACE,
+// checked against the in-process registry), two access paths (MCP JSON-RPC at /mcp,
 // hypermedia at /.well-known/operations + /tool/:name).
 //
 // Invocation contract: client GETs this catalog → picks an
@@ -13371,20 +13389,16 @@ app.get('/.well-known/operations', (req, res) => {
   const wantsJsonLd = (req.get('accept') || '').includes('application/ld+json');
   const base = `${req.protocol}://${req.get('host') ?? ''}`;
   const catalogId = `${base}/.well-known/operations`;
-  // Schema lookup by name — used to surface input/output schema IRIs
-  // pointing into /.well-known/shacl-shapes (one shape per tool name).
-  const schemaByName = new Map<string, typeof TOOL_SCHEMAS[number]>(
-    TOOL_SCHEMAS.map(t => [t.name, t])
-  );
-  // Enumerate from the runtime tool registry so the catalog can never
-  // drift from the actual /mcp surface. We classify each entry as
+  res.set('Cache-Control', 'no-cache');
+  // Enumerate from the registry-checked surface so this catalog and
+  // MCP tools/list are byte-for-byte projections of one contract. We classify each entry as
   // 'kernel-verb' (the 8 substrate primitives) vs 'thin-facade' (every
   // named shim that ultimately composes through to the kernel).
   // bandaid-parallel-state / bandaid-kernel-bypass entries are *not*
   // in TOOLS at all on this relay, so by construction the catalog
   // only publishes the surface a hypermedia client should reach for.
-  const members = Object.entries(TOOLS).map(([name, { description }]) => {
-    const schema = schemaByName.get(name);
+  const members = TOOL_SURFACE.tools.map((schema) => {
+    const { name, description } = schema;
     const classification = KERNEL_VERBS.has(name) ? 'kernel-verb' : 'thin-facade';
     const authRequired = AUTH_REQUIRED_TOOLS.has(name);
     /**
@@ -13394,9 +13408,8 @@ app.get('/.well-known/operations', (req, res) => {
      * exactly this shape of claim from every capability anyone else publishes.
      */
     const contract = operationContract(base, name, schema as { inputSchema?: unknown; outputSchema?: unknown } | undefined);
-    const title = schema && typeof (schema as { annotations?: { title?: string } }).annotations?.title === 'string'
-      ? (schema as { annotations: { title: string } }).annotations.title
-      : name;
+    const annotations = schema?.['annotations'] as { title?: unknown } | undefined;
+    const title = typeof annotations?.title === 'string' ? annotations.title : name;
     return {
       '@id': `urn:iep:operation:${name}`,
       '@type': ['iep:Affordance', 'hydra:Operation'],
@@ -13436,6 +13449,7 @@ app.get('/.well-known/operations', (req, res) => {
     '@id': catalogId,
     '@type': ['hydra:Collection', 'urn:iep:type:OperationsCatalog'],
     conformsToShape: 'urn:iep:shape:OperationsCatalog',
+    'dct:identifier': `sha256:${TOOL_SURFACE_DIGEST}`,
     'hydra:totalItems': members.length,
     'hydra:member': members,
   });
@@ -13465,7 +13479,7 @@ app.get('/.well-known/operations/:name/:kind', (req, res) => {
   }
   // Same derivation the catalog uses, so the URL it advertises and the one served here agree.
   const base = `${req.protocol}://${req.get('host') ?? ''}`;
-  const schema = TOOL_SCHEMAS.find((t) => t.name === name) as { inputSchema?: unknown; outputSchema?: unknown } | undefined;
+  const schema = TOOL_SURFACE.tools.find((t) => t.name === name) as { inputSchema?: unknown; outputSchema?: unknown } | undefined;
   const doc = contractDocument(base, name, kind, schema);
   if (!doc) {
     // Consistent with the catalog: an operation that publishes no schema advertises no `expects`,
@@ -13473,6 +13487,7 @@ app.get('/.well-known/operations/:name/:kind', (req, res) => {
     res.status(404).json({ error: 'no_published_contract', detail: `${name} publishes no ${kind} schema` });
     return;
   }
+  res.set('Cache-Control', 'no-cache');
   res.type('application/schema+json').json(doc);
 });
 
@@ -14558,6 +14573,7 @@ app.get('/.well-known/shacl-shapes', (_req, res) => {
 // endpoint returning 200 — indistinguishable from success. Polling until
 // `build === <the tag you deployed>` is what makes the rollout falsifiable.
 app.get('/health', (_req, res) => {
+  res.set('Cache-Control', 'no-store');
   res.json({
     status: 'ok',
     css: CSS_URL,
@@ -14565,6 +14581,8 @@ app.get('/health', (_req, res) => {
     auth: 'bearer-token',
     x402: true,
     build: process.env['INTEREGO_BUILD_SHA'] ?? 'unset',
+    mcpServerVersion: MCP_SERVER_VERSION,
+    toolSurfaceDigest: TOOL_SURFACE_DIGEST,
   });
 });
 
@@ -14746,7 +14764,7 @@ mountAgentInterop(app, {
   // resolve is advertising words rather than terms.
   affordances: () => {
     const base = (PUBLIC_BASE_URL || '').replace(/\/$/, '');
-    return TOOL_SCHEMAS.map(t => ({
+    return TOOL_SURFACE.tools.map(t => ({
       action: `${base}/ns/iep/action/relay/${t.name}`,
       title: t.name,
       comment: t.description,
@@ -15421,9 +15439,10 @@ app.post('/verify-token', verifyTokenLimiter, async (req, res) => {
 // RELAY_DYNAMIC_TOOLS_POD for Asserted ac:AgentTool descriptors and
 // rebuild the dynamicTools registry. Same auth model as
 // /admin/backfill-manifest-cid (introspection-secret-gated). The
-// substrate-honest "grow myself" tool: a new tool gets authored +
-// attested on a pod, this endpoint surfaces it, and the next MCP
-// `tools/list` call shows the new entry.
+// substrate-honest descriptor-alias loader: a new tool gets authored +
+// attested on a pod, and this endpoint makes its alias directly callable.
+// It deliberately does not rewrite the relay's declared MCP tools/list;
+// portable discovery remains descriptor → affordance → act.
 app.post('/admin/reload-dynamic-tools', async (req, res) => {
   if (!RELAY_INTROSPECTION_SECRET) {
     res.status(503).json({ ok: false, reason: 'RELAY_INTROSPECTION_SECRET not configured on relay; admin endpoints disabled' });
@@ -16170,23 +16189,20 @@ app.get('/x402/price/:podName', (req, res) => {
 // List tools
 app.get('/tools', (req, res) => {
   // Mirror the MCP /mcp tools/list response so HTTP-browseable
-  // introspection sees the same schemas + annotations the MCP
-  // clients see. Falls back to the legacy {name, description}
-  // shape for any tool that doesn't appear in TOOL_SCHEMAS.
-  const schemaByName = new Map<string, typeof TOOL_SCHEMAS[number]>(
-    TOOL_SCHEMAS.map(t => [t.name, t])
-  );
+  // introspection sees the same schemas + annotations the MCP clients
+  // see. TOOL_SURFACE already failed startup if a handler or schema was
+  // missing, so there is deliberately no lossy fallback here.
   const base = `${req.protocol}://${req.get('host') ?? ''}`;
-  const members = Object.entries(TOOLS).map(([name, { description }]) => {
-    const schema = schemaByName.get(name);
-    const baseSchema = schema ?? { name, description };
+  res.set('Cache-Control', 'no-cache');
+  const members = TOOL_SURFACE.tools.map((schema) => {
+    const name = schema.name;
     // Each entry is a hydra:Resource carrying its own affordance
     // (POST to /tool/:name) so clients can navigate from the
     // catalog to an individual invocation by following links.
     return {
       '@id': `${base}/tool/${name}`,
       '@type': ['hydra:Resource', 'urn:iep:type:McpTool'],
-      ...baseSchema,
+      ...schema,
       affordances: [
         {
           '@type': ['iep:Affordance', 'hydra:Operation'],
@@ -16204,6 +16220,7 @@ app.get('/tools', (req, res) => {
     '@id': `${base}/tools`,
     '@type': ['hydra:Collection', 'urn:iep:type:McpToolCatalog'],
     conformsToShape: 'urn:iep:shape:McpToolCatalog',
+    'dct:identifier': `sha256:${TOOL_SURFACE_DIGEST}`,
     'hydra:totalItems': members.length,
     'hydra:member': members,
   });
@@ -16661,11 +16678,8 @@ app.post('/messages', messagesLimiter, async (req, res) => {
       jsonrpc: '2.0',
       id,
       result: {
-        tools: Object.entries(TOOLS).map(([name, { description }]) => ({
-          name,
-          description,
-          inputSchema: { type: 'object', properties: {} },
-        })),
+        tools: TOOL_SURFACE.tools.map(tool => ({ ...tool })),
+        _meta: { [TOOL_SURFACE_META_KEY]: TOOL_SURFACE_DIGEST },
       },
     });
     return;

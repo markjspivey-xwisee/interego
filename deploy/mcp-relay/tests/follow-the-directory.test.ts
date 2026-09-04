@@ -120,7 +120,7 @@ try {
   writeFileSync(
     tmpModule,
     // The slices reference declarations that live elsewhere in server.ts (`KnownPodEntry`,
-    // `DirectoryIdentity`, `TOOL_SCHEMAS`). tsx transpiles rather than typechecks, so type
+    // `DirectoryIdentity`, `TOOL_SURFACE`). tsx transpiles rather than typechecks, so type
     // positions are erased; the value-level ones are supplied here as the smallest stand-ins
     // that let the BODIES under test run as the shipped characters.
     //
@@ -134,7 +134,7 @@ try {
     + `const STORE_ORIGINS: ReadonlySet<string> = new Set(`
     + `${JSON.stringify([new URL(CSS).origin, new URL(PUB).origin])});\n`
     + `const knownPods = new Map<string, KnownPodEntry>();\n`
-    + `const TOOL_SCHEMAS = [{ name: 'notify_agent', inputSchema: {}, outputSchema: {} }];\n`
+    + `const TOOL_SURFACE = { tools: [{ name: 'notify_agent', inputSchema: {}, outputSchema: {} }] };\n`
     + `const apActorUrl = (base: string, lp: string) => \`\${base.replace(/\\/$/, '')}/agents/\${encodeURIComponent(lp)}\`;\n`
     + `const operationActionUrl = (base: string, name: string) => \`\${base}/ns/iep/action/relay/\${name}\`;\n`
     + `const operationContract = (base: string, name: string, sc: any) => ({\n`

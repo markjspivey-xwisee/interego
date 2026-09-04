@@ -270,7 +270,12 @@ assert.ok(APPLICATION_LAB_APP_HTML.startsWith('<!doctype html>'));
 assert.ok(APPLICATION_LAB_APP_HTML.includes("callTool('open_application_lab'"));
 assert.ok(APPLICATION_LAB_APP_HTML.includes("callTool('execute_application_action'"));
 assert.ok(APPLICATION_LAB_APP_HTML.includes('catalog_graph_iri:d.catalog.graphIri'));
-assert.ok(!APPLICATION_LAB_APP_HTML.includes('Release Control'));
+assert.ok(APPLICATION_LAB_APP_HTML.includes('catalog_graph_iri:DATA.catalog.graphIri'));
+assert.ok(APPLICATION_LAB_APP_HTML.includes('pod_url:DATA.catalog.podUrl'));
+assert.ok(!APPLICATION_LAB_APP_HTML.includes("path(head.state,'status')"));
+for (const domainToken of ['Release Control', 'FOXXI', 'AGP']) {
+  assert.ok(!APPLICATION_LAB_APP_HTML.includes(domainToken));
+}
 assert.ok(!/<script\s+src=|<link\s+href=|@import/i.test(APPLICATION_LAB_APP_HTML));
 assert.ok(!/\son[a-z]+\s*=/.test(APPLICATION_LAB_APP_HTML));
 
