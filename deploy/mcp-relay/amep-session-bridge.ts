@@ -168,7 +168,8 @@ export function applicationActionMcpRequest(
   const params = rpc['params'];
   if (rpc['jsonrpc'] !== '2.0' || rpc['method'] !== 'tools/call') return null;
   if (!params || typeof params !== 'object' || Array.isArray(params)) return null;
-  if (!['execute_application_action', 'preview_application_action'].includes(String((params as Record<string, unknown>)['name']))) return null;
+  const name = (params as Record<string, unknown>)['name'];
+  if (name !== 'execute_application_action' && name !== 'preview_application_action') return null;
   return u;
 }
 

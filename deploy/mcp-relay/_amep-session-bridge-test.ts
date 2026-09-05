@@ -42,6 +42,7 @@ const REST_INIT = { method: 'POST', body: REST_BODY };
 check('same-origin exact Application Lab REST executor → matched', !!applicationActionRestRequest(REST, BASE, REST_INIT));
 check('same-origin exact Application Lab REST preview → matched', !!applicationActionRestRequest(`${BASE}/tool/preview_application_action`, BASE, REST_INIT));
 check('same-origin exact Application Lab MCP preview → matched', !!applicationActionMcpRequest(MCP, BASE, { ...RPC_INIT, body: APP_RPC.replace('execute_application_action', 'preview_application_action') }));
+check('array-shaped tool name → null', applicationActionMcpRequest(MCP, BASE, { ...RPC_INIT, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: ['preview_application_action'], arguments: {} } }) }) === null);
 check('external preview lookalike → null', applicationActionRestRequest('https://evil.example.com/tool/preview_application_action', BASE, REST_INIT) === null);
 check('preview route suffix → null', applicationActionRestRequest(`${BASE}/tool/preview_application_action/extra`, BASE, REST_INIT) === null);
 check('external REST lookalike → null', applicationActionRestRequest('https://evil.example.com/tool/execute_application_action', BASE, REST_INIT) === null);
