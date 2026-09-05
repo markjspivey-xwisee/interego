@@ -77,10 +77,11 @@ button.go:disabled{opacity:.55;cursor:default}
 
 const BOOT_JS = String.raw`
 var DATA = null;
+var RPC=1, PENDING=Object.create(null), BRIDGE_READY=false, BRIDGE_PROMISE=null;
 function q(id){return document.getElementById(id)}
-// ── read the tool output (ChatGPT compat first, then MCP Apps bridge) ──
+// Legacy globals can arrive before or instead of the standard host handshake.
 function readToolOutput(){ try{ if(window.openai&&window.openai.toolOutput) return window.openai.toolOutput; }catch(e){} return null; }
-function hydrate(d){ if(shouldRehydrate(DATA,d)){ DATA=d; render(); } }
+function hydrate(d){ if(shouldRehydrate(DATA,d)){ DATA=d; render(); reportSize(); } }
 // ChatGPT sets the tool output ASYNCHRONOUSLY (the iframe can mount before the
 // approval-gated structuredContent arrives) and signals it via the
 // openai:set_globals CustomEvent. But that event ALSO fires for theme / displayMode
@@ -95,21 +96,60 @@ window.addEventListener('openai:set_globals',function(ev){
 },{passive:true});
 window.addEventListener('message',function(ev){
   if(ev.source!==window.parent) return;
-  var m=ev.data; if(!m||typeof m!=='object') return;
-  // MCP Apps standard delivery (fallback path to the ChatGPT event above).
+  var m=ev.data; if(!m||typeof m!=='object'||m.jsonrpc!=='2.0') return;
   if(m.method==='ui/notifications/tool-result'){ hydrate((m.params&&m.params.structuredContent)||null); }
-  else if(m.id!=null && PENDING[m.id]){ var p=PENDING[m.id]; delete PENDING[m.id]; if(m.error) p.reject(new Error(m.error.message||'tool error')); else p.resolve(m.result); }
+  else if(!m.method && m.id!=null && PENDING[m.id]){ var p=PENDING[m.id]; delete PENDING[m.id]; clearTimeout(p.timer); if(m.error) p.reject(new Error(m.error.message||'host error')); else p.resolve(m.result); }
 });
-// ── invoke a tool: prefer window.openai.callTool, else JSON-RPC postMessage ──
-var RPC=1, PENDING={};
-function callTool(name,args){
-  try{ if(window.openai&&typeof window.openai.callTool==='function'){ var r=window.openai.callTool(name,args); return Promise.resolve(r); } }catch(e){}
+function rpcNotify(method,params){ window.parent.postMessage({jsonrpc:'2.0',method:method,params:params},'*'); }
+function rpcRequest(method,params){
   return new Promise(function(resolve,reject){
-    var id='hmd-'+(RPC++); PENDING[id]={resolve:resolve,reject:reject};
-    try{ window.parent.postMessage({jsonrpc:'2.0',id:id,method:'tools/call',params:{name:name,arguments:args}},'*'); }
-    catch(e){ delete PENDING[id]; reject(e); }
-    setTimeout(function(){ if(PENDING[id]){ delete PENDING[id]; reject(new Error('timed out waiting for '+name)); } },60000);
+    var id='hmd-'+(RPC++);
+    var timer=setTimeout(function(){ delete PENDING[id]; reject(new Error('timed out waiting for '+method)); },60000);
+    PENDING[id]={resolve:resolve,reject:reject,timer:timer};
+    try{ window.parent.postMessage({jsonrpc:'2.0',id:id,method:method,params:params},'*'); }
+    catch(e){ clearTimeout(timer); delete PENDING[id]; reject(e); }
   });
+}
+// The host may withhold BOTH frame visibility and tool data until initialized.
+// Listening for tool-result alone therefore leaves a permanent loading panel.
+function initializeBridge(){
+  if(window.parent===window) return;
+  BRIDGE_PROMISE=rpcRequest('ui/initialize',{
+    appInfo:{name:'interego-hmd',version:'1.0.0'},appCapabilities:{},protocolVersion:'2026-01-26'
+  }).then(function(result){
+    if(!result||result.protocolVersion!=='2026-01-26') throw new Error('Unsupported UI protocol');
+    rpcNotify('ui/notifications/initialized',{});
+    BRIDGE_READY=true;
+    LAST_HEIGHT=0;
+    reportSize();
+  });
+  // Keep rejection observable to queued calls, without an unhandled rejection.
+  BRIDGE_PROMISE.catch(function(error){
+    if(DATA && window.openai && typeof window.openai.callTool==='function') return;
+    var alert=el('p','status err','Unable to connect the viewer: '+error.message);
+    alert.setAttribute('role','alert'); q('pane-enhanced').appendChild(alert);
+    reportSize();
+  });
+}
+function callTool(name,args){
+  if(BRIDGE_READY) return rpcRequest('tools/call',{name:name,arguments:args});
+  // A legacy host need not implement ui/initialize. Do not retry a rejected call
+  // through another transport: a mutating request may already have been sent.
+  if(window.openai && typeof window.openai.callTool==='function'){
+    return Promise.resolve().then(function(){return window.openai.callTool(name,args);});
+  }
+  if(!BRIDGE_PROMISE) return Promise.reject(new Error('No widget host is connected'));
+  return BRIDGE_PROMISE.then(function(){return rpcRequest('tools/call',{name:name,arguments:args});});
+}
+var LAST_HEIGHT=0;
+function reportSize(){
+  var wrap=document.querySelector('.wrap'); if(!wrap) return;
+  var height=Math.ceil(wrap.getBoundingClientRect().height);
+  if(height<=0||height===LAST_HEIGHT) return;
+  if(BRIDGE_READY){ rpcNotify('ui/notifications/size-changed',{height:height}); LAST_HEIGHT=height; }
+  else if(window.openai && typeof window.openai.notifyIntrinsicHeight==='function'){
+    window.openai.notifyIntrinsicHeight(height); LAST_HEIGHT=height;
+  }
 }
 function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e;}
 function selectTab(name){
@@ -117,6 +157,7 @@ function selectTab(name){
     q('tab-'+t).setAttribute('aria-selected',String(t===name));
     q('pane-'+t).classList.toggle('on',t===name);
   });
+  reportSize();
 }
 function render(){
   var d=DATA||{};
@@ -263,6 +304,10 @@ function prettyAction(iri){ var n=localName(iri).replace(/[-_]/g,' ').replace(/(
   // tool-result hydrate later. hydrate() is guarded (only re-renders on a new HMD
   // document), so these paths never wipe in-progress UI state.
   DATA=null; render(); hydrate(readToolOutput());
+  initializeBridge();
+  // Watch content rather than viewport height, so host resizing cannot create
+  // a feedback loop and tab changes/confirmation boxes can shrink the frame.
+  if(typeof ResizeObserver==='function') new ResizeObserver(reportSize).observe(document.querySelector('.wrap'));
 })();
 `;
 
