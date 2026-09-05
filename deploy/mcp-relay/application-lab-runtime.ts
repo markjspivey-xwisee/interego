@@ -390,6 +390,7 @@ function getPath(root: Record<string, unknown>, path: string): unknown {
   let cur: unknown = root;
   for (const part of clean.split('.')) {
     if (cur == null || (typeof cur !== 'object' && !Array.isArray(cur))) return undefined;
+    if (!Object.hasOwn(cur, part)) return undefined;
     cur = (cur as Record<string, unknown>)[part];
   }
   return cur;
@@ -406,15 +407,21 @@ function resolveValue(value: unknown, env: Record<string, unknown>): unknown {
   return value;
 }
 
-function matchesWhere(item: unknown, where: unknown, env: Record<string, unknown>): boolean {
-  if (!where || typeof where !== 'object') return false;
+function evaluateWhere(item: unknown, where: unknown, env: Record<string, unknown>): GuardResult {
+  if (!where || typeof where !== 'object') return { pass: false, supported: false, explanation: 'invalid where predicate' };
   const w = where as Record<string, unknown>;
   const itemEnv = { ...env, item };
   if ('itemPath' in w && 'eq' in w) {
     const left = getPath({ item }, `$item.${String(w['itemPath'])}`);
-    return jsonEqual(left, resolveValue(w['eq'], itemEnv));
+    return { pass: jsonEqual(left, resolveValue(w['eq'], itemEnv)), supported: true, explanation: 'item equality' };
   }
-  return evaluateGuard(where, itemEnv).pass;
+  return evaluateGuard(where, itemEnv);
+}
+
+function matchesWhere(item: unknown, where: unknown, env: Record<string, unknown>): boolean {
+  const result = evaluateWhere(item, where, env);
+  if (!result.supported) throw new Error(`unsupported where predicate: ${result.explanation}`);
+  return result.pass;
 }
 
 export interface GuardResult { readonly pass: boolean; readonly explanation: string; readonly supported: boolean }
@@ -438,8 +445,14 @@ export function evaluateGuard(guard: unknown, env: Record<string, unknown>): Gua
   }
   if (op === 'none' || op === 'exists') {
     const list = getPath(env, String(g['path'] ?? ''));
+    // Unsupported predicates are not negative evidence. Check even an empty or
+    // missing collection so `none(unknown)` cannot silently become permission.
+    const results = (Array.isArray(list) && list.length ? list : [undefined])
+      .map(item => evaluateWhere(item, g['where'], env));
+    const unsupported = results.find(r => !r.supported);
+    if (unsupported) return { pass: false, supported: false, explanation: `${op}: ${unsupported.explanation}` };
     if (!Array.isArray(list)) return { pass: false, supported: true, explanation: `${op}: path is not an array` };
-    const count = list.filter(item => matchesWhere(item, g['where'], env)).length;
+    const count = list.length ? results.filter(r => r.pass).length : 0;
     return { pass: op === 'none' ? count === 0 : count > 0, supported: true, explanation: `${op}: ${count} match${count === 1 ? '' : 'es'}` };
   }
   if (op === 'countDistinct') {
@@ -464,7 +477,7 @@ function setPath(state: Record<string, Json>, path: string, value: Json): void {
   let cursor: Record<string, Json> = state;
   for (const p of parts.slice(0, -1)) {
     const next = cursor[p];
-    if (!isRecord(next)) cursor[p] = {};
+    if (!Object.hasOwn(cursor, p) || !isRecord(next)) cursor[p] = {};
     cursor = cursor[p] as Record<string, Json>;
   }
   cursor[parts[parts.length - 1]!] = value;
@@ -481,19 +494,25 @@ export function applyEffects(
   effects: readonly Record<string, Json>[],
   env: Record<string, unknown>,
 ): Record<string, Json> {
-  const next = JSON.parse(JSON.stringify(state)) as Record<string, Json>;
+  // Values crossing into a successor must be JSON-owned, including values resolved
+  // from payload/evidence. Otherwise a later effect can mutate the caller's input.
+  const copy = (value: unknown): Json => JSON.parse(canonicalJson(value)) as Json;
+  const next = copy(state) as Record<string, Json>;
   const fullEnv = { ...env, state: next };
   for (const raw of effects) {
     const op = String(raw['op'] ?? '');
     const path = String(raw['path'] ?? '');
     if (!path.startsWith('$state.')) throw new Error(`effect path must begin $state.: ${path}`);
+    if (path.slice('$state.'.length).split('.').some(p => !p || p === '__proto__' || p === 'constructor' || p === 'prototype')) {
+      throw new Error(`unsafe effect path: ${path}`);
+    }
     if (op === 'set') {
-      setPath(next, path, resolveValue(raw['value'], fullEnv) as Json);
+      setPath(next, path, copy(resolveValue(raw['value'], fullEnv)));
       continue;
     }
     if (op === 'appendUnique') {
       const arr = stateArray(next, path);
-      const value = resolveValue(raw['value'], fullEnv) as Json;
+      const value = copy(resolveValue(raw['value'], fullEnv));
       const by = asString(raw['by']);
       const duplicate = by && isRecord(value)
         ? arr.some(x => isRecord(x) && jsonEqual(x[by], value[by]))
@@ -505,10 +524,12 @@ export function applyEffects(
       const arr = stateArray(next, path);
       const patch = asRecord(raw['set']);
       if (!patch) throw new Error('updateAllWhere requires an object set');
+      if (!arr.length) matchesWhere(undefined, raw['where'], fullEnv);
       for (let i = 0; i < arr.length; i++) {
         const item = arr[i];
-        if (!isRecord(item) || !matchesWhere(item, raw['where'], fullEnv)) continue;
-        arr[i] = { ...item, ...resolveValue(patch, { ...fullEnv, item }) as Record<string, Json> };
+        const matches = matchesWhere(item, raw['where'], fullEnv);
+        if (!isRecord(item) || !matches) continue;
+        arr[i] = { ...item, ...copy(resolveValue(patch, { ...fullEnv, item })) as Record<string, Json> };
       }
       continue;
     }
@@ -1113,6 +1134,7 @@ export async function resolveApplicationLab(input: ResolveApplicationLabInput, r
       definition: definition as unknown as Json,
       stateGraphIri,
       contractGraphIri: activeContractLoaded.envelope.graphIri ?? definition.contractGraphIri,
+      contractDigest: activeContractLoaded.envelope.declaredDigest,
       governanceGraphIri: governanceGraphIri ?? '',
     },
     head: {
@@ -1243,7 +1265,7 @@ export function prepareApplicationAction(resolved: ResolvedApplicationLab, input
   if (!action) throw new Error(`action is absent from the verified active contract: ${input.actionIri}`);
   if (!descriptorActionIsExecutable(action)) throw new Error(`action target/method is not executable by signed-domain/v1: ${action.target} ${action.method}`);
   if ((action.method ?? 'POST').toUpperCase() === 'GET') throw new Error('read-only actions refresh the Lab; they do not publish a successor');
-  const payload = input.payload ?? {};
+  const payload = JSON.parse(canonicalJson(input.payload ?? {})) as Record<string, unknown>;
   const payloadErrors = validateActionPayload(action, payload);
   if (payloadErrors.length) throw new Error(`payload does not conform to the signed action inputs: ${payloadErrors.join('; ')}`);
   const verifiedEvidence = input.evidence ?? [];
