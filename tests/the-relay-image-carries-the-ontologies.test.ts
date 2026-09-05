@@ -16,6 +16,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { FRAMEWORK_CONTROLS } from '@interego/compliance';
 
@@ -23,7 +24,9 @@ const DOCKERFILE = fileURLToPath(new URL('../deploy/Dockerfile.relay', import.me
 const body = readFileSync(DOCKERFILE, 'utf8');
 
 /**
- * ★ STAGE-AWARE, because a multi-stage Dockerfile resets everything at each `FROM`.
+ * Follow FROM inheritance, without reading unrelated build-stage settings. A FROM that
+ * names an earlier stage inherits its filesystem and configuration; an external base
+ * starts a separate image. Both the neutral and reference targets inherit base-runtime.
  *
  * These helpers first read the whole file: `runtimeWorkdir()` returned the last `WORKDIR`
  * ANYWHERE, and the `ENV` assertion matched anywhere too. Dockerfile.relay declares `WORKDIR /app`
@@ -33,31 +36,44 @@ const body = readFileSync(DOCKERFILE, 'utf8');
  * runtime's. Likewise an `ENV` in a build stage does not reach the final image at all. A test
  * asserting a runtime property has to know where the runtime starts.
  */
-const runtimeStage = ((): string => {
-  const froms = [...body.matchAll(/^FROM\s/gm)];
-  const last = froms.at(-1);
-  if (last === undefined) throw new Error('Dockerfile.relay has no FROM — this guard is reading the wrong file');
-  return body.slice(last.index);
-})();
-
-/** `WORKDIR` in force for the final image — the last one declared IN THE RUNTIME STAGE. */
-function runtimeWorkdir(): string {
-  const all = [...runtimeStage.matchAll(/^WORKDIR\s+(\S+)/gm)].map(m => m[1]!);
-  return all.at(-1) ?? '/';
+function inheritedStage(source: string, target: string): string {
+  const froms = [...source.matchAll(/^FROM[ \t]+(\S+)(?:[ \t]+AS[ \t]+(\S+))?[^\n]*$/gmi)];
+  const stages = new Map<string, string>();
+  for (const [index, from] of froms.entries()) {
+    const inherited = stages.get(from[1]!.toLowerCase()) ?? '';
+    const own = source.slice(from.index! + from[0].length, froms[index + 1]?.index);
+    const effective = inherited + own;
+    stages.set(String(index), effective);
+    if (from[2]) stages.set(from[2].toLowerCase(), effective);
+    if (from[2]?.toLowerCase() === target.toLowerCase()) return effective;
+  }
+  throw new Error(`Dockerfile.relay has no ${target} stage`);
 }
 
-/** Resolve a runtime-stage destination (possibly `./x`) against the runtime WORKDIR. */
-function absolute(dest: string): string {
-  const cleaned = dest.replace(/\/$/, '');
-  if (cleaned.startsWith('/')) return cleaned;
-  return `${runtimeWorkdir().replace(/\/$/, '')}/${cleaned.replace(/^\.\//, '')}`;
+/** COPY destinations resolve against the WORKDIR in force when that instruction runs. */
+function runtimeCopies(stage: string): Array<{ src: string; dest: string }> {
+  let workdir = '/';
+  const copies: Array<{ src: string; dest: string }> = [];
+  for (const line of stage.split('\n')) {
+    const next = /^WORKDIR\s+(\S+)/.exec(line)?.[1];
+    if (next) workdir = posix.resolve(workdir, next);
+    const copy = /^COPY\s+--from=build\s+(\S+)\s+(\S+)/.exec(line);
+    if (copy) copies.push({ src: copy[1]!.replace(/\/$/, ''), dest: posix.resolve(workdir, copy[2]!) });
+  }
+  return copies;
 }
 
-describe('the relay image carries the published control rosters', () => {
+function ontologyDir(stage: string): string | undefined {
+  return [...stage.matchAll(/^ENV\s+INTEREGO_NS_DIR=(\S+)/gm)].at(-1)?.[1];
+}
+
+describe.each(['runtime', 'reference'])('the %s relay image carries the published control rosters', target => {
+  const runtimeStage = inheritedStage(body, target);
+
   it('parses a runtime stage at all — a vacuous pass here would hide every assertion below', () => {
     expect(runtimeStage.length).toBeGreaterThan(0);
     expect(runtimeStage.length).toBeLessThan(body.length);
-    expect(runtimeWorkdir()).toMatch(/^\//);
+    expect(runtimeStage).not.toContain('RUN npm run build');
   });
 
   it('declares INTEREGO_NS_DIR in the RUNTIME stage, where the running process can read it', () => {
@@ -80,12 +96,11 @@ describe('the relay image carries the published control rosters', () => {
    * a plausible number rather than an error, which is why it is asserted rather than trusted.
    */
   it('points INTEREGO_NS_DIR at the directory those ontologies actually land in at runtime', () => {
-    const nsDir = /^ENV\s+INTEREGO_NS_DIR=(\S+)/m.exec(runtimeStage)?.[1];
+    const nsDir = ontologyDir(runtimeStage);
     expect(nsDir, 'INTEREGO_NS_DIR is not set in the relay image runtime stage').toBeTruthy();
 
-    // Only the runtime stage's `COPY --from=` lines put anything in the final image.
-    const stageCopies = [...runtimeStage.matchAll(/^COPY\s+--from=\S+\s+(\S+)\s+(\S+)/gm)]
-      .map(m => ({ src: m[1]!.replace(/\/$/, ''), dest: absolute(m[2]!) }));
+    // Include inherited copies, but never copies from unrelated stages.
+    const stageCopies = runtimeCopies(runtimeStage);
 
     for (const framework of Object.keys(FRAMEWORK_CONTROLS)) {
       const dest = new RegExp(`^COPY\\s+docs/ns/${framework}\\.ttl\\s+(\\S+)`, 'm').exec(body)?.[1];
@@ -102,5 +117,18 @@ describe('the relay image carries the published control rosters', () => {
         `${framework}.ttl lands at ${runtimeDir} but INTEREGO_NS_DIR points at ${nsDir}`,
       ).toBe(nsDir);
     }
+  });
+
+  it('detects missing inherited environment, working directory and ontology copy', () => {
+    const withoutEnv = body.replace(/^ENV INTEREGO_NS_DIR=.*\n/m, '');
+    expect(ontologyDir(inheritedStage(withoutEnv, target))).toBeUndefined();
+
+    const withoutWorkdir = body.replace(/(FROM [^\n]+ AS base-runtime\s*)WORKDIR \/app/, '$1');
+    const copies = runtimeCopies(inheritedStage(withoutWorkdir, target));
+    expect(copies.find(copy => copy.src === '/relay-docs')?.dest).toBe('/relay-docs');
+    expect(copies.find(copy => copy.src === '/relay-docs')?.dest + '/ns').not.toBe(ontologyDir(runtimeStage));
+
+    const withoutCopy = body.replace(/^COPY --from=build \/relay-docs .*\n/m, '');
+    expect(runtimeCopies(inheritedStage(withoutCopy, target)).some(copy => copy.src === '/relay-docs')).toBe(false);
   });
 });
