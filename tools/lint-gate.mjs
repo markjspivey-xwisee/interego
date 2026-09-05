@@ -634,7 +634,7 @@ const BASELINE = {};
 // `| grep` or `| tail` is a gate you have partially disabled: run it plain and check ITS exit code.
 // Same shape as every other proxy this week — the summary line standing in for the verdict.
 // The simulation regressions bring the measured tracked scope to 554 files.
-export const MIN_FILES = 530;
+export const MIN_FILES = 534;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.

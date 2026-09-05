@@ -71,7 +71,20 @@ not utility, confidence, or a recommendation. Preview never selects an action.
 
 Selection does not authorize a write. The caller must re-resolve current authority,
 contract, evidence, and head, then execute through the existing authenticated path.
-No live MCP tool, UI control, signing, or publishing path is added here.
+The live `preview_application_action` tool wraps this same pure simulator. It
+requires the observed state CID and active contract digest, resolves signed
+authority and evidence afresh, and binds actor and time on the server. It checks
+authority again before returning. The Application Lab's **Preview changes** button
+calls that tool each time and displays the proposed changes separately from
+authoritative state. It discards responses after edits, rediscovery, or application
+switching. Execution remains a separate confirmed action with independent checks.
+
+The preview tool receives only read adapters, skips session pod initialization
+and directory registration, and is classified for OAuth read scope. Its narrow
+same-origin session bridge also makes it callable through the existing generic
+`act` tool when a client's named tool catalog is stale. That returns live JSON;
+mounting the native Lab still requires the host to expose `open_application_lab`.
+No production code imports these example rule packs or fixture verifier doubles.
 
 ## Acceptance coverage
 

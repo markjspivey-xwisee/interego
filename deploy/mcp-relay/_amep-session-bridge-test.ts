@@ -40,6 +40,10 @@ const REST = `${BASE}/tool/execute_application_action`;
 const REST_BODY = JSON.stringify({ catalog_descriptor_url: 'https://pod/catalog.ttl', application_id: 'urn:app', action_iri: 'urn:action', expected_head: 'cid', payload: {} });
 const REST_INIT = { method: 'POST', body: REST_BODY };
 check('same-origin exact Application Lab REST executor → matched', !!applicationActionRestRequest(REST, BASE, REST_INIT));
+check('same-origin exact Application Lab REST preview → matched', !!applicationActionRestRequest(`${BASE}/tool/preview_application_action`, BASE, REST_INIT));
+check('same-origin exact Application Lab MCP preview → matched', !!applicationActionMcpRequest(MCP, BASE, { ...RPC_INIT, body: APP_RPC.replace('execute_application_action', 'preview_application_action') }));
+check('external preview lookalike → null', applicationActionRestRequest('https://evil.example.com/tool/preview_application_action', BASE, REST_INIT) === null);
+check('preview route suffix → null', applicationActionRestRequest(`${BASE}/tool/preview_application_action/extra`, BASE, REST_INIT) === null);
 check('external REST lookalike → null', applicationActionRestRequest('https://evil.example.com/tool/execute_application_action', BASE, REST_INIT) === null);
 check('adjacent REST tool → null', applicationActionRestRequest(`${BASE}/tool/publish_context`, BASE, REST_INIT) === null);
 check('REST query string → null', applicationActionRestRequest(`${REST}?tool=publish_context`, BASE, REST_INIT) === null);
@@ -124,6 +128,14 @@ const acceptHdr = (init: any) => Object.entries(init?.headers ?? {}).find(([k]) 
 
 // ── Application Lab executor session bridge ──────────────────────────────
 // 10. Exact same-origin executor tools/call → bearer attached + redirect disabled.
+{
+  const rec = recorder();
+  const url = `${BASE}/tool/preview_application_action`;
+  const { fetch } = withAmepSession(url, {}, { identityBearer: 'PREVIEWTOK' }, DEPS(rec.fn));
+  await fetch(url, REST_INIT);
+  check('Preview REST call → identity bearer auto-attached', authHdr(rec.calls[0]?.init) === 'Bearer PREVIEWTOK');
+  check('Preview REST call → redirects disabled', rec.calls[0]?.init?.redirect === 'manual');
+}
 {
   const rec = recorder();
   const { fetch } = withAmepSession(MCP, {}, { sessionBearer: 'LABTOK' }, DEPS(rec.fn));

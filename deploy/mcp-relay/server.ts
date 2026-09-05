@@ -241,6 +241,7 @@ import { noteToHyperMarkdown, inlineRenderedForDescriptor, viewerControls, publi
 import { HMD_APP_HTML } from './hmd-app.js';
 // Generic descriptor-defined Application Lab (one app resource, live graphs supplied by tool).
 import { APPLICATION_LAB_APP_HTML } from './application-lab-app.js';
+import { previewApplicationAction } from './application-preview.js';
 import {
   prepareApplicationAction,
   resolveApplicationActionEvidence,
@@ -732,6 +733,7 @@ function log(msg: string): void {
 const AUTH_REQUIRED_TOOLS = new Set([
   'publish_context', 'remember', 'register_agent', 'revoke_agent',
   'execute_application_action',
+  'preview_application_action',
   'publish_directory',
   'subscribe_to_pod', 'add_pod', 'resolve_webfinger',
   // record_trajectory_step ultimately calls publish_context internally,
@@ -1870,6 +1872,7 @@ const READ_SIDE_TOOLS = new Set<string>([
   'discover_context', 'discover_all', 'discover_directory', 'get_descriptor',
   'get_encrypted_graph', 'get_current_head', 'get_pod_status', 'list_known_pods',
   'list_declared_shapes', 'render_hmd', 'resolve_linked_data', 'verify_agent',
+  'preview_application_action',
   // Analysis and routing — answer questions, write nothing.
   'analyze_question', 'interrogative_route', 'check_balance',
   // PGSL reads. `pgsl_ingest` and `pgsl_decide` are absent: they write the lattice.
@@ -4971,7 +4974,7 @@ async function handleOpenApplicationLab(args: ToolArgs): Promise<string> {
       ...(typeof a['catalog_descriptor_url'] === 'string' ? { catalogDescriptorUrl: normalizeCssUrl(a['catalog_descriptor_url'] as string) } : {}),
       ...(typeof a['pod_url'] === 'string' && a[POD_URL_INJECTED] !== true ? { podUrl: normalizeCssUrl(a['pod_url'] as string) } : {}),
       ...(typeof a['application_id'] === 'string' ? { applicationId: a['application_id'] as string } : {}),
-      actor: callerAgentId(args),
+      actor: canonicalApplicationActorId(callerAgentId(args), IDENTITY_URL),
     }, applicationLabReads(args));
     return JSON.stringify(resolved.snapshot);
   } catch (err) {
@@ -4981,6 +4984,22 @@ async function handleOpenApplicationLab(args: ToolArgs): Promise<string> {
       live: true,
       retryable: true,
     });
+  }
+}
+
+/** Resolve and simulate one action using only reads and the authenticated actor. */
+async function handlePreviewApplicationAction(args: ToolArgs): Promise<string> {
+  try {
+    const request = { ...args } as Record<string, unknown>;
+    if (typeof request['catalog_descriptor_url'] === 'string') {
+      request['catalog_descriptor_url'] = normalizeCssUrl(request['catalog_descriptor_url']);
+    }
+    return JSON.stringify(await previewApplicationAction(request, {
+      actor: canonicalApplicationActorId(callerAgentId(args), IDENTITY_URL),
+      now: new Date().toISOString(),
+    }, applicationLabReads(args)));
+  } catch (err) {
+    return JSON.stringify({ error: 'application_preview_refused', message: (err as Error).message, live: true, committed: false });
   }
 }
 
@@ -10712,6 +10731,7 @@ const TOOLS: Record<string, ToolEntry> = gateRequiredArgs({
   render_hmd: { description: 'Open a note in the interactive HyperMarkdown viewer', handler: handleRenderHmd },
   open_application_lab: { description: 'Blind-discover and open a live descriptor-defined Interego application', handler: handleOpenApplicationLab },
   execute_application_action: { description: 'Execute one exact action from a fully verified signed-domain application contract with current-head CAS', handler: handleExecuteApplicationAction },
+  preview_application_action: { description: 'Read and verify current application authority, then simulate one action without signing or publishing', handler: handlePreviewApplicationAction },
   get_pod_status: { description: 'Check pod status', handler: handleGetPodStatus },
   subscribe_to_pod: { description: 'Subscribe to pod notifications', handler: handleSubscribeToPod },
   register_agent: { description: 'Register an agent on a pod', handler: handleRegisterAgent },
@@ -12258,6 +12278,27 @@ const TOOL_SCHEMAS = [
     },
   },
   {
+    name: 'preview_application_action',
+    description: 'Preview one action against the live verified Application Lab state and active signed contract. Re-resolves authority and complete replay on every request, verifies declared external evidence, evaluates the same guard/effects as execution under the authenticated session actor, and returns proposed changes or refusal. Expected state head and contract digest must match. No signing, publishing, pod initialization, or state mutation occurs. The result grants no authority to commit; execution re-verifies independently.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        catalog_graph_iri: { type: 'string' },
+        catalog_descriptor_url: { type: 'string' },
+        application_id: { type: 'string' },
+        action_iri: { type: 'string' },
+        expected_head: { type: 'string', description: 'Observed current state CID from open_application_lab.' },
+        expected_contract_digest: { type: 'string', description: 'Observed application.contractDigest from open_application_lab.' },
+        payload: { type: 'object', additionalProperties: true, description: 'Only inputs declared by this signed action.' },
+      },
+      required: ['catalog_descriptor_url', 'application_id', 'action_iri', 'expected_head', 'expected_contract_digest', 'payload'],
+      additionalProperties: false,
+    },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Preview live application action', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    _meta: { ui: { visibility: ['model', 'app'] }, 'openai/widgetAccessible': true },
+  },
+  {
     name: 'execute_application_action',
     description: 'Execute ONE exact POST action from a live descriptor-defined application. This is the generic urn:interego:runtime:signed-domain:v1 executor used by the Application Lab: it re-resolves the verified catalog, active contract and singular state head; verifies complete replay; rejects undeclared inputs; evaluates the signed guard under the server-bound actor; applies only the signed effects; publishes one signed canonical-JSON successor with if_match CAS; then re-verifies the new descriptor and complete replay before returning committed. Caller-supplied actor, time, contract, effects, and successor state are never accepted.',
     inputSchema: {
@@ -12959,7 +13000,7 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
       // project's own name — and an external agent looking for the maintainer in
       // `list_known_pods` picked it, reasonably. `claude-code-vscode-…` collapsed to
       // `claude` the same way. See the helper's header for the measured incident.
-      {
+      if (name !== 'preview_application_action') {
         const sessId = (args._session_agent_id as string | undefined) ?? '';
         const surf = surfaceSlugFromAgentId(sessId);
         // ★ NO `?? args.agent_id` FALLBACK. `_session_agent_did` is assigned from
@@ -12997,7 +13038,7 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
     // strict-DPoP environment, where AUTH_REQUIRED_TOOLS calls bubble
     // the bootstrap error to the tool handler shell so the client gets
     // a clear failure rather than a silent half-init write.
-    if (authContext && authContext.podUrl && authContext.ownerWebId && authContext.userId) {
+    if (name !== 'preview_application_action' && authContext && authContext.podUrl && authContext.ownerWebId && authContext.userId) {
       const podAware = POD_AWARE_TOOLS.has(name);
       const strictRequired = RELAY_REQUIRE_DPOP && AUTH_REQUIRED_TOOLS.has(name);
       const initAuthCtx = {
@@ -16366,7 +16407,7 @@ app.post('/tool/:name', toolInvokeLimiter, async (req, res) => {
     // left ABSENT rather than filled with a placeholder when the id carries no surface —
     // `describeDirectoryEntry` reports an absent identity as absent, which is the honest
     // answer and the one a caller can act on.
-    {
+    if (toolName !== 'preview_application_action') {
       const sessionDid = req.body._session_agent_did as string | undefined;
       const sessionPod = req.body._session_user_id as string | undefined;
       autoRegisterAgentCard(

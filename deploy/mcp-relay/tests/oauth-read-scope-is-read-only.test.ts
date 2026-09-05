@@ -56,6 +56,7 @@ function readSideTools(): Set<string> {
 
 const tools = registeredTools();
 const readSide = readSideTools();
+check('live application preview is available with read scope', readSide.has('preview_application_action'));
 
 // Guards the guard: an extractor that stopped matching would make every assertion vacuous.
 check('the registered-tool scan still finds the tool table', tools.length > 40,

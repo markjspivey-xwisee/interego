@@ -1134,6 +1134,7 @@ export async function resolveApplicationLab(input: ResolveApplicationLabInput, r
       definition: definition as unknown as Json,
       stateGraphIri,
       contractGraphIri: activeContractLoaded.envelope.graphIri ?? definition.contractGraphIri,
+      contractDigest: activeContractLoaded.envelope.declaredDigest,
       governanceGraphIri: governanceGraphIri ?? '',
     },
     head: {

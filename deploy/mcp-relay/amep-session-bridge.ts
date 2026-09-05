@@ -6,7 +6,7 @@
  * the generic Application Lab executor when a connector's cached tool catalog
  * predates that live tool. The relay reuses the caller's ALREADY-VERIFIED
  * session token only for its own exact endpoints and, for the MCP loopback,
- * only when the JSON-RPC body selects `execute_application_action`.
+ * only when the JSON-RPC body selects `execute_application_action` or its read-only preview.
  *
  * Security posture (from the adversarial design review):
  *   - Same-origin is decided by PARSED URL.origin, never a string prefix (so
@@ -168,7 +168,7 @@ export function applicationActionMcpRequest(
   const params = rpc['params'];
   if (rpc['jsonrpc'] !== '2.0' || rpc['method'] !== 'tools/call') return null;
   if (!params || typeof params !== 'object' || Array.isArray(params)) return null;
-  if ((params as Record<string, unknown>)['name'] !== 'execute_application_action') return null;
+  if (!['execute_application_action', 'preview_application_action'].includes(String((params as Record<string, unknown>)['name']))) return null;
   return u;
 }
 
@@ -179,8 +179,8 @@ export function applicationActionMcpRequest(
  * Relay OAuth access tokens may be sender-constrained (for example by DPoP) and
  * therefore cannot be replayed into a nested /mcp request. The OAuth exchange
  * already carries a separate identity-server bearer in verified server context.
- * This predicate allows that bearer to reach only the one REST route that maps
- * to execute_application_action; it is never accepted from wire input.
+ * This predicate allows that bearer to reach only the two REST routes that map
+ * to execute_application_action or preview_application_action; it is never accepted from wire input.
  */
 export function applicationActionRestRequest(
   rawUrl: string,
@@ -192,7 +192,8 @@ export function applicationActionRestRequest(
   let base: URL;
   try { u = new URL(rawUrl); base = new URL(publicBaseUrl); } catch { return null; }
   if (u.origin !== base.origin) return null;
-  if (u.pathname !== '/tool/execute_application_action' || u.search || u.username || u.password) return null;
+  if (!['/tool/execute_application_action', '/tool/preview_application_action'].includes(u.pathname)
+      || u.search || u.username || u.password) return null;
   if ((init?.method ?? 'GET').toUpperCase() !== 'POST') return null;
   if (typeof init?.body !== 'string') return null;
   let body: unknown;

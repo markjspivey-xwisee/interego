@@ -1,0 +1,142 @@
+name: Auto-deploy master
+
+# Merging to master ships the services that merge actually changed.
+#
+# ── ★★ WHAT THIS REPLACED, AND WHY THE OLD ANSWER WAS DEFENSIBLE ─────────────────────────────
+#
+# `deploy-railway.yml` was dispatch-only, one service at a time, and its header gives the reason:
+# "Building is safe and repeatable; deploying is neither." That is a real argument and it had a
+# real price, measured twice in two days: sixteen services 65 commits behind on 2026-08-27, and
+# nine behind again on 2026-09-04 — seven of them genuinely shipping changed code while the relay
+# alone had been moved by hand. Nothing was broken. Nothing was current either, and the gap was
+# reported by a tool nobody was required to run.
+#
+# The maintainer chose automatic deploys. What makes that safe is not optimism, it is that the
+# deploy path already refuses in every way that matters: it checks the image exists before touching
+# production, refuses unless the image it is REPLACING is still pullable (so the rollout is
+# reversible), derives the health URL from the service being deployed rather than trusting an
+# input, restores the previous pin itself when a deployment fails, and asserts the live endpoint
+# reports the new build sha. This workflow adds no deploy logic of its own — it calls that one.
+#
+# ── THE THREE THINGS THIS FILE DECIDES ───────────────────────────────────────────────────────
+#
+#   1. WHETHER to deploy at all — tools/ci-green-for-sha.mjs waits for every other workflow on this
+#      commit and refuses unless all of them concluded successfully. A built image is not a tested
+#      one; this repository's own note reads "CI is a DEPLOY GATE; skipping it took the bridge
+#      down." An EMPTY result is refused too, because "nothing is failing" is what a mistyped sha
+#      and a token without actions:read both look like.
+#
+#   2. WHAT to deploy — tools/deploy-affected.ts asks, per service, whether master would build it a
+#      different image than the one it runs, comparing against the LIVE pin rather than this push's
+#      diff. Most merges touch tools/, tests/ and .github/, which no image bundles; deploying
+#      seventeen services for those is seventeen rollouts risked for nothing. Comparing against the
+#      live pin also makes it self-healing: a service missed by a failed run is picked up by the
+#      next merge instead of drifting forever.
+#
+#   3. That the images EXIST first — the same scope drives the build matrix and the deploy matrix,
+#      because computing them separately is exactly how a deploy reaches for a tag no build
+#      produced. Measured on 2026-09-04: four bridges failed to repin because only the relay leg
+#      had been built at that sha.
+#
+# Everything above is in tools/ with tests (tests/ci-green-for-sha.test.ts,
+# tests/deploy-affected.test.ts) rather than in shell here, so it can be exercised without merging.
+
+on:
+  push:
+    branches: [master]
+  # Deliberately dispatchable too: after a failed run, or a manual fix, the same decision can be
+  # re-taken without inventing a commit. It is idempotent — a fleet already on master finds nothing
+  # to do and the deploy job is skipped.
+  workflow_dispatch:
+
+# One rollout at a time for the whole fleet. Two overlapping runs would race on the same services,
+# and cancel-in-progress would SIGTERM a healthy container mid-replace — the reason the called
+# workflow sets it false as well.
+concurrency:
+  group: auto-deploy-master
+  cancel-in-progress: false
+
+# ★★ PER JOB, NOT ONE BLOCK AT THE TOP — a reusable workflow's permissions are CAPPED by its
+# caller's. A single workflow-level `contents: read` here would silently strip `packages: write`
+# from build-ghcr.yml, whose own job asks for it, and every image push would 403 on the first
+# merge. The called workflow asking for a permission does not grant it.
+permissions:
+  contents: read
+
+jobs:
+  scope:
+    name: "Is CI green, and what needs deploying?"
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      actions: read        # the CI gate reads this commit's other workflow runs
+      contents: read
+    outputs:
+      count: ${{ steps.affected.outputs.count }}
+      build_matrix: ${{ steps.affected.outputs.build_matrix }}
+      deploy_matrix: ${{ steps.affected.outputs.deploy_matrix }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Full history: the scope diffs each service's LIVE pin against HEAD, and a shallow
+          # clone cannot reach a pin from a week ago. With fetch-depth 1 every service would
+          # report "cannot determine", which this tool correctly treats as "deploy it" — turning
+          # a checkout setting into a seventeen-service rollout.
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with: { node-version: '20' }
+
+      # ★ BEFORE THE SCOPE, NOT AFTER. Reading Railway to decide what to deploy is harmless, but
+      # ordering the gate first means a red commit never even asks — and the log then says plainly
+      # that CI stopped it, rather than showing a scope nobody should act on.
+      - name: Wait for CI on this commit, and refuse unless it is green
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SELF_WORKFLOW: Auto-deploy master
+        run: node tools/ci-green-for-sha.mjs "${{ github.sha }}"
+
+      - name: Which services would master build differently?
+        id: affected
+        env:
+          RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
+        run: npx --yes tsx tools/deploy-affected.ts --github
+
+  build:
+    name: "Build ${{ matrix.image }}"
+    needs: scope
+    if: ${{ needs.scope.outputs.count != '0' }}
+    strategy:
+      # One image failing must not CANCEL the others — every build failure should surface in this
+      # run rather than one per re-run. It does not mean the deploy proceeds: `deploy` needs this
+      # job, so any build failure stops the whole rollout, deliberately. A fleet half on the new
+      # sha and half on the old is the split state that made this session's deploy risky in the
+      # first place, and it is worse than not deploying at all.
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.scope.outputs.build_matrix) }}
+    permissions:
+      contents: read
+      packages: write      # build-ghcr.yml pushes to GHCR; without this here it cannot
+    uses: ./.github/workflows/build-ghcr.yml
+    with:
+      image: ${{ matrix.image }}
+    secrets: inherit
+
+  deploy:
+    name: "Deploy ${{ matrix.service }}"
+    needs: [scope, build]
+    if: ${{ needs.scope.outputs.count != '0' }}
+    strategy:
+      # Sequential, not parallel. The bridges and the relay talk to one another, and rolling them
+      # all at once turns one bad image into a fleet-wide outage instead of one refused deploy.
+      # max-parallel: 1 also keeps the called workflow's per-service concurrency group from
+      # queueing behind itself.
+      max-parallel: 1
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.scope.outputs.deploy_matrix) }}
+    permissions: {}        # it talks only to Railway and GHCR, with secrets, not the run token
+    uses: ./.github/workflows/deploy-railway.yml
+    with:
+      service: ${{ matrix.service }}
+      tag: ${{ github.sha }}
+    secrets: inherit

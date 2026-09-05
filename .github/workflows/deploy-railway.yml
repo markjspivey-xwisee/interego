@@ -51,6 +51,35 @@ on:
       # deployed (Railway's own `domains` answer + that service's health path from
       # tools/railway-services.mjs), so there is nothing left here to type wrong.
 
+  # ── CALLABLE, so auto-deploy.yml ships through THIS workflow ────────────────────────────────
+  #
+  # Every guard below — the image-exists check, the rollback-recoverability check, the derived
+  # verify URL — exists because an adversarial review found the failure it prevents. An automatic
+  # deploy that reimplemented any of them would be a second path with none of that history, and it
+  # would be the path that runs unattended. So auto-deploy calls this, and a human dispatching by
+  # hand and a merge deploying itself take exactly the same route.
+  workflow_call:
+    inputs:
+      service:
+        description: 'Railway service name (relay, foxxi-bridge, …)'
+        required: true
+        type: string
+      tag:
+        description: 'Image tag: the 40-hex commit sha built by build-ghcr.yml.'
+        required: false
+        default: ''
+        type: string
+      set_registry_credentials:
+        description: 'Give this service its GHCR pull credential before deploying.'
+        type: boolean
+        required: false
+        default: false
+    secrets:
+      RAILWAY_PROJECT_TOKEN:
+        required: true
+      GHCR_TOKEN:
+        required: true
+
 # A second dispatch must QUEUE, never run alongside: re-triggering a deploy while one
 # is in flight SIGTERMs the healthy container, and the successors die before logging.
 # cancel-in-progress would do exactly that, so it stays false.
