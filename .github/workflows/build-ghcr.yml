@@ -40,6 +40,16 @@ on:
         description: 'Single image to build (leave blank to build all)'
         required: false
         default: ''
+  # Callable so auto-deploy.yml can build exactly the legs it is about to deploy, through THIS
+  # workflow rather than a copy of it. A second build path is where two build recipes drift, and
+  # the one that drifts is always the one nobody dispatches by hand.
+  workflow_call:
+    inputs:
+      image:
+        description: 'Single image to build (leave blank to build all)'
+        required: false
+        default: ''
+        type: string
 
 jobs:
   # A build that matched no image reported SUCCESS having built nothing.
