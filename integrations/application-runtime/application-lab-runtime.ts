@@ -278,7 +278,7 @@ export function parseSignedJsonDocument(turtle: string): SignedJsonEnvelope {
   const declaredDigest = /(?:\bia:sha256|<urn:interego:application:sha256>)\s+"([0-9a-fA-F]{64})"/.exec(turtle)?.[1]?.toLowerCase();
   const documentType = /(?:\bia:documentType|<urn:interego:application:documentType>)\s+"([^"\\]*(?:\\.[^"\\]*)*)"/.exec(turtle)?.[1];
   const graphIri = /#\s*[-─ ]*Named Graph Content[^\n]*\n\s*<([^>]+)>\s*\{/.exec(turtle)?.[1]
-    ?? /\n\s*<(urn:graph:[^>]+)>\s*\{/.exec(turtle)?.[1];
+    ?? /\n\s*<([A-Za-z][A-Za-z0-9+.-]*:[^>]+)>\s*\{/.exec(turtle)?.[1];
   if (!encoded) throw new Error('signed JSON graph has no ia:jsonBase64 literal');
   if (!declaredDigest) throw new Error('signed JSON graph has no 64-hex ia:sha256 literal');
   const canonical = Buffer.from(encoded, 'base64').toString('utf8');

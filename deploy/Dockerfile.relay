@@ -169,14 +169,9 @@ COPY deploy/mcp-relay/amep.ts ./
 COPY deploy/mcp-relay/amep-session-bridge.ts ./
 COPY deploy/mcp-relay/note-view.ts ./
 COPY deploy/mcp-relay/hmd-app.ts ./
+COPY deploy/mcp-relay/session-actor.ts ./
+COPY deploy/mcp-relay/resource-compositions.ts ./
 COPY deploy/mcp-relay/hmd-app-logic.ts ./
-# The generic Application Lab MCP App and its descriptor-defined runtime.  These
-# are imported by server.ts, so per-file image assembly must carry both.
-COPY deploy/mcp-relay/application-lab-app.ts ./
-COPY deploy/mcp-relay/application-lab-runtime.ts ./
-COPY deploy/mcp-relay/application-simulation.ts ./
-COPY deploy/mcp-relay/application-preview.ts ./
-COPY deploy/mcp-relay/application-actor.ts ./
 COPY deploy/mcp-relay/tool-surface.ts ./
 COPY deploy/mcp-relay/pgsl-node-store.ts ./
 COPY deploy/mcp-relay/engagement-store.ts ./
@@ -213,7 +208,13 @@ RUN npx tsc && cp -r amep-vendor dist/amep-vendor
 # ────────────────────────────────────────────────────────────
 #  Runtime stage: distroless image running compiled JS
 # ────────────────────────────────────────────────────────────
-FROM gcr.io/distroless/nodejs22-debian12
+FROM build AS reference-build
+WORKDIR /composition
+COPY integrations/application-runtime/ ./integrations/application-runtime/
+COPY deploy/mcp-relay/resource-compositions.ts ./deploy/mcp-relay/resource-compositions.ts
+RUN ln -s /app/node_modules node_modules && /app/node_modules/.bin/tsc -p integrations/application-runtime/tsconfig.json
+
+FROM gcr.io/distroless/nodejs22-debian12 AS base-runtime
 
 WORKDIR /app
 
@@ -241,3 +242,11 @@ ARG GIT_SHA=unset
 ENV INTEREGO_BUILD_SHA=$GIT_SHA
 
 CMD ["dist/server.js"]
+
+# Opt-in reference deployment. New signed domains reuse this composition unchanged.
+FROM base-runtime AS reference
+COPY --from=reference-build /composition/dist/integrations/application-runtime/ ./dist/compositions/application-runtime/
+ENV INTEREGO_RESOURCE_COMPOSITIONS='["./compositions/application-runtime/resource-composition.js"]'
+
+# A plain docker build ships no application interpreter.
+FROM base-runtime AS runtime

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   canonicalJson, prepareApplicationAction, sha256Hex, type Json,
-} from '../deploy/mcp-relay/application-lab-runtime.js';
+} from '../integrations/application-runtime/application-lab-runtime.js';
 import { fixtureStore } from '../examples/application-simulation/fixture-store.js';
 import { releaseControl, ticTacToe, type RulePack } from '../examples/application-simulation/rule-packs.js';
 import { simulateApplication, type SimulationFrontier } from '../examples/application-simulation/simulator.js';

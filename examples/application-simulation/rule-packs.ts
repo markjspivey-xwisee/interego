@@ -1,7 +1,7 @@
 /** L3 domain fixtures. Builders emit only signed-domain/v1 JSON, never callbacks. */
 import {
   SIGNED_DOMAIN_RUNTIME, type ApplicationAction, type ApplicationContract, type Json,
-} from '../../deploy/mcp-relay/application-lab-runtime.js';
+} from '../../integrations/application-runtime/application-lab-runtime.js';
 
 export interface RulePack {
   readonly contract: ApplicationContract;

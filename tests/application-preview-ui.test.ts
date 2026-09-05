@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
-import { APPLICATION_LAB_APP_HTML } from '../deploy/mcp-relay/application-lab-app.js';
-import { previewApplicationAction } from '../deploy/mcp-relay/application-preview.js';
+import { HMD_APP_HTML } from '../deploy/mcp-relay/hmd-app.js';
+import { resourceActionResponse, ResourceCompositions, type ResourceWriteContext } from '../deploy/mcp-relay/resource-compositions.js';
+import composition from '../integrations/application-runtime/resource-composition.js';
 import { fixtureStore } from '../examples/application-simulation/fixture-store.js';
 import { releaseControl } from '../examples/application-simulation/rule-packs.js';
 
@@ -10,68 +11,112 @@ const session = { actor: 'did:example:alice', now: '2026-09-05T12:00:00Z' };
 afterEach(() => { windows.splice(0).forEach(dom => dom.window.close()); });
 async function mount(deferPreview = false) {
   const store = fixtureStore(releaseControl());
-  const initial = await store.resolve();
+  const resolved = await store.resolve();
+  const registry = new ResourceCompositions([composition]);
+  const publish = vi.fn(async () => { throw new Error('writes disabled in this test'); });
+  const context: ResourceWriteContext = {
+    reads: { ...store.reads, discover: store.reads.discoverCatalogs }, principal: session.actor,
+    identityUrl: 'https://identity.example', now: session.now, publish,
+  };
+  const initial = await registry.render(resolved.catalogDescriptor.url, context, resolved.catalogDescriptor);
+  if (!initial) throw new Error('missing composed view');
   let release: (() => void) | undefined;
   const gate = deferPreview ? new Promise<void>(resolve => { release = resolve; }) : Promise.resolve();
   const callTool = vi.fn(async (name: string, args: Record<string, unknown>) => {
-    if (name === 'open_application_lab') return { structuredContent: (await store.resolve()).snapshot };
-    if (name !== 'preview_application_action') throw new Error(`unexpected write/tool: ${name}`);
-    const result = await previewApplicationAction(args, session, store.reads);
-    await gate;
-    return { structuredContent: result };
+    if (name !== 'invoke_affordance') throw new Error('unexpected tool: ' + name);
+    try {
+      const result = await registry.invoke(String(args['descriptor_url']), String(args['action_iri']), args['payload'], context);
+      if (result && 'alternatives' in result) await gate;
+      return { structuredContent: resourceActionResponse(String(args['descriptor_url']), String(args['action_iri']), result!, registry.access(String(args['descriptor_url']), String(args['action_iri']))!) };
+    } catch (error) { return { isError: true, structuredContent: { error: 'refused', message: (error as Error).message } }; }
   });
-  const dom = new JSDOM(APPLICATION_LAB_APP_HTML, { runScripts: 'dangerously', beforeParse(window) {
-    Object.defineProperty(window, 'openai', { value: { toolOutput: initial.snapshot, callTool } });
-    Object.defineProperty(window, 'CSS', { value: { escape: (s: string) => s } });
+  const dom = new JSDOM(HMD_APP_HTML, { runScripts: 'dangerously', beforeParse(window) {
+    Object.defineProperty(window, 'openai', { value: { toolOutput: initial, callTool } });
   } });
   windows.push(dom);
-  const buttons = [...dom.window.document.querySelectorAll<HTMLButtonElement>('.action button')];
-  return { dom, store, initial, callTool, release,
-    preview: buttons.filter(b => b.textContent === 'Preview changes'),
-  };
+  const button = (prefix: string) => [...dom.window.document.querySelectorAll<HTMLButtonElement>('.control .actions > button')].find(b => b.textContent?.startsWith(prefix))!;
+  return { dom, store, initial, resolved, callTool, publish, release, button };
 }
 
-describe('Application Lab host-connected preview', () => {
-  it('calls the live boundary on each click and leaves displayed authoritative state intact', async () => {
-    const { dom, store, initial, preview, callTool } = await mount();
-    const document = dom.window.document;
+describe('application composition through the generic host viewer', () => {
+  it('uses the discovered affordance, re-verifies each preview and leaves authority intact', async () => {
+    const { dom, store, initial, resolved, button, callTool, publish } = await mount();
+    const preview = button('Preview: Approve');
+    const descriptor = initial.controls.find(c => String(c['label']).startsWith('Preview: Approve'))!;
     const initialReads = store.counts().reads;
-    preview[0]!.click();
-    await vi.waitFor(() => expect(document.querySelector('.preview')?.textContent).toContain('Preview only'));
-    expect(callTool).toHaveBeenCalledWith('preview_application_action', expect.objectContaining({
-      expected_head: initial.stateHead.cid, expected_contract_digest: initial.activeContractEnvelope.declaredDigest, payload: {},
-    }));
-    expect(document.getElementById('head-cid')?.textContent).toBe(initial.stateHead.cid);
-    expect(document.getElementById('head-version')?.textContent).toBe('state v0');
-    expect(document.querySelector('.preview')?.textContent).toContain('/approvals');
+    preview.click();
+    await vi.waitFor(() => expect(dom.window.document.querySelector('.result')?.textContent).toContain('/approvals'));
+    expect(callTool).toHaveBeenCalledWith('invoke_affordance', {
+      descriptor_url: descriptor['descriptorUrl'], action_iri: descriptor['action'], payload: {},
+    });
+    expect(dom.window.document.querySelector('.result')?.textContent).toContain('"committed": false');
+    expect(dom.window.document.body.textContent).toContain(resolved.stateHead.cid);
     const firstReads = store.counts().reads;
     expect(firstReads).toBeGreaterThan(initialReads);
-    preview[0]!.click();
+    await vi.waitFor(() => expect(preview.disabled).toBe(false));
+    preview.click();
     await vi.waitFor(() => expect(callTool).toHaveBeenCalledTimes(2));
-    await vi.waitFor(() => expect(preview[0]!.disabled).toBe(false));
+    await vi.waitFor(() => expect(preview.disabled).toBe(false));
     expect(store.counts().reads).toBeGreaterThan(firstReads);
     expect(store.counts().writes).toBe(0);
+    expect(publish).not.toHaveBeenCalled();
   });
 
-  it('permits previewing a blocked action and shows its signed guard refusal', async () => {
-    const { dom, preview, store } = await mount();
-    expect(preview[1]!.disabled).toBe(false);
-    preview[1]!.click();
-    await vi.waitFor(() => expect(dom.window.document.querySelectorAll('.preview')[1]?.textContent).toContain('Refused: signed action guard refused'));
+  it('shows the signed guard refusal of a blocked action', async () => {
+    const { dom, button, store, publish } = await mount();
+    const preview = button('Preview: Record deployment');
+    expect(preview.disabled).toBe(false);
+    preview.click();
+    await vi.waitFor(() => expect(dom.window.document.querySelector('.result')?.textContent).toContain('signed action guard refused'));
     expect(store.counts().writes).toBe(0);
+    expect(publish).not.toHaveBeenCalled();
   });
 
-  it('discards a delayed preview after rediscovery', async () => {
-    const { dom, store, initial, preview, callTool, release } = await mount(true);
-    preview[0]!.click();
-    await vi.waitFor(() => expect(store.counts().reads).toBeGreaterThan(20));
-    store.record(initial, { ...session, actionIri: `${initial.state.applicationId}:approve`, expectedHead: initial.stateHead.cid, payload: {} });
-    dom.window.document.getElementById('refresh')!.click();
-    await vi.waitFor(() => expect(dom.window.document.getElementById('head-version')?.textContent).toBe('state v1'));
+  it('discards a delayed preview after refreshing authority', async () => {
+    const { dom, store, resolved, button, callTool, release } = await mount(true);
+    button('Preview: Approve').click();
+    await vi.waitFor(() => expect(store.counts().reads).toBeGreaterThan(25));
+    store.record(resolved, { ...session, actionIri: resolved.state.applicationId + ':approve', expectedHead: resolved.stateHead.cid, payload: {} });
+    const after = await store.resolve();
+    button('Refresh and verify').click();
+    await vi.waitFor(() => expect(dom.window.document.body.textContent).toContain(after.stateHead.cid));
     release!();
     await Promise.all(callTool.mock.results.map(r => r.value));
-    expect(dom.window.document.querySelector('.preview')?.textContent).toBe('');
-    expect(dom.window.document.getElementById('head-version')?.textContent).toBe('state v1');
-    expect(store.counts().writes).toBe(1); // Only the explicitly injected concurrent writer.
+    expect(dom.window.document.querySelector('.result')).toBeNull();
+    expect(dom.window.document.body.textContent).toContain(after.stateHead.cid);
+    expect(store.counts().writes).toBe(1);
+  });
+
+  it('reports a stale-head tool error without showing success', async () => {
+    const { dom, store, resolved, button, publish } = await mount();
+    store.record(resolved, { ...session, actionIri: resolved.state.applicationId + ':approve', expectedHead: resolved.stateHead.cid, payload: {} });
+    button('Preview: Approve').click();
+    await vi.waitFor(() => expect(dom.window.document.body.textContent).toContain('stale application head'));
+    expect(dom.window.document.querySelector('.status.ok')).toBeNull();
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it('requires explicit confirmation before a write and does not double-submit', async () => {
+    const { dom, button, callTool, publish } = await mount();
+    button('Review & Submit: Approve').click();
+    expect(callTool).not.toHaveBeenCalled();
+    const yes = [...dom.window.document.querySelectorAll<HTMLButtonElement>('.confirm button')].find(b => b.textContent === 'Confirm & submit')!;
+    yes.click(); yes.click();
+    await vi.waitFor(() => expect(publish).toHaveBeenCalledTimes(1));
+    expect(callTool).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(dom.window.document.body.textContent).toContain('writes disabled in this test'));
+  });
+
+  it('validates and submits declared form inputs through the same generic preview', async () => {
+    const { button, callTool, publish } = await mount();
+    const preview = button('Preview: Cancel release');
+    preview.click();
+    expect(callTool).not.toHaveBeenCalled();
+    const card = preview.closest('.control')!;
+    (card.querySelector('[data-key="reason"]') as HTMLTextAreaElement).value = 'Needs another review';
+    preview.click();
+    await vi.waitFor(() => expect(card.querySelector('.result')?.textContent).toContain('Needs another review'));
+    expect(callTool).toHaveBeenCalledWith('invoke_affordance', expect.objectContaining({ payload: { reason: 'Needs another review' } }));
+    expect(publish).not.toHaveBeenCalled();
   });
 });

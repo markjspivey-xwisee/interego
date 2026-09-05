@@ -52,7 +52,7 @@ import {
   type ApplicationContract,
   type ApplicationEvidenceRecord,
   type Json,
-} from '../../deploy/mcp-relay/application-lab-runtime.js';
+} from '../../integrations/application-runtime/application-lab-runtime.js';
 
 export const SHOWCASE_ID = 'ttt-optimal-play';
 export const SHOWCASE_AGENT = 'did:example:agent:ttt-learner';

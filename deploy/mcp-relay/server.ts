@@ -239,18 +239,9 @@ import { ingestVault, VAULT_LD_PROFILE } from '@interego/mdvault';
 import { noteToHyperMarkdown, inlineRenderedForDescriptor, viewerControls, publishableAuthority } from './note-view.js';
 // The generic HyperMarkdown MCP-App renderer (served as a ui:// resource).
 import { HMD_APP_HTML } from './hmd-app.js';
-// Generic descriptor-defined Application Lab (one app resource, live graphs supplied by tool).
-import { APPLICATION_LAB_APP_HTML } from './application-lab-app.js';
-import { previewApplicationAction } from './application-preview.js';
-import {
-  prepareApplicationAction,
-  resolveApplicationActionEvidence,
-  resolveApplicationLab,
-  type ApplicationLabReads,
-  type LabDescriptor,
-  type LabManifestEntry,
-} from './application-lab-runtime.js';
-import { canonicalApplicationActorId } from './application-actor.js';
+import { canonicalSessionActorId } from './session-actor.js';
+import { loadResourceCompositions, resourceActionResponse, resourceInvocation, type ResourceContext, type ResourceDescriptor, type ResourceEntry, type ResourceReads, type ResourceWriteContext } from './resource-compositions.js';
+const resourceCompositions = await loadResourceCompositions(process.env.INTEREGO_RESOURCE_COMPOSITIONS);
 import {
   buildToolSurface,
   mcpServerVersion,
@@ -260,7 +251,8 @@ import {
 // CONTENT-VERSIONED widget URI: hosts (ChatGPT) may cache the widget HTML by
 // resource URI, so a same-URI redeploy could serve a STALE widget. Deriving the URI
 // from a short hash of HMD_APP_HTML means every widget change yields a fresh URI —
-// the host can never serve an old bundle. Referenced identically by the render_hmd
+// refreshed metadata identifies the new bundle; the host controls cache refresh.
+// Referenced identically by the render_hmd
 // tool's _meta.ui.resourceUri, ListResources, and ReadResource.
 function hmdShortHash(s: string): string {
   let h = 5381;
@@ -268,7 +260,6 @@ function hmdShortHash(s: string): string {
   return h.toString(36);
 }
 const HMD_WIDGET_URI = `ui://widget/hmd-${hmdShortHash(HMD_APP_HTML)}.html`;
-const APPLICATION_LAB_WIDGET_URI = `ui://widget/application-lab-${hmdShortHash(APPLICATION_LAB_APP_HTML)}.html`;
 
 import type {
   ContextDescriptorData,
@@ -732,8 +723,6 @@ function log(msg: string): void {
 // maintainer pod past the css-gate (the bridge holds WRITE_SECRET).
 const AUTH_REQUIRED_TOOLS = new Set([
   'publish_context', 'remember', 'register_agent', 'revoke_agent',
-  'execute_application_action',
-  'preview_application_action',
   'publish_directory',
   'subscribe_to_pod', 'add_pod', 'resolve_webfinger',
   // record_trajectory_step ultimately calls publish_context internally,
@@ -1834,9 +1823,6 @@ const OAUTH_SCOPE_WRITE = 'mcp:write';
 const ALL_MCP_OAUTH_SCOPES = new Set<string>([OAUTH_SCOPE_FULL, OAUTH_SCOPE_READ, OAUTH_SCOPE_WRITE]);
 // Scopes that satisfy the write gate below.
 const WRITE_SIDE_OAUTH_SCOPES = new Set<string>([OAUTH_SCOPE_FULL, OAUTH_SCOPE_WRITE]);
-// ★ `execute_application_action` (Application Lab, #356-#361) needed no edit here. It is not
-// on the read-side allowlist, so default-deny gates it by construction — which is exactly what
-// the old hand-maintained WRITE_SIDE_TOOLS list could not do for the nine tools it had missed.
 
 /**
  * ★★ READ-SIDE, NOT WRITE-SIDE: THE GATE IS NOW DEFAULT-DENY.
@@ -1872,7 +1858,6 @@ const READ_SIDE_TOOLS = new Set<string>([
   'discover_context', 'discover_all', 'discover_directory', 'get_descriptor',
   'get_encrypted_graph', 'get_current_head', 'get_pod_status', 'list_known_pods',
   'list_declared_shapes', 'render_hmd', 'resolve_linked_data', 'verify_agent',
-  'preview_application_action',
   // Analysis and routing — answer questions, write nothing.
   'analyze_question', 'interrogative_route', 'check_balance',
   // PGSL reads. `pgsl_ingest` and `pgsl_decide` are absent: they write the lattice.
@@ -1880,8 +1865,8 @@ const READ_SIDE_TOOLS = new Set<string>([
 ]);
 
 /** The gate's question, phrased so the DEFAULT is refusal. */
-function isWriteSideTool(name: string): boolean {
-  return !READ_SIDE_TOOLS.has(name);
+function isWriteSideTool(name: string, args: Record<string, unknown> = {}): boolean {
+  return !READ_SIDE_TOOLS.has(name) && !isReadOnlyResourceCall(name, args);
 }
 
 /** Any scope acceptable as a /mcp resource bearer. */
@@ -4480,7 +4465,7 @@ async function handleDiscoverContext(args: ToolArgs): Promise<string> {
 async function handleGetEncryptedGraph(args: ToolArgs): Promise<string> {
   const url = normalizeCssUrl(String(args['url'] ?? ''));
   if (!url) return JSON.stringify({ error: 'get_encrypted_graph requires a descriptor url' });
-  const gd = JSON.parse(await handleGetDescriptor({ url } as ToolArgs)) as Record<string, unknown>;
+  const gd = JSON.parse(await handleGetDescriptor({ ...args, url } as ToolArgs)) as Record<string, unknown>;
   if (gd['error']) return JSON.stringify({ error: String(gd['error']) });
 
   /**
@@ -4535,11 +4520,16 @@ async function handleGetEncryptedGraph(args: ToolArgs): Promise<string> {
   });
 }
 
-async function handleGetDescriptor(args: ToolArgs): Promise<string> {
+async function handleGetDescriptor(args: ToolArgs, project = true): Promise<string> {
   // Translate legacy public-host CSS URLs at the handler boundary so the
   // distribution-link parsing / response-body URLs see the canonical
   // internal-FQDN target. solidFetch ALSO rewrites at the HTTP layer.
   const url = normalizeCssUrl(args.url as string);
+  if (resourceCompositions.claims(url)) {
+    if (!project) throw new Error('derived views are not signed descriptors');
+    const view = await resourceCompositions.render(url, resourceContext(args));
+    return JSON.stringify({ url, view, rendered: view?.hmd, derived: true, authorship: null });
+  }
   // Route envelope / TriG URLs through fetchGraphContent so encrypted
   // payloads are transparently decrypted for this relay's agent key (the
   // recipients registered on the pod include us when we published, so
@@ -4831,9 +4821,22 @@ async function handleGetDescriptor(args: ToolArgs): Promise<string> {
     isFollowable: isFollowableTarget,
   });
 
+  // An optional interpretation cannot hide the raw descriptor or its verification
+  // verdict when that interpretation is refused.
+  let view: Awaited<ReturnType<typeof resourceCompositions.render>>;
+  let viewError: string | undefined;
+  if (project) {
+    try {
+      view = await resourceCompositions.render(url, resourceContext(args), {
+        url, turtle, cid: cryptoComputeCid(turtle), content: graph?.content ?? undefined, authorship,
+      });
+    } catch (error) { viewError = (error as Error).message; }
+  }
   return JSON.stringify({
     url,
     turtle,
+    ...(view ? { view } : {}),
+    ...(viewError ? { viewError } : {}),
     ...(graph ? { graph } : {}),
     ...(inline ? { rendered: inline.rendered, renderedMediaType: inline.mediaType } : {}),
     ...(authorship ? { authorship } : {}),
@@ -4854,8 +4857,10 @@ async function handleRenderHmd(args: ToolArgs): Promise<string> {
   const url = typeof a['descriptor_url'] === 'string' ? (a['descriptor_url'] as string)
     : (typeof a['url'] === 'string' ? (a['url'] as string) : '');
   if (!url) return JSON.stringify({ error: 'render_hmd requires a descriptor_url' });
-  const gd = JSON.parse(await handleGetDescriptor({ url } as ToolArgs)) as Record<string, unknown>;
+  const gd = JSON.parse(await handleGetDescriptor({ ...args, url } as ToolArgs)) as Record<string, unknown>;
   if (gd['error']) return JSON.stringify({ error: String(gd['error']) });
+  if (gd['view']) return JSON.stringify(gd['view']);
+  if (gd['viewError']) return JSON.stringify({ error: 'resource_view_refused', message: gd['viewError'] });
   const rendered = typeof gd['rendered'] === 'string' ? (gd['rendered'] as string) : '';
   let doc: ReturnType<typeof parseHypermediaMarkdown> | null = null;
   if (rendered) { try { doc = parseHypermediaMarkdown(rendered); } catch { doc = null; } }
@@ -4901,16 +4906,15 @@ async function handleRenderHmd(args: ToolArgs): Promise<string> {
   });
 }
 
-// ── Generic authoritative Application Lab ──────────────────
-
+// Optional resource interpreters use the same session, verification and CAS gates.
 /**
  * Preserve the authenticated session fields while making the pod chosen by a
- * verified catalog an EXPLICIT selector.  /mcp injects the caller's home pod and
+ * resolved resource an EXPLICIT selector.  /mcp injects the caller's home pod and
  * marks it with POD_URL_INJECTED; carrying that marker into an internal read of a
- * catalog on another delegated pod would make resolvePodSubject ignore the chosen
+ * resource on another delegated pod would make resolvePodSubject ignore the chosen
  * pod.  These markers are relay-private, so the client still cannot forge them.
  */
-function applicationLabPodArgs(args: ToolArgs, podUrl: string): ToolArgs {
+function resourcePodArgs(args: ToolArgs, podUrl: string): ToolArgs {
   const next: ToolArgs = { ...args, pod_url: podUrl };
   delete next.pod_name;
   next[POD_URL_INJECTED] = false;
@@ -4918,13 +4922,13 @@ function applicationLabPodArgs(args: ToolArgs, podUrl: string): ToolArgs {
   return next;
 }
 
-function applicationLabReads(args: ToolArgs): ApplicationLabReads {
+function resourceReads(args: ToolArgs): ResourceReads {
   return {
-    discoverCatalogs: async (graphIri: string) => {
+    discover: async (graphIri: string) => {
       const raw = JSON.parse(await handleDiscoverAll({ ...args, graph_iri: graphIri, limit: 1, sort: 'newest-first' })) as {
-        results?: Array<{ pod?: string; entries?: LabManifestEntry[] }>;
+        results?: Array<{ pod?: string; entries?: ResourceEntry[] }>;
       };
-      const found: Array<{ podUrl: string; entry: LabManifestEntry }> = [];
+      const found: Array<{ podUrl: string; entry: ResourceEntry }> = [];
       for (const result of raw.results ?? []) {
         if (!result.pod) continue;
         for (const entry of result.entries ?? []) {
@@ -4935,21 +4939,21 @@ function applicationLabReads(args: ToolArgs): ApplicationLabReads {
     },
     currentHead: async (podUrl: string, graphIri: string) => {
       return JSON.parse(await handleGetCurrentHead({
-        ...applicationLabPodArgs(args, podUrl),
+        ...resourcePodArgs(args, podUrl),
         urn: graphIri,
-      })) as Awaited<ReturnType<ApplicationLabReads['currentHead']>>;
+      })) as Awaited<ReturnType<ResourceReads['currentHead']>>;
     },
     discoverGraph: async (podUrl: string, graphIri: string) => {
       const raw = JSON.parse(await handleDiscoverContext({
-        ...applicationLabPodArgs(args, podUrl),
+        ...resourcePodArgs(args, podUrl),
         graph_iri: graphIri,
         sort: 'oldest-first',
-      })) as { entries?: LabManifestEntry[]; error?: string };
+      })) as { entries?: ResourceEntry[]; error?: string };
       if (raw.error) throw new Error(raw.error);
       return raw.entries ?? [];
     },
-    descriptor: async (url: string): Promise<LabDescriptor> => {
-      const raw = JSON.parse(await handleGetDescriptor({ ...args, url })) as Record<string, unknown>;
+    descriptor: async (url: string): Promise<ResourceDescriptor> => {
+      const raw = JSON.parse(await handleGetDescriptor({ ...args, url }, false)) as Record<string, unknown>;
       if (raw['error']) throw new Error(String(raw['error']));
       const graph = raw['graph'] as Record<string, unknown> | undefined;
       return {
@@ -4959,168 +4963,39 @@ function applicationLabReads(args: ToolArgs): ApplicationLabReads {
         ...(graph && typeof graph['content'] === 'string'
           ? { content: graph['content'] }
           : (typeof raw['content'] === 'string' ? { content: raw['content'] } : {})),
-        authorship: raw['authorship'] as LabDescriptor['authorship'],
+        authorship: raw['authorship'] as ResourceDescriptor['authorship'],
       };
     },
   };
 }
 
-/** Blind-discover a catalog (or open an exact one) and project its live app. */
-async function handleOpenApplicationLab(args: ToolArgs): Promise<string> {
-  try {
-    const a = args as Record<string, unknown>;
-    const resolved = await resolveApplicationLab({
-      ...(typeof a['catalog_graph_iri'] === 'string' ? { catalogGraphIri: a['catalog_graph_iri'] as string } : {}),
-      ...(typeof a['catalog_descriptor_url'] === 'string' ? { catalogDescriptorUrl: normalizeCssUrl(a['catalog_descriptor_url'] as string) } : {}),
-      ...(typeof a['pod_url'] === 'string' && a[POD_URL_INJECTED] !== true ? { podUrl: normalizeCssUrl(a['pod_url'] as string) } : {}),
-      ...(typeof a['application_id'] === 'string' ? { applicationId: a['application_id'] as string } : {}),
-      actor: canonicalApplicationActorId(callerAgentId(args), IDENTITY_URL),
-    }, applicationLabReads(args));
-    return JSON.stringify(resolved.snapshot);
-  } catch (err) {
-    return JSON.stringify({
-      error: 'application_lab_resolution_failed',
-      message: (err as Error).message,
-      live: true,
-      retryable: true,
-    });
-  }
+function resourceContext(args: ToolArgs): ResourceContext {
+  const principal = canonicalSessionActorId(callerAgentId(args), IDENTITY_URL) ?? '';
+  return { reads: resourceReads(args), principal, identityUrl: IDENTITY_URL, now: new Date().toISOString() };
 }
 
-/** Resolve and simulate one action using only reads and the authenticated actor. */
-async function handlePreviewApplicationAction(args: ToolArgs): Promise<string> {
-  try {
-    const request = { ...args } as Record<string, unknown>;
-    if (typeof request['catalog_descriptor_url'] === 'string') {
-      request['catalog_descriptor_url'] = normalizeCssUrl(request['catalog_descriptor_url']);
-    }
-    return JSON.stringify(await previewApplicationAction(request, {
-      actor: canonicalApplicationActorId(callerAgentId(args), IDENTITY_URL),
-      now: new Date().toISOString(),
-    }, applicationLabReads(args)));
-  } catch (err) {
-    return JSON.stringify({ error: 'application_preview_refused', message: (err as Error).message, live: true, committed: false });
-  }
+function resourceWriteContext(args: ToolArgs): ResourceWriteContext {
+  const context = resourceContext(args);
+  return { ...context, publish: async request => {
+    if (!context.principal || request.actor !== context.principal) throw new Error('authenticated resource actor is required');
+    const podName = podNameOf(request.podUrl);
+    if (!podName || !request.expectedHead) throw new Error('publication requires an explicit pod and expected head');
+    return JSON.parse(await handlePublishContext({
+      ...resourcePodArgs(args, request.podUrl), _session_agent_did: context.principal,
+      pod_name: podName, graph_iri: request.graphIri, graph_content: request.graphContent,
+      if_match: request.expectedHead, auto_supersede_prior: true, sync: true,
+      modal_status: 'Asserted', confidence: 1, visibility: 'public', sign_authorship: true,
+      valid_from: context.now,
+    })) as Record<string, unknown>;
+  } };
 }
 
-/**
- * Execute one POST action from the ACTIVE, fully verified contract.  The handler
- * ignores any caller-supplied actor/time/contract/state: it re-resolves all four
- * signed artifacts, replays the complete history, re-runs the guard, applies only
- * the declared effects, and publishes with current-head CAS.
- */
-async function handleExecuteApplicationAction(args: ToolArgs): Promise<string> {
-  const a = args as Record<string, unknown>;
-  const catalogDescriptorUrl = typeof a['catalog_descriptor_url'] === 'string' ? a['catalog_descriptor_url'] as string : '';
-  const applicationId = typeof a['application_id'] === 'string' ? a['application_id'] as string : '';
-  const actionIri = typeof a['action_iri'] === 'string' ? a['action_iri'] as string : '';
-  const expectedHead = typeof a['expected_head'] === 'string' ? a['expected_head'] as string : '';
-  if (!catalogDescriptorUrl) return JSON.stringify({ error: 'catalog_descriptor_url is required' });
-  if (!applicationId) return JSON.stringify({ error: 'application_id is required' });
-  if (!actionIri) return JSON.stringify({ error: 'action_iri is required' });
-  if (!expectedHead) return JSON.stringify({ error: 'expected_head is required' });
-  const actor = canonicalApplicationActorId(callerAgentId(args), IDENTITY_URL);
-  if (!actor) return JSON.stringify({ error: 'authenticated actor is required' });
-  const payload = a['payload'];
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    return JSON.stringify({ error: 'payload must be an object' });
-  }
-  try {
-    const resolveInput = {
-      ...(typeof a['catalog_graph_iri'] === 'string' ? { catalogGraphIri: a['catalog_graph_iri'] as string } : {}),
-      catalogDescriptorUrl: normalizeCssUrl(catalogDescriptorUrl),
-      applicationId,
-      actor,
-    };
-    const reads = applicationLabReads(args);
-    const resolved = await resolveApplicationLab(resolveInput, reads);
-    const now = new Date().toISOString();
-    // The payload contributes descriptor URLs only. The resolver independently
-    // fetches, verifies, head-checks and snapshots every evidence dependency
-    // declared by the signed contract before the pure action runtime sees it.
-    const verifiedEvidence = await resolveApplicationActionEvidence(resolved, {
-      actionIri,
-      payload: (payload ?? {}) as Record<string, unknown>,
-    }, reads);
-    const prepared = prepareApplicationAction(resolved, {
-      actionIri,
-      payload: (payload ?? {}) as Record<string, unknown>,
-      actor,
-      now,
-      expectedHead,
-      evidence: verifiedEvidence,
-    });
-    const writePodName = podNameOf(resolved.podUrl);
-    if (!writePodName) {
-      throw new Error(`verified application pod has no writable pod name: ${resolved.podUrl}`);
-    }
-    const writeArgs: ToolArgs = {
-      ...applicationLabPodArgs(args, resolved.podUrl),
-      // The guard and receipt already use this canonical, authenticated actor.
-      // Sign the descriptor with that exact identity too, independent of how a
-      // particular transport represented the session principal.
-      _session_agent_did: actor,
-      pod_name: writePodName,
-      graph_iri: resolved.definition.stateGraphIri,
-      graph_content: prepared.graphContent,
-      if_match: resolved.stateHead.cid,
-      auto_supersede_prior: true,
-      sync: true,
-      modal_status: 'Asserted',
-      confidence: 1,
-      visibility: 'public',
-      sign_authorship: true,
-      valid_from: now,
-    };
-    const published = JSON.parse(await handlePublishContext(writeArgs)) as Record<string, unknown>;
-    if (published['error'] || published['published'] === false || published['status'] === 'failed') {
-      throw new Error(String(published['message'] ?? published['error'] ?? 'publish_context refused the successor'));
-    }
-
-    // A CAS publish is synchronous.  Re-resolve anyway: success means the new head,
-    // its descriptor bindings, and the now-longer replay all independently verify.
-    const after = await resolveApplicationLab(resolveInput, reads);
-    const afterHead = after.snapshot['head'] as Record<string, unknown>;
-    const afterTrust = after.snapshot['trust'] as Record<string, unknown>;
-    if (after.state.version !== resolved.state.version + 1 || after.stateHead.cid === resolved.stateHead.cid) {
-      throw new Error('publish returned but the application head did not advance exactly one version');
-    }
-    if (afterTrust?.['verified'] !== true || after.replay.complete !== true) {
-      throw new Error('successor landed but complete graph/replay verification did not pass');
-    }
-    return JSON.stringify({
-      kind: 'interego.application-action-result/v1',
-      status: 'committed',
-      httpStatus: 200,
-      actionIri: prepared.action.actionIri,
-      actor,
-      at: now,
-      precondition: {
-        passed: true,
-        expectedCid: resolved.stateHead.cid,
-        observedCid: resolved.stateHead.cid,
-      },
-      priorHead: resolved.stateHead,
-      newHead: {
-        descriptorUrl: after.stateHead.descriptorUrl,
-        cid: after.stateHead.cid,
-        version: after.state.version,
-        documentDigest: afterHead?.['documentDigest'],
-      },
-      receipt: prepared.receipt,
-      receiptDigest: prepared.receiptDigest,
-      graphVerified: true,
-      replay: after.replay,
-      published,
-    });
-  } catch (err) {
-    return JSON.stringify({
-      error: 'application_action_refused',
-      message: (err as Error).message,
-      actionIri,
-      committed: false,
-    });
-  }
+/** Pure admission test; the registry removes publishing capabilities on this path. */
+function isReadOnlyResourceCall(name: string, args: Record<string, unknown> = {}): boolean {
+  if (['render_hmd', 'get_descriptor', 'dereference'].includes(name)) return true;
+  if (!['act', 'invoke_affordance'].includes(name)) return false;
+  const operation = resourceInvocation(args, name === 'act');
+  return !!operation && resourceCompositions.access(operation.reference, operation.action) === 'read';
 }
 
 // Per-user identity cache for the IDENTITY_URL/me lookup. The display
@@ -6868,7 +6743,7 @@ function injectRestVerifiedIdentity(
     // relative RDF identity while receipts use the full did:web value.
     // Canonicalize once at this authenticated ingress boundary so every
     // downstream attribution sink receives the same identity space.
-    const sessionAgentIri = canonicalApplicationActorId(auth.agentId, IDENTITY_URL);
+    const sessionAgentIri = canonicalSessionActorId(auth.agentId, IDENTITY_URL);
     if (!target.agent_id && sessionAgentIri) target.agent_id = sessionAgentIri;
     // Session identity WINS over the forgeable caller agent_id at every attribution sink
     // (callerAgentId), so set it whenever the bearer resolved an agent.
@@ -10064,6 +9939,8 @@ async function handleInvokeAffordance(args: ToolArgs): Promise<string> {
   const authorization = args.authorization as string | undefined;
   if (!descriptorUrl) throw new Error('invoke_affordance: descriptor_url is required');
   if (!actionIri) throw new Error('invoke_affordance: action_iri is required');
+  const composed = await resourceCompositions.invoke(descriptorUrl, actionIri, payload, resourceWriteContext(args));
+  if (composed !== undefined) return JSON.stringify(resourceActionResponse(descriptorUrl, actionIri, composed, resourceCompositions.access(descriptorUrl, actionIri)!));
   // AMEP same-origin session bridge (same as handleKernelAct): reuse the caller's
   // verified session for an act that targets the relay's own /amep.
   const { fetch: invFetch, payload: invPayload0 } = withAmepSession(
@@ -10071,7 +9948,6 @@ async function handleInvokeAffordance(args: ToolArgs): Promise<string> {
     payload,
     {
       sessionBearer: args['_session_bearer'] as string | undefined,
-      identityBearer: args['_identity_token'] as string | undefined,
       principalId: args['_session_principal'] as string | undefined,
       explicitAuth: authorization,
     },
@@ -10203,6 +10079,10 @@ async function handleKernelDereference(args: ToolArgs): Promise<string> {
   // also reflect the canonical target. URN inputs (`urn:graph:*`,
   // `urn:pgsl:*`) pass through unchanged.
   const iri = normalizeCssUrl(String(args['iri'] ?? ''));
+  if (resourceCompositions.claims(iri)) {
+    const view = await resourceCompositions.render(iri, resourceContext(args));
+    return JSON.stringify({ iri, derived: true, view, representation: view?.hmd });
+  }
   const decorateManifest = args['decorate_manifest'] !== false;
   /**
    * How many manifest entries this relay will return, unless the caller says otherwise.
@@ -10334,6 +10214,11 @@ async function handleKernelAct(args: ToolArgs): Promise<string> {
   const descriptorUrlRaw = args['descriptor_url'] as string | undefined;
   const descriptorUrl = descriptorUrlRaw ? normalizeCssUrl(descriptorUrlRaw) : undefined;
   const actionIri = args['action_iri'] as string | undefined;
+  const operation = resourceInvocation({ ...args, descriptor_url: descriptorUrl }, true);
+  if (operation) {
+    const composed = await resourceCompositions.invoke(operation.reference, operation.action, normalizeActPayload(args.payload ?? {}), resourceWriteContext(args));
+    if (composed !== undefined) return JSON.stringify(resourceActionResponse(operation.reference, operation.action, composed, resourceCompositions.access(operation.reference, operation.action)!));
+  }
   const authorization = args['authorization'] as string | undefined;
   const targetRaw = args['target'] as string | undefined;
   const affordance = descriptorUrl && actionIri
@@ -10370,7 +10255,6 @@ async function handleKernelAct(args: ToolArgs): Promise<string> {
     normPayload,
     {
       sessionBearer: args['_session_bearer'] as string | undefined,
-      identityBearer: args['_identity_token'] as string | undefined,
       principalId: args['_session_principal'] as string | undefined,
       explicitAuth: authorization,
     },
@@ -10729,9 +10613,6 @@ const TOOLS: Record<string, ToolEntry> = gateRequiredArgs({
   get_descriptor: { description: 'Fetch a descriptor\'s Turtle', handler: handleGetDescriptor },
   get_encrypted_graph: { description: 'Fetch a graph\'s SEALED envelope without opening it — the read half of end-to-end encryption, for a recipient holding their own key', handler: handleGetEncryptedGraph },
   render_hmd: { description: 'Open a note in the interactive HyperMarkdown viewer', handler: handleRenderHmd },
-  open_application_lab: { description: 'Blind-discover and open a live descriptor-defined Interego application', handler: handleOpenApplicationLab },
-  execute_application_action: { description: 'Execute one exact action from a fully verified signed-domain application contract with current-head CAS', handler: handleExecuteApplicationAction },
-  preview_application_action: { description: 'Read and verify current application authority, then simulate one action without signing or publishing', handler: handlePreviewApplicationAction },
   get_pod_status: { description: 'Check pod status', handler: handleGetPodStatus },
   subscribe_to_pod: { description: 'Subscribe to pod notifications', handler: handleSubscribeToPod },
   register_agent: { description: 'Register an agent on a pod', handler: handleRegisterAgent },
@@ -12226,7 +12107,7 @@ const TOOL_SCHEMAS = [
     inputSchema: {
       type: 'object',
       properties: {
-        descriptor_url: { type: 'string', description: 'URL of the Context Descriptor containing the affordance (e.g., a Foxxi course descriptor URL).' },
+        descriptor_url: { type: 'string', description: 'Descriptor URL or derived resource reference containing the affordance. Use the exact reference returned by discovery or a resource view.' },
         action_iri: { type: 'string', description: 'The iep:action IRI of the affordance to invoke (e.g., urn:iep:action:foxxi:discover-assigned-courses). Discover available actions via discover_context + get_descriptor.' },
         payload: { type: 'object', additionalProperties: true, description: 'Arguments to POST to the affordance target. Shape depends on the specific affordance — read the descriptor or the affordance\'s inputs metadata to learn what fields are required.' },
         authorization: { type: 'string', description: 'Optional Authorization header value to forward (e.g., Bearer <token>). Use when the target requires auth. The relay caller\'s own bearer token is NOT auto-forwarded — supply it explicitly if needed.' },
@@ -12242,7 +12123,7 @@ const TOOL_SCHEMAS = [
   // ── HyperMarkdown interactive viewer (MCP App render tool) ──
   {
     name: 'render_hmd',
-    description: 'Open a signed HyperMarkdown note/graph in the interactive HyperMarkdown VIEWER — a generic in-chat MCP App. Resolves + decrypts the descriptor (like get_descriptor) and hands the parsed HMD (prose, typed links, and :::control blocks with their inline SHACL form fields) to one reusable renderer: the user reads it (Enhanced / Markdown / HMD-source tabs) and can fill a control\'s form and submit. Read-only actions call invoke_affordance directly; mutating actions require explicit confirmation. HMD stays Markdown — this only mounts its interactive view. Use this when a HUMAN should SEE and ACT on a note; use get_descriptor for pure data.',
+    description: 'Open a verified descriptor projection in the interactive HyperMarkdown VIEWER — a generic in-chat MCP App. Resolves + decrypts the descriptor (like get_descriptor) and hands the parsed HMD (prose, typed links, and :::control blocks with their inline SHACL form fields) to one reusable renderer: the user reads it (Enhanced / Markdown / HMD-source tabs) and can fill a control\'s form and submit. Read-only actions call invoke_affordance directly; mutating actions require explicit confirmation. HMD stays Markdown — this only mounts its interactive view. Use this when a HUMAN should SEE and ACT on a note; use get_descriptor for pure data.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -12256,67 +12137,7 @@ const TOOL_SCHEMAS = [
     // (+ ChatGPT legacy outputTemplate alias). Content-versioned URI (cache-bust).
     _meta: { ui: { resourceUri: HMD_WIDGET_URI }, 'openai/outputTemplate': HMD_WIDGET_URI },
   },
-  // ── Generic descriptor-defined Application Lab (MCP App) ──
-  {
-    name: 'open_application_lab',
-    description: 'Blind-discover and open the authoritative live view of ANY Interego application described by a signed application catalog. With no arguments, scans the federation for the default application catalog, selects the newest fully signature/content/descriptor-bound candidate, follows its pinned definition + contract + state graph, verifies every artifact, deterministically replays the complete state chain (including multiple contract epochs), evaluates current guards, and mounts the generic Application Lab MCP App. No application logic or state is hardcoded in the viewer. Pass application_id to select another catalog entry, or catalog_descriptor_url to pin the exact authority you intend.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        catalog_graph_iri: { type: 'string', description: 'Application catalog graph IRI. Defaults to urn:graph:interego:application-catalog:v1.' },
-        catalog_descriptor_url: { type: 'string', description: 'Optional exact signed catalog descriptor URL. Supplying it skips federation-wide catalog discovery.' },
-        application_id: { type: 'string', description: 'Application ID from the verified catalog. Defaults to the first catalog entry.' },
-        pod_url: { type: 'string', description: 'Optional pod to search for the catalog instead of scanning the federation.' },
-      },
-    },
-    outputSchema: GENERIC_OUTPUT_SCHEMA,
-    annotations: { title: 'Open authoritative Application Lab', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    _meta: {
-      ui: { resourceUri: APPLICATION_LAB_WIDGET_URI, visibility: ['model', 'app'] },
-      'openai/outputTemplate': APPLICATION_LAB_WIDGET_URI,
-      'openai/widgetAccessible': true,
-    },
-  },
-  {
-    name: 'preview_application_action',
-    description: 'Preview one action against the live verified Application Lab state and active signed contract. Re-resolves authority and complete replay on every request, verifies declared external evidence, evaluates the same guard/effects as execution under the authenticated session actor, and returns proposed changes or refusal. Expected state head and contract digest must match. No signing, publishing, pod initialization, or state mutation occurs. The result grants no authority to commit; execution re-verifies independently.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        catalog_graph_iri: { type: 'string' },
-        catalog_descriptor_url: { type: 'string' },
-        application_id: { type: 'string' },
-        action_iri: { type: 'string' },
-        expected_head: { type: 'string', description: 'Observed current state CID from open_application_lab.' },
-        expected_contract_digest: { type: 'string', description: 'Observed application.contractDigest from open_application_lab.' },
-        payload: { type: 'object', additionalProperties: true, description: 'Only inputs declared by this signed action.' },
-      },
-      required: ['catalog_descriptor_url', 'application_id', 'action_iri', 'expected_head', 'expected_contract_digest', 'payload'],
-      additionalProperties: false,
-    },
-    outputSchema: GENERIC_OUTPUT_SCHEMA,
-    annotations: { title: 'Preview live application action', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    _meta: { ui: { visibility: ['model', 'app'] }, 'openai/widgetAccessible': true },
-  },
-  {
-    name: 'execute_application_action',
-    description: 'Execute ONE exact POST action from a live descriptor-defined application. This is the generic urn:interego:runtime:signed-domain:v1 executor used by the Application Lab: it re-resolves the verified catalog, active contract and singular state head; verifies complete replay; rejects undeclared inputs; evaluates the signed guard under the server-bound actor; applies only the signed effects; publishes one signed canonical-JSON successor with if_match CAS; then re-verifies the new descriptor and complete replay before returning committed. Caller-supplied actor, time, contract, effects, and successor state are never accepted.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        catalog_graph_iri: { type: 'string', description: 'Application catalog graph IRI. Defaults to urn:graph:interego:application-catalog:v1.' },
-        catalog_descriptor_url: { type: 'string', description: 'Exact signed catalog descriptor that names the application.' },
-        application_id: { type: 'string', description: 'Exact application ID inside that verified catalog.' },
-        action_iri: { type: 'string', description: 'Exact action IRI from the active verified contract.' },
-        expected_head: { type: 'string', description: 'CID observed by the user while reviewing the action. Refused if the live head changed.' },
-        payload: { type: 'object', additionalProperties: true, description: 'Only fields declared by the selected action inputs are accepted.' },
-      },
-      required: ['catalog_descriptor_url', 'application_id', 'action_iri', 'expected_head', 'payload'],
-    },
-    outputSchema: GENERIC_OUTPUT_SCHEMA,
-    annotations: { title: 'Execute verified application action', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    _meta: { ui: { visibility: ['model', 'app'] }, 'openai/widgetAccessible': true },
-  },
+
 ] as const;
 
 // One materialized, content-addressed DECLARED tool surface for every transport.
@@ -12718,19 +12539,6 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
           'openai/widgetCSP': { connect_domains: [], resource_domains: [] },
         },
       },
-      {
-        uri: APPLICATION_LAB_WIDGET_URI,
-        name: 'Interego Application Lab (MCP App)',
-        description: 'One generic live viewer for any application that emerges from a verified application catalog, definition, action contract, and state chain. The open_application_lab tool supplies all content; this resource contains no Release Control or other vertical-specific state or policy.',
-        mimeType: 'text/html;profile=mcp-app',
-        _meta: {
-          ui: {
-            csp: { connectDomains: [], resourceDomains: [], frameDomains: [] },
-            domain: (PUBLIC_BASE_URL || 'https://relay.interego.xwisee.com'),
-          },
-          'openai/widgetCSP': { connect_domains: [], resource_domains: [] },
-        },
-      },
     ],
   }));
 
@@ -12775,23 +12583,7 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
         }],
       };
     }
-    if (req.params.uri === APPLICATION_LAB_WIDGET_URI) {
-      return {
-        contents: [{
-          uri: req.params.uri,
-          mimeType: 'text/html;profile=mcp-app',
-          text: APPLICATION_LAB_APP_HTML,
-          _meta: {
-            ui: {
-              csp: { connectDomains: [], resourceDomains: [], frameDomains: [] },
-              domain: (PUBLIC_BASE_URL || 'https://relay.interego.xwisee.com'),
-            },
-            'openai/widgetCSP': { connect_domains: [], resource_domains: [] },
-          },
-        }],
-      };
-    }
-    // Live substrate resource (resolved, not read off disk).
+
     const ns = /^interego:\/\/ns\/([^/]+)\/([^/?#]+)$/.exec(req.params.uri);
     if (ns) {
       const owner = decodeURIComponent(ns[1]!);
@@ -12893,7 +12685,7 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
     // scope claim to gate on.
     if (
       authContext?.oauthScopes
-      && isWriteSideTool(name)
+      && isWriteSideTool(name, rawArgs ?? {})
       && !hasWriteOauthScope(authContext.oauthScopes)
     ) {
       return {
@@ -13000,7 +12792,7 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
       // project's own name — and an external agent looking for the maintainer in
       // `list_known_pods` picked it, reasonably. `claude-code-vscode-…` collapsed to
       // `claude` the same way. See the helper's header for the measured incident.
-      if (name !== 'preview_application_action') {
+      if (!isReadOnlyResourceCall(name, args)) {
         const sessId = (args._session_agent_id as string | undefined) ?? '';
         const surf = surfaceSlugFromAgentId(sessId);
         // ★ NO `?? args.agent_id` FALLBACK. `_session_agent_did` is assigned from
@@ -13038,7 +12830,7 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
     // strict-DPoP environment, where AUTH_REQUIRED_TOOLS calls bubble
     // the bootstrap error to the tool handler shell so the client gets
     // a clear failure rather than a silent half-init write.
-    if (name !== 'preview_application_action' && authContext && authContext.podUrl && authContext.ownerWebId && authContext.userId) {
+    if (!isReadOnlyResourceCall(name, args) && authContext && authContext.podUrl && authContext.ownerWebId && authContext.userId) {
       const podAware = POD_AWARE_TOOLS.has(name);
       const strictRequired = RELAY_REQUIRE_DPOP && AUTH_REQUIRED_TOOLS.has(name);
       const initAuthCtx = {
@@ -16407,7 +16199,7 @@ app.post('/tool/:name', toolInvokeLimiter, async (req, res) => {
     // left ABSENT rather than filled with a placeholder when the id carries no surface —
     // `describeDirectoryEntry` reports an absent identity as absent, which is the honest
     // answer and the one a caller can act on.
-    if (toolName !== 'preview_application_action') {
+    if (!isReadOnlyResourceCall(toolName, req.body)) {
       const sessionDid = req.body._session_agent_did as string | undefined;
       const sessionPod = req.body._session_user_id as string | undefined;
       autoRegisterAgentCard(

@@ -23,7 +23,7 @@
     "matrix cannot disagree. Same file, same list, no sed parsing of YAML."
   ],
   "images": [
-    { "image": "interego-relay", "dockerfile": "deploy/Dockerfile.relay" },
+    { "image": "interego-relay", "dockerfile": "deploy/Dockerfile.relay", "target": "reference" },
     { "image": "interego-identity", "dockerfile": "deploy/Dockerfile.identity" },
     { "image": "interego-css-gate", "dockerfile": "deploy/Dockerfile.css-gate" },
     { "image": "interego-foxxi-bridge", "dockerfile": "deploy/Dockerfile.foxxi-bridge" },

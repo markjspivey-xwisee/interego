@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import {
   canonicalJson,
   descriptorTrusted,
@@ -13,8 +12,7 @@ import {
   type ApplicationLabReads,
   type Json,
   type LabDescriptor,
-} from './application-lab-runtime.js';
-import { APPLICATION_LAB_APP_HTML } from './application-lab-app.js';
+} from '../../integrations/application-runtime/application-lab-runtime.js';
 
 const APP = 'urn:test:application:one';
 const CATALOG = 'urn:graph:interego:application-catalog:v1';
@@ -266,23 +264,4 @@ assert.equal(afterEvidenceSwap.replay.links[3]!.evidenceVerified, false);
 assert.ok(afterEvidenceSwap.replay.links[3]!.errors.some(e => e.includes('evidence signed')));
 bodies.set(url('readiness'), originalEvidenceBody);
 
-assert.ok(APPLICATION_LAB_APP_HTML.startsWith('<!doctype html>'));
-assert.ok(APPLICATION_LAB_APP_HTML.includes("callTool('open_application_lab'"));
-assert.ok(APPLICATION_LAB_APP_HTML.includes("callTool('execute_application_action'"));
-assert.ok(APPLICATION_LAB_APP_HTML.includes('catalog_graph_iri:d.catalog.graphIri'));
-assert.ok(APPLICATION_LAB_APP_HTML.includes('catalog_graph_iri:DATA.catalog.graphIri'));
-assert.ok(APPLICATION_LAB_APP_HTML.includes('pod_url:DATA.catalog.podUrl'));
-assert.ok(!APPLICATION_LAB_APP_HTML.includes("path(head.state,'status')"));
-for (const domainToken of ['Release Control', 'FOXXI', 'AGP']) {
-  assert.ok(!APPLICATION_LAB_APP_HTML.includes(domainToken));
-}
-assert.ok(!/<script\s+src=|<link\s+href=|@import/i.test(APPLICATION_LAB_APP_HTML));
-assert.ok(!/\son[a-z]+\s*=/.test(APPLICATION_LAB_APP_HTML));
-
-const relaySource = readFileSync(new URL('./server.ts', import.meta.url), 'utf8');
-assert.match(relaySource, /const writePodName = podNameOf\(resolved\.podUrl\);/);
-assert.match(relaySource, /pod_name: writePodName,/);
-const executorDeclaration = relaySource.slice(relaySource.indexOf("name: 'execute_application_action'"));
-assert.match(executorDeclaration, /catalog_graph_iri: \{ type: 'string'/);
-
-console.log('application-lab: canonical binding, two-epoch replay, CAS preparation, and generic MCP App verified');
+console.log('application runtime: canonical binding, two-epoch replay, evidence verification and CAS preparation verified');

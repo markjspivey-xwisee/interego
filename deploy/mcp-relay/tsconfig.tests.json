@@ -24,7 +24,8 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "noEmit": true
+    "noEmit": true,
+    "rootDir": "../.."
   },
   // `include` in a child config REPLACES the parent's — the 11 production entry points are
   // deliberately not repeated here; `tsconfig.json` already checks them, and every source

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { validateAgainstShape } from '@interego/core';
-import { parseSignedJsonDocument } from '../../../deploy/mcp-relay/application-lab-runtime.js';
+import { parseSignedJsonDocument } from '../../../integrations/application-runtime/application-lab-runtime.js';
 import { createAgpHandlers } from '../bridge/handlers.js';
 import { readShapesTurtle } from '../src/ontology.js';
 import {

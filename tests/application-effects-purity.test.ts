@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyEffects, evaluateGuard, type Json } from '../deploy/mcp-relay/application-lab-runtime.js';
+import { applyEffects, evaluateGuard, type Json } from '../integrations/application-runtime/application-lab-runtime.js';
 
 describe('signed-domain effects own every inserted value', () => {
   it('cannot mutate a payload through a later effect', () => {

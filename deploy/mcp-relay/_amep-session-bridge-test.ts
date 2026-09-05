@@ -1,7 +1,7 @@
 // Unit tests for the AMEP same-origin session bridge — the security-critical
 // gate that decides when the relay auto-forwards a caller's OAuth bearer to
 // POST /amep/acts and stamps act.actor. Run: tsx _amep-session-bridge-test.ts
-import { applicationActionMcpRequest, applicationActionRestRequest, amepSameOriginUrl, withAmepSession, principalIri, isIriLike } from './amep-session-bridge.js';
+import { amepSameOriginUrl, withAmepSession, principalIri, isIriLike } from './amep-session-bridge.js';
 import type { FetchFn } from '@interego/core';
 
 const BASE = 'https://relay.interego.xwisee.com';
@@ -21,36 +21,6 @@ check('userinfo@host still same origin (harmless, fetch ignores it)', !!amepSame
 check('unset base → null (fail closed)', amepSameOriginUrl(`${BASE}/amep/acts`, '') === null);
 check('malformed url → null', amepSameOriginUrl('::::not a url', BASE) === null);
 check('external host with base as path segment → null (no prefix bypass)', amepSameOriginUrl('https://relay.interego.xwisee.com.evil.com/amep/acts', BASE) === null);
-
-// ── Application action MCP loopback: URL + body gate ───────────────
-const MCP = `${BASE}/mcp`;
-const APP_RPC = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'execute_application_action', arguments: {} } });
-const RPC_INIT = { method: 'POST', body: APP_RPC };
-check('same-origin exact Application Lab tools/call → matched', !!applicationActionMcpRequest(MCP, BASE, RPC_INIT));
-check('external MCP lookalike → null', applicationActionMcpRequest('https://evil.example.com/mcp', BASE, RPC_INIT) === null);
-check('same-origin REST shortcut → null', applicationActionMcpRequest(`${BASE}/tool/execute_application_action`, BASE, RPC_INIT) === null);
-check('MCP query string → null', applicationActionMcpRequest(`${MCP}?tool=execute_application_action`, BASE, RPC_INIT) === null);
-check('GET MCP → null', applicationActionMcpRequest(MCP, BASE, { method: 'GET', body: APP_RPC }) === null);
-check('another nested tool → null', applicationActionMcpRequest(MCP, BASE, { method: 'POST', body: APP_RPC.replace('execute_application_action', 'publish_context') }) === null);
-check('another JSON-RPC method → null', applicationActionMcpRequest(MCP, BASE, { method: 'POST', body: APP_RPC.replace('tools/call', 'tools/list') }) === null);
-check('malformed JSON-RPC body → null', applicationActionMcpRequest(MCP, BASE, { method: 'POST', body: '{' }) === null);
-
-
-const REST = `${BASE}/tool/execute_application_action`;
-const REST_BODY = JSON.stringify({ catalog_descriptor_url: 'https://pod/catalog.ttl', application_id: 'urn:app', action_iri: 'urn:action', expected_head: 'cid', payload: {} });
-const REST_INIT = { method: 'POST', body: REST_BODY };
-check('same-origin exact Application Lab REST executor → matched', !!applicationActionRestRequest(REST, BASE, REST_INIT));
-check('same-origin exact Application Lab REST preview → matched', !!applicationActionRestRequest(`${BASE}/tool/preview_application_action`, BASE, REST_INIT));
-check('same-origin exact Application Lab MCP preview → matched', !!applicationActionMcpRequest(MCP, BASE, { ...RPC_INIT, body: APP_RPC.replace('execute_application_action', 'preview_application_action') }));
-check('array-shaped tool name → null', applicationActionMcpRequest(MCP, BASE, { ...RPC_INIT, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: ['preview_application_action'], arguments: {} } }) }) === null);
-check('external preview lookalike → null', applicationActionRestRequest('https://evil.example.com/tool/preview_application_action', BASE, REST_INIT) === null);
-check('preview route suffix → null', applicationActionRestRequest(`${BASE}/tool/preview_application_action/extra`, BASE, REST_INIT) === null);
-check('external REST lookalike → null', applicationActionRestRequest('https://evil.example.com/tool/execute_application_action', BASE, REST_INIT) === null);
-check('adjacent REST tool → null', applicationActionRestRequest(`${BASE}/tool/publish_context`, BASE, REST_INIT) === null);
-check('REST query string → null', applicationActionRestRequest(`${REST}?tool=publish_context`, BASE, REST_INIT) === null);
-check('GET REST executor → null', applicationActionRestRequest(REST, BASE, { method: 'GET', body: REST_BODY }) === null);
-check('malformed REST body → null', applicationActionRestRequest(REST, BASE, { method: 'POST', body: '{' }) === null);
-check('array REST body → null', applicationActionRestRequest(REST, BASE, { method: 'POST', body: '[]' }) === null);
 
 // ── principalIri: the AMEP actor IRI (never the bare userId slug) ──
 check('isIriLike: did:/https: true, bare slug false', isIriLike('did:web:x') && isIriLike('https://x/c#me') && !isIriLike('u-pk-a') && !isIriLike(undefined));
@@ -127,70 +97,19 @@ const acceptHdr = (init: any) => Object.entries(init?.headers ?? {}).find(([k]) 
   check('yaml-string payload → parsed + actor stamped', (payload as any)?.act?.actor === 'u-pk-bob');
 }
 
-// ── Application Lab executor session bridge ──────────────────────────────
-// 10. Exact same-origin executor tools/call → bearer attached + redirect disabled.
+// No session credentials escape through nested MCP or tool REST calls, including
+// the removed application shortcuts and off-origin lookalikes.
 {
   const rec = recorder();
-  const url = `${BASE}/tool/preview_application_action`;
-  const { fetch } = withAmepSession(url, {}, { identityBearer: 'PREVIEWTOK' }, DEPS(rec.fn));
-  await fetch(url, REST_INIT);
-  check('Preview REST call → identity bearer auto-attached', authHdr(rec.calls[0]?.init) === 'Bearer PREVIEWTOK');
-  check('Preview REST call → redirects disabled', rec.calls[0]?.init?.redirect === 'manual');
-}
-{
-  const rec = recorder();
-  const { fetch } = withAmepSession(MCP, {}, { sessionBearer: 'LABTOK' }, DEPS(rec.fn));
-  await fetch(MCP, RPC_INIT);
-  check('Application action MCP call → bearer auto-attached', authHdr(rec.calls[0]?.init) === 'Bearer LABTOK');
-  check('Application action MCP call → Streamable HTTP Accept', acceptHdr(rec.calls[0]?.init) === 'application/json, text/event-stream');
-  check('Application action MCP call → redirect:manual set', rec.calls[0]?.init?.redirect === 'manual');
-}
-// 11. GET, another nested tool, REST shortcut, and external MCP never receive it.
-{
-  const rec = recorder();
-  const { fetch } = withAmepSession(MCP, {}, { sessionBearer: 'LABTOK' }, DEPS(rec.fn));
-  await fetch(MCP, { method: 'GET' });
-  await fetch(MCP, { method: 'POST', body: APP_RPC.replace('execute_application_action', 'publish_context') });
-  await fetch(`${BASE}/tool/execute_application_action`, RPC_INIT);
-  await fetch('https://evil.example.com/mcp', RPC_INIT);
-  check('Application bridge refuses GET/other-tool/REST/off-origin', rec.calls.every((c) => authHdr(c.init) === undefined && acceptHdr(c.init) === undefined));
-}
-// 12. Explicit authorization suppresses session forwarding.
-{
-  const rec = recorder();
-  const { fetch } = withAmepSession(MCP, {}, { sessionBearer: 'LABTOK', explicitAuth: 'Bearer CALLER' }, DEPS(rec.fn));
-  await fetch(MCP, RPC_INIT);
-  check('Application action explicit auth → no auto-forward', authHdr(rec.calls[0]?.init) === undefined);
-}
-
-
-// 13. Exact REST executor receives only the server-bound identity bearer.
-{
-  const rec = recorder();
-  const { fetch } = withAmepSession(REST, {}, { sessionBearer: 'OAUTH-DPOP', identityBearer: 'IDENTITY-TOKEN' }, DEPS(rec.fn));
-  await fetch(REST, REST_INIT);
-  check('Application action REST call → identity bearer auto-attached', authHdr(rec.calls[0]?.init) === 'Bearer IDENTITY-TOKEN');
-  check('Application action REST call → no MCP Accept rewrite', acceptHdr(rec.calls[0]?.init) === undefined);
-  check('Application action REST call → redirect:manual set', rec.calls[0]?.init?.redirect === 'manual');
-}
-// 14. Identity bearer never reaches MCP, AMEP, external, adjacent, query, or GET targets.
-{
-  const rec = recorder();
-  const { fetch } = withAmepSession(REST, {}, { identityBearer: 'IDENTITY-TOKEN' }, DEPS(rec.fn));
-  await fetch(MCP, RPC_INIT);
-  await fetch(`${BASE}/amep/acts`, { method: 'POST', body: '{}' });
-  await fetch('https://evil.example.com/tool/execute_application_action', REST_INIT);
-  await fetch(`${BASE}/tool/publish_context`, REST_INIT);
-  await fetch(`${REST}?x=1`, REST_INIT);
-  await fetch(REST, { method: 'GET', body: REST_BODY });
-  check('Identity bridge refuses MCP/AMEP/off-origin/other-tool/query/GET', rec.calls.every((c) => authHdr(c.init) === undefined));
-}
-// 15. Explicit authorization suppresses identity-token forwarding too.
-{
-  const rec = recorder();
-  const { fetch } = withAmepSession(REST, {}, { identityBearer: 'IDENTITY-TOKEN', explicitAuth: 'Bearer CALLER' }, DEPS(rec.fn));
-  await fetch(REST, REST_INIT);
-  check('Application REST explicit auth → no auto-forward', authHdr(rec.calls[0]?.init) === undefined);
+  const { fetch } = withAmepSession(BASE + '/mcp', {}, { sessionBearer: 'SECRET' }, DEPS(rec.fn));
+  for (const name of ['preview_application_action', 'execute_application_action', 'publish_context', 'invoke_affordance']) {
+    const body = JSON.stringify({ jsonrpc: '2.0', method: 'tools/call', params: { name, arguments: {} } });
+    for (const target of [BASE + '/mcp', BASE + '/tool/' + name, 'https://evil.example/mcp']) {
+      await fetch(target, { method: 'POST', body, headers: { Accept: 'application/json' } });
+      check('no loopback credential: ' + target + ' ' + name, authHdr(rec.calls.at(-1)?.init) === undefined);
+      check('Accept stays unchanged', rec.calls.at(-1)?.init?.headers?.['Accept'] === 'application/json');
+    }
+  }
 }
 
 console.log(`\n${ok}/${ok + bad} session-bridge checks passed`);
