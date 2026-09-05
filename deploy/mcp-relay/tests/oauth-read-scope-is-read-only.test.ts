@@ -56,7 +56,8 @@ function readSideTools(): Set<string> {
 
 const tools = registeredTools();
 const readSide = readSideTools();
-check('live application preview is available with read scope', readSide.has('preview_application_action'));
+check('generic resource read admission is capability-classified', SRC.includes('resourceCompositions.access(') && SRC.includes('isWriteSideTool(name, rawArgs ?? {})'));
+check('no application tools in the substrate', !tools.some(name => /application/.test(name)));
 
 // Guards the guard: an extractor that stopped matching would make every assertion vacuous.
 check('the registered-tool scan still finds the tool table', tools.length > 40,

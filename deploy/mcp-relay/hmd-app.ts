@@ -164,14 +164,14 @@ function renderControl(c,d){
   // to executable controls (and keys on method, never the author-controlled name).
   var executable=(c&&c.executable===true);
   var kind=executable?classifyAction(c.action,c.method):'declarative';
-  var h=el('h3'); h.appendChild(document.createTextNode(prettyAction(c.action)));
+  var h=el('h3'); h.appendChild(document.createTextNode((c.label||prettyAction(c.action))));
   var b=el('span','badge'+(kind==='mutate'?' mutate':'')+(kind==='declarative'?' declarative':'')); b.textContent=(kind==='declarative'?'declarative':(kind==='mutate'?'writes':'reads')); h.appendChild(b);
   card.appendChild(h);
   if(c.whenToUse){ card.appendChild(el('p','when',c.whenToUse)); }
   var fields=(c.fields||[]);
-  var inputs={};
+  var inputs=Object.create(null);
   fields.forEach(function(f){
-    var key=localName(f.path);
+    var key=fieldKey(f);
     var fw=el('div','field'); var lab=el('label'); lab.textContent=(f.name||key);
     if(isRequired(f)){ var r=el('span','req',' *'); lab.appendChild(r); }
     if(f.description){ var ds=el('span','desc',f.description); lab.appendChild(ds); }
@@ -193,22 +193,43 @@ function renderControl(c,d){
     return card;
   }
   var actions=el('div','actions');
-  var btn=el('button','go'+(kind==='mutate'?' secondary':'')); btn.textContent=(kind==='mutate'?'Review & '+prettyAction(c.action):prettyAction(c.action));
+  var btn=el('button','go'+(kind==='mutate'?' secondary':'')); btn.textContent=(kind==='mutate'?'Review & '+(c.label||prettyAction(c.action)):(c.label||prettyAction(c.action)));
   var status=el('div','status muted');
   var confirmBox=el('div','confirm'); confirmBox.style.display='none';
   actions.appendChild(btn); card.appendChild(actions); card.appendChild(confirmBox); card.appendChild(status);
 
   function validateAll(){
-    var ok=true, values={};
-    fields.forEach(function(f){ var key=localName(f.path); var io=inputs[key]; var v=io.input.value; values[key]=v;
+    var ok=true, values=Object.create(null);
+    fields.forEach(function(f){ var key=fieldKey(f); var io=inputs[key]; var v=io.input.value; values[key]=v;
       var e=validateValue(f,v); io.wrap.classList.toggle('invalid',!!e); io.err.textContent=e||''; if(e) ok=false; });
     return ok?{values:values}:null;
   }
   function doExecute(payload){
     btn.disabled=true; status.className='status muted'; status.textContent='Submitting…';
-    callTool('invoke_affordance',{descriptor_url:d.descriptorUrl,action_iri:c.action,payload:payload}).then(function(res){
+    var previous=card.querySelector('.result'); if(previous) previous.remove();
+    callTool('invoke_affordance',{descriptor_url:c.descriptorUrl||d.descriptorUrl,action_iri:c.action,payload:payload}).then(function(res){
+      // A response to an older document must never replace a newly refreshed view.
+      if(DATA!==d || !card.isConnected) return;
+      var result=res&&res.structuredContent;
+      if(!result && res&&Array.isArray(res.content)){
+        var item=res.content.find(function(x){return x.type==='text'&&typeof x.text==='string';});
+        if(item){try{result=JSON.parse(item.text);}catch(e){result={message:item.text};}}
+      }
+      result=result||res;
+      var transportError=false;
+      if(result&&typeof result.body==='string'&&typeof result.status==='number'){
+        transportError=result.status>=400;
+        try{result=JSON.parse(result.body);}catch(e){result={message:result.body};}
+      }
+      if((res&&res.isError)||transportError||(result&&result.error)){
+        var failure=el('pre','src result'); failure.textContent=JSON.stringify(result,null,2); card.appendChild(failure);
+        throw new Error(String(result.message||result.error||'Operation refused'));
+      }
+      if(isHmdDoc(result)){hydrate(result);return;}
+      if(result&&isHmdDoc(result.view)){hydrate(result.view);return;}
       status.className='status ok'; status.textContent='Done.';
-    }).catch(function(e){ status.className='status err'; status.textContent='Failed: '+(e&&e.message?e.message:'error'); }).then(function(){ btn.disabled=false; });
+      var output=el('pre','src result'); output.textContent=JSON.stringify(result,null,2); card.appendChild(output);
+    }).catch(function(e){ if(DATA!==d || !card.isConnected) return; status.className='status err'; status.textContent='Failed: '+(e&&e.message?e.message:'error'); }).then(function(){ btn.disabled=false; });
   }
   btn.addEventListener('click',function(){
     confirmBox.style.display='none';
@@ -219,7 +240,7 @@ function renderControl(c,d){
     // payload (textContent, so untrusted values stay inert) so consent is
     // informed: what you confirm is exactly what is submitted.
     confirmBox.innerHTML=''; confirmBox.style.display='block';
-    confirmBox.appendChild(el('div',null,'This will submit a signed “'+prettyAction(c.action)+'” action. It sends:'));
+    confirmBox.appendChild(el('div',null,'This will submit “'+(c.label||prettyAction(c.action))+'” action. It sends:'));
     var pv=el('pre','src'); pv.style.margin='8px 0'; pv.style.maxHeight='none'; pv.textContent=JSON.stringify(payload,null,2); confirmBox.appendChild(pv);
     var row=el('div','actions');
     var yes=el('button','go'); yes.textContent='Confirm & submit';

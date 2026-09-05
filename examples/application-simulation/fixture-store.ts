@@ -7,7 +7,7 @@ import {
   canonicalJson, prepareApplicationAction, resolveApplicationLab, signedJsonGraph,
   type ApplicationLabReads, type ApplicationState, type Json, type LabDescriptor, type LabHead,
   type LabManifestEntry, type PrepareActionInput, type ResolvedApplicationLab,
-} from '../../deploy/mcp-relay/application-lab-runtime.js';
+} from '../../integrations/application-runtime/application-lab-runtime.js';
 import type { RulePack } from './rule-packs.js';
 
 export function fixtureStore(pack: RulePack) {

@@ -25,12 +25,14 @@ on:
     branches: [master]
     paths:
       - 'deploy/mcp-relay/**'
+      - 'integrations/application-runtime/**'
       - 'packages/**'
       - '.github/workflows/relay-tests.yml'
   pull_request:
     branches: [master]
     paths:
       - 'deploy/mcp-relay/**'
+      - 'integrations/application-runtime/**'
       - 'packages/**'
       - '.github/workflows/relay-tests.yml'
 

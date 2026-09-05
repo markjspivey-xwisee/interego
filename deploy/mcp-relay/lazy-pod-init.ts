@@ -42,9 +42,9 @@ export interface LazyPodInit {
 // don't and are fired as best-effort warm-ups elsewhere.
 export const POD_AWARE_TOOLS: ReadonlySet<string> = new Set<string>([
   // Writes — first-line auth reads /agents
-  'publish_context', 'execute_application_action', 'register_agent', 'revoke_agent', 'publish_directory',
+  'publish_context', 'register_agent', 'revoke_agent', 'publish_directory',
   // Reads that materialize over /agents or /profile/card
-  'discover_context', 'discover_all', 'get_descriptor', 'open_application_lab',
+  'discover_context', 'discover_all', 'get_descriptor',
   'get_pod_status', 'list_known_pods', 'verify_agent',
   'subscribe_to_pod', 'unsubscribe_from_pod',
   'add_pod', 'remove_pod', 'discover_directory', 'resolve_webfinger',

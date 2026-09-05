@@ -156,7 +156,7 @@ check('the helper sets _session_user_id in BOTH branches (the field the ownershi
   && /if \(auth\.userId\) target\._session_user_id = auth\.userId;/.test(SERVER));
 check('the helper sets the _session_agent_did attribution identity in both branches',
   /target\._session_agent_did = auth\.recoveredDid;/.test(SERVER)
-  && /const sessionAgentIri = canonicalApplicationActorId\(auth\.agentId, IDENTITY_URL\);/.test(SERVER)
+  && /const sessionAgentIri = canonicalSessionActorId\(auth\.agentId, IDENTITY_URL\);/.test(SERVER)
   && /if \(sessionAgentIri\) target\._session_agent_did = sessionAgentIri;/.test(SERVER));
 check('bearer attribution never publishes a relative identity slug',
   /if \(!target\.agent_id && sessionAgentIri\) target\.agent_id = sessionAgentIri;/.test(SERVER)
@@ -169,19 +169,15 @@ check('/messages routes through the helper — this is what fixes its requireOwn
   && !/args\._session_agent_did = auth\.recoveredDid/.test(SERVER));
 check('/mcp still injects _session_agent_did for every tool',
   /args\._session_agent_did = authContext\.agentId;/.test(SERVER));
-const executeApplicationActionBody = topLevelFunctionBody(
+const resourceWriteBody = topLevelFunctionBody(
   SERVER_CODE,
-  'async function handleExecuteApplicationAction(args: ToolArgs): Promise<string> {',
+  'function resourceWriteContext(args: ToolArgs): ResourceWriteContext {',
 );
-const applicationWriteArgsAt = executeApplicationActionBody.indexOf('const writeArgs: ToolArgs = {');
-const applicationActorAt = executeApplicationActionBody.indexOf('_session_agent_did: actor,');
-const applicationStateGraphAt = executeApplicationActionBody.indexOf(
-  'graph_iri: resolved.definition.stateGraphIri,',
-);
-check('the generic application executor signs with the same canonical actor used by its receipt',
-  applicationWriteArgsAt >= 0
-  && applicationActorAt > applicationWriteArgsAt
-  && applicationStateGraphAt > applicationActorAt);
+check('resource publication requires the authenticated principal and signs with that exact identity',
+  resourceWriteBody.includes('request.actor !== context.principal')
+  && resourceWriteBody.includes('_session_agent_did: context.principal')
+  && resourceWriteBody.includes('if_match: request.expectedHead')
+  && resourceWriteBody.includes('sign_authorship: true'));
 // ★ THIS USED TO MATCH AN INLINE `for (const reserved of ['_session_bearer', …])` LOOP,
 // of which there were two — one on /mcp and one on /tool — each a hand-copy of
 // RESERVED_WIRE_FIELDS. The check passed while the constant it was really about was NOT
@@ -353,7 +349,7 @@ console.log('\n13. R8 — the bearer branch injects the attribution identity');
 // The helper's bearer branch (shared by /tool + /messages) sets _session_agent_did from
 // the resolved agent, so callerAgentId() cannot fall through to a forgeable value.
 check('the shared helper sets _session_agent_did from the resolved agent on the bearer path',
-  /const sessionAgentIri = canonicalApplicationActorId\(auth\.agentId, IDENTITY_URL\);/.test(SERVER)
+  /const sessionAgentIri = canonicalSessionActorId\(auth\.agentId, IDENTITY_URL\);/.test(SERVER)
   && /if \(sessionAgentIri\) target\._session_agent_did = sessionAgentIri;/.test(SERVER));
 
 console.log('\n14. R4 — the egress guard screens EVERY redirect hop, not just the first URL');

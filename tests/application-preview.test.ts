@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { previewApplicationAction } from '../deploy/mcp-relay/application-preview.js';
-import { canonicalJson, prepareApplicationAction, signedJsonGraph, type ApplicationLabReads, type Json } from '../deploy/mcp-relay/application-lab-runtime.js';
+import { previewApplicationAction } from '../integrations/application-runtime/application-preview.js';
+import { canonicalJson, prepareApplicationAction, signedJsonGraph, type ApplicationLabReads, type Json } from '../integrations/application-runtime/application-lab-runtime.js';
 import { fixtureStore } from '../examples/application-simulation/fixture-store.js';
 import { releaseControl } from '../examples/application-simulation/rule-packs.js';
 

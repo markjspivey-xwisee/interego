@@ -205,6 +205,7 @@ function inputModel(field) {
   if (Number.isInteger(max) && max > 0 && max <= 120) return { kind: 'text' };
   return { kind: field.maxLength && Number(field.maxLength) <= 120 ? 'text' : 'textarea' };
 }
+function fieldKey(field) { return typeof field.key === 'string' ? field.key : localName(field.path); }
 function isRequired(field) { return Number.isInteger(Number(field.minCount)) && Number(field.minCount) >= 1; }
 // Returns an error string, or '' when valid. Never throws (a hostile pattern is
 // length-capped and tried in a try/catch so it cannot break validation).
@@ -236,16 +237,16 @@ function isHmdDoc(d) {
 }
 function shouldRehydrate(current, next) {
   if (!isHmdDoc(next)) return false; // non-HMD (e.g. an invoke_affordance result) never replaces the doc
-  if (current && current.descriptorUrl === next.descriptorUrl && current.hmd === next.hmd) return false; // unchanged
+  if (current && current.descriptorUrl === next.descriptorUrl && current.hmd === next.hmd && JSON.stringify(current.controls) === JSON.stringify(next.controls)) return false; // unchanged
   return true;
 }
 
 // Assemble the invoke_affordance payload from field values, keyed by each field's
 // property LOCAL NAME (the conventional form-field key). Empty optionals dropped.
 function collectPayload(fields, values) {
-  var payload = {};
+  var payload = Object.create(null);
   for (var i = 0; i < (fields || []).length; i++) {
-    var f = fields[i]; var key = localName(f.path); var v = values[key];
+    var f = fields[i]; var key = fieldKey(f); var v = values[key];
     if (v == null || v === '') continue;
     var m = inputModel(f);
     if (m.kind === 'number') payload[key] = Number(v);

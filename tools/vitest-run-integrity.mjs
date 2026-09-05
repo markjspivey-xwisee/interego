@@ -255,7 +255,7 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // it went red BEFORE the next addition broke CI, not after.
 // Two simulation regression modules bring the tracked tree to 363; retain headroom
 // inside the proportional allowance rather than arming the next addition to fail.
-export const MIN_TEST_MODULES = 350;
+export const MIN_TEST_MODULES = 351;
 
 /**
  * How far below the real module count MIN_TEST_MODULES may sit before that is itself a

@@ -8,7 +8,7 @@ import {
   evaluatePolicy,
   runShowcase,
 } from '../../examples/foxxi-agp-release-showcase/showcase.js';
-import { SIGNED_DOMAIN_RUNTIME } from '../../deploy/mcp-relay/application-lab-runtime.js';
+import { SIGNED_DOMAIN_RUNTIME } from '../../integrations/application-runtime/application-lab-runtime.js';
 
 describe('FOXXI + AGP + generic Release Control showcase', () => {
   it('begins cold, selects a warranted A2A intervention, and passes held-out transfer evidence', async () => {

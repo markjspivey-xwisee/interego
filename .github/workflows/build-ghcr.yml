@@ -223,6 +223,7 @@ jobs:
           # every level, which is the part that would actually poison it.
           context: .
           file: ${{ matrix.dockerfile }}
+          target: ${{ matrix.target }}
           push: true
           # Empty for images without a build_args field; docker/build-push-action
           # treats an empty build-args as none.

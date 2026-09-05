@@ -35,7 +35,7 @@ import { dirname, resolve } from 'node:path';
 const here = dirname(fileURLToPath(import.meta.url));
 const file = resolve(here, '..', 'deploy', 'images.json');
 
-/** @type {{ images: { image: string, dockerfile: string, build_args?: string, prebuild?: string }[] }} */
+/** @type {{ images: { image: string, dockerfile: string, build_args?: string, prebuild?: string, target?: string }[] }} */
 let manifest;
 try {
   manifest = JSON.parse(readFileSync(file, 'utf8'));
