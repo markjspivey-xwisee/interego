@@ -4,10 +4,9 @@ import { canonicalGraphDigest } from '../../../packages/core/src/rdf/graph-diges
 import { graphRegion } from '../../../packages/core/src/rdf/turtle-region.js';
 import { parseTrig } from '../../../packages/core/src/rdf/turtle-parser.js';
 import { turtleIriRef, escapeTurtleLiteral } from '../../../packages/core/src/rdf/escape.js';
+import { readEncryptedGraph, unpackToolResult as unpack, type CallTool } from './tool-client.js';
 
 interface Context { actor: string; relay: string }
-type Json = Record<string, any>; // Tool responses are checked at each boundary below.
-type CallTool = (name: string, args: Json) => Promise<unknown>;
 
 function database(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -43,21 +42,6 @@ const storage: ClientKeyStorage = {
     };
   }),
 };
-
-function unpack(raw: unknown): Json {
-  const result = raw as Json;
-  if (result?.isError) throw new Error('Interego refused the request.');
-  let value = result?.structuredContent;
-  if (!value && Array.isArray(result?.content)) {
-    const text = result.content.find((item: Json) => item.type === 'text')?.text;
-    if (typeof text === 'string') value = JSON.parse(text);
-  }
-  value ??= result;
-  if (typeof value?.status === 'number' && value.status >= 400) throw new Error(String(value.error ?? 'Interego refused the request.'));
-  if (typeof value?.body === 'string') value = JSON.parse(value.body);
-  if (!value || typeof value !== 'object' || value.error) throw new Error(String(value?.message ?? value?.error ?? 'Invalid Interego response.'));
-  return value;
-}
 
 function element<K extends keyof HTMLElementTagNameMap>(tag: K, text = ''): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag); node.textContent = text; return node;
@@ -122,19 +106,9 @@ export function mount(container: HTMLElement, getContext: () => { clientEncrypti
     if (context().scope !== c.scope || activeScope !== c.scope) throw new Error('The connected identity changed. Reopen client encryption before continuing.');
   }
 
-  async function encryptedRead(c: ReturnType<typeof context>, url: string): Promise<Json> {
-    // Discovery avoids depending on a host's stale list containing this reader.
-    const surface = unpack(await callTool('act', { target: `${c.relay}/tools`, action: 'read', method: 'GET' }));
-    const reader = surface['hydra:member']?.find((tool: Json) => tool.name === 'get_encrypted_graph');
-    const affordance = reader?.affordances?.find((a: Json) => a.method === 'POST' && a.action === 'urn:iep:action:invoke:get_encrypted_graph');
-    if (!affordance || new URL(affordance.target).origin !== c.relay) throw new Error('Interego did not publish a usable encrypted reader.');
-    sameIdentity(c);
-    return unpack(await callTool('act', { target: affordance.target, action: affordance.action, method: 'POST', payload: { url } }));
-  }
-
   async function read(c: ReturnType<typeof context>, url: string, expected?: { graphIri: string; digest: string; envelope: string }): Promise<void> {
     if (!/^https?:\/\//.test(url)) throw new Error('Enter an encrypted descriptor URL.');
-    const result = await encryptedRead(c, url);
+    const result = await readEncryptedGraph(callTool, c.relay, url, () => sameIdentity(c));
     if (result.encrypted !== true || typeof result.envelope !== 'string') throw new Error('This resource is not an encrypted envelope.');
     if (expected && result.envelope !== expected.envelope) throw new Error('Stored ciphertext differs from the ciphertext this browser sent.');
     sameIdentity(c);

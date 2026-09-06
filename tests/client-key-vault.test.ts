@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { webcrypto, createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { ClientKeyVault, type ClientKeyRecord, type ClientKeyStorage } from '../packages/core/src/crypto/client-vault.js';
 import { generateKeyPair, openEncryptedEnvelope } from '../packages/core/src/crypto/encryption.js';
 import { canonicalGraphDigest, canonicalGraphTriples } from '../packages/core/src/rdf/graph-digest.js';
+import { readEncryptedGraph } from '../deploy/mcp-relay/client/tool-client.js';
 
 function localStorage(): ClientKeyStorage & { records: Map<string, ClientKeyRecord> } {
   const records = new Map<string, ClientKeyRecord>();
@@ -105,5 +106,32 @@ describe('client-held encryption', () => {
     expect(execFileSync(process.execPath, ['../../tools/build-client-encryption.mjs', '--check'], {
       cwd: 'deploy/mcp-relay', encoding: 'utf8',
     })).toContain('matches its source');
+  });
+
+  it('reads ciphertext using the read-side tool without asking a read-only connection to call act', async () => {
+    const result = { encrypted: true, envelope: 'original ciphertext' };
+    const call = vi.fn(async (name: string) => {
+      if (name !== 'get_encrypted_graph') throw new Error('mcp:read cannot call act');
+      return { structuredContent: result };
+    });
+    expect(await readEncryptedGraph(call, 'https://relay.example', 'https://pod.example/note.ttl', () => {})).toEqual(result);
+    expect(call.mock.calls).toEqual([['get_encrypted_graph', { url: 'https://pod.example/note.ttl' }]]);
+  });
+
+  it('does not retry a denied encrypted read through the broader act tool', async () => {
+    const call = vi.fn(async () => ({ isError: true, content: [{ type: 'text', text: '403 insufficient_scope' }] }));
+    await expect(readEncryptedGraph(call, 'https://relay.example', 'https://pod.example/note.ttl', () => {})).rejects.toThrow('insufficient_scope');
+    expect(call).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses a discovered reader only when the host explicitly reports a stale tool list', async () => {
+    const target = 'https://relay.example/tool/get_encrypted_graph';
+    const call = vi.fn()
+      .mockResolvedValueOnce({ isError: true, content: [{ type: 'text', text: 'Unknown tool: get_encrypted_graph' }] })
+      .mockResolvedValueOnce({ 'hydra:member': [{ name: 'get_encrypted_graph', affordances: [{ method: 'POST', action: 'urn:iep:action:invoke:get_encrypted_graph', target }] }] })
+      .mockResolvedValueOnce({ encrypted: true, envelope: 'ciphertext' });
+    expect(await readEncryptedGraph(call, 'https://relay.example', 'https://pod.example/note.ttl', () => {})).toEqual({ encrypted: true, envelope: 'ciphertext' });
+    expect(call.mock.calls.map(args => args[0])).toEqual(['get_encrypted_graph', 'act', 'act']);
+    expect(call.mock.lastCall?.[1]).toMatchObject({ target, method: 'POST', payload: { url: 'https://pod.example/note.ttl' } });
   });
 });
