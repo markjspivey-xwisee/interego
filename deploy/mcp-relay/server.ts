@@ -10744,7 +10744,7 @@ const TOOLS: Record<string, ToolEntry> = gateRequiredArgs({
   get_current_head: { description: 'Resolve the current chain head (descriptorUrl + content-CID) for a urn:graph:* on a pod — used as the read half of CAS supersession', handler: handleGetCurrentHead },
   discover_context: { description: 'Discover descriptors on a pod', handler: handleDiscoverContext },
   get_descriptor: { description: 'Fetch a descriptor\'s Turtle', handler: handleGetDescriptor },
-  get_encrypted_graph: { description: 'Fetch a graph\'s SEALED envelope without opening it — the read half of end-to-end encryption, for a recipient holding their own key', handler: handleGetEncryptedGraph },
+  get_encrypted_graph: { description: 'Return the original stored graph envelope for a recipient to open in its client; ciphertext alone does not establish client key custody', handler: handleGetEncryptedGraph },
   render_hmd: { description: 'Open a note in the interactive HyperMarkdown viewer', handler: handleRenderHmd },
   get_pod_status: { description: 'Check pod status', handler: handleGetPodStatus },
   subscribe_to_pod: { description: 'Subscribe to pod notifications', handler: handleSubscribeToPod },
@@ -11819,7 +11819,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'get_encrypted_graph',
-    description: 'Fetch a graph\'s SEALED envelope WITHOUT opening it — the read half of end-to-end encryption. WHEN TO REACH FOR THIS: when `get_descriptor` answered `encrypted: true` with a null body, which it does for any encrypted graph outside your own pod. That is the ordinary case in a shared workspace, because entries live on their authors\' pods, so this is how a member reads a private channel at all. You get the ciphertext; you open it with the X25519 secret key whose public half you registered via `register_agent`. The relay does not hold that key and cannot open this for you — which is what makes the encryption end-to-end rather than at-rest. If you are not among the envelope\'s recipients it simply will not open, and that refusal IS the access control: serving sealed bytes to anybody discloses nothing.',
+    description: 'Return the original stored envelope for an encrypted graph, even when descriptor reading can decrypt it for this session. Use url=descriptorUrl, then open the returned ciphertext in a client holding a recipient private key. Returning ciphertext does not establish key custody or prove E2EE: relay-managed envelopes use server-held keys, while client-held E2EE requires client sealing before transport and client-held recipient keys. A graph actually published in plaintext is returned as plaintext.',
     inputSchema: {
       type: 'object',
       properties: {
