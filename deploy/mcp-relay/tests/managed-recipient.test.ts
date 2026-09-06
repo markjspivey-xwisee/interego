@@ -9,7 +9,7 @@ import {
   managedRecipientKey, managedRecipientPublicKeys, openManagedEnvelope,
   type ManagedKeyContext,
 } from '../managed-recipient.js';
-import { createRecipientGrant, openRecipientGrant, recipientGrantUrl } from '../envelope-sharing.js';
+import { createRecipientGrant, openRecipientGrant, recipientGrantUrl, managedGrantRecipientKey, persistRecipientGrants } from '../envelope-sharing.js';
 
 const root = generateKeyPair();
 const identityUrl = 'https://identity.example';
@@ -39,7 +39,31 @@ const envelope = createEncryptedEnvelope(plaintext, keys, root);
 const oldPrivate = createEncryptedEnvelope('legacy private', [root.publicKey], root);
 const originalBytes = JSON.stringify(oldPrivate);
 const reviewerKey = managedRecipientKey(root, reviewer, identityUrl);
+assert.equal(managedGrantRecipientKey(authorContext, reviewer, root.publicKey), reviewerKey.publicKey, 'legacy registry key resolves to the usable managed recipient');
+assert.equal(managedGrantRecipientKey(authorContext, reviewer, reviewerKey.publicKey), reviewerKey.publicKey, 'current managed registrations remain usable');
+assert.equal(managedGrantRecipientKey(authorContext, reviewer, generateKeyPair().publicKey), null, 'client-held keys must not be reported as a usable detached grant');
 const grant = createRecipientGrant(authorContext, graphUrl, oldPrivate, reviewer, reviewerKey.publicKey, '2026-09-06T00:00:00Z');
+const grantUrl = recipientGrantUrl(authorContext, graphUrl, reviewerKey.publicKey)!;
+const anotherGrant = createRecipientGrant(authorContext, graphUrl, oldPrivate, stranger, managedRecipientKey(root, stranger, identityUrl).publicKey, '2026-09-06T00:00:00Z');
+const anotherUrl = recipientGrantUrl(authorContext, graphUrl, anotherGrant.recipientPublicKey)!;
+const planned = [{ grant, url: grantUrl }, { grant: anotherGrant, url: anotherUrl }];
+const persisted = new Map<string, string>();
+const partialWrite: FetchFn = async (url, init) => {
+  const ok = url === grantUrl;
+  if (ok) persisted.set(url, init!.body as string);
+  return { ok, status: ok ? 201 : 403, statusText: '', text: async () => '', json: async () => ({}) };
+};
+const partial = await persistRecipientGrants(planned, partialWrite);
+assert.equal(partial.shared, false); assert.equal(partial.partial, true);
+assert.equal(partial.grants[0]!.recipient, reviewer, 'a later failure must not hide access already granted');
+assert.equal(partial.failures[0]!.recipient, stranger); assert.equal(partial.failures[0]!.outcome, 'rejected');
+assert.equal(openRecipientGrant(reviewerContext, graphUrl, oldPrivate, JSON.parse(persisted.get(grantUrl)!)), 'legacy private');
+const unknown = await persistRecipientGrants(planned, async (url, init) => {
+  if (url === anotherUrl) throw new Error('connection lost');
+  return partialWrite(url, init);
+});
+assert.equal(unknown.shared, false); assert.equal(unknown.partial, true);
+assert.equal(unknown.grants.length, 1); assert.equal(unknown.failures[0]!.outcome, 'unknown', 'a lost response cannot assert that no grant was persisted');
 assert.equal(JSON.stringify(oldPrivate), originalBytes, 'sharing leaves the original encrypted artifact byte-identical');
 assert(!JSON.stringify(grant).includes('legacy private'), 'grant contains only an encrypted content-key wrap');
 assert.equal(openRecipientGrant(reviewerContext, graphUrl, oldPrivate, grant), 'legacy private', 'recipient opens the actual legacy ciphertext using its own detached wrap');
@@ -128,6 +152,8 @@ assert.equal(grantRead.encrypted, true); assert.equal(grantRead.content, 'legacy
 
 // These wiring checks supplement the executable policy/crypto/transport tests.
 const server = readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
+const sharingHandler = server.slice(server.indexOf('async function handleShareEncryptedEnvelope('), server.indexOf('async function handleKernelAct('));
+assert(sharingHandler.indexOf('unsupportedRecipients:') < sharingHandler.indexOf('persistRecipientGrants('), 'unsupported keys are rejected before any grant writes');
 for (const sink of server.matchAll(/recipientKeyPair: await recipientKeyFor\(args, [^\n]+\),/g)) {
   assert.match(server.slice(sink.index, sink.index! + 220), /openEnvelope: await envelopeOpenerFor\(args\)/, 'every named read path carries the authoritative policy');
 }

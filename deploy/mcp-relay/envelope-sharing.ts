@@ -6,7 +6,7 @@
 import { createHash } from 'node:crypto';
 import {
   canonicalJson, decryptContent, unwrapKey, wrapKeyForRecipient,
-  type EncryptedEnvelope, type WrappedKey,
+  type EncryptedEnvelope, type WrappedKey, type FetchFn,
 } from '@interego/core';
 import { managedRecipientKey, recipientKeyForResource, type ManagedKeyContext } from './managed-recipient.js';
 import { mayUseRelayKey } from './relay-key-gate.js';
@@ -26,6 +26,34 @@ export interface RecipientGrant {
   readonly wrappedKey: WrappedKey;
   readonly grantedBy: string;
   readonly createdAt: string;
+}
+
+/** Detached grants currently have a relay-managed opening path only. */
+export function managedGrantRecipientKey(context: ManagedKeyContext, recipient: string, registeredKey: string): string | null {
+  const managed = managedRecipientKey(context.root, recipient, context.identityUrl).publicKey;
+  return registeredKey === context.root.publicKey || registeredKey === managed ? managed : null;
+}
+
+/** Report every persisted grant even when a later write fails. A transport
+ * exception has an unknown outcome: the store may have committed the PUT. */
+export async function persistRecipientGrants(
+  planned: readonly { readonly grant: RecipientGrant; readonly url: string }[], write: FetchFn,
+) {
+  const grants: Record<string, unknown>[] = [];
+  const failures: Record<string, unknown>[] = [];
+  for (const { grant, url } of planned) {
+    const receipt = { recipient: grant.recipient, publicKey: grant.recipientPublicKey, grantUrl: url, envelopeDigest: grant.envelopeDigest };
+    try {
+      const written = await write(url, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(grant),
+      });
+      if (written.ok) grants.push(receipt);
+      else failures.push({ ...receipt, status: written.status, outcome: 'rejected' });
+    } catch {
+      failures.push({ ...receipt, outcome: 'unknown', error: 'Transport failed; this grant may have persisted. Read grantUrl to reconcile before retrying.' });
+    }
+  }
+  return { shared: failures.length === 0, partial: grants.length > 0 && failures.length > 0, grants, failures };
 }
 
 /** Same store spelling and container as the envelope; no caller-chosen write URL. */
@@ -82,7 +110,7 @@ export function openRecipientGrant(
 export function envelopeSharingResource() {
   return {
     iri: ENVELOPE_SHARING_IRI, status: 'ok',
-    representation: 'Share an existing encrypted descriptor by adding a detached recipient key wrap. Requires source-pod ownership and an openable, content-bound signed descriptor. Original artifact bytes and manifest heads are unchanged.',
+    representation: 'Share an existing encrypted descriptor by adding a detached recipient key wrap. Requires source-pod ownership and an openable, content-bound signed descriptor. This action supports relay-managed recipients; client-held keys are rejected before writes. Original artifact bytes and manifest heads are unchanged. The result lists persisted grants and any failed or unknown writes.',
     affordances: [{
       action: SHARE_ENVELOPE_ACTION, target: ENVELOPE_SHARING_IRI, method: 'POST',
       inputs: {

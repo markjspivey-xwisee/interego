@@ -132,7 +132,7 @@ import { winnowDiscoverResults } from './discover-winnow.js';
 import { createConformanceGate } from './conformance-gate.js';
 import { mayUseRelayKey } from './relay-key-gate.js';
 import { managedRecipientPublicKeys, managedRecipientKey, openManagedEnvelope } from './managed-recipient.js';
-import { ENVELOPE_SHARING_IRI, SHARE_ENVELOPE_ACTION, envelopeSharingResource, recipientGrantUrl, createRecipientGrant, openRecipientGrant, type RecipientGrant } from './envelope-sharing.js';
+import { ENVELOPE_SHARING_IRI, SHARE_ENVELOPE_ACTION, envelopeSharingResource, recipientGrantUrl, createRecipientGrant, openRecipientGrant, managedGrantRecipientKey, persistRecipientGrants, type RecipientGrant } from './envelope-sharing.js';
 // The /ns dereference surface — ~540 lines of route + projection logic that could not be
 // imported (and so could not be unit-tested) while it sat in this file. It carries the
 // iep:action route with it, because that route only resolves by being registered ahead of
@@ -10291,25 +10291,22 @@ async function handleShareEncryptedEnvelope(args: ToolArgs): Promise<string> {
   if (resolved.some(r => !r.agentKeyBindings?.length)) {
     return JSON.stringify({ error: 'every sharing target must resolve to an active registered encryption key', code: 422 });
   }
-  const planned = resolved.flatMap(r => (r.agentKeyBindings ?? []).map(binding => {
-    const publicKey = binding.publicKey === relayAgentKey.publicKey
-      ? managedRecipientKey(relayAgentKey, binding.agentId, IDENTITY_URL).publicKey : binding.publicKey;
-    const grant = createRecipientGrant(context, fetched.landedUrl, envelope, binding.agentId, publicKey, new Date().toISOString());
-    const url = recipientGrantUrl(context, fetched.landedUrl, publicKey);
+  const recipients = resolved.flatMap(r => (r.agentKeyBindings ?? []).map(binding => ({
+    agentId: binding.agentId, publicKey: managedGrantRecipientKey(context, binding.agentId, binding.publicKey),
+  })));
+  if (recipients.some(recipient => !recipient.publicKey)) {
+    return JSON.stringify({ error: 'detached grants currently support relay-managed recipients only; no grants were written', code: 422,
+      unsupportedRecipients: recipients.filter(recipient => !recipient.publicKey).map(recipient => recipient.agentId) });
+  }
+  const planned = recipients.map(({ agentId, publicKey }) => {
+    const grant = createRecipientGrant(context, fetched.landedUrl, envelope, agentId, publicKey!, new Date().toISOString());
+    const url = recipientGrantUrl(context, fetched.landedUrl, publicKey!);
     if (!url) throw new Error('recipient grant has no authorized storage location');
     return { grant, url };
-  }));
-  const grants: Record<string, unknown>[] = [];
-  for (const { grant, url } of planned) {
-    // An explicit owner action replaces only this encrypted key capsule. It
-    // cannot select a write URL, change a descriptor, or advance a graph head.
-    const written = await solidFetch(url, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(grant),
-    });
-    if (!written.ok) throw new Error('recipient grant could not be persisted');
-    grants.push({ recipient: grant.recipient, publicKey: grant.recipientPublicKey, grantUrl: url, envelopeDigest: grant.envelopeDigest });
-  }
-  return JSON.stringify({ shared: true, descriptorUrl, envelopeUrl: fetched.landedUrl, sourceUnchanged: true, grants });
+  });
+  // Only these encrypted key capsules can change; descriptor and graph heads cannot.
+  const result = await persistRecipientGrants(planned, solidFetch);
+  return JSON.stringify({ ...result, descriptorUrl, envelopeUrl: fetched.landedUrl, sourceUnchanged: true });
 }
 
 async function handleKernelAct(args: ToolArgs): Promise<string> {

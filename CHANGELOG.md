@@ -53,6 +53,9 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
   wrap binds to the exact source path and envelope digest. It leaves ciphertext,
   signed descriptors, manifest heads and replay history unchanged. Deployment alone
   grants nobody access and does not republish application graphs.
+- Detached sharing rejects unsupported client-held recipients before writing any
+  grants. Multi-recipient writes report persisted grants and failed or uncertain
+  outcomes, so a later transport failure cannot hide access already granted.
 
 ## 2026-08-20 — a compliance percentage whose denominator nobody could see
 
