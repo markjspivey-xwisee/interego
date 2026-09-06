@@ -238,7 +238,7 @@ import { ingestVault, VAULT_LD_PROFILE } from '@interego/mdvault';
 // Private-note HyperMarkdown projection (extracted for unit-testability; server.ts is self-starting).
 import { noteToHyperMarkdown, inlineRenderedForDescriptor, viewerControls, publishableAuthority } from './note-view.js';
 // The generic HyperMarkdown MCP-App renderer (served as a ui:// resource).
-import { HMD_APP_HTML } from './hmd-app.js';
+import { HMD_WIDGET_URI, readHmdWidgetResource } from './hmd-resource.js';
 import { canonicalSessionActorId } from './session-actor.js';
 import { loadResourceCompositions, resourceActionResponse, resourceInvocation, type ResourceContext, type ResourceDescriptor, type ResourceEntry, type ResourceReads, type ResourceWriteContext } from './resource-compositions.js';
 const resourceCompositions = await loadResourceCompositions(process.env.INTEREGO_RESOURCE_COMPOSITIONS);
@@ -247,19 +247,6 @@ import {
   mcpServerVersion,
   TOOL_SURFACE_META_KEY,
 } from './tool-surface.js';
-
-// CONTENT-VERSIONED widget URI: hosts (ChatGPT) may cache the widget HTML by
-// resource URI, so a same-URI redeploy could serve a STALE widget. Deriving the URI
-// from a short hash of HMD_APP_HTML means every widget change yields a fresh URI —
-// refreshed metadata identifies the new bundle; the host controls cache refresh.
-// Referenced identically by the render_hmd
-// tool's _meta.ui.resourceUri, ListResources, and ReadResource.
-function hmdShortHash(s: string): string {
-  let h = 5381;
-  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
-  return h.toString(36);
-}
-const HMD_WIDGET_URI = `ui://widget/hmd-${hmdShortHash(HMD_APP_HTML)}.html`;
 
 import type {
   ContextDescriptorData,
@@ -12567,22 +12554,8 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
   server.setRequestHandler('resources/read', async (req) => {
     // The generic HyperMarkdown viewer (MCP App UI). Static HTML, no content —
     // the render_hmd tool supplies the document at call time.
-    if (req.params.uri === HMD_WIDGET_URI) {
-      return {
-        contents: [{
-          uri: req.params.uri,
-          mimeType: 'text/html;profile=mcp-app',
-          text: HMD_APP_HTML,
-          _meta: {
-            ui: {
-              csp: { connectDomains: [], resourceDomains: [], frameDomains: [] },
-              domain: (PUBLIC_BASE_URL || 'https://relay.interego.xwisee.com'),
-            },
-            'openai/widgetCSP': { connect_domains: [], resource_domains: [] },
-          },
-        }],
-      };
-    }
+    const widget = readHmdWidgetResource(req.params.uri, PUBLIC_BASE_URL || 'https://relay.interego.xwisee.com');
+    if (widget) return widget;
 
     const ns = /^interego:\/\/ns\/([^/]+)\/([^/?#]+)$/.exec(req.params.uri);
     if (ns) {

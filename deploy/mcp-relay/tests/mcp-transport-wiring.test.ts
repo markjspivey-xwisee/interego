@@ -37,6 +37,7 @@ import { createMcpHandler } from '@modelcontextprotocol/server';
 import type { AuthInfo, Tool } from '@modelcontextprotocol/server';
 import { Server } from '@modelcontextprotocol/server';
 import { toNodeHandler } from '@modelcontextprotocol/node';
+import { HMD_WIDGET_URI, readHmdWidgetResource } from '../hmd-resource.js';
 
 let failures = 0;
 const ok = (cond: boolean, name: string, detail = ''): void => {
@@ -70,9 +71,14 @@ function buildServerFor(ctx: { era: string; authInfo?: AuthInfo; requestInfo?: R
 
   const server = new Server(
     { name: 'wiring-test', version: '0.0.1' },
-    { capabilities: { tools: {} } },
+    { capabilities: { tools: {}, resources: {} } },
   );
   server.setRequestHandler('tools/list', async () => ({ tools: [TOOL] }));
+  server.setRequestHandler('resources/read', async (req) => {
+    const resource = readHmdWidgetResource(req.params.uri, 'https://relay.example');
+    if (!resource) throw new Error(`Unknown resource: ${req.params.uri}`);
+    return resource;
+  });
   server.setRequestHandler('tools/call', async (req) => ({
     content: [{ type: 'text' as const, text: JSON.stringify({ echoed: req.params.arguments?.['msg'] ?? null }) }],
   }));
@@ -146,6 +152,24 @@ function payload(res: Res): Record<string, any> | undefined {
 console.log('\n/mcp: the Express <-> SDK v2 seam');
 
 try {
+  // Hosts may retain tools/list across a relay update. Fetch the URI from the
+  // preceding production build, not just the URI in today's tool metadata.
+  for (const uri of [HMD_WIDGET_URI, 'ui://widget/hmd-cmnqon.html', 'ui://widget/hmd.html']) {
+    const response = payload(await post('/mcp-correct', {
+      jsonrpc: '2.0', id: 'template', method: 'resources/read', params: { uri },
+    }, ACCEPT_BOTH));
+    const content = response?.result?.contents?.[0];
+    ok(content?.uri === uri && content?.mimeType === 'text/html;profile=mcp-app',
+      `a host can fetch its viewer template: ${uri}`, JSON.stringify(response?.error));
+    ok(typeof content?.text === 'string' && content.text.includes("rpcRequest('ui/initialize'"),
+      `the fetched template contains the working host handshake: ${uri}`);
+  }
+  for (const uri of ['ui://other/hmd-cmnqon.html', 'https://widget/hmd-cmnqon.html', 'ui://widget/hmd-cmnqon.html?x=1']) {
+    const response = payload(await post('/mcp-correct', {
+      jsonrpc: '2.0', id: 'unknown-template', method: 'resources/read', params: { uri },
+    }, ACCEPT_BOTH));
+    ok(!!response?.error && !response?.result, `unrelated resources remain unknown: ${uri}`);
+  }
   // ── The body must actually arrive ────────────────────────────────────────
   const list = await post('/mcp-correct', { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }, ACCEPT_BOTH);
   const listBody = payload(list);

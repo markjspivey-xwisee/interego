@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { JSDOM, type DOMWindow } from 'jsdom';
-import { HMD_APP_HTML } from '../deploy/mcp-relay/hmd-app.js';
+import { readHmdWidgetResource } from '../deploy/mcp-relay/hmd-resource.js';
 
 const windows: JSDOM[] = [];
 afterEach(() => { windows.splice(0).forEach(dom => dom.window.close()); });
@@ -40,7 +40,10 @@ function mount(options: { reject?: boolean; defer?: boolean; height?: number } =
       } } }));
     }
   } };
-  const dom = new JSDOM(HMD_APP_HTML, { runScripts: 'dangerously', beforeParse(w) {
+  // A host still holding the preceding deployment's template must both fetch
+  // its resource and complete startup; testing current HTML alone misses this.
+  const resource = readHmdWidgetResource('ui://widget/hmd-cmnqon.html', 'https://relay.example');
+  const dom = new JSDOM(resource!.contents[0]!.text, { runScripts: 'dangerously', beforeParse(w) {
     window = w;
     Object.defineProperty(w, 'parent', { value: host });
     w.HTMLElement.prototype.getBoundingClientRect = () => new w.DOMRect(0, 0, 390, height);
