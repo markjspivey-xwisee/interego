@@ -18,7 +18,8 @@
  * a serialization change — it changes which IRI every abbreviated term denotes — and that
  * moves the digest, which is the behaviour a content binding has to have.
  */
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import type { ParsedTerm, ParsedTripleTerm } from './turtle-parser.js';
 import { parseTrig } from './turtle-parser.js';
 
@@ -168,7 +169,7 @@ export function canonicalGraphDigestResult(turtle: string): GraphDigestResult {
     };
   }
   return {
-    digest: `${GRAPH_DIGEST_ALGORITHM}:${createHash('sha256').update(canonical, 'utf8').digest('hex')}`,
+    digest: `${GRAPH_DIGEST_ALGORITHM}:${bytesToHex(sha256(utf8ToBytes(canonical)))}`,
   };
 }
 

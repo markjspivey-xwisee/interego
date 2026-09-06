@@ -62,7 +62,7 @@ describe('generic HMD viewer host lifecycle', () => {
     await vi.waitFor(() => expect(dom.window.document.getElementById('title')?.textContent).toBe(initial.title));
     expect(messages.slice(0, 2).map(m => m['method'])).toEqual(['ui/initialize', 'ui/notifications/initialized']);
     expect(messages[0]?.['params']).toMatchObject({ protocolVersion: '2026-01-26', appCapabilities: {}, appInfo: { name: 'interego-hmd' } });
-    (dom.window.document.querySelector('.control button') as HTMLButtonElement).click();
+    (dom.window.document.querySelector('#pane-enhanced .control button') as HTMLButtonElement).click();
     await vi.waitFor(() => expect(dom.window.document.getElementById('title')?.textContent).toBe('Refreshed through host'));
     expect(messages.filter(m => m['method'] === 'tools/call').map(m => m['params'])).toEqual([{
       name: 'invoke_affordance', arguments: { descriptor_url: initial.descriptorUrl, action_iri: 'urn:example:refresh', payload: {} },
@@ -95,5 +95,19 @@ describe('generic HMD viewer host lifecycle', () => {
       { height: 200 }, { height: 640 }, { height: 180 },
     ]);
     expect(messages.slice(0, 2).map(m => m['method'])).toEqual(['ui/initialize', 'ui/notifications/initialized']);
+  });
+
+  it('clears private drafts when an explicit host identity changes, even if the HMD is unchanged', async () => {
+    const { dom, deliver } = mount();
+    await vi.waitFor(() => expect(dom.window.document.getElementById('title')?.textContent).toBe(initial.title));
+    const notify = (actor: string) => deliver({ jsonrpc: '2.0', method: 'ui/notifications/tool-result', params: {
+      structuredContent: { ...initial, clientEncryption: { actor, relay: 'https://relay.example' } },
+    } });
+    notify('did:example:alice');
+    const note = dom.window.document.querySelector('[aria-label="Private note"]') as HTMLTextAreaElement;
+    note.value = 'private draft belonging to Alice';
+    notify('did:example:bob');
+    expect(note.value).toBe('');
+    expect(dom.window.document.querySelector('#private-content details')?.hasAttribute('open')).toBe(false);
   });
 });

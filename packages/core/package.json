@@ -1,7 +1,7 @@
 {
   "name": "@interego/core",
   "version": "0.2.0",
-  "description": "Interego substrate kernel — typed Context Descriptors + 7 facets + composition algebra + categorical kernel verbs (mint, dereference, compose, act, restrict, extend, promote, decompose) + RDF/SPARQL/SHACL + crypto primitives. The shape and API of the substrate; per-vertical compositions live in sibling @interego/* packages.",
+  "description": "Interego substrate kernel \u2014 typed Context Descriptors + 7 facets + composition algebra + categorical kernel verbs (mint, dereference, compose, act, restrict, extend, promote, decompose) + RDF/SPARQL/SHACL + crypto primitives. The shape and API of the substrate; per-vertical compositions live in sibling @interego/* packages.",
   "author": "Mark Spivey",
   "license": "MIT",
   "type": "module",
@@ -72,6 +72,18 @@
     "./lattice": {
       "import": "./dist/lattice/index.js",
       "types": "./dist/lattice/index.d.ts"
+    },
+    "./crypto/encryption": {
+      "import": "./dist/crypto/encryption.js",
+      "types": "./dist/crypto/encryption.d.ts"
+    },
+    "./crypto/client-vault": {
+      "import": "./dist/crypto/client-vault.js",
+      "types": "./dist/crypto/client-vault.d.ts"
+    },
+    "./rdf/graph-digest": {
+      "import": "./dist/rdf/graph-digest.js",
+      "types": "./dist/rdf/graph-digest.d.ts"
     }
   },
   "files": [
