@@ -3,6 +3,7 @@ import { ClientKeyVault, type ClientKeyRecord, type ClientKeyRecovery, type Clie
 import { canonicalGraphDigest } from '../../../packages/core/src/rdf/graph-digest.js';
 import { graphRegion } from '../../../packages/core/src/rdf/turtle-region.js';
 import { parseTrig } from '../../../packages/core/src/rdf/turtle-parser.js';
+import { turtleIriRef, escapeTurtleLiteral } from '../../../packages/core/src/rdf/escape.js';
 
 interface Context { actor: string; relay: string }
 type Json = Record<string, any>; // Tool responses are checked at each boundary below.
@@ -173,14 +174,17 @@ export function mount(container: HTMLElement, getContext: () => { clientEncrypti
   action(save, async () => {
     const c = await ready();
     if (!note.value.trim()) throw new Error('Write a private note first.');
-    if (!c.descriptorUrl || /[\s<>"{}|\\^`]/.test(c.descriptorUrl)) throw new Error('This viewer has no usable resource reference.');
+    const resourceRef = turtleIriRef(c.descriptorUrl);
+    if (!resourceRef) throw new Error('This viewer has no usable resource reference.');
     const graphIri = `urn:uuid:${crypto.randomUUID()}`;
-    const mirror = `@prefix prov: <http://www.w3.org/ns/prov#> .\n<${graphIri}> prov:wasDerivedFrom <${c.descriptorUrl}> .`;
-    const turtle = `<${graphIri}> <https://schema.org/text> ${JSON.stringify(note.value)} .\n<${graphIri}> <http://www.w3.org/ns/prov#wasDerivedFrom> <${c.descriptorUrl}> .`;
+    const graphRef = turtleIriRef(graphIri);
+    if (!graphRef) throw new Error('The private graph identifier could not be created.');
+    const mirror = `@prefix prov: <http://www.w3.org/ns/prov#> .\n${graphRef} prov:wasDerivedFrom ${resourceRef} .`;
+    const turtle = `${graphRef} <https://schema.org/text> "${escapeTurtleLiteral(note.value)}" .\n${graphRef} <http://www.w3.org/ns/prov#wasDerivedFrom> ${resourceRef} .`;
     const digest = canonicalGraphDigest(turtle);
     if (!digest) throw new Error('The private note could not be represented as a graph.');
     const recipientKeys = recipients.value.split(',').map(key => key.trim()).filter(Boolean);
-    const envelope = JSON.stringify(await vault.seal(`<${graphIri}> {\n${turtle}\n}`, recipientKeys));
+    const envelope = JSON.stringify(await vault.seal(`${graphRef} {\n${turtle}\n}`, recipientKeys));
     sameIdentity(c);
     const published = unpack(await callTool('publish_context', {
       graph_iri: graphIri, graph_content: envelope, sealed_payload: true, content_digest: digest,

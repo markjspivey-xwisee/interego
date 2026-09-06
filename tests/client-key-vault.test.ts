@@ -102,5 +102,8 @@ describe('client-held encryption', () => {
 
   it('ships exactly the shared client implementation in the browser bundle', () => {
     expect(execFileSync(process.execPath, ['tools/build-client-encryption.mjs', '--check'], { encoding: 'utf8' })).toContain('matches its source');
+    expect(execFileSync(process.execPath, ['../../tools/build-client-encryption.mjs', '--check'], {
+      cwd: 'deploy/mcp-relay', encoding: 'utf8',
+    })).toContain('matches its source');
   });
 });

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const out = await build({
+  absWorkingDir: root, preserveSymlinks: true,
   entryPoints: [join(root, 'deploy/mcp-relay/client/encryption-ui.ts')],
   bundle: true, platform: 'browser', format: 'iife', globalName: 'InteregoPrivateContent',
   target: 'es2022', write: false, sourcemap: false, legalComments: 'inline', minify: false,
