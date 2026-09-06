@@ -132,6 +132,7 @@ import { winnowDiscoverResults } from './discover-winnow.js';
 import { createConformanceGate } from './conformance-gate.js';
 import { mayUseRelayKey } from './relay-key-gate.js';
 import { managedRecipientPublicKeys, managedRecipientKey, openManagedEnvelope } from './managed-recipient.js';
+import { ENVELOPE_SHARING_IRI, SHARE_ENVELOPE_ACTION, envelopeSharingResource, recipientGrantUrl, createRecipientGrant, openRecipientGrant, type RecipientGrant } from './envelope-sharing.js';
 // The /ns dereference surface — ~540 lines of route + projection logic that could not be
 // imported (and so could not be unit-tested) while it sat in this file. It carries the
 // iep:action route with it, because that route only resolves by being registered ahead of
@@ -6874,8 +6875,18 @@ async function envelopeOpenerFor(args: ToolArgs) {
   // target argument, not evidence of who is requesting decryption.
   const sessionActor = (args._session_agent_did ?? args._session_agent_id) as string | undefined;
   const context = { root: relayAgentKey, ownPodUrl, sessionActor, identityUrl: IDENTITY_URL, storeOrigins: STORE_ORIGINS };
-  return (envelope: EncryptedEnvelope, fetchedUrl: string): string | null =>
-    openManagedEnvelope(context, envelope, fetchedUrl);
+  return async (envelope: EncryptedEnvelope, fetchedUrl: string): Promise<string | null> => {
+    const direct = openManagedEnvelope(context, envelope, fetchedUrl);
+    if (direct !== null || !sessionActor) return direct;
+    const key = managedRecipientKey(relayAgentKey, sessionActor, IDENTITY_URL);
+    const grantUrl = recipientGrantUrl(context, fetchedUrl, key.publicKey);
+    if (!grantUrl) return null;
+    try {
+      const response = await guardedInvokeFetch(grantUrl, { headers: { Accept: 'application/json' } });
+      if (!response.ok) return null;
+      return openRecipientGrant(context, fetchedUrl, envelope, await response.json() as RecipientGrant);
+    } catch { return null; }
+  };
 }
 
 async function selfPodUrl(args: ToolArgs): Promise<string | undefined> {
@@ -10111,6 +10122,7 @@ async function handleKernelDereference(args: ToolArgs): Promise<string> {
   // also reflect the canonical target. URN inputs (`urn:graph:*`,
   // `urn:pgsl:*`) pass through unchanged.
   const iri = normalizeCssUrl(String(args['iri'] ?? ''));
+  if (iri === ENVELOPE_SHARING_IRI) return JSON.stringify(envelopeSharingResource());
   if (resourceCompositions.claims(iri)) {
     const view = await resourceCompositions.render(iri, resourceContext(args));
     return JSON.stringify({ iri, derived: true, view, representation: view?.hmd });
@@ -10240,7 +10252,75 @@ function normalizeActPayload(payload: unknown): unknown {
   return v;
 }
 
+/** Add a recipient wrap without rewriting the signed source or its ciphertext. */
+async function handleShareEncryptedEnvelope(args: ToolArgs): Promise<string> {
+  let payload = normalizeActPayload(args.payload);
+  if (typeof payload === 'string') { try { payload = JSON.parse(payload); } catch { payload = null; } }
+  const p = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload as Record<string, unknown> : {};
+  const descriptorUrl = typeof p.descriptor_url === 'string' ? normalizeCssUrl(p.descriptor_url) : '';
+  const shareWith = Array.isArray(p.share_with) ? p.share_with : [];
+  if (!descriptorUrl || shareWith.length < 1 || shareWith.length > 16 || shareWith.some(x => typeof x !== 'string' || !x)) {
+    return JSON.stringify({ error: 'descriptor_url and 1–16 share_with handles are required', code: 400 });
+  }
+  const ownPodUrl = await callerOwnPod(args);
+  const sessionActor = (args._session_agent_did ?? args._session_agent_id) as string | undefined;
+  if (!ownPodUrl || !sessionActor || !mayUseRelayKey({ targetUrl: descriptorUrl, ownPodUrl, storeOrigins: STORE_ORIGINS })) {
+    return JSON.stringify({ error: 'only the authenticated source-pod owner may share an existing envelope', code: 403 });
+  }
+  const scope = await runScopeGate(canonicalSessionActorId(sessionActor, IDENTITY_URL)!, ownPodUrl);
+  if (!scope.allowed) return JSON.stringify({ error: 'scope_violation', code: 403 });
+  const descriptor = JSON.parse(await handleGetDescriptor({ ...args, url: descriptorUrl }, false));
+  if (!descriptor.authorship?.authorshipVerified || descriptor.authorship?.contentBinding !== 'bound'
+    || descriptor.authorship?.descriptorBinding?.bound !== true || !descriptor.graph?.encrypted) {
+    return JSON.stringify({ error: 'sharing requires an openable, content-bound signed encrypted descriptor', code: 422 });
+  }
+  const sourceUrl = descriptor.graph.url as string;
+  if (!mayUseRelayKey({ targetUrl: sourceUrl, ownPodUrl, storeOrigins: STORE_ORIGINS })) {
+    return JSON.stringify({ error: 'the encrypted payload must be on the authenticated owner pod', code: 403 });
+  }
+  const fetched = await guardedInvokeFetchLanded(sourceUrl, { headers: { Accept: 'application/jose+json' } });
+  if (!fetched.response.ok || !mayUseRelayKey({ targetUrl: fetched.landedUrl, ownPodUrl, storeOrigins: STORE_ORIGINS })) {
+    return JSON.stringify({ error: 'source envelope could not be retrieved from the owner pod', code: 403 });
+  }
+  const envelope = await fetched.response.json() as EncryptedEnvelope;
+  const context = { root: relayAgentKey, ownPodUrl, sessionActor, identityUrl: IDENTITY_URL, storeOrigins: STORE_ORIGINS };
+  if (openManagedEnvelope(context, envelope, fetched.landedUrl) !== descriptor.graph.content) {
+    return JSON.stringify({ error: 'source changed after content-binding verification; retry the read', code: 409 });
+  }
+  const resolved = await resolveRecipients(shareWith as string[], { fetch: guardedInvokeFetch });
+  if (resolved.some(r => !r.agentKeyBindings?.length)) {
+    return JSON.stringify({ error: 'every sharing target must resolve to an active registered encryption key', code: 422 });
+  }
+  const planned = resolved.flatMap(r => (r.agentKeyBindings ?? []).map(binding => {
+    const publicKey = binding.publicKey === relayAgentKey.publicKey
+      ? managedRecipientKey(relayAgentKey, binding.agentId, IDENTITY_URL).publicKey : binding.publicKey;
+    const grant = createRecipientGrant(context, fetched.landedUrl, envelope, binding.agentId, publicKey, new Date().toISOString());
+    const url = recipientGrantUrl(context, fetched.landedUrl, publicKey);
+    if (!url) throw new Error('recipient grant has no authorized storage location');
+    return { grant, url };
+  }));
+  const grants: Record<string, unknown>[] = [];
+  for (const { grant, url } of planned) {
+    // An explicit owner action replaces only this encrypted key capsule. It
+    // cannot select a write URL, change a descriptor, or advance a graph head.
+    const written = await solidFetch(url, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(grant),
+    });
+    if (!written.ok) throw new Error('recipient grant could not be persisted');
+    grants.push({ recipient: grant.recipient, publicKey: grant.recipientPublicKey, grantUrl: url, envelopeDigest: grant.envelopeDigest });
+  }
+  return JSON.stringify({ shared: true, descriptorUrl, envelopeUrl: fetched.landedUrl, sourceUnchanged: true, grants });
+}
+
 async function handleKernelAct(args: ToolArgs): Promise<string> {
+  const sharingTarget = args.descriptor_url ?? args.target;
+  if (sharingTarget === ENVELOPE_SHARING_IRI) {
+    if ((args.action_iri ?? args.action) !== SHARE_ENVELOPE_ACTION || (args.method && args.method !== 'POST')) {
+      return JSON.stringify({ error: 'the envelope-sharing resource declares only its POST sharing action', code: 400 });
+    }
+    return handleShareEncryptedEnvelope(args);
+  }
+
   // Translate legacy public-host CSS URLs at the handler boundary so the
   // act-via-descriptor + act-via-affordance paths both target the
   // canonical internal-FQDN. solidFetch ALSO rewrites at the HTTP layer.

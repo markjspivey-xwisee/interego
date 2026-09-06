@@ -3606,7 +3606,7 @@ export async function fetchGraphContent(
     fetch?: FetchFn;
     recipientKeyPair?: EncryptionKeyPair;
     /** Host-managed opening policy, evaluated against the actual fetched resource. */
-    openEnvelope?: (envelope: EncryptedEnvelope, fetchedUrl: string) => string | null;
+    openEnvelope?: (envelope: EncryptedEnvelope, fetchedUrl: string) => string | null | Promise<string | null>;
   } = {},
 ): Promise<{ content: string | null; encrypted: boolean; mediaType: string }> {
   const fetchFn = options.fetch ?? getDefaultFetch();
@@ -3634,7 +3634,7 @@ export async function fetchGraphContent(
   }
   // A host policy is authoritative: refusal MUST NOT fall back to a borrowed key.
   if (options.openEnvelope) {
-    return { content: options.openEnvelope(env, r.url || graphUrl), encrypted: true, mediaType };
+    return { content: await options.openEnvelope(env, r.url || graphUrl), encrypted: true, mediaType };
   }
   if (!options.recipientKeyPair) {
     return { content: null, encrypted: true, mediaType };

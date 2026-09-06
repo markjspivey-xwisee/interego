@@ -398,7 +398,7 @@ export interface DereferenceOptions {
   /** Recipient keypair for decrypting an encrypted envelope payload. */
   readonly recipientKeyPair?: EncryptionKeyPair;
   /** Authoritative host policy. A refusal never falls back to recipientKeyPair. */
-  readonly openEnvelope?: (envelope: EncryptedEnvelope, fetchedUrl: string) => string | null;
+  readonly openEnvelope?: (envelope: EncryptedEnvelope, fetchedUrl: string) => string | null | Promise<string | null>;
   /**
    * When dereferencing a pod manifest, also fetch each entry's
    * descriptor and decorate its affordances onto the entry. Defaults
@@ -1192,7 +1192,7 @@ export interface ActOptions {
    * is returned (so existing decrypt-on-client callers still work). */
   readonly recipientKeyPair?: EncryptionKeyPair;
   /** Authoritative host policy. A refusal never falls back to recipientKeyPair. */
-  readonly openEnvelope?: (envelope: EncryptedEnvelope, fetchedUrl: string) => string | null;
+  readonly openEnvelope?: (envelope: EncryptedEnvelope, fetchedUrl: string) => string | null | Promise<string | null>;
   /**
    * ★★ ASKED ABOUT THE URL THE KERNEL ACTUALLY FETCHED, BEFORE THE KEY IS USED ON IT.
    *
@@ -1238,11 +1238,11 @@ function isCanDecryptAction(action: string | undefined): boolean {
  * fails), and `undefined` when `body` is not a recognisable envelope
  * (caller should fall through and surface the body as-is).
  */
-function tryUnwrapEnvelopeBody(
+async function tryUnwrapEnvelopeBody(
   body: string,
   options: ActOptions,
   fetchedUrl: string,
-): string | null | undefined {
+): Promise<string | null | undefined> {
   let env: EncryptedEnvelope;
   try {
     env = JSON.parse(body) as EncryptedEnvelope;
@@ -1387,7 +1387,7 @@ export async function act(
     if (isCanDecryptAction(affordance.action) && (options?.openEnvelope || options?.recipientKeyPair)
       // ★ The URL FETCHED, not the affordance that was authorised. See `mayDecrypt`.
       && (options.openEnvelope || (options.mayDecrypt?.(response.url || affordance.target) ?? true))) {
-      const plaintext = tryUnwrapEnvelopeBody(responseBody, options, response.url || affordance.target);
+      const plaintext = await tryUnwrapEnvelopeBody(responseBody, options, response.url || affordance.target);
       if (typeof plaintext === 'string') {
         return {
           status: response.status,
@@ -1429,7 +1429,7 @@ export async function act(
     // ★★ `resolved.target` came out of the DESCRIPTOR, so this is the branch the hole lived
     // in: the descriptor may be one the caller controls while the target is not.
     && (options.openEnvelope || (options.mayDecrypt?.(result.responseUrl || resolved.target) ?? true))) {
-    const plaintext = tryUnwrapEnvelopeBody(result.body, options, result.responseUrl || resolved.target);
+    const plaintext = await tryUnwrapEnvelopeBody(result.body, options, result.responseUrl || resolved.target);
     if (typeof plaintext === 'string') {
       return {
         status: result.status,

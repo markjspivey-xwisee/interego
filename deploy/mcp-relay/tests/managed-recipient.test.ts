@@ -9,6 +9,7 @@ import {
   managedRecipientKey, managedRecipientPublicKeys, openManagedEnvelope,
   type ManagedKeyContext,
 } from '../managed-recipient.js';
+import { createRecipientGrant, openRecipientGrant, recipientGrantUrl } from '../envelope-sharing.js';
 
 const root = generateKeyPair();
 const identityUrl = 'https://identity.example';
@@ -36,6 +37,21 @@ assert.deepEqual(managedRecipientPublicKeys(root, [{ agentId: reviewer, publicKe
 
 const envelope = createEncryptedEnvelope(plaintext, keys, root);
 const oldPrivate = createEncryptedEnvelope('legacy private', [root.publicKey], root);
+const originalBytes = JSON.stringify(oldPrivate);
+const reviewerKey = managedRecipientKey(root, reviewer, identityUrl);
+const grant = createRecipientGrant(authorContext, graphUrl, oldPrivate, reviewer, reviewerKey.publicKey, '2026-09-06T00:00:00Z');
+assert.equal(JSON.stringify(oldPrivate), originalBytes, 'sharing leaves the original encrypted artifact byte-identical');
+assert(!JSON.stringify(grant).includes('legacy private'), 'grant contains only an encrypted content-key wrap');
+assert.equal(openRecipientGrant(reviewerContext, graphUrl, oldPrivate, grant), 'legacy private', 'recipient opens the actual legacy ciphertext using its own detached wrap');
+assert.equal(openRecipientGrant(strangerContext, graphUrl, oldPrivate, grant), null);
+assert.equal(openRecipientGrant(reviewerContext, `${origin}/author/other.envelope.jose.json`, oldPrivate, grant), null, 'grant is bound to the exact source path');
+assert.equal(openRecipientGrant(reviewerContext, graphUrl, envelope, grant), null, 'grant is bound to the exact encrypted envelope');
+assert.equal(openRecipientGrant(context(reviewer, undefined), graphUrl, oldPrivate, grant), null);
+assert.throws(() => createRecipientGrant(reviewerContext, graphUrl, oldPrivate, stranger, keys[0]!, ''), /source-pod owner/, 'a delegated foreign reader cannot mint grants on the source pod');
+assert.throws(() => createRecipientGrant(context(undefined, 'author'), graphUrl, oldPrivate, reviewer, reviewerKey.publicKey, ''), /source-pod owner/);
+assert(recipientGrantUrl(reviewerContext, graphUrl, reviewerKey.publicKey)?.startsWith(`${origin}/author/context-graphs/`));
+const corruptGrant = { ...grant, wrappedKey: { ...grant.wrappedKey, wrappedKey: 'AAAA' } };
+assert.equal(openRecipientGrant(reviewerContext, graphUrl, oldPrivate, corruptGrant), null, 'a corrupt detached wrap cannot open the content');
 const newPrivate = createEncryptedEnvelope('agent private', [keys[0]!], root);
 assert.equal(reader(authorContext)(envelope, graphUrl), plaintext);
 assert.equal(reader(reviewerContext)(envelope, graphUrl), plaintext, 'foreign recipient actually unwraps the content key');
@@ -99,7 +115,16 @@ for (const affordance of [
     recipientKeyPair: root, openEnvelope: reader(authorContext),
   });
   assert.equal(redirected.body, JSON.stringify(oldPrivate), 'both action paths authorize the final redirect destination');
+  const throughGrant = await kernelAct(affordance, {}, {
+    fetch: transport(oldPrivate),
+    openEnvelope: async (env, url) => openRecipientGrant(reviewerContext, url, env, grant),
+  });
+  assert.equal(throughGrant.body, 'legacy private', 'both action paths await detached recipient decryption');
 }
+const grantRead = await fetchGraphContent(graphUrl, {
+  fetch: transport(oldPrivate), openEnvelope: async (env, url) => openRecipientGrant(reviewerContext, url, env, grant),
+});
+assert.equal(grantRead.encrypted, true); assert.equal(grantRead.content, 'legacy private');
 
 // These wiring checks supplement the executable policy/crypto/transport tests.
 const server = readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
