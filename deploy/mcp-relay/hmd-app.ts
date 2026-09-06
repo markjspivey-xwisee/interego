@@ -1,7 +1,7 @@
 /**
  * hmd-app — the GENERIC HyperMarkdown MCP-App renderer, served by the relay as a
  * `text/html;profile=mcp-app` resource (`ui://widget/hmd.html`). ONE reusable,
- * memory-free viewer: the `render_hmd` tool supplies a parsed HMD document as
+ * application-state-free viewer: the `render_hmd` tool supplies a parsed HMD document as
  * structuredContent, this renders it (Enhanced / Markdown / HMD-source tabs), and
  * builds a form from each control's inline SHACL fields. Read-only actions fire a
  * direct `invoke_affordance` tools/call; mutating actions require explicit in-app
@@ -13,6 +13,7 @@
  * safeMarkdown() output (see hmd-app-logic) is assigned as HTML.
  */
 import { HMD_APP_LOGIC_JS } from './hmd-app-logic.js';
+import { CLIENT_ENCRYPTION_UI_JS } from './client-encryption-bundle.js';
 
 const STYLE = String.raw`
 :root{--bg:#fff;--fg:#16181d;--muted:#5b616e;--line:#e4e7ec;--card:#f7f8fa;--accent:#3538cd;--accent-fg:#fff;--ok:#067647;--warn:#b42318;--chip:#eef0f4;font-synthesis:none}
@@ -76,12 +77,19 @@ button.go:disabled{opacity:.55;cursor:default}
 `;
 
 const BOOT_JS = String.raw`
-var DATA = null;
+var DATA = null, PRIVATE_CONTENT = null;
 var RPC=1, PENDING=Object.create(null), BRIDGE_READY=false, BRIDGE_PROMISE=null;
 function q(id){return document.getElementById(id)}
 // Legacy globals can arrive before or instead of the standard host handshake.
 function readToolOutput(){ try{ if(window.openai&&window.openai.toolOutput) return window.openai.toolOutput; }catch(e){} return null; }
-function hydrate(d){ if(shouldRehydrate(DATA,d)){ DATA=d; render(); reportSize(); } }
+function hydrate(d){ if(shouldRehydrate(DATA,d)){
+  var prior=DATA&&DATA.clientEncryption;
+  // A refresh projection may omit transport metadata. Keep the authenticated
+  // context supplied by render_hmd; a new explicit identity clears private DOM.
+  if(!d.clientEncryption && prior) d=Object.assign({},d,{clientEncryption:prior});
+  if(PRIVATE_CONTENT && prior && d.clientEncryption && (prior.actor!==d.clientEncryption.actor || prior.relay!==d.clientEncryption.relay)) PRIVATE_CONTENT.reset();
+  DATA=d; render(); reportSize();
+} }
 // ChatGPT sets the tool output ASYNCHRONOUSLY (the iframe can mount before the
 // approval-gated structuredContent arrives) and signals it via the
 // openai:set_globals CustomEvent. But that event ALSO fires for theme / displayMode
@@ -305,6 +313,7 @@ function prettyAction(iri){ var n=localName(iri).replace(/[-_]/g,' ').replace(/(
   // document), so these paths never wipe in-progress UI state.
   DATA=null; render(); hydrate(readToolOutput());
   initializeBridge();
+  PRIVATE_CONTENT=InteregoPrivateContent.mount(q('private-content'),function(){return DATA||{};},callTool);
   // Watch content rather than viewport height, so host resizing cannot create
   // a feedback loop and tab changes/confirmation boxes can shrink the frame.
   if(typeof ResizeObserver==='function') new ResizeObserver(reportSize).observe(document.querySelector('.wrap'));
@@ -312,4 +321,4 @@ function prettyAction(iri){ var n=localName(iri).replace(/[-_]/g,' ').replace(/(
 `;
 
 /** The complete self-contained widget document served at `ui://widget/hmd.html`. */
-export const HMD_APP_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>HyperMarkdown viewer</title><style>${STYLE}</style></head><body><div class="wrap"><header><h1 class="title" id="title">HyperMarkdown</h1><span class="prov" id="prov"></span></header><div class="tabs" role="tablist"><button class="tab" id="tab-enhanced" role="tab" aria-selected="true">Enhanced</button><button class="tab" id="tab-markdown" role="tab" aria-selected="false">Markdown</button><button class="tab" id="tab-source" role="tab" aria-selected="false">HMD source</button></div><div class="pane on" id="pane-enhanced"></div><div class="pane" id="pane-markdown"></div><div class="pane" id="pane-source"></div><div class="links" id="links"></div></div><script>${HMD_APP_LOGIC_JS}\n${BOOT_JS}</script></body></html>`;
+export const HMD_APP_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>HyperMarkdown viewer</title><style>${STYLE}</style></head><body><div class="wrap"><header><h1 class="title" id="title">HyperMarkdown</h1><span class="prov" id="prov"></span></header><div id="private-content"></div><div class="tabs" role="tablist"><button class="tab" id="tab-enhanced" role="tab" aria-selected="true">Enhanced</button><button class="tab" id="tab-markdown" role="tab" aria-selected="false">Markdown</button><button class="tab" id="tab-source" role="tab" aria-selected="false">HMD source</button></div><div class="pane on" id="pane-enhanced"></div><div class="pane" id="pane-markdown"></div><div class="pane" id="pane-source"></div><div class="links" id="links"></div></div><script>${CLIENT_ENCRYPTION_UI_JS}\n${HMD_APP_LOGIC_JS}\n${BOOT_JS}</script></body></html>`;

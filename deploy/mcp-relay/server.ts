@@ -241,6 +241,7 @@ import { ingestVault, VAULT_LD_PROFILE } from '@interego/mdvault';
 import { noteToHyperMarkdown, inlineRenderedForDescriptor, viewerControls, publishableAuthority } from './note-view.js';
 // The generic HyperMarkdown MCP-App renderer (served as a ui:// resource).
 import { HMD_WIDGET_URI, readHmdWidgetResource } from './hmd-resource.js';
+import { CLIENT_CHECK_HTML, CLIENT_CHECK_CSP } from './client-check.js';
 import { canonicalSessionActorId } from './session-actor.js';
 import { loadResourceCompositions, resourceActionResponse, resourceInvocation, type ResourceContext, type ResourceDescriptor, type ResourceEntry, type ResourceReads, type ResourceWriteContext } from './resource-compositions.js';
 const resourceCompositions = await loadResourceCompositions(process.env.INTEREGO_RESOURCE_COMPOSITIONS);
@@ -4889,7 +4890,8 @@ async function handleRenderHmd(args: ToolArgs): Promise<string> {
   if (!url) return JSON.stringify({ error: 'render_hmd requires a descriptor_url' });
   const gd = JSON.parse(await handleGetDescriptor({ ...args, url } as ToolArgs)) as Record<string, unknown>;
   if (gd['error']) return JSON.stringify({ error: String(gd['error']) });
-  if (gd['view']) return JSON.stringify(gd['view']);
+  const clientEncryption = { actor: canonicalSessionActorId(callerAgentId(args), IDENTITY_URL) ?? '', relay: PUBLIC_BASE_URL || 'https://relay.interego.xwisee.com' };
+  if (gd['view']) return JSON.stringify({ ...(gd['view'] as Record<string, unknown>), clientEncryption });
   if (gd['viewError']) return JSON.stringify({ error: 'resource_view_refused', message: gd['viewError'] });
   const rendered = typeof gd['rendered'] === 'string' ? (gd['rendered'] as string) : '';
   let doc: ReturnType<typeof parseHypermediaMarkdown> | null = null;
@@ -4923,6 +4925,7 @@ async function handleRenderHmd(args: ToolArgs): Promise<string> {
   }
   return JSON.stringify({
     descriptorUrl: url,
+    clientEncryption,
     hmd: rendered,
     title: hmdTitle || 'HyperMarkdown',
     ...(doc?.state ? { state: doc.state } : {}),
@@ -11486,6 +11489,7 @@ const TOOL_SCHEMAS = [
     },
     outputSchema: GENERIC_OUTPUT_SCHEMA,
     annotations: { title: 'Act on an affordance', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    _meta: { ui: { visibility: ['model', 'app'] }, 'openai/widgetAccessible': true },
   },
   {
     name: 'restrict',
@@ -11692,6 +11696,7 @@ const TOOL_SCHEMAS = [
     },
     outputSchema: PUBLISH_CONTEXT_OUTPUT,
     annotations: { title: 'Publish context graph', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    _meta: { ui: { visibility: ['model', 'app'] }, 'openai/widgetAccessible': true },
   },
   {
     name: 'record_trajectory_step',
@@ -11828,6 +11833,7 @@ const TOOL_SCHEMAS = [
       required: ['url'],
     },
     annotations: { title: 'Fetch sealed envelope (does not decrypt)', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    _meta: { ui: { visibility: ['model', 'app'] }, 'openai/widgetAccessible': true },
   },
   {
     name: 'resolve_linked_data',
@@ -16102,6 +16108,12 @@ app.get('/x402/price/:podName', (req, res) => {
 });
 
 // List tools
+app.get('/client-check', (_req, res) => {
+  res.setHeader('Content-Security-Policy', CLIENT_CHECK_CSP);
+  res.setHeader('Cache-Control', 'no-store');
+  res.type('text/html').send(CLIENT_CHECK_HTML);
+});
+
 app.get('/tools', (req, res) => {
   // Mirror the MCP /mcp tools/list response so HTTP-browseable
   // introspection sees the same schemas + annotations the MCP clients

@@ -237,7 +237,7 @@ function isHmdDoc(d) {
 }
 function shouldRehydrate(current, next) {
   if (!isHmdDoc(next)) return false; // non-HMD (e.g. an invoke_affordance result) never replaces the doc
-  if (current && current.descriptorUrl === next.descriptorUrl && current.hmd === next.hmd && JSON.stringify(current.controls) === JSON.stringify(next.controls)) return false; // unchanged
+  if (current && current.descriptorUrl === next.descriptorUrl && current.hmd === next.hmd && JSON.stringify(current.controls) === JSON.stringify(next.controls) && (!next.clientEncryption || JSON.stringify(current.clientEncryption) === JSON.stringify(next.clientEncryption))) return false; // unchanged
   return true;
 }
 

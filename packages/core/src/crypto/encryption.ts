@@ -28,7 +28,8 @@
 
 import nacl from 'tweetnacl';
 import util from 'tweetnacl-util';
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 // ═════════════════════════════════════════════════════════════
 //  Types
@@ -132,7 +133,7 @@ export function deriveEncryptionKeyPair(privateKeyHex: string, principal?: strin
   const seed = principal
     ? `${stem}:interego-agent-encryption-v1:${principal}`
     : `${stem}:interego-bridge-encryption-v1`;
-  const secretBytes = createHash('sha256').update(seed, 'utf8').digest();
+  const secretBytes = sha256(utf8ToBytes(seed));
   // tweetnacl reduces this to a valid Curve25519 scalar internally.
   const kp = nacl.box.keyPair.fromSecretKey(secretBytes);
   return {

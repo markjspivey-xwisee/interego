@@ -171,6 +171,8 @@ COPY deploy/mcp-relay/amep.ts ./
 COPY deploy/mcp-relay/amep-session-bridge.ts ./
 COPY deploy/mcp-relay/note-view.ts ./
 COPY deploy/mcp-relay/hmd-app.ts ./
+COPY deploy/mcp-relay/client-encryption-bundle.ts ./
+COPY deploy/mcp-relay/client-check.ts ./
 COPY deploy/mcp-relay/hmd-resource.ts ./
 COPY deploy/mcp-relay/session-actor.ts ./
 COPY deploy/mcp-relay/resource-compositions.ts ./

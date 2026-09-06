@@ -36,6 +36,23 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
 
 ---
 
+## 2026-09-06 — Client-held encryption in the generic MCP viewer
+
+The HMD viewer can create a device key, seal a private graph before its MCP call,
+retrieve the original envelope and decrypt locally. The shared core owns the NaCl
+format, canonical digest and client key vault. Browser storage retains an encrypted
+NaCl secret under a non-extractable WebCrypto wrapping key; encrypted recovery is
+portable to a new browser for the same identity. Missing keys, unavailable secure
+storage and failed authentication never fall back to relay decryption. The relay
+stores ciphertext and public metadata through the existing publish/read tools.
+
+This does not retrofit E2EE onto old relay-encrypted artifacts, give an LLM client
+a private key, attest to independent governance, or hide metadata. A client must
+trust its executable code and browser origin. The HTTPS `/client-check` diagnostic
+hosts the identical viewer without credentials or network access; an operator
+forwards requests through their actual MCP connection. Domain state remains on
+Interego and existing application graphs are not migrated by this change.
+
 ## Unreleased
 
 ### Fixed
