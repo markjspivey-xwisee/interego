@@ -54,7 +54,7 @@ import { fileURLToPath } from 'node:url';
 
 import express from 'express';
 
-import { validateAgainstShape } from '@interego/core';
+import { validateAgainstShape, createEncryptedEnvelope, generateKeyPair } from '@interego/core';
 
 import {
   refusesEmptyShapesGraph,
@@ -720,6 +720,7 @@ ex:AbsentShape a sh:NodeShape ; sh:targetClass ex:NotInThisGraph ;
   const publish = async (
     shapeIri: string | null,
     token = 'any-token-the-fixture-accepts',
+    overrides: Record<string, unknown> = {},
   ): Promise<PublishReply> => {
     n += 1;
     const res = await fetch(`${base}/tool/publish_context`, {
@@ -733,6 +734,7 @@ ex:AbsentShape a sh:NodeShape ; sh:targetClass ex:NotInThisGraph ;
         graph_content: GRAPH,
         visibility: 'public',
         ...(shapeIri === null ? {} : { conforms_to_shapes: [shapeIri] }),
+        ...overrides,
       }),
       signal: AbortSignal.timeout(60_000),
     });
@@ -819,6 +821,43 @@ ex:AbsentShape a sh:NodeShape ; sh:targetClass ex:NotInThisGraph ;
       ok(dropped.every(l => !/REFUSED/.test(l)),
         '§8 ★★ …and no line about it claims the publish was REFUSED — this publish returned 200',
         dropped.join(' | ').slice(0, 400));
+    }
+
+    // The same advertised endpoint accepts actual client ciphertext, retains it
+    // verbatim, and tells the caller exactly what the relay did not validate.
+    {
+      const sender = generateKeyPair();
+      const recipient = generateKeyPair();
+      const envelope = JSON.stringify(createEncryptedEnvelope(GRAPH,
+        [sender.publicKey, recipient.publicKey], sender));
+      const callerShape = `${pod.base}/p7-shapes/c`;
+      const r = await publish(callerShape, undefined, {
+        visibility: 'shared', sealed_payload: true, graph_content: envelope,
+        sync: true,
+      });
+      const conf = r.body['conformance'] as {
+        status?: string; validated?: unknown[];
+        deferred?: { shapeIri: string; source: string }[];
+      } | undefined;
+      ok(r.body['published'] === true && r.body['status'] === 'committed',
+        '§8 sealed publication succeeds through the real endpoint with declared shapes',
+        JSON.stringify(r.body).slice(0, 500));
+      ok(conf?.status === 'deferred-to-clients' && conf.validated?.length === 0,
+        '§8 sealed publication reports no relay plaintext validation', JSON.stringify(conf));
+      ok(conf?.deferred?.length === 2
+        && conf.deferred.some(s => s.shapeIri === callerShape && s.source === 'caller')
+        && conf.deferred.some(s => s.shapeIri === `${pod.base}/p7-shapes/d` && s.source === 'container'),
+        '§8 deferred shape requirements keep both sources and caller attribution on overlap',
+        JSON.stringify(conf));
+      ok(r.body['recipients'] === 2,
+        '§8 sealed recipient count comes from the two actual envelope wraps',
+        JSON.stringify(r.body['recipients']));
+      ok(!Object.hasOwn(r.body, 'recipientAgents') && !Object.hasOwn(r.body, 'selfIncluded'),
+        '§8 sealed responses do not claim inferred identities or author inclusion');
+      const graphUrl = r.body['graphUrl'];
+      ok(typeof graphUrl === 'string' && written.get(new URL(graphUrl).pathname) === envelope,
+        '§8 the pod received the exact original envelope, without re-encryption or plaintext',
+        String(graphUrl));
     }
 
     // ── The refusal, over the wire, and it lands nothing ───────────────────

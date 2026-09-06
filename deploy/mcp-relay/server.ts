@@ -2842,6 +2842,7 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     podUrl,
     (args.graph_content as string) ?? '',
     callerShapeIris,
+    { sealedPayload: sealed !== null },
   );
   if (conformance.conforms === false) {
     return JSON.stringify({
@@ -2903,7 +2904,7 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   const authorRegistryKey = currentProfile?.authorizedAgents.find(a =>
     !a.revoked && canonicalSessionActorId(a.agentId, IDENTITY_URL) === canonicalSessionActorId(agentId, IDENTITY_URL),
   )?.encryptionPublicKey;
-  const authorEncryptionKey = encryptionKeyToRecord(undefined, authorRegistryKey, agentId);
+  const authorEncryptionKey = sealed ? '' : encryptionKeyToRecord(undefined, authorRegistryKey, agentId);
   const registryAgentKeys = (currentProfile?.authorizedAgents ?? [])
     .filter(a => !a.revoked && a.encryptionPublicKey)
     .map(a => a.encryptionPublicKey!) as string[];
@@ -2914,7 +2915,15 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     shareResolved.push({ handle: r.handle, podUrl: r.podUrl, agentCount: r.agentEncryptionKeys.length });
   }
 
-  const computed = computePublishRecipients({
+  const computed = sealed ? {
+    visibility: rawVisibility === 'private' ? 'private' as const : 'shared' as const,
+    recipients: [],
+    recipientAgents: [],
+    selfIncluded: false,
+    warnings: shareWith.length > 0
+      ? ['WARN: sealed_payload preserves the envelope audience; share_with cannot add recipients to ciphertext.']
+      : [],
+  } : computePublishRecipients({
     rawVisibility,
     shareWith,
     authorEncryptionKey,
@@ -3655,7 +3664,7 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   let renderedNote = '';
   const graphContentStr = String(args.graph_content ?? '');
   const isNoteLike = /\b(schema:text|schema:articleBody|dct:description|rdfs:comment|schema:name|dct:title|AgentMemory|NoteDigitalDocument)\b/.test(graphContentStr);
-  if (publishRelayBase && isNoteLike) {
+  if (publishRelayBase && isNoteLike && !sealed) {
     try {
       const IEP_NS = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
       const viewUrl = `${publishRelayBase}/render/${encodeURIComponent(descriptor.id as string)}`;
@@ -3807,7 +3816,14 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
 
   // Computed once. `summarizeConformance` returns undefined when no shape ran, so a publish
   // that declared none does not grow a block claiming it was gated.
-  const conformanceSummary = summarizeConformance(conformance.coverage);
+  const conformanceSummary = conformance.conforms === 'deferred-to-clients'
+    ? {
+        status: 'deferred-to-clients',
+        validated: [],
+        deferred: conformance.deferred,
+        reason: 'The relay did not validate encrypted plaintext. Clients must validate before sealing and after opening; publication does not attest that they did.',
+      }
+    : summarizeConformance(conformance.coverage);
 
   return JSON.stringify({
     published: true,
@@ -3880,7 +3896,9 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
             url: `${publishRelayBase}/render/${encodeURIComponent(descriptor.id as string)}`,
             mediaType: HYPERMEDIA_MARKDOWN_MEDIA_TYPE,
             authenticated: true,
-            howTo: renderedNote
+            howTo: sealed
+              ? 'Fetch the original ciphertext from graphUrl (or get_encrypted_graph on descriptorUrl) and open it with the recipient key in your client. The relay cannot provide a plaintext view for client-held recipients.'
+              : renderedNote
               ? 'The artifact is already in `rendered` above — display that. This URL is only an OPTIONAL authenticated re-fetch (bearer + Accept: text/markdown); for a pure MCP client, prefer `get_descriptor` on descriptorUrl, which decrypts through your session.'
               : 'GET this URL with your bearer + `Accept: text/markdown` for the complete HyperMarkdown view'
                 + ((result.encrypted ?? false) ? ' (decrypted for you), or use `get_descriptor` on descriptorUrl through your session.' : '.'),
@@ -3890,15 +3908,16 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     // Audience-class echoed back so callers can confirm the branch
     // taken (default 'shared' is the back-compat path).
     visibility,
-    recipients: recipients.length,
+    recipients: sealed ? sealed.recipientCount : recipients.length,
     // Agent-IRI-level view of who can decrypt this envelope. `recipients`
     // (count) was misleading when multiple surface-agents share the relay's
     // single X25519 keypair (they dedup to one key). `recipientAgents`
     // reports identities, and `selfIncluded` confirms the author can
     // self-decrypt — both essential for the share_with author-inclusion
     // invariant. See fix `share-with-author`.
-    recipientAgents,
-    selfIncluded,
+    // A sealed envelope names public keys, not verified agent identities. The
+    // relay cannot assert author inclusion or infer identities from share_with.
+    ...(!sealed ? { recipientAgents, selfIncluded } : {}),
     sharedWith: shareResolved.length > 0 ? shareResolved : undefined,
     manifestUrl: result.manifestUrl,
     // ★ REPORTED BECAUSE IT EXPLAINS AN OUTLIER LATENCY, AND BECAUSE THE POD JUST CHANGED
@@ -10980,8 +10999,21 @@ const PUBLISH_CONTEXT_OUTPUT = mcpOutputSchema({
      */
     conformance: {
       type: 'object',
-      description: 'What the SHACL gate actually enforced — present only when at least one shape ran. `published: true` alone cannot distinguish "validated, clean" from "validated against a document that declares no shapes", because both conform with no results. `validated` lists every shape the gate resolved with `declared` (shapes compiled from the document) and `applied` (how many selected a node in THIS graph). `unenforced` appears ONLY when a shape constrained nothing, each entry carrying `why`: "declares-no-shapes" (the document is not a shapes graph — reachable only for a pod\'s own container declaration, since a caller-named one is refused 422 iep:shapeDeclaresNoShapes) or "targets-nothing-here" (a caller-named shapes graph none of whose shapes matched this payload — commonly an ontology IRI named where its separate -shapes document belongs).',
+      description: 'For sealed_payload, status=deferred-to-clients reports that no plaintext validation ran and deferred lists the caller and container shape requirements. Otherwise, what the SHACL gate actually enforced — present only when at least one shape ran. `published: true` alone cannot distinguish "validated, clean" from "validated against a document that declares no shapes", because both conform with no results. `validated` lists every shape the gate resolved with `declared` (shapes compiled from the document) and `applied` (how many selected a node in THIS graph). `unenforced` appears ONLY when a shape constrained nothing, each entry carrying `why`: "declares-no-shapes" (the document is not a shapes graph — reachable only for a pod\'s own container declaration, since a caller-named one is refused 422 iep:shapeDeclaresNoShapes) or "targets-nothing-here" (a caller-named shapes graph none of whose shapes matched this payload — commonly an ontology IRI named where its separate -shapes document belongs).',
       properties: {
+        status: { type: 'string', enum: ['deferred-to-clients'], description: 'For sealed_payload only: plaintext conformance was not checked by the relay. Publication does not attest to client validation.' },
+        reason: { type: 'string' },
+        deferred: {
+          type: 'array',
+          description: 'Shape IRIs declared by the container or caller that clients must validate against plaintext; no relay validation result is asserted.',
+          items: {
+            type: 'object',
+            properties: {
+              shapeIri: { type: 'string' },
+              source: { type: 'string', enum: ['caller', 'container'] },
+            },
+          },
+        },
         validated: {
           type: 'array',
           items: {
@@ -11016,7 +11048,9 @@ const PUBLISH_CONTEXT_OUTPUT = mcpOutputSchema({
       enum: ['public', 'shared', 'private'],
       description: 'Audience class actually applied (echoes the input; "shared" when input was omitted).',
     },
-    recipients: { type: 'integer', description: 'Number of envelope recipients (includes self). 0 when visibility="public".' },
+    recipients: { type: 'integer', description: 'Number of envelope key wraps. For sealed_payload this is read from the client envelope; author inclusion and recipient identities are not inferred. 0 when visibility="public".' },
+    recipientAgents: { type: 'array', items: { type: 'string' }, description: 'Relay-resolved recipient identities. Omitted for sealed_payload because the relay did not choose or verify the client envelope audience.' },
+    selfIncluded: { type: 'boolean', description: 'Whether the relay included the author in its computed audience. Omitted for sealed_payload; the client selects its own audience.' },
     manifestUrl: { type: 'string', description: 'URL of the pod manifest entry for this descriptor' },
     sharedWith: {
       type: 'array',
@@ -11564,12 +11598,12 @@ const TOOL_SCHEMAS = [
   // ═══════════════════════════════════════════════════════════
   {
     name: 'publish_context',
-    description: 'Compatibility shim — internally composes kernel(compose+act) over a publish affordance plus E2EE/anchoring/compliance plumbing. Publishes a context-annotated knowledge graph (Turtle) to your Solid pod with the full 6-facet descriptor (Temporal, Provenance, Agent, Semiotic, Trust, Federation). Attributes the descriptor to the pod owner and associates it with the calling agent. Audience class is set via `visibility`: "public" (plaintext payload + foaf:Agent acl:Read — useful for wiki-style notes or jam:renderView projections), "shared" (default; JOSE envelope to the pod\'s authorized agents plus optional share_with recipients), or "private" (envelope to the calling agent ONLY; share_with ignored). SHACL conformance gate: pass `conforms_to_shapes` as an array of shape IRIs — every shape is fetched, parsed, and validated against the inbound graph_content BEFORE the pod write; non-conformance returns a 422 envelope `{ error: "shape_violation", code: 422, shape, violations: [...] }` and the descriptor/payload never lands on the pod. Caller-supplied shapes stack with any iep:conformsTo / dct:conformsTo declarations the target container (or its manifest) already carries — either failing rejects.',
+    description: 'Compatibility shim — publishes a context-annotated graph through the generic kernel with its descriptor, attribution and optional authorship proof. Unsealed graph_content is Turtle; visibility selects public plaintext or relay-managed encryption. With sealed_payload=true, graph_content is an envelope created by the client and stored unchanged; the client chooses recipients and must hold its private keys for client-held E2EE. The SHACL gate enforces caller and container shapes before writes of unsealed input. For sealed input it reports conformance.status=deferred-to-clients and the shape requirements; it cannot validate encrypted plaintext or attest to client validation.',
     inputSchema: {
       type: 'object',
       properties: {
         graph_iri: { type: 'string', description: 'IRI for the named graph, e.g. urn:graph:markj:session:20260418' },
-        graph_content: { type: 'string', description: 'RDF Turtle content of the knowledge graph' },
+        graph_content: { type: 'string', description: 'RDF Turtle content, or the original encrypted envelope JSON when sealed_payload is true.' },
         sealed_payload: {
           type: 'boolean',
           description: 'Set true when graph_content is an encrypted envelope already created by the client. The relay stores those ciphertext bytes unchanged. This is the existing client-sealed publishing path; default/false sends plaintext for relay-managed encryption. For end-to-end encryption, clients must hold the recipient private keys and seal before transport. visibility must not be public; choose all recipients before sealing because share_with cannot add recipients to a presealed envelope.',
@@ -11591,12 +11625,12 @@ const TOOL_SCHEMAS = [
         visibility: {
           type: 'string',
           enum: ['public', 'shared', 'private'],
-          description: 'Audience class for the published payload. Default "shared". "public" → no envelope; plaintext Turtle written to the pod; the descriptor + payload .acl grants acl:Read to acl:agentClass foaf:Agent — which in Web Access Control means ANYONE ON THE INTERNET, including unauthenticated readers. (The WAC term for logged-in-only is acl:AuthenticatedAgent; this is deliberately NOT that.) The content is written as plaintext Turtle with no envelope, and there is no unpublish. Descriptor advertises iep:visibility "public" and iep:encrypted false. Use ONLY for content the user has decided to disclose to the open web — wiki-style notes, jam:renderView projections. If in doubt, use "shared". "shared" (DEFAULT) → JOSE envelope wrapped to the pod\'s authorized agents + author\'s session-agent key + any share_with recipients — historical behavior, preserves wire compat. "private" → envelope to the author\'s session agent ONLY; even other authorized agents on the same pod cannot decrypt. Use for personal scratchpads. share_with is ignored under "public" and "private" (a warn is logged if it was supplied).',
+          description: 'For sealed_payload=true, the client envelope alone determines who can decrypt; the relay preserves its audience and does not assert author inclusion. Public is incompatible with sealed input. For unsealed input: audience class for the published payload. Default "shared". "public" → no envelope; plaintext Turtle written to the pod; the descriptor + payload .acl grants acl:Read to acl:agentClass foaf:Agent — which in Web Access Control means ANYONE ON THE INTERNET, including unauthenticated readers. (The WAC term for logged-in-only is acl:AuthenticatedAgent; this is deliberately NOT that.) The content is written as plaintext Turtle with no envelope, and there is no unpublish. Descriptor advertises iep:visibility "public" and iep:encrypted false. Use ONLY for content the user has decided to disclose to the open web — wiki-style notes, jam:renderView projections. If in doubt, use "shared". "shared" (DEFAULT) → JOSE envelope wrapped to the pod\'s authorized agents + author\'s session-agent key + any share_with recipients — historical behavior, preserves wire compat. "private" → envelope to the author\'s session agent ONLY; even other authorized agents on the same pod cannot decrypt. Use for personal scratchpads. share_with is ignored under "public" and "private" (a warn is logged if it was supplied).',
         },
         share_with: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Optional list of external identity handles (did:web:..., WebID URLs, or acct:user@host). Each is resolved to its pod, and their authorized agents\' X25519 keys are added as recipients on the envelope — per-graph cross-pod sharing without any pod-level ACL change. Use to share a specific graph with another person while keeping your other graphs private. NOTE: only honored when visibility is "shared" (the default); ignored + warn-logged under "public" or "private".',
+          description: 'For sealed_payload=true, recipients must already be in the envelope and this parameter cannot add them. For unsealed input: optional list of external identity handles (did:web:..., WebID URLs, or acct:user@host). Each is resolved to its pod, and their authorized agents\' X25519 keys are added as recipients on the envelope — per-graph cross-pod sharing without any pod-level ACL change. Use to share a specific graph with another person while keeping your other graphs private. NOTE: only honored when visibility is "shared" (the default); ignored + warn-logged under "public" or "private".',
         },
         auto_supersede_prior: {
           type: 'boolean',
@@ -11633,7 +11667,7 @@ const TOOL_SCHEMAS = [
         conforms_to_shapes: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Optional list of SHACL shape IRIs the inbound graph_content MUST conform to. Each shape is fetched (text/turtle) and run against the payload BEFORE any pod write — non-conformance rejects with the same 422 envelope as the container-declared conformance gate ({ error: "shape_violation", code: 422, shape, violations: [...] }) and the descriptor + payload never land on the pod. Naming a document that FETCHES AND PARSES BUT DECLARES NO SHAPES is also a 422, carrying the constraint component iep:shapeDeclaresNoShapes: an ontology named where a shapes graph was meant would otherwise validate everything by validating nothing, and reported success is the wrong answer to "enforce this contract". The same document declared by the pod\'s own container is REPORTED rather than refused (conformance.unenforced, why: "declares-no-shapes"), because the pod owner is not the caller. Stacks on top of any iep:conformsTo / dct:conformsTo shapes the target container (or its manifest collection) already declares; ALL shapes (container-declared + caller-supplied) must conform — any one failing rejects. Use to enforce a per-publish shape contract from the MCP wire without relying on the pod\'s .well-known/container-shape file being present.',
+          description: 'Optional list of SHACL shape IRIs the plaintext MUST conform to. For sealed_payload, the relay cannot check encrypted plaintext: conformance.status is deferred-to-clients, no validation pass is asserted, and the publisher and recipients must validate locally. The following relay enforcement applies to unsealed input only. Each shape is fetched (text/turtle) and run against the payload BEFORE any pod write — non-conformance rejects with the same 422 envelope as the container-declared conformance gate ({ error: "shape_violation", code: 422, shape, violations: [...] }) and the descriptor + payload never land on the pod. Naming a document that FETCHES AND PARSES BUT DECLARES NO SHAPES is also a 422, carrying the constraint component iep:shapeDeclaresNoShapes: an ontology named where a shapes graph was meant would otherwise validate everything by validating nothing, and reported success is the wrong answer to "enforce this contract". The same document declared by the pod\'s own container is REPORTED rather than refused (conformance.unenforced, why: "declares-no-shapes"), because the pod owner is not the caller. Stacks on top of any iep:conformsTo / dct:conformsTo shapes the target container (or its manifest collection) already declares; ALL shapes (container-declared + caller-supplied) must conform — any one failing rejects. Use to enforce a per-publish shape contract from the MCP wire without relying on the pod\'s .well-known/container-shape file being present.',
         },
       },
       required: ['graph_iri', 'graph_content'],

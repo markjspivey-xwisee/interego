@@ -403,6 +403,7 @@ function build(deps: ConformanceGateDeps) {
     podUrl: string,
     graphContent: string,
     callerShapeIris: readonly string[] = [],
+    options: { readonly sealedPayload?: boolean } = {},
   ): Promise<
     | {
         conforms: true;
@@ -417,6 +418,10 @@ function build(deps: ConformanceGateDeps) {
         coverage: readonly ShapeCoverage[];
       }
     | { conforms: false; shape: string; violations: readonly ShaclResult[] }
+    | {
+        conforms: 'deferred-to-clients';
+        deferred: readonly Pick<ShapeCoverage, 'shapeIri' | 'source'>[];
+      }
   > {
     const containerShapeIris = await fetchContainerShapes(podUrl);
     const seen = new Set<string>();
@@ -427,13 +432,25 @@ function build(deps: ConformanceGateDeps) {
     for (const s of callerShapeIris) {
       if (!seen.has(s)) { seen.add(s); allShapes.push(s); }
     }
-    if (allShapes.length === 0) return { conforms: true, resolvedShapes: [], coverage: [] };
     // ★ ATTRIBUTED BY MEMBERSHIP, NOT BY WHICH LOOP ADDED IT. The de-dup above keeps the
     // CONTAINER's copy when a shape appears in both sources, so reading the source off insertion
     // order would silently downgrade a caller-named document to the container's lenient
     // treatment — and the whole refuse/report split in `shapes-declared.ts` turns on that
     // attribution. If the caller named it, the caller owns it, however it also got here.
     const namedByCaller = new Set(callerShapeIris);
+    // Ciphertext is not an RDF data graph. Keep both sources of shape requirements
+    // visible, but make no conformance assertion: clients must validate plaintext
+    // before sealing and after opening. This does not attest that either happened.
+    if (options.sealedPayload) {
+      return {
+        conforms: 'deferred-to-clients',
+        deferred: allShapes.map(shapeIri => ({
+          shapeIri,
+          source: namedByCaller.has(shapeIri) ? 'caller' : 'container',
+        })),
+      };
+    }
+    if (allShapes.length === 0) return { conforms: true, resolvedShapes: [], coverage: [] };
     const coverage: ShapeCoverage[] = [];
     const resolvedShapes: { shapeIri: string; shapeTurtle: string }[] = [];
     for (const shapeIri of allShapes) {

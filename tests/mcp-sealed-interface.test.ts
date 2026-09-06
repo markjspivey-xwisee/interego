@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import ts from 'typescript';
 import { createEncryptedEnvelope, generateKeyPair } from '@interego/core';
+import { createConformanceGate, type ConformanceGateDeps } from '../deploy/mcp-relay/conformance-gate.js';
 
 const relay = readFileSync('deploy/mcp-relay/server.ts', 'utf8');
 const parser = readFileSync('deploy/mcp-relay/sealed-payload.ts', 'utf8');
@@ -78,5 +79,52 @@ describe('a request for ciphertext stays a request for ciphertext', () => {
     const result = JSON.parse(await read({ url: 'https://store.example/owner/2.ttl' }));
     expect(result).toMatchObject({ encrypted: false, content: 'public graph' });
     expect(fetched).toEqual([]);
+  });
+});
+
+describe('sealed publications keep shape requirements without a false validation pass', () => {
+  const pod = 'https://store.example/owner/';
+  const shape = 'https://shapes.example/required-name';
+  const shapeBody = '@prefix sh: <http://www.w3.org/ns/shacl#> . '
+    + '<urn:shape> a sh:NodeShape; sh:targetNode <urn:thing>; '
+    + 'sh:property [ sh:path <urn:name>; sh:minCount 1 ] .';
+  function gate() {
+    const calls: string[] = [];
+    const transport: ConformanceGateDeps['solidFetch'] = async url => {
+      calls.push(url);
+      const body = url.endsWith('/.well-known/container-shape')
+        ? `@prefix dct: <http://purl.org/dc/terms/> . <> dct:conformsTo <${shape}> .`
+        : url === shape ? shapeBody : '';
+      return new Response(body, { status: body ? 200 : 404, headers: { 'Content-Type': 'text/turtle' } });
+    };
+    return {
+      calls,
+      ...createConformanceGate({
+        log: () => {}, solidFetch: transport, guardedInvokeFetch: transport,
+        guardedInvokeFetchLanded: async (url, init) => ({ response: await transport(url, init), landedUrl: url }),
+      }),
+    };
+  }
+
+  it('does not parse ciphertext as RDF or attest to plaintext conformance', async () => {
+    const client = generateKeyPair();
+    const envelope = JSON.stringify(createEncryptedEnvelope('<urn:thing> <urn:name> "Name" .', [client.publicKey], client));
+    const g = gate();
+    const result = await g.runConformanceGate(pod, envelope, [shape, 'https://shapes.example/other'], { sealedPayload: true });
+    expect(result).toEqual({
+      conforms: 'deferred-to-clients',
+      deferred: [{ shapeIri: shape, source: 'caller' }, { shapeIri: 'https://shapes.example/other', source: 'caller' }],
+    });
+    expect(g.calls).toEqual([`${pod}.well-known/container-shape`]);
+  });
+
+  it('still rejects a plaintext violation of the same container requirement', async () => {
+    const g = gate();
+    const result = await g.runConformanceGate(pod, '<urn:thing> <urn:other> "no name" .');
+    expect(result.conforms).toBe(false);
+    if (result.conforms !== false) throw new Error('plaintext shape enforcement was lost');
+    expect(result.shape).toBe(shape);
+    expect(result.violations.some(v => v.constraintComponent.includes('MinCount'))).toBe(true);
+    expect(g.calls).toContain(shape);
   });
 });
