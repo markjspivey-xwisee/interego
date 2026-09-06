@@ -131,6 +131,8 @@ import { normalizeCssUrl, assertPublicPodUrl, publicStoreSpelling } from './url-
 import { winnowDiscoverResults } from './discover-winnow.js';
 import { createConformanceGate } from './conformance-gate.js';
 import { mayUseRelayKey } from './relay-key-gate.js';
+import { managedRecipientPublicKeys, managedRecipientKey, openManagedEnvelope } from './managed-recipient.js';
+import { ENVELOPE_SHARING_IRI, SHARE_ENVELOPE_ACTION, envelopeSharingResource, recipientGrantUrl, createRecipientGrant, openRecipientGrant, managedGrantRecipientKey, persistRecipientGrants, type RecipientGrant } from './envelope-sharing.js';
 // The /ns dereference surface — ~540 lines of route + projection logic that could not be
 // imported (and so could not be unit-tested) while it sat in this file. It carries the
 // iep:action route with it, because that route only resolves by being registered ahead of
@@ -2576,7 +2578,7 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
           isSoftwareAgent: true,
           scope: 'ReadWrite',
           validFrom: new Date().toISOString(),
-          encryptionPublicKey: encryptionKeyToRecord(args['encryption_public_key']),
+          encryptionPublicKey: encryptionKeyToRecord(args['encryption_public_key'], undefined, agentId),
         });
         // Mint a SIGNED VC so downstream verifiers can cryptographically
         // walk the chain (the unsigned form forces a SelfAsserted trust
@@ -2602,13 +2604,13 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
         relayProfileCache.delete(podUrl);
         registeredOk = true;
         await credentialWrite;
-      } else if (me.encryptionPublicKey !== encryptionKeyToRecord(undefined, me.encryptionPublicKey)) {
+      } else if (me.encryptionPublicKey !== encryptionKeyToRecord(undefined, me.encryptionPublicKey, agentId)) {
         const updated = {
           ...profile,
           authorizedAgents: Object.freeze(
             profile.authorizedAgents.map(a =>
               a.agentId === agentId && !a.revoked
-                ? { ...a, encryptionPublicKey: encryptionKeyToRecord(undefined, a.encryptionPublicKey) }
+                ? { ...a, encryptionPublicKey: encryptionKeyToRecord(undefined, a.encryptionPublicKey, a.agentId) }
                 : a,
             ),
           ),
@@ -2881,7 +2883,6 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   // Default is 'shared' to keep callers that omit the param wire-compatible.
   const rawVisibility = args.visibility as string | undefined;
   const shareWith = (args.share_with as string[] | undefined) ?? [];
-  const authorEncryptionKey = relayAgentKey.publicKey;
   const shareResolved: { handle: string; podUrl: string; agentCount: number }[] = [];
 
   // Pre-fetch the inputs the pure helper needs. Only do the registry read +
@@ -2896,9 +2897,13 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
    * The relay would announce itself as a recipient of an envelope it is provably not in.
    */
   const willShare = !sealed && (rawVisibility === undefined || rawVisibility === 'shared');
-  const currentProfile = willShare
+  const currentProfile = !sealed && rawVisibility !== 'public'
     ? await getCachedRelayProfile(podUrl).catch(() => null)
     : null;
+  const authorRegistryKey = currentProfile?.authorizedAgents.find(a =>
+    !a.revoked && canonicalSessionActorId(a.agentId, IDENTITY_URL) === canonicalSessionActorId(agentId, IDENTITY_URL),
+  )?.encryptionPublicKey;
+  const authorEncryptionKey = encryptionKeyToRecord(undefined, authorRegistryKey, agentId);
   const registryAgentKeys = (currentProfile?.authorizedAgents ?? [])
     .filter(a => !a.revoked && a.encryptionPublicKey)
     .map(a => a.encryptionPublicKey!) as string[];
@@ -2919,9 +2924,25 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   });
   for (const w of computed.warnings) log(w);
   const visibility = computed.visibility;
-  const recipients = computed.recipients;
+  // Legacy registry rows advertised one fleet key for every agent. Translate
+  // those bindings into distinct managed keys on NEW shared envelopes. Never
+  // wrap their content key to the fleet key; it remains readable only on the
+  // legacy own-pod path. Externally supplied keys and sealed payloads are kept.
+  const managedBindings = visibility === 'shared' && !sealed ? [
+    { agentId, publicKey: authorEncryptionKey },
+    ...(currentProfile?.authorizedAgents ?? [])
+      .filter(a => !a.revoked && a.encryptionPublicKey)
+      .map(a => ({ agentId: a.agentId, publicKey: a.encryptionPublicKey! })),
+    ...resolvedShareTargets.flatMap(r => r.agentKeyBindings ?? []),
+  ] : [];
+  const managedKeys = managedRecipientPublicKeys(relayAgentKey, managedBindings, IDENTITY_URL);
+  const recipients = visibility === 'shared' && !sealed
+    ? [...new Set([...computed.recipients.filter(key => key !== relayAgentKey.publicKey), ...managedKeys])]
+    : computed.recipients;
   const recipientAgents = computed.recipientAgents;
-  const selfIncluded = computed.selfIncluded;
+  const selfIncluded = visibility === 'shared' && !sealed
+    ? recipients.includes(authorEncryptionKey)
+    : computed.selfIncluded;
 
   // relayBaseUrl is threaded in so encrypted publishes emit a SECOND
   // affordance — iep:renderView — pointing at this relay's
@@ -4534,6 +4555,7 @@ async function handleGetDescriptor(args: ToolArgs, project = true): Promise<stri
       // credential, so passing relayAgentKey unconditionally made this an
       // unauthenticated oracle for every user's private plaintext.
       recipientKeyPair: await recipientKeyFor(args, url),
+      openEnvelope: await envelopeOpenerFor(args),
     });
     if (content === null && encrypted) {
       return JSON.stringify({
@@ -4593,6 +4615,7 @@ async function handleGetDescriptor(args: ToolArgs, project = true): Promise<stri
         // Same rule on the followed dcat:accessURL — this auto-follow was the
         // second half of the oracle (it returned the payload as `graph.content`).
         recipientKeyPair: await recipientKeyFor(args, link.accessURL),
+        openEnvelope: await envelopeOpenerFor(args),
       });
       graph = { url: link.accessURL, mediaType: link.mediaType, encrypted, content };
     } catch { /* link present but fetch/decrypt failed; return descriptor only */ }
@@ -5761,7 +5784,7 @@ async function handleRegisterAgent(args: ToolArgs): Promise<string> {
        * historical wiring, where the relay's key rides along so it can decrypt on the caller's
        * behalf — see `encryptionKeyToRecord` for what each choice costs.
        */
-      encryptionPublicKey: encryptionKeyToRecord(args['encryption_public_key']),
+      encryptionPublicKey: encryptionKeyToRecord(args['encryption_public_key'], undefined, agentId),
     });
   } catch (err) {
     if (/already authorized/i.test((err as Error).message)) {
@@ -5792,7 +5815,7 @@ async function handleRegisterAgent(args: ToolArgs): Promise<string> {
                   ...a,
                   scope: requestedScope as 'ReadWrite',
                   ...(args.label ? { label: args.label as string } : {}),
-                  encryptionPublicKey: encryptionKeyToRecord(args['encryption_public_key']),
+                  encryptionPublicKey: encryptionKeyToRecord(args['encryption_public_key'], a.encryptionPublicKey, agentId),
                 }
               : a,
           )),
@@ -5802,6 +5825,15 @@ async function handleRegisterAgent(args: ToolArgs): Promise<string> {
       return JSON.stringify({ error: (err as Error).message });
     }
   }
+
+  profile = {
+    ...profile,
+    authorizedAgents: Object.freeze(profile.authorizedAgents.map(a =>
+      a.agentId === agentId && !a.revoked
+        ? { ...a, encryptionPublicKey: encryptionKeyToRecord(args['encryption_public_key'], a.encryptionPublicKey, agentId) }
+        : a,
+    )),
+  };
 
   // Sign the credential with the relay's compliance wallet so
   // verify_agent can perform a cryptographic chain walk later.
@@ -6777,16 +6809,18 @@ function injectRestVerifiedIdentity(
  * by holding everybody's key. That is not a regression; it is the property being asked for. The
  * client reads ciphertext through `get_encrypted_graph` and opens it locally.
  *
- * ★ AND IT IS OPT-IN, which is why the old behaviour is still the default. An agent that supplies
- * nothing gets the relay's key exactly as before, so every existing pod, memory and workspace
- * keeps working untouched.
+ * Agents supplying no key now receive a distinct stable relay-managed key. This is
+ * server-managed encryption, not client-held E2EE. Existing fleet-key envelopes
+ * remain readable only under the legacy own-pod guard; new publishes use the
+ * registered per-agent keys. Explicit external keys are preserved.
  */
-function encryptionKeyToRecord(supplied: unknown, existing?: string | null): string {
+function encryptionKeyToRecord(supplied: unknown, existing?: string | null, agentId?: string): string {
   const given = typeof supplied === 'string' ? supplied.trim() : '';
   // Base64 X25519 public keys are 32 bytes -> 44 chars with padding. Anything else is refused
   // rather than recorded: an unusable key recorded as usable would encrypt to nobody, silently.
   if (given && /^[A-Za-z0-9+/]{43}=$/.test(given)) return given;
   if (existing && existing !== relayAgentKey.publicKey) return existing;
+  if (agentId) return managedRecipientKey(relayAgentKey, agentId, IDENTITY_URL).publicKey;
   return relayAgentKey.publicKey;
 }
 
@@ -6832,6 +6866,27 @@ async function recipientKeyFor(args: ToolArgs, targetUrl: string | undefined): P
   return mayUseRelayKey({ targetUrl, ownPodUrl: own, storeOrigins: STORE_ORIGINS })
     ? relayAgentKey
     : undefined;
+}
+
+/** A key is selected from verified session identity at the encrypted response. */
+async function envelopeOpenerFor(args: ToolArgs) {
+  const ownPodUrl = await callerOwnPod(args);
+  // Do not use callerAgentId here: its unauthenticated agent_id fallback is a
+  // target argument, not evidence of who is requesting decryption.
+  const sessionActor = (args._session_agent_did ?? args._session_agent_id) as string | undefined;
+  const context = { root: relayAgentKey, ownPodUrl, sessionActor, identityUrl: IDENTITY_URL, storeOrigins: STORE_ORIGINS };
+  return async (envelope: EncryptedEnvelope, fetchedUrl: string): Promise<string | null> => {
+    const direct = openManagedEnvelope(context, envelope, fetchedUrl);
+    if (direct !== null || !sessionActor) return direct;
+    const key = managedRecipientKey(relayAgentKey, sessionActor, IDENTITY_URL);
+    const grantUrl = recipientGrantUrl(context, fetchedUrl, key.publicKey);
+    if (!grantUrl) return null;
+    try {
+      const response = await guardedInvokeFetch(grantUrl, { headers: { Accept: 'application/json' } });
+      if (!response.ok) return null;
+      return openRecipientGrant(context, fetchedUrl, envelope, await response.json() as RecipientGrant);
+    } catch { return null; }
+  };
 }
 
 async function selfPodUrl(args: ToolArgs): Promise<string | undefined> {
@@ -9953,6 +10008,7 @@ async function handleInvokeAffordance(args: ToolArgs): Promise<string> {
   const actOpts = {
     fetch: invFetch,
     recipientKeyPair: await recipientKeyFor(args, descriptorUrl),
+    openEnvelope: await envelopeOpenerFor(args),
     ...(authorization ? { authorization } : {}),
   };
   let result;
@@ -10066,6 +10122,7 @@ async function handleKernelDereference(args: ToolArgs): Promise<string> {
   // also reflect the canonical target. URN inputs (`urn:graph:*`,
   // `urn:pgsl:*`) pass through unchanged.
   const iri = normalizeCssUrl(String(args['iri'] ?? ''));
+  if (iri === ENVELOPE_SHARING_IRI) return JSON.stringify(envelopeSharingResource());
   if (resourceCompositions.claims(iri)) {
     const view = await resourceCompositions.render(iri, resourceContext(args));
     return JSON.stringify({ iri, derived: true, view, representation: view?.hmd });
@@ -10107,6 +10164,7 @@ async function handleKernelDereference(args: ToolArgs): Promise<string> {
     fetch: guardedInvokeFetch,
     decorateManifest,
     recipientKeyPair: await recipientKeyFor(args, iri),
+    openEnvelope: await envelopeOpenerFor(args),
     /**
      * ── ★★ THE BOUND IS APPLIED AT THE EDGE, NOT IN THE KERNEL DEFAULT ────────────────────
      *
@@ -10194,7 +10252,72 @@ function normalizeActPayload(payload: unknown): unknown {
   return v;
 }
 
+/** Add a recipient wrap without rewriting the signed source or its ciphertext. */
+async function handleShareEncryptedEnvelope(args: ToolArgs): Promise<string> {
+  let payload = normalizeActPayload(args.payload);
+  if (typeof payload === 'string') { try { payload = JSON.parse(payload); } catch { payload = null; } }
+  const p = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload as Record<string, unknown> : {};
+  const descriptorUrl = typeof p.descriptor_url === 'string' ? normalizeCssUrl(p.descriptor_url) : '';
+  const shareWith = Array.isArray(p.share_with) ? p.share_with : [];
+  if (!descriptorUrl || shareWith.length < 1 || shareWith.length > 16 || shareWith.some(x => typeof x !== 'string' || !x)) {
+    return JSON.stringify({ error: 'descriptor_url and 1–16 share_with handles are required', code: 400 });
+  }
+  const ownPodUrl = await callerOwnPod(args);
+  const sessionActor = (args._session_agent_did ?? args._session_agent_id) as string | undefined;
+  if (!ownPodUrl || !sessionActor || !mayUseRelayKey({ targetUrl: descriptorUrl, ownPodUrl, storeOrigins: STORE_ORIGINS })) {
+    return JSON.stringify({ error: 'only the authenticated source-pod owner may share an existing envelope', code: 403 });
+  }
+  const scope = await runScopeGate(canonicalSessionActorId(sessionActor, IDENTITY_URL)!, ownPodUrl);
+  if (!scope.allowed) return JSON.stringify({ error: 'scope_violation', code: 403 });
+  const descriptor = JSON.parse(await handleGetDescriptor({ ...args, url: descriptorUrl }, false));
+  if (!descriptor.authorship?.authorshipVerified || descriptor.authorship?.contentBinding !== 'bound'
+    || descriptor.authorship?.descriptorBinding?.bound !== true || !descriptor.graph?.encrypted) {
+    return JSON.stringify({ error: 'sharing requires an openable, content-bound signed encrypted descriptor', code: 422 });
+  }
+  const sourceUrl = descriptor.graph.url as string;
+  if (!mayUseRelayKey({ targetUrl: sourceUrl, ownPodUrl, storeOrigins: STORE_ORIGINS })) {
+    return JSON.stringify({ error: 'the encrypted payload must be on the authenticated owner pod', code: 403 });
+  }
+  const fetched = await guardedInvokeFetchLanded(sourceUrl, { headers: { Accept: 'application/jose+json' } });
+  if (!fetched.response.ok || !mayUseRelayKey({ targetUrl: fetched.landedUrl, ownPodUrl, storeOrigins: STORE_ORIGINS })) {
+    return JSON.stringify({ error: 'source envelope could not be retrieved from the owner pod', code: 403 });
+  }
+  const envelope = await fetched.response.json() as EncryptedEnvelope;
+  const context = { root: relayAgentKey, ownPodUrl, sessionActor, identityUrl: IDENTITY_URL, storeOrigins: STORE_ORIGINS };
+  if (openManagedEnvelope(context, envelope, fetched.landedUrl) !== descriptor.graph.content) {
+    return JSON.stringify({ error: 'source changed after content-binding verification; retry the read', code: 409 });
+  }
+  const resolved = await resolveRecipients(shareWith as string[], { fetch: guardedInvokeFetch });
+  if (resolved.some(r => !r.agentKeyBindings?.length)) {
+    return JSON.stringify({ error: 'every sharing target must resolve to an active registered encryption key', code: 422 });
+  }
+  const recipients = resolved.flatMap(r => (r.agentKeyBindings ?? []).map(binding => ({
+    agentId: binding.agentId, publicKey: managedGrantRecipientKey(context, binding.agentId, binding.publicKey),
+  })));
+  if (recipients.some(recipient => !recipient.publicKey)) {
+    return JSON.stringify({ error: 'detached grants currently support relay-managed recipients only; no grants were written', code: 422,
+      unsupportedRecipients: recipients.filter(recipient => !recipient.publicKey).map(recipient => recipient.agentId) });
+  }
+  const planned = recipients.map(({ agentId, publicKey }) => {
+    const grant = createRecipientGrant(context, fetched.landedUrl, envelope, agentId, publicKey!, new Date().toISOString());
+    const url = recipientGrantUrl(context, fetched.landedUrl, publicKey!);
+    if (!url) throw new Error('recipient grant has no authorized storage location');
+    return { grant, url };
+  });
+  // Only these encrypted key capsules can change; descriptor and graph heads cannot.
+  const result = await persistRecipientGrants(planned, solidFetch);
+  return JSON.stringify({ ...result, descriptorUrl, envelopeUrl: fetched.landedUrl, sourceUnchanged: true });
+}
+
 async function handleKernelAct(args: ToolArgs): Promise<string> {
+  const sharingTarget = args.descriptor_url ?? args.target;
+  if (sharingTarget === ENVELOPE_SHARING_IRI) {
+    if ((args.action_iri ?? args.action) !== SHARE_ENVELOPE_ACTION || (args.method && args.method !== 'POST')) {
+      return JSON.stringify({ error: 'the envelope-sharing resource declares only its POST sharing action', code: 400 });
+    }
+    return handleShareEncryptedEnvelope(args);
+  }
+
   // Translate legacy public-host CSS URLs at the handler boundary so the
   // act-via-descriptor + act-via-affordance paths both target the
   // canonical internal-FQDN. solidFetch ALSO rewrites at the HTTP layer.
@@ -10297,6 +10420,7 @@ async function handleKernelAct(args: ToolArgs): Promise<string> {
   const r = await kernelAct(affordance as Parameters<typeof kernelAct>[0], actPayload, {
     fetch: actFetch,
     recipientKeyPair: await recipientKeyFor(args, keyAuthorisedFor),
+    openEnvelope: await envelopeOpenerFor(args),
     mayDecrypt: (fetchedUrl: string) => ownPodForDecrypt !== undefined
       && mayUseRelayKey({ targetUrl: fetchedUrl, ownPodUrl: ownPodForDecrypt, storeOrigins: STORE_ORIGINS }),
     ...(authorization ? { authorization } : {}),
@@ -10409,6 +10533,7 @@ async function handleKernelReduceChain(args: ToolArgs): Promise<string> {
         // interpreted — same SSRF screen as the follow chain.
         fetch: guardedInvokeFetch,
         recipientKeyPair: await recipientKeyFor(args, reducerIri),
+        openEnvelope: await envelopeOpenerFor(args),
       });
       if (r.status === 'ok' && r.representation !== undefined) {
         const body = r.representation;
@@ -10440,6 +10565,7 @@ async function handleKernelReduceChain(args: ToolArgs): Promise<string> {
         // IRI and are echoed into the fold — screened like every invoke fetch.
         fetch: guardedInvokeFetch,
         recipientKeyPair: await recipientKeyFor(args, iri),
+        openEnvelope: await envelopeOpenerFor(args),
       });
       if (r.status !== 'ok' || r.representation === undefined) return null;
       return r.representation;
@@ -15608,6 +15734,11 @@ app.get('/render/:descriptorIri', async (req, res) => {
     });
     return;
   }
+  const renderArgs = {
+    _session_user_id: auth.userId,
+    _session_agent_did: canonicalSessionActorId(auth.agentId, IDENTITY_URL),
+  } as ToolArgs;
+  const renderOpenEnvelope = await envelopeOpenerFor(renderArgs);
   const descriptorIri = decodeURIComponent(req.params['descriptorIri'] ?? '');
   if (!descriptorIri) {
     res.status(400).type('application/ld+json').json({
@@ -15637,6 +15768,7 @@ app.get('/render/:descriptorIri', async (req, res) => {
         // payload for any bearer holder; auth.userId is the token-verified
         // identity, so pass it as the proven pod rather than the relay key.
         recipientKeyPair: await recipientKeyFor({ _session_user_id: auth.userId } as ToolArgs, descriptorIri),
+        openEnvelope: renderOpenEnvelope,
         ...(podHint ? { podHint } : {}),
         ...(knownPodUrls.length > 0 ? { knownPods: knownPodUrls } : {}),
       });
@@ -15734,98 +15866,18 @@ app.get('/render/:descriptorIri', async (req, res) => {
       return;
     }
 
-    /**
-     * ★★ THE CALLER MUST OWN THE POD THIS ENVELOPE LIVES ON.
-     *
-     * Without this, `GET /render/<https url>` is an unauthenticated-in-effect plaintext oracle for
-     * every private graph on the fleet. The chain:
-     *
-     *   1. the `https://` branch above takes `descriptorUrl` STRAIGHT FROM THE CALLER, while the
-     *      `urn:` branch beside it passes `recipientKeyFor` — its own comment records that this
-     *      route "previously decrypted ANY pod's payload for any bearer holder"
-     *   2. the recipient-set check below asks whether the RELAY'S key is in `wrappedKeys`, and it
-     *      always is: every `encryptionPublicKey` the relay registers is `relayAgentKey.publicKey`,
-     *      at all six registration sites
-     *   3. so the check passes for every envelope in existence, and the unwrap hands the caller
-     *      somebody else's plaintext
-     *
-     * Any holder of any valid bearer could read any pod's private graphs by URL — including the
-     * `encrypted-private` agent memories `create_memory` writes. `recipientKeyFor` returns a key
-     * only for a URL under the caller's OWN proven pod, which is exactly the predicate needed, and
-     * is the same one guarding `get_descriptor`.
-     */
-    const ownPodKey = await recipientKeyFor(
-      { _session_user_id: auth.userId } as ToolArgs,
-      dist.accessURL,
-    );
-    if (!ownPodKey) {
-      res.status(403).type('application/ld+json').json({
-        '@context': KERNEL_JSONLD_CONTEXT,
-        '@type': ['hydra:Status', 'urn:iep:error:NotYourPod'],
-        error: 'This graph is encrypted and lives on another pod. This route decrypts only graphs '
-          + 'on the caller\'s own pod — being able to name a URL is not being a recipient.',
-      });
-      return;
-    }
-
-    // Fetch the envelope and server-side unwrap.
-    const envResp = await solidFetch(dist.accessURL, {
-      headers: { 'Accept': 'application/jose+json, application/json' },
+    // The shared-reader policy tries the authenticated agent's distinct key.
+    // The legacy fleet key is considered only for an own-pod legacy envelope.
+    const opened = await fetchGraphContent(dist.accessURL, {
+      fetch: guardedInvokeFetch,
+      openEnvelope: renderOpenEnvelope,
     });
-    if (!envResp.ok) {
-      res.status(502).type('application/ld+json').json({
-        '@context': KERNEL_JSONLD_CONTEXT,
-        '@type': ['hydra:Status', 'urn:iep:error:EnvelopeFetchFailed'],
-        error: `Envelope GET failed: ${envResp.status} ${envResp.statusText}`,
-        envelopeUrl: dist.accessURL,
-      });
-      return;
-    }
-    const envBody = await envResp.text();
-    let envelope: EncryptedEnvelope;
-    try {
-      envelope = JSON.parse(envBody) as EncryptedEnvelope;
-    } catch (err) {
-      res.status(502).type('application/ld+json').json({
-        '@context': KERNEL_JSONLD_CONTEXT,
-        '@type': ['hydra:Status', 'urn:iep:error:MalformedEnvelope'],
-        error: `Envelope is not valid JSON: ${(err as Error).message}`,
-      });
-      return;
-    }
-    if (!envelope || envelope.algorithm !== 'X25519-XSalsa20-Poly1305' || !Array.isArray(envelope.wrappedKeys)) {
-      res.status(502).type('application/ld+json').json({
-        '@context': KERNEL_JSONLD_CONTEXT,
-        '@type': ['hydra:Status', 'urn:iep:error:MalformedEnvelope'],
-        error: 'Envelope is not a valid X25519-XSalsa20-Poly1305 JOSE envelope',
-      });
-      return;
-    }
-    // Recipient-set check via wrappedKeys: the relay's per-agent X25519
-    // public key MUST be in the envelope's recipient list for the
-    // unwrap below to succeed. We check explicitly (instead of relying
-    // on openEncryptedEnvelope returning null) so the 403 carries a
-    // clear "you are not a recipient" message rather than a generic
-    // decryption failure — important for thin-client diagnostics.
-    const inRecipientSet = envelope.wrappedKeys.some(
-      wk => wk.recipientPublicKey === relayAgentKey.publicKey,
-    );
-    if (!inRecipientSet) {
+    const plaintext = opened.content;
+    if (plaintext === null || !opened.encrypted) {
       res.status(403).type('application/ld+json').json({
         '@context': KERNEL_JSONLD_CONTEXT,
         '@type': ['hydra:Status', 'urn:iep:error:NotARecipient'],
-        error: 'Relay agent is not in the envelope recipient set; cannot render plaintext projection.',
-        relayAgentPublicKey: relayAgentKey.publicKey,
-        recipientCount: envelope.wrappedKeys.length,
-      });
-      return;
-    }
-    const plaintext = openEncryptedEnvelope(envelope, relayAgentKey);
-    if (plaintext === null) {
-      res.status(500).type('application/ld+json').json({
-        '@context': KERNEL_JSONLD_CONTEXT,
-        '@type': ['hydra:Status', 'urn:iep:error:UnwrapFailed'],
-        error: 'Relay agent is in recipient set but unwrap failed (key material corrupted?).',
+        error: 'The authenticated agent cannot open this encrypted envelope.',
       });
       return;
     }

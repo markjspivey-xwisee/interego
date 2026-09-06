@@ -3602,7 +3602,12 @@ export function parseDistributionFromDescriptorTurtle(turtle: string): Distribut
  */
 export async function fetchGraphContent(
   graphUrl: string,
-  options: { fetch?: FetchFn; recipientKeyPair?: EncryptionKeyPair } = {},
+  options: {
+    fetch?: FetchFn;
+    recipientKeyPair?: EncryptionKeyPair;
+    /** Host-managed opening policy, evaluated against the actual fetched resource. */
+    openEnvelope?: (envelope: EncryptedEnvelope, fetchedUrl: string) => string | null | Promise<string | null>;
+  } = {},
 ): Promise<{ content: string | null; encrypted: boolean; mediaType: string }> {
   const fetchFn = options.fetch ?? getDefaultFetch();
   const r = await withTransientRetry(async () => {
@@ -3626,6 +3631,10 @@ export async function fetchGraphContent(
   }
   if (!env || env.algorithm !== 'X25519-XSalsa20-Poly1305' || !Array.isArray(env.wrappedKeys)) {
     return { content: body, encrypted: false, mediaType };
+  }
+  // A host policy is authoritative: refusal MUST NOT fall back to a borrowed key.
+  if (options.openEnvelope) {
+    return { content: await options.openEnvelope(env, r.url || graphUrl), encrypted: true, mediaType };
   }
   if (!options.recipientKeyPair) {
     return { content: null, encrypted: true, mediaType };

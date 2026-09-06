@@ -69,6 +69,23 @@ describe('resolveHandleToPodUrl', () => {
 describe('resolveRecipient', () => {
   const POD = 'https://host/alice/';
 
+  it('matches a full agent DID in the registry without fanning out or falling back to a different DID key', async () => {
+    const did = 'did:web:host:agents:reviewer';
+    const profile = createOwnerProfile('https://host/alice/profile#me' as IRI, 'Alice', [
+      agent({ agentId: did as IRI, encryptionPublicKey: 'KEY_REVIEWER' }),
+      agent({ agentId: 'did:web:host:agents:other' as IRI, encryptionPublicKey: 'KEY_OTHER' }),
+    ]);
+    const registryFetch = mockFetch({ [POD]: profile });
+    const fetch: FetchFn = async url => url === 'https://host/agents/reviewer/did.json'
+      ? { ok: true, status: 200, statusText: 'OK', text: async () => '', json: async () => ({
+        id: did, service: [{ id: `${did}#storage`, type: 'SolidStorage', serviceEndpoint: POD }],
+      }) }
+      : registryFetch(url);
+    const r = await resolveRecipient(did, { fetch });
+    expect(r?.agentEncryptionKeys).toEqual(['KEY_REVIEWER']);
+    expect(r?.agentKeyBindings).toEqual([{ agentId: did, publicKey: 'KEY_REVIEWER' }]);
+  });
+
   it('returns encryption keys of non-revoked agents only', async () => {
     const profile = createOwnerProfile('https://host/alice/profile#me' as IRI, 'Alice', [
       agent({ agentId: 'urn:agent:active' as IRI, encryptionPublicKey: 'KEY_ACTIVE' }),

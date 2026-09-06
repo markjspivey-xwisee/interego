@@ -14,6 +14,8 @@
 
 /** Minimal subset of the WHATWG fetch Response surface the substrate uses. */
 export interface FetchResponse {
+  /** Final response URL after redirects, when provided by the transport. */
+  readonly url?: string;
   readonly ok: boolean;
   readonly status: number;
   readonly statusText: string;

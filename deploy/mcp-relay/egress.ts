@@ -461,8 +461,16 @@ export function createEgress(config: EgressConfig): Egress {
     throw new Error('invoke: too many redirects');
   }
 
-  const guardedInvokeFetch: FetchFn = async (url, init) =>
-    (await guardedInvokeFetchLanded(url, init)).response;
+  const guardedInvokeFetch: FetchFn = async (url, init) => {
+    const { response, landedUrl } = await guardedInvokeFetchLanded(url, init);
+    // Carry the final URL to envelope authorization, even for minimal FetchFn
+    // implementations that omit Response.url. Keep methods bound to the body.
+    return {
+      ok: response.ok, status: response.status, statusText: response.statusText,
+      headers: response.headers, url: landedUrl,
+      text: () => response.text(), json: () => response.json(),
+    };
+  };
 
   return {
     outboundAgent,

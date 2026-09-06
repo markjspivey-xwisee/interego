@@ -261,7 +261,7 @@ export interface PodWritersDeps {
    */
   readonly relayAgentPublicKey: () => string;
   /** server.ts's `encryptionKeyToRecord` — the one rule for what key an agent is recorded with. */
-  readonly encryptionKeyToRecord: (supplied: unknown, existing?: string | null) => string;
+  readonly encryptionKeyToRecord: (supplied: unknown, existing?: string | null, agentId?: string) => string;
   /** server.ts's per-pod unfiltered-manifest cache read. */
   readonly getCachedManifest: (podUrl: string) => Promise<ManifestEntry[]>;
   /** Drop server.ts's `relayProfileCache` entry for this pod. Called, like the key above, late. */
@@ -584,7 +584,7 @@ export function createPodWriters(deps: PodWritersDeps): PodWriters {
       // Rename support: a display-name change (agentLabel) on an already-authorized
       // agent must UPDATE the existing canonical entry, not register a new one.
       const labelChanged = !!existing && !!agentLabel && existing.label !== agentLabel;
-      if (existing && existing.encryptionPublicKey === relayAgentPublicKey() && !labelChanged) {
+      if (existing && existing.encryptionPublicKey === encryptionKeyToRecord(undefined, existing.encryptionPublicKey, surfaceAgentIri) && !labelChanged) {
         // Re-connect from known surface with current key + name — nothing to do.
         return;
       }
@@ -595,7 +595,7 @@ export function createPodWriters(deps: PodWritersDeps): PodWriters {
             authorizedAgents: Object.freeze(
               profile.authorizedAgents.map(a =>
                 a.agentId === surfaceAgentIri && !a.revoked
-                  ? { ...a, encryptionPublicKey: encryptionKeyToRecord(undefined, a.encryptionPublicKey), ...(labelChanged ? { label: agentLabel } : {}) }
+                  ? { ...a, encryptionPublicKey: encryptionKeyToRecord(undefined, a.encryptionPublicKey, a.agentId), ...(labelChanged ? { label: agentLabel } : {}) }
                   : a,
               ),
             ),
@@ -607,7 +607,7 @@ export function createPodWriters(deps: PodWritersDeps): PodWriters {
             isSoftwareAgent: true,
             scope: 'ReadWrite',
             validFrom: new Date().toISOString(),
-            encryptionPublicKey: encryptionKeyToRecord(undefined),
+            encryptionPublicKey: encryptionKeyToRecord(undefined, undefined, surfaceAgentIri),
           });
 
       if (firstTouch) {

@@ -35,6 +35,8 @@ export interface ResolvedRecipientPod {
   readonly agentEncryptionKeys: readonly string[];
   /** Their agent IDs (for descriptor metadata / provenance). */
   readonly agentIds: readonly string[];
+  /** Current keys paired with their exact agent identity (no positional inference). */
+  readonly agentKeyBindings?: readonly { readonly agentId: string; readonly publicKey: string }[];
 }
 
 export interface ResolveRecipientsOptions {
@@ -147,6 +149,7 @@ export async function resolveRecipient(
         podUrl: pod.podUrl,
         agentEncryptionKeys: [didKey],
         agentIds: agentIdFromDid ? [agentIdFromDid] : [],
+        agentKeyBindings: agentIdFromDid ? [{ agentId: handle, publicKey: didKey }] : [],
       };
       if (pod.webId) (fastPath as { webId?: string }).webId = pod.webId;
       return fastPath;
@@ -167,7 +170,7 @@ export async function resolveRecipient(
   // on the owner's pod. When the registry has no entry for that agent
   // (the FIX-6 case), we fall back below to the DID-doc keyAgreement key.
   const filteredAgents = agentIdFromDid
-    ? profile.authorizedAgents.filter(a => a.agentId === agentIdFromDid)
+    ? profile.authorizedAgents.filter(a => a.agentId === handle || a.agentId === agentIdFromDid)
     : profile.authorizedAgents;
   const active = filteredAgents.filter(a => !a.revoked && a.encryptionPublicKey);
 
@@ -186,9 +189,11 @@ export async function resolveRecipient(
   const cutoff = Date.now() - ROLLOVER_WINDOW_MS;
   const keys: string[] = [];
   const ids: string[] = [];
+  const agentKeyBindings: { agentId: string; publicKey: string }[] = [];
   for (const a of active) {
     keys.push(a.encryptionPublicKey!);
     ids.push(a.agentId);
+    agentKeyBindings.push({ agentId: agentIdFromDid ? handle : a.agentId, publicKey: a.encryptionPublicKey! });
     if (a.encryptionKeyHistory && a.encryptionKeyHistory.length > 0) {
       for (const h of a.encryptionKeyHistory) {
         // Defensive: skip malformed entries; skip ones outside the window
@@ -210,9 +215,10 @@ export async function resolveRecipient(
   // owner-pod registry presence catches up. Registry walks for owner
   // DIDs (`did:web:…:users:<id>`) still produce the full multi-agent
   // recipient set as before.
-  if (keys.length === 0 && didKey) {
+  if (keys.length === 0 && didKey && !filteredAgents.some(a => a.revoked)) {
     keys.push(didKey);
     if (agentIdFromDid) ids.push(agentIdFromDid);
+    if (agentIdFromDid) agentKeyBindings.push({ agentId: handle, publicKey: didKey });
   }
 
   const result: ResolvedRecipientPod = {
@@ -220,6 +226,7 @@ export async function resolveRecipient(
     podUrl: pod.podUrl,
     agentEncryptionKeys: keys,
     agentIds: ids,
+    agentKeyBindings,
   };
   if (pod.webId) (result as { webId?: string }).webId = pod.webId;
   if (!pod.webId && profile.webId) (result as { webId?: string }).webId = profile.webId;

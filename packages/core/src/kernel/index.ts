@@ -397,6 +397,8 @@ export interface DereferenceOptions {
   readonly fetch?: FetchFn;
   /** Recipient keypair for decrypting an encrypted envelope payload. */
   readonly recipientKeyPair?: EncryptionKeyPair;
+  /** Authoritative host policy. A refusal never falls back to recipientKeyPair. */
+  readonly openEnvelope?: (envelope: EncryptedEnvelope, fetchedUrl: string) => string | null | Promise<string | null>;
   /**
    * When dereferencing a pod manifest, also fetch each entry's
    * descriptor and decorate its affordances onto the entry. Defaults
@@ -567,7 +569,7 @@ async function dereferenceUrnGraph(
   // Cache hit — go straight to the resolved graph URL.
   const cached = URN_GRAPH_RESOLUTION_CACHE.get(iri);
   if (cached) {
-    return fetchResolvedGraphUrl(iri, cached, fetchImpl, options?.recipientKeyPair);
+    return fetchResolvedGraphUrl(iri, cached, fetchImpl, options?.recipientKeyPair, options?.openEnvelope);
   }
 
   // Build pod candidate list. podHint first (most likely hit), then
@@ -639,6 +641,7 @@ async function dereferenceUrnGraph(
       const r = await solid.fetchGraphContent(match.descriptorUrl, {
         fetch: fetchImpl,
         ...(options?.recipientKeyPair ? { recipientKeyPair: options.recipientKeyPair } : {}),
+        ...(options?.openEnvelope ? { openEnvelope: options.openEnvelope } : {}),
       });
       if (r.content === null && r.encrypted) {
         return {
@@ -676,7 +679,7 @@ async function dereferenceUrnGraph(
     }
 
     URN_GRAPH_RESOLUTION_CACHE.set(iri, distribution.accessURL);
-    return fetchResolvedGraphUrl(iri, distribution.accessURL, fetchImpl, options?.recipientKeyPair);
+    return fetchResolvedGraphUrl(iri, distribution.accessURL, fetchImpl, options?.recipientKeyPair, options?.openEnvelope);
   }
 
   // No candidate pod's manifest carried the URN. Surface a clear
@@ -720,12 +723,14 @@ async function fetchResolvedGraphUrl(
   graphUrl: string,
   fetchImpl: FetchFn,
   recipientKeyPair?: EncryptionKeyPair,
+  openEnvelope?: DereferenceOptions['openEnvelope'],
 ): Promise<DereferenceResult> {
   try {
     const { fetchGraphContent } = await loadSolidLazy();
     const r = await fetchGraphContent(graphUrl, {
       fetch: fetchImpl,
       ...(recipientKeyPair ? { recipientKeyPair } : {}),
+      ...(openEnvelope ? { openEnvelope } : {}),
     });
     if (r.content === null && r.encrypted) {
       return {
@@ -810,7 +815,7 @@ export async function dereference(iri: string, options?: DereferenceOptions): Pr
 
   // Manifest path — walk the pod and surface affordances per entry.
   if (looksLikeManifest(iri)) {
-    return dereferenceManifest(iri, fetchImpl, options?.decorateManifest !== false, options?.recipientKeyPair, options?.limit);
+    return dereferenceManifest(iri, fetchImpl, options?.decorateManifest !== false, options?.recipientKeyPair, options?.limit, options?.openEnvelope);
   }
 
   // Generic graph / descriptor / envelope path.
@@ -819,6 +824,7 @@ export async function dereference(iri: string, options?: DereferenceOptions): Pr
     const r = await fetchGraphContent(iri, {
       ...(options?.fetch ? { fetch: options.fetch } : {}),
       ...(options?.recipientKeyPair ? { recipientKeyPair: options.recipientKeyPair } : {}),
+      ...(options?.openEnvelope ? { openEnvelope: options.openEnvelope } : {}),
     });
     if (r.content === null && r.encrypted) {
       return {
@@ -891,6 +897,7 @@ async function dereferenceManifest(
   decorate: boolean,
   recipientKeyPair?: EncryptionKeyPair,
   limitOpt?: number,
+  openEnvelope?: DereferenceOptions['openEnvelope'],
 ): Promise<DereferenceResult> {
   const response = await withTransientRetry(() => fetchImpl(manifestUrl, {
     method: 'GET',
@@ -971,6 +978,7 @@ async function dereferenceManifest(
       const r = await fetchGraphContent(entry.descriptorUrl, {
         fetch: fetchImpl,
         ...(recipientKeyPair ? { recipientKeyPair } : {}),
+        ...(openEnvelope ? { openEnvelope } : {}),
       });
       if (r.content) {
         decorated.push({
@@ -1183,6 +1191,8 @@ export interface ActOptions {
    * the plaintext as the `body`. Without the key the raw envelope JSON
    * is returned (so existing decrypt-on-client callers still work). */
   readonly recipientKeyPair?: EncryptionKeyPair;
+  /** Authoritative host policy. A refusal never falls back to recipientKeyPair. */
+  readonly openEnvelope?: (envelope: EncryptedEnvelope, fetchedUrl: string) => string | null | Promise<string | null>;
   /**
    * ★★ ASKED ABOUT THE URL THE KERNEL ACTUALLY FETCHED, BEFORE THE KEY IS USED ON IT.
    *
@@ -1228,10 +1238,11 @@ function isCanDecryptAction(action: string | undefined): boolean {
  * fails), and `undefined` when `body` is not a recognisable envelope
  * (caller should fall through and surface the body as-is).
  */
-function tryUnwrapEnvelopeBody(
+async function tryUnwrapEnvelopeBody(
   body: string,
-  recipientKeyPair: EncryptionKeyPair,
-): string | null | undefined {
+  options: ActOptions,
+  fetchedUrl: string,
+): Promise<string | null | undefined> {
   let env: EncryptedEnvelope;
   try {
     env = JSON.parse(body) as EncryptedEnvelope;
@@ -1241,7 +1252,8 @@ function tryUnwrapEnvelopeBody(
   if (!env || env.algorithm !== 'X25519-XSalsa20-Poly1305' || !Array.isArray(env.wrappedKeys)) {
     return undefined;
   }
-  return openEncryptedEnvelope(env, recipientKeyPair);
+  if (options.openEnvelope) return options.openEnvelope(env, fetchedUrl);
+  return options.recipientKeyPair ? openEncryptedEnvelope(env, options.recipientKeyPair) : null;
 }
 
 /**
@@ -1372,10 +1384,10 @@ export async function act(
     // the caller supplied a recipientKeyPair AND we recognize an
     // envelope shape, unwrap before returning. Non-recipients see the
     // raw envelope JSON (current behavior).
-    if (isCanDecryptAction(affordance.action) && options?.recipientKeyPair
+    if (isCanDecryptAction(affordance.action) && (options?.openEnvelope || options?.recipientKeyPair)
       // ★ The URL FETCHED, not the affordance that was authorised. See `mayDecrypt`.
-      && (options.mayDecrypt?.(affordance.target) ?? true)) {
-      const plaintext = tryUnwrapEnvelopeBody(responseBody, options.recipientKeyPair);
+      && (options.openEnvelope || (options.mayDecrypt?.(response.url || affordance.target) ?? true))) {
+      const plaintext = await tryUnwrapEnvelopeBody(responseBody, options, response.url || affordance.target);
       if (typeof plaintext === 'string') {
         return {
           status: response.status,
@@ -1413,11 +1425,11 @@ export async function act(
     fromDescriptor: affordance.descriptorUrl,
   };
   // iep:canDecrypt semantics — see the symmetrical branch above.
-  if (isCanDecryptAction(resolved.action) && options?.recipientKeyPair
+  if (isCanDecryptAction(resolved.action) && (options?.openEnvelope || options?.recipientKeyPair)
     // ★★ `resolved.target` came out of the DESCRIPTOR, so this is the branch the hole lived
     // in: the descriptor may be one the caller controls while the target is not.
-    && (options.mayDecrypt?.(resolved.target) ?? true)) {
-    const plaintext = tryUnwrapEnvelopeBody(result.body, options.recipientKeyPair);
+    && (options.openEnvelope || (options.mayDecrypt?.(result.responseUrl || resolved.target) ?? true))) {
+    const plaintext = await tryUnwrapEnvelopeBody(result.body, options, result.responseUrl || resolved.target);
     if (typeof plaintext === 'string') {
       return {
         status: result.status,
