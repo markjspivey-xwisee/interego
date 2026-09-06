@@ -4488,8 +4488,9 @@ async function handleGetEncryptedGraph(args: ToolArgs): Promise<string> {
    * parsed link is `link.accessURL`, but the response field it lands in is `url`.
    */
   const graph = gd['graph'] as { content?: string | null; encrypted?: boolean; url?: string } | undefined;
-  // Already plaintext for this caller — hand it back rather than making them ask twice.
-  if (typeof graph?.content === 'string') {
+  // A sealed read must return the stored ciphertext even when this relay can open
+  // it. Only a genuinely plaintext artifact can take the plaintext response path.
+  if (graph?.encrypted !== true && typeof graph?.content === 'string') {
     return JSON.stringify({ url, encrypted: false, content: graph.content });
   }
   const envelopeUrl = normalizeCssUrl(String(graph?.url ?? ''));
@@ -4522,9 +4523,9 @@ async function handleGetEncryptedGraph(args: ToolArgs): Promise<string> {
   const body = await resp.text();
   return JSON.stringify({
     url, encrypted: true, envelope: body,
-    hint: 'This is the sealed envelope. Open it with your own X25519 secret key — the relay does not '
-      + 'open it for you, which is what makes this end-to-end. If you are not among its recipients, '
-      + 'it will not open, and that is the access control.',
+    hint: 'This is the stored ciphertext, returned unchanged. Open it with your own X25519 key. '
+      + 'A ciphertext response alone does not establish end-to-end encryption: the publisher must '
+      + 'seal before sending, and the recipient private keys must be held by clients rather than this relay.',
   });
 }
 
@@ -11569,6 +11570,18 @@ const TOOL_SCHEMAS = [
       properties: {
         graph_iri: { type: 'string', description: 'IRI for the named graph, e.g. urn:graph:markj:session:20260418' },
         graph_content: { type: 'string', description: 'RDF Turtle content of the knowledge graph' },
+        sealed_payload: {
+          type: 'boolean',
+          description: 'Set true when graph_content is an encrypted envelope already created by the client. The relay stores those ciphertext bytes unchanged. This is the existing client-sealed publishing path; default/false sends plaintext for relay-managed encryption. For end-to-end encryption, clients must hold the recipient private keys and seal before transport. visibility must not be public; choose all recipients before sealing because share_with cannot add recipients to a presealed envelope.',
+        },
+        content_digest: {
+          type: 'string',
+          description: 'For sealed_payload: the client-computed canonical graph digest of the plaintext. Required when sign_authorship is true. The relay records the publisher assertion; recipients verify the digest locally after decrypting.',
+        },
+        cleartext_mirror: {
+          type: 'string',
+          description: 'For sealed_payload: non-secret descriptor relationships extracted by the client, such as iep:supersedes, prov:wasDerivedFrom and dct:conformsTo. These metadata are visible to the relay. Do not put private payload content here. May be omitted when there are no relationships to mirror.',
+        },
         pod_name: { type: 'string', description: 'Pod name (default: the authenticated user\'s pod)' },
         descriptor_id: { type: 'string', description: 'Optional descriptor IRI (auto-generated if omitted)' },
         valid_from: { type: 'string', description: 'ISO 8601 start of validity (default: now)' },
@@ -11829,7 +11842,7 @@ const TOOL_SCHEMAS = [
       type: 'object',
       properties: {
         agent_id: { type: 'string', description: 'Agent IRI, e.g. urn:agent:anthropic:claude-mobile:markj' },
-        encryption_public_key: { type: 'string', description: 'OPTIONAL base64 X25519 public key this agent holds the secret half of. Supply one to make encryption genuinely end-to-end: content shared with this agent is then sealed to a key THE RELAY DOES NOT HOLD, and only this agent can open it — read the ciphertext with get_encrypted_graph and decrypt locally. Omit it and the relay records its own key, which is the historical behaviour and lets the relay decrypt on your behalf.' },
+        encryption_public_key: { type: 'string', description: 'OPTIONAL base64 X25519 public key whose private half is held by this agent\'s client. Only the public half is registered. End-to-end encryption also requires the publisher to seal before sending, using sealed_payload; registering a key alone does not establish it. Read ciphertext with get_encrypted_graph and decrypt in the key-holding client. Omitting this key selects relay-managed key custody, which allows the relay to decrypt on the agent\'s behalf.' },
         pod_name: { type: 'string', description: 'Pod name (default: authenticated user\'s pod)' },
         owner_webid: { type: 'string', description: 'Owner WebID (default: authenticated user)' },
         owner_name: { type: 'string', description: 'Owner display name' },
@@ -12288,7 +12301,7 @@ PROACTIVE TRIGGERS — listen for these and use Interego unprompted:
   compliance_framework (signed + anchored + framework-cited).
 
 WHEN TO USE EACH TOOL FAMILY:
-- publish_context → persist memory + cross-pod E2EE share
+- publish_context → persist memory + cross-pod encrypted share; use client-held keys and client-sealed payloads for E2EE
 - discover_context / discover_all / get_descriptor → search pods + read
 - list_known_pods / subscribe_to_pod → federation surface
 - register_agent / revoke_agent / verify_agent → identity ops; revoke
@@ -14429,7 +14442,7 @@ First call triggers an OAuth flow in your browser. You'll be asked to enroll a <
 <ul>
   <li><strong>60+ MCP tools</strong> — typed-context publish/discover, federation, identity ops, PGSL lattice, ZK proofs, compliance-grade descriptors, ABAC, x402 payments, agent registry</li>
   <li><strong>Per-surface agents</strong> — your DCR client name (chatgpt, cursor, claude-code-vscode, etc.) maps to a per-surface agent automatically</li>
-  <li><strong>Cross-pod E2EE share</strong> — <code>publish_context(..., share_with: [did:web:bob])</code> wraps the envelope key for any recipient DID</li>
+  <li><strong>Cross-pod encrypted share</strong> — <code>publish_context(..., share_with: [did:web:bob])</code> uses relay-managed encryption. End-to-end encryption requires client-held keys and a payload sealed by the client before transport.</li>
 </ul>
 
 <h2>For auditors / developers</h2>

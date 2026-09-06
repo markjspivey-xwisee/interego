@@ -40,6 +40,11 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
 
 ### Fixed
 
+- The MCP publishing schema now exposes the existing client-sealed payload, digest
+  and metadata-mirror inputs. A sealed read returns original ciphertext even when
+  the relay can decrypt it. Registration and sharing descriptions distinguish
+  relay-managed encryption from client-held E2EE; this does not create client key
+  custody inside a cloud connector.
 - Relay-managed encrypted sharing now wraps content keys for distinct authenticated
   agent identities. New private publications use only the author's key; shared
   publications use the registered audience and resolved sharing targets. Existing
