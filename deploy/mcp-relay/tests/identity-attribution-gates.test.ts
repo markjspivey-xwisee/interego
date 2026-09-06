@@ -287,31 +287,14 @@ check('the followed dcat:accessURL is scoped too',
  * So this now counts the gates instead of finding one, and separately asserts that the envelope
  * unwrap is preceded by an own-pod refusal.
  */
-const renderGates = (SERVER.match(/recipientKeyFor\(\s*\{ _session_user_id: auth\.userId \}/g) ?? []).length;
-check('/render gates BOTH branches — the urn: one and the caller-supplied https:// one',
-  renderGates >= 2, `found ${renderGates} own-pod gate(s) on /render; the https branch was the unguarded one`);
-/**
- * ★ ORDER BY INDEX, NOT BY A DISTANCE-BOUNDED REGEX. This file already records that bounding the
- * gap between two tokens fails on unchanged code the moment a comment between them grows — it
- * happened to the egress checks below. What matters here is only that the refusal comes FIRST.
- */
-const refusalAt = SERVER.indexOf('urn:iep:error:NotYourPod');
-const unwrapAt = SERVER.indexOf('openEncryptedEnvelope(envelope, relayAgentKey)');
-check('the envelope unwrap is preceded by an own-pod refusal',
-  refusalAt > 0 && unwrapAt > 0 && refusalAt < unwrapAt,
-  `refusal at ${refusalAt}, unwrap at ${unwrapAt}`);
-/**
- * ★★ AND THE GUARD ITSELF, NOT JUST ITS ERROR MESSAGE.
- *
- * MEASURED: with only the check above, replacing `if (!ownPodKey) {` with `if (false) {` left every
- * assertion green — the error string is still in the file, still before the unwrap, and the route
- * is wide open again. Asserting a message is asserting that somebody wrote a message.
- */
-const keyAt = SERVER.indexOf('const ownPodKey = await recipientKeyFor(');
-const guardAt = SERVER.indexOf('if (!ownPodKey) {');
-check('…and that refusal is actually wired to the key lookup',
-  keyAt > 0 && guardAt > keyAt && guardAt < unwrapAt,
-  `lookup at ${keyAt}, guard at ${guardAt}, unwrap at ${unwrapAt}`);
+const renderGates = (SERVER.match(/openEnvelope: renderOpenEnvelope/g) ?? []).length;
+check('/render gates BOTH branches through the shared recipient policy', renderGates === 2);
+check('/render derives its actor from the verified bearer, never a URL or request field',
+  /_session_agent_did: canonicalSessionActorId\(auth\.agentId, IDENTITY_URL\)/.test(SERVER));
+check('/render never opens a caller-named envelope with the raw fleet key',
+  !/openEncryptedEnvelope\(envelope, relayAgentKey\)/.test(SERVER));
+check('/render refuses an unopened envelope before returning plaintext',
+  /if \(plaintext === null \|\| !opened\.encrypted\)/.test(SERVER));
 
 console.log('\n11b. get_encrypted_graph hands back the SEALED envelope and never opens it');
 /**

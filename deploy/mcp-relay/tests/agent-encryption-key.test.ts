@@ -48,8 +48,11 @@ check(/if \(given &&/.test(body) && /return given;/.test(body),
 check(/existing !== relayAgentKey\.publicKey/.test(body) && /return existing;/.test(body),
   '★★ a key the agent already set is NEVER overwritten — the relay used to clobber it every pod-status call');
 
+check(/if \(agentId\) return managedRecipientKey\(relayAgentKey, agentId, IDENTITY_URL\)\.publicKey;/.test(body),
+  'managed agent registrations get distinct stable keys');
+
 check(/return relayAgentKey\.publicKey;/.test(body),
-  '★ and supplying nothing keeps the old behaviour, so every existing pod is untouched');
+  'legacy callers without an agent identity retain the compatibility key');
 
 /**
  * ★ A MALFORMED KEY IS REFUSED RATHER THAN RECORDED. Recording an unusable key would encrypt to

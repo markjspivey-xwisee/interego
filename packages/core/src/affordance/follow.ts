@@ -122,6 +122,8 @@ export interface ResolvedAffordance {
 
 /** The result of following an affordance. */
 export interface FollowAffordanceResult {
+  /** Final transport URL, used by hosts authorizing encrypted response bodies. */
+  readonly responseUrl?: string;
   /** Numeric HTTP status from the target. */
   readonly status: number;
   /** HTTP status text. */
@@ -343,6 +345,7 @@ export async function followAffordance(
   const contentType = readContentType(response);
 
   return {
+    ...(response.url ? { responseUrl: response.url } : {}),
     status: response.status,
     statusText: response.statusText,
     contentType,

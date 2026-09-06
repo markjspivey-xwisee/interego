@@ -36,6 +36,22 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
 
 ---
 
+## Unreleased
+
+### Fixed
+
+- Relay-managed encrypted sharing now wraps content keys for distinct authenticated
+  agent identities. New private publications use only the author's key; shared
+  publications use the registered audience and resolved sharing targets. Existing
+  fleet-key envelopes keep their owner-pod-only read rule. Explicit client keys
+  remain unchanged; these managed keys are server-held, not client-held E2EE.
+- Descriptor, kernel and render reads apply the same envelope-opening policy at the
+  final fetched URL, including redirects. A policy refusal never falls back to a
+  borrowed key. Full agent DIDs now match registry rows during sharing resolution.
+- Existing encrypted artifacts require an owner-authorized new encrypted version
+  to gain new recipients. Deploying this reader does not make old shared ciphertext
+  readable across pods and does not republish application graphs.
+
 ## 2026-08-20 — a compliance percentage whose denominator nobody could see
 
 The scorer divided by a frozen TypeScript array while the ontologies published a different,
