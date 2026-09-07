@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import express from 'express';
 import yaml from 'js-yaml';
 import * as jsonld from 'jsonld';
 import { createServer, type Server } from 'node:http';
@@ -13,7 +14,7 @@ import { agpAffordances } from '../applications/agentic-performance-practice/aff
 import { renderAffordanceManifestHmd } from '../applications/_shared/hypermedia/index.js';
 import { withAmepSession } from '../deploy/mcp-relay/amep-session-bridge.js';
 import { createEgress } from '../deploy/mcp-relay/egress.js';
-import { verifyRenderCaller, type RenderAuthDeps } from '../deploy/mcp-relay/render-auth.js';
+import { renderOAuthGate, verifyRenderCaller, type RenderAuthDeps } from '../deploy/mcp-relay/render-auth.js';
 import { resolveRenderDescriptor } from '../deploy/mcp-relay/render-descriptor.js';
 
 const base = 'https://foxxi.example';
@@ -225,10 +226,86 @@ describe('private render verifies the caller on both credential paths', () => {
     expect(route).toContain('verifyOAuth: token => oauthProvider.verifyAccessToken(token)');
     expect(route).toContain('verifyIdentity: verifyBearerToken');
     expect(route).toContain('allowsOAuthRead: hasAnyMcpScope');
+    expect(route).toContain('renderOAuthGate({');
+    expect(route).toContain('oauthDpopOrBearer(req, res, next)');
     expect(route).toContain('_session_user_id: auth.userId');
     expect(route).toContain('resolveRenderDescriptor(descriptorIri');
     expect(route).toContain('manifest: getCachedManifest');
     expect(route).toContain('fetch: guardedInvokeFetch');
+  });
+});
+
+describe('private render delegates OAuth request authorization to the resource gate', () => {
+  let server: Server;
+  let origin: string;
+  let mode: 'allow' | 'refuse' | 'error';
+  let seen: string[];
+  let bound: number;
+  const verifyOAuth = async (token: string) => {
+    if (token !== 'oauth-reader') throw new Error('unknown OAuth credential');
+    return { scopes: ['mcp:read'], extra: { userId: 'alice' } };
+  };
+  beforeAll(async () => {
+    const app = express();
+    app.get('/render/note', renderOAuthGate({
+      verifyToken: verifyOAuth,
+      // The seam is the resource middleware, whose proof/expiry/scope policy
+      // has its own tests. Exercise its refusal through a real HTTP route.
+      authorize: (req, res, next) => {
+        seen.push(req.headers.authorization!);
+        if (mode === 'refuse') { res.status(401).json({ error: 'request-proof-required' }); return; }
+        if (mode === 'error') { next(new Error('authorization unavailable')); return; }
+        next();
+      },
+    }), async (req, res) => {
+      bound++;
+      const caller = await verifyRenderCaller(req.headers.authorization, {
+        verifyOAuth,
+        verifyIdentity: async header => ({ authenticated: header === 'Bearer native-reader', userId: 'bob' }),
+        allowsOAuthRead: scopes => scopes?.includes('mcp:read') ?? false,
+      });
+      res.status(caller.authenticated ? 200 : caller.status).json(caller);
+    });
+    app.use((_err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => { res.status(500).end(); });
+    server = createServer(app);
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  });
+  afterAll(() => new Promise<void>(resolve => server.close(() => resolve())));
+  beforeEach(() => { mode = 'refuse'; seen = []; bound = 0; });
+
+  it('does not disclose a private representation when the OAuth request gate refuses', async () => {
+    const response = await fetch(`${origin}/render/note`, { headers: { Authorization: 'Bearer oauth-reader' } });
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: 'request-proof-required' });
+    expect(seen).toEqual(['Bearer oauth-reader']);
+    expect(bound).toBe(0);
+  });
+  it('retains an authorized ordinary OAuth reader', async () => {
+    mode = 'allow';
+    const response = await fetch(`${origin}/render/note`, { headers: { Authorization: 'Bearer oauth-reader' } });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ authenticated: true, userId: 'alice' });
+    expect(seen).toEqual(['Bearer oauth-reader']);
+  });
+  it('normalizes a DPoP credential only after the resource middleware authorizes it', async () => {
+    mode = 'allow';
+    const response = await fetch(`${origin}/render/note`, { headers: { Authorization: 'DPoP oauth-reader' } });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ authenticated: true, userId: 'alice' });
+    expect(seen).toEqual(['DPoP oauth-reader']);
+  });
+  it('retains the existing identity-server credential path', async () => {
+    const response = await fetch(`${origin}/render/note`, { headers: { Authorization: 'Bearer native-reader' } });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ authenticated: true, userId: 'bob' });
+    expect(seen).toEqual([]);
+  });
+  it('does not bind an identity after a request-authorization error', async () => {
+    mode = 'error';
+    const response = await fetch(`${origin}/render/note`, { headers: { Authorization: 'Bearer oauth-reader' } });
+    expect(response.status).toBe(500);
+    expect(bound).toBe(0);
   });
 });
 
