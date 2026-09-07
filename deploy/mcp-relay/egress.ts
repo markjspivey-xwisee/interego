@@ -448,6 +448,9 @@ export function createEgress(config: EgressConfig): Egress {
         ...(mode === 'public' && screenAddresses ? { dispatcher: guardedEgressAgent } : {}),
       } as typeof init);
       if (r.status < 300 || r.status >= 400) return { response: r, landedUrl: target };
+      // Session forwarding explicitly forbids redirects. The transport was manual,
+      // but this outer loop followed anyway with the same Authorization header.
+      if ((init as RequestInit | undefined)?.redirect === 'manual') return { response: r, landedUrl: target };
       // `headers` is optional on the substrate's minimal `FetchResponse`, and this line
       // was an unguarded `.get` in server.ts — where the stricter tsconfig that caught it
       // does not reach. A 3xx from any FetchFn that omits headers threw a TypeError out

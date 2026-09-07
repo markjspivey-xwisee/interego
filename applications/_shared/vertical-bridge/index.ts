@@ -46,6 +46,8 @@ import {
   toStructuredContent,
   protocolMembersOnly,
   acceptForSdkTransport,
+  sameAction,
+  type HypermediaLink,
 } from '@interego/core';
 import {
   createMcpHandler,
@@ -55,6 +57,8 @@ import {
   WebStandardStreamableHTTPServerTransport,
 } from '@modelcontextprotocol/server';
 import type { Tool } from '@modelcontextprotocol/server';
+import { wantsHmd, sendHmd, renderAffordanceManifestHmd, sendActionResult } from '../hypermedia/index.js';
+import type { GuidedAffordanceEntry } from '../guided-affordance/index.js';
 
 /**
  * ONE JSON-LD projection of an Affordance, shared by the entry point and the
@@ -112,6 +116,10 @@ export interface VerticalBridgeOptions {
    *  bridge it just spawned (rather than a stale bridge from a prior
    *  run that happens to be holding the same port). */
   readonly defaultPodUrl?: string;
+  /** Vertical-owned resource catalogs linked from HMD entry points and results. */
+  readonly hypermediaLinks?: readonly HypermediaLink[];
+  /** Use the vertical's existing next-step guidance in action representations. */
+  readonly guidance?: readonly GuidedAffordanceEntry[];
   /** Optional: additional Express middleware to install (e.g., auth). */
   readonly middleware?: (app: Express) => void;
 }
@@ -257,7 +265,13 @@ export function createVerticalBridge(opts: VerticalBridgeOptions): Express {
             },
           ],
         });
-        res.status(status).type('application/ld+json').json(decorated);
+        const guidance = (payload['_guidance'] as { nextAffordances?: { action: string }[] } | undefined)
+          ?? opts.guidance?.find(g => sameAction(g.action, affordance.action))?.guidance;
+        const next = status < 400
+          ? guidance?.nextAffordances?.flatMap(h => opts.affordances.filter(a => sameAction(a.action, h.action))) ?? []
+          : [];
+        res.status(status).type('application/ld+json');
+        sendActionResult(req, res, decorated, deploymentUrl, affordance.title, next, opts.hypermediaLinks);
       } catch (err) {
         res.status(400).type('application/ld+json').json({
           '@context': KERNEL_JSONLD_CONTEXT,
@@ -467,6 +481,10 @@ export function createVerticalBridge(opts: VerticalBridgeOptions): Express {
   // required at the agent.
   app.get('/affordances', (req, res) => {
     const manifestIri = `${deploymentUrl}/affordances`;
+    if (wantsHmd(req)) {
+      sendHmd(res, renderAffordanceManifestHmd(manifestIri, `${opts.verticalName} affordances`, opts.affordances, deploymentUrl, opts.hypermediaLinks));
+      return;
+    }
     // ★ CONTENT NEGOTIATION. This route used to answer Turtle unconditionally —
     // `Accept: application/ld+json` and `?format=jsonld` were both ignored, so a
     // JSON-LD client asking correctly got Turtle labelled `text/turtle` and could
@@ -481,7 +499,7 @@ export function createVerticalBridge(opts: VerticalBridgeOptions): Express {
     // hypermedia caller and the JSON-RPC caller from being told different things.
     const wants = String(req.query.format ?? '').toLowerCase()
       || (/application\/ld\+json|application\/json/i.test(String(req.headers.accept ?? '')) ? 'jsonld' : '');
-    res.setHeader('Vary', 'Accept');
+    res.vary('Accept');
     if (wants === 'jsonld' || wants === 'json') {
       res.type('application/ld+json').json({
         '@context': KERNEL_JSONLD_CONTEXT,
@@ -502,7 +520,18 @@ export function createVerticalBridge(opts: VerticalBridgeOptions): Express {
   });
 
   // ── Health + meta ─────────────────────────────────────────────────
-  app.get('/', (_req, res) => {
+  app.get('/affordances/:tool/input', (req, res) => {
+    const affordance = opts.affordances.find(a => a.toolName === req.params.tool);
+    if (!affordance) { res.status(404).json({ error: 'Unknown affordance input contract' }); return; }
+    res.type('application/schema+json').json(affordanceToMcpToolSchema(affordance).inputSchema);
+  });
+
+  app.get('/', (req, res) => {
+    res.vary('Accept');
+    if (wantsHmd(req)) {
+      sendHmd(res, renderAffordanceManifestHmd(deploymentUrl, `${opts.verticalName} entry point`, opts.affordances, deploymentUrl, opts.hypermediaLinks));
+      return;
+    }
     // Bridge entry point — Hydra-typed so generic clients see this as
     // a `hydra:EntryPoint` document with every affordance reachable
     // by following the embedded operation list. The original keys

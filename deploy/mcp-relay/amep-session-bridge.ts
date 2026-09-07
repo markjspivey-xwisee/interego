@@ -1,5 +1,5 @@
 /**
- * AMEP same-origin session bridge.
+ * AMEP and HMD same-origin session bridge (legacy export name retained).
  *
  * Lets an OAuth MCP caller drive AMEP acts (POST /amep/acts — e.g. Compose)
  * using the already verified session, without pasting credentials.
@@ -7,8 +7,8 @@
  * Security posture (from the adversarial design review):
  *   - Same-origin is decided by PARSED URL.origin, never a string prefix (so
  *     case / port / userinfo / trailing-dot / traversal / lookalike are handled).
- *   - The credential is attached ONLY to a POST at the EXACT /amep/acts path —
- *     never to the public GET descriptor/head reads the kernel does first.
+ *   - The credential is attached ONLY to POST /amep/acts or GET /render/:id —
+ *     never to public descriptor/head reads, other routes, or external origins.
  *   - redirect:'manual' so a 3xx can never carry a (possibly DPoP-bound) bearer
  *     off-origin.
  *   - The reserved args that carry the token + principal are stripped from wire
@@ -137,6 +137,16 @@ export function amepSameOriginUrl(rawUrl: string, publicBaseUrl: string): URL | 
   return u;
 }
 
+/** A private representation is still read as the caller, never anonymously.
+ * Restrict session forwarding to the relay's own single-segment render route. */
+function renderSameOriginUrl(rawUrl: string, publicBaseUrl: string): URL | null {
+  if (!publicBaseUrl || !rawUrl) return null;
+  try {
+    const u = new URL(rawUrl), base = new URL(publicBaseUrl);
+    return u.origin === base.origin && !u.username && !u.password && /^\/render\/[^/]+$/.test(u.pathname) ? u : null;
+  } catch { return null; }
+}
+
 export interface AmepSessionOpts {
   /** Raw OAuth access token the MCP client presented (relay-injected, never from the wire). */
   sessionBearer?: string;
@@ -149,7 +159,7 @@ export interface AmepSessionOpts {
 /**
  * Given the act's target and payload, returns the fetch + payload to hand to
  * kernelAct: a fetch that auto-attaches the caller's bearer to the exact
- * same-origin POST /amep/acts endpoint, and a payload whose act.actor is stamped to the
+ * same-origin POST /amep/acts or GET /render/:id endpoint, and a payload whose act.actor is stamped to the
  * principal id (only when same-origin /amep and the caller left actor absent).
  */
 export function withAmepSession(
@@ -189,7 +199,8 @@ export function withAmepSession(
   const wireFetch: FetchFn = async (url, init) => {
     const u = amepSameOriginUrl(url, publicBaseUrl);
     const method = (init?.method ?? 'GET').toUpperCase();
-    if (method === 'POST' && u && u.pathname === '/amep/acts') {
+    if ((method === 'POST' && u && u.pathname === '/amep/acts')
+      || (method === 'GET' && renderSameOriginUrl(url, publicBaseUrl))) {
       const headers: Record<string, string> = { ...(init?.headers ?? {}) };
       if (!Object.keys(headers).some((k) => k.toLowerCase() === 'authorization')) {
         headers['Authorization'] = `Bearer ${sessionBearer}`;

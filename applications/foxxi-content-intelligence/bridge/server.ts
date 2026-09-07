@@ -79,6 +79,8 @@ process.on('uncaughtException', (err) => {
   console.error('[foxxi-bridge] uncaughtException (continuing):', (err as Error)?.stack ?? err);
 });
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
+import { wantsHmd, sendHmd, sendActionResult, renderAffordanceManifestHmd } from '../../_shared/hypermedia/index.js';
+import { courseHmd, memoryHmd, collectionHmd } from '../src/hypermedia.js';
 import { affordancesManifestTurtle, type Affordance } from '../../_shared/affordance-mcp/index.js';
 import { foxxiAffordances, foxxiAdminAffordances } from '../affordances.js';
 
@@ -4821,6 +4823,11 @@ const app = createVerticalBridge({
   affordances: activeAffordances,
   handlers: instrumentedHandlers,
   defaultPodUrl: tenantPodUrl,
+  hypermediaLinks: [
+    { label: 'Courses', href: `${bridgeBaseUrl}/agent/scorm/courses?format=markdown`, rel: 'collection', type: 'text/markdown' },
+    { label: 'Job aids', href: `${bridgeBaseUrl}/agent/memories?format=markdown`, rel: 'collection', type: 'text/markdown' },
+    { label: 'Guidance', href: `${bridgeBaseUrl}/guidance?format=markdown`, rel: 'help', type: 'text/markdown' },
+  ],
   middleware: (a) => {
     // CORS for the browser dashboard. The vertical owns its CORS
     // policy; the substrate-side vertical-bridge factory stays
@@ -6312,7 +6319,7 @@ app.post('/agent/review-record', async (req, res) => {
       for (const [pod, r] of durableRetired) if (samePodPrincipal(pod, subjectPodUrl)) return r;
       return undefined;
     })();
-    res.json({
+    sendActionResult(req, res, {
       ok: true,
       reviewedAs: callerDid,
       authMode,
@@ -6425,7 +6432,7 @@ app.post('/agent/review-record', async (req, res) => {
           },
         }
         : {}),
-    });
+    }, bridgeBaseUrl, 'Performance record', activeAffordances.filter(a => a.toolName === 'foxxi.record_performance_signed'));
   } catch (err) {
     sendServerError(res, err, 'route-handler');
   }
@@ -8132,7 +8139,7 @@ app.post('/agent/record-performance', async (req, res) => {
      * not find. Reported, never chosen for you: pass subject_pod_url to write to the other one.
      */
     const alsoHolds = otherPodForPrincipal(subjectPod);
-    res.json({
+    sendActionResult(req, res, {
       ok: true, recorded: true, statementId, performer: callerDid, taskId, taskName, activityType,
       success: p.success, durable: subjectPod, lensTenant: lensTenantFor(label),
       ...(alsoHolds
@@ -8153,7 +8160,7 @@ app.post('/agent/record-performance', async (req, res) => {
         }
         : {}),
       ...(sharedLattice ? { sharedLattice } : {}),
-    });
+    }, bridgeBaseUrl, 'Performance recorded', activeAffordances.filter(a => a.toolName === 'foxxi.review_record'));
   } catch (err) {
     sendServerError(res, err, 'route-handler');
   }
@@ -8557,8 +8564,13 @@ function emitScormCompletion(play: ScormPlay, course: AgentScormCourse, passed: 
   return ids;
 }
 
-app.get('/agent/scorm/affordances', (_req, res) => {
+app.get('/agent/scorm/affordances', (req, res) => {
   const base = (process.env.BRIDGE_DEPLOYMENT_URL ?? `http://localhost:${PORT}`).replace(/\/$/, '');
+  if (wantsHmd(req)) {
+    sendHmd(res, renderAffordanceManifestHmd(`${base}/agent/scorm/affordances`, 'FOXXI SCORM actions',
+      ['author', 'launch', 'submit'].map(name => canonicalAffordance(`urn:iep:action:foxxi:scorm-${name}-signed`)), base));
+    return;
+  }
   res.type('text/turtle').send(affordancesManifestTurtle(`${base}/agent/scorm/affordances`, [canonicalAffordance('urn:iep:action:foxxi:scorm-author-signed'), canonicalAffordance('urn:iep:action:foxxi:scorm-launch-signed'), canonicalAffordance('urn:iep:action:foxxi:scorm-submit-signed')], base, {
     verticalLabel: 'Foxxi agentic SCORM RTE', rdfsComment: 'Author, launch, and play a real SCORM 2004 course as an agent — the SN runtime sequences + the engine rolls up the outcome.',
   }));
@@ -8744,50 +8756,18 @@ function publicCourseView(c: AgentScormCourse, base: string): Record<string, unk
  *  sequencing conditions, rung-4 authority-closed launch control (no target: the
  *  live target is re-resolved from the signed affordance at execution time). */
 function courseToHmd(c: AgentScormCourse, base: string): string {
-  const id = `${base}/agent/scorm/course/${encodeURIComponent(c.courseId)}`;
-  const fm = [
-    '---',
-    `"@id": ${JSON.stringify(id)}`,
-    '"@type": ["scorm:Organization", "hmd:Document"]',
-    `title: ${JSON.stringify(c.title)}`,
-    `courseId: ${JSON.stringify(c.courseId)}`,
-    `courseIri: ${JSON.stringify(scormCourseIri(c.courseId))}`,
-    `masteryScore: ${c.masteryScore}`,
-    `authoredBy: ${JSON.stringify(c.authoredBy)}`,
-    `scoCount: ${c.scos.length}`,
-    '---',
-  ].join('\n');
-  const scos = c.scos.map((s, i) => {
-    const prev = i > 0 ? c.scos[i - 1] : undefined;
-    const gate = prev ? `\ncondition: ${JSON.stringify(`${prev.id} satisfied`)}\nrequires: <#${scormSlug(prev.id)}>\n` : '';
-    const qs = s.assessment?.length ? '\n\n' + s.assessment.map(q => `> **Assessment.** ${q.question}`).join('\n') : '';
-    return `## ${s.title}  {#${scormSlug(s.id)}}\n${gate}\n${s.body}${qs}`;
-  }).join('\n\n');
-  return `${fm}
-
-# ${c.title}
-
-A real SCORM 2004 course, authored by an agent and sequenced by the live SN runtime;
-mastery at ${c.masteryScore}. Read it here as prose — or launch a real attempt and be
-sequenced SCO by SCO, with the engine rolling up your outcome.
-
-- [Launch an attempt in the player](${scormPlayerLink(c)}){rel="scorm:launch" type="text/html"}
-- [imsmanifest.xml](${id}?format=manifest){rel="scorm:manifest" type="application/xml"}
-- [catalog record](${id}){rel="alternate" type="application/json"}
-
-${scos}
-
-:::control control-launch
-type: ["hmd:Control", "hydra:Operation"]
-rel: "${actionUrl('urn:iep:action:foxxi:scorm-launch-signed')}"
-method: "POST"
-whenToUse: "Start a new attempt as yourself. sign_request -> act; the SN runtime delivers the first SCO, then POST /agent/scorm/submit { session_id, answers? } until done."
-:::
-`;
+  return courseHmd(c, base, scormPlayerLink(c), canonicalAffordance('urn:iep:action:foxxi:scorm-launch-signed'));
 }
+
 app.get('/agent/scorm/courses', async (req, res) => {
   const base = (process.env.BRIDGE_DEPLOYMENT_URL ?? `${req.protocol}://${req.get('host') ?? ''}`).replace(/\/$/, '');
   await hydrateAgentCourses();  // the Map is a cache; the lattice is the source
+  res.vary('Accept');
+  if (wantsHmd(req)) {
+    sendHmd(res, collectionHmd(`${base}/agent/scorm/courses`, 'FOXXI courses', base,
+      [...agentScormCourses.values()].map(c => ({ id: `${base}/agent/scorm/course/${encodeURIComponent(c.courseId)}`, title: c.title }))));
+    return;
+  }
   res.json({ ok: true, count: agentScormCourses.size, courses: [...agentScormCourses.values()].map(c => publicCourseView(c, base)) });
 });
 app.get('/agent/scorm/course/:id', async (req, res) => {
@@ -8796,11 +8776,8 @@ app.get('/agent/scorm/course/:id', async (req, res) => {
   if (!c) { res.status(404).json({ error: `no authored course "${req.params.id}" on any configured agent pod — author it via /agent/scorm/author, or pass ?author_did=<did> to point at the author's pod` }); return; }
   const fmt = String(req.query.format ?? '').toLowerCase();
   if (fmt === 'manifest' || fmt === 'xml') { res.type('application/xml').send(buildAgentScormManifest(c)); return; }
-  if (fmt === 'markdown' || fmt === 'hmd') {
-    res.type('text/markdown; charset=UTF-8; variant=CommonMark')
-      .setHeader('Link', `<https://relay.interego.xwisee.com/ns/maintainer/hmd>; rel="profile"`);
-    res.send(courseToHmd(c, base)); return;
-  }
+  res.vary('Accept');
+  if (wantsHmd(req)) { sendHmd(res, courseToHmd(c, base)); return; }
   res.json({ ok: true, ...publicCourseView(c, base) });
 });
 
@@ -8905,7 +8882,7 @@ app.post('/agent/publish-memory', async (req, res) => {
     // The memory's own atom is a dereferenceable URL now; hand it back so a reader can
     // follow it (via the relay authority) to this memory's description.
     const d = dereferenceTerm(label, memoryIri);
-    res.json({
+    sendActionResult(req, res, {
       ok: true, kind, title, memoryIri, label,
       holonUri: sl?.holonUri, persisted: sl?.persisted,
       atom: d?.atomUri ?? null,   // e.g. https://relay.interego.xwisee.com/ns/pgsl/atom/<hash> — resolves
@@ -8913,12 +8890,11 @@ app.post('/agent/publish-memory', async (req, res) => {
       hmd: `${memoryIri}?format=markdown`,   // the memory as a followable HyperMarkdown doc
       commons: `${base}/agent/memories`,     // discover every shared memory (HATEOAS)
       inbox: `${base}/agent/memories?format=ldn`,  // the LDN pull-inbox other agents poll
-    });
+    }, bridgeBaseUrl, 'Guidance published', activeAffordances.filter(a => a.toolName === 'foxxi.record_performance_signed'));
   } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 
 interface MemoryContent { kind?: string; title?: string; body?: string; author?: string; memoryIri?: string }
-const MEMORY_APPLIED_REL = actionUrl('urn:iep:action:foxxi:record-performance-signed');
 /** The atom's short content hash (the relay authority path segment), or null. */
 function atomHash(atomUri: string | null): string | null { return atomUri ? String(atomUri).split('/').pop() ?? null : null; }
 /** A memory's JSON description — id + dereferenceable atom + its HMD and node links.
@@ -8938,45 +8914,7 @@ function memoryView(m: MemoryContent, base: string, atomUri: string | null): Rec
  *  first-class followable hypermedia object in the HMD viewer, not an opaque blob. The
  *  control has NO target: the live target is re-resolved from the signed affordance. */
 function memoryToHmd(m: MemoryContent, base: string, atomUri: string | null): string {
-  const id = m.memoryIri ?? `${base}/memory/x`;
-  const kind = m.kind ?? 'job-aid';
-  const h = atomHash(atomUri);
-  const fm = [
-    '---',
-    `"@id": ${JSON.stringify(id)}`,
-    '"@type": ["skos:Concept", "hmd:Document"]',
-    `title: ${JSON.stringify(m.title ?? kind)}`,
-    `kind: ${JSON.stringify(kind)}`,
-    `creator: ${JSON.stringify(m.author ?? '')}`,
-    ...(atomUri ? [`atom: ${JSON.stringify(atomUri)}`] : []),
-    '---',
-  ].join('\n');
-  const links = [
-    ...(atomUri ? [`- [content-addressed id — resolves via the relay authority](${atomUri}){rel="canonical"}`] : []),
-    ...(h ? [`- [this memory as a lattice node](${base}/agent/lattice/atom/${h}){rel="foxxi:node" type="application/json"}`] : []),
-    `- [JSON description](${id}){rel="alternate" type="application/json"}`,
-    `- [discover other shared memories](${base}/agent/memories){rel="collection" type="application/json"}`,
-    ...(m.author ? [`- [author](${m.author}){rel="dct:creator"}`] : []),
-  ].join('\n');
-  return `${fm}
-
-# ${m.title ?? kind}
-
-A published ${kind} in the shared memory commons — not a PDF, not a dead urn. Its id and its
-atom are dereferenceable URLs that resolve to this description; read it here, or follow the
-links to walk it as linked data in the same fabric every agent shares.
-
-${links}
-
-${m.body ?? ''}
-
-:::control control-applied
-type: ["hmd:Control", "hydra:Operation"]
-rel: ${JSON.stringify(MEMORY_APPLIED_REL)}
-method: "POST"
-whenToUse: ${JSON.stringify(`You applied this ${kind} to a task. Record the outcome as yourself: sign_request -> POST /agent/record-performance { task_name, success, evidence } so the guidance you followed is linked to what you did with it.`)}
-:::
-`;
+  return memoryHmd(m, base, atomUri, canonicalAffordance('urn:iep:action:foxxi:record-performance-signed'));
 }
 
 // GET /memory/:slug — dereference the memory's OWN identity URL. Publishing made the ATOM
@@ -8995,12 +8933,8 @@ app.get('/memory/:slug', async (req, res) => {
   const m = art.content as MemoryContent;
   const atomUri = dereferenceTerm(MEMORY_LATTICE_LABEL, memoryIri)?.atomUri ?? null;
   res.append('Link', `<${base}/agent/memories?format=ldn>; rel="http://www.w3.org/ns/ldp#inbox"`);
-  const fmt = String(req.query.format ?? '').toLowerCase();
-  const wantsHmd = fmt === 'markdown' || fmt === 'hmd' || /\btext\/markdown\b/.test(String(req.headers.accept ?? ''));
-  if (wantsHmd) {
-    res.append('Link', `<https://relay.interego.xwisee.com/ns/maintainer/hmd>; rel="profile"`);
-    res.type('text/markdown; charset=UTF-8; variant=CommonMark').send(memoryToHmd(m, base, atomUri)); return;
-  }
+  res.vary('Accept');
+  if (wantsHmd(req)) { sendHmd(res, memoryToHmd(m, base, atomUri)); return; }
   res.json({ ...memoryView(m, base, atomUri), body: m.body });
 });
 
@@ -9024,6 +8958,12 @@ app.get('/agent/memories', async (req, res) => {
     .filter(v => v['@id']);
   const inbox = `${base}/agent/memories?format=ldn`;
   res.append('Link', `<${inbox}>; rel="http://www.w3.org/ns/ldp#inbox"`);
+  res.vary('Accept');
+  if (wantsHmd(req)) {
+    sendHmd(res, collectionHmd(`${base}/agent/memories`, 'FOXXI shared memories', base,
+      memories.map(m => ({ id: String(m['@id']), title: String(m.title ?? m['@id']) }))));
+    return;
+  }
   const fmt = String(req.query.format ?? '').toLowerCase();
   if (fmt === 'ldn' || /application\/ld\+json/.test(String(req.headers.accept ?? ''))) {
     res.type('application/ld+json').json({
@@ -9106,7 +9046,7 @@ app.post('/agent/scorm/author', async (req, res) => {
       content: course as unknown as Record<string, unknown>,
       contentType: 'foxxi:Course', projections: ['rdf', 'vc', 'activity'],
     });
-    res.json({ ok: true, authoredBy: auth.callerDid, courseId: course.courseId, title: course.title, scoCount: course.scos.length, assessmentScos: course.scos.filter(s => s.assessment?.length).length, masteryScore: course.masteryScore, manifestValid: true, durable: authorPod, courseIri, ...(authoredStatementId ? { authoredStatementId } : {}), ...(sharedLattice ? { sharedLattice } : {}) });
+    sendActionResult(req, res, { ok: true, authoredBy: auth.callerDid, courseId: course.courseId, title: course.title, scoCount: course.scos.length, assessmentScos: course.scos.filter(s => s.assessment?.length).length, masteryScore: course.masteryScore, manifestValid: true, durable: authorPod, courseIri: courseIriUrl, ...(authoredStatementId ? { authoredStatementId } : {}), ...(sharedLattice ? { sharedLattice } : {}) }, bridgeBaseUrl, 'Course authored', activeAffordances.filter(a => a.toolName === 'foxxi.scorm_launch'));
   } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 
@@ -9167,7 +9107,7 @@ app.post('/agent/scorm/launch', async (req, res) => {
     if (!nav.ok || !nav.delivered) { res.status(409).json({ error: `SCORM start failed: ${nav.exception ?? nav.message ?? 'no SCO delivered'}` }); return; }
     if (agentScormPlays.size >= SCORM_PLAYS_MAX) { const oldest = agentScormPlays.keys().next().value; if (oldest !== undefined) agentScormPlays.delete(oldest); }
     agentScormPlays.set(seq.id, { seq, courseId, learnerDid: callerDid, lens, masteryScore: course.masteryScore, course });
-    res.json({ ok: true, sessionId: seq.id, launchedBy: callerDid, course: { id: courseId, title: course.title }, sco: scoViewForLearner(scoForActivity(course, nav.delivered.activityId)), sequencingEnded: !!nav.sequencingEnded, instruction: 'Read the SCO; for an assessment SCO answer the questions; then POST /agent/scorm/submit { session_id, answers? }. Repeat until done:true.' });
+    sendActionResult(req, res, { ok: true, sessionId: seq.id, launchedBy: callerDid, course: { id: courseId, title: course.title }, sco: scoViewForLearner(scoForActivity(course, nav.delivered.activityId)), sequencingEnded: !!nav.sequencingEnded, instruction: 'Read the SCO; for an assessment SCO answer the questions; then POST /agent/scorm/submit { session_id, answers? }. Repeat until done:true.' }, bridgeBaseUrl, 'SCORM attempt launched', activeAffordances.filter(a => a.toolName === 'foxxi.scorm_submit'));
   } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 
@@ -9218,7 +9158,7 @@ app.post('/agent/scorm/submit', async (req, res) => {
     commitTracking(play.seq, update);
     const nav = processNavigation(play.seq, 'continue');
     if (nav.ok && nav.delivered && !nav.sequencingEnded) {
-      res.json({ ok: true, done: false, ...(graded ? { graded } : {}), sco: scoViewForLearner(scoForActivity(course, nav.delivered.activityId)) });
+      sendActionResult(req, res, { ok: true, sessionId, done: false, ...(graded ? { graded } : {}), sco: scoViewForLearner(scoForActivity(course, nav.delivered.activityId)) }, bridgeBaseUrl, 'Next SCO', activeAffordances.filter(a => a.toolName === 'foxxi.scorm_submit'));
       return;
     }
     // Sequencing ended — the SN engine's ROLLUP on the root is the course outcome.
@@ -9229,7 +9169,7 @@ app.post('/agent/scorm/submit', async (req, res) => {
     const score = typeof root.normalizedMeasure === 'number' ? root.normalizedMeasure : (passed ? 1 : 0);
     const statementIds = emitScormCompletion(play, course, passed, score);
     agentScormPlays.delete(sessionId);
-    res.json({ ok: true, done: true, ...(graded ? { graded } : {}), course: { id: play.courseId, title: course.title }, completed, passed, score: Number(score.toFixed(3)), recordedStatements: statementIds.length, lens: play.lens, note: 'The SCORM 2004 SN runtime rolled up this outcome from your committed SCO tracking — recorded to your ELR.' });
+    sendActionResult(req, res, { ok: true, sessionId, done: true, ...(graded ? { graded } : {}), course: { id: play.courseId, title: course.title }, completed, passed, score: Number(score.toFixed(3)), recordedStatements: statementIds.length, lens: play.lens, note: 'The SCORM 2004 SN runtime rolled up this outcome from your committed SCO tracking — recorded to your ELR.' }, bridgeBaseUrl, 'SCORM attempt outcome', activeAffordances.filter(a => a.toolName === 'foxxi.review_record'));
   } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 
@@ -9332,7 +9272,7 @@ app.post('/agent/mesh-event', async (req, res) => {
 const FOXXI_GUIDANCE: FoxxiGuidedEntry[] = [
   { action: 'urn:iep:action:foxxi:extend-standards', toolName: 'foxxi.extend_standards', guidance: EXTEND_STANDARDS_GUIDANCE },
 ];
-attachGuidanceServing(app, '/guidance', FOXXI_GUIDANCE);
+attachGuidanceServing(app, '/guidance', FOXXI_GUIDANCE, { base: bridgeBaseUrl, affordances: activeAffordances });
 
 // Terminal JSON error handler: a malformed request body makes body-parser throw a SyntaxError
 // whose default Express rendering leaks the stack trace + absolute /app/node_modules server paths
