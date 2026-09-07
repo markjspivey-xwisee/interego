@@ -712,12 +712,30 @@ export function parseHypermediaMarkdown(md: string): HypermediaMarkdownDoc {
 
   // ── body + :::control blocks ──
   const controls: Array<{ -readonly [K in keyof HypermediaControl]?: HypermediaControl[K] }> = [];
+  const links: HypermediaLink[] = [];
   const bodyLines: string[] = [];
   const lines = rest.split(/\r?\n/);
   let i = 0;
   let sawControl = false;
+  let fence: { marker: string; length: number } | undefined;
   while (i < lines.length) {
     const line = lines[i]!;
+    const fm = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (fm) {
+      if (!fence) fence = { marker: fm[1]![0]!, length: fm[1]!.length };
+      else if (fm[1]![0] === fence.marker && fm[1]!.length >= fence.length) fence = undefined;
+      bodyLines.push(line); i++; continue;
+    }
+    if (fence) { bodyLines.push(line); i++; continue; }
+    const link = /^- \[([^\]]+)\]\(([^)]+)\)\{([^}]*)\}\s*$/.exec(line);
+    if (link) {
+      const attrs: Record<string, string> = {};
+      for (const am of link[3]!.matchAll(/(\w+)="([^"]*)"/g)) attrs[am[1]!] = am[2]!;
+      if (attrs['rel']) {
+        links.push({ label: link[1]!, href: link[2]!, rel: attrs['rel'], ...(attrs['type'] ? { type: attrs['type'] } : {}) });
+        i++; continue;
+      }
+    }
     const opener = /^:::control ([A-Za-z][\w-]*)\s*$/.exec(line);
     if (!opener) {
       // Drop the constant execution note (re-emitted by render); keep other prose.
@@ -801,6 +819,7 @@ export function parseHypermediaMarkdown(md: string): HypermediaMarkdownDoc {
     ...(Object.keys(fields).length > 0 ? { fields } : {}),
     ...(Object.keys(extra).length > 0 ? { extraContext: extra } : {}),
     controls: allControls,
+    ...(links.length ? { links } : {}),
     body: bodyLines.join('\n').replace(/\n+$/, ''),
   };
 }
@@ -914,16 +933,9 @@ export function liftHypermediaMarkdown(md: string): readonly HmdTriple[] {
   // blockquoted or inline, and lifting a `{rel=…}` link out of attacker
   // prose would hand action-rel edges to consumers — the links side door
   // around the control authority closure.
-  const linkLineRe = /^- \[([^\]]+)\]\(([^)]+)\)\{([^}]*)\}\s*$/;
-  for (const bodyLine of doc.body.split('\n')) {
-    const lm = linkLineRe.exec(bodyLine);
-    if (!lm) continue;
-    const attrs: Record<string, string> = {};
-    for (const am of lm[3]!.matchAll(/(\w+)="([^"]*)"/g)) attrs[am[1]!] = am[2]!;
-    if (attrs['rel']) {
-      const relIri = /^[a-z][\w.+-]*:/i.test(attrs['rel']) ? ex(attrs['rel']) : `http://www.iana.org/assignments/relation/${attrs['rel']}`;
-      push(D, relIri, lm[2]!, 'iri');
-    }
+  for (const link of doc.links ?? []) {
+    const relIri = /^[a-z][\w.+-]*:/i.test(link.rel) ? ex(link.rel) : `http://www.iana.org/assignments/relation/${link.rel}`;
+    push(D, relIri, link.href, 'iri');
   }
 
   // GFM pipe tables in the prose body → hmd:Table / hmd:Row / hmd:Cell (grammar

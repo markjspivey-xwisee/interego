@@ -2,6 +2,7 @@
 import { renderHypermediaMarkdown, type HypermediaLink } from '@interego/core';
 import type { Affordance } from '../../_shared/affordance-mcp/index.js';
 import { affordanceControl, hmdProse } from '../../_shared/hypermedia/index.js';
+import { scormArtifactLinks } from './scorm-artifacts.js';
 
 export interface CourseView {
   courseId: string; title: string; masteryScore: number; authoredBy: string;
@@ -12,6 +13,7 @@ export interface MemoryView { kind?: string; title?: string; body?: string; auth
 
 export function courseHmd(course: CourseView, base: string, player: string, launch: Affordance): string {
   const id = `${base}/agent/scorm/course/${encodeURIComponent(course.courseId)}`;
+  const artifacts = scormArtifactLinks(base, course.courseId);
   return renderHypermediaMarkdown({ id, type: 'scorm:Organization', descriptorUrl: `${base}/affordances`,
     title: course.title,
     extraContext: {
@@ -25,7 +27,10 @@ export function courseHmd(course: CourseView, base: string, player: string, laun
         + (s.assessment?.length ? '\n\n' + s.assessment.map(q => `> **Assessment.** ${q.question}`).join('\n') : '')).join('\n\n')),
     links: [
       { label: 'Launch an attempt in the player', href: player, rel: 'alternate', type: 'text/html' },
-      { label: 'imsmanifest.xml', href: `${id}?format=manifest`, rel: 'describedby', type: 'application/xml' },
+      { label: 'imsmanifest.xml', href: artifacts.manifest, rel: 'describedby', type: 'application/xml' },
+      { label: 'Download SCORM 2004 package', href: artifacts.scormZip, rel: 'enclosure', type: 'application/zip' },
+      { label: 'SCORM package bytes and digest', href: artifacts.packageData, rel: 'alternate', type: 'application/json' },
+      ...course.scos.map(s => ({ label: `${s.title} — SCO HTML`, href: artifacts.sco(s.id), rel: 'item', type: 'text/html' })),
       { label: 'Catalog record', href: id, rel: 'alternate', type: 'application/json' },
       { label: 'Course catalog', href: `${base}/agent/scorm/courses?format=markdown`, rel: 'collection', type: 'text/markdown' },
     ],

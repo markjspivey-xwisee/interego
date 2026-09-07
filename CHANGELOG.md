@@ -36,6 +36,19 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
 
 ---
 
+## 2026-09-07 — Artifact contents and completion claims are verifiable
+
+Agent SCORM courses now serve their advertised manifest, executable SCOs and ZIP.
+Both course exporters share assessment scoring and check runtime return values.
+HMD readers expose typed artifact links, and HTTP affordance calls preserve binary
+bytes with an explicit base64 encoding. Published course and job-aid source can
+rehydrate from pod storage; bundle readers accept the full predicate IRIs their
+writers emit. Failed transport is no longer reported as delivery. The browser
+runtime retains a local outbox for acknowledged LRS retries, and the slide player
+requires a receipt before claiming recorded completion; viewing slides does not
+emit a passed assessment. These changes add consumer and failure-path regression
+coverage; they do not establish third-party SCORM certification.
+
 ## 2026-09-07 — Private HMD rendering retains OAuth request protection
 
 Recognizing an OAuth token is not sufficient to authorize a request carrying it.

@@ -154,6 +154,7 @@ async function loadSolidLazy(): Promise<SolidModule> {
 }
 import { getDefaultFetch } from '../http/fetch.js';
 import { withTransientRetry } from '../http/retry.js';
+import { readResponseBody } from '../http/response-body.js';
 import type { FetchFn } from '../http/types.js';
 import type { EncryptionKeyPair, EncryptedEnvelope } from '../crypto/encryption.js';
 import { openEncryptedEnvelope } from '../crypto/encryption.js';
@@ -1371,14 +1372,15 @@ export async function act(
     // exception rather than as data with its `iep:refusalReason`. Same call, same refusal, two
     // different outcomes depending on which argument the caller passed. Reached from
     // `invoke_affordance` on both the relay and the stdio server.
-    const { response, responseBody } = await withTransientRetry(async () => {
+    const { response, representation } = await withTransientRetry(async () => {
       const r = await fetchImpl(affordance.target, { method: affordance.method, headers, body });
-      const text = await r.text();
-      if (r.status >= 500 && !declaresRefusal(text)) {
+      const representation = await readResponseBody(r);
+      if (r.status >= 500 && !declaresRefusal(representation.body)) {
         throw new Error(`Affordance target ${affordance.target} returned ${r.status} ${r.statusText}`);
       }
-      return { response: r, responseBody: text };
+      return { response: r, representation };
     });
+    const responseBody = representation.body;
     // iep:canDecrypt semantics: the GET fetches an envelope; the kernel's
     // contract is to surface its plaintext to authorized recipients. If
     // the caller supplied a recipientKeyPair AND we recognize an
@@ -1402,7 +1404,7 @@ export async function act(
       status: response.status,
       statusText: response.statusText,
       contentType: response.headers?.get('content-type') ?? null,
-      body: responseBody,
+      ...representation,
       affordance,
     };
   }
@@ -1445,6 +1447,7 @@ export async function act(
     statusText: result.statusText,
     contentType: result.contentType,
     body: result.body,
+    ...(result.bodyEncoding ? { bodyEncoding: result.bodyEncoding } : {}),
     affordance: resolved,
   };
 }

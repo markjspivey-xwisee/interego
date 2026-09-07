@@ -18,8 +18,7 @@
  * docs/patterns/out-of-band-auth-exchange.md) and passes that instead.
  * The player exchanges `code` → bearer on startup. A `bearer` param is
  * still accepted for stand-alone testing. When opened with neither, the
- * player still renders the course but emits statements anonymously (the
- * bridge rejects them with 401 — surfaced in the trace panel).
+ * player renders a preview and reports that no learning record was sent.
  */
 
 const url = new URL(location.href);
@@ -133,7 +132,7 @@ async function emit(stmt) {
   // an anonymous player can only log statements locally.
   if (!params.bearer) {
     logTrace(`<span class="verb">${enriched.verb.display.en}</span> · <em>not emitted (no session)</em>`);
-    return enriched.id;
+    return null;
   }
   const headers = { 'Content-Type': 'application/json', 'X-Experience-API-Version': '2.0.0' };
   headers['Authorization'] = `Bearer ${params.bearer}`;
@@ -246,20 +245,7 @@ function statementCompleted(viewed) {
     }),
     result: {
       completion,
-      success: completion,
-      score: { scaled: viewed.size / SLIDES.length },
     },
-  };
-}
-
-function statementPassed(score) {
-  return {
-    actor: actor(),
-    verb: { id: `${ADL}verbs/passed`, display: { en: 'passed' } },
-    object: { objectType: 'Activity', id: COURSE_IRI, definition: COURSE_DEF },
-    timestamp: new Date().toISOString(),
-    context: baseContext({ [`${FOXXI_NS}masteryThreshold`]: 0.7 }),
-    result: { completion: true, success: true, score: { scaled: score } },
   };
 }
 
@@ -396,7 +382,9 @@ document.getElementById('btn-prev').addEventListener('click', () => jumpTo(state
 document.getElementById('btn-next').addEventListener('click', () => jumpTo(state.current + 1));
 document.getElementById('btn-complete').addEventListener('click', async () => {
   if (state.completed) return;
-  state.completed = true;
+  const button = document.getElementById('btn-complete');
+  if (button.disabled || state.viewed.size < SLIDES.length) return;
+  button.disabled = true;
   // Emit any unfired scene-completed for the final scene
   const finalScene = SLIDES[state.current].scene;
   const finalSceneSlides = SLIDES.filter(s => s.scene === finalScene);
@@ -405,10 +393,11 @@ document.getElementById('btn-complete').addEventListener('click', async () => {
     state.scenesCompleted.add(finalScene);
     await emit(statementSceneCompleted(finalScene, finalSceneSlides));
   }
-  await emit(statementCompleted(state.viewed));
-  await emit(statementPassed(state.viewed.size / SLIDES.length));
-  document.getElementById('btn-complete').textContent = '✓ Completed';
-  document.getElementById('btn-complete').disabled = true;
+  state.completionStatement ||= { ...statementCompleted(state.viewed), id: crypto.randomUUID() };
+  const receipt = await emit(state.completionStatement);
+  state.completed = Boolean(receipt);
+  button.textContent = receipt ? '✓ Completion recorded' : (params.bearer ? 'Recording failed — retry' : 'Preview complete — sign in to record');
+  button.disabled = state.completed;
 });
 
 window.addEventListener('beforeunload', () => {

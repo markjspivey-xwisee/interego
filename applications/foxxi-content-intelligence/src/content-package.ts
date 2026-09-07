@@ -24,7 +24,7 @@
  * change.
  */
 
-import AdmZip from 'adm-zip';
+import { scormArtifactZip, hashScormAnswer, type ScormArtifactCourse } from './scorm-artifacts.js';
 import type { Course, Module, Lesson, GroundingFragment } from './emergent-content.js';
 
 const CMI5_NS = 'https://w3id.org/xapi/profiles/cmi5/v1/CourseStructure.xsd';
@@ -85,7 +85,7 @@ export function generateCmi5Xml(course: Course, auUrl: (lessonId: string) => str
     m.lessons.push(fl);
   }
   const auXml = (fl: FlatLesson): string =>
-    `    <au id="${xml(fl.lesson.id)}" moveOn="${xml(String(course.moveOn ?? ''))}">\n` +
+    `    <au id="${xml(fl.lesson.id)}" moveOn="${xml(String(course.moveOn ?? ''))}" masteryScore="0.6">\n` +
     `      <title><langstring lang="en-US">${xml(fl.lesson.title)}</langstring></title>\n` +
     `      <description><langstring lang="en-US">${xml(fl.lesson.competency)}</langstring></description>\n` +
     `      <url>${xml(auUrl(fl.lesson.id))}</url>\n` +
@@ -143,7 +143,7 @@ export function generateAuHtml(courseTitle: string, lesson: AuLessonView): strin
 <div class="crumb">competency: ${htmlEsc(lesson.competency)}</div>
 <div id="content"></div>
 <div style="margin-top:18px">
-  <button id="go">${isAssessment ? 'Submit answers' : 'Mark complete'}</button>
+  <button id="go" disabled>${isAssessment ? 'Submit answers' : 'Mark complete'}</button>
 </div>
 <div class="status" id="status">cmi5 — connecting to the LRS…</div>
 <script>
@@ -164,6 +164,7 @@ const actor = JSON.parse(q.get('actor') || '{}');
 const activityId = q.get('activityId') || LESSON.id;
 const registration = q.get('registration') || '';
 let authToken = null;
+let ready = false;
 
 function setStatus(msg, cls){ const s=document.getElementById('status'); s.textContent=msg; s.className='status '+(cls||''); }
 
@@ -208,16 +209,19 @@ async function start(){
   try {
     if (!fetchUrl) { setStatus('Not launched via cmi5 — preview only.', 'err'); render(); document.getElementById('go').disabled=true; return; }
     const fr = await fetch(fetchUrl, { method: 'POST' });
+    if (!fr.ok) throw new Error('fetch endpoint returned ' + fr.status);
     const fj = await fr.json();
     authToken = fj['auth-token'];
     if (!authToken) throw new Error('no auth-token from fetch endpoint');
     await sendStatement('initialized');
     render();
+    ready = true; document.getElementById('go').disabled = false;
     setStatus('Launched. Work through the lesson, then complete it.', 'ok');
   } catch (e) { setStatus('cmi5 launch failed: ' + e.message, 'err'); render(); }
 }
 
 document.getElementById('go').onclick = async () => {
+  if (!ready) return;
   const btn = document.getElementById('go'); btn.disabled = true;
   try {
     if (IS_ASSESSMENT){
@@ -243,87 +247,25 @@ start();
 
 // ── SCORM 2004 package ──────────────────────────────────────────────
 
-/** Generate a SCORM 2004 SCO page — standard run-time API discovery. */
-function generateScoHtml(courseTitle: string, lesson: AuLessonView): string {
-  return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>${htmlEsc(lesson.title)}</title>
-<style>body{font-family:system-ui,sans-serif;max-width:680px;margin:0 auto;padding:24px;line-height:1.6}
-.frag{border:1px solid #e3e3ee;border-radius:8px;padding:12px 14px;margin:10px 0}
-button{background:#1a73e8;color:#fff;border:0;border-radius:6px;padding:.6rem 1.2rem;cursor:pointer}</style>
-</head><body>
-<div style="font-size:12px;color:#778">${htmlEsc(courseTitle)}</div>
-<h1>${htmlEsc(lesson.title)}</h1>
-<div id="c"></div>
-<button id="go">Mark complete</button>
-<div id="s" style="margin-top:12px;font-size:13px;color:#667"></div>
-<script>
-const LESSON=${jsStr(lesson)};
-function findAPI(w){let n=0;while(w&&!w.API_1484_11&&w.parent&&w.parent!==w&&n++<12)w=w.parent;return w&&w.API_1484_11||null;}
-const API=findAPI(window)||(window.opener&&findAPI(window.opener));
-const c=document.getElementById('c');
-for(const f of LESSON.fragments){const d=document.createElement('div');d.className='frag';d.textContent=f.body;c.appendChild(d);}
-if(API){API.Initialize('');document.getElementById('s').textContent='SCORM run-time connected.';}
-else{document.getElementById('s').textContent='No SCORM run-time found — preview mode.';}
-document.getElementById('go').onclick=function(){
-  if(API){API.SetValue('cmi.completion_status','completed');API.SetValue('cmi.success_status','passed');
-    API.SetValue('cmi.score.scaled','1');API.Commit('');API.Terminate('');
-    document.getElementById('s').textContent='Completion committed to the SCORM run-time.';}
-  this.disabled=true;
-};
-</script></body></html>`;
+/** Adapt the composed content model to the same executable SCO artifacts as agent courses. */
+export function composedScormCourse(course: Course): ScormArtifactCourse {
+  return {
+    courseId: course.id, title: course.title, masteryScore: 0.6,
+    scos: flattenCourse(course).map(fl => ({
+      id: fl.lesson.id, title: fl.lesson.title,
+      body: fl.fragments.filter(f => f.modality !== 'assessment-item').map(f => f.body).join('\n\n'),
+      assessment: fl.fragments.filter(f => f.modality === 'assessment-item').map(f => {
+        const separator = f.body.indexOf(':::');
+        if (separator < 0 || !f.body.slice(separator + 3).trim()) throw new Error('An assessment fragment must contain question ::: answer.');
+        return { question: f.body.slice(0, separator).trim(), answerHash: hashScormAnswer(f.body.slice(separator + 3).trim()) };
+      }),
+    })),
+  };
 }
 
-/** Generate a SCORM 2004 imsmanifest.xml for the course. */
-function generateImsManifest(course: Course): string {
-  const flat = flattenCourse(course);
-  const items = flat.map(fl =>
-    `        <item identifier="ITEM-${xml(slug(fl.lesson.id))}" identifierref="RES-${xml(slug(fl.lesson.id))}">\n` +
-    `          <title>${xml(fl.lesson.title)}</title>\n` +
-    `        </item>`).join('\n');
-  const resources = flat.map(fl =>
-    `    <resource identifier="RES-${xml(slug(fl.lesson.id))}" type="webcontent" ` +
-    `adlcp:scormType="sco" href="sco-${xml(slug(fl.lesson.id))}.html">\n` +
-    `      <file href="sco-${xml(slug(fl.lesson.id))}.html"/>\n` +
-    `    </resource>`).join('\n');
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<manifest identifier="MANIFEST-${xml(slug(course.id))}" version="1.0"
-  xmlns="http://www.imsglobal.org/xsd/imscp_v1p1"
-  xmlns:adlcp="http://www.adlnet.org/xsd/adlcp_v1p3"
-  xmlns:imsss="http://www.imsglobal.org/xsd/imsss">
-  <metadata><schema>ADL SCORM</schema><schemaversion>2004 4th Edition</schemaversion></metadata>
-  <organizations default="ORG-1">
-    <organization identifier="ORG-1">
-      <title>${xml(course.title)}</title>
-      <item identifier="ITEM-ROOT">
-        <title>${xml(course.title)}</title>
-${items}
-        <imsss:sequencing><imsss:controlMode choice="true" flow="true"/></imsss:sequencing>
-      </item>
-    </organization>
-  </organizations>
-  <resources>
-${resources}
-  </resources>
-</manifest>
-`;
-}
-
-function slug(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48) || 'x';
-}
-
-/** Generate a SCORM 2004 package as a `.zip` Buffer. */
+/** Every manifest resource is materialized; assessments are scored by the emitted SCO. */
 export function generateScormZip(course: Course): Buffer {
-  const zip = new AdmZip();
-  zip.addFile('imsmanifest.xml', Buffer.from(generateImsManifest(course), 'utf8'));
-  for (const fl of flattenCourse(course)) {
-    const view: AuLessonView = {
-      id: fl.lesson.id, title: fl.lesson.title, competency: fl.lesson.competency,
-      fragments: fl.fragments.map(f => ({ modality: f.modality, level: f.level, body: f.body })),
-    };
-    zip.addFile(`sco-${slug(fl.lesson.id)}.html`, Buffer.from(generateScoHtml(course.title, view), 'utf8'));
-  }
-  return zip.toBuffer();
+  return scormArtifactZip(composedScormCourse(course));
 }
 
 /** Build the AU view a lesson renders from. */

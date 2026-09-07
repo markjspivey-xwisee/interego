@@ -504,6 +504,7 @@ export function attachCmi5LmsRoutes(app: Express, config: {
   selfBaseUrl: string;
   authoritativeSource: string;
   defaultLrsEndpoint?: string;
+  restorePublishedCourse?: (tenant: TenantId, courseId: string) => Promise<void>;
 } & OperatorAuthConfig): void {
   // ── The fetch endpoint (cmi5 §8) — the AU exchanges its one-time
   //    fetch token for an LRS auth-token. ─────────────────────────────
@@ -558,7 +559,7 @@ export function attachCmi5LmsRoutes(app: Express, config: {
 
   // ── The launch endpoint — given an AU + a learner, return a
   //    conformant cmi5 launch (URL + LaunchData + actor). ─────────────
-  app.get('/cmi5/launch', (req: Request, res: Response) => {
+  app.get('/cmi5/launch', async (req: Request, res: Response) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     // This mints an LRS-honored Bearer for the named learner — require a
     // verified operator. Previously anonymous: any caller could mint a
@@ -580,6 +581,10 @@ export function attachCmi5LmsRoutes(app: Express, config: {
     // If the AU belongs to a registered course, take its url / moveOn /
     // masteryScore / title from the course structure (the caller need
     // not repeat them), and derive the sequential prerequisite.
+    if (courseId && !getCmi5Course(tenant, courseId) && config.restorePublishedCourse) {
+      try { await config.restorePublishedCourse(tenant, courseId); }
+      catch { res.status(503).json({ error: 'Published course storage is unavailable.' }); return; }
+    }
     const course = courseId ? getCmi5Course(tenant, courseId) : undefined;
     const auNode = course ? auById(course, auId) : undefined;
     const auUrl = (req.query.au_url as string | undefined) ?? auNode?.url;
