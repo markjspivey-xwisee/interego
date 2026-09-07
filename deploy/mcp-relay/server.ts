@@ -155,6 +155,8 @@ import { contractDocument, operationActionUrl, operationContract } from './opera
 // header of egress.ts for why a regex over this file could never assert it.
 import { createEgress } from './egress.js';
 import { withAmepSession, principalIri, stampAmepProof, type AmepSigner } from './amep-session-bridge.js';
+import { verifyRenderCaller } from './render-auth.js';
+import { resolveRenderDescriptor } from './render-descriptor.js';
 
 // Substrate kernel + model + crypto + sparql + RDF + HTTP — `@interego/core`.
 import {
@@ -15757,33 +15759,35 @@ app.post('/admin/backfill-manifest-cid', async (req, res) => {
  * that link and receive the decrypted named-graph as `text/turtle`.
  *
  *   1. Verify bearer (OAuth access token OR identity-server token).
- *   2. Resolve `descriptorIri` (URN or URL) to a descriptor URL via
- *      kernel.dereference using podHint = caller's pod and knownPods.
+ *   2. Resolve descriptor URNs from manifest-listed locations, checking
+ *      their RDF identity; graph URNs use the manifest's describes link.
  *   3. Fetch the descriptor turtle; parse its Distribution affordance
  *      to find the envelope URL + encryption status.
  *   4. Fetch the envelope JSON.
- *   5. Server-side unwrap using the relay's per-agent X25519 keypair
- *      (`relayAgentKey`) — the relay holds the recipient key for every
- *      surface-agent it has minted, so every envelope published through
- *      this relay (or sharedWith one of its agents) is openable here.
+ *   5. Open only envelopes addressed to the verified agent's available
+ *      key. Browser-held private keys are not available to this route.
  *   6. Return plaintext Turtle with `Content-Type: text/turtle`.
  *
  * Returns:
  *   200 text/turtle on success (plaintext projection)
  *   401 when bearer is missing or invalid
- *   403 when the relay agent is not in the envelope's recipient set
+ *   403 when scope, pod-owner binding, or envelope recipient checks fail
  *   404 when the descriptor can't be resolved
  *   409 when the descriptor's payload is NOT encrypted (no projection
  *       needed — caller can fetch the payload URL directly via the
  *       existing iep:canFetchPayload affordance)
  */
 app.get('/render/:descriptorIri', async (req, res) => {
-  const auth = await verifyBearerToken(req.headers.authorization);
-  if (!auth.authenticated) {
-    res.status(401).type('application/ld+json').json({
+  const auth = await verifyRenderCaller(req.headers.authorization, {
+    verifyOAuth: token => oauthProvider.verifyAccessToken(token),
+    verifyIdentity: verifyBearerToken,
+    allowsOAuthRead: hasAnyMcpScope,
+  });
+  if (auth.authenticated === false) {
+    res.status(auth.status).type('application/ld+json').json({
       '@context': KERNEL_JSONLD_CONTEXT,
-      '@type': ['hydra:Status', 'urn:iep:error:Unauthorized'],
-      error: auth.error ?? 'Bearer token required',
+      '@type': ['hydra:Status', auth.status === 403 ? 'urn:iep:error:Forbidden' : 'urn:iep:error:Unauthorized'],
+      error: auth.error,
     });
     return;
   }
@@ -15803,35 +15807,12 @@ app.get('/render/:descriptorIri', async (req, res) => {
   }
 
   try {
-    // Resolve the descriptor IRI to a fetchable descriptor URL.
-    // Either form works:
-    //   - urn:graph:* — needs podHint + knownPods so the kernel can
-    //     scan manifests
-    //   - https://… — already a URL; we fetch directly
-    let descriptorUrl: string | null = null;
-    if (descriptorIri.startsWith('http://') || descriptorIri.startsWith('https://')) {
-      descriptorUrl = descriptorIri;
-    } else {
-      const podHint = auth.userId ? `${CSS_URL}${auth.userId}/` : undefined;
-      const knownPodUrls = Array.from(knownPods.values()).map(e => e.url);
-      const r = await kernelDereference(descriptorIri, {
-        fetch: guardedInvokeFetch,   // caller-supplied descriptorIri (R4)
-        decorateManifest: false,
-        // Own-pod-only decryption (R1). This route previously decrypted ANY pod's
-        // payload for any bearer holder; auth.userId is the token-verified
-        // identity, so pass it as the proven pod rather than the relay key.
-        recipientKeyPair: await recipientKeyFor({ _session_user_id: auth.userId } as ToolArgs, descriptorIri),
-        openEnvelope: renderOpenEnvelope,
-        ...(podHint ? { podHint } : {}),
-        ...(knownPodUrls.length > 0 ? { knownPods: knownPodUrls } : {}),
-      });
-      // kernelDereference returns affordances; the descriptor URL is the
-      // resolved canonical IRI. When it returned a manifest entry (URN
-      // resolution), its `source` field carries the descriptor URL.
-      const rr = r as unknown as { source?: string; manifest?: { source?: string } };
-      descriptorUrl = rr.source ?? rr.manifest?.source ?? null;
-    }
-    if (!descriptorUrl) {
+    const resolved = await resolveRenderDescriptor(descriptorIri, {
+      pods: [`${CSS_URL}${auth.userId}/`, ...Array.from(knownPods.values()).map(e => e.url)],
+      manifest: getCachedManifest,
+      fetch: guardedInvokeFetch,
+    });
+    if (!resolved) {
       res.status(404).type('application/ld+json').json({
         '@context': KERNEL_JSONLD_CONTEXT,
         '@type': ['hydra:Status', 'urn:iep:error:DescriptorNotFound'],
@@ -15840,20 +15821,7 @@ app.get('/render/:descriptorIri', async (req, res) => {
       return;
     }
 
-    // Fetch the descriptor and parse its Distribution affordance.
-    const descResp = await solidFetch(descriptorUrl, {
-      headers: { 'Accept': 'text/turtle' },
-    });
-    if (!descResp.ok) {
-      res.status(404).type('application/ld+json').json({
-        '@context': KERNEL_JSONLD_CONTEXT,
-        '@type': ['hydra:Status', 'urn:iep:error:DescriptorNotFound'],
-        error: `Descriptor GET failed: ${descResp.status} ${descResp.statusText}`,
-        descriptorUrl,
-      });
-      return;
-    }
-    const descTurtle = await descResp.text();
+    const { url: descriptorUrl, turtle: descTurtle } = resolved;
     const dist = parseDistributionFromDescriptorTurtle(descTurtle);
     if (!dist) {
       res.status(404).type('application/ld+json').json({

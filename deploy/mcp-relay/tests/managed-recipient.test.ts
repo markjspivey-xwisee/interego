@@ -10,6 +10,7 @@ import {
   type ManagedKeyContext,
 } from '../managed-recipient.js';
 import { createRecipientGrant, openRecipientGrant, recipientGrantUrl, managedGrantRecipientKey, persistRecipientGrants } from '../envelope-sharing.js';
+import { stripComments } from './strip-comments.js';
 
 const root = generateKeyPair();
 const identityUrl = 'https://identity.example';
@@ -160,5 +161,14 @@ for (const sink of server.matchAll(/recipientKeyPair: await recipientKeyFor\(arg
 const opener = server.slice(server.indexOf('async function envelopeOpenerFor('), server.indexOf('async function selfPodUrl('));
 assert.match(opener, /args\._session_agent_did \?\? args\._session_agent_id/);
 assert.doesNotMatch(opener, /callerAgentId\(args\)|args\.agent_id/, 'a caller-supplied target agent is not a decryption identity');
-assert.equal((server.match(/openEnvelope: renderOpenEnvelope/g) ?? []).length, 2, 'both render branches use the same recipient policy');
+// URN and URL resolution now converge before the encrypted payload is read.
+// Count both sinks and policy uses inside the route, so another route cannot
+// supply a passing match or conceal an extra unguarded decryption path.
+const renderStart = server.indexOf("app.get('/render/:descriptorIri'");
+const renderEnd = server.indexOf("app.post('/agents/:agentIri/revoke'", renderStart);
+assert(renderStart >= 0 && renderEnd > renderStart, 'the private render route is bounded');
+const render = stripComments(server.slice(renderStart, renderEnd), 'render-route.ts');
+assert.equal((render.match(/fetchGraphContent\(/g) ?? []).length, 1, 'all descriptor forms converge on one envelope read');
+assert.equal((render.match(/openEnvelope: renderOpenEnvelope/g) ?? []).length, 1, 'that read uses the shared recipient policy');
+assert.doesNotMatch(render, /kernelDereference\(|openEncryptedEnvelope\(/, 'there is no alternate render decryption path');
 console.log('Managed recipient encryption: real unwraps, unauthorized reads, tampering, redirects and both kernel action paths passed.');

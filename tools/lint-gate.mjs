@@ -183,7 +183,8 @@ const UNLINTED_FRONTIER = {
   // suite. The other eight files accumulated inside the documented slack; CI correctly forced
   // the floor to the full committed census once these final two took it past the boundary.
   // Both additions lint clean, so the error ceiling remains unchanged.
-  deploy: { errors: 356, files: 157 },
+  // Private HMD auth/resolution brings the tracked census to 166; no added lint debt.
+  deploy: { errors: 356, files: 166 },
   // The bulk of these are `no-console` in vertical bridges and CLI entry points — one config
   // decision, not a thousand defects. See the note above.
   // ★ 320 -> 337, and the ratchet caught it in CI rather than locally, which is the interesting

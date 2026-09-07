@@ -274,7 +274,7 @@ check('the followed dcat:accessURL is scoped too',
 /**
  * ★★ THIS CHECK PASSED WHILE THE HOLE IT NAMES WAS WIDE OPEN.
  *
- * `/render/:descriptorIri` has TWO branches. The `urn:` one passed `recipientKeyFor` and satisfied
+ * `/render/:descriptorIri` originally had TWO branches. The `urn:` one passed `recipientKeyFor` and satisfied
  * the regex below; the `https://` one took `descriptorUrl` straight from the caller and never went
  * near it. One `.test()` against the whole file cannot tell "both branches are gated" from "one
  * is" — so the gate reported green over a route where any holder of any valid bearer could read
@@ -284,11 +284,19 @@ check('the followed dcat:accessURL is scoped too',
  * `wrappedKeys`, and it always is — every `encryptionPublicKey` the relay registers is
  * `relayAgentKey.publicKey`, at all six registration sites. The check is vacuous by construction.
  *
- * So this now counts the gates instead of finding one, and separately asserts that the envelope
- * unwrap is preceded by an own-pod refusal.
+ * Descriptor resolution now converges URNs and URLs before the single envelope read. Count
+ * every opening boundary within this route, require its shared policy, and prohibit the old
+ * kernel dereference path. A gate elsewhere in server.ts must not satisfy this assertion.
  */
-const renderGates = (SERVER.match(/openEnvelope: renderOpenEnvelope/g) ?? []).length;
-check('/render gates BOTH branches through the shared recipient policy', renderGates === 2);
+const renderStart = SERVER_CODE.indexOf("app.get('/render/:descriptorIri'");
+const renderEnd = SERVER_CODE.indexOf("app.post('/agents/:agentIri/revoke'", renderStart);
+const renderRoute = renderStart >= 0 && renderEnd > renderStart ? SERVER_CODE.slice(renderStart, renderEnd) : '';
+check('/render has one bounded envelope read, guarded by the shared recipient policy',
+  renderRoute.length > 0
+  && /const renderOpenEnvelope = await envelopeOpenerFor\(renderArgs\)/.test(renderRoute)
+  && (renderRoute.match(/fetchGraphContent\(/g) ?? []).length === 1
+  && /fetchGraphContent\(dist\.accessURL,\s*\{\s*fetch: guardedInvokeFetch,\s*openEnvelope: renderOpenEnvelope,?\s*\}\)/.test(renderRoute)
+  && !/kernelDereference\(|openEncryptedEnvelope\(/.test(renderRoute));
 check('/render derives its actor from the verified bearer, never a URL or request field',
   /_session_agent_did: canonicalSessionActorId\(auth\.agentId, IDENTITY_URL\)/.test(SERVER));
 check('/render never opens a caller-named envelope with the raw fleet key',
