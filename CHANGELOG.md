@@ -36,6 +36,14 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
 
 ---
 
+## 2026-09-07 — Private HMD rendering accepts the MCP session credential
+
+The private render endpoint now verifies the relay OAuth token that MCP clients
+already hold, using the same resource scope policy as MCP. Existing identity-server
+bearers remain supported. A verified pod owner is required before decryption, and
+an insufficiently scoped OAuth token cannot fall back to a second issuer. Live HMD
+traversal exposed this receiver-side mismatch after session forwarding was fixed.
+
 ## 2026-09-07 — Uniform HMD across vertical discovery and execution
 
 FOXXI course and job-aid exports now use the shared HMD renderer, including inline

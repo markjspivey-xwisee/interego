@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import yaml from 'js-yaml';
 import * as jsonld from 'jsonld';
 import { createServer, type Server } from 'node:http';
+import { readFileSync } from 'node:fs';
 import { actionUrl, followAffordance, parseHypermediaMarkdown, liftHypermediaMarkdown, HMD_PROFILE_IRI } from '@interego/core';
 import { createVerticalBridge } from '../applications/_shared/vertical-bridge/index.js';
 import { attachGuidanceServing } from '../applications/_shared/guided-affordance/index.js';
@@ -12,6 +13,7 @@ import { agpAffordances } from '../applications/agentic-performance-practice/aff
 import { renderAffordanceManifestHmd } from '../applications/_shared/hypermedia/index.js';
 import { withAmepSession } from '../deploy/mcp-relay/amep-session-bridge.js';
 import { createEgress } from '../deploy/mcp-relay/egress.js';
+import { verifyRenderCaller, type RenderAuthDeps } from '../deploy/mcp-relay/render-auth.js';
 
 const base = 'https://foxxi.example';
 const hydra = 'http://www.w3.org/ns/hydra/core#';
@@ -163,6 +165,17 @@ it('carries the verified session only when the actual follower reaches a private
       expect(url).toBe(target);
       expect(auth).toBe('Bearer caller-session');
       expect((init as RequestInit).redirect).toBe('manual');
+      // The receiver must recognize the forwarded MCP OAuth token. The live
+      // route formerly sent it only to the identity server, which rejected it.
+      const caller = await verifyRenderCaller(auth as string, {
+        verifyOAuth: async token => {
+          if (token !== 'caller-session') throw new Error('unknown OAuth token');
+          return { scopes: ['mcp:read'], extra: { userId: 'alice', agentId: 'did:web:alice.example' } };
+        },
+        verifyIdentity: async () => ({ authenticated: false }),
+        allowsOAuthRead: scopes => scopes?.includes('mcp:read') ?? false,
+      });
+      expect(caller).toEqual({ authenticated: true, userId: 'alice', agentId: 'did:web:alice.example' });
       return new Response('# Authenticated private representation', { headers: { 'Content-Type': 'text/markdown' } });
     },
   });
@@ -170,6 +183,49 @@ it('carries the verified session only when the actual follower reaches a private
   expect(result.status).toBe(200);
   expect(result.body).toContain('Authenticated private representation');
   expect(calls.map(c => c.url)).toEqual([descriptor, target]);
+});
+
+describe('private render verifies the caller on both credential paths', () => {
+  const deps: RenderAuthDeps = {
+    verifyOAuth: async token => {
+      if (token === 'reader') return { scopes: ['mcp:read'], extra: { userId: 'alice', agentId: 'did:web:alice.example' } };
+      if (token === 'wrong-scope') return { scopes: ['openid'], extra: { userId: 'alice' } };
+      if (token === 'agent-only') return { scopes: ['mcp:read'], extra: { agentId: 'did:web:alice.example' } };
+      throw new Error('not a live OAuth token');
+    },
+    verifyIdentity: async header => header === 'Bearer native-reader'
+      ? { authenticated: true, userId: 'bob', agentId: 'did:web:bob.example' }
+      : { authenticated: false },
+    allowsOAuthRead: scopes => scopes?.includes('mcp:read') ?? false,
+  };
+
+  it('accepts the OAuth reader and binds its own pod and surface agent', async () => {
+    expect(await verifyRenderCaller('Bearer reader', deps)).toEqual({ authenticated: true, userId: 'alice', agentId: 'did:web:alice.example' });
+  });
+  it('retains verified identity-server readers', async () => {
+    expect(await verifyRenderCaller('Bearer native-reader', deps)).toEqual({ authenticated: true, userId: 'bob', agentId: 'did:web:bob.example' });
+  });
+  it.each([undefined, 'Bearer ', 'Basic reader', 'Bearer unknown'])('refuses missing or invalid credential %s', async header => {
+    expect(await verifyRenderCaller(header, deps)).toMatchObject({ authenticated: false, status: 401 });
+  });
+  it('does not try a second issuer to widen a verified but insufficient scope', async () => {
+    let fallbackCalls = 0;
+    const result = await verifyRenderCaller('Bearer wrong-scope', { ...deps, verifyIdentity: async () => { fallbackCalls++; return { authenticated: true, userId: 'other' }; } });
+    expect(result).toMatchObject({ authenticated: false, status: 403, error: 'insufficient_scope' });
+    expect(fallbackCalls).toBe(0);
+  });
+  it('refuses an agent identity without a verified pod owner', async () => {
+    expect(await verifyRenderCaller('Bearer agent-only', deps)).toMatchObject({ authenticated: false, status: 403 });
+  });
+  it('the real private route uses this verifier, the MCP scope policy, and the verified owner', () => {
+    const source = readFileSync(new URL('../deploy/mcp-relay/server.ts', import.meta.url), 'utf8');
+    const route = source.slice(source.indexOf("app.get('/render/:descriptorIri'"), source.indexOf("app.post('/agents/:agentIri/revoke'"));
+    expect(route).toContain('verifyRenderCaller(req.headers.authorization');
+    expect(route).toContain('verifyOAuth: token => oauthProvider.verifyAccessToken(token)');
+    expect(route).toContain('verifyIdentity: verifyBearerToken');
+    expect(route).toContain('allowsOAuthRead: hasAnyMcpScope');
+    expect(route).toContain('_session_user_id: auth.userId');
+  });
 });
 
 it('the real egress guard honors the session bridge redirect boundary', async () => {

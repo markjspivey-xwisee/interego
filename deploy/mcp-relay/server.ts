@@ -155,6 +155,7 @@ import { contractDocument, operationActionUrl, operationContract } from './opera
 // header of egress.ts for why a regex over this file could never assert it.
 import { createEgress } from './egress.js';
 import { withAmepSession, principalIri, stampAmepProof, type AmepSigner } from './amep-session-bridge.js';
+import { verifyRenderCaller } from './render-auth.js';
 
 // Substrate kernel + model + crypto + sparql + RDF + HTTP — `@interego/core`.
 import {
@@ -15778,12 +15779,16 @@ app.post('/admin/backfill-manifest-cid', async (req, res) => {
  *       existing iep:canFetchPayload affordance)
  */
 app.get('/render/:descriptorIri', async (req, res) => {
-  const auth = await verifyBearerToken(req.headers.authorization);
-  if (!auth.authenticated) {
-    res.status(401).type('application/ld+json').json({
+  const auth = await verifyRenderCaller(req.headers.authorization, {
+    verifyOAuth: token => oauthProvider.verifyAccessToken(token),
+    verifyIdentity: verifyBearerToken,
+    allowsOAuthRead: hasAnyMcpScope,
+  });
+  if (auth.authenticated === false) {
+    res.status(auth.status).type('application/ld+json').json({
       '@context': KERNEL_JSONLD_CONTEXT,
-      '@type': ['hydra:Status', 'urn:iep:error:Unauthorized'],
-      error: auth.error ?? 'Bearer token required',
+      '@type': ['hydra:Status', auth.status === 403 ? 'urn:iep:error:Forbidden' : 'urn:iep:error:Unauthorized'],
+      error: auth.error,
     });
     return;
   }
