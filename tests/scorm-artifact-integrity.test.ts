@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { webcrypto } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -212,9 +212,7 @@ describe('pod publishers read their own persisted bytes', () => {
     const published = await writer.put('read-back', value);
     expect(await new PodKeyValueStore<typeof value>(config).get('read-back')).toEqual(value);
     files.set('https://pod.example/foxxi/snapshots/integrity-snapshot-graph.trig', files.get(published.graphUrl)!);
-    vi.stubEnv('FOXXI_TENANT_POD_URL', 'https://pod.example/'); vi.stubEnv('FOXXI_AUTHORITATIVE_SOURCE', 'https://owner.example'); vi.stubGlobal('fetch', transport);
-    try { expect(await loadLatestSnapshot('integrity')).toEqual(value); }
-    finally { vi.unstubAllGlobals(); vi.unstubAllEnvs(); }
+    expect(await loadLatestSnapshot('integrity', config)).toEqual(value);
     await writer.delete('read-back');
     expect(await new PodKeyValueStore<typeof value>(config).get('read-back')).toBeNull();
   });

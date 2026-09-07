@@ -308,8 +308,7 @@ export async function flushAll(): Promise<void> {
  * The descriptor URL is deterministic for the latest version (the
  * publisher always uses the same slug), so a single GET suffices.
  */
-export async function loadLatestSnapshot<T>(surface: string): Promise<T | null> {
-  const config = podConfig();
+export async function loadLatestSnapshot<T>(surface: string, config = podConfig()): Promise<T | null> {
   if (!config) return null;
   const graphUrl = `${config.podUrl}foxxi/snapshots/${surface}-snapshot-graph.trig`;
   try {
