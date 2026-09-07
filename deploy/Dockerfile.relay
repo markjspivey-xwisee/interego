@@ -169,6 +169,8 @@ COPY deploy/mcp-relay/notification-log.ts ./
 COPY deploy/mcp-relay/pod-status-page.ts ./
 COPY deploy/mcp-relay/amep.ts ./
 COPY deploy/mcp-relay/amep-session-bridge.ts ./
+COPY deploy/mcp-relay/render-auth.ts ./
+COPY deploy/mcp-relay/render-descriptor.ts ./
 COPY deploy/mcp-relay/note-view.ts ./
 COPY deploy/mcp-relay/hmd-app.ts ./
 COPY deploy/mcp-relay/client-encryption-bundle.ts ./
