@@ -43,6 +43,9 @@ already hold, using the same resource scope policy as MCP. Existing identity-ser
 bearers remain supported. A verified pod owner is required before decryption, and
 an insufficiently scoped OAuth token cannot fall back to a second issuer. Live HMD
 traversal exposed this receiver-side mismatch after session forwarding was fixed.
+The same route now resolves descriptor URNs from manifest-listed locations and
+checks their RDF identity, instead of treating them as graph URNs or assuming a
+graph dereference returns a descriptor URL. Explicit URL reads use screened egress.
 
 ## 2026-09-07 — Uniform HMD across vertical discovery and execution
 

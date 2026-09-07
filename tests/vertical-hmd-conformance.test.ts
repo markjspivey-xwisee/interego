@@ -14,6 +14,7 @@ import { renderAffordanceManifestHmd } from '../applications/_shared/hypermedia/
 import { withAmepSession } from '../deploy/mcp-relay/amep-session-bridge.js';
 import { createEgress } from '../deploy/mcp-relay/egress.js';
 import { verifyRenderCaller, type RenderAuthDeps } from '../deploy/mcp-relay/render-auth.js';
+import { resolveRenderDescriptor } from '../deploy/mcp-relay/render-descriptor.js';
 
 const base = 'https://foxxi.example';
 const hydra = 'http://www.w3.org/ns/hydra/core#';
@@ -225,6 +226,51 @@ describe('private render verifies the caller on both credential paths', () => {
     expect(route).toContain('verifyIdentity: verifyBearerToken');
     expect(route).toContain('allowsOAuthRead: hasAnyMcpScope');
     expect(route).toContain('_session_user_id: auth.userId');
+    expect(route).toContain('resolveRenderDescriptor(descriptorIri');
+    expect(route).toContain('manifest: getCachedManifest');
+    expect(route).toContain('fetch: guardedInvokeFetch');
+  });
+});
+
+describe('private render resolves descriptor identity rather than a graph payload', () => {
+  const pod = 'https://pod.example/alice/';
+  const id = 'urn:iep:alice:note';
+  const url = `${pod}context-graphs/note.ttl`;
+  const turtle = `<${id}> a <https://markjspivey-xwisee.github.io/interego/ns/iep#ContextDescriptor> .`;
+  const entry = { descriptorUrl: url, describes: ['urn:graph:note'], facetTypes: [] };
+  const deps = { pods: [pod], manifest: async () => [entry], fetch: async () => new Response(turtle) };
+
+  it('resolves the descriptor URN minted into the real HMD render control', async () => {
+    expect(await resolveRenderDescriptor(id, deps)).toEqual({ url, turtle });
+  });
+  it('uses the manifest link for a graph URN without inventing a source result field', async () => {
+    expect(await resolveRenderDescriptor('urn:graph:note', deps)).toEqual({ url, turtle });
+  });
+  it('does not treat a matching filename or a mention as matching descriptor identity', async () => {
+    const wrong = `<urn:iep:other:note> a <https://markjspivey-xwisee.github.io/interego/ns/iep#ContextDescriptor>; <http://purl.org/dc/terms/description> "${id}" .`;
+    expect(await resolveRenderDescriptor(id, { ...deps, fetch: async () => new Response(wrong) })).toBeNull();
+  });
+  it('can find an exact descriptor in another known pod after rejecting a filename collision', async () => {
+    const other = 'https://pod.example/bob/';
+    const otherUrl = `${other}context-graphs/note.ttl`;
+    expect(await resolveRenderDescriptor(id, {
+      pods: [other, pod],
+      manifest: async p => [{ ...entry, descriptorUrl: p === pod ? url : otherUrl }],
+      fetch: async u => new Response(u === url ? turtle : turtle.replace(id, 'urn:iep:bob:note')),
+    })).toEqual({ url, turtle });
+  });
+  it('uses the screened fetch for an explicit descriptor URL too', async () => {
+    await expect(resolveRenderDescriptor('https://blocked.example/note.ttl', { ...deps,
+      fetch: async () => { throw new Error('egress rejected'); },
+    })).rejects.toThrow('egress rejected');
+  });
+  it('does not claim absence after a manifest read failure', async () => {
+    await expect(resolveRenderDescriptor(id, { ...deps, manifest: async () => { throw new Error('index unavailable'); } })).rejects.toThrow('index unavailable');
+  });
+  it('does not fetch an unregistered predicted filename', async () => {
+    let fetched = false;
+    expect(await resolveRenderDescriptor(id, { ...deps, manifest: async () => [], fetch: async () => { fetched = true; return new Response(turtle); } })).toBeNull();
+    expect(fetched).toBe(false);
   });
 });
 
