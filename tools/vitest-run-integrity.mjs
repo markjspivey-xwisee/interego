@@ -256,7 +256,8 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // Two simulation regression modules bring the tracked tree to 363; retain headroom
 // inside the proportional allowance rather than arming the next addition to fail.
 // The MCP sealed-interface regression brings the tree to 370 modules; retain headroom.
-export const MIN_TEST_MODULES = 354;
+// The uniform-HMD regression brings the tracked tree to 372; pin the measured floor.
+export const MIN_TEST_MODULES = 372;
 
 /**
  * How far below the real module count MIN_TEST_MODULES may sit before that is itself a
