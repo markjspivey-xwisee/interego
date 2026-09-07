@@ -78,6 +78,7 @@ const base = (process.env.BRIDGE_DEPLOYMENT_URL ?? `http://localhost:${PORT}`).r
 const app = createVerticalBridge({
   verticalName: 'agentic-performance-practice',
   affordances: agpAffordances,
+  guidance: GUIDANCE,
   deploymentUrl: base,
   hypermediaLinks: [{ label: 'Practice guidance', href: `${base}/guidance?format=markdown`, rel: 'help', type: 'text/markdown' }],
   handlers,

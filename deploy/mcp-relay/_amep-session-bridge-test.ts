@@ -112,5 +112,24 @@ const acceptHdr = (init: any) => Object.entries(init?.headers ?? {}).find(([k]) 
   }
 }
 
+// A descriptor may resolve to a private HMD view. Forward only to that exact
+// same-origin GET route, independently of where the descriptor was fetched.
+{
+  const rec = recorder();
+  const { fetch } = withAmepSession('https://pod.example/context.ttl', {}, { sessionBearer: 'HMD-SESSION' }, DEPS(rec.fn));
+  await fetch(`${BASE}/render/urn%3Aexample%3Anote?format=markdown`, { method: 'GET' });
+  check('private HMD view receives its caller session', authHdr(rec.calls.at(-1)?.init) === 'Bearer HMD-SESSION');
+  check('private HMD view cannot redirect the session', rec.calls.at(-1)?.init?.redirect === 'manual');
+  for (const [target, method] of [
+    ['https://evil.example/render/note', 'GET'], [BASE + '.evil.example/render/note', 'GET'],
+    [BASE + '/render/note', 'POST'], [BASE + '/render/note/extra', 'GET'],
+    [BASE + '/render/', 'GET'], [BASE + '/render/../mcp', 'GET'],
+    [BASE + '/mcp', 'GET'], ['https://user@' + new URL(BASE).host + '/render/note', 'GET'],
+  ]) {
+    await fetch(target!, { method: method! });
+    check('no HMD session escape: ' + method + ' ' + target, authHdr(rec.calls.at(-1)?.init) === undefined);
+  }
+}
+
 console.log(`\n${ok}/${ok + bad} session-bridge checks passed`);
 process.exit(bad === 0 ? 0 : 1);

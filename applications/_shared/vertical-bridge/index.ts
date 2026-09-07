@@ -58,6 +58,7 @@ import {
 } from '@modelcontextprotocol/server';
 import type { Tool } from '@modelcontextprotocol/server';
 import { wantsHmd, sendHmd, renderAffordanceManifestHmd, sendActionResult } from '../hypermedia/index.js';
+import type { GuidedAffordanceEntry } from '../guided-affordance/index.js';
 
 /**
  * ONE JSON-LD projection of an Affordance, shared by the entry point and the
@@ -117,6 +118,8 @@ export interface VerticalBridgeOptions {
   readonly defaultPodUrl?: string;
   /** Vertical-owned resource catalogs linked from HMD entry points and results. */
   readonly hypermediaLinks?: readonly HypermediaLink[];
+  /** Use the vertical's existing next-step guidance in action representations. */
+  readonly guidance?: readonly GuidedAffordanceEntry[];
   /** Optional: additional Express middleware to install (e.g., auth). */
   readonly middleware?: (app: Express) => void;
 }
@@ -262,8 +265,11 @@ export function createVerticalBridge(opts: VerticalBridgeOptions): Express {
             },
           ],
         });
-        const guidance = payload['_guidance'] as { nextAffordances?: { action: string }[] } | undefined;
-        const next = guidance?.nextAffordances?.flatMap(h => opts.affordances.filter(a => sameAction(a.action, h.action))) ?? [];
+        const guidance = (payload['_guidance'] as { nextAffordances?: { action: string }[] } | undefined)
+          ?? opts.guidance?.find(g => sameAction(g.action, affordance.action))?.guidance;
+        const next = status < 400
+          ? guidance?.nextAffordances?.flatMap(h => opts.affordances.filter(a => sameAction(a.action, h.action))) ?? []
+          : [];
         res.status(status).type('application/ld+json');
         sendActionResult(req, res, decorated, deploymentUrl, affordance.title, next, opts.hypermediaLinks);
       } catch (err) {

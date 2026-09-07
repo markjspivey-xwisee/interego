@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import yaml from 'js-yaml';
 import * as jsonld from 'jsonld';
-import type { Server } from 'node:http';
+import { createServer, type Server } from 'node:http';
 import { actionUrl, followAffordance, parseHypermediaMarkdown, liftHypermediaMarkdown, HMD_PROFILE_IRI } from '@interego/core';
 import { createVerticalBridge } from '../applications/_shared/vertical-bridge/index.js';
 import { attachGuidanceServing } from '../applications/_shared/guided-affordance/index.js';
@@ -10,6 +10,8 @@ import { courseHmd, memoryHmd, collectionHmd } from '../applications/foxxi-conte
 import { foxxiAffordances } from '../applications/foxxi-content-intelligence/affordances.js';
 import { agpAffordances } from '../applications/agentic-performance-practice/affordances.js';
 import { renderAffordanceManifestHmd } from '../applications/_shared/hypermedia/index.js';
+import { withAmepSession } from '../deploy/mcp-relay/amep-session-bridge.js';
+import { createEgress } from '../deploy/mcp-relay/egress.js';
 
 const base = 'https://foxxi.example';
 const hydra = 'http://www.w3.org/ns/hydra/core#';
@@ -95,7 +97,8 @@ describe('an HMD client can discover, invoke and continue without an endpoint re
   beforeAll(async () => {
     // The fetch implementation below maps the published origin to this isolated test server.
     const app = createVerticalBridge({ verticalName: 'conformance', deploymentUrl: base, affordances: [first, next],
-      handlers: { 'test.start': async args => { received = args; return { ok: true, value: args.value, _guidance: { nextAffordances: [{ action: next.action }] } }; }, 'test.continue': async () => ({ ok: true }) },
+      guidance: [{ action: first.action, toolName: first.toolName, guidance: { summary: 'Start here.', nextAffordances: [{ action: next.action, rel: 'then' }] } }],
+      handlers: { 'test.start': async args => { received = args; return { ok: true, value: args.value }; }, 'test.continue': async () => ({ ok: true }) },
       middleware: a => attachGuidanceServing(a, '/guidance', [{ action: first.action, toolName: first.toolName, guidance: { summary: 'Start here.', nextAffordances: [{ action: next.action, rel: 'then' }] } }], { base, affordances: [first, next] }),
     });
     await new Promise<void>(resolve => { server = app.listen(0, '127.0.0.1', () => resolve()); });
@@ -140,4 +143,55 @@ describe('an HMD client can discover, invoke and continue without an endpoint re
     expect(parseHypermediaMarkdown(await negotiated.text()).controls[0]!.action).toBe(actionUrl(next.action));
     expect((await fetch(`${origin}/affordances/unknown/input`)).status).toBe(404);
   });
+});
+
+it('carries the verified session only when the actual follower reaches a private relay representation', async () => {
+  const relay = 'https://relay.example';
+  const descriptor = 'https://pod.example/note.ttl';
+  const target = `${relay}/render/urn%3Aexample%3Anote`;
+  const action = 'https://markjspivey-xwisee.github.io/interego/ns/iep#renderView';
+  const calls: { url: string; init: unknown }[] = [];
+  const { fetch: sessionFetch } = withAmepSession(descriptor, {}, { sessionBearer: 'caller-session' }, {
+    publicBaseUrl: relay,
+    solidFetch: async (url, init) => {
+      calls.push({ url, init });
+      const auth = Object.entries(init?.headers ?? {}).find(([k]) => k.toLowerCase() === 'authorization')?.[1];
+      if (url === descriptor) {
+        expect(auth).toBeUndefined();
+        return new Response(`<${action}> a <http://www.w3.org/ns/hydra/core#Operation>; <https://markjspivey-xwisee.github.io/interego/ns/iep#action> <${action}>; <http://www.w3.org/ns/hydra/core#method> "GET"; <http://www.w3.org/ns/hydra/core#target> <${target}> .`);
+      }
+      expect(url).toBe(target);
+      expect(auth).toBe('Bearer caller-session');
+      expect((init as RequestInit).redirect).toBe('manual');
+      return new Response('# Authenticated private representation', { headers: { 'Content-Type': 'text/markdown' } });
+    },
+  });
+  const result = await followAffordance(descriptor, action, {}, { fetch: sessionFetch });
+  expect(result.status).toBe(200);
+  expect(result.body).toContain('Authenticated private representation');
+  expect(calls.map(c => c.url)).toEqual([descriptor, target]);
+});
+
+it('the real egress guard honors the session bridge redirect boundary', async () => {
+  const reached: string[] = [];
+  const server = createServer((req, res) => {
+    reached.push(req.url!);
+    if (req.url === '/render/note' || req.url === '/public-redirect') {
+      res.writeHead(302, { Location: '/destination' }); res.end();
+    } else { res.end('arrived'); }
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', () => resolve()));
+  const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  const egress = createEgress({ cssUrl: `${origin}/pod/`, publicBaseUrl: origin, screenAddresses: true });
+  try {
+    const { fetch: sessionFetch } = withAmepSession('https://pod.example/note.ttl', {}, { sessionBearer: 'caller-session' }, { publicBaseUrl: origin, solidFetch: egress.guardedInvokeFetch });
+    expect((await sessionFetch(`${origin}/render/note`, { method: 'GET' })).status).toBe(302);
+    expect(reached).toEqual(['/render/note']);
+    // Ordinary public discovery retains the guard's screened redirect behavior.
+    expect((await egress.guardedInvokeFetch(`${origin}/public-redirect`)).status).toBe(200);
+    expect(reached).toEqual(['/render/note', '/public-redirect', '/destination']);
+  } finally {
+    await egress.close();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
 });
