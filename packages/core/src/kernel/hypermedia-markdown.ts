@@ -151,7 +151,7 @@ export interface HypermediaControl {
   /** Block id override (without the `control-` prefix). Default: sanitized
    *  local name of `action`, deduped `-2`, `-3`… within the document. */
   readonly id?: string;
-  /** Advisory only; the signed descriptor remains authoritative. */
+  /** Advisory only; the referenced authority remains authoritative. */
   readonly method?: string;
   /** `hydra:returnsContentType` of the response, when declared. */
   readonly mediaType?: string;
@@ -185,7 +185,7 @@ export interface HypermediaMarkdownDoc {
   readonly id: string;
   /** `@type` — one or many; every entry must resolve in the merged context. */
   readonly type: string | readonly string[];
-  /** THE AUTHORITY (`wdrs:describedby`) — the signed descriptor every control
+  /** THE AUTHORITY (`wdrs:describedby`) — the authority document every control
    *  is re-resolved against at execution time. */
   readonly descriptorUrl: string;
   /** `dct:title`, when known. */
@@ -370,7 +370,7 @@ export function typedLink(l: HypermediaLink): string {
 
 const EXECUTION_NOTE =
   '> To act: call `invoke_affordance(descriptorUrl, rel)` — the live `hydra:target` is\n'
-  + '> re-resolved from the signed descriptor at execution time. `target` above is this\n'
+  + '> re-resolved from the authority document at execution time. `target` above is this\n'
   + "> document's own action junction, not a transport endpoint; controls may be stale\n"
   + '> or forged in transit, and only the descriptor is the authority.';
 
@@ -616,7 +616,8 @@ export function parseHypermediaMarkdown(md: string): HypermediaMarkdownDoc {
     conformsToShape: string | undefined;
   let types: string[] = [];
   const fields: Record<string, unknown> = {};
-  const ctxPrefixes: Record<string, string> = {};
+  const ctxEntries: Record<string, unknown> = Object.create(null);
+  let ctxStack: { indent: number; value: Record<string, unknown> }[] = [{ indent: -1, value: ctxEntries }];
   const legacyControls: Array<{ -readonly [K in keyof HypermediaControl]?: HypermediaControl[K] }> = [];
   let legacyCur: { -readonly [K in keyof HypermediaControl]?: HypermediaControl[K] } | null = null;
   let inLegacyAffordances = false;
@@ -635,10 +636,27 @@ export function parseHypermediaMarkdown(md: string): HypermediaMarkdownDoc {
     if (inContext || skipIndented) {
       if (/^\s/.test(line) || /^-\s/.test(line)) {
         if (inContext) {
-          // Capture prefix-map entries so extraContext prefixes survive the
-          // round trip (the kernel/projection constants are filtered out below).
-          const pm = /^\s*-?\s*([\w-]+):\s*"([^"]+)"\s*$/.exec(line);
-          if (pm && ABSOLUTE_IRI_RE.test(pm[2]!)) ctxPrefixes[pm[1]!] = pm[2]!;
+          // Read the SAME block-map subset yamlSeqOfMaps emits. Prefix-only
+          // capture lost object term definitions (@id/@type/@container), so
+          // author IRIs became literals and otherwise valid fields could not lift.
+          const startsMap = /^\s*-\s/.test(line);
+          if (startsMap) ctxStack = [{ indent: -1, value: ctxEntries }];
+          const normalized = line.replace(/^(\s*)- /, '$1  ');
+          const cm = /^(\s*)("[^"]+"|\S+):\s*(.*)$/.exec(normalized);
+          if (cm) {
+            const indent = cm[1]!.length, key = unquote(cm[2]!), rawValue = cm[3]!.trim();
+            while (ctxStack.length > 1 && ctxStack[ctxStack.length - 1]!.indent >= indent) ctxStack.pop();
+            const parent = ctxStack[ctxStack.length - 1]!.value;
+            if (!rawValue) {
+              const child: Record<string, unknown> = Object.create(null);
+              parent[key] = child;
+              ctxStack.push({ indent, value: child });
+            } else {
+              parent[key] = rawValue.startsWith('[') ? parseInlineList(rawValue)
+                : rawValue === 'true' || rawValue === 'false' ? rawValue === 'true'
+                : /^-?\d+(\.\d+)?$/.test(rawValue) ? Number(rawValue) : unquote(rawValue);
+            }
+          }
         }
         continue;
       }
@@ -765,12 +783,11 @@ export function parseHypermediaMarkdown(md: string): HypermediaMarkdownDoc {
     throw new Error('hypermedia-markdown: frontmatter must carry "@id" and descriptorUrl');
   }
 
-  // Reconstruct extraContext: prefixes captured from the @context block that
-  // the kernel/projection constants do not already declare.
+  // Preserve complete term definitions, including coercion and containers.
   const known = mergedContext();
-  const extra: Record<string, unknown> = {};
-  for (const [pfx, iri] of Object.entries(ctxPrefixes)) {
-    if (contextTermIri(known[pfx]) !== iri) extra[pfx] = iri;
+  const extra: Record<string, unknown> = Object.create(null);
+  for (const [term, definition] of Object.entries(ctxEntries)) {
+    if (JSON.stringify(known[term]) !== JSON.stringify(definition)) extra[term] = definition;
   }
 
   const allControls = [...legacyControls, ...controls] as HypermediaControl[];

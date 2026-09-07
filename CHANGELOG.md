@@ -36,6 +36,18 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
 
 ---
 
+## 2026-09-07 — Uniform HMD across vertical discovery and execution
+
+FOXXI course and job-aid exports now use the shared HMD renderer, including inline
+contexts, separate document identity, and controls bound to the live affordance
+authority. Vertical entry points, action catalogs, FOXXI resource catalogs and
+FOXXI/AGP guidance support Markdown negotiation. Control input-schema URLs serve
+the same contracts as MCP. Action responses carry a lossless JSON snapshot plus
+HMD continuation controls, including SCORM author, launch, submit and record review.
+The HMD reader preserves object-form context declarations across round trips,
+including IRI coercion and containers. Conformance tests expand real YAML as
+JSON-LD offline and follow advertised controls through the actual HTTP follower.
+
 ## 2026-09-06 — Client-held encryption in the generic MCP viewer
 
 The HMD viewer can create a device key, seal a private graph before its MCP call,

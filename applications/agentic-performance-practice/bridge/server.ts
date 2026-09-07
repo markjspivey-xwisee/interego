@@ -74,9 +74,12 @@ const GUIDANCE: GuidedAffordanceEntry[] = [
 ];
 
 const PORT = parseInt(process.env.PORT ?? '6030', 10);
+const base = (process.env.BRIDGE_DEPLOYMENT_URL ?? `http://localhost:${PORT}`).replace(/\/$/, '');
 const app = createVerticalBridge({
   verticalName: 'agentic-performance-practice',
   affordances: agpAffordances,
+  deploymentUrl: base,
+  hypermediaLinks: [{ label: 'Practice guidance', href: `${base}/guidance?format=markdown`, rel: 'help', type: 'text/markdown' }],
   handlers,
   defaultPodUrl: process.env.AGP_DEFAULT_POD_URL,
   // Dereferenceable serving: the agp ontology (shared primitive — content
@@ -98,7 +101,7 @@ const app = createVerticalBridge({
       res.type('application/ld+json').json(buildAgpProfileDoc({ generatedAt: new Date().toISOString() }));
     });
     // Performance support in the flow: the capability catalog + per-tool guidance.
-    attachGuidanceServing(a, '/guidance', GUIDANCE);
+    attachGuidanceServing(a, '/guidance', GUIDANCE, { base, affordances: agpAffordances });
   },
 });
 app.listen(PORT, () => {
