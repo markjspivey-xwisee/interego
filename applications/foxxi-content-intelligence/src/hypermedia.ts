@@ -59,6 +59,6 @@ export function collectionHmd(id: string, title: string, base: string,
     extraContext: { member: { '@id': 'hydra:member', '@type': '@id', '@container': '@set' } },
     fields: { 'hydra:totalItems': entries.length, member: entries.map(e => e.id) },
     body: `# ${title}\n\nFollow a resource to read its content and discover its current controls.`, controls: [],
-    links: entries.map(e => ({ label: e.title.replace(/[\[\]\\\r\n]/g, ' '), href: `${e.id}?format=markdown`, rel: 'item', type: 'text/markdown' })),
+    links: entries.map(e => ({ label: e.title.replace(/[[\]\\\r\n]/g, ' '), href: `${e.id}?format=markdown`, rel: 'item', type: 'text/markdown' })),
   });
 }
