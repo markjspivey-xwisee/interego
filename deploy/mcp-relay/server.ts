@@ -155,7 +155,7 @@ import { contractDocument, operationActionUrl, operationContract } from './opera
 // header of egress.ts for why a regex over this file could never assert it.
 import { createEgress } from './egress.js';
 import { withAmepSession, principalIri, stampAmepProof, type AmepSigner } from './amep-session-bridge.js';
-import { verifyRenderCaller } from './render-auth.js';
+import { renderOAuthGate, verifyRenderCaller } from './render-auth.js';
 import { resolveRenderDescriptor } from './render-descriptor.js';
 
 // Substrate kernel + model + crypto + sparql + RDF + HTTP — `@interego/core`.
@@ -15777,7 +15777,11 @@ app.post('/admin/backfill-manifest-cid', async (req, res) => {
  *       needed — caller can fetch the payload URL directly via the
  *       existing iep:canFetchPayload affordance)
  */
-app.get('/render/:descriptorIri', async (req, res) => {
+app.get('/render/:descriptorIri', renderOAuthGate({
+  verifyToken: token => oauthProvider.verifyAccessToken(token),
+  // Called only when a request arrives, after resource middleware initialization.
+  authorize: (req, res, next) => oauthDpopOrBearer(req, res, next),
+}), async (req, res) => {
   const auth = await verifyRenderCaller(req.headers.authorization, {
     verifyOAuth: token => oauthProvider.verifyAccessToken(token),
     verifyIdentity: verifyBearerToken,
@@ -15796,7 +15800,7 @@ app.get('/render/:descriptorIri', async (req, res) => {
     _session_agent_did: canonicalSessionActorId(auth.agentId, IDENTITY_URL),
   } as ToolArgs;
   const renderOpenEnvelope = await envelopeOpenerFor(renderArgs);
-  const descriptorIri = decodeURIComponent(req.params['descriptorIri'] ?? '');
+  const descriptorIri = decodeURIComponent(String(req.params['descriptorIri'] ?? ''));
   if (!descriptorIri) {
     res.status(400).type('application/ld+json').json({
       '@context': KERNEL_JSONLD_CONTEXT,

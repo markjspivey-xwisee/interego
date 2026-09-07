@@ -36,6 +36,15 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
 
 ---
 
+## 2026-09-07 — Private HMD rendering retains OAuth request protection
+
+Recognizing an OAuth token is not sufficient to authorize a request carrying it.
+The private render route now delegates known OAuth credentials to the same request
+middleware as MCP, retaining DPoP proof binding, expiry, scope and strict-mode
+checks. An OAuth refusal cannot fall back to the identity server. A successfully
+verified DPoP request is normalized only after its proof passes; existing native
+identity-server readers retain their credential path.
+
 ## 2026-09-07 — Private HMD rendering accepts the MCP session credential
 
 The private render endpoint now verifies the relay OAuth token that MCP clients

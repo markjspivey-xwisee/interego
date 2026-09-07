@@ -1,5 +1,35 @@
 /** The private representation accepts the same OAuth identity as /mcp.
  * Identity-server bearers remain supported for existing headless readers. */
+import type { RequestHandler } from 'express';
+
+/** An OAuth identity is not proof that this HTTP request is authorized. Reuse
+ * the MCP resource middleware for DPoP binding, expiry, scope and strict mode.
+ * Only unknown OAuth credentials may continue to the identity-server path. */
+export function renderOAuthGate(deps: {
+  verifyToken(token: string): Promise<unknown>;
+  authorize: RequestHandler;
+}): RequestHandler {
+  return async (req, res, next) => {
+    const credential = /^(Bearer|DPoP) (\S+)$/i.exec(req.headers.authorization ?? '');
+    if (!credential) { next(); return; }
+    const token = credential[2]!;
+    try { await deps.verifyToken(token); }
+    catch { next(); return; }
+    // A recognized OAuth token must pass the resource gate. Its refusal must
+    // never be retried against a different credential issuer.
+    try {
+      await deps.authorize(req, res, error => {
+        if (error) { next(error); return; }
+        // The resource gate has checked a DPoP proof against THIS method and URL.
+        // The identity binder below accepts the verified token as a bearer only
+        // after that succeeds; the original proof is never forwarded elsewhere.
+        req.headers.authorization = `Bearer ${token}`;
+        next();
+      });
+    } catch (error) { next(error); }
+  };
+}
+
 export interface RenderIdentity {
   userId?: string;
   agentId?: string;
