@@ -4,7 +4,7 @@ import { canonicalGraphDigest } from '../../../packages/core/src/rdf/graph-diges
 import { graphRegion } from '../../../packages/core/src/rdf/turtle-region.js';
 import { parseTrig } from '../../../packages/core/src/rdf/turtle-parser.js';
 import { turtleIriRef, escapeTurtleLiteral } from '../../../packages/core/src/rdf/escape.js';
-import { readEncryptedGraph, unpackToolResult as unpack, type CallTool } from './tool-client.js';
+import { readEncryptedGraph, readEncryptedGraphViaDiscovery, unpackToolResult as unpack, type CallTool } from './tool-client.js';
 
 interface Context { actor: string; relay: string }
 
@@ -59,6 +59,10 @@ export function mount(container: HTMLElement, getContext: () => { clientEncrypti
   const save = element('button', 'Encrypt & save to Interego'); save.className = 'go';
   const descriptor = element('input'); descriptor.setAttribute('aria-label', 'Encrypted descriptor URL'); descriptor.placeholder = 'Saved descriptor URL';
   const open = element('button', 'Read & decrypt here'); open.className = 'go secondary';
+  const compatibility = element('details'); compatibility.append(element('summary', 'Connection compatibility'));
+  compatibility.append(element('p', 'If this chat cannot find the encrypted reader, request the same ciphertext through its existing Interego connection. This only reads the saved note; it does not publish another copy.'));
+  const compatibleOpen = element('button', 'Read through existing connection'); compatibleOpen.className = 'go secondary';
+  compatibility.append(compatibleOpen);
   const output = element('pre'); output.className = 'src'; output.hidden = true;
   const recovery = element('details'); recovery.append(element('summary', 'Encrypted recovery'));
   recovery.append(element('p', 'Save a recovery file before storing important content. Losing this browser’s data and your recovery file loses access. The passphrase and unencrypted key never enter a tool call.'));
@@ -67,11 +71,11 @@ export function mount(container: HTMLElement, getContext: () => { clientEncrypti
   const restoreText = element('textarea'); restoreText.setAttribute('aria-label', 'Encrypted recovery file'); restoreText.placeholder = 'Paste the encrypted recovery JSON to restore';
   const restore = element('button', 'Restore encrypted recovery'); restore.className = 'go secondary';
   recovery.append(passphrase, backup, restoreText, restore);
-  const controls = [enable, save, open, backup, restore];
+  const controls = [enable, save, open, compatibleOpen, backup, restore];
   const field = (node: HTMLElement) => { const wrapper = element('div'); wrapper.className = 'field'; wrapper.append(node); return wrapper; };
   details.append(enable, keyLine, field(note), field(recipients), save,
     element('p', 'The note stays private. Its existence, author and link to this resource remain visible. Share only with public keys you have verified with their owners.'),
-    field(descriptor), open, status, output, recovery);
+    field(descriptor), open, status, output, compatibility, recovery);
   container.append(details);
   let activeScope = '';
   let vault: ClientKeyVault;
@@ -106,9 +110,9 @@ export function mount(container: HTMLElement, getContext: () => { clientEncrypti
     if (context().scope !== c.scope || activeScope !== c.scope) throw new Error('The connected identity changed. Reopen client encryption before continuing.');
   }
 
-  async function read(c: ReturnType<typeof context>, url: string, expected?: { graphIri: string; digest: string; envelope: string }): Promise<void> {
+  async function read(c: ReturnType<typeof context>, url: string, expected?: { graphIri: string; digest: string; envelope: string }, reader = readEncryptedGraph): Promise<void> {
     if (!/^https?:\/\//.test(url)) throw new Error('Enter an encrypted descriptor URL.');
-    const result = await readEncryptedGraph(callTool, c.relay, url, () => sameIdentity(c));
+    const result = await reader(callTool, c.relay, url, () => sameIdentity(c));
     if (result.encrypted !== true || typeof result.envelope !== 'string') throw new Error('This resource is not an encrypted envelope.');
     if (expected && result.envelope !== expected.envelope) throw new Error('Stored ciphertext differs from the ciphertext this browser sent.');
     sameIdentity(c);
@@ -180,6 +184,7 @@ export function mount(container: HTMLElement, getContext: () => { clientEncrypti
     note.value = '';
   });
   action(open, async () => { const c = await ready(); await read(c, descriptor.value.trim()); });
+  action(compatibleOpen, async () => { const c = await ready(); await read(c, descriptor.value.trim(), undefined, readEncryptedGraphViaDiscovery); });
   action(backup, async () => {
     await ready();
     const encrypted = JSON.stringify(await vault.backup(passphrase.value), null, 2);

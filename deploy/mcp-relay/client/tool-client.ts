@@ -31,6 +31,15 @@ export async function readEncryptedGraph(callTool: CallTool, relay: string, url:
   }
   // Only an explicitly stale tool list takes the older discovery route. A denied
   // scope, failed read or authentication error is never retried through act.
+  return readEncryptedGraphViaDiscovery(callTool, relay, url, checkIdentity);
+}
+
+/** Explicit compatibility read for hosts whose cached catalog omits the reader.
+ * This is also used after an unambiguous method-not-found response. An ambiguous
+ * host error never selects it automatically; the user can select it in the UI.
+ * Both calls retain the relay's normal authentication and scope enforcement.
+ */
+export async function readEncryptedGraphViaDiscovery(callTool: CallTool, relay: string, url: string, checkIdentity: () => void): Promise<ToolObject> {
   checkIdentity();
   const surface = unpackToolResult(await callTool('act', { target: `${relay}/tools`, action: 'read', method: 'GET' }));
   const reader = surface['hydra:member']?.find((tool: ToolObject) => tool.name === 'get_encrypted_graph');

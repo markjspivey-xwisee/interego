@@ -10,9 +10,13 @@ const initial = {
   controls: [{ label: 'Refresh', action: 'urn:example:refresh', method: 'GET', executable: true, fields: [] }],
 };
 
-// A protocol-only host: no window.openai and no data injection before readiness.
+// Defaults to a protocol-only host: no window.openai or data before readiness.
 // Mounting with pre-populated globals skips the handshake that gates real hosts.
-function mount(options: { reject?: boolean; defer?: boolean; height?: number } = {}) {
+function mount(options: {
+  reject?: boolean; defer?: boolean; height?: number;
+  toolError?: { code: number; message: string; data?: unknown };
+  legacyCall?: (name: string, args: Record<string, unknown>) => Promise<unknown>;
+} = {}) {
   let window: DOMWindow;
   let initializeId: unknown;
   let height = options.height ?? 0;
@@ -35,9 +39,11 @@ function mount(options: { reject?: boolean; defer?: boolean; height?: number } =
       queueMicrotask(() => deliver({ jsonrpc: '2.0', method: 'ui/notifications/tool-result', params: { structuredContent: initial } }));
     } else if (message.method === 'tools/call') {
       if (!initialized) throw new Error('tool called before initialization');
-      queueMicrotask(() => deliver({ jsonrpc: '2.0', id: message.id, result: { structuredContent: {
+      queueMicrotask(() => deliver({ jsonrpc: '2.0', id: message.id, ...(options.toolError
+        ? { error: options.toolError }
+        : { result: { structuredContent: {
         status: 200, body: JSON.stringify({ ...initial, title: 'Refreshed through host', body: 'Fresh authority.', hmd: '# Refreshed through host' }),
-      } } }));
+        } } }) }));
     }
   } };
   // A host still holding the preceding deployment's template must both fetch
@@ -46,6 +52,7 @@ function mount(options: { reject?: boolean; defer?: boolean; height?: number } =
   const dom = new JSDOM(resource!.contents[0]!.text, { runScripts: 'dangerously', beforeParse(w) {
     window = w;
     Object.defineProperty(w, 'parent', { value: host });
+    if (options.legacyCall) Object.defineProperty(w, 'openai', { value: { callTool: options.legacyCall } });
     w.HTMLElement.prototype.getBoundingClientRect = () => new w.DOMRect(0, 0, 390, height);
     Object.defineProperty(w, 'ResizeObserver', { value: class {
       constructor(callback: () => void) { resized = callback; }
@@ -85,6 +92,32 @@ describe('generic HMD viewer host lifecycle', () => {
     await vi.waitFor(() => expect(dom.window.document.querySelector('[role="alert"]')?.textContent).toContain('Unsupported UI protocol'));
     expect(messages.some(m => m['method'] === 'ui/notifications/initialized')).toBe(false);
     expect(messages.some(m => m['method'] === 'tools/call')).toBe(false);
+  });
+
+  it('preserves trusted host error codes for callers while displaying only the message', async () => {
+    const toolError = { code: -32601, message: 'MCP Resource not found', data: { diagnostic: 'host-detail-not-for-display' } };
+    const { dom } = mount({ toolError });
+    await vi.waitFor(() => expect(dom.window.document.getElementById('title')?.textContent).toBe(initial.title));
+    const callTool = dom.window['callTool'] as (name: string, args: Record<string, unknown>) => Promise<unknown>;
+    await expect(callTool('get_encrypted_graph', { url: initial.descriptorUrl })).rejects.toMatchObject(toolError);
+
+    (dom.window.document.querySelector('#pane-enhanced .control button') as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(dom.window.document.querySelector('#pane-enhanced .status.err')?.textContent).toContain(toolError.message));
+    expect(dom.window.document.body.textContent).not.toContain(toolError.data.diagnostic);
+  });
+
+  it.each([
+    { code: -32601, message: 'MCP Resource not found' },
+    { code: -32000, message: '403 insufficient_scope' },
+  ])('does not retry a rejected publication through a second transport ($message)', async toolError => {
+    const legacyCall = vi.fn().mockResolvedValue({});
+    const { dom, messages } = mount({ toolError, legacyCall });
+    await vi.waitFor(() => expect(dom.window.document.getElementById('title')?.textContent).toBe(initial.title));
+    const callTool = dom.window['callTool'] as (name: string, args: Record<string, unknown>) => Promise<unknown>;
+    const args = { graph_iri: 'urn:example:sealed-note', graph_content: 'synthetic ciphertext', sealed_payload: true };
+    await expect(callTool('publish_context', args)).rejects.toMatchObject(toolError);
+    expect(messages.filter(m => m['method'] === 'tools/call').map(m => m['params'])).toEqual([{ name: 'publish_context', arguments: args }]);
+    expect(legacyCall).not.toHaveBeenCalled();
   });
 
   it('reports content height after readiness and on growth or shrinkage without a resize loop', async () => {

@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { ClientKeyVault, type ClientKeyRecord, type ClientKeyStorage } from '../packages/core/src/crypto/client-vault.js';
 import { generateKeyPair, openEncryptedEnvelope } from '../packages/core/src/crypto/encryption.js';
 import { canonicalGraphDigest, canonicalGraphTriples } from '../packages/core/src/rdf/graph-digest.js';
-import { readEncryptedGraph } from '../deploy/mcp-relay/client/tool-client.js';
+import { readEncryptedGraph, readEncryptedGraphViaDiscovery } from '../deploy/mcp-relay/client/tool-client.js';
 
 function localStorage(): ClientKeyStorage & { records: Map<string, ClientKeyRecord> } {
   const records = new Map<string, ClientKeyRecord>();
@@ -133,5 +133,54 @@ describe('client-held encryption', () => {
     expect(await readEncryptedGraph(call, 'https://relay.example', 'https://pod.example/note.ttl', () => {})).toEqual({ encrypted: true, envelope: 'ciphertext' });
     expect(call.mock.calls.map(args => args[0])).toEqual(['get_encrypted_graph', 'act', 'act']);
     expect(call.mock.lastCall?.[1]).toMatchObject({ target, method: 'POST', payload: { url: 'https://pod.example/note.ttl' } });
+  });
+
+  it.each(['MCP Resource not found', '401 Unauthorized', '403 insufficient_scope', 'descriptor not found'])(
+    'does not interpret %s as permission to switch the read route', async message => {
+      const call = vi.fn().mockRejectedValue(new Error(message));
+      await expect(readEncryptedGraph(call, 'https://relay.example', 'https://pod.example/note.ttl', () => {})).rejects.toThrow(message);
+      expect(call).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('uses the explicit compatibility read with exact stored ciphertext and a real client-held key', async () => {
+    const vault = new ClientKeyVault(scope, localStorage(), webcrypto);
+    await vault.create();
+    const envelope = JSON.stringify(await vault.seal('existing private note'));
+    const target = 'https://relay.example/tool/get_encrypted_graph';
+    const call = vi.fn()
+      .mockResolvedValueOnce({ structuredContent: { status: 200, body: JSON.stringify({ 'hydra:member': [
+        { name: 'get_encrypted_graph', affordances: [{ method: 'POST', action: 'urn:iep:action:invoke:get_encrypted_graph', target }] },
+      ] }) } })
+      .mockResolvedValueOnce({ structuredContent: { status: 200, body: JSON.stringify({ encrypted: true, envelope }) } });
+    const result = await readEncryptedGraphViaDiscovery(call, 'https://relay.example', 'https://pod.example/note.ttl', () => {});
+    expect(result.envelope).toBe(envelope);
+    expect(await vault.open(JSON.parse(result.envelope))).toBe('existing private note');
+    expect(call.mock.calls).toEqual([
+      ['act', { target: 'https://relay.example/tools', action: 'read', method: 'GET' }],
+      ['act', { target, action: 'urn:iep:action:invoke:get_encrypted_graph', method: 'POST', payload: { url: 'https://pod.example/note.ttl' } }],
+    ]);
+    expect(JSON.stringify(call.mock.calls)).not.toContain('existing private note');
+  });
+
+  it('refuses a foreign advertised reader and stops if the connected identity changes during discovery', async () => {
+    const surface = (target: string) => ({ 'hydra:member': [{ name: 'get_encrypted_graph', affordances: [
+      { method: 'POST', action: 'urn:iep:action:invoke:get_encrypted_graph', target },
+    ] }] });
+    const foreign = vi.fn().mockResolvedValue(surface('https://foreign.example/tool/get_encrypted_graph'));
+    await expect(readEncryptedGraphViaDiscovery(foreign, 'https://relay.example', 'https://pod.example/note.ttl', () => {})).rejects.toThrow('usable encrypted reader');
+    expect(foreign).toHaveBeenCalledTimes(1);
+    const changed = vi.fn().mockResolvedValue(surface('https://relay.example/tool/get_encrypted_graph'));
+    let checks = 0;
+    await expect(readEncryptedGraphViaDiscovery(changed, 'https://relay.example', 'https://pod.example/note.ttl', () => {
+      if (++checks > 1) throw new Error('identity changed');
+    })).rejects.toThrow('identity changed');
+    expect(changed).toHaveBeenCalledTimes(1);
+  });
+
+  it('propagates a denied explicit compatibility read without trying another transport', async () => {
+    const call = vi.fn().mockResolvedValue({ structuredContent: { status: 403, error: 'insufficient_scope' } });
+    await expect(readEncryptedGraphViaDiscovery(call, 'https://relay.example', 'https://pod.example/note.ttl', () => {})).rejects.toThrow('insufficient_scope');
+    expect(call).toHaveBeenCalledTimes(1);
   });
 });

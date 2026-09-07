@@ -106,7 +106,17 @@ window.addEventListener('message',function(ev){
   if(ev.source!==window.parent) return;
   var m=ev.data; if(!m||typeof m!=='object'||m.jsonrpc!=='2.0') return;
   if(m.method==='ui/notifications/tool-result'){ hydrate((m.params&&m.params.structuredContent)||null); }
-  else if(!m.method && m.id!=null && PENDING[m.id]){ var p=PENDING[m.id]; delete PENDING[m.id]; clearTimeout(p.timer); if(m.error) p.reject(new Error(m.error.message||'host error')); else p.resolve(m.result); }
+  else if(!m.method && m.id!=null && PENDING[m.id]){
+    var p=PENDING[m.id]; delete PENDING[m.id]; clearTimeout(p.timer);
+    if(m.error){
+      var error=new Error(m.error.message||'host error');
+      // Keep the trusted host's machine-readable failure for callers. Display
+      // only message; error data may contain details unsuitable for the page.
+      if(typeof m.error.code==='number') error.code=m.error.code;
+      if(Object.prototype.hasOwnProperty.call(m.error,'data')) error.data=m.error.data;
+      p.reject(error);
+    } else p.resolve(m.result);
+  }
 });
 function rpcNotify(method,params){ window.parent.postMessage({jsonrpc:'2.0',method:method,params:params},'*'); }
 function rpcRequest(method,params){
