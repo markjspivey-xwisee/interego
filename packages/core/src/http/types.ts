@@ -21,6 +21,8 @@ export interface FetchResponse {
   readonly statusText: string;
   readonly headers?: { get(name: string): string | null };
   text(): Promise<string>;
+  /** Required by binary artifact reads; text-only adapters must fail explicitly. */
+  arrayBuffer?(): Promise<ArrayBuffer>;
   json(): Promise<unknown>;
 }
 

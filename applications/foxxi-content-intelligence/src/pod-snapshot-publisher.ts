@@ -56,6 +56,7 @@ import type {
 import { createHash } from 'node:crypto';
 import { bridgeDid, signAsBridge, withPublishLock } from './bridge-signer.js';
 import { FOXXI_NS } from './foxxi-vocab.js';
+import { decodePodBundle } from './pod-kv-store.js';
 
 const FOXXI = FOXXI_NS;
 const FOXXI_BUNDLE_JSON = `${FOXXI}bundleJson` as IRI;
@@ -323,9 +324,7 @@ export async function loadLatestSnapshot<T>(surface: string): Promise<T | null> 
       return r.text();
     });
     if (ttl === null) return null;
-    const m = ttl.match(/foxxi:bundleJson\s+"([^"]+)"\^\^xsd:base64Binary/);
-    if (!m?.[1]) return null;
-    return JSON.parse(Buffer.from(m[1], 'base64').toString('utf8')) as T;
+    return decodePodBundle<T>(ttl);
   } catch (err) {
     console.error(`[pod-snapshot/${surface}] hydrate failed:`, (err as Error).message);
     return null;

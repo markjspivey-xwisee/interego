@@ -285,6 +285,8 @@ export interface ActResult {
   readonly contentType: string | null;
   /** Raw response body — caller decides whether to `JSON.parse`. */
   readonly body: string;
+  /** Binary response bytes are base64; absent for ordinary text. */
+  readonly bodyEncoding?: 'base64';
   /** Echo of the affordance that was followed. */
   readonly affordance: Affordance;
 }

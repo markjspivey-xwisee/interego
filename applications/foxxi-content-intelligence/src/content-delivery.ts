@@ -26,6 +26,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import type { IRI } from '@interego/core';
 import type { Express, Request, Response } from 'express';
 import { DEFAULT_TENANT, type TenantId } from './tenant-context.js';
 import { trustedTenantOf, type OperatorAuthConfig } from './operator-auth.js';
@@ -40,6 +41,7 @@ import {
   renderForChannel, DELIVERY_CHANNELS, type ContentUnit, type DeliveryChannel,
 } from './content-channels.js';
 import { CONTENT_FORMS, type ContentForm } from './content-forms.js';
+import { PodKeyValueStore } from './pod-kv-store.js';
 import {
   deliverThroughChannel, type ChannelWebhook, type TransportResult,
 } from './content-transport.js';
@@ -47,6 +49,7 @@ import {
 const EXPERIENCED = 'http://adlnet.gov/expapi/verbs/experienced';
 
 export interface ContentDeliveryConfig extends OperatorAuthConfig {
+  publicationStore?: ContentPublicationStore;
   selfBaseUrl: string;
   /** The authoritative source — the xAPI Agent account homePage. */
   authoritativeSource: string;
@@ -63,7 +66,7 @@ export interface ContentDeliveryConfig extends OperatorAuthConfig {
   authorizeInstrumentation?: (req: Request, learner: string) => boolean;
   /** Channel transport — when set, `POST /content/deliver` actually
    *  sends: a per-channel webhook, or the Interego-native pod-descriptor
-   *  publish. Absent → the rendering is produced + recorded, not sent. */
+   *  publish. Absent → rendering only; no delivery or experience is claimed. */
   transport?: {
     webhooks?: Partial<Record<DeliveryChannel, ChannelWebhook>>;
     podUrl?: string;
@@ -92,6 +95,55 @@ interface PublishedJobAid {
   html: string;
   tenant: TenantId;
 }
+
+export type ContentPublicationSource =
+  | { kind: 'course'; publishId: string; tenant: TenantId; base: string; course: Course }
+  | { kind: 'job-aid'; aid: PublishedJobAid };
+export interface ContentPublicationStore {
+  get(key: string): Promise<ContentPublicationSource | null>;
+  put(key: string, source: ContentPublicationSource): Promise<{ descriptorUrl?: string }>;
+}
+let activePublicationStore: ContentPublicationStore | undefined;
+function defaultPublicationStore(): ContentPublicationStore | undefined {
+  const podUrl = process.env.FOXXI_TENANT_POD_URL;
+  const owner = process.env.FOXXI_AUTHORITATIVE_SOURCE;
+  if (!podUrl || !owner) return undefined;
+  return new PodKeyValueStore<ContentPublicationSource>({ podUrl, authoritativeSource: owner as IRI,
+    typeIri: 'https://schema.org/CreativeWork' as IRI, containerPath: 'foxxi/published-content/',
+    iriPrefix: 'urn:foxxi:published-content:', strictReads: true });
+}
+const coursePublicationKey = (tenant: TenantId, courseId: string): string => JSON.stringify([tenant, courseId]);
+
+/** Rehydrate both artifacts and the LMS registration from the persisted source. */
+function restorePublication(source: ContentPublicationSource): void {
+  if (source.kind === 'job-aid') { retainInMap(jobAids, source.aid.id, source.aid); return; }
+  const { course, publishId, tenant, base } = source;
+  const flat = flattenCourse(course);
+  const scormZip = generateScormZip(course);
+  const indices = new Map(flat.map((fl, i) => [fl.lesson.id, i]));
+  const cmi5Xml = generateCmi5Xml(course, id => `${base}/content/au/${publishId}/${indices.get(id)}`);
+  const parsed = parseCmi5Course(cmi5Xml);
+  const aus = flat.map((fl, index) => ({ index, lessonId: fl.lesson.id, title: fl.lesson.title,
+    competency: fl.lesson.competency, html: generateAuHtml(course.title, auLessonView(fl)),
+    blocks: fl.fragments.map(f => ({ label: f.modality, text: f.body })) }));
+  retainInMap(published, publishId, { publishId, courseId: course.id, title: course.title, tenant, course, cmi5Xml, scormZip, aus });
+  registerCmi5Course(tenant, parsed);
+}
+export async function restorePublishedCourse(tenant: TenantId, courseId: string): Promise<void> {
+  const source = await activePublicationStore?.get(coursePublicationKey(tenant, courseId));
+  if (source?.kind === 'course' && source.tenant === tenant && source.course.id === courseId) restorePublication(source);
+}
+async function readPublishedCourse(id: string, store?: ContentPublicationStore): Promise<PublishedCourse | undefined> {
+  if (!published.has(id)) { const source = await store?.get(id); if (source?.kind === 'course' && source.publishId === id) restorePublication(source); }
+  return published.get(id);
+}
+async function readPublishedAid(id: string, store?: ContentPublicationStore): Promise<PublishedJobAid | undefined> {
+  if (!jobAids.has(id)) { const source = await store?.get(id); if (source?.kind === 'job-aid' && source.aid.id === id) restorePublication(source); }
+  return jobAids.get(id);
+}
+const contentRead = (handler: (req: Request, res: Response) => Promise<void>) => (req: Request, res: Response): void => {
+  void handler(req, res).catch(error => { if (!res.headersSent) { console.error('[published-content]', error); res.status(503).json({ error: 'Published content storage is unavailable.' }); } });
+};
 
 const published = new Map<string, PublishedCourse>();
 const jobAids = new Map<string, PublishedJobAid>();
@@ -122,9 +174,11 @@ function jobAidHtml(aid: { competencyPoint: string; body: string; triggerContext
 /** Attach the content-delivery routes. */
 export function attachContentDeliveryRoutes(app: Express, config: ContentDeliveryConfig): void {
   const base = config.selfBaseUrl.replace(/\/+$/, '');
+  const store = config.publicationStore ?? defaultPublicationStore();
+  activePublicationStore = store;
 
   // ── POST /content/publish-course — generate + register + store. ───
-  app.post('/content/publish-course', (req: Request, res: Response) => {
+  app.post('/content/publish-course', contentRead(async (req: Request, res: Response) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     const body = (req.body ?? {}) as Record<string, unknown>;
     const course = body.course as Course | undefined;
@@ -152,7 +206,8 @@ export function attachContentDeliveryRoutes(app: Express, config: ContentDeliver
     // Parse it back (validates the generated XML round-trips) and register.
     try {
       const parsed = parseCmi5Course(cmi5Xml);
-      registerCmi5Course(tenant, parsed);
+      // Registration follows successful artifact creation and persistence.
+      void parsed;
     } catch (e) {
       sendServerError(res, e, 'cmi5-course-registration');
       return;
@@ -167,10 +222,15 @@ export function attachContentDeliveryRoutes(app: Express, config: ContentDeliver
       html: generateAuHtml(course.title, auLessonView(fl)),
       blocks: fl.fragments.map(f => ({ label: f.modality, text: f.body })),
     }));
+    const source: ContentPublicationSource = { kind: 'course', publishId, tenant, base, course };
+    const receipt = await store?.put(publishId, source);
+    if (store) await store.put(coursePublicationKey(tenant, course.id), source);
+    registerCmi5Course(tenant, parseCmi5Course(cmi5Xml));
     retainInMap(published, publishId, { publishId, courseId: course.id, title: course.title, tenant, cmi5Xml, scormZip, course, aus });
 
     res.json({
-      published: true,
+      published: true, persisted: !!store, storage: store ? 'pod' : 'process',
+      ...(receipt?.descriptorUrl ? { descriptorUrl: receipt.descriptorUrl } : {}),
       publishId,
       courseId: course.id,
       title: course.title,
@@ -183,34 +243,34 @@ export function attachContentDeliveryRoutes(app: Express, config: ContentDeliver
       launch: `GET ${base}/cmi5/launch?course_id=${encodeURIComponent(course.id)}&au_id=<auId>&learner=<learner_did>`,
       note: 'The course is live on the LMS. Launch an AU via /cmi5/launch — the AU runs, emits cmi5 xAPI to the LRS, moveOn auto-evaluates, and satisfaction rolls up.',
     });
-  });
+  }));
 
   // ── GET /content/au/:pub/:idx — the runnable cmi5 AU. ─────────────
-  app.get('/content/au/:pub/:idx', (req: Request, res: Response) => {
-    const pub = published.get(String(req.params.pub ?? ''));
+  app.get('/content/au/:pub/:idx', contentRead(async (req: Request, res: Response) => {
+    const pub = await readPublishedCourse(String(req.params.pub ?? ''), store);
     const au = pub?.aus[Number(req.params.idx)];
     if (!au) { res.status(404).type('html').send('<p>No such Assignable Unit.</p>'); return; }
     res.type('html').send(au.html);
-  });
+  }));
 
   // ── GET /content/package/:pub/cmi5.xml | scorm.zip — artifacts. ──
-  app.get('/content/package/:pub/cmi5.xml', (req: Request, res: Response) => {
+  app.get('/content/package/:pub/cmi5.xml', contentRead(async (req: Request, res: Response) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
-    const pub = published.get(String(req.params.pub ?? ''));
+    const pub = await readPublishedCourse(String(req.params.pub ?? ''), store);
     if (!pub) { res.status(404).json({ error: 'no such published course' }); return; }
     res.type('application/xml').send(pub.cmi5Xml);
-  });
-  app.get('/content/package/:pub/scorm.zip', (req: Request, res: Response) => {
+  }));
+  app.get('/content/package/:pub/scorm.zip', contentRead(async (req: Request, res: Response) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
-    const pub = published.get(String(req.params.pub ?? ''));
+    const pub = await readPublishedCourse(String(req.params.pub ?? ''), store);
     if (!pub) { res.status(404).json({ error: 'no such published course' }); return; }
     res.type('application/zip')
       .setHeader('Content-Disposition', `attachment; filename="${pub.publishId}-scorm.zip"`);
     res.send(pub.scormZip);
-  });
+  }));
 
   // ── POST /content/job-aid — publish an in-the-flow job aid. ───────
-  app.post('/content/job-aid', (req: Request, res: Response) => {
+  app.post('/content/job-aid', contentRead(async (req: Request, res: Response) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     const b = (req.body ?? {}) as Record<string, unknown>;
     if (typeof b.competencyPoint !== 'string' || typeof b.body !== 'string' || !b.body) {
@@ -228,17 +288,19 @@ export function attachContentDeliveryRoutes(app: Express, config: ContentDeliver
       tenant,
       html: jobAidHtml({ competencyPoint: b.competencyPoint, body: b.body, triggerContext: typeof b.triggerContext === 'string' ? b.triggerContext : 'the point of work' }),
     };
+    const receipt = await store?.put(id, { kind: 'job-aid', aid });
     retainInMap(jobAids, id, aid);
     res.json({
-      published: true, id,
+      published: true, persisted: !!store, storage: store ? 'pod' : 'process', id,
+      ...(receipt?.descriptorUrl ? { descriptorUrl: receipt.descriptorUrl } : {}),
       url: `${base}/content/job-aid/${id}`,
-      note: 'Performance support is live. A learner view (?learner=<did>) is instrumented into the LRS as an xAPI `experienced` statement.',
+      note: 'Performance support is available at the advertised URL. A learner view is recorded only when the caller proves authority for that learner.',
     });
-  });
+  }));
 
   // ── GET /content/job-aid/:id — serve + instrument with xAPI. ──────
-  app.get('/content/job-aid/:id', (req: Request, res: Response) => {
-    const aid = jobAids.get(String(req.params.id ?? ''));
+  app.get('/content/job-aid/:id', contentRead(async (req: Request, res: Response) => {
+    const aid = await readPublishedAid(String(req.params.id ?? ''), store);
     if (!aid) { res.status(404).type('html').send('<p>No such job aid.</p>'); return; }
     const learner = req.query.learner as string | undefined;
     // Only instrument (write an LRS statement attributed to `learner`) when
@@ -262,7 +324,7 @@ export function attachContentDeliveryRoutes(app: Express, config: ContentDeliver
       }, aid.tenant);
     }
     res.type('html').send(aid.html);
-  });
+  }));
 
   // ── POST /content/deliver — render content for a text channel. ────
   // The content is text; it travels through the channels work actually
@@ -286,14 +348,14 @@ export function attachContentDeliveryRoutes(app: Express, config: ContentDeliver
     let tenant: TenantId = trustedTenantOf(req, config);
     let objectId = `${base}/content/delivered`;
     if (typeof b.jobAidId === 'string') {
-      const aid = jobAids.get(b.jobAidId);
+      const aid = await readPublishedAid(b.jobAidId, store);
       if (!aid) { res.status(404).json({ error: 'no such job aid' }); return; }
       unit = { title: `Job aid — ${aid.competencyPoint}`, kind: 'job-aid', competency: aid.competencyPoint,
         blocks: [{ text: aid.body }], link: `${base}/content/job-aid/${aid.id}` };
       tenant = aid.tenant;
       objectId = `${base}/content/job-aid/${aid.id}`;
     } else if (typeof b.publishId === 'string') {
-      const pub = published.get(b.publishId);
+      const pub = await readPublishedCourse(b.publishId, store);
       const au = pub?.aus[Number(b.auIndex ?? 0)];
       if (!pub || !au) { res.status(404).json({ error: 'no such published course / AU' }); return; }
       unit = { title: au.title, kind: 'lesson', competency: au.competency, blocks: au.blocks,
@@ -353,10 +415,10 @@ export function attachContentDeliveryRoutes(app: Express, config: ContentDeliver
     }
 
     let instrumented = false;
-    // Only instrument when the caller is authorized to speak for `learner`
+    // Instrument only a delivery that occurred, with authority to speak for `learner`
     // (verified operator or a signer who proved control of the learner DID) —
     // never attribute an LRS statement to an unauthenticated caller-named actor.
-    if (learner && config.emitStatement && (config.authorizeInstrumentation?.(req, learner) ?? false)) {
+    if (transport.sent && learner && config.emitStatement && (config.authorizeInstrumentation?.(req, learner) ?? false)) {
       config.emitStatement({
         actor: { objectType: 'Agent', account: { homePage: config.authoritativeSource, name: learner } },
         verb: { id: EXPERIENCED, display: { 'en-US': 'experienced' } },
@@ -378,12 +440,12 @@ export function attachContentDeliveryRoutes(app: Express, config: ContentDeliver
       instrumented = true;
     }
     res.json({
-      delivered: true, channel, rendering, instrumented, transport,
-      note: transport.sent
+      delivered: transport.sent, rendered: true, channel, rendering, instrumented, transport,
+      note: transport.sent && instrumented
         ? `Rendered for ${channel}; ${transport.detail}; recorded in the LRS.`
-        : instrumented
-          ? `Rendered for ${channel} and recorded in the LRS. ${transport.detail}.`
-          : `Rendered for ${channel}. ${transport.detail}. Pass a learner DID to instrument the delivery.`,
+        : transport.sent
+          ? `Rendered for ${channel}; ${transport.detail}. No LRS statement was recorded.`
+          : `Rendered for ${channel}. Delivery did not occur: ${transport.detail}. No LRS statement was recorded.`,
     });
     })().catch((e: unknown) => {
       if (!res.headersSent) sendServerError(res, e, 'content-deliver');

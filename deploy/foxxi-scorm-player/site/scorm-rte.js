@@ -15,7 +15,7 @@
  *     Initialize / GetValue / SetValue / Commit / Terminate /
  *     GetLastError / GetErrorString / GetDiagnostic
  *
- * Foxxi is conformant for both. On Commit + Terminate, the RTE inspects
+ * On Commit + Terminate, this runtime inspects
  * the CMI data and emits cmi5-conformant xAPI 2.0 statements
  * (launched / initialized / completed / passed / failed / terminated /
  * abandoned) to Foxxi-as-LRS. Interactions + objectives ride along as
@@ -328,18 +328,65 @@
     }
     return stmt;
   }
-  async function emit(stmt) {
-    const cfg = (window.__foxxiPlayerConfig || {});
-    if (!cfg.bridge) return;
-    try {
-      const headers = { 'Content-Type': 'application/json', 'X-Experience-API-Version': '2.0.0' };
-      if (cfg.bearer) headers['Authorization'] = `Bearer ${cfg.bearer}`;
-      const r = await fetch(`${cfg.bridge}/xapi/statements`, { method: 'POST', headers, body: JSON.stringify(stmt) });
-      if (cfg.onEmit) cfg.onEmit(stmt, r.ok, r.status);
-    } catch (e) {
-      if (cfg.onEmit) cfg.onEmit(stmt, false, 0, e?.message);
+  // Commit is synchronous: it first saves the CMI state and an outbox locally.
+  // LRS acknowledgement is separate and observable; retries keep statement IDs.
+  let outbox = [], acknowledged = [], outboxKey = null, flushing = null;
+  function openOutbox() {
+    if (outboxKey) return;
+    const cfg = window.__foxxiPlayerConfig || {};
+    outboxKey = 'foxxi:rte:' + JSON.stringify([cfg.bridge || '', cfg.learnerDid || '', cfg.courseIri || '', cfg.registration || 'preview']);
+    const saved = JSON.parse(localStorage.getItem(outboxKey) || 'null');
+    if (saved) {
+      outbox = Array.isArray(saved.outbox) ? saved.outbox : [];
+      acknowledged = Array.isArray(saved.acknowledged) ? saved.acknowledged : [];
+      if (!saved.terminated) {
+        if (saved.cmi2004) Object.assign(cmi2004, saved.cmi2004, { entry: 'resume' });
+        if (saved.cmi12) Object.assign(cmi12, saved.cmi12, { 'core.entry': 'resume' });
+      }
     }
   }
+  function saveOutbox() {
+    openOutbox();
+    localStorage.setItem(outboxKey, JSON.stringify({ outbox, acknowledged, cmi2004, cmi12, terminated }));
+  }
+  function statementKey(stmt) {
+    const result = { ...(stmt.result || {}) }; delete result.duration;
+    return JSON.stringify([stmt.verb.id, result, stmt.context]);
+  }
+  function flushStatements() {
+    if (flushing) return flushing;
+    flushing = (async () => {
+      openOutbox();
+      const cfg = window.__foxxiPlayerConfig || {};
+      if (!cfg.bridge) { if (outbox.length) throw new Error('No LRS is configured; completion is saved locally only.'); return; }
+      while (outbox.length) {
+        const item = outbox[0], stmt = item.statement;
+        try {
+          const headers = { 'Content-Type': 'application/json', 'X-Experience-API-Version': '2.0.0' };
+          if (cfg.bearer) headers.Authorization = 'Bearer ' + cfg.bearer;
+          const response = await fetch(cfg.bridge + '/xapi/statements?statementId=' + encodeURIComponent(stmt.id), {
+            method: 'PUT', headers, body: JSON.stringify(stmt), signal: AbortSignal.timeout(15000),
+          });
+          if (!response.ok) throw new Error('LRS HTTP ' + response.status);
+          outbox.shift(); acknowledged.push(item.key); saveOutbox();
+          if (cfg.onEmit) cfg.onEmit(stmt, true, response.status);
+        } catch (error) {
+          if (cfg.onEmit) cfg.onEmit(stmt, false, 0, error.message);
+          throw error;
+        }
+      }
+    })().finally(() => { flushing = null; });
+    return flushing;
+  }
+  function emit(stmt) {
+    openOutbox();
+    const key = statementKey(stmt);
+    if (!acknowledged.includes(key) && !outbox.some(item => item.key === key)) outbox.push({ key, statement: JSON.parse(JSON.stringify(stmt)) });
+    saveOutbox();
+    void flushStatements().catch(() => {}); // retained for retry; never reported as delivered
+  }
+  window.addEventListener('online', () => { void flushStatements().catch(() => {}); });
+
   function emitOnCommit() {
     if (activeSpec === '12') {
       const s = cmi12['core.lesson_status'];
@@ -364,16 +411,16 @@
       const cfg = (window.__foxxiPlayerConfig || {});
       cmi2004.learner_id = cmi2004.learner_id || cfg.learnerDid || '';
       cmi2004.learner_name = cmi2004.learner_name || cfg.learnerName || '';
-      emit(buildStatement(`${ADL}/verbs/initialized`, 'initialized', false));
+      try { openOutbox(); emit(buildStatement(`${ADL}/verbs/initialized`, 'initialized', false)); } catch { initialized = false; return err(activeSpec === '12' ? 101 : 102); }
       return ok();
     },
     Terminate(p) {
       if (p !== '') { lastError = '201'; return 'false'; }
       if (!initialized) return err(112);
       if (terminated)   return err(113);
-      emitOnCommit();
-      emit(buildStatement(`${ADL}/verbs/terminated`, 'terminated', true));
+      try { saveOutbox(); emitOnCommit(); emit(buildStatement(`${ADL}/verbs/terminated`, 'terminated', true)); } catch { return err(activeSpec === '12' ? 101 : 111); }
       terminated = true;
+      try { saveOutbox(); } catch { terminated = false; return err(activeSpec === '12' ? 101 : 111); }
       return ok();
     },
     GetValue(name) {
@@ -394,7 +441,7 @@
       if (p !== '') { lastError = '201'; return 'false'; }
       if (!initialized) return err(142);
       if (terminated)   return err(143);
-      emitOnCommit();
+      try { saveOutbox(); emitOnCommit(); } catch { return err(activeSpec === '12' ? 101 : 391); }
       return ok();
     },
     GetLastError() { return lastError; },
@@ -441,15 +488,15 @@
       const cfg = (window.__foxxiPlayerConfig || {});
       cmi12['core.student_id'] = cmi12['core.student_id'] || cfg.learnerDid || '';
       cmi12['core.student_name'] = cmi12['core.student_name'] || cfg.learnerName || '';
-      emit(buildStatement(`${ADL}/verbs/initialized`, 'initialized', false));
+      try { openOutbox(); emit(buildStatement(`${ADL}/verbs/initialized`, 'initialized', false)); } catch { initialized = false; return err(activeSpec === '12' ? 101 : 102); }
       return ok();
     },
     LMSFinish(p) {
       if (p !== '') { lastError = '201'; return 'false'; }
       if (!initialized) return err(301);
-      emitOnCommit();
-      emit(buildStatement(`${ADL}/verbs/terminated`, 'terminated', true));
+      try { saveOutbox(); emitOnCommit(); emit(buildStatement(`${ADL}/verbs/terminated`, 'terminated', true)); } catch { return err(activeSpec === '12' ? 101 : 111); }
       terminated = true;
+      try { saveOutbox(); } catch { terminated = false; return err(activeSpec === '12' ? 101 : 111); }
       return ok();
     },
     LMSGetValue(name) {
@@ -467,7 +514,7 @@
     LMSCommit(p) {
       if (p !== '') { lastError = '201'; return 'false'; }
       if (!initialized) return err(301);
-      emitOnCommit();
+      try { saveOutbox(); emitOnCommit(); } catch { return err(activeSpec === '12' ? 101 : 391); }
       return ok();
     },
     LMSGetLastError() { return lastError; },
@@ -494,4 +541,6 @@
     spec: activeSpec,
     cmi: activeSpec === '12' ? { ...cmi12 } : { ...cmi2004 },
   });
+  window.API_1484_11.__foxxiFlush = flushStatements;
+  window.API.__foxxiFlush = flushStatements;
 })();

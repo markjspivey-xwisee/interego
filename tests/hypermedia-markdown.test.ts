@@ -367,3 +367,16 @@ describe('projectHolonToMarkdown: a render of the lattice, not a parallel artifa
     expect(md).toContain('invoke_affordance');
   });
 });
+
+
+describe('typed artifact link traversal', () => {
+  it('round-trips real links once and does not promote a fenced example to navigation', () => {
+    const example = '- [Example](https://example.test/fiction.zip){rel="alternate" type="application/zip"}';
+    const original = renderHypermediaMarkdown({ ...doc, body: doc.body + '\n\n```markdown\n' + example + '\n```' });
+    const parsed = parseHypermediaMarkdown(original);
+    expect(parsed.links).toEqual(doc.links);
+    const rerendered = renderHypermediaMarkdown(parsed);
+    expect(rerendered.match(/\[Turtle\]/g)).toHaveLength(1);
+    expect(rerendered).toContain(example);
+  });
+});

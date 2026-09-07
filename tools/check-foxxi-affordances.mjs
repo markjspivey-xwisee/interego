@@ -85,6 +85,7 @@ const ALLOWLIST = [
   // score an attempt.
   '/agent/scorm/courses',
   '/agent/scorm/course/:id',
+  '/agent/scorm/course/:id/:file', // Manifest, ZIP and SCO bytes, advertised by the course.
   // Shared-memory commons discovery feed (read-only). Listing published job aids /
   // quick references — as JSON or as an LDN as:Collection pull-inbox (?format=ldn) —
   // is DESCRIPTIVE, same category as the course + lattice read views. Publishing a
@@ -109,7 +110,7 @@ function normalizePath(p) {
 const allowSet = new Set(ALLOWLIST.map(normalizePath));
 
 // ── 1. Routes declared in server.ts ──────────────────────────────────────────
-const serverSrc = readFileSync(SERVER, 'utf8');
+const serverSrc = [SERVER, resolve(ROOT, 'applications/foxxi-content-intelligence/src/scorm-artifacts.ts')].map(path => readFileSync(path, 'utf8')).join('\n');
 // app.post('/agent/...'   app.get("/agent/..."   app.put('/agent/...')
 const routeRe = /\bapp\.(post|get|put)\(\s*['"`](\/agent\/[^'"`]*)['"`]/g;
 const routes = new Map(); // normalizedPath → { raw, methods:Set }

@@ -179,6 +179,7 @@ import { recoverSignedRequest } from '../src/auth.js';
 import { makeWalletDelegationVerifier, parseTrig, TENANT_ADMIN_CAPABILITY, pgslNodeKind, pgslNodeHash, actionUrl, ownPodSegment } from '@interego/core';
 import { proveCompetency } from '../src/competency-proof.js';
 import { courseIri, courseIdOf, sameCourse } from '../src/course-identity.js';
+import { attachAgentScormArtifacts, scormArtifactLinks, scormArtifactManifest, hashScormAnswer } from '../src/scorm-artifacts.js';
 import { competencyIri, competencyIriForTerm, competencyIdOf } from '../src/competency-identity.js';
 import { activityIri, ACTIVITY_DEFINITIONS } from '../src/activity-identity.js';
 import { FOXXI_NS } from '../src/foxxi-vocab.js';
@@ -380,7 +381,7 @@ import {
   commitTracking, sessionView, type SeqSession, type TrackingUpdate,
 } from '../src/scorm-sequencing.js';
 import { attachPerformanceRoutes } from '../src/performance-routes.js';
-import { attachContentDeliveryRoutes } from '../src/content-delivery.js';
+import { attachContentDeliveryRoutes, restorePublishedCourse } from '../src/content-delivery.js';
 // Re-integration with the agentic-performance (agp:) layer: Foxxi surfaces the
 // emergent, learnable standards-extension capability the agp layer affords by
 // composing Foxxi's own standards. + the shared in-flow performance-support primitive.
@@ -4937,6 +4938,7 @@ const app = createVerticalBridge({
     attachCmi5LmsRoutes(a, {
       selfBaseUrl: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080',
       authoritativeSource,
+      restorePublishedCourse,
       ...operatorAuth,
     });
 
@@ -8460,26 +8462,11 @@ const agentScormPlays = new Map<string, ScormPlay>();   // in-process per the SN
  *  (each entry holds a full course + SN tree) into an OOM (round-36). Evict oldest past the cap. */
 const SCORM_PLAYS_MAX = 5000;
 
-function scormXmlEsc(s: string): string { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 function scormSlug(s: string): string { return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'x'; }
 function buildAgentScormManifest(course: AgentScormCourse): string {
-  const cs = scormSlug(course.courseId);
-  const items = course.scos.map(s => `        <item identifier="ITEM-${scormSlug(s.id)}" identifierref="RES-${scormSlug(s.id)}"><title>${scormXmlEsc(s.title)}</title></item>`).join('\n');
-  const resources = course.scos.map(s => `    <resource identifier="RES-${scormSlug(s.id)}" type="webcontent" adlcp:scormType="sco" href="sco-${scormSlug(s.id)}.html"><file href="sco-${scormSlug(s.id)}.html"/></resource>`).join('\n');
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<manifest identifier="MANIFEST-${cs}" version="1.0" xmlns="http://www.imsglobal.org/xsd/imscp_v1p1" xmlns:adlcp="http://www.adlnet.org/xsd/adlcp_v1p3" xmlns:imsss="http://www.imsglobal.org/xsd/imsss">
-  <metadata><schema>ADL SCORM</schema><schemaversion>2004 4th Edition</schemaversion></metadata>
-  <organizations default="ORG-${cs}">
-    <organization identifier="ORG-${cs}"><title>${scormXmlEsc(course.title)}</title>
-      <imsss:sequencing><imsss:controlMode choice="true" flow="true"/><imsss:objectives><imsss:primaryObjective satisfiedByMeasure="true"><imsss:minNormalizedMeasure>${course.masteryScore > 1 ? course.masteryScore / 100 : course.masteryScore}</imsss:minNormalizedMeasure></imsss:primaryObjective></imsss:objectives></imsss:sequencing>
-${items}
-    </organization>
-  </organizations>
-  <resources>
-${resources}
-  </resources>
-</manifest>`;
+  return scormArtifactManifest(course);
 }
+
 function scoForActivity(course: AgentScormCourse, activityId: string | undefined): AgentScormSco | undefined {
   if (!activityId) return undefined;
   return course.scos.find(s => `ITEM-${scormSlug(s.id)}` === activityId);
@@ -8489,7 +8476,7 @@ function scoViewForLearner(sco: AgentScormSco | undefined): unknown {
   return { id: sco.id, title: sco.title, body: sco.body, ...(sco.assessment?.length ? { assessment: sco.assessment.map((q, i) => ({ index: i, question: q.question })) } : {}) };
 }
 function normAns(s: string): string { return String(s ?? '').toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim(); }
-function hashAnswer(s: string): string { return createHash('sha256').update(normAns(s)).digest('hex'); }
+function hashAnswer(s: string): string { return hashScormAnswer(s); }
 /** Record a first-class AGENT ACTIVITY (a teacher/author/issuer act) into the
  *  actor's OWN lens + durable pod, with an EXPRESSIVE verb. Unlike record-
  *  performance (verb=performed → ELR performance rollup), this carries a distinct
@@ -8745,9 +8732,11 @@ function publicCourseView(c: AgentScormCourse, base: string): Record<string, unk
   return {
     courseId: c.courseId, title: c.title, masteryScore: c.masteryScore, authoredBy: c.authoredBy,
     courseIri: scormCourseIri(c.courseId), scoCount: c.scos.length,
-    scos: c.scos.map(s => ({ id: s.id, title: s.title, body: s.body, assessmentCount: s.assessment?.length ?? 0 })),
+    scos: c.scos.map(s => ({ id: s.id, title: s.title, body: s.body, assessmentCount: s.assessment?.length ?? 0, href: scormArtifactLinks(base, c.courseId).sco(s.id) })),
     href: `${base}/agent/scorm/course/${encodeURIComponent(c.courseId)}`,
-    manifest: `${base}/agent/scorm/course/${encodeURIComponent(c.courseId)}?format=manifest`,
+    manifest: scormArtifactLinks(base, c.courseId).manifest,
+    scormZip: scormArtifactLinks(base, c.courseId).scormZip,
+    packageData: scormArtifactLinks(base, c.courseId).packageData,
     hmd: `${base}/agent/scorm/course/${encodeURIComponent(c.courseId)}?format=markdown`,
     launch: { player: scormPlayerLink(c), affordance: actionUrl('urn:iep:action:foxxi:scorm-launch-signed'), method: 'POST', target: `${base}/agent/scorm/launch` },
   };
@@ -8770,12 +8759,13 @@ app.get('/agent/scorm/courses', async (req, res) => {
   }
   res.json({ ok: true, count: agentScormCourses.size, courses: [...agentScormCourses.values()].map(c => publicCourseView(c, base)) });
 });
+attachAgentScormArtifacts(app, resolveCourseForRead);
 app.get('/agent/scorm/course/:id', async (req, res) => {
   const base = (process.env.BRIDGE_DEPLOYMENT_URL ?? `${req.protocol}://${req.get('host') ?? ''}`).replace(/\/$/, '');
   const c = await resolveCourseForRead(String(req.params.id), typeof req.query.author_did === 'string' ? req.query.author_did : undefined);
   if (!c) { res.status(404).json({ error: `no authored course "${req.params.id}" on any configured agent pod — author it via /agent/scorm/author, or pass ?author_did=<did> to point at the author's pod` }); return; }
   const fmt = String(req.query.format ?? '').toLowerCase();
-  if (fmt === 'manifest' || fmt === 'xml') { res.type('application/xml').send(buildAgentScormManifest(c)); return; }
+  if (fmt === 'manifest' || fmt === 'xml') { res.type('application/xml').send(scormArtifactManifest(c, `${base}/agent/scorm/course/${encodeURIComponent(c.courseId)}/`)); return; }
   res.vary('Accept');
   if (wantsHmd(req)) { sendHmd(res, courseToHmd(c, base)); return; }
   res.json({ ok: true, ...publicCourseView(c, base) });

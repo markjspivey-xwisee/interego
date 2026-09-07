@@ -43,6 +43,7 @@ import type { IRI } from '../model/types.js';
 import type { FetchFn, FetchResponse } from '../http/types.js';
 import { getDefaultFetch } from '../http/fetch.js';
 import { withTransientRetry } from '../http/retry.js';
+import { readResponseBody } from '../http/response-body.js';
 import {
   parseTrig,
   findSubjectsOfType,
@@ -133,6 +134,8 @@ export interface FollowAffordanceResult {
   /** Raw response body — caller decides whether to JSON.parse based on
    *  `contentType`. */
   readonly body: string;
+  /** Binary response bytes are base64; absent for ordinary text. */
+  readonly bodyEncoding?: 'base64';
   /** Resolved affordance details — useful for logging + debugging. */
   readonly affordance: ResolvedAffordance;
 }
@@ -331,13 +334,13 @@ export async function followAffordance(
   // DECISION — `unreadable-workspace`, `append-failed`, foxxi's `upstreamFailed` — and
   // resending it three more times cannot change the answer; it only makes the caller wait
   // ~15s to be refused four times. 4xx stays informative and is surfaced as data, unchanged.
-  const { response, responseBody } = await withTransientRetry(async () => {
+  const { response, representation } = await withTransientRetry(async () => {
     const r = await fetchImpl(target, { method, headers, body });
-    const text = await r.text();
-    if (r.status >= 500 && !declaresRefusal(text)) {
+    const representation = await readResponseBody(r);
+    if (r.status >= 500 && !declaresRefusal(representation.body)) {
       throw new Error(`Affordance target ${target} returned ${r.status} ${r.statusText}`);
     }
-    return { response: r, responseBody: text };
+    return { response: r, representation };
   });
   // FetchResponse intentionally doesn't expose headers as a typed map —
   // probe via the underlying `.headers.get` when present (Node fetch /
@@ -349,7 +352,7 @@ export async function followAffordance(
     status: response.status,
     statusText: response.statusText,
     contentType,
-    body: responseBody,
+    ...representation,
     affordance: resolved,
   };
 }

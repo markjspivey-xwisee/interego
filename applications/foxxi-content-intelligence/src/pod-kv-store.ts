@@ -56,6 +56,7 @@ import type {
   PGSLInstance,
 } from '@interego/pgsl';
 import { createHash } from 'node:crypto';
+import { parseTrig, readStringValue } from '@interego/core';
 import { FOXXI_NS } from './foxxi-vocab.js';
 
 const FOXXI = FOXXI_NS;
@@ -100,6 +101,8 @@ export interface PodKvConfig {
   readonly fetch?: FetchFn;
   /** Pod read cache TTL (ms). Default 5000. */
   readonly cacheTtlMs?: number;
+  /** Do not turn unreadable storage into a claim that a published artifact is absent. */
+  readonly strictReads?: boolean;
 }
 
 function buildDescriptor(args: {
@@ -181,15 +184,20 @@ function buildGraph(args: {
   return lines.join('\n');
 }
 
-function decodeFromGraphTurtle<T>(turtle: string): T | null {
-  const m = turtle.match(/foxxi:bundleJson\s+"([^"]+)"\^\^xsd:base64Binary/);
-  if (!m) return null;
-  try { return JSON.parse(Buffer.from(m[1], 'base64').toString('utf8')) as T; }
+export function decodePodBundle<T>(turtle: string): T | null {
+  try {
+    for (const subject of parseTrig(turtle).subjects) {
+      const encoded = readStringValue(subject, FOXXI_BUNDLE_JSON);
+      if (encoded) return JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')) as T;
+    }
+    return null;
+  }
   catch { return null; }
 }
 
 function isTombstoned(turtle: string): boolean {
-  return /foxxi:isDeleted\s+"true"/.test(turtle);
+  try { return parseTrig(turtle).subjects.some(s => readStringValue(s, FOXXI_IS_DELETED) === 'true'); }
+  catch { return false; }
 }
 
 /**
@@ -211,6 +219,7 @@ export class PodKeyValueStore<T extends object> {
   private readonly authoritativeSource: IRI;
   private readonly fetchFn: FetchFn;
   private readonly cacheTtlMs: number;
+  private readonly strictReads: boolean;
   private readonly hot = new Map<string, T>();
   private readonly seenTombstones = new Set<string>();
   private lastListAt = 0;
@@ -223,6 +232,7 @@ export class PodKeyValueStore<T extends object> {
     this.authoritativeSource = config.authoritativeSource;
     this.fetchFn = config.fetch ?? globalThis.fetch.bind(globalThis);
     this.cacheTtlMs = config.cacheTtlMs ?? 5000;
+    this.strictReads = config.strictReads ?? false;
   }
 
   private slugFor(key: string): string { return keyToSlug(key); }
@@ -273,13 +283,17 @@ export class PodKeyValueStore<T extends object> {
   private async getRaw(key: string): Promise<T | null> {
     try {
       const r = await this.fetchFn(this.graphUrl(key), { headers: { Accept: 'application/trig, text/turtle' } });
-      if (!r.ok) return null;
+      if (!r.ok) {
+        if (r.status === 404 || r.status === 410 || !this.strictReads) return null;
+        throw new Error(`Pod artifact read failed: HTTP ${r.status}`);
+      }
       const ttl = await r.text();
       if (isTombstoned(ttl)) { this.seenTombstones.add(key); return null; }
-      const value = decodeFromGraphTurtle<T>(ttl);
+      const value = decodePodBundle<T>(ttl);
+      if (!value && this.strictReads) throw new Error('Pod artifact payload could not be decoded.');
       if (value) this.hot.set(key, value);
       return value;
-    } catch { return null; }
+    } catch (error) { if (this.strictReads) throw error; return null; }
   }
 
   /** Delete (tombstone) the value at `key`. */
@@ -362,7 +376,7 @@ export class PodKeyValueStore<T extends object> {
           if (!r.ok) continue;
           const ttl = await r.text();
           if (isTombstoned(ttl)) { this.seenTombstones.add(key); continue; }
-          const value = decodeFromGraphTurtle<T>(ttl);
+          const value = decodePodBundle<T>(ttl);
           if (value) this.hot.set(key, value);
         } catch { /* skip — partial pod is acceptable */ }
       }
