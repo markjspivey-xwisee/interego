@@ -11385,7 +11385,8 @@ const INVOKE_AFFORDANCE_OUTPUT = mcpOutputSchema({
     status: { type: 'integer', description: 'HTTP status from the target' },
     statusText: { type: 'string' },
     contentType: { type: 'string', description: 'Content-Type header from the target (null when absent)' },
-    body: { type: 'string', description: 'Raw response body — JSON-parse when contentType is application/json' },
+    body: { type: 'string', description: 'Response text, or base64 bytes when bodyEncoding is base64. Decode that encoding before interpreting contentType.' },
+    bodyEncoding: { type: 'string', enum: ['base64'], description: 'Present for binary representations; absent for text.' },
     affordance: {
       type: 'object',
       description: 'Resolved affordance metadata from the descriptor',
