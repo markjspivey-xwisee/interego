@@ -149,7 +149,7 @@ async function start() {
   $('slide-title').textContent = 'Loading course…';
   let course;
   try {
-    const r = await fetch(`${BRIDGE}/agent/scorm/course/${encodeURIComponent(COURSE_ID)}`);
+    const r = await fetch(`${BRIDGE}/agent/scorm/course/${encodeURIComponent(COURSE_ID)}${AUTHOR_DID ? '?author_did=' + encodeURIComponent(AUTHOR_DID) : ''}`);
     course = await r.json();
     if (!r.ok) throw new Error(course.error || `HTTP ${r.status}`);
   } catch (e) {
@@ -162,6 +162,7 @@ async function start() {
   $('course-links').innerHTML =
     `<a href="${esc(course.hmd)}">read as HyperMarkdown</a> · ` +
     `<a href="${esc(course.manifest)}">imsmanifest.xml</a> · ` +
+    (course.scormZip ? `<a href="${esc(course.scormZip)}">Download SCORM package</a> · ` : '') +
     `<a href="${esc(course.href)}">catalog record</a>`;
   renderToc(course, course.scos ?? []);
 

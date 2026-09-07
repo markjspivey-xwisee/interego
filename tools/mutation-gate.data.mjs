@@ -208,7 +208,7 @@ export const MUTANTS = [
   {
     name: 'follower-retries-a-declared-refusal',
     file: FOLLOW,
-    find: "    if (r.status >= 500 && !declaresRefusal(text)) {",
+    find: "    if (r.status >= 500 && !declaresRefusal(representation.body)) {",
     replace: "    if (r.status >= 500 && !declaresRefusal('')) {",
     mustFail: [RETRY_GATE],
     why: 'still CALLS declaresRefusal, so it compiles and the import stays used - but never on the body, so every 502 refusal is resent three more times',
@@ -282,7 +282,7 @@ export const MUTANTS = [
     // took this leg, which had its own copy of the throw and read the body only after the
     // retry. Measured before the fix: 4 fetches, ~7s, and the refusal arrived as a THROWN
     // exception rather than as data.
-    find: "      if (r.status >= 500 && !declaresRefusal(text)) {",
+    find: "      if (r.status >= 500 && !declaresRefusal(representation.body)) {",
     replace: "      if (r.status >= 500 && !declaresRefusal('')) {",
     mustFail: [RETRY_GATE],
     why: 'a fix applied to one of two identical legs is not a fix to the class',
