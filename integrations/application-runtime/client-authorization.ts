@@ -26,7 +26,16 @@ const b64 = (value: Uint8Array): string => Buffer.from(value).toString('base64ur
 function ed25519Bytes(value: string): Uint8Array {
   const bytes = base58btc.decode(value);
   if (bytes.length !== 34 || bytes[0] !== 0xed || bytes[1] !== 0x01) throw new Error('expected an Ed25519 multicodec public key');
-  return bytes.slice(2);
+  const raw = bytes.slice(2);
+  let y = 0n;
+  for (let i = 31; i >= 0; i--) y = (y << 8n) | BigInt(raw[i]! & (i === 31 ? 0x7f : 0xff));
+  const prime = (1n << 255n) - 19n;
+  // RFC 8032 point decoding has one encoding per point: y is in the field,
+  // and the sign bit cannot select a negative zero x-coordinate.
+  if (y >= prime || ((y === 1n || y === prime - 1n) && (raw[31]! & 0x80))) {
+    throw new Error('noncanonical Ed25519 public key');
+  }
+  return raw;
 }
 
 /** Fingerprint key material, never a credential label or the caller's chosen DID. */
@@ -42,26 +51,27 @@ export function clientKeyId(key: ClientSigningKey): string {
   // must count as ONE key, even when their IDs or encodings differ.
   const kty = cose.get(1);
   if (kty === 1 && cose.get(-1) === 6 && cose.get(-2) instanceof Uint8Array) {
-    return 'did:key:' + base58btc.encode(new Uint8Array([0xed, 0x01, ...cose.get(-2) as Uint8Array]));
+    return clientKeyId({ scheme: 'ed25519', publicKeyMultibase: base58btc.encode(new Uint8Array([0xed, 0x01, ...cose.get(-2) as Uint8Array])) });
   }
-  const parameter = (n: number): string | number => {
+  const parameter = (n: number): string => {
     const value = cose.get(n);
-    if (typeof value === 'number') return value;
-    if (value instanceof Uint8Array) {
-      // RSA n/e are unsigned integers. Redundant zero octets do not make a new
-      // public key, even when a COSE/JWK decoder accepts both representations.
-      if (kty === 3) {
-        let first = 0;
-        while (first < value.length - 1 && value[first] === 0) first++;
-        return b64(value.slice(first));
-      }
-      return b64(value);
-    }
+    if (value instanceof Uint8Array) return b64(value);
     throw new Error('malformed COSE public key');
   };
-  const material = kty === 2 ? [kty, parameter(-1), parameter(-2), parameter(-3)]
-    : kty === 1 || kty === 3 ? [kty, parameter(-1), parameter(-2)] : null;
-  if (!material) throw new Error('unsupported COSE key type');
+  // Fingerprint the decoded public key. The crypto provider accepts redundant
+  // zero octets for EC coordinates as well as RSA integers; exporting it gives
+  // fixed-width EC coordinates and minimal unsigned RSA integers.
+  let material: readonly (string | number)[];
+  if (kty === 2) {
+    const curve = cose.get(-1);
+    const crv = typeof curve === 'number' ? ({ 1: 'P-256', 2: 'P-384', 3: 'P-521' } as Record<number, string>)[curve] : undefined;
+    if (!crv) throw new Error('unsupported COSE curve');
+    const canonical = createPublicKey({ key: { kty: 'EC', crv, x: parameter(-2), y: parameter(-3) }, format: 'jwk' }).export({ format: 'jwk' });
+    material = [kty, curve as number, canonical.x!, canonical.y!];
+  } else if (kty === 3) {
+    const canonical = createPublicKey({ key: { kty: 'RSA', n: parameter(-1), e: parameter(-2) }, format: 'jwk' }).export({ format: 'jwk' });
+    material = [kty, canonical.n!, canonical.e!];
+  } else throw new Error('unsupported COSE key type');
   return 'urn:sha256:' + digest(JSON.stringify(material));
 }
 
