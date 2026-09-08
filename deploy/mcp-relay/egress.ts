@@ -244,6 +244,7 @@ export function createEgress(config: EgressConfig): Egress {
         headers: { get: (n: string) => resp.headers.get(n) },
         text: () => resp.text(),
         json: () => resp.json(),
+        arrayBuffer: () => resp.arrayBuffer(),
       };
     } catch (e) {
       /**
@@ -472,6 +473,7 @@ export function createEgress(config: EgressConfig): Egress {
       ok: response.ok, status: response.status, statusText: response.statusText,
       headers: response.headers, url: landedUrl,
       text: () => response.text(), json: () => response.json(),
+      ...(response.arrayBuffer ? { arrayBuffer: () => response.arrayBuffer!() } : {}),
     };
   };
 

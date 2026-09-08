@@ -2,7 +2,7 @@
  * Foxxi channel transport — actually delivering rendered content.
  *
  * `content-channels.ts` renders a unit of content for a channel;
- * `content-delivery.ts` records the delivery in the LRS. This module is
+ * `content-delivery.ts` records authorized, successful delivery in the LRS. This module is
  * the last step: it makes the content genuinely *leave the bridge*.
  *
  * Two transports, both real:
@@ -19,9 +19,8 @@
  *     `FOXXI_TRANSPORT_<CHANNEL>` is set, exactly like the bridge's
  *     other configure-to-activate integrations.
  *
- * When neither is configured for a channel the rendering is still
- * produced and the delivery still recorded — it just hasn't left the
- * bridge, and the result says so honestly.
+ * When neither is configured for a channel the rendering is produced,
+ * but no delivery or learner experience is recorded.
  *
  * Layer: L3 vertical. Composes the substrate's `publish()` + `fetch`;
  * no L1/L2/L3 ontology change.
@@ -55,7 +54,7 @@ export interface TransportConfig {
 }
 
 export interface TransportResult {
-  /** How the content left the bridge. 'none' = produced + recorded only. */
+  /** How the content left the bridge. 'none' = rendering only. */
   mode: 'pod-descriptor' | 'webhook' | 'none';
   /** True iff the content genuinely left the bridge. */
   sent: boolean;
@@ -68,7 +67,7 @@ export interface TransportResult {
 /**
  * Deliver a rendered unit through its channel. Tries a configured
  * webhook first; failing that, the Interego-native pod-descriptor
- * publish; failing that, an honest no-op (recorded, not sent).
+ * publish; failing that, rendering only, with no delivery claimed.
  */
 export async function deliverThroughChannel(args: {
   channel: DeliveryChannel;
@@ -133,12 +132,11 @@ export async function deliverThroughChannel(args: {
     }
   }
 
-  // 3. Nothing configured — the rendering is produced and the delivery
-  //    recorded in the LRS; it just hasn't left the bridge.
+  // 3. Nothing configured — rendering only, with no delivery to instrument.
   return {
     mode: 'none', sent: false,
     detail: `no transport configured for the ${channel} channel — the rendering is produced `
-      + `and the delivery recorded; set FOXXI_TRANSPORT_${channel.toUpperCase()} (a webhook URL) `
+      + `only; no delivery occurred. Set FOXXI_TRANSPORT_${channel.toUpperCase()} (a webhook URL) `
       + `or a pod to actually send it`,
   };
 }

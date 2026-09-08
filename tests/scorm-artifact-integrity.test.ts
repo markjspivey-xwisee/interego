@@ -143,14 +143,17 @@ describe('course links resolve to the actual package contents', () => {
 });
 
 describe('delivery claims require an actual delivery', () => {
-  it('does not report delivery or record experience when no transport sent anything', async () => {
+  it.each([undefined, {}])('does not report delivery or record experience with transport=%j', async transport => {
     const statements: unknown[] = [];
     const app = express(); app.use(express.json());
-    attachContentDeliveryRoutes(app, { selfBaseUrl: 'https://foxxi.example', authoritativeSource: 'https://owner.example', authorizeInstrumentation: () => true, emitStatement: s => { statements.push(s); } });
+    attachContentDeliveryRoutes(app, { selfBaseUrl: 'https://foxxi.example', authoritativeSource: 'https://owner.example', transport, authorizeInstrumentation: () => true, emitStatement: s => { statements.push(s); } });
     const base = await serve(app);
     const r = await fetch(base + '/content/deliver', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ channel: 'chat', learner: 'did:web:tester.example', unit: { title: 'A reference', kind: 'reference', blocks: [{ text: 'Read this.' }] } }) });
     expect(r.status).toBe(200);
-    expect(await r.json()).toMatchObject({ rendered: true, delivered: false, instrumented: false, transport: { sent: false } });
+    const result = await r.json();
+    expect(result).toMatchObject({ rendered: true, delivered: false, instrumented: false, transport: { sent: false } });
+    expect(result.transport.detail).toContain('no delivery occurred');
+    expect(result.transport.detail).not.toContain('delivery recorded');
     expect(statements).toEqual([]);
   });
 });

@@ -34,6 +34,11 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
 
 <!-- documented-through: 2037e1a -->
 
+### 2026-09-08 — Relay adapters preserve binary bodies
+
+- Both production relay HTTP wrappers MUST carry the response's binary body reader through to the shared kernel reader. A real HTTP integration check follows a redirect and an advertised download through these exact adapters, then compares decoded bytes.
+- A rendering-only delivery response MUST also describe its result truthfully in prose: no transport means no delivery occurred, rather than a claim that delivery was recorded.
+
 ### 2026-09-08 — Completion is not an assessment score
 
 - Unassessed exported SCORM and cmi5 lessons MUST record completion without inventing a passed assessment or a perfect score, matching native agent submissions.
