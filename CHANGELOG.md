@@ -38,6 +38,7 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
 
 - A signed application contract MAY require a registered client credential to sign the exact action receipt. The executor MUST verify that proof before publication and MUST retain it for cryptographic replay. A relay attestation or a caller-supplied verification flag MUST NOT satisfy the requirement.
 - Wallet, Ed25519 agent, and WebAuthn signatures bind the actor, action, predecessor, contract, inputs and evidence. Public-key fingerprints are available to domain guards so two credential labels over one key cannot satisfy a distinct-key quorum.
+- EC and RSA fingerprints use decoded canonical public keys, so alternate coordinate and integer encodings MUST NOT increase the key count. Direct and WebAuthn Ed25519 keys reject noncanonical point encodings. Normally encoded keys retain their existing fingerprints.
 - The browser signing page and process signer keep private keys with their holders. Descriptor authorship responses distinguish current relay attestations from keys whose custody is unclassified.
 
 ### 2026-09-08 — Relay adapters preserve binary bodies

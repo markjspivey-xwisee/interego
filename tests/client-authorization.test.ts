@@ -83,6 +83,53 @@ describe('client-held authorization signatures', () => {
     const changed = new Map([...cose.entries()].reverse()); changed.set(2, Buffer.from('new label'));
     expect(clientKeyId({ ...key, credentialId: 'different-id', publicKey: Buffer.from(isoCBOR.encode(changed)).toString('base64url') })).toBe(clientKeyId(key));
   });
+  it.each([
+    { curve: 'prime256v1', crv: 1, alg: -7, hash: 'sha256' },
+    { curve: 'secp384r1', crv: 2, alg: -35, hash: 'sha384' },
+    { curve: 'secp521r1', crv: 3, alg: -36, hash: 'sha512' },
+  ])('counts one $curve key across coordinate encodings with real assertions', async config => {
+    const pair = generateKeyPairSync('ec', { namedCurve: config.curve });
+    const jwk = pair.publicKey.export({ format: 'jwk' });
+    const x = Buffer.from(jwk.x!, 'base64url'), y = Buffer.from(jwk.y!, 'base64url');
+    const originalId = 'urn:sha256:' + createHash('sha256').update(JSON.stringify([2, config.crv, jwk.x, jwk.y])).digest('hex');
+    const hash = (value: string | Uint8Array) => createHash('sha256').update(value).digest();
+    for (const encoding of ['normal', 'padded', 'minimal']) {
+      const coordinate = (value: Buffer) => {
+        if (encoding === 'padded') return Buffer.concat([Buffer.from([0, 0]), value]);
+        if (encoding === 'normal') return value;
+        let first = 0;
+        while (first < value.length - 1 && value[first] === 0) first++;
+        return value.subarray(first);
+      };
+      const cose = new Map<number, number | Uint8Array>([[1, 2], [3, config.alg], [-1, config.crv], [-2, coordinate(x)], [-3, coordinate(y)]]);
+      const key: ClientSigningKey = { scheme: 'webauthn', publicKey: Buffer.from(isoCBOR.encode(cose)).toString('base64url'),
+        credentialId: Buffer.from('synthetic-' + config.curve + '-' + encoding).toString('base64url'),
+        origins: ['https://identity.example'], rpIds: ['identity.example'] };
+      const message = 'synthetic EC receipt';
+      const clientDataJSON = Buffer.from(JSON.stringify({ type: 'webauthn.get', origin: key.origins![0],
+        challenge: hash(clientSigningMessage(message, key)).toString('base64url'), crossOrigin: false }));
+      const authenticatorData = Buffer.concat([hash('identity.example'), Buffer.from([5, 0, 0, 0, 1])]);
+      const proof: ClientSignature = { schema: 'interego.client-signature/v1', key, message, assertion: {
+        id: key.credentialId!, rawId: key.credentialId!, type: 'public-key', clientExtensionResults: {},
+        response: { clientDataJSON: clientDataJSON.toString('base64url'), authenticatorData: authenticatorData.toString('base64url'),
+          signature: sign(config.hash, Buffer.concat([authenticatorData, hash(clientDataJSON)]), pair.privateKey).toString('base64url') },
+      } };
+      expect((await verifyClientAuthorization(proof, message, [key])).keyId).toBe(originalId);
+    }
+  });
+  it('rejects noncanonical Ed25519 point encodings in direct keys and passkeys', () => {
+    const prime = (1n << 255n) - 19n;
+    for (const encoded of [prime, prime + 1n, 1n | (1n << 255n), (prime - 1n) | (1n << 255n)]) {
+      let value = encoded;
+      const raw = new Uint8Array(32);
+      for (let i = 0; i < raw.length; i++) { raw[i] = Number(value & 255n); value >>= 8n; }
+      const direct: ClientSigningKey = { scheme: 'ed25519', publicKeyMultibase: base58btc.encode(new Uint8Array([0xed, 1, ...raw])) };
+      const cose = new Map<number, number | Uint8Array>([[1, 1], [3, -8], [-1, 6], [-2, raw]]);
+      const wrapped: ClientSigningKey = { scheme: 'webauthn', publicKey: Buffer.from(isoCBOR.encode(cose)).toString('base64url') };
+      expect(() => clientKeyId(direct)).toThrow('noncanonical');
+      expect(() => clientKeyId(wrapped)).toThrow('noncanonical');
+    }
+  });
   it('counts one RSA key across unsigned-integer encodings and verifies its assertions', async () => {
     const pair = generateKeyPairSync('rsa', { modulusLength: 2048 });
     const jwk = pair.publicKey.export({ format: 'jwk' });
