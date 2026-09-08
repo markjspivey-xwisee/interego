@@ -29,11 +29,22 @@ export interface ResourceReads {
   discoverGraph(podUrl: string, graphIri: string): Promise<readonly ResourceEntry[]>;
   descriptor(url: string): Promise<ResourceDescriptor>;
 }
+export interface ResourceSigningKey {
+  readonly scheme: 'eip191' | 'ed25519' | 'webauthn';
+  readonly address?: string;
+  readonly publicKeyMultibase?: string;
+  readonly publicKey?: string;
+  readonly credentialId?: string;
+  readonly origins?: readonly string[];
+  readonly rpIds?: readonly string[];
+}
 export interface ResourceContext {
   readonly reads: ResourceReads;
   readonly principal: string;
   readonly identityUrl: string;
   readonly now: string;
+  /** Public verification material for the authenticated caller, never a signing oracle. */
+  readonly signingKeys?: () => Promise<readonly ResourceSigningKey[]>;
 }
 export interface ResourceWriteContext extends ResourceContext {
   /** Session-bound, signed, synchronous CAS publication through the existing substrate gates. */
@@ -97,7 +108,8 @@ export class ResourceCompositions {
 }
 
 function readContext(context: ResourceContext): ResourceContext {
-  return Object.freeze({ reads: context.reads, principal: context.principal, identityUrl: context.identityUrl, now: context.now });
+  return Object.freeze({ reads: context.reads, principal: context.principal, identityUrl: context.identityUrl, now: context.now,
+    ...(context.signingKeys ? { signingKeys: context.signingKeys } : {}) });
 }
 
 /** Preserve the generic affordance follower's existing transport result schema. */

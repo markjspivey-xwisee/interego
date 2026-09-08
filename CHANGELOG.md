@@ -34,6 +34,12 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
 
 <!-- documented-through: 2037e1a -->
 
+### 2026-09-08 — Client signatures for declared actions
+
+- A signed application contract MAY require a registered client credential to sign the exact action receipt. The executor MUST verify that proof before publication and MUST retain it for cryptographic replay. A relay attestation or a caller-supplied verification flag MUST NOT satisfy the requirement.
+- Wallet, Ed25519 agent, and WebAuthn signatures bind the actor, action, predecessor, contract, inputs and evidence. Public-key fingerprints are available to domain guards so two credential labels over one key cannot satisfy a distinct-key quorum.
+- The browser signing page and process signer keep private keys with their holders. Descriptor authorship responses distinguish current relay attestations from keys whose custody is unclassified.
+
 ### 2026-09-08 — Relay adapters preserve binary bodies
 
 - Both production relay HTTP wrappers MUST carry the response's binary body reader through to the shared kernel reader. A real HTTP integration check follows a redirect and an advertised download through these exact adapters, then compares decoded bytes.

@@ -178,6 +178,7 @@ COPY deploy/mcp-relay/client-check.ts ./
 COPY deploy/mcp-relay/hmd-resource.ts ./
 COPY deploy/mcp-relay/session-actor.ts ./
 COPY deploy/mcp-relay/resource-compositions.ts ./
+COPY deploy/mcp-relay/client-signing-keys.ts ./
 COPY deploy/mcp-relay/hmd-app-logic.ts ./
 COPY deploy/mcp-relay/tool-surface.ts ./
 COPY deploy/mcp-relay/pgsl-node-store.ts ./
@@ -229,6 +230,8 @@ COPY --from=build /app/dist ./dist
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/package.json ./
 COPY --from=build /relay-docs ./relay-docs
+COPY docs/client-sign.html ./client-sign.html
+ENV INTEREGO_CLIENT_SIGN_PAGE=/app/client-sign.html
 
 EXPOSE 8080
 

@@ -246,6 +246,7 @@ import { HMD_WIDGET_URI, readHmdWidgetResource } from './hmd-resource.js';
 import { CLIENT_CHECK_HTML, CLIENT_CHECK_CSP } from './client-check.js';
 import { canonicalSessionActorId } from './session-actor.js';
 import { loadResourceCompositions, resourceActionResponse, resourceInvocation, type ResourceContext, type ResourceDescriptor, type ResourceEntry, type ResourceReads, type ResourceWriteContext } from './resource-compositions.js';
+import { readClientSigningKeys } from './client-signing-keys.js';
 const resourceCompositions = await loadResourceCompositions(process.env.INTEREGO_RESOURCE_COMPOSITIONS);
 import {
   buildToolSurface,
@@ -3971,6 +3972,8 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
                 signer: authorshipProof.issuer,
                 verificationMethod: authorshipProof.verificationMethod,
                 signerAddress: authorshipProof.signerAddress,
+                signatureAuthority: 'relay',
+                signingNote: 'The relay signed this authorship attestation. It is not a signature made by the caller\'s own credential.',
                 created: authorshipProof.created,
                 scheme: authorshipProof.scheme,
                 // Present iff the proof covers the payload's triples. Reported explicitly
@@ -4664,6 +4667,8 @@ async function handleGetDescriptor(args: ToolArgs, project = true): Promise<stri
   // bad authorship proof — that's the caller's policy decision.
   let authorship: {
     authorshipVerified: boolean;
+    signatureAuthority?: 'relay' | 'unclassified';
+    signingNote?: string;
     signedBy?: IRI;
     verificationMethod?: IRI;
     effectiveTrustLevel?: 'CryptographicallyVerified' | 'SelfAsserted';
@@ -4829,6 +4834,14 @@ async function handleGetDescriptor(args: ToolArgs, project = true): Promise<stri
         descriptorBinding,
       };
     }
+  }
+
+  if (authorship) {
+    const relayAddress = (await ensureRelayComplianceWallet()).wallet.address.toLowerCase();
+    authorship.signatureAuthority = authorship.verificationMethod?.toLowerCase() === `did:ethr:${relayAddress}` ? 'relay' : 'unclassified';
+    authorship.signingNote = authorship.signatureAuthority === 'relay'
+      ? 'The relay signed this attestation about the authenticated caller. A separate client signature must be verified to establish authorization by the caller\'s own key.'
+      : 'This key has not been classified as client-held or relay-held. Signature validity alone does not establish key custody.';
   }
 
   // Inline HyperMarkdown projection — mirrors publish_context's `rendered`
@@ -5006,7 +5019,13 @@ function resourceReads(args: ToolArgs): ResourceReads {
 
 function resourceContext(args: ToolArgs): ResourceContext {
   const principal = canonicalSessionActorId(callerAgentId(args), IDENTITY_URL) ?? '';
-  return { reads: resourceReads(args), principal, identityUrl: IDENTITY_URL, now: new Date().toISOString() };
+  return { reads: resourceReads(args), principal, identityUrl: IDENTITY_URL, now: new Date().toISOString(),
+    signingKeys: async () => readClientSigningKeys({
+      identityUrl: IDENTITY_URL, identityToken: String(args._identity_token ?? ''),
+      userId: String(args._session_user_id ?? ''),
+      relayAddress: (await ensureRelayComplianceWallet()).wallet.address, fetch,
+    }),
+  };
 }
 
 function resourceWriteContext(args: ToolArgs): ResourceWriteContext {
@@ -8921,6 +8940,8 @@ async function handleSignRequest(args: ToolArgs): Promise<string> {
       _signature: signature,
       _signed_payload: signedPayload,
       signed_as: agentId,
+      signatureAuthority: 'relay',
+      signingNote: 'This is a relay-mediated signature, not an independently held client key. It cannot satisfy a client-signature requirement.',
       anchor: `did:ethr:${signerAddress}`,
       /**
        * ── ★★ THE HINT NAMED AN IDENTIFIER THAT NO LONGER EXISTS ──────────────────
@@ -11182,9 +11203,11 @@ const GET_DESCRIPTOR_OUTPUT = mcpOutputSchema({
     },
     authorship: {
       type: 'object',
-      description: 'When the descriptor embeds a iep:authorshipProof, the relay automatically re-derives the canonical authorship payload and runs the delegation verifier from the descriptor turtle alone. authorshipVerified=true means BOTH that the signature matched and that the proof names the record it was served with (descriptorBinding.bound) — a proof lifted onto another record now answers false with the binding diagnostic as its reason, because the signature alone verifies wherever the block is pasted. When BOTH the authorship proof and the delegation chain verify, effectiveTrustLevel becomes CryptographicallyVerified even if the descriptor body shipped SelfAsserted. ★ authorshipVerified alone says WHO SIGNED A DESCRIPTOR — read contentBinding to learn whether the signature also covers the graph served with it; the two are separate questions and a proof can verify while covering nothing.',
+      description: 'When the descriptor embeds a iep:authorshipProof, the relay automatically re-derives the canonical authorship payload and runs the delegation verifier from the descriptor turtle alone. authorshipVerified=true means BOTH that the signature matched and that the proof names the record it was served with (descriptorBinding.bound) — a proof lifted onto another record now answers false with the binding diagnostic as its reason, because the signature alone verifies wherever the block is pasted. When BOTH the authorship proof and the delegation chain verify, effectiveTrustLevel becomes CryptographicallyVerified even if the descriptor body shipped SelfAsserted. ★ authorshipVerified alone verifies the descriptor attestation; signatureAuthority describes whether the current relay key made it — read contentBinding to learn whether the signature also covers the graph served with it; the two are separate questions and a proof can verify while covering nothing.',
       properties: {
         authorshipVerified: { type: 'boolean' },
+        signatureAuthority: { type: 'string', enum: ['relay', 'unclassified'], description: 'Whether this descriptor proof uses the current relay key. It never establishes independent client authorization.' },
+        signingNote: { type: 'string' },
         signedBy: { type: 'string', description: 'Agent IRI claimed in the proof' },
         verificationMethod: { type: 'string', description: 'did:ethr:<addr> or other key-resolution IRI' },
         effectiveTrustLevel: { type: 'string', enum: ['CryptographicallyVerified', 'SelfAsserted'] },
@@ -11665,7 +11688,7 @@ const TOOL_SCHEMAS = [
         },
         sign_authorship: {
           type: 'boolean',
-          description: 'When true, embed an agent-level iep:authorshipProof block in the descriptor turtle. The proof signs a canonical payload of (agentId, ownerWebId, descriptorId, created, agentDid?) with the agent\'s delegation key (same ECDSA key the signed delegation VC chain uses). Verifiable from the descriptor ALONE: the verificationMethod (did:ethr:<addr>) lets a reader recover the public key without trusting pod storage. On dereference (get_descriptor), the relay automatically runs the verifier and returns { authorshipVerified, signedBy, verificationMethod, effectiveTrustLevel }. When BOTH the authorship proof AND the delegation chain verify, the EFFECTIVE trustLevel is CryptographicallyVerified even when the descriptor body ships TrustFacet.trustLevel = SelfAsserted. Default false to preserve SelfAsserted neutrality. Independent of `compliance` (the trust-facet operator-grade iep:proof block) — the two stack: a publish can carry both, neither, or either.',
+          description: 'When true, embed an agent-level iep:authorshipProof block in the descriptor turtle. The proof signs a canonical payload of (agentId, ownerWebId, descriptorId, created, agentDid?) with the relay\'s shared delegation key. This is a relay attestation about the authenticated caller, not a signature made by the caller\'s own credential. Verifiable from the descriptor ALONE: the verificationMethod (did:ethr:<addr>) lets a reader recover the public key without trusting pod storage. On dereference (get_descriptor), the relay automatically runs the verifier and returns { authorshipVerified, signedBy, verificationMethod, effectiveTrustLevel }. When BOTH the authorship proof AND the delegation chain verify, the EFFECTIVE trustLevel is CryptographicallyVerified even when the descriptor body ships TrustFacet.trustLevel = SelfAsserted. Default false to preserve SelfAsserted neutrality. Independent of `compliance` (the trust-facet operator-grade iep:proof block) — the two stack: a publish can carry both, neither, or either.',
         },
         agent_did: {
           type: 'string',
@@ -16081,6 +16104,13 @@ app.get('/x402/price/:podName', (req, res) => {
 });
 
 // List tools
+app.get('/sign-action', (_req, res) => {
+  res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.type('html').send(readFileSync(process.env.INTEREGO_CLIENT_SIGN_PAGE ?? new URL('../../docs/client-sign.html', import.meta.url), 'utf8'));
+});
+
 app.get('/client-check', (_req, res) => {
   res.setHeader('Content-Security-Policy', CLIENT_CHECK_CSP);
   res.setHeader('Cache-Control', 'no-store');

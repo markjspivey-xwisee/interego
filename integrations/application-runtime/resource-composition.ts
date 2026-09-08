@@ -6,9 +6,11 @@ import type {
 import {
   descriptorActionIsExecutable, parseSignedJsonDocument, prepareApplicationAction,
   resolveApplicationActionEvidence, resolveApplicationLab,
+  applicationActionReceipt, canonicalJson,
   type ApplicationLabReads, type ResolvedApplicationLab,
 } from './application-lab-runtime.js';
 import { previewApplicationAction } from './application-preview.js';
+import { clientKeyId, verifyClientAuthorization, type ClientSignature, type VerifiedClientAuthorization } from './client-authorization.js';
 
 const PREFIX = 'urn:interego:application-view:v1:';
 const REFRESH = 'urn:interego:application-view:refresh';
@@ -126,12 +128,22 @@ function view(resolved: ResolvedApplicationLab, context: ResourceContext): Resou
     }));
     for (const mode of ['preview', 'execute'] as const) controls.push({
       action: action.actionIri, label: (mode === 'preview' ? 'Preview: ' : 'Submit: ') + (action.label ?? action.actionIri),
-      method: mode === 'preview' ? 'GET' : 'POST', fields, executable,
+      method: mode === 'preview' ? 'GET' : 'POST',
+      fields: mode === 'execute' && action.clientSignature ? [...fields, {
+        path: 'client_proof', key: 'client_proof', name: 'Client signature JSON from the signing page or your agent signer', minCount: 1,
+        datatype: 'http://www.w3.org/2001/XMLSchema#string',
+      }] : fields, executable,
       descriptorUrl: reference({ ...ref, mode, action: action.actionIri }),
       source: resolved.activeContractDescriptor.url,
-      whenToUse: mode === 'preview' ? 'Verify and simulate the declared action without publishing.' : action.description ?? 'Submit the declared action after reviewing its inputs.',
+      whenToUse: mode === 'preview' ? 'Verify and simulate the declared action without publishing. Actions requiring a client signature return a signing request.' : action.description ?? 'Submit the declared action after reviewing its inputs.',
     });
   }
+  if (resolved.activeContract.actions.some(action => action.clientSignature)) parts.push(
+    '## Client signatures',
+    'Preview the action to get the exact receipt and a signing link. Sign with your registered wallet, passkey, or agent key, then submit the returned signature JSON. The private key stays with its holder. Relay attestation alone does not satisfy these actions.',
+    table(['Transition', 'Authorization', 'Signing key'], resolved.replay.links.filter(link => link.index > 0)
+      .map(link => [link.version, link.authorizationBasis, link.clientKeyId ?? 'Relay key'])),
+  );
   const body = parts.join('\n\n');
   // Each action is a separate derived resource, so the HMD source links to its own
   // authority context. The chat adapter receives the corresponding inline controls.
@@ -170,17 +182,53 @@ const composition: ResourceComposition = {
       return view(await resolveApplicationLab(input(ref, context), reads(context)), context);
     }
     if (!actor(context)) throw new Error('authenticated actor is required');
+    const wirePayload = { ...payload as Record<string, unknown> };
+    const rawProof = wirePayload['client_proof'];
+    delete wirePayload['client_proof'];
     const request = {
       catalog_descriptor_url: ref.catalog, catalog_graph_iri: ref.graph, application_id: ref.application,
-      action_iri: action, expected_head: ref.head, expected_contract_digest: ref.contract, payload,
+      action_iri: action, expected_head: ref.head, expected_contract_digest: ref.contract, payload: wirePayload,
     };
-    if (ref.mode === 'preview') return previewApplicationAction(request, { actor: actor(context), now: context.now }, reads(context));
+    if (ref.mode === 'preview') {
+      const preview = await previewApplicationAction(request, { actor: actor(context), now: context.now }, reads(context));
+      const resolved = await resolveApplicationLab(input(ref, context), reads(context));
+      const declared = resolved.activeContract.actions.find(value => value.actionIri === action);
+      if (!declared?.clientSignature) return preview;
+      if (resolved.activeContractEnvelope.declaredDigest !== ref.contract) throw new Error('stale application contract; refresh before signing');
+      const evidence = await resolveApplicationActionEvidence(resolved, { actionIri: action, payload: wirePayload }, reads(context));
+      const draft = applicationActionReceipt(resolved, { actionIri: action, payload: wirePayload, actor: actor(context), now: context.now, expectedHead: ref.head, evidence });
+      if (!context.signingKeys) throw new Error('this transport cannot resolve registered client signing keys');
+      const keys = (await context.signingKeys()).map(key => ({ keyId: clientKeyId(key), key }));
+      const signingRequest = { schema: 'interego.client-signing-request/v1', message: canonicalJson(draft.receipt), keys,
+        expiresAt: new Date(Date.parse(context.now) + 10 * 60_000).toISOString() };
+      const origins = new Set([new URL(context.identityUrl).origin, ...keys.flatMap(value => value.key.origins ?? [])]);
+      const fragment = Buffer.from(JSON.stringify(signingRequest)).toString('base64url');
+      return { ...preview, signingRequest,
+        signingUrls: [...origins].map(origin => `${origin}/sign-action#${fragment}`),
+        message: 'Client signature required. Open the signing page on the origin where you registered your credential, review the receipt, sign locally, and submit the returned JSON as client_proof.',
+      };
+    }
     if (!('publish' in context)) throw new Error('write capability is required');
     const write = context as ResourceWriteContext;
     const resolved = await resolveApplicationLab(input(ref, context), reads(context));
     if (resolved.activeContractEnvelope.declaredDigest !== ref.contract) throw new Error('stale application contract; refresh before submitting');
     if (resolved.stateHead.cid !== ref.head) throw new Error('stale application head; refresh before submitting');
-    const evidence = await resolveApplicationActionEvidence(resolved, { actionIri: action, payload: payload as Record<string, unknown> }, reads(context));
+    const evidence = await resolveApplicationActionEvidence(resolved, { actionIri: action, payload: wirePayload }, reads(context));
+    const declared = resolved.activeContract.actions.find(value => value.actionIri === action);
+    if (rawProof !== undefined && declared?.clientSignature !== true) throw new Error('this action does not declare client signature input');
+    let authorization: VerifiedClientAuthorization | undefined;
+    let actionTime = context.now;
+    if (declared?.clientSignature || rawProof !== undefined) {
+      if (!rawProof) throw new Error('client signature is required; preview the action to obtain its signing request');
+      const proof = (typeof rawProof === 'string' ? JSON.parse(rawProof) : rawProof) as ClientSignature;
+      const signedReceipt = JSON.parse(proof.message) as Record<string, unknown>;
+      actionTime = typeof signedReceipt['at'] === 'string' ? signedReceipt['at'] : '';
+      const age = Date.parse(context.now) - Date.parse(actionTime);
+      if (!Number.isFinite(age) || age < -30_000 || age > 10 * 60_000) throw new Error('client signature expired or has an invalid time; preview and sign again');
+      if (!context.signingKeys) throw new Error('registered client signing keys are unavailable');
+      const draft = applicationActionReceipt(resolved, { actionIri: action, payload: wirePayload, actor: actor(context), now: actionTime, expectedHead: ref.head, evidence });
+      authorization = await verifyClientAuthorization(proof, canonicalJson(draft.receipt), await context.signingKeys());
+    }
     const authority = await resolveApplicationLab(input(ref, context), reads(context));
     if (!authority.catalogCurrent || !authority.replay.complete
       || authority.stateHead.cid !== ref.head
@@ -190,7 +238,7 @@ const composition: ResourceComposition = {
       throw new Error('application authority changed before submission; refresh and retry');
     }
     const prepared = prepareApplicationAction(authority, {
-      actionIri: action, payload: payload as Record<string, unknown>, actor: actor(context), now: context.now, expectedHead: ref.head, evidence,
+      actionIri: action, payload: wirePayload, actor: actor(context), now: actionTime, expectedHead: ref.head, evidence, authorization,
     });
     const published = await write.publish({ podUrl: resolved.podUrl, graphIri: resolved.definition.stateGraphIri, graphContent: prepared.graphContent, expectedHead: ref.head, actor: actor(context) });
     if (published['error'] || published['published'] === false || published['status'] === 'failed') {

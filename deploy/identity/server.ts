@@ -26,6 +26,7 @@
 
 import express from 'express';
 import * as crypto from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { corsMiddleware } from './cors-allowlist.js';
 import {
   lookupWebFingerIdentity,
@@ -454,6 +455,8 @@ interface AuthMethods {
     transports?: string[];
     label?: string;
     createdAt: string;
+    rpId?: string;
+    rpOrigin?: string;
   }>;
   didKeys: Array<{
     did: string;
@@ -1925,6 +1928,13 @@ app.get(['/', '/try'], (_req, res) => {
 });
 
 // Health check
+app.get('/sign-action', (_req, res) => {
+  res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.type('html').send(readFileSync(process.env.INTEREGO_CLIENT_SIGN_PAGE ?? new URL('../../docs/client-sign.html', import.meta.url), 'utf8'));
+});
+
 app.get('/health', (_req, res) => {
   res.json({
     status: 'ok',
@@ -2484,6 +2494,8 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
     counter: credential.counter,
     transports: (response.response?.transports as string[] | undefined) ?? [],
     createdAt: new Date().toISOString(),
+    rpId: ch.rpId ?? RP_ID,
+    rpOrigin: ch.rpOrigin ?? RP_ORIGIN,
   });
   // Defer the ~2.5s CSS PUT off the hot response path — same shape as
   // /auth/did and /auth/siwe. The credential is added to the in-memory
@@ -3537,6 +3549,7 @@ app.get('/auth-methods/me', authEnrollLimiter, async (req, res) => {
   if (!tr.valid) { res.status(401).json({ error: `Invalid bearer token: ${tr.reason}` }); return; }
   const userId = tr.record!.userId;
   const methods = await readAuthMethods(userId);
+  const forSigning = req.query.purpose === 'client-signature';
   res.json({
     userId,
     name: methods.name,
@@ -3546,13 +3559,17 @@ app.get('/auth-methods/me', authEnrollLimiter, async (req, res) => {
       id: c.id,
       createdAt: c.createdAt,
       transports: c.transports,
-      // NOTE: publicKey + counter intentionally omitted — not useful for
-      // audit and they're stored in the pod anyway.
+      ...(forSigning ? {
+        publicKey: c.publicKey,
+        rpIds: c.rpId ? [c.rpId] : [...new Set([RP_ID, ...[...RP_ALLOWLIST.values()].map(rp => rp.rpId)])],
+        origins: c.rpOrigin ? [c.rpOrigin] : [...new Set([RP_ORIGIN, ...RP_ALLOWLIST.keys()])],
+      } : {}),
     })),
     didKeys: methods.didKeys.map(k => ({
       did: k.did,
       keyType: k.keyType,
       createdAt: k.createdAt,
+      ...(forSigning ? { publicKeyMultibase: k.publicKeyMultibase } : {}),
     })),
   });
 });

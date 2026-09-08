@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sign an Interego action</title>
+<style>body{font:16px system-ui,sans-serif;max-width:850px;margin:40px auto;padding:0 20px;color:#192a3d;background:#f7f9fc}h1{font-size:28px}textarea,select,button{font:inherit;box-sizing:border-box;width:100%;margin:8px 0;padding:12px}textarea{min-height:130px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:white;border:1px solid #c8d2df;padding:18px}button{background:#163b70;color:white;border:0;border-radius:6px;cursor:pointer}button:disabled{opacity:.45}#status{white-space:pre-wrap}label{font-weight:600}small{display:block;color:#526376}</style>
+</head><body>
+<h1>Sign an Interego action</h1>
+<p>Review the complete receipt below. Your wallet or passkey signs these exact action details. Its private key stays on your device. Creating a signature does not submit the action.</p>
+<label for="request">Signing request</label><textarea id="request" spellcheck="false" placeholder="Paste the signingRequest from the action preview"></textarea>
+<button id="load">Review request</button>
+<p id="status" role="status"></p><pre id="receipt">No request loaded.</pre>
+<label for="key">Your registered signing credential</label><select id="key"></select>
+<button id="sign" disabled>Sign this receipt</button>
+<label for="proof">Client signature JSON</label><textarea id="proof" readonly spellcheck="false"></textarea>
+<button id="copy" disabled>Copy signature JSON</button>
+<small>Submit this JSON as client_proof with the original action inputs and control. If the state or contract changed, obtain a new preview and sign again. Never paste a private key here.</small>
+<script>
+'use strict';
+const el = id => document.getElementById(id);
+const encoder = new TextEncoder();
+const decode = value => Uint8Array.from(atob(value.replace(/-/g,'+').replace(/_/g,'/')), c=>c.charCodeAt(0));
+const encode = bytes => btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+const hash = async value => new Uint8Array(await crypto.subtle.digest('SHA-256',encoder.encode(value)));
+let request = null;
+const say = value => { el('status').textContent = value; };
+const resetProof = () => { el('proof').value='';el('copy').disabled=true; };
+el('request').addEventListener('input',()=>{request=null;el('sign').disabled=true;resetProof();});
+el('load').onclick = async () => {
+  try {
+    request=null;el('sign').disabled=true;resetProof();
+    const next=JSON.parse(el('request').value);
+    if(next.schema!=='interego.client-signing-request/v1'||typeof next.message!=='string'||!Array.isArray(next.keys))throw Error('Invalid signing request.');
+    const receipt=JSON.parse(next.message);
+    if(!receipt.actor||!receipt.actionIri||!receipt.contractDigest||!receipt.expectedHead||!receipt.authority)throw Error('The receipt is missing its authority bindings.');
+    const age=Date.now()-Date.parse(receipt.at);
+    if(!Number.isFinite(age)||age < -30000||age > 600000)throw Error('This request expired. Obtain a new preview.');
+    el('receipt').textContent=JSON.stringify(receipt,null,2)+'\n\nReceipt SHA-256: '+Array.from(await hash(next.message),b=>b.toString(16).padStart(2,'0')).join('');
+    el('key').replaceChildren();
+    next.keys.forEach((entry,index)=>{
+      const key=entry.key;
+      if(!key||!['eip191','webauthn'].includes(key.scheme))return;
+      if(key.scheme==='webauthn'&&(!key.origins?.includes(location.origin)||!key.credentialId))return;
+      const option=document.createElement('option');option.value=String(index);option.textContent=(key.scheme==='eip191'?'Wallet: ':'Passkey: ')+entry.keyId;el('key').append(option);
+    });
+    if(!el('key').options.length)throw Error('No wallet or passkey is available on this origin. Use the signing link for your registration origin, or use your agent key in its own runtime.');
+    request=next;el('sign').disabled=false;say('Review the actor, action, state head, contract and receipt before signing.');
+  } catch(error) { say(error.message); }
+};
+el('sign').onclick=async()=>{
+  el('sign').disabled=true;resetProof();
+  try{
+    if(!request)throw Error('Load a signing request first.');
+    const {key,keyId}=request.keys[Number(el('key').value)];
+    const age=Date.now()-Date.parse(JSON.parse(request.message).at);
+    if(!Number.isFinite(age)||age < -30000||age > 600000)throw Error('The request expired. Obtain a new preview.');
+    const message='Interego client authorization v1\nKey: '+keyId+'\n'+request.message;
+    const proof={schema:'interego.client-signature/v1',key,message:request.message};
+    if(key.scheme==='eip191'){
+      if(!window.ethereum)throw Error('Open this page in a wallet browser or use a wallet extension.');
+      const accounts=await window.ethereum.request({method:'eth_requestAccounts'});
+      if(!accounts.some(address=>address.toLowerCase()===key.address.toLowerCase()))throw Error('The connected wallet differs from the registered signing credential.');
+      const bytes=Array.from(encoder.encode(message),b=>b.toString(16).padStart(2,'0')).join('');
+      proof.signature=await window.ethereum.request({method:'personal_sign',params:['0x'+bytes,key.address]});
+    }else{
+      const rpId=key.rpIds.find(rp=>location.hostname===rp||location.hostname.endsWith('.'+rp));
+      if(!rpId)throw Error('This origin cannot use that passkey. Use its other signing link.');
+      const credential=await navigator.credentials.get({publicKey:{challenge:await hash(message),rpId,
+        allowCredentials:[{id:decode(key.credentialId),type:'public-key'}],userVerification:'required',timeout:60000}});
+      if(!credential)throw Error('No passkey signature was returned.');
+      proof.assertion={id:credential.id,rawId:encode(credential.rawId),type:credential.type,
+        response:{authenticatorData:encode(credential.response.authenticatorData),clientDataJSON:encode(credential.response.clientDataJSON),signature:encode(credential.response.signature),userHandle:credential.response.userHandle?encode(credential.response.userHandle):null},
+        clientExtensionResults:credential.getClientExtensionResults()};
+    }
+    el('proof').value=JSON.stringify(proof);el('copy').disabled=false;
+    say('Signature created locally. Submit the JSON through the original action control. Interego will verify the signature and current state before committing.');
+  }catch(error){say(error.message);}finally{el('sign').disabled=!request;}
+};
+el('copy').onclick=async()=>{try{await navigator.clipboard.writeText(el('proof').value);say('Signature JSON copied.');}catch{el('proof').select();say('Select and copy the signature JSON.');}};
+if(location.hash.length>1){try{el('request').value=new TextDecoder().decode(decode(location.hash.slice(1)));history.replaceState(null,'',location.pathname);el('load').click();}catch{say('Could not decode signing request. Paste it above.');}}
+</script></body></html>

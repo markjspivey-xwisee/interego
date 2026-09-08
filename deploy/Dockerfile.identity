@@ -41,6 +41,8 @@ WORKDIR /app
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/package.json ./
+COPY docs/client-sign.html ./client-sign.html
+ENV INTEREGO_CLIENT_SIGN_PAGE=/app/client-sign.html
 
 EXPOSE 8090
 
