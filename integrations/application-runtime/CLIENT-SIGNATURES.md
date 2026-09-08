@@ -49,6 +49,43 @@ authenticated actor and refuses to overwrite an existing output. Submit the
 public proof through the original Interego MCP control. The signer neither
 authenticates a new identity nor reviews or submits an action itself.
 
+## Autonomous tests with two confirmations
+
+Run the hosted test from a built checkout with Node 20 or later:
+
+```sh
+INTEREGO_LIVE_CANARY=1 node --import tsx tools/client-signature-canary.mjs
+```
+
+The runner starts three processes: a submitter and two reviewers. Each creates
+its own ephemeral wallet, authenticates through ordinary SIWE/PKCE, and retains
+its private key and session credential inside that worker. The coordinator
+receives public identities, receipts and signatures. No human passkey prompt,
+connector reconnection, existing account key or reviewer message is needed.
+
+Each worker reads the published fixture through its own MCP session, verifies
+the contract and candidate result, obtains its own current preview, checks the
+receipt's actor and artifact bindings, and invokes the process signer. The
+declarative fixture excludes the submitter, rejects repeated actors and keys,
+and requires two verified confirmations of the same candidate before the
+submitter can finish. The live test exercises the refusals and successful
+completion, then cryptographically verifies retained proofs and the full replay.
+
+This is a repeatable integration test of separately authenticated, separately
+keyed confirmations. The workers run a deterministic test check on the same
+host; this does not establish independent human judgments or isolation from
+the host operator. These fresh identities and the explicitly synthetic fixture
+do not supply approvals for an existing release or impersonate its reviewers.
+
+The `Client signature live check` GitHub workflow runs the same command and
+retains its public JSON report. Locally, the report is written to
+`$RUNNER_TEMP/client-signature-live.json`, or the system temporary directory
+when `RUNNER_TEMP` is unset. It contains no private keys or bearer tokens.
+Worker key files are removed on exit; the synthetic public pod artifacts remain
+available for replay. `EXPECTED_RELAY_BUILD` optionally pins an exact deployed
+relay commit. Extend `tools/client-signature-fixture.mjs` and the worker's
+candidate checks together when testing another synthetic approval scenario.
+
 ## Contract policy and replay
 
 `clientSignature` is an application-runtime declaration, not an L1 ontology term.

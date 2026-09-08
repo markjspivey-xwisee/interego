@@ -9,17 +9,18 @@ on:
         type: string
         required: false
   push:
-    branches: [fix/client-key-canonicalization]
+    branches: [master, fix/autonomous-client-approvals]
     paths:
       - .github/workflows/client-signature-live.yml
-      - tools/client-signature-canary.mjs
+      - tools/client-signature-*.mjs
+      - tools/sign-application-action.mjs
 
 permissions:
   contents: read
 
 jobs:
   live-client-signatures:
-    name: Two synthetic clients sign through hosted MCP
+    name: Submitter and two reviewer processes complete a synthetic approval test
     runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
