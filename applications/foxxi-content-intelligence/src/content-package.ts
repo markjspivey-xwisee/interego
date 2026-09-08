@@ -165,11 +165,16 @@ const activityId = q.get('activityId') || LESSON.id;
 const registration = q.get('registration') || '';
 let authToken = null;
 let ready = false;
+let submittedScore = null;
+const pendingStatements = new Map(), acknowledged = new Set();
 
 function setStatus(msg, cls){ const s=document.getElementById('status'); s.textContent=msg; s.className='status '+(cls||''); }
 
 async function sendStatement(verb, result){
-  const stmt = {
+  if (acknowledged.has(verb)) return;
+  let stmt = pendingStatements.get(verb);
+  if (!stmt) { stmt = {
+    id: crypto.randomUUID(),
     actor: actor,
     verb: { id: VERB[verb], display: { 'en-US': verb } },
     object: { objectType: 'Activity', id: activityId,
@@ -178,6 +183,7 @@ async function sendStatement(verb, result){
     timestamp: new Date().toISOString(),
   };
   if (result) stmt.result = result;
+  pendingStatements.set(verb, stmt); }
   const r = await fetch(endpoint + 'statements', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Experience-API-Version': '2.0.0',
@@ -185,6 +191,7 @@ async function sendStatement(verb, result){
     body: JSON.stringify(stmt),
   });
   if (!r.ok) throw new Error('LRS ' + r.status + ' on ' + verb);
+  acknowledged.add(verb);
 }
 
 function render(){
@@ -226,8 +233,10 @@ document.getElementById('go').onclick = async () => {
   try {
     if (IS_ASSESSMENT){
       const inputs = [...document.querySelectorAll('.answer')];
-      const correct = inputs.filter(i => i.value.trim().toLowerCase() === (i.dataset.answer||'').toLowerCase()).length;
-      const scaled = inputs.length ? correct / inputs.length : 1;
+      const normalize = value => String(value).toLowerCase().replace(/[^a-z0-9 ]/g,'').replace(/\\s+/g,' ').trim();
+      const correct = inputs.filter(i => { const answer=normalize(i.value), expected=normalize(i.dataset.answer||''); return answer.length>0 && [answer,...answer.split(' ').filter(token=>token.length>=4)].includes(expected); }).length;
+      if (submittedScore === null) submittedScore = inputs.length ? correct / inputs.length : 0;
+      const scaled = submittedScore;
       const passed = scaled >= 0.6;
       await sendStatement(passed ? 'passed' : 'failed', { score: { scaled: scaled }, success: passed, completion: true });
       await sendStatement('completed', { completion: true });
@@ -235,7 +244,6 @@ document.getElementById('go').onclick = async () => {
       setStatus('Assessment submitted — scored ' + Math.round(scaled*100) + '% (' + (passed?'passed':'failed') + '). Statements sent to the LRS.', passed?'ok':'err');
     } else {
       await sendStatement('completed', { completion: true });
-      await sendStatement('passed', { score: { scaled: 1 }, success: true, completion: true });
       await sendStatement('terminated');
       setStatus('Lesson completed — cmi5 statements sent to the LRS.', 'ok');
     }

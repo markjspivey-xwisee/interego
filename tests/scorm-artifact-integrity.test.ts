@@ -68,6 +68,18 @@ describe('the emitted SCORM artifact, executed against the shipped RTE', () => {
     expect(sco.dom.window.document.querySelector('#status')!.textContent).toContain('Could not finish recording');
     expect(sco.dom.window.document.querySelector('#status')!.textContent).not.toContain('Recorded:');
   });
+  it('records completion without inventing a score or passed outcome for an unassessed SCO', async () => {
+    const unassessed = { ...course, scos: [{ id: 'reading', title: 'Reading', body: 'Read this guidance.' }] };
+    const sco = runSco(scormScoHtml(unassessed, unassessed.scos[0]!));
+    await sco.submit([]);
+    expect(sco.committed).toEqual([{ 'cmi.score.scaled': '', 'cmi.success_status': 'unknown', 'cmi.completion_status': 'completed' }]);
+    expect(sco.dom.window.document.querySelector('#status')!.textContent).toBe('Recorded: completed. No assessment score.');
+  });
+  it('matches the native player normalization and salient-token answer rule', async () => {
+    const sco = runSco(scormScoHtml(course, course.scos[0]!));
+    await sco.submit(['The answer is ALPHA!', '  BETA.  ']);
+    expect(sco.committed[0]!['cmi.score.scaled']).toBe('1');
+  });
   it.each(['Initialize', 'no-api'] as const)('cannot submit in %s mode', failure => {
     const sco = runSco(scormScoHtml(course, course.scos[0]!), failure);
     expect((sco.dom.window.document.querySelector('button') as HTMLButtonElement).disabled).toBe(true);
@@ -182,6 +194,62 @@ describe('publication survives cache loss and refuses storage failures', () => {
 });
 
 describe('cmi5 artifacts honor launch and scoring conditions', () => {
+  it('retries an interrupted submission without duplicating or changing its outcome', async () => {
+    const statements: Array<{ id: string; verb: { id: string }; result?: { score?: { scaled: number } } }> = [];
+    let refused = false;
+    const html = generateAuHtml('Course', { id: 'retry', title: 'Retry', competency: 'Check', fragments: [{ modality: 'assessment-item', level: 'test', body: 'Marker? ::: alpha' }] });
+    const dom = new JSDOM(html, { runScripts: 'dangerously', url: 'https://foxxi.example/au?fetch=https://foxxi.example/token&endpoint=https://lrs.example/&activityId=https://course.example/retry', beforeParse(w) {
+      Object.defineProperty(w, 'fetch', { value: async (url: string, init?: RequestInit) => {
+        if (String(url).includes('/token')) return { ok: true, json: async () => ({ 'auth-token': 'test-token' }) };
+        const statement = JSON.parse(String(init?.body)); statements.push(statement);
+        if (statement.verb.id.endsWith('/completed') && !refused) { refused = true; return { ok: false, status: 503 }; }
+        return { ok: true, status: 204 };
+      } });
+    } }); windows.push(dom);
+    const button = dom.window.document.querySelector('button') as HTMLButtonElement;
+    await expect.poll(() => button.disabled).toBe(false);
+    const input = dom.window.document.querySelector('input') as HTMLInputElement; input.value = 'alpha'; button.click();
+    await expect.poll(() => dom.window.document.querySelector('#status')!.textContent).toContain('Could not record completion');
+    input.value = 'wrong'; button.click();
+    await expect.poll(() => dom.window.document.querySelector('#status')!.textContent).toContain('scored 100% (passed)');
+    expect(statements.filter(s => s.verb.id.endsWith('/passed'))).toHaveLength(1);
+    expect(statements.filter(s => s.verb.id.endsWith('/failed'))).toHaveLength(0);
+    const completions = statements.filter(s => s.verb.id.endsWith('/completed'));
+    expect(completions).toHaveLength(2); expect(completions[0]).toEqual(completions[1]);
+    expect(completions[0]!.id).toMatch(/^[0-9a-f-]{36}$/);
+  });
+  it.each([['wrong', 0, 'failed'], ['The answer is ALPHA!', 1, 'passed']] as const)('grades %s using the native answer rule', async (answer, score, outcome) => {
+    const statements: Array<{ verb: { id: string }; result?: { score?: { scaled: number }; success?: boolean } }> = [];
+    const html = generateAuHtml('Course', { id: 'assessment', title: 'Assessment', competency: 'Check', fragments: [{ modality: 'assessment-item', level: 'test', body: 'Marker? ::: alpha' }] });
+    const dom = new JSDOM(html, { runScripts: 'dangerously', url: 'https://foxxi.example/au?fetch=https://foxxi.example/token&endpoint=https://lrs.example/&activityId=https://course.example/assessment', beforeParse(w) {
+      Object.defineProperty(w, 'fetch', { value: async (url: string, init?: RequestInit) => {
+        if (String(url).includes('/token')) return { ok: true, json: async () => ({ 'auth-token': 'test-token' }) };
+        statements.push(JSON.parse(String(init?.body))); return { ok: true, status: 204 };
+      } });
+    } }); windows.push(dom);
+    const button = dom.window.document.querySelector('button') as HTMLButtonElement;
+    await expect.poll(() => button.disabled).toBe(false);
+    (dom.window.document.querySelector('input') as HTMLInputElement).value = answer; button.click();
+    await expect.poll(() => dom.window.document.querySelector('#status')!.textContent).toContain('Assessment submitted');
+    const graded = statements.find(s => s.verb.id.endsWith('/' + outcome))!;
+    expect(graded.result?.score?.scaled).toBe(score); expect(graded.result?.success).toBe(outcome === 'passed');
+  });
+  it('records an unassessed lesson as completed without emitting a pass or perfect score', async () => {
+    const statements: Array<{ verb: { id: string }; result?: Record<string, unknown> }> = [];
+    const html = generateAuHtml('Course', { id: 'reading', title: 'Reading', competency: 'Check', fragments: [{ modality: 'text', level: 'test', body: 'Read.' }] });
+    const dom = new JSDOM(html, { runScripts: 'dangerously', url: 'https://foxxi.example/au?fetch=https://foxxi.example/token&endpoint=https://lrs.example/&activityId=https://course.example/reading&registration=reg&actor=%7B%22objectType%22%3A%22Agent%22%2C%22mbox%22%3A%22mailto%3Atest%40example.com%22%7D', beforeParse(w) {
+      Object.defineProperty(w, 'fetch', { value: async (url: string, init?: RequestInit) => {
+        if (String(url).includes('/token')) return { ok: true, json: async () => ({ 'auth-token': 'test-token' }) };
+        statements.push(JSON.parse(String(init?.body))); return { ok: true, status: 204 };
+      } });
+    } }); windows.push(dom);
+    const button = dom.window.document.querySelector('button') as HTMLButtonElement;
+    await expect.poll(() => button.disabled).toBe(false); button.click();
+    await expect.poll(() => dom.window.document.querySelector('#status')!.textContent).toContain('Lesson completed');
+    expect(statements.map(s => s.verb.id.split('/').pop())).toEqual(['initialized', 'completed', 'terminated']);
+    expect(statements.find(s => s.verb.id.endsWith('/completed'))!.result).toEqual({ completion: true });
+    expect(statements.every(s => !s.result?.score && s.result?.success === undefined)).toBe(true);
+  });
   it('declares the same mastery threshold that its runnable assessment uses', () => {
     const xml = generateCmi5Xml(composedCourse, () => 'https://foxxi.example/au');
     expect(xml).toContain('masteryScore="0.6"');
