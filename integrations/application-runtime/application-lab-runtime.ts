@@ -15,6 +15,10 @@
 
 import { createHash } from 'node:crypto';
 import { turtleIriRef } from '@interego/core';
+import {
+  requireVerifiedClientAuthorization, verifyClientAuthorization,
+  type VerifiedClientAuthorization,
+} from './client-authorization.js';
 
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 
@@ -142,6 +146,8 @@ export interface ApplicationAction {
   readonly effects?: readonly Record<string, Json>[];
   readonly inputs?: readonly ApplicationActionInput[];
   readonly evidence?: readonly ApplicationEvidenceRequirement[];
+  /** Require a signature made by a registered client credential over the exact receipt. */
+  readonly clientSignature?: boolean;
 }
 
 export interface ApplicationContract {
@@ -202,6 +208,8 @@ export interface ReplayLink {
   readonly effectVerified: boolean;
   readonly evidenceVerified: boolean;
   readonly evidenceCount: number;
+  readonly authorizationBasis: 'client-signature' | 'relay-attestation' | 'genesis';
+  readonly clientKeyId?: string;
   readonly verified: boolean;
   readonly errors: readonly string[];
 }
@@ -670,7 +678,9 @@ function asContract(doc: Record<string, Json>): ApplicationContract {
   if (typeof doc['applicationId'] !== 'string' || !Array.isArray(doc['actions'])) throw new Error('contract lacks applicationId/actions');
   for (const a of doc['actions']) {
     if (!isRecord(a) || typeof a['actionIri'] !== 'string') throw new Error('contract has a malformed action');
+    if (a['clientSignature'] !== undefined && typeof a['clientSignature'] !== 'boolean') throw new Error('clientSignature must be a boolean');
     const inputs = Array.isArray(a['inputs']) ? a['inputs'].filter(isRecord) : [];
+    if (inputs.some(value => value['name'] === 'client_proof')) throw new Error('client_proof is reserved for verified authorization');
     const requirements = a['evidence'];
     if (requirements !== undefined && !Array.isArray(requirements)) throw new Error('contract action evidence must be an array');
     const evidenceInputs = new Set<string>();
@@ -768,11 +778,11 @@ function receiptOf(state: ApplicationState): Record<string, Json> | undefined {
   return asRecord(asRecord(state.transition)?.['receipt']);
 }
 
-export function verifyReplay(
+export async function verifyReplay(
   history: readonly { entry: LabManifestEntry; descriptor: LabDescriptor; envelope: SignedJsonEnvelope; state: ApplicationState }[],
   contractsByDigest: ReadonlyMap<string, { descriptor: LabDescriptor; envelope: SignedJsonEnvelope; contract: ApplicationContract }>,
   loadedEvidence: ReadonlyMap<string, LoadedEvidenceArtifact> = new Map(),
-): ReplayReport {
+): Promise<ReplayReport> {
   const sorted = [...history].sort((a, b) => a.state.version - b.state.version || a.entry.descriptorUrl.localeCompare(b.entry.descriptorUrl));
   const links: ReplayLink[] = [];
   const globalErrors: string[] = [];
@@ -796,6 +806,7 @@ export function verifyReplay(
     let at: string | undefined;
     let contractDigest: string | undefined;
     let contractVersion: string | undefined;
+    let clientAuthorization: VerifiedClientAuthorization | undefined;
     if (index === 0) {
       if (item.state.version !== 0) errors.push('genesis version is not 0');
       if (item.state.transition) errors.push('genesis unexpectedly carries a transition');
@@ -833,6 +844,22 @@ export function verifyReplay(
           if (!action) {
             errors.push('receipt action is absent from bound contract');
           } else {
+            const proof = receipt['clientAuthorization'];
+            if (proof !== undefined || action.clientSignature === true) {
+              try {
+                const unsignedReceipt = { ...receipt };
+                delete unsignedReceipt['clientAuthorization'];
+                clientAuthorization = await verifyClientAuthorization(proof, canonicalJson(unsignedReceipt));
+                const authority = asRecord(receipt['authority']);
+                if (authority?.['stateDigest'] !== previous.envelope.declaredDigest
+                  || authority?.['stateDescriptorUrl'] !== previous.entry.descriptorUrl
+                  || receipt['applicationId'] !== item.state.applicationId
+                  || receipt['at'] !== transition['at'] || receipt['actionIri'] !== transition['actionIri']) {
+                  throw new Error('client signature authority does not match replay predecessor');
+                }
+              } catch (error) { errors.push(`client authorization failed: ${(error as Error).message}`); }
+            }
+            if (clientAuthorization && actor !== item.descriptor.authorship?.signedBy) errors.push('receipt actor does not match authenticated descriptor author');
             const payload = asRecord(receipt['payload']) ?? {};
             const evidenceErrors = validateEvidenceBindings(action, payload, parsedEvidence.records, loadedEvidence);
             evidenceVerified = evidenceErrors.length === 0;
@@ -843,6 +870,7 @@ export function verifyReplay(
               evidence: evidenceEnvironment(parsedEvidence.records),
               actor: actor ?? '',
               now: at ?? '',
+              authorization: clientAuthorization ? { verified: true, keyId: clientAuthorization.keyId, scheme: clientAuthorization.scheme } : { verified: false },
             };
             const guard = evaluateGuard(action.guard, env);
             guardVerified = guard.supported && guard.pass;
@@ -883,6 +911,8 @@ export function verifyReplay(
       effectVerified,
       evidenceVerified,
       evidenceCount,
+      authorizationBasis: index === 0 ? 'genesis' : clientAuthorization ? 'client-signature' : 'relay-attestation',
+      ...(clientAuthorization ? { clientKeyId: clientAuthorization.keyId } : {}),
       verified,
       errors,
     });
@@ -1065,7 +1095,7 @@ export async function resolveApplicationLab(input: ResolveApplicationLabInput, r
       loadedEvidence.set(url, { error: (err as Error).message });
     }
   }));
-  const replay = verifyReplay(historyLoaded, contractsByDigest, loadedEvidence);
+  const replay = await verifyReplay(historyLoaded, contractsByDigest, loadedEvidence);
 
   const genesis = [...historyLoaded].sort((a, b) => a.state.version - b.state.version)[0];
   const genesisRef = artifactRef(catalogEntry, 'genesisState');
@@ -1248,16 +1278,11 @@ export interface PrepareActionInput {
   readonly now: string;
   readonly expectedHead?: string;
   readonly evidence?: readonly VerifiedApplicationEvidence[];
+  readonly authorization?: VerifiedClientAuthorization;
 }
 
-/** Re-resolve first, then prepare the one exact descriptor-bound successor. */
-export function prepareApplicationAction(resolved: ResolvedApplicationLab, input: PrepareActionInput): {
-  readonly action: ApplicationAction;
-  readonly successor: ApplicationState;
-  readonly graphContent: string;
-  readonly receipt: Record<string, Json>;
-  readonly receiptDigest: string;
-} {
+/** The bytes to authorize, derived from verified authority. This cannot publish or approve. */
+export function applicationActionReceipt(resolved: ResolvedApplicationLab, input: PrepareActionInput) {
   if (!resolved.catalogCurrent) throw new Error('selected catalog is not the current authoritative catalog head; refusing mutation');
   if (!resolved.replay.complete) throw new Error('complete replay is not verified; refusing mutation');
   if (input.expectedHead && input.expectedHead !== resolved.stateHead.cid) throw new Error(`stale application head: expected ${input.expectedHead}, observed ${resolved.stateHead.cid}`);
@@ -1275,10 +1300,6 @@ export function prepareApplicationAction(resolved: ResolvedApplicationLab, input
   const receiptEvidence = verifiedEvidence.map(receiptEvidenceRecord);
   const evidenceErrors = validateEvidenceBindings(action, payload, receiptEvidence);
   if (evidenceErrors.length) throw new Error(`verified evidence does not satisfy the signed action declaration: ${evidenceErrors.join('; ')}`);
-  const env = { state: resolved.state.data, payload, evidence: evidenceEnvironment(receiptEvidence), actor: input.actor, now: input.now };
-  const guard = evaluateGuard(action.guard, env);
-  if (!guard.supported || !guard.pass) throw new Error(`signed action guard refused: ${guard.explanation}`);
-  const nextData = applyEffects(resolved.state.data, action.effects ?? [], env);
   const receipt: Record<string, Json> = {
     actionIri: action.actionIri,
     actor: input.actor,
@@ -1292,7 +1313,39 @@ export function prepareApplicationAction(resolved: ResolvedApplicationLab, input
     ...(receiptEvidence.length ? { evidence: receiptEvidence as unknown as Json } : {}),
     stateVersion: resolved.state.version,
     version: 1,
+    ...(action.clientSignature === true || input.authorization ? {
+      authority: {
+        podUrl: resolved.podUrl,
+        catalogDescriptorUrl: resolved.catalogDescriptor.url,
+        catalogDigest: resolved.catalogEnvelope.declaredDigest,
+        definitionDescriptorUrl: resolved.definitionDescriptor.url,
+        definitionDigest: resolved.definitionEnvelope.declaredDigest,
+        stateDescriptorUrl: resolved.stateHead.descriptorUrl,
+        stateDigest: resolved.stateEnvelope.declaredDigest,
+        stateGraphIri: resolved.definition.stateGraphIri,
+      },
+    } : {}),
   };
+  return { action, receipt, payload, receiptEvidence };
+}
+
+/** Re-resolve first, then prepare the one exact descriptor-bound successor. */
+export function prepareApplicationAction(resolved: ResolvedApplicationLab, input: PrepareActionInput): {
+  readonly action: ApplicationAction;
+  readonly successor: ApplicationState;
+  readonly graphContent: string;
+  readonly receipt: Record<string, Json>;
+  readonly receiptDigest: string;
+} {
+  const { action, receipt, payload, receiptEvidence } = applicationActionReceipt(resolved, input);
+  const authorization = action.clientSignature === true || input.authorization
+    ? requireVerifiedClientAuthorization(input.authorization, canonicalJson(receipt)) : undefined;
+  const env = { state: resolved.state.data, payload, evidence: evidenceEnvironment(receiptEvidence), actor: input.actor, now: input.now,
+    authorization: authorization ? { verified: true, keyId: authorization.keyId, scheme: authorization.scheme } : { verified: false } };
+  const guard = evaluateGuard(action.guard, env);
+  if (!guard.supported || !guard.pass) throw new Error(`signed action guard refused: ${guard.explanation}`);
+  const nextData = applyEffects(resolved.state.data, action.effects ?? [], env);
+  if (authorization) receipt['clientAuthorization'] = authorization.proof as unknown as Json;
   const receiptDigest = sha256Hex(canonicalJson(receipt));
   const successor: ApplicationState = {
     applicationId: resolved.state.applicationId,
