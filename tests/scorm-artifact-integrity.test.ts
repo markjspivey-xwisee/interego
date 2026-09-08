@@ -194,6 +194,30 @@ describe('publication survives cache loss and refuses storage failures', () => {
 });
 
 describe('cmi5 artifacts honor launch and scoring conditions', () => {
+  it('retries an interrupted submission without duplicating or changing its outcome', async () => {
+    const statements: Array<{ id: string; verb: { id: string }; result?: { score?: { scaled: number } } }> = [];
+    let refused = false;
+    const html = generateAuHtml('Course', { id: 'retry', title: 'Retry', competency: 'Check', fragments: [{ modality: 'assessment-item', level: 'test', body: 'Marker? ::: alpha' }] });
+    const dom = new JSDOM(html, { runScripts: 'dangerously', url: 'https://foxxi.example/au?fetch=https://foxxi.example/token&endpoint=https://lrs.example/&activityId=https://course.example/retry', beforeParse(w) {
+      Object.defineProperty(w, 'fetch', { value: async (url: string, init?: RequestInit) => {
+        if (String(url).includes('/token')) return { ok: true, json: async () => ({ 'auth-token': 'test-token' }) };
+        const statement = JSON.parse(String(init?.body)); statements.push(statement);
+        if (statement.verb.id.endsWith('/completed') && !refused) { refused = true; return { ok: false, status: 503 }; }
+        return { ok: true, status: 204 };
+      } });
+    } }); windows.push(dom);
+    const button = dom.window.document.querySelector('button') as HTMLButtonElement;
+    await expect.poll(() => button.disabled).toBe(false);
+    const input = dom.window.document.querySelector('input') as HTMLInputElement; input.value = 'alpha'; button.click();
+    await expect.poll(() => dom.window.document.querySelector('#status')!.textContent).toContain('Could not record completion');
+    input.value = 'wrong'; button.click();
+    await expect.poll(() => dom.window.document.querySelector('#status')!.textContent).toContain('scored 100% (passed)');
+    expect(statements.filter(s => s.verb.id.endsWith('/passed'))).toHaveLength(1);
+    expect(statements.filter(s => s.verb.id.endsWith('/failed'))).toHaveLength(0);
+    const completions = statements.filter(s => s.verb.id.endsWith('/completed'));
+    expect(completions).toHaveLength(2); expect(completions[0]).toEqual(completions[1]);
+    expect(completions[0]!.id).toMatch(/^[0-9a-f-]{36}$/);
+  });
   it.each([['wrong', 0, 'failed'], ['The answer is ALPHA!', 1, 'passed']] as const)('grades %s using the native answer rule', async (answer, score, outcome) => {
     const statements: Array<{ verb: { id: string }; result?: { score?: { scaled: number }; success?: boolean } }> = [];
     const html = generateAuHtml('Course', { id: 'assessment', title: 'Assessment', competency: 'Check', fragments: [{ modality: 'assessment-item', level: 'test', body: 'Marker? ::: alpha' }] });
