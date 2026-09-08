@@ -88,7 +88,7 @@ function startWorker(role) {
   });
 }
 const unwrap = wire => {
-  if (typeof wire.body === 'string') return { ...JSON.parse(wire.body), httpStatus: wire.status };
+  if (typeof wire.status === 'number' && typeof wire.body === 'string') return { ...JSON.parse(wire.body), httpStatus: wire.status };
   if (typeof wire.text === 'string' && wire.text.startsWith('Error: ')) return { error: wire.text.slice(7) };
   return wire;
 };
