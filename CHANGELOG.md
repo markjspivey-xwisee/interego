@@ -36,6 +36,7 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
 
 ### 2026-09-08 — Client signatures for declared actions
 
+- The autonomous live test uses one submitter and two reviewer processes, each with its own locally generated credential and authenticated session. Each reviewer checks the published synthetic fixture before signing. Submitter self-approval, incomplete quorum, repeated approval and cross-actor proof reuse MUST be refused without a state write; two verified non-submitter confirmations permit completion and full replay.
 - A signed application contract MAY require a registered client credential to sign the exact action receipt. The executor MUST verify that proof before publication and MUST retain it for cryptographic replay. A relay attestation or a caller-supplied verification flag MUST NOT satisfy the requirement.
 - Wallet, Ed25519 agent, and WebAuthn signatures bind the actor, action, predecessor, contract, inputs and evidence. Public-key fingerprints are available to domain guards so two credential labels over one key cannot satisfy a distinct-key quorum.
 - EC and RSA fingerprints use decoded canonical public keys, so alternate coordinate and integer encodings MUST NOT increase the key count. Direct and WebAuthn Ed25519 keys reject noncanonical point encodings. Normally encoded keys retain their existing fingerprints.
