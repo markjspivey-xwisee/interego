@@ -41,7 +41,12 @@ const waitForSigning = async () => {
   }
   throw new Error('The deployed signing services did not become ready within 30 minutes');
 };
-const unwrap = wire => typeof wire.body === 'string' ? { ...JSON.parse(wire.body), httpStatus: wire.status } : wire;
+const unwrap = wire => {
+  if (typeof wire.body === 'string') return { ...JSON.parse(wire.body), httpStatus: wire.status };
+  // The agent SDK preserves non-JSON MCP error text as a text result.
+  if (typeof wire.text === 'string' && wire.text.startsWith('Error: ')) return { ...wire, error: wire.text.slice(7) };
+  return wire;
+};
 const invoke = async (session, control, payload = {}) => unwrap(await session.call('act', {
   descriptor_url: control.descriptorUrl, action_iri: control.action, payload,
 }));
@@ -69,8 +74,24 @@ try {
     const result = await call(a, 'publish_context', { graph_iri: graphs[kind], graph_content: graph.graphContent,
       visibility: 'public', sign_authorship: true });
     assert.equal(result.published, true);
+    assert.ok(['pending', 'committed'].includes(result.status));
+    if (result.status === 'pending') {
+      // Acceptance precedes the descriptor and manifest commit. Poll only the
+      // read-only status endpoint; never repeat the publication itself.
+      const deadline = Date.now() + 90_000;
+      let status;
+      do {
+        const response = await fetch(relay + '/publish/status?descriptorUrl=' + encodeURIComponent(result.descriptorUrl));
+        assert.ok(response.ok);
+        status = await response.json();
+        assert.ok(['pending', 'committed'].includes(status.kind), JSON.stringify(status));
+        if (status.kind === 'committed') break;
+        await new Promise(done => setTimeout(done, 1000));
+      } while (Date.now() < deadline);
+      assert.equal(status.kind, 'committed', 'Synthetic publication did not commit in time');
+    }
     const current = await call(a, 'get_current_head', { urn: graphs[kind] });
-    assert.equal(current.forked, false);
+    assert.equal(current.forked, false, JSON.stringify({ current, published: result }).slice(0, 3000));
     assert.equal(current.head.descriptorUrl, result.descriptorUrl);
     return { descriptorUrl: result.descriptorUrl, cid: current.head.cid, documentDigest: graph.digest, graphIri: graphs[kind] };
   };
