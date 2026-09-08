@@ -34,6 +34,11 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
 
 <!-- documented-through: 2037e1a -->
 
+### 2026-09-08 — Completion is not an assessment score
+
+- Unassessed exported SCORM and cmi5 lessons MUST record completion without inventing a passed assessment or a perfect score, matching native agent submissions.
+- Exported assessment players MUST apply the native player’s existing answer normalization and salient-token matching rule. Regression checks execute the emitted players and inspect their actual runtime updates and xAPI statements.
+
 ---
 
 ## 2026-09-07 — Artifact contents and completion claims are verifiable

@@ -69,15 +69,15 @@ for(const [i,q] of (SCO.assessment||[]).entries()){const label=document.createEl
 function findAPI(w){for(let n=0;w&&n<12;n++){try{if(w.API_1484_11)return w.API_1484_11;if(w.parent===w)break;w=w.parent;}catch(e){break;}}return null;}
 let API=findAPI(window);if(!API){try{API=findAPI(window.opener);}catch(e){}}
 function call(method,...args){const result=API[method](...args);if(result!=='true')throw new Error(method+' failed (SCORM '+API.GetLastError()+').');}
-let initialized=false, committed=false, terminated=false, lastScore=1;
+let initialized=false, committed=false, terminated=false, lastScore=null;
 try{if(API){call('Initialize','');initialized=true;button.disabled=false;status.textContent='Connected to the learning system.';}else{status.textContent='Preview only. Launch this SCO from a SCORM 2004 learning system to record an attempt.';}}catch(e){status.textContent=e.message;}
 async function digestAnswer(answer){const normalized=String(answer).toLowerCase().replace(/[^a-z0-9 ]/g,'').replace(/\\s+/g,' ').trim();const bytes=new TextEncoder().encode(normalized);const digest=await crypto.subtle.digest('SHA-256',bytes);return Array.from(new Uint8Array(digest)).map(b=>b.toString(16).padStart(2,'0')).join('');}
 document.getElementById('assessment').onsubmit=async function(event){event.preventDefault();if(!initialized||button.disabled)return;button.disabled=true;try{
-  let score=1;
-  if(!committed){const questions=SCO.assessment||[];if(questions.length){let correct=0;for(let i=0;i<questions.length;i++){if(await digestAnswer(document.querySelector('[name="answer-'+i+'"]').value)===questions[i].answerHash)correct++;}score=correct/questions.length;}
-    call('SetValue','cmi.score.scaled',String(score));call('SetValue','cmi.success_status',score>=MASTERY?'passed':'failed');call('SetValue','cmi.completion_status','completed');call('Commit','');committed=true;lastScore=score;
+  let score=null;
+  if(!committed){const questions=SCO.assessment||[];if(questions.length){let correct=0;for(let i=0;i<questions.length;i++){const raw=document.querySelector('[name="answer-'+i+'"]').value;const normalized=String(raw).toLowerCase().replace(/[^a-z0-9 ]/g,'').replace(/\\s+/g,' ').trim();const candidates=normalized?[raw,...normalized.split(' ').filter(token=>token.length>=4)]:[];for(const candidate of candidates){if(await digestAnswer(candidate)===questions[i].answerHash){correct++;break;}}}score=correct/questions.length;}
+    if(score!==null){call('SetValue','cmi.score.scaled',String(score));call('SetValue','cmi.success_status',score>=MASTERY?'passed':'failed');}call('SetValue','cmi.completion_status','completed');call('Commit','');committed=true;lastScore=score;
   }else{score=lastScore;}
-  if(!terminated){call('Terminate','');terminated=true;}if(API.__foxxiFlush)await API.__foxxiFlush();initialized=false;status.textContent='Recorded: '+Math.round(score*100)+'% — '+(score>=MASTERY?'passed':'failed')+'.';
+  if(!terminated){call('Terminate','');terminated=true;}if(API.__foxxiFlush)await API.__foxxiFlush();initialized=false;status.textContent=score===null?'Recorded: completed. No assessment score.':'Recorded: '+Math.round(score*100)+'% — '+(score>=MASTERY?'passed':'failed')+'.';
 }catch(e){status.textContent='Could not finish recording: '+e.message;button.disabled=false;}};
 </script></body></html>`;
 }
