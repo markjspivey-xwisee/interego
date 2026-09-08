@@ -47,7 +47,16 @@ export function clientKeyId(key: ClientSigningKey): string {
   const parameter = (n: number): string | number => {
     const value = cose.get(n);
     if (typeof value === 'number') return value;
-    if (value instanceof Uint8Array) return b64(value);
+    if (value instanceof Uint8Array) {
+      // RSA n/e are unsigned integers. Redundant zero octets do not make a new
+      // public key, even when a COSE/JWK decoder accepts both representations.
+      if (kty === 3) {
+        let first = 0;
+        while (first < value.length - 1 && value[first] === 0) first++;
+        return b64(value.slice(first));
+      }
+      return b64(value);
+    }
     throw new Error('malformed COSE public key');
   };
   const material = kty === 2 ? [kty, parameter(-1), parameter(-2), parameter(-3)]

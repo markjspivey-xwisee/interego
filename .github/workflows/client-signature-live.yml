@@ -1,0 +1,42 @@
+name: Client signature live check
+
+# Explicitly isolated synthetic accounts. No real release or user key is used.
+on:
+  workflow_dispatch:
+    inputs:
+      expected_build:
+        description: Optional exact relay build SHA to require
+        type: string
+        required: false
+  push:
+    branches: [fix/client-key-canonicalization]
+    paths:
+      - .github/workflows/client-signature-live.yml
+      - tools/client-signature-canary.mjs
+
+permissions:
+  contents: read
+
+jobs:
+  live-client-signatures:
+    name: Two synthetic clients sign through hosted MCP
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with: { node-version: '20' }
+      - run: npm ci
+      - run: npm run build
+      - name: Verify registered keys, signatures, CAS and replay on the live services
+        env:
+          INTEREGO_LIVE_CANARY: '1'
+          EXPECTED_RELAY_BUILD: ${{ inputs.expected_build || '' }}
+        run: node --import tsx tools/client-signature-canary.mjs
+      - name: Preserve the public synthetic test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: client-signature-live-result
+          path: ${{ runner.temp }}/client-signature-live.json
+          if-no-files-found: warn

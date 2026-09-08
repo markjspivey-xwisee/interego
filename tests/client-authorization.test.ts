@@ -83,6 +83,32 @@ describe('client-held authorization signatures', () => {
     const changed = new Map([...cose.entries()].reverse()); changed.set(2, Buffer.from('new label'));
     expect(clientKeyId({ ...key, credentialId: 'different-id', publicKey: Buffer.from(isoCBOR.encode(changed)).toString('base64url') })).toBe(clientKeyId(key));
   });
+  it('counts one RSA key across unsigned-integer encodings and verifies its assertions', async () => {
+    const pair = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const jwk = pair.publicKey.export({ format: 'jwk' });
+    const n = Buffer.from(jwk.n!, 'base64url'), e = Buffer.from(jwk.e!, 'base64url');
+    const hash = (value: string | Uint8Array) => createHash('sha256').update(value).digest();
+    const ids: string[] = [];
+    for (const padded of [false, true]) {
+      const cose = new Map<number, number | Uint8Array>([[1, 3], [3, -257],
+        [-1, padded ? Buffer.concat([Buffer.from([0]), n]) : n],
+        [-2, padded ? Buffer.concat([Buffer.from([0, 0]), e]) : e]]);
+      const key: ClientSigningKey = { scheme: 'webauthn', publicKey: Buffer.from(isoCBOR.encode(cose)).toString('base64url'),
+        credentialId: Buffer.from('synthetic-rsa-' + padded).toString('base64url'),
+        origins: ['https://identity.example'], rpIds: ['identity.example'] };
+      const message = 'synthetic RSA receipt';
+      const clientDataJSON = Buffer.from(JSON.stringify({ type: 'webauthn.get', origin: key.origins![0],
+        challenge: hash(clientSigningMessage(message, key)).toString('base64url'), crossOrigin: false }));
+      const authenticatorData = Buffer.concat([hash('identity.example'), Buffer.from([5, 0, 0, 0, 1])]);
+      const proof: ClientSignature = { schema: 'interego.client-signature/v1', key, message, assertion: {
+        id: key.credentialId!, rawId: key.credentialId!, type: 'public-key', clientExtensionResults: {},
+        response: { clientDataJSON: clientDataJSON.toString('base64url'), authenticatorData: authenticatorData.toString('base64url'),
+          signature: sign('sha256', Buffer.concat([authenticatorData, hash(clientDataJSON)]), pair.privateKey).toString('base64url') },
+      } };
+      ids.push((await verifyClientAuthorization(proof, message, [key])).keyId);
+    }
+    expect(ids[0]).toBe(ids[1]);
+  });
   it('reads only the session subject and excludes the relay wallet', async () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify({ userId: 'alice', walletAddresses: [wallet.address, other.address] }))) as unknown as typeof fetch;
     const input = { identityUrl: 'https://identity.example', identityToken: 'fixture-token', userId: 'alice', relayAddress: other.address, fetch: fetcher };
