@@ -393,8 +393,8 @@ export function attachContentDeliveryRoutes(app: Express, config: ContentDeliver
     const recipient = typeof b.recipient === 'string' ? b.recipient : undefined;
 
     // Actually deliver it — a configured webhook send, or the Interego-
-    // native pod-descriptor publish, or an honest recorded-only no-op.
-    let transport: TransportResult = { mode: 'none', sent: false, detail: 'transport not wired on this bridge' };
+    // native pod-descriptor publish, or rendering only when none is configured.
+    let transport: TransportResult = { mode: 'none', sent: false, detail: 'no transport configured on this bridge — rendering only; no delivery occurred' };
     if (config.transport) {
       try {
         transport = await deliverThroughChannel({
