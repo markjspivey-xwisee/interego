@@ -1,7 +1,6 @@
 import { inputRequired, PROTOCOL_VERSION_META_KEY, CLIENT_CAPABILITIES_META_KEY, type Server, type ServerContext, type ClientCapabilities } from '@modelcontextprotocol/server';
+import { resourceActionResponse } from './resource-compositions.js';
 
-const textResult = (value: Record<string, unknown>) => ({ content: [{ type: 'text' as const, text: JSON.stringify(value) }], structuredContent: value,
-  ...(value['status'] === 'failed' ? { isError: true } : {}) });
 const watchers = new WeakMap<Server, Map<string, ReturnType<typeof setTimeout>>>();
 
 async function waitForCompletion(context: ServerContext, status: () => Promise<Record<string, unknown>>) {
@@ -52,9 +51,18 @@ function notifyWhenComplete(server: Server, id: string, expiresAt: string, statu
 export async function clientInteractionMcpResult(
   initial: Record<string, unknown>, server: Server, context: ServerContext,
   lifecycle: { status: () => Promise<Record<string, unknown>>; cancel: () => Promise<Record<string, unknown>> },
+  invocation?: { reference: string; action: string },
 ) {
   const id = String(initial['id']);
   const pending = (value: Record<string, unknown>) => ['pending', 'reviewing', 'submitting'].includes(String(value['status']));
+  const textResult = (value: Record<string, unknown>) => {
+    // The compatibility shim promises an HTTP response. Keep lifecycle state in
+    // its JSON body on EVERY return path, including reconnect and cancellation.
+    const response = invocation ? { ...resourceActionResponse(invocation.reference, invocation.action, value, 'write'),
+      ...(pending(value) ? { status: 202, statusText: 'Accepted' } : {}) } : value;
+    return { content: [{ type: 'text' as const, text: JSON.stringify(response) }], structuredContent: response,
+      ...(value['status'] === 'failed' ? { isError: true } : {}) };
+  };
   if (!pending(initial)) return textResult(initial);
   const envelope = context.mcpReq.envelope as Record<string, unknown> | undefined;
   const modern = typeof envelope?.[PROTOCOL_VERSION_META_KEY] === 'string';

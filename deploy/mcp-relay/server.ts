@@ -246,7 +246,7 @@ import { noteToHyperMarkdown, inlineRenderedForDescriptor, viewerControls, publi
 import { HMD_WIDGET_URI, readHmdWidgetResource } from './hmd-resource.js';
 import { CLIENT_CHECK_HTML, CLIENT_CHECK_CSP } from './client-check.js';
 import { canonicalSessionActorId } from './session-actor.js';
-import { loadResourceCompositions, resourceActionResponse, resourceInvocation, type ResourceContext, type ResourceDescriptor, type ResourceEntry, type ResourceReads, type ResourceWriteContext } from './resource-compositions.js';
+import { INVOKE_AFFORDANCE_OUTPUT, loadResourceCompositions, resourceActionResponse, resourceInvocation, type ResourceContext, type ResourceDescriptor, type ResourceEntry, type ResourceReads, type ResourceWriteContext } from './resource-compositions.js';
 import { readClientSigningKeys } from './client-signing-keys.js';
 import { ClientInteractions, encryptedInteractionStore, clientInteractionComposition, type InteractionRecord, type InteractionOwner } from './client-interactions.js';
 const resourceCompositions = await loadResourceCompositions(process.env.INTEREGO_RESOURCE_COMPOSITIONS, [clientInteractionComposition()]);
@@ -11454,30 +11454,6 @@ const STUB_REDIRECT_OUTPUT = mcpOutputSchema({
   required: ['skipped', 'reason', 'message'],
 });
 
-const INVOKE_AFFORDANCE_OUTPUT = mcpOutputSchema({
-  type: 'object',
-  description: 'Result of a iep:Affordance invocation — echo of the resolved affordance metadata plus the raw HTTP response from the target. Parse body based on contentType; 4xx is informative (e.g. forbidden / validation), 5xx is retried internally before surfacing.',
-  properties: {
-    status: { type: 'integer', description: 'HTTP status from the target' },
-    statusText: { type: 'string' },
-    contentType: { type: 'string', description: 'Content-Type header from the target (null when absent)' },
-    body: { type: 'string', description: 'Response text, or base64 bytes when bodyEncoding is base64. Decode that encoding before interpreting contentType.' },
-    bodyEncoding: { type: 'string', enum: ['base64'], description: 'Present for binary representations; absent for text.' },
-    affordance: {
-      type: 'object',
-      description: 'Resolved affordance metadata from the descriptor',
-      properties: {
-        action: { type: 'string', description: 'iep:action IRI selected by the caller' },
-        target: { type: 'string', description: 'hydra:target URL invoked' },
-        method: { type: 'string', description: 'hydra:method (default POST when absent on the descriptor)' },
-        mediaType: { type: 'string', description: 'dcat:mediaType when present' },
-      },
-      required: ['action', 'target', 'method'],
-    },
-  },
-  required: ['status', 'statusText', 'contentType', 'body', 'affordance'],
-});
-
 const TOOL_SCHEMAS = [
   // ═══════════════════════════════════════════════════════════
   //  Kernel verbs — the substrate's primitives as first-class
@@ -13118,7 +13094,7 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
       const respond = (pending: Record<string, unknown>) => clientInteractionMcpResult(pending, server, mcpContext, {
         status: () => clientInteractions.status(String(pending['id']), owner!),
         cancel: () => clientInteractions.cancel(String(pending['id']), owner!),
-      });
+      }, name === 'invoke_affordance' ? operation : undefined);
       if (canResume) {
         const pending = state
           ? await clientInteractions.resume(state, owner!, operation.reference, operation.action, payload)

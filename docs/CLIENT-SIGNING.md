@@ -1,6 +1,6 @@
 # Client signing through MCP
 
-Use the signed resource's advertised Preview and Submit controls through `act`.
+Use the signed resource's advertised Preview and Submit controls through `act` or `invoke_affordance`.
 Preview stays read-only. For a client-signed action, Submit without `client_proof`
 starts an authenticated signing handoff. The optional application interpreter
 defines the action and receipt; the relay supplies a generic interaction lifecycle.
@@ -12,6 +12,20 @@ completion notification. Clients without URL support receive an ordinary short
 link and descriptor-bound status and cancellation controls. They can poll that
 status through MCP. The server cannot force an unsupported host to open a window
 or resume a conversation.
+
+The `invoke_affordance` compatibility shim keeps a numeric HTTP-style `status`:
+202 while awaiting signing, with the interaction state and all recovery controls
+inside the JSON string `body`. Completed results use 200; inspect the interaction
+state and retained result to establish whether an action committed. The kernel
+`act` handoff continues to return its interaction object directly.
+
+If a connector lost the response, repeat the exact original descriptor, action
+and unsigned payload in the same authenticated session to recover the existing
+request. Switching between `act` and `invoke_affordance` does not change its ID.
+Changing the access token or action arguments is not this recovery operation.
+Expired or cancelled requests may be renewed; completed, submitting and failed
+requests are returned without repeating their execution. Request status and IDs
+remain restricted to the originating account, agent and OAuth client.
 
 The link contains an opaque identifier, not a bearer token or a receipt. The
 holder authenticates with an existing Interego account before receipt access.

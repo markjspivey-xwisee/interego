@@ -3,17 +3,26 @@ import express from 'express';
 import { JSDOM } from 'jsdom';
 import { describe, expect, it } from 'vitest';
 import { Server, type AuthInfo } from '@modelcontextprotocol/server';
+import { AjvJsonSchemaValidator } from '@modelcontextprotocol/server/validators/ajv';
+import { INVOKE_AFFORDANCE_OUTPUT } from '../deploy/mcp-relay/resource-compositions.js';
 import { createRelayMcpHandler } from '../deploy/mcp-relay/mcp-serving.js';
 import { clientInteractionMcpResult } from '../deploy/mcp-relay/client-interaction-mcp.js';
 import { listenLoopback } from '../deploy/mcp-relay/tests/listen-loopback.js';
 import { signingFixture } from './fixtures/client-interaction-fixture.js';
 
+const interaction = (value: Record<string, unknown>): Record<string, unknown> => {
+  if (typeof value['body'] !== 'string') return value;
+  expect(new AjvJsonSchemaValidator().getValidator(INVOKE_AFFORDANCE_OUTPUT)(value)).toMatchObject({ valid: true });
+  return JSON.parse(value['body']) as Record<string, unknown>;
+};
+
 const meta = (url = true) => ({ 'io.modelcontextprotocol/protocolVersion': '2026-07-28',
   'io.modelcontextprotocol/clientInfo': { name: 'signing-test', version: '1' },
   'io.modelcontextprotocol/clientCapabilities': url ? { elicitation: { url: {} } } : {} });
 
-async function harness() {
+async function harness(toolName = 'act') {
   const f = await signingFixture(); const pending = (await f.create())!; const id = String(pending['id']);
+  const control = await f.control();
   const app = express(); app.use(express.json());
   app.use((req, _res, next) => {
     const user = req.headers.authorization === 'Bearer bob' ? 'bob' : 'alice';
@@ -27,12 +36,12 @@ async function harness() {
         await f.broker.status(state, f.owners[ctx.http!.authInfo!.token]!); return state;
       } },
     });
-    server.setRequestHandler('tools/list', async () => ({ tools: [{ name: 'act', inputSchema: { type: 'object' } }] }));
+    server.setRequestHandler('tools/list', async () => ({ tools: [{ name: toolName, inputSchema: { type: 'object' }, ...(toolName === 'invoke_affordance' ? { outputSchema: INVOKE_AFFORDANCE_OUTPUT } : {}) }] }));
     server.setRequestHandler('tools/call', async (_req, ctx) => {
       const owner = f.owners[ctx.http!.authInfo!.token]!;
       return clientInteractionMcpResult(await f.broker.status(id, owner), server, ctx, {
         status: () => f.broker.status(id, owner), cancel: () => f.broker.cancel(id, owner),
-      });
+      }, toolName === 'invoke_affordance' ? { reference: String(control['descriptorUrl']), action: String(control['action']) } : undefined);
     });
     return server;
   });
@@ -81,11 +90,39 @@ async function browserSign(f: Awaited<ReturnType<typeof harness>>) {
 }
 
 describe('MCP signing lifecycle on the actual SDK transport', () => {
-  it('returns modern URL input_required, signs in the browser, and resumes with the verified commit', async () => {
-    const f = await harness();
+  it('preserves the advertised invoke_affordance schema on fallback, recovery and completion', async () => {
+    const f = await harness('invoke_affordance');
+    try {
+      const post = async (method: string) => (await (await f.post({ jsonrpc: '2.0', id: 2, method,
+        params: { name: 'invoke_affordance', arguments: {}, _meta: meta(false) } },
+      { 'Mcp-Method': method, 'Mcp-Name': 'invoke_affordance' })).json()).result;
+      const advertised = await post('tools/list');
+      const validate = new AjvJsonSchemaValidator().getValidator(advertised.tools[0].outputSchema);
+      const first = await post('tools/call');
+      expect(validate(first.structuredContent)).toMatchObject({ valid: true });
+      expect(first.structuredContent).toMatchObject({ status: 202, statusText: 'Accepted', contentType: 'application/json' });
+      const pending = JSON.parse(first.structuredContent.body);
+      expect(pending).toMatchObject({ status: 'pending', id: f.id, signingUrl: f.pending['signingUrl'],
+        descriptorUrl: f.pending['descriptorUrl'], action: f.pending['action'], cancelAction: f.pending['cancelAction'] });
+      expect(JSON.parse(first.content[0].text)).toEqual(first.structuredContent);
+      const repeated = await post('tools/call');
+      expect(JSON.parse(repeated.structuredContent.body).id).toBe(f.id);
+      expect(f.storage.records.size).toBe(1);
+      expect(f.publish).not.toHaveBeenCalled();
+      await browserSign(f);
+      const completed = await post('tools/call');
+      expect(validate(completed.structuredContent)).toMatchObject({ valid: true });
+      expect(completed.structuredContent.status).toBe(200);
+      expect(JSON.parse(completed.structuredContent.body)).toMatchObject({ status: 'completed', result: { committed: true } });
+      expect(f.publish).toHaveBeenCalledTimes(1);
+    } finally { await f.close(); }
+  });
+
+  it.each(['act', 'invoke_affordance'])('%s returns modern URL input_required, signs in the browser, and resumes with the verified commit', async toolName => {
+    const f = await harness(toolName);
     try {
       const call = (extra = {}) => f.post({ jsonrpc: '2.0', id: 1, method: 'tools/call',
-        params: { name: 'act', arguments: {}, _meta: meta(), ...extra } }, { 'Mcp-Method': 'tools/call', 'Mcp-Name': 'act' });
+        params: { name: toolName, arguments: {}, _meta: meta(), ...extra } }, { 'Mcp-Method': 'tools/call', 'Mcp-Name': toolName });
       const response = await (await call()).json();
       expect(response.result, JSON.stringify(response)).toMatchObject({ resultType: 'input_required', requestState: f.id });
       expect(response.result.inputRequests.sign).toMatchObject({ method: 'elicitation/create', params: { mode: 'url', url: f.pending['signingUrl'] } });
@@ -94,9 +131,9 @@ describe('MCP signing lifecycle on the actual SDK transport', () => {
       await new Promise(resolve => setTimeout(resolve, 20));
       expect(f.publish).not.toHaveBeenCalled();
       await browserSign(f);
-      expect((await (await accepted).json()).result.structuredContent.status).toBe('completed');
+      expect(interaction((await (await accepted).json()).result.structuredContent).status).toBe('completed');
       const completed = await (await call({ requestState: f.id, inputResponses: { sign: { action: 'accept' } } })).json();
-      expect(completed.result.structuredContent).toMatchObject({ status: 'completed', result: { committed: true } });
+      expect(interaction(completed.result.structuredContent)).toMatchObject({ status: 'completed', result: { committed: true } });
       expect(f.publish).toHaveBeenCalledTimes(1);
     } finally { await f.close(); }
   });
@@ -111,18 +148,18 @@ describe('MCP signing lifecycle on the actual SDK transport', () => {
       expect((await f.broker.status(f.id, f.owners['alice']!)).status).toBe('completed');
     } finally { await f.close(); }
   });
-  it('cancels modern input and refuses another account’s echoed request state', async () => {
-    const f = await harness();
+  it.each(['act', 'invoke_affordance'])('%s cancels modern input and refuses another account’s echoed request state', async toolName => {
+    const f = await harness(toolName);
     try {
-      const body = { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'act', arguments: {}, _meta: meta(), requestState: f.id, inputResponses: { sign: { action: 'cancel' } } } };
-      const wrong = await (await f.post(body, { 'Mcp-Method': 'tools/call', 'Mcp-Name': 'act', Authorization: 'Bearer bob' })).json();
+      const body = { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: toolName, arguments: {}, _meta: meta(), requestState: f.id, inputResponses: { sign: { action: 'cancel' } } } };
+      const wrong = await (await f.post(body, { 'Mcp-Method': 'tools/call', 'Mcp-Name': toolName, Authorization: 'Bearer bob' })).json();
       expect(wrong.error.code).toBe(-32602);
-      const cancelled = await (await f.post(body, { 'Mcp-Method': 'tools/call', 'Mcp-Name': 'act' })).json();
-      expect(cancelled.result.structuredContent.status).toBe('cancelled'); expect(f.publish).not.toHaveBeenCalled();
+      const cancelled = await (await f.post(body, { 'Mcp-Method': 'tools/call', 'Mcp-Name': toolName })).json();
+      expect(interaction(cancelled.result.structuredContent).status).toBe('cancelled'); expect(f.publish).not.toHaveBeenCalled();
     } finally { await f.close(); }
   });
-  it('negotiates legacy URL elicitation, binds the session, and returns automatic completion', async () => {
-    const f = await harness();
+  it.each(['act', 'invoke_affordance'])('%s negotiates legacy URL elicitation, binds the session, and returns automatic completion', async toolName => {
+    const f = await harness(toolName);
     try {
       const init = await f.post({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-11-25', capabilities: { elicitation: { url: {} } }, clientInfo: { name: 'legacy-test', version: '1' } } });
       const sid = init.headers.get('mcp-session-id')!; expect(sid).toBeTruthy(); await init.text();
@@ -130,7 +167,7 @@ describe('MCP signing lifecycle on the actual SDK transport', () => {
       await f.post({ jsonrpc: '2.0', method: 'notifications/initialized' }, headers);
       const stolen = await f.post({ jsonrpc: '2.0', id: 8, method: 'tools/list' }, { ...headers, Authorization: 'Bearer bob' });
       expect(stolen.status).toBe(404);
-      const response = await f.post({ jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: 'act', arguments: {} } }, headers);
+      const response = await f.post({ jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: toolName, arguments: {} } }, headers);
       const reader = response.body!.getReader(); const decoder = new TextDecoder(); let buffer = ''; let result; let elicited = false; let notified = false;
       while (!result) {
         const chunk = await reader.read(); if (chunk.done) break; buffer += decoder.decode(chunk.value, { stream: true });
@@ -149,7 +186,7 @@ describe('MCP signing lifecycle on the actual SDK transport', () => {
       }
       await reader.cancel();
       expect(elicited).toBe(true); expect(notified).toBe(true);
-      expect(result.result.structuredContent).toMatchObject({ status: 'completed', result: { committed: true } });
+      expect(interaction(result.result.structuredContent)).toMatchObject({ status: 'completed', result: { committed: true } });
       expect(f.publish).toHaveBeenCalledTimes(1);
     } finally { await f.close(); }
   }, 15_000);
