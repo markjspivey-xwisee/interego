@@ -1929,10 +1929,11 @@ app.get(['/', '/try'], (_req, res) => {
 
 // Health check
 app.get('/sign-action', (_req, res) => {
-  res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
+  res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self' ${new URL(resolveRelayBase()).origin}; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`);
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Referrer-Policy', 'no-referrer');
-  res.type('html').send(readFileSync(process.env.INTEREGO_CLIENT_SIGN_PAGE ?? new URL('../../docs/client-sign.html', import.meta.url), 'utf8'));
+  res.type('html').send(readFileSync(process.env.INTEREGO_CLIENT_SIGN_PAGE ?? new URL('../../docs/client-sign.html', import.meta.url), 'utf8')
+    .replace('__INTEREGO_SIGNING_CONFIG__', JSON.stringify({ identityUrl: BASE_URL, relayUrl: resolveRelayBase() }).replace(/</g, '\\u003c')));
 });
 
 app.get('/health', (_req, res) => {
@@ -2151,6 +2152,11 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
   // Returning user via wallet index — no user-claim needed.
   let userId = walletIndex.get(recoveredAddress);
   let user = userId ? identities.get(userId) : undefined;
+
+  if (!user && req.body?.existingOnly === true) {
+    res.status(401).json({ error: 'This wallet is not registered. Sign in with an existing credential for the requested account.' });
+    return;
+  }
 
   // Authenticated add-wallet: if a valid bearer is presented, bind this
   // newly-signed wallet to the caller's user (not a new one).

@@ -179,19 +179,23 @@ try {
   };
   await refuseSigned(submitter, 'approve', 'Submitter cannot count its own valid signature as a reviewer confirmation');
   await refuseSigned(submitter, 'finish', 'Zero reviewer confirmations cannot complete the test');
+  const beforeHandoffs = await head();
+  report.handoffs = await Promise.all(reviewers.map(reviewer => reviewer.request('begin-handoff', { action: 'approve' })));
+  assert.equal((await head()).head.cid, beforeHandoffs.head.cid);
+  check('Both reviewers obtain private short-link handoffs through MCP without changing the application state');
   for (let index = 0; index < reviewers.length; index++) {
     const reviewer = reviewers[index], name = reviewer.role;
     const view = await render(reviewer);
     const submit = view.controls.find(c => c.label === 'Submit: ' + labels.approve);
-    await refuse(reviewer, submit, {}, /client signature.*required/i, name + ': missing client proof refused');
+    assert.ok(submit);
     const prepared = await prepare(reviewer, 'approve');
     const foreign = await prepare(reviewers[1 - index], 'approve');
     await refuse(reviewer, prepared.submit, { client_proof: foreign.proof }, /exact action receipt|registered credential/i,
       name + ': other reviewer proof cannot be submitted as this actor');
     report.signingOrigins = prepared.signingOrigins;
-    const result = await invoke(reviewer, prepared.submit, { client_proof: prepared.proof });
+    const result = await reviewer.request('handoff', { action: 'approve' });
     await verifyCommitted(result, reviewer);
-    check(name + ': independently checked and process-signed confirmation committed with a verifiable retained proof');
+    check(name + ': fresh handoff receipt signed by its own process, automatically committed and returned through MCP');
     await refuse(reviewer, prepared.submit, { client_proof: prepared.proof }, /stale application head/i,
       name + ': replayed proof refused without another state write');
     await refuseSigned(reviewer, 'approve', name + ': a fresh signature from the same reviewer cannot count twice');

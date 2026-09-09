@@ -56,7 +56,9 @@ import { Wallet as EthersWalletCtor } from 'ethers';
 // WWW-Authenticate header, and no client ever starts an OAuth flow. Error classes
 // come from '@modelcontextprotocol/server'; only the AS plumbing comes from
 // server-legacy.
-import { Server, createMcpHandler } from '@modelcontextprotocol/server';
+import { Server } from '@modelcontextprotocol/server';
+import { createRelayMcpHandler } from './mcp-serving.js';
+import { clientInteractionMcpResult } from './client-interaction-mcp.js';
 import { mcpOutputSchema, toStructuredContent,
   // Turtle term serialisers. IRIs and prefixed names are REFUSED when unusable
   // (Turtle defines no escape for their terminators); literals are escaped.
@@ -65,7 +67,6 @@ import { mcpOutputSchema, toStructuredContent,
   escapeTurtleLiteral,
 } from '@interego/core';
 import type { Tool } from '@modelcontextprotocol/server';
-import { toNodeHandler } from '@modelcontextprotocol/node';
 import type { AuthInfo } from '@modelcontextprotocol/server';
 import { resolve as resolvePath, dirname as pathDirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -247,7 +248,8 @@ import { CLIENT_CHECK_HTML, CLIENT_CHECK_CSP } from './client-check.js';
 import { canonicalSessionActorId } from './session-actor.js';
 import { loadResourceCompositions, resourceActionResponse, resourceInvocation, type ResourceContext, type ResourceDescriptor, type ResourceEntry, type ResourceReads, type ResourceWriteContext } from './resource-compositions.js';
 import { readClientSigningKeys } from './client-signing-keys.js';
-const resourceCompositions = await loadResourceCompositions(process.env.INTEREGO_RESOURCE_COMPOSITIONS);
+import { ClientInteractions, encryptedInteractionStore, clientInteractionComposition, type InteractionRecord, type InteractionOwner } from './client-interactions.js';
+const resourceCompositions = await loadResourceCompositions(process.env.INTEREGO_RESOURCE_COMPOSITIONS, [clientInteractionComposition()]);
 import {
   buildToolSurface,
   mcpServerVersion,
@@ -5020,6 +5022,7 @@ function resourceReads(args: ToolArgs): ResourceReads {
 function resourceContext(args: ToolArgs): ResourceContext {
   const principal = canonicalSessionActorId(callerAgentId(args), IDENTITY_URL) ?? '';
   return { reads: resourceReads(args), principal, identityUrl: IDENTITY_URL, now: new Date().toISOString(),
+    interactionStatus: async id => clientInteractions.status(id, await interactionOwner(String(args._session_bearer ?? ''), false)),
     signingKeys: async () => readClientSigningKeys({
       identityUrl: IDENTITY_URL, identityToken: String(args._identity_token ?? ''),
       userId: String(args._session_user_id ?? ''),
@@ -5030,7 +5033,12 @@ function resourceContext(args: ToolArgs): ResourceContext {
 
 function resourceWriteContext(args: ToolArgs): ResourceWriteContext {
   const context = resourceContext(args);
-  return { ...context, publish: async request => {
+  return { ...context,
+    requestSignature: (reference, action, payload, draft) => clientInteractions.create({
+      credential: String(args._session_bearer ?? ''), reference, action, payload, draft,
+    }),
+    cancelInteraction: async id => clientInteractions.cancel(id, await interactionOwner(String(args._session_bearer ?? ''), true)),
+    publish: async request => {
     if (!context.principal || request.actor !== context.principal) throw new Error('authenticated resource actor is required');
     const podName = podNameOf(request.podUrl);
     if (!podName || !request.expectedHead) throw new Error('publication requires an explicit pod and expected head');
@@ -5043,6 +5051,50 @@ function resourceWriteContext(args: ToolArgs): ResourceWriteContext {
     })) as Record<string, unknown>;
   } };
 }
+
+async function interactionOwner(credential: string, write: boolean): Promise<InteractionOwner & { expiresAt: number }> {
+  if (!credential) throw new Error('an authenticated MCP client session is required for a signing handoff');
+  const auth = await oauthProvider.verifyAccessToken(credential);
+  const extra = auth.extra;
+  const principal = canonicalSessionActorId(String(extra?.agentId ?? ''), IDENTITY_URL);
+  if (!extra?.userId || !auth.clientId || !principal || !extra.identityToken || !extra.ownerWebId
+    || !(write ? auth.scopes.some(scope => scope === 'mcp' || scope === 'mcp:write')
+      : auth.scopes.some(scope => ['mcp', 'mcp:read', 'mcp:write'].includes(scope)))) {
+    throw new Error('the originating MCP grant cannot perform this operation');
+  }
+  return { userId: String(extra.userId), clientId: auth.clientId, principal, expiresAt: (auth.expiresAt ?? 0) * 1000 };
+}
+
+async function interactionArgs(record: InteractionRecord): Promise<ToolArgs> {
+  const owner = await interactionOwner(record.credential, true);
+  if (owner.userId !== record.owner.userId || owner.clientId !== record.owner.clientId || owner.principal !== record.owner.principal) {
+    throw new Error('originating MCP identity changed');
+  }
+  const auth = await oauthProvider.verifyAccessToken(record.credential);
+  const extra = auth.extra!;
+  return { _session_user_id: owner.userId, _session_agent_did: owner.principal,
+    _session_agent_id: extra.agentId, _session_principal: extra.ownerWebId,
+    _identity_token: extra.identityToken, _session_bearer: record.credential,
+    agent_id: extra.agentId, owner_webid: extra.ownerWebId, pod_url: extra.podUrl };
+}
+
+const clientInteractions = new ClientInteractions({
+  store: encryptedInteractionStore({ podUrl: oauthStorePodUrl, fetch: solidFetch, encryptionKey: relayAgentKey }),
+  publicUrl: IDENTITY_URL,
+  authorize: credential => interactionOwner(credential, true),
+  prepare: async record => resourceCompositions.prepareSignature(record.reference, record.action, record.payload, resourceContext(await interactionArgs(record))),
+  validate: async (record, proof) => {
+    if (!record.draft) throw new Error('review draft missing');
+    await resourceCompositions.validateSignature(record.draft.reference, record.action, record.payload, proof, resourceContext(await interactionArgs(record)));
+  },
+  execute: async (record, proof) => {
+    if (!record.draft) throw new Error('review draft missing');
+    const result = await resourceCompositions.invoke(record.draft.reference, record.action,
+      { ...record.payload, client_proof: proof }, resourceWriteContext(await interactionArgs(record)));
+    if (!result) throw new Error('signing interpreter is no longer installed');
+    return result;
+  },
+});
 
 /** Pure admission test; the registry removes publishing capabilities on this path. */
 function isReadOnlyResourceCall(name: string, args: Record<string, unknown> = {}): boolean {
@@ -12689,6 +12741,12 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
     {
       capabilities: { tools: {}, resources: {}, prompts: {} },
       instructions: SERVER_INSTRUCTIONS,
+      requestState: { verify: async (state, ctx) => {
+        const auth = ctx.http?.authInfo;
+        if (!auth?.token) throw new Error('authenticated continuation required');
+        await clientInteractions.status(state, await interactionOwner(auth.token, false));
+        return state;
+      } },
     },
   );
 
@@ -12836,7 +12894,12 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
     };
   });
 
-  server.setRequestHandler('tools/call', async (req) => {
+  server.setRequestHandler('tools/call', async (req, mcpContext) => {
+    // A legacy session spans requests; use THIS request's verified grant and scopes.
+    const currentAuth = mcpContext.http?.authInfo;
+    const sessionAuth = currentAuth ? resolveAuthContext({ authInfo: currentAuth }) : authContext;
+    return callWithSession(sessionAuth);
+    async function callWithSession(authContext: Parameters<typeof buildMcpServer>[0]) {
     const { name, arguments: rawArgs } = req.params;
     const tool = TOOLS[name] ?? dynamicTools.get(name);
     if (!tool) {
@@ -13044,7 +13107,28 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
     }
 
     try {
+      const operation = ['act', 'invoke_affordance'].includes(name) ? resourceInvocation(args, name === 'act') : undefined;
+      const payload = normalizeActPayload(args.payload ?? {}) as Record<string, unknown>;
+      const canResume = operation && resourceCompositions.access(operation.reference, operation.action) === 'write'
+        && !payload['client_proof'] && authContext?.accessToken;
+      const owner = canResume ? await interactionOwner(authContext.accessToken, true) : undefined;
+      const state = mcpContext.mcpReq.requestState<string>();
+      if (state && !canResume) throw new Error('continuation requires its original action');
+      const respond = (pending: Record<string, unknown>) => clientInteractionMcpResult(pending, server, mcpContext, {
+        status: () => clientInteractions.status(String(pending['id']), owner!),
+        cancel: () => clientInteractions.cancel(String(pending['id']), owner!),
+      });
+      if (canResume) {
+        const pending = state
+          ? await clientInteractions.resume(state, owner!, operation.reference, operation.action, payload)
+          : await clientInteractions.existing(authContext.accessToken, operation.reference, operation.action, payload, owner!);
+        if (pending && !['cancelled', 'expired'].includes(String(pending['status']))) return respond(pending);
+      }
       const text = await tool.handler(args);
+      if (canResume) {
+        const pending = await clientInteractions.existing(authContext.accessToken, operation.reference, operation.action, payload, owner!);
+        if (pending) return respond(pending);
+      }
       // MCP spec: a tool that declares an outputSchema MUST return
       // structuredContent conforming to it. Every relay handler returns
       // a JSON string, so we parse it and attach the object as
@@ -13057,6 +13141,7 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
       return { content: [{ type: 'text' as const, text }], structuredContent: toStructuredContent(text) };
     } catch (err) {
       return { content: [{ type: 'text' as const, text: `Error: ${(err as Error).message}` }], isError: true };
+    }
     }
   });
 
@@ -16105,10 +16190,30 @@ app.get('/x402/price/:podName', (req, res) => {
 
 // List tools
 app.get('/sign-action', (_req, res) => {
-  res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
+  res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self' ${new URL(IDENTITY_URL).origin}; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`);
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Referrer-Policy', 'no-referrer');
-  res.type('html').send(readFileSync(process.env.INTEREGO_CLIENT_SIGN_PAGE ?? new URL('../../docs/client-sign.html', import.meta.url), 'utf8'));
+  res.type('html').send(readFileSync(process.env.INTEREGO_CLIENT_SIGN_PAGE ?? new URL('../../docs/client-sign.html', import.meta.url), 'utf8')
+    .replace('__INTEREGO_SIGNING_CONFIG__', JSON.stringify({ identityUrl: IDENTITY_URL, relayUrl: PUBLIC_BASE_URL }).replace(/</g, '\\u003c')));
+});
+
+// The short identifier grants no access. The browser must authenticate as the
+// originating account before it can see a receipt, sign, cancel, or read results.
+app.all('/client-interactions/:id/:operation?', bearerVerifyLimiter, async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  const auth = await verifyBearerToken(req.headers.authorization);
+  if (!auth.authenticated || !auth.userId) { res.status(401).json({ error: 'Sign in with the key holder’s existing Interego account.' }); return; }
+  if (JSON.stringify(req.body ?? {}).length > 131072) { res.status(413).json({ error: 'Request is too large' }); return; }
+  try {
+    const id = String(req.params.id);
+    const operation = req.params.operation;
+    if (req.method === 'GET' && !operation) res.json(await clientInteractions.status(id, { holderUserId: auth.userId }));
+    else if (req.method === 'POST' && operation === 'review') res.json(await clientInteractions.review(id, auth.userId));
+    else if (req.method === 'POST' && operation === 'submit') res.json(await clientInteractions.submit(id, auth.userId, String(req.body?.reviewId ?? ''), req.body?.proof));
+    else if (req.method === 'POST' && operation === 'cancel') res.json(await clientInteractions.cancel(id, { holderUserId: auth.userId }));
+    else res.status(405).json({ error: 'Unsupported interaction operation' });
+  } catch (error) { res.status(409).json({ error: (error as Error).message }); }
 });
 
 app.get('/client-check', (_req, res) => {
@@ -16768,28 +16873,13 @@ function resolveAuthContext(ctx: { authInfo?: AuthInfo; requestInfo?: Request })
 //     from rebuilding the handler.
 //  2. There is no explicit server.close(). The SDK owns instance lifecycle now —
 //     closing it ourselves would close an instance the SDK is still using.
-//  3. `legacy: 'stateless'` is the default and is what we want: 2025-era clients
-//     (claude.ai and ChatGPT connectors today) are served from the SAME factory as
-//     2026-07-28 clients, so the tool surface cannot drift between eras, and GET/DELETE
-//     still answer 405 exactly as the old stateless transport did.
-const mcpHandler = createMcpHandler(
+//  3. Initialized legacy clients retain an authenticated session for URL elicitation.
+//     Clients that skip initialization retain the stateless compatibility fallback.
+const mcpHandler = createRelayMcpHandler(
   (ctx) => buildMcpServer(resolveAuthContext(ctx)),
-  { onerror: (err) => log(`[/mcp] ${err.message}`) },
+  (err) => log(`[/mcp] ${err.message}`),
 );
-
-const mcpNodeHandler = toNodeHandler(mcpHandler, {
-  onerror: (err) => log(`[/mcp] adapter error: ${err.message}`),
-});
-
-// ★ THE THIRD ARGUMENT IS NOT OPTIONAL FOR US. `express.json()` is mounted globally and
-// has already drained the request stream by the time /mcp is reached. toNodeHandler
-// explicitly ignores a FUNCTION third argument (Express passes `next`), so mounting
-// `toNodeHandler(handler)` directly would leave it with no body: it would fall back to
-// reading an already-consumed stream, collect nothing, and answer every POST with a
-// parse error. Nothing in the type system catches this.
-const handleMcp: express.RequestHandler = (req, res) => {
-  void mcpNodeHandler(req, res, (req as express.Request & { body?: unknown }).body);
-};
+const handleMcp = mcpHandler.handler;
 
 // Bearer-auth middleware for the OAuth path. Requires 'mcp' scope on the
 // token. When a request arrives WITHOUT an Authorization header, the

@@ -34,6 +34,12 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
 
 <!-- documented-through: 2037e1a -->
 
+### 2026-09-09 — MCP client-signing handoffs
+
+- Submitting a descriptor-declared client-signed action without a proof creates an authenticated pending request. Short links MUST NOT confer access to the receipt. The holder signs fresh, verified action bytes; the service verifies and submits them automatically.
+- The relay negotiates URL elicitation for initialized 2025 clients and uses input-required continuations for the 2026 protocol. Clients without URL elicitation receive a short link and authenticated status controls. URL acceptance MUST NOT count as a signature.
+- Pending records are encrypted at rest and bound to the originating account, agent and OAuth client. Cancellation, expiry, revoked grants, changed authority and altered proofs MUST fail closed. A new state head requires a fresh review and signature. Publication outcomes that cannot be established MUST NOT be retried automatically.
+
 ### 2026-09-08 — Client signatures for declared actions
 
 - The autonomous live test uses one submitter and two reviewer processes, each with its own locally generated credential and authenticated session. Each reviewer checks the published synthetic fixture before signing. Submitter self-approval, incomplete quorum, repeated approval and cross-actor proof reuse MUST be refused without a state write; two verified non-submitter confirmations permit completion and full replay.

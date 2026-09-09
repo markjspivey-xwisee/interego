@@ -28,6 +28,27 @@ const session = await openAgentSession({ privateKey: wallet.privateKey,
   relay: 'https://relay.interego.xwisee.com', identityHost: 'https://identity.interego.xwisee.com' });
 let scenario, participants, refs, sequence = 0;
 const controls = new Map();
+const handoffs = new Map();
+let holderToken;
+async function holderApi(path, body) {
+  if (!holderToken) {
+    const base = 'https://identity.interego.xwisee.com';
+    const challenge = await fetch(base + '/challenges', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ purpose: 'siwe' }) });
+    const { nonce } = await challenge.json();
+    const message = new URL(base).host + ' wants you to sign in with your Ethereum account:\n' + wallet.address
+      + '\n\nSign in to Interego\n\nURI: ' + base + '\nVersion: 1\nChain ID: 1\nNonce: ' + nonce + '\nIssued At: ' + new Date().toISOString();
+    const auth = await fetch(base + '/auth/siwe', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, signature: await wallet.signMessage(message), nonce, existingOnly: true }) });
+    assert.ok(auth.ok, 'Existing synthetic key holder must authenticate');
+    holderToken = (await auth.json()).token; assert.equal(typeof holderToken, 'string');
+  }
+  const response = await fetch('https://relay.interego.xwisee.com/client-interactions/' + path, {
+    method: body === undefined ? 'GET' : 'POST', headers: { Authorization: 'Bearer ' + holderToken, 'Content-Type': 'application/json' },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  const value = await response.json();
+  assert.ok(response.ok, 'Holder operation refused: ' + JSON.stringify(value).slice(0, 1000));
+  return value;
+}
 const unwrap = wire => {
   if (typeof wire.status === 'number' && typeof wire.body === 'string') return { ...JSON.parse(wire.body), httpStatus: wire.status };
   if (typeof wire.text === 'string' && wire.text.startsWith('Error: ')) return { error: wire.text.slice(7) };
@@ -76,7 +97,21 @@ async function command(method, args) {
     await render();
     return { verified: true, role, contractDigest: refs.contract.documentDigest };
   }
-  if (method === 'prepare') {
+  if (method === 'begin-handoff') {
+    assert.ok(refs && Object.hasOwn(labels, args.action));
+    const view = await render();
+    const submit = view.controls.find(c => c.label === 'Submit: ' + labels[args.action]);
+    assert.ok(submit);
+    const pending = await invoke(submit);
+    assert.equal(pending.schema, 'interego.client-interaction/v1', JSON.stringify(pending).slice(0, 1000));
+    assert.equal(pending.status, 'pending'); assert.match(pending.id, /^[\w-]{43}$/);
+    assert.equal(pending.signingUrl, 'https://identity.interego.xwisee.com/sign-action?request=' + pending.id);
+    handoffs.set(args.action, pending);
+    const unauthenticated = await fetch('https://relay.interego.xwisee.com/client-interactions/' + pending.id);
+    assert.equal(unauthenticated.status, 401, 'Knowing the short identifier grants no receipt access');
+    return pending;
+  }
+  if (method === 'prepare' || method === 'handoff') {
     assert.ok(refs && Object.hasOwn(labels, args.action));
     // Read independently through this actor's own authenticated session. Never
     // accept a caller-supplied receipt or digest as an instruction to sign.
@@ -84,7 +119,10 @@ async function command(method, args) {
     const preview = view.controls.find(c => c.label === 'Preview: ' + labels[args.action]);
     const submit = view.controls.find(c => c.label === 'Submit: ' + labels[args.action]);
     assert.ok(preview && submit);
-    const prepared = await invoke(preview), request = prepared.signingRequest;
+    const pending = method === 'handoff' ? handoffs.get(args.action) : undefined;
+    if (method === 'handoff') assert.ok(pending, 'This worker must originate its own handoff');
+    const prepared = pending ? await holderApi(pending.id + '/review', {}) : await invoke(preview);
+    const request = prepared.signingRequest;
     assert.ok(request, JSON.stringify(prepared).slice(0, 1500));
     const receipt = JSON.parse(request.message);
     const head = await read('get_current_head', { pod_url: podUrl, urn: scenario.graphs.state });
@@ -119,6 +157,16 @@ async function command(method, args) {
     execFileSync(process.execPath, ['tools/sign-application-action.mjs', prefix + '.request.json',
       reviewedDigest, prefix + '.proof.json'], { env: { ...process.env, INTEREGO_CLIENT_KEY_FILE: keyPath }, stdio: 'pipe' });
     const proof = JSON.parse(readFileSync(prefix + '.proof.json', 'utf8'));
+    if (pending) {
+      const completed = await holderApi(pending.id + '/submit', { reviewId: prepared.reviewId, proof });
+      assert.equal(completed.status, 'completed', JSON.stringify(completed).slice(0, 1500));
+      const status = unwrap(await session.call('act', { descriptor_url: pending.descriptorUrl, action_iri: pending.action, payload: {} }));
+      assert.equal(status.status, 'completed');
+      assert.deepEqual(status.result, completed.result, 'MCP must retrieve the automatic submission result');
+      const repeat = await holderApi(pending.id + '/submit', { reviewId: prepared.reviewId, proof });
+      assert.deepEqual(repeat.result, completed.result, 'Replayed handoff POST returns the original result');
+      return { ...completed.result, handoff: { id: pending.id, status: completed.status, signingUrl: pending.signingUrl }, proof, submit };
+    }
     return { proof, submit, request, reviewedDigest, signingOrigins: prepared.signingUrls.map(url => url.split('#')[0]) };
   }
   assert.equal(method, 'call', 'Unknown worker command');

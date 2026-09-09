@@ -45,8 +45,17 @@ export interface ResourceContext {
   readonly now: string;
   /** Public verification material for the authenticated caller, never a signing oracle. */
   readonly signingKeys?: () => Promise<readonly ResourceSigningKey[]>;
+  readonly interactionStatus?: (id: string) => Promise<Record<string, unknown>>;
+}
+export interface ResourceSignatureDraft {
+  readonly reference: string;
+  /** Immutable authority, evidence, actor and inputs; the module decides its semantics. */
+  readonly binding: string;
+  readonly request: { schema: string; message: string; keys: readonly { keyId: string; key: ResourceSigningKey }[]; expiresAt: string };
 }
 export interface ResourceWriteContext extends ResourceContext {
+  readonly requestSignature?: (reference: string, action: string, payload: Record<string, unknown>, draft: ResourceSignatureDraft) => Promise<Record<string, unknown>>;
+  readonly cancelInteraction?: (id: string) => Promise<Record<string, unknown>>;
   /** Session-bound, signed, synchronous CAS publication through the existing substrate gates. */
   readonly publish: (request: {
     podUrl: string; graphIri: string; graphContent: string; expectedHead: string; actor: string;
@@ -67,6 +76,9 @@ export interface ResourceComposition {
   access(reference: string, action: string): 'read' | 'write' | undefined;
   render(reference: string, context: ResourceContext, descriptor?: ResourceDescriptor): Promise<ResourceView | undefined>;
   invoke(reference: string, action: string, payload: unknown, context: ResourceContext | ResourceWriteContext): Promise<Record<string, unknown>>;
+  /** Re-resolves a draft for a human review. This never signs or publishes. */
+  prepareSignature?(reference: string, action: string, payload: Record<string, unknown>, context: ResourceContext): Promise<ResourceSignatureDraft>;
+  validateSignature?(reference: string, action: string, payload: Record<string, unknown>, proof: unknown, context: ResourceContext): Promise<void>;
 }
 
 export class ResourceCompositions {
@@ -82,6 +94,17 @@ export class ResourceCompositions {
 
   access(reference: string, action: string): 'read' | 'write' | undefined {
     return this.owner(reference)?.access(reference, action);
+  }
+
+  async prepareSignature(reference: string, action: string, payload: Record<string, unknown>, context: ResourceContext): Promise<ResourceSignatureDraft> {
+    const owner = this.owner(reference);
+    if (!owner?.prepareSignature || owner.access(reference, action) !== 'write') throw new Error('resource does not support client signing');
+    return owner.prepareSignature(reference, action, payload, readContext(context));
+  }
+  async validateSignature(reference: string, action: string, payload: Record<string, unknown>, proof: unknown, context: ResourceContext): Promise<void> {
+    const owner = this.owner(reference);
+    if (!owner?.validateSignature || owner.access(reference, action) !== 'write') throw new Error('resource signature validation is unavailable');
+    return owner.validateSignature(reference, action, payload, proof, readContext(context));
   }
 
   async render(reference: string, context: ResourceContext, descriptor?: ResourceDescriptor): Promise<ResourceView | undefined> {
@@ -109,7 +132,8 @@ export class ResourceCompositions {
 
 function readContext(context: ResourceContext): ResourceContext {
   return Object.freeze({ reads: context.reads, principal: context.principal, identityUrl: context.identityUrl, now: context.now,
-    ...(context.signingKeys ? { signingKeys: context.signingKeys } : {}) });
+    ...(context.signingKeys ? { signingKeys: context.signingKeys } : {}),
+    ...(context.interactionStatus ? { interactionStatus: context.interactionStatus } : {}) });
 }
 
 /** Preserve the generic affordance follower's existing transport result schema. */
@@ -136,13 +160,13 @@ export function resourceInvocation(args: Record<string, unknown>, allowTarget = 
 }
 
 /** Local modules are selected by deployment configuration, never by a fetched document. */
-export async function loadResourceCompositions(configuration = ''): Promise<ResourceCompositions> {
-  if (!configuration) return new ResourceCompositions();
+export async function loadResourceCompositions(configuration = '', builtins: readonly ResourceComposition[] = []): Promise<ResourceCompositions> {
+  if (!configuration) return new ResourceCompositions(builtins);
   const paths: unknown = JSON.parse(configuration);
   if (!Array.isArray(paths) || paths.some(path => typeof path !== 'string')) {
     throw new Error('INTEREGO_RESOURCE_COMPOSITIONS must be a JSON array of local module paths');
   }
-  const modules: ResourceComposition[] = [];
+  const modules: ResourceComposition[] = [...builtins];
   for (const path of paths as string[]) {
     const url = new URL(path, import.meta.url);
     if (url.protocol !== 'file:' || url.host) throw new Error('resource composition modules must be local files');

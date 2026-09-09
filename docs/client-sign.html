@@ -4,15 +4,23 @@
 <style>body{font:16px system-ui,sans-serif;max-width:850px;margin:40px auto;padding:0 20px;color:#192a3d;background:#f7f9fc}h1{font-size:28px}textarea,select,button{font:inherit;box-sizing:border-box;width:100%;margin:8px 0;padding:12px}textarea{min-height:130px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:white;border:1px solid #c8d2df;padding:18px}button{background:#163b70;color:white;border:0;border-radius:6px;cursor:pointer}button:disabled{opacity:.45}#status{white-space:pre-wrap}label{font-weight:600}small{display:block;color:#526376}</style>
 </head><body>
 <h1>Sign an Interego action</h1>
-<p>Review the complete receipt below. Your wallet or passkey signs these exact action details. Its private key stays on your device. Creating a signature does not submit the action.</p>
+<p id="intro">Review the complete receipt below. Your wallet or passkey signs these exact action details. Its private key stays on your device.</p>
+<section id="handoff" hidden>
+<p>Sign in with the existing account that owns the requested credential. Signing then submits the reviewed action automatically and returns its result to the requesting client.</p>
+<button id="passkey-login">Sign in with a passkey</button><button id="wallet-login">Sign in with a wallet</button>
+<button id="review" hidden>Load a fresh review</button><button id="cancel" hidden>Cancel this request</button>
+</section>
+<div id="manual-request">
 <label for="request">Signing request</label><textarea id="request" spellcheck="false" placeholder="Paste the signingRequest from the action preview"></textarea>
 <button id="load">Review request</button>
-<p id="status" role="status"></p><pre id="receipt">No request loaded.</pre>
+</div>
+<p id="status" role="status"></p><p id="summary"></p><details open><summary>Exact action and authority</summary><pre id="receipt">No request loaded.</pre></details>
 <label for="key">Your registered signing credential</label><select id="key"></select>
 <button id="sign" disabled>Sign this receipt</button>
-<label for="proof">Client signature JSON</label><textarea id="proof" readonly spellcheck="false"></textarea>
+<div id="manual-proof"><label for="proof">Client signature JSON</label><textarea id="proof" readonly spellcheck="false"></textarea>
 <button id="copy" disabled>Copy signature JSON</button>
-<small>Submit this JSON as client_proof with the original action inputs and control. If the state or contract changed, obtain a new preview and sign again. Never paste a private key here.</small>
+<small>Submit this JSON as client_proof with the original action inputs and control. If the state or contract changed, obtain a new preview and sign again. Never paste a private key here.</small></div>
+<script type="application/json" id="signing-config">__INTEREGO_SIGNING_CONFIG__</script>
 <script>
 'use strict';
 const el = id => document.getElementById(id);
@@ -21,6 +29,9 @@ const decode = value => Uint8Array.from(atob(value.replace(/-/g,'+').replace(/_/
 const encode = bytes => btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 const hash = async value => new Uint8Array(await crypto.subtle.digest('SHA-256',encoder.encode(value)));
 let request = null;
+const requestId = new URL(location.href).searchParams.get('request');
+let config = null, reviewId = '', token = '', finished = false;
+try { config = JSON.parse(el('signing-config').textContent); } catch { /* Offline manual signer. */ }
 const say = value => { el('status').textContent = value; };
 const resetProof = () => { el('proof').value='';el('copy').disabled=true; };
 el('request').addEventListener('input',()=>{request=null;el('sign').disabled=true;resetProof();});
@@ -34,6 +45,7 @@ el('load').onclick = async () => {
     const age=Date.now()-Date.parse(receipt.at);
     if(!Number.isFinite(age)||age < -30000||age > 600000)throw Error('This request expired. Obtain a new preview.');
     el('receipt').textContent=JSON.stringify(receipt,null,2)+'\n\nReceipt SHA-256: '+Array.from(await hash(next.message),b=>b.toString(16).padStart(2,'0')).join('');
+    el('summary').textContent=(receipt.goal || receipt.actionIri)+' — signing as '+receipt.actor;
     el('key').replaceChildren();
     next.keys.forEach((entry,index)=>{
       const key=entry.key;
@@ -70,10 +82,86 @@ el('sign').onclick=async()=>{
         response:{authenticatorData:encode(credential.response.authenticatorData),clientDataJSON:encode(credential.response.clientDataJSON),signature:encode(credential.response.signature),userHandle:credential.response.userHandle?encode(credential.response.userHandle):null},
         clientExtensionResults:credential.getClientExtensionResults()};
     }
-    el('proof').value=JSON.stringify(proof);el('copy').disabled=false;
-    say('Signature created locally. Submit the JSON through the original action control. Interego will verify the signature and current state before committing.');
-  }catch(error){say(error.message);}finally{el('sign').disabled=!request;}
+    if(requestId){
+      say('Verifying your signature and submitting the reviewed action…');
+      showResult(await interaction('submit',{reviewId,proof}));
+    }else{
+      el('proof').value=JSON.stringify(proof);el('copy').disabled=false;
+      say('Signature created locally. Submit the JSON through the original action control. Interego will verify the signature and current state before committing.');
+    }
+  }catch(error){say(error.message+' Load a fresh review before trying again.');if(requestId)request=null;}
+  finally{el('sign').disabled=!request || finished;}
 };
 el('copy').onclick=async()=>{try{await navigator.clipboard.writeText(el('proof').value);say('Signature JSON copied.');}catch{el('proof').select();say('Select and copy the signature JSON.');}};
-if(location.hash.length>1){try{el('request').value=new TextDecoder().decode(decode(location.hash.slice(1)));history.replaceState(null,'',location.pathname);el('load').click();}catch{say('Could not decode signing request. Paste it above.');}}
+async function api(url,body,bearer){
+  const response=await fetch(url,{method:body===undefined?'GET':'POST',credentials:'omit',cache:'no-store',
+    headers:{...(body===undefined?{}:{'Content-Type':'application/json'}),...(bearer?{Authorization:'Bearer '+bearer}:{})},
+    ...(body===undefined?{}:{body:JSON.stringify(body)})});
+  const result=await response.json();
+  if(!response.ok)throw Error(result.error || 'The request failed ('+response.status+').');
+  return result;
+}
+function interaction(operation,body){
+  if(!config || !/^[a-zA-Z0-9_-]{43}$/.test(requestId || ''))throw Error('Invalid signing link.');
+  return api(config.relayUrl.replace(/\/$/,'')+'/client-interactions/'+requestId+(operation?'/'+operation:''),body,token);
+}
+function showResult(result){
+  if(result.status==='completed'){
+    finished=true;request=null;say('Signed, verified and submitted. The result is available to your requesting client. You can close this page.');
+  }else if(['cancelled','expired','failed'].includes(result.status)){
+    finished=true;request=null;say(result.result?.message || result.blocker || 'This request is '+result.status+'. Return to the requesting client for the next step.');
+  }else if(result.status==='submitting'){
+    request=null;say(result.blocker || 'Submission is in progress. Checking its result…');
+    setTimeout(()=>interaction('').then(showResult).catch(error=>say(error.message)),1500);
+  }
+  el('sign').disabled=!request || finished;
+  el('review').disabled=finished;el('cancel').disabled=finished || result.status==='submitting';
+}
+async function authenticated(){
+  const status=await interaction(''); // Account check BEFORE receipt disclosure.
+  el('review').hidden=false;el('cancel').hidden=false;
+  if(['pending','reviewing'].includes(status.status))await loadReview();else showResult(status);
+}
+async function loadReview(){
+  request=null;el('sign').disabled=true;say('Checking the current action, state and authority…');
+  const result=await interaction('review',{});
+  reviewId=result.reviewId;el('request').value=JSON.stringify(result.signingRequest);
+  await el('load').onclick();
+  if(request){el('sign').textContent='Sign and submit this action';say('Review this fresh receipt. Signing will submit exactly these details.');}
+}
+const assertionJson=credential=>({id:credential.id,rawId:encode(credential.rawId),type:credential.type,
+  response:{authenticatorData:encode(credential.response.authenticatorData),clientDataJSON:encode(credential.response.clientDataJSON),
+    signature:encode(credential.response.signature),userHandle:credential.response.userHandle?encode(credential.response.userHandle):null},
+  clientExtensionResults:credential.getClientExtensionResults()});
+async function login(kind){
+  if(!config)throw Error('The signing service is not configured.');
+  const base=config.identityUrl.replace(/\/$/,'');
+  say('Authenticate with your existing Interego account.');
+  let result;
+  if(kind==='passkey'){
+    const challenge=await api(base+'/challenges',{purpose:'webauthn-authenticate'});
+    const credential=await navigator.credentials.get({publicKey:{challenge:decode(challenge.nonce),allowCredentials:[],userVerification:'required',timeout:60000}});
+    if(!credential)throw Error('Sign-in was cancelled.');
+    result=await api(base+'/auth/webauthn/authenticate',{response:assertionJson(credential)});
+  }else{
+    if(!window.ethereum)throw Error('Use a browser with your existing wallet extension.');
+    const [address]=await window.ethereum.request({method:'eth_requestAccounts'});
+    const {nonce}=await api(base+'/challenges',{purpose:'siwe'});
+    const message=location.host+' wants you to sign in with your Ethereum account:\n'+address+'\n\nSign in to Interego\n\nURI: '+location.origin+'\nVersion: 1\nChain ID: 1\nNonce: '+nonce+'\nIssued At: '+new Date().toISOString();
+    const bytes=Array.from(encoder.encode(message),b=>b.toString(16).padStart(2,'0')).join('');
+    const signature=await window.ethereum.request({method:'personal_sign',params:['0x'+bytes,address]});
+    result=await api(base+'/auth/siwe',{message,signature,nonce,existingOnly:true});
+  }
+  if(typeof result.token!=='string')throw Error('Sign-in did not return a session.');
+  token=result.token;sessionStorage.setItem('cg.token',token);await authenticated();
+}
+el('passkey-login').onclick=()=>login('passkey').catch(error=>say(error.message));
+el('wallet-login').onclick=()=>login('wallet').catch(error=>say(error.message));
+el('review').onclick=()=>loadReview().catch(error=>say(error.message));
+el('cancel').onclick=()=>interaction('cancel',{}).then(showResult).catch(error=>say(error.message));
+if(requestId){
+  el('handoff').hidden=false;el('manual-request').hidden=true;el('manual-proof').hidden=true;
+  if(!config || !/^[a-zA-Z0-9_-]{43}$/.test(requestId))say('This signing link is invalid.');
+  else {token=sessionStorage.getItem('cg.token') || '';if(token)authenticated().catch(error=>say(error.message));else say('Sign in to view your request.');}
+}else if(location.hash.length>1){try{el('request').value=new TextDecoder().decode(decode(location.hash.slice(1)));history.replaceState(null,'',location.pathname);el('load').click();}catch{say('Could not decode signing request. Paste it above.');}}
 </script></body></html>

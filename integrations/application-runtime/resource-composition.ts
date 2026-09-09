@@ -1,7 +1,7 @@
 /** Signed-domain/v1 composition. Installed explicitly; never an MCP tool or L1 vocabulary. */
 import { renderHypermediaMarkdown } from '@interego/core';
 import type {
-  ResourceComposition, ResourceContext, ResourceDescriptor, ResourceView, ResourceWriteContext,
+  ResourceComposition, ResourceContext, ResourceDescriptor, ResourceView, ResourceWriteContext, ResourceSignatureDraft,
 } from '../../deploy/mcp-relay/resource-compositions.js';
 import {
   descriptorActionIsExecutable, parseSignedJsonDocument, prepareApplicationAction,
@@ -130,7 +130,7 @@ function view(resolved: ResolvedApplicationLab, context: ResourceContext): Resou
       action: action.actionIri, label: (mode === 'preview' ? 'Preview: ' : 'Submit: ') + (action.label ?? action.actionIri),
       method: mode === 'preview' ? 'GET' : 'POST',
       fields: mode === 'execute' && action.clientSignature ? [...fields, {
-        path: 'client_proof', key: 'client_proof', name: 'Client signature JSON from the signing page or your agent signer', minCount: 1,
+        path: 'client_proof', key: 'client_proof', name: 'Optional proof from your agent signer; leave empty to sign interactively', minCount: 0,
         datatype: 'http://www.w3.org/2001/XMLSchema#string',
       }] : fields, executable,
       descriptorUrl: reference({ ...ref, mode, action: action.actionIri }),
@@ -140,7 +140,7 @@ function view(resolved: ResolvedApplicationLab, context: ResourceContext): Resou
   }
   if (resolved.activeContract.actions.some(action => action.clientSignature)) parts.push(
     '## Client signatures',
-    'Preview the action to get the exact receipt and a signing link. Sign with your registered wallet, passkey, or agent key, then submit the returned signature JSON. The private key stays with its holder. Relay attestation alone does not satisfy these actions.',
+    'Preview to inspect the action. Submit starts a secure signing request and automatically verifies and submits your signature. An agent with its own registered key can also supply client_proof directly. The private key stays with its holder.',
     table(['Transition', 'Authorization', 'Signing key'], resolved.replay.links.filter(link => link.index > 0)
       .map(link => [link.version, link.authorizationBasis, link.clientKeyId ?? 'Relay key'])),
   );
@@ -154,7 +154,46 @@ function view(resolved: ResolvedApplicationLab, context: ResourceContext): Resou
   return { descriptorUrl, title, body, hmd, controls, authorship: null, derivedFrom: snapshot['provenance'], snapshot };
 }
 
+async function prepareSignature(url: string, action: string, payload: Record<string, unknown>, context: ResourceContext): Promise<ResourceSignatureDraft> {
+  const ref = parseReference(url);
+  if (ref.mode !== 'execute' || action !== ref.action || !actor(context)) throw new Error('invalid signing operation');
+  const resolved = await resolveApplicationLab(input(ref, context), reads(context));
+  if (resolved.activeContractEnvelope.declaredDigest !== ref.contract) throw new Error('contract changed; request a new action review');
+  const evidence = await resolveApplicationActionEvidence(resolved, { actionIri: action, payload }, reads(context));
+  const current = { ...binding(resolved), mode: 'execute' as const, action };
+  const draft = applicationActionReceipt(resolved, { actionIri: action, payload, actor: actor(context), now: context.now, expectedHead: current.head, evidence });
+  if (!draft.action.clientSignature) throw new Error('action does not require a client signature');
+  if (!context.signingKeys) throw new Error('registered client signing keys are unavailable');
+  const receipt = draft.receipt;
+  const authority = record(receipt['authority']);
+  // State can advance between independent reviewers. Only a NEW review and signature
+  // may bind that new state. Contract, catalog, definition, evidence and inputs cannot.
+  const immutable = { ...receipt, at: undefined, expectedHead: undefined, stateVersion: undefined,
+    authority: { ...authority, stateDescriptorUrl: undefined, stateDigest: undefined } };
+  return { reference: reference(current), binding: canonicalJson(JSON.parse(JSON.stringify(immutable))),
+    request: { schema: 'interego.client-signing-request/v1', message: canonicalJson(receipt),
+      keys: (await context.signingKeys()).map(key => ({ keyId: clientKeyId(key), key })),
+      expiresAt: new Date(Date.parse(context.now) + 600_000).toISOString() } };
+}
+
 const composition: ResourceComposition = {
+  prepareSignature,
+  async validateSignature(url, action, payload, rawProof, context) {
+    const ref = parseReference(url);
+    if (ref.mode !== 'execute' || ref.action !== action) throw new Error('invalid signing operation');
+    const resolved = await resolveApplicationLab(input(ref, context), reads(context));
+    if (resolved.stateHead.cid !== ref.head) throw new Error('state changed; load and review a fresh receipt');
+    if (resolved.activeContractEnvelope.declaredDigest !== ref.contract) throw new Error('contract changed; request a new action review');
+    if (!context.signingKeys) throw new Error('registered client signing keys are unavailable');
+    const proof = rawProof as ClientSignature;
+    const at = String(record(JSON.parse(proof.message))['at'] ?? '');
+    const age = Date.parse(context.now) - Date.parse(at);
+    if (!Number.isFinite(age) || age < -30_000 || age > 600_000) throw new Error('signature expired; load and review a fresh receipt');
+    const evidence = await resolveApplicationActionEvidence(resolved, { actionIri: action, payload }, reads(context));
+    const draft = applicationActionReceipt(resolved, { actionIri: action, payload, actor: actor(context), now: at, expectedHead: ref.head, evidence });
+    const authorization = await verifyClientAuthorization(proof, canonicalJson(draft.receipt), await context.signingKeys());
+    prepareApplicationAction(resolved, { actionIri: action, payload, actor: actor(context), now: at, expectedHead: ref.head, evidence, authorization });
+  },
   claims: url => url.startsWith(PREFIX),
   access(url, action) {
     try {
@@ -219,7 +258,11 @@ const composition: ResourceComposition = {
     let authorization: VerifiedClientAuthorization | undefined;
     let actionTime = context.now;
     if (declared?.clientSignature || rawProof !== undefined) {
-      if (!rawProof) throw new Error('client signature is required; preview the action to obtain its signing request');
+      if (!rawProof) {
+        if (!write.requestSignature) throw new Error('client signature is required; signing handoff is unavailable here, so use your registered agent signer');
+        const draft = await prepareSignature(url, action, wirePayload, context);
+        return write.requestSignature(url, action, wirePayload, draft);
+      }
       const proof = (typeof rawProof === 'string' ? JSON.parse(rawProof) : rawProof) as ClientSignature;
       const signedReceipt = JSON.parse(proof.message) as Record<string, unknown>;
       actionTime = typeof signedReceipt['at'] === 'string' ? signedReceipt['at'] : '';
