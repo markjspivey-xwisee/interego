@@ -29,18 +29,20 @@ function notifyWhenComplete(server: Server, id: string, expiresAt: string, statu
   if (active.has(id)) return;
   const deadline = Math.min(Date.parse(expiresAt), Date.now() + 30 * 60_000);
   const poll = async () => {
-    active!.delete(id);
-    if (Date.now() > deadline) return;
+    if (!active!.has(id)) return;
+    if (Date.now() > deadline) { active!.delete(id); return; }
     try {
       const current = await status();
+      if (!active!.has(id)) return; // The session may have closed during the read.
       if (!['pending', 'reviewing', 'submitting'].includes(String(current['status']))) {
         // This Server belongs to one authenticated legacy session. Never use the
         // shared subscription bus, which would disclose IDs to other clients.
         await server.notification({ method: 'notifications/elicitation/complete', params: { elicitationId: id } });
+        active!.delete(id);
         return;
       }
     } catch { /* A transient storage failure does not lose the durable handoff. */ }
-    schedule();
+    if (active!.has(id)) schedule();
   };
   const schedule = () => { const timer = setTimeout(() => { void poll(); }, 2000); timer.unref(); active!.set(id, timer); };
   schedule();

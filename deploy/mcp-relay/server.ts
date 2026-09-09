@@ -5081,6 +5081,7 @@ async function interactionArgs(record: InteractionRecord): Promise<ToolArgs> {
 const clientInteractions = new ClientInteractions({
   store: encryptedInteractionStore({ podUrl: oauthStorePodUrl, fetch: solidFetch, encryptionKey: relayAgentKey }),
   publicUrl: IDENTITY_URL,
+  signingOrigins: [IDENTITY_URL, ...(PUBLIC_BASE_URL ? [PUBLIC_BASE_URL] : [])],
   authorize: credential => interactionOwner(credential, true),
   prepare: async record => resourceCompositions.prepareSignature(record.reference, record.action, record.payload, resourceContext(await interactionArgs(record))),
   validate: async (record, proof) => {

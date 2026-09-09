@@ -20,6 +20,9 @@ the holder opens the review. The holder reviews it and chooses **Sign and submit
 The wallet or passkey signs locally; the page sends the public proof directly
 back for verification and conditional publication. There is no proof to copy
 into chat. Approving the URL prompt alone never authorizes the resource action.
+The relay chooses a configured signing origin compatible with the registered
+wallet or passkey. Agent-only keys continue to use their own signing runtime and
+submit the resulting proof through MCP.
 
 The pending handoff lasts up to thirty minutes, bounded by the originating OAuth
 grant's expiry. Request data and the delegated session credential are encrypted

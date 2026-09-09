@@ -8,12 +8,15 @@ on:
         description: Optional exact relay build SHA to require
         type: string
         required: false
-  push:
-    branches: [master, fix/autonomous-client-approvals]
-    paths:
-      - .github/workflows/client-signature-live.yml
-      - tools/client-signature-*.mjs
-      - tools/sign-application-action.mjs
+  # Called after auto-deploy succeeds. Running a new live test before its server
+  # code is deployed would test the old build and deadlock the pre-deploy CI gate.
+  workflow_call:
+    inputs:
+      expected_build:
+        description: Optional exact relay build SHA to require
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read

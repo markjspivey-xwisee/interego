@@ -12,6 +12,7 @@ export interface InteractionRecord {
   reference: string; action: string; payload: Record<string, unknown>; binding: string;
   status: 'pending' | 'reviewing' | 'submitting' | 'completed' | 'cancelled' | 'expired' | 'failed';
   createdAt: number; expiresAt: number; updatedAt: number;
+  signingOrigin?: string;
   draft?: ResourceSignatureDraft; result?: Record<string, unknown>;
 }
 export interface InteractionStore {
@@ -55,7 +56,7 @@ export function encryptedInteractionStore(config: { podUrl: string; fetch: Fetch
 
 export class ClientInteractions {
   constructor(private readonly deps: {
-    store: InteractionStore; publicUrl: string; now?: () => number;
+    store: InteractionStore; publicUrl: string; signingOrigins?: readonly string[]; now?: () => number;
     /** Revalidates the original grant, its current scopes and account on EVERY operation. */
     authorize: (credential: string) => Promise<InteractionOwner & { expiresAt: number }>;
     prepare: (record: InteractionRecord) => Promise<ResourceSignatureDraft>;
@@ -65,9 +66,13 @@ export class ClientInteractions {
   }) {}
   private now() { return this.deps.now?.() ?? Date.now(); }
   operationId(credential: string, reference: string, action: string, payload: Record<string, unknown>) {
+    // An optional empty proof field is the same unsigned request as an omitted
+    // field. The interpreter removes it before creating the handoff.
+    const unsigned = { ...payload };
+    if (!unsigned['client_proof']) delete unsigned['client_proof'];
     const stable = (value: unknown): unknown => Array.isArray(value) ? value.map(stable) : value && typeof value === 'object'
       ? Object.fromEntries(Object.keys(value).sort().map(key => [key, stable((value as Record<string, unknown>)[key])])) : value;
-    return createHash('sha256').update(JSON.stringify([credential, reference, action, stable(payload)])).digest('base64url');
+    return createHash('sha256').update(JSON.stringify([credential, reference, action, stable(unsigned)])).digest('base64url');
   }
   async existing(credential: string, reference: string, action: string, payload: Record<string, unknown>, owner: InteractionOwner) {
     const entry = await this.deps.store.read(this.operationId(credential, reference, action, payload));
@@ -96,7 +101,7 @@ export class ClientInteractions {
   private publicRecord(record: InteractionRecord) {
     return { schema: 'interego.client-interaction/v1', id: record.id, status: record.status,
       expiresAt: new Date(record.expiresAt).toISOString(),
-      signingUrl: this.deps.publicUrl.replace(/\/$/, '') + '/sign-action?request=' + record.id,
+      signingUrl: (record.signingOrigin ?? this.deps.publicUrl).replace(/\/$/, '') + '/sign-action?request=' + record.id,
       descriptorUrl: INTERACTION_PREFIX + record.id, action: INTERACTION_STATUS,
       cancelAction: INTERACTION_CANCEL,
       ...(record.result ? { result: record.result } : {}),
@@ -116,10 +121,19 @@ export class ClientInteractions {
       return this.publicRecord(previous.record);
     }
     if (previous && ['completed', 'submitting', 'failed'].includes(previous.record.status)) return this.publicRecord(previous.record);
+    // Choose only an operator-configured signing page that can use a registered
+    // credential. A key's origin list must never become an arbitrary redirect.
+    const signingOrigin = (this.deps.signingOrigins ?? [this.deps.publicUrl]).find(origin => {
+      const url = new URL(origin);
+      return input.draft.request.keys.some(({ key }) => key.scheme === 'eip191'
+        || key.scheme === 'webauthn' && key.origins?.includes(url.origin)
+          && key.rpIds?.some(rp => url.hostname === rp || url.hostname.endsWith('.' + rp)));
+    });
+    if (!signingOrigin) throw new Error('No configured signing page supports your registered credential. Use your registered agent signer and submit its client_proof through MCP.');
     const record: InteractionRecord = { version: 1, id,
       owner: { userId: owner.userId, clientId: owner.clientId, principal: owner.principal },
       credential: input.credential, reference: input.reference, action: input.action, payload: input.payload,
-      binding: input.draft.binding, status: 'pending', createdAt: now, updatedAt: now, expiresAt };
+      binding: input.draft.binding, status: 'pending', createdAt: now, updatedAt: now, expiresAt, signingOrigin };
     await this.deps.store.write(record, previous?.etag);
     return this.publicRecord(record);
   }

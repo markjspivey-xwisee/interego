@@ -52,6 +52,9 @@ describe('durable client signing handoffs', () => {
     const f = await signingFixture(); const pending = (await f.create())!; const id = String(pending['id']);
     const restarted = new ClientInteractions(f.deps);
     expect(await restarted.status(id, f.owners['alice']!)).toMatchObject({ status: 'pending' });
+    const control = await f.control();
+    expect(await restarted.existing('alice', String(control['descriptorUrl']), String(control['action']), { client_proof: '' }, f.owners['alice']!)).toMatchObject({ id, status: 'pending' });
+    expect(await restarted.resume(id, f.owners['alice']!, String(control['descriptorUrl']), String(control['action']), { client_proof: '' })).toMatchObject({ id, status: 'pending' });
     const review = await restarted.review(id, 'alice'); const proof = await f.sign(review.signingRequest);
     const first = await restarted.submit(id, 'alice', review.reviewId, proof);
     expect(await restarted.submit(id, 'alice', review.reviewId, proof)).toEqual(first);
@@ -67,6 +70,22 @@ describe('durable client signing handoffs', () => {
     const review = await f.broker.review(id, 'alice');
     await expect(f.broker.submit(id, 'alice', review.reviewId, await f.sign(review.signingRequest, 'bob'))).rejects.toThrow();
     expect((await f.broker.status(id, f.owners['alice']!)).status).toBe('reviewing');
+    expect(f.publish).not.toHaveBeenCalled();
+  });
+  it('chooses a configured origin compatible with the holder key and refuses arbitrary origins', async () => {
+    const f = await signingFixture(); const control = await f.control();
+    const reference = String(control['descriptorUrl']); const action = String(control['action']);
+    const original = await f.registry.prepareSignature(reference, action, {}, f.context());
+    const draft = { ...original, request: { ...original.request, keys: [{ keyId: 'test-passkey', key: {
+      scheme: 'webauthn' as const, credentialId: 'test', origins: ['https://relay.example'], rpIds: ['relay.example'],
+    } }] } };
+    const broker = new ClientInteractions({ ...f.deps, signingOrigins: ['https://identity.example', 'https://relay.example'] });
+    const request = { credential: 'alice', reference, action, payload: {}, draft };
+    expect((await broker.create(request)).signingUrl).toMatch(/^https:\/\/relay.example\/sign-action\?request=/);
+    const unsupported = { ...draft, request: { ...draft.request, keys: [{ keyId: 'foreign', key: {
+      scheme: 'webauthn' as const, credentialId: 'foreign', origins: ['https://unconfigured.example'], rpIds: ['unconfigured.example'],
+    } }] } };
+    await expect(broker.create({ ...request, payload: { different: true }, draft: unsupported })).rejects.toThrow('No configured signing page');
     expect(f.publish).not.toHaveBeenCalled();
   });
   it('requires fresh review after a current-state change even while the old proof is unexpired', async () => {
