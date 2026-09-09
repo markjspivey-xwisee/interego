@@ -6,6 +6,7 @@ import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Wallet } from 'ethers';
+import { AjvJsonSchemaValidator } from '@modelcontextprotocol/server/validators/ajv';
 import { openAgentSession } from '../applications/shared-workspace/src/agent-session.ts';
 import { canonicalJson, parseSignedJsonDocument } from '../integrations/application-runtime/application-lab-runtime.ts';
 import { fixture, roles, labels } from './client-signature-fixture.mjs';
@@ -66,8 +67,23 @@ const rememberControls = view => {
   return view;
 };
 const render = async () => rememberControls(await read('render_hmd', { descriptor_url: refs.catalog.descriptorUrl }));
-const invoke = (control, payload = {}) => session.call('act', {
-  descriptor_url: control.descriptorUrl, action_iri: control.action, payload }).then(unwrap);
+// Cover both published tool contracts. Reviewer 1 follows Claude's strict shim.
+const invocationTool = role === 'reviewer-1' ? 'invoke_affordance' : 'act';
+let validateInvocation;
+const invoke = async (control, payload = {}) => {
+  const wire = await session.call(invocationTool, {
+    descriptor_url: control.descriptorUrl, action_iri: control.action, payload });
+  if (invocationTool === 'invoke_affordance') {
+    if (!validateInvocation) {
+      const response = await fetch('https://relay.interego.xwisee.com/.well-known/operations/invoke_affordance/output');
+      assert.ok(response.ok, 'Read the deployed output schema');
+      validateInvocation = new AjvJsonSchemaValidator().getValidator(await response.json());
+    }
+    const check = validateInvocation(wire);
+    assert.ok(check.valid, 'invoke_affordance violates its advertised schema: ' + JSON.stringify(check));
+  }
+  return unwrap(wire);
+};
 
 async function command(method, args) {
   if (method === 'configure') {
@@ -106,6 +122,10 @@ async function command(method, args) {
     assert.equal(pending.schema, 'interego.client-interaction/v1', JSON.stringify(pending).slice(0, 1000));
     assert.equal(pending.status, 'pending'); assert.match(pending.id, /^[\w-]{43}$/);
     assert.equal(pending.signingUrl, 'https://identity.interego.xwisee.com/sign-action?request=' + pending.id);
+    if (invocationTool === 'invoke_affordance') assert.equal(pending.httpStatus, 202);
+    const recovered = await invoke(submit);
+    assert.equal(recovered.id, pending.id, 'An identical call recovers the pending handoff');
+    assert.equal(recovered.status, 'pending');
     handoffs.set(args.action, pending);
     const unauthenticated = await fetch('https://relay.interego.xwisee.com/client-interactions/' + pending.id);
     assert.equal(unauthenticated.status, 401, 'Knowing the short identifier grants no receipt access');
@@ -160,12 +180,12 @@ async function command(method, args) {
     if (pending) {
       const completed = await holderApi(pending.id + '/submit', { reviewId: prepared.reviewId, proof });
       assert.equal(completed.status, 'completed', JSON.stringify(completed).slice(0, 1500));
-      const status = unwrap(await session.call('act', { descriptor_url: pending.descriptorUrl, action_iri: pending.action, payload: {} }));
+      const status = await invoke({ descriptorUrl: pending.descriptorUrl, action: pending.action });
       assert.equal(status.status, 'completed');
       assert.deepEqual(status.result, completed.result, 'MCP must retrieve the automatic submission result');
       const repeat = await holderApi(pending.id + '/submit', { reviewId: prepared.reviewId, proof });
       assert.deepEqual(repeat.result, completed.result, 'Replayed handoff POST returns the original result');
-      return { ...completed.result, handoff: { id: pending.id, status: completed.status, signingUrl: pending.signingUrl }, proof, submit };
+      return { ...completed.result, handoff: { id: pending.id, status: completed.status, signingUrl: pending.signingUrl, tool: invocationTool, pendingHttpStatus: pending.httpStatus }, proof, submit };
     }
     return { proof, submit, request, reviewedDigest, signingOrigins: prepared.signingUrls.map(url => url.split('#')[0]) };
   }

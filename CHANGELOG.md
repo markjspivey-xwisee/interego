@@ -34,6 +34,11 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
 
 <!-- documented-through: 2037e1a -->
 
+### 2026-09-09 — Signing response compatibility
+
+- Interactive `invoke_affordance` responses MUST retain the published numeric status and JSON body schema through fallback, continuation and cancellation. Pending handoffs return 202 with their signing and recovery controls in the body. The existing schema is preserved.
+- The live approval canary exercises both `act` and the strict `invoke_affordance` shim, validates the latter against its deployed output schema, and verifies that repeating a pending request recovers the same identifier.
+
 ### 2026-09-09 — MCP client-signing handoffs
 
 - Submitting a descriptor-declared client-signed action without a proof creates an authenticated pending request. Short links MUST NOT confer access to the receipt. The holder signs fresh, verified action bytes; the service verifies and submits them automatically.
