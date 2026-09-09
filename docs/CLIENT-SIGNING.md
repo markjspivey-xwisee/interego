@@ -5,13 +5,23 @@ Preview stays read-only. For a client-signed action, Submit without `client_proo
 starts an authenticated signing handoff. The optional application interpreter
 defines the action and receipt; the relay supplies a generic interaction lifecycle.
 
+Both action tools advertise the existing HyperMarkdown MCP App. A pending signing
+response opens its signing panel in hosts supporting MCP Apps. The panel reads the
+request through the caller's authenticated status control before enabling a
+**Review and sign** button. A click opens the holder's signing origin through the
+host's link API; no URL or proof needs copying. The panel polls the verified result,
+displays it, updates model context and requests conversation continuation. A host
+may refuse that continuation; the visible result and read-only status control remain.
+If cached tool metadata does not open the panel, call the existing `render_hmd`
+tool with the returned interaction `descriptorUrl`. No new signing tool is needed.
+
 The requesting client receives URL elicitation when it advertises support. On
 the 2026-07-28 protocol this is an `input_required` result with a server-bound
 continuation. Initialized 2025-11-25 clients receive `elicitation/create` and a
-completion notification. Clients without URL support receive an ordinary short
-link and descriptor-bound status and cancellation controls. They can poll that
-status through MCP. The server cannot force an unsupported host to open a window
-or resume a conversation.
+completion notification. Clients without URL support receive the panel's resource
+reference and descriptor-bound status and cancellation controls. If a host supports
+neither interface, report that measured limitation and provide a clickable link.
+The server cannot force an unsupported host to open a window or resume a conversation.
 
 The `invoke_affordance` compatibility shim keeps a numeric HTTP-style `status`:
 202 while awaiting signing, with the interaction state and all recovery controls
@@ -57,6 +67,24 @@ runtime and supply `client_proof` directly. Client-held signing does not require
 two humans or two devices; the application contract determines which distinct
 actors and public-key fingerprints qualify. The relay never supplies a reviewer
 private key or substitutes its attestation for a client signature.
+
+`integrations/application-runtime/client-signing-session.ts` provides this runtime
+path without a proof-file round trip. Configure `clientSigningSession` inside the
+real key holder's process with its authenticated MCP `call`, public `key`, private
+`sign` callback and a scope naming the actor, application, action, contract and
+expiry. Its required `review(receipt, digest)` callback independently checks the
+receipt and evidence. Then call `execute(previewControl, submitControl, payload)`
+with the resource's advertised controls. It previews, checks scope and freshness,
+reviews, signs, verifies the public proof locally and submits once through MCP.
+It never retries an uncertain submission or falls back to the relay's key.
+
+This local scope restricts the signer; it does not create a new cryptographic
+delegation or replace server-side authorization. The server still checks current
+registration, delegation, contract and predecessor. OAuth access by itself does
+not supply a private key. A hosted connector without a signer uses the interactive
+holder path; do not manufacture a key for another reviewer or call the bearer an
+independent client proof. A newly provisioned subordinate signing key and its
+delegation would require a separate explicit enrollment and verification design.
 
 The standalone fragment-based page remains available for existing process
 integrations. New interactive clients should use Submit's pending request flow.

@@ -99,11 +99,13 @@ export class ClientInteractions {
     if (!sameOwner(owner, record.owner) || owner.expiresAt <= this.now()) throw new Error('the originating authorization expired or changed; request a new signing handoff');
   }
   private publicRecord(record: InteractionRecord) {
-    return { schema: 'interego.client-interaction/v1', id: record.id, status: record.status,
+    return { schema: 'interego.client-interaction/v1', id: record.id, status: record.status, actor: record.owner.principal,
       expiresAt: new Date(record.expiresAt).toISOString(),
       signingUrl: (record.signingOrigin ?? this.deps.publicUrl).replace(/\/$/, '') + '/sign-action?request=' + record.id,
       descriptorUrl: INTERACTION_PREFIX + record.id, action: INTERACTION_STATUS,
       cancelAction: INTERACTION_CANCEL,
+      signingRequirement: { authorization: 'authenticated-session', proof: 'registered-client-key',
+        reason: 'This action requires a client signature. No client proof was supplied; the relay cannot sign with the holder’s private key.' },
       ...(record.result ? { result: record.result } : {}),
       ...(record.status === 'submitting' && this.now() - record.updatedAt > 120_000
         ? { blocker: 'Submission outcome is uncertain. Inspect the current resource head before any new submission.' } : {}),
@@ -215,7 +217,7 @@ export function clientInteractionComposition(): ResourceComposition {
       if (!claims(ref)) return undefined;
       if (!context.interactionStatus) throw new Error('authenticated interaction session required');
       const status = await context.interactionStatus(id(ref));
-      const body = JSON.stringify(status, null, 2);
+      const body = 'Review and sign using your registered credential. This panel checks the submitted result automatically.';
       return { descriptorUrl: ref, title: 'Signing request', body, hmd: body, controls: [
         { descriptorUrl: ref, action: INTERACTION_STATUS, label: 'Check signing result', method: 'GET', fields: [], executable: true },
         { descriptorUrl: ref, action: INTERACTION_CANCEL, label: 'Cancel signing request', method: 'POST', fields: [], executable: true },

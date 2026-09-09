@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import express from 'express';
 import { JSDOM } from 'jsdom';
-import { describe, expect, it } from 'vitest';
+import { HMD_APP_HTML } from '../deploy/mcp-relay/hmd-app.js';
+import { describe, expect, it, vi } from 'vitest';
 import { Server, type AuthInfo } from '@modelcontextprotocol/server';
 import { AjvJsonSchemaValidator } from '@modelcontextprotocol/server/validators/ajv';
 import { INVOKE_AFFORDANCE_OUTPUT } from '../deploy/mcp-relay/resource-compositions.js';
@@ -39,6 +40,10 @@ async function harness(toolName = 'act') {
     server.setRequestHandler('tools/list', async () => ({ tools: [{ name: toolName, inputSchema: { type: 'object' }, ...(toolName === 'invoke_affordance' ? { outputSchema: INVOKE_AFFORDANCE_OUTPUT } : {}) }] }));
     server.setRequestHandler('tools/call', async (_req, ctx) => {
       const owner = f.owners[ctx.http!.authInfo!.token]!;
+      if (_req.params.name === 'render_hmd') {
+        const data = { interaction: await f.broker.status(id, owner) };
+        return { content: [{ type: 'text' as const, text: JSON.stringify(data) }], structuredContent: data };
+      }
       return clientInteractionMcpResult(await f.broker.status(id, owner), server, ctx, {
         status: () => f.broker.status(id, owner), cancel: () => f.broker.cancel(id, owner),
       }, toolName === 'invoke_affordance' ? { reference: String(control['descriptorUrl']), action: String(control['action']) } : undefined);
@@ -90,6 +95,76 @@ async function browserSign(f: Awaited<ReturnType<typeof harness>>) {
 }
 
 describe('MCP signing lifecycle on the actual SDK transport', () => {
+  it('checks request ownership before enabling a signing button and cancels without signing', async () => {
+    const f = await harness();
+    const doms: JSDOM[] = [];
+    try {
+      for (const allowed of [false, true]) {
+        const openExternal = vi.fn();
+        const callTool = vi.fn(async (name: string) => ({ structuredContent: { interaction: name === 'render_hmd'
+          ? await f.broker.status(f.id, f.owners[allowed ? 'alice' : 'bob']!)
+          : await f.broker.cancel(f.id, f.owners['alice']!) } }));
+        const dom = new JSDOM(HMD_APP_HTML, { runScripts: 'dangerously', beforeParse(w) {
+          Object.defineProperty(w, 'openai', { value: { toolOutput: f.pending, callTool, openExternal, sendFollowUpMessage: vi.fn() } });
+        } });
+        doms.push(dom);
+        const button = (label: string) => [...dom.window.document.querySelectorAll('button')].find(b => b.textContent === label)!;
+        if (!allowed) {
+          await vi.waitFor(() => expect(dom.window.document.querySelector('#pane-enhanced [role="status"]')?.textContent).toContain('Unable to check signing'));
+          expect(button('Review and sign').disabled).toBe(true);
+        } else {
+          await vi.waitFor(() => expect(button('Cancel request').disabled).toBe(false));
+          button('Cancel request').click();
+          await vi.waitFor(() => expect(dom.window.document.querySelector('#pane-enhanced [role="status"]')?.textContent).toBe('Request cancelled.'));
+          expect(button('Review and sign').disabled).toBe(true);
+          expect(callTool.mock.calls.filter(([name]) => name === 'invoke_affordance')).toHaveLength(1);
+        }
+        expect(openExternal).not.toHaveBeenCalled();expect(f.publish).not.toHaveBeenCalled();
+      }
+    } finally { doms.forEach(dom => dom.window.close());await f.close(); }
+  });
+
+  it.each(['act', 'invoke_affordance'])('%s mounts a signing panel, opens only on a click and reports the verified commit automatically', async toolName => {
+    const f = await harness(toolName);
+    let dom: JSDOM | undefined;
+    const messages: Array<{ method: string; params: Record<string, unknown> }> = [];
+    try {
+      const wire = async (name = toolName, args = {}) => (await (await f.post({ jsonrpc: '2.0', id: 1, method: 'tools/call',
+        params: { name, arguments: args, _meta: meta(false) } }, { 'Mcp-Method': 'tools/call', 'Mcp-Name': name })).json()).result;
+      const initial = await wire();
+      const host = { postMessage(message: { id?: string; method: string; params: Record<string, unknown> }) {
+        messages.push(message);
+        const deliver = (response: Record<string, unknown>) => dom!.window.dispatchEvent(new dom!.window.MessageEvent('message', { source: host as unknown as Window, data: { jsonrpc: '2.0', ...response } }));
+        if (message.method === 'ui/initialize') queueMicrotask(() => deliver({ id: message.id, result: { protocolVersion: '2026-01-26' } }));
+        else if (message.method === 'ui/notifications/initialized') queueMicrotask(() => deliver({ method: 'ui/notifications/tool-result', params: initial }));
+        else if (message.method === 'tools/call') {
+          expect(message.params).toEqual({ name: 'render_hmd', arguments: { descriptor_url: f.pending['descriptorUrl'] } });
+          void wire(String(message.params['name']), message.params['arguments'] as Record<string, unknown>).then(result => deliver({ id: message.id, result }));
+        } else if (message.id) queueMicrotask(() => deliver({ id: message.id, result: {} }));
+      } };
+      dom = new JSDOM(HMD_APP_HTML, { runScripts: 'dangerously', beforeParse(w) {
+        Object.defineProperty(w, 'parent', { value: host });
+        const timeout = w.setTimeout.bind(w);
+        w.setTimeout = ((handler: TimerHandler, ms?: number) => timeout(handler, ms === 5000 ? 20 : ms)) as typeof w.setTimeout;
+      } });
+      const button = () => [...dom!.window.document.querySelectorAll('button')].find(b => b.textContent === 'Review and sign')!;
+      await vi.waitFor(() => expect(button()?.disabled).toBe(false));
+      expect(messages.some(m => m.method === 'ui/open-link')).toBe(false);
+      expect(f.publish).not.toHaveBeenCalled();
+      button().click();
+      await vi.waitFor(() => expect(messages.filter(m => m.method === 'ui/open-link')).toHaveLength(1));
+      expect(messages.find(m => m.method === 'ui/open-link')!.params).toEqual({ url: f.pending['signingUrl'] });
+      expect(f.publish).not.toHaveBeenCalled(); // Opening is not signing.
+      expect(dom.window.document.querySelector('#pane-enhanced [role="status"]')?.textContent).not.toContain('Signed, verified and submitted.');
+      await browserSign(f);
+      await vi.waitFor(() => expect(dom!.window.document.querySelector('#pane-enhanced [role="status"]')?.textContent).toBe('Signed, verified and submitted.'));
+      expect(f.publish).toHaveBeenCalledTimes(1);
+      expect(messages.filter(m => m.method === 'ui/update-model-context')).toHaveLength(1);
+      expect(messages.filter(m => m.method === 'ui/message')).toHaveLength(1);
+      expect(button().disabled).toBe(true);
+    } finally { dom?.window.close(); await f.close(); }
+  });
+
   it('preserves the advertised invoke_affordance schema on fallback, recovery and completion', async () => {
     const f = await harness('invoke_affordance');
     try {
