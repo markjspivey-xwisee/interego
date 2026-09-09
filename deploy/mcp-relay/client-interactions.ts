@@ -104,8 +104,8 @@ export class ClientInteractions {
       signingUrl: (record.signingOrigin ?? this.deps.publicUrl).replace(/\/$/, '') + '/sign-action?request=' + record.id,
       descriptorUrl: INTERACTION_PREFIX + record.id, action: INTERACTION_STATUS,
       cancelAction: INTERACTION_CANCEL,
-      signingRequirement: { authorization: 'authenticated-session', proof: 'registered-client-key',
-        reason: 'This action requires a client signature. No client proof was supplied; the relay cannot sign with the holder’s private key.' },
+      ...(!terminal(record.status) ? { signingRequirement: { authorization: 'authenticated-session', proof: 'registered-client-key',
+        reason: 'This action requires a client signature. No client proof was supplied; the relay cannot sign with the holder’s private key.' } } : {}),
       ...(record.result ? { result: record.result } : {}),
       ...(record.status === 'submitting' && this.now() - record.updatedAt > 120_000
         ? { blocker: 'Submission outcome is uncertain. Inspect the current resource head before any new submission.' } : {}),

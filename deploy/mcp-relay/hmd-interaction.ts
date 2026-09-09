@@ -33,6 +33,7 @@ function renderInteraction(initial){
   var card=el('section','control'), state=el('p','status muted','Checking signing request…');
   state.setAttribute('role','status');state.setAttribute('aria-live','polite');
   var detail=el('p','when','This action requires a signature from a registered key.');
+  detail.style.overflowWrap='anywhere';
   var origin=el('p','when'), row=el('div','actions');
   var sign=el('button','go','Review and sign'), refresh=el('button','go secondary','Check result'), cancel=el('button','go secondary','Cancel request');
   var output=el('pre','src');output.hidden=true;
