@@ -14,6 +14,7 @@
  */
 import { HMD_APP_LOGIC_JS } from './hmd-app-logic.js';
 import { CLIENT_ENCRYPTION_UI_JS } from './client-encryption-bundle.js';
+import { HMD_INTERACTION_JS } from './hmd-interaction.js';
 
 const STYLE = String.raw`
 :root{--bg:#fff;--fg:#16181d;--muted:#5b616e;--line:#e4e7ec;--card:#f7f8fa;--accent:#3538cd;--accent-fg:#fff;--ok:#067647;--warn:#b42318;--chip:#eef0f4;font-synthesis:none}
@@ -82,7 +83,7 @@ var RPC=1, PENDING=Object.create(null), BRIDGE_READY=false, BRIDGE_PROMISE=null;
 function q(id){return document.getElementById(id)}
 // Legacy globals can arrive before or instead of the standard host handshake.
 function readToolOutput(){ try{ if(window.openai&&window.openai.toolOutput) return window.openai.toolOutput; }catch(e){} return null; }
-function hydrate(d){ if(shouldRehydrate(DATA,d)){
+function hydrate(d){ d=viewerOutput(d); if(shouldRehydrate(DATA,d)){
   var prior=DATA&&DATA.clientEncryption;
   // A refresh projection may omit transport metadata. Keep the authenticated
   // context supplied by render_hmd; a new explicit identity clears private DOM.
@@ -179,6 +180,7 @@ function selectTab(name){
 }
 function render(){
   var d=DATA||{};
+  q('private-content').hidden=!!d.interaction||d.toolResult!==undefined;
   q('title').textContent=d.title||'HyperMarkdown';
   var prov=q('prov'); var a=d.authorship||{};
   // ★ "Authorship verified" ALONE IS THE OVERCLAIM THIS BADGE USED TO MAKE. The signature
@@ -203,8 +205,12 @@ function render(){
   var enh=q('pane-enhanced'); enh.innerHTML='';
   var prose=el('div','prose'); prose.innerHTML=safeMarkdown(d.body||''); enh.appendChild(prose);
   var controls=(d.controls||[]);
-  if(!controls.length){ enh.appendChild(el('p','empty','This document publishes no controls.')); }
-  controls.forEach(function(c){ enh.appendChild(renderControl(c,d)); });
+  if(d.interaction){ enh.appendChild(renderInteraction(d.interaction)); prov.textContent='Authenticated request'; }
+  else if(d.toolResult!==undefined){ enh.appendChild(mkpre(JSON.stringify(d.toolResult,null,2))); prov.textContent='Tool response'; }
+  else {
+    if(!controls.length){ enh.appendChild(el('p','empty','This document publishes no controls.')); }
+    controls.forEach(function(c){ enh.appendChild(renderControl(c,d)); });
+  }
   // Markdown + source
   q('pane-markdown').innerHTML=''; q('pane-markdown').appendChild(mkpre(d.body||'(no body)'));
   q('pane-source').innerHTML=''; q('pane-source').appendChild(mkpre(d.hmd||'(no source)'));
@@ -286,6 +292,7 @@ function renderControl(c,d){
       }
       if(isHmdDoc(result)){hydrate(result);return;}
       if(result&&isHmdDoc(result.view)){hydrate(result.view);return;}
+      if(validInteraction(result)){hydrate(result);return;}
       status.className='status ok'; status.textContent='Done.';
       var output=el('pre','src result'); output.textContent=JSON.stringify(result,null,2); card.appendChild(output);
     }).catch(function(e){ if(DATA!==d || !card.isConnected) return; status.className='status err'; status.textContent='Failed: '+(e&&e.message?e.message:'error'); }).then(function(){ btn.disabled=false; });
@@ -331,4 +338,4 @@ function prettyAction(iri){ var n=localName(iri).replace(/[-_]/g,' ').replace(/(
 `;
 
 /** The complete self-contained widget document served at `ui://widget/hmd.html`. */
-export const HMD_APP_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>HyperMarkdown viewer</title><style>${STYLE}</style></head><body><div class="wrap"><header><h1 class="title" id="title">HyperMarkdown</h1><span class="prov" id="prov"></span></header><div id="private-content"></div><div class="tabs" role="tablist"><button class="tab" id="tab-enhanced" role="tab" aria-selected="true">Enhanced</button><button class="tab" id="tab-markdown" role="tab" aria-selected="false">Markdown</button><button class="tab" id="tab-source" role="tab" aria-selected="false">HMD source</button></div><div class="pane on" id="pane-enhanced"></div><div class="pane" id="pane-markdown"></div><div class="pane" id="pane-source"></div><div class="links" id="links"></div></div><script>${CLIENT_ENCRYPTION_UI_JS}\n${HMD_APP_LOGIC_JS}\n${BOOT_JS}</script></body></html>`;
+export const HMD_APP_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>HyperMarkdown viewer</title><style>${STYLE}</style></head><body><div class="wrap"><header><h1 class="title" id="title">HyperMarkdown</h1><span class="prov" id="prov"></span></header><div id="private-content"></div><div class="tabs" role="tablist"><button class="tab" id="tab-enhanced" role="tab" aria-selected="true">Enhanced</button><button class="tab" id="tab-markdown" role="tab" aria-selected="false">Markdown</button><button class="tab" id="tab-source" role="tab" aria-selected="false">HMD source</button></div><div class="pane on" id="pane-enhanced"></div><div class="pane" id="pane-markdown"></div><div class="pane" id="pane-source"></div><div class="links" id="links"></div></div><script>${CLIENT_ENCRYPTION_UI_JS}\n${HMD_APP_LOGIC_JS}\n${HMD_INTERACTION_JS}\n${BOOT_JS}</script></body></html>`;

@@ -11544,7 +11544,7 @@ const TOOL_SCHEMAS = [
     },
     outputSchema: GENERIC_OUTPUT_SCHEMA,
     annotations: { title: 'Act on an affordance', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
-    _meta: { ui: { visibility: ['model', 'app'] }, 'openai/widgetAccessible': true },
+    _meta: { ui: { resourceUri: HMD_WIDGET_URI, visibility: ['model', 'app'] }, 'ui/resourceUri': HMD_WIDGET_URI, 'openai/outputTemplate': HMD_WIDGET_URI, 'openai/widgetAccessible': true },
   },
   {
     name: 'restrict',
@@ -12339,7 +12339,7 @@ const TOOL_SCHEMAS = [
     annotations: { title: 'Invoke a vertical affordance', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     // MCP Apps: app-visible so the HyperMarkdown viewer widget can call it via
     // tools/call on Submit (+ ChatGPT legacy widget-accessible alias).
-    _meta: { ui: { visibility: ['model', 'app'] }, 'openai/widgetAccessible': true },
+    _meta: { ui: { resourceUri: HMD_WIDGET_URI, visibility: ['model', 'app'] }, 'ui/resourceUri': HMD_WIDGET_URI, 'openai/outputTemplate': HMD_WIDGET_URI, 'openai/widgetAccessible': true },
   },
   // ── HyperMarkdown interactive viewer (MCP App render tool) ──
   {
@@ -12356,7 +12356,7 @@ const TOOL_SCHEMAS = [
     annotations: { title: 'Open in HyperMarkdown viewer', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     // MCP Apps: this tool's output mounts the generic HMD viewer widget
     // (+ ChatGPT legacy outputTemplate alias). Content-versioned URI (cache-bust).
-    _meta: { ui: { resourceUri: HMD_WIDGET_URI }, 'openai/outputTemplate': HMD_WIDGET_URI },
+    _meta: { ui: { resourceUri: HMD_WIDGET_URI, visibility: ['model', 'app'] }, 'ui/resourceUri': HMD_WIDGET_URI, 'openai/outputTemplate': HMD_WIDGET_URI, 'openai/widgetAccessible': true },
   },
 
 ] as const;

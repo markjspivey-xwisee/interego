@@ -173,6 +173,7 @@ COPY deploy/mcp-relay/render-auth.ts ./
 COPY deploy/mcp-relay/render-descriptor.ts ./
 COPY deploy/mcp-relay/note-view.ts ./
 COPY deploy/mcp-relay/hmd-app.ts ./
+COPY deploy/mcp-relay/hmd-interaction.ts ./
 COPY deploy/mcp-relay/client-encryption-bundle.ts ./
 COPY deploy/mcp-relay/client-check.ts ./
 COPY deploy/mcp-relay/hmd-resource.ts ./

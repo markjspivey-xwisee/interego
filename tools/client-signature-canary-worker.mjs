@@ -10,6 +10,7 @@ import { AjvJsonSchemaValidator } from '@modelcontextprotocol/server/validators/
 import { openAgentSession } from '../applications/shared-workspace/src/agent-session.ts';
 import { canonicalJson, parseSignedJsonDocument } from '../integrations/application-runtime/application-lab-runtime.ts';
 import { fixture, roles, labels } from './client-signature-fixture.mjs';
+import { clientSigningSession } from '../integrations/application-runtime/client-signing-session.ts';
 
 const [role, id] = process.argv.slice(2);
 assert.equal(process.env.INTEREGO_LIVE_CANARY, '1');
@@ -127,6 +128,9 @@ async function command(method, args) {
     assert.equal(recovered.id, pending.id, 'An identical call recovers the pending handoff');
     assert.equal(recovered.status, 'pending');
     handoffs.set(args.action, pending);
+    const panel = await read('render_hmd', { descriptor_url: pending.descriptorUrl });
+    assert.equal(panel.interaction.id, pending.id, 'The existing MCP App must resolve the private signing request');
+    assert.equal(panel.interaction.status, 'pending');
     const unauthenticated = await fetch('https://relay.interego.xwisee.com/client-interactions/' + pending.id);
     assert.equal(unauthenticated.status, 401, 'Knowing the short identifier grants no receipt access');
     return pending;
@@ -188,6 +192,27 @@ async function command(method, args) {
       return { ...completed.result, handoff: { id: pending.id, status: completed.status, signingUrl: pending.signingUrl, tool: invocationTool, pendingHttpStatus: pending.httpStatus }, proof, submit };
     }
     return { proof, submit, request, reviewedDigest, signingOrigins: prepared.signingUrls.map(url => url.split('#')[0]) };
+  }
+  if (method === 'finish-autonomously') {
+    assert.equal(role, 'submitter');
+    const view = await render();
+    const preview = view.controls.find(c => c.label === 'Preview: ' + labels.finish);
+    const submit = view.controls.find(c => c.label === 'Submit: ' + labels.finish);
+    assert.ok(preview && submit);
+    const signer = clientSigningSession({ call: session.call,
+      key: { scheme: 'eip191', address: wallet.address }, sign: message => wallet.signMessage(message),
+      scope: { actor: session.identity.agentDid, applicationId: id, actionIri: id + ':finish',
+        contractDigest: refs.contract.documentDigest, expiresAt: new Date(Date.now() + 300000).toISOString(),
+        review: async receipt => {
+          const current = await render();
+          assert.equal(receipt.expectedHead, current.snapshot.head.cid);
+          assert.equal(current.snapshot.head.state.candidateDigest, scenario.candidateDigest);
+          assert.equal(current.snapshot.head.state.approvals.length, 2);
+          assert.deepEqual(current.snapshot.head.state.approvals.map(a => a.approver), participants.slice(1).map(p => p.agentDid));
+          return true;
+        } },
+    });
+    return signer.execute(preview, submit);
   }
   assert.equal(method, 'call', 'Unknown worker command');
   const { name, payload } = args;

@@ -244,7 +244,7 @@ const composition: ResourceComposition = {
       const fragment = Buffer.from(JSON.stringify(signingRequest)).toString('base64url');
       return { ...preview, signingRequest,
         signingUrls: [...origins].map(origin => `${origin}/sign-action#${fragment}`),
-        message: 'Client signature required. Open the signing page on the origin where you registered your credential, review the receipt, sign locally, and submit the returned JSON as client_proof.',
+        message: 'Read-only preview. A runtime with its own registered signer can review this receipt and submit client_proof through MCP. Otherwise invoke the advertised Submit control without a proof to open the interactive signing panel. Do not ask the user to copy a URL or proof JSON.',
       };
     }
     if (!('publish' in context)) throw new Error('write capability is required');

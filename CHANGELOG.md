@@ -34,6 +34,12 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
 
 <!-- documented-through: 2037e1a -->
 
+### 2026-09-09 — Hosted signing panel and runtime-held signer
+
+- Both action tools advertise the generic HMD MCP App. Pending signatures render an authenticated signing panel with a host-opened button, status polling and completion delivery to the conversation. Opening a page MUST NOT count as a signature; failed or uncertain submissions MUST NOT be displayed as committed approvals.
+- An existing runtime-held wallet or Ed25519 signer can review and submit exact receipts through its own MCP connection with an explicit local actor/application/action/contract/expiry scope. Server authorization remains authoritative. This helper MUST NOT create another actor's key, substitute relay signing, or retry an uncertain submit.
+- Preview instructions use the interactive Submit path instead of proof/URL copy-paste. The live canary resolves private panels through render_hmd and completes its final synthetic transition with the runtime signer. Host UI and real-device passkey behavior still require host-side verification.
+
 ### 2026-09-09 — Signing response compatibility
 
 - Interactive `invoke_affordance` responses MUST retain the published numeric status and JSON body schema through fallback, continuation and cancellation. Pending handoffs return 202 with their signing and recovery controls in the body. The existing schema is preserved.

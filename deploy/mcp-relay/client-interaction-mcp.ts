@@ -69,7 +69,8 @@ export async function clientInteractionMcpResult(
   const capabilities = modern ? envelope?.[CLIENT_CAPABILITIES_META_KEY] as ClientCapabilities | undefined : server.getClientCapabilities();
   const urlSupported = capabilities?.elicitation && Object.prototype.hasOwnProperty.call(capabilities.elicitation, 'url');
   if (!urlSupported) return textResult({ ...initial,
-    message: 'Open signingUrl, authenticate as the requested key holder, and sign. Submission completes automatically. Follow descriptorUrl with its status action to retrieve the result; no proof needs copying.' });
+    interactionDelivery: { urlElicitation: 'not-advertised', viewerTool: 'render_hmd', viewerArguments: { descriptor_url: initial['descriptorUrl'] } },
+    message: 'The signing panel opens in hosts supporting MCP Apps. If it did not open, call render_hmd with descriptor_url equal to descriptorUrl. The panel provides the signing button and checks completion automatically. URL elicitation was not advertised on this request. If this host cannot show either interface, report that limitation and provide a clickable signingUrl, never a code block or copy-paste instructions. A pending request is not an approval.' });
   const message = 'Review and sign this action with your registered key. The signed action will be verified and submitted automatically.';
   if (modern) {
     const response = context.mcpReq.inputResponses?.['sign'] as { action?: string } | undefined;

@@ -202,10 +202,9 @@ try {
     if (index === 0) await refuseSigned(submitter, 'finish', 'One reviewer confirmation cannot complete the test');
   }
   await refuseSigned(reviewers[0], 'finish', 'A reviewer cannot perform the submitter-only final transition');
-  const finalRequest = await prepare(submitter, 'finish');
-  const finished = await invoke(submitter, finalRequest.submit, { client_proof: finalRequest.proof });
+  const finished = await submitter.request('finish-autonomously', {});
   await verifyCommitted(finished, submitter);
-  check('Two distinct non-submitter confirmations allow the submitter to complete the live synthetic test');
+  check('Two distinct non-submitter confirmations allow the runtime-held signer to complete through MCP without a human handoff');
   const finalView = await render(submitter), finalHead = await head();
   const descriptor = await call(submitter, 'get_descriptor', { url: finalHead.head.descriptorUrl });
   const finalState = parseSignedJsonDocument(descriptor.graph.content).document;
