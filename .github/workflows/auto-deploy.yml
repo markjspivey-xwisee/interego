@@ -75,6 +75,7 @@ jobs:
       count: ${{ steps.affected.outputs.count }}
       build_matrix: ${{ steps.affected.outputs.build_matrix }}
       deploy_matrix: ${{ steps.affected.outputs.deploy_matrix }}
+      signing_test_changed: ${{ steps.signing-test.outputs.changed }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -102,6 +103,15 @@ jobs:
           RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
         run: npx --yes tsx tools/deploy-affected.ts --github
 
+      - name: Did the live signing check change?
+        id: signing-test
+        run: |
+          if git diff --quiet HEAD^ HEAD -- .github/workflows/client-signature-live.yml .github/workflows/auto-deploy.yml 'tools/client-signature-*.mjs' tools/sign-application-action.mjs; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+          fi
+
   build:
     name: "Build ${{ matrix.image }}"
     needs: scope
@@ -121,6 +131,22 @@ jobs:
     with:
       image: ${{ matrix.image }}
     secrets: inherit
+
+  # This is a POST-deployment assertion inside the same run, not an exception to
+  # the CI gate. All pre-deploy tests must still pass before any rollout occurs.
+  # Also check tool-only changes when the services already run the required code.
+  client-signatures:
+    name: Verify live client signatures after deployment
+    needs: [scope, deploy]
+    if: >-
+      ${{ always() && needs.scope.result == 'success'
+          && (needs.deploy.result == 'success' || needs.deploy.result == 'skipped')
+          && (needs.scope.outputs.signing_test_changed == 'true'
+              || contains(needs.scope.outputs.deploy_matrix, 'relay')
+              || contains(needs.scope.outputs.deploy_matrix, 'identity')) }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/client-signature-live.yml
 
   deploy:
     name: "Deploy ${{ matrix.service }}"
