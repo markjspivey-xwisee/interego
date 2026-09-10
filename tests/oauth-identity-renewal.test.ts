@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { InteregoOAuthProvider, renewIdentityToken } from '../deploy/mcp-relay/oauth-provider.js';
 
-const identity = { userId: 'user', agentId: 'agent', ownerWebId: 'https://identity.example/users/user/profile', podUrl: 'https://pod.example/user/', identityToken: 'old-identity' };
+const identity = { userId: 'user', agentId: 'did:web:identity.example:agents:agent', ownerWebId: 'https://identity.example/users/user/profile', podUrl: 'https://pod.example/user/', identityToken: 'old-identity' };
 const client = { client_id: 'client', redirect_uris: ['https://client.example/cb'], token_endpoint_auth_method: 'none' as const };
 function fixture(renew: (value: Readonly<typeof identity>) => Promise<string>) {
   const expiresAt = Date.now() + 86400_000;
@@ -52,5 +52,14 @@ describe('OAuth identity renewal', () => {
     await expect(renewIdentityToken('https://identity.example', identity, fetcher)).rejects.toMatchObject({ code: 'invalid_grant' });
     fetcher.mockResolvedValue(new Response('', { status: 503 }));
     await expect(renewIdentityToken('https://identity.example', identity, fetcher)).rejects.toThrow('temporarily unavailable');
+  });
+  it('maps the public DID over an internal transport and refuses a foreign authority', async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ token: 'fresh', expiresAt: new Date(Date.now() + 86400_000).toISOString() })));
+    await renewIdentityToken('http://identity:8090', identity, fetcher);
+    expect(String(fetcher.mock.calls[0]![0])).toBe('http://identity:8090/tokens');
+    expect(JSON.parse(String(fetcher.mock.calls[0]![1]!.body))).toEqual({ userId: 'user', agentId: 'agent' });
+    fetcher.mockClear();
+    await expect(renewIdentityToken('https://identity.example', { ...identity, agentId: 'did:web:foreign.example:agents:agent' }, fetcher)).rejects.toMatchObject({ code: 'invalid_grant' });
+    expect(fetcher).not.toHaveBeenCalled();
   });
 });

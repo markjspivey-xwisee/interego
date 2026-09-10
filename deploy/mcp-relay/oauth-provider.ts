@@ -98,10 +98,18 @@ export interface ResolvedIdentity {
 
 /** Renew only an existing valid identity grant, for its same user and agent. */
 export async function renewIdentityToken(identityUrl: string, identity: ResolvedIdentity, fetcher: typeof fetch = fetch): Promise<string> {
+  // OAuth attribution stores a canonical DID; /tokens indexes the local slug.
+  // Use the identity-asserted public WebID authority, since the transport URL
+  // can be an internal service address. Never strip an arbitrary DID's suffix.
+  const prefix = `did:web:${new URL(identity.ownerWebId).host}:agents:`;
+  const agentId = identity.agentId.startsWith(prefix) ? identity.agentId.slice(prefix.length) : identity.agentId;
+  if (!/^[A-Za-z0-9._~-]+$/.test(agentId)) {
+    throw new OAuthError(OAuthErrorCode.InvalidGrant, 'Identity agent binding is invalid; authenticate again');
+  }
   const response = await fetcher(new URL('/tokens', identityUrl), {
     method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15_000),
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${identity.identityToken}` },
-    body: JSON.stringify({ userId: identity.userId, agentId: identity.agentId }),
+    body: JSON.stringify({ userId: identity.userId, agentId }),
   });
   if ([401, 403, 404].includes(response.status)) {
     throw new OAuthError(OAuthErrorCode.InvalidGrant, 'Identity authorization expired or was revoked; authenticate again');
