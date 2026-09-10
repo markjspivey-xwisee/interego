@@ -34,6 +34,13 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
 
 <!-- documented-through: 2037e1a -->
 
+### 2026-09-10 — Verified passkey domains and signing-session renewal
+
+- Successful passkey authentication MUST persist the verified relying-party domain with the counter. Legacy credentials acquire that binding only after cryptographic verification; conflicting bindings and failed persistence MUST refuse authentication. The signing page MUST NOT guess a credential's domain from an origin allowlist.
+- OAuth refresh renews the underlying identity token through the authenticated same-user, same-agent endpoint before rotating the refresh grant. Expired or revoked identity grants require authentication; transient renewal failures preserve the refresh token for retry.
+- Pending signing requests expose an explicit generic resume control for the same actor and OAuth client. Renewal invalidates the previous review and preserves the original thirty-minute maximum lifetime. Read-only polling, terminal outcomes and uncertain submissions MUST NOT renew or resubmit actions.
+- A Chromium virtual-authenticator regression exercises legacy login, domain binding, receipt signing and retained-proof verification. Hosted clients without MCP App support still use the clickable holder signing page.
+
 ### 2026-09-09 — Hosted signing panel and runtime-held signer
 
 - Both action tools advertise the generic HMD MCP App. Pending signatures render an authenticated signing panel with a host-opened button, status polling and completion delivery to the conversation. Opening a page MUST NOT count as a signature; failed or uncertain submissions MUST NOT be displayed as committed approvals.

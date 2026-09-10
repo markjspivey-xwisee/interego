@@ -24,6 +24,7 @@ COPY deploy/identity/did-parse.ts ./
 COPY deploy/identity/timing.ts ./
 COPY deploy/identity/derive-userid.ts ./
 COPY deploy/identity/resolve-target-userid.ts ./
+COPY deploy/identity/passkey-authentication.ts ./
 RUN npx tsc
 
 # ────────────────────────────────────────────────────────────

@@ -21,9 +21,10 @@
  */
 import { test, expect, request, type Page } from '@playwright/test';
 import { createHash, randomBytes } from 'node:crypto';
+import { clientKeyId, verifyClientAuthorization } from '../../../integrations/application-runtime/client-authorization.js';
 
-const RELAY_URL = process.env.BASE_URL ?? 'https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io';
-const IDENTITY_URL = process.env.IDENTITY_URL ?? 'https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+const RELAY_URL = process.env.BASE_URL ?? 'https://relay.interego.xwisee.com';
+const IDENTITY_URL = process.env.IDENTITY_URL ?? 'https://identity.interego.xwisee.com';
 
 async function enableVirtualAuthenticator(page: Page): Promise<string> {
   const client = await page.context().newCDPSession(page);
@@ -56,7 +57,7 @@ test('passkey OAuth dance issues a usable MCP token', async ({ page }) => {
     data: {
       client_name: 'playwright-passkey',
       redirect_uris: ['http://localhost:9999/cb'],
-      grant_types: ['authorization_code'],
+      grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],
       token_endpoint_auth_method: 'none',
     },
@@ -126,9 +127,10 @@ test('passkey OAuth dance issues a usable MCP token', async ({ page }) => {
     },
   });
   expect(token.ok()).toBeTruthy();
-  const { access_token: accessToken } = await token.json();
+  const { access_token: accessToken, refresh_token: refreshToken } = await token.json();
   expect(accessToken).toBeTruthy();
 
+  try {
   // 5. Use the access token to list MCP tools
   const tools = await api.post(`${RELAY_URL}/mcp`, {
     headers: {
@@ -149,6 +151,41 @@ test('passkey OAuth dance issues a usable MCP token', async ({ page }) => {
     expect(body, `${expectedTool} tool exposed`).toContain(`"name":"${expectedTool}"`);
   }
 
+  // Exercise the deployed identity renewal, then the deployed signing page with
+  // this test's own virtual passkey. These signatures are never real approvals.
+  const oldIdentity = await api.get(`${RELAY_URL}/identity-token`, { headers: { Authorization: `Bearer ${accessToken}` } });
+  expect(oldIdentity.ok()).toBeTruthy();
+  const oldIdentityBody = await oldIdentity.json();
+  const refreshed = await api.post(`${RELAY_URL}/token`, { form: { grant_type: 'refresh_token', client_id: clientId, refresh_token: refreshToken } });
+  expect(refreshed.ok()).toBeTruthy();
+  const freshTokens = await refreshed.json();
+  const freshIdentity = await api.get(`${RELAY_URL}/identity-token`, { headers: { Authorization: `Bearer ${freshTokens.access_token}` } });
+  expect(freshIdentity.ok()).toBeTruthy();
+  const freshIdentityBody = await freshIdentity.json();
+  expect(freshIdentityBody.identityToken).toBeTruthy();
+  expect(freshIdentityBody.identityToken).not.toBe(oldIdentityBody.identityToken);
+  const methods = await api.get(`${IDENTITY_URL}/auth-methods/me?purpose=client-signature`, {
+    headers: { Authorization: `Bearer ${freshIdentityBody.identityToken}` },
+  });
+  expect(methods.ok()).toBeTruthy();
+  const credential = (await methods.json()).webAuthnCredentials[0];
+  expect(credential.rpIds).toEqual([new URL(RELAY_URL).hostname]);
+  const key = { scheme: 'webauthn' as const, credentialId: credential.id, publicKey: credential.publicKey,
+    rpIds: credential.rpIds, origins: credential.origins };
+  const message = JSON.stringify({ actor: 'did:example:isolated-browser-test', actionIri: 'urn:test:passkey-signature',
+    authority: { purpose: 'synthetic browser verification only' }, expectedHead: 'synthetic-head', contractDigest: 'synthetic-contract', at: new Date().toISOString() });
+  await page.goto(`${RELAY_URL}/sign-action`);
+  await page.fill('#request', JSON.stringify({ schema: 'interego.client-signing-request/v1', message,
+    keys: [{ keyId: clientKeyId(key), key }], expiresAt: new Date(Date.now() + 600_000).toISOString() }));
+  await page.locator('#load').click();
+  await page.locator('#sign').click();
+  await expect(page.locator('#proof')).not.toHaveValue('');
+  const proof = JSON.parse(await page.locator('#proof').inputValue());
+  const verifiedProof = await verifyClientAuthorization(proof, message, [key]);
+  expect(verifiedProof.keyId).toBe(clientKeyId(key));
+  expect((await verifyClientAuthorization(verifiedProof.proof, message)).keyId).toBe(verifiedProof.keyId);
+  console.log('PASS: live OAuth identity renewal, registered passkey RP, deployed signing page and retained-proof verification.');
+  } finally {
   // 6. Cleanup — purge the test user so live identity / pod state stays
   // pristine. The relay's MCP token wraps an identity-server bearer in
   // its `extra` field; swap it out via /identity-token, then call
@@ -175,5 +212,7 @@ test('passkey OAuth dance issues a usable MCP token', async ({ page }) => {
     }
   } catch (err) {
     console.warn(`[cleanup] threw: ${(err as Error).message}`);
+  }
+  await api.dispose();
   }
 });

@@ -46,6 +46,7 @@ import {
   deriveUserIdFromDid,
 } from './derive-userid.js';
 import { resolveTargetUserId } from './resolve-target-userid.js';
+import { authenticatePasskey, PasskeyPersistenceError } from './passkey-authentication.js';
 
 // ── Lazy heavy imports ──────────────────────────────────────
 //
@@ -65,9 +66,6 @@ type WebAuthnModule = typeof import('@simplewebauthn/server');
 // Reduce noise — these are the symbols we actually use from each module.
 type VerifiedRegistrationResponse = Awaited<
   ReturnType<WebAuthnModule['verifyRegistrationResponse']>
->;
-type VerifiedAuthenticationResponse = Awaited<
-  ReturnType<WebAuthnModule['verifyAuthenticationResponse']>
 >;
 
 let _ethersPromise: Promise<EthersModule> | null = null;
@@ -2052,6 +2050,7 @@ app.post('/challenges', challengeLimiter, async (req, res) => {
     ch.rpOrigin = rp.origin;
   }
   const resp: Record<string, unknown> = { nonce: ch.nonce, expiresAt: new Date(ch.expiresAt).toISOString() };
+  if (ch.rpId) resp.rpId = ch.rpId;
   if (purpose === 'webauthn-authenticate' && userId) {
     // Read credentials from the user's pod (stale-while-revalidate cache).
     // The pre-check above guarantees readAuthMethods has succeeded and at
@@ -2569,48 +2568,18 @@ app.post('/auth/webauthn/authenticate', authEnrollLimiter, async (req, res) => {
     return;
   }
 
-  let verification: VerifiedAuthenticationResponse;
   try {
-    const { verifyAuthenticationResponse } = await loadWebAuthn();
-    verification = await verifyAuthenticationResponse({
-      response,
-      expectedChallenge,
-      // Verify against the rp pinned on the challenge at /challenges
-      // time (resolved from the Origin); static RP_* fallback for
-      // challenges issued before this was tracked.
-      expectedOrigin: ch.rpOrigin ?? RP_ORIGIN,
-      expectedRPID: ch.rpId ?? RP_ID,
-      credential: {
-        id: cred.id,
-        publicKey: Buffer.from(cred.publicKey, 'base64url'),
-        counter: cred.counter,
-        transports: (cred.transports ?? []) as unknown as import('@simplewebauthn/server').AuthenticatorTransportFuture[],
-      },
+    await authenticatePasskey({ credential: cred, response, challenge: expectedChallenge,
+      rpId: ch.rpId ?? RP_ID, origin: ch.rpOrigin ?? RP_ORIGIN,
+      persist: () => putPodAuthMethods(userId, methods),
     });
   } catch (err) {
-    res.status(401).json({ error: `WebAuthn verification failed: ${(err as Error).message}` });
-    return;
-  }
-  if (!verification.verified) {
-    res.status(401).json({ error: 'WebAuthn assertion not verified' });
-    return;
-  }
-
-  // Counter is bumped by the authenticator; we MUST persist the new value
-  // before considering the auth successful, or a clone with a stale counter
-  // can keep authenticating indefinitely (WebAuthn §6.1.1 clone detection).
-  // Persist FIRST; on failure, roll the in-memory counter back to what's
-  // stored on the pod and refuse the auth with a transient 503 so the
-  // client retries. That preserves the invariant: in-memory counter ≡
-  // persisted counter.
-  const previousCounter = cred.counter;
-  cred.counter = verification.authenticationInfo.newCounter;
-  try {
-    await putPodAuthMethods(userId, methods);
-  } catch (err) {
-    cred.counter = previousCounter;
-    log(`WARN: refused passkey auth — counter persist failed: ${(err as Error).message}`);
-    res.status(503).json({ error: 'transient: failed to persist passkey counter; retry' });
+    if (err instanceof PasskeyPersistenceError) {
+      log(`WARN: refused passkey auth — ${(err as Error).message}`);
+      res.status(503).json({ error: err.message });
+    } else {
+      res.status(401).json({ error: `WebAuthn verification failed: ${(err as Error).message}` });
+    }
     return;
   }
   res.json(await issueTokenResponse(user, surfaceAgent));

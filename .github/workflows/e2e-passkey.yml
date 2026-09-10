@@ -92,6 +92,7 @@ jobs:
       - name: Run Playwright passkey suite
         env:
           BASE_URL: ${{ vars.RELAY_PUBLIC_URL || 'https://relay.interego.xwisee.com' }}
+          IDENTITY_URL: ${{ vars.IDENTITY_PUBLIC_URL || 'https://identity.interego.xwisee.com' }}
           CI: '1'
         run: npx playwright test --reporter=list
 

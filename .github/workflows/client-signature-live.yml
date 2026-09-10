@@ -37,6 +37,15 @@ jobs:
           INTEREGO_LIVE_CANARY: '1'
           EXPECTED_RELAY_BUILD: ${{ inputs.expected_build || '' }}
         run: node --import tsx tools/client-signature-canary.mjs
+      - name: Install Chromium for live passkey signing
+        run: npx playwright install --with-deps chromium
+      - name: Verify the deployed passkey page and OAuth identity renewal
+        working-directory: deploy/mcp-relay
+        env:
+          BASE_URL: ${{ vars.RELAY_PUBLIC_URL || 'https://relay.interego.xwisee.com' }}
+          IDENTITY_URL: ${{ vars.IDENTITY_PUBLIC_URL || 'https://identity.interego.xwisee.com' }}
+          CI: '1'
+        run: npx playwright test --reporter=list --retries=0
       - name: Preserve the public synthetic test report
         if: always()
         uses: actions/upload-artifact@v4

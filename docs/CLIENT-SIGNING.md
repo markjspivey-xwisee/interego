@@ -33,7 +33,13 @@ If a connector lost the response, repeat the exact original descriptor, action
 and unsigned payload in the same authenticated session to recover the existing
 request. Switching between `act` and `invoke_affordance` does not change its ID.
 Changing the access token or action arguments is not this recovery operation.
-Expired or cancelled requests may be renewed; completed, submitting and failed
+After OAuth refresh, invoke the request's `renewAction` with an empty payload
+through `act` or `invoke_affordance`, or choose **Resume with current session**
+in the panel. This explicit write accepts only the same account, actor and OAuth
+client. It clears the old review, keeps the request ID and original thirty-minute
+maximum deadline, and requires the holder to load a fresh review. Status polling
+never performs this renewal. An elapsed maximum deadline requires a new handoff.
+Repeating the original Submit can replace expired or cancelled requests; completed, submitting and failed
 requests are returned without repeating their execution. Request status and IDs
 remain restricted to the originating account, agent and OAuth client.
 
@@ -46,12 +52,20 @@ back for verification and conditional publication. There is no proof to copy
 into chat. Approving the URL prompt alone never authorizes the resource action.
 The relay chooses a configured signing origin compatible with the registered
 wallet or passkey. Agent-only keys continue to use their own signing runtime and
-submit the resulting proof through MCP.
+submit the resulting proof through MCP. Passkey signing uses the credential's
+single verified relying-party domain. Legacy credentials without that binding
+must sign in with their existing passkey and load a fresh review; successful
+cryptographic authentication persists the binding with the authenticator counter.
+An origin allowlist is not proof of where a credential was registered.
 
 The pending handoff lasts up to thirty minutes, bounded by the originating OAuth
 grant's expiry. Request data and the delegated session credential are encrypted
 at rest. Every signing operation revalidates that grant; reconnecting does not
-silently extend it. Completed results can be retrieved by the same authenticated
+silently extend it. Active OAuth refresh renews the underlying identity token
+through the existing authenticated same-agent endpoint. If that identity grant
+has already expired or been revoked, reauthentication is required; a refresh
+token does not bypass that check. Transient renewal errors can be retried.
+Completed results can be retrieved by the same authenticated
 account, agent and OAuth client after transport reconnect or relay restart.
 
 A state advance, such as the first reviewer's approval, invalidates an older

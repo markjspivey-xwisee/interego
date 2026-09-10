@@ -96,6 +96,31 @@ export interface ResolvedIdentity {
   identityToken: string; // bearer token from the identity server
 }
 
+/** Renew only an existing valid identity grant, for its same user and agent. */
+export async function renewIdentityToken(identityUrl: string, identity: ResolvedIdentity, fetcher: typeof fetch = fetch): Promise<string> {
+  // OAuth attribution stores a canonical DID; /tokens indexes the local slug.
+  // Use the identity-asserted public WebID authority, since the transport URL
+  // can be an internal service address. Never strip an arbitrary DID's suffix.
+  const prefix = `did:web:${new URL(identity.ownerWebId).host}:agents:`;
+  const agentId = identity.agentId.startsWith(prefix) ? identity.agentId.slice(prefix.length) : identity.agentId;
+  if (!/^[A-Za-z0-9._~-]+$/.test(agentId)) {
+    throw new OAuthError(OAuthErrorCode.InvalidGrant, 'Identity agent binding is invalid; authenticate again');
+  }
+  const response = await fetcher(new URL('/tokens', identityUrl), {
+    method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15_000),
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${identity.identityToken}` },
+    body: JSON.stringify({ userId: identity.userId, agentId }),
+  });
+  if ([401, 403, 404].includes(response.status)) {
+    throw new OAuthError(OAuthErrorCode.InvalidGrant, 'Identity authorization expired or was revoked; authenticate again');
+  }
+  if (!response.ok) throw new Error(`Identity renewal temporarily unavailable (${response.status}); retry refresh`);
+  const result = await response.json() as { token?: unknown; expiresAt?: unknown };
+  if (typeof result.token !== 'string' || !result.token || typeof result.expiresAt !== 'string'
+    || !(Date.parse(result.expiresAt) > Date.now())) throw new Error('Identity renewal returned an invalid credential');
+  return result.token;
+}
+
 export interface InteregoAuthInfo extends AuthInfo {
   // Identity the provider asserts for this token — used by MCP handlers to
   // attribute writes to the authenticated user's home pod. Populated by
@@ -219,6 +244,8 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
     private readonly cfg: {
       identityUrl: string;
       tokenTtlSec?: number;
+      /** Renew before rotation, while the identity grant is still valid. */
+      renewIdentityToken?: (identity: Readonly<ResolvedIdentity>) => Promise<string>;
       /**
        * RFC 8707 canonical resource identifier of THIS resource server — the relay's
        * own public URL. Tokens are bound to it, and a client naming a different
@@ -1215,6 +1242,16 @@ async function didSubmit() {
       throw new Error('Requested scopes exceed original grant');
     }
 
+    // OAuth access refresh must also renew the shorter-lived inner identity.
+    // Fail before consuming the refresh token, so transient errors are retryable.
+    const identity = { ...rec.identity };
+    if (this.cfg.renewIdentityToken) {
+      identity.identityToken = await this.cfg.renewIdentityToken(Object.freeze({ ...identity }));
+      if (!identity.identityToken) throw new Error('Identity renewal returned an empty credential');
+      // The asynchronous renewal must not let concurrent refreshes both rotate.
+      if (this.refreshTokens.get(refreshToken) !== rec) throw new OAuthError(OAuthErrorCode.InvalidGrant, 'Refresh token already used');
+    }
+
     // Rotate the refresh token: invalidate the old one, issue a new one.
     // Defense against replayed refresh tokens (standard OAuth best practice).
     this.refreshTokens.delete(refreshToken);
@@ -1243,7 +1280,7 @@ async function didSubmit() {
         userId: rec.identity.userId,
         // Carry podUrl across refresh too — see the access-token path above.
         podUrl: rec.identity.podUrl,
-        identityToken: rec.identity.identityToken,
+        identityToken: identity.identityToken,
         ...(inheritedJkt ? { cnf: { jkt: inheritedJkt } } : {}),
       },
     };
@@ -1252,7 +1289,7 @@ async function didSubmit() {
     const refreshRec = {
       clientId: client.client_id,
       scopes: finalScopes,
-      identity: rec.identity,
+      identity,
       expiresAt: rec.expiresAt, // preserve original refresh TTL window
     };
     this.refreshTokens.set(newRefresh, refreshRec);
@@ -1500,4 +1537,3 @@ async function didSubmit() {
     };
   }
 }
-

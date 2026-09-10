@@ -72,7 +72,7 @@ import { resolve as resolvePath, dirname as pathDirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { interegoOAuthRouter } from './oauth-router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/express';
-import { InteregoOAuthProvider } from './oauth-provider.js';
+import { InteregoOAuthProvider, renewIdentityToken } from './oauth-provider.js';
 import {
   loadClients as loadOAuthClients,
   loadOneClient as loadOneOAuthClient,
@@ -1441,6 +1441,7 @@ log(`OAuth token store: pod=${oauthStorePodUrl} access=${_oauthInitialAccessToke
 
 oauthProvider = new InteregoOAuthProvider({
   identityUrl: IDENTITY_URL,
+  renewIdentityToken: identity => renewIdentityToken(IDENTITY_URL, identity),
   tokenTtlSec: 3600,
   // RFC 8707 canonical resource identifier of this resource server. The AS is
   // co-hosted with the RS here, so it is simply the relay's own public URL — the same
@@ -5038,6 +5039,7 @@ function resourceWriteContext(args: ToolArgs): ResourceWriteContext {
       credential: String(args._session_bearer ?? ''), reference, action, payload, draft,
     }),
     cancelInteraction: async id => clientInteractions.cancel(id, await interactionOwner(String(args._session_bearer ?? ''), true)),
+    renewInteraction: id => clientInteractions.renewAuthorization(id, String(args._session_bearer ?? '')),
     publish: async request => {
     if (!context.principal || request.actor !== context.principal) throw new Error('authenticated resource actor is required');
     const podName = podNameOf(request.podUrl);

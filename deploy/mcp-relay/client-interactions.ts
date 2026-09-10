@@ -6,6 +6,7 @@ import type { ResourceComposition, ResourceSignatureDraft, ResourceWriteContext 
 export const INTERACTION_PREFIX = 'urn:interego:client-interaction:v1:';
 export const INTERACTION_STATUS = 'urn:interego:client-interaction:status';
 export const INTERACTION_CANCEL = 'urn:interego:client-interaction:cancel';
+export const INTERACTION_RENEW = 'urn:interego:client-interaction:renew-authorization';
 export interface InteractionOwner { userId: string; clientId: string; principal: string }
 export interface InteractionRecord {
   version: 1; id: string; owner: InteractionOwner; credential: string;
@@ -104,6 +105,8 @@ export class ClientInteractions {
       signingUrl: (record.signingOrigin ?? this.deps.publicUrl).replace(/\/$/, '') + '/sign-action?request=' + record.id,
       descriptorUrl: INTERACTION_PREFIX + record.id, action: INTERACTION_STATUS,
       cancelAction: INTERACTION_CANCEL,
+      ...(['pending', 'reviewing', 'expired'].includes(record.status) && record.createdAt + 30 * 60_000 > this.now()
+        ? { renewAction: INTERACTION_RENEW, resumableUntil: new Date(record.createdAt + 30 * 60_000).toISOString() } : {}),
       ...(!terminal(record.status) ? { signingRequirement: { authorization: 'authenticated-session', proof: 'registered-client-key',
         reason: 'This action requires a client signature. No client proof was supplied; the relay cannot sign with the holder’s private key.' } } : {}),
       ...(record.result ? { result: record.result } : {}),
@@ -145,6 +148,21 @@ export class ClientInteractions {
     // Status is read-only. Expiry does not need a pod write to take effect.
     return this.publicRecord(!terminal(record.status) && record.status !== 'submitting' && record.expiresAt <= this.now()
       ? { ...record, status: 'expired' } : record);
+  }
+  /** Explicit MCP write: renew the same request using its same client's current grant. */
+  async renewAuthorization(id: string, credential: string) {
+    const { record, etag } = await this.load(id);
+    const owner = await this.deps.authorize(credential);
+    this.checkCaller(record, owner);
+    if (!['pending', 'reviewing'].includes(record.status)) throw new Error('this interaction cannot be resumed');
+    const now = this.now();
+    const expiresAt = Math.min(record.createdAt + 30 * 60_000, owner.expiresAt);
+    if (expiresAt <= now) throw new Error('interaction or current authorization expired; request a new handoff');
+    // Invalidate the old receipt. A fresh review still resolves the original
+    // authority/evidence binding before any new signature can be accepted.
+    const next: InteractionRecord = { ...record, credential, expiresAt, status: 'pending', draft: undefined, updatedAt: now };
+    await this.deps.store.write(next, etag);
+    return this.publicRecord(next);
   }
   private checkCaller(record: InteractionRecord, caller: InteractionOwner | { holderUserId: string }) {
     if ('holderUserId' in caller ? caller.holderUserId !== record.owner.userId : !sameOwner(record.owner, caller)) {
@@ -212,7 +230,7 @@ export function clientInteractionComposition(): ResourceComposition {
   const claims = (ref: string) => ref.startsWith(INTERACTION_PREFIX) && validId(id(ref));
   return {
     claims,
-    access: (ref, action) => !claims(ref) ? undefined : action === INTERACTION_STATUS ? 'read' : action === INTERACTION_CANCEL ? 'write' : undefined,
+    access: (ref, action) => !claims(ref) ? undefined : action === INTERACTION_STATUS ? 'read' : [INTERACTION_CANCEL, INTERACTION_RENEW].includes(action) ? 'write' : undefined,
     async render(ref, context) {
       if (!claims(ref)) return undefined;
       if (!context.interactionStatus) throw new Error('authenticated interaction session required');
@@ -220,6 +238,7 @@ export function clientInteractionComposition(): ResourceComposition {
       const body = 'Review and sign using your registered credential. This panel checks the submitted result automatically.';
       return { descriptorUrl: ref, title: 'Signing request', body, hmd: body, controls: [
         { descriptorUrl: ref, action: INTERACTION_STATUS, label: 'Check signing result', method: 'GET', fields: [], executable: true },
+        ...(status['renewAction'] ? [{ descriptorUrl: ref, action: INTERACTION_RENEW, label: 'Resume with current session', method: 'POST', fields: [], executable: true }] : []),
         { descriptorUrl: ref, action: INTERACTION_CANCEL, label: 'Cancel signing request', method: 'POST', fields: [], executable: true },
       ], interaction: status };
     },
@@ -228,6 +247,7 @@ export function clientInteractionComposition(): ResourceComposition {
       if (action === INTERACTION_STATUS && context.interactionStatus) return context.interactionStatus(id(ref));
       const write = context as ResourceWriteContext;
       if (action === INTERACTION_CANCEL && write.cancelInteraction) return write.cancelInteraction(id(ref));
+      if (action === INTERACTION_RENEW && write.renewInteraction) return write.renewInteraction(id(ref));
       throw new Error('authenticated interaction session required');
     },
   };
