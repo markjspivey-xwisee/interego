@@ -128,12 +128,19 @@ export class ClientInteractions {
     if (previous && ['completed', 'submitting', 'failed'].includes(previous.record.status)) return this.publicRecord(previous.record);
     // Choose only an operator-configured signing page that can use a registered
     // credential. A key's origin list must never become an arbitrary redirect.
-    const signingOrigin = (this.deps.signingOrigins ?? [this.deps.publicUrl]).find(origin => {
+    const configuredOrigins = this.deps.signingOrigins ?? [this.deps.publicUrl];
+    const passkeyOrigin = (origin: string, verified: boolean) => {
       const url = new URL(origin);
-      return input.draft.request.keys.some(({ key }) => key.scheme === 'eip191'
-        || key.scheme === 'webauthn' && key.origins?.includes(url.origin)
+      return input.draft.request.keys.some(({ key }) => key.scheme === 'webauthn'
+          && (!verified || key.rpIds?.length === 1) && key.origins?.includes(url.origin)
           && key.rpIds?.some(rp => url.hostname === rp || url.hostname.endsWith('.' + rp)));
-    });
+    };
+    // A wallet on the same account must not send a pinned passkey to a sibling
+    // site. Legacy multi-RP metadata is only a compatibility hint, not proof of
+    // registration; the page offers configured-site recovery before login.
+    const signingOrigin = configuredOrigins.find(origin => passkeyOrigin(origin, true))
+      ?? (input.draft.request.keys.some(({ key }) => key.scheme === 'eip191') ? configuredOrigins[0] : undefined)
+      ?? configuredOrigins.find(origin => passkeyOrigin(origin, false));
     if (!signingOrigin) throw new Error('No configured signing page supports your registered credential. Use your registered agent signer and submit its client_proof through MCP.');
     const record: InteractionRecord = { version: 1, id,
       owner: { userId: owner.userId, clientId: owner.clientId, principal: owner.principal },

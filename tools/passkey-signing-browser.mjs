@@ -8,6 +8,7 @@ import { authenticatePasskey, PasskeyPersistenceError } from '../deploy/identity
 import { clientKeyId, verifyClientAuthorization } from '../integrations/application-runtime/client-authorization.ts';
 
 const origin = 'https://relay.example.test';
+const identityOrigin = 'https://identity.example.test';
 const rpId = new URL(origin).hostname;
 const requestId = 'a'.repeat(43);
 const browser = await chromium.launch({ headless: true });
@@ -41,7 +42,9 @@ try {
   const fingerprint = clientKeyId(key());
   let authChallenge, assertion, persisted, receipt, committed = 0, retained;
   const html = readFileSync(new URL('../docs/client-sign.html', import.meta.url), 'utf8')
-    .replace('__INTEREGO_SIGNING_CONFIG__', JSON.stringify({ identityUrl: origin, relayUrl: origin }));
+    .replace('__INTEREGO_SIGNING_CONFIG__', JSON.stringify({ identityUrl: origin, relayUrl: origin,
+      signingOrigins: [identityOrigin, origin] }));
+  await page.route(identityOrigin + '/sign-action**', route => route.fulfill({ contentType: 'text/html', body: html }));
   await page.route(origin + '/**', async route => {
     const path = new URL(route.request().url()).pathname;
     const body = route.request().method() === 'POST' ? route.request().postDataJSON() : undefined;
@@ -70,6 +73,17 @@ try {
       await route.fulfill({ json: result });
     } catch (error) { await route.fulfill({ status: 400, json: { error: error.message } }); }
   });
+  // A legacy request may predate RP migration and point at identity. Its holder
+  // can move to the registration site before login without editing/copying URLs.
+  await page.goto(identityOrigin + '/sign-action?request=' + requestId + '&returnTo=https://untrusted.example');
+  await page.evaluate(() => sessionStorage.setItem('cg.token', 'identity-only-session'));
+  const recovery = page.locator('#origin-links a');
+  assert.equal(await recovery.count(), 1);
+  assert.equal(await recovery.getAttribute('href'), origin + '/sign-action?request=' + requestId);
+  assert.equal(await recovery.getAttribute('rel'), 'noreferrer');
+  await recovery.click();
+  await page.waitForURL(origin + '/sign-action?request=' + requestId);
+  assert.equal(await page.evaluate(() => sessionStorage.getItem('cg.token')), null);
   // An old holder session must not make the page guess a parent domain.
   await page.evaluate(() => sessionStorage.setItem('cg.token', 'fixture-holder-session'));
   await page.goto(origin + '/sign-action?request=' + requestId);
@@ -100,5 +114,5 @@ try {
   assert.equal(unbound.rpOrigin, undefined);
   await assert.rejects(authenticatePasskey({ credential: { ...original, rpId: 'example.test' }, response: assertion,
     challenge: authChallenge, rpId, origin, persist: async () => {} }), /different relying party/);
-  console.log('PASS: Chromium WebAuthn login → legacy RP migration → receipt signing → retained proof replay; ambiguous RP, invalid assertion, conflicting binding and persistence failure refused.');
+  console.log('PASS: identity-to-registration-site recovery preserves request ID without transferring tokens; Chromium WebAuthn login → legacy RP migration → receipt signing → retained proof replay; ambiguous RP, invalid assertion, conflicting binding and persistence failure refused.');
 } finally { await browser.close(); }

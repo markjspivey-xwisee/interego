@@ -95,6 +95,25 @@ async function browserSign(f: Awaited<ReturnType<typeof harness>>) {
 }
 
 describe('MCP signing lifecycle on the actual SDK transport', () => {
+  it('offers configured-site recovery before login without accepting URL-provided destinations or transferring tokens', () => {
+    const requestId = 'a'.repeat(43);
+    const html = readFileSync(new URL('../docs/client-sign.html', import.meta.url), 'utf8')
+      .replace('__INTEREGO_SIGNING_CONFIG__', JSON.stringify({ identityUrl: 'https://identity.example', relayUrl: 'https://relay.example',
+        signingOrigins: ['https://identity.example', 'https://relay.example', 'https://relay.example/',
+          'javascript:alert(1)', 'https://user:secret@untrusted.example', 'http://insecure.example', 'invalid'] }));
+    const dom = new JSDOM(html, { url: `https://identity.example/sign-action?request=${requestId}&returnTo=https://untrusted.example&token=not-a-credential`,
+      runScripts: 'dangerously', beforeParse(window) { Object.assign(window, { TextEncoder, TextDecoder }); } });
+    try {
+      const links = [...dom.window.document.querySelectorAll<HTMLAnchorElement>('#origin-links a')];
+      expect(links).toHaveLength(1);
+      expect(links[0]!.href).toBe(`https://relay.example/sign-action?request=${requestId}`);
+      expect(links[0]!.rel).toBe('noreferrer');
+      expect((dom.window.document.getElementById('origin-recovery') as HTMLElement).hidden).toBe(false);
+      expect(dom.window.document.getElementById('receipt')!.textContent).toBe('No request loaded.');
+      expect((dom.window.document.getElementById('sign') as HTMLButtonElement).disabled).toBe(true);
+    } finally { dom.window.close(); }
+  });
+
   it('checks request ownership before enabling a signing button and cancels without signing', async () => {
     const f = await harness();
     const doms: JSDOM[] = [];

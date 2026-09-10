@@ -8,6 +8,7 @@
 <section id="handoff" hidden>
 <p>Sign in with the existing account that owns the requested credential. Signing then submits the reviewed action automatically and returns its result to the requesting client.</p>
 <button id="passkey-login">Sign in with a passkey</button><button id="wallet-login">Sign in with a wallet</button>
+<div id="origin-recovery" hidden><p>If you created your passkey on another Interego site, continue there with this same request.</p><div id="origin-links"></div></div>
 <button id="review" hidden>Load a fresh review</button><button id="cancel" hidden>Cancel this request</button>
 </section>
 <div id="manual-request">
@@ -34,6 +35,25 @@ let config = null, reviewId = '', token = '', finished = false;
 try { config = JSON.parse(el('signing-config').textContent); } catch { /* Offline manual signer. */ }
 const say = value => { el('status').textContent = value; };
 const resetProof = () => { el('proof').value='';el('copy').disabled=true; };
+function showOriginRecovery(){
+  if(!requestId||!/^[a-zA-Z0-9_-]{43}$/.test(requestId)||!config)return;
+  // Only deployment configuration supplies destinations. Never use a query,
+  // receipt or credential's origin list as a navigation target. Move the opaque
+  // request ID only; authentication stays on each site and no token is copied.
+  const origins=new Set();
+  for(const candidate of config.signingOrigins || [config.identityUrl,config.relayUrl]){
+    try{
+      const url=new URL(candidate);
+      if(url.protocol!=='https:'||url.username||url.password||url.origin===location.origin||origins.has(url.origin))continue;
+      origins.add(url.origin);
+      const link=document.createElement('a');
+      link.href=url.origin+'/sign-action?request='+encodeURIComponent(requestId);
+      link.rel='noreferrer';link.textContent='Continue on '+url.hostname;
+      const paragraph=document.createElement('p');paragraph.append(link);el('origin-links').append(paragraph);
+    }catch{ /* Ignore malformed operator configuration. */ }
+  }
+  el('origin-recovery').hidden=!origins.size;
+}
 el('request').addEventListener('input',()=>{request=null;el('sign').disabled=true;resetProof();});
 el('load').onclick = async () => {
   try {
@@ -50,7 +70,8 @@ el('load').onclick = async () => {
     next.keys.forEach((entry,index)=>{
       const key=entry.key;
       if(!key||!['eip191','webauthn'].includes(key.scheme))return;
-      if(key.scheme==='webauthn'&&(!key.origins?.includes(location.origin)||!key.credentialId))return;
+      if(key.scheme==='webauthn'&&(!key.origins?.includes(location.origin)||!key.credentialId
+        ||key.rpIds?.length===1&&location.hostname!==key.rpIds[0]&&!location.hostname.endsWith('.'+key.rpIds[0])))return;
       const option=document.createElement('option');option.value=String(index);option.textContent=(key.scheme==='eip191'?'Wallet: ':'Passkey: ')+entry.keyId;el('key').append(option);
     });
     if(!el('key').options.length)throw Error('No wallet or passkey is available on this origin. Use the signing link for your registration origin, or use your agent key in its own runtime.');
@@ -162,6 +183,7 @@ el('review').onclick=()=>loadReview().catch(error=>say(error.message));
 el('cancel').onclick=()=>interaction('cancel',{}).then(showResult).catch(error=>say(error.message));
 if(requestId){
   el('handoff').hidden=false;el('manual-request').hidden=true;el('manual-proof').hidden=true;
+  showOriginRecovery();
   if(!config || !/^[a-zA-Z0-9_-]{43}$/.test(requestId))say('This signing link is invalid.');
   else {token=sessionStorage.getItem('cg.token') || '';if(token)authenticated().catch(error=>say(error.message));else say('Sign in to view your request.');}
 }else if(location.hash.length>1){try{el('request').value=new TextDecoder().decode(decode(location.hash.slice(1)));history.replaceState(null,'',location.pathname);el('load').click();}catch{say('Could not decode signing request. Paste it above.');}}
