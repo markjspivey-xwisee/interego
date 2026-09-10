@@ -23,8 +23,23 @@ describe('explicit pending-request authorization renewal', () => {
     expect(record.binding).toBeTruthy(); expect(record.draft).toBeUndefined();
     await expect(f.broker.submit(id, 'alice', review.reviewId, await f.sign(review.signingRequest))).rejects.toThrow('review this request');
     expect(f.publish).not.toHaveBeenCalled();
-    f.advance(30 * 60_000);
-    await expect(f.broker.renewAuthorization(id, 'refreshed')).rejects.toThrow('expired');
+    // Route the fresh token to the same fixture identity, like production's
+    // OAuth resolver; then complete the actual application transition.
+    const { prepare, validate, execute } = f.deps;
+    f.deps.prepare = record => prepare({ ...record, credential: 'alice' });
+    f.deps.validate = (record, proof) => validate({ ...record, credential: 'alice' }, proof);
+    f.deps.execute = (record, proof) => execute({ ...record, credential: 'alice' }, proof);
+    const fresh = await f.broker.review(id, 'alice');
+    expect(fresh.reviewId).not.toBe(review.reviewId);
+    expect((await f.broker.submit(id, 'alice', fresh.reviewId, await f.sign(fresh.signingRequest))).status).toBe('completed');
+    expect(f.publish).toHaveBeenCalledTimes(1);
+    expect((await f.store.resolve()).replay.complete).toBe(true);
+  });
+  it('cannot extend the original maximum window, even with a new valid grant', async () => {
+    const f = await signingFixture(); const pending = (await f.create())!;
+    f.advance(31 * 60_000);
+    await expect(f.broker.renewAuthorization(String(pending['id']), 'alice')).rejects.toThrow('expired');
+    expect(f.publish).not.toHaveBeenCalled();
   });
   it('rejects changed actor/client, revoked grants, cancelled and uncertain submissions', async () => {
     const f = await signingFixture(); const pending = (await f.create())!; const id = String(pending['id']);
