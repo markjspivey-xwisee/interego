@@ -16173,7 +16173,8 @@ app.get('/sign-action', (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Referrer-Policy', 'no-referrer');
   res.type('html').send(readFileSync(process.env.INTEREGO_CLIENT_SIGN_PAGE ?? new URL('../../docs/client-sign.html', import.meta.url), 'utf8')
-    .replace('__INTEREGO_SIGNING_CONFIG__', JSON.stringify({ identityUrl: IDENTITY_URL, relayUrl: PUBLIC_BASE_URL }).replace(/</g, '\\u003c')));
+    .replace('__INTEREGO_SIGNING_CONFIG__', JSON.stringify({ identityUrl: IDENTITY_URL, relayUrl: PUBLIC_BASE_URL,
+      signingOrigins: [IDENTITY_URL, ...(PUBLIC_BASE_URL ? [PUBLIC_BASE_URL] : [])] }).replace(/</g, '\\u003c')));
 });
 
 // The short identifier grants no access. The browser must authenticate as the

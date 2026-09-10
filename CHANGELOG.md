@@ -52,6 +52,12 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
 - Interactive `invoke_affordance` responses MUST retain the published numeric status and JSON body schema through fallback, continuation and cancellation. Pending handoffs return 202 with their signing and recovery controls in the body. The existing schema is preserved.
 - The live approval canary exercises both `act` and the strict `invoke_affordance` shim, validates the latter against its deployed output schema, and verifies that repeating a pending request recovers the same identifier.
 
+### 2026-09-10 — Recover legacy signing requests at the registration site
+
+- A verified passkey's registration origin takes priority over wallet and legacy-origin hints when choosing a signing page. Existing requests offer direct links to the configured signing sites before login, preserving the request ID without transferring credentials or requiring URL editing.
+- Recovery destinations MUST come from deployment configuration. Query parameters and credential metadata MUST NOT create redirects. Each site authenticates the holder before disclosing the receipt; existing signature, authority and replay checks remain required.
+- The Chromium passkey regression starts at the identity site, follows the recovery link to the credential's registration site, verifies that no session token crossed sites, and completes actual WebAuthn login, legacy RP migration, signing and retained-proof replay.
+
 ### 2026-09-09 — MCP client-signing handoffs
 
 - Submitting a descriptor-declared client-signed action without a proof creates an authenticated pending request. Short links MUST NOT confer access to the receipt. The holder signs fresh, verified action bytes; the service verifies and submits them automatically.

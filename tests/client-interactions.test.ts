@@ -82,6 +82,16 @@ describe('durable client signing handoffs', () => {
     const broker = new ClientInteractions({ ...f.deps, signingOrigins: ['https://identity.example', 'https://relay.example'] });
     const request = { credential: 'alice', reference, action, payload: {}, draft };
     expect((await broker.create(request)).signingUrl).toMatch(/^https:\/\/relay.example\/sign-action\?request=/);
+    // A wallet and legacy multi-origin credential must not override a verified
+    // passkey's registration site just because identity is configured first.
+    const mixed = { ...draft, request: { ...draft.request, keys: [
+      ...original.request.keys,
+      { keyId: 'legacy', key: { scheme: 'webauthn' as const, credentialId: 'legacy',
+        origins: ['https://identity.example', 'https://relay.example'], rpIds: ['example', 'identity.example', 'relay.example'] } },
+      ...draft.request.keys,
+    ] } };
+    expect((await broker.create({ ...request, payload: { mixed: true }, draft: mixed })).signingUrl)
+      .toMatch(/^https:\/\/relay.example\/sign-action\?request=/);
     const unsupported = { ...draft, request: { ...draft.request, keys: [{ keyId: 'foreign', key: {
       scheme: 'webauthn' as const, credentialId: 'foreign', origins: ['https://unconfigured.example'], rpIds: ['unconfigured.example'],
     } }] } };

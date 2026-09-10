@@ -57,6 +57,15 @@ single verified relying-party domain. Legacy credentials without that binding
 must sign in with their existing passkey and load a fresh review; successful
 cryptographic authentication persists the binding with the authenticator counter.
 An origin allowlist is not proof of where a credential was registered.
+Verified passkey origins take priority even when the account also has a wallet
+or an older credential with several possible domains. A request created before
+legacy metadata was repaired may still point at a different site. Before login,
+the signing page offers **Continue on …** links to the configured signing sites.
+The holder chooses the site where they created their passkey. These links preserve
+only the same opaque request ID; each site authenticates separately, with no token,
+receipt or signature copied or moved between sites. Query parameters and credential
+origin lists cannot introduce a destination. Successful login pins the legacy RP,
+so subsequent requests select the verified site directly.
 
 The pending handoff lasts up to thirty minutes, bounded by the originating OAuth
 grant's expiry. Request data and the delegated session credential are encrypted

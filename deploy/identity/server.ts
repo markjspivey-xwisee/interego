@@ -1931,7 +1931,8 @@ app.get('/sign-action', (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Referrer-Policy', 'no-referrer');
   res.type('html').send(readFileSync(process.env.INTEREGO_CLIENT_SIGN_PAGE ?? new URL('../../docs/client-sign.html', import.meta.url), 'utf8')
-    .replace('__INTEREGO_SIGNING_CONFIG__', JSON.stringify({ identityUrl: BASE_URL, relayUrl: resolveRelayBase() }).replace(/</g, '\\u003c')));
+    .replace('__INTEREGO_SIGNING_CONFIG__', JSON.stringify({ identityUrl: BASE_URL, relayUrl: resolveRelayBase(),
+      signingOrigins: [BASE_URL, resolveRelayBase()] }).replace(/</g, '\\u003c')));
 });
 
 app.get('/health', (_req, res) => {
