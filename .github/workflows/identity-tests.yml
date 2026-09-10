@@ -19,6 +19,9 @@ on:
     branches: [master]
     paths:
       - 'deploy/identity/**'
+      - 'docs/client-sign.html'
+      - 'tools/passkey-signing-browser.mjs'
+      - 'integrations/application-runtime/client-authorization.ts'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/identity-tests.yml'
@@ -26,6 +29,9 @@ on:
     branches: [master]
     paths:
       - 'deploy/identity/**'
+      - 'docs/client-sign.html'
+      - 'tools/passkey-signing-browser.mjs'
+      - 'integrations/application-runtime/client-authorization.ts'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/identity-tests.yml'
@@ -47,3 +53,16 @@ jobs:
         run: npm ci --no-audit --no-fund
       - name: Run identity unit tests
         run: npm test --workspace @interego/identity
+
+  passkey-browser:
+    name: "Passkey login and receipt signing (Chromium)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - run: npm ci --no-audit --no-fund
+      - run: npx playwright install --with-deps chromium
+      - run: node --import tsx tools/passkey-signing-browser.mjs

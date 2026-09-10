@@ -36,9 +36,10 @@ function renderInteraction(initial){
   detail.style.overflowWrap='anywhere';
   var origin=el('p','when'), row=el('div','actions');
   var sign=el('button','go','Review and sign'), refresh=el('button','go secondary','Check result'), cancel=el('button','go secondary','Cancel request');
+  var renew=el('button','go secondary','Resume with current session');renew.hidden=true;
   var output=el('pre','src');output.hidden=true;
   sign.disabled=true;cancel.disabled=true;
-  row.appendChild(sign);row.appendChild(refresh);row.appendChild(cancel);
+  row.appendChild(sign);row.appendChild(refresh);row.appendChild(renew);row.appendChild(cancel);
   card.appendChild(detail);card.appendChild(origin);card.appendChild(row);card.appendChild(state);card.appendChild(output);
   if(!validInteraction(initial)){state.textContent='Invalid signing request.';refresh.disabled=true;return card;}
   var reference=initial.descriptorUrl, id=initial.id, current=null, timer=null, busy=false;
@@ -77,6 +78,7 @@ function renderInteraction(initial){
     current=v;var pending=active(v),done=v.status==='completed'&&v.result&&v.result.committed===true;
     detail.textContent='Authenticated agent: '+(v.actor||'current session')+'. This action requires a registered-key signature.';
     sign.disabled=!pending||v.status==='submitting';cancel.disabled=!pending||v.status==='submitting';
+    renew.hidden=v.renewAction!=='urn:interego:client-interaction:renew-authorization';renew.disabled=renew.hidden;
     state.className='status '+(done?'ok':v.status==='failed'?'err':'muted');
     state.textContent=done?'Signed, verified and submitted.':v.status==='completed'?'Signing finished. Inspect the result below.':v.status==='pending'||v.status==='reviewing'?'Waiting for your signature. The result will appear here automatically.':v.status==='submitting'?'Verifying and submitting…':'Request '+v.status+'.';
     if(pending){var u=signingLink(v);origin.textContent='Signing at '+u.origin;}
@@ -88,13 +90,18 @@ function renderInteraction(initial){
     if(!card.isConnected||busy)return;
     clearTimeout(timer);busy=true;refresh.disabled=true;
     control('urn:interego:client-interaction:status').then(function(v){if(card.isConnected)show(v);}).catch(function(e){
-      current=null;sign.disabled=true;cancel.disabled=true;state.className='status err';state.textContent='Unable to check signing: '+e.message;reportSize();
+      current=null;sign.disabled=true;cancel.disabled=true;renew.disabled=true;state.className='status err';state.textContent='Unable to check signing: '+e.message;reportSize();
     }).finally(function(){
       busy=false;refresh.disabled=false;
       if(card.isConnected&&current&&active(current))timer=setTimeout(check,5000);
     });
   }
   refresh.addEventListener('click',check);
+  renew.addEventListener('click',function(){
+    if(renew.disabled||busy)return;
+    clearTimeout(timer);busy=true;renew.disabled=true;sign.disabled=true;
+    control('urn:interego:client-interaction:renew-authorization').then(function(v){if(card.isConnected)show(v);}).catch(function(e){state.textContent='Could not resume: '+e.message;}).finally(function(){busy=false;check();});
+  });
   sign.addEventListener('click',function(){
     if(!current||sign.disabled)return;
     var url;try{url=signingLink(current).href;}catch(e){state.textContent=e.message;return;}

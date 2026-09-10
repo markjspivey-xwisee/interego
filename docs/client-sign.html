@@ -73,8 +73,9 @@ el('sign').onclick=async()=>{
       const bytes=Array.from(encoder.encode(message),b=>b.toString(16).padStart(2,'0')).join('');
       proof.signature=await window.ethereum.request({method:'personal_sign',params:['0x'+bytes,key.address]});
     }else{
-      const rpId=key.rpIds.find(rp=>location.hostname===rp||location.hostname.endsWith('.'+rp));
-      if(!rpId)throw Error('This origin cannot use that passkey. Use its other signing link.');
+      if(key.rpIds?.length!==1)throw Error('Sign in with this passkey, then load a fresh review to confirm its registration domain.');
+      const [rpId]=key.rpIds;
+      if(location.hostname!==rpId&&!location.hostname.endsWith('.'+rpId))throw Error('This origin cannot use that passkey. Use its other signing link.');
       const credential=await navigator.credentials.get({publicKey:{challenge:await hash(message),rpId,
         allowCredentials:[{id:decode(key.credentialId),type:'public-key'}],userVerification:'required',timeout:60000}});
       if(!credential)throw Error('No passkey signature was returned.');
@@ -140,7 +141,7 @@ async function login(kind){
   let result;
   if(kind==='passkey'){
     const challenge=await api(base+'/challenges',{purpose:'webauthn-authenticate'});
-    const credential=await navigator.credentials.get({publicKey:{challenge:decode(challenge.nonce),allowCredentials:[],userVerification:'required',timeout:60000}});
+    const credential=await navigator.credentials.get({publicKey:{challenge:decode(challenge.nonce),rpId:challenge.rpId || location.hostname,allowCredentials:[],userVerification:'required',timeout:60000}});
     if(!credential)throw Error('Sign-in was cancelled.');
     result=await api(base+'/auth/webauthn/authenticate',{response:assertionJson(credential)});
   }else{
