@@ -18,6 +18,12 @@
 <p id="status" role="status"></p><p id="summary"></p><details open><summary>Exact action and authority</summary><pre id="receipt">No request loaded.</pre></details>
 <label for="key">Your registered signing credential</label><select id="key"></select>
 <button id="sign" disabled>Sign this receipt</button>
+<section id="scoped-signing" hidden>
+<p id="scope-summary">Allow this agent to request signatures for this action for 55 minutes. A new signing key stays in this browser tab. Review and authorize its exact scope with your existing credential once, then keep this tab open.</p>
+<button id="enable-scoped">Enable scoped signing</button>
+<button id="stop-scoped" hidden>Stop background signing and discard this key</button>
+<p id="scope-status" role="status"></p>
+</section>
 <div id="manual-proof"><label for="proof">Client signature JSON</label><textarea id="proof" readonly spellcheck="false"></textarea>
 <button id="copy" disabled>Copy signature JSON</button>
 <small>Submit this JSON as client_proof with the original action inputs and control. If the state or contract changed, obtain a new preview and sign again. Never paste a private key here.</small></div>
@@ -30,7 +36,8 @@ const decode = value => Uint8Array.from(atob(value.replace(/-/g,'+').replace(/_/
 const encode = bytes => btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 const hash = async value => new Uint8Array(await crypto.subtle.digest('SHA-256',encoder.encode(value)));
 let request = null;
-const requestId = new URL(location.href).searchParams.get('request');
+let requestId = new URL(location.href).searchParams.get('request');
+let pendingGrant = null, companion = null, companionTimer = null;
 let config = null, reviewId = '', token = '', finished = false;
 try { config = JSON.parse(el('signing-config').textContent); } catch { /* Offline manual signer. */ }
 const say = value => { el('status').textContent = value; };
@@ -75,7 +82,11 @@ el('load').onclick = async () => {
       const option=document.createElement('option');option.value=String(index);option.textContent=(key.scheme==='eip191'?'Wallet: ':'Passkey: ')+entry.keyId;el('key').append(option);
     });
     if(!el('key').options.length)throw Error('No wallet or passkey is available on this origin. Use the signing link for your registration origin, or use your agent key in its own runtime.');
-    request=next;el('sign').disabled=false;say('Review the actor, action, state head, contract and receipt before signing.');
+    request=next;el('sign').disabled=false;
+    el('scoped-signing').hidden=!requestId || !next.clientGrants && !companion && !pendingGrant;
+    el('enable-scoped').hidden=!next.clientGrants || !!companion || !!pendingGrant;
+    if(pendingGrant)el('scope-status').textContent='Authorize the exact grant below. This enables background signing only for its agent, application, action, contract, pod and relay until '+pendingGrant.grant.expiresAt+'.';
+    say('Review the actor, action, state head, contract and receipt before signing.');
   } catch(error) { say(error.message); }
 };
 el('sign').onclick=async()=>{
@@ -106,7 +117,8 @@ el('sign').onclick=async()=>{
     }
     if(requestId){
       say('Verifying your signature and submitting the reviewed action…');
-      showResult(await interaction('submit',{reviewId,proof}));
+      const result=await interaction('submit',{reviewId,proof});
+      if(pendingGrant && result.status==='completed')await activateCompanion();else showResult(result);
     }else{
       el('proof').value=JSON.stringify(proof);el('copy').disabled=false;
       say('Signature created locally. Submit the JSON through the original action control. Interego will verify the signature and current state before committing.');
@@ -123,9 +135,9 @@ async function api(url,body,bearer){
   if(!response.ok)throw Error(result.error || 'The request failed ('+response.status+').');
   return result;
 }
-function interaction(operation,body){
-  if(!config || !/^[a-zA-Z0-9_-]{43}$/.test(requestId || ''))throw Error('Invalid signing link.');
-  return api(config.relayUrl.replace(/\/$/,'')+'/client-interactions/'+requestId+(operation?'/'+operation:''),body,token);
+function interaction(operation,body,id=requestId){
+  if(!config || !/^[a-zA-Z0-9_-]{43}$/.test(id || ''))throw Error('Invalid signing link.');
+  return api(config.relayUrl.replace(/\/$/,'')+'/client-interactions/'+id+(operation?'/'+operation:''),body,token);
 }
 function showResult(result){
   if(result.status==='completed'){
@@ -150,6 +162,99 @@ async function loadReview(){
   reviewId=result.reviewId;el('request').value=JSON.stringify(result.signingRequest);
   await el('load').onclick();
   if(request){el('sign').textContent='Sign and submit this action';say('Review this fresh receipt. Signing will submit exactly these details.');}
+}
+// The subordinate private key is nonexportable and exists only in this tab.
+// No relay/identity service, model, URL or storage record receives it.
+const canonical=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)
+  ?'['+value.map(canonical).join(',')+']':'{'+Object.keys(value).sort().map(k=>JSON.stringify(k)+':'+canonical(value[k])).join(',')+'}';
+const hex=bytes=>Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');
+function multibase(bytes){
+  const alphabet='123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+  let n=BigInt('0x'+hex(bytes)),out='';
+  while(n){out=alphabet[Number(n%58n)]+out;n/=58n;}
+  for(const b of bytes){if(b!==0)break;out='1'+out;}
+  return 'z'+out;
+}
+async function subordinateProof(keyPair,key,message){
+  const signed='Interego client authorization v1\nKey: did:key:'+key.publicKeyMultibase+'\n'+message;
+  return {schema:'interego.client-signature/v1',key,message,
+    signature:encode(await crypto.subtle.sign('Ed25519',keyPair.privateKey,encoder.encode(signed)))};
+}
+function stopCompanion(message='Background signing stopped. The private key was discarded. The enrolled grant expires at its stated time. You can revoke it through the application’s Revoke signing grant control.'){
+  clearTimeout(companionTimer);companionTimer=null;companion=null;pendingGrant=null;request=null;
+  el('sign').disabled=true;
+  el('stop-scoped').hidden=true;el('scope-status').textContent=message;
+}
+el('stop-scoped').onclick=()=>stopCompanion();
+el('enable-scoped').onclick=async()=>{
+  el('enable-scoped').disabled=true;
+  try{
+    if(!request?.clientGrants||!requestId||companion||pendingGrant)throw Error('Load a current action that allows scoped signing.');
+    const receipt=JSON.parse(request.message),policy=request.clientGrants;
+    if(policy.schema!=='interego.application.client-grants/v1'||policy.audience!==new URL(config.relayUrl).origin)throw Error('This relay does not match the signed grant policy.');
+    const keyPair=await crypto.subtle.generateKey('Ed25519',false,['sign','verify']);
+    const raw=new Uint8Array(await crypto.subtle.exportKey('raw',keyPair.publicKey));
+    const key={scheme:'ed25519',publicKeyMultibase:multibase(new Uint8Array([0xed,0x01,...raw]))};
+    const now=Date.now();
+    const grant={schema:'interego.client-signing-grant/v1',id:'urn:uuid:'+crypto.randomUUID(),
+      issuer:receipt.actor,actor:receipt.actor,audience:policy.audience,podUrl:receipt.authority.podUrl,
+      applicationId:receipt.applicationId,actionIri:receipt.actionIri,contractDigest:receipt.contractDigest,key,
+      notBefore:new Date(now-5000).toISOString(),expiresAt:new Date(now+55*60000).toISOString()};
+    const possession=await subordinateProof(keyPair,key,canonical(grant));
+    const parentId=requestId;
+    const enrollment=await interaction('grant',{grant:canonical(grant),possession:canonical(possession)});
+    pendingGrant={parentId,grant,keyPair};requestId=enrollment.id;finished=false;
+    await loadReview();
+    el('sign').textContent='Authorize this scoped signing grant';
+  }catch(error){say(error.message);pendingGrant=null;}
+  finally{el('enable-scoped').disabled=false;}
+};
+function eligible(entry,session,review){
+  const receipt=JSON.parse(review.message),g=session.grant;
+  return review.clientGrants?.audience===g.audience && !entry.revokedAt && canonical(entry.envelope.grant)===canonical(g)
+    && ['actor','applicationId','actionIri','contractDigest'].every(k=>receipt[k]===g[k])
+    && receipt.authority?.podUrl===g.podUrl && Date.now()>=Date.parse(g.notBefore) && Date.now()<Date.parse(g.expiresAt)
+    && review.keys.some(k=>k.keyId===entry.registration.keyId);
+}
+async function activateCompanion(){
+  const next=pendingGrant;pendingGrant=null;requestId=next.parentId;finished=false;request=null;reviewId='';
+  el('sign').disabled=true;say('Grant authorized. This tab is checking matching agent requests.');
+  companion={...next,anchorId:next.parentId,attempted:new Set()};
+  el('stop-scoped').hidden=false;el('enable-scoped').hidden=true;
+  el('scope-status').textContent='Scoped signing is active for '+next.grant.actor+' until '+next.grant.expiresAt+'. Keep this tab open. Stop discards the key immediately.';
+  await companionTick();
+}
+async function companionTick(){
+  const session=companion;
+  if(!session)return;
+  try{
+    if(Date.now()>=Date.parse(session.grant.expiresAt)){stopCompanion('The scoped signing grant expired. The private key was discarded.');return;}
+    const queue=await interaction('pending',undefined,session.anchorId);
+    for(const item of queue.requests){
+      if(companion!==session)return;
+      if(item.requestedAction!==session.grant.actionIri||session.attempted.has(item.id))continue;
+      const review=await interaction('review',{},item.id);
+      const entry=review.signingRequest.clientGrants?.entries?.find(e=>eligible(e,session,review.signingRequest));
+      if(!entry)continue;
+      const message=canonical({schema:'interego.delegated-client-action/v1',grantId:session.grant.id,
+        grantDigest:hex(await hash(canonical(session.grant))),audience:session.grant.audience,receipt:JSON.parse(review.signingRequest.message)});
+      if(companion!==session)return;
+      const proof={schema:'interego.delegated-client-signature/v1',grant:entry.envelope,
+        proof:await subordinateProof(session.keyPair,session.grant.key,message)};
+      if(companion!==session)return;
+      // Never retry an uncertain submission automatically, even after a lost response.
+      session.attempted.add(item.id);
+      const result=await interaction('submit',{reviewId:review.reviewId,proof},item.id);
+      if(result.status!=='completed')throw Error(result.result?.message||'The action did not complete. Check its result with the requesting agent.');
+      const receipt=JSON.parse(review.signingRequest.message);
+      el('receipt').textContent=JSON.stringify(receipt,null,2)+'\n\nReceipt SHA-256: '+hex(await hash(review.signingRequest.message));
+      el('summary').textContent=(receipt.goal||receipt.actionIri)+' — signed as '+receipt.actor;
+      say('Signed, verified and submitted through your scoped grant. The result is available to the requesting agent.');
+      el('scope-status').textContent='Signed and verified an action for '+session.grant.actor+'. Active until '+session.grant.expiresAt+'. Keep this tab open.';
+      if(item.id===requestId){finished=true;request=null;el('sign').disabled=true;el('review').disabled=true;el('cancel').disabled=true;}
+    }
+    if(companion===session)companionTimer=setTimeout(companionTick,3000);
+  }catch(error){stopCompanion('Background signing stopped: '+error.message);}
 }
 const assertionJson=credential=>({id:credential.id,rawId:encode(credential.rawId),type:credential.type,
   response:{authenticatorData:encode(credential.response.authenticatorData),clientDataJSON:encode(credential.response.clientDataJSON),
@@ -180,7 +285,7 @@ async function login(kind){
 el('passkey-login').onclick=()=>login('passkey').catch(error=>say(error.message));
 el('wallet-login').onclick=()=>login('wallet').catch(error=>say(error.message));
 el('review').onclick=()=>loadReview().catch(error=>say(error.message));
-el('cancel').onclick=()=>interaction('cancel',{}).then(showResult).catch(error=>say(error.message));
+el('cancel').onclick=()=>interaction('cancel',{}).then(result=>{if(pendingGrant)stopCompanion('Grant enrollment cancelled. The private key was discarded.');showResult(result);}).catch(error=>say(error.message));
 if(requestId){
   el('handoff').hidden=false;el('manual-request').hidden=true;el('manual-proof').hidden=true;
   showOriginRecovery();

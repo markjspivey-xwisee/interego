@@ -19,6 +19,10 @@ import {
   requireVerifiedClientAuthorization, verifyClientAuthorization,
   type VerifiedClientAuthorization,
 } from './client-authorization.js';
+import { clientGrantLedger, validateClientGrantContract, unsignedClientReceipt, replayClientGrantLedger,
+  replayEnrolledClientGrant, requireEnrolledClientGrant, requireClientGrantChange,
+  type ClientGrantPolicy, type ClientGrantEntry, type VerifiedClientGrantChange } from './client-grant-ledger.js';
+import type { VerifiedDelegatedClientAuthorization } from './client-signing-grant.js';
 
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 
@@ -148,6 +152,8 @@ export interface ApplicationAction {
   readonly evidence?: readonly ApplicationEvidenceRequirement[];
   /** Require a signature made by a registered client credential over the exact receipt. */
   readonly clientSignature?: boolean;
+  readonly allowClientDelegation?: boolean;
+  readonly clientGrantOperation?: 'enroll' | 'revoke';
 }
 
 export interface ApplicationContract {
@@ -156,6 +162,7 @@ export interface ApplicationContract {
   readonly version?: string;
   readonly runtimeIri?: string;
   readonly actions: readonly ApplicationAction[];
+  readonly clientSigningGrants?: ClientGrantPolicy;
 }
 
 export interface ApplicationDefinition {
@@ -174,6 +181,7 @@ export interface ApplicationState {
   readonly version: number;
   readonly data: Record<string, Json>;
   readonly transition?: Record<string, Json>;
+  readonly clientSigningGrants?: readonly ClientGrantEntry[];
 }
 
 export interface ArtifactEvidence {
@@ -208,8 +216,9 @@ export interface ReplayLink {
   readonly effectVerified: boolean;
   readonly evidenceVerified: boolean;
   readonly evidenceCount: number;
-  readonly authorizationBasis: 'client-signature' | 'relay-attestation' | 'genesis';
+  readonly authorizationBasis: 'client-signature' | 'delegated-client-signature' | 'relay-attestation' | 'genesis';
   readonly clientKeyId?: string;
+  readonly delegatedKeyId?: string;
   readonly verified: boolean;
   readonly errors: readonly string[];
 }
@@ -705,6 +714,7 @@ function asContract(doc: Record<string, Json>): ApplicationContract {
       }
     }
   }
+  validateClientGrantContract(doc as unknown as ApplicationContract);
   return doc as unknown as ApplicationContract;
 }
 
@@ -717,6 +727,7 @@ function asDefinition(doc: Record<string, Json>): ApplicationDefinition {
 function asState(doc: Record<string, Json>): ApplicationState {
   if (typeof doc['schema'] !== 'string' || !String(doc['schema']).startsWith('interego.application.state/')) throw new Error('state schema is not interego.application.state/*');
   if (typeof doc['applicationId'] !== 'string' || typeof doc['version'] !== 'number' || !isRecord(doc['data'])) throw new Error('state lacks applicationId/version/data');
+  clientGrantLedger(doc as unknown as ApplicationState);
   return doc as unknown as ApplicationState;
 }
 
@@ -807,9 +818,11 @@ export async function verifyReplay(
     let contractDigest: string | undefined;
     let contractVersion: string | undefined;
     let clientAuthorization: VerifiedClientAuthorization | undefined;
+    let delegatedAuthorization: Awaited<ReturnType<typeof replayEnrolledClientGrant>> | undefined;
     if (index === 0) {
       if (item.state.version !== 0) errors.push('genesis version is not 0');
       if (item.state.transition) errors.push('genesis unexpectedly carries a transition');
+      if (clientGrantLedger(item.state).length) errors.push('genesis cannot enroll client grants');
     } else if (previous) {
       const transition = asRecord(item.state.transition);
       const prior = asRecord(transition?.['prior']);
@@ -845,11 +858,14 @@ export async function verifyReplay(
             errors.push('receipt action is absent from bound contract');
           } else {
             const proof = receipt['clientAuthorization'];
-            if (proof !== undefined || action.clientSignature === true) {
+            const delegatedProof = receipt['clientDelegatedAuthorization'];
+            if (proof !== undefined || delegatedProof !== undefined || action.clientSignature === true) {
               try {
-                const unsignedReceipt = { ...receipt };
-                delete unsignedReceipt['clientAuthorization'];
-                clientAuthorization = await verifyClientAuthorization(proof, canonicalJson(unsignedReceipt));
+                if (proof !== undefined && delegatedProof !== undefined) throw new Error('ambiguous client authorization');
+                const unsignedReceipt = unsignedClientReceipt(receipt);
+                if (delegatedProof !== undefined) {
+                  delegatedAuthorization = await replayEnrolledClientGrant(delegatedProof, unsignedReceipt, previous.state, epoch.contract);
+                } else clientAuthorization = await verifyClientAuthorization(proof, unsignedReceipt);
                 const authority = asRecord(receipt['authority']);
                 if (authority?.['stateDigest'] !== previous.envelope.declaredDigest
                   || authority?.['stateDescriptorUrl'] !== previous.entry.descriptorUrl
@@ -859,7 +875,7 @@ export async function verifyReplay(
                 }
               } catch (error) { errors.push(`client authorization failed: ${(error as Error).message}`); }
             }
-            if (clientAuthorization && actor !== item.descriptor.authorship?.signedBy) errors.push('receipt actor does not match authenticated descriptor author');
+            if ((clientAuthorization || delegatedAuthorization) && actor !== item.descriptor.authorship?.signedBy) errors.push('receipt actor does not match authenticated descriptor author');
             const payload = asRecord(receipt['payload']) ?? {};
             const evidenceErrors = validateEvidenceBindings(action, payload, parsedEvidence.records, loadedEvidence);
             evidenceVerified = evidenceErrors.length === 0;
@@ -870,12 +886,16 @@ export async function verifyReplay(
               evidence: evidenceEnvironment(parsedEvidence.records),
               actor: actor ?? '',
               now: at ?? '',
-              authorization: clientAuthorization ? { verified: true, keyId: clientAuthorization.keyId, scheme: clientAuthorization.scheme } : { verified: false },
+              authorization: delegatedAuthorization ? { verified: true, keyId: delegatedAuthorization.issuerKeyId,
+                scheme: delegatedAuthorization.issuerScheme, delegatedKeyId: delegatedAuthorization.keyId }
+                : clientAuthorization ? { verified: true, keyId: clientAuthorization.keyId, scheme: clientAuthorization.scheme } : { verified: false },
             };
             const guard = evaluateGuard(action.guard, env);
             guardVerified = guard.supported && guard.pass;
             if (!guardVerified) errors.push(`guard replay failed: ${guard.explanation}`);
             try {
+              await replayClientGrantLedger({ state: previous.state, successor: item.state, contract: epoch.contract, action, receipt,
+                ...(clientAuthorization ? { authorization: clientAuthorization.proof } : {}) });
               const replayed = applyEffects(previous.state.data, action.effects ?? [], env);
               effectVerified = jsonEqual(replayed, item.state.data);
               if (!effectVerified) errors.push('effect replay did not reproduce successor data');
@@ -911,8 +931,9 @@ export async function verifyReplay(
       effectVerified,
       evidenceVerified,
       evidenceCount,
-      authorizationBasis: index === 0 ? 'genesis' : clientAuthorization ? 'client-signature' : 'relay-attestation',
-      ...(clientAuthorization ? { clientKeyId: clientAuthorization.keyId } : {}),
+      authorizationBasis: index === 0 ? 'genesis' : delegatedAuthorization ? 'delegated-client-signature' : clientAuthorization ? 'client-signature' : 'relay-attestation',
+      ...(delegatedAuthorization ? { clientKeyId: delegatedAuthorization.issuerKeyId, delegatedKeyId: delegatedAuthorization.keyId }
+        : clientAuthorization ? { clientKeyId: clientAuthorization.keyId } : {}),
       verified,
       errors,
     });
@@ -1172,6 +1193,7 @@ export async function resolveApplicationLab(input: ResolveApplicationLabInput, r
       cid: stateHeadCid,
       version: state.version,
       state: state.data,
+      ...(state.clientSigningGrants ? { clientSigningGrants: state.clientSigningGrants as unknown as Json } : {}),
       documentDigest: stateLoaded.envelope.declaredDigest,
       forked: false,
     },
@@ -1279,6 +1301,8 @@ export interface PrepareActionInput {
   readonly expectedHead?: string;
   readonly evidence?: readonly VerifiedApplicationEvidence[];
   readonly authorization?: VerifiedClientAuthorization;
+  readonly delegatedAuthorization?: VerifiedDelegatedClientAuthorization;
+  readonly grantChange?: VerifiedClientGrantChange;
 }
 
 /** The bytes to authorize, derived from verified authority. This cannot publish or approve. */
@@ -1313,7 +1337,7 @@ export function applicationActionReceipt(resolved: ResolvedApplicationLab, input
     ...(receiptEvidence.length ? { evidence: receiptEvidence as unknown as Json } : {}),
     stateVersion: resolved.state.version,
     version: 1,
-    ...(action.clientSignature === true || input.authorization ? {
+    ...(action.clientSignature === true || input.authorization || input.delegatedAuthorization ? {
       authority: {
         podUrl: resolved.podUrl,
         catalogDescriptorUrl: resolved.catalogDescriptor.url,
@@ -1329,6 +1353,26 @@ export function applicationActionReceipt(resolved: ResolvedApplicationLab, input
   return { action, receipt, payload, receiptEvidence };
 }
 
+/** Validate signatures and guards without issuing a grant attestation or publishing. */
+export function validateAuthorizedApplicationAction(resolved: ResolvedApplicationLab, input: PrepareActionInput) {
+  const draft = applicationActionReceipt(resolved, input);
+  const { action, receipt, payload, receiptEvidence } = draft;
+  if (input.authorization && input.delegatedAuthorization) throw new Error('ambiguous client authorization');
+  const delegated = input.delegatedAuthorization
+    ? requireEnrolledClientGrant(input.delegatedAuthorization, resolved.state, canonicalJson(receipt)) : undefined;
+  if (delegated && (!action.allowClientDelegation || action.clientGrantOperation)) throw new Error('action does not allow delegated authorization');
+  const authorization = !delegated && (action.clientSignature === true || input.authorization)
+    ? requireVerifiedClientAuthorization(input.authorization, canonicalJson(receipt)) : undefined;
+  // Quorum counts the registered holder key. Rotating subordinate keys cannot
+  // manufacture additional independent approvals from one holder credential.
+  const env = { state: resolved.state.data, payload, evidence: evidenceEnvironment(receiptEvidence), actor: input.actor, now: input.now,
+    authorization: delegated ? { verified: true, keyId: delegated.issuerKeyId, scheme: delegated.proof.grant.issuerProof.key.scheme, delegatedKeyId: delegated.keyId }
+      : authorization ? { verified: true, keyId: authorization.keyId, scheme: authorization.scheme } : { verified: false } };
+  const guard = evaluateGuard(action.guard, env);
+  if (!guard.supported || !guard.pass) throw new Error(`signed action guard refused: ${guard.explanation}`);
+  return { ...draft, authorization, delegated, nextData: applyEffects(resolved.state.data, action.effects ?? [], env) };
+}
+
 /** Re-resolve first, then prepare the one exact descriptor-bound successor. */
 export function prepareApplicationAction(resolved: ResolvedApplicationLab, input: PrepareActionInput): {
   readonly action: ApplicationAction;
@@ -1337,19 +1381,18 @@ export function prepareApplicationAction(resolved: ResolvedApplicationLab, input
   readonly receipt: Record<string, Json>;
   readonly receiptDigest: string;
 } {
-  const { action, receipt, payload, receiptEvidence } = applicationActionReceipt(resolved, input);
-  const authorization = action.clientSignature === true || input.authorization
-    ? requireVerifiedClientAuthorization(input.authorization, canonicalJson(receipt)) : undefined;
-  const env = { state: resolved.state.data, payload, evidence: evidenceEnvironment(receiptEvidence), actor: input.actor, now: input.now,
-    authorization: authorization ? { verified: true, keyId: authorization.keyId, scheme: authorization.scheme } : { verified: false } };
-  const guard = evaluateGuard(action.guard, env);
-  if (!guard.supported || !guard.pass) throw new Error(`signed action guard refused: ${guard.explanation}`);
-  const nextData = applyEffects(resolved.state.data, action.effects ?? [], env);
+  const { action, receipt, authorization, delegated, nextData } = validateAuthorizedApplicationAction(resolved, input);
+  if (input.grantChange && !action.clientGrantOperation) throw new Error('unexpected grant lifecycle change');
+  const change = action.clientGrantOperation ? requireClientGrantChange(input.grantChange, canonicalJson(receipt)) : undefined;
+  const ledger = change?.ledger ?? clientGrantLedger(resolved.state);
   if (authorization) receipt['clientAuthorization'] = authorization.proof as unknown as Json;
+  if (delegated) receipt['clientDelegatedAuthorization'] = delegated.proof as unknown as Json;
+  if (change?.registration) receipt['clientRegistration'] = change.registration as unknown as Json;
   const receiptDigest = sha256Hex(canonicalJson(receipt));
   const successor: ApplicationState = {
     applicationId: resolved.state.applicationId,
     data: nextData,
+    ...(ledger.length || resolved.state.clientSigningGrants ? { clientSigningGrants: ledger } : {}),
     schema: resolved.state.schema,
     transition: {
       actionIri: action.actionIri,

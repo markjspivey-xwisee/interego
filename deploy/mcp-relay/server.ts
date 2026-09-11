@@ -248,6 +248,8 @@ import { CLIENT_CHECK_HTML, CLIENT_CHECK_CSP } from './client-check.js';
 import { canonicalSessionActorId } from './session-actor.js';
 import { INVOKE_AFFORDANCE_OUTPUT, loadResourceCompositions, resourceActionResponse, resourceInvocation, type ResourceContext, type ResourceDescriptor, type ResourceEntry, type ResourceReads, type ResourceWriteContext } from './resource-compositions.js';
 import { readClientSigningKeys } from './client-signing-keys.js';
+import { attestClientRegistration } from './client-registration.js';
+import { signMessageRaw } from '@interego/core';
 import { ClientInteractions, encryptedInteractionStore, clientInteractionComposition, type InteractionRecord, type InteractionOwner } from './client-interactions.js';
 const resourceCompositions = await loadResourceCompositions(process.env.INTEREGO_RESOURCE_COMPOSITIONS, [clientInteractionComposition()]);
 import {
@@ -5022,7 +5024,7 @@ function resourceReads(args: ToolArgs): ResourceReads {
 
 function resourceContext(args: ToolArgs): ResourceContext {
   const principal = canonicalSessionActorId(callerAgentId(args), IDENTITY_URL) ?? '';
-  return { reads: resourceReads(args), principal, identityUrl: IDENTITY_URL, now: new Date().toISOString(),
+  return { reads: resourceReads(args), principal, identityUrl: IDENTITY_URL, now: new Date().toISOString(), relayUrl: new URL(PUBLIC_BASE_URL).origin, clock: Date.now,
     interactionStatus: async id => clientInteractions.status(id, await interactionOwner(String(args._session_bearer ?? ''), false)),
     signingKeys: async () => readClientSigningKeys({
       identityUrl: IDENTITY_URL, identityToken: String(args._identity_token ?? ''),
@@ -5035,6 +5037,12 @@ function resourceContext(args: ToolArgs): ResourceContext {
 function resourceWriteContext(args: ToolArgs): ResourceWriteContext {
   const context = resourceContext(args);
   return { ...context,
+    attestClientRegistration: async proof => {
+      const { wallet } = await ensureRelayComplianceWallet();
+      return attestClientRegistration(proof, { actor: context.principal, now: new Date().toISOString(),
+        verifier: 'did:ethr:' + wallet.address.toLowerCase(), keys: await context.signingKeys!(),
+        sign: message => signMessageRaw(wallet, message) });
+    },
     requestSignature: (reference, action, payload, draft) => clientInteractions.create({
       credential: String(args._session_bearer ?? ''), reference, action, payload, draft,
     }),
@@ -5086,6 +5094,7 @@ const clientInteractions = new ClientInteractions({
   signingOrigins: [IDENTITY_URL, ...(PUBLIC_BASE_URL ? [PUBLIC_BASE_URL] : [])],
   authorize: credential => interactionOwner(credential, true),
   prepare: async record => resourceCompositions.prepareSignature(record.reference, record.action, record.payload, resourceContext(await interactionArgs(record))),
+  prepareGrant: async (record, payload) => resourceCompositions.prepareClientGrant(record.reference, record.action, payload, resourceContext(await interactionArgs(record))),
   validate: async (record, proof) => {
     if (!record.draft) throw new Error('review draft missing');
     await resourceCompositions.validateSignature(record.draft.reference, record.action, record.payload, proof, resourceContext(await interactionArgs(record)));
@@ -16189,6 +16198,8 @@ app.all('/client-interactions/:id/:operation?', bearerVerifyLimiter, async (req,
     const id = String(req.params.id);
     const operation = req.params.operation;
     if (req.method === 'GET' && !operation) res.json(await clientInteractions.status(id, { holderUserId: auth.userId }));
+    else if (req.method === 'GET' && operation === 'pending') res.json(await clientInteractions.pending(id, auth.userId));
+    else if (req.method === 'POST' && operation === 'grant') res.json(await clientInteractions.grant(id, auth.userId, req.body ?? {}));
     else if (req.method === 'POST' && operation === 'review') res.json(await clientInteractions.review(id, auth.userId));
     else if (req.method === 'POST' && operation === 'submit') res.json(await clientInteractions.submit(id, auth.userId, String(req.body?.reviewId ?? ''), req.body?.proof));
     else if (req.method === 'POST' && operation === 'cancel') res.json(await clientInteractions.cancel(id, { holderUserId: auth.userId }));
