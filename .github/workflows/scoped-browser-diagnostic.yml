@@ -1,0 +1,38 @@
+name: Scoped browser enrollment diagnostic
+
+# Isolated diagnostic against the already deployed PR394 build.
+# This branch-only job is not a deployment gate or a production rollout.
+on:
+  push:
+    branches: [diagnostic/scoped-browser-20260911]
+
+permissions:
+  contents: read
+
+jobs:
+  browser:
+    name: Diagnose scoped browser enrollment on deployed PR394
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with: { node-version: '20' }
+      - run: npm ci
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - name: Verify the deployed browser workflow
+        working-directory: deploy/mcp-relay
+        env:
+          BASE_URL: https://relay.interego.xwisee.com
+          IDENTITY_URL: https://identity.interego.xwisee.com
+          CI: '1'
+        run: npx playwright test --reporter=list --retries=0
+      - name: Preserve browser failure context
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scoped-browser-diagnostic-context
+          path: deploy/mcp-relay/test-results/**/error-context.md
+          retention-days: 7
+          if-no-files-found: ignore
