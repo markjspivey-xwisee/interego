@@ -25,6 +25,32 @@ describe('durable client signing handoffs', () => {
     await expect(encryptedInteractionStore({ ...config, encryptionKey: generateKeyPair() }).read(record.id)).rejects.toThrow();
     await expect(encryptedInteractionStore({ ...config, fetch: async () => new Response(saved) }).read(record.id)).rejects.toThrow('conditional writes');
   });
+  it('keeps concurrent private queue entries across restarts without disclosing credentials or mixing owners', async () => {
+    const f = await signingFixture();
+    const first = await f.create(); const second = await f.create('bob');
+    const a = f.storage.records.get(String(first!['id']))!.record;
+    const b = f.storage.records.get(String(second!['id']))!.record;
+    const other = { ...a, id: 'z'.repeat(43) };
+    const files = new Map<string, { body: string; revision: number }>();
+    const config = { podUrl: 'https://pod.example/service/', encryptionKey: generateKeyPair(),
+      fetch: async (url: string, options?: { method?: string; headers?: Record<string, string>; body?: string }) => {
+        const old = files.get(url);
+        if (options?.method === 'PUT') {
+          if (old ? options.headers?.['If-Match'] !== String(old.revision) : options.headers?.['If-None-Match'] !== '*') return new Response('', { status: 412 });
+          files.set(url, { body: options.body!, revision: (old?.revision ?? 0) + 1 }); return new Response('', { status: 201 });
+        }
+        return old ? new Response(old.body, { headers: { ETag: String(old.revision) } }) : new Response('', { status: 404 });
+      } };
+    const store = encryptedInteractionStore(config);
+    await Promise.all([store.enqueue!(a), store.enqueue!(other), store.enqueue!(b)]);
+    const restarted = encryptedInteractionStore(config);
+    expect(await restarted.pending!(a.owner)).toEqual(expect.arrayContaining([a.id, other.id]));
+    expect(await restarted.pending!(a.owner)).toHaveLength(2);
+    expect(await restarted.pending!(b.owner)).toEqual([b.id]);
+    const stored = JSON.stringify([...files]);
+    for (const privateValue of [a.credential, a.owner.principal, a.id, b.owner.principal]) expect(stored).not.toContain(privateValue);
+    await expect(encryptedInteractionStore({ ...config, encryptionKey: generateKeyPair() }).pending!(a.owner)).rejects.toThrow();
+  });
   it('records two real independent signatures after a head change, and replays both', async () => {
     const f = await signingFixture();
     const a = (await f.create())!; const b = (await f.create('bob'))!;

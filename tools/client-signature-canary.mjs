@@ -6,7 +6,9 @@ import { writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { signedJsonGraph, parseSignedJsonDocument, canonicalJson } from '../integrations/application-runtime/application-lab-runtime.ts';
+import { signedJsonGraph, parseSignedJsonDocument } from '../integrations/application-runtime/application-lab-runtime.ts';
+import { replayDelegatedClientSignature } from '../integrations/application-runtime/client-signing-grant.ts';
+import { unsignedClientReceipt } from '../integrations/application-runtime/client-grant-ledger.ts';
 import { verifyClientAuthorization } from '../integrations/application-runtime/client-authorization.ts';
 import { fixture, roles, labels, purpose } from './client-signature-fixture.mjs';
 
@@ -108,7 +110,8 @@ try {
   for (const role of roles) sessions.push(await startWorker(role));
   const [submitter, ...reviewers] = sessions;
   const participants = sessions.map(s => s.identity);
-  const scenario = fixture(id, participants), { graphs } = scenario;
+  let scenario = fixture(id, participants);
+  const { graphs } = scenario;
   assert.equal(new Set(sessions.map(s => s.processId)).size, 3);
   assert.equal(new Set(sessions.map(s => s.keyId)).size, 3);
   report.identities = sessions.map(s => ({ role: s.role, processId: s.processId, keyId: s.keyId, ...s.identity }));
@@ -145,9 +148,15 @@ try {
       label: 'SYNTHETIC client-signature canary ' + reviewer.role, scope: 'ReadWrite' });
     assert.equal(grant.registered, true);
   }
+  report.genesis = await publish('state', scenario.state); save();
+  const genesisDescriptor = await call(submitter, 'get_descriptor', { url: report.genesis.descriptorUrl });
+  assert.equal(genesisDescriptor.authorship.authorshipVerified, true);
+  const registrationVerifier = genesisDescriptor.authorship.verificationMethod.toLowerCase();
+  assert.match(registrationVerifier, /^did:ethr:0x[0-9a-f]{40}$/);
+  scenario = fixture(id, participants, registrationVerifier);
+  await Promise.all(sessions.map(s => s.request('configure-grants', { registrationVerifier, genesis: report.genesis })));
   report.contract = await publish('contract', scenario.contract); save();
   report.definition = await publish('definition', scenario.definition); save();
-  report.genesis = await publish('state', scenario.state); save();
   const refs = { contract: report.contract, definition: report.definition, genesis: report.genesis };
   report.catalog = await publish('catalog', scenario.catalog(refs)); save();
   refs.catalog = report.catalog;
@@ -171,9 +180,11 @@ try {
     assert.equal(result.committed, true, JSON.stringify(result).slice(0, 1500));
     assert.ok(!result.error);
     assert.equal(result.view.snapshot.replay.complete, true);
-    const { clientAuthorization, ...unsigned } = result.receipt;
-    const verified = await verifyClientAuthorization(clientAuthorization, canonicalJson(unsigned));
-    assert.equal(verified.keyId, signer.keyId);
+    const message = unsignedClientReceipt(result.receipt);
+    const verified = result.receipt.clientDelegatedAuthorization
+      ? await replayDelegatedClientSignature(result.receipt.clientDelegatedAuthorization, message)
+      : await verifyClientAuthorization(result.receipt.clientAuthorization, message);
+    assert.equal(verified.issuerKeyId ?? verified.keyId, signer.keyId);
     assert.equal(result.receipt.actor, signer.identity.agentDid);
     report.receipts.push(result.receipt);
   };
@@ -190,9 +201,12 @@ try {
     assert.ok(submit);
     const prepared = await prepare(reviewer, 'approve');
     const foreign = await prepare(reviewers[1 - index], 'approve');
-    await refuse(reviewer, prepared.submit, { client_proof: foreign.proof }, /exact action receipt|registered credential/i,
+    await refuse(reviewer, prepared.submit, { client_proof: foreign.proof }, /exact action receipt|registered credential|outside grant scope|authenticated context/i,
       name + ': other reviewer proof cannot be submitted as this actor');
     report.signingOrigins = prepared.signingOrigins;
+    const enrollment = await reviewer.request('enroll-grant', {});
+    assert.equal(enrollment.enrolled, true);
+    check(name + ': owner proof enrolls its process-held subordinate key with a verified registration attestation');
     const result = await reviewer.request('handoff', { action: 'approve' });
     await verifyCommitted(result, reviewer);
     check(name + ': fresh handoff receipt signed by its own process, automatically committed and returned through MCP');
@@ -202,6 +216,11 @@ try {
     if (index === 0) await refuseSigned(submitter, 'finish', 'One reviewer confirmation cannot complete the test');
   }
   await refuseSigned(reviewers[0], 'finish', 'A reviewer cannot perform the submitter-only final transition');
+  const revoked = await reviewers[0].request('revoke-grant', {});
+  await verifyCommitted(revoked, reviewers[0]);
+  const afterRevocation = await prepare(reviewers[0], 'approve');
+  await refuse(reviewers[0], afterRevocation.submit, { client_proof: afterRevocation.proof }, /active enrolled grant/i,
+    'Revoked subordinate grant cannot authorize a fresh receipt; existing approval history stays verified');
   const finished = await submitter.request('finish-autonomously', {});
   await verifyCommitted(finished, submitter);
   check('Two distinct non-submitter confirmations allow the runtime-held signer to complete through MCP without a human handoff');
@@ -215,7 +234,8 @@ try {
   assert.ok(finalState.data.approvals.every(entry => entry.verified && entry.candidateDigest === scenario.candidateDigest));
   assert.equal(finalHead.forked, false);
   assert.equal(finalView.snapshot.replay.complete, true);
-  assert.equal(finalView.snapshot.replay.links.filter(link => link.authorizationBasis === 'client-signature').length, 3);
+  assert.equal(finalView.snapshot.replay.links.filter(link => link.authorizationBasis === 'client-signature').length, 4);
+  assert.equal(finalView.snapshot.replay.links.filter(link => link.authorizationBasis === 'delegated-client-signature').length, 2);
   report.stateHead = finalHead; report.replay = finalView.snapshot.replay;
   assert.deepEqual(await health(), report.builds, 'Deployment changed during this test; retain the test record and run a fresh canary after rollout');
   report.passed = true; save();

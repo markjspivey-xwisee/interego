@@ -21,9 +21,12 @@
  */
 import { test, expect, request, type Page } from '@playwright/test';
 import { createHash, randomBytes } from 'node:crypto';
+import { signedJsonGraph, type Json } from '../../../integrations/application-runtime/application-lab-runtime.js';
 import { clientKeyId, verifyClientAuthorization } from '../../../integrations/application-runtime/client-authorization.js';
 
 const RELAY_URL = process.env.BASE_URL ?? 'https://relay.interego.xwisee.com';
+/** Browser lexical state used only to inspect this synthetic test's key. */
+declare const pendingGrant: { keyPair: CryptoKeyPair };
 const IDENTITY_URL = process.env.IDENTITY_URL ?? 'https://identity.interego.xwisee.com';
 
 async function enableVirtualAuthenticator(page: Page): Promise<string> {
@@ -49,6 +52,7 @@ function pkce(): { verifier: string; challenge: string } {
 }
 
 test('passkey OAuth dance issues a usable MCP token', async ({ page }) => {
+  test.setTimeout(300_000);
   const api = await request.newContext();
 
   // 1. Dynamic Client Registration
@@ -184,6 +188,89 @@ test('passkey OAuth dance issues a usable MCP token', async ({ page }) => {
   const verifiedProof = await verifyClientAuthorization(proof, message, [key]);
   expect(verifiedProof.keyId).toBe(clientKeyId(key));
   expect((await verifyClientAuthorization(verifiedProof.proof, message)).keyId).toBe(verifiedProof.keyId);
+  // A second isolated scenario exercises the deployed scoped companion end to
+  // end. The passkey and subordinate signing key are owned by Chromium here.
+  let callSequence = 100;
+  const call = async (name: string, args: Record<string, unknown> = {}) => {
+    const response = await api.post(`${RELAY_URL}/mcp`, { headers: { Authorization: `Bearer ${freshTokens.access_token}`,
+      'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+      data: { jsonrpc: '2.0', id: callSequence++, method: 'tools/call', params: { name, arguments: args } } });
+    expect(response.ok()).toBeTruthy();
+    const raw = await response.text();
+    const json = raw.trim().startsWith('{') ? JSON.parse(raw) : JSON.parse(raw.split('\n').filter(l => l.startsWith('data:')).map(l => l.slice(5).trim()).join(''));
+    expect(json.error).toBeUndefined();
+    const result = json.result.structuredContent ?? JSON.parse(json.result.content[0].text);
+    const value = typeof result.status === 'number' && typeof result.body === 'string' ? JSON.parse(result.body) : result;
+    expect(value.error, JSON.stringify(value).slice(0, 2000)).toBeUndefined();
+    return value;
+  };
+  const appId = 'urn:graph:interego:application:browser-grant-ci-' + Date.now() + '-' + randomBytes(4).toString('hex');
+  const graphs = Object.fromEntries(['state', 'contract', 'definition', 'catalog'].map(k => [k, appId + ':' + k]));
+  const publish = async (kind: string, document: Record<string, Json>) => {
+    const graph = signedJsonGraph(graphs[kind]!, 'application-' + kind, document);
+    const result = await call('publish_context', { graph_iri: graphs[kind], graph_content: graph.graphContent, sign_authorship: true, visibility: 'public' });
+    expect(result.published).toBe(true);
+    if (result.status === 'pending') {
+      await expect.poll(async () => (await (await api.get(`${RELAY_URL}/publish/status`, { params: { descriptorUrl: result.descriptorUrl } })).json()).kind,
+        { timeout: 90_000 }).toBe('committed');
+    }
+    const head = await call('get_current_head', { urn: graphs[kind] });
+    expect(head.forked).toBe(false);
+    expect(head.head.descriptorUrl).toBe(result.descriptorUrl);
+    return { descriptorUrl: result.descriptorUrl, cid: head.head.cid, documentDigest: graph.digest, graphIri: graphs[kind]! };
+  };
+  const genesis = await publish('state', { schema: 'interego.application.state/v1', applicationId: appId, version: 0, data: { events: [] } });
+  const genesisDescriptor = await call('get_descriptor', { url: genesis.descriptorUrl });
+  expect(genesisDescriptor.authorship.authorshipVerified).toBe(true);
+  const verifier = genesisDescriptor.authorship.verificationMethod.toLowerCase();
+  expect(verifier).toMatch(/^did:ethr:0x[0-9a-f]{40}$/);
+  const target = 'urn:interego:runtime:signed-domain:v1';
+  const contract = await publish('contract', { schema: 'interego.application.contract/v1', applicationId: appId, version: '1.2.0', runtimeIri: target,
+    clientSigningGrants: { schema: 'interego.application.client-grants/v1', audience: RELAY_URL, registrationVerifier: verifier },
+    actions: [{ actionIri: appId + ':record', label: 'Record synthetic observation', method: 'POST', target, clientSignature: true, allowClientDelegation: true,
+      inputs: [{ name: 'observation', type: 'string', required: true }], guard: { op: 'eq', left: '$authorization.verified', right: true },
+      effects: [{ op: 'appendUnique', path: '$state.events', by: 'observation', value: { observation: '$payload.observation', keyId: '$authorization.keyId' } }] },
+    ...['enroll', 'revoke'].map(op => ({ actionIri: appId + ':grant:' + op, label: op === 'enroll' ? 'Enroll signing grant' : 'Revoke signing grant',
+      method: 'POST', target, clientSignature: true, clientGrantOperation: op, effects: [],
+      inputs: (op === 'enroll' ? ['grant', 'possession'] : ['grantId']).map(name => ({ name, type: 'string', required: true })) }))] });
+  const definition = await publish('definition', { schema: 'interego.application.definition/v1', id: appId,
+    title: 'SYNTHETIC browser scoped-signing test', stateGraphIri: graphs['state']!, contractGraphIri: graphs['contract']! });
+  const catalog = await publish('catalog', { schema: 'interego.application.catalog/v1', id: graphs['catalog']!, version: 1,
+    applications: [{ applicationId: appId, contractGraphIri: graphs['contract']!, definitionGraphIri: graphs['definition']!, definitionDescriptorUrl: definition.descriptorUrl,
+      stateGraphIri: graphs['state']!, manifestCids: { contract, definition, genesisState: genesis } }] });
+  const createRequest = async (observation: string) => {
+    const view = await call('render_hmd', { descriptor_url: catalog.descriptorUrl });
+    expect(view.snapshot.replay.complete).toBe(true);
+    const control = view.controls.find((c: { label: string }) => c.label === 'Submit: Record synthetic observation');
+    const pending = await call('act', { descriptor_url: control.descriptorUrl, action_iri: control.action, payload: { observation } });
+    expect(pending.status).toBe('pending'); return pending;
+  };
+  const first = await createRequest('one');
+  await page.goto(first.signingUrl);
+  // This token belongs solely to the synthetic account created by this test.
+  await page.evaluate(token => sessionStorage.setItem('cg.token', token), freshIdentityBody.identityToken);
+  await page.reload();
+  await page.locator('#enable-scoped:not([hidden])').waitFor();
+  await page.locator('#enable-scoped').click();
+  await expect(page.locator('#sign')).toHaveText('Authorize this scoped signing grant');
+  expect(await page.evaluate(async () => {
+    const heldKey = pendingGrant.keyPair.privateKey;
+    if (!(heldKey instanceof CryptoKey) || heldKey.type !== 'private') throw new Error('browser key missing');
+    try { await crypto.subtle.exportKey('pkcs8', heldKey); return true; } catch { return false; }
+  })).toBe(false);
+  await page.locator('#sign').click();
+  await expect(page.locator('#scope-status')).toContainText('Signed and verified an action', { timeout: 90_000 });
+  const second = await createRequest('two');
+  await expect.poll(async () => (await call('invoke_affordance', { descriptor_url: second.descriptorUrl, action_iri: second.action, payload: {} })).status,
+    { timeout: 90_000 }).toBe('completed');
+  const after = await call('render_hmd', { descriptor_url: catalog.descriptorUrl });
+  expect(after.snapshot.head.version).toBe(3);
+  expect(after.snapshot.replay.complete).toBe(true);
+  expect(after.snapshot.replay.links.filter((link: { authorizationBasis: string }) => link.authorizationBasis === 'delegated-client-signature')).toHaveLength(2);
+  expect(after.snapshot.head.state.events.map((event: { keyId: string }) => event.keyId)).toEqual([clientKeyId(key), clientKeyId(key)]);
+  await page.locator('#stop-scoped').click();
+  await expect(page.locator('#scope-status')).toContainText('private key was discarded');
+  console.log('PASS: live passkey-authorized grant enrollment, nonexportable Chromium key, two automatic MCP actions, registered-holder accounting and complete retained-proof replay.');
   console.log('PASS: live OAuth identity renewal, registered passkey RP, deployed signing page and retained-proof verification.');
   } finally {
   // 6. Cleanup — purge the test user so live identity / pod state stays

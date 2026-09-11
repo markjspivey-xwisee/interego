@@ -106,12 +106,14 @@ delegation or replace server-side authorization. The server still checks current
 registration, delegation, contract and predecessor. OAuth access by itself does
 not supply a private key. A hosted connector without a signer uses the interactive
 holder path; do not manufacture a key for another reviewer or call the bearer an
-independent client proof. A newly provisioned subordinate signing key and its
-delegation require explicit enrollment and a separate versioned policy. The
-[proposed scoped-grant verifier](SCOPED-CLIENT-SIGNING-GRANTS.md) checks owner and
-possession signatures, scope, time and trusted grant status. It is not wired into
-the hosted connector or current policy; its document records the remaining
-custody, enrollment, revocation and historical-authority integration requirements.
+independent client proof. A newly provisioned subordinate signing key requires explicit enrollment and a
+versioned contract opt-in. The [scoped signing companion](SCOPED-CLIENT-SIGNING-GRANTS.md)
+creates a nonexportable key in the holder's browser tab, enrolls its exact scope
+with one holder signature, and watches that agent/client's private queue while
+the tab remains open. Enrollment, revocation and actions share one verified CAS
+history. Quorum guards count the registered holder key, so extra subordinate
+keys cannot create extra votes. Existing applications are not opted in by a
+code deployment; their owners authorize a concrete new contract epoch first.
 
 The standalone fragment-based page remains available for existing process
 integrations. New interactive clients should use Submit's pending request flow.

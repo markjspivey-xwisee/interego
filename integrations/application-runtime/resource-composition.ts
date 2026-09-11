@@ -6,11 +6,13 @@ import type {
 import {
   descriptorActionIsExecutable, parseSignedJsonDocument, prepareApplicationAction,
   resolveApplicationActionEvidence, resolveApplicationLab,
-  applicationActionReceipt, canonicalJson,
-  type ApplicationLabReads, type ResolvedApplicationLab,
+  applicationActionReceipt, canonicalJson, validateAuthorizedApplicationAction,
+  type ApplicationLabReads, type ResolvedApplicationLab, type PrepareActionInput,
 } from './application-lab-runtime.js';
 import { previewApplicationAction } from './application-preview.js';
-import { clientKeyId, verifyClientAuthorization, type ClientSignature, type VerifiedClientAuthorization } from './client-authorization.js';
+import { clientKeyId, verifyClientAuthorization } from './client-authorization.js';
+import { authorizeEnrolledClientGrant, prepareClientGrantChange, validateClientGrantProposal, clientGrantLedger } from './client-grant-ledger.js';
+import { clientSigningGrantMessage, type ClientSigningGrant } from './client-signing-grant.js';
 
 const PREFIX = 'urn:interego:application-view:v1:';
 const REFRESH = 'urn:interego:application-view:refresh';
@@ -173,26 +175,70 @@ async function prepareSignature(url: string, action: string, payload: Record<str
   return { reference: reference(current), binding: canonicalJson(JSON.parse(JSON.stringify(immutable))),
     request: { schema: 'interego.client-signing-request/v1', message: canonicalJson(receipt),
       keys: (await context.signingKeys()).map(key => ({ keyId: clientKeyId(key), key })),
-      expiresAt: new Date(Date.parse(context.now) + 600_000).toISOString() } };
+      expiresAt: new Date(Date.parse(context.now) + 600_000).toISOString(),
+      ...(draft.action.allowClientDelegation ? { clientGrants: { ...resolved.activeContract.clientSigningGrants,
+        entries: clientGrantLedger(resolved.state).filter(entry => entry.envelope.grant.actor === actor(context)) } } : {}) } };
+}
+
+async function actionAuthorization(raw: unknown, resolved: ResolvedApplicationLab, ref: Reference, payload: Record<string, unknown>, context: ResourceContext): Promise<PrepareActionInput> {
+  const proof = record(typeof raw === 'string' ? JSON.parse(raw) : raw);
+  const delegated = proof['schema'] === 'interego.delegated-client-signature/v1';
+  const signed = JSON.parse(String(delegated ? record(proof['proof'])['message'] : proof['message'])) as Record<string, unknown>;
+  const receipt = delegated ? record(signed['receipt']) : signed;
+  const at = String(receipt['at'] ?? '');
+  const age = (context.clock?.() ?? Date.parse(context.now)) - Date.parse(at);
+  if (!Number.isFinite(age) || age < -30_000 || age >= 600_000) throw new Error('signature expired; load and review a fresh receipt');
+  if (!context.signingKeys) throw new Error('registered client signing keys are unavailable');
+  const evidence = await resolveApplicationActionEvidence(resolved, { actionIri: ref.action, payload }, reads(context));
+  const input = { actionIri: ref.action, payload, actor: actor(context), now: at, expectedHead: ref.head, evidence };
+  const draft = applicationActionReceipt(resolved, input);
+  const message = canonicalJson(draft.receipt);
+  const keys = await context.signingKeys();
+  if (delegated) {
+    if (!context.relayUrl) throw new Error('trusted relay audience is unavailable');
+    return { ...input, delegatedAuthorization: await authorizeEnrolledClientGrant(proof, message, { state: resolved.state,
+      contract: resolved.activeContract, actor: actor(context), audience: new URL(context.relayUrl).origin, keys,
+      now: context.clock ?? (() => Date.parse(context.now)) }) };
+  }
+  const authorization = await verifyClientAuthorization(proof, message, keys);
+  if (draft.action.clientGrantOperation) await validateClientGrantProposal({ state: resolved.state, contract: resolved.activeContract,
+    action: draft.action, receipt: message, authorization });
+  return { ...input, authorization };
 }
 
 const composition: ResourceComposition = {
   prepareSignature,
+  async prepareClientGrant(url, action, payload, context) {
+    const ref = parseReference(url);
+    if (ref.mode !== 'execute' || ref.action !== action || !['grant,possession', 'grantId'].includes(Object.keys(payload).sort().join(','))) throw new Error('invalid grant request');
+    const resolved = await resolveApplicationLab(input(ref, context), reads(context));
+    const policy = resolved.activeContract.clientSigningGrants;
+    const target = resolved.activeContract.actions.find(a => a.actionIri === action);
+    const operation = payload['grantId'] === undefined ? 'enroll' : 'revoke';
+    const enroll = resolved.activeContract.actions.find(a => a.clientGrantOperation === operation);
+    if (!policy || !target?.allowClientDelegation || !enroll || policy.audience !== context.relayUrl
+      || resolved.activeContractEnvelope.declaredDigest !== ref.contract) throw new Error('current contract does not allow this scoped grant');
+    if (operation === 'revoke') {
+      const entry = clientGrantLedger(resolved.state).find(e => e.envelope.grant.id === payload['grantId'] && e.envelope.grant.actor === actor(context));
+      if (!entry || entry.revokedAt !== undefined || entry.envelope.grant.actionIri !== action) throw new Error('no active owned grant for this action');
+    } else {
+      const grant = JSON.parse(String(payload['grant'])) as ClientSigningGrant;
+      const message = clientSigningGrantMessage(grant);
+      if (message !== payload['grant'] || grant.actor !== actor(context) || grant.issuer !== actor(context)
+        || grant.audience !== policy.audience || grant.applicationId !== ref.application || grant.actionIri !== action
+        || grant.podUrl !== resolved.podUrl || grant.contractDigest !== ref.contract) throw new Error('grant is outside the reviewed authority');
+      await verifyClientAuthorization(JSON.parse(String(payload['possession'])), message, [grant.key]);
+    }
+    const enrollmentRef = reference({ ...binding(resolved), mode: 'execute', action: enroll.actionIri });
+    return { action: enroll.actionIri, payload, draft: await prepareSignature(enrollmentRef, enroll.actionIri, payload, context) };
+  },
   async validateSignature(url, action, payload, rawProof, context) {
     const ref = parseReference(url);
     if (ref.mode !== 'execute' || ref.action !== action) throw new Error('invalid signing operation');
     const resolved = await resolveApplicationLab(input(ref, context), reads(context));
     if (resolved.stateHead.cid !== ref.head) throw new Error('state changed; load and review a fresh receipt');
     if (resolved.activeContractEnvelope.declaredDigest !== ref.contract) throw new Error('contract changed; request a new action review');
-    if (!context.signingKeys) throw new Error('registered client signing keys are unavailable');
-    const proof = rawProof as ClientSignature;
-    const at = String(record(JSON.parse(proof.message))['at'] ?? '');
-    const age = Date.parse(context.now) - Date.parse(at);
-    if (!Number.isFinite(age) || age < -30_000 || age > 600_000) throw new Error('signature expired; load and review a fresh receipt');
-    const evidence = await resolveApplicationActionEvidence(resolved, { actionIri: action, payload }, reads(context));
-    const draft = applicationActionReceipt(resolved, { actionIri: action, payload, actor: actor(context), now: at, expectedHead: ref.head, evidence });
-    const authorization = await verifyClientAuthorization(proof, canonicalJson(draft.receipt), await context.signingKeys());
-    prepareApplicationAction(resolved, { actionIri: action, payload, actor: actor(context), now: at, expectedHead: ref.head, evidence, authorization });
+    validateAuthorizedApplicationAction(resolved, await actionAuthorization(rawProof, resolved, ref, payload, context));
   },
   claims: url => url.startsWith(PREFIX),
   access(url, action) {
@@ -255,23 +301,16 @@ const composition: ResourceComposition = {
     const evidence = await resolveApplicationActionEvidence(resolved, { actionIri: action, payload: wirePayload }, reads(context));
     const declared = resolved.activeContract.actions.find(value => value.actionIri === action);
     if (rawProof !== undefined && declared?.clientSignature !== true) throw new Error('this action does not declare client signature input');
-    let authorization: VerifiedClientAuthorization | undefined;
-    let actionTime = context.now;
+    let authorizedInput = { actionIri: action, payload: wirePayload, actor: actor(context), now: context.now, expectedHead: ref.head, evidence } as Awaited<ReturnType<typeof actionAuthorization>>;
     if (declared?.clientSignature || rawProof !== undefined) {
       if (!rawProof) {
         if (!write.requestSignature) throw new Error('client signature is required; signing handoff is unavailable here, so use your registered agent signer');
         const draft = await prepareSignature(url, action, wirePayload, context);
         return write.requestSignature(url, action, wirePayload, draft);
       }
-      const proof = (typeof rawProof === 'string' ? JSON.parse(rawProof) : rawProof) as ClientSignature;
-      const signedReceipt = JSON.parse(proof.message) as Record<string, unknown>;
-      actionTime = typeof signedReceipt['at'] === 'string' ? signedReceipt['at'] : '';
-      const age = Date.parse(context.now) - Date.parse(actionTime);
-      if (!Number.isFinite(age) || age < -30_000 || age > 10 * 60_000) throw new Error('client signature expired or has an invalid time; preview and sign again');
-      if (!context.signingKeys) throw new Error('registered client signing keys are unavailable');
-      const draft = applicationActionReceipt(resolved, { actionIri: action, payload: wirePayload, actor: actor(context), now: actionTime, expectedHead: ref.head, evidence });
-      authorization = await verifyClientAuthorization(proof, canonicalJson(draft.receipt), await context.signingKeys());
+      authorizedInput = await actionAuthorization(rawProof, resolved, ref, wirePayload, context);
     }
+
     const authority = await resolveApplicationLab(input(ref, context), reads(context));
     if (!authority.catalogCurrent || !authority.replay.complete
       || authority.stateHead.cid !== ref.head
@@ -280,9 +319,11 @@ const composition: ResourceComposition = {
       || authority.activeContractEnvelope.declaredDigest !== ref.contract) {
       throw new Error('application authority changed before submission; refresh and retry');
     }
-    const prepared = prepareApplicationAction(authority, {
-      actionIri: action, payload: wirePayload, actor: actor(context), now: actionTime, expectedHead: ref.head, evidence, authorization,
-    });
+    validateAuthorizedApplicationAction(authority, authorizedInput);
+    const grantChange = declared?.clientGrantOperation ? await prepareClientGrantChange({ state: authority.state, contract: authority.activeContract,
+      action: declared, receipt: canonicalJson(applicationActionReceipt(authority, authorizedInput).receipt), authorization: authorizedInput.authorization!,
+      attest: proof => { if (!write.attestClientRegistration) throw new Error('credential membership attestation is unavailable'); return write.attestClientRegistration(proof); } }) : undefined;
+    const prepared = prepareApplicationAction(authority, { ...authorizedInput, ...(grantChange ? { grantChange } : {}) });
     const published = await write.publish({ podUrl: resolved.podUrl, graphIri: resolved.definition.stateGraphIri, graphContent: prepared.graphContent, expectedHead: ref.head, actor: actor(context) });
     if (published['error'] || published['published'] === false || published['status'] === 'failed') {
       return { error: 'application_action_refused', message: String(published['message'] ?? published['error'] ?? 'publication refused'), committed: false };

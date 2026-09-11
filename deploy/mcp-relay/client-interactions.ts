@@ -19,6 +19,8 @@ export interface InteractionRecord {
 export interface InteractionStore {
   read(id: string): Promise<{ record: InteractionRecord; etag: string } | undefined>;
   write(record: InteractionRecord, etag?: string): Promise<void>;
+  enqueue?(record: InteractionRecord): Promise<void>;
+  pending?(owner: InteractionOwner): Promise<readonly string[]>;
 }
 const validId = (id: string) => /^[a-zA-Z0-9_-]{43}$/.test(id);
 const sameOwner = (a: InteractionOwner, b: InteractionOwner) => a.userId === b.userId && a.clientId === b.clientId && a.principal === b.principal;
@@ -31,7 +33,40 @@ export function encryptedInteractionStore(config: { podUrl: string; fetch: Fetch
     if (!validId(id)) throw new Error('invalid interaction identifier');
     return config.podUrl.replace(/\/$/, '') + '/client-interactions/' + id + '.json';
   };
+  const queueUrl = (owner: InteractionOwner) => config.podUrl.replace(/\/$/, '') + '/client-interaction-queues/'
+    + createHash('sha256').update(JSON.stringify([owner.userId, owner.clientId, owner.principal])).digest('base64url') + '.json';
+  const readQueue = async (owner: InteractionOwner) => {
+    const response = await config.fetch(queueUrl(owner), { headers: { Accept: 'application/json', 'Cache-Control': 'no-store' } });
+    if (response.status === 404) return { entries: [] as { id: string; expiresAt: number }[], etag: undefined };
+    if (!response.ok) throw new Error('cannot read private signing queue');
+    const sealed: unknown = await response.json();
+    if (!isEncryptedFacetValue(sealed)) throw new Error('unencrypted signing queue refused');
+    const plain = decryptFacetValue(sealed, config.encryptionKey);
+    const etag = response.headers?.get('etag');
+    if (!plain || !etag) throw new Error('signing queue requires encrypted conditional storage');
+    const queue = JSON.parse(plain) as { owner: InteractionOwner; entries: { id: string; expiresAt: number }[] };
+    if (!sameOwner(owner, queue.owner) || !Array.isArray(queue.entries) || queue.entries.length > 128
+      || queue.entries.some(e => !validId(e.id) || !Number.isFinite(e.expiresAt))) throw new Error('invalid signing queue');
+    return { entries: queue.entries, etag };
+  };
   return {
+    async enqueue(record) {
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const queue = await readQueue(record.owner);
+        const entries = queue.entries.filter(e => e.expiresAt > record.updatedAt && e.id !== record.id);
+        if (!terminal(record.status) && record.expiresAt > record.updatedAt) {
+          if (entries.length >= 128) throw new Error('signing queue is full; complete or wait for pending requests to expire');
+          entries.push({ id: record.id, expiresAt: record.expiresAt });
+        }
+        const body = encryptFacetValue(JSON.stringify({ owner: record.owner, entries }), [config.encryptionKey.publicKey], config.encryptionKey);
+        const response = await config.fetch(queueUrl(record.owner), { method: 'PUT', headers: { 'Content-Type': 'application/json',
+          ...(queue.etag ? { 'If-Match': queue.etag } : { 'If-None-Match': '*' }) }, body: JSON.stringify(body) });
+        if (response.ok) return;
+        if (response.status !== 412) throw new Error('cannot update private signing queue');
+      }
+      throw new Error('signing queue changed repeatedly; retry the handoff');
+    },
+    async pending(owner) { return (await readQueue(owner)).entries.map(e => e.id); },
     async read(id) {
       const response = await config.fetch(url(id), { headers: { Accept: 'application/json', 'Cache-Control': 'no-store' } });
       if (response.status === 404) return undefined;
@@ -62,6 +97,7 @@ export class ClientInteractions {
     authorize: (credential: string) => Promise<InteractionOwner & { expiresAt: number }>;
     prepare: (record: InteractionRecord) => Promise<ResourceSignatureDraft>;
     validate: (record: InteractionRecord, proof: unknown) => Promise<void>;
+    prepareGrant?: (record: InteractionRecord, payload: Record<string, unknown>) => Promise<{ action: string; payload: Record<string, unknown>; draft: ResourceSignatureDraft }>;
     execute: (record: InteractionRecord, proof: unknown) => Promise<Record<string, unknown>>;
     complete?: (id: string, owner: InteractionOwner) => void;
   }) {}
@@ -123,6 +159,7 @@ export class ClientInteractions {
     const previous = await this.deps.store.read(id);
     if (previous && previous.record.expiresAt > now && previous.record.status !== 'cancelled') {
       this.checkCaller(previous.record, owner);
+      await this.deps.store.enqueue?.(previous.record);
       return this.publicRecord(previous.record);
     }
     if (previous && ['completed', 'submitting', 'failed'].includes(previous.record.status)) return this.publicRecord(previous.record);
@@ -147,7 +184,36 @@ export class ClientInteractions {
       credential: input.credential, reference: input.reference, action: input.action, payload: input.payload,
       binding: input.draft.binding, status: 'pending', createdAt: now, updatedAt: now, expiresAt, signingOrigin };
     await this.deps.store.write(record, previous?.etag);
+    await this.deps.store.enqueue?.(record);
     return this.publicRecord(record);
+  }
+  /** A holder may watch only the exact originating agent/client's private queue. */
+  async pending(id: string, holderUserId: string) {
+    const { record } = await this.load(id);
+    this.checkCaller(record, { holderUserId });
+    if (!this.deps.store.pending) throw new Error('background signing is unavailable');
+    const pending = [];
+    for (const nextId of await this.deps.store.pending(record.owner)) {
+      const next = await this.deps.store.read(nextId);
+      if (next && sameOwner(next.record.owner, record.owner) && ['pending', 'reviewing'].includes(next.record.status)
+        && next.record.expiresAt > this.now()) pending.push({ ...this.publicRecord(next.record), requestedAction: next.record.action });
+    }
+    return { requests: pending };
+  }
+  /** Create an owner-reviewed enrollment using the original agent's authenticated authority. */
+  async grant(id: string, holderUserId: string, payload: Record<string, unknown>) {
+    const { record } = await this.load(id);
+    this.checkCaller(record, { holderUserId });
+    if (!['pending', 'reviewing'].includes(record.status) || record.expiresAt <= this.now()) throw new Error('a live action review is required');
+    await this.authorize(record);
+    if (!this.deps.prepareGrant) throw new Error('scoped client signing is unavailable');
+    // Recheck the original immutable authority, then derive the declared enrollment
+    // action. The browser cannot select another agent, credential or application.
+    const current = await this.deps.prepare(record);
+    if (current.binding !== record.binding) throw new Error('authority or inputs changed; request a fresh review');
+    const enrollment = await this.deps.prepareGrant({ ...record, reference: current.reference }, payload);
+    return this.create({ credential: record.credential, reference: enrollment.draft.reference,
+      action: enrollment.action, payload: enrollment.payload, draft: enrollment.draft });
   }
   async status(id: string, caller: InteractionOwner | { holderUserId: string }) {
     const { record } = await this.load(id);
@@ -169,6 +235,7 @@ export class ClientInteractions {
     // authority/evidence binding before any new signature can be accepted.
     const next: InteractionRecord = { ...record, credential, expiresAt, status: 'pending', draft: undefined, updatedAt: now };
     await this.deps.store.write(next, etag);
+    await this.deps.store.enqueue?.(next);
     return this.publicRecord(next);
   }
   private checkCaller(record: InteractionRecord, caller: InteractionOwner | { holderUserId: string }) {
@@ -196,6 +263,9 @@ export class ClientInteractions {
     if (terminal(record.status)) return this.publicRecord(record);
     const next: InteractionRecord = { ...record, status: 'cancelled', updatedAt: this.now(), credential: '', draft: undefined };
     await this.deps.store.write(next, etag);
+    // Queue cleanup is optional after the durable terminal result; a stale entry
+    // is filtered by pending() and must not make a committed action look failed.
+    await this.deps.store.enqueue?.(next).catch(() => {});
     this.deps.complete?.(id, record.owner);
     return this.publicRecord(next);
   }
@@ -206,10 +276,12 @@ export class ClientInteractions {
     if (record.status !== 'reviewing' || !record.draft) throw new Error('review this request before signing');
     if (record.expiresAt <= this.now() || Date.parse(record.draft.request.expiresAt) <= this.now()) throw new Error('review expired; load and review a fresh receipt');
     if (createHash('sha256').update(record.draft.request.message).digest('hex') !== reviewId
-      || !proof || typeof proof !== 'object' || (proof as Record<string, unknown>)['message'] !== record.draft.request.message) {
+      || !proof || typeof proof !== 'object' || Array.isArray(proof)) {
       throw new Error('signature does not match the current review');
     }
     await this.authorize(record);
+    // The installed interpreter validates the exact retained draft and proof domain.
+    // Delegated proofs wrap the receipt instead of using a top-level message field.
     await this.deps.validate(record, proof);
     // Claim before external publication. A crash or ambiguous network outcome is never
     // retried automatically: durable 'submitting' prompts explicit reconciliation.
@@ -226,6 +298,9 @@ export class ClientInteractions {
       status: result['committed'] === true && !result['error'] ? 'completed' : 'failed',
       result, updatedAt: this.now(), credential: '', draft: undefined };
     await this.deps.store.write(next, saved.etag);
+    // Queue cleanup is optional after the durable terminal result; a stale entry
+    // is filtered by pending() and must not make a committed action look failed.
+    await this.deps.store.enqueue?.(next).catch(() => {});
     this.deps.complete?.(id, record.owner);
     return this.publicRecord(next);
   }

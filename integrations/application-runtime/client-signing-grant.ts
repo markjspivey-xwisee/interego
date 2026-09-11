@@ -1,7 +1,7 @@
 /**
- * Proposed subordinate-key proof format. Deliberately not a client-signature/v1
- * admission path: a future, explicitly versioned policy and trusted grant store
- * must opt in. This module never enrolls a credential, creates a key or publishes.
+ * Subordinate-key proof format. The optional application runtime opts in through
+ * an explicit versioned policy and verified state ledger. This cryptographic
+ * module never enrolls a credential, creates a key or publishes.
  */
 import { createHash } from 'node:crypto';
 import { canonicalJson } from './application-lab-runtime.js';
@@ -26,6 +26,8 @@ export interface SignedClientSigningGrant {
   readonly grant: ClientSigningGrant;
   readonly issuerProof: ClientSignature;
   readonly possessionProof: ClientSignature;
+  /** A holder may authorize the grant as the payload of its exact enrollment receipt. */
+  readonly enrollmentReceipt?: string;
 }
 
 export interface DelegatedClientSignature {
@@ -142,10 +144,17 @@ export function delegatedClientSigningMessage(grant: ClientSigningGrant, receipt
 }
 
 async function verifyGrantProofs(raw: unknown, issuerKeys?: readonly ClientSigningKey[]) {
-  const envelope = fields(raw, ['grant', 'issuerProof', 'possessionProof']) as unknown as SignedClientSigningGrant;
+  const names = ['grant', 'issuerProof', 'possessionProof', ...(object(raw)['enrollmentReceipt'] === undefined ? [] : ['enrollmentReceipt'])];
+  const envelope = fields(raw, names) as unknown as SignedClientSigningGrant;
   const grant = validateGrant(envelope.grant);
   const message = clientSigningGrantMessage(grant);
-  const owner = await verifyClientAuthorization(envelope.issuerProof, message, issuerKeys);
+  if (envelope.enrollmentReceipt !== undefined) {
+    const enrollment = receiptFor(envelope.enrollmentReceipt, { ...grant, actionIri: String(object(JSON.parse(envelope.enrollmentReceipt))['actionIri']) });
+    const payload = object(enrollment['payload']);
+    if (grant.issuer !== grant.actor || payload['grant'] !== message
+      || canonicalJson(JSON.parse(String(payload['possession']))) !== canonicalJson(envelope.possessionProof)) throw new Error('enrollment receipt does not authorize the exact grant and possession proof');
+  }
+  const owner = await verifyClientAuthorization(envelope.issuerProof, envelope.enrollmentReceipt ?? message, issuerKeys);
   const possession = await verifyClientAuthorization(envelope.possessionProof, message, [grant.key]);
   if (owner.keyId === possession.keyId) throw new Error('subordinate key must differ from the issuer key');
   return { grant, owner, possession, message };
@@ -159,21 +168,25 @@ async function verifyGrantProofs(raw: unknown, issuerKeys?: readonly ClientSigni
 export async function verifyClientSigningGrant(raw: unknown, context: {
   readonly issuer: string; readonly actor: string; readonly audience: string;
   readonly issuerKeys: readonly ClientSigningKey[]; readonly now: () => number;
+  readonly enrollmentActionIri?: string;
 }) {
   const envelope = freeze(snapshot(raw));
-  const { issuer, actor, audience, now } = context;
+  const { issuer, actor, audience, now, enrollmentActionIri } = context;
   const keys = freeze(snapshot(context.issuerKeys));
   const verified = await verifyGrantProofs(envelope, keys);
   const grant = verified.grant;
+  const enrollmentReceipt = (envelope as SignedClientSigningGrant).enrollmentReceipt;
+  if (enrollmentReceipt !== undefined && (!enrollmentActionIri || object(JSON.parse(enrollmentReceipt))['actionIri'] !== enrollmentActionIri)) throw new Error('enrollment action is not declared by trusted policy');
   if (grant.issuer !== issuer || grant.actor !== actor || grant.audience !== audience) throw new Error('grant authority differs from authenticated context');
   validAt(grant, now());
-  return freeze({ envelope: { grant, issuerProof: verified.owner.proof, possessionProof: verified.possession.proof }, binding: {
+  return freeze({ envelope: { grant, issuerProof: verified.owner.proof, possessionProof: verified.possession.proof,
+    ...(enrollmentReceipt === undefined ? {} : { enrollmentReceipt }) }, binding: {
     id: grant.id, digest: digest(verified.message), issuer, actor, keyId: verified.possession.keyId,
   }, issuerKeyId: verified.owner.keyId });
 }
 
 /**
- * Proposed live admission verifier. readStatus is a TRUSTED adapter read of the
+ * Live cryptographic admission verifier. readStatus is a TRUSTED adapter read of the
  * exact grant binding, never a model-supplied boolean or a cached grant envelope.
  * Missing, unavailable or revoked status refuses admission. Publication still
  * requires current resource authority, CAS, and an explicit delegated-proof policy.
@@ -181,14 +194,16 @@ export async function verifyClientSigningGrant(raw: unknown, context: {
 export async function verifyDelegatedClientAuthorization(raw: unknown, expectedReceipt: string, context: {
   readonly issuer: string; readonly actor: string; readonly audience: string;
   readonly issuerKeys: readonly ClientSigningKey[]; readonly now: () => number;
+  readonly enrollmentActionIri?: string;
   readonly readStatus: (binding: Readonly<GrantBinding>) => Promise<'active' | 'revoked' | 'unknown'>;
 }): Promise<VerifiedDelegatedClientAuthorization> {
   const proof = freeze(snapshot(raw)) as DelegatedClientSignature;
   fields(proof, ['schema', 'grant', 'proof']);
   if (proof.schema !== 'interego.delegated-client-signature/v1') throw new Error('a delegated client proof is required');
-  const { issuer, actor, audience, now, readStatus } = context;
+  const { issuer, actor, audience, now, readStatus, enrollmentActionIri } = context;
   const issuerKeys = freeze(snapshot(context.issuerKeys));
-  const verified = await verifyClientSigningGrant(proof.grant, { issuer, actor, audience, issuerKeys, now });
+  const verified = await verifyClientSigningGrant(proof.grant, { issuer, actor, audience, issuerKeys, now,
+    ...(enrollmentActionIri ? { enrollmentActionIri } : {}) });
   const grant = verified.envelope.grant;
   const receipt = receiptFor(expectedReceipt, grant);
   const checkTime = () => {
@@ -216,8 +231,8 @@ export function requireVerifiedDelegatedClientAuthorization(value: VerifiedDeleg
 
 /**
  * Historical cryptographic evidence ONLY. Retained keys cannot establish issuer
- * authority, registration or revocation at action time. A future replay adapter
- * must verify those from pinned historical authority, separately. No live capability.
+ * authority, registration or revocation at action time. The ledger replay adapter
+ * verifies those from pinned historical authority, separately. No live capability.
  */
 export async function replayDelegatedClientSignature(raw: unknown, expectedReceipt: string) {
   const proof = freeze(snapshot(raw)) as DelegatedClientSignature;

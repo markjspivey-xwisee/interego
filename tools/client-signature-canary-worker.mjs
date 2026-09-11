@@ -1,6 +1,9 @@
 /** One synthetic actor per process. Only public identities, receipts and proofs cross IPC. */
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import { createHash, generateKeyPairSync, randomUUID, sign } from 'node:crypto';
+import { base58btc } from 'multiformats/bases/base58';
+import { clientSigningMessage } from '../integrations/application-runtime/client-authorization.ts';
+import { delegatedClientSigningMessage } from '../integrations/application-runtime/client-signing-grant.ts';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -31,7 +34,13 @@ const session = await openAgentSession({ privateKey: wallet.privateKey,
 let scenario, participants, refs, sequence = 0;
 const controls = new Map();
 const handoffs = new Map();
-let holderToken;
+let holderToken, subordinateKey, enrolledGrant;
+const ownerProof = async message => {
+  const key = { scheme: 'eip191', address: wallet.address.toLowerCase() };
+  return { schema: 'interego.client-signature/v1', key, message, signature: await wallet.signMessage(clientSigningMessage(message, key)) };
+};
+const subordinateProof = message => ({ schema: 'interego.client-signature/v1', key: subordinateKey.key, message,
+  signature: sign(null, Buffer.from(clientSigningMessage(message, subordinateKey.key)), subordinateKey.pair.privateKey).toString('base64url') });
 async function holderApi(path, body) {
   if (!holderToken) {
     const base = 'https://identity.interego.xwisee.com';
@@ -96,6 +105,14 @@ async function command(method, args) {
   }
   assert.ok(scenario, 'Configure the synthetic scenario first');
   const podUrl = participants[0].podUrl;
+  if (method === 'configure-grants') {
+    assert.ok(!refs && /^did:ethr:0x[0-9a-f]{40}$/.test(args.registrationVerifier));
+    const genesis = await read('get_descriptor', { url: args.genesis.descriptorUrl });
+    assert.equal(genesis.authorship.authorshipVerified, true);
+    assert.equal(genesis.authorship.verificationMethod.toLowerCase(), args.registrationVerifier);
+    scenario = fixture(id, participants, args.registrationVerifier);
+    return { configured: true, registrationVerifier: args.registrationVerifier };
+  }
   if (method === 'bind') {
     assert.ok(!refs, 'Fixture references are immutable');
     const documents = { contract: scenario.contract, definition: scenario.definition,
@@ -134,6 +151,42 @@ async function command(method, args) {
     const unauthenticated = await fetch('https://relay.interego.xwisee.com/client-interactions/' + pending.id);
     assert.equal(unauthenticated.status, 401, 'Knowing the short identifier grants no receipt access');
     return pending;
+  }
+  if (method === 'enroll-grant') {
+    assert.notEqual(role, 'submitter');
+    assert.ok(!enrolledGrant && !subordinateKey);
+    const pending = handoffs.get('approve'); assert.ok(pending);
+    const pair = generateKeyPairSync('ed25519');
+    const key = { scheme: 'ed25519', publicKeyMultibase: base58btc.encode(new Uint8Array([0xed, 1, ...pair.publicKey.export({ format: 'der', type: 'spki' }).subarray(-32)])) };
+    subordinateKey = { pair, key };
+    const now = Date.now();
+    const grant = { schema: 'interego.client-signing-grant/v1', id: 'urn:uuid:' + randomUUID(), actor: session.identity.agentDid,
+      issuer: session.identity.agentDid, audience: 'https://relay.interego.xwisee.com', podUrl, applicationId: id,
+      actionIri: id + ':approve', contractDigest: refs.contract.documentDigest, key,
+      notBefore: new Date(now - 1000).toISOString(), expiresAt: new Date(now + 3500_000).toISOString() };
+    const payload = { grant: canonicalJson(grant), possession: canonicalJson(subordinateProof(canonicalJson(grant))) };
+    const enrollment = await holderApi(pending.id + '/grant', payload);
+    const review = await holderApi(enrollment.id + '/review', {});
+    const receipt = JSON.parse(review.signingRequest.message);
+    assert.equal(receipt.actionIri, id + ':grant:enroll');
+    assert.equal(receipt.actor, session.identity.agentDid);
+    assert.equal(receipt.contractDigest, refs.contract.documentDigest);
+    assert.deepEqual(receipt.payload, payload);
+    const result = await holderApi(enrollment.id + '/submit', { reviewId: review.reviewId, proof: await ownerProof(review.signingRequest.message) });
+    assert.equal(result.status, 'completed', JSON.stringify(result).slice(0, 1500));
+    const current = await render();
+    enrolledGrant = current.snapshot.head.clientSigningGrants.find(e => e.envelope.grant.id === grant.id).envelope;
+    assert.deepEqual(enrolledGrant.grant, grant);
+    return { grant, enrolled: true, stateHead: current.snapshot.head.cid };
+  }
+  if (method === 'revoke-grant') {
+    assert.ok(enrolledGrant);
+    const view = await render();
+    const preview = view.controls.find(c => c.label === 'Preview: Revoke synthetic signing grant');
+    const submit = view.controls.find(c => c.label === 'Submit: Revoke synthetic signing grant');
+    const payload = { grantId: enrolledGrant.grant.id };
+    const draft = await invoke(preview, payload);
+    return invoke(submit, { ...payload, client_proof: await ownerProof(draft.signingRequest.message) });
   }
   if (method === 'prepare' || method === 'handoff') {
     assert.ok(refs && Object.hasOwn(labels, args.action));
@@ -178,9 +231,11 @@ async function command(method, args) {
     const prefix = join(secretDir, String(sequence++));
     writeFileSync(prefix + '.request.json', JSON.stringify(request), { mode: 0o600, flag: 'wx' });
     const reviewedDigest = createHash('sha256').update(request.message).digest('hex');
-    execFileSync(process.execPath, ['tools/sign-application-action.mjs', prefix + '.request.json',
+    if (!enrolledGrant || args.action !== 'approve') execFileSync(process.execPath, ['tools/sign-application-action.mjs', prefix + '.request.json',
       reviewedDigest, prefix + '.proof.json'], { env: { ...process.env, INTEREGO_CLIENT_KEY_FILE: keyPath }, stdio: 'pipe' });
-    const proof = JSON.parse(readFileSync(prefix + '.proof.json', 'utf8'));
+    const proof = enrolledGrant && args.action === 'approve'
+      ? { schema: 'interego.delegated-client-signature/v1', grant: enrolledGrant, proof: subordinateProof(delegatedClientSigningMessage(enrolledGrant.grant, request.message)) }
+      : JSON.parse(readFileSync(prefix + '.proof.json', 'utf8'));
     if (pending) {
       const completed = await holderApi(pending.id + '/submit', { reviewId: prepared.reviewId, proof });
       assert.equal(completed.status, 'completed', JSON.stringify(completed).slice(0, 1500));

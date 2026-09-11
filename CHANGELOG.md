@@ -34,11 +34,12 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
 
 <!-- documented-through: 2037e1a -->
 
-### 2026-09-11 — Proposed subordinate signing-grant verifier
+### 2026-09-11 — Owner-controlled scoped signing companion
 
-- An optional, currently unconnected verifier checks owner-signed, possession-proved Ed25519 grants with exact issuer, agent, audience, application, action and contract bindings and a maximum one-hour lifetime. A trusted adapter MUST supply current grant status; revoked, unknown and unavailable status MUST refuse admission.
-- Delegated action signatures bind the complete receipt and grant identity. Their admission capability MUST remain distinct from the current direct-signature policy. Retained-proof checks MUST NOT claim issuer authority or historical revocation verification without the corresponding evidence.
-- This component does not enroll keys, provide a hosted signer or change the original release. Owner-controlled runtime integration, authenticated grant lifecycle resources and an explicitly authorized versioned policy remain required before activation.
+- The optional application interpreter supports explicit versioned client-grant policies. Holder-authorized enrollment, revocation and actions MUST share the same CAS state ledger; ordinary effects MUST NOT modify it. Full replay verifies membership attestations, holder and subordinate signatures, scope and historical grant status.
+- The holder's browser can enroll a nonexportable Ed25519 key and sign matching queued agent requests while its tab is open. Grants MUST name an exact actor, audience, pod, application, action and contract, and expire within one hour. Private requests and originating OAuth credentials MUST remain encrypted; every review and submission MUST revalidate the originating session.
+- Approval guards count the registered holder fingerprint. Extra subordinate keys MUST NOT count as extra votes. Existing direct-signature contracts remain valid and MUST opt in explicitly before delegated proofs are accepted. Deployment does not enroll real reviewers or activate the original release's proposed policy.
+- Synthetic deployment checks exercise process-owned grant enrollment/revocation and Chromium passkey enrollment followed by two automatic delegated actions; their signatures MUST NOT count toward a real review quorum.
 
 ### 2026-09-10 — Verified passkey domains and signing-session renewal
 

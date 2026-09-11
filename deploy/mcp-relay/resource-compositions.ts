@@ -44,6 +44,8 @@ export interface ResourceContext {
   readonly principal: string;
   readonly identityUrl: string;
   readonly now: string;
+  readonly relayUrl?: string;
+  readonly clock?: () => number;
   /** Public verification material for the authenticated caller, never a signing oracle. */
   readonly signingKeys?: () => Promise<readonly ResourceSigningKey[]>;
   readonly interactionStatus?: (id: string) => Promise<Record<string, unknown>>;
@@ -52,9 +54,11 @@ export interface ResourceSignatureDraft {
   readonly reference: string;
   /** Immutable authority, evidence, actor and inputs; the module decides its semantics. */
   readonly binding: string;
-  readonly request: { schema: string; message: string; keys: readonly { keyId: string; key: ResourceSigningKey }[]; expiresAt: string };
+  readonly request: { schema: string; message: string; keys: readonly { keyId: string; key: ResourceSigningKey }[]; expiresAt: string; clientGrants?: Record<string, unknown> };
 }
 export interface ResourceWriteContext extends ResourceContext {
+  /** Attest current credential membership only after independently verifying the holder proof. */
+  readonly attestClientRegistration?: (proof: unknown) => Promise<unknown>;
   readonly requestSignature?: (reference: string, action: string, payload: Record<string, unknown>, draft: ResourceSignatureDraft) => Promise<Record<string, unknown>>;
   readonly cancelInteraction?: (id: string) => Promise<Record<string, unknown>>;
   readonly renewInteraction?: (id: string) => Promise<Record<string, unknown>>;
@@ -80,6 +84,7 @@ export interface ResourceComposition {
   invoke(reference: string, action: string, payload: unknown, context: ResourceContext | ResourceWriteContext): Promise<Record<string, unknown>>;
   /** Re-resolves a draft for a human review. This never signs or publishes. */
   prepareSignature?(reference: string, action: string, payload: Record<string, unknown>, context: ResourceContext): Promise<ResourceSignatureDraft>;
+  prepareClientGrant?(reference: string, action: string, payload: Record<string, unknown>, context: ResourceContext): Promise<{ action: string; payload: Record<string, unknown>; draft: ResourceSignatureDraft }>;
   validateSignature?(reference: string, action: string, payload: Record<string, unknown>, proof: unknown, context: ResourceContext): Promise<void>;
 }
 
@@ -102,6 +107,11 @@ export class ResourceCompositions {
     const owner = this.owner(reference);
     if (!owner?.prepareSignature || owner.access(reference, action) !== 'write') throw new Error('resource does not support client signing');
     return owner.prepareSignature(reference, action, payload, readContext(context));
+  }
+  async prepareClientGrant(reference: string, action: string, payload: Record<string, unknown>, context: ResourceContext) {
+    const owner = this.owner(reference);
+    if (!owner?.prepareClientGrant || owner.access(reference, action) !== 'write') throw new Error('resource does not support scoped client grants');
+    return owner.prepareClientGrant(reference, action, payload, readContext(context));
   }
   async validateSignature(reference: string, action: string, payload: Record<string, unknown>, proof: unknown, context: ResourceContext): Promise<void> {
     const owner = this.owner(reference);
@@ -134,6 +144,7 @@ export class ResourceCompositions {
 
 function readContext(context: ResourceContext): ResourceContext {
   return Object.freeze({ reads: context.reads, principal: context.principal, identityUrl: context.identityUrl, now: context.now,
+    ...(context.relayUrl ? { relayUrl: context.relayUrl } : {}), ...(context.clock ? { clock: context.clock } : {}),
     ...(context.signingKeys ? { signingKeys: context.signingKeys } : {}),
     ...(context.interactionStatus ? { interactionStatus: context.interactionStatus } : {}) });
 }

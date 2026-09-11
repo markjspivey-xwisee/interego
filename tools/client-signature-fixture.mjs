@@ -6,7 +6,7 @@ export const roles = ['submitter', 'reviewer-1', 'reviewer-2'];
 export const labels = { approve: 'Confirm synthetic test result', finish: 'Finish synthetic canary' };
 export const purpose = 'SYNTHETIC autonomous approval test. Never a real release approval.';
 
-export function fixture(id, participants) {
+export function fixture(id, participants, registrationVerifier) {
   assert.match(id, /^urn:graph:interego:application:client-signature-ci-canary-[0-9]+-[a-f0-9]+$/);
   assert.equal(participants.length, 3);
   for (const field of ['agentDid', 'podUrl', 'address']) {
@@ -45,7 +45,13 @@ export function fixture(id, participants) {
     effects: [{ op: 'set', path: '$state.status', value: 'synthetic-test-complete' }] };
   return { graphs, candidateDigest,
     contract: { schema: 'interego.application.contract/v1', applicationId: id, version: '1.1.0',
-      runtimeIri: approve.target, actions: [approve, finish] },
+      runtimeIri: approve.target, actions: [{ ...approve, ...(registrationVerifier ? { allowClientDelegation: true } : {}) }, finish,
+        ...(registrationVerifier ? ['enroll', 'revoke'].map(op => ({ actionIri: id + ':grant:' + op,
+          label: (op === 'enroll' ? 'Enroll' : 'Revoke') + ' synthetic signing grant', method: 'POST', target: approve.target,
+          clientSignature: true, clientGrantOperation: op, effects: [],
+          inputs: (op === 'enroll' ? ['grant', 'possession'] : ['grantId']).map(name => ({ name, type: 'string', required: true })) })) : [])],
+      ...(registrationVerifier ? { clientSigningGrants: { schema: 'interego.application.client-grants/v1',
+        audience: 'https://relay.interego.xwisee.com', registrationVerifier } } : {}) },
     definition: { schema: 'interego.application.definition/v1', id,
       title: purpose, description: 'One submitter and two separately keyed reviewer processes.',
       version: '1.1.0', stateGraphIri: graphs.state, contractGraphIri: graphs.contract },
