@@ -107,7 +107,11 @@ registration, delegation, contract and predecessor. OAuth access by itself does
 not supply a private key. A hosted connector without a signer uses the interactive
 holder path; do not manufacture a key for another reviewer or call the bearer an
 independent client proof. A newly provisioned subordinate signing key and its
-delegation would require a separate explicit enrollment and verification design.
+delegation require explicit enrollment and a separate versioned policy. The
+[proposed scoped-grant verifier](SCOPED-CLIENT-SIGNING-GRANTS.md) checks owner and
+possession signatures, scope, time and trusted grant status. It is not wired into
+the hosted connector or current policy; its document records the remaining
+custody, enrollment, revocation and historical-authority integration requirements.
 
 The standalone fragment-based page remains available for existing process
 integrations. New interactive clients should use Submit's pending request flow.

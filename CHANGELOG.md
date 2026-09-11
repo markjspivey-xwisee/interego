@@ -34,6 +34,12 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
 
 <!-- documented-through: 2037e1a -->
 
+### 2026-09-11 — Proposed subordinate signing-grant verifier
+
+- An optional, currently unconnected verifier checks owner-signed, possession-proved Ed25519 grants with exact issuer, agent, audience, application, action and contract bindings and a maximum one-hour lifetime. A trusted adapter MUST supply current grant status; revoked, unknown and unavailable status MUST refuse admission.
+- Delegated action signatures bind the complete receipt and grant identity. Their admission capability MUST remain distinct from the current direct-signature policy. Retained-proof checks MUST NOT claim issuer authority or historical revocation verification without the corresponding evidence.
+- This component does not enroll keys, provide a hosted signer or change the original release. Owner-controlled runtime integration, authenticated grant lifecycle resources and an explicitly authorized versioned policy remain required before activation.
+
 ### 2026-09-10 — Verified passkey domains and signing-session renewal
 
 - Successful passkey authentication MUST persist the verified relying-party domain with the counter. Legacy credentials acquire that binding only after cryptographic verification; conflicting bindings and failed persistence MUST refuse authentication. The signing page MUST NOT guess a credential's domain from an origin allowlist.
