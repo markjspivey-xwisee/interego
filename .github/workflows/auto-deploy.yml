@@ -106,7 +106,7 @@ jobs:
       - name: Did the live signing check change?
         id: signing-test
         run: |
-          if git diff --quiet HEAD^ HEAD -- .github/workflows/client-signature-live.yml .github/workflows/auto-deploy.yml 'tools/client-signature-*.mjs' tools/sign-application-action.mjs; then
+          if git diff --quiet HEAD^ HEAD -- .github/workflows/client-signature-live.yml .github/workflows/auto-deploy.yml 'tools/client-signature-*.mjs' tools/sign-application-action.mjs deploy/mcp-relay/tests/passkey-oauth.spec.ts deploy/mcp-relay/playwright.config.ts; then
             echo 'changed=false' >> "$GITHUB_OUTPUT"
           else
             echo 'changed=true' >> "$GITHUB_OUTPUT"
