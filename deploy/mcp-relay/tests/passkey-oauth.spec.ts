@@ -251,8 +251,23 @@ test('passkey OAuth dance issues a usable MCP token', async ({ page }) => {
   await page.evaluate(token => sessionStorage.setItem('cg.token', token), freshIdentityBody.identityToken);
   await page.reload();
   await page.locator('#enable-scoped:not([hidden])').waitFor();
-  await page.locator('#enable-scoped').click();
-  await expect(page.locator('#sign')).toHaveText('Authorize this scoped signing grant');
+  // Grant preparation revalidates the original action, derives its enrollment
+  // and prepares another current receipt over the live pod. Await that actual
+  // operation and the page's subsequent review, rather than racing them with
+  // the default ten-second text assertion.
+  const enrollmentStarted = Date.now();
+  const [enrollmentResponse] = await Promise.all([
+    page.waitForResponse(response => response.request().method() === 'POST'
+      && /^\/client-interactions\/[a-zA-Z0-9_-]{43}\/grant$/.test(new URL(response.url()).pathname), { timeout: 90_000 }),
+    page.locator('#enable-scoped').click(),
+  ]);
+  const enrollmentResult = await enrollmentResponse.json();
+  expect(enrollmentResponse.ok(), enrollmentResult.error ?? 'Grant preparation refused').toBe(true);
+  await expect(page.locator('#enable-scoped')).toBeEnabled({ timeout: 90_000 });
+  const enrollmentStatus = await page.locator('#status').textContent() ?? 'Enrollment review failed';
+  expect(await page.locator('#sign').textContent(), enrollmentStatus).toBe('Authorize this scoped signing grant');
+  expect(await page.locator('#sign').isEnabled(), enrollmentStatus).toBe(true);
+  console.log('Scoped enrollment review ready after ' + (Date.now() - enrollmentStarted) + 'ms.');
   expect(await page.evaluate(async () => {
     const heldKey = pendingGrant.keyPair.privateKey;
     if (!(heldKey instanceof CryptoKey) || heldKey.type !== 'private') throw new Error('browser key missing');
