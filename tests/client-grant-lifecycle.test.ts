@@ -203,6 +203,9 @@ describe('owner browser companion', () => {
       expect(button('sign').textContent, dom.window.document.getElementById('status')!.textContent!).toBe('Authorize this scoped signing grant');
       await button('sign').onclick!(new dom.window.MouseEvent('click') as unknown as PointerEvent);
       expect(dom.window.document.getElementById('scope-status')!.textContent).toContain('Signed and verified an action');
+      expect(button('sign').disabled).toBe(true);
+      expect(dom.window.document.getElementById('status')!.textContent).toContain('submitted through your scoped grant');
+      expect(dom.window.document.getElementById('receipt')!.textContent).toContain(':approve');
       expect(walletSignatures).toBe(1);
       expect(cryptoCalls).toHaveBeenCalledWith('Ed25519', false, ['sign', 'verify']);
       const result = await f.store.resolve();

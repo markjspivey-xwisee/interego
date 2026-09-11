@@ -181,7 +181,8 @@ async function subordinateProof(keyPair,key,message){
     signature:encode(await crypto.subtle.sign('Ed25519',keyPair.privateKey,encoder.encode(signed)))};
 }
 function stopCompanion(message='Background signing stopped. The private key was discarded. The enrolled grant expires at its stated time. You can revoke it through the application’s Revoke signing grant control.'){
-  clearTimeout(companionTimer);companionTimer=null;companion=null;pendingGrant=null;
+  clearTimeout(companionTimer);companionTimer=null;companion=null;pendingGrant=null;request=null;
+  el('sign').disabled=true;
   el('stop-scoped').hidden=true;el('scope-status').textContent=message;
 }
 el('stop-scoped').onclick=()=>stopCompanion();
@@ -216,7 +217,8 @@ function eligible(entry,session,review){
     && review.keys.some(k=>k.keyId===entry.registration.keyId);
 }
 async function activateCompanion(){
-  const next=pendingGrant;pendingGrant=null;requestId=next.parentId;finished=false;
+  const next=pendingGrant;pendingGrant=null;requestId=next.parentId;finished=false;request=null;reviewId='';
+  el('sign').disabled=true;say('Grant authorized. This tab is checking matching agent requests.');
   companion={...next,anchorId:next.parentId,attempted:new Set()};
   el('stop-scoped').hidden=false;el('enable-scoped').hidden=true;
   el('scope-status').textContent='Scoped signing is active for '+next.grant.actor+' until '+next.grant.expiresAt+'. Keep this tab open. Stop discards the key immediately.';
@@ -244,6 +246,10 @@ async function companionTick(){
       session.attempted.add(item.id);
       const result=await interaction('submit',{reviewId:review.reviewId,proof},item.id);
       if(result.status!=='completed')throw Error(result.result?.message||'The action did not complete. Check its result with the requesting agent.');
+      const receipt=JSON.parse(review.signingRequest.message);
+      el('receipt').textContent=JSON.stringify(receipt,null,2)+'\n\nReceipt SHA-256: '+hex(await hash(review.signingRequest.message));
+      el('summary').textContent=(receipt.goal||receipt.actionIri)+' — signed as '+receipt.actor;
+      say('Signed, verified and submitted through your scoped grant. The result is available to the requesting agent.');
       el('scope-status').textContent='Signed and verified an action for '+session.grant.actor+'. Active until '+session.grant.expiresAt+'. Keep this tab open.';
       if(item.id===requestId){finished=true;request=null;el('sign').disabled=true;el('review').disabled=true;el('cancel').disabled=true;}
     }
