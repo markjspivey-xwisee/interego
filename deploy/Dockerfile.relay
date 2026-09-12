@@ -226,9 +226,12 @@ RUN npx tsc && cp -r amep-vendor dist/amep-vendor
 FROM build AS reference-build
 WORKDIR /composition
 COPY integrations/application-runtime/ ./integrations/application-runtime/
+COPY integrations/affordance-surface/ ./integrations/affordance-surface/
 COPY deploy/mcp-relay/resource-compositions.ts ./deploy/mcp-relay/resource-compositions.ts
 COPY deploy/mcp-relay/client-authorization.ts deploy/mcp-relay/client-registration.ts ./deploy/mcp-relay/
-RUN ln -s /app/node_modules node_modules && /app/node_modules/.bin/tsc -p integrations/application-runtime/tsconfig.json
+RUN ln -s /app/node_modules node_modules && \
+    /app/node_modules/.bin/tsc -p integrations/application-runtime/tsconfig.json && \
+    /app/node_modules/.bin/tsc -p integrations/affordance-surface/tsconfig.json
 
 FROM gcr.io/distroless/nodejs22-debian12 AS base-runtime
 
@@ -264,9 +267,10 @@ CMD ["dist/server.js"]
 # Opt-in reference deployment. New signed domains reuse this composition unchanged.
 FROM base-runtime AS reference
 COPY --from=reference-build /composition/dist/integrations/application-runtime/ ./dist/compositions/application-runtime/
+COPY --from=reference-build /composition/dist/integrations/affordance-surface/ ./dist/compositions/affordance-surface/
 # Preserve the optional module's relative imports into shared credential primitives.
 COPY --from=build /app/dist/client-authorization.js /app/dist/client-registration.js ./dist/deploy/mcp-relay/
-ENV INTEREGO_RESOURCE_COMPOSITIONS='["./compositions/application-runtime/resource-composition.js"]'
+ENV INTEREGO_RESOURCE_COMPOSITIONS='["./compositions/application-runtime/resource-composition.js","./compositions/affordance-surface/resource-composition.js"]'
 
 # A plain docker build ships no application interpreter.
 FROM base-runtime AS runtime

@@ -237,8 +237,72 @@ function isHmdDoc(d) {
 }
 function shouldRehydrate(current, next) {
   if (!isHmdDoc(next)) return false; // non-HMD (e.g. an invoke_affordance result) never replaces the doc
-  if (current && current.descriptorUrl === next.descriptorUrl && current.hmd === next.hmd && JSON.stringify(current.controls) === JSON.stringify(next.controls) && (!next.clientEncryption || JSON.stringify(current.clientEncryption) === JSON.stringify(next.clientEncryption))) return false; // unchanged
+  if (current && ['descriptorUrl','hmd','body','markdownBody','title','controls','views','snapshot','authorship','links'].every(function(key){return JSON.stringify(current[key]) === JSON.stringify(next[key]);}) && (!next.clientEncryption || JSON.stringify(current.clientEncryption) === JSON.stringify(next.clientEncryption))) return false; // unchanged
   return true;
+}
+
+// A grid is a bounded presentation of labels and references to controls. It has
+// no application rules: only the server's unique, explicit control binding can
+// make a cell actionable. Never infer an action or payload from a cell index.
+function declaredPayload(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  var remaining = 4096;
+  function valid(v, depth) {
+    if (--remaining < 0 || depth > 16) return false;
+    if (v === null || typeof v === 'boolean') return true;
+    if (typeof v === 'string') return v.length <= 8192;
+    if (typeof v === 'number') return Number.isFinite(v);
+    if (!v || typeof v !== 'object' || !Array.isArray(v) && Object.prototype.toString.call(v) !== '[object Object]') return false;
+    var keys = Object.keys(v);
+    return keys.every(function(k){ return k.length <= 512 && valid(v[k], depth + 1); });
+  }
+  try {
+    if (!valid(value, 0)) return null;
+    var json = JSON.stringify(value);
+    var copy = json.length <= 65536 ? JSON.parse(json) : null;
+    return copy && typeof copy === 'object' && !Array.isArray(copy) ? copy : null;
+  } catch (e) { return null; }
+}
+function gridRepresentations(d) {
+  var out = { views: [], controlIds: Object.create(null) };
+  if (!Array.isArray(d.views) || d.views.length > 8 || !Array.isArray(d.controls) || d.controls.length > 256) return out;
+  var controls = Object.create(null), seenViews = Object.create(null), cellCount = 0;
+  d.controls.forEach(function(c){
+    if (!c || typeof c.id !== 'string' || !c.id || c.id.length > 256) return;
+    controls[c.id] = Object.prototype.hasOwnProperty.call(controls,c.id) ? null : c;
+  });
+  d.views.forEach(function(v){
+    if (!v || v.kind !== 'grid' || typeof v.id !== 'string' || !v.id || v.id.length > 256 || seenViews[v.id]
+      || typeof v.label !== 'string' || v.label.length > 512 || !Number.isInteger(v.columns) || v.columns < 1 || v.columns > 12
+      || !Array.isArray(v.cells) || !v.cells.length || cellCount + v.cells.length > 256
+      || !v.cells.every(function(cell){return cell && typeof cell.label === 'string' && cell.label.length <= 512
+        && (cell.control === undefined || typeof cell.control === 'string' && cell.control.length <= 256)
+        && (cell.emphasis === undefined || typeof cell.emphasis === 'boolean');})) return;
+    seenViews[v.id] = true; cellCount += v.cells.length;
+    out.views.push({ id: v.id, label: v.label, columns: v.columns, cells: v.cells.map(function(cell){
+      var c = typeof cell.control === 'string' ? controls[cell.control] : null, bound = null;
+      if (c && c.executable === true && typeof c.descriptorUrl === 'string' && c.descriptorUrl.length <= 4096
+        && /^(https?:\/\/|urn:)[^\s]+$/.test(c.descriptorUrl)
+        && typeof c.action === 'string' && c.action.length <= 4096 && /^[a-z][a-z0-9+.-]*:[^\s]+$/i.test(c.action)
+        && typeof c.method === 'string' && /^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)$/.test(c.method)) {
+        var payload = declaredPayload(c.payload);
+        if (payload !== null) bound = { id: c.id, descriptorUrl: c.descriptorUrl, action: c.action, method: c.method,
+          payload: payload, executable: true, fields: [], label: typeof c.label === 'string' ? c.label.slice(0,512) : cell.label };
+      }
+      if (bound) out.controlIds[c.id] = true;
+      return { label: cell.label, emphasis: cell.emphasis === true, control: bound };
+    }) });
+  });
+  return out;
+}
+function sourcesVerified(snapshot) {
+  var trust = snapshot && snapshot.trust, replay = snapshot && snapshot.replay;
+  return !!trust && trust.verified === true && Number.isInteger(trust.artifactsTotal) && trust.artifactsTotal > 0
+    && trust.artifactsVerified === trust.artifactsTotal && (!Object.prototype.hasOwnProperty.call(snapshot,'replay') || !!replay && replay.complete === true
+    && Number.isInteger(replay.chainLength) && replay.chainLength > 0 && replay.verifiedLinks === replay.chainLength
+    && Array.isArray(replay.links) && replay.links.length === replay.chainLength
+    && replay.links.every(function(link){return !!link && link.verified === true && Array.isArray(link.errors) && link.errors.length === 0;})
+    && Array.isArray(replay.errors) && replay.errors.length === 0);
 }
 
 // Assemble the invoke_affordance payload from field values, keyed by each field's

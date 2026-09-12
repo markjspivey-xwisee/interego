@@ -75,6 +75,16 @@ button.go:disabled{opacity:.55;cursor:default}
 .links{display:none;margin-top:20px;padding-top:14px;border-top:1px solid var(--line);font-size:12.5px}
 .links a{color:var(--accent);margin-right:14px}
 .empty{color:var(--muted);font-size:13px}
+.representation-grid{width:100%;max-width:480px;table-layout:fixed;border-spacing:6px;margin:16px 0}
+.representation-grid caption{text-align:left;font-weight:650;margin:0 0 6px}
+.representation-grid td{padding:0;vertical-align:middle}
+.grid-cell{display:flex;align-items:center;justify-content:center;min-height:64px;aspect-ratio:1;width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--fg);font:inherit;font-size:20px;font-weight:600;overflow-wrap:anywhere;text-align:center}
+button.grid-cell{cursor:pointer;background:var(--bg)}
+button.grid-cell:hover{border-color:var(--accent)}
+button.grid-cell:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button.grid-cell:disabled{cursor:default;opacity:.55}
+.grid-cell.emphasis{border:2px solid var(--ok);color:var(--ok)}
+.grid-detail:empty{display:none}
 `;
 
 const BOOT_JS = String.raw`
@@ -182,7 +192,7 @@ function render(){
   var d=DATA||{};
   q('private-content').hidden=!!d.interaction||d.toolResult!==undefined;
   q('title').textContent=d.title||'HyperMarkdown';
-  var prov=q('prov'); var a=d.authorship||{};
+  var prov=q('prov'); var a=d.authorship||{}; prov.removeAttribute('title');
   // ★ "Authorship verified" ALONE IS THE OVERCLAIM THIS BADGE USED TO MAKE. The signature
   // can be intact over a descriptor whose graph says anything at all, so the badge names the
   // content verdict too: only bound means the document below it is the document that was
@@ -190,7 +200,15 @@ function render(){
   // because a reader who sees a green tick and no qualifier will assume the strongest thing.
   // (No backticks anywhere in this string: BOOT_JS is a String.raw template literal and a
   // stray backtick in a comment silently ends it, which is a parse error 50 lines later.)
-  if(a.authorshipVerified){
+  if(Object.prototype.hasOwnProperty.call(d,'snapshot')){
+    var verified=sourcesVerified(d.snapshot);
+    prov.className=verified?'prov verified':'prov';prov.innerHTML='';prov.appendChild(el('span','dot'));
+    prov.appendChild(document.createTextNode(verified?'Sources verified':'Sources not verified'));
+    prov.title=verified?'Source signatures and content bindings verified. This displayed projection is derived; '
+      +(d.snapshot.replay?'the supplied history replay is complete.':'no history replay is asserted.')
+      :'The supplied source verification evidence is missing or incomplete. This displayed projection is derived.';
+  }
+  else if(a.authorshipVerified){
     var cb=a.contentBinding||'unbound';
     var bound=cb==='bound';
     prov.className=bound?'prov verified':'prov';
@@ -203,16 +221,19 @@ function render(){
   else { prov.className='prov'; prov.innerHTML=''; prov.appendChild(el('span','dot')); prov.appendChild(document.createTextNode(a.reason?'Unverified':'Self-asserted')); }
   // Enhanced: prose + controls
   var enh=q('pane-enhanced'); enh.innerHTML='';
-  var prose=el('div','prose'); prose.innerHTML=safeMarkdown(d.body||''); enh.appendChild(prose);
-  var controls=(d.controls||[]);
-  if(d.interaction){ enh.appendChild(renderInteraction(d.interaction)); prov.textContent='Authenticated request'; }
-  else if(d.toolResult!==undefined){ enh.appendChild(mkpre(JSON.stringify(d.toolResult,null,2))); prov.textContent='Tool response'; }
+  var prose=el('div','prose'); prose.innerHTML=safeMarkdown(d.body||'');
+  var controls=Array.isArray(d.controls)?d.controls:[];
+  if(d.interaction){ enh.appendChild(prose);enh.appendChild(renderInteraction(d.interaction)); prov.textContent='Authenticated request'; }
+  else if(d.toolResult!==undefined){ enh.appendChild(prose);enh.appendChild(mkpre(JSON.stringify(d.toolResult,null,2))); prov.textContent='Tool response'; }
   else {
+    var representations=gridRepresentations(d);
+    representations.views.forEach(function(view){enh.appendChild(renderGrid(view,d));});
+    enh.appendChild(prose);
     if(!controls.length){ enh.appendChild(el('p','empty','This document publishes no controls.')); }
-    controls.forEach(function(c){ enh.appendChild(renderControl(c,d)); });
+    controls.forEach(function(c){if(c&&!(typeof c.id==='string'&&representations.controlIds[c.id]))enh.appendChild(renderControl(c,d));});
   }
   // Markdown + source
-  q('pane-markdown').innerHTML=''; q('pane-markdown').appendChild(mkpre(d.body||'(no body)'));
+  q('pane-markdown').innerHTML=''; q('pane-markdown').appendChild(mkpre(d.markdownBody||d.body||'(no body)'));
   q('pane-source').innerHTML=''; q('pane-source').appendChild(mkpre(d.hmd||'(no source)'));
   // links
   var lw=q('links'); lw.innerHTML='';
@@ -220,20 +241,34 @@ function render(){
   lw.style.display=(d.links&&d.links.length)?'block':'none';
 }
 function mkpre(t){var p=el('pre','src');p.textContent=t;return p;}
-function renderControl(c,d){
+function renderGrid(view,d){
+  var section=el('section','grid-view'),table=el('table','representation-grid');
+  table.appendChild(el('caption',null,view.label));
+  var body=el('tbody'),row,detail=el('div','grid-detail');
+  view.cells.forEach(function(cell,index){
+    if(index%view.columns===0){row=el('tr');body.appendChild(row);}
+    var td=el('td'),button=el(cell.control?'button':'span','grid-cell'+(cell.emphasis?' emphasis':''),cell.label);
+    button.setAttribute('aria-label',cell.label||'Cell '+(index+1));
+    if(cell.control){button.type='button';renderControl(cell.control,d,{button:button,host:detail});}
+    td.appendChild(button);row.appendChild(td);
+  });
+  table.appendChild(body);section.appendChild(table);section.appendChild(detail);return section;
+}
+function renderControl(c,d,grid){
   var card=el('div','control');
   // A control is EXECUTABLE only if the server resolved a real target for it
   // (descriptor or signed graph). A DECLARATIVE control (authority-closed, no
   // target) describes an interaction shape but has no execution endpoint — show it
   // read-only instead of firing a doomed submit. The read/mutate split applies only
   // to executable controls (and keys on method, never the author-controlled name).
-  var executable=(c&&c.executable===true);
+  var fixed=Object.prototype.hasOwnProperty.call(c,'payload'),boundPayload=fixed?declaredPayload(c.payload):null;
+  var executable=(c&&c.executable===true)&&(!fixed||boundPayload!==null);
   var kind=executable?classifyAction(c.action,c.method):'declarative';
   var h=el('h3'); h.appendChild(document.createTextNode((c.label||prettyAction(c.action))));
   var b=el('span','badge'+(kind==='mutate'?' mutate':'')+(kind==='declarative'?' declarative':'')); b.textContent=(kind==='declarative'?'declarative':(kind==='mutate'?'writes':'reads')); h.appendChild(b);
   card.appendChild(h);
   if(c.whenToUse){ card.appendChild(el('p','when',c.whenToUse)); }
-  var fields=(c.fields||[]);
+  var fields=fixed?[]:(c.fields||[]);
   var inputs=Object.create(null);
   fields.forEach(function(f){
     var key=fieldKey(f);
@@ -258,10 +293,16 @@ function renderControl(c,d){
     return card;
   }
   var actions=el('div','actions');
-  var btn=el('button','go'+(kind==='mutate'?' secondary':'')); btn.textContent=(kind==='mutate'?'Review & '+(c.label||prettyAction(c.action)):(c.label||prettyAction(c.action)));
+  var btn=grid?grid.button:el('button','go'+(kind==='mutate'?' secondary':''));
+  if(!grid)btn.textContent=(kind==='mutate'?'Review & '+(c.label||prettyAction(c.action)):(c.label||prettyAction(c.action)));
+  btn.type='button';
   var status=el('div','status muted');
+  status.setAttribute('role','status');status.setAttribute('aria-live','polite');
   var confirmBox=el('div','confirm'); confirmBox.style.display='none';
-  actions.appendChild(btn); card.appendChild(actions); card.appendChild(confirmBox); card.appendChild(status);
+  if(!grid){actions.appendChild(btn);card.appendChild(actions);}
+  card.appendChild(confirmBox);card.appendChild(status);
+  var busy=false;
+  function current(){return DATA===d&&btn.isConnected&&(!grid||grid.host.isConnected);}
 
   function validateAll(){
     var ok=true, values=Object.create(null);
@@ -270,11 +311,14 @@ function renderControl(c,d){
     return ok?{values:values}:null;
   }
   function doExecute(payload){
-    btn.disabled=true; status.className='status muted'; status.textContent='Submitting…';
+    if(!current()||busy)return;
+    busy=true;btn.disabled=true; status.className='status muted'; status.textContent='Submitting…';
     var previous=card.querySelector('.result'); if(previous) previous.remove();
     callTool('invoke_affordance',{descriptor_url:c.descriptorUrl||d.descriptorUrl,action_iri:c.action,payload:payload}).then(function(res){
-      // A response to an older document must never replace a newly refreshed view.
-      if(DATA!==d || !card.isConnected) return;
+      // Source identity, not the selected detail card, governs a returned view.
+      // Selecting another cell can detach this card while the same projection is
+      // still current. Its successful successor must still replace that projection.
+      if(DATA!==d) return;
       var result=res&&res.structuredContent;
       if(!result && res&&Array.isArray(res.content)){
         var item=res.content.find(function(x){return x.type==='text'&&typeof x.text==='string';});
@@ -287,20 +331,23 @@ function renderControl(c,d){
         try{result=JSON.parse(result.body);}catch(e){result={message:result.body};}
       }
       if((res&&res.isError)||transportError||(result&&result.error)){
-        var failure=el('pre','src result'); failure.textContent=JSON.stringify(result,null,2); card.appendChild(failure);
+        if(card.isConnected){var failure=el('pre','src result'); failure.textContent=JSON.stringify(result,null,2); card.appendChild(failure);}
         throw new Error(String(result.message||result.error||'Operation refused'));
       }
       if(isHmdDoc(result)){hydrate(result);return;}
       if(result&&isHmdDoc(result.view)){hydrate(result.view);return;}
       if(validInteraction(result)){hydrate(result);return;}
+      if(!card.isConnected)return;
       status.className='status ok'; status.textContent='Done.';
       var output=el('pre','src result'); output.textContent=JSON.stringify(result,null,2); card.appendChild(output);
-    }).catch(function(e){ if(DATA!==d || !card.isConnected) return; status.className='status err'; status.textContent='Failed: '+(e&&e.message?e.message:'error'); }).then(function(){ btn.disabled=false; });
+    }).catch(function(e){ if(DATA!==d || !card.isConnected) return; status.className='status err'; status.textContent='Failed: '+(e&&e.message?e.message:'error'); }).then(function(){busy=false;if(current())btn.disabled=false;reportSize();});
   }
   btn.addEventListener('click',function(){
+    if(!current()||busy)return;
+    if(grid&&!card.isConnected){grid.host.replaceChildren(card);}
     confirmBox.style.display='none';
     var r=validateAll(); if(!r){ status.className='status err'; status.textContent='Please fix the highlighted fields.'; return; }
-    var payload=collectPayload(fields,r.values);
+    var payload=fixed?declaredPayload(boundPayload):collectPayload(fields,r.values);
     if(kind==='read'){ doExecute(payload); return; }
     // mutation → explicit confirmation before any tools/call. Show the EXACT
     // payload (textContent, so untrusted values stay inert) so consent is
@@ -313,9 +360,10 @@ function renderControl(c,d){
     var no=el('button','go secondary'); no.textContent='Cancel';
     // Disable BOTH confirm buttons synchronously so a double-activation (mouse or
     // keyboard) can never fire the mutating tools/call twice.
-    yes.addEventListener('click',function(){ yes.disabled=true; no.disabled=true; confirmBox.style.display='none'; doExecute(payload); });
-    no.addEventListener('click',function(){ confirmBox.style.display='none'; status.className='status muted'; status.textContent='Cancelled.'; });
+    yes.addEventListener('click',function(){if(!current()||!card.isConnected||yes.disabled)return;yes.disabled=true;no.disabled=true;confirmBox.style.display='none';doExecute(payload);});
+    no.addEventListener('click',function(){if(!current()||!card.isConnected)return;confirmBox.style.display='none';status.className='status muted';status.textContent='Cancelled.';reportSize();});
     row.appendChild(yes); row.appendChild(no); confirmBox.appendChild(row);
+    yes.focus();reportSize();
   });
   return card;
 }

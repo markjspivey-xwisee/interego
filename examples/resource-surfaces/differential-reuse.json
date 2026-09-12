@@ -1,0 +1,111 @@
+{
+  "schema": "interego.resource-surface/v1",
+  "id": "urn:graph:interego:resource-surface:differential-reuse:original-game:v1",
+  "title": "Interego Differential Reuse Lab",
+  "interpreter": "finite-board/v1",
+  "authority": {
+    "podUrl": "http://css.railway.internal:3456/u-pk-f2a9c751075a/",
+    "signer": "did:web:identity.interego.xwisee.com:agents:chatgpt-u-pk-f2a9c751075a",
+    "actionTarget": "urn:interego:runtime:differential-reuse:tictactoe",
+    "registryGraphIri": "urn:graph:interego:differential-reuse-registry:tictactoe:1.0.0",
+    "contractGraphIri": "urn:graph:game:tictactoe:actions:v4",
+    "engineGraphIri": "urn:graph:game:tictactoe:engine:v3",
+    "stateGraphIri": "urn:graph:game:tictactoe:live:v3"
+  },
+  "presentation": {
+    "kind": "grid",
+    "columns": 3
+  },
+  "evidence": {
+    "documents": [
+      {
+        "id": "release",
+        "kind": "application",
+        "catalogDescriptorUrl": "http://css.railway.internal:3456/u-pk-f2a9c751075a/context-graphs/1789176747504.ttl",
+        "catalogGraphIri": "urn:graph:interego:application-catalog:ttt-composed-live-20260907-1788780279335",
+        "applicationId": "urn:graph:interego:application:ttt-composed-live-20260907-1788780279335",
+        "signer": "did:web:identity.interego.xwisee.com:agents:chatgpt-u-pk-f2a9c751075a"
+      },
+      {
+        "id": "observation",
+        "kind": "signed-json",
+        "descriptorUrl": "http://css.railway.internal:3456/u-pk-f2a9c751075a/context-graphs/1789187039641.ttl",
+        "digest": "40748b8252a9064cd6834dedf986813455da450883dd483dfebd6ff1d29f0e05",
+        "signer": "did:web:identity.interego.xwisee.com:agents:chatgpt-u-pk-f2a9c751075a"
+      }
+    ],
+    "equalities": [
+      {
+        "left": {
+          "document": "observation",
+          "path": "applicationId"
+        },
+        "right": {
+          "document": "release",
+          "path": "application.applicationId"
+        }
+      },
+      {
+        "left": {
+          "document": "observation",
+          "path": "release.cid"
+        },
+        "right": {
+          "document": "release",
+          "path": "head.cid"
+        }
+      },
+      {
+        "left": {
+          "document": "observation",
+          "path": "release.documentDigest"
+        },
+        "right": {
+          "document": "release",
+          "path": "head.documentDigest"
+        }
+      },
+      {
+        "left": {
+          "document": "observation",
+          "path": "release.contractDigest"
+        },
+        "right": {
+          "document": "release",
+          "path": "application.contractDigest"
+        }
+      },
+      {
+        "left": {
+          "document": "observation",
+          "path": "policy.documentDigest"
+        },
+        "right": {
+          "document": "release",
+          "path": "head.state.candidateDigest"
+        }
+      }
+    ],
+    "recordedState": {
+      "document": "observation",
+      "path": "transitions.1.after.cid"
+    },
+    "summaries": [
+      {
+        "label": "Policy",
+        "document": "observation",
+        "path": "selection.procedure"
+      },
+      {
+        "label": "Why X selected position 6",
+        "document": "observation",
+        "path": "selection.reasoning"
+      },
+      {
+        "label": "What this demonstrates",
+        "document": "observation",
+        "path": "scope"
+      }
+    ]
+  }
+}

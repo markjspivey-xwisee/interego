@@ -34,6 +34,12 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
 
 <!-- documented-through: 2037e1a -->
 
+### 2026-09-12 — Signed resource surfaces through the generic viewer
+
+- A signed resource surface MAY declare an existing finite-board engine, state, contract, registry and grid presentation. The optional reference composition resolves the signed differential frontier and executes the exact selected affordance through the existing generic tools. Application-specific MCP registrations and ChatGPT plugins are not required.
+- Grid cells MUST refer to advertised controls and preserve their reviewed payloads. Terminal cells cannot submit; writes require fresh authority and current-head CAS. Stale requests retain HTTP 412, and a post-publication verification failure MUST preserve the publication outcome.
+- Related signed evidence MAY declare digest, signer and cross-document bindings. Current source verification and related history replay MUST remain distinct, and a derived view MUST NOT claim its own authorship signature.
+
 ### 2026-09-11 — Owner-controlled scoped signing companion
 
 - The optional application interpreter supports explicit versioned client-grant policies. Holder-authorized enrollment, revocation and actions MUST share the same CAS state ledger; ordinary effects MUST NOT modify it. Full replay verifies membership attestations, holder and subordinate signatures, scope and historical grant status.

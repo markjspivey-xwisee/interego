@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
-import { loadResourceCompositions, resourceInvocation, ResourceCompositions, type ResourceComposition, type ResourceWriteContext } from '../deploy/mcp-relay/resource-compositions.js';
+import { loadResourceCompositions, resourceActionResponse, resourceInvocation, ResourceCompositions, type ResourceComposition, type ResourceWriteContext } from '../deploy/mcp-relay/resource-compositions.js';
 import application from '../integrations/application-runtime/resource-composition.js';
 import { parseSignedJsonDocument } from '../integrations/application-runtime/application-lab-runtime.js';
 import { fixtureStore } from '../examples/application-simulation/fixture-store.js';
@@ -22,6 +22,17 @@ async function setup(pack: RulePack = releaseControl()) {
 }
 
 describe('optional resource compositions', () => {
+  it('preserves stale and uncertain publication failures on the generic action transport', () => {
+    const stale = resourceActionResponse('urn:reviewed', 'urn:submit', { error: 'stale', statusCode: 412, committed: false }, 'write');
+    expect(stale.status).toBe(412);
+    expect(JSON.parse(stale.body).committed).toBe(false);
+    const uncertain = resourceActionResponse('urn:reviewed', 'urn:submit', {
+      error: 'successor_verification_failed', statusCode: 502, committed: true, published: { descriptorUrl: 'https://pod.example/new.ttl' },
+    }, 'write');
+    expect(uncertain.status).toBe(502);
+    expect(JSON.parse(uncertain.body)).toMatchObject({ committed: true, published: { descriptorUrl: 'https://pod.example/new.ttl' } });
+    expect(resourceActionResponse('urn:reviewed', 'urn:submit', { error: 'invalid', statusCode: 200 }, 'write').status).toBe(409);
+  });
   it('resolves both act forms consistently without widening the compatibility shim', () => {
     expect(resourceInvocation({ target: 'urn:view', action: 'urn:read' }, true)).toEqual({ reference: 'urn:view', action: 'urn:read' });
     expect(resourceInvocation({ target: 'urn:view', action: 'urn:read' })).toBeUndefined();
