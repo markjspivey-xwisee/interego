@@ -58,7 +58,8 @@ import { Wallet as EthersWalletCtor } from 'ethers';
 // server-legacy.
 import { Server } from '@modelcontextprotocol/server';
 import { createRelayMcpHandler } from './mcp-serving.js';
-import { clientInteractionMcpResult } from './client-interaction-mcp.js';
+import { clientInteractionMcpResult, clientInteractionToolResult } from './client-interaction-mcp.js';
+import { clientInteractionHttpHandler } from './client-interaction-http.js';
 import { mcpOutputSchema, toStructuredContent,
   // Turtle term serialisers. IRIs and prefixed names are REFUSED when unusable
   // (Turtle defines no escape for their terminators); literals are escaped.
@@ -5048,6 +5049,7 @@ function resourceWriteContext(args: ToolArgs): ResourceWriteContext {
     }),
     cancelInteraction: async id => clientInteractions.cancel(id, await interactionOwner(String(args._session_bearer ?? ''), true)),
     renewInteraction: id => clientInteractions.renewAuthorization(id, String(args._session_bearer ?? '')),
+    openInteraction: async id => clientInteractions.openSigning(id, await interactionOwner(String(args._session_bearer ?? ''), true)),
     publish: async request => {
     if (!context.principal || request.actor !== context.principal) throw new Error('authenticated resource actor is required');
     const podName = podNameOf(request.podUrl);
@@ -13105,6 +13107,7 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
       const respond = (pending: Record<string, unknown>) => clientInteractionMcpResult(pending, server, mcpContext, {
         status: () => clientInteractions.status(String(pending['id']), owner!),
         cancel: () => clientInteractions.cancel(String(pending['id']), owner!),
+        open: () => clientInteractions.openSigning(String(pending['id']), owner!),
       }, name === 'invoke_affordance' ? operation : undefined);
       if (canResume) {
         const pending = state
@@ -13126,7 +13129,7 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
       // Non-object / unparseable returns are wrapped as { result: ... }
       // so structuredContent is always an object (the permissive
       // outputSchema accepts it).
-      return { content: [{ type: 'text' as const, text }], structuredContent: toStructuredContent(text) };
+      return clientInteractionToolResult(toStructuredContent(text), text);
     } catch (err) {
       return { content: [{ type: 'text' as const, text: `Error: ${(err as Error).message}` }], isError: true };
     }
@@ -16186,26 +16189,15 @@ app.get('/sign-action', (_req, res) => {
       signingOrigins: [IDENTITY_URL, ...(PUBLIC_BASE_URL ? [PUBLIC_BASE_URL] : [])] }).replace(/</g, '\\u003c')));
 });
 
-// The short identifier grants no access. The browser must authenticate as the
-// originating account before it can see a receipt, sign, cancel, or read results.
-app.all('/client-interactions/:id/:operation?', bearerVerifyLimiter, async (req, res) => {
-  res.setHeader('Cache-Control', 'no-store');
-  res.setHeader('Referrer-Policy', 'no-referrer');
-  const auth = await verifyBearerToken(req.headers.authorization);
-  if (!auth.authenticated || !auth.userId) { res.status(401).json({ error: 'Sign in with the key holder’s existing Interego account.' }); return; }
-  if (JSON.stringify(req.body ?? {}).length > 131072) { res.status(413).json({ error: 'Request is too large' }); return; }
-  try {
-    const id = String(req.params.id);
-    const operation = req.params.operation;
-    if (req.method === 'GET' && !operation) res.json(await clientInteractions.status(id, { holderUserId: auth.userId }));
-    else if (req.method === 'GET' && operation === 'pending') res.json(await clientInteractions.pending(id, auth.userId));
-    else if (req.method === 'POST' && operation === 'grant') res.json(await clientInteractions.grant(id, auth.userId, req.body ?? {}));
-    else if (req.method === 'POST' && operation === 'review') res.json(await clientInteractions.review(id, auth.userId));
-    else if (req.method === 'POST' && operation === 'submit') res.json(await clientInteractions.submit(id, auth.userId, String(req.body?.reviewId ?? ''), req.body?.proof));
-    else if (req.method === 'POST' && operation === 'cancel') res.json(await clientInteractions.cancel(id, { holderUserId: auth.userId }));
-    else res.status(405).json({ error: 'Unsupported interaction operation' });
-  } catch (error) { res.status(409).json({ error: (error as Error).message }); }
-});
+// A bare request identifier grants nothing. An authenticated app can hand its
+// browser one request; the registered-key receipt signature still authorizes it.
+app.use('/client-interactions', bearerVerifyLimiter, clientInteractionHttpHandler({
+  interactions: clientInteractions,
+  verifyHolder: async authorization => {
+    const auth = await verifyBearerToken(authorization);
+    return auth.authenticated && auth.userId ? auth.userId : undefined;
+  },
+}));
 
 app.get('/client-check', (_req, res) => {
   res.setHeader('Content-Security-Policy', CLIENT_CHECK_CSP);

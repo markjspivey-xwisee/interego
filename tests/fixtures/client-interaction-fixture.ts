@@ -5,7 +5,7 @@ import { releaseControl } from '../../examples/application-simulation/rule-packs
 import application from '../../integrations/application-runtime/resource-composition.js';
 import { parseSignedJsonDocument, type Json, type ApplicationContract } from '../../integrations/application-runtime/application-lab-runtime.js';
 import { attestClientRegistration } from '../../deploy/mcp-relay/client-registration.js';
-import { clientSigningMessage, type ClientSignature } from '../../integrations/application-runtime/client-authorization.js';
+import { clientSigningMessage, type ClientSignature, type ClientSigningKey } from '../../integrations/application-runtime/client-authorization.js';
 import { ResourceCompositions, type ResourceWriteContext } from '../../deploy/mcp-relay/resource-compositions.js';
 import { ClientInteractions, type InteractionRecord, type InteractionStore, type InteractionOwner } from '../../deploy/mcp-relay/client-interactions.js';
 
@@ -23,7 +23,7 @@ export function memoryInteractionStore(): InteractionStore & { records: Map<stri
   };
 }
 
-export async function signingFixture(options: { clientGrants?: boolean } = {}) {
+export async function signingFixture(options: { clientGrants?: boolean; signingKeys?: Partial<Record<'alice' | 'bob', ClientSigningKey[]>> } = {}) {
   const relay = Wallet.createRandom();
   let now = Date.now();
   const pack = releaseControl();
@@ -43,6 +43,8 @@ export async function signingFixture(options: { clientGrants?: boolean } = {}) {
     bob: { userId: 'bob', clientId: 'client-b', principal: 'did:example:bob' },
   };
   const revoked = new Set<string>();
+  const signingKeys = (credential: string) => options.signingKeys?.[credential as 'alice' | 'bob']
+    ?? [{ scheme: 'eip191' as const, address: wallets[credential as keyof typeof wallets].address.toLowerCase() }];
   const publish = vi.fn(async (request: Parameters<ResourceWriteContext['publish']>[0]) => {
     const current = store.heads.get(store.graphs.state)!.head!;
     if (request.expectedHead !== current.cid) throw new Error('CAS failed');
@@ -57,8 +59,10 @@ export async function signingFixture(options: { clientGrants?: boolean } = {}) {
   const context = (credential = 'alice'): ResourceWriteContext => ({ reads: { ...store.reads, discover: store.reads.discoverCatalogs },
     principal: owners[credential]!.principal, identityUrl: 'https://identity.example', now: new Date(now).toISOString(), relayUrl: 'https://relay.example', clock: () => now,
     attestClientRegistration: proof => attestClientRegistration(proof, { actor: owners[credential]!.principal, now: new Date(now).toISOString(),
-      verifier: 'did:ethr:' + relay.address.toLowerCase(), keys: [{ scheme: 'eip191', address: wallets[credential as keyof typeof wallets].address.toLowerCase() }], sign: message => relay.signMessage(message) }),
-    signingKeys: async () => [{ scheme: 'eip191' as const, address: wallets[credential as keyof typeof wallets].address.toLowerCase() }], publish });
+      verifier: 'did:ethr:' + relay.address.toLowerCase(), keys: signingKeys(credential), sign: message => relay.signMessage(message) }),
+    signingKeys: async () => signingKeys(credential),
+    interactionStatus: id => broker.status(id, owners[credential]!),
+    openInteraction: id => broker.openSigning(id, owners[credential]!), publish });
   const storage = memoryInteractionStore();
   const deps = {
     store: storage, publicUrl: 'https://identity.example', now: () => now,

@@ -3,6 +3,27 @@ import { resourceActionResponse } from './resource-compositions.js';
 
 const watchers = new WeakMap<Server, Map<string, ReturnType<typeof setTimeout>>>();
 
+/** Launch secrets belong to the app, never to model-visible tool text or context. */
+export function clientInteractionToolResult(response: Record<string, unknown>, originalText?: string) {
+  const wrapped = typeof response['status'] === 'number' && typeof response['body'] === 'string';
+  let value: Record<string, unknown> = response;
+  if (wrapped) {
+    try { value = JSON.parse(String(response['body'])) as Record<string, unknown>; } catch { /* not an interaction */ }
+  }
+  let url: URL | undefined;
+  if (value?.['schema'] === 'interego.client-interaction/v1' && typeof value['signingUrl'] === 'string') {
+    try { url = new URL(value['signingUrl']); } catch { /* not a launch result */ }
+  }
+  if (!url || !/^#launch=[a-zA-Z0-9_-]{43}$/.test(url.hash)) {
+    return { content: [{ type: 'text' as const, text: originalText ?? JSON.stringify(response) }], structuredContent: response };
+  }
+  url.hash = '';
+  const visible = { ...value, signingUrl: url.href };
+  const safeResponse = wrapped ? { ...response, body: JSON.stringify(visible) } : visible;
+  return { content: [{ type: 'text' as const, text: JSON.stringify(safeResponse) }], structuredContent: safeResponse,
+    _meta: { 'interego/browser-signing': value } };
+}
+
 async function waitForCompletion(context: ServerContext, status: () => Promise<Record<string, unknown>>) {
   const deadline = Date.now() + 55_000;
   let current = await status();
@@ -50,7 +71,8 @@ function notifyWhenComplete(server: Server, id: string, expiresAt: string, statu
 /** URL acceptance is permission to open a page, never a signature or an approval. */
 export async function clientInteractionMcpResult(
   initial: Record<string, unknown>, server: Server, context: ServerContext,
-  lifecycle: { status: () => Promise<Record<string, unknown>>; cancel: () => Promise<Record<string, unknown>> },
+  lifecycle: { status: () => Promise<Record<string, unknown>>; cancel: () => Promise<Record<string, unknown>>;
+    open?: () => Promise<Record<string, unknown>> },
   invocation?: { reference: string; action: string },
 ) {
   const id = String(initial['id']);
@@ -86,10 +108,12 @@ export async function clientInteractionMcpResult(
       return textResult(pending(completed) ? { ...completed,
         message: 'Signing remains pending. Submission is automatic; follow the authenticated status control to retrieve its result.' } : completed);
     }
+    const launch = lifecycle.open ? await lifecycle.open() : initial;
     return inputRequired({ requestState: id,
-      inputRequests: { sign: inputRequired.elicitUrl({ message, url: String(initial['signingUrl']) }) } });
+      inputRequests: { sign: inputRequired.elicitUrl({ message, url: String(launch['signingUrl']) }) } });
   }
-  const consent = await context.mcpReq.elicitInput({ mode: 'url', elicitationId: id, message, url: String(initial['signingUrl']) },
+  const launch = lifecycle.open ? await lifecycle.open() : initial;
+  const consent = await context.mcpReq.elicitInput({ mode: 'url', elicitationId: id, message, url: String(launch['signingUrl']) },
     { relatedRequestId: context.mcpReq.id, signal: context.mcpReq.signal, timeout: 600_000 });
   if (consent.action !== 'accept') return textResult(await lifecycle.cancel());
   // Keep this initiating request alive for a bounded human ceremony; polling is

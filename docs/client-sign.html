@@ -1,12 +1,12 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer">
 <title>Sign an Interego action</title>
 <style>body{font:16px system-ui,sans-serif;max-width:850px;margin:40px auto;padding:0 20px;color:#192a3d;background:#f7f9fc}h1{font-size:28px}textarea,select,button{font:inherit;box-sizing:border-box;width:100%;margin:8px 0;padding:12px}textarea{min-height:130px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:white;border:1px solid #c8d2df;padding:18px}button{background:#163b70;color:white;border:0;border-radius:6px;cursor:pointer}button:disabled{opacity:.45}#status{white-space:pre-wrap}label{font-weight:600}small{display:block;color:#526376}</style>
 </head><body>
 <h1>Sign an Interego action</h1>
 <p id="intro">Review the complete receipt below. Your wallet or passkey signs these exact action details. Its private key stays on your device.</p>
 <section id="handoff" hidden>
-<p>Sign in with the existing account that owns the requested credential. Signing then submits the reviewed action automatically and returns its result to the requesting client.</p>
+<p id="handoff-instructions">Sign in with the existing account that owns the requested credential. Signing then submits the reviewed action automatically and returns its result to the requesting client.</p>
 <button id="passkey-login">Sign in with a passkey</button><button id="wallet-login">Sign in with a wallet</button>
 <div id="origin-recovery" hidden><p>If you created your passkey on another Interego site, continue there with this same request.</p><div id="origin-links"></div></div>
 <button id="review" hidden>Load a fresh review</button><button id="cancel" hidden>Cancel this request</button>
@@ -36,13 +36,22 @@ const decode = value => Uint8Array.from(atob(value.replace(/-/g,'+').replace(/_/
 const encode = bytes => btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 const hash = async value => new Uint8Array(await crypto.subtle.digest('SHA-256',encoder.encode(value)));
 let request = null;
-let requestId = new URL(location.href).searchParams.get('request');
+const pageUrl = new URL(location.href);
+let requestId = pageUrl.searchParams.get('request');
+// Capture and remove a launch secret before any network call or async work.
+// Its replacement browser credential is kept only in this page's memory.
+let launchFragment = requestId || /^#launch(?:=|&|$)/.test(pageUrl.hash) ? pageUrl.hash : '';
+const browserSigning = !!launchFragment;
+const browserRequestId = requestId;
+if(browserSigning){history.replaceState(null,'',location.pathname+location.search);pageUrl.hash='';}
 let pendingGrant = null, companion = null, companionTimer = null;
-let config = null, reviewId = '', token = '', finished = false;
+let config = null, reviewId = '', token = '', finished = false, loginBusy = false;
+let browserCredential = '', browserExpiresAt = 0;
 try { config = JSON.parse(el('signing-config').textContent); } catch { /* Offline manual signer. */ }
 const say = value => { el('status').textContent = value; };
 const resetProof = () => { el('proof').value='';el('copy').disabled=true; };
 function showOriginRecovery(){
+  if(browserSigning)return;
   if(!requestId||!/^[a-zA-Z0-9_-]{43}$/.test(requestId)||!config)return;
   // Only deployment configuration supplies destinations. Never use a query,
   // receipt or credential's origin list as a navigation target. Move the opaque
@@ -83,7 +92,7 @@ el('load').onclick = async () => {
     });
     if(!el('key').options.length)throw Error('No wallet or passkey is available on this origin. Use the signing link for your registration origin, or use your agent key in its own runtime.');
     request=next;el('sign').disabled=false;
-    el('scoped-signing').hidden=!requestId || !next.clientGrants && !companion && !pendingGrant;
+    el('scoped-signing').hidden=browserSigning || !requestId || !next.clientGrants && !companion && !pendingGrant;
     el('enable-scoped').hidden=!next.clientGrants || !!companion || !!pendingGrant;
     if(pendingGrant)el('scope-status').textContent='Authorize the exact grant below. This enables background signing only for its agent, application, action, contract, pod and relay until '+pendingGrant.grant.expiresAt+'.';
     say('Review the actor, action, state head, contract and receipt before signing.');
@@ -105,7 +114,15 @@ el('sign').onclick=async()=>{
       const bytes=Array.from(encoder.encode(message),b=>b.toString(16).padStart(2,'0')).join('');
       proof.signature=await window.ethereum.request({method:'personal_sign',params:['0x'+bytes,key.address]});
     }else{
-      if(key.rpIds?.length!==1)throw Error('Sign in with this passkey, then load a fresh review to confirm its registration domain.');
+      if(key.rpIds?.length!==1){
+        if(browserSigning)throw Error('This older passkey needs its registration domain confirmed through the existing account sign-in flow. Return to the requesting app.');
+        if(requestId){
+          el('passkey-login').hidden=false;el('wallet-login').hidden=false;
+          el('origin-recovery').hidden=!el('origin-links').children.length;
+          el('handoff-instructions').textContent='This older passkey needs one account sign-in to confirm its registration domain. Then review and sign the action.';
+        }
+        throw Error('Sign in with this passkey, then load a fresh review to confirm its registration domain.');
+      }
       const [rpId]=key.rpIds;
       if(location.hostname!==rpId&&!location.hostname.endsWith('.'+rpId))throw Error('This origin cannot use that passkey. Use its other signing link.');
       const credential=await navigator.credentials.get({publicKey:{challenge:await hash(message),rpId,
@@ -127,9 +144,15 @@ el('sign').onclick=async()=>{
   finally{el('sign').disabled=!request || finished;}
 };
 el('copy').onclick=async()=>{try{await navigator.clipboard.writeText(el('proof').value);say('Signature JSON copied.');}catch{el('proof').select();say('Select and copy the signature JSON.');}};
-async function api(url,body,bearer){
+async function api(url,body,bearer,signingCredential){
+  if(bearer&&signingCredential)throw Error('Conflicting signing authentication.');
   const response=await fetch(url,{method:body===undefined?'GET':'POST',credentials:'omit',cache:'no-store',
-    headers:{...(body===undefined?{}:{'Content-Type':'application/json'}),...(bearer?{Authorization:'Bearer '+bearer}:{})},
+    // Preserve the browser's same-origin POST Origin header. The document's
+    // no-referrer policy otherwise serializes that header as null; strict-origin
+    // discloses at most the origin, never this request URL or its launch secret.
+    ...(browserSigning?{referrerPolicy:'strict-origin'}:{}),
+    headers:{...(body===undefined?{}:{'Content-Type':'application/json'}),...(bearer?{Authorization:'Bearer '+bearer}:{}),
+      ...(signingCredential?{'X-Interego-Browser-Signing':signingCredential}:{})},
     ...(body===undefined?{}:{body:JSON.stringify(body)})});
   const result=await response.json();
   if(!response.ok)throw Error(result.error || 'The request failed ('+response.status+').');
@@ -137,6 +160,13 @@ async function api(url,body,bearer){
 }
 function interaction(operation,body,id=requestId){
   if(!config || !/^[a-zA-Z0-9_-]{43}$/.test(id || ''))throw Error('Invalid signing link.');
+  if(browserSigning){
+    if(id!==browserRequestId||!['','status','review','submit'].includes(operation))throw Error('This browser session is limited to reviewing and signing its original request.');
+    if(!browserCredential||Date.now()>=browserExpiresAt)throw Error('This signing session expired. Reopen the request from the requesting app.');
+    // POST status keeps the browser-generated Origin header present on both
+    // same-origin and cross-origin requests. No caller-supplied origin header.
+    return api(config.relayUrl.replace(/\/$/,'')+'/client-interactions/'+id+'/'+(operation||'status'),body===undefined?{}:body,'',browserCredential);
+  }
   return api(config.relayUrl.replace(/\/$/,'')+'/client-interactions/'+id+(operation?'/'+operation:''),body,token);
 }
 function showResult(result){
@@ -153,8 +183,34 @@ function showResult(result){
 }
 async function authenticated(){
   const status=await interaction(''); // Account check BEFORE receipt disclosure.
-  el('review').hidden=false;el('cancel').hidden=false;
+  el('passkey-login').hidden=true;el('wallet-login').hidden=true;el('origin-recovery').hidden=true;
+  el('handoff-instructions').textContent='Review the exact action below. Signing submits it automatically and returns the result to the requesting app.';
+  el('review').hidden=false;el('cancel').hidden=browserSigning;
   if(['pending','reviewing'].includes(status.status))await loadReview();else showResult(status);
+}
+async function exchangeBrowserLaunch(){
+  let code='';
+  try{
+    const match=/^#launch=([a-zA-Z0-9_-]{43})$/.exec(launchFragment);
+    launchFragment='';
+    const allowedOrigins=(config?.signingOrigins || [config?.identityUrl,config?.relayUrl]).map(value=>{
+      try{const url=new URL(value);return url.protocol==='https:'&&!url.username&&!url.password?url.origin:'';}catch{return '';}
+    });
+    if(!config||!match||!requestId||!/^[a-zA-Z0-9_-]{43}$/.test(requestId)
+      ||pageUrl.protocol!=='https:'||pageUrl.username||pageUrl.password||pageUrl.pathname!=='/sign-action'||pageUrl.search!=='?request='+requestId
+      ||!allowedOrigins.includes(location.origin))throw Error('Invalid signing handoff.');
+    code=match[1];
+    const result=await api(config.relayUrl.replace(/\/$/,'')+'/client-interactions/'+requestId+'/exchange',{code});
+    code='';
+    if(result.schema!=='interego.browser-signing/v1'||result.id!==requestId
+      ||typeof result.credential!=='string'||!/^[a-zA-Z0-9_-]{43}$/.test(result.credential)
+      ||!Number.isFinite(Date.parse(result.expiresAt))||Date.parse(result.expiresAt)<=Date.now())throw Error('Invalid browser signing session.');
+    browserCredential=result.credential;browserExpiresAt=Date.parse(result.expiresAt);
+    await authenticated();
+  }catch{
+    code='';launchFragment='';browserCredential='';browserExpiresAt=0;request=null;el('sign').disabled=true;el('review').hidden=true;
+    say('Could not open this signing request. The link may be invalid, expired or already used. Reopen the request from the requesting app.');
+  }
 }
 async function loadReview(){
   request=null;el('sign').disabled=true;say('Checking the current action, state and authority…');
@@ -189,6 +245,7 @@ el('stop-scoped').onclick=()=>stopCompanion();
 el('enable-scoped').onclick=async()=>{
   el('enable-scoped').disabled=true;
   try{
+    if(browserSigning)throw Error('Scoped signing is not available in this request-only browser session.');
     if(!request?.clientGrants||!requestId||companion||pendingGrant)throw Error('Load a current action that allows scoped signing.');
     const receipt=JSON.parse(request.message),policy=request.clientGrants;
     if(policy.schema!=='interego.application.client-grants/v1'||policy.audience!==new URL(config.relayUrl).origin)throw Error('This relay does not match the signed grant policy.');
@@ -261,7 +318,11 @@ const assertionJson=credential=>({id:credential.id,rawId:encode(credential.rawId
     signature:encode(credential.response.signature),userHandle:credential.response.userHandle?encode(credential.response.userHandle):null},
   clientExtensionResults:credential.getClientExtensionResults()});
 async function login(kind){
+  if(browserSigning)throw Error('Reopen this signing request from the requesting app.');
+  if(loginBusy)return;
   if(!config)throw Error('The signing service is not configured.');
+  loginBusy=true;el('passkey-login').disabled=true;el('wallet-login').disabled=true;
+  try{
   const base=config.identityUrl.replace(/\/$/,'');
   say('Authenticate with your existing Interego account.');
   let result;
@@ -281,15 +342,19 @@ async function login(kind){
   }
   if(typeof result.token!=='string')throw Error('Sign-in did not return a session.');
   token=result.token;sessionStorage.setItem('cg.token',token);await authenticated();
+  }finally{loginBusy=false;el('passkey-login').disabled=false;el('wallet-login').disabled=false;}
 }
 el('passkey-login').onclick=()=>login('passkey').catch(error=>say(error.message));
 el('wallet-login').onclick=()=>login('wallet').catch(error=>say(error.message));
 el('review').onclick=()=>loadReview().catch(error=>say(error.message));
 el('cancel').onclick=()=>interaction('cancel',{}).then(result=>{if(pendingGrant)stopCompanion('Grant enrollment cancelled. The private key was discarded.');showResult(result);}).catch(error=>say(error.message));
-if(requestId){
+if(requestId||browserSigning){
   el('handoff').hidden=false;el('manual-request').hidden=true;el('manual-proof').hidden=true;
-  showOriginRecovery();
-  if(!config || !/^[a-zA-Z0-9_-]{43}$/.test(requestId))say('This signing link is invalid.');
-  else {token=sessionStorage.getItem('cg.token') || '';if(token)authenticated().catch(error=>say(error.message));else say('Sign in to view your request.');}
+  if(browserSigning){
+    el('passkey-login').hidden=true;el('wallet-login').hidden=true;el('origin-recovery').hidden=true;el('cancel').hidden=true;el('scoped-signing').hidden=true;
+    el('handoff-instructions').textContent='Opening the request from your connected app. Review the receipt, then authorize it with your registered credential.';
+    say('Opening this signing request…');exchangeBrowserLaunch();
+  }else if(!config || !/^[a-zA-Z0-9_-]{43}$/.test(requestId))say('This signing link is invalid.');
+  else {showOriginRecovery();token=sessionStorage.getItem('cg.token') || '';if(token)authenticated().catch(error=>say(error.message));else say('Sign in to view your request.');}
 }else if(location.hash.length>1){try{el('request').value=new TextDecoder().decode(decode(location.hash.slice(1)));history.replaceState(null,'',location.pathname);el('load').click();}catch{say('Could not decode signing request. Paste it above.');}}
 </script></body></html>
