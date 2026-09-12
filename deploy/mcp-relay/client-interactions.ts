@@ -1,5 +1,5 @@
 /** Authenticated, durable handoffs. Stores public proofs, never client private keys. */
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { encryptFacetValue, decryptFacetValue, isEncryptedFacetValue, type EncryptionKeyPair, type FetchFn } from '@interego/core';
 import type { ResourceComposition, ResourceSignatureDraft, ResourceWriteContext } from './resource-compositions.js';
 
@@ -7,13 +7,18 @@ export const INTERACTION_PREFIX = 'urn:interego:client-interaction:v1:';
 export const INTERACTION_STATUS = 'urn:interego:client-interaction:status';
 export const INTERACTION_CANCEL = 'urn:interego:client-interaction:cancel';
 export const INTERACTION_RENEW = 'urn:interego:client-interaction:renew-authorization';
+export const INTERACTION_OPEN = 'urn:interego:client-interaction:open-signing-page';
 export interface InteractionOwner { userId: string; clientId: string; principal: string }
+/** An interaction capability is never a holder login or a general OAuth bearer. */
+export interface BrowserInteractionCaller { kind: 'browser-interaction'; credential: string; origin: string }
+interface BrowserCapability { hash: string; expiresAt: number; generation: number; origin: string; authorizationDigest: string }
 export interface InteractionRecord {
   version: 1; id: string; owner: InteractionOwner; credential: string;
   reference: string; action: string; payload: Record<string, unknown>; binding: string;
   status: 'pending' | 'reviewing' | 'submitting' | 'completed' | 'cancelled' | 'expired' | 'failed';
   createdAt: number; expiresAt: number; updatedAt: number;
   signingOrigin?: string;
+  browserGeneration?: number; browserLaunch?: BrowserCapability; browserSession?: BrowserCapability;
   draft?: ResourceSignatureDraft; result?: Record<string, unknown>;
 }
 export interface InteractionStore {
@@ -134,12 +139,97 @@ export class ClientInteractions {
   private async authorize(record: InteractionRecord) {
     const owner = await this.deps.authorize(record.credential);
     if (!sameOwner(owner, record.owner) || owner.expiresAt <= this.now()) throw new Error('the originating authorization expired or changed; request a new signing handoff');
+    return owner;
+  }
+  private authorizationDigest(record: InteractionRecord) { return createHash('sha256').update(record.credential).digest('hex'); }
+  private capabilityHash(kind: 'launch' | 'session', record: InteractionRecord, secret: string, origin: string,
+    authorizationDigest = this.authorizationDigest(record)) {
+    return createHash('sha256').update(JSON.stringify([kind, record.id, record.owner.userId, record.owner.clientId,
+      record.owner.principal, authorizationDigest, record.browserGeneration ?? 0, record.signingOrigin, record.binding, origin, secret])).digest('hex');
+  }
+  private checkOrigin(record: InteractionRecord, origin: string) {
+    const configured = this.deps.signingOrigins ?? [this.deps.publicUrl];
+    if (!record.signingOrigin || !configured.includes(record.signingOrigin) || origin !== new URL(record.signingOrigin).origin) {
+      throw new Error('browser interaction is not authorized');
+    }
+  }
+  private matchesCapability(kind: 'launch' | 'session', record: InteractionRecord, value: BrowserCapability | undefined, secret: string, origin: string) {
+    if (!validId(secret) || !value || value.expiresAt <= this.now() || value.generation !== (record.browserGeneration ?? 0)
+      || value.origin !== origin || !/^[a-f0-9]{64}$/.test(value.hash) || !/^[a-f0-9]{64}$/.test(value.authorizationDigest)
+      || (!terminal(record.status) && value.authorizationDigest !== this.authorizationDigest(record))) return false;
+    const digest = this.capabilityHash(kind, record, secret, origin, value.authorizationDigest);
+    return timingSafeEqual(Buffer.from(value.hash, 'hex'), Buffer.from(digest, 'hex'));
+  }
+  private async checkBrowser(record: InteractionRecord, caller: BrowserInteractionCaller) {
+    if (!caller || caller.kind !== 'browser-interaction') throw new Error('browser interaction is not authorized');
+    this.checkOrigin(record, caller.origin);
+    if (!this.matchesCapability('session', record, record.browserSession, caller.credential, caller.origin)) {
+      throw new Error('browser interaction is not authorized');
+    }
+    // Terminal writes erase the general OAuth bearer immediately. The already-
+    // admitted browser may only read its minimal terminal result until its fixed
+    // TTL; this deliberately does not revalidate a bearer that no longer exists.
+    // reviewFor rejects terminal records, and submitFor only returns that result.
+    if (record.status === 'completed' || record.status === 'failed') return;
+    // Every nonterminal browser operation revalidates the original grant.
+    await this.authorize(record);
+  }
+  private browserRecord(record: InteractionRecord) {
+    const status = !terminal(record.status) && record.status !== 'submitting' && record.expiresAt <= this.now() ? 'expired' : record.status;
+    return { id: record.id, status, expiresAt: new Date(record.browserSession!.expiresAt).toISOString(),
+      ...(record.result ? { result: { status: typeof record.result['status'] === 'string' ? record.result['status'] : status,
+        committed: record.result['committed'] === true ? true : record.result['committed'] === 'unknown' ? 'unknown' : false } } : {}) };
+  }
+  /** Only the original authenticated MCP owner can mint a browser launch. */
+  async openSigning(id: string, owner: InteractionOwner) {
+    const { record, etag } = await this.load(id);
+    if ('holderUserId' in owner) throw new Error('interaction not found');
+    this.checkCaller(record, owner);
+    if (!['pending', 'reviewing'].includes(record.status) || record.expiresAt <= this.now()) throw new Error('a live signing request is required');
+    const authorization = await this.authorize(record);
+    const origin = new URL(record.signingOrigin ?? this.deps.publicUrl).origin;
+    this.checkOrigin(record, origin);
+    const code = randomBytes(32).toString('base64url');
+    const expiresAt = Math.min(this.now() + 120_000, record.expiresAt, authorization.expiresAt);
+    const next: InteractionRecord = { ...record, browserGeneration: (record.browserGeneration ?? 0) + 1,
+      browserLaunch: undefined, browserSession: undefined, draft: undefined, status: 'pending', updatedAt: this.now() };
+    next.browserLaunch = { hash: this.capabilityHash('launch', next, code, origin), expiresAt, generation: next.browserGeneration!, origin,
+      authorizationDigest: this.authorizationDigest(next) };
+    await this.deps.store.write(next, etag);
+    return { schema: 'interego.client-interaction/v1', id, status: next.status, actor: next.owner.principal,
+      descriptorUrl: INTERACTION_PREFIX + id, signingUrl: origin + '/sign-action?request=' + id + '#launch=' + code,
+      expiresAt: new Date(next.expiresAt).toISOString(), launchExpiresAt: new Date(expiresAt).toISOString() };
+  }
+  /** One-use exchange, protected by the same durable CAS as the interaction. */
+  async exchangeBrowser(id: string, code: string, origin: string) {
+    const { record, etag } = await this.load(id);
+    this.checkOrigin(record, origin);
+    if (!['pending', 'reviewing'].includes(record.status) || record.expiresAt <= this.now()
+      || !this.matchesCapability('launch', record, record.browserLaunch, code, origin)) throw new Error('browser launch is invalid or expired');
+    const authorization = await this.authorize(record);
+    const credential = randomBytes(32).toString('base64url');
+    const expiresAt = Math.min(this.now() + 5 * 60_000, record.expiresAt, authorization.expiresAt);
+    const next: InteractionRecord = { ...record, browserLaunch: undefined, updatedAt: this.now(),
+      browserSession: { hash: this.capabilityHash('session', record, credential, origin), expiresAt,
+        generation: record.browserGeneration ?? 0, origin, authorizationDigest: this.authorizationDigest(record) } };
+    await this.deps.store.write(next, etag);
+    return { schema: 'interego.browser-signing/v1', id, credential, expiresAt: new Date(expiresAt).toISOString() };
+  }
+  async browserStatus(id: string, caller: BrowserInteractionCaller) {
+    const { record } = await this.load(id);
+    await this.checkBrowser(record, caller);
+    return this.browserRecord(record);
+  }
+  async browserReview(id: string, caller: BrowserInteractionCaller) { return this.reviewFor(id, caller); }
+  async browserSubmit(id: string, caller: BrowserInteractionCaller, reviewId: string, proof: unknown) {
+    return this.submitFor(id, caller, reviewId, proof);
   }
   private publicRecord(record: InteractionRecord) {
     return { schema: 'interego.client-interaction/v1', id: record.id, status: record.status, actor: record.owner.principal,
       expiresAt: new Date(record.expiresAt).toISOString(),
       signingUrl: (record.signingOrigin ?? this.deps.publicUrl).replace(/\/$/, '') + '/sign-action?request=' + record.id,
       descriptorUrl: INTERACTION_PREFIX + record.id, action: INTERACTION_STATUS,
+      ...(['pending', 'reviewing'].includes(record.status) && record.expiresAt > this.now() ? { openAction: INTERACTION_OPEN } : {}),
       cancelAction: INTERACTION_CANCEL,
       ...(['pending', 'reviewing', 'expired'].includes(record.status) && record.createdAt + 30 * 60_000 > this.now()
         ? { renewAction: INTERACTION_RENEW, resumableUntil: new Date(record.createdAt + 30 * 60_000).toISOString() } : {}),
@@ -233,19 +323,24 @@ export class ClientInteractions {
     if (expiresAt <= now) throw new Error('interaction or current authorization expired; request a new handoff');
     // Invalidate the old receipt. A fresh review still resolves the original
     // authority/evidence binding before any new signature can be accepted.
-    const next: InteractionRecord = { ...record, credential, expiresAt, status: 'pending', draft: undefined, updatedAt: now };
+    const next: InteractionRecord = { ...record, credential, expiresAt, status: 'pending', draft: undefined, updatedAt: now,
+      browserGeneration: (record.browserGeneration ?? 0) + 1, browserLaunch: undefined, browserSession: undefined };
     await this.deps.store.write(next, etag);
     await this.deps.store.enqueue?.(next);
     return this.publicRecord(next);
   }
   private checkCaller(record: InteractionRecord, caller: InteractionOwner | { holderUserId: string }) {
-    if ('holderUserId' in caller ? caller.holderUserId !== record.owner.userId : !sameOwner(record.owner, caller)) {
+    if ('kind' in caller || ('holderUserId' in caller ? caller.holderUserId !== record.owner.userId : !sameOwner(record.owner, caller))) {
       throw new Error('interaction not found');
     }
   }
   async review(id: string, holderUserId: string) {
+    return this.reviewFor(id, { holderUserId });
+  }
+  private async reviewFor(id: string, caller: { holderUserId: string } | BrowserInteractionCaller) {
     const { record, etag } = await this.load(id);
-    this.checkCaller(record, { holderUserId });
+    const browser = 'kind' in caller;
+    if (browser) await this.checkBrowser(record, caller); else this.checkCaller(record, caller);
     if (terminal(record.status) || record.status === 'submitting') throw new Error('this interaction cannot be reviewed again');
     if (record.expiresAt <= this.now()) throw new Error('interaction expired; request a new handoff');
     await this.authorize(record);
@@ -253,7 +348,8 @@ export class ClientInteractions {
     if (draft.binding !== record.binding) throw new Error('authority, evidence or action inputs changed; request a new action review');
     const next: InteractionRecord = { ...record, status: 'reviewing', draft, updatedAt: this.now() };
     await this.deps.store.write(next, etag);
-    return { ...this.publicRecord(next), signingRequest: draft.request,
+    const { clientGrants: _grants, ...directRequest } = draft.request;
+    return { ...(browser ? this.browserRecord(next) : this.publicRecord(next)), signingRequest: browser ? directRequest : draft.request,
       reviewId: createHash('sha256').update(draft.request.message).digest('hex') };
   }
   async cancel(id: string, caller: InteractionOwner | { holderUserId: string }) {
@@ -261,7 +357,8 @@ export class ClientInteractions {
     this.checkCaller(record, caller);
     if (record.status === 'submitting') throw new Error('submission is already in progress; inspect its result');
     if (terminal(record.status)) return this.publicRecord(record);
-    const next: InteractionRecord = { ...record, status: 'cancelled', updatedAt: this.now(), credential: '', draft: undefined };
+    const next: InteractionRecord = { ...record, status: 'cancelled', updatedAt: this.now(), credential: '', draft: undefined,
+      browserLaunch: undefined, browserSession: undefined, browserGeneration: (record.browserGeneration ?? 0) + 1 };
     await this.deps.store.write(next, etag);
     // Queue cleanup is optional after the durable terminal result; a stale entry
     // is filtered by pending() and must not make a committed action look failed.
@@ -270,9 +367,16 @@ export class ClientInteractions {
     return this.publicRecord(next);
   }
   async submit(id: string, holderUserId: string, reviewId: string, proof: unknown) {
+    return this.submitFor(id, { holderUserId }, reviewId, proof);
+  }
+  private async submitFor(id: string, caller: { holderUserId: string } | BrowserInteractionCaller, reviewId: string, proof: unknown) {
     const { record, etag } = await this.load(id);
-    this.checkCaller(record, { holderUserId });
-    if (terminal(record.status) || record.status === 'submitting') return this.publicRecord(record);
+    const browser = 'kind' in caller;
+    if (browser) await this.checkBrowser(record, caller); else this.checkCaller(record, caller);
+    if (terminal(record.status) || record.status === 'submitting') return browser ? this.browserRecord(record) : this.publicRecord(record);
+    if (browser && (!proof || typeof proof !== 'object' || (proof as Record<string, unknown>)['schema'] !== 'interego.client-signature/v1')) {
+      throw new Error('browser signing requires a direct registered holder signature');
+    }
     if (record.status !== 'reviewing' || !record.draft) throw new Error('review this request before signing');
     if (record.expiresAt <= this.now() || Date.parse(record.draft.request.expiresAt) <= this.now()) throw new Error('review expired; load and review a fresh receipt');
     if (createHash('sha256').update(record.draft.request.message).digest('hex') !== reviewId
@@ -296,13 +400,14 @@ export class ClientInteractions {
     }
     const next: InteractionRecord = { ...claimed,
       status: result['committed'] === true && !result['error'] ? 'completed' : 'failed',
-      result, updatedAt: this.now(), credential: '', draft: undefined };
+      result, updatedAt: this.now(), credential: '', draft: undefined,
+      browserLaunch: undefined, browserSession: browser ? record.browserSession : undefined };
     await this.deps.store.write(next, saved.etag);
     // Queue cleanup is optional after the durable terminal result; a stale entry
     // is filtered by pending() and must not make a committed action look failed.
     await this.deps.store.enqueue?.(next).catch(() => {});
     this.deps.complete?.(id, record.owner);
-    return this.publicRecord(next);
+    return browser ? this.browserRecord(next) : this.publicRecord(next);
   }
 }
 
@@ -312,7 +417,7 @@ export function clientInteractionComposition(): ResourceComposition {
   const claims = (ref: string) => ref.startsWith(INTERACTION_PREFIX) && validId(id(ref));
   return {
     claims,
-    access: (ref, action) => !claims(ref) ? undefined : action === INTERACTION_STATUS ? 'read' : [INTERACTION_CANCEL, INTERACTION_RENEW].includes(action) ? 'write' : undefined,
+    access: (ref, action) => !claims(ref) ? undefined : action === INTERACTION_STATUS ? 'read' : [INTERACTION_CANCEL, INTERACTION_RENEW, INTERACTION_OPEN].includes(action) ? 'write' : undefined,
     async render(ref, context) {
       if (!claims(ref)) return undefined;
       if (!context.interactionStatus) throw new Error('authenticated interaction session required');
@@ -320,6 +425,7 @@ export function clientInteractionComposition(): ResourceComposition {
       const body = 'Review and sign using your registered credential. This panel checks the submitted result automatically.';
       return { descriptorUrl: ref, title: 'Signing request', body, hmd: body, controls: [
         { descriptorUrl: ref, action: INTERACTION_STATUS, label: 'Check signing result', method: 'GET', fields: [], executable: true },
+        ...(status['openAction'] ? [{ descriptorUrl: ref, action: INTERACTION_OPEN, label: 'Open signing page', method: 'POST', fields: [], executable: true }] : []),
         ...(status['renewAction'] ? [{ descriptorUrl: ref, action: INTERACTION_RENEW, label: 'Resume with current session', method: 'POST', fields: [], executable: true }] : []),
         { descriptorUrl: ref, action: INTERACTION_CANCEL, label: 'Cancel signing request', method: 'POST', fields: [], executable: true },
       ], interaction: status };
@@ -330,6 +436,7 @@ export function clientInteractionComposition(): ResourceComposition {
       const write = context as ResourceWriteContext;
       if (action === INTERACTION_CANCEL && write.cancelInteraction) return write.cancelInteraction(id(ref));
       if (action === INTERACTION_RENEW && write.renewInteraction) return write.renewInteraction(id(ref));
+      if (action === INTERACTION_OPEN && write.openInteraction) return write.openInteraction(id(ref));
       throw new Error('authenticated interaction session required');
     },
   };

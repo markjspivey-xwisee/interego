@@ -62,6 +62,8 @@ export interface ResourceWriteContext extends ResourceContext {
   readonly requestSignature?: (reference: string, action: string, payload: Record<string, unknown>, draft: ResourceSignatureDraft) => Promise<Record<string, unknown>>;
   readonly cancelInteraction?: (id: string) => Promise<Record<string, unknown>>;
   readonly renewInteraction?: (id: string) => Promise<Record<string, unknown>>;
+  /** Mint a one-use browser launch scoped to this exact signing request. */
+  readonly openInteraction?: (id: string) => Promise<Record<string, unknown>>;
   /** Session-bound, signed, synchronous CAS publication through the existing substrate gates. */
   readonly publish: (request: {
     podUrl: string; graphIri: string; graphContent: string; expectedHead: string; actor: string;

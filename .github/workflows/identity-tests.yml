@@ -21,8 +21,19 @@ on:
       - 'deploy/identity/**'
       - 'docs/client-sign.html'
       - 'tools/passkey-signing-browser.mjs'
-      - 'integrations/application-runtime/client-authorization.ts'
+      - 'integrations/application-runtime/**'
       - 'deploy/mcp-relay/client-authorization.ts'
+      - 'deploy/mcp-relay/client-interactions.ts'
+      - 'deploy/mcp-relay/client-interaction-http.ts'
+      - 'deploy/mcp-relay/client-registration.ts'
+      - 'deploy/mcp-relay/resource-compositions.ts'
+      - 'deploy/mcp-relay/cors-allowlist.ts'
+      - 'tests/browser-signing-handoff*.test.ts'
+      - 'tests/fixtures/client-interaction-fixture.ts'
+      - 'examples/application-simulation/**'
+      - 'packages/**'
+      - 'tsconfig.check.json'
+      - 'vitest.config.ts'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/identity-tests.yml'
@@ -32,8 +43,19 @@ on:
       - 'deploy/identity/**'
       - 'docs/client-sign.html'
       - 'tools/passkey-signing-browser.mjs'
-      - 'integrations/application-runtime/client-authorization.ts'
+      - 'integrations/application-runtime/**'
       - 'deploy/mcp-relay/client-authorization.ts'
+      - 'deploy/mcp-relay/client-interactions.ts'
+      - 'deploy/mcp-relay/client-interaction-http.ts'
+      - 'deploy/mcp-relay/client-registration.ts'
+      - 'deploy/mcp-relay/resource-compositions.ts'
+      - 'deploy/mcp-relay/cors-allowlist.ts'
+      - 'tests/browser-signing-handoff*.test.ts'
+      - 'tests/fixtures/client-interaction-fixture.ts'
+      - 'examples/application-simulation/**'
+      - 'packages/**'
+      - 'tsconfig.check.json'
+      - 'vitest.config.ts'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/identity-tests.yml'
@@ -57,9 +79,9 @@ jobs:
         run: npm test --workspace @interego/identity
 
   passkey-browser:
-    name: "Passkey login and receipt signing (Chromium)"
+    name: "Passkey login and single-prompt receipt signing (Chromium)"
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -67,4 +89,10 @@ jobs:
           node-version: '22'
       - run: npm ci --no-audit --no-fund
       - run: npx playwright install --with-deps chromium
+      - name: Build workspace packages for the runtime and typecheck gate
+        run: npm run build
       - run: node --import tsx tools/passkey-signing-browser.mjs
+      - name: Verify one native passkey assertion without prior login
+        env:
+          INTEREGO_TEST_CHROMIUM: '1'
+        run: npx vitest run tests/browser-signing-handoff.chromium.test.ts

@@ -7,7 +7,7 @@ import { Server, type AuthInfo } from '@modelcontextprotocol/server';
 import { AjvJsonSchemaValidator } from '@modelcontextprotocol/server/validators/ajv';
 import { INVOKE_AFFORDANCE_OUTPUT } from '../deploy/mcp-relay/resource-compositions.js';
 import { createRelayMcpHandler } from '../deploy/mcp-relay/mcp-serving.js';
-import { clientInteractionMcpResult } from '../deploy/mcp-relay/client-interaction-mcp.js';
+import { clientInteractionMcpResult, clientInteractionToolResult } from '../deploy/mcp-relay/client-interaction-mcp.js';
 import { listenLoopback } from '../deploy/mcp-relay/tests/listen-loopback.js';
 import { signingFixture } from './fixtures/client-interaction-fixture.js';
 
@@ -40,12 +40,17 @@ async function harness(toolName = 'act') {
     server.setRequestHandler('tools/list', async () => ({ tools: [{ name: toolName, inputSchema: { type: 'object' }, ...(toolName === 'invoke_affordance' ? { outputSchema: INVOKE_AFFORDANCE_OUTPUT } : {}) }] }));
     server.setRequestHandler('tools/call', async (_req, ctx) => {
       const owner = f.owners[ctx.http!.authInfo!.token]!;
+      if (_req.params.name === 'act' && (_req.params.arguments as Record<string, unknown>)?.['action_iri'] === pending['openAction']) {
+        const opened = await f.broker.openSigning(id, owner);
+        return clientInteractionToolResult(opened);
+      }
       if (_req.params.name === 'render_hmd') {
         const data = { interaction: await f.broker.status(id, owner) };
         return { content: [{ type: 'text' as const, text: JSON.stringify(data) }], structuredContent: data };
       }
       return clientInteractionMcpResult(await f.broker.status(id, owner), server, ctx, {
         status: () => f.broker.status(id, owner), cancel: () => f.broker.cancel(id, owner),
+        open: () => f.broker.openSigning(id, owner),
       }, toolName === 'invoke_affordance' ? { reference: String(control['descriptorUrl']), action: String(control['action']) } : undefined);
     });
     return server;
@@ -57,20 +62,27 @@ async function harness(toolName = 'act') {
   return { ...f, id, pending, post, base: http.base, close: async () => { await mcp.close(); await http.close(); } };
 }
 
-async function browserSign(f: Awaited<ReturnType<typeof harness>>) {
+async function browserSign(f: Awaited<ReturnType<typeof harness>>, signingUrl = String(f.pending['signingUrl'])) {
   const html = readFileSync(new URL('../docs/client-sign.html', import.meta.url), 'utf8')
     .replace('__INTEREGO_SIGNING_CONFIG__', JSON.stringify({ identityUrl: 'https://identity.example', relayUrl: 'https://relay.example' }));
-  const dom = new JSDOM(html, { url: String(f.pending['signingUrl']), runScripts: 'dangerously', beforeParse(window) {
-    window.sessionStorage.setItem('cg.token', 'holder-alice');
+  const dom = new JSDOM(html, { url: signingUrl, runScripts: 'dangerously', beforeParse(window) {
+    if (!new URL(signingUrl).hash) window.sessionStorage.setItem('cg.token', 'holder-alice');
     Object.defineProperty(window, 'crypto', { value: globalThis.crypto });
     Object.assign(window, { TextEncoder, TextDecoder,
       fetch: async (url: string, options: { method: string; headers: Record<string, string>; body?: string }) => {
-        expect(options.headers['Authorization']).toBe('Bearer holder-alice');
         const suffix = new URL(url).pathname.split('/').at(-1);
-        const body = JSON.parse(options.body ?? '{}') as { proof: unknown; reviewId: string };
-        const result = suffix === 'review' ? await f.broker.review(f.id, 'alice')
-          : suffix === 'submit' ? await f.broker.submit(f.id, 'alice', body.reviewId, body.proof)
-            : await f.broker.status(f.id, { holderUserId: 'alice' });
+        const body = JSON.parse(options.body ?? '{}') as { proof: unknown; reviewId: string; code: string };
+        const browser = !!new URL(signingUrl).hash;
+        if (browser) expect(options.headers['Authorization']).toBeUndefined();
+        else expect(options.headers['Authorization']).toBe('Bearer holder-alice');
+        const caller = { kind: 'browser-interaction' as const, credential: options.headers['X-Interego-Browser-Signing']!, origin: window.location.origin };
+        const result = suffix === 'exchange' ? await f.broker.exchangeBrowser(f.id, body.code, window.location.origin)
+          : browser ? suffix === 'review' ? await f.broker.browserReview(f.id, caller)
+            : suffix === 'submit' ? await f.broker.browserSubmit(f.id, caller, body.reviewId, body.proof)
+              : await f.broker.browserStatus(f.id, caller)
+            : suffix === 'review' ? await f.broker.review(f.id, 'alice')
+              : suffix === 'submit' ? await f.broker.submit(f.id, 'alice', body.reviewId, body.proof)
+                : await f.broker.status(f.id, { holderUserId: 'alice' });
         return new Response(JSON.stringify(result), { headers: { 'Content-Type': 'application/json' } });
       },
       ethereum: { request: async (args: { method: string; params?: string[] }) => {
@@ -95,6 +107,24 @@ async function browserSign(f: Awaited<ReturnType<typeof harness>>) {
 }
 
 describe('MCP signing lifecycle on the actual SDK transport', () => {
+  it('keeps launch credentials in private app metadata for direct and compatibility tool results', async () => {
+    const f = await harness();
+    try {
+      const opened = await f.broker.openSigning(f.id, f.owners['alice']!);
+      const secret = new URL(String(opened['signingUrl'])).hash.slice('#launch='.length);
+      for (const value of [opened, { status: 200, body: JSON.stringify(opened), contentType: 'application/json' }]) {
+        const result = clientInteractionToolResult(value);
+        expect(JSON.stringify(result.structuredContent)).not.toContain(secret);
+        expect(JSON.stringify(result.content)).not.toContain(secret);
+        expect(result._meta?.['interego/browser-signing']).toEqual(opened);
+      }
+      const status = await f.broker.status(f.id, f.owners['alice']!);
+      expect(JSON.stringify(status)).not.toContain(secret);
+      expect(status['openAction']).toBe('urn:interego:client-interaction:open-signing-page');
+      expect(f.publish).not.toHaveBeenCalled();
+    } finally { await f.close(); }
+  });
+
   it('offers configured-site recovery before login without accepting URL-provided destinations or transferring tokens', () => {
     const requestId = 'a'.repeat(43);
     const html = readFileSync(new URL('../docs/client-sign.html', import.meta.url), 'utf8')
@@ -157,7 +187,10 @@ describe('MCP signing lifecycle on the actual SDK transport', () => {
         if (message.method === 'ui/initialize') queueMicrotask(() => deliver({ id: message.id, result: { protocolVersion: '2026-01-26' } }));
         else if (message.method === 'ui/notifications/initialized') queueMicrotask(() => deliver({ method: 'ui/notifications/tool-result', params: initial }));
         else if (message.method === 'tools/call') {
-          expect(message.params).toEqual({ name: 'render_hmd', arguments: { descriptor_url: f.pending['descriptorUrl'] } });
+          if (message.params['name'] === 'act') expect(message.params).toEqual({ name: 'act', arguments: {
+            descriptor_url: f.pending['descriptorUrl'], action_iri: f.pending['openAction'], payload: {},
+          } });
+          else expect(message.params).toEqual({ name: 'render_hmd', arguments: { descriptor_url: f.pending['descriptorUrl'] } });
           void wire(String(message.params['name']), message.params['arguments'] as Record<string, unknown>).then(result => deliver({ id: message.id, result }));
         } else if (message.id) queueMicrotask(() => deliver({ id: message.id, result: {} }));
       } };
@@ -172,10 +205,12 @@ describe('MCP signing lifecycle on the actual SDK transport', () => {
       expect(f.publish).not.toHaveBeenCalled();
       button().click();
       await vi.waitFor(() => expect(messages.filter(m => m.method === 'ui/open-link')).toHaveLength(1));
-      expect(messages.find(m => m.method === 'ui/open-link')!.params).toEqual({ url: f.pending['signingUrl'] });
+      const openedUrl = String(messages.find(m => m.method === 'ui/open-link')!.params['url']);
+      expect(openedUrl.split('#')[0]).toBe(f.pending['signingUrl']);
+      expect(new URL(openedUrl).hash).toMatch(/^#launch=[a-zA-Z0-9_-]{43}$/);
       expect(f.publish).not.toHaveBeenCalled(); // Opening is not signing.
       expect(dom.window.document.querySelector('#pane-enhanced [role="status"]')?.textContent).not.toContain('Signed, verified and submitted.');
-      await browserSign(f);
+      await browserSign(f, openedUrl);
       await vi.waitFor(() => expect(dom!.window.document.querySelector('#pane-enhanced [role="status"]')?.textContent).toBe('Signed, verified and submitted.'));
       expect(f.publish).toHaveBeenCalledTimes(1);
       expect(messages.filter(m => m.method === 'ui/update-model-context')).toHaveLength(1);
@@ -187,6 +222,9 @@ describe('MCP signing lifecycle on the actual SDK transport', () => {
       expect(followup[0]!.text).toContain('authenticated status control: ' + String(f.pending['descriptorUrl']));
       expect(followup[0]!.text).toContain('untrusted context, not authorization');
       expect(followup[0]!.text.length).toBeLessThan(400);
+      const launchSecret = new URL(openedUrl).hash.slice('#launch='.length);
+      expect(JSON.stringify(context)).not.toContain(launchSecret);
+      expect(JSON.stringify(followup)).not.toContain(launchSecret);
       const details = dom.window.document.querySelector('#pane-enhanced details') as HTMLDetailsElement;
       expect(details.hidden).toBe(false);
       expect(details.open).toBe(false);
@@ -231,12 +269,14 @@ describe('MCP signing lifecycle on the actual SDK transport', () => {
         params: { name: toolName, arguments: {}, _meta: meta(), ...extra } }, { 'Mcp-Method': 'tools/call', 'Mcp-Name': toolName });
       const response = await (await call()).json();
       expect(response.result, JSON.stringify(response)).toMatchObject({ resultType: 'input_required', requestState: f.id });
-      expect(response.result.inputRequests.sign).toMatchObject({ method: 'elicitation/create', params: { mode: 'url', url: f.pending['signingUrl'] } });
+      expect(response.result.inputRequests.sign).toMatchObject({ method: 'elicitation/create', params: { mode: 'url' } });
+      const openedUrl = response.result.inputRequests.sign.params.url as string;
+      expect(new URL(openedUrl).hash).toMatch(/^#launch=[a-zA-Z0-9_-]{43}$/);
       // An 'accept' response by itself cannot manufacture an approval.
       const accepted = call({ requestState: f.id, inputResponses: { sign: { action: 'accept' } } });
       await new Promise(resolve => setTimeout(resolve, 20));
       expect(f.publish).not.toHaveBeenCalled();
-      await browserSign(f);
+      await browserSign(f, openedUrl);
       expect(interaction((await (await accepted).json()).result.structuredContent).status).toBe('completed');
       const completed = await (await call({ requestState: f.id, inputResponses: { sign: { action: 'accept' } } })).json();
       expect(interaction(completed.result.structuredContent)).toMatchObject({ status: 'completed', result: { committed: true } });
@@ -283,8 +323,9 @@ describe('MCP signing lifecycle on the actual SDK transport', () => {
           const line = event.split('\n').find(value => value.startsWith('data: ')); if (!line) continue;
           const message = JSON.parse(line.slice(6));
           if (message.method === 'elicitation/create') {
-            elicited = true; expect(message.params).toMatchObject({ mode: 'url', elicitationId: f.id, url: f.pending['signingUrl'] });
-            await browserSign(f);
+            elicited = true; expect(message.params).toMatchObject({ mode: 'url', elicitationId: f.id });
+            expect(new URL(message.params.url).hash).toMatch(/^#launch=[a-zA-Z0-9_-]{43}$/);
+            await browserSign(f, message.params.url);
             await f.post({ jsonrpc: '2.0', id: message.id, result: { action: 'accept' } }, headers);
           } else if (message.method === 'notifications/elicitation/complete') notified = true;
           else if (message.id === 9) result = message;

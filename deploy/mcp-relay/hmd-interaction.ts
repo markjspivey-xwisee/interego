@@ -19,6 +19,9 @@ function validInteraction(value){
 function viewerOutput(value){
   var v;
   try{v=interactionValue(value);}catch(e){v={error:e.message};}
+  // Opening a signing page can be echoed as a host tool-output event. Its
+  // one-use URL is navigation data, never a document or visible source panel.
+  if(v&&typeof v.signingUrl==='string'&&v.signingUrl.indexOf('#launch=')!==-1)return null;
   if(isHmdDoc(v)) return v;
   if(v&&isHmdDoc(v.view)) return v.view;
   if(validInteraction(v)){
@@ -48,9 +51,12 @@ function renderInteraction(initial){
   function active(v){return ['pending','reviewing','submitting'].indexOf(v.status)!==-1;}
   function control(action){return (action==='urn:interego:client-interaction:status'
     ?callTool('render_hmd',{descriptor_url:reference})
-    :callTool('invoke_affordance',{descriptor_url:reference,action_iri:action,payload:{}})).then(function(result){
+    :callTool(action==='urn:interego:client-interaction:open-signing-page'?'act':'invoke_affordance',{descriptor_url:reference,action_iri:action,payload:{}})).then(function(result){
     if(result&&result.isError) throw new Error('Signing request access was refused.');
-    var v=interactionValue(result);
+    // The launch secret is delivered only as app-private metadata. Never
+    // recover it from model-visible structuredContent or text fallbacks.
+    var v=interactionValue(action==='urn:interego:client-interaction:open-signing-page'
+      ?result&&result._meta&&result._meta['interego/browser-signing']:result);
     if(!validInteraction(v)||v.id!==id) throw new Error('Signing result does not match this request.');
     return v;
   });}
@@ -59,6 +65,13 @@ function renderInteraction(initial){
     if(u.protocol!=='https:'||u.username||u.password||u.hash||u.pathname!=='/sign-action'
       ||u.search!=='?request='+id) throw new Error('Invalid signing destination.');
     return u;
+  }
+  function launchLink(v,expectedOrigin){
+    var u=new URL(v.signingUrl);
+    if(u.protocol!=='https:'||u.username||u.password||u.origin!==expectedOrigin
+      ||u.pathname!=='/sign-action'||u.search!=='?request='+id||!/^#launch=[a-zA-Z0-9_-]{43}$/.test(u.hash))
+      throw new Error('Invalid signing destination.');
+    return u.href;
   }
   function inform(v){
     var notificationKey=id+':'+v.expiresAt+':'+v.status;
@@ -107,12 +120,24 @@ function renderInteraction(initial){
     control('urn:interego:client-interaction:renew-authorization').then(function(v){if(card.isConnected)show(v);}).catch(function(e){state.textContent='Could not resume: '+e.message;}).finally(function(){busy=false;check();});
   });
   sign.addEventListener('click',function(){
-    if(!current||sign.disabled)return;
-    var url;try{url=signingLink(current).href;}catch(e){state.textContent=e.message;return;}
-    // No prefetch, credential forwarding or popup on mount: only a holder click.
-    var opened=BRIDGE_READY?rpcRequest('ui/open-link',{url:url}):window.openai&&typeof window.openai.openExternal==='function'
-      ?Promise.resolve().then(function(){return window.openai.openExternal({href:url});}):Promise.reject(new Error('This host cannot open the signing interface.'));
-    opened.then(function(r){if(r&&r.isError)throw new Error('The host refused to open the signing interface.');check();}).catch(function(e){state.textContent=e.message;reportSize();});
+    if(!current||sign.disabled||busy)return;
+    var destination;try{destination=signingLink(current);}catch(e){state.textContent=e.message;return;}
+    var openAction=current.openAction;
+    if(openAction&&openAction!=='urn:interego:client-interaction:open-signing-page'){
+      state.textContent='Invalid signing control.';return;
+    }
+    clearTimeout(timer);busy=true;sign.disabled=true;var opened=false;
+    // Mint the one-use browser handoff only after a holder click. It stays in
+    // this local promise and is never sent to model context or chat callbacks.
+    var launch=openAction?control(openAction).then(function(v){return launchLink(v,destination.origin);}):Promise.resolve(destination.href);
+    launch.then(function(url){
+      return BRIDGE_READY?rpcRequest('ui/open-link',{url:url}):window.openai&&typeof window.openai.openExternal==='function'
+        ?Promise.resolve().then(function(){return window.openai.openExternal({href:url});}):Promise.reject(new Error('This host cannot open the signing interface.'));
+    }).then(function(r){if(r&&r.isError)throw new Error('The host refused to open the signing interface.');opened=true;}).catch(function(e){state.textContent=e.message;reportSize();}).finally(function(){
+      busy=false;
+      if(opened)check();
+      else{sign.disabled=!current||!active(current)||current.status==='submitting';if(card.isConnected&&current&&active(current))timer=setTimeout(check,5000);}
+    });
   });
   cancel.addEventListener('click',function(){
     if(cancel.disabled||busy)return;
