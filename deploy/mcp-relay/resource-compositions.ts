@@ -177,9 +177,16 @@ export const INVOKE_AFFORDANCE_OUTPUT = mcpOutputSchema({
 
 /** Preserve the generic affordance follower's existing transport result schema. */
 export function resourceActionResponse(reference: string, action: string, result: Record<string, unknown>, access: 'read' | 'write') {
+  // An installed interpreter may distinguish a stale predecessor from an invalid
+  // input or an uncertain publication. Keep that status on the generic transport;
+  // callers must not turn a successful CAS followed by a failed read into a retry.
+  const declared = result['statusCode'];
+  const status = result['error']
+    ? typeof declared === 'number' && Number.isInteger(declared) && declared >= 400 && declared <= 599 ? declared : 409
+    : 200;
   return {
-    status: result['error'] ? 409 : 200,
-    statusText: result['error'] ? 'Conflict' : 'OK',
+    status,
+    statusText: status === 200 ? 'OK' : status === 412 ? 'Precondition Failed' : status === 422 ? 'Unprocessable Content' : status >= 500 ? 'Upstream Failure' : 'Conflict',
     contentType: 'application/json', body: JSON.stringify(result),
     affordance: { action, target: reference, method: access === 'read' ? 'GET' : 'POST' },
   };
