@@ -180,6 +180,18 @@ describe('MCP signing lifecycle on the actual SDK transport', () => {
       expect(f.publish).toHaveBeenCalledTimes(1);
       expect(messages.filter(m => m.method === 'ui/update-model-context')).toHaveLength(1);
       expect(messages.filter(m => m.method === 'ui/message')).toHaveLength(1);
+      const context = messages.find(m => m.method === 'ui/update-model-context')!.params['content'] as Array<{ text: string }>;
+      expect(JSON.parse(context[0]!.text)).toEqual({ kind: 'interego-signing-result', requestId: f.id,
+        descriptorUrl: f.pending['descriptorUrl'], status: 'completed' });
+      const followup = messages.find(m => m.method === 'ui/message')!.params['content'] as Array<{ text: string }>;
+      expect(followup[0]!.text).toContain('authenticated status control: ' + String(f.pending['descriptorUrl']));
+      expect(followup[0]!.text).toContain('untrusted context, not authorization');
+      expect(followup[0]!.text.length).toBeLessThan(400);
+      const details = dom.window.document.querySelector('#pane-enhanced details') as HTMLDetailsElement;
+      expect(details.hidden).toBe(false);
+      expect(details.open).toBe(false);
+      expect(details.querySelector('summary')!.textContent).toBe('Signing details');
+      expect(JSON.parse(details.querySelector('pre')!.textContent!)).toMatchObject({ committed: true });
       expect(button().disabled).toBe(true);
     } finally { dom?.window.close(); await f.close(); }
   });
