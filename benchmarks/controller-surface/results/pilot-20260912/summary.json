@@ -1,0 +1,131 @@
+{
+  "episodeCount": 32,
+  "complete": 32,
+  "groups": [
+    {
+      "controller": "react",
+      "arm": "baseline",
+      "episodes": 8,
+      "completed": 8,
+      "meanModelDecisions": 10.875,
+      "meanToolCalls": 9.625,
+      "meanBackendReads": 60.75,
+      "medianToolMs": 11.5,
+      "medianEpisodeMs": 143756.0,
+      "staleRejections": 4,
+      "invalidAccepted": 0,
+      "staleAccepted": 0,
+      "maxParallelTools": 1
+    },
+    {
+      "controller": "react",
+      "arm": "interego",
+      "episodes": 8,
+      "completed": 8,
+      "meanModelDecisions": 10.875,
+      "meanToolCalls": 9.75,
+      "meanBackendReads": 242,
+      "medianToolMs": 87.0,
+      "medianEpisodeMs": 125274.0,
+      "staleRejections": 4,
+      "invalidAccepted": 0,
+      "staleAccepted": 0,
+      "maxParallelTools": 1
+    },
+    {
+      "controller": "dag",
+      "arm": "baseline",
+      "episodes": 8,
+      "completed": 8,
+      "meanModelDecisions": 3.75,
+      "meanToolCalls": 9.25,
+      "meanBackendReads": 60.75,
+      "medianToolMs": 11.0,
+      "medianEpisodeMs": 96719.0,
+      "staleRejections": 4,
+      "invalidAccepted": 0,
+      "staleAccepted": 0,
+      "maxParallelTools": 1
+    },
+    {
+      "controller": "dag",
+      "arm": "interego",
+      "episodes": 8,
+      "completed": 8,
+      "meanModelDecisions": 3.375,
+      "meanToolCalls": 9.25,
+      "meanBackendReads": 242,
+      "medianToolMs": 77.0,
+      "medianEpisodeMs": 100808.0,
+      "staleRejections": 4,
+      "invalidAccepted": 0,
+      "staleAccepted": 0,
+      "maxParallelTools": 1
+    }
+  ],
+  "scenarioResults": {
+    "stable": {
+      "episodes": 8,
+      "complete": 8
+    },
+    "rebind": {
+      "episodes": 8,
+      "complete": 8
+    },
+    "stale": {
+      "episodes": 8,
+      "complete": 8
+    },
+    "handoff": {
+      "episodes": 8,
+      "complete": 8
+    }
+  },
+  "totalModelDecisionRequests": 231,
+  "totalToolCalls": 303,
+  "verifiedSignedDescriptors": 424,
+  "allDescriptorAuditsVerified": true,
+  "acceptedInvalidWrites": 0,
+  "acceptedStaleWrites": 0,
+  "lowestPositionViolations": 0,
+  "retainedFailures": [],
+  "freshControllerAgents": 40,
+  "inputTokens": null,
+  "outputTokens": null,
+  "providerInferenceCalls": null,
+  "dollarCost": null,
+  "evidenceSha256": {
+    "stable-0-react-baseline": "ff12efc9d8832e3f5e80095e05c19a95232638113862767b079de3dff37ecf50",
+    "stable-0-react-interego": "5a1666ef701b6df559f36666b6d76566cf272f40cf51908262bdcf801b73f15e",
+    "stable-0-dag-baseline": "cffeb4547b41d04a1d06fd83de16d8fa19d8c1d7b40ea53247934db00d19ee1a",
+    "stable-0-dag-interego": "53332205ec132a29904d4596f23ed0b7662cf5504b7932e29b074cb873394ed6",
+    "rebind-0-react-interego": "55f51a8c04d6fff22168262a6c1c3bccf12b5838e5f3c1dc1ba578462ec22ef6",
+    "rebind-0-dag-baseline": "8f61a05fd7b2ae07234da0ddc932f3c1461835fd677d21d87163016c284b9805",
+    "rebind-0-dag-interego": "9d04d5f592b9ba5f3d8100b8028da62748281c17198c3e6f951ba69f08898aaa",
+    "rebind-0-react-baseline": "2741eba7f396a7f02d11494dd591e555f27eeaf4e0a39c33a9a969fe432e4929",
+    "stale-0-dag-baseline": "4dd67e84dbc66fe52d810c21658369692464a966e9f4e45d06a682fffe962ce9",
+    "stale-0-dag-interego": "c15190133125102198bc0b456edd71b2d0059ae4a9632740f417ed67941bf0af",
+    "stale-0-react-baseline": "8a485e890234ab5014402a68687f3ed84aa59ebc8df19dcb95eab091af6c9efc",
+    "stale-0-react-interego": "0db24a02062793dadbe6f01862c89f5feae04c6f79d01292b6ee75553b8f7b4e",
+    "handoff-0-dag-interego": "427c7330d07f53595338b94bcc43baf4df35c2253b3fbbe2d613769de1940648",
+    "handoff-0-react-baseline": "a43cc06568ad05b96fe1b7cea8ce658c67493896a72ce73da3dea0c3eaf5ffe9",
+    "handoff-0-react-interego": "33593c2b6e5e15d46a926e41a1fd1ad36a2ae7cc0f074cbb4d3fc5537e146e67",
+    "handoff-0-dag-baseline": "8b2701ffbce6fca06436929a90e9ddb028a26670a3ef65bffb871eb317908006",
+    "stable-1-react-interego": "8524566ea4d9740be6dc67a1d2265fb8bcf965729f995fda636aa6b83c6dc222",
+    "stable-1-dag-baseline": "2a44d4b00ca09f125d659c6dedc23e073a4bd0593ad3e75e5587cb5098347e43",
+    "stable-1-dag-interego": "9aeb999e8170086fa5a48f901165a1f019b35ed8e59b30d1946d8517b6419c5a",
+    "stable-1-react-baseline": "6170db14e9c266c98390f3c8c743c6246162f112543e3010769137ecf806a722",
+    "rebind-1-dag-baseline": "c8840264efda96115b6ed326817f7100ca4ba42bf3192143ecb1f209c0f26885",
+    "rebind-1-dag-interego": "06f8d6e9885fb0a5c94b70840e13f8b58147c32ad779483b23ec9aa69e1c7141",
+    "rebind-1-react-baseline": "145461c4d6d8bf1ddef69add14b11d6b73663b7fcecb1e8e938356a04574bc86",
+    "rebind-1-react-interego": "c2cd7fc2963cdb2f867a640b0c3862e25321dde8eb48c525f7e69b66c10f4bf0",
+    "stale-1-dag-interego": "4718c2f1e45d2526f099e28f46de8ec68f025102ddf4e8e22d50c5a456fafb09",
+    "stale-1-react-baseline": "5ce57673e05aaff660e5c649e7d71cb8bc0ae8ded46256b3e76d79e14947971d",
+    "stale-1-react-interego": "b5f340787f509c39b30b29eeeb0666ccca329f7f0e36c4930246cd0ce9ef0d82",
+    "stale-1-dag-baseline": "7aeaec8bd0a3e9ece2d5234e4834e2e1491fbf8430a6eed76bf903ec8b62e597",
+    "handoff-1-react-baseline": "d29060820f6e6057f83eede1d97dfe0b2f172d0f432b45c2dd4408322f27207d",
+    "handoff-1-react-interego": "fb506871039fb7dff1cdcaf8d23a0e277fe58a4e43d20265666921f797ba97a0",
+    "handoff-1-dag-baseline": "a1c02c7f54e79c095d52e9218f5a1639cfa781d8f78c8a0eb73fca287b9689d0",
+    "handoff-1-dag-interego": "e64ade5a2d193530ffa8e9894af1cf9ed4de6f44507c50d27d4d9b9d25f7874c"
+  }
+}

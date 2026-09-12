@@ -34,6 +34,11 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
 
 <!-- documented-through: 2037e1a -->
 
+### 2026-09-12 — Controller and resource interface comparison
+
+- A separate manual benchmark compares ReAct and model-generated Plan–Act DAG controllers through conventional JSON and the shipped Interego resource composition. Matched local signed resources exercise action rebinding, concurrent writes and fresh-agent continuation without production mutations.
+- Evidence MUST distinguish submitted model decisions from unavailable provider inference, token and cost telemetry. Independent scoring checks the exact task policy, preserved state, signature verification and stale-write rejection; the report limits conclusions to the measured component pilot.
+
 ### 2026-09-12 — Signed resource surfaces through the generic viewer
 
 - A signed resource surface MAY declare an existing finite-board engine, state, contract, registry and grid presentation. The optional reference composition resolves the signed differential frontier and executes the exact selected affordance through the existing generic tools. Application-specific MCP registrations and ChatGPT plugins are not required.

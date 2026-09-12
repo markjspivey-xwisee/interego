@@ -1,0 +1,24 @@
+{
+  "after": {
+    "forked": false,
+    "head": {
+      "cid": "bafkreicvzwar3swx7sfcwcpnirf6cnrcr7ydttixhwjubhd7eeh2habtri",
+      "descriptorUrl": "http://css.railway.internal:3456/u-pk-f2a9c751075a/context-graphs/1789186866121.ttl"
+    },
+    "podUrl": "http://css.railway.internal:3456/u-pk-f2a9c751075a/",
+    "urn": "urn:graph:game:tictactoe:live:v3"
+  },
+  "before": {
+    "forked": false,
+    "head": {
+      "cid": "bafkreicvzwar3swx7sfcwcpnirf6cnrcr7ydttixhwjubhd7eeh2habtri",
+      "descriptorUrl": "http://css.railway.internal:3456/u-pk-f2a9c751075a/context-graphs/1789186866121.ttl"
+    },
+    "podUrl": "http://css.railway.internal:3456/u-pk-f2a9c751075a/",
+    "urn": "urn:graph:game:tictactoe:live:v3"
+  },
+  "unchanged": true,
+  "scope": "Read-only live game invariant. Every measured episode used isolated local resources; benchmark exposes no reset.",
+  "gameVersion": 14,
+  "observedDate": "2026-09-12"
+}

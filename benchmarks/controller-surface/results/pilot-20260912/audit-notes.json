@@ -1,0 +1,38 @@
+{
+  "auditType": "post-hoc independent source and retained trace review",
+  "reviewer": "/root/benchmark_design_review",
+  "scope": "All 32 completed episodes; no controller contact, reruns, source changes, or outcome filtering.",
+  "findings": {
+    "fatalIssues": [],
+    "allFiveFrozenSourceHashesMatch": true,
+    "all32AuthoritativeBoardAuditsPassIndependentReplay": true,
+    "allPromptHashesAndSubmittedResponseFilesMatchRetainedTraces": true,
+    "taskWrites": 96,
+    "preservedExternalWrites": 8,
+    "staleRejections": 16,
+    "acceptedInvalidWrites": 0,
+    "acceptedStaleWrites": 0,
+    "lowestLegalPositionViolations": 0,
+    "executedSamePlanDagDataReferences": 49,
+    "retainedReferencePathErrorsWithCorrect400Responses": 7,
+    "handoffGenerationsStartingWithEmptyObservations": 8,
+    "uniqueProviderAgentsRecorded": 40,
+    "providerSidecarCoversEveryEpisodeGeneration": true,
+    "allRecordedAgentForksAreNoneWithNoModelOrReasoningOverrides": true,
+    "maximumObservedParallelTools": 1
+  },
+  "supportedInterpretation": [
+    "Model-generated dependency plans completed serial tool workflows with fewer submitted model decisions than the defined one-operation-per-decision ReAct controller in both interface arms.",
+    "Both implementations completed all tested stable, rebinding, stale-state and fresh-handoff cases. No success advantage attributable to Interego was observed.",
+    "The Interego composition performed more backend reads in this local component experiment. These are actual counted reads, not production network latency or dollar cost."
+  ],
+  "limits": [
+    "Provider inference calls, tokens, dollar cost and exact model snapshot were unavailable; submitted decisions are not an API-call or token measurement.",
+    "The two seeds select initial-state and key fixtures. There is one episode per scenario/controller/interface/initial-state cell, not repeated stochastic trials of an identical cell.",
+    "The adapter supplies equivalent task information and opaque controls. Binding values, key ordering and error wording differ. Raw MCP ergonomics, integration effort and general capability discovery were not measured.",
+    "Observed dependency plans were serial; this run supplies no evidence of parallel speedup or runtime branching advantages.",
+    "Registry success/failure priors are synthetic fixture data. No procedure learning, cross-episode reuse or performance of the brother's unseen implementation was measured.",
+    "Fresh-agent identity/fork settings are recorded in the provider sidecar; exact host inference telemetry is unavailable.",
+    "This audit checks retained traces, board transitions and source consistency. Independent reconstruction and cryptographic verification of the signed descriptor envelopes is a separate audit."
+  ]
+}

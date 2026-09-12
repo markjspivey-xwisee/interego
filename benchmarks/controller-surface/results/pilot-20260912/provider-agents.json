@@ -1,0 +1,489 @@
+{
+  "provider": "collaboration",
+  "forkTurns": "none",
+  "overrides": null,
+  "episodes": [
+    {
+      "episode": 1,
+      "alias": "/workspace/scratch/9725c7277e3f/benchmark-mailboxes/episode-01",
+      "case": "stable-0-react-baseline"
+    },
+    {
+      "episode": 2,
+      "alias": "/workspace/scratch/9725c7277e3f/benchmark-mailboxes/episode-02",
+      "case": "stable-0-react-interego"
+    },
+    {
+      "episode": 3,
+      "alias": "/workspace/scratch/9725c7277e3f/benchmark-mailboxes/episode-03",
+      "case": "stable-0-dag-baseline"
+    },
+    {
+      "episode": 4,
+      "alias": "/workspace/scratch/9725c7277e3f/benchmark-mailboxes/episode-04",
+      "case": "stable-0-dag-interego"
+    },
+    {
+      "episode": 5,
+      "alias": "/workspace/scratch/9725c7277e3f/benchmark-mailboxes/episode-05",
+      "case": "rebind-0-react-interego"
+    },
+    {
+      "episode": 6,
+      "alias": "/workspace/scratch/9725c7277e3f/benchmark-mailboxes/episode-06",
+      "case": "rebind-0-dag-baseline"
+    },
+    {
+      "episode": 7,
+      "alias": "/workspace/scratch/9725c7277e3f/benchmark-mailboxes/episode-07",
+      "case": "rebind-0-dag-interego"
+    },
+    {
+      "episode": 8,
+      "alias": "/workspace/scratch/9725c7277e3f/benchmark-mailboxes/episode-08",
+      "case": "rebind-0-react-baseline"
+    },
+    {
+      "episode": 9,
+      "alias": "/workspace/scratch/9725c7277e3f/benchmark-mailboxes/episode-09",
+      "case": "stale-0-dag-baseline"
+    },
+    {
+      "episode": 10,
+      "alias": "/workspace/scratch/9725c7277e3f/benchmark-mailboxes/episode-10",
+      "case": "stale-0-dag-interego"
+    },
+    {
+      "episode": 11,
+      "alias": "/workspace/scratch/9725c7277e3f/benchmark-mailboxes/episode-11",
+      "case": "stale-0-react-baseline"
+    },
+    {
+      "episode": 12,
+      "alias": "/workspace/scratch/9725c7277e3f/benchmark-mailboxes/episode-12",
+      "case": "stale-0-react-interego"
+    },
+    {
+      "episode": 13,
+      "alias": "/workspace/scratch/9725c7277e3f/benchmark-mailboxes/episode-13",
+      "case": "handoff-0-dag-interego"
+    },
+    {
+      "episode": 14,
+      "alias": "/workspace/scratch/9725c7277e3f/benchmark-mailboxes/episode-14",
+      "case": "handoff-0-react-baseline"
+    },
+    {
+      "episode": 15,
+      "alias": "/workspace/scratch/9725c7277e3f/benchmark-mailboxes/episode-15",
+      "case": "handoff-0-react-interego"
+    },
+    {
+      "episode": 16,
+      "alias": "/workspace/scratch/9725c7277e3f/benchmark-mailboxes/episode-16",
+      "case": "handoff-0-dag-baseline"
+    },
+    {
+      "episode": 17,
+      "alias": "/workspace/scratch/9725c7277e3f/benchmark-mailboxes/episode-17",
+      "case": "stable-1-react-interego"
+    },
+    {
+      "episode": 18,
+      "alias": "/workspace/scratch/9725c7277e3f/benchmark-mailboxes/episode-18",
+      "case": "stable-1-dag-baseline"
+    },
+    {
+      "episode": 19,
+      "alias": "/workspace/scratch/9725c7277e3f/benchmark-mailboxes/episode-19",
+      "case": "stable-1-dag-interego"
+    },
+    {
+      "episode": 20,
+      "alias": "/workspace/scratch/9725c7277e3f/benchmark-mailboxes/episode-20",
+      "case": "stable-1-react-baseline"
+    },
+    {
+      "episode": 21,
+      "alias": "/workspace/scratch/9725c7277e3f/benchmark-mailboxes/episode-21",
+      "case": "rebind-1-dag-baseline"
+    },
+    {
+      "episode": 22,
+      "alias": "/workspace/scratch/9725c7277e3f/benchmark-mailboxes/episode-22",
+      "case": "rebind-1-dag-interego"
+    },
+    {
+      "episode": 23,
+      "alias": "/workspace/scratch/9725c7277e3f/benchmark-mailboxes/episode-23",
+      "case": "rebind-1-react-baseline"
+    },
+    {
+      "episode": 24,
+      "alias": "/workspace/scratch/9725c7277e3f/benchmark-mailboxes/episode-24",
+      "case": "rebind-1-react-interego"
+    },
+    {
+      "episode": 25,
+      "alias": "/workspace/scratch/9725c7277e3f/benchmark-mailboxes/episode-25",
+      "case": "stale-1-dag-interego"
+    },
+    {
+      "episode": 26,
+      "alias": "/workspace/scratch/9725c7277e3f/benchmark-mailboxes/episode-26",
+      "case": "stale-1-react-baseline"
+    },
+    {
+      "episode": 27,
+      "alias": "/workspace/scratch/9725c7277e3f/benchmark-mailboxes/episode-27",
+      "case": "stale-1-react-interego"
+    },
+    {
+      "episode": 28,
+      "alias": "/workspace/scratch/9725c7277e3f/benchmark-mailboxes/episode-28",
+      "case": "stale-1-dag-baseline"
+    },
+    {
+      "episode": 29,
+      "alias": "/workspace/scratch/9725c7277e3f/benchmark-mailboxes/episode-29",
+      "case": "handoff-1-react-baseline"
+    },
+    {
+      "episode": 30,
+      "alias": "/workspace/scratch/9725c7277e3f/benchmark-mailboxes/episode-30",
+      "case": "handoff-1-react-interego"
+    },
+    {
+      "episode": 31,
+      "alias": "/workspace/scratch/9725c7277e3f/benchmark-mailboxes/episode-31",
+      "case": "handoff-1-dag-baseline"
+    },
+    {
+      "episode": 32,
+      "alias": "/workspace/scratch/9725c7277e3f/benchmark-mailboxes/episode-32",
+      "case": "handoff-1-dag-interego"
+    }
+  ],
+  "agents": [
+    {
+      "episode": 1,
+      "generation": 0,
+      "agent": "/root/pilot_01",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 2,
+      "generation": 0,
+      "agent": "/root/pilot_02",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 3,
+      "generation": 0,
+      "agent": "/root/pilot_03",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 4,
+      "generation": 0,
+      "agent": "/root/pilot_04",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 5,
+      "generation": 0,
+      "agent": "/root/pilot_05",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 6,
+      "generation": 0,
+      "agent": "/root/pilot_06",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 7,
+      "generation": 0,
+      "agent": "/root/pilot_07",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 8,
+      "generation": 0,
+      "agent": "/root/pilot_08",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 9,
+      "generation": 0,
+      "agent": "/root/pilot_09",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 10,
+      "generation": 0,
+      "agent": "/root/pilot_10",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 11,
+      "generation": 0,
+      "agent": "/root/pilot_11",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 12,
+      "generation": 0,
+      "agent": "/root/pilot_12",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 13,
+      "generation": 0,
+      "agent": "/root/pilot_13",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 14,
+      "generation": 0,
+      "agent": "/root/pilot_14",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 15,
+      "generation": 0,
+      "agent": "/root/pilot_15",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 13,
+      "generation": 1,
+      "agent": "/root/pilot_13_handoff",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 16,
+      "generation": 0,
+      "agent": "/root/pilot_16",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 17,
+      "generation": 0,
+      "agent": "/root/pilot_17",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 14,
+      "generation": 1,
+      "agent": "/root/pilot_14_handoff",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 15,
+      "generation": 1,
+      "agent": "/root/pilot_15_handoff",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 16,
+      "generation": 1,
+      "agent": "/root/pilot_16_handoff",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 18,
+      "generation": 0,
+      "agent": "/root/pilot_18",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 19,
+      "generation": 0,
+      "agent": "/root/pilot_19",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 20,
+      "generation": 0,
+      "agent": "/root/pilot_20",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 21,
+      "generation": 0,
+      "agent": "/root/pilot_21",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 22,
+      "generation": 0,
+      "agent": "/root/pilot_22",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 23,
+      "generation": 0,
+      "agent": "/root/pilot_23",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 24,
+      "generation": 0,
+      "agent": "/root/pilot_24",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 25,
+      "generation": 0,
+      "agent": "/root/pilot_25",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 26,
+      "generation": 0,
+      "agent": "/root/pilot_26",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 27,
+      "generation": 0,
+      "agent": "/root/pilot_27",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 28,
+      "generation": 0,
+      "agent": "/root/pilot_28",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 29,
+      "generation": 0,
+      "agent": "/root/pilot_29",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 30,
+      "generation": 0,
+      "agent": "/root/pilot_30",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 31,
+      "generation": 0,
+      "agent": "/root/pilot_31",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 32,
+      "generation": 0,
+      "agent": "/root/pilot_32",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 29,
+      "generation": 1,
+      "agent": "/root/pilot_29_handoff",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 30,
+      "generation": 1,
+      "agent": "/root/pilot_30_handoff",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 31,
+      "generation": 1,
+      "agent": "/root/pilot_31_handoff",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    },
+    {
+      "episode": 32,
+      "generation": 1,
+      "agent": "/root/pilot_32_handoff",
+      "forkTurns": "none",
+      "modelOverride": null,
+      "reasoningOverride": null
+    }
+  ]
+}

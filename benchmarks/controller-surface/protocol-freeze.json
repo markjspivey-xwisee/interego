@@ -1,0 +1,11 @@
+{
+  "frozenBeforeModelEpisodes": true,
+  "sha256": {
+    "controller.ts": "874618f9820ab4310e884b36257f58f3dd4e379d6b7b93950f90ea2e60aa0b19",
+    "environment.ts": "d0983134718d1f15945481db6fa7c8cdbaa984971a696a1abe54c2bd0f9570aa",
+    "run.ts": "4de94ffd88880d0863b9e5dd03be77a683d4e64c4307c0b02b7f9f3569773711",
+    "agent-client.mjs": "e6965d394e253139e89320b0be0ec2c1028b7195c9db72d0281e6b5e1b3a7128",
+    "README.md": "48f088f82efb6c4c74b6804639ad2dedf9e52f9c9447a224a714f843a685a664"
+  },
+  "sourceBaseCommit": "c9a8853f054581db3b05b5f9ff5c4d66c2ab8862"
+}
