@@ -1,0 +1,207 @@
+{
+  "protocol": "controller-surface/v1",
+  "createdAt": "2026-09-12T18:49:12.444Z",
+  "budget": {
+    "decisions": 12,
+    "tools": 24,
+    "nodesPerPlan": 12,
+    "decisionBytes": 24000
+  },
+  "cases": [
+    {
+      "seed": 0,
+      "scenario": "stable",
+      "controller": "react",
+      "arm": "baseline"
+    },
+    {
+      "seed": 0,
+      "scenario": "stable",
+      "controller": "react",
+      "arm": "interego"
+    },
+    {
+      "seed": 0,
+      "scenario": "stable",
+      "controller": "dag",
+      "arm": "baseline"
+    },
+    {
+      "seed": 0,
+      "scenario": "stable",
+      "controller": "dag",
+      "arm": "interego"
+    },
+    {
+      "seed": 0,
+      "scenario": "rebind",
+      "controller": "react",
+      "arm": "interego"
+    },
+    {
+      "seed": 0,
+      "scenario": "rebind",
+      "controller": "dag",
+      "arm": "baseline"
+    },
+    {
+      "seed": 0,
+      "scenario": "rebind",
+      "controller": "dag",
+      "arm": "interego"
+    },
+    {
+      "seed": 0,
+      "scenario": "rebind",
+      "controller": "react",
+      "arm": "baseline"
+    },
+    {
+      "seed": 0,
+      "scenario": "stale",
+      "controller": "dag",
+      "arm": "baseline"
+    },
+    {
+      "seed": 0,
+      "scenario": "stale",
+      "controller": "dag",
+      "arm": "interego"
+    },
+    {
+      "seed": 0,
+      "scenario": "stale",
+      "controller": "react",
+      "arm": "baseline"
+    },
+    {
+      "seed": 0,
+      "scenario": "stale",
+      "controller": "react",
+      "arm": "interego"
+    },
+    {
+      "seed": 0,
+      "scenario": "handoff",
+      "controller": "dag",
+      "arm": "interego"
+    },
+    {
+      "seed": 0,
+      "scenario": "handoff",
+      "controller": "react",
+      "arm": "baseline"
+    },
+    {
+      "seed": 0,
+      "scenario": "handoff",
+      "controller": "react",
+      "arm": "interego"
+    },
+    {
+      "seed": 0,
+      "scenario": "handoff",
+      "controller": "dag",
+      "arm": "baseline"
+    },
+    {
+      "seed": 1,
+      "scenario": "stable",
+      "controller": "react",
+      "arm": "interego"
+    },
+    {
+      "seed": 1,
+      "scenario": "stable",
+      "controller": "dag",
+      "arm": "baseline"
+    },
+    {
+      "seed": 1,
+      "scenario": "stable",
+      "controller": "dag",
+      "arm": "interego"
+    },
+    {
+      "seed": 1,
+      "scenario": "stable",
+      "controller": "react",
+      "arm": "baseline"
+    },
+    {
+      "seed": 1,
+      "scenario": "rebind",
+      "controller": "dag",
+      "arm": "baseline"
+    },
+    {
+      "seed": 1,
+      "scenario": "rebind",
+      "controller": "dag",
+      "arm": "interego"
+    },
+    {
+      "seed": 1,
+      "scenario": "rebind",
+      "controller": "react",
+      "arm": "baseline"
+    },
+    {
+      "seed": 1,
+      "scenario": "rebind",
+      "controller": "react",
+      "arm": "interego"
+    },
+    {
+      "seed": 1,
+      "scenario": "stale",
+      "controller": "dag",
+      "arm": "interego"
+    },
+    {
+      "seed": 1,
+      "scenario": "stale",
+      "controller": "react",
+      "arm": "baseline"
+    },
+    {
+      "seed": 1,
+      "scenario": "stale",
+      "controller": "react",
+      "arm": "interego"
+    },
+    {
+      "seed": 1,
+      "scenario": "stale",
+      "controller": "dag",
+      "arm": "baseline"
+    },
+    {
+      "seed": 1,
+      "scenario": "handoff",
+      "controller": "react",
+      "arm": "baseline"
+    },
+    {
+      "seed": 1,
+      "scenario": "handoff",
+      "controller": "react",
+      "arm": "interego"
+    },
+    {
+      "seed": 1,
+      "scenario": "handoff",
+      "controller": "dag",
+      "arm": "baseline"
+    },
+    {
+      "seed": 1,
+      "scenario": "handoff",
+      "controller": "dag",
+      "arm": "interego"
+    }
+  ],
+  "provider": "collaboration agents; inherited same model/settings; exact provider snapshot and token usage unavailable",
+  "modelBudget": "decision requests and serialized output bytes bounded; provider tokens and hidden inference requests not observable",
+  "transport": "local Ed25519 verified store; actual Interego composition versus conventional JSON adapter; no production writes"
+}

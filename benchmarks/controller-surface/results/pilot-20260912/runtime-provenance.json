@@ -1,0 +1,45 @@
+{
+  "observedAt": "2026-09-12T19:08:36.237Z",
+  "node": "v24.19.0",
+  "platform": "linux",
+  "arch": "x64",
+  "packages": [
+    {
+      "name": "@interego/core",
+      "version": "0.2.0",
+      "resolvedEntry": "/workspace/scratch/55ff1dc770f6/interego/packages/core/dist/index.js",
+      "entrySha256": "cfe64b33824eb2d70f404414b2bd3791f8a01d4b23a5281aeb82efa66426bb0b"
+    },
+    {
+      "name": "@interego/solid",
+      "version": "0.2.0",
+      "resolvedEntry": "/workspace/scratch/55ff1dc770f6/interego/packages/solid/dist/index.js",
+      "entrySha256": "540a879f5da853a969e1dfb4f2dcfe94e6b82cdcb5f98742aa68b439a90f42f3"
+    },
+    {
+      "name": "n3",
+      "version": "1.26.0",
+      "resolvedEntry": "/workspace/scratch/55ff1dc770f6/interego/node_modules/n3/lib/index.js",
+      "entrySha256": "aafe045c2737667121f1f0df02ad7d3bda58182499e907c794b1baf564f7329d"
+    },
+    {
+      "name": "multiformats",
+      "version": "13.4.2",
+      "resolvedEntry": "/workspace/scratch/55ff1dc770f6/interego/node_modules/multiformats/dist/src/index.js",
+      "entrySha256": "1b372ffc9972aa56f6e24e57d2029f5338c3e42df3058e7ee52c2fbc9c10c734"
+    },
+    {
+      "name": "tsx",
+      "version": "4.22.4",
+      "resolvedEntry": "/workspace/scratch/55ff1dc770f6/interego/node_modules/tsx/dist/loader.mjs",
+      "entrySha256": "7dcee7691241fdd4a59a52879597d22d603d770a764282724eaca7cab03b389f"
+    },
+    {
+      "name": "typescript",
+      "version": "5.9.3",
+      "resolvedEntry": "/workspace/scratch/55ff1dc770f6/interego/node_modules/typescript/lib/typescript.js",
+      "entrySha256": "3ae902c92cc44dace175c0e69e13a4b0899f6983c6121d76b9ab8dd5795e7675"
+    }
+  ],
+  "limitation": "Entry-point hashes identify resolved local dependencies; they are not complete dependency-tree attestations. Repository workspace packages resolved from pre-existing built dependencies."
+}

@@ -1,0 +1,541 @@
+{
+  "label": "POST-MEASUREMENT DETERMINISTIC RECONSTRUCTION",
+  "limitation": "These signed descriptor bytes were reconstructed after measurement by replaying recorded environment calls against the frozen seeded fixture. They are not originally retained signed bytes and are not additional model episodes. Matching transcripts establish reproducibility under this local benchmark transport, not a Railway or full-protocol attestation.",
+  "generatedAt": "2026-09-12T19:05:35.750Z",
+  "schema": "benchmark.post-measurement-replay/v1",
+  "checkOnly": false,
+  "sourceFreeze": {
+    "frozenBeforeModelEpisodes": true,
+    "sha256": {
+      "controller.ts": "874618f9820ab4310e884b36257f58f3dd4e379d6b7b93950f90ea2e60aa0b19",
+      "environment.ts": "d0983134718d1f15945481db6fa7c8cdbaa984971a696a1abe54c2bd0f9570aa",
+      "run.ts": "4de94ffd88880d0863b9e5dd03be77a683d4e64c4307c0b02b7f9f3569773711",
+      "agent-client.mjs": "e6965d394e253139e89320b0be0ec2c1028b7195c9db72d0281e6b5e1b3a7128",
+      "README.md": "48f088f82efb6c4c74b6804639ad2dedf9e52f9c9447a224a714f843a685a664"
+    },
+    "sourceBaseCommit": "c9a8853f054581db3b05b5f9ff5c4d66c2ab8862"
+  },
+  "sourceSha256": "b8cab368da63efdeb9aa4a3e09ed8fa56425fb0fad66e1025cca1af1410f39db",
+  "measuredEpisodes": 32,
+  "toolOutputsCompared": 296,
+  "capturedPublications": 424,
+  "uniqueSignedDescriptors": 116,
+  "uniquePublicKeys": 2,
+  "exportedEnvelopesVerify": true,
+  "allMatch": true,
+  "reconstructedDescriptorsFileSha256": "e1f8960b176e114e8869667f72e7267d868fcfc33643572fcc7c011ead7b9967",
+  "episodes": [
+    {
+      "episode": "handoff-0-dag-baseline",
+      "resultFileSha256": "8b2701ffbce6fca06436929a90e9ddb028a26670a3ef65bffb871eb317908006",
+      "spec": {
+        "arm": "baseline",
+        "controller": "dag",
+        "scenario": "handoff",
+        "seed": 0
+      },
+      "toolOutputsCompared": 9,
+      "toolOutputsMatchExactly": true,
+      "inspectionMatchesExceptElapsedMs": true,
+      "reconstructedPublications": 12,
+      "signaturesVerified": true,
+      "mismatches": []
+    },
+    {
+      "episode": "handoff-0-dag-interego",
+      "resultFileSha256": "427c7330d07f53595338b94bcc43baf4df35c2253b3fbbe2d613769de1940648",
+      "spec": {
+        "arm": "interego",
+        "controller": "dag",
+        "scenario": "handoff",
+        "seed": 0
+      },
+      "toolOutputsCompared": 9,
+      "toolOutputsMatchExactly": true,
+      "inspectionMatchesExceptElapsedMs": true,
+      "reconstructedPublications": 12,
+      "signaturesVerified": true,
+      "mismatches": []
+    },
+    {
+      "episode": "handoff-0-react-baseline",
+      "resultFileSha256": "a43cc06568ad05b96fe1b7cea8ce658c67493896a72ce73da3dea0c3eaf5ffe9",
+      "spec": {
+        "arm": "baseline",
+        "controller": "react",
+        "scenario": "handoff",
+        "seed": 0
+      },
+      "toolOutputsCompared": 9,
+      "toolOutputsMatchExactly": true,
+      "inspectionMatchesExceptElapsedMs": true,
+      "reconstructedPublications": 12,
+      "signaturesVerified": true,
+      "mismatches": []
+    },
+    {
+      "episode": "handoff-0-react-interego",
+      "resultFileSha256": "33593c2b6e5e15d46a926e41a1fd1ad36a2ae7cc0f074cbb4d3fc5537e146e67",
+      "spec": {
+        "arm": "interego",
+        "controller": "react",
+        "scenario": "handoff",
+        "seed": 0
+      },
+      "toolOutputsCompared": 9,
+      "toolOutputsMatchExactly": true,
+      "inspectionMatchesExceptElapsedMs": true,
+      "reconstructedPublications": 12,
+      "signaturesVerified": true,
+      "mismatches": []
+    },
+    {
+      "episode": "handoff-1-dag-baseline",
+      "resultFileSha256": "a1c02c7f54e79c095d52e9218f5a1639cfa781d8f78c8a0eb73fca287b9689d0",
+      "spec": {
+        "arm": "baseline",
+        "controller": "dag",
+        "scenario": "handoff",
+        "seed": 1
+      },
+      "toolOutputsCompared": 9,
+      "toolOutputsMatchExactly": true,
+      "inspectionMatchesExceptElapsedMs": true,
+      "reconstructedPublications": 12,
+      "signaturesVerified": true,
+      "mismatches": []
+    },
+    {
+      "episode": "handoff-1-dag-interego",
+      "resultFileSha256": "e64ade5a2d193530ffa8e9894af1cf9ed4de6f44507c50d27d4d9b9d25f7874c",
+      "spec": {
+        "arm": "interego",
+        "controller": "dag",
+        "scenario": "handoff",
+        "seed": 1
+      },
+      "toolOutputsCompared": 9,
+      "toolOutputsMatchExactly": true,
+      "inspectionMatchesExceptElapsedMs": true,
+      "reconstructedPublications": 12,
+      "signaturesVerified": true,
+      "mismatches": []
+    },
+    {
+      "episode": "handoff-1-react-baseline",
+      "resultFileSha256": "d29060820f6e6057f83eede1d97dfe0b2f172d0f432b45c2dd4408322f27207d",
+      "spec": {
+        "arm": "baseline",
+        "controller": "react",
+        "scenario": "handoff",
+        "seed": 1
+      },
+      "toolOutputsCompared": 9,
+      "toolOutputsMatchExactly": true,
+      "inspectionMatchesExceptElapsedMs": true,
+      "reconstructedPublications": 12,
+      "signaturesVerified": true,
+      "mismatches": []
+    },
+    {
+      "episode": "handoff-1-react-interego",
+      "resultFileSha256": "fb506871039fb7dff1cdcaf8d23a0e277fe58a4e43d20265666921f797ba97a0",
+      "spec": {
+        "arm": "interego",
+        "controller": "react",
+        "scenario": "handoff",
+        "seed": 1
+      },
+      "toolOutputsCompared": 9,
+      "toolOutputsMatchExactly": true,
+      "inspectionMatchesExceptElapsedMs": true,
+      "reconstructedPublications": 12,
+      "signaturesVerified": true,
+      "mismatches": []
+    },
+    {
+      "episode": "rebind-0-dag-baseline",
+      "resultFileSha256": "8f61a05fd7b2ae07234da0ddc932f3c1461835fd677d21d87163016c284b9805",
+      "spec": {
+        "arm": "baseline",
+        "controller": "dag",
+        "scenario": "rebind",
+        "seed": 0
+      },
+      "toolOutputsCompared": 10,
+      "toolOutputsMatchExactly": true,
+      "inspectionMatchesExceptElapsedMs": true,
+      "reconstructedPublications": 15,
+      "signaturesVerified": true,
+      "mismatches": []
+    },
+    {
+      "episode": "rebind-0-dag-interego",
+      "resultFileSha256": "9d04d5f592b9ba5f3d8100b8028da62748281c17198c3e6f951ba69f08898aaa",
+      "spec": {
+        "arm": "interego",
+        "controller": "dag",
+        "scenario": "rebind",
+        "seed": 0
+      },
+      "toolOutputsCompared": 10,
+      "toolOutputsMatchExactly": true,
+      "inspectionMatchesExceptElapsedMs": true,
+      "reconstructedPublications": 15,
+      "signaturesVerified": true,
+      "mismatches": []
+    },
+    {
+      "episode": "rebind-0-react-baseline",
+      "resultFileSha256": "2741eba7f396a7f02d11494dd591e555f27eeaf4e0a39c33a9a969fe432e4929",
+      "spec": {
+        "arm": "baseline",
+        "controller": "react",
+        "scenario": "rebind",
+        "seed": 0
+      },
+      "toolOutputsCompared": 10,
+      "toolOutputsMatchExactly": true,
+      "inspectionMatchesExceptElapsedMs": true,
+      "reconstructedPublications": 15,
+      "signaturesVerified": true,
+      "mismatches": []
+    },
+    {
+      "episode": "rebind-0-react-interego",
+      "resultFileSha256": "55f51a8c04d6fff22168262a6c1c3bccf12b5838e5f3c1dc1ba578462ec22ef6",
+      "spec": {
+        "arm": "interego",
+        "controller": "react",
+        "scenario": "rebind",
+        "seed": 0
+      },
+      "toolOutputsCompared": 10,
+      "toolOutputsMatchExactly": true,
+      "inspectionMatchesExceptElapsedMs": true,
+      "reconstructedPublications": 15,
+      "signaturesVerified": true,
+      "mismatches": []
+    },
+    {
+      "episode": "rebind-1-dag-baseline",
+      "resultFileSha256": "c8840264efda96115b6ed326817f7100ca4ba42bf3192143ecb1f209c0f26885",
+      "spec": {
+        "arm": "baseline",
+        "controller": "dag",
+        "scenario": "rebind",
+        "seed": 1
+      },
+      "toolOutputsCompared": 10,
+      "toolOutputsMatchExactly": true,
+      "inspectionMatchesExceptElapsedMs": true,
+      "reconstructedPublications": 15,
+      "signaturesVerified": true,
+      "mismatches": []
+    },
+    {
+      "episode": "rebind-1-dag-interego",
+      "resultFileSha256": "06f8d6e9885fb0a5c94b70840e13f8b58147c32ad779483b23ec9aa69e1c7141",
+      "spec": {
+        "arm": "interego",
+        "controller": "dag",
+        "scenario": "rebind",
+        "seed": 1
+      },
+      "toolOutputsCompared": 10,
+      "toolOutputsMatchExactly": true,
+      "inspectionMatchesExceptElapsedMs": true,
+      "reconstructedPublications": 15,
+      "signaturesVerified": true,
+      "mismatches": []
+    },
+    {
+      "episode": "rebind-1-react-baseline",
+      "resultFileSha256": "145461c4d6d8bf1ddef69add14b11d6b73663b7fcecb1e8e938356a04574bc86",
+      "spec": {
+        "arm": "baseline",
+        "controller": "react",
+        "scenario": "rebind",
+        "seed": 1
+      },
+      "toolOutputsCompared": 10,
+      "toolOutputsMatchExactly": true,
+      "inspectionMatchesExceptElapsedMs": true,
+      "reconstructedPublications": 15,
+      "signaturesVerified": true,
+      "mismatches": []
+    },
+    {
+      "episode": "rebind-1-react-interego",
+      "resultFileSha256": "c2cd7fc2963cdb2f867a640b0c3862e25321dde8eb48c525f7e69b66c10f4bf0",
+      "spec": {
+        "arm": "interego",
+        "controller": "react",
+        "scenario": "rebind",
+        "seed": 1
+      },
+      "toolOutputsCompared": 10,
+      "toolOutputsMatchExactly": true,
+      "inspectionMatchesExceptElapsedMs": true,
+      "reconstructedPublications": 15,
+      "signaturesVerified": true,
+      "mismatches": []
+    },
+    {
+      "episode": "stable-0-dag-baseline",
+      "resultFileSha256": "cffeb4547b41d04a1d06fd83de16d8fa19d8c1d7b40ea53247934db00d19ee1a",
+      "spec": {
+        "arm": "baseline",
+        "controller": "dag",
+        "scenario": "stable",
+        "seed": 0
+      },
+      "toolOutputsCompared": 8,
+      "toolOutputsMatchExactly": true,
+      "inspectionMatchesExceptElapsedMs": true,
+      "reconstructedPublications": 12,
+      "signaturesVerified": true,
+      "mismatches": []
+    },
+    {
+      "episode": "stable-0-dag-interego",
+      "resultFileSha256": "53332205ec132a29904d4596f23ed0b7662cf5504b7932e29b074cb873394ed6",
+      "spec": {
+        "arm": "interego",
+        "controller": "dag",
+        "scenario": "stable",
+        "seed": 0
+      },
+      "toolOutputsCompared": 8,
+      "toolOutputsMatchExactly": true,
+      "inspectionMatchesExceptElapsedMs": true,
+      "reconstructedPublications": 12,
+      "signaturesVerified": true,
+      "mismatches": []
+    },
+    {
+      "episode": "stable-0-react-baseline",
+      "resultFileSha256": "ff12efc9d8832e3f5e80095e05c19a95232638113862767b079de3dff37ecf50",
+      "spec": {
+        "arm": "baseline",
+        "controller": "react",
+        "scenario": "stable",
+        "seed": 0
+      },
+      "toolOutputsCompared": 8,
+      "toolOutputsMatchExactly": true,
+      "inspectionMatchesExceptElapsedMs": true,
+      "reconstructedPublications": 12,
+      "signaturesVerified": true,
+      "mismatches": []
+    },
+    {
+      "episode": "stable-0-react-interego",
+      "resultFileSha256": "5a1666ef701b6df559f36666b6d76566cf272f40cf51908262bdcf801b73f15e",
+      "spec": {
+        "arm": "interego",
+        "controller": "react",
+        "scenario": "stable",
+        "seed": 0
+      },
+      "toolOutputsCompared": 8,
+      "toolOutputsMatchExactly": true,
+      "inspectionMatchesExceptElapsedMs": true,
+      "reconstructedPublications": 12,
+      "signaturesVerified": true,
+      "mismatches": []
+    },
+    {
+      "episode": "stable-1-dag-baseline",
+      "resultFileSha256": "2a44d4b00ca09f125d659c6dedc23e073a4bd0593ad3e75e5587cb5098347e43",
+      "spec": {
+        "arm": "baseline",
+        "controller": "dag",
+        "scenario": "stable",
+        "seed": 1
+      },
+      "toolOutputsCompared": 8,
+      "toolOutputsMatchExactly": true,
+      "inspectionMatchesExceptElapsedMs": true,
+      "reconstructedPublications": 12,
+      "signaturesVerified": true,
+      "mismatches": []
+    },
+    {
+      "episode": "stable-1-dag-interego",
+      "resultFileSha256": "9aeb999e8170086fa5a48f901165a1f019b35ed8e59b30d1946d8517b6419c5a",
+      "spec": {
+        "arm": "interego",
+        "controller": "dag",
+        "scenario": "stable",
+        "seed": 1
+      },
+      "toolOutputsCompared": 8,
+      "toolOutputsMatchExactly": true,
+      "inspectionMatchesExceptElapsedMs": true,
+      "reconstructedPublications": 12,
+      "signaturesVerified": true,
+      "mismatches": []
+    },
+    {
+      "episode": "stable-1-react-baseline",
+      "resultFileSha256": "6170db14e9c266c98390f3c8c743c6246162f112543e3010769137ecf806a722",
+      "spec": {
+        "arm": "baseline",
+        "controller": "react",
+        "scenario": "stable",
+        "seed": 1
+      },
+      "toolOutputsCompared": 8,
+      "toolOutputsMatchExactly": true,
+      "inspectionMatchesExceptElapsedMs": true,
+      "reconstructedPublications": 12,
+      "signaturesVerified": true,
+      "mismatches": []
+    },
+    {
+      "episode": "stable-1-react-interego",
+      "resultFileSha256": "8524566ea4d9740be6dc67a1d2265fb8bcf965729f995fda636aa6b83c6dc222",
+      "spec": {
+        "arm": "interego",
+        "controller": "react",
+        "scenario": "stable",
+        "seed": 1
+      },
+      "toolOutputsCompared": 8,
+      "toolOutputsMatchExactly": true,
+      "inspectionMatchesExceptElapsedMs": true,
+      "reconstructedPublications": 12,
+      "signaturesVerified": true,
+      "mismatches": []
+    },
+    {
+      "episode": "stale-0-dag-baseline",
+      "resultFileSha256": "4dd67e84dbc66fe52d810c21658369692464a966e9f4e45d06a682fffe962ce9",
+      "spec": {
+        "arm": "baseline",
+        "controller": "dag",
+        "scenario": "stale",
+        "seed": 0
+      },
+      "toolOutputsCompared": 10,
+      "toolOutputsMatchExactly": true,
+      "inspectionMatchesExceptElapsedMs": true,
+      "reconstructedPublications": 14,
+      "signaturesVerified": true,
+      "mismatches": []
+    },
+    {
+      "episode": "stale-0-dag-interego",
+      "resultFileSha256": "c15190133125102198bc0b456edd71b2d0059ae4a9632740f417ed67941bf0af",
+      "spec": {
+        "arm": "interego",
+        "controller": "dag",
+        "scenario": "stale",
+        "seed": 0
+      },
+      "toolOutputsCompared": 10,
+      "toolOutputsMatchExactly": true,
+      "inspectionMatchesExceptElapsedMs": true,
+      "reconstructedPublications": 14,
+      "signaturesVerified": true,
+      "mismatches": []
+    },
+    {
+      "episode": "stale-0-react-baseline",
+      "resultFileSha256": "8a485e890234ab5014402a68687f3ed84aa59ebc8df19dcb95eab091af6c9efc",
+      "spec": {
+        "arm": "baseline",
+        "controller": "react",
+        "scenario": "stale",
+        "seed": 0
+      },
+      "toolOutputsCompared": 10,
+      "toolOutputsMatchExactly": true,
+      "inspectionMatchesExceptElapsedMs": true,
+      "reconstructedPublications": 14,
+      "signaturesVerified": true,
+      "mismatches": []
+    },
+    {
+      "episode": "stale-0-react-interego",
+      "resultFileSha256": "0db24a02062793dadbe6f01862c89f5feae04c6f79d01292b6ee75553b8f7b4e",
+      "spec": {
+        "arm": "interego",
+        "controller": "react",
+        "scenario": "stale",
+        "seed": 0
+      },
+      "toolOutputsCompared": 10,
+      "toolOutputsMatchExactly": true,
+      "inspectionMatchesExceptElapsedMs": true,
+      "reconstructedPublications": 14,
+      "signaturesVerified": true,
+      "mismatches": []
+    },
+    {
+      "episode": "stale-1-dag-baseline",
+      "resultFileSha256": "7aeaec8bd0a3e9ece2d5234e4834e2e1491fbf8430a6eed76bf903ec8b62e597",
+      "spec": {
+        "arm": "baseline",
+        "controller": "dag",
+        "scenario": "stale",
+        "seed": 1
+      },
+      "toolOutputsCompared": 10,
+      "toolOutputsMatchExactly": true,
+      "inspectionMatchesExceptElapsedMs": true,
+      "reconstructedPublications": 14,
+      "signaturesVerified": true,
+      "mismatches": []
+    },
+    {
+      "episode": "stale-1-dag-interego",
+      "resultFileSha256": "4718c2f1e45d2526f099e28f46de8ec68f025102ddf4e8e22d50c5a456fafb09",
+      "spec": {
+        "arm": "interego",
+        "controller": "dag",
+        "scenario": "stale",
+        "seed": 1
+      },
+      "toolOutputsCompared": 10,
+      "toolOutputsMatchExactly": true,
+      "inspectionMatchesExceptElapsedMs": true,
+      "reconstructedPublications": 14,
+      "signaturesVerified": true,
+      "mismatches": []
+    },
+    {
+      "episode": "stale-1-react-baseline",
+      "resultFileSha256": "5ce57673e05aaff660e5c649e7d71cb8bc0ae8ded46256b3e76d79e14947971d",
+      "spec": {
+        "arm": "baseline",
+        "controller": "react",
+        "scenario": "stale",
+        "seed": 1
+      },
+      "toolOutputsCompared": 10,
+      "toolOutputsMatchExactly": true,
+      "inspectionMatchesExceptElapsedMs": true,
+      "reconstructedPublications": 14,
+      "signaturesVerified": true,
+      "mismatches": []
+    },
+    {
+      "episode": "stale-1-react-interego",
+      "resultFileSha256": "b5f340787f509c39b30b29eeeb0666ccca329f7f0e36c4930246cd0ce9ef0d82",
+      "spec": {
+        "arm": "interego",
+        "controller": "react",
+        "scenario": "stale",
+        "seed": 1
+      },
+      "toolOutputsCompared": 10,
+      "toolOutputsMatchExactly": true,
+      "inspectionMatchesExceptElapsedMs": true,
+      "reconstructedPublications": 14,
+      "signaturesVerified": true,
+      "mismatches": []
+    }
+  ]
+}

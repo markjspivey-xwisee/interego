@@ -1,0 +1,31 @@
+{
+  "observedDate": "2026-09-12",
+  "provider": "configured-codex-cli",
+  "requestedModel": "gpt-6-astra",
+  "configuredAuthenticationAvailable": true,
+  "modelCatalogEntryAvailable": true,
+  "inferenceVerified": false,
+  "probes": [
+    {
+      "condition": "ephemeral-read-only-cli-with-structured-output",
+      "wallTimeoutSeconds": 45,
+      "outcome": "timeout",
+      "observedModelEvents": 0,
+      "completedModelTurns": 0
+    },
+    {
+      "condition": "same-with-apps-plugins-shell-multi-agent-and-configured-mcp-disabled-for-invocation",
+      "wallTimeoutSeconds": 60,
+      "outcome": "timeout",
+      "observedModelEvents": 0,
+      "completedModelTurns": 0,
+      "stdoutBytes": 0,
+      "stderrBytes": 0
+    }
+  ],
+  "providerInferenceCalls": null,
+  "inputTokens": null,
+  "outputTokens": null,
+  "costUsd": null,
+  "limitation": "Successful authentication and model catalog lookup did not establish working inference. No completion or provider usage was observed. The optional CLI provider must fail closed; it cannot silently substitute simulated decisions."
+}

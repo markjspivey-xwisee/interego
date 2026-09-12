@@ -1,0 +1,1273 @@
+{
+  "seed": 1,
+  "scenario": "rebind",
+  "controller": "dag",
+  "arm": "interego",
+  "success": true,
+  "finished": true,
+  "finalError": null,
+  "modelDecisionRequests": 4,
+  "providerInferenceCalls": null,
+  "inputTokens": null,
+  "outputTokens": null,
+  "cachedTokens": null,
+  "dollarCost": null,
+  "toolCalls": 10,
+  "toolMs": 75,
+  "decisionTransportWaitMs": 94594,
+  "elapsedMs": 94678,
+  "maxParallelTools": 1,
+  "handedOff": false,
+  "generations": 1,
+  "lastVerifiedReadAtMoves": 3,
+  "inspection": {
+    "arm": "interego",
+    "scenario": "rebind",
+    "seed": 1,
+    "initialState": {
+      "board": "........X",
+      "turn": "O",
+      "status": "in-progress",
+      "winner": null,
+      "winningLine": null,
+      "moveNumber": 1,
+      "sessionVersion": 1,
+      "lastPosition": 8,
+      "lastMark": "X"
+    },
+    "state": {
+      "board": "OXO.....X",
+      "status": "in-progress",
+      "winner": null,
+      "winningLine": null,
+      "turn": "X",
+      "moveNumber": 4,
+      "sessionVersion": 4,
+      "lastPosition": 2,
+      "lastMark": "O"
+    },
+    "taskMoves": 3,
+    "externalMoves": 0,
+    "generation": 1,
+    "audit": [
+      {
+        "actor": "task",
+        "position": 0,
+        "mark": "O",
+        "before": {
+          "board": "........X",
+          "turn": "O",
+          "status": "in-progress",
+          "winner": null,
+          "winningLine": null,
+          "moveNumber": 1,
+          "sessionVersion": 1,
+          "lastPosition": 8,
+          "lastMark": "X"
+        },
+        "after": {
+          "board": "O.......X",
+          "status": "in-progress",
+          "winner": null,
+          "winningLine": null,
+          "turn": "X",
+          "moveNumber": 2,
+          "sessionVersion": 2,
+          "lastPosition": 0,
+          "lastMark": "O"
+        },
+        "expectedHead": "bafkreias2bz3cacteuetcoxovevomwog7pfg6xn72mberrywmzc6c4wn44",
+        "beforeHead": "bafkreias2bz3cacteuetcoxovevomwog7pfg6xn72mberrywmzc6c4wn44",
+        "afterHead": "bafkreiaaukn4ef3ze23ko3ayqlkeb7fk4hyjn5jc2pqmskhtjwbdpanff4"
+      },
+      {
+        "actor": "task",
+        "position": 1,
+        "mark": "X",
+        "before": {
+          "board": "O.......X",
+          "status": "in-progress",
+          "winner": null,
+          "winningLine": null,
+          "turn": "X",
+          "moveNumber": 2,
+          "sessionVersion": 2,
+          "lastPosition": 0,
+          "lastMark": "O"
+        },
+        "after": {
+          "board": "OX......X",
+          "status": "in-progress",
+          "winner": null,
+          "winningLine": null,
+          "turn": "O",
+          "moveNumber": 3,
+          "sessionVersion": 3,
+          "lastPosition": 1,
+          "lastMark": "X"
+        },
+        "expectedHead": "bafkreiaaukn4ef3ze23ko3ayqlkeb7fk4hyjn5jc2pqmskhtjwbdpanff4",
+        "beforeHead": "bafkreiaaukn4ef3ze23ko3ayqlkeb7fk4hyjn5jc2pqmskhtjwbdpanff4",
+        "afterHead": "bafkreibjhqey5cs73vstfdiuftowmtsg65d5tbldqm2h3d72y7o5q7lcxm"
+      },
+      {
+        "actor": "task",
+        "position": 2,
+        "mark": "O",
+        "before": {
+          "board": "OX......X",
+          "status": "in-progress",
+          "winner": null,
+          "winningLine": null,
+          "turn": "O",
+          "moveNumber": 3,
+          "sessionVersion": 3,
+          "lastPosition": 1,
+          "lastMark": "X"
+        },
+        "after": {
+          "board": "OXO.....X",
+          "status": "in-progress",
+          "winner": null,
+          "winningLine": null,
+          "turn": "X",
+          "moveNumber": 4,
+          "sessionVersion": 4,
+          "lastPosition": 2,
+          "lastMark": "O"
+        },
+        "expectedHead": "bafkreibjhqey5cs73vstfdiuftowmtsg65d5tbldqm2h3d72y7o5q7lcxm",
+        "beforeHead": "bafkreibjhqey5cs73vstfdiuftowmtsg65d5tbldqm2h3d72y7o5q7lcxm",
+        "afterHead": "bafkreiaoaxktekzrg4kaecemm6mwsfj3xqvsfdqedprv44milg7u2s5htm"
+      }
+    ],
+    "events": [
+      {
+        "event": "tool",
+        "tool": "discover",
+        "args": {
+          "handle": "urn:graph:benchmark:controller-surface:case-1:surface"
+        },
+        "result": {
+          "resource": "urn:graph:benchmark:controller-surface:case-1:surface"
+        },
+        "backendReads": 1,
+        "elapsedMs": 0.2434089999878779
+      },
+      {
+        "event": "contract-rebound",
+        "generation": 1
+      },
+      {
+        "event": "tool",
+        "tool": "read",
+        "args": {
+          "resource": "urn:graph:benchmark:controller-surface:case-1:surface"
+        },
+        "result": {
+          "state": {
+            "board": "........X",
+            "turn": "O",
+            "status": "in-progress",
+            "winner": null,
+            "winningLine": null,
+            "moveNumber": 1,
+            "sessionVersion": 1,
+            "lastPosition": 8,
+            "lastMark": "X"
+          },
+          "controls": [
+            {
+              "operation": "move",
+              "position": 0,
+              "binding": "control:83f89ffee101c18519903c7161e7bd5d4e8f103ccd7af542d72f1b91a72e3b62"
+            },
+            {
+              "operation": "move",
+              "position": 1,
+              "binding": "control:eb98157cd1c4f9bb9965577144fb36e95dd22a8d876ab632902e947d7a580efd"
+            },
+            {
+              "operation": "move",
+              "position": 2,
+              "binding": "control:f49e62153b01a46d865fdad14804d967295bef7703e1b656b65387d8f26be23d"
+            },
+            {
+              "operation": "move",
+              "position": 3,
+              "binding": "control:10511c4f257576fe12c5d8958845294473ff0f1144b3a449f455b01466caae5b"
+            },
+            {
+              "operation": "move",
+              "position": 4,
+              "binding": "control:101b9cf3dc7d1c3e3b5089e766c7e0e36586f562d74b8b8837e49976683d97cd"
+            },
+            {
+              "operation": "move",
+              "position": 5,
+              "binding": "control:764b15810870dac08c93cc3f2a729e5ef95c11d002e074ab1f50b22dad70797d"
+            },
+            {
+              "operation": "move",
+              "position": 6,
+              "binding": "control:da5e22cf723519d7637a786514f1c2dd7a0f11a0daaaa93030e474fcc9885c71"
+            },
+            {
+              "operation": "move",
+              "position": 7,
+              "binding": "control:f9c94a8114c07d50b781f38c1438849aaf3b36e7650cf4d32d3a6c080bd09b38"
+            }
+          ],
+          "verified": true,
+          "taskProgress": {
+            "completedMoves": 0
+          },
+          "history": []
+        },
+        "backendReads": 24,
+        "elapsedMs": 9.13429700001143
+      },
+      {
+        "event": "tool",
+        "tool": "invoke",
+        "args": {
+          "control": {
+            "operation": "move",
+            "position": 0,
+            "binding": "control:83f89ffee101c18519903c7161e7bd5d4e8f103ccd7af542d72f1b91a72e3b62"
+          }
+        },
+        "result": {
+          "status": 412,
+          "committed": false,
+          "error": "surface_operation_refused"
+        },
+        "backendReads": 11,
+        "elapsedMs": 2.157763999886811
+      },
+      {
+        "event": "tool",
+        "tool": "read",
+        "args": {
+          "resource": "urn:graph:benchmark:controller-surface:case-1:surface"
+        },
+        "result": {
+          "state": {
+            "board": "........X",
+            "turn": "O",
+            "status": "in-progress",
+            "winner": null,
+            "winningLine": null,
+            "moveNumber": 1,
+            "sessionVersion": 1,
+            "lastPosition": 8,
+            "lastMark": "X"
+          },
+          "controls": [
+            {
+              "operation": "move",
+              "position": 0,
+              "binding": "control:3c1bbc101c568c38f2a3988a5ea5bc7a28d657cece22ef255e617940d772743d"
+            },
+            {
+              "operation": "move",
+              "position": 1,
+              "binding": "control:f2edd1a020dbb4f286e8522f2065eb7a33e14476e0e7d67e07dd0505b7acfa8b"
+            },
+            {
+              "operation": "move",
+              "position": 2,
+              "binding": "control:3bc7b73ca8d61c3f05dae932dab853387d9dd17b211b9366dac1986a7250b099"
+            },
+            {
+              "operation": "move",
+              "position": 3,
+              "binding": "control:fd011f1ac73b5419fb0ea11420f09f2aede9b095f407e362801fb0b5af17651f"
+            },
+            {
+              "operation": "move",
+              "position": 4,
+              "binding": "control:c6d42d670be02c6bf3b6ad9b55e55004f7ab892bdf8bb2f1c7f5271933770b85"
+            },
+            {
+              "operation": "move",
+              "position": 5,
+              "binding": "control:84cee3139696d84e59f42fb0aa0e4a5f521dc3307bb734c9fc841202d017ed28"
+            },
+            {
+              "operation": "move",
+              "position": 6,
+              "binding": "control:5f99aeacb16648ec2af7c451a0cb13600d7053d97ffa8932883de9e6943fc7bc"
+            },
+            {
+              "operation": "move",
+              "position": 7,
+              "binding": "control:c39936f1ece443f89e8a50105b110c26fd8cb8319a6751fb0e9e214d93011c8f"
+            }
+          ],
+          "verified": true,
+          "taskProgress": {
+            "completedMoves": 0
+          },
+          "history": []
+        },
+        "backendReads": 24,
+        "elapsedMs": 9.031215999973938
+      },
+      {
+        "event": "tool",
+        "tool": "invoke",
+        "args": {
+          "control": {
+            "operation": "move",
+            "position": 0,
+            "binding": "control:3c1bbc101c568c38f2a3988a5ea5bc7a28d657cece22ef255e617940d772743d"
+          }
+        },
+        "result": {
+          "status": 200,
+          "committed": true,
+          "state": {
+            "board": "O.......X",
+            "turn": "X",
+            "status": "in-progress",
+            "winner": null,
+            "winningLine": null,
+            "moveNumber": 2,
+            "sessionVersion": 2,
+            "lastPosition": 0,
+            "lastMark": "O"
+          }
+        },
+        "backendReads": 42,
+        "elapsedMs": 12.048618000000715
+      },
+      {
+        "event": "tool",
+        "tool": "read",
+        "args": {
+          "resource": "urn:graph:benchmark:controller-surface:case-1:surface"
+        },
+        "result": {
+          "state": {
+            "board": "O.......X",
+            "turn": "X",
+            "status": "in-progress",
+            "winner": null,
+            "winningLine": null,
+            "moveNumber": 2,
+            "sessionVersion": 2,
+            "lastPosition": 0,
+            "lastMark": "O"
+          },
+          "controls": [
+            {
+              "operation": "move",
+              "position": 1,
+              "binding": "control:e129e340050b38fa222895a92bcd658d1c78e73f6822524140f3addd3d586029"
+            },
+            {
+              "operation": "move",
+              "position": 2,
+              "binding": "control:87e8289915153df1eb104446a0c5b485ea8ceae6fcbcdac95d32913a3e32c5b7"
+            },
+            {
+              "operation": "move",
+              "position": 3,
+              "binding": "control:ee003c780e188042324f8d73b41198eb54400d2e1f703d7524474c899917a52c"
+            },
+            {
+              "operation": "move",
+              "position": 4,
+              "binding": "control:881d01094878fb0fbf36d4117351357b12e733348898b2dd778b553ced2ee751"
+            },
+            {
+              "operation": "move",
+              "position": 5,
+              "binding": "control:28b827f39ba9de4a888932f6c65efb5547b6d44946c5e9d41af0ab079c3b0e3c"
+            },
+            {
+              "operation": "move",
+              "position": 6,
+              "binding": "control:35a527c12712454206291140bf3993a7e92c5aea914a47ecbd5ccdfac465ba82"
+            },
+            {
+              "operation": "move",
+              "position": 7,
+              "binding": "control:0b9dc3092a698f35b0e68679904dff0fd8089a45a9f43b87fb399d90a21b8e9f"
+            }
+          ],
+          "verified": true,
+          "taskProgress": {
+            "completedMoves": 1
+          },
+          "history": [
+            {
+              "actor": "task",
+              "position": 0,
+              "mark": "O",
+              "moveNumber": 2
+            }
+          ]
+        },
+        "backendReads": 24,
+        "elapsedMs": 7.993003000039607
+      },
+      {
+        "event": "tool",
+        "tool": "invoke",
+        "args": {
+          "control": {
+            "operation": "move",
+            "position": 1,
+            "binding": "control:e129e340050b38fa222895a92bcd658d1c78e73f6822524140f3addd3d586029"
+          }
+        },
+        "result": {
+          "status": 200,
+          "committed": true,
+          "state": {
+            "board": "OX......X",
+            "turn": "O",
+            "status": "in-progress",
+            "winner": null,
+            "winningLine": null,
+            "moveNumber": 3,
+            "sessionVersion": 3,
+            "lastPosition": 1,
+            "lastMark": "X"
+          }
+        },
+        "backendReads": 42,
+        "elapsedMs": 11.437326000072062
+      },
+      {
+        "event": "tool",
+        "tool": "read",
+        "args": {
+          "resource": "urn:graph:benchmark:controller-surface:case-1:surface"
+        },
+        "result": {
+          "state": {
+            "board": "OX......X",
+            "turn": "O",
+            "status": "in-progress",
+            "winner": null,
+            "winningLine": null,
+            "moveNumber": 3,
+            "sessionVersion": 3,
+            "lastPosition": 1,
+            "lastMark": "X"
+          },
+          "controls": [
+            {
+              "operation": "move",
+              "position": 2,
+              "binding": "control:31fb2925151bbd42b54f4577c53f8ee6fc693d88378b6156a7bac4bf60d40d33"
+            },
+            {
+              "operation": "move",
+              "position": 3,
+              "binding": "control:78a8339ca66258559db2f1775269db4fd6307a2570a50de74f016ffa6eecbbab"
+            },
+            {
+              "operation": "move",
+              "position": 4,
+              "binding": "control:1d53dbed5aee027dcecd8eef9d544b1810d558ce3c61052905b98ce01e8bc751"
+            },
+            {
+              "operation": "move",
+              "position": 5,
+              "binding": "control:12c200745cafe26f3a12f37c2cfc768d22ab51df0816eb2154c0c28de0b9c300"
+            },
+            {
+              "operation": "move",
+              "position": 6,
+              "binding": "control:d4e5d6641cd018190858183998d4cc10976e59afca8a7bd82bfa3f5f48741cb9"
+            },
+            {
+              "operation": "move",
+              "position": 7,
+              "binding": "control:435e97bc8b2f355bb3e44a583195f324616627ba14dbe0a855b2736c5c11f5b0"
+            }
+          ],
+          "verified": true,
+          "taskProgress": {
+            "completedMoves": 2
+          },
+          "history": [
+            {
+              "actor": "task",
+              "position": 0,
+              "mark": "O",
+              "moveNumber": 2
+            },
+            {
+              "actor": "task",
+              "position": 1,
+              "mark": "X",
+              "moveNumber": 3
+            }
+          ]
+        },
+        "backendReads": 24,
+        "elapsedMs": 7.1919919999782
+      },
+      {
+        "event": "tool",
+        "tool": "invoke",
+        "args": {
+          "control": {
+            "operation": "move",
+            "position": 2,
+            "binding": "control:31fb2925151bbd42b54f4577c53f8ee6fc693d88378b6156a7bac4bf60d40d33"
+          }
+        },
+        "result": {
+          "status": 200,
+          "committed": true,
+          "state": {
+            "board": "OXO.....X",
+            "turn": "X",
+            "status": "in-progress",
+            "winner": null,
+            "winningLine": null,
+            "moveNumber": 4,
+            "sessionVersion": 4,
+            "lastPosition": 2,
+            "lastMark": "O"
+          }
+        },
+        "backendReads": 42,
+        "elapsedMs": 10.086941999965347
+      },
+      {
+        "event": "tool",
+        "tool": "read",
+        "args": {
+          "resource": "urn:graph:benchmark:controller-surface:case-1:surface"
+        },
+        "result": {
+          "state": {
+            "board": "OXO.....X",
+            "turn": "X",
+            "status": "in-progress",
+            "winner": null,
+            "winningLine": null,
+            "moveNumber": 4,
+            "sessionVersion": 4,
+            "lastPosition": 2,
+            "lastMark": "O"
+          },
+          "controls": [
+            {
+              "operation": "move",
+              "position": 3,
+              "binding": "control:a160006bbb45293ad8e3c760d4719fed241215d2092f9cf50672376cbf4d8afd"
+            },
+            {
+              "operation": "move",
+              "position": 4,
+              "binding": "control:d579c8c7b21ebc90a9d541cec51c78e00877bff5869609081d7835b6d41de54b"
+            },
+            {
+              "operation": "move",
+              "position": 5,
+              "binding": "control:2c6b32503946c79f8b283d812163461f45cb4f6651c40c52cb4028f3991b7ef0"
+            },
+            {
+              "operation": "move",
+              "position": 6,
+              "binding": "control:5cf7253cee2d6b82ba03701ed7f75e2a8d5d11317f7340227fd2ac476dd19e3e"
+            },
+            {
+              "operation": "move",
+              "position": 7,
+              "binding": "control:e3ec2bdb5b0e26a15b5c8da9405284c7b80abd8720948aadf23f7c1e692981ac"
+            }
+          ],
+          "verified": true,
+          "taskProgress": {
+            "completedMoves": 3
+          },
+          "history": [
+            {
+              "actor": "task",
+              "position": 0,
+              "mark": "O",
+              "moveNumber": 2
+            },
+            {
+              "actor": "task",
+              "position": 1,
+              "mark": "X",
+              "moveNumber": 3
+            },
+            {
+              "actor": "task",
+              "position": 2,
+              "mark": "O",
+              "moveNumber": 4
+            }
+          ]
+        },
+        "backendReads": 24,
+        "elapsedMs": 6.150404999963939
+      }
+    ],
+    "backendReads": 258,
+    "verifiedReads": 258,
+    "signatureFailures": 0,
+    "durableDescriptorsVerified": true,
+    "descriptorCount": 15,
+    "mutationAttempts": 3,
+    "staleRejections": 1,
+    "invalidRejections": 0,
+    "invalidAccepted": 0,
+    "staleAccepted": 0,
+    "lowestPositionViolations": 0,
+    "completed": true
+  },
+  "modelDecisions": [
+    {
+      "request": 0,
+      "generation": 0,
+      "promptSha256": "7c39d1453576880d3e7e98e64031c580080e65100ddb0ac76792a061f34b14d4",
+      "submission": "{\"nodes\":[{\"id\":\"d\",\"tool\":\"discover\",\"args\":\"{\\\"handle\\\":\\\"urn:graph:benchmark:controller-surface:case-1:surface\\\"}\",\"dependsOn\":[]},{\"id\":\"r\",\"tool\":\"read\",\"args\":\"{\\\"resource\\\":{\\\"$ref\\\":\\\"d.resource\\\"}}\",\"dependsOn\":[\"d\"]}],\"finish\":false}\n",
+      "transportWaitMs": 61166,
+      "output": {
+        "nodes": [
+          {
+            "id": "d",
+            "tool": "discover",
+            "args": "{\"handle\":\"urn:graph:benchmark:controller-surface:case-1:surface\"}",
+            "dependsOn": []
+          },
+          {
+            "id": "r",
+            "tool": "read",
+            "args": "{\"resource\":{\"$ref\":\"d.resource\"}}",
+            "dependsOn": [
+              "d"
+            ]
+          }
+        ],
+        "finish": false
+      }
+    },
+    {
+      "request": 1,
+      "generation": 0,
+      "promptSha256": "d34f6be5d78e7a56f41cf93216455643a21ae1e97a1d454daef5743ca3428400",
+      "submission": "{\"nodes\":[{\"id\":\"m1\",\"tool\":\"invoke\",\"args\":\"{\\\"control\\\":{\\\"$ref\\\":\\\"r.controls.0\\\"}}\",\"dependsOn\":[]},{\"id\":\"r1\",\"tool\":\"read\",\"args\":\"{\\\"resource\\\":{\\\"$ref\\\":\\\"d.resource\\\"}}\",\"dependsOn\":[\"m1\"]},{\"id\":\"m2\",\"tool\":\"invoke\",\"args\":\"{\\\"control\\\":{\\\"$ref\\\":\\\"r1.controls.0\\\"}}\",\"dependsOn\":[\"r1\"]},{\"id\":\"r2\",\"tool\":\"read\",\"args\":\"{\\\"resource\\\":{\\\"$ref\\\":\\\"d.resource\\\"}}\",\"dependsOn\":[\"m2\"]},{\"id\":\"m3\",\"tool\":\"invoke\",\"args\":\"{\\\"control\\\":{\\\"$ref\\\":\\\"r2.controls.0\\\"}}\",\"dependsOn\":[\"r2\"]},{\"id\":\"r3\",\"tool\":\"read\",\"args\":\"{\\\"resource\\\":{\\\"$ref\\\":\\\"d.resource\\\"}}\",\"dependsOn\":[\"m3\"]}],\"finish\":true}\n",
+      "transportWaitMs": 13145,
+      "output": {
+        "nodes": [
+          {
+            "id": "m1",
+            "tool": "invoke",
+            "args": "{\"control\":{\"$ref\":\"r.controls.0\"}}",
+            "dependsOn": []
+          },
+          {
+            "id": "r1",
+            "tool": "read",
+            "args": "{\"resource\":{\"$ref\":\"d.resource\"}}",
+            "dependsOn": [
+              "m1"
+            ]
+          },
+          {
+            "id": "m2",
+            "tool": "invoke",
+            "args": "{\"control\":{\"$ref\":\"r1.controls.0\"}}",
+            "dependsOn": [
+              "r1"
+            ]
+          },
+          {
+            "id": "r2",
+            "tool": "read",
+            "args": "{\"resource\":{\"$ref\":\"d.resource\"}}",
+            "dependsOn": [
+              "m2"
+            ]
+          },
+          {
+            "id": "m3",
+            "tool": "invoke",
+            "args": "{\"control\":{\"$ref\":\"r2.controls.0\"}}",
+            "dependsOn": [
+              "r2"
+            ]
+          },
+          {
+            "id": "r3",
+            "tool": "read",
+            "args": "{\"resource\":{\"$ref\":\"d.resource\"}}",
+            "dependsOn": [
+              "m3"
+            ]
+          }
+        ],
+        "finish": true
+      }
+    },
+    {
+      "request": 2,
+      "generation": 0,
+      "promptSha256": "dada0b210d1721499663290a2e6ab62c93b3a552865c69b2256a8d212be98ea2",
+      "submission": "{\"nodes\":[{\"id\":\"fresh\",\"tool\":\"read\",\"args\":\"{\\\"resource\\\":{\\\"$ref\\\":\\\"d.resource\\\"}}\",\"dependsOn\":[]}],\"finish\":false}\n",
+      "transportWaitMs": 6028,
+      "output": {
+        "nodes": [
+          {
+            "id": "fresh",
+            "tool": "read",
+            "args": "{\"resource\":{\"$ref\":\"d.resource\"}}",
+            "dependsOn": []
+          }
+        ],
+        "finish": false
+      }
+    },
+    {
+      "request": 3,
+      "generation": 0,
+      "promptSha256": "e19194ecbb7f0ca611f77722bd7f18701450f79a4433a68967c173b9330e41d9",
+      "submission": "{\"nodes\":[{\"id\":\"a1\",\"tool\":\"invoke\",\"args\":\"{\\\"control\\\":{\\\"$ref\\\":\\\"fresh.controls.0\\\"}}\",\"dependsOn\":[]},{\"id\":\"b1\",\"tool\":\"read\",\"args\":\"{\\\"resource\\\":{\\\"$ref\\\":\\\"d.resource\\\"}}\",\"dependsOn\":[\"a1\"]},{\"id\":\"a2\",\"tool\":\"invoke\",\"args\":\"{\\\"control\\\":{\\\"$ref\\\":\\\"b1.controls.0\\\"}}\",\"dependsOn\":[\"b1\"]},{\"id\":\"b2\",\"tool\":\"read\",\"args\":\"{\\\"resource\\\":{\\\"$ref\\\":\\\"d.resource\\\"}}\",\"dependsOn\":[\"a2\"]},{\"id\":\"a3\",\"tool\":\"invoke\",\"args\":\"{\\\"control\\\":{\\\"$ref\\\":\\\"b2.controls.0\\\"}}\",\"dependsOn\":[\"b2\"]},{\"id\":\"b3\",\"tool\":\"read\",\"args\":\"{\\\"resource\\\":{\\\"$ref\\\":\\\"d.resource\\\"}}\",\"dependsOn\":[\"a3\"]}],\"finish\":true}\n",
+      "transportWaitMs": 14256,
+      "output": {
+        "nodes": [
+          {
+            "id": "a1",
+            "tool": "invoke",
+            "args": "{\"control\":{\"$ref\":\"fresh.controls.0\"}}",
+            "dependsOn": []
+          },
+          {
+            "id": "b1",
+            "tool": "read",
+            "args": "{\"resource\":{\"$ref\":\"d.resource\"}}",
+            "dependsOn": [
+              "a1"
+            ]
+          },
+          {
+            "id": "a2",
+            "tool": "invoke",
+            "args": "{\"control\":{\"$ref\":\"b1.controls.0\"}}",
+            "dependsOn": [
+              "b1"
+            ]
+          },
+          {
+            "id": "b2",
+            "tool": "read",
+            "args": "{\"resource\":{\"$ref\":\"d.resource\"}}",
+            "dependsOn": [
+              "a2"
+            ]
+          },
+          {
+            "id": "a3",
+            "tool": "invoke",
+            "args": "{\"control\":{\"$ref\":\"b2.controls.0\"}}",
+            "dependsOn": [
+              "b2"
+            ]
+          },
+          {
+            "id": "b3",
+            "tool": "read",
+            "args": "{\"resource\":{\"$ref\":\"d.resource\"}}",
+            "dependsOn": [
+              "a3"
+            ]
+          }
+        ],
+        "finish": true
+      }
+    }
+  ],
+  "events": [
+    {
+      "id": "d",
+      "tool": "discover",
+      "result": {
+        "resource": "urn:graph:benchmark:controller-surface:case-1:surface"
+      },
+      "args": {
+        "handle": "urn:graph:benchmark:controller-surface:case-1:surface"
+      },
+      "generation": 0,
+      "request": 0,
+      "atMs": 61168
+    },
+    {
+      "id": "r",
+      "tool": "read",
+      "result": {
+        "state": {
+          "board": "........X",
+          "turn": "O",
+          "status": "in-progress",
+          "winner": null,
+          "winningLine": null,
+          "moveNumber": 1,
+          "sessionVersion": 1,
+          "lastPosition": 8,
+          "lastMark": "X"
+        },
+        "controls": [
+          {
+            "operation": "move",
+            "position": 0,
+            "binding": "control:83f89ffee101c18519903c7161e7bd5d4e8f103ccd7af542d72f1b91a72e3b62"
+          },
+          {
+            "operation": "move",
+            "position": 1,
+            "binding": "control:eb98157cd1c4f9bb9965577144fb36e95dd22a8d876ab632902e947d7a580efd"
+          },
+          {
+            "operation": "move",
+            "position": 2,
+            "binding": "control:f49e62153b01a46d865fdad14804d967295bef7703e1b656b65387d8f26be23d"
+          },
+          {
+            "operation": "move",
+            "position": 3,
+            "binding": "control:10511c4f257576fe12c5d8958845294473ff0f1144b3a449f455b01466caae5b"
+          },
+          {
+            "operation": "move",
+            "position": 4,
+            "binding": "control:101b9cf3dc7d1c3e3b5089e766c7e0e36586f562d74b8b8837e49976683d97cd"
+          },
+          {
+            "operation": "move",
+            "position": 5,
+            "binding": "control:764b15810870dac08c93cc3f2a729e5ef95c11d002e074ab1f50b22dad70797d"
+          },
+          {
+            "operation": "move",
+            "position": 6,
+            "binding": "control:da5e22cf723519d7637a786514f1c2dd7a0f11a0daaaa93030e474fcc9885c71"
+          },
+          {
+            "operation": "move",
+            "position": 7,
+            "binding": "control:f9c94a8114c07d50b781f38c1438849aaf3b36e7650cf4d32d3a6c080bd09b38"
+          }
+        ],
+        "verified": true,
+        "taskProgress": {
+          "completedMoves": 0
+        },
+        "history": []
+      },
+      "args": {
+        "resource": "urn:graph:benchmark:controller-surface:case-1:surface"
+      },
+      "generation": 0,
+      "request": 0,
+      "atMs": 61177
+    },
+    {
+      "id": "m1",
+      "tool": "invoke",
+      "result": {
+        "status": 412,
+        "committed": false,
+        "error": "surface_operation_refused"
+      },
+      "args": {
+        "control": {
+          "operation": "move",
+          "position": 0,
+          "binding": "control:83f89ffee101c18519903c7161e7bd5d4e8f103ccd7af542d72f1b91a72e3b62"
+        }
+      },
+      "generation": 0,
+      "request": 1,
+      "atMs": 74325
+    },
+    {
+      "id": "fresh",
+      "tool": "read",
+      "result": {
+        "state": {
+          "board": "........X",
+          "turn": "O",
+          "status": "in-progress",
+          "winner": null,
+          "winningLine": null,
+          "moveNumber": 1,
+          "sessionVersion": 1,
+          "lastPosition": 8,
+          "lastMark": "X"
+        },
+        "controls": [
+          {
+            "operation": "move",
+            "position": 0,
+            "binding": "control:3c1bbc101c568c38f2a3988a5ea5bc7a28d657cece22ef255e617940d772743d"
+          },
+          {
+            "operation": "move",
+            "position": 1,
+            "binding": "control:f2edd1a020dbb4f286e8522f2065eb7a33e14476e0e7d67e07dd0505b7acfa8b"
+          },
+          {
+            "operation": "move",
+            "position": 2,
+            "binding": "control:3bc7b73ca8d61c3f05dae932dab853387d9dd17b211b9366dac1986a7250b099"
+          },
+          {
+            "operation": "move",
+            "position": 3,
+            "binding": "control:fd011f1ac73b5419fb0ea11420f09f2aede9b095f407e362801fb0b5af17651f"
+          },
+          {
+            "operation": "move",
+            "position": 4,
+            "binding": "control:c6d42d670be02c6bf3b6ad9b55e55004f7ab892bdf8bb2f1c7f5271933770b85"
+          },
+          {
+            "operation": "move",
+            "position": 5,
+            "binding": "control:84cee3139696d84e59f42fb0aa0e4a5f521dc3307bb734c9fc841202d017ed28"
+          },
+          {
+            "operation": "move",
+            "position": 6,
+            "binding": "control:5f99aeacb16648ec2af7c451a0cb13600d7053d97ffa8932883de9e6943fc7bc"
+          },
+          {
+            "operation": "move",
+            "position": 7,
+            "binding": "control:c39936f1ece443f89e8a50105b110c26fd8cb8319a6751fb0e9e214d93011c8f"
+          }
+        ],
+        "verified": true,
+        "taskProgress": {
+          "completedMoves": 0
+        },
+        "history": []
+      },
+      "args": {
+        "resource": "urn:graph:benchmark:controller-surface:case-1:surface"
+      },
+      "generation": 0,
+      "request": 2,
+      "atMs": 80364
+    },
+    {
+      "id": "a1",
+      "tool": "invoke",
+      "result": {
+        "status": 200,
+        "committed": true,
+        "state": {
+          "board": "O.......X",
+          "turn": "X",
+          "status": "in-progress",
+          "winner": null,
+          "winningLine": null,
+          "moveNumber": 2,
+          "sessionVersion": 2,
+          "lastPosition": 0,
+          "lastMark": "O"
+        }
+      },
+      "args": {
+        "control": {
+          "operation": "move",
+          "position": 0,
+          "binding": "control:3c1bbc101c568c38f2a3988a5ea5bc7a28d657cece22ef255e617940d772743d"
+        }
+      },
+      "generation": 0,
+      "request": 3,
+      "atMs": 94633
+    },
+    {
+      "id": "b1",
+      "tool": "read",
+      "result": {
+        "state": {
+          "board": "O.......X",
+          "turn": "X",
+          "status": "in-progress",
+          "winner": null,
+          "winningLine": null,
+          "moveNumber": 2,
+          "sessionVersion": 2,
+          "lastPosition": 0,
+          "lastMark": "O"
+        },
+        "controls": [
+          {
+            "operation": "move",
+            "position": 1,
+            "binding": "control:e129e340050b38fa222895a92bcd658d1c78e73f6822524140f3addd3d586029"
+          },
+          {
+            "operation": "move",
+            "position": 2,
+            "binding": "control:87e8289915153df1eb104446a0c5b485ea8ceae6fcbcdac95d32913a3e32c5b7"
+          },
+          {
+            "operation": "move",
+            "position": 3,
+            "binding": "control:ee003c780e188042324f8d73b41198eb54400d2e1f703d7524474c899917a52c"
+          },
+          {
+            "operation": "move",
+            "position": 4,
+            "binding": "control:881d01094878fb0fbf36d4117351357b12e733348898b2dd778b553ced2ee751"
+          },
+          {
+            "operation": "move",
+            "position": 5,
+            "binding": "control:28b827f39ba9de4a888932f6c65efb5547b6d44946c5e9d41af0ab079c3b0e3c"
+          },
+          {
+            "operation": "move",
+            "position": 6,
+            "binding": "control:35a527c12712454206291140bf3993a7e92c5aea914a47ecbd5ccdfac465ba82"
+          },
+          {
+            "operation": "move",
+            "position": 7,
+            "binding": "control:0b9dc3092a698f35b0e68679904dff0fd8089a45a9f43b87fb399d90a21b8e9f"
+          }
+        ],
+        "verified": true,
+        "taskProgress": {
+          "completedMoves": 1
+        },
+        "history": [
+          {
+            "actor": "task",
+            "position": 0,
+            "mark": "O",
+            "moveNumber": 2
+          }
+        ]
+      },
+      "args": {
+        "resource": "urn:graph:benchmark:controller-surface:case-1:surface"
+      },
+      "generation": 0,
+      "request": 3,
+      "atMs": 94641
+    },
+    {
+      "id": "a2",
+      "tool": "invoke",
+      "result": {
+        "status": 200,
+        "committed": true,
+        "state": {
+          "board": "OX......X",
+          "turn": "O",
+          "status": "in-progress",
+          "winner": null,
+          "winningLine": null,
+          "moveNumber": 3,
+          "sessionVersion": 3,
+          "lastPosition": 1,
+          "lastMark": "X"
+        }
+      },
+      "args": {
+        "control": {
+          "operation": "move",
+          "position": 1,
+          "binding": "control:e129e340050b38fa222895a92bcd658d1c78e73f6822524140f3addd3d586029"
+        }
+      },
+      "generation": 0,
+      "request": 3,
+      "atMs": 94652
+    },
+    {
+      "id": "b2",
+      "tool": "read",
+      "result": {
+        "state": {
+          "board": "OX......X",
+          "turn": "O",
+          "status": "in-progress",
+          "winner": null,
+          "winningLine": null,
+          "moveNumber": 3,
+          "sessionVersion": 3,
+          "lastPosition": 1,
+          "lastMark": "X"
+        },
+        "controls": [
+          {
+            "operation": "move",
+            "position": 2,
+            "binding": "control:31fb2925151bbd42b54f4577c53f8ee6fc693d88378b6156a7bac4bf60d40d33"
+          },
+          {
+            "operation": "move",
+            "position": 3,
+            "binding": "control:78a8339ca66258559db2f1775269db4fd6307a2570a50de74f016ffa6eecbbab"
+          },
+          {
+            "operation": "move",
+            "position": 4,
+            "binding": "control:1d53dbed5aee027dcecd8eef9d544b1810d558ce3c61052905b98ce01e8bc751"
+          },
+          {
+            "operation": "move",
+            "position": 5,
+            "binding": "control:12c200745cafe26f3a12f37c2cfc768d22ab51df0816eb2154c0c28de0b9c300"
+          },
+          {
+            "operation": "move",
+            "position": 6,
+            "binding": "control:d4e5d6641cd018190858183998d4cc10976e59afca8a7bd82bfa3f5f48741cb9"
+          },
+          {
+            "operation": "move",
+            "position": 7,
+            "binding": "control:435e97bc8b2f355bb3e44a583195f324616627ba14dbe0a855b2736c5c11f5b0"
+          }
+        ],
+        "verified": true,
+        "taskProgress": {
+          "completedMoves": 2
+        },
+        "history": [
+          {
+            "actor": "task",
+            "position": 0,
+            "mark": "O",
+            "moveNumber": 2
+          },
+          {
+            "actor": "task",
+            "position": 1,
+            "mark": "X",
+            "moveNumber": 3
+          }
+        ]
+      },
+      "args": {
+        "resource": "urn:graph:benchmark:controller-surface:case-1:surface"
+      },
+      "generation": 0,
+      "request": 3,
+      "atMs": 94660
+    },
+    {
+      "id": "a3",
+      "tool": "invoke",
+      "result": {
+        "status": 200,
+        "committed": true,
+        "state": {
+          "board": "OXO.....X",
+          "turn": "X",
+          "status": "in-progress",
+          "winner": null,
+          "winningLine": null,
+          "moveNumber": 4,
+          "sessionVersion": 4,
+          "lastPosition": 2,
+          "lastMark": "O"
+        }
+      },
+      "args": {
+        "control": {
+          "operation": "move",
+          "position": 2,
+          "binding": "control:31fb2925151bbd42b54f4577c53f8ee6fc693d88378b6156a7bac4bf60d40d33"
+        }
+      },
+      "generation": 0,
+      "request": 3,
+      "atMs": 94670
+    },
+    {
+      "id": "b3",
+      "tool": "read",
+      "result": {
+        "state": {
+          "board": "OXO.....X",
+          "turn": "X",
+          "status": "in-progress",
+          "winner": null,
+          "winningLine": null,
+          "moveNumber": 4,
+          "sessionVersion": 4,
+          "lastPosition": 2,
+          "lastMark": "O"
+        },
+        "controls": [
+          {
+            "operation": "move",
+            "position": 3,
+            "binding": "control:a160006bbb45293ad8e3c760d4719fed241215d2092f9cf50672376cbf4d8afd"
+          },
+          {
+            "operation": "move",
+            "position": 4,
+            "binding": "control:d579c8c7b21ebc90a9d541cec51c78e00877bff5869609081d7835b6d41de54b"
+          },
+          {
+            "operation": "move",
+            "position": 5,
+            "binding": "control:2c6b32503946c79f8b283d812163461f45cb4f6651c40c52cb4028f3991b7ef0"
+          },
+          {
+            "operation": "move",
+            "position": 6,
+            "binding": "control:5cf7253cee2d6b82ba03701ed7f75e2a8d5d11317f7340227fd2ac476dd19e3e"
+          },
+          {
+            "operation": "move",
+            "position": 7,
+            "binding": "control:e3ec2bdb5b0e26a15b5c8da9405284c7b80abd8720948aadf23f7c1e692981ac"
+          }
+        ],
+        "verified": true,
+        "taskProgress": {
+          "completedMoves": 3
+        },
+        "history": [
+          {
+            "actor": "task",
+            "position": 0,
+            "mark": "O",
+            "moveNumber": 2
+          },
+          {
+            "actor": "task",
+            "position": 1,
+            "mark": "X",
+            "moveNumber": 3
+          },
+          {
+            "actor": "task",
+            "position": 2,
+            "mark": "O",
+            "moveNumber": 4
+          }
+        ]
+      },
+      "args": {
+        "resource": "urn:graph:benchmark:controller-surface:case-1:surface"
+      },
+      "generation": 0,
+      "request": 3,
+      "atMs": 94676
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+# Live transport files are redundant with the retained complete episode evidence.
+results/*/*/decision-*.request.json
+results/*/*/decision-*.response.json
+results/*/*/pending.json
+results/*/*/case.json
+results/*/results.json
+*.tmp
