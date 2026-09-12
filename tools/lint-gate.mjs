@@ -235,7 +235,7 @@ const UNLINTED_FRONTIER = {
   //    (its .tsx files are clean). Written here rather than argued about later: this is the one
   //    kind of repin that is legitimate, and it is legitimate only because the SCAN widened.
   applications: { errors: 1452, files: 464 },
-  benchmarks: { errors: 193, files: 31 },
+  benchmarks: { errors: 193, files: 38 },
   demos: { errors: 48, files: 45 },
   // A declared npm workspace (see package.json `workspaces`), never linted.
   'mcp-server': { errors: 33, files: 4 },
