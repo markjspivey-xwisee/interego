@@ -183,6 +183,7 @@ COPY deploy/mcp-relay/client-signing-keys.ts ./
 COPY deploy/mcp-relay/client-authorization.ts ./
 COPY deploy/mcp-relay/client-registration.ts ./
 COPY deploy/mcp-relay/client-interactions.ts ./
+COPY deploy/mcp-relay/client-interaction-http.ts ./
 COPY deploy/mcp-relay/client-interaction-mcp.ts ./
 COPY deploy/mcp-relay/mcp-serving.ts ./
 COPY deploy/mcp-relay/hmd-app-logic.ts ./

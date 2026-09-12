@@ -19,17 +19,17 @@
  * it identically to a real device. This is the standard way to CI-gate
  * WebAuthn flows.
  */
-import { test, expect, request, type Page } from '@playwright/test';
+import { test, expect, request, type Page, type CDPSession } from '@playwright/test';
 import { createHash, randomBytes } from 'node:crypto';
 import { signedJsonGraph, type Json } from '../../../integrations/application-runtime/application-lab-runtime.js';
-import { clientKeyId, verifyClientAuthorization } from '../../../integrations/application-runtime/client-authorization.js';
+import { clientKeyId, clientSigningMessage, verifyClientAuthorization } from '../../../integrations/application-runtime/client-authorization.js';
 
 const RELAY_URL = process.env.BASE_URL ?? 'https://relay.interego.xwisee.com';
 /** Browser lexical state used only to inspect this synthetic test's key. */
 declare const pendingGrant: { keyPair: CryptoKeyPair };
 const IDENTITY_URL = process.env.IDENTITY_URL ?? 'https://identity.interego.xwisee.com';
 
-async function enableVirtualAuthenticator(page: Page): Promise<string> {
+async function enableVirtualAuthenticator(page: Page): Promise<{ client: CDPSession; authenticatorId: string }> {
   const client = await page.context().newCDPSession(page);
   await client.send('WebAuthn.enable');
   const { authenticatorId } = await client.send('WebAuthn.addVirtualAuthenticator', {
@@ -42,7 +42,7 @@ async function enableVirtualAuthenticator(page: Page): Promise<string> {
       automaticPresenceSimulation: true,
     },
   });
-  return authenticatorId;
+  return { client, authenticatorId };
 }
 
 function pkce(): { verifier: string; challenge: string } {
@@ -51,8 +51,9 @@ function pkce(): { verifier: string; challenge: string } {
   return { verifier, challenge };
 }
 
-test('passkey OAuth dance issues a usable MCP token', async ({ page }) => {
-  test.setTimeout(300_000);
+test('passkey OAuth dance issues a usable MCP token', async ({ page, browser }) => {
+  // Includes an additional live action through a fresh request-only browser.
+  test.setTimeout(420_000);
   const api = await request.newContext();
 
   // 1. Dynamic Client Registration
@@ -78,7 +79,7 @@ test('passkey OAuth dance issues a usable MCP token', async ({ page }) => {
   // here is just to get a human-readable unique display string in logs.
   const displayName = 'pw-passkey-' + randomBytes(4).toString('hex');
 
-  await enableVirtualAuthenticator(page);
+  const registeredAuthenticator = await enableVirtualAuthenticator(page);
 
   const authUrl = `${RELAY_URL}/authorize?response_type=code&client_id=${clientId}&redirect_uri=http%3A%2F%2Flocalhost%3A9999%2Fcb&code_challenge=${challenge}&code_challenge_method=S256&scope=mcp&state=${state}`;
 
@@ -191,7 +192,7 @@ test('passkey OAuth dance issues a usable MCP token', async ({ page }) => {
   // A second isolated scenario exercises the deployed scoped companion end to
   // end. The passkey and subordinate signing key are owned by Chromium here.
   let callSequence = 100;
-  const call = async (name: string, args: Record<string, unknown> = {}) => {
+  const call = async (name: string, args: Record<string, unknown> = {}, includePrivateMetadata = false) => {
     const response = await api.post(`${RELAY_URL}/mcp`, { headers: { Authorization: `Bearer ${freshTokens.access_token}`,
       'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
       data: { jsonrpc: '2.0', id: callSequence++, method: 'tools/call', params: { name, arguments: args } } });
@@ -202,7 +203,7 @@ test('passkey OAuth dance issues a usable MCP token', async ({ page }) => {
     const result = json.result.structuredContent ?? JSON.parse(json.result.content[0].text);
     const value = typeof result.status === 'number' && typeof result.body === 'string' ? JSON.parse(result.body) : result;
     expect(value.error, JSON.stringify(value).slice(0, 2000)).toBeUndefined();
-    return value;
+    return includePrivateMetadata ? { value, metadata: json.result._meta, content: json.result.content } : value;
   };
   const appId = 'urn:graph:interego:application:browser-grant-ci-' + Date.now() + '-' + randomBytes(4).toString('hex');
   const graphs = Object.fromEntries(['state', 'contract', 'definition', 'catalog'].map(k => [k, appId + ':' + k]));
@@ -287,6 +288,90 @@ test('passkey OAuth dance issues a usable MCP token', async ({ page }) => {
   await expect(page.locator('#scope-status')).toContainText('private key was discarded');
   console.log('PASS: live passkey-authorized grant enrollment, nonexportable Chromium key, two automatic MCP actions, registered-holder accounting and complete retained-proof replay.');
   console.log('PASS: live OAuth identity renewal, registered passkey RP, deployed signing page and retained-proof verification.');
+  // Only this synthetic credential enters the clean context. No login token,
+  // cookies, storage, real account or demo action is reused by the signing page.
+  const cleanContext = await browser.newContext();
+  try {
+    const signingPage = await cleanContext.newPage();
+    const cleanAuthenticator = await enableVirtualAuthenticator(signingPage);
+    const { credentials } = await registeredAuthenticator.client.send('WebAuthn.getCredentials', {
+      authenticatorId: registeredAuthenticator.authenticatorId,
+    });
+    expect(credentials.length).toBe(1);
+    await cleanAuthenticator.client.send('WebAuthn.addCredential', {
+      authenticatorId: cleanAuthenticator.authenticatorId, credential: credentials[0]!,
+    });
+    type SigningStats = { gets: string[]; storageAttempts: string[]; initialStorage: { local: number; session: number } };
+    await signingPage.addInitScript(() => {
+      const stats: SigningStats = { gets: [], storageAttempts: [],
+        initialStorage: { local: localStorage.length, session: sessionStorage.length } };
+      (window as unknown as { signingStats: SigningStats }).signingStats = stats;
+      const nativeGet = CredentialsContainer.prototype.get;
+      CredentialsContainer.prototype.get = function (options) {
+        if (options?.publicKey) stats.gets.push(btoa(String.fromCharCode(...new Uint8Array(options.publicKey.challenge as ArrayBuffer)))
+          .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''));
+        return nativeGet.call(this, options);
+      };
+      for (const name of ['localStorage', 'sessionStorage']) Object.defineProperty(window, name, {
+        get() { stats.storageAttempts.push(name); throw Error('Request-only signing must not access browser storage'); },
+      });
+    });
+    const browserRequests: Array<Promise<{ path: string; method: string; bearer: boolean; cookie: boolean; origin?: string }>> = [];
+    signingPage.on('request', request => browserRequests.push(request.allHeaders().then(headers => ({
+      path: new URL(request.url()).pathname, method: request.method(), bearer: !!headers['authorization'],
+      cookie: !!headers['cookie'], origin: headers['origin'],
+    }))));
+    const direct = await createRequest('three-direct-handoff');
+    expect(direct.openAction).toBe('urn:interego:client-interaction:open-signing-page');
+    const opened = await call('act', { descriptor_url: direct.descriptorUrl, action_iri: direct.openAction, payload: {} }, true);
+    const launch = opened.metadata?.['interego/browser-signing'];
+    expect(launch?.id).toBe(direct.id);
+    const launchUrl = new URL(launch.signingUrl);
+    expect(launchUrl.origin).toBe(new URL(RELAY_URL).origin);
+    expect(launchUrl.pathname).toBe('/sign-action');
+    expect(launchUrl.search).toBe('?request=' + direct.id);
+    expect(/^#launch=[a-zA-Z0-9_-]{43}$/.test(launchUrl.hash)).toBe(true);
+    const launchSecret = launchUrl.hash.slice('#launch='.length);
+    expect(JSON.stringify(opened.value).includes(launchSecret)).toBe(false);
+    expect(JSON.stringify(opened.content).includes(launchSecret)).toBe(false);
+    const [reviewResponse] = await Promise.all([
+      signingPage.waitForResponse(response => response.request().method() === 'POST'
+        && new URL(response.url()).pathname === `/client-interactions/${direct.id}/review`, { timeout: 90_000 }),
+      signingPage.goto(launchUrl.href),
+    ]);
+    expect(reviewResponse.ok()).toBe(true);
+    const review = await reviewResponse.json();
+    expect(JSON.parse(review.signingRequest.message)).toMatchObject({ actor: direct.actor, actionIri: appId + ':record',
+      contractDigest: contract.documentDigest, expectedHead: after.snapshot.head.cid, payload: { observation: 'three-direct-handoff' } });
+    expect(await signingPage.evaluate(() => location.hash)).toBe('');
+    await expect(signingPage.locator('#sign')).toBeEnabled({ timeout: 90_000 });
+    expect(await signingPage.evaluate(() => (window as unknown as { signingStats: SigningStats }).signingStats)).toEqual({
+      gets: [], storageAttempts: [], initialStorage: { local: 0, session: 0 },
+    });
+    for (const selector of ['#passkey-login', '#wallet-login', '#cancel', '#scoped-signing'])
+      await expect(signingPage.locator(selector)).toBeHidden();
+    await signingPage.locator('#sign').click();
+    await expect(signingPage.locator('#status')).toContainText('Signed, verified and submitted', { timeout: 90_000 });
+    const stats = await signingPage.evaluate(() => (window as unknown as { signingStats: SigningStats }).signingStats);
+    expect(stats.gets).toEqual([createHash('sha256').update(clientSigningMessage(review.signingRequest.message, key)).digest('base64url')]);
+    expect(stats.storageAttempts).toEqual([]);
+    const requests = await Promise.all(browserRequests);
+    expect(requests.every(r => !r.bearer && !r.cookie)).toBe(true);
+    expect(requests.filter(r => /\/(?:auth|challenges|authorize|token)(?:\/|$)/.test(r.path))).toEqual([]);
+    const operations = requests.filter(r => r.path.startsWith('/client-interactions/'));
+    expect(operations.map(r => r.path.split('/').at(-1))).toEqual(['exchange', 'status', 'review', 'submit']);
+    expect(operations.every(r => r.method === 'POST' && r.origin === launchUrl.origin)).toBe(true);
+    const completed = await call('act', { descriptor_url: direct.descriptorUrl, action_iri: direct.action, payload: {} });
+    expect(completed.status).toBe('completed'); expect(completed.result.committed).toBe(true);
+    const directProof = await verifyClientAuthorization(completed.result.receipt.clientAuthorization, review.signingRequest.message, [key]);
+    expect(directProof.keyId).toBe(clientKeyId(key));
+    const final = await call('render_hmd', { descriptor_url: catalog.descriptorUrl });
+    expect(final.snapshot.head.version).toBe(4); expect(final.snapshot.head.forked).toBe(false);
+    expect(final.snapshot.head.state.events.map((event: { observation: string }) => event.observation)).toEqual(['one', 'two', 'three-direct-handoff']);
+    expect(final.snapshot.replay.complete).toBe(true); expect(final.snapshot.replay.errors).toEqual([]);
+    expect(final.snapshot.replay.links.at(-1)).toMatchObject({ verified: true, authorizationBasis: 'client-signature', clientKeyId: clientKeyId(key) });
+    console.log('PASS: deployed private MCP launch, clean browser with no login/storage, exactly one native receipt assertion, direct commit and complete replay.');
+  } finally { await cleanContext.close(); }
   } finally {
   // 6. Cleanup — purge the test user so live identity / pod state stays
   // pristine. The relay's MCP token wraps an identity-server bearer in
