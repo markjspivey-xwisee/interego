@@ -1,0 +1,713 @@
+{
+  "schema": "live-discovery-public-setup-attempts/v1",
+  "scope": "unsigned-derived-incomplete-setup-records",
+  "sourceAuditPassed": true,
+  "disclosureScope": "retained-records-and-agent-self-disclosure",
+  "protocol": {
+    "version": "1.0.3",
+    "design": "four-pair-procedure-exposure/v1",
+    "plannedPairs": [
+      {
+        "pair": "P1",
+        "condition": "stable",
+        "firstArm": "procedure-present"
+      },
+      {
+        "pair": "P2",
+        "condition": "stable",
+        "firstArm": "procedure-absent"
+      },
+      {
+        "pair": "P3",
+        "condition": "changed-binding",
+        "firstArm": "procedure-present"
+      },
+      {
+        "pair": "P4",
+        "condition": "changed-binding",
+        "firstArm": "procedure-absent"
+      }
+    ]
+  },
+  "disposition": "aborted-before-pair-completion",
+  "reason": "preflight-proof-not-discoverable",
+  "plannedRuns": 8,
+  "startedRuns": 4,
+  "unstartedRuns": 4,
+  "runs": [
+    {
+      "label": "SetupRun01",
+      "pair": "P1",
+      "assignedArm": "procedure-present",
+      "plannedCondition": "stable",
+      "started": true,
+      "completed": false,
+      "checkpointReached": false,
+      "protocolConformant": true,
+      "assistanceCount": 0,
+      "protocolDeviationCount": 0,
+      "reportedProtocolDeviationCount": 0,
+      "reportedCounts": {
+        "calls": 20,
+        "batches": 8,
+        "failedCalls": 0
+      },
+      "grading": {
+        "launchAttempts": 0,
+        "successfulLaunches": 0,
+        "submissionAttempts": 0,
+        "gradedSubmissions": 0,
+        "grades": []
+      },
+      "calls": [
+        {
+          "index": 1,
+          "batch": 1,
+          "verb": "dereference",
+          "failed": false
+        },
+        {
+          "index": 2,
+          "batch": 2,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 3,
+          "batch": 3,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 4,
+          "batch": 3,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 5,
+          "batch": 3,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 6,
+          "batch": 3,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 7,
+          "batch": 4,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 8,
+          "batch": 4,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 9,
+          "batch": 4,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 10,
+          "batch": 4,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 11,
+          "batch": 4,
+          "verb": "dereference",
+          "failed": false
+        },
+        {
+          "index": 12,
+          "batch": 4,
+          "verb": "dereference",
+          "failed": false
+        },
+        {
+          "index": 13,
+          "batch": 5,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 14,
+          "batch": 5,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 15,
+          "batch": 5,
+          "verb": "dereference",
+          "failed": false
+        },
+        {
+          "index": 16,
+          "batch": 6,
+          "verb": "get_current_head",
+          "failed": false
+        },
+        {
+          "index": 17,
+          "batch": 6,
+          "verb": "dereference",
+          "failed": false
+        },
+        {
+          "index": 18,
+          "batch": 6,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 19,
+          "batch": 7,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 20,
+          "batch": 8,
+          "verb": "act",
+          "failed": false
+        }
+      ]
+    },
+    {
+      "label": "SetupRun02",
+      "pair": "P1",
+      "assignedArm": "procedure-absent",
+      "plannedCondition": "stable",
+      "started": false,
+      "completed": false,
+      "checkpointReached": false,
+      "protocolConformant": null,
+      "assistanceCount": 0,
+      "protocolDeviationCount": 0,
+      "reportedProtocolDeviationCount": 0,
+      "reportedCounts": {
+        "calls": 0,
+        "batches": 0,
+        "failedCalls": 0
+      },
+      "grading": {
+        "launchAttempts": 0,
+        "successfulLaunches": 0,
+        "submissionAttempts": 0,
+        "gradedSubmissions": 0,
+        "grades": []
+      },
+      "calls": []
+    },
+    {
+      "label": "SetupRun03",
+      "pair": "P2",
+      "assignedArm": "procedure-absent",
+      "plannedCondition": "stable",
+      "started": true,
+      "completed": false,
+      "checkpointReached": false,
+      "protocolConformant": true,
+      "assistanceCount": 0,
+      "protocolDeviationCount": 0,
+      "reportedProtocolDeviationCount": 0,
+      "reportedCounts": {
+        "calls": 19,
+        "batches": 9,
+        "failedCalls": 1
+      },
+      "grading": {
+        "launchAttempts": 0,
+        "successfulLaunches": 0,
+        "submissionAttempts": 0,
+        "gradedSubmissions": 0,
+        "grades": []
+      },
+      "calls": [
+        {
+          "index": 1,
+          "batch": 1,
+          "verb": "dereference",
+          "failed": false
+        },
+        {
+          "index": 2,
+          "batch": 2,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 3,
+          "batch": 3,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 4,
+          "batch": 3,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 5,
+          "batch": 3,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 6,
+          "batch": 3,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 7,
+          "batch": 4,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 8,
+          "batch": 4,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 9,
+          "batch": 4,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 10,
+          "batch": 4,
+          "verb": "dereference",
+          "failed": false
+        },
+        {
+          "index": 11,
+          "batch": 4,
+          "verb": "dereference",
+          "failed": false
+        },
+        {
+          "index": 12,
+          "batch": 5,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 13,
+          "batch": 5,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 14,
+          "batch": 5,
+          "verb": "get_current_head",
+          "failed": false
+        },
+        {
+          "index": 15,
+          "batch": 5,
+          "verb": "dereference",
+          "failed": false
+        },
+        {
+          "index": 16,
+          "batch": 6,
+          "verb": "dereference",
+          "failed": true
+        },
+        {
+          "index": 17,
+          "batch": 7,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 18,
+          "batch": 8,
+          "verb": "act",
+          "failed": false
+        },
+        {
+          "index": 19,
+          "batch": 9,
+          "verb": "get_descriptor",
+          "failed": false
+        }
+      ]
+    },
+    {
+      "label": "SetupRun04",
+      "pair": "P2",
+      "assignedArm": "procedure-present",
+      "plannedCondition": "stable",
+      "started": false,
+      "completed": false,
+      "checkpointReached": false,
+      "protocolConformant": null,
+      "assistanceCount": 0,
+      "protocolDeviationCount": 0,
+      "reportedProtocolDeviationCount": 0,
+      "reportedCounts": {
+        "calls": 0,
+        "batches": 0,
+        "failedCalls": 0
+      },
+      "grading": {
+        "launchAttempts": 0,
+        "successfulLaunches": 0,
+        "submissionAttempts": 0,
+        "gradedSubmissions": 0,
+        "grades": []
+      },
+      "calls": []
+    },
+    {
+      "label": "SetupRun05",
+      "pair": "P3",
+      "assignedArm": "procedure-present",
+      "plannedCondition": "changed-binding",
+      "started": true,
+      "completed": false,
+      "checkpointReached": false,
+      "protocolConformant": true,
+      "assistanceCount": 0,
+      "protocolDeviationCount": 0,
+      "reportedProtocolDeviationCount": 1,
+      "reportedCounts": {
+        "calls": 20,
+        "batches": 8,
+        "failedCalls": 2
+      },
+      "grading": {
+        "launchAttempts": 0,
+        "successfulLaunches": 0,
+        "submissionAttempts": 0,
+        "gradedSubmissions": 0,
+        "grades": []
+      },
+      "calls": [
+        {
+          "index": 1,
+          "batch": 1,
+          "verb": "dereference",
+          "failed": false
+        },
+        {
+          "index": 2,
+          "batch": 2,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 3,
+          "batch": 3,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 4,
+          "batch": 3,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 5,
+          "batch": 3,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 6,
+          "batch": 3,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 7,
+          "batch": 4,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 8,
+          "batch": 4,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 9,
+          "batch": 4,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 10,
+          "batch": 4,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 11,
+          "batch": 4,
+          "verb": "dereference",
+          "failed": false
+        },
+        {
+          "index": 12,
+          "batch": 4,
+          "verb": "dereference",
+          "failed": false
+        },
+        {
+          "index": 13,
+          "batch": 5,
+          "verb": "dereference",
+          "failed": false
+        },
+        {
+          "index": 14,
+          "batch": 5,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 15,
+          "batch": 5,
+          "verb": "get_current_head",
+          "failed": false
+        },
+        {
+          "index": 16,
+          "batch": 5,
+          "verb": "get_current_head",
+          "failed": false
+        },
+        {
+          "index": 17,
+          "batch": 6,
+          "verb": "act",
+          "failed": true
+        },
+        {
+          "index": 18,
+          "batch": 7,
+          "verb": "dereference",
+          "failed": true
+        },
+        {
+          "index": 19,
+          "batch": 8,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 20,
+          "batch": 8,
+          "verb": "get_descriptor",
+          "failed": false
+        }
+      ]
+    },
+    {
+      "label": "SetupRun06",
+      "pair": "P3",
+      "assignedArm": "procedure-absent",
+      "plannedCondition": "changed-binding",
+      "started": false,
+      "completed": false,
+      "checkpointReached": false,
+      "protocolConformant": null,
+      "assistanceCount": 0,
+      "protocolDeviationCount": 0,
+      "reportedProtocolDeviationCount": 0,
+      "reportedCounts": {
+        "calls": 0,
+        "batches": 0,
+        "failedCalls": 0
+      },
+      "grading": {
+        "launchAttempts": 0,
+        "successfulLaunches": 0,
+        "submissionAttempts": 0,
+        "gradedSubmissions": 0,
+        "grades": []
+      },
+      "calls": []
+    },
+    {
+      "label": "SetupRun07",
+      "pair": "P4",
+      "assignedArm": "procedure-absent",
+      "plannedCondition": "changed-binding",
+      "started": true,
+      "completed": false,
+      "checkpointReached": false,
+      "protocolConformant": true,
+      "assistanceCount": 0,
+      "protocolDeviationCount": 0,
+      "reportedProtocolDeviationCount": 0,
+      "reportedCounts": {
+        "calls": 18,
+        "batches": 8,
+        "failedCalls": 1
+      },
+      "grading": {
+        "launchAttempts": 0,
+        "successfulLaunches": 0,
+        "submissionAttempts": 0,
+        "gradedSubmissions": 0,
+        "grades": []
+      },
+      "calls": [
+        {
+          "index": 1,
+          "batch": 1,
+          "verb": "dereference",
+          "failed": false
+        },
+        {
+          "index": 2,
+          "batch": 2,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 3,
+          "batch": 3,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 4,
+          "batch": 3,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 5,
+          "batch": 3,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 6,
+          "batch": 3,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 7,
+          "batch": 4,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 8,
+          "batch": 4,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 9,
+          "batch": 4,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 10,
+          "batch": 4,
+          "verb": "dereference",
+          "failed": false
+        },
+        {
+          "index": 11,
+          "batch": 4,
+          "verb": "dereference",
+          "failed": false
+        },
+        {
+          "index": 12,
+          "batch": 5,
+          "verb": "dereference",
+          "failed": false
+        },
+        {
+          "index": 13,
+          "batch": 5,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 14,
+          "batch": 5,
+          "verb": "get_current_head",
+          "failed": false
+        },
+        {
+          "index": 15,
+          "batch": 6,
+          "verb": "dereference",
+          "failed": true
+        },
+        {
+          "index": 16,
+          "batch": 6,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 17,
+          "batch": 7,
+          "verb": "get_descriptor",
+          "failed": false
+        },
+        {
+          "index": 18,
+          "batch": 8,
+          "verb": "act",
+          "failed": false
+        }
+      ]
+    },
+    {
+      "label": "SetupRun08",
+      "pair": "P4",
+      "assignedArm": "procedure-present",
+      "plannedCondition": "changed-binding",
+      "started": false,
+      "completed": false,
+      "checkpointReached": false,
+      "protocolConformant": null,
+      "assistanceCount": 0,
+      "protocolDeviationCount": 0,
+      "reportedProtocolDeviationCount": 0,
+      "reportedCounts": {
+        "calls": 0,
+        "batches": 0,
+        "failedCalls": 0
+      },
+      "grading": {
+        "launchAttempts": 0,
+        "successfulLaunches": 0,
+        "submissionAttempts": 0,
+        "gradedSubmissions": 0,
+        "grades": []
+      },
+      "calls": []
+    }
+  ]
+}
