@@ -174,7 +174,9 @@ const resourceWriteBody = topLevelFunctionBody(
   'function resourceWriteContext(args: ToolArgs): ResourceWriteContext {',
 );
 check('resource publication requires the authenticated principal and signs with that exact identity',
-  resourceWriteBody.includes('request.actor !== context.principal')
+  resourceWriteBody.includes('protectResourcePublication(context.reads, context.principal,')
+  && resourceWriteBody.includes('publish: publication.publish')
+  && stripComments(readFileSync(join(here, '..', 'resource-publication.ts'), 'utf8')).includes('request.actor !== principal')
   && resourceWriteBody.includes('_session_agent_did: context.principal')
   && resourceWriteBody.includes('if_match: request.expectedHead')
   && resourceWriteBody.includes('sign_authorship: true'));

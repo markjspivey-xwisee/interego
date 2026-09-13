@@ -3,6 +3,7 @@ import { parseHypermediaMarkdown } from '@interego/core';
 import { ResourceCompositions, type ResourceDescriptor, type ResourceWriteContext, type ResourceView } from '../../../deploy/mcp-relay/resource-compositions.js';
 import { signedJsonGraph } from '../../application-runtime/application-lab-runtime.js';
 import composition from '../resource-composition.js';
+import { protectResourcePublication } from '../../../deploy/mcp-relay/resource-publication.js';
 
 const G = 'urn:interego:game:';
 const H = 'http://www.w3.org/ns/hydra/core#';
@@ -61,6 +62,33 @@ function control(view: ResourceView, id: string) { return view.controls.find(con
 async function invoke(f: ReturnType<typeof fixture>, c: Record<string, unknown>, payload = c['payload']) { return f.modules.invoke(String(c['descriptorUrl']), String(c['action']), payload, f.context); }
 
 describe('signed resource surface composition', () => {
+  it.each(['public', 'private', 'shared'] as const)('applies generic audience preservation to a %s board successor', async visibility => {
+    const f = fixture();
+    const view = (await f.open())!;
+    const reads = { ...f.context.reads, descriptor: async (url: string) => {
+      const descriptor = await f.context.reads.descriptor(url);
+      const audience = url === f.urls.state || url.endsWith('/state-successor.ttl') ? visibility : 'public';
+      const payload = url + '.payload';
+      return { ...descriptor, distribution: { url: payload, encrypted: audience !== 'public' }, turtle: `
+        @prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+        @prefix dcat: <http://www.w3.org/ns/dcat#> .
+        <> iep:affordance [ a dcat:Distribution; dcat:accessURL <${payload}>;
+          iep:encrypted ${audience !== 'public'}; iep:visibility "${audience}" ] .` };
+    } };
+    const sink = vi.fn(async (request: Parameters<ResourceWriteContext['publish']>[0], _audience: 'public' | 'private') => f.publish(request));
+    const context = { ...f.context, ...protectResourcePublication(reads, f.context.principal, sink) };
+    const c = control(view, 'position-4');
+    const result = await f.modules.invoke(String(c['descriptorUrl']), String(c['action']), c['payload'], context);
+    if (visibility === 'shared') {
+      expect(result).toMatchObject({ error: 'publication_refused', committed: false });
+      expect(f.publish).not.toHaveBeenCalled();
+      expect(sink).not.toHaveBeenCalled();
+    } else {
+      expect(result).toMatchObject({ committed: true, verified: true });
+      expect(sink).toHaveBeenCalledWith(expect.objectContaining({ graphIri: f.ids.state, expectedHead: 'state-cid' }), visibility);
+      expect((result!['view'] as ResourceView)['snapshot']).toMatchObject({ state: { board: '....X....', sessionVersion: 1 } });
+    }
+  });
   it('opens arbitrary graph/action IDs with verified evidence and zero writes; HMD carries typed authority-closed controls', async () => {
     const f = fixture(); const view = (await f.open())!;
     expect(view['snapshot']).toMatchObject({ trust: { verified: true, artifactsVerified: 5, artifactsTotal: 5 } });
