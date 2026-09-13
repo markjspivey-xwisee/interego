@@ -106,6 +106,8 @@ function renderInteraction(initial){
   function check(){
     if(!card.isConnected||busy)return;
     clearTimeout(timer);busy=true;refresh.disabled=true;
+    // Match visible availability to the click guards while status is in flight.
+    sign.disabled=true;cancel.disabled=true;renew.disabled=true;
     control('urn:interego:client-interaction:status').then(function(v){if(card.isConnected)show(v);}).catch(function(e){
       current=null;sign.disabled=true;cancel.disabled=true;renew.disabled=true;state.className='status err';state.textContent='Unable to check signing: '+e.message;reportSize();
     }).finally(function(){

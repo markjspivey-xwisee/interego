@@ -173,6 +173,46 @@ describe('MCP signing lifecycle on the actual SDK transport', () => {
     } finally { doms.forEach(dom => dom.window.close());await f.close(); }
   });
 
+  it('disables signing controls while a background status check is pending, then accepts the next click', async () => {
+    const f = await harness();
+    const status = await f.broker.status(f.id, f.owners['alice']!);
+    let finishStatus!: (value: unknown) => void;
+    const deferredStatus = new Promise(resolve => { finishStatus = resolve; });
+    let checks = 0;
+    let poll: (() => void) | undefined;
+    const openExternal = vi.fn();
+    const callTool = vi.fn(async (name: string) => {
+      if (name === 'act') return clientInteractionToolResult(await f.broker.openSigning(f.id, f.owners['alice']!));
+      expect(name).toBe('render_hmd');
+      return { structuredContent: { interaction: ++checks === 1 ? status : await deferredStatus } };
+    });
+    const dom = new JSDOM(HMD_APP_HTML, { runScripts: 'dangerously', beforeParse(w) {
+      Object.defineProperty(w, 'openai', { value: { toolOutput: f.pending, callTool, openExternal, sendFollowUpMessage: vi.fn() } });
+      const timeout = w.setTimeout.bind(w);
+      w.setTimeout = ((handler: TimerHandler, ms?: number) => {
+        if (ms === 5000) { poll = handler as () => void; return 0; }
+        return timeout(handler, ms);
+      }) as typeof w.setTimeout;
+    } });
+    const button = (label: string) => [...dom.window.document.querySelectorAll('button')].find(b => b.textContent === label)!;
+    try {
+      await vi.waitFor(() => expect(button('Review and sign')?.disabled).toBe(false));
+      expect(poll).toBeTypeOf('function');
+      poll!();
+      await vi.waitFor(() => expect(checks).toBe(2));
+      expect(button('Review and sign').disabled).toBe(true);
+      expect(button('Cancel request').disabled).toBe(true);
+      button('Review and sign').click();
+      expect(callTool.mock.calls.filter(([name]) => name === 'act')).toHaveLength(0);
+      finishStatus(status);
+      await vi.waitFor(() => expect(button('Review and sign').disabled).toBe(false));
+      button('Review and sign').click();
+      await vi.waitFor(() => expect(openExternal).toHaveBeenCalledTimes(1));
+      expect(callTool.mock.calls.filter(([name]) => name === 'act')).toHaveLength(1);
+      expect(f.publish).not.toHaveBeenCalled();
+    } finally { finishStatus(status); dom.window.close(); await f.close(); }
+  });
+
   it.each(['act', 'invoke_affordance'])('%s mounts a signing panel, opens only on a click and reports the verified commit automatically', async toolName => {
     const f = await harness(toolName);
     let dom: JSDOM | undefined;
