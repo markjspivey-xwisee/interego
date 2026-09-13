@@ -1,0 +1,84 @@
+{
+  "schema": "live-discovery-public-procedure-structure/v1",
+  "scope": "unsigned-structural-projection",
+  "roles": [
+    "R01",
+    "R02",
+    "R03",
+    "R04",
+    "R05",
+    "R06",
+    "R07",
+    "R08",
+    "R09"
+  ],
+  "steps": [
+    "S01",
+    "S02",
+    "S03",
+    "S04",
+    "S05",
+    "S06",
+    "S07",
+    "S08",
+    "S09",
+    "S10"
+  ],
+  "dependencies": [
+    {
+      "id": "D01",
+      "from": "S01",
+      "to": "S02"
+    },
+    {
+      "id": "D02",
+      "from": "S01",
+      "to": "S03"
+    },
+    {
+      "id": "D03",
+      "from": "S02",
+      "to": "S04"
+    },
+    {
+      "id": "D04",
+      "from": "S03",
+      "to": "S04"
+    },
+    {
+      "id": "D05",
+      "from": "S04",
+      "to": "S05"
+    },
+    {
+      "id": "D06",
+      "from": "S02",
+      "to": "S06"
+    },
+    {
+      "id": "D07",
+      "from": "S05",
+      "to": "S06"
+    },
+    {
+      "id": "D08",
+      "from": "S06",
+      "to": "S07"
+    },
+    {
+      "id": "D09",
+      "from": "S07",
+      "to": "S08"
+    },
+    {
+      "id": "D10",
+      "from": "S08",
+      "to": "S09"
+    },
+    {
+      "id": "D11",
+      "from": "S09",
+      "to": "S10"
+    }
+  ]
+}
