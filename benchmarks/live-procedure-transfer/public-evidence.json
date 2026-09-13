@@ -1,0 +1,1617 @@
+{
+  "schema": "live-transfer-public-projection/v1",
+  "scope": "unsigned-derived-records",
+  "sourceArchiveSha256": "9a5a6901d50f160d54ef31e9a6ab4a0f9ec595d0807d6e591e5a7abd4e9a2ec4",
+  "sourceArchiveFiles": 135,
+  "sourceAuditPassed": true,
+  "cases": [
+    {
+      "caseName": "acquisition",
+      "calls": [
+        {
+          "index": 1,
+          "batch": 1,
+          "tool": "dereference",
+          "steps": [
+            "S03"
+          ],
+          "capturedOutputBytes": 298622,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 2,
+          "batch": 1,
+          "tool": "dereference",
+          "steps": [
+            "S03"
+          ],
+          "capturedOutputBytes": 23328,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 3,
+          "batch": 1,
+          "tool": "get_descriptor",
+          "steps": [
+            "S03"
+          ],
+          "capturedOutputBytes": 33821,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 4,
+          "batch": 2,
+          "tool": "dereference",
+          "steps": [
+            "S03"
+          ],
+          "capturedOutputBytes": 20986,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 5,
+          "batch": 3,
+          "tool": "sign_request",
+          "steps": [
+            "S04"
+          ],
+          "capturedOutputBytes": 926,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 6,
+          "batch": 4,
+          "tool": "act",
+          "steps": [
+            "S04"
+          ],
+          "capturedOutputBytes": 412,
+          "recordedFailure": true,
+          "failureCategory": "discovery-or-dispatch"
+        },
+        {
+          "index": 7,
+          "batch": 5,
+          "tool": "sign_request",
+          "steps": [
+            "S04"
+          ],
+          "capturedOutputBytes": 402,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 8,
+          "batch": 5,
+          "tool": "act",
+          "steps": [
+            "S04"
+          ],
+          "capturedOutputBytes": 36014,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 9,
+          "batch": 6,
+          "tool": "sign_request",
+          "steps": [
+            "S05"
+          ],
+          "capturedOutputBytes": 402,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 10,
+          "batch": 6,
+          "tool": "act",
+          "steps": [
+            "S05"
+          ],
+          "capturedOutputBytes": 39288,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 11,
+          "batch": 7,
+          "tool": "publish_context",
+          "steps": [
+            "S06"
+          ],
+          "capturedOutputBytes": 4930,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 12,
+          "batch": 8,
+          "tool": "get_descriptor",
+          "steps": [
+            "S06"
+          ],
+          "capturedOutputBytes": 59234,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 13,
+          "batch": 8,
+          "tool": "get_current_head",
+          "steps": [
+            "S06"
+          ],
+          "capturedOutputBytes": 766,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 14,
+          "batch": 9,
+          "tool": "get_descriptor",
+          "steps": [
+            "S02"
+          ],
+          "capturedOutputBytes": 93413,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 15,
+          "batch": 10,
+          "tool": "get_descriptor",
+          "steps": [
+            "S02"
+          ],
+          "capturedOutputBytes": 23027,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 16,
+          "batch": 10,
+          "tool": "get_descriptor",
+          "steps": [
+            "S02"
+          ],
+          "capturedOutputBytes": 33643,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 17,
+          "batch": 11,
+          "tool": "dereference",
+          "steps": [
+            "S02"
+          ],
+          "capturedOutputBytes": 4168,
+          "recordedFailure": true,
+          "failureCategory": "discovery-or-dispatch"
+        },
+        {
+          "index": 18,
+          "batch": 11,
+          "tool": "get_current_head",
+          "steps": [
+            "S02"
+          ],
+          "capturedOutputBytes": 754,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 19,
+          "batch": 12,
+          "tool": "dereference",
+          "steps": [
+            "S02"
+          ],
+          "capturedOutputBytes": 17764,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 20,
+          "batch": 13,
+          "tool": "dereference",
+          "steps": [
+            "S02"
+          ],
+          "capturedOutputBytes": 288262,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 21,
+          "batch": 14,
+          "tool": "dereference",
+          "steps": [
+            "S02"
+          ],
+          "capturedOutputBytes": 15794,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 22,
+          "batch": 15,
+          "tool": "act",
+          "steps": [
+            "S02"
+          ],
+          "capturedOutputBytes": 437,
+          "recordedFailure": true,
+          "failureCategory": "discovery-or-dispatch"
+        },
+        {
+          "index": 23,
+          "batch": 16,
+          "tool": "act",
+          "steps": [
+            "S07"
+          ],
+          "capturedOutputBytes": 130298,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 24,
+          "batch": 17,
+          "tool": "get_descriptor",
+          "steps": [
+            "S07"
+          ],
+          "capturedOutputBytes": 102585,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 25,
+          "batch": 18,
+          "tool": "act",
+          "steps": [
+            "S08"
+          ],
+          "capturedOutputBytes": 94908,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 26,
+          "batch": 19,
+          "tool": "get_descriptor",
+          "steps": [
+            "S09"
+          ],
+          "capturedOutputBytes": 104353,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 27,
+          "batch": 19,
+          "tool": "get_current_head",
+          "steps": [
+            "S09"
+          ],
+          "capturedOutputBytes": 754,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 28,
+          "batch": 20,
+          "tool": "publish_context",
+          "steps": [
+            "S10"
+          ],
+          "capturedOutputBytes": 4930,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 29,
+          "batch": 21,
+          "tool": "get_descriptor",
+          "steps": [
+            "S10"
+          ],
+          "capturedOutputBytes": 30036,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 30,
+          "batch": 21,
+          "tool": "get_current_head",
+          "steps": [
+            "S10"
+          ],
+          "capturedOutputBytes": 762,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        }
+      ],
+      "reportedCounts": {
+        "calls": 30,
+        "batches": 21,
+        "capturedOutputBytes": 1465019,
+        "failures": 3,
+        "reportTailCalls": 3
+      },
+      "reportedGrading": {
+        "launches": 1,
+        "attempts": 1,
+        "correct": 10,
+        "questions": 10,
+        "score": 1,
+        "answerCorrespondence": true
+      },
+      "reportedReplay": {
+        "complete": true,
+        "verifiedLinks": 3,
+        "chainLength": 3
+      },
+      "recordedAssistanceCount": 1
+    },
+    {
+      "caseName": "linked-stable",
+      "calls": [
+        {
+          "index": 1,
+          "batch": 1,
+          "tool": "get_descriptor",
+          "steps": [
+            "S01"
+          ],
+          "capturedOutputBytes": 29497,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 2,
+          "batch": 2,
+          "tool": "get_descriptor",
+          "steps": [
+            "S01"
+          ],
+          "capturedOutputBytes": 75301,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 3,
+          "batch": 3,
+          "tool": "get_current_head",
+          "steps": [
+            "S01"
+          ],
+          "capturedOutputBytes": 752,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 4,
+          "batch": 3,
+          "tool": "get_descriptor",
+          "steps": [
+            "S02"
+          ],
+          "capturedOutputBytes": 93623,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 5,
+          "batch": 3,
+          "tool": "get_descriptor",
+          "steps": [
+            "S03"
+          ],
+          "capturedOutputBytes": 33821,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 6,
+          "batch": 3,
+          "tool": "dereference",
+          "steps": [
+            "S03"
+          ],
+          "capturedOutputBytes": 23328,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 7,
+          "batch": 3,
+          "tool": "dereference",
+          "steps": [
+            "S03"
+          ],
+          "capturedOutputBytes": 298622,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 8,
+          "batch": 4,
+          "tool": "dereference",
+          "steps": [
+            "S03"
+          ],
+          "capturedOutputBytes": 20986,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 9,
+          "batch": 5,
+          "tool": "sign_request",
+          "steps": [
+            "S04"
+          ],
+          "capturedOutputBytes": 2205,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 10,
+          "batch": 5,
+          "tool": "act",
+          "steps": [
+            "S04"
+          ],
+          "capturedOutputBytes": 36146,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 11,
+          "batch": 6,
+          "tool": "sign_request",
+          "steps": [
+            "S05"
+          ],
+          "capturedOutputBytes": 2047,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 12,
+          "batch": 6,
+          "tool": "act",
+          "steps": [
+            "S05"
+          ],
+          "capturedOutputBytes": 39420,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 13,
+          "batch": 7,
+          "tool": "publish_context",
+          "steps": [
+            "S06"
+          ],
+          "capturedOutputBytes": 4930,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 14,
+          "batch": 8,
+          "tool": "get_descriptor",
+          "steps": [
+            "S06"
+          ],
+          "capturedOutputBytes": 60370,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 15,
+          "batch": 8,
+          "tool": "get_current_head",
+          "steps": [
+            "S06"
+          ],
+          "capturedOutputBytes": 770,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 16,
+          "batch": 8,
+          "tool": "get_descriptor",
+          "steps": [
+            "S07"
+          ],
+          "capturedOutputBytes": 93623,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 17,
+          "batch": 9,
+          "tool": "act",
+          "steps": [
+            "S07"
+          ],
+          "capturedOutputBytes": 131718,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 18,
+          "batch": 10,
+          "tool": "get_descriptor",
+          "steps": [
+            "S07",
+            "S08"
+          ],
+          "capturedOutputBytes": 102799,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 19,
+          "batch": 11,
+          "tool": "act",
+          "steps": [
+            "S08"
+          ],
+          "capturedOutputBytes": 95270,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 20,
+          "batch": 12,
+          "tool": "get_descriptor",
+          "steps": [
+            "S09"
+          ],
+          "capturedOutputBytes": 104571,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 21,
+          "batch": 12,
+          "tool": "get_current_head",
+          "steps": [
+            "S09"
+          ],
+          "capturedOutputBytes": 758,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 22,
+          "batch": 13,
+          "tool": "publish_context",
+          "steps": [
+            "S10"
+          ],
+          "capturedOutputBytes": 4930,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 23,
+          "batch": 14,
+          "tool": "get_descriptor",
+          "steps": [
+            "S10"
+          ],
+          "capturedOutputBytes": 39450,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 24,
+          "batch": 14,
+          "tool": "get_current_head",
+          "steps": [
+            "S10"
+          ],
+          "capturedOutputBytes": 766,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        }
+      ],
+      "reportedCounts": {
+        "calls": 24,
+        "batches": 14,
+        "capturedOutputBytes": 1295703,
+        "failures": 0,
+        "reportTailCalls": 3
+      },
+      "reportedGrading": {
+        "launches": 1,
+        "attempts": 1,
+        "correct": 10,
+        "questions": 10,
+        "score": 1,
+        "answerCorrespondence": true
+      },
+      "reportedReplay": {
+        "complete": true,
+        "verifiedLinks": 3,
+        "chainLength": 3
+      },
+      "recordedAssistanceCount": 0
+    },
+    {
+      "caseName": "conventional-stable",
+      "calls": [
+        {
+          "index": 1,
+          "batch": 1,
+          "tool": "get_descriptor",
+          "steps": [
+            "S01"
+          ],
+          "capturedOutputBytes": 29685,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 2,
+          "batch": 2,
+          "tool": "get_descriptor",
+          "steps": [
+            "S01"
+          ],
+          "capturedOutputBytes": 74053,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 3,
+          "batch": 2,
+          "tool": "get_descriptor",
+          "steps": [
+            "S03"
+          ],
+          "capturedOutputBytes": 33821,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 4,
+          "batch": 3,
+          "tool": "dereference",
+          "steps": [
+            "S03"
+          ],
+          "capturedOutputBytes": 20986,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 5,
+          "batch": 3,
+          "tool": "dereference",
+          "steps": [
+            "S03"
+          ],
+          "capturedOutputBytes": 23328,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 6,
+          "batch": 3,
+          "tool": "get_current_head",
+          "steps": [
+            "S01"
+          ],
+          "capturedOutputBytes": 764,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 7,
+          "batch": 3,
+          "tool": "dereference",
+          "steps": [
+            "S03"
+          ],
+          "capturedOutputBytes": 298622,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 8,
+          "batch": 3,
+          "tool": "get_descriptor",
+          "steps": [
+            "S02"
+          ],
+          "capturedOutputBytes": 94775,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 9,
+          "batch": 4,
+          "tool": "sign_request",
+          "steps": [
+            "S04"
+          ],
+          "capturedOutputBytes": 1832,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 10,
+          "batch": 4,
+          "tool": "act",
+          "steps": [
+            "S04"
+          ],
+          "capturedOutputBytes": 36014,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 11,
+          "batch": 5,
+          "tool": "sign_request",
+          "steps": [
+            "S05"
+          ],
+          "capturedOutputBytes": 1832,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 12,
+          "batch": 5,
+          "tool": "act",
+          "steps": [
+            "S05"
+          ],
+          "capturedOutputBytes": 39288,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 13,
+          "batch": 6,
+          "tool": "publish_context",
+          "steps": [
+            "S06"
+          ],
+          "capturedOutputBytes": 4930,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 14,
+          "batch": 7,
+          "tool": "get_current_head",
+          "steps": [
+            "S06"
+          ],
+          "capturedOutputBytes": 782,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 15,
+          "batch": 7,
+          "tool": "get_descriptor",
+          "steps": [
+            "S06"
+          ],
+          "capturedOutputBytes": 60110,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 16,
+          "batch": 7,
+          "tool": "get_descriptor",
+          "steps": [
+            "S07"
+          ],
+          "capturedOutputBytes": 94775,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 17,
+          "batch": 8,
+          "tool": "act",
+          "steps": [
+            "S07"
+          ],
+          "capturedOutputBytes": 132504,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 18,
+          "batch": 9,
+          "tool": "get_descriptor",
+          "steps": [
+            "S07",
+            "S08"
+          ],
+          "capturedOutputBytes": 103963,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 19,
+          "batch": 10,
+          "tool": "act",
+          "steps": [
+            "S08"
+          ],
+          "capturedOutputBytes": 96370,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 20,
+          "batch": 11,
+          "tool": "get_current_head",
+          "steps": [
+            "S09"
+          ],
+          "capturedOutputBytes": 770,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 21,
+          "batch": 11,
+          "tool": "get_descriptor",
+          "steps": [
+            "S09"
+          ],
+          "capturedOutputBytes": 105747,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 22,
+          "batch": 12,
+          "tool": "publish_context",
+          "steps": [
+            "S10"
+          ],
+          "capturedOutputBytes": 4930,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 23,
+          "batch": 13,
+          "tool": "get_current_head",
+          "steps": [
+            "S10"
+          ],
+          "capturedOutputBytes": 778,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 24,
+          "batch": 13,
+          "tool": "get_descriptor",
+          "steps": [
+            "S10"
+          ],
+          "capturedOutputBytes": 41702,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        }
+      ],
+      "reportedCounts": {
+        "calls": 24,
+        "batches": 13,
+        "capturedOutputBytes": 1302361,
+        "failures": 0,
+        "reportTailCalls": 3
+      },
+      "reportedGrading": {
+        "launches": 1,
+        "attempts": 1,
+        "correct": 10,
+        "questions": 10,
+        "score": 1,
+        "answerCorrespondence": true
+      },
+      "reportedReplay": {
+        "complete": true,
+        "verifiedLinks": 3,
+        "chainLength": 3
+      },
+      "recordedAssistanceCount": 0
+    },
+    {
+      "caseName": "linked-rebind",
+      "calls": [
+        {
+          "index": 1,
+          "batch": 1,
+          "tool": "get_descriptor",
+          "steps": [
+            "S01"
+          ],
+          "capturedOutputBytes": 29497,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 2,
+          "batch": 2,
+          "tool": "get_descriptor",
+          "steps": [
+            "S01"
+          ],
+          "capturedOutputBytes": 75301,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 3,
+          "batch": 3,
+          "tool": "get_current_head",
+          "steps": [
+            "S01"
+          ],
+          "capturedOutputBytes": 752,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 4,
+          "batch": 3,
+          "tool": "get_descriptor",
+          "steps": [
+            "S02"
+          ],
+          "capturedOutputBytes": 93791,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 5,
+          "batch": 3,
+          "tool": "get_descriptor",
+          "steps": [
+            "S03"
+          ],
+          "capturedOutputBytes": 33821,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 6,
+          "batch": 3,
+          "tool": "dereference",
+          "steps": [
+            "S03"
+          ],
+          "capturedOutputBytes": 23328,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 7,
+          "batch": 3,
+          "tool": "dereference",
+          "steps": [
+            "S03"
+          ],
+          "capturedOutputBytes": 298622,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 8,
+          "batch": 4,
+          "tool": "dereference",
+          "steps": [
+            "S03"
+          ],
+          "capturedOutputBytes": 20986,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 9,
+          "batch": 5,
+          "tool": "sign_request",
+          "steps": [
+            "S04"
+          ],
+          "capturedOutputBytes": 2224,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 10,
+          "batch": 5,
+          "tool": "act",
+          "steps": [
+            "S04"
+          ],
+          "capturedOutputBytes": 36014,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 11,
+          "batch": 6,
+          "tool": "sign_request",
+          "steps": [
+            "S05"
+          ],
+          "capturedOutputBytes": 2066,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 12,
+          "batch": 6,
+          "tool": "act",
+          "steps": [
+            "S05"
+          ],
+          "capturedOutputBytes": 39288,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 13,
+          "batch": 7,
+          "tool": "publish_context",
+          "steps": [
+            "S06"
+          ],
+          "capturedOutputBytes": 4930,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 14,
+          "batch": 8,
+          "tool": "get_descriptor",
+          "steps": [
+            "S06"
+          ],
+          "capturedOutputBytes": 60786,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 15,
+          "batch": 8,
+          "tool": "get_current_head",
+          "steps": [
+            "S06"
+          ],
+          "capturedOutputBytes": 770,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 16,
+          "batch": 8,
+          "tool": "get_descriptor",
+          "steps": [
+            "S07"
+          ],
+          "capturedOutputBytes": 93791,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 17,
+          "batch": 9,
+          "tool": "act",
+          "steps": [
+            "S07"
+          ],
+          "capturedOutputBytes": 132076,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 18,
+          "batch": 10,
+          "tool": "get_descriptor",
+          "steps": [
+            "S07",
+            "S08"
+          ],
+          "capturedOutputBytes": 102967,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 19,
+          "batch": 11,
+          "tool": "act",
+          "steps": [
+            "S08"
+          ],
+          "capturedOutputBytes": 181,
+          "recordedFailure": true,
+          "failureCategory": "authority-changed"
+        },
+        {
+          "index": 20,
+          "batch": 12,
+          "tool": "get_descriptor",
+          "steps": [
+            "S08"
+          ],
+          "capturedOutputBytes": 103335,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 21,
+          "batch": 13,
+          "tool": "get_current_head",
+          "steps": [
+            "S08"
+          ],
+          "capturedOutputBytes": 762,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 22,
+          "batch": 14,
+          "tool": "get_descriptor",
+          "steps": [
+            "S08"
+          ],
+          "capturedOutputBytes": 106433,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 23,
+          "batch": 15,
+          "tool": "act",
+          "steps": [
+            "S08"
+          ],
+          "capturedOutputBytes": 98290,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 24,
+          "batch": 16,
+          "tool": "get_descriptor",
+          "steps": [
+            "S09"
+          ],
+          "capturedOutputBytes": 108609,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 25,
+          "batch": 16,
+          "tool": "get_current_head",
+          "steps": [
+            "S09"
+          ],
+          "capturedOutputBytes": 758,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 26,
+          "batch": 17,
+          "tool": "publish_context",
+          "steps": [
+            "S10"
+          ],
+          "capturedOutputBytes": 4930,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 27,
+          "batch": 18,
+          "tool": "get_descriptor",
+          "steps": [
+            "S10"
+          ],
+          "capturedOutputBytes": 47730,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 28,
+          "batch": 18,
+          "tool": "get_current_head",
+          "steps": [
+            "S10"
+          ],
+          "capturedOutputBytes": 766,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        }
+      ],
+      "reportedCounts": {
+        "calls": 28,
+        "batches": 18,
+        "capturedOutputBytes": 1522804,
+        "failures": 1,
+        "reportTailCalls": 3
+      },
+      "reportedGrading": {
+        "launches": 1,
+        "attempts": 1,
+        "correct": 10,
+        "questions": 10,
+        "score": 1,
+        "answerCorrespondence": true
+      },
+      "reportedReplay": {
+        "complete": true,
+        "verifiedLinks": 3,
+        "chainLength": 3
+      },
+      "recordedAssistanceCount": 0
+    },
+    {
+      "caseName": "conventional-rebind",
+      "calls": [
+        {
+          "index": 1,
+          "batch": 1,
+          "tool": "get_descriptor",
+          "steps": [
+            "S01"
+          ],
+          "capturedOutputBytes": 29685,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 2,
+          "batch": 2,
+          "tool": "get_descriptor",
+          "steps": [
+            "S01"
+          ],
+          "capturedOutputBytes": 74053,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 3,
+          "batch": 2,
+          "tool": "get_descriptor",
+          "steps": [
+            "S03"
+          ],
+          "capturedOutputBytes": 33821,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 4,
+          "batch": 3,
+          "tool": "get_descriptor",
+          "steps": [
+            "S02"
+          ],
+          "capturedOutputBytes": 94955,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 5,
+          "batch": 3,
+          "tool": "get_current_head",
+          "steps": [
+            "S01"
+          ],
+          "capturedOutputBytes": 764,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 6,
+          "batch": 3,
+          "tool": "dereference",
+          "steps": [
+            "S03"
+          ],
+          "capturedOutputBytes": 23328,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 7,
+          "batch": 3,
+          "tool": "dereference",
+          "steps": [
+            "S03"
+          ],
+          "capturedOutputBytes": 298622,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 8,
+          "batch": 3,
+          "tool": "dereference",
+          "steps": [
+            "S03"
+          ],
+          "capturedOutputBytes": 20986,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 9,
+          "batch": 4,
+          "tool": "sign_request",
+          "steps": [
+            "S04"
+          ],
+          "capturedOutputBytes": 1832,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 10,
+          "batch": 4,
+          "tool": "act",
+          "steps": [
+            "S04"
+          ],
+          "capturedOutputBytes": 36014,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 11,
+          "batch": 5,
+          "tool": "sign_request",
+          "steps": [
+            "S05"
+          ],
+          "capturedOutputBytes": 1832,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 12,
+          "batch": 5,
+          "tool": "act",
+          "steps": [
+            "S05"
+          ],
+          "capturedOutputBytes": 39288,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 13,
+          "batch": 6,
+          "tool": "publish_context",
+          "steps": [
+            "S06"
+          ],
+          "capturedOutputBytes": 4930,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 14,
+          "batch": 7,
+          "tool": "get_descriptor",
+          "steps": [
+            "S06"
+          ],
+          "capturedOutputBytes": 60110,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 15,
+          "batch": 7,
+          "tool": "get_current_head",
+          "steps": [
+            "S06"
+          ],
+          "capturedOutputBytes": 782,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 16,
+          "batch": 7,
+          "tool": "get_descriptor",
+          "steps": [
+            "S07"
+          ],
+          "capturedOutputBytes": 94955,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 17,
+          "batch": 8,
+          "tool": "act",
+          "steps": [
+            "S07"
+          ],
+          "capturedOutputBytes": 132504,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 18,
+          "batch": 9,
+          "tool": "get_descriptor",
+          "steps": [
+            "S07",
+            "S08"
+          ],
+          "capturedOutputBytes": 104143,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 19,
+          "batch": 10,
+          "tool": "act",
+          "steps": [
+            "S08"
+          ],
+          "capturedOutputBytes": 181,
+          "recordedFailure": true,
+          "failureCategory": "authority-changed"
+        },
+        {
+          "index": 20,
+          "batch": 11,
+          "tool": "get_current_head",
+          "steps": [
+            "S08"
+          ],
+          "capturedOutputBytes": 774,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 21,
+          "batch": 12,
+          "tool": "get_descriptor",
+          "steps": [
+            "S08"
+          ],
+          "capturedOutputBytes": 107609,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 22,
+          "batch": 13,
+          "tool": "get_descriptor",
+          "steps": [
+            "S08"
+          ],
+          "capturedOutputBytes": 36109,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 23,
+          "batch": 14,
+          "tool": "act",
+          "steps": [
+            "S08"
+          ],
+          "capturedOutputBytes": 99390,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 24,
+          "batch": 15,
+          "tool": "get_descriptor",
+          "steps": [
+            "S09"
+          ],
+          "capturedOutputBytes": 109797,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 25,
+          "batch": 15,
+          "tool": "get_current_head",
+          "steps": [
+            "S09"
+          ],
+          "capturedOutputBytes": 770,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 26,
+          "batch": 16,
+          "tool": "publish_context",
+          "steps": [
+            "S10"
+          ],
+          "capturedOutputBytes": 4930,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 27,
+          "batch": 17,
+          "tool": "get_descriptor",
+          "steps": [
+            "S10"
+          ],
+          "capturedOutputBytes": 49630,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        },
+        {
+          "index": 28,
+          "batch": 17,
+          "tool": "get_current_head",
+          "steps": [
+            "S10"
+          ],
+          "capturedOutputBytes": 778,
+          "recordedFailure": false,
+          "failureCategory": "none"
+        }
+      ],
+      "reportedCounts": {
+        "calls": 28,
+        "batches": 17,
+        "capturedOutputBytes": 1462572,
+        "failures": 1,
+        "reportTailCalls": 3
+      },
+      "reportedGrading": {
+        "launches": 1,
+        "attempts": 1,
+        "correct": 10,
+        "questions": 10,
+        "score": 1,
+        "answerCorrespondence": true
+      },
+      "reportedReplay": {
+        "complete": true,
+        "verifiedLinks": 3,
+        "chainLength": 3
+      },
+      "recordedAssistanceCount": 0
+    }
+  ]
+}

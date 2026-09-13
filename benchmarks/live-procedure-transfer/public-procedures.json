@@ -1,0 +1,167 @@
+{
+  "schema": "live-transfer-public-procedure-structure/v1",
+  "scope": "unsigned-structural-projection",
+  "resourceRoleCount": 8,
+  "workflow": [
+    {
+      "id": "S01",
+      "name": "Read seeded entry and frozen procedure",
+      "dependsOn": []
+    },
+    {
+      "id": "S02",
+      "name": "Resolve live target authority and controls",
+      "dependsOn": [
+        "S01"
+      ]
+    },
+    {
+      "id": "S03",
+      "name": "Read frozen policy and live evaluator guidance",
+      "dependsOn": [
+        "S01"
+      ]
+    },
+    {
+      "id": "S04",
+      "name": "Launch one live assessment",
+      "dependsOn": [
+        "S02",
+        "S03"
+      ]
+    },
+    {
+      "id": "S05",
+      "name": "Apply policy and submit once for server grade",
+      "dependsOn": [
+        "S04"
+      ]
+    },
+    {
+      "id": "S06",
+      "name": "Attest and verify the live observation",
+      "dependsOn": [
+        "S02",
+        "S05"
+      ]
+    },
+    {
+      "id": "S07",
+      "name": "Accept current assessment evidence",
+      "dependsOn": [
+        "S06"
+      ]
+    },
+    {
+      "id": "S08",
+      "name": "Activate the isolated test release",
+      "dependsOn": [
+        "S07"
+      ]
+    },
+    {
+      "id": "S09",
+      "name": "Verify final state and full replay",
+      "dependsOn": [
+        "S08"
+      ]
+    },
+    {
+      "id": "S10",
+      "name": "Publish procedure-linked execution evidence",
+      "dependsOn": [
+        "S09"
+      ]
+    }
+  ],
+  "linked": {
+    "nodes": [
+      {
+        "id": "S01",
+        "name": "Read seeded entry and frozen procedure"
+      },
+      {
+        "id": "S02",
+        "name": "Resolve live target authority and controls"
+      },
+      {
+        "id": "S03",
+        "name": "Read frozen policy and live evaluator guidance"
+      },
+      {
+        "id": "S04",
+        "name": "Launch one live assessment"
+      },
+      {
+        "id": "S05",
+        "name": "Apply policy and submit once for server grade"
+      },
+      {
+        "id": "S06",
+        "name": "Attest and verify the live observation"
+      },
+      {
+        "id": "S07",
+        "name": "Accept current assessment evidence"
+      },
+      {
+        "id": "S08",
+        "name": "Activate the isolated test release"
+      },
+      {
+        "id": "S09",
+        "name": "Verify final state and full replay"
+      },
+      {
+        "id": "S10",
+        "name": "Publish procedure-linked execution evidence"
+      }
+    ],
+    "edges": [
+      {
+        "from": "S01",
+        "to": "S02"
+      },
+      {
+        "from": "S01",
+        "to": "S03"
+      },
+      {
+        "from": "S02",
+        "to": "S04"
+      },
+      {
+        "from": "S03",
+        "to": "S04"
+      },
+      {
+        "from": "S04",
+        "to": "S05"
+      },
+      {
+        "from": "S02",
+        "to": "S06"
+      },
+      {
+        "from": "S05",
+        "to": "S06"
+      },
+      {
+        "from": "S06",
+        "to": "S07"
+      },
+      {
+        "from": "S07",
+        "to": "S08"
+      },
+      {
+        "from": "S08",
+        "to": "S09"
+      },
+      {
+        "from": "S09",
+        "to": "S10"
+      }
+    ]
+  }
+}
