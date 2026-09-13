@@ -184,7 +184,8 @@ const UNLINTED_FRONTIER = {
   // the floor to the full committed census once these final two took it past the boundary.
   // Both additions lint clean, so the error ceiling remains unchanged.
   // Private HMD auth/resolution brings the tracked census to 166; no added lint debt.
-  deploy: { errors: 356, files: 166 },
+  // Derived-resource confidentiality adds a tracked module; the error ceiling stays fixed.
+  deploy: { errors: 356, files: 176 },
   // The bulk of these are `no-console` in vertical bridges and CLI entry points — one config
   // decision, not a thousand defects. See the note above.
   // ★ 320 -> 337, and the ratchet caught it in CI rather than locally, which is the interesting
