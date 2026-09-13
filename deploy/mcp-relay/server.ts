@@ -248,6 +248,7 @@ import { HMD_WIDGET_URI, readHmdWidgetResource } from './hmd-resource.js';
 import { CLIENT_CHECK_HTML, CLIENT_CHECK_CSP } from './client-check.js';
 import { canonicalSessionActorId } from './session-actor.js';
 import { INVOKE_AFFORDANCE_OUTPUT, loadResourceCompositions, resourceActionResponse, resourceInvocation, type ResourceContext, type ResourceDescriptor, type ResourceEntry, type ResourceReads, type ResourceWriteContext } from './resource-compositions.js';
+import { protectResourcePublication } from './resource-publication.js';
 import { readClientSigningKeys } from './client-signing-keys.js';
 import { attestClientRegistration } from './client-registration.js';
 import { signMessageRaw } from '@interego/core';
@@ -5017,6 +5018,8 @@ function resourceReads(args: ToolArgs): ResourceReads {
         ...(graph && typeof graph['content'] === 'string'
           ? { content: graph['content'] }
           : (typeof raw['content'] === 'string' ? { content: raw['content'] } : {})),
+        ...(graph && typeof graph['url'] === 'string' && typeof graph['encrypted'] === 'boolean'
+          ? { distribution: { url: graph['url'], encrypted: graph['encrypted'] } } : {}),
         authorship: raw['authorship'] as ResourceDescriptor['authorship'],
       };
     },
@@ -5037,7 +5040,18 @@ function resourceContext(args: ToolArgs): ResourceContext {
 
 function resourceWriteContext(args: ToolArgs): ResourceWriteContext {
   const context = resourceContext(args);
-  return { ...context,
+  const publication = protectResourcePublication(context.reads, context.principal, async (request, visibility) => {
+    const podName = podNameOf(request.podUrl);
+    if (!podName) throw new Error('publication requires an explicit pod');
+    return JSON.parse(await handlePublishContext({
+      ...resourcePodArgs(args, request.podUrl), _session_agent_did: context.principal,
+      pod_name: podName, graph_iri: request.graphIri, graph_content: request.graphContent,
+      if_match: request.expectedHead, auto_supersede_prior: true, sync: true,
+      modal_status: 'Asserted', confidence: 1, visibility, sign_authorship: true,
+      valid_from: context.now,
+    })) as Record<string, unknown>;
+  });
+  return { ...context, reads: publication.reads,
     attestClientRegistration: async proof => {
       const { wallet } = await ensureRelayComplianceWallet();
       return attestClientRegistration(proof, { actor: context.principal, now: new Date().toISOString(),
@@ -5050,18 +5064,8 @@ function resourceWriteContext(args: ToolArgs): ResourceWriteContext {
     cancelInteraction: async id => clientInteractions.cancel(id, await interactionOwner(String(args._session_bearer ?? ''), true)),
     renewInteraction: id => clientInteractions.renewAuthorization(id, String(args._session_bearer ?? '')),
     openInteraction: async id => clientInteractions.openSigning(id, await interactionOwner(String(args._session_bearer ?? ''), true)),
-    publish: async request => {
-    if (!context.principal || request.actor !== context.principal) throw new Error('authenticated resource actor is required');
-    const podName = podNameOf(request.podUrl);
-    if (!podName || !request.expectedHead) throw new Error('publication requires an explicit pod and expected head');
-    return JSON.parse(await handlePublishContext({
-      ...resourcePodArgs(args, request.podUrl), _session_agent_did: context.principal,
-      pod_name: podName, graph_iri: request.graphIri, graph_content: request.graphContent,
-      if_match: request.expectedHead, auto_supersede_prior: true, sync: true,
-      modal_status: 'Asserted', confidence: 1, visibility: 'public', sign_authorship: true,
-      valid_from: context.now,
-    })) as Record<string, unknown>;
-  } };
+    publish: publication.publish,
+  };
 }
 
 async function interactionOwner(credential: string, write: boolean): Promise<InteractionOwner & { expiresAt: number }> {

@@ -5,6 +5,8 @@ export interface ResourceDescriptor {
   readonly cid?: string;
   readonly turtle?: string;
   readonly content?: string;
+  /** Actual followed payload observation, not the descriptor's declared encryption flag. */
+  readonly distribution?: { readonly url: string; readonly encrypted: boolean };
   readonly authorship?: {
     readonly authorshipVerified?: boolean;
     readonly contentBinding?: string;
