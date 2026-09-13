@@ -412,10 +412,70 @@ test('noncontiguous raw batch reuse is rejected rather than relabeled into clean
 
 test('observed launches and submissions cannot exceed retained generic act calls', () => {
   const source = fixture(); const run = source.runs[0];
-  run.summary.grading = { successfulLaunches: 1, gradedSubmissions: 1, grades: [] };
+  run.summary.grading = { successfulLaunches: 1, gradedSubmissions: 1,
+    grades: [{ attempt: 1, correct: 9, questions: 10, score: 0.9 }] };
   assert.throws(() => project(source), /exceed retained/u);
   ensureActCalls(run, 2);
   assert.equal(project(source).evidence.runs[0].grading.gradedSubmissions, 1);
+});
+
+test('every exact capture requires grading totals regardless of conformance or outcome', () => {
+  for (const conformance of [false, null, true]) for (const completed of [false, null]) {
+    for (const field of ['successfulLaunches', 'gradedSubmissions']) for (const omitted of [false, true]) {
+      const source = fixture(), run = source.runs[0];
+      run.summary.protocolConformant = conformance; run.summary.completed = completed;
+      if (omitted) delete run.summary.grading[field];
+      else run.summary.grading[field] = null;
+      assert.throws(() => project(source), /Exact captures require known grading totals/u);
+    }
+  }
+});
+
+test('exact captures retain every grade even when repeated assessments violate the protocol', () => {
+  const source = fixture(), run = source.runs[0];
+  run.summary.protocolConformant = false; run.summary.protocolDeviationCount = 1;
+  run.summary.grading = { successfulLaunches: 2, gradedSubmissions: 2, grades: [
+    { attempt: 1, correct: 3, questions: 10, score: 0.3 },
+    { attempt: 2, correct: 9, questions: 10, score: 0.9 },
+  ] };
+  ensureActCalls(run, 4);
+  const output = project(source);
+  assert.deepEqual(output.evidence.runs[0].grading.grades.map(grade => grade.attempt), [1, 2]);
+  for (const missingAttempt of [0, 1]) {
+    const incomplete = structuredClone(output);
+    incomplete.evidence.runs[0].grading.grades.splice(missingAttempt, 1);
+    assert.throws(() => audit(incomplete.evidence, incomplete.procedure, incomplete.setupAttempts), /retain every graded submission/u);
+  }
+  const gap = structuredClone(output);
+  gap.evidence.runs[0].grading.grades[0].attempt = 2;
+  assert.throws(() => audit(gap.evidence, gap.procedure, gap.setupAttempts));
+});
+
+test('any retained grade or graded submission contradicts a known zero successful launches', () => {
+  for (const recovered of [false, true]) for (const conformance of [false, null]) {
+    const source = fixture(), run = source.runs[0];
+    if (recovered) markRecovery(run);
+    else run.summary.protocolConformant = conformance;
+    run.summary.grading = { successfulLaunches: 0, gradedSubmissions: 1,
+      grades: [{ attempt: 1, correct: 9, questions: 10, score: 0.9 }] };
+    assert.throws(() => project(source), /Graded assessments require a successful launch/u);
+    if (recovered) {
+      run.summary.grading.gradedSubmissions = null;
+      assert.throws(() => project(source), /Graded assessments require a successful launch/u);
+      run.summary.grading.successfulLaunches = null;
+      assert.equal(project(source).evidence.runs[0].grading.grades[0].correct, 9);
+    }
+  }
+});
+
+test('lower-bound capture preserves a partial grade list without claiming exact completeness', () => {
+  const source = fixture(), run = source.runs[0]; markRecovery(run);
+  run.summary.grading = { successfulLaunches: 2, gradedSubmissions: 2,
+    grades: [{ attempt: 2, correct: 9, questions: 10, score: 0.9 }] };
+  const output = project(source);
+  assert.equal(output.evidence.runs[0].callAccountingScope, 'retained-lower-bound');
+  assert.deepEqual(output.evidence.runs[0].grading.grades.map(grade => grade.attempt), [2]);
+  assert.equal(output.result.paired[0].callsPresentMinusAbsent, null);
 });
 
 test('stale rejection cannot be reported without a retained failed act', () => {

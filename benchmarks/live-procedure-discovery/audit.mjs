@@ -160,19 +160,27 @@ export function audit(evidence, procedure, initialSetup) {
     const counts = auditCalls(run.calls, run.reportedCounts);
     keys(run.grading, ['successfulLaunches', 'gradedSubmissions', 'grades']);
     nullableCount(run.grading.successfulLaunches); nullableCount(run.grading.gradedSubmissions);
+    if (exactRetainedStream) {
+      assert.notEqual(run.grading.successfulLaunches, null, 'Exact captures require known grading totals');
+      assert.notEqual(run.grading.gradedSubmissions, null, 'Exact captures require known grading totals');
+    }
     // An incomplete stream may omit the act response while private current-state
     // evidence independently establishes a launch or submission. Never synthesize it.
     if (exactRetainedStream) assert((run.grading.successfulLaunches ?? 0) + (run.grading.gradedSubmissions ?? 0)
       <= run.calls.filter(call => call.verb === 'act').length, 'Observed launches and submissions exceed retained generic act calls');
     assert(Array.isArray(run.grading.grades));
-    if (run.grading.gradedSubmissions === null) {
-      // Retained grades do not establish an interrupted controller's whole-stream total.
-      if (exactRetainedStream) assert.equal(run.grading.grades.length, 0);
-    } else assert(run.grading.grades.length <= run.grading.gradedSubmissions);
+    if (run.grading.gradedSubmissions > 0 || run.grading.grades.length > 0) {
+      assert.notEqual(run.grading.successfulLaunches, 0, 'Graded assessments require a successful launch');
+    }
+    if (exactRetainedStream) assert.equal(run.grading.grades.length, run.grading.gradedSubmissions,
+      'Exact captures must retain every graded submission');
+    // Partial retained grades do not establish an interrupted controller's whole-stream total.
+    else if (run.grading.gradedSubmissions !== null) assert(run.grading.grades.length <= run.grading.gradedSubmissions);
     let priorAttempt = 0;
     for (const grade of run.grading.grades) {
       keys(grade, ['attempt', 'correct', 'questions', 'score']);
       integer(grade.attempt, 1000); assert(grade.attempt > priorAttempt);
+      if (exactRetainedStream) assert.equal(grade.attempt, priorAttempt + 1, 'Exact capture grade attempts must be contiguous');
       if (run.grading.gradedSubmissions !== null) assert(grade.attempt <= run.grading.gradedSubmissions);
       priorAttempt = grade.attempt;
       integer(grade.correct, 1000); integer(grade.questions, 1000);
