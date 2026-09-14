@@ -7,6 +7,9 @@ reports a separate prospective cohort: three completed releases, one blocked,
 one interrupted at its recorded checkpoint, and three unstarted assignments.
 Its public accounting and disclosure checks run in the dedicated
 `controller-comparison.yml` workflow. The older studies remain separate.
+The [changed-binding follow-up](controller-procedure-comparison/followup.md)
+reports four additional fresh trials under protocol 2.1.0, with separate
+measurements and contrasts; it preserves the stopped cohort above.
 
 ## Status
 
