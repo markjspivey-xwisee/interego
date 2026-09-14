@@ -1,0 +1,26 @@
+name: Controller comparison public audit
+
+on:
+  pull_request:
+    paths:
+      - 'benchmarks/controller-procedure-comparison/**'
+      - '.github/workflows/controller-comparison.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'benchmarks/controller-procedure-comparison/**'
+      - '.github/workflows/controller-comparison.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  public-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+      - name: Validate public accounting and disclosure regressions
+        run: node --test benchmarks/controller-procedure-comparison/public-release.test.mjs

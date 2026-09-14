@@ -1,0 +1,1753 @@
+{
+  "schema": "interego.controller-comparison-public/v1",
+  "protocolVersion": "2.0.0",
+  "scope": "unsigned-derived-measurements",
+  "recordingScope": "mandatory-recorder-and-retained-controller-records",
+  "design": "two-controller-policies-two-procedure-conditions-two-binding-conditions",
+  "modelScope": "common-inherited-configuration-provider-details-unavailable",
+  "assessmentScope": "reused-assessment-fresh-instances",
+  "runs": [
+    {
+      "run": 1,
+      "controller": "react-style",
+      "procedure": "procedure-present",
+      "binding": "stable",
+      "status": "completed",
+      "captureComplete": true,
+      "captureScope": "closed-run",
+      "protocolConformant": true,
+      "interventionApplied": false,
+      "protocolDeviationCount": 0,
+      "planRevisionEntries": null,
+      "successfulLaunches": 1,
+      "gradedSubmissions": 1,
+      "grades": [
+        {
+          "correct": 10,
+          "questions": 10,
+          "score": 1.0
+        }
+      ],
+      "applicableProcedureDiscovered": true,
+      "procedureUseVerified": true,
+      "checkpointReached": true,
+      "staleRejectionObserved": false,
+      "staleRecoveryVerified": false,
+      "finalStateVerified": true,
+      "replayComplete": true,
+      "replayLinks": 3,
+      "retainedCalls": 45,
+      "retainedGroups": 20,
+      "retainedFailedCalls": 0,
+      "retainedTransportExceptions": 0,
+      "calls": [
+        {
+          "index": 1,
+          "group": 1,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 2,
+          "group": 2,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 3,
+          "group": 3,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 4,
+          "group": 3,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 5,
+          "group": 3,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 6,
+          "group": 3,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 7,
+          "group": 4,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 8,
+          "group": 4,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 9,
+          "group": 4,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 10,
+          "group": 4,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 11,
+          "group": 4,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 12,
+          "group": 4,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 13,
+          "group": 4,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 14,
+          "group": 5,
+          "verb": "get_current_head",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 15,
+          "group": 5,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 16,
+          "group": 5,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 17,
+          "group": 5,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 18,
+          "group": 5,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 19,
+          "group": 5,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 20,
+          "group": 5,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 21,
+          "group": 5,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 22,
+          "group": 6,
+          "verb": "get_current_head",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 23,
+          "group": 6,
+          "verb": "get_current_head",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 24,
+          "group": 6,
+          "verb": "get_current_head",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 25,
+          "group": 7,
+          "verb": "sign_request",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 26,
+          "group": 8,
+          "verb": "act",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 27,
+          "group": 9,
+          "verb": "sign_request",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 28,
+          "group": 10,
+          "verb": "act",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 29,
+          "group": 11,
+          "verb": "publish_context",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 30,
+          "group": 12,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 31,
+          "group": 13,
+          "verb": "get_current_head",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 32,
+          "group": 13,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 33,
+          "group": 13,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 34,
+          "group": 14,
+          "verb": "act",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 35,
+          "group": 15,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 36,
+          "group": 15,
+          "verb": "get_current_head",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 37,
+          "group": 15,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 38,
+          "group": 16,
+          "verb": "act",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 39,
+          "group": 17,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 40,
+          "group": 17,
+          "verb": "get_current_head",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 41,
+          "group": 17,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 42,
+          "group": 18,
+          "verb": "publish_context",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 43,
+          "group": 19,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 44,
+          "group": 20,
+          "verb": "get_current_head",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 45,
+          "group": 20,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        }
+      ]
+    },
+    {
+      "run": 2,
+      "controller": "react-style",
+      "procedure": "procedure-absent",
+      "binding": "stable",
+      "status": "completed",
+      "captureComplete": true,
+      "captureScope": "closed-run",
+      "protocolConformant": true,
+      "interventionApplied": false,
+      "protocolDeviationCount": 0,
+      "planRevisionEntries": null,
+      "successfulLaunches": 1,
+      "gradedSubmissions": 1,
+      "grades": [
+        {
+          "correct": 10,
+          "questions": 10,
+          "score": 1.0
+        }
+      ],
+      "applicableProcedureDiscovered": false,
+      "procedureUseVerified": false,
+      "checkpointReached": true,
+      "staleRejectionObserved": false,
+      "staleRecoveryVerified": false,
+      "finalStateVerified": true,
+      "replayComplete": true,
+      "replayLinks": 3,
+      "retainedCalls": 40,
+      "retainedGroups": 20,
+      "retainedFailedCalls": 0,
+      "retainedTransportExceptions": 0,
+      "calls": [
+        {
+          "index": 1,
+          "group": 1,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 2,
+          "group": 2,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 3,
+          "group": 3,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 4,
+          "group": 3,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 5,
+          "group": 3,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 6,
+          "group": 3,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 7,
+          "group": 4,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 8,
+          "group": 4,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 9,
+          "group": 4,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 10,
+          "group": 4,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 11,
+          "group": 4,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 12,
+          "group": 4,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 13,
+          "group": 5,
+          "verb": "get_current_head",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 14,
+          "group": 5,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 15,
+          "group": 5,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 16,
+          "group": 5,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 17,
+          "group": 5,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 18,
+          "group": 5,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 19,
+          "group": 6,
+          "verb": "sign_request",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 20,
+          "group": 7,
+          "verb": "act",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 21,
+          "group": 8,
+          "verb": "sign_request",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 22,
+          "group": 9,
+          "verb": "act",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 23,
+          "group": 10,
+          "verb": "publish_context",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 24,
+          "group": 11,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 25,
+          "group": 12,
+          "verb": "get_current_head",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 26,
+          "group": 12,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 27,
+          "group": 12,
+          "verb": "get_current_head",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 28,
+          "group": 13,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 29,
+          "group": 14,
+          "verb": "act",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 30,
+          "group": 15,
+          "verb": "get_current_head",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 31,
+          "group": 15,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 32,
+          "group": 15,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 33,
+          "group": 16,
+          "verb": "act",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 34,
+          "group": 17,
+          "verb": "get_current_head",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 35,
+          "group": 17,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 36,
+          "group": 17,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 37,
+          "group": 18,
+          "verb": "publish_context",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 38,
+          "group": 19,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 39,
+          "group": 20,
+          "verb": "get_current_head",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 40,
+          "group": 20,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        }
+      ]
+    },
+    {
+      "run": 3,
+      "controller": "plan-act-style",
+      "procedure": "procedure-absent",
+      "binding": "stable",
+      "status": "completed",
+      "captureComplete": true,
+      "captureScope": "closed-run",
+      "protocolConformant": true,
+      "interventionApplied": false,
+      "protocolDeviationCount": 0,
+      "planRevisionEntries": 0,
+      "successfulLaunches": 1,
+      "gradedSubmissions": 1,
+      "grades": [
+        {
+          "correct": 10,
+          "questions": 10,
+          "score": 1.0
+        }
+      ],
+      "applicableProcedureDiscovered": false,
+      "procedureUseVerified": false,
+      "checkpointReached": true,
+      "staleRejectionObserved": false,
+      "staleRecoveryVerified": false,
+      "finalStateVerified": true,
+      "replayComplete": true,
+      "replayLinks": 3,
+      "retainedCalls": 44,
+      "retainedGroups": 18,
+      "retainedFailedCalls": 0,
+      "retainedTransportExceptions": 0,
+      "calls": [
+        {
+          "index": 1,
+          "group": 1,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 2,
+          "group": 2,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 3,
+          "group": 3,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 4,
+          "group": 3,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 5,
+          "group": 3,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 6,
+          "group": 3,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 7,
+          "group": 4,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 8,
+          "group": 4,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 9,
+          "group": 4,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 10,
+          "group": 4,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 11,
+          "group": 5,
+          "verb": "get_current_head",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 12,
+          "group": 5,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 13,
+          "group": 5,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 14,
+          "group": 5,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 15,
+          "group": 5,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 16,
+          "group": 6,
+          "verb": "get_current_head",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 17,
+          "group": 6,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 18,
+          "group": 6,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 19,
+          "group": 6,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 20,
+          "group": 7,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 21,
+          "group": 8,
+          "verb": "sign_request",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 22,
+          "group": 8,
+          "verb": "act",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 23,
+          "group": 9,
+          "verb": "sign_request",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 24,
+          "group": 9,
+          "verb": "act",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 25,
+          "group": 10,
+          "verb": "get_current_head",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 26,
+          "group": 10,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 27,
+          "group": 11,
+          "verb": "publish_context",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 28,
+          "group": 12,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 29,
+          "group": 12,
+          "verb": "get_current_head",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 30,
+          "group": 12,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 31,
+          "group": 13,
+          "verb": "act",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 32,
+          "group": 14,
+          "verb": "get_current_head",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 33,
+          "group": 14,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 34,
+          "group": 14,
+          "verb": "get_current_head",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 35,
+          "group": 14,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 36,
+          "group": 15,
+          "verb": "act",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 37,
+          "group": 16,
+          "verb": "get_current_head",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 38,
+          "group": 16,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 39,
+          "group": 16,
+          "verb": "get_current_head",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 40,
+          "group": 16,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 41,
+          "group": 17,
+          "verb": "publish_context",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 42,
+          "group": 18,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 43,
+          "group": 18,
+          "verb": "get_current_head",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 44,
+          "group": 18,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        }
+      ]
+    },
+    {
+      "run": 4,
+      "controller": "plan-act-style",
+      "procedure": "procedure-present",
+      "binding": "stable",
+      "status": "blocked",
+      "captureComplete": true,
+      "captureScope": "closed-run",
+      "protocolConformant": true,
+      "interventionApplied": false,
+      "protocolDeviationCount": 0,
+      "planRevisionEntries": 4,
+      "successfulLaunches": 1,
+      "gradedSubmissions": 1,
+      "grades": [
+        {
+          "correct": 9,
+          "questions": 10,
+          "score": 0.9
+        }
+      ],
+      "applicableProcedureDiscovered": true,
+      "procedureUseVerified": true,
+      "checkpointReached": false,
+      "staleRejectionObserved": false,
+      "staleRecoveryVerified": false,
+      "finalStateVerified": true,
+      "replayComplete": true,
+      "replayLinks": 1,
+      "retainedCalls": 37,
+      "retainedGroups": 15,
+      "retainedFailedCalls": 1,
+      "retainedTransportExceptions": 0,
+      "calls": [
+        {
+          "index": 1,
+          "group": 1,
+          "verb": "dereference",
+          "failed": true,
+          "transportException": false
+        },
+        {
+          "index": 2,
+          "group": 2,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 3,
+          "group": 3,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 4,
+          "group": 4,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 5,
+          "group": 4,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 6,
+          "group": 4,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 7,
+          "group": 4,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 8,
+          "group": 5,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 9,
+          "group": 5,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 10,
+          "group": 5,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 11,
+          "group": 5,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 12,
+          "group": 5,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 13,
+          "group": 6,
+          "verb": "get_current_head",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 14,
+          "group": 6,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 15,
+          "group": 6,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 16,
+          "group": 6,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 17,
+          "group": 6,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 18,
+          "group": 7,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 19,
+          "group": 7,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 20,
+          "group": 7,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 21,
+          "group": 8,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 22,
+          "group": 9,
+          "verb": "sign_request",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 23,
+          "group": 9,
+          "verb": "act",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 24,
+          "group": 10,
+          "verb": "sign_request",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 25,
+          "group": 10,
+          "verb": "act",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 26,
+          "group": 11,
+          "verb": "publish_context",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 27,
+          "group": 12,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 28,
+          "group": 12,
+          "verb": "get_current_head",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 29,
+          "group": 12,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 30,
+          "group": 13,
+          "verb": "get_current_head",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 31,
+          "group": 13,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 32,
+          "group": 13,
+          "verb": "get_current_head",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 33,
+          "group": 13,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 34,
+          "group": 14,
+          "verb": "publish_context",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 35,
+          "group": 15,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 36,
+          "group": 15,
+          "verb": "get_current_head",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 37,
+          "group": 15,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        }
+      ]
+    },
+    {
+      "run": 5,
+      "controller": "plan-act-style",
+      "procedure": "procedure-present",
+      "binding": "changed-binding",
+      "status": "interrupted",
+      "captureComplete": false,
+      "captureScope": "checkpoint-prefix",
+      "protocolConformant": null,
+      "interventionApplied": false,
+      "protocolDeviationCount": 0,
+      "planRevisionEntries": 0,
+      "successfulLaunches": 1,
+      "gradedSubmissions": 1,
+      "grades": [
+        {
+          "correct": 10,
+          "questions": 10,
+          "score": 1.0
+        }
+      ],
+      "applicableProcedureDiscovered": true,
+      "procedureUseVerified": true,
+      "checkpointReached": true,
+      "staleRejectionObserved": false,
+      "staleRecoveryVerified": false,
+      "finalStateVerified": false,
+      "replayComplete": true,
+      "replayLinks": 2,
+      "retainedCalls": 35,
+      "retainedGroups": 15,
+      "retainedFailedCalls": 0,
+      "retainedTransportExceptions": 0,
+      "calls": [
+        {
+          "index": 1,
+          "group": 1,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 2,
+          "group": 2,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 3,
+          "group": 3,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 4,
+          "group": 3,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 5,
+          "group": 3,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 6,
+          "group": 3,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 7,
+          "group": 4,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 8,
+          "group": 4,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 9,
+          "group": 4,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 10,
+          "group": 4,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 11,
+          "group": 4,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 12,
+          "group": 5,
+          "verb": "get_current_head",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 13,
+          "group": 5,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 14,
+          "group": 5,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 15,
+          "group": 5,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 16,
+          "group": 5,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 17,
+          "group": 6,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 18,
+          "group": 6,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 19,
+          "group": 6,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 20,
+          "group": 7,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 21,
+          "group": 7,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 22,
+          "group": 8,
+          "verb": "sign_request",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 23,
+          "group": 8,
+          "verb": "act",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 24,
+          "group": 9,
+          "verb": "sign_request",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 25,
+          "group": 9,
+          "verb": "act",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 26,
+          "group": 10,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 27,
+          "group": 11,
+          "verb": "publish_context",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 28,
+          "group": 12,
+          "verb": "dereference",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 29,
+          "group": 12,
+          "verb": "get_current_head",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 30,
+          "group": 12,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 31,
+          "group": 13,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 32,
+          "group": 14,
+          "verb": "act",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 33,
+          "group": 15,
+          "verb": "get_current_head",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 34,
+          "group": 15,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        },
+        {
+          "index": 35,
+          "group": 15,
+          "verb": "get_descriptor",
+          "failed": false,
+          "transportException": false
+        }
+      ]
+    },
+    {
+      "run": 6,
+      "controller": "plan-act-style",
+      "procedure": "procedure-absent",
+      "binding": "changed-binding",
+      "status": "not-started",
+      "captureComplete": null,
+      "captureScope": "not-started",
+      "protocolConformant": null,
+      "interventionApplied": false,
+      "protocolDeviationCount": 0,
+      "planRevisionEntries": null,
+      "successfulLaunches": 0,
+      "gradedSubmissions": 0,
+      "grades": [],
+      "applicableProcedureDiscovered": null,
+      "procedureUseVerified": null,
+      "checkpointReached": false,
+      "staleRejectionObserved": false,
+      "staleRecoveryVerified": false,
+      "finalStateVerified": false,
+      "replayComplete": null,
+      "replayLinks": null,
+      "retainedCalls": 0,
+      "retainedGroups": 0,
+      "retainedFailedCalls": 0,
+      "retainedTransportExceptions": 0,
+      "calls": []
+    },
+    {
+      "run": 7,
+      "controller": "react-style",
+      "procedure": "procedure-absent",
+      "binding": "changed-binding",
+      "status": "not-started",
+      "captureComplete": null,
+      "captureScope": "not-started",
+      "protocolConformant": null,
+      "interventionApplied": false,
+      "protocolDeviationCount": 0,
+      "planRevisionEntries": null,
+      "successfulLaunches": 0,
+      "gradedSubmissions": 0,
+      "grades": [],
+      "applicableProcedureDiscovered": null,
+      "procedureUseVerified": null,
+      "checkpointReached": false,
+      "staleRejectionObserved": false,
+      "staleRecoveryVerified": false,
+      "finalStateVerified": false,
+      "replayComplete": null,
+      "replayLinks": null,
+      "retainedCalls": 0,
+      "retainedGroups": 0,
+      "retainedFailedCalls": 0,
+      "retainedTransportExceptions": 0,
+      "calls": []
+    },
+    {
+      "run": 8,
+      "controller": "react-style",
+      "procedure": "procedure-present",
+      "binding": "changed-binding",
+      "status": "not-started",
+      "captureComplete": null,
+      "captureScope": "not-started",
+      "protocolConformant": null,
+      "interventionApplied": false,
+      "protocolDeviationCount": 0,
+      "planRevisionEntries": null,
+      "successfulLaunches": 0,
+      "gradedSubmissions": 0,
+      "grades": [],
+      "applicableProcedureDiscovered": null,
+      "procedureUseVerified": null,
+      "checkpointReached": false,
+      "staleRejectionObserved": false,
+      "staleRecoveryVerified": false,
+      "finalStateVerified": false,
+      "replayComplete": null,
+      "replayLinks": null,
+      "retainedCalls": 0,
+      "retainedGroups": 0,
+      "retainedFailedCalls": 0,
+      "retainedTransportExceptions": 0,
+      "calls": []
+    }
+  ],
+  "paired": [
+    {
+      "controller": "react-style",
+      "binding": "stable",
+      "comparisonAvailable": true,
+      "bothTasksCompleted": true,
+      "callsPresentMinusAbsent": 5,
+      "groupsPresentMinusAbsent": 0
+    },
+    {
+      "controller": "plan-act-style",
+      "binding": "stable",
+      "comparisonAvailable": true,
+      "bothTasksCompleted": false,
+      "callsPresentMinusAbsent": -7,
+      "groupsPresentMinusAbsent": -3
+    },
+    {
+      "controller": "react-style",
+      "binding": "changed-binding",
+      "comparisonAvailable": false,
+      "bothTasksCompleted": false,
+      "callsPresentMinusAbsent": null,
+      "groupsPresentMinusAbsent": null
+    },
+    {
+      "controller": "plan-act-style",
+      "binding": "changed-binding",
+      "comparisonAvailable": false,
+      "bothTasksCompleted": false,
+      "callsPresentMinusAbsent": null,
+      "groupsPresentMinusAbsent": null
+    }
+  ],
+  "controllerContrasts": [
+    {
+      "procedure": "procedure-present",
+      "binding": "stable",
+      "comparisonAvailable": true,
+      "bothTasksCompleted": false,
+      "callsReactMinusPlanAct": 8,
+      "groupsReactMinusPlanAct": 5
+    },
+    {
+      "procedure": "procedure-present",
+      "binding": "changed-binding",
+      "comparisonAvailable": false,
+      "bothTasksCompleted": false,
+      "callsReactMinusPlanAct": null,
+      "groupsReactMinusPlanAct": null
+    },
+    {
+      "procedure": "procedure-absent",
+      "binding": "stable",
+      "comparisonAvailable": true,
+      "bothTasksCompleted": true,
+      "callsReactMinusPlanAct": -4,
+      "groupsReactMinusPlanAct": 2
+    },
+    {
+      "procedure": "procedure-absent",
+      "binding": "changed-binding",
+      "comparisonAvailable": false,
+      "bothTasksCompleted": false,
+      "callsReactMinusPlanAct": null,
+      "groupsReactMinusPlanAct": null
+    }
+  ]
+}

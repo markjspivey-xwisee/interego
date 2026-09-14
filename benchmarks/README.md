@@ -2,6 +2,12 @@
 
 Adhoc evaluation scripts and result artifacts for the Interego agentic memory pipeline.
 
+The [controller policy and release-procedure comparison](controller-procedure-comparison/README.md)
+reports a separate prospective cohort: three completed releases, one blocked,
+one interrupted at its recorded checkpoint, and three unstarted assignments.
+Its public accounting and disclosure checks run in the dedicated
+`controller-comparison.yml` workflow. The older studies remain separate.
+
 ## Status
 
 Manual / adhoc. No CI integration today — these scripts are run by the operator on demand and results are committed when noteworthy. See [`spec/OPS-RUNBOOK.md`](../spec/OPS-RUNBOOK.md) §13 for the roadmap to CI-gated benchmark regressions.

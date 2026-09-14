@@ -236,9 +236,9 @@ const UNLINTED_FRONTIER = {
   //    (its .tsx files are clean). Written here rather than argued about later: this is the one
   //    kind of repin that is legitimate, and it is legitimate only because the SCAN widened.
   applications: { errors: 1452, files: 464 },
-  // Live procedure discovery adds three lint-clean modules; the staged census is 44.
+  // The controller comparison adds two lint-clean audit modules; the census is 46.
   // Re-pin the file floor to that measured count without raising the error ceiling.
-  benchmarks: { errors: 193, files: 44 },
+  benchmarks: { errors: 193, files: 46 },
   demos: { errors: 48, files: 45 },
   // A declared npm workspace (see package.json `workspaces`), never linted.
   'mcp-server': { errors: 33, files: 4 },
