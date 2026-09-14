@@ -1,0 +1,335 @@
+@prefix pr: <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix hydra: <http://www.w3.org/ns/hydra/core#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix vann: <http://purl.org/vocab/vann/> .
+
+<https://markjspivey-xwisee.github.io/interego/ns/procedure#> a owl:Ontology ;
+    rdfs:label "Interego linked read-procedure example profile" ;
+    rdfs:comment "Optional L3 prototype vocabulary for the procedure-runner integration. Reuses PROV plans, Hydra operations, and Interego descriptor authority. It is not a change to the Interego core protocol." ;
+    vann:preferredNamespacePrefix "pr" ;
+    vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/ns/procedure#" .
+
+pr:Procedure a owl:Class ;
+    rdfs:subClassOf prov:Plan ;
+    rdfs:label "Procedure" ;
+    rdfs:comment "A finite read-only plan expressed as directed RDF steps. This optional L3 client profile does not add a core MCP tool." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:Step a owl:Class ;
+    rdfs:subClassOf prov:Plan ;
+    rdfs:label "Step" ;
+    rdfs:comment "One part of a procedure plan. Network steps additionally declare Hydra GET operations; local steps evaluate only the installed expression vocabulary." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:RunRequest a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "RunRequest" ;
+    rdfs:comment "A signed invocation description linking an immutable procedure publication, its current-head pin, and explicit input data." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:Binding a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "Binding" ;
+    rdfs:comment "A data binding from a named procedure input, preceding step result, or collection item, using a relative JSON Pointer." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:Expression a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "Expression" ;
+    rdfs:comment "A data description evaluated by the installed client interpreter. It never contains executable code." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:Object a owl:Class ;
+    rdfs:subClassOf pr:Expression ;
+    rdfs:label "Object" ;
+    rdfs:comment "An object expression with unique named field resources; its internal JSON projection is not the publication format." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:Equal a owl:Class ;
+    rdfs:subClassOf pr:Expression ;
+    rdfs:label "Equal" ;
+    rdfs:comment "Structural equality of left and right expressions." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:Nonempty a owl:Class ;
+    rdfs:subClassOf pr:Expression ;
+    rdfs:label "Nonempty" ;
+    rdfs:comment "True only for a nonempty string or array." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:And a owl:Class ;
+    rdfs:subClassOf pr:Expression ;
+    rdfs:label "And" ;
+    rdfs:comment "Conjunction of one or more condition resources, independent of RDF triple order." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:All a owl:Class ;
+    rdfs:subClassOf pr:Expression ;
+    rdfs:label "All" ;
+    rdfs:comment "A condition applied to every member of a nonempty collection. An empty collection fails." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:ObservedRepresentation a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "ObservedRepresentation" ;
+    rdfs:comment "The authenticated host's observed response to a declared read operation; observation alone is not proof of every embedded claim." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:EvidenceReviewExecution a owl:Class ;
+    rdfs:subClassOf prov:Activity ;
+    rdfs:label "EvidenceReviewExecution" ;
+    rdfs:comment "An execution that reviews linked performance and learning evidence. Completion does not imply a new assessment or acquired competence." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:entry a owl:ObjectProperty ;
+    rdfs:label "entry" ;
+    rdfs:comment "First step of a procedure." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:step a owl:ObjectProperty ;
+    rdfs:label "step" ;
+    rdfs:comment "A declared step belonging to this procedure. The next edges determine order." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:input a owl:ObjectProperty ;
+    rdfs:label "input" ;
+    rdfs:comment "Named input binding source for a plan, or a node of scalar fields for a run request." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:iterationItem a owl:ObjectProperty ;
+    rdfs:label "iterationItem" ;
+    rdfs:comment "Named binding source for the current collection item during selection or universal checks." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:next a owl:ObjectProperty ;
+    rdfs:label "next" ;
+    rdfs:comment "Directed edge to the next step. Output is terminal; cycles and multiple next edges are refused." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:kind a owl:ObjectProperty ;
+    rdfs:label "kind" ;
+    rdfs:comment "One installed step kind from StepKinds." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:key a owl:DatatypeProperty ;
+    rdfs:label "key" ;
+    rdfs:comment "Local key of a step or object field. Keys must be unique in their scope." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:capability a owl:DatatypeProperty ;
+    rdfs:label "capability" ;
+    rdfs:comment "Name of an installed generic Interego read capability. This is neither an endpoint recipe nor a domain-specific tool." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:arguments a owl:ObjectProperty ;
+    rdfs:label "arguments" ;
+    rdfs:comment "Object expression supplying arguments to an installed generic read capability." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:condition a owl:ObjectProperty ;
+    rdfs:label "condition" ;
+    rdfs:comment "Condition expression, or conjuncts of an And expression." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:from a owl:ObjectProperty ;
+    rdfs:label "from" ;
+    rdfs:comment "Binding to an observed collection or representation. Controls may be selected only from discovered data." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:control a owl:ObjectProperty ;
+    rdfs:label "control" ;
+    rdfs:comment "Edge from a follow operation to a preceding selection step. The selected authority and action are passed unchanged to act." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:format a owl:DatatypeProperty ;
+    rdfs:label "format" ;
+    rdfs:comment "Name of an installed representation interpreter. No interpreter is downloaded from a procedure." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:onFailure a owl:ObjectProperty ;
+    rdfs:label "onFailure" ;
+    rdfs:comment "Terminal failure outcome, Blocked for checks or NeedsDecision for expectations." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:observation a owl:ObjectProperty ;
+    rdfs:label "observation" ;
+    rdfs:comment "Object expression returned to the caller at a decision boundary." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:field a owl:ObjectProperty ;
+    rdfs:label "field" ;
+    rdfs:comment "Field resource with one key and one value." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:value a rdf:Property ;
+    rdfs:label "value" ;
+    rdfs:comment "A literal value or a linked expression resource." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:values a owl:ObjectProperty ;
+    rdfs:label "values" ;
+    rdfs:comment "Expression providing the collection inspected by All." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:left a rdf:Property ;
+    rdfs:label "left" ;
+    rdfs:comment "Left operand of structural equality." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:right a rdf:Property ;
+    rdfs:label "right" ;
+    rdfs:comment "Right operand of structural equality." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:source a owl:ObjectProperty ;
+    rdfs:label "source" ;
+    rdfs:comment "Named binding source in this procedure." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:pointer a owl:DatatypeProperty ;
+    rdfs:label "pointer" ;
+    rdfs:comment "Relative JSON Pointer into the declared source result; empty selects the whole source." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:procedure a owl:ObjectProperty ;
+    rdfs:label "procedure" ;
+    rdfs:comment "Authoritative descriptor URL of the signed procedure graph selected by a run request." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:procedureGraph a owl:ObjectProperty ;
+    rdfs:label "procedureGraph" ;
+    rdfs:comment "Graph IRI whose current head must agree with the invocation pin." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:procedurePod a owl:ObjectProperty ;
+    rdfs:label "procedurePod" ;
+    rdfs:comment "Pod used by the generic current-head capability." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:procedureCid a owl:DatatypeProperty ;
+    rdfs:label "procedureCid" ;
+    rdfs:comment "Committed current-head content identifier pinned by the invocation." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:podUrl a owl:DatatypeProperty ;
+    rdfs:label "podUrl" ;
+    rdfs:comment "String input used by this example to locate the application catalog head." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:catalogGraphIri a owl:DatatypeProperty ;
+    rdfs:label "catalogGraphIri" ;
+    rdfs:comment "String input naming this example's application catalog graph." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:expectedStateCid a owl:DatatypeProperty ;
+    rdfs:label "expectedStateCid" ;
+    rdfs:comment "Caller's expected release-state identifier; mismatch requests a decision." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:courseHmd a owl:DatatypeProperty ;
+    rdfs:label "courseHmd" ;
+    rdfs:comment "String input linking the course's HyperMarkdown representation. The course catalog link is subsequently discovered in that representation." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+pr:ReadProcedureProfile a dct:Standard ;
+    rdfs:label "Read procedure profile v1" ;
+    rdfs:comment "Finite acyclic graphs, at most 64 steps, a terminal output, read-only generic capabilities, discovered input-free GET controls, and fail-closed checks. SHACL describes structure; the compiler also enforces reachability, expression scope, and the capability boundary." .
+
+pr:StepKinds a skos:ConceptScheme ;
+    rdfs:comment "The installed step kinds understood by the v1 client interpreter." ;
+    skos:hasTopConcept pr:Read, pr:Check, pr:Select, pr:Pick, pr:Project, pr:Follow, pr:Expect, pr:Output .
+
+pr:Read a skos:Concept ;
+    skos:inScheme pr:StepKinds ;
+    skos:prefLabel "Read" ;
+    rdfs:comment "Invoke an installed generic read capability with bound arguments." .
+
+pr:Check a skos:Concept ;
+    skos:inScheme pr:StepKinds ;
+    skos:prefLabel "Check" ;
+    rdfs:comment "Continue only when all declared preconditions hold; otherwise return Blocked." .
+
+pr:Select a skos:Concept ;
+    skos:inScheme pr:StepKinds ;
+    skos:prefLabel "Select" ;
+    rdfs:comment "Select exactly one executable, input-free GET control from observed data." .
+
+pr:Pick a skos:Concept ;
+    skos:inScheme pr:StepKinds ;
+    skos:prefLabel "Pick" ;
+    rdfs:comment "Select exactly one data item or typed link from observed data." .
+
+pr:Project a skos:Concept ;
+    skos:inScheme pr:StepKinds ;
+    skos:prefLabel "Project" ;
+    rdfs:comment "Interpret an observed representation with a preinstalled media interpreter." .
+
+pr:Follow a skos:Concept ;
+    skos:inScheme pr:StepKinds ;
+    skos:prefLabel "Follow" ;
+    rdfs:comment "Follow the selected descriptor-bound GET control using the existing generic act capability." .
+
+pr:Expect a skos:Concept ;
+    skos:inScheme pr:StepKinds ;
+    skos:prefLabel "Expect" ;
+    rdfs:comment "Compare a caller expectation with observation and return NeedsDecision on mismatch." .
+
+pr:Output a skos:Concept ;
+    skos:inScheme pr:StepKinds ;
+    skos:prefLabel "Output" ;
+    rdfs:comment "Return a bound output value and terminate the procedure." .
+
+pr:FailureOutcomes a skos:ConceptScheme ;
+    rdfs:comment "Terminal outcomes when a procedure cannot continue automatically." ;
+    skos:hasTopConcept pr:Blocked, pr:NeedsDecision .
+
+pr:Blocked a skos:Concept ;
+    skos:inScheme pr:FailureOutcomes ;
+    skos:prefLabel "Blocked" ;
+    rdfs:comment "A required trust, integrity, or consistency condition failed. Do not report completion." .
+
+pr:NeedsDecision a skos:Concept ;
+    skos:inScheme pr:FailureOutcomes ;
+    skos:prefLabel "Needs decision" ;
+    rdfs:comment "Return the observation to the caller. Any continuation is a new invocation with explicit inputs and fresh discovery, never a resumed cursor." .
+
+pr:ProcedureShape a sh:NodeShape ;
+    rdfs:comment "Structural entry and membership constraints; the compiler additionally checks reachability and cycles." ;
+    sh:targetClass pr:Procedure ;
+    sh:nodeKind sh:IRI ;
+    sh:property [ sh:path pr:entry ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path pr:step ; sh:minCount 1 ; sh:maxCount 64 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path pr:input ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path pr:iterationItem ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] .
+
+pr:StepShape a sh:NodeShape ;
+    rdfs:comment "A named step has one key and kind, and at most one successor." ;
+    sh:targetClass pr:Step ;
+    sh:nodeKind sh:IRI ;
+    sh:property [ sh:path pr:key ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path pr:kind ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( pr:Read pr:Check pr:Select pr:Pick pr:Project pr:Follow pr:Expect pr:Output ) ] ;
+    sh:property [ sh:path pr:next ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] .
+
+pr:BindingShape a sh:NodeShape ;
+    rdfs:comment "A binding identifies one source and one relative pointer." ;
+    sh:targetClass pr:Binding ;
+    sh:nodeKind sh:IRI ;
+    sh:property [ sh:path pr:source ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path pr:pointer ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] .
+
+pr:RequestShape a sh:NodeShape ;
+    rdfs:comment "A signed request pins the linked procedure's current publication and supplies named inputs." ;
+    sh:targetClass pr:RunRequest ;
+    sh:nodeKind sh:IRI ;
+    sh:property [ sh:path pr:procedure ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path pr:procedureGraph ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path pr:procedurePod ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path pr:procedureCid ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path pr:input ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] .

@@ -1,0 +1,18 @@
+@prefix pr: <https://markjspivey-xwisee.github.io/interego/ns/procedure#> .
+
+# Replace placeholders with values observed from your own signed publication
+# and committed current head. Publish this request with authorship signing too.
+<urn:example:request> a pr:RunRequest ;
+    pr:procedure <https://example.invalid/procedure-descriptor.ttl> ;
+    pr:procedureGraph <urn:example:procedure-publication> ;
+    pr:procedurePod <https://example.invalid/pod/> ;
+    pr:procedureCid "REPLACE_WITH_COMMITTED_HEAD_CID" ;
+    pr:input <urn:example:request-input> .
+
+<urn:example:request-input> pr:field
+    <urn:example:input-pod>, <urn:example:input-catalog>,
+    <urn:example:input-expected>, <urn:example:input-course> .
+<urn:example:input-pod> pr:key "podUrl" ; pr:value "https://example.invalid/pod/" .
+<urn:example:input-catalog> pr:key "catalogGraphIri" ; pr:value "urn:example:application-catalog" .
+<urn:example:input-expected> pr:key "expectedStateCid" ; pr:value "REPLACE_WITH_EXPECTED_STATE_CID" .
+<urn:example:input-course> pr:key "courseHmd" ; pr:value "https://example.invalid/course.hmd" .

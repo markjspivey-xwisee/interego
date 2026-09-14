@@ -1,0 +1,39 @@
+name: Linked procedure runner
+
+on:
+  pull_request:
+    paths:
+      - 'integrations/procedure-runner/**'
+      - 'examples/procedures/**'
+      - 'packages/core/**'
+      - 'docs/ns/procedure*'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/procedure-runner.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'integrations/procedure-runner/**'
+      - 'examples/procedures/**'
+      - 'packages/core/**'
+      - 'docs/ns/procedure*'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/procedure-runner.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  linked-procedure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - run: npm run build:core
+      - name: Validate execution boundaries and HMD semantic projection
+        run: node --test integrations/procedure-runner/*.test.mjs
