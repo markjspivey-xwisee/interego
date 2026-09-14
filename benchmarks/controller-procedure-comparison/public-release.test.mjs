@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { ASSIGNMENTS, audit, differences } from './audit.mjs';
+import { ASSIGNMENTS, FOLLOWUP_ASSIGNMENTS, audit, differences } from './audit.mjs';
 
 function fixture() {
   const runs = ASSIGNMENTS.map(([controller, procedure, binding], index) => ({
@@ -82,5 +82,68 @@ test('unstarted assignments cannot carry calls or fabricated grades', () => {
 test('plan-revision counts cannot be assigned to ReAct notes', () => {
   const value = fixture();
   value.runs[0].planRevisionEntries = 1;
+  assert.throws(() => audit(value));
+});
+
+function followupFixture() {
+  const value = fixture();
+  value.protocolVersion = '2.1.0';
+  value.design = 'two-controller-policies-two-procedure-conditions-changed-binding-followup';
+  value.runs = value.runs.slice(4).map((row, index) => ({ ...row, run: index + 1,
+    interventionApplied: true, staleRejectionObserved: true, staleRecoveryVerified: true,
+    retainedCalls: 3, retainedFailedCalls: 1,
+    calls: [...row.calls, { index: 3, group: 1, verb: 'act', failed: true, transportException: false }] }));
+  return { ...value, ...differences(value.runs, ['changed-binding']) };
+}
+
+test('the published follow-up projection passes its independent audit', () => {
+  audit(JSON.parse(readFileSync(new URL('./followup-results.json', import.meta.url), 'utf8')));
+});
+test('follow-up assignments and contrasts remain in their own temporal block', () => {
+  const value = followupFixture();
+  audit(value);
+  assert.equal(value.runs.length, FOLLOWUP_ASSIGNMENTS.length);
+  assert(value.paired.every(pair => pair.binding === 'changed-binding'));
+  assert.equal(value.controllerContrasts.length, 2);
+  value.runs.push(fixture().runs[0]);
+  assert.throws(() => audit(value));
+});
+test('completed follow-up releases require actual intervention and recovery accounting', () => {
+  for (const field of ['checkpointReached', 'interventionApplied', 'staleRejectionObserved', 'staleRecoveryVerified']) {
+    const value = followupFixture();
+    value.runs[0][field] = false;
+    assert.throws(() => audit(value));
+  }
+});
+test('a blocked follow-up can finish without reaching the intervention', () => {
+  const value = followupFixture();
+  Object.assign(value.runs[0], { status: 'blocked', checkpointReached: false, interventionApplied: false,
+    staleRejectionObserved: false, staleRecoveryVerified: false, finalStateVerified: false,
+    grades: [{ correct: 9, questions: 10, score: 0.9 }] });
+  Object.assign(value, differences(value.runs, ['changed-binding']));
+  audit(value);
+  assert.equal(value.paired[1].bothTasksCompleted, false);
+});
+test('follow-up labels cannot relabel or pool the original frozen cohort', () => {
+  const value = fixture();
+  value.protocolVersion = '2.1.0';
+  assert.throws(() => audit(value));
+  assert.throws(() => differences([], ['changed-binding']));
+});
+test('follow-up private content cannot enter the public projection', () => {
+  const value = followupFixture();
+  value.runs[0].calls[0].payload = 'SYNTHETIC_PRIVATE_CANARY';
+  assert.throws(() => audit(value));
+});
+test('completed but nonconformant follow-up remains visible and excludes its contrasts', () => {
+  const value = followupFixture();
+  Object.assign(value.runs[1], { protocolConformant: false, protocolDeviationCount: 1 });
+  Object.assign(value, differences(value.runs, ['changed-binding']));
+  audit(value);
+  assert.equal(value.runs[1].status, 'completed');
+  assert.equal(value.paired[1].bothTasksCompleted, true);
+  assert.equal(value.paired[1].comparisonAvailable, false);
+  assert.equal(value.controllerContrasts[1].comparisonAvailable, false);
+  value.paired[1].callsPresentMinusAbsent = 0;
   assert.throws(() => audit(value));
 });

@@ -2,6 +2,8 @@
 
 Layer 3, non-normative empirical report. Protocol 2.0.0; September 2026.
 
+The four changed-binding conditions were subsequently measured in a [separate prospective follow-up](followup.md), protocol 2.1.0. The frozen cohort below and its `results.json` remain unchanged; the follow-up has its own measurements and within-cohort contrasts.
+
 3 of 5 started isolated test releases completed. Of eight planned assignments, 1 was blocked, 1 was interrupted and 3 were not started. The retained record contains 201 Interego invocations across 88 decision groups, 1 failed invocation and 0 recorded transport exceptions. 4 controller captures are closed and complete; those 4 cases conform to the recorded protocol. This cohort stopped early.
 
 The experiment crosses two controller instruction policies, presence or absence of a discoverable release procedure, and stable or changed activation bindings. Every arm uses Interego. ReAct style and Plan-Act style describe the operational instructions below; no external framework library is being benchmarked.

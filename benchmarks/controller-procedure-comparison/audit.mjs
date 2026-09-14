@@ -15,6 +15,7 @@ export const ASSIGNMENTS = [
   ['react-style', 'procedure-absent', 'changed-binding'],
   ['react-style', 'procedure-present', 'changed-binding'],
 ];
+export const FOLLOWUP_ASSIGNMENTS = ASSIGNMENTS.slice(4);
 const TOP = ['schema', 'protocolVersion', 'scope', 'recordingScope', 'design', 'modelScope',
   'assessmentScope', 'runs', 'paired', 'controllerContrasts'];
 const ROW = ['run', 'controller', 'procedure', 'binding', 'status', 'captureComplete', 'captureScope',
@@ -30,13 +31,14 @@ const keys = (value, allowed) => {
 const count = value => assert(Number.isSafeInteger(value) && value >= 0 && value <= 10000);
 const nullableCount = value => { if (value !== null) count(value); };
 const tri = value => assert(value === null || typeof value === 'boolean');
-const bothClosed = rows => rows.every(row => row.captureComplete === true && row.protocolConformant === true);
+const bothClosed = rows => rows.length === 2 && rows.every(row => row.captureComplete === true && row.protocolConformant === true);
 
-export function differences(rows) {
+export function differences(rows, bindings = ['stable', 'changed-binding']) {
   const paired = [];
   for (const controller of ['react-style', 'plan-act-style']) {
-    for (const binding of ['stable', 'changed-binding']) {
+    for (const binding of bindings) {
       const group = rows.filter(row => row.controller === controller && row.binding === binding);
+      assert.equal(group.length, 2, 'Contrasts require exactly two assigned runs');
       const present = group.find(row => row.procedure === 'procedure-present');
       const absent = group.find(row => row.procedure === 'procedure-absent');
       const available = bothClosed(group);
@@ -47,11 +49,12 @@ export function differences(rows) {
     }
   }
   // Match the prospectively reported order: stable controller blocks, then changed blocks.
-  [paired[1], paired[2]] = [paired[2], paired[1]];
+  if (bindings.length === 2) [paired[1], paired[2]] = [paired[2], paired[1]];
   const controllerContrasts = [];
   for (const procedure of ['procedure-present', 'procedure-absent']) {
-    for (const binding of ['stable', 'changed-binding']) {
+    for (const binding of bindings) {
       const group = rows.filter(row => row.procedure === procedure && row.binding === binding);
+      assert.equal(group.length, 2, 'Contrasts require exactly two assigned runs');
       const react = group.find(row => row.controller === 'react-style');
       const plan = group.find(row => row.controller === 'plan-act-style');
       const available = bothClosed(group);
@@ -67,17 +70,21 @@ export function differences(rows) {
 export function audit(value) {
   keys(value, TOP);
   assert.equal(value.schema, 'interego.controller-comparison-public/v1');
-  assert.equal(value.protocolVersion, '2.0.0');
+  assert(['2.0.0', '2.1.0'].includes(value.protocolVersion));
+  const followup = value.protocolVersion === '2.1.0';
+  const assignments = followup ? FOLLOWUP_ASSIGNMENTS : ASSIGNMENTS;
   assert.equal(value.scope, 'unsigned-derived-measurements');
   assert.equal(value.recordingScope, 'mandatory-recorder-and-retained-controller-records');
-  assert.equal(value.design, 'two-controller-policies-two-procedure-conditions-two-binding-conditions');
+  assert.equal(value.design, followup
+    ? 'two-controller-policies-two-procedure-conditions-changed-binding-followup'
+    : 'two-controller-policies-two-procedure-conditions-two-binding-conditions');
   assert.equal(value.modelScope, 'common-inherited-configuration-provider-details-unavailable');
   assert.equal(value.assessmentScope, 'reused-assessment-fresh-instances');
-  assert(Array.isArray(value.runs) && value.runs.length === ASSIGNMENTS.length);
+  assert(Array.isArray(value.runs) && value.runs.length === assignments.length);
   value.runs.forEach((row, index) => {
     keys(row, ROW);
     assert.equal(row.run, index + 1);
-    assert.deepEqual([row.controller, row.procedure, row.binding], ASSIGNMENTS[index]);
+    assert.deepEqual([row.controller, row.procedure, row.binding], assignments[index]);
     assert(['completed', 'blocked', 'interrupted', 'not-started'].includes(row.status));
     assert(['closed-run', 'checkpoint-prefix', 'incomplete', 'not-started'].includes(row.captureScope));
     for (const name of ['captureComplete', 'protocolConformant', 'applicableProcedureDiscovered',
@@ -134,6 +141,13 @@ export function audit(value) {
       assert.equal(row.grades.at(-1)?.correct, 10);
       assert.equal(row.finalStateVerified, true);
       assert.equal(row.replayComplete, true);
+      if (followup) {
+        assert.equal(row.checkpointReached, true);
+        assert.equal(row.interventionApplied, true);
+        assert.equal(row.staleRejectionObserved, true);
+        assert.equal(row.staleRecoveryVerified, true);
+        assert(row.retainedFailedCalls >= 1, 'A stale rejection must remain in the call accounting');
+      }
     }
     if (row.status === 'interrupted') {
       assert.notEqual(row.captureComplete, true);
@@ -153,7 +167,7 @@ export function audit(value) {
       assert.equal(row.interventionApplied, false);
     }
   });
-  const computed = differences(value.runs);
+  const computed = differences(value.runs, followup ? ['changed-binding'] : undefined);
   assert.deepEqual(value.paired, computed.paired);
   assert.deepEqual(value.controllerContrasts, computed.controllerContrasts);
   return { assignments: value.runs.length,
