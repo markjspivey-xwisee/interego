@@ -34,6 +34,13 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
 
 <!-- documented-through: 2037e1a -->
 
+### 2026-09-14 — Linked procedure execution example
+
+- The optional client procedure runner loads signed RDF plans and invocation requests, follows directed steps and discovered Hydra GET controls through the existing Interego MCP surface, and returns explicit decision boundaries.
+- The performance and learning example follows AGP and FOXXI evidence, SCORM HyperMarkdown links, and historical xAPI references. Its separate execution performance event and live timings are documented with their evidence limits.
+- Native RDF, a HyperMarkdown navigation projection, the L3 procedure vocabulary, focused execution tests, and an unmeasured prose reference are available under `integrations/procedure-runner` and `examples/procedures`.
+
+
 ### 2026-09-12 — Controller and resource interface comparison
 
 - A separate manual benchmark compares ReAct and model-generated Plan–Act DAG controllers through conventional JSON and the shipped Interego resource composition. Matched local signed resources exercise action rebinding, concurrent writes and fresh-agent continuation without production mutations.

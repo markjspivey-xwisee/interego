@@ -1,0 +1,411 @@
+{
+  "schema": "interego.read-procedure/v1",
+  "id": "urn:interego:procedure:verified-application-status:v1",
+  "title": "Read the current verified application status",
+  "purpose": "Resolve current authority, follow the advertised read control, verify the evidence/replay, detect changed expectations, and return a compact status. No application state is changed.",
+  "inputs": [
+    "podUrl",
+    "catalogGraphIri",
+    "expectedStateCid"
+  ],
+  "steps": [
+    {
+      "id": "catalog-head",
+      "op": "read",
+      "tool": "get_current_head",
+      "args": {
+        "pod_url": {
+          "$ref": "/input/podUrl"
+        },
+        "urn": {
+          "$ref": "/input/catalogGraphIri"
+        }
+      }
+    },
+    {
+      "id": "one-catalog-head",
+      "op": "check",
+      "test": {
+        "op": "and",
+        "tests": [
+          {
+            "op": "eq",
+            "left": {
+              "$ref": "/steps/catalog-head/forked"
+            },
+            "right": false
+          },
+          {
+            "op": "nonempty",
+            "value": {
+              "$ref": "/steps/catalog-head/head/cid"
+            }
+          }
+        ]
+      },
+      "reason": "Catalog has no unambiguous current head."
+    },
+    {
+      "id": "catalog",
+      "op": "read",
+      "tool": "get_descriptor",
+      "args": {
+        "url": {
+          "$ref": "/steps/catalog-head/head/descriptorUrl"
+        }
+      }
+    },
+    {
+      "id": "catalog-authority",
+      "op": "check",
+      "test": {
+        "op": "and",
+        "tests": [
+          {
+            "op": "eq",
+            "left": {
+              "$ref": "/steps/catalog/authorship/authorshipVerified"
+            },
+            "right": true
+          },
+          {
+            "op": "eq",
+            "left": {
+              "$ref": "/steps/catalog/authorship/contentBinding"
+            },
+            "right": "bound"
+          },
+          {
+            "op": "eq",
+            "left": {
+              "$ref": "/steps/catalog/authorship/descriptorBinding/bound"
+            },
+            "right": true
+          },
+          {
+            "op": "and",
+            "tests": [
+              {
+                "op": "eq",
+                "left": {
+                  "$ref": "/steps/catalog/view/snapshot/live"
+                },
+                "right": true
+              },
+              {
+                "op": "eq",
+                "left": {
+                  "$ref": "/steps/catalog/view/snapshot/catalog/current"
+                },
+                "right": true
+              },
+              {
+                "op": "eq",
+                "left": {
+                  "$ref": "/steps/catalog/view/snapshot/head/forked"
+                },
+                "right": false
+              },
+              {
+                "op": "eq",
+                "left": {
+                  "$ref": "/steps/catalog/view/snapshot/trust/verified"
+                },
+                "right": true
+              },
+              {
+                "op": "eq",
+                "left": {
+                  "$ref": "/steps/catalog/view/snapshot/trust/artifactsTotal"
+                },
+                "right": {
+                  "$ref": "/steps/catalog/view/snapshot/trust/artifactsVerified"
+                }
+              },
+              {
+                "op": "eq",
+                "left": {
+                  "$ref": "/steps/catalog/view/snapshot/replay/complete"
+                },
+                "right": true
+              },
+              {
+                "op": "eq",
+                "left": {
+                  "$ref": "/steps/catalog/view/snapshot/replay/errors"
+                },
+                "right": []
+              },
+              {
+                "op": "eq",
+                "left": {
+                  "$ref": "/steps/catalog/view/snapshot/replay/chainLength"
+                },
+                "right": {
+                  "$ref": "/steps/catalog/view/snapshot/replay/verifiedLinks"
+                }
+              },
+              {
+                "op": "all",
+                "values": {
+                  "$ref": "/steps/catalog/view/snapshot/replay/links"
+                },
+                "test": {
+                  "op": "eq",
+                  "left": {
+                    "$ref": "/item/verified"
+                  },
+                  "right": true
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "Current catalog or application evidence is not verified."
+    },
+    {
+      "id": "refresh-control",
+      "op": "select",
+      "from": {
+        "$ref": "/steps/catalog/view/controls"
+      },
+      "test": {
+        "op": "and",
+        "tests": [
+          {
+            "op": "eq",
+            "left": {
+              "$ref": "/item/label"
+            },
+            "right": "Refresh and verify"
+          },
+          {
+            "op": "eq",
+            "left": {
+              "$ref": "/item/method"
+            },
+            "right": "GET"
+          }
+        ]
+      }
+    },
+    {
+      "id": "refresh",
+      "op": "follow",
+      "control": "refresh-control"
+    },
+    {
+      "id": "refreshed-authority",
+      "op": "check",
+      "test": {
+        "op": "and",
+        "tests": [
+          {
+            "op": "eq",
+            "left": {
+              "$ref": "/steps/refresh/snapshot/live"
+            },
+            "right": true
+          },
+          {
+            "op": "eq",
+            "left": {
+              "$ref": "/steps/refresh/snapshot/catalog/current"
+            },
+            "right": true
+          },
+          {
+            "op": "eq",
+            "left": {
+              "$ref": "/steps/refresh/snapshot/head/forked"
+            },
+            "right": false
+          },
+          {
+            "op": "eq",
+            "left": {
+              "$ref": "/steps/refresh/snapshot/trust/verified"
+            },
+            "right": true
+          },
+          {
+            "op": "eq",
+            "left": {
+              "$ref": "/steps/refresh/snapshot/trust/artifactsTotal"
+            },
+            "right": {
+              "$ref": "/steps/refresh/snapshot/trust/artifactsVerified"
+            }
+          },
+          {
+            "op": "eq",
+            "left": {
+              "$ref": "/steps/refresh/snapshot/replay/complete"
+            },
+            "right": true
+          },
+          {
+            "op": "eq",
+            "left": {
+              "$ref": "/steps/refresh/snapshot/replay/errors"
+            },
+            "right": []
+          },
+          {
+            "op": "eq",
+            "left": {
+              "$ref": "/steps/refresh/snapshot/replay/chainLength"
+            },
+            "right": {
+              "$ref": "/steps/refresh/snapshot/replay/verifiedLinks"
+            }
+          },
+          {
+            "op": "all",
+            "values": {
+              "$ref": "/steps/refresh/snapshot/replay/links"
+            },
+            "test": {
+              "op": "eq",
+              "left": {
+                "$ref": "/item/verified"
+              },
+              "right": true
+            }
+          }
+        ]
+      },
+      "reason": "Refreshed authority or receipt replay is not verified."
+    },
+    {
+      "id": "expected-state",
+      "op": "expect",
+      "test": {
+        "op": "eq",
+        "left": {
+          "$ref": "/steps/refresh/snapshot/head/cid"
+        },
+        "right": {
+          "$ref": "/input/expectedStateCid"
+        }
+      },
+      "reason": "The application state differs from the caller's expected state. A model or user must decide whether to accept the current observation or investigate.",
+      "observation": {
+        "expectedCid": {
+          "$ref": "/input/expectedStateCid"
+        },
+        "currentCid": {
+          "$ref": "/steps/refresh/snapshot/head/cid"
+        },
+        "version": {
+          "$ref": "/steps/refresh/snapshot/head/version"
+        },
+        "status": {
+          "$ref": "/steps/refresh/snapshot/head/state/status"
+        },
+        "verified": {
+          "$ref": "/steps/refresh/snapshot/trust/verified"
+        }
+      }
+    },
+    {
+      "id": "state-fence",
+      "op": "read",
+      "tool": "get_current_head",
+      "args": {
+        "pod_url": {
+          "$ref": "/input/podUrl"
+        },
+        "urn": {
+          "$ref": "/steps/refresh/snapshot/application/stateGraphIri"
+        }
+      }
+    },
+    {
+      "id": "catalog-fence",
+      "op": "read",
+      "tool": "get_current_head",
+      "args": {
+        "pod_url": {
+          "$ref": "/input/podUrl"
+        },
+        "urn": {
+          "$ref": "/input/catalogGraphIri"
+        }
+      }
+    },
+    {
+      "id": "consistent-observation",
+      "op": "check",
+      "test": {
+        "op": "and",
+        "tests": [
+          {
+            "op": "eq",
+            "left": {
+              "$ref": "/steps/state-fence/forked"
+            },
+            "right": false
+          },
+          {
+            "op": "eq",
+            "left": {
+              "$ref": "/steps/state-fence/head/cid"
+            },
+            "right": {
+              "$ref": "/steps/refresh/snapshot/head/cid"
+            }
+          },
+          {
+            "op": "eq",
+            "left": {
+              "$ref": "/steps/catalog-fence/forked"
+            },
+            "right": false
+          },
+          {
+            "op": "eq",
+            "left": {
+              "$ref": "/steps/catalog-fence/head/cid"
+            },
+            "right": {
+              "$ref": "/steps/catalog-head/head/cid"
+            }
+          }
+        ]
+      },
+      "reason": "Authority changed during the read; rerun discovery before reporting."
+    },
+    {
+      "id": "status",
+      "op": "output",
+      "value": {
+        "title": {
+          "$ref": "/steps/refresh/snapshot/application/title"
+        },
+        "status": {
+          "$ref": "/steps/refresh/snapshot/head/state/status"
+        },
+        "stateVersion": {
+          "$ref": "/steps/refresh/snapshot/head/version"
+        },
+        "stateCid": {
+          "$ref": "/steps/refresh/snapshot/head/cid"
+        },
+        "verifiedArtifacts": {
+          "$ref": "/steps/refresh/snapshot/trust/artifactsVerified"
+        },
+        "verifiedReplayLinks": {
+          "$ref": "/steps/refresh/snapshot/replay/verifiedLinks"
+        },
+        "replayComplete": {
+          "$ref": "/steps/refresh/snapshot/replay/complete"
+        },
+        "observedAt": {
+          "$ref": "/steps/refresh/snapshot/generatedAt"
+        }
+      }
+    }
+  ]
+}

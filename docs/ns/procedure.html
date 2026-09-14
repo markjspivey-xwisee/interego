@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Interego linked procedure profile</title>
+<style>body{font:17px/1.6 system-ui;max-width:850px;margin:3rem auto;padding:0 1rem;color:#172735}dt{font-weight:650;margin-top:1rem}code{font-size:.9em}a{color:#136da4}</style>
+<main><h1>Linked read-procedure profile</h1><p>An optional L3 client example profile for Interego. The executable definition uses PROV plans, directed RDF edges, Hydra operations, and bound descriptor authority. Domain-specific performance, SCORM, and xAPI logic stays in the example.</p><p><a href="procedure.ttl" type="text/turtle">Turtle vocabulary and structural shapes</a> · <a href="https://github.com/markjspivey-xwisee/interego/tree/master/integrations/procedure-runner">Interpreter, example, and measured results</a></p>
+<h2>Classes</h2><dl>
+<dt id="Procedure"><code>pr:Procedure</code></dt><dd>A finite read-only plan expressed as directed RDF steps. This optional L3 client profile does not add a core MCP tool. Grounded in prov:Plan.</dd>
+<dt id="Step"><code>pr:Step</code></dt><dd>One part of a procedure plan. Network steps additionally declare Hydra GET operations; local steps evaluate only the installed expression vocabulary. Grounded in prov:Plan.</dd>
+<dt id="RunRequest"><code>pr:RunRequest</code></dt><dd>A signed invocation description linking an immutable procedure publication, its current-head pin, and explicit input data. Grounded in prov:Entity.</dd>
+<dt id="Binding"><code>pr:Binding</code></dt><dd>A data binding from a named procedure input, preceding step result, or collection item, using a relative JSON Pointer. Grounded in prov:Entity.</dd>
+<dt id="Expression"><code>pr:Expression</code></dt><dd>A data description evaluated by the installed client interpreter. It never contains executable code. Grounded in prov:Entity.</dd>
+<dt id="Object"><code>pr:Object</code></dt><dd>An object expression with unique named field resources; its internal JSON projection is not the publication format. Grounded in pr:Expression.</dd>
+<dt id="Equal"><code>pr:Equal</code></dt><dd>Structural equality of left and right expressions. Grounded in pr:Expression.</dd>
+<dt id="Nonempty"><code>pr:Nonempty</code></dt><dd>True only for a nonempty string or array. Grounded in pr:Expression.</dd>
+<dt id="And"><code>pr:And</code></dt><dd>Conjunction of one or more condition resources, independent of RDF triple order. Grounded in pr:Expression.</dd>
+<dt id="All"><code>pr:All</code></dt><dd>A condition applied to every member of a nonempty collection. An empty collection fails. Grounded in pr:Expression.</dd>
+<dt id="ObservedRepresentation"><code>pr:ObservedRepresentation</code></dt><dd>The authenticated host's observed response to a declared read operation; observation alone is not proof of every embedded claim. Grounded in prov:Entity.</dd>
+<dt id="EvidenceReviewExecution"><code>pr:EvidenceReviewExecution</code></dt><dd>An execution that reviews linked performance and learning evidence. Completion does not imply a new assessment or acquired competence. Grounded in prov:Activity.</dd>
+</dl>
+<h2>Properties</h2><dl>
+<dt id="entry"><code>pr:entry</code></dt><dd>First step of a procedure.</dd>
+<dt id="step"><code>pr:step</code></dt><dd>A declared step belonging to this procedure. The next edges determine order.</dd>
+<dt id="input"><code>pr:input</code></dt><dd>Named input binding source for a plan, or a node of scalar fields for a run request.</dd>
+<dt id="iterationItem"><code>pr:iterationItem</code></dt><dd>Named binding source for the current collection item during selection or universal checks.</dd>
+<dt id="next"><code>pr:next</code></dt><dd>Directed edge to the next step. Output is terminal; cycles and multiple next edges are refused.</dd>
+<dt id="kind"><code>pr:kind</code></dt><dd>One installed step kind from StepKinds.</dd>
+<dt id="key"><code>pr:key</code></dt><dd>Local key of a step or object field. Keys must be unique in their scope.</dd>
+<dt id="capability"><code>pr:capability</code></dt><dd>Name of an installed generic Interego read capability. This is neither an endpoint recipe nor a domain-specific tool.</dd>
+<dt id="arguments"><code>pr:arguments</code></dt><dd>Object expression supplying arguments to an installed generic read capability.</dd>
+<dt id="condition"><code>pr:condition</code></dt><dd>Condition expression, or conjuncts of an And expression.</dd>
+<dt id="from"><code>pr:from</code></dt><dd>Binding to an observed collection or representation. Controls may be selected only from discovered data.</dd>
+<dt id="control"><code>pr:control</code></dt><dd>Edge from a follow operation to a preceding selection step. The selected authority and action are passed unchanged to act.</dd>
+<dt id="format"><code>pr:format</code></dt><dd>Name of an installed representation interpreter. No interpreter is downloaded from a procedure.</dd>
+<dt id="onFailure"><code>pr:onFailure</code></dt><dd>Terminal failure outcome, Blocked for checks or NeedsDecision for expectations.</dd>
+<dt id="observation"><code>pr:observation</code></dt><dd>Object expression returned to the caller at a decision boundary.</dd>
+<dt id="field"><code>pr:field</code></dt><dd>Field resource with one key and one value.</dd>
+<dt id="value"><code>pr:value</code></dt><dd>A literal value or a linked expression resource.</dd>
+<dt id="values"><code>pr:values</code></dt><dd>Expression providing the collection inspected by All.</dd>
+<dt id="left"><code>pr:left</code></dt><dd>Left operand of structural equality.</dd>
+<dt id="right"><code>pr:right</code></dt><dd>Right operand of structural equality.</dd>
+<dt id="source"><code>pr:source</code></dt><dd>Named binding source in this procedure.</dd>
+<dt id="pointer"><code>pr:pointer</code></dt><dd>Relative JSON Pointer into the declared source result; empty selects the whole source.</dd>
+<dt id="procedure"><code>pr:procedure</code></dt><dd>Authoritative descriptor URL of the signed procedure graph selected by a run request.</dd>
+<dt id="procedureGraph"><code>pr:procedureGraph</code></dt><dd>Graph IRI whose current head must agree with the invocation pin.</dd>
+<dt id="procedurePod"><code>pr:procedurePod</code></dt><dd>Pod used by the generic current-head capability.</dd>
+<dt id="procedureCid"><code>pr:procedureCid</code></dt><dd>Committed current-head content identifier pinned by the invocation.</dd>
+<dt id="podUrl"><code>pr:podUrl</code></dt><dd>String input used by this example to locate the application catalog head.</dd>
+<dt id="catalogGraphIri"><code>pr:catalogGraphIri</code></dt><dd>String input naming this example's application catalog graph.</dd>
+<dt id="expectedStateCid"><code>pr:expectedStateCid</code></dt><dd>Caller's expected release-state identifier; mismatch requests a decision.</dd>
+<dt id="courseHmd"><code>pr:courseHmd</code></dt><dd>String input linking the course's HyperMarkdown representation. The course catalog link is subsequently discovered in that representation.</dd>
+</dl>
+<h2>Step kinds</h2><dl>
+<dt id="Read"><code>pr:Read</code></dt><dd>Invoke an installed generic read capability with bound arguments.</dd>
+<dt id="Check"><code>pr:Check</code></dt><dd>Continue only when all declared preconditions hold; otherwise return Blocked.</dd>
+<dt id="Select"><code>pr:Select</code></dt><dd>Select exactly one executable, input-free GET control from observed data.</dd>
+<dt id="Pick"><code>pr:Pick</code></dt><dd>Select exactly one data item or typed link from observed data.</dd>
+<dt id="Project"><code>pr:Project</code></dt><dd>Interpret an observed representation with a preinstalled media interpreter.</dd>
+<dt id="Follow"><code>pr:Follow</code></dt><dd>Follow the selected descriptor-bound GET control using the existing generic act capability.</dd>
+<dt id="Expect"><code>pr:Expect</code></dt><dd>Compare a caller expectation with observation and return NeedsDecision on mismatch.</dd>
+<dt id="Output"><code>pr:Output</code></dt><dd>Return a bound output value and terminate the procedure.</dd>
+</dl>
+<h2 id="ReadProcedureProfile">Profile boundary</h2><p>Finite acyclic read-only plans, at most 64 steps, terminal output, bounded calls, pure expressions, and uniquely discovered input-free GET controls. This profile supplies no new server-side execution action. Full binding and condition resources remain in the signed RDF authority.</p><dl><dt id="Blocked">Blocked</dt><dd>A required integrity or consistency check failed.</dd><dt id="NeedsDecision">NeedsDecision</dt><dd>Return to the caller. Any continuation begins a fresh invocation.</dd></dl><p>Namespace: <code>https://markjspivey-xwisee.github.io/interego/ns/procedure#</code></p></main></html>

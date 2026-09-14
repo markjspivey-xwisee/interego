@@ -1,0 +1,119 @@
+{
+  "schema": "interego.procedure-demo.public-results/v1",
+  "date": "2026-09-14",
+  "scope": "Single-application mechanism demonstration; not an independent framework benchmark",
+  "procedureGraphSha256": "7398e4e41ee60375f5b4f4dae51f4aebfb3a8892ead10c4fb1ca7162cb6c4007",
+  "runs": [
+    {
+      "id": "live-linked-2",
+      "status": "completed",
+      "metrics": {
+        "interegoCalls": 10,
+        "failedCalls": 0,
+        "automaticSteps": 28,
+        "modelInvocations": 0,
+        "modelHandoffs": 0,
+        "toolElapsedMs": 36199,
+        "elapsedMs": 36223,
+        "providerInferenceCalls": null,
+        "tokens": null,
+        "monetaryCost": null
+      },
+      "bootstrap": {
+        "interegoCalls": 3,
+        "elapsedMs": 6833
+      },
+      "totalElapsedMs": 43057
+    },
+    {
+      "id": "live-stale-expectation",
+      "status": "needs-decision",
+      "metrics": {
+        "interegoCalls": 3,
+        "failedCalls": 0,
+        "automaticSteps": 7,
+        "modelInvocations": 0,
+        "modelHandoffs": 1,
+        "toolElapsedMs": 22039,
+        "elapsedMs": 22047,
+        "providerInferenceCalls": null,
+        "tokens": null,
+        "monetaryCost": null
+      },
+      "bootstrap": {
+        "interegoCalls": 3,
+        "elapsedMs": 7019
+      },
+      "totalElapsedMs": 29067
+    },
+    {
+      "id": "live-after-decision",
+      "status": "completed",
+      "metrics": {
+        "interegoCalls": 10,
+        "failedCalls": 0,
+        "automaticSteps": 28,
+        "modelInvocations": 0,
+        "modelHandoffs": 0,
+        "toolElapsedMs": 34527,
+        "elapsedMs": 34548,
+        "providerInferenceCalls": null,
+        "tokens": null,
+        "monetaryCost": null
+      },
+      "bootstrap": {
+        "interegoCalls": 3,
+        "elapsedMs": 8638
+      },
+      "totalElapsedMs": 43187
+    }
+  ],
+  "routineCalls": 23,
+  "bootstrapCalls": 9,
+  "totalMeasuredInteregoCalls": 32,
+  "developmentAttempt": {
+    "status": "incomplete-transport-bridge",
+    "dispatchedReadCalls": 1,
+    "includedInTimings": false
+  },
+  "modelBoundary": {
+    "executorCallbacks": 0,
+    "observedExternalDecisionHandoffs": 1,
+    "providerInferenceRequests": null,
+    "providerTokens": null,
+    "monetaryCost": null
+  },
+  "evidence": {
+    "releaseVersion": 5,
+    "verifiedArtifacts": 8,
+    "totalArtifacts": 8,
+    "verifiedReplayLinks": 6,
+    "totalReplayLinks": 6,
+    "scorm": "HyperMarkdown and live JSON course metadata read and bound to accepted evidence; package links returned; no new package execution or assessment",
+    "historicalXapi": "Signed performance-record snapshot; no successful fresh raw LRS statement query",
+    "newPerformanceEvent": {
+      "outsideRoutine": true,
+      "serviceAcknowledgedRecorded": true,
+      "serviceAcknowledgedPersisted": true,
+      "durableDescriptorReadable": true,
+      "durableDescriptorAuthorshipVerified": null,
+      "durationIso": "PT36.223S",
+      "activityType": "https://markjspivey-xwisee.github.io/interego/ns/procedure#EvidenceReviewExecution",
+      "newAssessment": false,
+      "taskIdentifierNormalizedByService": true
+    }
+  },
+  "proseReference": {
+    "executed": false,
+    "elapsedMs": null,
+    "providerTokens": null,
+    "monetaryCost": null
+  },
+  "limits": [
+    "No causal efficiency or framework-superiority claim.",
+    "No provider billing or inference telemetry.",
+    "Current release state was a signed deployed declaration, not an independent infrastructure test.",
+    "Historical xAPI and fresh performance-record acknowledgements have different evidentiary status.",
+    "Private raw evidence and operational identifiers are omitted from this aggregate."
+  ]
+}
