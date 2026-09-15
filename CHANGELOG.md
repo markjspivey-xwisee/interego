@@ -34,6 +34,13 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
 
 <!-- documented-through: 2037e1a -->
 
+### 2026-09-15 — Validated SCORM assessment forms
+
+- Generated SCOs render safe typed resource links, require complete valid responses, disclose the passing threshold, and provide question-level feedback after recording.
+- Native agent submissions and exported SCORM/cmi5 assessments share numeric-safe answer normalization and explicit integer/number constraints. Invalid submissions MUST NOT write a score or advance the current SCO.
+- SCORM recording includes per-question responses/results and raw/scaled scores. Recording retries MUST retain the originally submitted answers and outcome.
+- Focused tests execute the emitted SCOs against the shipped runtime, including wrong/correct answers, malformed input, link safety and LRS delivery failure.
+
 ### 2026-09-14 — Linked procedure execution example
 
 - The optional client procedure runner loads signed RDF plans and invocation requests, follows directed steps and discovered Hydra GET controls through the existing Interego MCP surface, and returns explicit decision boundaries.
