@@ -20,6 +20,8 @@
  */
 
 import { randomUUID, createHash, randomBytes } from 'node:crypto';
+import { readSelfXapi, writeSelfXapi, type SelfXapiDependencies } from '../src/self-xapi.js';
+import type { RequestHandler } from 'express';
 
 // ── Pod-write auth: attach Authorization: Bearer on writes that target
 // the configured tenant pod URL. The CSS deployment sits behind a
@@ -8422,6 +8424,55 @@ app.post('/agent/credentials', async (req, res) => {
     res.json({ ok: true, owner: callerDid, ownerTenant, credentials: mine });
   } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
+
+// Signed-agent transport for the STANDARD Statements Resource. The temporary Basic
+// credential is internal, scoped to the verified caller's lens and always revoked.
+// No arbitrary target/header proxy, operator grant, or alternate statement engine.
+const signedXapiHandler = (operation: 'read' | 'write'): RequestHandler => async (req, res) => {
+    try {
+      const bound = await bindSignedCaller(req.body, { hint: 'sign_request the query/statements, then follow the signed xAPI affordance.' });
+      if (!bound.ok) { res.status(bound.status).json({ error: bound.error }); return; }
+      const xff = req.headers['x-forwarded-for'];
+      const ip = typeof xff === 'string' ? xff.split(',').at(-1)!.trim() : Array.isArray(xff) ? xff.at(-1)!.trim() : req.ip ?? 'unknown';
+      const rl = checkAgenticRateLimit(ip);
+      if (!rl.ok) { res.status(429).json({ error: `rate limit — retry in ${rl.retryAfterSeconds}s` }); return; }
+      const podUrl = resolveSubjectPodUrl(bound.callerDid);
+      const label = actorForPod(podUrl, MESH_ACTOR_LABELS);
+      const tenant = lensTenantFor(label);
+      // UUID begins immediately: registry ids truncate the encoded principal.
+      const principal = randomUUID();
+      const secret = randomBytes(32).toString('base64url');
+      const credential = inboundCredentials.add({ principal, secret, tenant: String(tenant), label: 'temporary signed xAPI request' });
+      if (!credential) { res.status(503).json({ error: 'inbound credential capacity unavailable' }); return; }
+      try {
+        const deps: SelfXapiDependencies = {
+          request: async (method, query, body) => {
+            const url = new URL(`http://127.0.0.1:${PORT}/xapi/statements`);
+            url.search = query.toString();
+            const response = await fetch(url, {
+              method, redirect: 'error', signal: AbortSignal.timeout(30_000),
+              headers: { 'Content-Type': 'application/json', 'X-Experience-API-Version': '2.0.0', Authorization: `Basic ${Buffer.from(`${principal}:${secret}`).toString('base64')}` },
+              ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+            });
+            return { status: response.status, body: await response.json() as unknown };
+          },
+          persist: async (statement) => composeIntoSharedLattice({
+            podUrl, agentDid: bound.callerDid, label,
+            terms: [bound.callerDid, String((statement.verb as { id?: string }).id), String((statement.object as { id?: string }).id)],
+            content: statement, contentType: 'xapi:Statement',
+            ts: typeof statement.timestamp === 'string' ? statement.timestamp : undefined,
+            projections: ['rdf', 'activity'],
+          }),
+        };
+        const result = operation === 'write'
+          ? await writeSelfXapi(bound.callerDid, bound.payload.statements, deps)
+          : await readSelfXapi(bound.payload.query, deps);
+        res.status(result.status).json(result.body);
+      } finally { inboundCredentials.remove(credential.id); }
+    } catch (err) { sendServerError(res, err, 'signed-xapi'); }
+};
+app.post('/agent/xapi-statements/read', signedXapiHandler('read'));
+app.post('/agent/xapi-statements/write', signedXapiHandler('write'));
 
 // ── Agentic SCORM RTE (delegated auth) ─────────────────────────────────────
 // A REAL SCORM run for agents: a creator AUTHORS a course -> a conformant
