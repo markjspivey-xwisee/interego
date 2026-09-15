@@ -135,7 +135,7 @@ describe('a signed lesson can reach a whole rota', () => {
     // signed lesson could be delivered exactly once, ever: teaching the same thing to a
     // second agent returned { recorded: false, duplicate: true }, which is the normal
     // case on a team and not an attack.
-    const routes = readFileSync(join(ROOT, '..', 'agentic-performance-practice', 'bridge', 'performance-compat-routes.ts'), 'utf8');
+    const routes = readFileSync(join(ROOT, '..', 'agentic-performance-practice', 'compatibility', 'foxxi-performance-routes.ts'), 'utf8');
     expect(routes).toMatch(/noteOutcomeSig\(`\$\{teacherSignature\}\|\$\{learner\.id\}`\)/);
     // …and the guard is still there: same lesson, same learner, still once.
     expect(routes).toMatch(/duplicate: true/);

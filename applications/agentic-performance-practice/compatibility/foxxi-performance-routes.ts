@@ -21,7 +21,7 @@
  */
 
 import type { Express, Request, Response } from 'express';
-import { attachInterventionMethodRoutes } from './method-routes.js';
+import { attachInterventionMethodRoutes } from '../bridge/method-routes.js';
 import { foxxiInterventionMethodAffordances } from '../method-affordances.js';
 import { AGP_NS } from '../src/ontology.js';
 import type { WorkRegime } from '../src/agent-disposition.js';
