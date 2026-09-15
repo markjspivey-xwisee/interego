@@ -21,6 +21,7 @@
 
 import { randomUUID, createHash, randomBytes } from 'node:crypto';
 import { readSelfXapi, writeSelfXapi, type SelfXapiDependencies } from '../src/self-xapi.js';
+import type { RequestHandler } from 'express';
 
 // ── Pod-write auth: attach Authorization: Bearer on writes that target
 // the configured tenant pod URL. The CSS deployment sits behind a
@@ -8427,8 +8428,7 @@ app.post('/agent/credentials', async (req, res) => {
 // Signed-agent transport for the STANDARD Statements Resource. The temporary Basic
 // credential is internal, scoped to the verified caller's lens and always revoked.
 // No arbitrary target/header proxy, operator grant, or alternate statement engine.
-for (const operation of ['read', 'write'] as const) {
-  app.post(`/agent/xapi-statements/${operation}`, async (req, res) => {
+const signedXapiHandler = (operation: 'read' | 'write'): RequestHandler => async (req, res) => {
     try {
       const bound = await bindSignedCaller(req.body, { hint: 'sign_request the query/statements, then follow the signed xAPI affordance.' });
       if (!bound.ok) { res.status(bound.status).json({ error: bound.error }); return; }
@@ -8470,8 +8470,9 @@ for (const operation of ['read', 'write'] as const) {
         res.status(result.status).json(result.body);
       } finally { inboundCredentials.remove(credential.id); }
     } catch (err) { sendServerError(res, err, 'signed-xapi'); }
-  });
-}
+};
+app.post('/agent/xapi-statements/read', signedXapiHandler('read'));
+app.post('/agent/xapi-statements/write', signedXapiHandler('write'));
 
 // ── Agentic SCORM RTE (delegated auth) ─────────────────────────────────────
 // A REAL SCORM run for agents: a creator AUTHORS a course -> a conformant
