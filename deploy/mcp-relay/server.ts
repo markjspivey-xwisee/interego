@@ -12377,11 +12377,11 @@ const TOOL_SCHEMAS = [
   // ── HyperMarkdown interactive viewer (MCP App render tool) ──
   {
     name: 'render_hmd',
-    description: 'Open a verified descriptor projection in the interactive HyperMarkdown VIEWER — a generic in-chat MCP App. Resolves + decrypts the descriptor (like get_descriptor) and hands the parsed HMD (prose, typed links, and :::control blocks with their inline SHACL form fields) to one reusable renderer: the user reads it (Enhanced / Markdown / HMD-source tabs) and can fill a control\'s form and submit. Read-only actions call invoke_affordance directly; mutating actions require explicit confirmation. HMD stays Markdown — this only mounts its interactive view. Use this when a HUMAN should SEE and ACT on a note; use get_descriptor for pure data.',
+    description: 'Open a verified descriptor projection or a direct HyperMarkdown representation in the interactive HyperMarkdown VIEWER — a generic in-chat MCP App. Resolves + decrypts descriptors (like get_descriptor), or reads direct text/markdown, and hands parsed prose, typed links, and :::control blocks to one reusable renderer. Direct Markdown does not verify authorship or grant execution authority: controls are executable only when an independently resolved descriptor or decrypted graph supplies their target. Authorized read-only actions call invoke_affordance; mutating actions require explicit confirmation. HMD stays Markdown — this only mounts its interactive view. Use this when a HUMAN should SEE a note or course; use get_descriptor for pure data.',
     inputSchema: {
       type: 'object',
       properties: {
-        descriptor_url: { type: 'string', description: 'URL of the Context Descriptor to open in the viewer (the same URL you would pass to get_descriptor).' },
+        descriptor_url: { type: 'string', description: 'URL of the Context Descriptor or direct text/markdown resource to open in the viewer (the same URL you would pass to get_descriptor).' },
       },
       required: ['descriptor_url'],
     },
