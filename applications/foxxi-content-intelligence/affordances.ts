@@ -923,6 +923,40 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
   },
 
   {
+    action: 'urn:iep:action:foxxi:write-xapi-statements-signed' as IRI,
+    toolName: 'foxxi.write_xapi_statements_signed',
+    title: 'Record your own xAPI activity and preserve its native evidence',
+    description: 'Signed transport over the standard xAPI Statements Resource, scoped to your own lens. Accepts 1–20 JSON Activity statements (128 KiB maximum), each with a UUID id, observed timestamp and actor.account.name equal to your authenticated DID. Uses the existing LRS validation, immutability and forwarding; reads back its exact enriched envelopes and awaits encrypted PGSL persistence. No attachment, SubStatement or voiding transport on this adapter. Retry identical ids/content after uncertainty; never manufacture replacement events. Does not infer competency from mere reads: choose the accurate xAPI verb/result.',
+    method: 'POST', targetTemplate: '{base}/agent/xapi-statements/write',
+    mediaType: 'application/json', externallyRouted: true,
+    annotations: { title: 'Record own xAPI activity', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    inputs: [
+      { name: '_signed_payload', type: 'string', required: true, description: 'sign_request({ statements:[{id, actor, verb, object, timestamp, result?, context?}] }). The relay supplies agent_id and the fresh authentication timestamp. Statement timestamps describe when the observed activities happened.' },
+      { name: '_signature', type: 'string', required: true, description: 'The complete signature returned by sign_request.' },
+    ],
+    appliesTo: { collections: ['profiles'] },
+    outputs: {
+      description: '200 only when accepted by the LRS and persisted to encrypted PGSL. A partial persistence failure returns 502 with lrsAccepted, statementIds and per-statement receipts so the same ids can be reconciled. Authority and stored are LRS-assigned.',
+      properties: { ok: { type: 'boolean' }, lrsAccepted: { type: 'boolean' }, durable: { type: 'boolean' }, statementIds: { type: 'array', items: { type: 'string' } }, receipts: { type: 'array', items: { type: 'object', additionalProperties: true } } },
+      required: ['ok'],
+    },
+  },
+  {
+    action: 'urn:iep:action:foxxi:read-xapi-statements-signed' as IRI,
+    toolName: 'foxxi.read_xapi_statements_signed',
+    title: 'Read your actual xAPI LRS statements',
+    description: 'Signed transport to GET /xapi/statements in your own lens. Returns the actual LRS response, without merging a pod snapshot or learner-record summary. query accepts standard statementId, verb, activity, registration, since, until, ascending, limit (1–200; default 100), and the LRS cursor. Follow the returned more cursor through this same signed affordance. No operator role or caller-managed Basic secret required. LRS memory/restart limits remain as reported by discover-lrs; the write affordance separately preserves an encrypted native copy.',
+    method: 'POST', targetTemplate: '{base}/agent/xapi-statements/read',
+    mediaType: 'application/json', externallyRouted: true,
+    annotations: { title: 'Read own xAPI statements', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    inputs: [
+      { name: '_signed_payload', type: 'string', required: true, description: 'sign_request({query?:{statementId?,verb?,activity?,registration?,since?,until?,ascending?,limit?,cursor?}}); identity/pod are bound by the signature.' },
+      { name: '_signature', type: 'string', required: true, description: 'The complete signature returned by sign_request.' },
+    ],
+    appliesTo: { collections: ['profiles'] },
+    outputs: { description: 'The unmodified xAPI Statement for statementId, or StatementResult {statements, more} for a filtered query; errors preserve the LRS HTTP status.', properties: { statements: { type: 'array', items: { type: 'object', additionalProperties: true } }, more: { type: 'string' } } },
+  },
+  {
     action: 'urn:iep:action:foxxi:set-inbound-credentials-signed' as IRI,
     toolName: 'foxxi.credentials',
     title: 'Manage your own inbound forwarding credentials',
