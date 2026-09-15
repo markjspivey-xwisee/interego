@@ -544,7 +544,7 @@ last""" .
     '★ the descriptor GET reports where it LANDED',
   );
   ok(
-    /cacheDescriptorBody\(url, \{ content: turtle, mediaType: 'text\/turtle', encrypted: false, landedUrl: landed \}\)/.test(SERVER),
+    /cacheDescriptorBody\(url, \{ content: turtle, mediaType: representationMediaType, encrypted: false, landedUrl: landed \}\)/.test(SERVER),
     '★★ and the landed URL is cached WITH the body — otherwise the second read of a URL '
     + 'knows only where it asked, and the binding silently weakens on every cache hit',
   );

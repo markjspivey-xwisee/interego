@@ -563,7 +563,7 @@ function build(deps: ConformanceGateDeps) {
         //
         // The container-declared side is deliberately NOT refused here: `dct:conformsTo` on a
         // pod is a profile assertion that in this system routinely names an ontology (23 of the
-        // 33 documents in `docs/ns/` declare zero shapes — re-measured with the engine over every
+        // 34 documents in `docs/ns/` declare zero shapes — re-measured with the engine over every
         // one of them, because the figure this comment used to carry had never been run), the pod
         // owner is not the caller, and the repair would be a pod write this very 422 has just
         // locked out. It travels in `coverage.unenforced` instead — see `shapes-declared.ts` for

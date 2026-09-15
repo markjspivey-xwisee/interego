@@ -11,6 +11,7 @@
 
 import type { Affordance } from '../_shared/affordance-mcp/index.js';
 import type { IRI } from '@interego/core';
+import { interventionMethodAffordances } from './method-affordances.js';
 
 const POD_INPUTS = [
   { name: 'pod_url', type: 'string' as const, required: false, description: 'Pod URL to write to / read from.' },
@@ -18,6 +19,7 @@ const POD_INPUTS = [
 ];
 
 const AGP_AFFORDANCES: ReadonlyArray<Affordance> = [
+  ...interventionMethodAffordances,
   {
     action: 'urn:iep:action:agp:contextualize-situation' as IRI,
     toolName: 'agp.contextualize_situation',

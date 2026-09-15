@@ -15,6 +15,47 @@
 @prefix prov:     <http://www.w3.org/ns/prov#> .
 @prefix vann:     <http://purl.org/vocab/vann/> .
 
+# Method profiles live in agp-methods.ttl. AGP owns this domain knowledge;
+# FOXXI composes it for content and standards delivery.
+agp:Methodology a owl:Class ; rdfs:label "Methodology" ;
+    rdfs:comment "A versioned process with entry conditions, steps, work products and evidence criteria. A method is guidance, not a guarantee of effectiveness." .
+agp:InterventionMethodology a owl:Class ; rdfs:subClassOf agp:Methodology ;
+    rdfs:label "Intervention methodology" ; rdfs:comment "Design, implementation and evaluation guidance for an intervention selected through a regime-appropriate diagnosis." .
+agp:MethodStep a owl:Class ; rdfs:label "Method step" ;
+    rdfs:comment "A process activity with explicit next steps, revision links and required evidence. Sequence is the default order; iteration is explicit." .
+agp:QualityCriterion a owl:Class ; rdfs:label "Quality criterion" ;
+    rdfs:comment "A review question with a required work product. Supplying an evidence pointer does not prove that the criterion is satisfied." .
+agp:MethodEvidenceReview a owl:Class ; rdfs:subClassOf iep:ContextDescriptor ;
+    rdfs:label "Method evidence coverage review" ;
+    rdfs:comment "A bounded check of evidence pointers against method criteria. It does not verify artifact contents, suitability, authorship, quality or performance effects." .
+agp:EvidenceItem a owl:Class ; rdfs:label "Evidence item" ;
+    rdfs:comment "An artifact pointer and explanatory note associated with a method criterion; provenance and substantive quality require separate verification." .
+agp:CriterionEvidenceReview a owl:Class ; rdfs:label "Criterion evidence coverage review" ;
+    rdfs:comment "The coverage finding for one criterion in one review. Status belongs to this review instance, not to the reusable criterion definition." .
+
+agp:methodology a owl:ObjectProperty ; rdfs:label "methodology" ; rdfs:range agp:Methodology .
+agp:consultingProcess a owl:ObjectProperty ; rdfs:label "consulting process" ; rdfs:range agp:Methodology .
+agp:hasStep a owl:ObjectProperty ; rdfs:label "has step" ; rdfs:domain agp:Methodology ; rdfs:range agp:MethodStep .
+agp:entryStep a owl:ObjectProperty ; rdfs:label "entry step" ; rdfs:domain agp:Methodology ; rdfs:range agp:MethodStep .
+agp:nextStep a owl:ObjectProperty ; rdfs:label "next step" ; rdfs:domain agp:MethodStep ; rdfs:range agp:MethodStep .
+agp:revisitsStep a owl:ObjectProperty ; rdfs:label "revisits step" ; rdfs:domain agp:MethodStep ; rdfs:range agp:MethodStep .
+agp:branchesToMethod a owl:ObjectProperty ; rdfs:label "branches to regime method" ; rdfs:domain agp:MethodStep ; rdfs:range agp:PerformanceMethod .
+agp:requiresCriterion a owl:ObjectProperty ; rdfs:label "requires criterion" ; rdfs:range agp:QualityCriterion .
+agp:hasEvidence a owl:ObjectProperty ; rdfs:label "has evidence" ; rdfs:range agp:EvidenceItem .
+agp:forCriterion a owl:ObjectProperty ; rdfs:label "for criterion" ; rdfs:range agp:QualityCriterion .
+agp:hasCriterionReview a owl:ObjectProperty ; rdfs:label "has criterion review" ; rdfs:domain agp:MethodEvidenceReview ; rdfs:range agp:CriterionEvidenceReview .
+agp:evidenceArtifact a owl:ObjectProperty ; rdfs:label "evidence artifact" ; rdfs:domain agp:EvidenceItem .
+agp:profileToken a owl:DatatypeProperty ; rdfs:label "profile token" ; rdfs:domain agp:Methodology ; rdfs:range xsd:string .
+agp:interventionToken a owl:DatatypeProperty ; rdfs:label "intervention token" ; rdfs:domain agp:InterventionMethodology ; rdfs:range xsd:string .
+agp:appliesWhen a owl:DatatypeProperty ; rdfs:label "applies when" ; rdfs:domain agp:Methodology ; rdfs:range xsd:string .
+agp:sequence a owl:DatatypeProperty ; rdfs:label "sequence" ; rdfs:domain agp:MethodStep ; rdfs:range xsd:integer .
+agp:workProduct a owl:DatatypeProperty ; rdfs:label "work product" ; rdfs:domain agp:QualityCriterion ; rdfs:range xsd:string .
+agp:reviewStatus a owl:DatatypeProperty ; rdfs:label "evidence review status" ; rdfs:range xsd:string ;
+    rdfs:comment "missing-evidence or documented-unverified. These are coverage states, never quality approval." .
+agp:evidenceCoverage a owl:DatatypeProperty ; rdfs:label "evidence coverage percent" ; rdfs:domain agp:MethodEvidenceReview ; rdfs:range xsd:integer .
+agp:qualityVerified a owl:DatatypeProperty ; rdfs:label "quality verified" ; rdfs:domain agp:MethodEvidenceReview ; rdfs:range xsd:boolean ;
+    rdfs:comment "Always false for a method evidence coverage review. Verification requires inspection and a separate attestation." .
+
 # ══════════════════════════════════════════════════════════════════════════
 #  VERTICAL APPLICATION ONTOLOGY — non-normative
 #  NOT part of the Interego protocol (L1/L2/L3).

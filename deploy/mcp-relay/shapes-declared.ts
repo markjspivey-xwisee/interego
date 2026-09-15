@@ -41,7 +41,7 @@
  * routinely names something that is not a shapes graph at all. RE-MEASURED — the first
  * version of this sentence quoted 21, and that figure had never been run: with
  * `validateAgainstShape` over every `.ttl` in `docs/ns/`, reading `shapesDeclared`, it is
- * 23 of 33 — `abac`, `adl-tla-proficiency`, `alignment`, `amta`, `cg`, `cgh`, `code`, `cts`,
+ * 23 of 34 — `abac`, `adl-tla-proficiency`, `alignment`, `amta`, `cg`, `cgh`, `code`, `cts`,
  * `demo`, `eu-ai-act`, `harness`, `hela`, `hypragent`, `hyprcat`, `interego`, `nist-rmf`,
  * `olke`, `passport`, `pgsl-lexicon`, `registry`, `sat`, `soc2`, `wks`. They are ontologies
  * and profiles, and every one is a plausible `dct:conformsTo` target. This repo's own
