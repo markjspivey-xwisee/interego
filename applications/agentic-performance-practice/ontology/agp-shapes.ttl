@@ -5,6 +5,39 @@
 @prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
 @prefix prov:  <http://www.w3.org/ns/prov#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+
+agpsh:MethodologyShape a sh:NodeShape ; sh:targetClass agp:Methodology ;
+    sh:property [ sh:path agp:profileToken ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path dct:hasVersion ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path agp:appliesWhen ; sh:minCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path agp:entryStep ; sh:minCount 1 ; sh:maxCount 1 ; sh:class agp:MethodStep ] ;
+    sh:property [ sh:path agp:hasStep ; sh:minCount 1 ; sh:class agp:MethodStep ] ;
+    sh:property [ sh:path agp:requiresCriterion ; sh:minCount 1 ; sh:class agp:QualityCriterion ] .
+agpsh:InterventionMethodologyShape a sh:NodeShape ; sh:targetClass agp:InterventionMethodology ;
+    sh:property [ sh:path agp:interventionToken ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ;
+        sh:in ( "instruction" "performance-support" "reference" "practice" "assessment" "coaching" "probe" "environmental-fix" "no-intervention" ) ] ;
+    sh:property [ sh:path agp:consultingProcess ; sh:minCount 1 ; sh:class agp:Methodology ] .
+agpsh:MethodStepShape a sh:NodeShape ; sh:targetClass agp:MethodStep ;
+    sh:property [ sh:path rdfs:label ; sh:minCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path agp:sequence ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+    sh:property [ sh:path agp:nextStep ; sh:minCount 1 ; sh:class agp:MethodStep ] ;
+    sh:property [ sh:path agp:requiresCriterion ; sh:minCount 1 ; sh:class agp:QualityCriterion ] .
+agpsh:QualityCriterionShape a sh:NodeShape ; sh:targetClass agp:QualityCriterion ;
+    sh:property [ sh:path rdfs:label ; sh:minCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path rdfs:comment ; sh:minCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path agp:workProduct ; sh:minCount 1 ; sh:datatype xsd:string ] .
+agpsh:MethodEvidenceReviewShape a sh:NodeShape ; sh:targetClass agp:MethodEvidenceReview ;
+    sh:property [ sh:path agp:methodology ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path agp:reviewStatus ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "missing-evidence" "documented-unverified" ) ] ;
+    sh:property [ sh:path agp:qualityVerified ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( false ) ] .
+agpsh:EvidenceItemShape a sh:NodeShape ; sh:targetClass agp:EvidenceItem ;
+    sh:property [ sh:path agp:forCriterion ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path agp:evidenceArtifact ; sh:minCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path rdfs:comment ; sh:minCount 1 ; sh:datatype xsd:string ] .
+agpsh:CriterionEvidenceReviewShape a sh:NodeShape ; sh:targetClass agp:CriterionEvidenceReview ;
+    sh:property [ sh:path agp:forCriterion ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path agp:reviewStatus ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "missing-evidence" "documented-unverified" ) ] .
 
 # ══════════════════════════════════════════════════════════════════════════
 #  SHACL node shapes for the agentic-performance-practice vertical.

@@ -57,6 +57,7 @@ import { assessDisposition, type WorkRegime } from './agent-disposition.js';
 // The regime→method routing is read from the published graph, not decided here. See
 // methodForRegime below for what this replaced and why it throws rather than defaulting.
 import { AGP_NS, readOntologyTurtle } from './ontology.js';
+import { methodologyFor, consultingMethodology, type MethodReference } from './intervention-methods.js';
 import {
   findSubjectsOfType,
   type IRI,
@@ -196,6 +197,8 @@ export type InterventionType =
 
 export interface InterventionOption {
   type: InterventionType;
+  /** Published implementation method; selection still comes from the diagnosis. */
+  methodology?: MethodReference;
   selected: boolean;
   rationale: string;
   /** When ruled out, the honest reason. */
@@ -590,6 +593,7 @@ function authoringFor(type: InterventionType, direction: PerformanceDirection): 
 
 export interface InterventionPlan {
   situationId: string;
+  consultingProcess?: MethodReference;
   /** Optional reference to the diagnosed gap this plan addresses. */
   gapId?: string;
   diagnosis: Diagnosis;
@@ -754,6 +758,7 @@ export function recommendInterventions(input: RecommendInput): InterventionPlan 
     const selected = select.has(type);
     const opt: InterventionOption = {
       type,
+      methodology: methodologyFor(type),
       selected,
       rationale: selected ? (rationale.get(type) ?? 'selected by the analysis.') : (ruledOut.get(type) ?? 'not selected.'),
       ...(!selected && ruledOut.has(type) ? { ruledOutBecause: ruledOut.get(type)! } : {}),
@@ -798,6 +803,7 @@ export function recommendInterventions(input: RecommendInput): InterventionPlan 
     situationId: situation.id,
     diagnosis,
     paradigm,
+    consultingProcess: consultingMethodology(),
     selected,
     contentWarranted,
     direction,

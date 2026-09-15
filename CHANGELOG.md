@@ -34,6 +34,12 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
 
 <!-- documented-through: 2037e1a -->
 
+### 2026-09-15 — Performance consulting and intervention methodologies
+
+- AGP publishes a versioned consulting/management cycle and nine intervention-specific method profiles as connected RDF with SHACL constraints. FOXXI composes the same catalogue; plans MUST link to the published method mapping while preserving regime-specific diagnosis.
+- Instructional design includes objective/practice/assessment alignment, input and scoring validation, usability/accessibility, runtime recording, pilot revision, transfer and maintenance evidence.
+- Native method discovery serves JSON-LD, Turtle and HyperMarkdown. Evidence reviews MUST distinguish missing evidence from documented-but-unverified pointers; supplied evidence MUST NOT be treated as quality approval or proof of performance effects.
+
 ### 2026-09-15 — Validated SCORM assessment forms
 
 - Generated SCOs render safe typed resource links, require complete valid responses, disclose the passing threshold, and provide question-level feedback after recording.

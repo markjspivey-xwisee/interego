@@ -10,6 +10,7 @@
  * middleware hook (see bridge/server.ts).
  */
 import { readFileSync } from 'node:fs';
+import { parseTrig } from '@interego/core';
 
 export const AGP_NS = 'https://markjspivey-xwisee.github.io/interego/applications/agentic-performance-practice/agp#';
 export const AGP_ONTOLOGY_IRI = 'https://markjspivey-xwisee.github.io/interego/applications/agentic-performance-practice/agp';
@@ -38,8 +39,9 @@ function readOntologyFile(file: string): string {
   throw new Error(`agp ontology artifact not found: ${file}`);
 }
 
-export const readOntologyTurtle = (): string => readOntologyFile('agp.ttl');
+export const readOntologyTurtle = (): string => readOntologyFile('agp.ttl') + '\n' + readMethodsTurtle();
 export const readShapesTurtle = (): string => readOntologyFile('agp-shapes.ttl');
+export const readMethodsTurtle = (): string => readOntologyFile('agp-methods.ttl');
 
 type TermKind = 'Class' | 'ObjectProperty' | 'DatatypeProperty' | 'Individual';
 interface AgpTerm {
@@ -60,6 +62,34 @@ interface AgpTerm {
  *  The Turtle file is the complete source (ranges, domains, constructedFrom,
  *  every individual); this index is the dereferenceable JSON-LD view. */
 export const AGP_TERMS: ReadonlyArray<AgpTerm> = [
+  // Consulting, management and intervention methods: full definitions in agp.ttl; profiles in agp-methods.ttl.
+  { name: 'Methodology', kind: 'Class', label: 'Methodology' },
+  { name: 'InterventionMethodology', kind: 'Class', label: 'Intervention methodology' },
+  { name: 'MethodStep', kind: 'Class', label: 'Method step' },
+  { name: 'QualityCriterion', kind: 'Class', label: 'Quality criterion' },
+  { name: 'MethodEvidenceReview', kind: 'Class', label: 'Method evidence coverage review' },
+  { name: 'EvidenceItem', kind: 'Class', label: 'Evidence item' },
+  { name: 'CriterionEvidenceReview', kind: 'Class', label: 'Criterion evidence coverage review' },
+  { name: 'hasCriterionReview', kind: 'ObjectProperty', label: 'has criterion review' },
+  { name: 'methodology', kind: 'ObjectProperty', label: 'methodology' },
+  { name: 'consultingProcess', kind: 'ObjectProperty', label: 'consulting process' },
+  { name: 'hasStep', kind: 'ObjectProperty', label: 'has step' },
+  { name: 'entryStep', kind: 'ObjectProperty', label: 'entry step' },
+  { name: 'nextStep', kind: 'ObjectProperty', label: 'next step' },
+  { name: 'revisitsStep', kind: 'ObjectProperty', label: 'revisits step' },
+  { name: 'branchesToMethod', kind: 'ObjectProperty', label: 'branches to regime method' },
+  { name: 'requiresCriterion', kind: 'ObjectProperty', label: 'requires criterion' },
+  { name: 'hasEvidence', kind: 'ObjectProperty', label: 'has evidence' },
+  { name: 'forCriterion', kind: 'ObjectProperty', label: 'for criterion' },
+  { name: 'evidenceArtifact', kind: 'ObjectProperty', label: 'evidence artifact' },
+  { name: 'profileToken', kind: 'DatatypeProperty', label: 'profile token' },
+  { name: 'interventionToken', kind: 'DatatypeProperty', label: 'intervention token' },
+  { name: 'appliesWhen', kind: 'DatatypeProperty', label: 'applies when' },
+  { name: 'sequence', kind: 'DatatypeProperty', label: 'sequence' },
+  { name: 'workProduct', kind: 'DatatypeProperty', label: 'work product' },
+  { name: 'reviewStatus', kind: 'DatatypeProperty', label: 'evidence review status' },
+  { name: 'evidenceCoverage', kind: 'DatatypeProperty', label: 'evidence coverage percent' },
+  { name: 'qualityVerified', kind: 'DatatypeProperty', label: 'quality verified' },
   { name: 'PerformanceSituation', kind: 'Class', label: 'Performance Situation', subClassOf: `${CG_NS}ContextDescriptor`, comment: 'The UNIT of the theory — contextualized first by its work regime, never assumed to be a gap.' },
   { name: 'Performer', kind: 'Class', label: 'Performer', subClassOf: `${CG_NS}ContextDescriptor`, comment: 'A human, agent, or team that performs in a situation. Actor-agnostic.' },
   { name: 'PerformanceDirection', kind: 'Class', label: 'Performance Direction', comment: 'Enumerated H2H/H2A/A2H/A2A direction of a performance relationship.' },
@@ -152,6 +182,25 @@ const kindToType = (k: TermKind): string =>
       : k === 'DatatypeProperty' ? 'owl:DatatypeProperty'
         : 'owl:NamedIndividual';
 
+/** The profiles are canonical named-node Turtle data, projected without a second
+ * manually maintained list of method, step and criterion instances. */
+function methodNodes(): Record<string, unknown>[] {
+  return parseTrig(readMethodsTurtle()).subjects.map(s => {
+    if (typeof s.subject !== 'string') throw new Error('Method graph requires named subjects');
+    const node: Record<string, unknown> = { '@id': String(s.subject) };
+    for (const [predicate, terms] of s.properties) {
+      const isType = predicate === 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
+      node[isType ? '@type' : predicate] = terms.map(t => {
+        if (t.kind === 'iri') return isType ? String(t.iri) : { '@id': String(t.iri) };
+        if (t.kind === 'literal') return { '@value': t.value,
+          ...(t.language ? { '@language': t.language } : t.datatype ? { '@type': t.datatype } : {}) };
+        throw new Error('Method graph requires IRI or literal objects');
+      });
+    }
+    return node;
+  });
+}
+
 const refIri = (v: string): string => v.startsWith('http') ? v : `${AGP_NS}${v}`;
 
 function termNode(t: AgpTerm): Record<string, unknown> {
@@ -181,13 +230,17 @@ export function renderOntologyJsonLd(): Record<string, unknown> {
         'rdfs:comment': 'Non-normative vertical ontology. JSON-LD is a summary view; the complete OWL source is the Turtle representation, and SHACL shapes are at /ns/agp/shapes.',
       },
       ...AGP_TERMS.map(termNode),
+      ...methodNodes(),
     ],
   };
 }
 
 export function renderTermJsonLd(name: string): Record<string, unknown> | null {
   const t = AGP_TERMS.find(x => x.name === name);
-  if (!t) return null;
+  if (!t) {
+    const node = methodNodes().find(n => n['@id'] === `${AGP_NS}${name}`);
+    return node ? { '@context': JSONLD_CONTEXT, ...node } : null;
+  }
   return {
     '@context': JSONLD_CONTEXT,
     ...termNode(t),

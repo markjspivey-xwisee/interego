@@ -21,6 +21,8 @@
  */
 
 import type { Express, Request, Response } from 'express';
+import { attachInterventionMethodRoutes } from '../../agentic-performance-practice/bridge/method-routes.js';
+import { AGP_NS } from '../../agentic-performance-practice/src/ontology.js';
 import type { WorkRegime } from '../../agentic-performance-practice/src/agent-disposition.js';
 import {
   diagnose, recommendInterventions, rollUpPortfolio,
@@ -81,6 +83,7 @@ import type {
 // this file composes with — already binds ns/iep#, ns/pgsl# and ns/amta# correctly, so Foxxi
 // was the lone outlier. All four below are verified 200.
 const JSONLD_CONTEXT = {
+  agp: AGP_NS,
   iep: 'https://markjspivey-xwisee.github.io/interego/ns/iep#',
   pgsl: 'https://markjspivey-xwisee.github.io/interego/ns/pgsl#',
   ac: 'https://markjspivey-xwisee.github.io/interego/applications/agent-collective/ac#',
@@ -326,6 +329,7 @@ export function attachPerformanceRoutes(app: Express, config: {
   checkWriteRateLimit?: (clientIp: string) => { ok: boolean; retryAfterSeconds?: number };
 }): void {
   const base = config.selfBaseUrl.replace(/\/+$/, '');
+  attachInterventionMethodRoutes(app, base);
   const clientIpOf = (req: Request): string =>
     (String(req.headers['x-forwarded-for'] ?? '').split(',')[0]?.trim())
     || req.socket?.remoteAddress || 'unknown';
@@ -521,6 +525,8 @@ export function attachPerformanceRoutes(app: Express, config: {
         'assessment', 'coaching', 'probe', 'environmental-fix', 'no-intervention',
       ],
       _affordances: {
+        interventionMethods: { method: 'GET', href: `${base}/performance/methods`, note: 'Versioned consulting process and intervention-specific design methods with evidence criteria.' },
+        methodEvidenceReview: { method: 'POST', href: `${base}/performance/methods/review`, note: 'Check evidence coverage; this does not certify quality or effectiveness.' },
         contextualizeAndPlan: {
           method: 'POST', href: `${base}/performance/plan`,
           note: 'Contextualize a performance situation — read its regime, apply that regime\'s method — and return the full intervention paradigm, selected and ruled-out with reasoning.',

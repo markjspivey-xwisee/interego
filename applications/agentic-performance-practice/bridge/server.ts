@@ -35,6 +35,7 @@ import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
 import { attachOntologyServing } from '../../_shared/ontology-serve/index.js';
 import { attachGuidanceServing, type GuidedAffordanceEntry } from '../../_shared/guided-affordance/index.js';
 import { agpAffordances } from '../affordances.js';
+import { attachInterventionMethodRoutes } from './method-routes.js';
 import {
   AGP_NS, AGP_ONTOLOGY_IRI,
   readOntologyTurtle, readShapesTurtle, renderOntologyJsonLd, renderTermJsonLd,
@@ -88,6 +89,7 @@ const app = createVerticalBridge({
   // xAPI Profile, authored via Foxxi's parameterized builder (it composes,
   // rather than reimplements, the standards layer).
   middleware: (a) => {
+    attachInterventionMethodRoutes(a, base);
     attachOntologyServing(a, {
       mountPath: '/ns/agp',
       ontologyIri: AGP_ONTOLOGY_IRI,
