@@ -25,6 +25,7 @@
  */
 
 import { scormArtifactZip, hashScormAnswer, type ScormArtifactCourse } from './scorm-artifacts.js';
+import { inferScormAnswerInput, scormAssessmentScript } from './scorm-assessment.js';
 import type { Course, Module, Lesson, GroundingFragment } from './emergent-content.js';
 
 const CMI5_NS = 'https://w3id.org/xapi/profiles/cmi5/v1/CourseStructure.xsd';
@@ -149,6 +150,8 @@ export function generateAuHtml(courseTitle: string, lesson: AuLessonView): strin
 <script>
 const LESSON = ${jsStr(lesson)};
 const IS_ASSESSMENT = ${isAssessment};
+${scormAssessmentScript()}
+const inferScormAnswerInput = ${inferScormAnswerInput.toString()};
 const CMI5_CAT = 'https://w3id.org/xapi/cmi5/context/categories/cmi5';
 const VERB = {
   initialized: 'http://adlnet.gov/expapi/verbs/initialized',
@@ -233,8 +236,8 @@ document.getElementById('go').onclick = async () => {
   try {
     if (IS_ASSESSMENT){
       const inputs = [...document.querySelectorAll('.answer')];
-      const normalize = value => String(value).toLowerCase().replace(/[^a-z0-9 ]/g,'').replace(/\\s+/g,' ').trim();
-      const correct = inputs.filter(i => { const answer=normalize(i.value), expected=normalize(i.dataset.answer||''); return answer.length>0 && [answer,...answer.split(' ').filter(token=>token.length>=4)].includes(expected); }).length;
+      if(submittedScore===null){for(const input of inputs){const error=validateScormAnswer(input.value,inferScormAnswerInput(input.dataset.answer||''));if(error){input.focus();throw new Error(error);}}}
+      const correct = inputs.filter(i => { const input=inferScormAnswerInput(i.dataset.answer||'');const expected=scormAnswerCandidates(i.dataset.answer||'',input)[0];return scormAnswerCandidates(i.value,input).includes(expected); }).length;
       if (submittedScore === null) submittedScore = inputs.length ? correct / inputs.length : 0;
       const scaled = submittedScore;
       const passed = scaled >= 0.6;
@@ -265,7 +268,8 @@ export function composedScormCourse(course: Course): ScormArtifactCourse {
       assessment: fl.fragments.filter(f => f.modality === 'assessment-item').map(f => {
         const separator = f.body.indexOf(':::');
         if (separator < 0 || !f.body.slice(separator + 3).trim()) throw new Error('An assessment fragment must contain question ::: answer.');
-        return { question: f.body.slice(0, separator).trim(), answerHash: hashScormAnswer(f.body.slice(separator + 3).trim()) };
+        const answer = f.body.slice(separator + 3).trim(), input = inferScormAnswerInput(answer);
+        return { question: f.body.slice(0, separator).trim(), answerHash: hashScormAnswer(answer, input), ...(input ? { input } : {}) };
       }),
     })),
   };

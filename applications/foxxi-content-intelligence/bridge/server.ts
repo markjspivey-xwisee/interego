@@ -182,6 +182,7 @@ import { makeWalletDelegationVerifier, parseTrig, TENANT_ADMIN_CAPABILITY, pgslN
 import { proveCompetency } from '../src/competency-proof.js';
 import { courseIri, courseIdOf, sameCourse } from '../src/course-identity.js';
 import { attachAgentScormArtifacts, scormArtifactLinks, scormArtifactManifest, hashScormAnswer } from '../src/scorm-artifacts.js';
+import { inferScormAnswerInput, scormAnswerCandidates, validateScormResponses, type ScormAnswerInput, type ScormAssessmentQuestion } from '../src/scorm-assessment.js';
 import { competencyIri, competencyIriForTerm, competencyIdOf } from '../src/competency-identity.js';
 import { activityIri, ACTIVITY_DEFINITIONS } from '../src/activity-identity.js';
 import { FOXXI_NS } from '../src/foxxi-vocab.js';
@@ -8485,7 +8486,7 @@ app.post('/agent/xapi-statements/write', signedXapiHandler('write'));
 // Assessment answers are stored HASHED (sha256 of the normalized answer), never
 // plaintext — the course is persisted to the author's world-readable pod, so the
 // bridge grades by hash compare rather than leak the key.
-interface AgentScormSco { id: string; title: string; body: string; assessment?: Array<{ question: string; answerHash: string }>; }
+interface AgentScormSco { id: string; title: string; body: string; assessment?: ScormAssessmentQuestion[]; }
 interface AgentScormCourse { courseId: string; title: string; masteryScore: number; scos: AgentScormSco[]; authoredBy: string; }
 interface ScormPlay { seq: SeqSession; courseId: string; learnerDid: string; lens: TenantId; masteryScore: number; course: AgentScormCourse; }
 const agentScormCourses = new Map<string, AgentScormCourse>();
@@ -8524,10 +8525,9 @@ function scoForActivity(course: AgentScormCourse, activityId: string | undefined
 }
 function scoViewForLearner(sco: AgentScormSco | undefined): unknown {
   if (!sco) return null;
-  return { id: sco.id, title: sco.title, body: sco.body, ...(sco.assessment?.length ? { assessment: sco.assessment.map((q, i) => ({ index: i, question: q.question })) } : {}) };
+  return { id: sco.id, title: sco.title, body: sco.body, ...(sco.assessment?.length ? { assessment: sco.assessment.map((q, i) => ({ index: i, question: q.question, ...(q.input ? { input: q.input } : {}) })) } : {}) };
 }
-function normAns(s: string): string { return String(s ?? '').toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim(); }
-function hashAnswer(s: string): string { return hashScormAnswer(s); }
+function hashAnswer(s: string, input?: ScormAnswerInput): string { return hashScormAnswer(s, input); }
 /** Record a first-class AGENT ACTIVITY (a teacher/author/issuer act) into the
  *  actor's OWN lens + durable pod, with an EXPRESSIVE verb. Unlike record-
  *  performance (verb=performed → ELR performance rollup), this carries a distinct
@@ -9035,21 +9035,25 @@ app.post('/agent/scorm/author', async (req, res) => {
     if (!c || typeof c !== 'object' || !c.courseId || !Array.isArray(c.scos) || c.scos.length === 0) {
       res.status(400).json({ error: 'course { courseId, title, masteryScore?, scos:[{ id, title, body, assessment? }] } required' }); return;
     }
-    const course: AgentScormCourse = {
+    let course: AgentScormCourse;
+    try { course = {
       courseId: String(c.courseId), title: String(c.title ?? c.courseId),
       masteryScore: typeof c.masteryScore === 'number' ? c.masteryScore : 0.7,
-      scos: (c.scos as Array<{ id: unknown; title?: unknown; body?: unknown; assessment?: Array<{ question: unknown; answer?: unknown; answerHash?: unknown }> }>).map(s => ({
+      scos: (c.scos as Array<{ id: unknown; title?: unknown; body?: unknown; assessment?: Array<{ question: unknown; answer?: unknown; answerHash?: unknown; input?: ScormAnswerInput }> }>).map(s => ({
         id: String(s.id), title: String(s.title ?? s.id), body: String(s.body ?? ''),
         // Hash answers at author time — plaintext never touches the Map or the pod.
         // Accept an already-hashed answerHash (a course loaded from a pod re-authored).
-        ...(Array.isArray(s.assessment) ? { assessment: s.assessment.map(q => ({
-          question: String(q.question),
-          answerHash: typeof q.answerHash === 'string' && q.answerHash ? q.answerHash : hashAnswer(String(q.answer ?? '')),
-        })) } : {}),
+        ...(Array.isArray(s.assessment) ? { assessment: s.assessment.map(q => {
+          const input = q.input ?? (typeof q.answer === 'string' ? inferScormAnswerInput(q.answer) : undefined);
+          return { question: String(q.question),
+            answerHash: typeof q.answerHash === 'string' && q.answerHash ? q.answerHash : hashAnswer(String(q.answer ?? ''), input),
+            ...(input ? { input } : {}),
+          };
+        }) } : {}),
       })),
       authoredBy: auth.callerDid,
     };
-    try { parseManifest(buildAgentScormManifest(course)); }
+    parseManifest(buildAgentScormManifest(course)); }
     catch (e) { res.status(400).json({ error: `generated SCORM manifest did not parse on the SN runtime: ${(e as Error).message}` }); return; }
     // FIRST-AUTHOR LOCK (round-40 blocker): the global course cache is keyed by courseId,
     // so a wallet re-authoring another agent's courseId would overwrite the content AND
@@ -9169,22 +9173,17 @@ app.post('/agent/scorm/submit', async (req, res) => {
     let update: TrackingUpdate = { completion: 'completed' };
     let graded: unknown;
     if (sco?.assessment?.length) {
-      const answers = Array.isArray(p.answers) ? (p.answers as unknown[]).map(a => String(a)) : [];
+      const errors = validateScormResponses(sco.assessment, p.answers);
+      if (errors.length) {
+        res.status(422).json({ error: 'Invalid assessment answers; the current SCO has not advanced.', validationErrors: errors }); return;
+      }
+      const answers = p.answers as string[];
       let correct = 0;
       const detail = sco.assessment.map((item, i) => {
-        const raw = answers[i] ?? '';
-        const got = normAns(raw);
-        // Graded by hash compare — the plaintext key is never stored (the course
-        // lives on a world-readable pod). Lenient: the full normalized answer OR any
-        // salient token (>=4 chars) may match the key hash, so a semantically-correct
-        // answer phrased differently ("the /guidance catalog" vs "/guidance") still
-        // scores. Token hashing keeps the key off the pod (no plaintext compare).
-        const candidates = new Set<string>();
-        if (got.length > 0) candidates.add(hashAnswer(raw));
-        for (const tok of got.split(' ')) if (tok.length >= 4) candidates.add(hashAnswer(tok));
-        const ok = candidates.has(item.answerHash);
+        const raw = answers[i]!;
+        const ok = scormAnswerCandidates(raw, item.input).some(candidate => hashAnswer(candidate) === item.answerHash);
         if (ok) correct++;
-        return { question: item.question, your: raw || null, correct: ok };
+        return { question: item.question, your: raw, correct: ok };
       });
       const score = correct / sco.assessment.length;
       // masteryScore may be authored on either scale: a 0-1 fraction (the 0.7
