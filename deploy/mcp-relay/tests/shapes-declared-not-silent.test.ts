@@ -473,7 +473,7 @@ async function main(): Promise<void> {
         readFileSync(join(nsDir, f), 'utf8'), OPTS).shapesDeclared === 0);
 
     // COMMENT LINES ONLY, unwrapped first. Both sentences wrap mid-figure — "(23 of the" then
-    // "33 documents in `docs/ns/`" on the next line — so a per-line regex reads zero of them
+    // "34 documents in `docs/ns/`" on the next line — so a per-line regex reads zero of them
     // and passes vacuously, which is the failure mode this whole section is about.
     const prose = (src: string): string => readFileSync(join(here, src), 'utf8')
       .split('\n')
@@ -486,14 +486,14 @@ async function main(): Promise<void> {
     // lines it describes. The check failed with `comment says []` — and a file that no longer
     // states the number cannot state it wrongly, which is a pass this test must not give.
     for (const src of ['../shapes-declared.ts', '../conformance-gate.ts']) {
-      const quoted = [...prose(src).matchAll(/(\d+) of (?:the )?33\b/g)].map(m => Number(m[1]));
+      const quoted = [...prose(src).matchAll(/(\d+) of (?:the )?34\b/g)].map(m => Number(m[1]));
       ok(quoted.length > 0 && quoted.every(q => q === zero.length),
-        `§9 every "N of 33" figure in ${src.replace('../', '')} equals the engine's own count`,
+        `§9 every "N of 34" figure in ${src.replace('../', '')} equals the engine's own count`,
         `comment says ${JSON.stringify(quoted)}, measured ${zero.length} of ${files.length}: `
         + zero.join(', '));
     }
-    ok(files.length === 33,
-      '§9 …and the denominator is the real file count, so "of 33" is not stale either',
+    ok(files.length === 34,
+      '§9 …and the denominator is the real file count, so "of 34" is not stale either',
       `${files.length} .ttl files`);
   }
 
