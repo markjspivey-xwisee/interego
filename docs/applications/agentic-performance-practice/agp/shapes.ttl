@@ -1,0 +1,271 @@
+@prefix agp:   <https://markjspivey-xwisee.github.io/interego/applications/agentic-performance-practice/agp#> .
+@prefix agpsh: <https://markjspivey-xwisee.github.io/interego/applications/agentic-performance-practice/agp/shapes#> .
+@prefix iep:    <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix sh:    <http://www.w3.org/ns/shacl#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+@prefix prov:  <http://www.w3.org/ns/prov#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+
+agpsh:MethodologyShape a sh:NodeShape ; sh:targetClass agp:Methodology ;
+    sh:property [ sh:path agp:profileToken ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path dct:hasVersion ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path agp:appliesWhen ; sh:minCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path agp:entryStep ; sh:minCount 1 ; sh:maxCount 1 ; sh:class agp:MethodStep ] ;
+    sh:property [ sh:path agp:hasStep ; sh:minCount 1 ; sh:class agp:MethodStep ] ;
+    sh:property [ sh:path agp:requiresCriterion ; sh:minCount 1 ; sh:class agp:QualityCriterion ] .
+agpsh:InterventionMethodologyShape a sh:NodeShape ; sh:targetClass agp:InterventionMethodology ;
+    sh:property [ sh:path agp:interventionToken ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ;
+        sh:in ( "instruction" "performance-support" "reference" "practice" "assessment" "coaching" "probe" "environmental-fix" "no-intervention" ) ] ;
+    sh:property [ sh:path agp:consultingProcess ; sh:minCount 1 ; sh:class agp:Methodology ] .
+agpsh:MethodStepShape a sh:NodeShape ; sh:targetClass agp:MethodStep ;
+    sh:property [ sh:path rdfs:label ; sh:minCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path agp:sequence ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+    sh:property [ sh:path agp:nextStep ; sh:minCount 1 ; sh:class agp:MethodStep ] ;
+    sh:property [ sh:path agp:requiresCriterion ; sh:minCount 1 ; sh:class agp:QualityCriterion ] .
+agpsh:QualityCriterionShape a sh:NodeShape ; sh:targetClass agp:QualityCriterion ;
+    sh:property [ sh:path rdfs:label ; sh:minCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path rdfs:comment ; sh:minCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path agp:workProduct ; sh:minCount 1 ; sh:datatype xsd:string ] .
+agpsh:MethodEvidenceReviewShape a sh:NodeShape ; sh:targetClass agp:MethodEvidenceReview ;
+    sh:property [ sh:path agp:methodology ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path agp:reviewStatus ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "missing-evidence" "documented-unverified" ) ] ;
+    sh:property [ sh:path agp:qualityVerified ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( false ) ] .
+agpsh:EvidenceItemShape a sh:NodeShape ; sh:targetClass agp:EvidenceItem ;
+    sh:property [ sh:path agp:forCriterion ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path agp:evidenceArtifact ; sh:minCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path rdfs:comment ; sh:minCount 1 ; sh:datatype xsd:string ] .
+agpsh:CriterionEvidenceReviewShape a sh:NodeShape ; sh:targetClass agp:CriterionEvidenceReview ;
+    sh:property [ sh:path agp:forCriterion ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path agp:reviewStatus ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "missing-evidence" "documented-unverified" ) ] .
+
+# ══════════════════════════════════════════════════════════════════════════
+#  SHACL node shapes for the agentic-performance-practice vertical.
+#  Authored within the EXECUTABLE subset of the in-process SHACL engine
+#  (packages/core/src/validation/shacl-engine.ts): sh:targetClass, single-
+#  predicate sh:path, sh:minCount/maxCount, sh:datatype, sh:nodeKind, sh:class,
+#  sh:in, sh:pattern, sh:message, sh:severity. NO sh:and/or/not/xone, NO
+#  sequence paths, NO sh:sparql (those are not executed by the in-process
+#  engine; only the normative substrate shapes use sh:sparql, validated
+#  externally). Cross-property rules that exceed this subset (e.g. "gap-analysis
+#  method REQUIRES a derived Knowable regime") are enforced in CODE by the
+#  regime-source discipline, not here — see the README.
+#
+#  Instances declare dct:conformsTo the relevant shape IRI and the container
+#  declares the shapes (.well-known/container-shape) so the relay conformance
+#  gate (deploy/mcp-relay runConformanceGate) validates them BEFORE the pod
+#  write.
+# ══════════════════════════════════════════════════════════════════════════
+
+agpsh:PerformanceSituationShape a sh:NodeShape ;
+    sh:targetClass agp:PerformanceSituation ;
+    sh:property [
+        sh:path agp:regime ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "A performance situation MUST be placed in exactly one work regime (regime-first)." ;
+        sh:severity sh:Violation ;
+    ] ;
+    sh:property [
+        sh:path agp:regimeSource ;
+        sh:minCount 1 ;
+        sh:datatype xsd:string ;
+        sh:pattern "^(derived|asserted|default-gap-intent|unclassified)$" ;
+        sh:message "regimeSource MUST be one of derived|asserted|default-gap-intent|unclassified — provenance of the regime placement." ;
+        sh:severity sh:Violation ;
+    ] .
+
+agpsh:CapabilityShape a sh:NodeShape ;
+    sh:targetClass agp:Capability ;
+    sh:property [
+        sh:path agp:composedOf ;
+        sh:minCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "A capability MUST be composed of at least one constituent (skill, tool, or knowledge) — an empty capability is not productive." ;
+        sh:severity sh:Violation ;
+    ] .
+
+agpsh:KnowledgeShape a sh:NodeShape ;
+    sh:targetClass agp:Knowledge ;
+    sh:property [
+        sh:path agp:knowledgeComponentKind ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "A knowledge component MUST carry exactly one codifiability kind (Recorded/Trained/Judged/Lived/Innate)." ;
+        sh:severity sh:Violation ;
+    ] .
+
+agpsh:PerformanceAffordanceShape a sh:NodeShape ;
+    sh:targetClass agp:PerformanceAffordance ;
+    sh:property [
+        sh:path agp:requiresCapability ;
+        sh:minCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "A performance affordance MUST name the capability it requires — an affordance with no capability requirement cannot be actualized or unmet." ;
+        sh:severity sh:Violation ;
+    ] .
+
+# The productive join. This shape is what makes affordance-ACTUALIZATION a
+# first-class, validated object: an actualization is meaningless unless it
+# references the capability engaged, the situation it occurred in, the
+# affordance it realized, and the performance it yielded.
+agpsh:ActualizationShape a sh:NodeShape ;
+    sh:targetClass agp:Actualization ;
+    sh:property [
+        sh:path agp:engages ;
+        sh:minCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "An actualization MUST engage a capability." ;
+        sh:severity sh:Violation ;
+    ] ;
+    sh:property [
+        sh:path agp:inSituation ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "An actualization MUST occur in exactly one performance situation." ;
+        sh:severity sh:Violation ;
+    ] ;
+    sh:property [
+        sh:path agp:actualizes ;
+        sh:minCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "An actualization MUST realize at least one performance affordance." ;
+        sh:severity sh:Violation ;
+    ] ;
+    sh:property [
+        sh:path agp:yields ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "An actualization MUST yield exactly one performance (the measurable result)." ;
+        sh:severity sh:Violation ;
+    ] .
+
+agpsh:DiagnosisShape a sh:NodeShape ;
+    sh:targetClass agp:Diagnosis ;
+    sh:property [
+        sh:path agp:diagnoses ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "A diagnosis MUST reference exactly one performance situation." ;
+        sh:severity sh:Violation ;
+    ] ;
+    sh:property [
+        sh:path agp:method ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "A diagnosis MUST route to exactly one performance method." ;
+        sh:severity sh:Violation ;
+    ] .
+
+agpsh:InterventionEvaluationShape a sh:NodeShape ;
+    sh:targetClass agp:InterventionEvaluation ;
+    sh:property [
+        sh:path agp:evaluates ;
+        sh:minCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "An intervention evaluation MUST reference the intervention it judges." ;
+        sh:severity sh:Violation ;
+    ] .
+
+agpsh:PerformanceReadinessAttestationShape a sh:NodeShape ;
+    sh:targetClass agp:PerformanceReadinessAttestation ;
+    sh:property [
+        sh:path agp:subjectDigest ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:datatype xsd:string ; sh:pattern "^[0-9a-f]{64}$" ;
+        sh:message "Readiness evidence MUST name exactly one 64-hex candidate SHA-256 digest." ;
+        sh:severity sh:Violation ;
+    ] ;
+    sh:property [
+        sh:path agp:readinessDecision ;
+        sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:boolean ;
+        sh:message "Readiness evidence MUST carry exactly one derived boolean decision." ;
+        sh:severity sh:Violation ;
+    ] ;
+    sh:property [
+        sh:path agp:evaluatedRegime ;
+        sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
+        sh:message "Readiness evidence MUST name the work regime in which it was evaluated." ;
+        sh:severity sh:Violation ;
+    ] ;
+    sh:property [
+        sh:path agp:evaluationSuiteDigest ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:datatype xsd:string ; sh:pattern "^[0-9a-f]{64}$" ;
+        sh:message "Readiness evidence MUST bind the exact held-out suite digest." ;
+        sh:severity sh:Violation ;
+    ] ;
+    sh:property [
+        sh:path agp:heldOutCases ;
+        sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:nonNegativeInteger ;
+        sh:message "Readiness evidence MUST report the held-out case count." ;
+        sh:severity sh:Violation ;
+    ] ;
+    sh:property [
+        sh:path agp:passedCases ;
+        sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:nonNegativeInteger ;
+        sh:message "Readiness evidence MUST report the passed case count." ;
+        sh:severity sh:Violation ;
+    ] ;
+    sh:property [
+        sh:path agp:failedCases ;
+        sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:nonNegativeInteger ;
+        sh:message "Readiness evidence MUST report the derived failed case count." ;
+        sh:severity sh:Violation ;
+    ] ;
+    sh:property [
+        sh:path agp:minimumCases ;
+        sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:nonNegativeInteger ;
+        sh:minInclusive 1 ;
+        sh:message "Readiness evidence MUST expose its evidence-sufficiency floor." ;
+        sh:severity sh:Violation ;
+    ] ;
+    sh:property [
+        sh:path agp:allowedFailures ;
+        sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:nonNegativeInteger ;
+        sh:message "Readiness evidence MUST expose its permitted failure count." ;
+        sh:severity sh:Violation ;
+    ] ;
+    sh:property [
+        sh:path agp:portableRecord ;
+        sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
+        sh:message "Readiness evidence MUST cite a portable LER/CLR record." ;
+        sh:severity sh:Violation ;
+    ] ;
+    sh:property [
+        sh:path agp:explicitClaimNotMade ;
+        sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ;
+        sh:hasValue "This attestation does not deploy infrastructure and does not claim that training caused the observed result." ;
+        sh:message "Readiness evidence MUST explicitly disclaim infrastructure deployment and causal attribution to training." ;
+        sh:severity sh:Violation ;
+    ] ;
+    sh:property [
+        sh:path prov:wasDerivedFrom ;
+        sh:minCount 4 ; sh:nodeKind sh:IRI ;
+        sh:message "Readiness evidence MUST remain traceable to consulting, evaluation, xAPI, and portable-record evidence." ;
+        sh:severity sh:Violation ;
+    ] .
+
+agpsh:StandardsExtensionShape a sh:NodeShape ;
+    sh:targetClass agp:StandardsExtension ;
+    sh:property [
+        sh:path agp:extensionKind ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "A standards extension MUST declare exactly one extension kind (xAPI extension / profile fragment / LER term / TLA term)." ;
+        sh:severity sh:Violation ;
+    ] ;
+    sh:property [
+        sh:path agp:extendsStandard ;
+        sh:minCount 1 ;
+        sh:datatype xsd:string ;
+        sh:message "A standards extension MUST name the standard it extends (so it is discoverable + composable, not orphaned)." ;
+        sh:severity sh:Violation ;
+    ] .

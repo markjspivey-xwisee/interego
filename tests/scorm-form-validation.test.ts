@@ -77,6 +77,12 @@ describe('delivered question form against the shipped SCORM runtime', () => {
 });
 
 describe('shared native and exported answer rules', () => {
+  it('keeps persisted alphanumeric text verifiers compatible without collapsing typed signs', () => {
+    expect(hashScormAnswer('OAuth 2.0')).toBe(hashScormAnswer('oauth 20'));
+    expect(hashScormAnswer('R2-D2')).toBe(hashScormAnswer('r2d2'));
+    expect(hashScormAnswer('HTTP 404.')).toBe(hashScormAnswer('HTTP 404'));
+    expect(hashScormAnswer('-1', { type: 'integer' })).not.toBe(hashScormAnswer('1', { type: 'integer' }));
+  });
   it('never collapses a sign, decimal or numeric punctuation into the expected answer', () => {
     expect(hashScormAnswer('-1')).not.toBe(hashScormAnswer('1'));
     expect(hashScormAnswer('1.0')).not.toBe(hashScormAnswer('10'));

@@ -1,5 +1,6 @@
 /** The same readonly methodology resource is served by AGP and FOXXI. */
 import type { Express, Request, Response } from 'express';
+import type { Affordance } from '../../_shared/affordance-mcp/index.js';
 import { renderHypermediaMarkdown } from '@interego/core';
 import { sendHmd, wantsHmd, hmdProse, affordanceControl, sendActionResult } from '../../_shared/hypermedia/index.js';
 import { interventionMethodAffordances } from '../method-affordances.js';
@@ -16,7 +17,7 @@ function methodBody(m: InterventionMethod): string {
     + m.criteria.map(c => `- **${c.title}**: ${c.workProduct}. ${c.description}\n  Criterion: ${c['@id']}`).join('\n');
 }
 
-export function attachInterventionMethodRoutes(app: Express, selfBaseUrl: string): void {
+export function attachInterventionMethodRoutes(app: Express, selfBaseUrl: string, affordances: readonly Affordance[] = interventionMethodAffordances): void {
   const base = selfBaseUrl.replace(/\/+$/, '');
   app.get('/performance/methods', (req: Request, res: Response) => {
     res.vary('Accept');
@@ -47,7 +48,7 @@ export function attachInterventionMethodRoutes(app: Express, selfBaseUrl: string
         body: hmdProse('# Performance consulting and intervention methods\n\n'
           + 'Contextualize the work before choosing an intervention. These practice profiles define work and evidence to review; they do not certify quality or prove effectiveness.\n\n'
           + methods.map(methodBody).join('\n\n')),
-        links, controls: interventionMethodAffordances.map(a => affordanceControl(a, base)),
+        links, controls: affordances.map(a => affordanceControl(a, base)),
       })); return;
     }
     res.type('application/ld+json').json({ '@context': METHOD_CONTEXT, '@id': id,
@@ -56,7 +57,7 @@ export function attachInterventionMethodRoutes(app: Express, selfBaseUrl: string
   });
   app.post('/performance/methods/review', (req: Request, res: Response) => {
     try {
-      sendActionResult(req, res, reviewMethodEvidence(req.body), base, 'Method evidence coverage', interventionMethodAffordances,
+      sendActionResult(req, res, reviewMethodEvidence(req.body), base, 'Method evidence coverage', affordances,
         [{ label: 'Method catalogue', href: `${base}/performance/methods?format=markdown`, rel: 'related', type: 'text/markdown' }]);
     } catch (error) {
       if (!(error instanceof MethodEvidenceInputError)) throw error;

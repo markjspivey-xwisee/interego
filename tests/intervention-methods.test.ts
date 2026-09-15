@@ -7,7 +7,7 @@ import { AGP_NS, readOntologyTurtle, readMethodsTurtle, readShapesTurtle, render
 import { findInterventionMethod, interventionMethods, loadInterventionMethods, methodologyFor, reviewMethodEvidence } from '../applications/agentic-performance-practice/src/intervention-methods.js';
 import { diagnose, recommendInterventions, type PerformanceSituation } from '../applications/agentic-performance-practice/src/performance-architecture.js';
 import { attachInterventionMethodRoutes } from '../applications/agentic-performance-practice/bridge/method-routes.js';
-import { interventionMethodAffordances } from '../applications/agentic-performance-practice/method-affordances.js';
+import { interventionMethodAffordances, foxxiInterventionMethodAffordances } from '../applications/agentic-performance-practice/method-affordances.js';
 import { agpAffordances } from '../applications/agentic-performance-practice/affordances.js';
 import { foxxiAdminAffordances } from '../applications/foxxi-content-intelligence/affordances.js';
 
@@ -23,6 +23,7 @@ describe('published consulting and intervention methods', () => {
     expect(report.shapesApplied).toBeGreaterThan(0);
     expect(readFileSync(new URL('../docs/applications/agentic-performance-practice/agp.ttl', import.meta.url), 'utf8')).toBe(readOntologyTurtle());
     expect(readFileSync(new URL('../docs/applications/agentic-performance-practice/agp-shapes.ttl', import.meta.url), 'utf8')).toBe(readShapesTurtle());
+    expect(readFileSync(new URL('../docs/applications/agentic-performance-practice/agp/shapes.ttl', import.meta.url), 'utf8')).toBe(readShapesTurtle());
     const broken = readMethodsTurtle().replace('agp:entryStep agp:LearnerTaskAnalysisStep ;', '');
     expect(validateAgainstShape(broken, readShapesTurtle(), {}).conforms).toBe(false);
   });
@@ -113,9 +114,15 @@ describe('shared native methodology routes', () => {
     base = `http://127.0.0.1:${address.port}`; attachInterventionMethodRoutes(app, base);
   });
   afterAll(async () => { await new Promise<void>((resolve, reject) => server.close(e => e ? reject(e) : resolve())); });
-  it('both vertical authorities declare the same invocable method controls', () => {
-    for (const a of interventionMethodAffordances) {
-      expect(agpAffordances).toContainEqual(a); expect(foxxiAdminAffordances).toContainEqual(a);
+  it('both authorities declare accurate namespaced controls and chainable output contracts', () => {
+    for (const [index, a] of interventionMethodAffordances.entries()) {
+      expect(agpAffordances).toContainEqual(a);
+      const alias = foxxiInterventionMethodAffordances[index]!;
+      expect(foxxiAdminAffordances).toContainEqual(alias);
+      expect(alias.action).toBe(a.action.replace(':agp:', ':foxxi:'));
+      expect(alias.targetTemplate).toBe(a.targetTemplate);
+      expect(Object.keys(a.outputs!.properties!).length).toBeGreaterThan(0);
+      expect(alias.outputs).toEqual(a.outputs);
     }
   });
   it('serves JSON-LD, connected Turtle and HMD with typed controls', async () => {

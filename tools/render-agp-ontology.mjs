@@ -6,6 +6,7 @@ const path = 'docs/applications/agentic-performance-practice/';
 const ttl = readOntologyTurtle();
 writeFileSync(path + 'agp.ttl', ttl);
 writeFileSync(path + 'agp-shapes.ttl', readShapesTurtle());
+writeFileSync(path + 'agp/shapes.ttl', readShapesTurtle());
 const escape = s => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const merged = new Map();
 for (const subject of parseTrig(ttl).subjects) {

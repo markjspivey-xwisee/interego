@@ -17,10 +17,11 @@ export function inferScormAnswerInput(answer: string): ScormAnswerInput | undefi
   return undefined;
 }
 
-/** Keep legacy word matching, but never erase a numeric sign or decimal point. */
+/** Preserve legacy text hashes, including words with digits. Numeric-only
+ * expressions retain punctuation; typed numeric answers use their numeric contract. */
 export function normalizeScormAnswer(value: string): string {
   const text = String(value ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
-  return /[0-9]/.test(text) ? text : text.replace(/[^a-z ]/g, '').replace(/\s+/g, ' ').trim();
+  return /[a-z]/.test(text) ? text.replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim() : text;
 }
 
 export function validateScormAnswer(value: unknown, input?: ScormAnswerInput): string | null {

@@ -13,7 +13,7 @@
  */
 
 import type { Affordance } from '../_shared/affordance-mcp/index.js';
-import { interventionMethodAffordances } from '../agentic-performance-practice/method-affordances.js';
+import { foxxiInterventionMethodAffordances } from '../agentic-performance-practice/method-affordances.js';
 import type {
   IRI,
 } from '@interego/core';
@@ -1112,7 +1112,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
 // ─────────────────────────────────────────────────────────────────────
 
 export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
-  ...interventionMethodAffordances,
+  ...foxxiInterventionMethodAffordances,
   {
     action: 'urn:iep:action:foxxi:ingest-content-package' as IRI,
     toolName: 'foxxi.ingest_content_package',

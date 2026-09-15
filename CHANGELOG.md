@@ -36,6 +36,8 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
 
 ### 2026-09-15 — Performance consulting and intervention methodologies
 
+- Performance HTTP implementation now lives in AGP, with a compatibility export preserving existing FOXXI URLs and authorization. This reduces the existing upward-dependency count rather than raising its ceiling.
+- Method actions declare output schemas, use each hosting vertical's action namespace, and publish SHACL bytes at the declared shape IRI. Untyped alphanumeric text answer hashes retain legacy punctuation normalization.
 - AGP publishes a versioned consulting/management cycle and nine intervention-specific method profiles as connected RDF with SHACL constraints. FOXXI composes the same catalogue; plans MUST link to the published method mapping while preserving regime-specific diagnosis.
 - Instructional design includes objective/practice/assessment alignment, input and scoring validation, usability/accessibility, runtime recording, pilot revision, transfer and maintenance evidence.
 - Native method discovery serves JSON-LD, Turtle and HyperMarkdown. Evidence reviews MUST distinguish missing evidence from documented-but-unverified pointers; supplied evidence MUST NOT be treated as quality approval or proof of performance effects.
