@@ -638,7 +638,7 @@ const BASELINE = {};
 // `| grep` or `| tail` is a gate you have partially disabled: run it plain and check ITS exit code.
 // Same shape as every other proxy this week — the summary line standing in for the verdict.
 // The simulation regressions bring the measured tracked scope to 554 files.
-export const MIN_FILES = 564;
+export const MIN_FILES = 565;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.
@@ -1007,3 +1007,4 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   console.log(lintGateReport(result));
   process.exit(result.ok ? 0 : 1);
 }
+
