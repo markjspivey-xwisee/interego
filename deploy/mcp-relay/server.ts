@@ -4607,6 +4607,7 @@ async function handleGetDescriptor(args: ToolArgs, project = true): Promise<stri
   // a long TTL keyed by URL only.
   const cached = !args.bypass_cache ? descriptorBodyCache.get(url) : undefined;
   let turtle: string;
+  let representationMediaType: string;
   // Where the bytes actually came from, after normalisation and redirects. Every later
   // question about LOCATION — which pod owns this, does the proof name this record — is
   // asked of this and never of `url`. See the cache comment for why anchoring on the URL
@@ -4614,6 +4615,7 @@ async function handleGetDescriptor(args: ToolArgs, project = true): Promise<stri
   let landedUrl: string;
   if (cached && cached.expiresAt > Date.now() && !cached.encrypted) {
     turtle = cached.content;
+    representationMediaType = cached.mediaType;
     // A pre-existing entry (written before this field existed) has no landed URL. Falling
     // back to the request is the honest answer — it is what the old code compared — and it
     // can only weaken a binding, never strengthen one.
@@ -4621,7 +4623,7 @@ async function handleGetDescriptor(args: ToolArgs, project = true): Promise<stri
   } else {
     const { response: resp, landedUrl: landed } = await guardedInvokeFetchLanded(url, {
       method: 'GET',
-      headers: { 'Accept': 'text/turtle' },
+      headers: { 'Accept': 'text/turtle, text/markdown;q=0.9' },
     });
     if (!resp.ok) {
       // Do NOT echo upstream status/statusText for a caller-supplied URL — that is an
@@ -4629,8 +4631,20 @@ async function handleGetDescriptor(args: ToolArgs, project = true): Promise<stri
       return JSON.stringify({ error: 'descriptor could not be retrieved' });
     }
     turtle = await resp.text();
+    representationMediaType = resp.headers.get('content-type') ?? 'text/turtle';
     landedUrl = landed;
-    cacheDescriptorBody(url, { content: turtle, mediaType: 'text/turtle', encrypted: false, landedUrl: landed });
+    // Direct HMD resources (courses, catalogues, etc.) are mutable representations,
+    // not immutable Turtle descriptors. Do not mislabel or descriptor-cache them.
+    if (!/^text\/markdown(?:\s*;|\s*$)/i.test(representationMediaType)) {
+      cacheDescriptorBody(url, { content: turtle, mediaType: representationMediaType, encrypted: false, landedUrl: landed });
+    }
+  }
+
+  if (/^text\/markdown(?:\s*;|\s*$)/i.test(representationMediaType)) {
+    if (!project) return JSON.stringify({ error: 'a HyperMarkdown representation is not a signed descriptor' });
+    return JSON.stringify({ url, mediaType: representationMediaType, content: turtle,
+      rendered: turtle, renderedMediaType: representationMediaType,
+      representationKind: 'hypermarkdown', authorship: null });
   }
 
   // Hypermedia follow-your-nose: the descriptor Turtle includes
@@ -4916,8 +4930,10 @@ async function handleRenderHmd(args: ToolArgs): Promise<string> {
   if (gd['view']) return JSON.stringify({ ...(gd['view'] as Record<string, unknown>), clientEncryption });
   if (gd['viewError']) return JSON.stringify({ error: 'resource_view_refused', message: gd['viewError'] });
   const rendered = typeof gd['rendered'] === 'string' ? (gd['rendered'] as string) : '';
+  if (!rendered) return JSON.stringify({ error: 'hypermarkdown_unavailable', message: 'The resource has no readable HyperMarkdown representation.' });
   let doc: ReturnType<typeof parseHypermediaMarkdown> | null = null;
-  if (rendered) { try { doc = parseHypermediaMarkdown(rendered); } catch { doc = null; } }
+  try { doc = parseHypermediaMarkdown(rendered); }
+  catch { return JSON.stringify({ error: 'invalid_hypermarkdown', message: 'The resource did not parse as HyperMarkdown.' }); }
   // EXECUTABLE actions = those with a REAL hydra:target in the signed descriptor OR
   // the (decrypted) graph — i.e. what invoke_affordance can actually follow (the
   // relay re-resolves a payload control's graph target). extractAffordancesFromTurtle

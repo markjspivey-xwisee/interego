@@ -24,6 +24,7 @@ describe('published consulting and intervention methods', () => {
     expect(readFileSync(new URL('../docs/applications/agentic-performance-practice/agp.ttl', import.meta.url), 'utf8')).toBe(readOntologyTurtle());
     expect(readFileSync(new URL('../docs/applications/agentic-performance-practice/agp-shapes.ttl', import.meta.url), 'utf8')).toBe(readShapesTurtle());
     expect(readFileSync(new URL('../docs/applications/agentic-performance-practice/agp/shapes.ttl', import.meta.url), 'utf8')).toBe(readShapesTurtle());
+    expect(readFileSync(new URL('../docs/applications/agentic-performance-practice/agp/shapes', import.meta.url), 'utf8')).toBe(readShapesTurtle());
     const broken = readMethodsTurtle().replace('agp:entryStep agp:LearnerTaskAnalysisStep ;', '');
     expect(validateAgainstShape(broken, readShapesTurtle(), {}).conforms).toBe(false);
   });
