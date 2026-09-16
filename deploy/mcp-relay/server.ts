@@ -13224,6 +13224,13 @@ void randomBytes;
 // ── Express App ─────────────────────────────────────────────
 
 const app = express();
+// Public description of the generic authentication precondition used by HMD.
+app.get('/auth/relay-signature', (_req, res) => res.type('application/ld+json').json({
+  '@context': { schema: 'https://schema.org/' },
+  '@id': `${PUBLIC_BASE_URL || 'https://relay.interego.xwisee.com'}/auth/relay-signature`,
+  '@type': 'schema:DigitalDocument', 'schema:name': 'Bound relay signature',
+  'schema:description': 'Authenticate to Interego, then use act with descriptor_url, action_iri, sign_payload:true and an unsigned JSON payload. This composes sign_request with descriptor-resolved execution. The actor comes from the verified session. It is a relay-mediated signature and cannot satisfy a client-held-key requirement.',
+}));
 // Azure Container Apps sits behind Envoy, which sets X-Forwarded-For.
 // The SDK's mcpAuthRouter applies express-rate-limit, which throws
 // ERR_ERL_UNEXPECTED_X_FORWARDED_FOR unless Express trusts the proxy.

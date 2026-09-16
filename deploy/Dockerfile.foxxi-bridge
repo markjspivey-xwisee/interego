@@ -76,6 +76,7 @@ COPY docs/ns/pgsl-lexicon.ttl ./docs/ns/pgsl-lexicon.ttl
 COPY docs/ns/ ./docs/ns/
 COPY applications/_shared/ ./applications/_shared/
 COPY applications/foxxi-content-intelligence/ ./applications/foxxi-content-intelligence/
+COPY applications/llm-telemetry/ ./applications/llm-telemetry/
 # The agentic-performance (agp:) vertical: Foxxi composes its relocated engine
 # (transitional re-export shims) + the agp standards-extension capability it
 # re-integrates and surfaces. Imported by relative path from the foxxi bridge, so

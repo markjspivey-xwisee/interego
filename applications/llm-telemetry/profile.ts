@@ -48,7 +48,7 @@ export function telemetryProfile() {
     prefLabel: { en: 'General LLM telemetry' },
     definition: { en: 'Metadata-only observations of human-assisted and autonomous LLM runtimes, tools and agent teams. The actor is the authenticated observer. Runtime participants, causal identifiers, observation coverage and measured usage are explicit; absent usage is unknown.' },
     author: { type: 'Organization', name: 'Interego', url: 'https://github.com/markjspivey-xwisee/interego' },
-    versions: [{ id: VERSION, generatedAtTime: '2026-09-16T00:00:00Z' }],
+    versions: [{ id: VERSION, generatedAtTime: '2026-09-16T12:48:17Z' }],
     concepts: [
       ...Object.entries(EVENTS).map(([kind, [, label, def]]) => concept(`${NS}verbs/${kind}`, 'Verb', label, def)),
       ...[...new Set(Object.values(EVENTS).map(e => e[0]))].map(t => concept(`${NS}activities/${t}`, 'ActivityType', t, `An opaque ${t} activity in an observed LLM runtime.`)),

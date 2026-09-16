@@ -8515,6 +8515,14 @@ app.post('/agent/llm-telemetry/query', signedXapiHandler('telemetry-query'));
 app.get('/llm-telemetry', (_req, res) => { res.setHeader('Cache-Control', 'no-store'); sendHmd(res, telemetryView(bridgeBaseUrl).hmd); });
 app.get(['/llm-telemetry/profile', '/llm-telemetry/profile/v1'], (_req, res) => res.type('application/ld+json').json(telemetryProfile()));
 app.get('/llm-telemetry/event-schema', (_req, res) => res.type('application/schema+json').json(eventSchema()));
+app.get('/llm-telemetry/:collection/:term', (req, res, next) => {
+  if (!['verbs', 'activities', 'extensions', 'templates', 'patterns'].includes(String(req.params.collection))) { next(); return; }
+  const profile = telemetryProfile();
+  const id = `${profile.id.replace(/profile$/, '')}${req.params.collection}/${req.params.term}`;
+  const term = [...profile.concepts, ...profile.templates, ...profile.patterns].find(value => value.id === id);
+  if (!term) { res.status(404).json({ error: 'unknown profile term' }); return; }
+  res.type('application/ld+json').json({ '@context': profile['@context'], ...term });
+});
 app.get('/llm-telemetry/coverage', (_req, res) => res.json({
   profile: `${bridgeBaseUrl}/llm-telemetry/profile/v1`, default_capture: 'metadata only',
   excludes: ['prompts', 'responses', 'reasoning', 'tool arguments', 'tool results', 'credentials', 'transcript paths'],
