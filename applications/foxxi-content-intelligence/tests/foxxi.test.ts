@@ -7,8 +7,7 @@
  *      affordance-mcp derivation (the bridge derives MCP schemas from
  *      these declarations; CI failure here = adopter's MCP client
  *      can't see Foxxi tools).
- *   2. Affordance action IRIs follow the urn:iep:action:foxxi:<verb>
- *      convention.
+ *   2. Affordance action IRIs preserve each mounted application's namespace.
  *   3. The dual-audience split is correct — both arrays are
  *      non-empty + disjoint.
  *   4. coverageQuery composes cleanly with the three privacy modes:
@@ -18,6 +17,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { foxxiAffordances, foxxiAdminAffordances } from '../affordances.js';
+import { telemetryAffordances } from '../../llm-telemetry/affordances.js';
 import { coverageQuery, type FoxxiConfig } from '../src/publisher.js';
 import {
   verifyAttestedAggregateResult,
@@ -52,15 +52,18 @@ describe('foxxi affordances: shape + naming', () => {
     }
   });
 
-  it('every action IRI follows the urn:iep:action:foxxi:<verb> convention', () => {
+  it('every action IRI preserves its application namespace', () => {
+    expect(foxxiAffordances).toEqual(expect.arrayContaining([...telemetryAffordances]));
     for (const a of [...foxxiAffordances, ...foxxiAdminAffordances]) {
-      expect(a.action).toMatch(/^urn:iep:action:foxxi:[a-z0-9-]+$/);
+      const namespace = telemetryAffordances.includes(a) ? 'llm-telemetry' : 'foxxi';
+      expect(a.action).toMatch(new RegExp('^urn:iep:action:' + namespace + ':[a-z0-9-]+$'));
     }
   });
 
-  it('every toolName follows the foxxi.<verb> convention', () => {
+  it('every toolName preserves its application namespace', () => {
     for (const a of [...foxxiAffordances, ...foxxiAdminAffordances]) {
-      expect(a.toolName).toMatch(/^foxxi\.[a-z0-9_]+$/);
+      const namespace = telemetryAffordances.includes(a) ? 'llm_telemetry' : 'foxxi';
+      expect(a.toolName).toMatch(new RegExp('^' + namespace + '\\.[a-z0-9_]+$'));
     }
   });
 

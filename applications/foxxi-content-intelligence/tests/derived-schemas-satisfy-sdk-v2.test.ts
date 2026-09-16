@@ -61,7 +61,7 @@ async function connectedPair(register: (s: McpServer) => void) {
 }
 
 describe('the derived tool schemas satisfy MCP SDK v2', () => {
-  it('registers all 91 foxxi affordances without throwing', async () => {
+  it('registers every mounted affordance without throwing', async () => {
     // registerTool throws on a duplicate name and on a non-object inputSchema root, so
     // getting through the whole set is itself the assertion.
     const { client } = await connectedPair((server) => {
@@ -146,7 +146,10 @@ describe('the derived tool schemas satisfy MCP SDK v2', () => {
             args[name] =
               prop?.type === 'number' || prop?.type === 'integer' ? (prop.minimum ?? 1)
               : prop?.type === 'boolean' ? true
-              : prop?.type === 'array' ? (prop.minItems ? Array.from({ length: prop.minItems }, () => 'x') : [])
+              : prop?.type === 'array' ? Array.from({ length: prop.minItems ?? 0 }, () =>
+                  prop.items?.type === 'object' ? {}
+                  : prop.items?.type === 'number' || prop.items?.type === 'integer' ? 1
+                  : prop.items?.type === 'boolean' ? true : 'x')
               : prop?.type === 'object' ? {}
               : 'x';
           }
