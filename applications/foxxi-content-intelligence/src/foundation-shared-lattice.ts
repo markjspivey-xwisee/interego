@@ -443,6 +443,10 @@ export async function composeIntoSharedLattice(args: {
    *  dedicated resource keeps a public commons's node map disjoint from the agent's
    *  private `shared-lattice` — required before a label can be marked public. */
   resourceName?: string;
+  /** Suppress the public descriptor projection for private activity streams.
+   * The encrypted canonical resource is still persisted. The derived descriptorUrl
+   * is only a locator when publication is suppressed; callers must not advertise it. */
+  publishDescriptor?: boolean;
   fetch?: FetchFn;
 }): Promise<ComposeResult | null> {
   try {
@@ -546,7 +550,9 @@ export async function composeIntoSharedLattice(args: {
       }
       // The descriptor is a deterministic PROJECTION of the holon (idempotent), so it
       // is written best-effort and unconditionally — it never carries authorship.
-      await fetchFn(proj.descriptorUrl, { method: 'PUT', headers: { 'Content-Type': 'text/turtle' }, body: proj.descriptorTurtle }).catch(() => undefined);
+      if (args.publishDescriptor !== false) {
+        await fetchFn(proj.descriptorUrl, { method: 'PUT', headers: { 'Content-Type': 'text/turtle' }, body: proj.descriptorTurtle }).catch(() => undefined);
+      }
     } catch (e) { persistError = (e as Error).message; console.warn('[shared-lattice][persist]', persistError); }
 
     return {

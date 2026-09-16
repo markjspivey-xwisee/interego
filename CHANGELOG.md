@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-16 — Keep telemetry descriptor projections private
+
+Telemetry now suppresses public per-event descriptor publication while retaining encrypted canonical persistence and authenticated LRS access. Receipts omit unpublished locators. Existing descriptor publication remains the default for other applications. A transport-level regression verifies both paths.
+
 Notable changes to @interego/core. Dates are UTC.
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) with RFC 2119-style

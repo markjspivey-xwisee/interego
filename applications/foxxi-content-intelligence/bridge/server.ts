@@ -8476,14 +8476,19 @@ const signedXapiHandler = (operation: 'read' | 'write' | 'telemetry-ingest' | 't
             });
             return { status: response.status, body: await response.json() as unknown };
           },
-          persist: async (statement) => composeIntoSharedLattice({
+          persist: async (statement) => {
+            const result = await composeIntoSharedLattice({
             podUrl, agentDid: bound.callerDid, label: telemetry ? `${label}-llm-telemetry-v1` : label,
-            ...(telemetry ? { resourceName: 'llm-telemetry-v1' } : {}),
+            ...(telemetry ? { resourceName: 'llm-telemetry-v1', publishDescriptor: false } : {}),
             terms: [bound.callerDid, String((statement.verb as { id?: string }).id), String((statement.object as { id?: string }).id)],
             content: statement, contentType: 'xapi:Statement',
             ts: typeof statement.timestamp === 'string' ? statement.timestamp : undefined,
             projections: ['rdf', 'activity'],
-          }),
+            });
+            // Private records have no published descriptor; do not advertise a
+            // derived but intentionally unpublished locator in their receipt.
+            return telemetry && result ? { persisted: result.persisted, holonUri: result.holonUri } : result;
+          },
         };
         if (operation === 'telemetry-query') {
           let query;
