@@ -5,7 +5,7 @@ export const queryInputs: readonly AffordanceInput[] = [
   { name: 'session_id', type: 'string', required: false, description: 'Optional opaque session ID; empty means all observed sessions.' },
   { name: 'source', type: 'string', required: false, description: 'Optional reporting adapter, for example codex-hooks.' },
   { name: 'model', type: 'string', required: false, description: 'Optional exact model identifier reported by the source.' },
-  { name: 'agent_id', type: 'string', required: false, description: 'Optional exact runtime agent identifier.' },
+  { name: 'runtime_agent_id', type: 'string', required: false, description: 'Optional exact runtime agent identifier. Distinct from the signature-bound observer agent_id.' },
   { name: 'tool_name', type: 'string', required: false, description: 'Optional exact tool name.' },
   { name: 'status', type: 'string', required: false, description: 'Optional explicit event outcome. Completion alone does not mean success.', enum: ['ok', 'error', 'cancelled', 'unknown'] },
   { name: 'kind', type: 'string', required: false, description: 'Optional event kind, for example tool-failed.' },

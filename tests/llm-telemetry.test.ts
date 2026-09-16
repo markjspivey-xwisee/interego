@@ -87,6 +87,14 @@ describe('general LLM xAPI observations', () => {
     expect(report.statements).toHaveLength(1); expect(report.pagination.next_offset).toBe(1);
     const changed = { ...end, timestamp: time }; expect(mergeTelemetrySnapshot(actor, [changed], [end]).conflictingIds).toEqual([end.id]);
   });
+  it('filters a runtime agent without colliding with the transport signer identity', () => {
+    const a = eventStatement(actor, event({ kind: 'agent-started', agent_id: 'child-a', source_event_id: 'a' }), time);
+    const b = eventStatement(actor, event({ kind: 'agent-started', agent_id: 'child-b', source_event_id: 'b' }), time);
+    const query = normalizeQuery({ runtime_agent_id: 'child-a' });
+    const report = telemetryReport(actor, mergeTelemetrySnapshot(actor, [a, b], [a, b]), query, time);
+    expect(report.statements.map(s => s.id)).toEqual([a.id]);
+    expect(report.query).toEqual({ runtime_agent_id: 'child-a' });
+  });
   it('renders a readable HMD report with grounded controls and query defaults', () => {
     const s = eventStatement(actor, event(), time); const report = telemetryReport(actor, mergeTelemetrySnapshot(actor, [s], [s]), {}, time);
     const v = telemetryView('https://example.org', report); const doc = parseHypermediaMarkdown(v.hmd);

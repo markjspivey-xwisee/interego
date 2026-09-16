@@ -48,14 +48,14 @@ export async function ingestTelemetry(actor: string, input: unknown, deps: Telem
   try { return await run; } finally { if (locks.get(actor) === run) locks.delete(actor); }
 }
 
-export interface TelemetryQuery { session_id?: string; source?: string; model?: string; kind?: string; agent_id?: string; tool_name?: string; status?: string; capture_mode?: string; since?: string; until?: string; limit?: number; offset?: number; view?: string }
+export interface TelemetryQuery { session_id?: string; source?: string; model?: string; kind?: string; runtime_agent_id?: string; tool_name?: string; status?: string; capture_mode?: string; since?: string; until?: string; limit?: number; offset?: number; view?: string }
 export function normalizeQuery(input: unknown): TelemetryQuery {
   if (input === undefined) return {};
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('query must be an object');
   const result: Json = {};
   for (const [k, v] of Object.entries(input)) {
     if (v === '' || v === undefined) continue;
-    if (!['session_id', 'source', 'model', 'kind', 'agent_id', 'tool_name', 'status', 'capture_mode', 'since', 'until', 'limit', 'offset', 'view'].includes(k)) throw new Error(`unsupported query field: ${k}`);
+    if (!['session_id', 'source', 'model', 'kind', 'runtime_agent_id', 'tool_name', 'status', 'capture_mode', 'since', 'until', 'limit', 'offset', 'view'].includes(k)) throw new Error(`unsupported query field: ${k}`);
     if (k === 'limit' || k === 'offset') {
       const n = Number(v); if (!Number.isSafeInteger(n) || n < (k === 'limit' ? 1 : 0) || n > (k === 'limit' ? 200 : 1000000)) throw new Error(`invalid ${k}`); result[k] = n;
     } else {
@@ -84,7 +84,8 @@ export function mergeTelemetrySnapshot(actor: string, lrs: Json[] | null, durabl
 export function telemetryReport(actor: string, snapshot: TelemetrySnapshot, query: TelemetryQuery, now: string) {
   const rows = snapshot.statements.filter(s => {
     const m = telemetryMetadata(s)!;
-    return ['session_id', 'source', 'model', 'kind', 'agent_id', 'tool_name', 'status', 'capture_mode'].every(k => !(query as Json)[k] || m[k] === (query as Json)[k])
+    return ['session_id', 'source', 'model', 'kind', 'tool_name', 'status', 'capture_mode'].every(k => !(query as Json)[k] || m[k] === (query as Json)[k])
+      && (!query.runtime_agent_id || m.agent_id === query.runtime_agent_id)
       && (!query.since || Date.parse(s.timestamp) >= Date.parse(query.since)) && (!query.until || Date.parse(s.timestamp) <= Date.parse(query.until));
   }).sort((a, b) => String(a.timestamp).localeCompare(String(b.timestamp)) || String(a.id).localeCompare(String(b.id)));
   const sessions = new Map<string, Json>(); const sourceCounts: Json = {}; const eventCounts: Json = {};
