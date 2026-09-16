@@ -53,7 +53,9 @@ export class TelemetryClient {
     return this.serialized(async () => {
       let pending = await this.config.outbox.read(); let delivered = 0;
       while (pending.length) {
-        const batch = pending.slice(0, 20);
+        // Leave room for xAPI context/identity enrichment under the 128 KiB LRS
+        // batch cap, including observations near the 8 KiB event input limit.
+        const batch = pending.slice(0, 10);
         const receipt = resultPayload(await this.config.call('act', {
           descriptor_url: this.config.descriptor_url ?? 'https://foxxi-bridge.interego.xwisee.com/affordances',
           action_iri: this.config.action_iri ?? 'https://relay.interego.xwisee.com/ns/iep/action/llm-telemetry/ingest',
@@ -71,7 +73,7 @@ export class TelemetryClient {
   async observe<T>(family: 'model' | 'tool' | 'agent', metadata: Partial<TelemetryEvent>, work: () => Promise<T>,
     measuredUsage?: (result: T) => TelemetryEvent['usage']): Promise<T> {
     const operation = randomUUID(); const started = performance.now();
-    const id = family === 'tool' ? { tool_use_id: operation } : family === 'model' ? { generation_id: operation } : { agent_id: operation };
+    const id = family === 'tool' ? { tool_use_id: metadata.tool_use_id ?? operation } : family === 'model' ? { generation_id: metadata.generation_id ?? operation } : { agent_id: metadata.agent_id ?? operation };
     const notify = (error: unknown) => { try { this.config.onError?.(error); } catch { /* an observer must not change the work outcome */ } };
     const capture = async (event: any) => { try { await this.record(event); } catch (error) { notify(error); } };
     await capture({ ...metadata, ...id, kind: family === 'model' ? 'model-invoked' : `${family}-started` });

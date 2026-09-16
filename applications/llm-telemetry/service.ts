@@ -93,7 +93,10 @@ export function telemetryReport(actor: string, snapshot: TelemetrySnapshot, quer
   const durationEvidence: Json[] = []; let unmatchedEnds = 0;
   const durable = new Set(snapshot.durableIds);
   for (const s of rows) {
-    const m = telemetryMetadata(s)!; const u = s.result?.extensions?.[USAGE];
+    const m = telemetryMetadata(s)!;
+    // Count provider usage on terminal model observations only. Parent/tool
+    // summaries must not double-count the same underlying generation's usage.
+    const u = ['model-completed', 'model-failed'].includes(m.kind) ? s.result?.extensions?.[USAGE] : undefined;
     const key = s.context.registration;
     let session = sessions.get(key);
     if (!session) { session = { registration: key, session_id: m.session_id, source: m.source, first_seen: s.timestamp, last_seen: s.timestamp, events: 0, errors: 0, agents: new Set<string>(), models: new Set<string>(), capture_modes: new Set<string>(), ended: false }; sessions.set(key, session); }
