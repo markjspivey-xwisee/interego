@@ -727,6 +727,31 @@ export function latticeArtifacts(label: string, contentType?: string): LatticeAr
   return out;
 }
 
+/** Read an exact encrypted pod snapshot without treating pending resident ingests
+ * as durable. Null means unavailable; [] means a successful empty/absent read.
+ * Does not mutate or replace the resident lattice or its CAS state. */
+export async function persistedLatticeArtifacts(podUrl: string, contentType: string,
+  resourceName = 'shared-lattice', fetchFn: FetchFn = globalThis.fetch as unknown as FetchFn): Promise<LatticeArtifact[] | null> {
+  try {
+    if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(resourceName)) return null;
+    const kp = bridgeEncryptionKeypair(); if (!kp) return null;
+    const url = latticeResourceUrl(podUrl, resourceName);
+    await assertSafeFetchTarget(url);
+    const result = await resolveLatticeFromPodDetailed(url, kp, guardedFetchFn(fetchFn) as unknown as typeof fetch);
+    if (result.status === 'absent') return [];
+    if (result.status !== 'ok' || !result.nodes) return null;
+    const out: LatticeArtifact[] = [];
+    for (const [uri, node] of result.nodes) {
+      if (node.kind !== 'Atom' || !isContentAtom(String(node.value))) continue;
+      try {
+        const env = JSON.parse(String(node.value).slice(ARTIFACT_SENTINEL.length)) as { t: string; c: unknown };
+        if (env.t === contentType) out.push({ contentAtomUri: uri, contentType: env.t, content: env.c });
+      } catch { /* malformed unrelated content atoms are not artifacts */ }
+    }
+    return out;
+  } catch { return null; }
+}
+
 /** ELR-shaped xAPI statements reconstructed FROM the lattice (the canonical read
  *  source). Same wrapper shape the ELR assembler consumes. */
 export function latticeStatements(label: string): Array<{ id: string; statement: Record<string, unknown>; stored: string; voided: boolean }> {

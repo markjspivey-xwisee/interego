@@ -67,6 +67,7 @@ export function viewerControls(
       ...(c.expects ? { expects: c.expects } : {}),
       ...(c.source ? { source: c.source } : {}),
       ...(c.whenToUse ? { whenToUse: c.whenToUse } : {}),
+      ...(c.requires?.length ? { requires: c.requires } : {}),
       ...(c.fields && c.fields.length > 0 ? { fields: c.fields } : {}),
       executable: executableActions
         ? executableActions.has(c.action) || executableKeys!.has(actionKey(c.action))

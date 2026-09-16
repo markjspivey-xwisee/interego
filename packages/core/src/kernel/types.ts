@@ -82,6 +82,8 @@ export interface Holon {
  * the canonical reference; this is an additive convenience projection of it.
  */
 export interface ShapeField {
+  /** Advisory SHACL form default. Validated again by the execution authority. */
+  readonly defaultValue?: string | number | boolean;
   /** `sh:path` — the property this field constrains (IRI). */
   readonly path: string;
   /** `sh:name` — a human label for the field, when declared. */

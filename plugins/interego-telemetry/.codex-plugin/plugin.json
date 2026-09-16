@@ -1,0 +1,18 @@
+{
+  "name": "interego-telemetry",
+  "version": "1.0.0",
+  "description": "Metadata-only LLM session, tool and agent observations in your private Interego xAPI records.",
+  "author": {
+    "name": "Interego"
+  },
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Interego activity",
+    "shortDescription": "Private LLM telemetry and HyperMarkdown reports",
+    "longDescription": "Capture supported Codex lifecycle metadata in Interego. Requires connecting the Interego MCP server and reviewing hook trust. Prompts, responses, arguments, transcripts and credentials are excluded.",
+    "developerName": "Interego",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": "Open my Interego LLM activity interface at https://foxxi-bridge.interego.xwisee.com/llm-telemetry using render_hmd."
+  }
+}

@@ -268,7 +268,15 @@ function renderControl(c,d,grid){
   var b=el('span','badge'+(kind==='mutate'?' mutate':'')+(kind==='declarative'?' declarative':'')); b.textContent=(kind==='declarative'?'declarative':(kind==='mutate'?'writes':'reads')); h.appendChild(b);
   card.appendChild(h);
   if(c.whenToUse){ card.appendChild(el('p','when',c.whenToUse)); }
+  var signed=Array.isArray(c.requires)&&c.requires.indexOf('https://relay.interego.xwisee.com/auth/relay-signature')!==-1;
+  if(signed) card.appendChild(el('p','when','Uses your bound Interego identity.'));
   var fields=fixed?[]:(c.fields||[]);
+  var formHost=card, options=null;
+  if(fields.length>3){
+    options=el('details');options.open=fields.some(isRequired);
+    options.appendChild(el('summary','','Filters and options'));
+    formHost=el('div');options.appendChild(formHost);card.appendChild(options);
+  }
   var inputs=Object.create(null);
   fields.forEach(function(f){
     var key=fieldKey(f);
@@ -283,9 +291,10 @@ function renderControl(c,d,grid){
     if(f.maxLength && Number(f.maxLength)>0 && (inp.tagName==='INPUT'||inp.tagName==='TEXTAREA')) inp.maxLength=Number(f.maxLength);
     if(!executable){ inp.disabled=true; }
     inp.setAttribute('data-key',key);
+    if(['string','number','boolean'].indexOf(typeof f.defaultValue)!==-1)inp.value=String(f.defaultValue);
     var err=el('div','err');
     fw.appendChild(inp); fw.appendChild(err);
-    card.appendChild(fw); inputs[key]={field:f,input:inp,wrap:fw,err:err};
+    formHost.appendChild(fw); inputs[key]={field:f,input:inp,wrap:fw,err:err};
   });
   if(!executable){
     // Declarative: informational only — no submit, no invoke_affordance.
@@ -308,13 +317,14 @@ function renderControl(c,d,grid){
     var ok=true, values=Object.create(null);
     fields.forEach(function(f){ var key=fieldKey(f); var io=inputs[key]; var v=io.input.value; values[key]=v;
       var e=validateValue(f,v); io.wrap.classList.toggle('invalid',!!e); io.err.textContent=e||''; if(e) ok=false; });
+    if(!ok&&options)options.open=true;
     return ok?{values:values}:null;
   }
   function doExecute(payload){
     if(!current()||busy)return;
     busy=true;btn.disabled=true; status.className='status muted'; status.textContent='Submitting…';
     var previous=card.querySelector('.result'); if(previous) previous.remove();
-    callTool('invoke_affordance',{descriptor_url:c.descriptorUrl||d.descriptorUrl,action_iri:c.action,payload:payload}).then(function(res){
+    callTool(signed?'act':'invoke_affordance',Object.assign({descriptor_url:c.descriptorUrl||d.descriptorUrl,action_iri:c.action,payload:payload},signed?{sign_payload:true}:{})).then(function(res){
       // Source identity, not the selected detail card, governs a returned view.
       // Selecting another cell can detach this card while the same projection is
       // still current. Its successful successor must still replace that projection.

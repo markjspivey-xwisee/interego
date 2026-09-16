@@ -34,6 +34,14 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
 
 <!-- documented-through: 2037e1a -->
 
+### 2026-09-16 — General LLM telemetry and private HyperMarkdown reports
+
+- A separate application profile defines metadata observations for sessions, human/agent inputs, tools, model requests, agent lifecycles, handoffs and artifacts. The signed observer MUST remain distinct from runtime participant identifiers.
+- Ingestion validates through the existing own-lens xAPI LRS and MUST await encrypted PGSL persistence before reporting durable success. Retries preserve original statement IDs and LRS envelopes; conflicting event IDs are refused.
+- Private reports join the live LRS lens with a fresh encrypted history snapshot and expose source availability, usage coverage, conflicting records and unmatched lifecycle observations. Missing usage MUST NOT become zero or inferred cost.
+- The generic act transport can compose bound relay signing with descriptor-resolved execution. Direct HyperMarkdown controls require an independently resolved authority; SHACL form defaults and signing preconditions survive the generic viewer.
+- A Codex hook plugin and provider-neutral runtime adapter capture allowlisted metadata. The plugin requires host connection and hook trust; publishing the application MUST NOT be described as activating capture in every chat. Runtime adapters can retain failed deliveries in a private outbox.
+
 ### 2026-09-15 — Performance consulting and intervention methodologies
 
 - Direct HyperMarkdown resources retain their actual media type in the descriptor/viewer read path, stay out of the immutable descriptor cache, and no longer produce successful empty views. Unverified document controls remain declarative; signed-descriptor and recipient restrictions are unchanged.

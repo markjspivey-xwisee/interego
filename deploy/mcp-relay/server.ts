@@ -245,6 +245,7 @@ import { ingestVault, VAULT_LD_PROFILE } from '@interego/mdvault';
 import { noteToHyperMarkdown, inlineRenderedForDescriptor, viewerControls, publishableAuthority } from './note-view.js';
 // The generic HyperMarkdown MCP-App renderer (served as a ui:// resource).
 import { HMD_WIDGET_URI, readHmdWidgetResource } from './hmd-resource.js';
+import { signedActPayload } from './signed-act.js';
 import { CLIENT_CHECK_HTML, CLIENT_CHECK_CSP } from './client-check.js';
 import { canonicalSessionActorId } from './session-actor.js';
 import { INVOKE_AFFORDANCE_OUTPUT, loadResourceCompositions, resourceActionResponse, resourceInvocation, type ResourceContext, type ResourceDescriptor, type ResourceEntry, type ResourceReads, type ResourceWriteContext } from './resource-compositions.js';
@@ -4948,6 +4949,22 @@ async function handleRenderHmd(args: ToolArgs): Promise<string> {
   const gobj = gd['graph'] as Record<string, unknown> | undefined;
   const gcontent = gobj && typeof gobj['content'] === 'string' ? (gobj['content'] as string) : '';
   if (gcontent) { try { for (const a of extractAffordancesFromTurtle(gcontent, url)) { if (isFollowableTarget(a.target)) executableActions.add(a.action); } } catch { /* best-effort */ } }
+  // A direct HMD representation may point to a separate affordance authority.
+  // Resolve that document independently. Markdown controls never supply targets.
+  // One document authority only: no per-control fan-out or caller-target fallback.
+  let resolvedAuthority = url;
+  const declaredAuthority = doc?.descriptorUrl;
+  if (gd['representationKind'] === 'hypermarkdown' && declaredAuthority && declaredAuthority !== url && /^https:\/\//.test(declaredAuthority)) {
+    try {
+      const authority = JSON.parse(await handleGetDescriptor({ ...args, url: declaredAuthority } as ToolArgs, false)) as Record<string, unknown>;
+      if (typeof authority.turtle === 'string') {
+        for (const a of extractAffordancesFromTurtle(authority.turtle, declaredAuthority)) {
+          if (isFollowableTarget(a.target)) executableActions.add(a.action);
+        }
+        resolvedAuthority = declaredAuthority;
+      }
+    } catch { /* unresolved authority leaves controls declarative */ }
+  }
   // The projected body ALWAYS opens with the note's title as a leading `# H1`
   // (noteToHyperMarkdown prepends it, or keeps the note's own opening H1). The
   // widget ALSO renders `title` in its header, so the same title showed TWICE
@@ -4971,7 +4988,7 @@ async function handleRenderHmd(args: ToolArgs): Promise<string> {
     // Only the note's payload/vertical actions — descriptor transport affordances
     // (canDecrypt / renderView) filtered out; each remaining control marked
     // executable (has a real target) vs declarative (shape-only).
-    controls: viewerControls(doc?.controls ?? [], executableActions),
+    controls: viewerControls(doc?.controls ?? [], executableActions).map(c => ({ ...c, descriptorUrl: resolvedAuthority })),
     links: doc?.links ?? [],
     authorship: gd['authorship'] ?? null,
   });
@@ -10109,7 +10126,7 @@ async function handleInvokeAffordance(args: ToolArgs): Promise<string> {
   const actionIri = args.action_iri as string;
   // Same connector double-encode tolerance as handleKernelAct (this shim is an
   // internal `act`): peel a redundantly-quoted payload before invoking.
-  const payload = normalizeActPayload(args.payload ?? {});
+  const payload = await signedActPayload(args, normalizeActPayload(args.payload ?? {}), handleSignRequest);
   const authorization = args.authorization as string | undefined;
   if (!descriptorUrl) throw new Error('invoke_affordance: descriptor_url is required');
   if (!actionIri) throw new Error('invoke_affordance: action_iri is required');
@@ -10480,7 +10497,7 @@ async function handleKernelAct(args: ToolArgs): Promise<string> {
   // without guessing. Logs structure only (first 80 chars), not full signed
   // content. Lets us confirm whether normalization fires for real connector traffic.
   const rawPayload = args['payload'];
-  const normPayload = normalizeActPayload(rawPayload);
+  const normPayload = await signedActPayload(args, normalizeActPayload(rawPayload ?? {}), handleSignRequest);
   try {
     if (typeof rawPayload === 'string') {
       log(`[act-payload-diag] type=string len=${rawPayload.length} normalized=${rawPayload !== normPayload} rawHead=${JSON.stringify(rawPayload.slice(0, 80))} normHead=${JSON.stringify(String(typeof normPayload === 'string' ? normPayload : JSON.stringify(normPayload)).slice(0, 80))}`);
@@ -11571,6 +11588,7 @@ const TOOL_SCHEMAS = [
         action: { type: 'string' },
         method: { type: 'string', enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] },
         media_type: { type: 'string' },
+        sign_payload: { type: 'boolean', description: 'Compose sign_request with this descriptor-resolved act using the authenticated session identity. Relay-mediated signature; not a client-held key. Requires descriptor_url and action_iri.' },
         payload: { description: 'For AMEP acts, a full amep:Exchange envelope (see the tool description). For other affordances, the JSON body the target expects.' },
         authorization: { type: 'string' },
       },
@@ -13206,6 +13224,13 @@ void randomBytes;
 // ── Express App ─────────────────────────────────────────────
 
 const app = express();
+// Public description of the generic authentication precondition used by HMD.
+app.get('/auth/relay-signature', (_req, res) => res.type('application/ld+json').json({
+  '@context': { schema: 'https://schema.org/' },
+  '@id': `${PUBLIC_BASE_URL || 'https://relay.interego.xwisee.com'}/auth/relay-signature`,
+  '@type': 'schema:DigitalDocument', 'schema:name': 'Bound relay signature',
+  'schema:description': 'Authenticate to Interego, then use act with descriptor_url, action_iri, sign_payload:true and an unsigned JSON payload. This composes sign_request with descriptor-resolved execution. The actor comes from the verified session. It is a relay-mediated signature and cannot satisfy a client-held-key requirement.',
+}));
 // Azure Container Apps sits behind Envoy, which sets X-Forwarded-For.
 // The SDK's mcpAuthRouter applies express-rate-limit, which throws
 // ERR_ERL_UNEXPECTED_X_FORWARDED_FOR unless Express trusts the proxy.

@@ -269,6 +269,7 @@ function shapeFieldsFor(
     const mnl = Number(readStringValue(ps, SH_MIN_LENGTH)); if (Number.isInteger(mnl)) f.minLength = mnl;
     const mxl = Number(readStringValue(ps, SH_MAX_LENGTH)); if (Number.isInteger(mxl)) f.maxLength = mxl;
     const pat = readStringValue(ps, SH_PATTERN); if (pat) f.pattern = pat;
+    const defaultValue = readStringValue(ps, `${SHACL}defaultValue` as IRI); if (defaultValue !== undefined) f.defaultValue = defaultValue;
     fields.push(f);
   }
   return fields.length ? fields : undefined;

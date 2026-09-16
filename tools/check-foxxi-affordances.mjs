@@ -123,7 +123,24 @@ for (const m of serverSrc.matchAll(routeRe)) {
 }
 
 // ── 2. Affordance targetTemplate paths in affordances.ts ─────────────────────
-const affSrc = readFileSync(AFFORDANCES, 'utf8');
+// Follow statically imported arrays that are actually spread into the catalogue.
+// A composed application must be checked just like an inline declaration.
+function composedAffordanceSource(file, visited = new Set()) {
+  if (visited.has(file)) return '';
+  visited.add(file);
+  const source = readFileSync(file, 'utf8');
+  const parts = [source];
+  for (const match of source.matchAll(/import\s*\{([^}]+)\}\s*from\s*['"]([^'"]+)['"]/g)) {
+    if (!match[2].startsWith('.')) continue;
+    const names = match[1].split(',').map(s => s.trim().split(/\s+as\s+/).at(-1));
+    if (!names.some(name => new RegExp('\\.\\.\\.\\s*' + name + '\\b').test(source))) continue;
+    const imported = resolve(dirname(file), match[2].replace(/\.js$/, '.ts'));
+    if (!imported.startsWith(ROOT + '/')) throw new Error('affordance composition escapes repository');
+    parts.push(composedAffordanceSource(imported, visited));
+  }
+  return parts.join('\n');
+}
+const affSrc = composedAffordanceSource(AFFORDANCES);
 // targetTemplate: '{base}/agent/...'
 const targetRe = /targetTemplate:\s*['"`]\{base\}(\/agent\/[^'"`]*)['"`]/g;
 const covered = new Set();
