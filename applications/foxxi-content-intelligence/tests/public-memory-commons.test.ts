@@ -16,7 +16,7 @@ process.env.FOXXI_WALLET_SEED ||= 'public-memory-commons-regression-seed';
 
 import { describe, it, expect } from 'vitest';
 import {
-  composeIntoSharedLattice, resolvePublicNode, markLatticePublic,
+  composeIntoSharedLattice, resolvePublicNode,
   dereferenceTerm, isResident,
 } from '../src/foundation-shared-lattice.js';
 
@@ -39,15 +39,29 @@ function makePodFetch() {
     return new Response(null, { status: 200 });
   }) as unknown as typeof fetch;
   const holonPuts = () => requests.filter(r => r.method === 'PUT' && r.url.endsWith('.holon.json')).map(r => r.url);
-  return { fetchFn, holonPuts };
+  const descriptorPuts = () => requests.filter(r => r.method === 'PUT' && r.url.endsWith('.ttl')).map(r => r.url);
+  return { fetchFn, holonPuts, descriptorPuts };
 }
 
 const RDFS = 'http://www.w3.org/2000/01/rdf-schema#';
 const term = (iri: string): [string, string, string][] => [[iri, RDFS + 'label', 'x']];
 
 describe('public-memory commons — resource isolation', () => {
+  it('persists a private activity stream without publishing a discoverable descriptor', async () => {
+    const { fetchFn, holonPuts, descriptorPuts } = makePodFetch();
+    const result = await composeIntoSharedLattice({
+      podUrl: 'https://pod.test-private-stream.example/agent/',
+      agentDid: 'did:test:private-stream', label: 'private-stream', resourceName: 'private-stream',
+      terms: ['https://x.example/private-operation'], content: { source: 'private-runtime' },
+      contentType: 'xapi:Statement', publishDescriptor: false, fetch: fetchFn,
+    });
+    expect(result?.persisted).toBe(true);
+    expect(holonPuts()).toHaveLength(1);
+    expect(descriptorPuts()).toEqual([]);
+  }, 30000);
+
   it('routes a public memory to a resource DISJOINT from the private shared-lattice', async () => {
-    const { fetchFn, holonPuts } = makePodFetch();
+    const { fetchFn, holonPuts, descriptorPuts } = makePodFetch();
     const pod = 'https://pod.test-disjoint.example/agent/';
 
     // A private artifact (the agent's own corpus) → the default `shared-lattice` resource.
@@ -66,6 +80,7 @@ describe('public-memory commons — resource isolation', () => {
     const puts = holonPuts();
     expect(puts.some(u => u.endsWith('/foxxi-lattice/shared-lattice.holon.json'))).toBe(true);
     expect(puts.some(u => u.endsWith('/foxxi-lattice/public-memories.holon.json'))).toBe(true);
+    expect(descriptorPuts()).toHaveLength(2);
     // The public memory NEVER wrote to the private resource — disjoint, not merged.
     expect(holonPuts().filter(u => u.endsWith('/public-memories.holon.json'))
       .every(u => !u.endsWith('/shared-lattice.holon.json'))).toBe(true);
