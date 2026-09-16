@@ -1,0 +1,305 @@
+{
+  "description": "Metadata-only observations. No content interpolation, command execution or transcript reads. MCP failures are nonblocking; connection and hook trust are managed by the host.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "interego",
+            "tool": "act",
+            "timeout": 30,
+            "statusMessage": "Recording Interego activity metadata",
+            "input": {
+              "descriptor_url": "https://foxxi-bridge.interego.xwisee.com/affordances",
+              "action_iri": "https://relay.interego.xwisee.com/ns/iep/action/llm-telemetry/ingest",
+              "sign_payload": true,
+              "payload": {
+                "events": [
+                  {
+                    "kind": "session-observed",
+                    "source": "codex-hooks",
+                    "source_event_id": "${session_id}:SessionStart:${model}",
+                    "session_id": "${session_id}",
+                    "model": "${model}",
+                    "capture_mode": "live",
+                    "coverage": "hook"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "interego",
+            "tool": "act",
+            "timeout": 30,
+            "statusMessage": "Recording Interego activity metadata",
+            "input": {
+              "descriptor_url": "https://foxxi-bridge.interego.xwisee.com/affordances",
+              "action_iri": "https://relay.interego.xwisee.com/ns/iep/action/llm-telemetry/ingest",
+              "sign_payload": true,
+              "payload": {
+                "events": [
+                  {
+                    "kind": "input-received",
+                    "source": "codex-hooks",
+                    "source_event_id": "${session_id}:${turn_id}:UserPromptSubmit",
+                    "session_id": "${session_id}",
+                    "model": "${model}",
+                    "capture_mode": "live",
+                    "coverage": "hook",
+                    "initiator_kind": "unknown",
+                    "turn_id": "${turn_id}"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "interego",
+            "tool": "act",
+            "timeout": 30,
+            "statusMessage": "Recording Interego activity metadata",
+            "input": {
+              "descriptor_url": "https://foxxi-bridge.interego.xwisee.com/affordances",
+              "action_iri": "https://relay.interego.xwisee.com/ns/iep/action/llm-telemetry/ingest",
+              "sign_payload": true,
+              "payload": {
+                "events": [
+                  {
+                    "kind": "tool-started",
+                    "source": "codex-hooks",
+                    "source_event_id": "${session_id}:${tool_use_id}:PreToolUse",
+                    "session_id": "${session_id}",
+                    "model": "${model}",
+                    "capture_mode": "live",
+                    "coverage": "hook",
+                    "turn_id": "${turn_id}",
+                    "tool_use_id": "${tool_use_id}",
+                    "tool_name": "${tool_name}"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "interego",
+            "tool": "act",
+            "timeout": 30,
+            "statusMessage": "Recording Interego activity metadata",
+            "input": {
+              "descriptor_url": "https://foxxi-bridge.interego.xwisee.com/affordances",
+              "action_iri": "https://relay.interego.xwisee.com/ns/iep/action/llm-telemetry/ingest",
+              "sign_payload": true,
+              "payload": {
+                "events": [
+                  {
+                    "kind": "tool-completed",
+                    "source": "codex-hooks",
+                    "source_event_id": "${session_id}:${tool_use_id}:PostToolUse",
+                    "session_id": "${session_id}",
+                    "model": "${model}",
+                    "capture_mode": "live",
+                    "coverage": "hook",
+                    "turn_id": "${turn_id}",
+                    "tool_use_id": "${tool_use_id}",
+                    "tool_name": "${tool_name}"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "interego",
+            "tool": "act",
+            "timeout": 30,
+            "statusMessage": "Recording Interego activity metadata",
+            "input": {
+              "descriptor_url": "https://foxxi-bridge.interego.xwisee.com/affordances",
+              "action_iri": "https://relay.interego.xwisee.com/ns/iep/action/llm-telemetry/ingest",
+              "sign_payload": true,
+              "payload": {
+                "events": [
+                  {
+                    "kind": "agent-started",
+                    "source": "codex-hooks",
+                    "source_event_id": "${session_id}:${agent_id}:SubagentStart",
+                    "session_id": "${session_id}",
+                    "model": "${model}",
+                    "capture_mode": "live",
+                    "coverage": "hook",
+                    "initiator_kind": "agent",
+                    "turn_id": "${turn_id}",
+                    "agent_id": "${agent_id}",
+                    "agent_type": "${agent_type}"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "interego",
+            "tool": "act",
+            "timeout": 30,
+            "statusMessage": "Recording Interego activity metadata",
+            "input": {
+              "descriptor_url": "https://foxxi-bridge.interego.xwisee.com/affordances",
+              "action_iri": "https://relay.interego.xwisee.com/ns/iep/action/llm-telemetry/ingest",
+              "sign_payload": true,
+              "payload": {
+                "events": [
+                  {
+                    "kind": "agent-stopped",
+                    "source": "codex-hooks",
+                    "source_event_id": "${session_id}:${agent_id}:SubagentStop",
+                    "session_id": "${session_id}",
+                    "model": "${model}",
+                    "capture_mode": "live",
+                    "coverage": "hook",
+                    "initiator_kind": "agent",
+                    "turn_id": "${turn_id}",
+                    "agent_id": "${agent_id}",
+                    "agent_type": "${agent_type}"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "interego",
+            "tool": "act",
+            "timeout": 30,
+            "statusMessage": "Recording Interego activity metadata",
+            "input": {
+              "descriptor_url": "https://foxxi-bridge.interego.xwisee.com/affordances",
+              "action_iri": "https://relay.interego.xwisee.com/ns/iep/action/llm-telemetry/ingest",
+              "sign_payload": true,
+              "payload": {
+                "events": [
+                  {
+                    "kind": "response-completed",
+                    "source": "codex-hooks",
+                    "source_event_id": "${session_id}:${turn_id}:Stop",
+                    "session_id": "${session_id}",
+                    "model": "${model}",
+                    "capture_mode": "live",
+                    "coverage": "hook",
+                    "turn_id": "${turn_id}"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "interego",
+            "tool": "act",
+            "timeout": 30,
+            "statusMessage": "Recording Interego activity metadata",
+            "input": {
+              "descriptor_url": "https://foxxi-bridge.interego.xwisee.com/affordances",
+              "action_iri": "https://relay.interego.xwisee.com/ns/iep/action/llm-telemetry/ingest",
+              "sign_payload": true,
+              "payload": {
+                "events": [
+                  {
+                    "kind": "compaction-started",
+                    "source": "codex-hooks",
+                    "source_event_id": "${session_id}:${model}:PreCompact",
+                    "session_id": "${session_id}",
+                    "model": "${model}",
+                    "capture_mode": "live",
+                    "coverage": "hook"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "interego",
+            "tool": "act",
+            "timeout": 30,
+            "statusMessage": "Recording Interego activity metadata",
+            "input": {
+              "descriptor_url": "https://foxxi-bridge.interego.xwisee.com/affordances",
+              "action_iri": "https://relay.interego.xwisee.com/ns/iep/action/llm-telemetry/ingest",
+              "sign_payload": true,
+              "payload": {
+                "events": [
+                  {
+                    "kind": "compaction-completed",
+                    "source": "codex-hooks",
+                    "source_event_id": "${session_id}:${model}:PostCompact",
+                    "session_id": "${session_id}",
+                    "model": "${model}",
+                    "capture_mode": "live",
+                    "coverage": "hook"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

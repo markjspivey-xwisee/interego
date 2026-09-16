@@ -61,7 +61,7 @@ describe('direct HyperMarkdown through the actual descriptor and viewer handlers
   it('does not freeze a mutable document in the immutable-descriptor cache', async () => {
     const r = reader(); await r.get({ url: HMD_URL }); r.set(hmd.replace('Learn the procedure.', 'Revised instruction.'));
     const view = JSON.parse(await viewer(r.get)({ descriptor_url: HMD_URL }));
-    expect(view.body).toContain('Revised instruction.'); expect(r.requests).toHaveLength(2); expect(r.writes).toEqual([]);
+    expect(view.body).toContain('Revised instruction.'); expect(r.requests.filter(([url]) => url === HMD_URL)).toHaveLength(2); expect(r.writes).toEqual([]);
   });
   it('refuses a projection when a caller explicitly needs a signed descriptor', async () => {
     expect(JSON.parse(await reader().get({ url: HMD_URL }, false)).error).toMatch(/not a signed descriptor/);
@@ -89,5 +89,17 @@ describe('direct HyperMarkdown through the actual descriptor and viewer handlers
     const authorship = { authorshipVerified: true, contentBinding: { bound: true } };
     const view = JSON.parse(await viewer(async () => JSON.stringify({ rendered: hmd, turtle, authorship }))({ descriptor_url: AUTHORITY }));
     expect(view.controls[0].executable).toBe(true); expect(view.authorship).toEqual(authorship);
+  });
+  it('resolves a direct document authority before enabling its control and uses that authority to execute', async () => {
+    const turtle = `<urn:aff> a <https://markjspivey-xwisee.github.io/interego/ns/iep#Affordance> ; <https://markjspivey-xwisee.github.io/interego/ns/iep#action> <${ACTION}> ; <http://www.w3.org/ns/hydra/core#method> "POST" ; <http://www.w3.org/ns/hydra/core#target> <https://content.example/execute> .`;
+    const resolved: string[] = [];
+    const get = async (args: { url: string }) => {
+      resolved.push(args.url);
+      return JSON.stringify(args.url === AUTHORITY ? { turtle } : { representationKind: 'hypermarkdown', rendered: hmd, authorship: null });
+    };
+    const view = JSON.parse(await viewer(get)({ descriptor_url: HMD_URL }));
+    expect(resolved).toEqual([HMD_URL, AUTHORITY]);
+    expect(view.controls[0]).toMatchObject({ executable: true, descriptorUrl: AUTHORITY });
+    expect(view.authorship).toBeNull();
   });
 });

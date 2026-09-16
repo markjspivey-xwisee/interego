@@ -1032,6 +1032,7 @@ export function liftHypermediaMarkdown(md: string): readonly HmdTriple[] {
       if (Number.isInteger(f['minLength'])) push(F, `${SH}minLength`, String(f['minLength']), 'literal');
       if (Number.isInteger(f['maxLength'])) push(F, `${SH}maxLength`, String(f['maxLength']), 'literal');
       if (typeof f['pattern'] === 'string') push(F, `${SH}pattern`, f['pattern'], 'literal');
+      if (['string', 'number', 'boolean'].includes(typeof f['defaultValue'])) push(F, `${SH}defaultValue`, String(f['defaultValue']), 'literal');
     });
   });
 

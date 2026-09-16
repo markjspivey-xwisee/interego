@@ -20,7 +20,12 @@
  */
 
 import { randomUUID, createHash, randomBytes } from 'node:crypto';
-import { readSelfXapi, writeSelfXapi, type SelfXapiDependencies } from '../src/self-xapi.js';
+import { readSelfXapi, writeSelfXapi } from '../src/self-xapi.js';
+import { ingestTelemetry, normalizeQuery, telemetryReport, mergeTelemetrySnapshot, type TelemetryDependencies } from '../../llm-telemetry/service.js';
+import { telemetryProfile } from '../../llm-telemetry/profile.js';
+import { eventSchema } from '../../llm-telemetry/events.js';
+import { telemetryView } from '../../llm-telemetry/view.js';
+import { persistedLatticeArtifacts } from '../src/foundation-shared-lattice.js';
 import type { RequestHandler } from 'express';
 
 // ── Pod-write auth: attach Authorization: Bearer on writes that target
@@ -8429,7 +8434,7 @@ app.post('/agent/credentials', async (req, res) => {
 // Signed-agent transport for the STANDARD Statements Resource. The temporary Basic
 // credential is internal, scoped to the verified caller's lens and always revoked.
 // No arbitrary target/header proxy, operator grant, or alternate statement engine.
-const signedXapiHandler = (operation: 'read' | 'write'): RequestHandler => async (req, res) => {
+const signedXapiHandler = (operation: 'read' | 'write' | 'telemetry-ingest' | 'telemetry-query'): RequestHandler => async (req, res) => {
     try {
       const bound = await bindSignedCaller(req.body, { hint: 'sign_request the query/statements, then follow the signed xAPI affordance.' });
       if (!bound.ok) { res.status(bound.status).json({ error: bound.error }); return; }
@@ -8440,13 +8445,27 @@ const signedXapiHandler = (operation: 'read' | 'write'): RequestHandler => async
       const podUrl = resolveSubjectPodUrl(bound.callerDid);
       const label = actorForPod(podUrl, MESH_ACTOR_LABELS);
       const tenant = lensTenantFor(label);
+      const telemetry = operation.startsWith('telemetry-');
       // UUID begins immediately: registry ids truncate the encoded principal.
       const principal = randomUUID();
       const secret = randomBytes(32).toString('base64url');
       const credential = inboundCredentials.add({ principal, secret, tenant: String(tenant), label: 'temporary signed xAPI request' });
       if (!credential) { res.status(503).json({ error: 'inbound credential capacity unavailable' }); return; }
       try {
-        const deps: SelfXapiDependencies = {
+        const deps: TelemetryDependencies = {
+          now: () => new Date().toISOString(),
+          snapshot: async () => {
+            const [lrs, durable] = await Promise.allSettled([
+              listStoredStatements(tenant), persistedLatticeArtifacts(podUrl, 'xapi:Statement', 'llm-telemetry-v1'),
+            ]);
+            return mergeTelemetrySnapshot(bound.callerDid,
+              lrs.status === 'fulfilled' ? lrs.value.filter(s => !s.voided).map(s => s.statement) : null,
+              durable.status === 'fulfilled' && durable.value !== null ? durable.value.map(a => a.content as Record<string, unknown>) : null);
+          },
+          restore: async statement => {
+            if (!statement.stored || !statement.authority) throw new Error('durable record is missing its LRS-assigned envelope');
+            await getStatementStore(tenant).put({ id: String(statement.id), statement, stored: String(statement.stored), voided: false });
+          },
           request: async (method, query, body) => {
             const url = new URL(`http://127.0.0.1:${PORT}/xapi/statements`);
             url.search = query.toString();
@@ -8458,22 +8477,52 @@ const signedXapiHandler = (operation: 'read' | 'write'): RequestHandler => async
             return { status: response.status, body: await response.json() as unknown };
           },
           persist: async (statement) => composeIntoSharedLattice({
-            podUrl, agentDid: bound.callerDid, label,
+            podUrl, agentDid: bound.callerDid, label: telemetry ? `${label}-llm-telemetry-v1` : label,
+            ...(telemetry ? { resourceName: 'llm-telemetry-v1' } : {}),
             terms: [bound.callerDid, String((statement.verb as { id?: string }).id), String((statement.object as { id?: string }).id)],
             content: statement, contentType: 'xapi:Statement',
             ts: typeof statement.timestamp === 'string' ? statement.timestamp : undefined,
             projections: ['rdf', 'activity'],
           }),
         };
-        const result = operation === 'write'
-          ? await writeSelfXapi(bound.callerDid, bound.payload.statements, deps)
-          : await readSelfXapi(bound.payload.query, deps);
-        res.status(result.status).json(result.body);
+        if (operation === 'telemetry-query') {
+          let query;
+          try {
+            // The signature binder adds identity/time fields; only the query options
+            // supplied by the caller are passed to its closed schema.
+            const { agent_id: _agent, subject_pod_url: _pod, timestamp: _time, ...options } = bound.payload;
+            query = normalizeQuery(options.query ?? options);
+          } catch (error) { res.status(400).json({ error: (error as Error).message }); return; }
+          const report = telemetryReport(bound.callerDid, await deps.snapshot(), query, deps.now());
+          const view = telemetryView(bridgeBaseUrl, report);
+          res.setHeader('Cache-Control', 'no-store');
+          if (wantsHmd(req)) { sendHmd(res, view.hmd); return; }
+          res.json({ ...report, view });
+        } else {
+          const result = operation === 'telemetry-ingest'
+            ? await ingestTelemetry(bound.callerDid, bound.payload.events, deps)
+            : operation === 'write' ? await writeSelfXapi(bound.callerDid, bound.payload.statements, deps)
+            : await readSelfXapi(bound.payload.query, deps);
+          res.status(result.status).json(result.body);
+        }
       } finally { inboundCredentials.remove(credential.id); }
     } catch (err) { sendServerError(res, err, 'signed-xapi'); }
 };
 app.post('/agent/xapi-statements/read', signedXapiHandler('read'));
 app.post('/agent/xapi-statements/write', signedXapiHandler('write'));
+app.post('/agent/llm-telemetry/ingest', signedXapiHandler('telemetry-ingest'));
+app.post('/agent/llm-telemetry/query', signedXapiHandler('telemetry-query'));
+app.get('/llm-telemetry', (_req, res) => { res.setHeader('Cache-Control', 'no-store'); sendHmd(res, telemetryView(bridgeBaseUrl).hmd); });
+app.get(['/llm-telemetry/profile', '/llm-telemetry/profile/v1'], (_req, res) => res.type('application/ld+json').json(telemetryProfile()));
+app.get('/llm-telemetry/event-schema', (_req, res) => res.type('application/schema+json').json(eventSchema()));
+app.get('/llm-telemetry/coverage', (_req, res) => res.json({
+  profile: `${bridgeBaseUrl}/llm-telemetry/profile/v1`, default_capture: 'metadata only',
+  excludes: ['prompts', 'responses', 'reasoning', 'tool arguments', 'tool results', 'credentials', 'transcript paths'],
+  capture_sources: ['Codex MCP lifecycle hooks after host installation and trust', 'provider-neutral runtime adapter', 'explicit manual observations'],
+  hook_limits: ['Hosted web tools are not covered', 'MCP hooks cannot observe SessionEnd', 'SessionStart can run before the MCP connection is ready', 'Identical lifecycle keys coalesce; hooks have no durable delivery queue'],
+  durability: 'Successful ingests require actual own-lens LRS read-back and awaited encrypted PGSL persistence. Reports also read a fresh encrypted snapshot after restarts.',
+  activation: 'Availability of this endpoint does not mean hooks are installed. Query records to see which sources have actually delivered events.',
+}));
 
 // ── Agentic SCORM RTE (delegated auth) ─────────────────────────────────────
 // A REAL SCORM run for agents: a creator AUTHORS a course -> a conformant

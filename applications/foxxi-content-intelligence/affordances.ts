@@ -14,6 +14,7 @@
 
 import type { Affordance } from '../_shared/affordance-mcp/index.js';
 import { foxxiInterventionMethodAffordances } from '../agentic-performance-practice/method-affordances.js';
+import { telemetryAffordances } from '../llm-telemetry/affordances.js';
 import type {
   IRI,
 } from '@interego/core';
@@ -23,6 +24,7 @@ import type {
 // ─────────────────────────────────────────────────────────────────────
 
 export const foxxiAffordances: ReadonlyArray<Affordance> = [
+  ...telemetryAffordances,
   // ── The door to the LRS ────────────────────────────────────────────────────
   //
   // ★ WHY ONE AFFORDANCE AND NOT TWENTY.
