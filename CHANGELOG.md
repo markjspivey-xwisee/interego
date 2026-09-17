@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-17 — Independent server and client telemetry opt-ins
+
+The existing MCP connection can automatically report allowlisted request metadata through an optional deployment observer. Signed HyperMarkdown controls independently enable server recording and client reporting; both MUST default off. Automatic ingestion MUST recheck durable consent, and a server delivery MUST match the consent revision read before its operation. Client installation and hook trust remain separate from intake consent. Reports identify observation channels, UTC-day relay groups and possible overlap without claiming deduplicated work or universal chat coverage. Private preference history does not publish descriptor projections. The plain relay has no application observer configured, and its tool inventory is unchanged.
+
 ## 2026-09-16 — Keep telemetry descriptor projections private
 
 Telemetry now suppresses public per-event descriptor publication while retaining encrypted canonical persistence and authenticated LRS access. Receipts omit unpublished locators. Existing descriptor publication remains the default for other applications. A transport-level regression verifies both paths.

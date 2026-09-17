@@ -1,6 +1,7 @@
 import { renderHypermediaMarkdown, actionUrl, type HypermediaControl } from '@interego/core';
 import { hmdProse, affordanceControl } from '../_shared/hypermedia/index.js';
-import { telemetryAffordances, queryInputs } from './affordances.js';
+import { telemetryAffordances, queryInputs, captureReadAffordance, captureUpdateAffordance } from './affordances.js';
+import type { CapturePreferences } from './capture.js';
 import { telemetryMetadata, type Json } from './events.js';
 import { PROFILE, RELAY_SIGNATURE } from './profile.js';
 
@@ -20,20 +21,21 @@ export function telemetryView(base: string, report?: Json) {
   };
   let body: string;
   if (!report) {
-    body = '# LLM activity\n\nSee which sessions are reporting, follow work across agents and tools, and inspect the evidence behind each insight.\n\nOpen **My sessions** to load your private records. Use **Query** to narrow the time range, model or runtime.\n\nCapture collects identifiers, lifecycle events and reported usage. Message contents, tool arguments, credentials and transcripts are excluded.\n\n**Coverage is measured from received events.** Installing the hook integration and reviewing its trust request enables capture on supported hosts; this page alone does not activate it.';
+    body = '# LLM activity\n\nSee which sessions are reporting, follow work across agents and tools, and inspect the evidence behind each insight.\n\nOpen **Capture settings** to choose Interego recording, client reporting, both, or neither. Both start off. Interego records calls through this server; client reporting covers supported host activity after its collector is installed and trusted.\n\nOpen **My sessions** to load your private records. Use **Query** to narrow the time range, source, model or runtime.\n\nCapture collects identifiers, lifecycle events and reported usage. Message contents, tool arguments, credentials and transcripts are excluded. Coverage is measured from received events; this page alone does not start a collector.';
     control('sessions', 'My sessions', { view: 'sessions' });
     control('report', 'Activity report', { view: 'report' });
     control('query', 'Query');
   } else {
     const t = report.totals, c = report.coverage; const selectedView = report.query.view ?? (report.query.session_id ? 'timeline' : 'sessions');
     body = `# ${selectedView === 'timeline' ? 'Session timeline' : selectedView === 'report' ? 'Activity report' : selectedView === 'export' ? 'xAPI export' : 'Your sessions'}\n\n`
-      + `${t.events} observations · ${t.sessions} sessions · ${t.errors} explicit failure observations\n\n`
+      + `${t.events} observations · ${t.sessions} session / relay-day groups · ${t.errors} explicit failure observations\n\n`
       + table(['Input tokens reported', 'Output tokens reported', 'Events in encrypted history'], [[t.input_tokens ?? 'Unknown', t.output_tokens ?? 'Unknown', `${c.durable_matching_events}/${t.events}`]])
       + `\n\nSource coverage: ${Object.entries(c.sources).map(([s, n]) => `${cell(s)} (${n})`).join(', ') || 'No reporting source observed'}. `
       + `LRS: ${c.lrs_available ? 'available' : 'unavailable'}. Encrypted history: ${c.encrypted_history_available ? 'available' : 'unavailable'}.\n\n`;
+    if (report.capture) body += `Reporting choices: Interego **${report.capture.server_enabled ? 'on' : 'off'}** · Client **${report.capture.client_enabled ? 'on' : 'off'}**. Client installation and host trust are verified separately.\n\n`;
     if (!c.complete_for_available_snapshot) body += '**This snapshot is incomplete or contains conflicting records.** The coverage fields identify the unavailable sources or conflicting statement IDs.\n\n';
     if (selectedView === 'sessions') {
-      body += table(['Session', 'Source / mode', 'Last seen (UTC)', 'Events', 'Agents', 'Status'], report.sessions.slice(0, 30).map((s: Json) => [s.session_id, `${s.source} / ${s.capture_modes.join(', ')}`, s.last_seen, s.events, s.agents.length, s.ended ? 'End observed' : 'Last seen; end unknown'])) + '\n\n';
+      body += table(['Session / group', 'Source / mode', 'Last seen (UTC)', 'Events', 'Agents', 'Status'], report.sessions.slice(0, 30).map((s: Json) => [s.session_id, `${s.source} / ${s.capture_modes.join(', ')}`, s.last_seen, s.events, s.agents.length, s.session_scope === 'relay-day' ? 'UTC-day group; not a chat' : s.ended ? 'End observed' : 'Last seen; end unknown'])) + '\n\n';
       for (const [i, session] of report.sessions.slice(0, 4).entries()) control(`session-${i}`, `Open ${session.session_id}`, { session_id: session.session_id, source: session.source, view: 'timeline' });
       if (report.sessions.length > 30) body += 'Showing the 30 most recently observed sessions. Query a session ID or time range to narrow the selection.\n\n';
     } else if (selectedView === 'timeline' || selectedView === 'export') {
@@ -52,9 +54,42 @@ export function telemetryView(base: string, report?: Json) {
     control('export', 'Export xAPI page', { ...report.query, view: 'export' });
     control('query', 'New query');
   }
+  controls.push({ ...affordanceControl(captureReadAffordance, base), id: 'capture', label: 'Capture settings', whenToUse: 'Capture settings', descriptorUrl: authority, executable: true, requires: [RELAY_SIGNATURE], fields: [] });
   const links = [{ label: 'xAPI profile', href: PROFILE, rel: 'describedby', type: 'application/ld+json' }, { label: 'Affordance contracts', href: `${authority}?format=markdown`, rel: 'related', type: 'text/markdown' }, { label: 'Capture and coverage', href: `${base}/llm-telemetry/coverage`, rel: 'related', type: 'application/json' }];
   const title = /^# ([^\n]+)/.exec(body)?.[1] ?? 'LLM activity';
   const hmd = renderHypermediaMarkdown({ id: report ? `urn:uuid:${crypto.randomUUID()}` : `${base}/llm-telemetry`, type: 'schema:DigitalDocument', descriptorUrl: authority, title, body: hmdProse(body), controls, links });
   // Same affordance-derived document for the standard HMD representation and MCP App.
+  return { descriptorUrl: authority, title, hmd, body: hmdProse(body).replace(/^# [^\n]+\n+/, ''), controls, links };
+}
+
+export function captureView(base: string, preferences: CapturePreferences) {
+  const authority = `${base}/affordances`;
+  const controls: Array<HypermediaControl & Json> = [];
+  const choice = (id: string, label: string, patch: Record<string, boolean>) => {
+    const payload = { ...patch, expected_revision: preferences.revision };
+    controls.push({ ...affordanceControl(captureUpdateAffordance, base), id, label, whenToUse: label,
+      descriptorUrl: authority, executable: true, requires: [RELAY_SIGNATURE], payload,
+      fields: Object.entries(payload).map(([name, defaultValue]) => ({ name, path: `${base}/llm-telemetry/capture#${name}`, defaultValue,
+        datatype: `http://www.w3.org/2001/XMLSchema#${typeof defaultValue === 'boolean' ? 'boolean' : 'integer'}`, minCount: 0 })),
+    });
+  };
+  choice('server', `${preferences.server_enabled ? 'Disable' : 'Enable'} Interego recording`, { server_enabled: !preferences.server_enabled });
+  choice('client', `${preferences.client_enabled ? 'Disable' : 'Enable'} client reporting`, { client_enabled: !preferences.client_enabled });
+  choice('both', 'Enable both', { server_enabled: true, client_enabled: true });
+  choice('neither', 'Disable both', { server_enabled: false, client_enabled: false });
+  controls.push({ ...affordanceControl(captureReadAffordance, base), id: 'refresh-capture', whenToUse: 'Refresh settings', descriptorUrl: authority, executable: true, requires: [RELAY_SIGNATURE], fields: [] });
+  const sessionFields = [{ name: 'view', path: `${base}/llm-telemetry/query#view`, defaultValue: 'sessions', datatype: 'http://www.w3.org/2001/XMLSchema#string', minCount: 0 }];
+  controls.push({ ...affordanceControl(queryAction, base), id: 'sessions', whenToUse: 'My sessions', descriptorUrl: authority, executable: true, requires: [RELAY_SIGNATURE], fields: sessionFields });
+  const title = 'Capture settings';
+  const body = '# Capture settings\n\nChoose either source, both, or neither for this connected agent. Both default to off.\n\n'
+    + table(['Source', 'Your choice', 'What it covers'], [
+      ['Interego recording', preferences.server_enabled ? 'On' : 'Off', 'Authenticated calls through this Interego MCP server; no client plugin required.'],
+      ['Client reporting', preferences.client_enabled ? 'On' : 'Off', 'Reports from installed host hooks or runtime adapters, including supported work outside Interego.'],
+    ]) + '\n\nClient reporting needs a collector installed, connected and trusted in each participating host. Switching it on here permits reports; it does not install or trust a collector.\n\n'
+    + 'Switching a source off refuses new automatic deliveries to Interego. To stop a host collector itself, disable its hooks or adapter there. Existing records remain available. Explicit manual observations remain separate signed actions.\n\n'
+    + 'Both sources can observe the same operation. Reports preserve their source labels and count observations, not distinct work. Relay UTC-day groups are not chat sessions.\n\n'
+    + `Settings revision: ${preferences.revision}.`;
+  const links = [{ label: 'Capture coverage', href: `${base}/llm-telemetry/coverage`, rel: 'describedby', type: 'application/json' }];
+  const hmd = renderHypermediaMarkdown({ id: `urn:uuid:${crypto.randomUUID()}`, type: 'schema:DigitalDocument', descriptorUrl: authority, title, body: hmdProse(body), controls, links });
   return { descriptorUrl: authority, title, hmd, body: hmdProse(body).replace(/^# [^\n]+\n+/, ''), controls, links };
 }
