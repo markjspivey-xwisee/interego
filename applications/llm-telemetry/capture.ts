@@ -71,6 +71,25 @@ export async function updateCapturePreferences(actor: string, input: unknown, st
   });
 }
 export type CaptureChannel = 'server' | 'client' | 'manual';
+/** Authenticated metadata traffic must not consume the public LLM-call budget.
+ * Keep settings separate so intake/query saturation cannot block revocation. */
+export function createTelemetryRateLimit(now: () => number = Date.now) {
+  const windows = new Map<string, { count: number; resetAt: number }>();
+  const limits = { ingest: 120, query: 60, settings: 60 };
+  return (actor: string, lane: keyof typeof limits): { ok: true } | { ok: false; retryAfterSeconds: number } => {
+    const time = now(); const key = JSON.stringify([actor, lane]);
+    let window = windows.get(key);
+    if (!window || time >= window.resetAt) {
+      if (windows.size >= 10_000) {
+        for (const [k, value] of windows) if (time >= value.resetAt) windows.delete(k);
+        if (!windows.has(key) && windows.size >= 10_000) return { ok: false, retryAfterSeconds: 60 };
+      }
+      window = { count: 0, resetAt: time + 60_000 }; windows.set(key, window);
+    }
+    window.count++;
+    return window.count <= limits[lane] ? { ok: true } : { ok: false, retryAfterSeconds: Math.ceil((window.resetAt - time) / 1000) };
+  };
+}
 export function captureChannel(event: Pick<TelemetryEvent, 'coverage'>): CaptureChannel {
   return event.coverage === 'server-observation' ? 'server' : event.coverage === 'manual-observation' ? 'manual' : 'client';
 }

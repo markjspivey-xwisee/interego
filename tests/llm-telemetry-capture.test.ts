@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { captureResource, readCapturePreferences, updateCapturePreferences, withCaptureConsent, type CaptureStore } from '../applications/llm-telemetry/capture.js';
+import { captureResource, readCapturePreferences, updateCapturePreferences, withCaptureConsent, createTelemetryRateLimit, type CaptureStore } from '../applications/llm-telemetry/capture.js';
 import { RequestObservers, loadRequestObservers, type RequestObservationContext } from '../deploy/mcp-relay/request-observers.js';
 import { createRelayObserver } from '../applications/llm-telemetry/relay-observer.js';
 import { captureView } from '../applications/llm-telemetry/view.js';
@@ -17,6 +17,15 @@ function store() {
   return { records, deps, unavailable: () => { unavailable = true; }, fail: () => { persist = false; } };
 }
 describe('independent durable capture consent', () => {
+  it('limits each observer and traffic lane without intake exhaustion blocking capture settings', () => {
+    let clock = 1; const check = createTelemetryRateLimit(() => clock);
+    for (let i = 0; i < 120; i++) expect(check(actor, 'ingest').ok).toBe(true);
+    expect(check(actor, 'ingest')).toEqual({ ok:false, retryAfterSeconds:60 });
+    expect(check(actor, 'settings')).toEqual({ ok:true });
+    expect(check(actor, 'query')).toEqual({ ok:true });
+    expect(check('did:web:other', 'ingest')).toEqual({ ok:true });
+    clock += 60_000; expect(check(actor, 'ingest')).toEqual({ ok:true });
+  });
   it.each([[false,false],[true,false],[false,true],[true,true]])('gates server=%s and client=%s separately', async (server_enabled, client_enabled) => {
     const s = store();
     const preferences = await updateCapturePreferences(actor, { server_enabled, client_enabled }, s.deps);

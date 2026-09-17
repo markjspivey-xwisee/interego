@@ -25,7 +25,7 @@ import { ingestTelemetry, normalizeQuery, telemetryReport, mergeTelemetrySnapsho
 import { telemetryProfile } from '../../llm-telemetry/profile.js';
 import { eventSchema } from '../../llm-telemetry/events.js';
 import { telemetryView, captureView } from '../../llm-telemetry/view.js';
-import { captureResource, readCapturePreferences, updateCapturePreferences, withCaptureConsent, CaptureError, type CaptureStore } from '../../llm-telemetry/capture.js';
+import { captureResource, readCapturePreferences, updateCapturePreferences, withCaptureConsent, createTelemetryRateLimit, CaptureError, type CaptureStore } from '../../llm-telemetry/capture.js';
 import { persistedLatticeArtifacts } from '../src/foundation-shared-lattice.js';
 import type { RequestHandler } from 'express';
 
@@ -8453,18 +8453,21 @@ function telemetryCaptureStore(actor: string, podUrl: string, label: string): Ca
     },
   };
 }
+const checkTelemetryRateLimit = createTelemetryRateLimit();
 const signedXapiHandler = (operation: 'read' | 'write' | 'telemetry-ingest' | 'telemetry-query' | 'telemetry-capture-read' | 'telemetry-capture-update'): RequestHandler => async (req, res) => {
     try {
       const bound = await bindSignedCaller(req.body, { hint: 'sign_request the query/statements, then follow the signed xAPI affordance.' });
       if (!bound.ok) { res.status(bound.status).json({ error: bound.error }); return; }
+      const telemetry = operation.startsWith('telemetry-');
       const xff = req.headers['x-forwarded-for'];
       const ip = typeof xff === 'string' ? xff.split(',').at(-1)!.trim() : Array.isArray(xff) ? xff.at(-1)!.trim() : req.ip ?? 'unknown';
-      const rl = checkAgenticRateLimit(ip);
-      if (!rl.ok) { res.status(429).json({ error: `rate limit — retry in ${rl.retryAfterSeconds}s` }); return; }
+      const rl = telemetry
+        ? checkTelemetryRateLimit(bound.callerDid, operation === 'telemetry-ingest' ? 'ingest' : operation === 'telemetry-query' ? 'query' : 'settings')
+        : checkAgenticRateLimit(ip);
+      if (!rl.ok) { res.setHeader('Retry-After', String(rl.retryAfterSeconds)); res.status(429).json({ error: `rate limit — retry in ${rl.retryAfterSeconds}s` }); return; }
       const podUrl = resolveSubjectPodUrl(bound.callerDid);
       const label = actorForPod(podUrl, MESH_ACTOR_LABELS);
       const tenant = lensTenantFor(label);
-      const telemetry = operation.startsWith('telemetry-');
       const captureStore = telemetryCaptureStore(bound.callerDid, podUrl, label);
       if (operation === 'telemetry-capture-read' || operation === 'telemetry-capture-update') {
         const { agent_id: _agent, subject_pod_url: _pod, timestamp: _time, ...settings } = bound.payload;

@@ -23,6 +23,8 @@ Client opt-in authorizes intake; it does not install a collector or approve a ho
 
 When both sources observe an Interego call, the report counts **observations**, not unique operations. Use `capture_channel: server | client | manual` or `source` to inspect one source. The report flags possible overlap without guessing a correlation from timestamps.
 
+Authenticated telemetry has its own per-observer limits per bridge process: 120 ingestion requests, 60 queries and 60 settings requests per minute. Ingestion/query exhaustion does not consume the settings allowance or the public model-call budget. A refusal returns HTTP 429 with `Retry-After`; unconfirmed server delivery still leaves the original MCP result intact.
+
 Operators opt into observation modules with `INTEREGO_REQUEST_OBSERVERS`, a JSON array of local deployment module paths. The reference image includes this application's adapter; the plain relay image has no application observer configured. No new MCP tool is added.
 
 ## Connect a supported Codex host
