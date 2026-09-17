@@ -246,6 +246,7 @@ import { noteToHyperMarkdown, inlineRenderedForDescriptor, viewerControls, publi
 // The generic HyperMarkdown MCP-App renderer (served as a ui:// resource).
 import { HMD_WIDGET_URI, readHmdWidgetResource } from './hmd-resource.js';
 import { signedActPayload } from './signed-act.js';
+import { loadRequestObservers } from './request-observers.js';
 import { CLIENT_CHECK_HTML, CLIENT_CHECK_CSP } from './client-check.js';
 import { canonicalSessionActorId } from './session-actor.js';
 import { INVOKE_AFFORDANCE_OUTPUT, loadResourceCompositions, resourceActionResponse, resourceInvocation, type ResourceContext, type ResourceDescriptor, type ResourceEntry, type ResourceReads, type ResourceWriteContext } from './resource-compositions.js';
@@ -255,6 +256,7 @@ import { attestClientRegistration } from './client-registration.js';
 import { signMessageRaw } from '@interego/core';
 import { ClientInteractions, encryptedInteractionStore, clientInteractionComposition, type InteractionRecord, type InteractionOwner } from './client-interactions.js';
 const resourceCompositions = await loadResourceCompositions(process.env.INTEREGO_RESOURCE_COMPOSITIONS, [clientInteractionComposition()]);
+const requestObservers = await loadRequestObservers(process.env.INTEREGO_REQUEST_OBSERVERS);
 import {
   buildToolSurface,
   mcpServerVersion,
@@ -12926,7 +12928,26 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
     // A legacy session spans requests; use THIS request's verified grant and scopes.
     const currentAuth = mcpContext.http?.authInfo;
     const sessionAuth = currentAuth ? resolveAuthContext({ authInfo: currentAuth }) : authContext;
-    return callWithSession(sessionAuth);
+    // Optional observation modules are installed by the deployment, never by a
+    // caller or fetched document. Only a currently authenticated write-capable
+    // OAuth grant can authorize their signed deliveries. No tool payload or
+    // credential is passed into an observer.
+    const raw = req.params.arguments ?? {};
+    const reference = raw.descriptor_url ?? raw.target ?? raw.iri;
+    const action = raw.action_iri ?? raw.action;
+    const observation = sessionAuth?.oauthScopes && hasWriteOauthScope(sessionAuth.oauthScopes)
+      && sessionAuth.agentId && (TOOLS[req.params.name] ?? dynamicTools.get(req.params.name)) ? {
+        principal: sessionAuth.agentId, tool: req.params.name,
+        ...(typeof reference === 'string' ? { selector: { reference, ...(typeof action === 'string' ? { action } : {}) } } : {}),
+        now: () => new Date().toISOString(),
+        follow: (descriptor: string, selectedAction: string, payload: Record<string, unknown>) => handleKernelAct({
+          descriptor_url: descriptor, action_iri: selectedAction, sign_payload: true, payload,
+          _session_agent_did: sessionAuth.agentId, _session_agent_id: sessionAuth.agentId.split(':').at(-1),
+          _session_user_id: sessionAuth.userId, _identity_token: sessionAuth.identityToken,
+          _session_bearer: sessionAuth.accessToken,
+        }),
+      } : undefined;
+    return requestObservers.run(observation, () => callWithSession(sessionAuth));
     async function callWithSession(authContext: Parameters<typeof buildMcpServer>[0]) {
     const { name, arguments: rawArgs } = req.params;
     const tool = TOOLS[name] ?? dynamicTools.get(name);

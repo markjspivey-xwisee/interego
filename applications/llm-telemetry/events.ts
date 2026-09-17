@@ -9,11 +9,12 @@ export interface TelemetryEvent {
   artifact_id?: string; target_agent_id?: string;
   model?: string; provider?: string; tool_name?: string; agent_type?: string;
   initiator_kind?: 'human' | 'agent' | 'unknown'; status?: 'ok' | 'error' | 'cancelled' | 'unknown';
-  coverage?: 'hook' | 'runtime-adapter' | 'manual-observation';
+  coverage?: 'hook' | 'runtime-adapter' | 'manual-observation' | 'server-observation';
+  session_scope?: 'host-session' | 'relay-day';
   usage?: { input_tokens?: number; output_tokens?: number; cached_input_tokens?: number; duration_ms?: number; cost?: number; currency?: string };
 }
 const ID_KEYS = ['session_id', 'source', 'source_event_id', 'turn_id', 'tool_use_id', 'agent_id', 'parent_agent_id', 'generation_id', 'trace_id', 'span_id', 'parent_span_id', 'model', 'provider', 'tool_name', 'agent_type', 'artifact_id', 'target_agent_id'];
-const ENUMS: Record<string, readonly string[]> = { kind: Object.keys(EVENTS), capture_mode: ['live', 'backfill', 'validation'], initiator_kind: ['human', 'agent', 'unknown'], status: ['ok', 'error', 'cancelled', 'unknown'], coverage: ['hook', 'runtime-adapter', 'manual-observation'] };
+const ENUMS: Record<string, readonly string[]> = { kind: Object.keys(EVENTS), capture_mode: ['live', 'backfill', 'validation'], initiator_kind: ['human', 'agent', 'unknown'], status: ['ok', 'error', 'cancelled', 'unknown'], coverage: ['hook', 'runtime-adapter', 'manual-observation', 'server-observation'], session_scope: ['host-session', 'relay-day'] };
 const ALLOWED = new Set([...ID_KEYS, ...Object.keys(ENUMS), 'observed_at', 'usage']);
 export function eventSchema(): Json {
   return { '$schema': 'https://json-schema.org/draft/2020-12/schema', '$id': `${NS}event-schema`, type: 'object', additionalProperties: false,

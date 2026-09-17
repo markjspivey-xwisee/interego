@@ -4,9 +4,32 @@ Open `https://foxxi-bridge.interego.xwisee.com/llm-telemetry` with the existing 
 
 The [profile](https://foxxi-bridge.interego.xwisee.com/llm-telemetry/profile) has 19 verbs/templates, nine activity types and three typed extensions. It follows the [ADL xAPI Profile specification](https://github.com/adlnet/xapi-profiles/blob/master/xapi-profiles-structure.md). An observation stream deliberately permits missing or out-of-order lifecycle events; it does not certify a complete session. The official profile context is vendored in the test fixtures for offline JSON-LD verification.
 
+## Choose either observer, both, or neither
+
+Open **Capture settings** in the HyperMarkdown interface. The independent **Interego server** and **Client reporting** switches both default to off, and apply to the authenticated observer identity. Settings are signed through the existing `act` affordance and stored in private encrypted history. The interface also offers **Enable both** and **Disable both**.
+
+| Choice | What can be recorded |
+| --- | --- |
+| Neither | No new automatic deliveries are accepted. Existing history remains readable. |
+| Server only | Metadata for supported calls through the existing Interego MCP connection. No client installation is needed. |
+| Client only | Reports from a collector installed in a supported host, with the host's hook trust or runtime instrumentation enabled. |
+| Both | Both observation sources, identified separately in queries and reports. |
+
+The server observer covers known tools called through the authenticated, write-capable OAuth `/mcp` transport in the reference deployment. It follows the same published, signed ingestion affordance as clients. It cannot see ordinary chat turns, calls to other servers, or provider token usage. It records tool name, caller identity, actual start/end times and an explicit error flag when available. It never receives prompts, tool arguments, results or credentials. It groups activity by UTC day, labelled `relay-day`, because the MCP connection does not attest a host chat session.
+
+Server records arrive as a matched start/end pair after the call completes. An unconfirmed delivery does not change the original tool result; a receipt is attached in MCP metadata when available. There is no server retry queue. Consent and delivery each have a ten-second deadline; a timed-out delivery may still complete. The relay caches the initial opt-in lookup for up to thirty seconds, but every automatic delivery rechecks durable settings. A changed server consent revision refuses an in-flight delivery. Unavailable or conflicting preference history refuses automatic reporting.
+
+Client opt-in authorizes intake; it does not install a collector or approve a host trust prompt. Disabling a switch refuses new deliveries for that channel. To stop a client collecting or queueing locally, also disable its hooks or adapter in that host. Explicit signed `manual-observation` submissions remain one-off actions, separate from either automatic opt-in.
+
+When both sources observe an Interego call, the report counts **observations**, not unique operations. Use `capture_channel: server | client | manual` or `source` to inspect one source. The report flags possible overlap without guessing a correlation from timestamps.
+
+Authenticated telemetry has its own per-observer limits per bridge process: 120 ingestion requests, 60 queries and 60 settings requests per minute. Ingestion/query exhaustion does not consume the settings allowance or the public model-call budget. A refusal returns HTTP 429 with `Retry-After`; unconfirmed server delivery still leaves the original MCP result intact.
+
+Operators opt into observation modules with `INTEREGO_REQUEST_OBSERVERS`, a JSON array of local deployment module paths. The reference image includes this application's adapter; the plain relay image has no application observer configured. No new MCP tool is added.
+
 ## Connect a supported Codex host
 
-Generate the personal plugin with `node applications/llm-telemetry/build-plugin.mjs /path/to/interego-telemetry`. Install that folder in Codex, connect its Interego MCP server, and review the host's hook trust request. Installing a plugin does not itself trust its hooks. No script in this project writes trust hashes or reads credentials.
+Enable **Client reporting** in Capture settings. Generate the personal plugin with `node applications/llm-telemetry/build-plugin.mjs /path/to/interego-telemetry`. Install that folder in Codex, connect its Interego MCP server, and review the host's hook trust request. Installing a plugin does not itself trust its hooks. No script in this project writes trust hashes or reads credentials.
 
 The hook configuration calls the existing generic `act` tool with `sign_payload: true`. It sends only an explicit field allowlist. There are no command hooks and no transcript reads. Prompt text, answers, internal reasoning, arguments, tool results, filesystem paths and credentials are excluded. `UserPromptSubmit` does not attest that the initiator was a human, so that role remains unknown; controlled runtimes can report a known human or agent initiator explicitly.
 
@@ -16,7 +39,7 @@ The dashboard reports sources that actually delivered events. It does not claim 
 
 ## Instrument any controlled runtime
 
-`client.ts` accepts an authenticated MCP call function, a stable session identifier and a private outbox. No model vendor dependency is required.
+Enable **Client reporting** for the adapter's authenticated observer first. `client.ts` accepts an authenticated MCP call function, a stable session identifier and a private outbox. No model vendor dependency is required.
 
 ```ts
 const telemetry = new TelemetryClient({

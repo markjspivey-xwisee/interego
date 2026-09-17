@@ -24,7 +24,8 @@ import { readSelfXapi, writeSelfXapi } from '../src/self-xapi.js';
 import { ingestTelemetry, normalizeQuery, telemetryReport, mergeTelemetrySnapshot, type TelemetryDependencies } from '../../llm-telemetry/service.js';
 import { telemetryProfile } from '../../llm-telemetry/profile.js';
 import { eventSchema } from '../../llm-telemetry/events.js';
-import { telemetryView } from '../../llm-telemetry/view.js';
+import { telemetryView, captureView } from '../../llm-telemetry/view.js';
+import { captureResource, readCapturePreferences, updateCapturePreferences, withCaptureConsent, createTelemetryRateLimit, CaptureError, type CaptureStore } from '../../llm-telemetry/capture.js';
 import { persistedLatticeArtifacts } from '../src/foundation-shared-lattice.js';
 import type { RequestHandler } from 'express';
 
@@ -8434,18 +8435,51 @@ app.post('/agent/credentials', async (req, res) => {
 // Signed-agent transport for the STANDARD Statements Resource. The temporary Basic
 // credential is internal, scoped to the verified caller's lens and always revoked.
 // No arbitrary target/header proxy, operator grant, or alternate statement engine.
-const signedXapiHandler = (operation: 'read' | 'write' | 'telemetry-ingest' | 'telemetry-query'): RequestHandler => async (req, res) => {
+function telemetryCaptureStore(actor: string, podUrl: string, label: string): CaptureStore {
+  const resourceName = captureResource(actor);
+  return {
+    now: () => new Date().toISOString(),
+    load: async () => {
+      const records = await persistedLatticeArtifacts(podUrl, 'llm:CapturePreference', resourceName);
+      return records === null ? null : records.map(record => record.content);
+    },
+    persist: async preference => {
+      const receipt = await composeIntoSharedLattice({
+        podUrl, agentDid: actor, label: `${label}-${resourceName}`, resourceName, publishDescriptor: false,
+        terms: [actor, `${bridgeBaseUrl}/llm-telemetry/capture`], content: { ...preference },
+        contentType: 'llm:CapturePreference', ts: preference.updated_at ?? undefined,
+      });
+      return receipt?.persisted === true;
+    },
+  };
+}
+const checkTelemetryRateLimit = createTelemetryRateLimit();
+const signedXapiHandler = (operation: 'read' | 'write' | 'telemetry-ingest' | 'telemetry-query' | 'telemetry-capture-read' | 'telemetry-capture-update'): RequestHandler => async (req, res) => {
     try {
       const bound = await bindSignedCaller(req.body, { hint: 'sign_request the query/statements, then follow the signed xAPI affordance.' });
       if (!bound.ok) { res.status(bound.status).json({ error: bound.error }); return; }
+      const telemetry = operation.startsWith('telemetry-');
       const xff = req.headers['x-forwarded-for'];
       const ip = typeof xff === 'string' ? xff.split(',').at(-1)!.trim() : Array.isArray(xff) ? xff.at(-1)!.trim() : req.ip ?? 'unknown';
-      const rl = checkAgenticRateLimit(ip);
-      if (!rl.ok) { res.status(429).json({ error: `rate limit — retry in ${rl.retryAfterSeconds}s` }); return; }
+      const rl = telemetry
+        ? checkTelemetryRateLimit(bound.callerDid, operation === 'telemetry-ingest' ? 'ingest' : operation === 'telemetry-query' ? 'query' : 'settings')
+        : checkAgenticRateLimit(ip);
+      if (!rl.ok) { res.setHeader('Retry-After', String(rl.retryAfterSeconds)); res.status(429).json({ error: `rate limit — retry in ${rl.retryAfterSeconds}s` }); return; }
       const podUrl = resolveSubjectPodUrl(bound.callerDid);
       const label = actorForPod(podUrl, MESH_ACTOR_LABELS);
       const tenant = lensTenantFor(label);
-      const telemetry = operation.startsWith('telemetry-');
+      const captureStore = telemetryCaptureStore(bound.callerDid, podUrl, label);
+      if (operation === 'telemetry-capture-read' || operation === 'telemetry-capture-update') {
+        const { agent_id: _agent, subject_pod_url: _pod, timestamp: _time, ...settings } = bound.payload;
+        const preferences = operation === 'telemetry-capture-read'
+          ? await readCapturePreferences(bound.callerDid, captureStore)
+          : await updateCapturePreferences(bound.callerDid, settings, captureStore);
+        const view = captureView(bridgeBaseUrl, preferences);
+        res.setHeader('Cache-Control', 'no-store');
+        if (wantsHmd(req)) { sendHmd(res, view.hmd); return; }
+        res.json({ ok: true, preferences, scope: 'this authenticated observer', client_host_activation: 'not attested; installation, connection and host hook trust are separate', view });
+        return;
+      }
       // UUID begins immediately: registry ids truncate the encoded principal.
       const principal = randomUUID();
       const secret = randomBytes(32).toString('base64url');
@@ -8499,24 +8533,28 @@ const signedXapiHandler = (operation: 'read' | 'write' | 'telemetry-ingest' | 't
             query = normalizeQuery(options.query ?? options);
           } catch (error) { res.status(400).json({ error: (error as Error).message }); return; }
           const report = telemetryReport(bound.callerDid, await deps.snapshot(), query, deps.now());
-          const view = telemetryView(bridgeBaseUrl, report);
+          const capture = await readCapturePreferences(bound.callerDid, captureStore).catch(() => null);
+          const view = telemetryView(bridgeBaseUrl, { ...report, capture });
           res.setHeader('Cache-Control', 'no-store');
           if (wantsHmd(req)) { sendHmd(res, view.hmd); return; }
-          res.json({ ...report, view });
+          res.json({ ...report, ...(capture ? { capture } : { capture_unavailable: true }), view });
         } else {
           const result = operation === 'telemetry-ingest'
-            ? await ingestTelemetry(bound.callerDid, bound.payload.events, deps)
+            ? await withCaptureConsent(bound.callerDid, bound.payload.events, bound.payload.capture_revision, captureStore,
+              events => ingestTelemetry(bound.callerDid, events, deps))
             : operation === 'write' ? await writeSelfXapi(bound.callerDid, bound.payload.statements, deps)
             : await readSelfXapi(bound.payload.query, deps);
           res.status(result.status).json(result.body);
         }
       } finally { inboundCredentials.remove(credential.id); }
-    } catch (err) { sendServerError(res, err, 'signed-xapi'); }
+    } catch (err) { if (err instanceof CaptureError) { res.status(err.status).json({ ok: false, error: err.message }); return; } sendServerError(res, err, 'signed-xapi'); }
 };
 app.post('/agent/xapi-statements/read', signedXapiHandler('read'));
 app.post('/agent/xapi-statements/write', signedXapiHandler('write'));
 app.post('/agent/llm-telemetry/ingest', signedXapiHandler('telemetry-ingest'));
 app.post('/agent/llm-telemetry/query', signedXapiHandler('telemetry-query'));
+app.post('/agent/llm-telemetry/capture/read', signedXapiHandler('telemetry-capture-read'));
+app.post('/agent/llm-telemetry/capture/update', signedXapiHandler('telemetry-capture-update'));
 app.get('/llm-telemetry', (_req, res) => { res.setHeader('Cache-Control', 'no-store'); sendHmd(res, telemetryView(bridgeBaseUrl).hmd); });
 app.get(['/llm-telemetry/profile', '/llm-telemetry/profile/v1'], (_req, res) => res.type('application/ld+json').json(telemetryProfile()));
 app.get('/llm-telemetry/event-schema', (_req, res) => res.type('application/schema+json').json(eventSchema()));
@@ -8531,7 +8569,10 @@ app.get('/llm-telemetry/:collection/:term', (req, res, next) => {
 app.get('/llm-telemetry/coverage', (_req, res) => res.json({
   profile: `${bridgeBaseUrl}/llm-telemetry/profile/v1`, default_capture: 'metadata only',
   excludes: ['prompts', 'responses', 'reasoning', 'tool arguments', 'tool results', 'credentials', 'transcript paths'],
-  capture_sources: ['Codex MCP lifecycle hooks after host installation and trust', 'provider-neutral runtime adapter', 'explicit manual observations'],
+  capture_sources: ['Interego MCP request observer after server opt-in', 'Codex MCP lifecycle hooks after client opt-in plus host installation and trust', 'provider-neutral runtime adapter after client opt-in', 'explicit manual observations'],
+  defaults: { server_enabled: false, client_enabled: false },
+  server_limits: ['Only authenticated write-capable OAuth calls to /mcp are eligible', 'Telemetry management and delivery are excluded', 'Matched request observations are delivered after the call returns', 'Relay UTC-day groups are not chat sessions', 'No automatic retry queue; unconfirmed delivery is marked in MCP metadata', 'No ordinary chat messages, other servers, provider tokens or inferred subagent identities'],
+  overlap: 'When both sources report one operation, they remain separate observations. Cross-source counts are not a count of unique work.',
   hook_limits: ['Hosted web tools are not covered', 'MCP hooks cannot observe SessionEnd', 'SessionStart can run before the MCP connection is ready', 'Identical lifecycle keys coalesce; hooks have no durable delivery queue'],
   durability: 'Successful ingests require actual own-lens LRS read-back and awaited encrypted PGSL persistence. Reports also read a fresh encrypted snapshot after restarts.',
   activation: 'Availability of this endpoint does not mean hooks are installed. Query records to see which sources have actually delivered events.',

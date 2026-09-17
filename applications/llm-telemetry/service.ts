@@ -1,6 +1,7 @@
 import { writeSelfXapi, type SelfXapiDependencies, type SelfXapiReply } from '../foxxi-content-intelligence/src/self-xapi.js';
 import { normalizeEvent, eventStatement, telemetryMetadata, digest, type Json } from './events.js';
 import { INTENT, USAGE, VERSION } from './profile.js';
+import { captureChannel } from './capture.js';
 
 export interface TelemetrySnapshot {
   statements: Json[];
@@ -48,18 +49,19 @@ export async function ingestTelemetry(actor: string, input: unknown, deps: Telem
   try { return await run; } finally { if (locks.get(actor) === run) locks.delete(actor); }
 }
 
-export interface TelemetryQuery { session_id?: string; source?: string; model?: string; kind?: string; runtime_agent_id?: string; tool_name?: string; status?: string; capture_mode?: string; since?: string; until?: string; limit?: number; offset?: number; view?: string }
+export interface TelemetryQuery { session_id?: string; source?: string; model?: string; kind?: string; runtime_agent_id?: string; tool_name?: string; status?: string; capture_mode?: string; capture_channel?: string; since?: string; until?: string; limit?: number; offset?: number; view?: string }
 export function normalizeQuery(input: unknown): TelemetryQuery {
   if (input === undefined) return {};
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('query must be an object');
   const result: Json = {};
   for (const [k, v] of Object.entries(input)) {
     if (v === '' || v === undefined) continue;
-    if (!['session_id', 'source', 'model', 'kind', 'runtime_agent_id', 'tool_name', 'status', 'capture_mode', 'since', 'until', 'limit', 'offset', 'view'].includes(k)) throw new Error(`unsupported query field: ${k}`);
+    if (!['session_id', 'source', 'model', 'kind', 'runtime_agent_id', 'tool_name', 'status', 'capture_mode', 'capture_channel', 'since', 'until', 'limit', 'offset', 'view'].includes(k)) throw new Error(`unsupported query field: ${k}`);
     if (k === 'limit' || k === 'offset') {
       const n = Number(v); if (!Number.isSafeInteger(n) || n < (k === 'limit' ? 1 : 0) || n > (k === 'limit' ? 200 : 1000000)) throw new Error(`invalid ${k}`); result[k] = n;
     } else {
       if (typeof v !== 'string' || v.length > 240 || /[\x00-\x1f]/.test(v)) throw new Error(`invalid ${k}`);
+      if (k === 'capture_channel' && !['server','client','manual'].includes(v)) throw new Error('invalid capture_channel');
       if (['since', 'until'].includes(k) && (!/^\d{4}-\d\d-\d\dT/.test(v) || !Number.isFinite(Date.parse(v)))) throw new Error(`invalid ${k} timestamp`);
       result[k] = v;
     }
@@ -86,9 +88,10 @@ export function telemetryReport(actor: string, snapshot: TelemetrySnapshot, quer
     const m = telemetryMetadata(s)!;
     return ['session_id', 'source', 'model', 'kind', 'tool_name', 'status', 'capture_mode'].every(k => !(query as Json)[k] || m[k] === (query as Json)[k])
       && (!query.runtime_agent_id || m.agent_id === query.runtime_agent_id)
+      && (!query.capture_channel || captureChannel(m) === query.capture_channel)
       && (!query.since || Date.parse(s.timestamp) >= Date.parse(query.since)) && (!query.until || Date.parse(s.timestamp) <= Date.parse(query.until));
   }).sort((a, b) => String(a.timestamp).localeCompare(String(b.timestamp)) || String(a.id).localeCompare(String(b.id)));
-  const sessions = new Map<string, Json>(); const sourceCounts: Json = {}; const eventCounts: Json = {};
+  const sessions = new Map<string, Json>(); const sourceCounts: Json = {}; const channelCounts: Json = {}; const eventCounts: Json = {};
   const costs: Json = {}; let inputTokens = 0, outputTokens = 0, inputKnown = 0, outputKnown = 0, costKnown = 0;
   const starts = new Map<string, Json>(); const ends = new Set<string>(); const durations: number[] = [];
   const durationEvidence: Json[] = []; let unmatchedEnds = 0;
@@ -100,11 +103,12 @@ export function telemetryReport(actor: string, snapshot: TelemetrySnapshot, quer
     const u = ['model-completed', 'model-failed'].includes(m.kind) ? s.result?.extensions?.[USAGE] : undefined;
     const key = s.context.registration;
     let session = sessions.get(key);
-    if (!session) { session = { registration: key, session_id: m.session_id, source: m.source, first_seen: s.timestamp, last_seen: s.timestamp, events: 0, errors: 0, agents: new Set<string>(), models: new Set<string>(), capture_modes: new Set<string>(), ended: false }; sessions.set(key, session); }
+    if (!session) { session = { registration: key, session_id: m.session_id, source: m.source, session_scope: m.session_scope ?? 'host-session', capture_channel: captureChannel(m), first_seen: s.timestamp, last_seen: s.timestamp, events: 0, errors: 0, agents: new Set<string>(), models: new Set<string>(), capture_modes: new Set<string>(), ended: false }; sessions.set(key, session); }
     session.last_seen = s.timestamp; session.events++; session.errors += m.status === 'error' || m.kind.endsWith('-failed') ? 1 : 0;
     if (m.agent_id) session.agents.add(m.agent_id); if (m.model) session.models.add(m.model); session.capture_modes.add(m.capture_mode);
     if (m.kind === 'session-ended') session.ended = true;
     sourceCounts[m.source] = (sourceCounts[m.source] ?? 0) + 1; eventCounts[m.kind] = (eventCounts[m.kind] ?? 0) + 1;
+    const channel = captureChannel(m); channelCounts[channel] = (channelCounts[channel] ?? 0) + 1;
     if (typeof u?.input_tokens === 'number') { inputTokens += u.input_tokens; inputKnown++; }
     if (typeof u?.output_tokens === 'number') { outputTokens += u.output_tokens; outputKnown++; }
     if (typeof u?.cost === 'number' && typeof u.currency === 'string') { costs[u.currency] = (costs[u.currency] ?? 0) + u.cost; costKnown++; }
@@ -125,6 +129,8 @@ export function telemetryReport(actor: string, snapshot: TelemetrySnapshot, quer
   durations.sort((a, b) => a - b);
   const offset = query.offset ?? 0; const limit = query.limit ?? 50;
   const insights: Json[] = [];
+  if (channelCounts.server && channelCounts.client) insights.push({ kind: 'overlapping-observers', text: 'Server and client observers may describe the same operation. Counts are observations, not unique work; no cross-source deduplication is inferred.', statementIds: [] });
+  if (channelCounts.server) insights.push({ kind: 'server-coverage', text: 'Relay records cover Interego MCP calls and use UTC-day observation groups, not host chat sessions. Calls appear after completion; other tools, chat turns and provider usage are outside this source.', statementIds: [] });
   const errors = rows.filter(s => { const m = telemetryMetadata(s)!; return m.status === 'error' || m.kind.endsWith('-failed'); });
   if (errors.length) insights.push({ kind: 'errors', text: `${errors.length} explicit failure observations. Inspect their runtime and tool identifiers.`, statementIds: errors.slice(0, 20).map(s => s.id) });
   if (missingEnds.length || unmatchedEnds) insights.push({ kind: 'capture-gaps', text: `${missingEnds.length} starts have no observed end; ${unmatchedEnds} ends have no observed start in this selection. These are capture gaps or unfinished work, not proven failures.`, statementIds: missingEnds.slice(0, 20).map(k => starts.get(k)!.id) });
@@ -135,7 +141,7 @@ export function telemetryReport(actor: string, snapshot: TelemetrySnapshot, quer
       lrs_available: snapshot.lrsAvailable, encrypted_history_available: snapshot.durableAvailable,
       complete_for_available_snapshot: snapshot.durableAvailable && snapshot.lrsAvailable && !snapshot.conflictingIds.length,
       durable_matching_events: rows.filter(s => durable.has(s.id)).length, conflicting_statement_ids: snapshot.conflictingIds,
-      sources: sourceCounts, input_usage_events: inputKnown, output_usage_events: outputKnown, cost_events: costKnown,
+      sources: sourceCounts, capture_channels: channelCounts, count_semantics: 'observations; sources can overlap on the same underlying work', input_usage_events: inputKnown, output_usage_events: outputKnown, cost_events: costKnown,
       time_filter: 'event timestamp; source time when provided, otherwise collector observation time',
       scope: 'Only configured observers that delivered records are visible. An empty result does not prove no activity. Hosted web tools, uninstalled hooks and inaccessible chats are not covered.',
     },
