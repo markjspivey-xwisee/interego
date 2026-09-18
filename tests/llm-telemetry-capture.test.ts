@@ -78,7 +78,7 @@ describe('independent durable capture consent', () => {
   it('renders executable independent choices, preserving boolean defaults and revision', () => {
     const view=captureView('https://example.org',{observer:actor,revision:3,server_enabled:true,client_enabled:false,updated_at:time});
     const doc=parseHypermediaMarkdown(view.hmd);
-    expect(doc.controls).toHaveLength(6);
+    expect(doc.controls).toHaveLength(7);
     expect(view.controls.find(c=>c.id==='server')?.payload).toEqual({server_enabled:false,expected_revision:3});
     expect(view.controls.find(c=>c.id==='client')?.payload).toEqual({client_enabled:true,expected_revision:3});
     expect(liftHypermediaMarkdown(view.hmd).some(t=>t.p==='http://www.w3.org/ns/shacl#defaultValue'&&t.o==='false')).toBe(true);
