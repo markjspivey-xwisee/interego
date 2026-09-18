@@ -110,7 +110,7 @@ function normalizePath(p) {
 const allowSet = new Set(ALLOWLIST.map(normalizePath));
 
 // ── 1. Routes declared in server.ts ──────────────────────────────────────────
-const serverSrc = [SERVER, resolve(ROOT, 'applications/foxxi-content-intelligence/src/scorm-artifacts.ts')].map(path => readFileSync(path, 'utf8')).join('\n');
+const serverSrc = [SERVER, resolve(ROOT, 'applications/foxxi-content-intelligence/src/scorm-artifacts.ts'), resolve(ROOT, 'applications/llm-telemetry/client-setup-routes.ts')].map(path => readFileSync(path, 'utf8')).join('\n');
 // app.post('/agent/...'   app.get("/agent/..."   app.put('/agent/...')
 const routeRe = /\bapp\.(post|get|put)\(\s*['"`](\/agent\/[^'"`]*)['"`]/g;
 const routes = new Map(); // normalizedPath → { raw, methods:Set }

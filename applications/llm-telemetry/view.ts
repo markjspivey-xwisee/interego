@@ -1,6 +1,7 @@
 import { renderHypermediaMarkdown, actionUrl, type HypermediaControl } from '@interego/core';
 import { hmdProse, affordanceControl } from '../_shared/hypermedia/index.js';
-import { telemetryAffordances, queryInputs, captureReadAffordance, captureUpdateAffordance } from './affordances.js';
+import { telemetryAffordances, queryInputs, captureReadAffordance, captureUpdateAffordance, clientSetupAffordance } from './affordances.js';
+import type { ClientSetup } from './client-setup.js';
 import type { CapturePreferences } from './capture.js';
 import { telemetryMetadata, type Json } from './events.js';
 import { PROFILE, RELAY_SIGNATURE } from './profile.js';
@@ -8,6 +9,7 @@ import { PROFILE, RELAY_SIGNATURE } from './profile.js';
 const queryAction = telemetryAffordances[2]!;
 const cell = (x: unknown) => String(x ?? '—').replace(/[|\r\n]/g, ' ').replace(/[\[\]<>`]/g, '');
 const table = (headers: string[], rows: unknown[][]) => `| ${headers.join(' | ')} |\n| ${headers.map(() => '---').join(' | ')} |\n${rows.map(r => `| ${r.map(cell).join(' | ')} |`).join('\n')}`;
+const setupControl = (base: string): HypermediaControl & Json => ({ ...affordanceControl(clientSetupAffordance, base), id: 'client-setup', label: 'Client reporting setup', whenToUse: 'Client reporting setup', descriptorUrl: `${base}/affordances`, executable: true, fields: [] });
 
 export function telemetryView(base: string, report?: Json) {
   const authority = `${base}/affordances`;
@@ -21,7 +23,7 @@ export function telemetryView(base: string, report?: Json) {
   };
   let body: string;
   if (!report) {
-    body = '# LLM activity\n\nSee which sessions are reporting, follow work across agents and tools, and inspect the evidence behind each insight.\n\nOpen **Capture settings** to choose Interego recording, client reporting, both, or neither. Both start off. Interego records calls through this server; client reporting covers supported host activity after its collector is installed and trusted.\n\nOpen **My sessions** to load your private records. Use **Query** to narrow the time range, source, model or runtime.\n\nCapture collects identifiers, lifecycle events and reported usage. Message contents, tool arguments, credentials and transcripts are excluded. Coverage is measured from received events; this page alone does not start a collector.';
+    body = '# LLM activity\n\nSee which sessions are reporting, follow work across agents and tools, and inspect the evidence behind each insight.\n\nOpen **Capture settings** to choose Interego recording, client reporting, both, or neither. Both start off. Interego records calls through this server; client reporting covers supported host activity after its hooks are configured and reviewed. Open **Client reporting setup** to reuse your existing connection with Codex or Claude Code.\n\nOpen **My sessions** to load your private records. Use **Query** to narrow the time range, source, model or runtime.\n\nCapture collects identifiers, lifecycle events and reported usage. Message contents, tool arguments, credentials and transcripts are excluded. Coverage is measured from received events; this page alone does not start a collector.';
     control('sessions', 'My sessions', { view: 'sessions' });
     control('report', 'Activity report', { view: 'report' });
     control('query', 'Query');
@@ -55,6 +57,7 @@ export function telemetryView(base: string, report?: Json) {
     control('query', 'New query');
   }
   controls.push({ ...affordanceControl(captureReadAffordance, base), id: 'capture', label: 'Capture settings', whenToUse: 'Capture settings', descriptorUrl: authority, executable: true, requires: [RELAY_SIGNATURE], fields: [] });
+  controls.push(setupControl(base));
   const links = [{ label: 'xAPI profile', href: PROFILE, rel: 'describedby', type: 'application/ld+json' }, { label: 'Affordance contracts', href: `${authority}?format=markdown`, rel: 'related', type: 'text/markdown' }, { label: 'Capture and coverage', href: `${base}/llm-telemetry/coverage`, rel: 'related', type: 'application/json' }];
   const title = /^# ([^\n]+)/.exec(body)?.[1] ?? 'LLM activity';
   const hmd = renderHypermediaMarkdown({ id: report ? `urn:uuid:${crypto.randomUUID()}` : `${base}/llm-telemetry`, type: 'schema:DigitalDocument', descriptorUrl: authority, title, body: hmdProse(body), controls, links });
@@ -80,16 +83,50 @@ export function captureView(base: string, preferences: CapturePreferences) {
   controls.push({ ...affordanceControl(captureReadAffordance, base), id: 'refresh-capture', whenToUse: 'Refresh settings', descriptorUrl: authority, executable: true, requires: [RELAY_SIGNATURE], fields: [] });
   const sessionFields = [{ name: 'view', path: `${base}/llm-telemetry/query#view`, defaultValue: 'sessions', datatype: 'http://www.w3.org/2001/XMLSchema#string', minCount: 0 }];
   controls.push({ ...affordanceControl(queryAction, base), id: 'sessions', whenToUse: 'My sessions', descriptorUrl: authority, executable: true, requires: [RELAY_SIGNATURE], fields: sessionFields });
+  controls.push(setupControl(base));
   const title = 'Capture settings';
   const body = '# Capture settings\n\nChoose either source, both, or neither for this connected agent. Both default to off.\n\n'
     + table(['Source', 'Your choice', 'What it covers'], [
       ['Interego recording', preferences.server_enabled ? 'On' : 'Off', 'Authenticated calls through this Interego MCP server; no client plugin required.'],
       ['Client reporting', preferences.client_enabled ? 'On' : 'Off', 'Reports from installed host hooks or runtime adapters, including supported work outside Interego.'],
-    ]) + '\n\nClient reporting needs a collector installed, connected and trusted in each participating host. Switching it on here permits reports; it does not install or trust a collector.\n\n'
+    ]) + '\n\nClient reporting uses the existing Interego connection. Open **Client reporting setup** for supported Codex and Claude Code configuration. No second MCP server or source build is required. Switching it on here permits reports; it does not install or trust host hooks. Browser chat coverage and unverified host setup are shown explicitly.\n\n'
     + 'Switching a source off refuses new automatic deliveries to Interego. To stop a host collector itself, disable its hooks or adapter there. Existing records remain available. Explicit manual observations remain separate signed actions.\n\n'
     + 'Both sources can observe the same operation. Reports preserve their source labels and count observations, not distinct work. Relay UTC-day groups are not chat sessions.\n\n'
     + `Settings revision: ${preferences.revision}.`;
   const links = [{ label: 'Capture coverage', href: `${base}/llm-telemetry/coverage`, rel: 'describedby', type: 'application/json' }];
   const hmd = renderHypermediaMarkdown({ id: `urn:uuid:${crypto.randomUUID()}`, type: 'schema:DigitalDocument', descriptorUrl: authority, title, body: hmdProse(body), controls, links });
+  return { descriptorUrl: authority, title, hmd, body: hmdProse(body).replace(/^# [^\n]+\n+/, ''), controls, links };
+}
+
+export function clientSetupView(base: string, setup: ClientSetup) {
+  const authority = `${base}/affordances`;
+  const statusLabel = (status: string) => ({ 'configuration-available': 'Configuration available; host review required', 'configuration-prepared': 'Configuration ready; host activation not verified', 'connection-name-required': 'Enter your existing connection name', 'choose-client': 'Choose your client', 'host-setup-unverified': 'Client setup not verified for this surface', 'server-capture-only': 'Server capture only' }[status] ?? status);
+  const controls: Array<HypermediaControl & Json> = setup.support.filter(host => host.support === 'configuration-available').map(host => ({
+    ...affordanceControl(clientSetupAffordance, base), id: `setup-${host.client}`, label: `Set up ${host.label}`, whenToUse: `Set up ${host.label}`, descriptorUrl: authority, executable: true,
+    fields: [
+      { name: 'client', path: `${base}/llm-telemetry/client-setup#client`, defaultValue: host.client, datatype: 'http://www.w3.org/2001/XMLSchema#string', minCount: 0 },
+      { name: 'server_name', path: `${base}/llm-telemetry/client-setup#server_name`, description: 'Exact name of your EXISTING Interego MCP connection in this client. Do not create another connection.', datatype: 'http://www.w3.org/2001/XMLSchema#string', minCount: 1, maxCount: 1, ...(setup.server_name ? { defaultValue: setup.server_name } : {}) },
+    ],
+  }));
+  const links = [{ label: 'Capture coverage', href: `${base}/llm-telemetry/coverage`, rel: 'describedby', type: 'application/json' }];
+  if (setup.configuration) links.unshift({ label: `Download ${setup.label} hook configuration`, href: `${base}/llm-telemetry/setup/config?client=${encodeURIComponent(setup.client)}&server_name=${encodeURIComponent(setup.server_name!)}`, rel: 'related', type: 'application/json' });
+  if (setup.documentation) links.push({ label: 'Official host documentation', href: setup.documentation, rel: 'describedby', type: 'text/html' });
+  if (setup.verification_query) {
+    const payload = setup.verification_query;
+    controls.push({ ...affordanceControl(queryAction, base), id: 'client-evidence', label: 'Client reporting evidence', whenToUse: 'Client reporting evidence', descriptorUrl: authority, executable: true, requires: [RELAY_SIGNATURE], payload,
+      fields: Object.entries(payload).map(([name, defaultValue]) => ({ name, path: `${base}/llm-telemetry/query#${name}`, defaultValue, datatype: 'http://www.w3.org/2001/XMLSchema#string', minCount: 0 })) });
+  }
+  controls.push({ ...affordanceControl(captureReadAffordance, base), id: 'capture', label: 'Capture settings', whenToUse: 'Capture settings', descriptorUrl: authority, executable: true, requires: [RELAY_SIGNATURE], fields: [] });
+  const title = 'Client reporting setup';
+  const body = '# Client reporting setup\n\nTelemetry uses your existing Interego MCP connection. Server capture already works without a client plugin. Optional host hooks send additional metadata to the same ingestion affordance.\n\n'
+    + table(['Client', 'Setup availability'], setup.support.map(host => [host.label, statusLabel(host.support)])) + '\n\n'
+    + `Selected: **${cell(setup.label)}**. Status: **${cell(statusLabel(setup.status))}**.\n\n`
+    + `Prepared at ${cell(setup.prepared_at)}. The evidence query only includes live records from this time onward; confirm the session belongs to the host you configured.\n\n`
+    + (setup.server_name ? `Existing connection name: ${cell(setup.server_name)}.\n\n` : '')
+    + '## Requirements\n\n' + setup.requirements.map(s => `- ${s}`).join('\n') + '\n\n'
+    + '## Setup\n\n' + setup.steps.map((s, i) => `${i + 1}. ${s}`).join('\n') + '\n\n'
+    + (setup.configuration ? 'Use the **Download hook configuration** link below. Your coding agent can merge these hook entries into the existing host settings while preserving unrelated configuration. Review the result in the host before activating it. This download contains configuration only; no new MCP server, executable, token or credential.\n\n' : '')
+    + '## Coverage\n\n' + setup.limits.map(s => `- ${s}`).join('\n');
+  const hmd = renderHypermediaMarkdown({ id: `${base}/llm-telemetry/setup`, type: 'schema:DigitalDocument', descriptorUrl: authority, title, body: hmdProse(body), controls, links });
   return { descriptorUrl: authority, title, hmd, body: hmdProse(body).replace(/^# [^\n]+\n+/, ''), controls, links };
 }

@@ -1,0 +1,26 @@
+import type { Express, Request, Response } from 'express';
+import { telemetryClientSetup } from './client-setup.js';
+import { clientSetupView } from './view.js';
+
+/** Read-only setup on the existing application authority; no credentials or settings are written. */
+export function mountTelemetryClientSetup(app: Express, base: string) {
+  const handle = (download: boolean, markdown: boolean) => (req: Request, res: Response) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    try {
+      const setup = telemetryClientSetup(req.method === 'POST' ? req.body : req.query);
+      if (download) {
+        if (!setup.configuration) { res.status(409).json({ ok: false, status: setup.status, error: 'Configuration requires a supported client and its existing MCP connection name.' }); return; }
+        res.setHeader('Content-Disposition', `attachment; filename="interego-${setup.client}-hooks.json"`);
+        res.type('application/json').send(JSON.stringify(setup.configuration, null, 2) + '\n');
+        return;
+      }
+      const view = clientSetupView(base, setup);
+      if (markdown) res.type('text/markdown').send(view.hmd);
+      else res.json({ ...setup, view });
+    } catch (error) { res.status(400).json({ ok: false, error: error instanceof Error ? error.message : 'Invalid setup request' }); }
+  };
+  app.get('/llm-telemetry/setup', handle(false, true));
+  app.get('/llm-telemetry/setup/config', handle(true, false));
+  app.post('/agent/llm-telemetry/client-setup', handle(false, false));
+}

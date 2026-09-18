@@ -25,6 +25,7 @@ import { ingestTelemetry, normalizeQuery, telemetryReport, mergeTelemetrySnapsho
 import { telemetryProfile } from '../../llm-telemetry/profile.js';
 import { eventSchema } from '../../llm-telemetry/events.js';
 import { telemetryView, captureView } from '../../llm-telemetry/view.js';
+import { mountTelemetryClientSetup } from '../../llm-telemetry/client-setup-routes.js';
 import { captureResource, readCapturePreferences, updateCapturePreferences, withCaptureConsent, createTelemetryRateLimit, CaptureError, type CaptureStore } from '../../llm-telemetry/capture.js';
 import { persistedLatticeArtifacts } from '../src/foundation-shared-lattice.js';
 import type { RequestHandler } from 'express';
@@ -8555,6 +8556,7 @@ app.post('/agent/llm-telemetry/ingest', signedXapiHandler('telemetry-ingest'));
 app.post('/agent/llm-telemetry/query', signedXapiHandler('telemetry-query'));
 app.post('/agent/llm-telemetry/capture/read', signedXapiHandler('telemetry-capture-read'));
 app.post('/agent/llm-telemetry/capture/update', signedXapiHandler('telemetry-capture-update'));
+mountTelemetryClientSetup(app, bridgeBaseUrl);
 app.get('/llm-telemetry', (_req, res) => { res.setHeader('Cache-Control', 'no-store'); sendHmd(res, telemetryView(bridgeBaseUrl).hmd); });
 app.get(['/llm-telemetry/profile', '/llm-telemetry/profile/v1'], (_req, res) => res.type('application/ld+json').json(telemetryProfile()));
 app.get('/llm-telemetry/event-schema', (_req, res) => res.type('application/schema+json').json(eventSchema()));
@@ -8569,11 +8571,12 @@ app.get('/llm-telemetry/:collection/:term', (req, res, next) => {
 app.get('/llm-telemetry/coverage', (_req, res) => res.json({
   profile: `${bridgeBaseUrl}/llm-telemetry/profile/v1`, default_capture: 'metadata only',
   excludes: ['prompts', 'responses', 'reasoning', 'tool arguments', 'tool results', 'credentials', 'transcript paths'],
-  capture_sources: ['Interego MCP request observer after server opt-in', 'Codex MCP lifecycle hooks after client opt-in plus host installation and trust', 'provider-neutral runtime adapter after client opt-in', 'explicit manual observations'],
+  capture_sources: ['Interego MCP request observer after server opt-in', 'Codex and Claude Code MCP lifecycle hooks using the existing connection after client opt-in and host configuration/review', 'provider-neutral runtime adapter after client opt-in', 'explicit manual observations'],
+  client_setup: `${bridgeBaseUrl}/llm-telemetry/setup`,
   defaults: { server_enabled: false, client_enabled: false },
   server_limits: ['Only authenticated write-capable OAuth calls to /mcp are eligible', 'Telemetry management and delivery are excluded', 'Matched request observations are delivered after the call returns', 'Relay UTC-day groups are not chat sessions', 'No automatic retry queue; unconfirmed delivery is marked in MCP metadata', 'No ordinary chat messages, other servers, provider tokens or inferred subagent identities'],
   overlap: 'When both sources report one operation, they remain separate observations. Cross-source counts are not a count of unique work.',
-  hook_limits: ['Hosted web tools are not covered', 'MCP hooks cannot observe SessionEnd', 'SessionStart can run before the MCP connection is ready', 'Identical lifecycle keys coalesce; hooks have no durable delivery queue'],
+  hook_limits: ['Coverage depends on the runtime; native browser chat hooks are not activated by an MCP connection', 'These configurations do not emit SessionEnd', 'A session-observed marker accompanies delivered events rather than relying on startup MCP readiness', 'Generic act tool calls are excluded to prevent recursion', 'Identical lifecycle keys coalesce; hooks have no durable delivery queue', 'Configuration availability does not attest host installation or delivery'],
   durability: 'Successful ingests require actual own-lens LRS read-back and awaited encrypted PGSL persistence. Reports also read a fresh encrypted snapshot after restarts.',
   activation: 'Availability of this endpoint does not mean hooks are installed. Query records to see which sources have actually delivered events.',
 }));

@@ -27,15 +27,31 @@ Authenticated telemetry has its own per-observer limits per bridge process: 120 
 
 Operators opt into observation modules with `INTEREGO_REQUEST_OBSERVERS`, a JSON array of local deployment module paths. The reference image includes this application's adapter; the plain relay image has no application observer configured. No new MCP tool is added.
 
-## Connect a supported Codex host
+## Set up client reporting through the existing connection
 
-Enable **Client reporting** in Capture settings. Generate the personal plugin with `node applications/llm-telemetry/build-plugin.mjs /path/to/interego-telemetry`. Install that folder in Codex, connect its Interego MCP server, and review the host's hook trust request. Installing a plugin does not itself trust its hooks. No script in this project writes trust hashes or reads credentials.
+Open **Client reporting setup** from the activity interface or Capture settings. The hosted entry is `https://foxxi-bridge.interego.xwisee.com/llm-telemetry/setup`. It is an ordinary application affordance reached with Interego's existing generic tools; there is no new telemetry MCP tool or separate server to connect.
 
-The hook configuration calls the existing generic `act` tool with `sign_payload: true`. It sends only an explicit field allowlist. There are no command hooks and no transcript reads. Prompt text, answers, internal reasoning, arguments, tool results, filesystem paths and credentials are excluded. `UserPromptSubmit` does not attest that the initiator was a human, so that role remains unknown; controlled runtimes can report a known human or agent initiator explicitly.
+Choose the runtime and enter the exact name of its **existing** authenticated Interego MCP connection. The service provides a ready-to-download JSON configuration that calls the same signed ingestion affordance. Users do not build source code, install a second MCP connection, or copy authentication tokens.
 
-The [host hook documentation](https://learn.chatgpt.com/docs/hooks) defines the capture boundary. Hosted web tools and any host paths that opt out of hooks are not covered. MCP hooks cannot handle SessionEnd. The first SessionStart can happen before MCP is ready. Failed hook deliveries are nonblocking and have no durable retry queue. Logical keys coalesce repeated SessionStart, Stop and compaction observations; these counts are observations, not exact occurrence counts. Hook timestamps are collector observation times, so reports do not infer tool execution latency from them. Tool completion does not attest domain success. Provider token usage is not exposed by these hooks and stays unknown.
+| Client | Delivered integration |
+| --- | --- |
+| Codex CLI | Declarative MCP tool hooks for its documented event fields; host trust review required. |
+| Claude Code CLI | Declarative MCP tool hooks using Claude's `prompt_id`; requires that field and `mcp_tool` hook support. |
+| Claude Code VS Code extension | The same Claude Code hook configuration and shared settings. |
+| Codex VS Code extension / ChatGPT Work | Server capture available; host installation/trust flow has not been verified. Setup explicitly says so and does not generate an unsupported install command. |
+| Ordinary ChatGPT / Claude browser chat | Server capture through the normal connector. No automatic native conversation hooks are installed by connecting MCP. |
 
-The dashboard reports sources that actually delivered events. It does not claim to observe arbitrary ChatGPT chats, uninstalled hosts or inaccessible agent sessions. Use the runtime adapter when precise event times, usage and a retry queue are required.
+Configuration availability is not an attestation that a user's host has loaded, trusted, or executed it. The JSON must be merged into the selected host's hook settings, preserving unrelated configuration. An agent with access to that host can do the merge; hook review remains in that host. Windows uses the equivalent user-profile paths. Replace legacy Interego hooks instead of activating a second copy. Enable Client reporting for the identity connected in that client; consent is not automatically shared across different observer identities.
+
+The setup response includes requirements, limitations, a download link, and a signed **Client reporting evidence** query. Send a fresh prompt and execute a supported tool after setup, then compare returned timestamps/session IDs with that test. Old records for the same source are not proof that a newly configured host is working. The implementation is tested with documented host-event fixtures, xAPI validation, and real HTTP setup/download routes; fixture replay is not a real client lifecycle test.
+
+The configurations allowlist only metadata. They never include prompt text, replies, reasoning, tool arguments/results, transcript paths or credentials. Claude uses `prompt_id` where Codex uses `turn_id`; optional Claude model fields are not assumed. Claude's failure hook records an explicit tool failure; generic completion remains outcome-unknown. A session marker accompanies every delivered event, avoiding reliance on MCP availability at startup. Duplicate session/compaction keys coalesce. No SessionEnd is claimed. Generic `act` calls are excluded from tool hooks to prevent recursive reporting; Interego server capture remains available for ordinary calls to Interego.
+
+Hook delivery has no durable retry queue; timestamps are receipt times and cannot establish execution latency. These configurations do not report token usage, cost or model identity. Use the runtime adapter for actual provider usage and precise event times. Native hosted tools and events a runtime does not expose remain outside its coverage.
+
+Official contracts: [Codex hooks](https://learn.chatgpt.com/docs/hooks), [Claude Code hooks](https://code.claude.com/docs/en/hooks), [Claude Code VS Code settings](https://code.claude.com/docs/en/vs-code). Claude `prompt_id` is documented from v2.1.196; the client must also support MCP tool hooks. A version number alone does not prove capability availability.
+
+The previous `build-plugin.mjs` workflow and generated separate-connection bundle are retired. Use the hosted setup flow.
 
 ## Instrument any controlled runtime
 
