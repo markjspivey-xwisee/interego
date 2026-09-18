@@ -8,7 +8,13 @@ export function mountTelemetryClientSetup(app: Express, base: string) {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     try {
-      const setup = telemetryClientSetup(req.method === 'POST' ? req.body : req.query);
+      const input: unknown = req.method === 'POST' ? req.body : req.query;
+      // The existing bridge enriches POST bodies with transport metadata. Neither
+      // field is setup input; never reflect an injected caller token in the result.
+      const options = req.method === 'POST' && input && typeof input === 'object' && !Array.isArray(input)
+        ? Object.fromEntries(Object.entries(input).filter(([key]) => !['__client_ip', '__caller_token'].includes(key)))
+        : input;
+      const setup = telemetryClientSetup(options);
       if (download) {
         if (!setup.configuration) { res.status(409).json({ ok: false, status: setup.status, error: 'Configuration requires a supported client and its existing MCP connection name.' }); return; }
         res.setHeader('Content-Disposition', `attachment; filename="interego-${setup.client}-hooks.json"`);
