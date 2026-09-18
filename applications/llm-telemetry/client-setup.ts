@@ -12,11 +12,16 @@ export const clientSupport = [
 ] as const;
 
 type HookEvent = Record<string, string>;
+interface HookGroup {
+  matcher?: string;
+  hooks: Array<{ type: 'mcp_tool'; server: string; tool: string; timeout: number;
+    input: { descriptor_url: string; action_iri: string; sign_payload: boolean; payload: { events: HookEvent[] } } }>;
+}
 export interface ClientSetup {
   ok: true; client: string; label: string; status: string; prepared_at: string;
   connection: 'existing-interego-mcp'; server_name: string | null;
   source: string | null; settings_path: string | null;
-  configuration: { hooks: Record<string, unknown[]> } | null;
+  configuration: { hooks: Record<string, HookGroup[]> } | null;
   host_activation: 'not-verified'; support: typeof clientSupport;
   requirements: string[]; steps: string[]; limits: string[];
   verification_query: Record<string, string> | null;
@@ -87,7 +92,7 @@ export function telemetryClientSetup(input: unknown = {}): ClientSetup {
   return result;
 }
 
-function hookConfiguration(runtime: 'claude' | 'codex', server: string, source: string) {
+function hookConfiguration(runtime: 'claude' | 'codex', server: string, source: string): { hooks: Record<string, HookGroup[]> } {
   const session = '${session_id}';
   const turn = runtime === 'claude' ? '${prompt_id}' : '${turn_id}';
   const common = { source, session_id: session, session_scope: 'host-session', capture_mode: 'live', coverage: 'hook' };
@@ -106,7 +111,7 @@ function hookConfiguration(runtime: 'claude' | 'codex', server: string, source: 
   if (runtime === 'claude') definitions.PostToolUseFailure = { kind: 'tool-failed', source_event_id: `v2:${session}:tool:${'${tool_use_id}'}:failure`, tool_use_id: '${tool_use_id}', tool_name: '${tool_name}', status: 'error' };
   const hooks = Object.fromEntries(Object.entries(definitions).map(([name, event]) => [name, [{
     ...(name.includes('ToolUse') ? { matcher: '^(?!act$|mcp__.*__act$).*' } : {}),
-    hooks: [{ type: 'mcp_tool', server, tool: 'act', timeout: 10,
+    hooks: [{ type: 'mcp_tool' as const, server, tool: 'act', timeout: 10,
       input: { descriptor_url: 'https://foxxi-bridge.interego.xwisee.com/affordances',
         action_iri: 'https://relay.interego.xwisee.com/ns/iep/action/llm-telemetry/ingest', sign_payload: true,
         payload: { events: [sessionEvent, { ...common, ...event }] } },
