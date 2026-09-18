@@ -28,7 +28,8 @@ export function normalizeOtlpLogs(input: unknown, source: string, mode: 'live' |
       const record = obj(raw); const a = { ...ra, ...attributes(record.attributes) };
       // event.name is defined by Claude; body is intentionally never read.
       if (source === 'claude-cowork-otel' && (!accountId || a['user.account_uuid'] !== accountId)) { rejected++; continue; }
-      const name = a['event.name'] ?? record.eventName;
+      const rawName = a['event.name'] ?? record.eventName;
+      const name = typeof rawName === 'string' ? rawName.replace(/^claude_code\./, '') : undefined;
       const kinds: Record<string, TelemetryEvent['kind']> = { user_prompt: 'input-received', assistant_response: 'response-completed', tool_result: a.success === 'false' || a.success === false ? 'tool-failed' : 'tool-completed', api_request: 'model-completed', api_error: 'model-failed' };
       const kind = kinds[String(name)];
       const session = id(a['session.id']);

@@ -8480,7 +8480,11 @@ const signedXapiHandler = (operation: 'read' | 'write' | 'telemetry-ingest' | 't
         if (!req.is('application/json')) { res.status(415).json({ error: 'Use OTLP HTTP/JSON logs' }); return; }
         const token = req.headers.authorization?.replace(/^Bearer /, '') ?? '';
         const actor = collectorActor(token);
-        const earlyLimit = checkTelemetryRateLimit(`collector-auth:${actor}`, 'ingest');
+        // Azure's trusted ingress appends the actual peer as the last XFF hop.
+        // Never throttle pre-authentication by an attacker-selected observer.
+        const forwarded = req.headers['x-forwarded-for'];
+        const peer = typeof forwarded === 'string' ? forwarded.split(',').at(-1)!.trim() : Array.isArray(forwarded) ? forwarded.at(-1)!.trim() : req.ip ?? 'unknown';
+        const earlyLimit = checkTelemetryRateLimit(`collector-auth-ip:${peer}`, 'ingest');
         if (!earlyLimit.ok) { res.setHeader('Retry-After', String(earlyLimit.retryAfterSeconds)); res.status(429).json({ error: 'Collector rate limit' }); return; }
         const grant = await verifyCollector(token, telemetryCollectorStore(actor));
         const normalized = normalizeOtlpLogs(req.body, grant.source, grant.mode, grant.account_id);

@@ -16,6 +16,13 @@ describe('native OTLP projection', () => {
     expect(JSON.stringify(a)).not.toMatch(/PRIVATE|other|email|body|prompt"/);
     expect(normalizeOtlpLogs(payload, 'claude-code-otel', 'validation')).toEqual(a);
   });
+  it('accepts namespaced native eventName without event.name', () => {
+    const payload = exportLogs();
+    const record = payload.resourceLogs[0]!.scopeLogs[0]!.logRecords[0]!;
+    record.attributes = record.attributes.filter(a => a.key !== 'event.name');
+    Object.assign(record, { eventName: 'claude_code.user_prompt' });
+    expect(normalizeOtlpLogs(payload, 'claude-code-otel', 'validation').events[0]?.kind).toBe('input-received');
+  });
   it('records reported tokens and duration but never estimated billing', () => {
     const result = normalizeOtlpLogs(exportLogs('api_request', [attr('request_id', 'req-1'), attr('input_tokens', '12'), attr('duration_ms', '25.5'), attr('cost_usd', '5')]), 'claude-code-otel', 'live');
     expect(result.events[0]).toMatchObject({ generation_id: 'req-1', usage: { input_tokens: 12, duration_ms: 25.5 } });
