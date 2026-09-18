@@ -13,13 +13,13 @@ import { validateStatement } from '../applications/foxxi-content-intelligence/sr
 // Recorded contract shapes, not a claim of executing a real Codex/Claude host.
 const fixture = { session_id: 'session-01', turn_id: 'codex-turn-01', prompt_id: 'claude-prompt-01', tool_use_id: 'toolu_01', tool_name: 'Bash', agent_id: 'subagent-01',
   prompt: 'PRIVATE_PROMPT', last_assistant_message: 'PRIVATE_REPLY', transcript_path: '/private/transcript', cwd: '/private/project', tool_input: { command: 'PRIVATE_COMMAND' }, tool_response: 'PRIVATE_RESULT', error: 'PRIVATE_ERROR', api_key: 'PRIVATE_KEY' };
-function expand(value: any, event: Record<string, unknown>): any {
+function expand<T>(value: T, event: Record<string, unknown>): T {
   if (typeof value === 'string') return value.replace(/\$\{([^}]+)\}/g, (_match, key) => {
     if (event[key] === undefined) throw new Error(`host field missing: ${key}`);
     return String(event[key]);
-  });
-  if (Array.isArray(value)) return value.map(v => expand(v, event));
-  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, expand(v, event)]));
+  }) as T;
+  if (Array.isArray(value)) return value.map(v => expand(v, event)) as T;
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, expand(v, event)])) as T;
   return value;
 }
 const actor = 'did:web:example.org:observer';
@@ -31,8 +31,8 @@ describe('existing-connection client telemetry', () => {
     expect(setup.status).toBe('configuration-prepared');
     expect(setup.host_activation).toBe('not-verified');
     expect(Object.keys(setup.configuration!)).toEqual(['hooks']);
-    const inputs: any[] = [];
-    for (const groups of Object.values(setup.configuration!.hooks) as any[][]) {
+    const inputs: unknown[] = [];
+    for (const groups of Object.values(setup.configuration!.hooks)) {
       for (const group of groups) for (const hook of group.hooks) {
         expect(hook).toMatchObject({ type: 'mcp_tool', server: 'interego-railway', tool: 'act' });
         const input = expand(hook.input, fixture);
@@ -52,31 +52,31 @@ describe('existing-connection client telemetry', () => {
 
   it('uses Claude prompt_id rather than Codex turn_id, and keeps tool success unknown', () => {
     for (const client of ['claude-code', 'codex']) {
-      const hooks = telemetryClientSetup({ client, server_name: 'existing' }).configuration!.hooks as any;
-      const input = expand(hooks.UserPromptSubmit[0].hooks[0].input, fixture);
-      expect(input.payload.events[1].turn_id).toBe(client === 'codex' ? fixture.turn_id : fixture.prompt_id);
-      expect(hooks.PostToolUse[0].hooks[0].input.payload.events[1].status).toBe('unknown');
+      const hooks = telemetryClientSetup({ client, server_name: 'existing' }).configuration!.hooks;
+      const input = expand(hooks.UserPromptSubmit![0]!.hooks[0]!.input, fixture);
+      expect(input.payload.events[1]!.turn_id).toBe(client === 'codex' ? fixture.turn_id : fixture.prompt_id);
+      expect(hooks.PostToolUse![0]!.hooks[0]!.input.payload.events[1]!.status).toBe('unknown');
       expect(hooks.SessionStart).toBeUndefined();
       expect(hooks.SessionEnd).toBeUndefined();
     }
-    const claude = telemetryClientSetup({ client: 'claude-code', server_name: 'existing' }).configuration!.hooks as any;
-    expect(claude.PostToolUseFailure[0].hooks[0].input.payload.events[1]).toMatchObject({ kind: 'tool-failed', status: 'error' });
+    const claude = telemetryClientSetup({ client: 'claude-code', server_name: 'existing' }).configuration!.hooks;
+    expect(claude.PostToolUseFailure![0]!.hooks[0]!.input.payload.events[1]).toMatchObject({ kind: 'tool-failed', status: 'error' });
   });
 
   it('does not need optional Claude model or turn fields for tool delivery and excludes recursive act calls', () => {
-    const hooks = telemetryClientSetup({ client: 'claude-code', server_name: 'plugin:existing:interego' }).configuration!.hooks as any;
-    const group = hooks.PreToolUse[0];
-    const input = expand(group.hooks[0].input, { session_id: 'session-1', tool_use_id: 'tool-1', tool_name: 'Read' });
+    const hooks = telemetryClientSetup({ client: 'claude-code', server_name: 'plugin:existing:interego' }).configuration!.hooks;
+    const group = hooks.PreToolUse![0]!;
+    const input = expand(group.hooks[0]!.input, { session_id: 'session-1', tool_use_id: 'tool-1', tool_name: 'Read' });
     expect(input.payload.events.map(normalizeEvent)).toHaveLength(2);
-    for (const name of ['act', 'mcp__interego__act', 'mcp__plugin_existing_interego__act']) expect(new RegExp(group.matcher).test(name)).toBe(false);
-    for (const name of ['Bash', 'Read', 'mcp__github__get_issue']) expect(new RegExp(group.matcher).test(name)).toBe(true);
+    for (const name of ['act', 'mcp__interego__act', 'mcp__plugin_existing_interego__act']) expect(new RegExp(group.matcher!).test(name)).toBe(false);
+    for (const name of ['Bash', 'Read', 'mcp__github__get_issue']) expect(new RegExp(group.matcher!).test(name)).toBe(true);
   });
 
   it('deduplicates session markers and keeps actual tool operations distinct', () => {
-    const hooks = telemetryClientSetup({ client: 'claude-code', server_name: 'existing' }).configuration!.hooks as any;
+    const hooks = telemetryClientSetup({ client: 'claude-code', server_name: 'existing' }).configuration!.hooks;
     const statements = new Map<string, ReturnType<typeof eventStatement>>();
     for (const tool_use_id of ['tool-1', 'tool-2']) for (const phase of ['PreToolUse', 'PostToolUse']) {
-      const input = expand(hooks[phase][0].hooks[0].input, { ...fixture, tool_use_id });
+      const input = expand(hooks[phase]![0]!.hooks[0]!.input, { ...fixture, tool_use_id });
       for (const e of input.payload.events) { const s = eventStatement(actor, normalizeEvent(e), now); statements.set(s.id, s); }
     }
     const values = [...statements.values()];
@@ -87,8 +87,8 @@ describe('existing-connection client telemetry', () => {
   });
 
   it('requires actual client consent even with valid generated events', async () => {
-    const hooks = telemetryClientSetup({ client: 'claude-code', server_name: 'existing' }).configuration!.hooks as any;
-    const events = expand(hooks.PreToolUse[0].hooks[0].input, fixture).payload.events;
+    const hooks = telemetryClientSetup({ client: 'claude-code', server_name: 'existing' }).configuration!.hooks;
+    const events = expand(hooks.PreToolUse![0]!.hooks[0]!.input, fixture).payload.events;
     const store: CaptureStore = { now: () => now, load: async () => [], persist: async () => true };
     await expect(withCaptureConsent(actor, events, undefined, store, async () => true)).rejects.toMatchObject({ status: 403 });
   });
