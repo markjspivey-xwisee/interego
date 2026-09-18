@@ -1,6 +1,6 @@
 import { renderHypermediaMarkdown, actionUrl, type HypermediaControl } from '@interego/core';
 import { hmdProse, affordanceControl } from '../_shared/hypermedia/index.js';
-import { telemetryAffordances, queryInputs, captureReadAffordance, captureUpdateAffordance, clientSetupAffordance } from './affordances.js';
+import { telemetryAffordances, queryInputs, captureReadAffordance, captureUpdateAffordance, clientSetupAffordance, collectorAffordances } from './affordances.js';
 import type { ClientSetup } from './client-setup.js';
 import type { CapturePreferences } from './capture.js';
 import { telemetryMetadata, type Json } from './events.js';
@@ -110,6 +110,9 @@ export function clientSetupView(base: string, setup: ClientSetup) {
   }));
   const links = [{ label: 'Capture coverage', href: `${base}/llm-telemetry/coverage`, rel: 'describedby', type: 'application/json' }];
   if (setup.configuration) links.unshift({ label: `Download ${setup.label} hook configuration`, href: `${base}/llm-telemetry/setup/config?client=${encodeURIComponent(setup.client)}&server_name=${encodeURIComponent(setup.server_name!)}`, rel: 'related', type: 'application/json' });
+  if (setup.configuration) links.push({ label: 'Download Interego Activity native plugin', href: `${base}/llm-telemetry/setup/plugin?client=${encodeURIComponent(setup.client)}&server_name=${encodeURIComponent(setup.server_name!)}`, rel: 'related', type: 'application/zip' });
+  links.push({ label: 'Native integration coverage and requirements', href: `${base}/llm-telemetry/native-integrations`, rel: 'describedby', type: 'application/json' });
+  controls.push({ ...affordanceControl(collectorAffordances[0]!, base), id: 'collector-create', label: 'Create native OTLP collector credential', whenToUse: 'Configure Claude Code native telemetry export', descriptorUrl: authority, executable: true, fields: [{ name: 'capture_mode', path: `${base}/llm-telemetry/collector#capture_mode`, datatype: 'http://www.w3.org/2001/XMLSchema#string', defaultValue: 'live', minCount: 1, maxCount: 1 }] });
   if (setup.documentation) links.push({ label: 'Official host documentation', href: setup.documentation, rel: 'describedby', type: 'text/html' });
   if (setup.verification_query) {
     const payload = setup.verification_query;

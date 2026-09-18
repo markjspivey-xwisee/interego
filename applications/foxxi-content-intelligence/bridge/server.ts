@@ -23,6 +23,8 @@ import { randomUUID, createHash, randomBytes } from 'node:crypto';
 import { readSelfXapi, writeSelfXapi } from '../src/self-xapi.js';
 import { ingestTelemetry, normalizeQuery, telemetryReport, mergeTelemetrySnapshot, type TelemetryDependencies } from '../../llm-telemetry/service.js';
 import { telemetryProfile } from '../../llm-telemetry/profile.js';
+import { normalizeOtlpLogs } from '../../llm-telemetry/otlp.js';
+import { collectorActor, collectorResource, issueCollector, verifyCollector, revokeCollector, type CollectorStore } from '../../llm-telemetry/collector.js';
 import { eventSchema } from '../../llm-telemetry/events.js';
 import { telemetryView, captureView } from '../../llm-telemetry/view.js';
 import { mountTelemetryClientSetup } from '../../llm-telemetry/client-setup-routes.js';
@@ -8454,22 +8456,62 @@ function telemetryCaptureStore(actor: string, podUrl: string, label: string): Ca
     },
   };
 }
+function telemetryCollectorStore(actor: string): CollectorStore {
+  const podUrl = resolveSubjectPodUrl(actor); const label = actorForPod(podUrl, MESH_ACTOR_LABELS);
+  const resourceName = collectorResource(actor);
+  return {
+    load: async () => {
+      const records = await persistedLatticeArtifacts(podUrl, 'llm:CollectorGrant', resourceName);
+      return records === null ? null : records.map(r => r.content);
+    },
+    persist: async grant => {
+      const receipt = await composeIntoSharedLattice({ podUrl, agentDid: actor, label: `${label}-${resourceName}`,
+        resourceName, publishDescriptor: false, terms: [actor], content: { ...grant }, contentType: 'llm:CollectorGrant' });
+      return receipt?.persisted === true;
+    },
+  };
+}
 const checkTelemetryRateLimit = createTelemetryRateLimit();
-const signedXapiHandler = (operation: 'read' | 'write' | 'telemetry-ingest' | 'telemetry-query' | 'telemetry-capture-read' | 'telemetry-capture-update'): RequestHandler => async (req, res) => {
+const signedXapiHandler = (operation: 'read' | 'write' | 'telemetry-ingest' | 'telemetry-query' | 'telemetry-capture-read' | 'telemetry-capture-update' | 'telemetry-collector-create' | 'telemetry-collector-revoke' | 'telemetry-otlp'): RequestHandler => async (req, res) => {
     try {
-      const bound = await bindSignedCaller(req.body, { hint: 'sign_request the query/statements, then follow the signed xAPI affordance.' });
+      res.setHeader('Cache-Control', 'no-store');
+      let bound: BoundCaller;
+      if (operation === 'telemetry-otlp') {
+        if (!req.is('application/json')) { res.status(415).json({ error: 'Use OTLP HTTP/JSON logs' }); return; }
+        const token = req.headers.authorization?.replace(/^Bearer /, '') ?? '';
+        const actor = collectorActor(token);
+        const earlyLimit = checkTelemetryRateLimit(`collector-auth:${actor}`, 'ingest');
+        if (!earlyLimit.ok) { res.setHeader('Retry-After', String(earlyLimit.retryAfterSeconds)); res.status(429).json({ error: 'Collector rate limit' }); return; }
+        const grant = await verifyCollector(token, telemetryCollectorStore(actor));
+        const normalized = normalizeOtlpLogs(req.body, grant.source, grant.mode, grant.account_id);
+        // The credential is ingest-only. Body/resource identity never grants authority.
+        bound = { ok: true, callerDid: actor, authMode: 'delegated', signer: 'collector-capability', payload: normalized as unknown as Record<string, unknown> };
+      } else bound = await bindSignedCaller(req.body, { hint: 'sign_request the query/statements, then follow the signed xAPI affordance.' });
       if (!bound.ok) { res.status(bound.status).json({ error: bound.error }); return; }
       const telemetry = operation.startsWith('telemetry-');
       const xff = req.headers['x-forwarded-for'];
       const ip = typeof xff === 'string' ? xff.split(',').at(-1)!.trim() : Array.isArray(xff) ? xff.at(-1)!.trim() : req.ip ?? 'unknown';
       const rl = telemetry
-        ? checkTelemetryRateLimit(bound.callerDid, operation === 'telemetry-ingest' ? 'ingest' : operation === 'telemetry-query' ? 'query' : 'settings')
+        ? checkTelemetryRateLimit(bound.callerDid, operation === 'telemetry-ingest' || operation === 'telemetry-otlp' ? 'ingest' : operation === 'telemetry-query' ? 'query' : 'settings')
         : checkAgenticRateLimit(ip);
       if (!rl.ok) { res.setHeader('Retry-After', String(rl.retryAfterSeconds)); res.status(429).json({ error: `rate limit — retry in ${rl.retryAfterSeconds}s` }); return; }
       const podUrl = resolveSubjectPodUrl(bound.callerDid);
       const label = actorForPod(podUrl, MESH_ACTOR_LABELS);
       const tenant = lensTenantFor(label);
       const captureStore = telemetryCaptureStore(bound.callerDid, podUrl, label);
+      if (operation === 'telemetry-collector-create' || operation === 'telemetry-collector-revoke') {
+        const store = telemetryCollectorStore(bound.callerDid);
+        if (operation === 'telemetry-collector-revoke') { res.json(await revokeCollector(bound.callerDid, bound.payload.collector_id, store)); return; }
+        const preferences = await readCapturePreferences(bound.callerDid, captureStore);
+        if (!preferences.client_enabled) throw new CaptureError(403, 'Enable client reporting before creating a collector');
+        const issued = await issueCollector(bound.callerDid, bound.payload.capture_mode, store, Date.now(), bound.payload.source, bound.payload.account_id);
+        res.json({ ok: true, ...issued, endpoint: `${bridgeBaseUrl}/llm-telemetry/otlp/v1/logs`, protocol: 'http/json',
+          host_activation: 'not-verified', scope: 'metadata-only intake for this observer; no read or administration access',
+          configuration: issued.source === 'claude-cowork-otel' ? { otlpEndpoint: `${bridgeBaseUrl}/llm-telemetry/otlp`, otlpProtocol: 'http/json', otlpHeaders: `Authorization=Bearer ${issued.token}`, otlpContentCapture: [], note: 'Organization owner setup required. Only the configured user.account_uuid is accepted; missing invocation identifiers are excluded.' } : { env: { CLAUDE_CODE_ENABLE_TELEMETRY: '1', OTEL_LOGS_EXPORTER: 'otlp', OTEL_METRICS_EXPORTER: 'none',
+            OTEL_EXPORTER_OTLP_LOGS_PROTOCOL: 'http/json', OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: `${bridgeBaseUrl}/llm-telemetry/otlp/v1/logs`,
+            OTEL_EXPORTER_OTLP_LOGS_HEADERS: `Authorization=Bearer ${issued.token}`, OTEL_LOG_USER_PROMPTS: '0', OTEL_LOG_ASSISTANT_RESPONSES: '0', OTEL_LOG_TOOL_DETAILS: '0', OTEL_LOG_RAW_API_BODIES: '0' } } });
+        return;
+      }
       if (operation === 'telemetry-capture-read' || operation === 'telemetry-capture-update') {
         const { agent_id: _agent, subject_pod_url: _pod, timestamp: _time, ...settings } = bound.payload;
         const preferences = operation === 'telemetry-capture-read'
@@ -8525,7 +8567,17 @@ const signedXapiHandler = (operation: 'read' | 'write' | 'telemetry-ingest' | 't
             return telemetry && result ? { persisted: result.persisted, holonUri: result.holonUri } : result;
           },
         };
-        if (operation === 'telemetry-query') {
+        if (operation === 'telemetry-otlp') {
+          const events = bound.payload.events as unknown[];
+          // Enforce opt-in even for empty/unsupported exports.
+          if (!(await readCapturePreferences(bound.callerDid, captureStore)).client_enabled) throw new CaptureError(403, 'Client reporting disabled');
+          for (let offset = 0; offset < events.length; offset += 20) {
+            const result = await withCaptureConsent(bound.callerDid, events.slice(offset, offset + 20), undefined, captureStore,
+              batch => ingestTelemetry(bound.callerDid, batch, deps));
+            if (result.status !== 200) { res.status(result.status).json({ error: 'Telemetry delivery not confirmed; retry identical export' }); return; }
+          }
+          res.json(bound.payload.rejected ? { partialSuccess: { rejectedLogRecords: String(bound.payload.rejected), errorMessage: 'Unsupported or incomplete records excluded; content is never retained' } } : {});
+        } else if (operation === 'telemetry-query') {
           let query;
           try {
             // The signature binder adds identity/time fields; only the query options
@@ -8556,6 +8608,9 @@ app.post('/agent/llm-telemetry/ingest', signedXapiHandler('telemetry-ingest'));
 app.post('/agent/llm-telemetry/query', signedXapiHandler('telemetry-query'));
 app.post('/agent/llm-telemetry/capture/read', signedXapiHandler('telemetry-capture-read'));
 app.post('/agent/llm-telemetry/capture/update', signedXapiHandler('telemetry-capture-update'));
+app.post('/agent/llm-telemetry/collector/create', signedXapiHandler('telemetry-collector-create'));
+app.post('/agent/llm-telemetry/collector/revoke', signedXapiHandler('telemetry-collector-revoke'));
+app.post('/llm-telemetry/otlp/v1/logs', signedXapiHandler('telemetry-otlp'));
 mountTelemetryClientSetup(app, bridgeBaseUrl);
 app.get('/llm-telemetry', (_req, res) => { res.setHeader('Cache-Control', 'no-store'); sendHmd(res, telemetryView(bridgeBaseUrl).hmd); });
 app.get(['/llm-telemetry/profile', '/llm-telemetry/profile/v1'], (_req, res) => res.type('application/ld+json').json(telemetryProfile()));
