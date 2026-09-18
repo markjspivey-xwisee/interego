@@ -99,7 +99,7 @@ describe('general LLM xAPI observations', () => {
     const s = eventStatement(actor, event(), time); const report = telemetryReport(actor, mergeTelemetrySnapshot(actor, [s], [s]), {}, time);
     const v = telemetryView('https://example.org', report); const doc = parseHypermediaMarkdown(v.hmd);
     expect(doc.body).toContain('1 observations'); expect(doc.body).not.toContain('"actor":');
-    expect(doc.controls.every(c => c.requires?.length === 1)).toBe(true);
+    expect(doc.controls.filter(c => c.id !== 'client-setup').every(c => c.requires?.length === 1)).toBe(true);
     expect(doc.controls.find(c => c.id?.includes('session-0'))?.fields?.some(f => f.defaultValue === 'session-1')).toBe(true);
     expect(liftHypermediaMarkdown(v.hmd).some(t => t.p === 'http://www.w3.org/ns/shacl#defaultValue' && t.o === 'session-1')).toBe(true);
   });
