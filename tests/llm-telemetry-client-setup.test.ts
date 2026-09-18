@@ -115,7 +115,16 @@ describe('hosted setup delivery', () => {
   let server: Server | undefined;
   afterEach(async () => { if (server) await new Promise<void>((resolve, reject) => server!.close(error => error ? reject(error) : resolve())); });
   it('serves configuration from the existing application and refuses unsupported downloads', async () => {
-    const app = express(); app.use(express.json()); mountTelemetryClientSetup(app, 'https://example.org');
+    const app = express(); app.use(express.json());
+    // Match the production bridge's enrichment before application routes run.
+    app.use((req, _res, next) => {
+      if (req.method === 'POST' && req.body && typeof req.body === 'object') {
+        req.body.__client_ip = '192.0.2.1';
+        req.body.__caller_token = 'PRIVATE_TRANSPORT_TOKEN';
+      }
+      next();
+    });
+    mountTelemetryClientSetup(app, 'https://example.org');
     server = app.listen(0, '127.0.0.1');
     await new Promise<void>(resolve => server!.once('listening', resolve));
     const address = server.address(); if (!address || typeof address === 'string') throw new Error('missing address');
@@ -124,6 +133,9 @@ describe('hosted setup delivery', () => {
     expect(response.status).toBe(200);
     const setup = await response.json();
     expect(setup).toMatchObject({ status: 'configuration-prepared', host_activation: 'not-verified' });
+    expect(JSON.stringify(setup)).not.toMatch(/PRIVATE_TRANSPORT_TOKEN|__caller_token|__client_ip|192\.0\.2\.1/);
+    const invalid = await fetch(`${base}/agent/llm-telemetry/client-setup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ client: 'codex', token: 'private' }) });
+    expect(invalid.status).toBe(400);
     const download = await fetch(`${base}/llm-telemetry/setup/config?client=claude-code&server_name=existing`);
     expect(download.status).toBe(200);
     expect(download.headers.get('Content-Disposition')).toContain('attachment');
