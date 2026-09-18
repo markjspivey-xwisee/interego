@@ -235,7 +235,7 @@ const UNLINTED_FRONTIER = {
   //    applications 415 -> 464 files, 1323 -> 1452 errors; demos 37 -> 45 files, 48 unchanged
   //    (its .tsx files are clean). Written here rather than argued about later: this is the one
   //    kind of repin that is legitimate, and it is legitimate only because the SCAN widened.
-  applications: { errors: 1452, files: 464 },
+  applications: { errors: 1452, files: 489 },
   // The controller comparison adds two lint-clean audit modules; the census is 46.
   // Re-pin the file floor to that measured count without raising the error ceiling.
   benchmarks: { errors: 193, files: 46 },
