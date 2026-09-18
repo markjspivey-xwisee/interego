@@ -6,7 +6,7 @@ export const clientSupport = [
   { client: 'claude-code', label: 'Claude Code CLI', support: 'configuration-available', runtime: 'claude', settings: '~/.claude/settings.json', documentation: 'https://code.claude.com/docs/en/hooks' },
   { client: 'claude-code-vscode', label: 'Claude Code in VS Code', support: 'configuration-available', runtime: 'claude', settings: '~/.claude/settings.json', documentation: 'https://code.claude.com/docs/en/vs-code' },
   { client: 'codex-vscode', label: 'Codex in VS Code', support: 'host-setup-unverified', documentation: 'https://learn.chatgpt.com/docs/hooks' },
-  { client: 'chatgpt-work', label: 'ChatGPT Work', support: 'host-setup-unverified', documentation: 'https://learn.chatgpt.com/docs/plugins' },
+  { client: 'chatgpt-work', label: 'ChatGPT Work', support: 'configuration-available', runtime: 'codex', documentation: 'https://learn.chatgpt.com/docs/plugins' },
   { client: 'chatgpt-web', label: 'ChatGPT browser chat', support: 'server-capture-only', documentation: 'https://learn.chatgpt.com/docs/plugins' },
   { client: 'claude-web', label: 'Claude browser chat', support: 'server-capture-only', documentation: 'https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp' },
 ] as const;
@@ -87,6 +87,10 @@ export function telemetryClientSetup(input: unknown = {}): ClientSetup {
     'Query Client reporting evidence for this source and the setup time. An empty result is not proof of installation; historical records do not prove this host is active.',
   ];
   if (!server) { result.status = 'connection-name-required'; return result; }
+  if (selected === 'chatgpt-work') {
+    result.steps = ['Download the Interego Activity plugin archive and install using the host native plugin flow where offered.', 'Review and trust the bundled hooks in the host. This service cannot activate them remotely.', 'Enable Client reporting, run a new Work session and verify actual source/time-bound events. Installation flow remains unverified in this host.'];
+    result.limits.push('Ordinary Chat mode is not attested by Work hook support. Plugin preparation does not establish availability of an installation/trust control in your account.');
+  }
   result.configuration = hookConfiguration(runtime, server, source!);
   result.status = 'configuration-prepared';
   return result;

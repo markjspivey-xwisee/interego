@@ -1,4 +1,6 @@
 import type { Express, Request, Response } from 'express';
+import { nativeIntegrations } from './native-integrations.js';
+import { telemetryPluginPackage } from './plugin-package.js';
 import { telemetryClientSetup } from './client-setup.js';
 import { clientSetupView } from './view.js';
 
@@ -26,6 +28,13 @@ export function mountTelemetryClientSetup(app: Express, base: string) {
       else res.json({ ...setup, view });
     } catch (error) { res.status(400).json({ ok: false, error: error instanceof Error ? error.message : 'Invalid setup request' }); }
   };
+  app.get('/llm-telemetry/native-integrations', (_req, res) => { res.setHeader('Cache-Control', 'no-store'); res.json(nativeIntegrations(base)); });
+  app.get('/llm-telemetry/setup/plugin', (req, res) => {
+    res.setHeader('Cache-Control', 'no-store'); res.setHeader('X-Content-Type-Options', 'nosniff');
+    try { const setup = telemetryClientSetup(req.query); const archive = telemetryPluginPackage(setup);
+      res.setHeader('Content-Disposition', 'attachment; filename="interego-activity.zip"'); res.type('application/zip').send(archive);
+    } catch { res.status(400).json({ error: 'Select a supported host and exact existing MCP connection name' }); }
+  });
   app.get('/llm-telemetry/setup', handle(false, true));
   app.get('/llm-telemetry/setup/config', handle(true, false));
   app.post('/agent/llm-telemetry/client-setup', handle(false, false));

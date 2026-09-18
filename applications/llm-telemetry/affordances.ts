@@ -69,4 +69,18 @@ export const clientSetupAffordance: Affordance = {
   } },
   annotations: { title: 'Client reporting setup', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }, appliesTo: { collections: ['entry', 'telemetry'] },
 };
-export const telemetryAffordances: readonly Affordance[] = [...observationAffordances, ...captureAffordances, clientSetupAffordance];
+export const collectorAffordances: readonly Affordance[] = [
+  { action: 'urn:iep:action:llm-telemetry:collector-create' as IRI, toolName: 'llm_telemetry.collector_create', title: 'Create native collector credential',
+    description: 'Create a private, expiring, ingest-only credential bound to this authenticated observer. Requires client consent. Returns native Claude Code OTLP HTTP/JSON settings. Does not configure a host. Keep the credential private.',
+    method: 'POST', targetTemplate: '{base}/agent/llm-telemetry/collector/create', mediaType: 'application/json', externallyRouted: true,
+    inputs: [{ name: 'source', type: 'string', required: false, enum: ['claude-code-otel', 'claude-cowork-otel'], description: 'Native exporter source. Defaults to Claude Code.' }, { name: 'account_id', type: 'string', required: false, description: 'Your exact user.account_uuid; mandatory for organization-wide Cowork export so other users are excluded.' }, { name: 'capture_mode', type: 'string', required: true, enum: ['live', 'validation'], description: 'Live native observations or explicitly separated validation fixtures.' }],
+    outputs: { description: 'Private collector credential and native settings; activation remains unverified.', properties: { ok: { type: 'boolean' }, token: { type: 'string' }, collector_id: { type: 'string' }, configuration: { type: 'object', additionalProperties: true } } },
+    annotations: { title: 'Create collector', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }, appliesTo: { collections: ['telemetry'] } },
+  { action: 'urn:iep:action:llm-telemetry:collector-revoke' as IRI, toolName: 'llm_telemetry.collector_revoke', title: 'Revoke collector credential',
+    description: 'Revoke one own collector credential. Existing observations are preserved.',
+    method: 'POST', targetTemplate: '{base}/agent/llm-telemetry/collector/revoke', mediaType: 'application/json', externallyRouted: true,
+    inputs: [{ name: 'collector_id', type: 'string', required: true, description: 'Collector ID returned at creation.' }],
+    outputs: { description: 'Confirmed revocation.', properties: { ok: { type: 'boolean' }, revoked: { type: 'boolean' } } },
+    annotations: { title: 'Revoke collector', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }, appliesTo: { collections: ['telemetry'] } },
+];
+export const telemetryAffordances: readonly Affordance[] = [...observationAffordances, ...captureAffordances, clientSetupAffordance, ...collectorAffordances];
