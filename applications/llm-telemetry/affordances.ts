@@ -40,7 +40,7 @@ const observationAffordances: readonly Affordance[] = [
 const captureOutputs = { description: 'Durable independent capture preferences for this authenticated observer, plus a HyperMarkdown view. Client opt-in does not attest host installation or hook trust.', properties: { ok: { type: 'boolean' as const }, preferences: { type: 'object' as const, additionalProperties: true }, scope: { type: 'string' as const }, client_host_activation: { type: 'string' as const }, view: { type: 'object' as const, additionalProperties: true }, error: { type: 'string' as const } } };
 export const captureReadAffordance: Affordance = {
   action: 'urn:iep:action:llm-telemetry:capture-read' as IRI, toolName: 'llm_telemetry.capture_read', title: 'Read capture settings',
-  description: 'Read your independent server and client reporting opt-ins. Both default to off. The server observer covers Interego /mcp requests; client observers require separate installation and host trust.',
+  description: 'Read your independent server and client reporting opt-ins. Both default to off. The server observer covers Interego /mcp requests; client reporters use the existing connection with host hook configuration and review.',
   method: 'POST', targetTemplate: '{base}/agent/llm-telemetry/capture/read', mediaType: 'application/json', externallyRouted: true,
   inputs: [], outputs: captureOutputs, annotations: { title: 'Capture settings', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }, appliesTo: { collections: ['entry', 'telemetry'] },
 };
@@ -55,4 +55,18 @@ export const captureUpdateAffordance: Affordance = {
   ], outputs: captureOutputs, annotations: { title: 'Change capture settings', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }, appliesTo: { collections: ['telemetry'] },
 };
 export const captureAffordances: readonly Affordance[] = [captureReadAffordance, captureUpdateAffordance];
-export const telemetryAffordances: readonly Affordance[] = [...observationAffordances, ...captureAffordances];
+export const clientSetupAffordance: Affordance = {
+  action: 'urn:iep:action:llm-telemetry:client-setup' as IRI, toolName: 'llm_telemetry.client_setup', title: 'Set up client reporting',
+  description: 'Read hosted metadata-only hook configuration for an existing Interego MCP connection. Supports Codex CLI and Claude Code CLI/VS Code contracts; other surfaces report their coverage limits explicitly. Does not install a plugin, connect another server, change consent or approve host trust. Configuration availability is not proof of live delivery.',
+  method: 'POST', targetTemplate: '{base}/agent/llm-telemetry/client-setup', mediaType: 'application/json', externallyRouted: true,
+  inputs: [
+    { name: 'client', type: 'string', required: false, description: 'Runtime or surface to configure; omitted means support overview.', enum: ['overview', 'codex', 'claude-code', 'claude-code-vscode', 'codex-vscode', 'chatgpt-work', 'chatgpt-web', 'claude-web'] },
+    { name: 'server_name', type: 'string', required: false, description: 'Exact existing MCP server name in the selected client. Required to generate configuration. No credentials or new connection.' },
+  ],
+  outputs: { description: 'Client support, requirements, configuration and verification query, with an executable HyperMarkdown setup view. No activation is attested.', properties: {
+    ok: { type: 'boolean' }, client: { type: 'string' }, status: { type: 'string' },
+    host_activation: { type: 'string' }, view: { type: 'object', additionalProperties: true },
+  } },
+  annotations: { title: 'Client reporting setup', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }, appliesTo: { collections: ['entry', 'telemetry'] },
+};
+export const telemetryAffordances: readonly Affordance[] = [...observationAffordances, ...captureAffordances, clientSetupAffordance];
