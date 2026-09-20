@@ -71,6 +71,18 @@ function range(prefix: Uint8Array): { begin: Key; end: Key } {
   return { begin: prefix, end: strinc(prefix) };
 }
 
+/** The single-letter subspaces, named as the header comment names them. */
+export type SubspaceTag = 'N' | 'I' | 'B' | 'L' | 'R' | 'V' | 'O' | 'W' | 'P' | 'A' | 'X' | 'C';
+const TAG_OF: Record<SubspaceTag, number> = { N: TAG_N, I: TAG_CI, B: TAG_CB, L: TAG_LFT, R: TAG_RGT, V: TAG_LV, O: TAG_OV, W: TAG_OVR, P: TAG_PR, A: TAG_AA, X: TAG_AAX, C: TAG_CP };
+/** The whole key range of one subspace, for a collector that must see every row of it. */
+export function subspaceRange(tag: SubspaceTag): { begin: Key; end: Key } {
+  return range(concat(ROOT, B(TAG_OF[tag])));
+}
+/** Byte offset of a subspace's own payload: the root prefix plus the tag byte. */
+export const SUBSPACE_PAYLOAD_OFFSET = ROOT.length + 1;
+/** The 21-byte in-key address of a node, exported for readers of P / V / A / X keys. */
+export function nodeAddrBytes(addr: NodeAddr): Uint8Array { return addrBytes(addr); }
+
 // ── N: content-addressed nodes ──
 export function nodeKey(addr: NodeAddr): Key { return concat(ROOT, B(TAG_N), addrBytes(addr)); }
 export function nodeRange(): { begin: Key; end: Key } { return range(concat(ROOT, B(TAG_N))); }

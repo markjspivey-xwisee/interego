@@ -212,10 +212,14 @@ export class LdpStore {
     await this.store.cpSet(this.col(pod), path, { topUri: uri, opaqueUri: uri, contentType: ct, updatedAt: Date.now(), size: 0, meta });
   }
 
-  /** Delete a resource's record (grow-only content nodes are left in place). */
+  /**
+   * Delete a resource's record and its overlay rows (grow-only content nodes are left in
+   * place; the collector in gc.ts reclaims them once nothing points at them).
+   */
   async deleteResource(pod: string, path: string): Promise<boolean> {
     const existed = (await this.store.cpGet(this.col(pod), path)) !== null;
     await this.store.cpDelete(this.col(pod), path);
+    await this.store.clearOverlay(pod, path);
     return existed;
   }
 
