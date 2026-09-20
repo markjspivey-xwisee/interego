@@ -101,7 +101,7 @@ async function main(): Promise<void> {
 
     if (args.kinds.has('navigate')) jobs.push((async () => {
       const j = await navigate(jev, inv, { task, topK: 5 });
-      const o = recordOutcome(j, { judgmentIri: j.graphIri, filesChanged: [...c.changed] });
+      const o = recordOutcome(j, { judgmentIri: j.graphIri, filesChanged: [...c.changed], source: 'backtest' });
       save(j); save(o);
       tokens += j.usage.input_tokens;
       r.navigate = { top: j.files[0]?.path ?? '', confidence: j.confidence, advice: j.advice, hitAt1: o.hitAt1, hitAt3: o.hitAt3, brier: o.brier, passes: j.passes.length, tokens: j.usage.input_tokens };
@@ -113,7 +113,7 @@ async function main(): Promise<void> {
       const j = await selectTests(jev, inv, { changedFiles: sources, task: c.subject });
       const selected = new Set(j.tests.map((t) => t.path));
       const covered = c.touchedTests.length === 0 ? null : c.touchedTests.every((t) => selected.has(t));
-      const o = recordOutcome(j, { judgmentIri: j.graphIri, testsRun: j.tests.map((t) => t.path), testsFailed: [...c.touchedTests] });
+      const o = recordOutcome(j, { judgmentIri: j.graphIri, testsRun: j.tests.map((t) => t.path), testsFailed: [...c.touchedTests], source: 'backtest' });
       save(j); save(o);
       tokens += j.usage.input_tokens;
       r.select = { mode: j.mode, tests: j.tests.length, semantic: j.tests.filter((t) => t.selectedBy === 'semantic').length, touchedTests: c.touchedTests.length, covered, confidence: j.confidence, tokens: j.usage.input_tokens, reason: j.reasons[0] ?? '' };
@@ -123,7 +123,7 @@ async function main(): Promise<void> {
       const diff = git(args.repo, ['diff', '--no-color', '--unified=3', c.parent, c.sha]) ?? '';
       if (!diff) return;
       const j = await reviewGate(jev, inv, { diff, title: c.subject, description: c.body || c.subject, changedFiles: [...c.changed] });
-      const o = recordOutcome(j, { judgmentIri: j.graphIri, humanDecision: 'approved' });
+      const o = recordOutcome(j, { judgmentIri: j.graphIri, humanDecision: 'approved', source: 'backtest' });
       save(j); save(o);
       tokens += j.usage.input_tokens;
       r.gate = { verdict: j.verdict, agreement: o.agreement ?? 'n/a', reasons: [...j.reasons], riskConfidence: j.risk?.confidence ?? null, tokens: j.usage.input_tokens };

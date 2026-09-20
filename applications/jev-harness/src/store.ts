@@ -148,20 +148,32 @@ export interface AdviceBucket {
   readonly samples: number;
   readonly hitAt1: number | null;
   readonly hitAt3: number | null;
+  /** live: enough real-task outcomes to stand alone; all: real and replayed outcomes together. */
+  readonly source: 'live' | 'all';
 }
 
 export const ADVICE_BUCKET_WIDTH = 0.2;
 export const ADVICE_RULE = { openTopFileHitAt1: 0.5, openTopThreeHitAt3: 0.5 } as const;
 
-export function computeAdviceBuckets(outcomes: readonly OutcomeRecord[], width = ADVICE_BUCKET_WIDTH): AdviceBucket[] {
+/**
+ * Hit rates per confidence bucket. Real-task outcomes are the evidence that matters; a
+ * history replay scores commit subjects, which are weaker tasks. So a bucket is computed from
+ * live outcomes when it has `minSamples` of them and from every outcome otherwise — the
+ * replay is the floor the calibration starts from, not the ceiling it stays at.
+ */
+export function computeAdviceBuckets(outcomes: readonly OutcomeRecord[], width = ADVICE_BUCKET_WIDTH, minSamples = CALIBRATION_MIN_SAMPLES): AdviceBucket[] {
+  const navigations = outcomes.filter((o) => o.judgmentKind === 'navigation' && typeof o.priorConfidence === 'number');
+  const inBucket = (o: OutcomeRecord, from: number): boolean => o.priorConfidence >= from && (o.priorConfidence < from + width || (from + width >= 1 && o.priorConfidence <= 1));
+  const rate = (rows: readonly OutcomeRecord[], pick: (o: OutcomeRecord) => boolean | null): number | null => {
+    const vals = rows.map(pick).filter((v): v is boolean => v !== null);
+    return vals.length === 0 ? null : round(vals.filter(Boolean).length / vals.length);
+  };
   const buckets: AdviceBucket[] = [];
   for (let from = 0; from < 1; from = round(from + width, 6)) {
-    const rows = outcomes.filter((o) => o.judgmentKind === 'navigation' && o.priorConfidence >= from && (o.priorConfidence < from + width || (from + width >= 1 && o.priorConfidence <= 1)));
-    const rate = (pick: (o: OutcomeRecord) => boolean | null): number | null => {
-      const vals = rows.map(pick).filter((v): v is boolean => v !== null);
-      return vals.length === 0 ? null : round(vals.filter(Boolean).length / vals.length);
-    };
-    buckets.push({ from: round(from, 6), samples: rows.length, hitAt1: rate((o) => o.hitAt1), hitAt3: rate((o) => o.hitAt3) });
+    const all = navigations.filter((o) => inBucket(o, from));
+    const live = all.filter((o) => o.source === 'live');
+    const rows = live.length >= minSamples ? live : all;
+    buckets.push({ from: round(from, 6), samples: rows.length, hitAt1: rate(rows, (o) => o.hitAt1), hitAt3: rate(rows, (o) => o.hitAt3), source: live.length >= minSamples ? 'live' : 'all' });
   }
   return buckets;
 }

@@ -53,7 +53,7 @@ export interface NavigationJudgment extends JudgmentBase {
   /** Whether the advice came from the static bands or from measured calibration (set by the service). */
   readonly adviceBasis?: 'default' | 'calibrated';
   /** The calibration bucket the advice was read from, when calibrated. */
-  readonly adviceBucket?: { readonly from: number; readonly samples: number; readonly hitAt1: number | null; readonly hitAt3: number | null };
+  readonly adviceBucket?: { readonly from: number; readonly samples: number; readonly hitAt1: number | null; readonly hitAt3: number | null; readonly source: 'live' | 'all' };
 }
 
 const MAX_OPTIONS = Math.min(240, JEV_LIMITS.choiceOptions - 5);

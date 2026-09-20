@@ -12,8 +12,12 @@ import type { ReviewVerdictJudgment } from './review-gate.js';
 
 export type AnyJudgment = NavigationJudgment | TestSelectionJudgment | FailureTriageJudgment | ReviewVerdictJudgment;
 
+export type OutcomeSource = 'live' | 'backtest';
+
 export interface OutcomeInput {
   readonly judgmentIri: string;
+  /** Where the ground truth came from: a real task (live) or a history replay (backtest). Default live. */
+  readonly source?: OutcomeSource;
   readonly filesChanged?: readonly string[];
   readonly testsRun?: readonly string[];
   readonly testsFailed?: readonly string[];
@@ -27,6 +31,8 @@ export interface OutcomeRecord extends JudgmentBase {
   readonly judgmentKind: JudgmentKind;
   /** The scored judgment's own confidence, kept here so calibration can bucket by it without a lookup. */
   readonly priorConfidence: number;
+  /** live or backtest; calibration prefers live outcomes and falls back to all of them. */
+  readonly source: OutcomeSource;
   readonly hitAt1: boolean | null;
   readonly hitAt3: boolean | null;
   readonly brier: number | null;
@@ -48,6 +54,7 @@ export function recordOutcome(judgment: AnyJudgment, input: OutcomeInput, reposi
     judgmentIri: input.judgmentIri,
     judgmentKind: judgment.kind,
     priorConfidence: judgment.confidence,
+    source: input.source ?? 'live',
     observed: input,
   };
   const graphIri = graphIriFor('outcome', base.id);

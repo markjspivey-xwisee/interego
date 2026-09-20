@@ -223,5 +223,14 @@ describe('outcomes and calibration', () => {
     expect(advice.basis).toBe('calibrated');
     expect(advice.advice).toBe(bucket.hitAt3 && bucket.hitAt3 >= 0.5 ? 'open-top-three' : 'widen-search');
     expect(calibratedAdvice(nav.confidence, nav.advice, computeAdviceBuckets(outcomes.slice(0, 4))).basis).toBe('default');
+    // Replayed outcomes only fill a bucket when no live ones can: five backtest misses count, but
+    // once five live outcomes exist they alone decide, and the bucket says which pool it used.
+    const replay = outcomes.map((o) => ({ ...o, source: 'backtest' as const }));
+    expect(computeAdviceBuckets(replay).find((b) => b.samples > 0)?.source).toBe('all');
+    expect(computeAdviceBuckets(outcomes).find((b) => b.samples > 0)?.source).toBe('live');
+    const liveHits = outcomes.map((o) => ({ ...o, hitAt1: true, hitAt3: true }));
+    const mixed = computeAdviceBuckets([...replay, ...liveHits]).find((b) => b.samples > 0)!;
+    expect(mixed.source).toBe('live');
+    expect(mixed.hitAt1).toBe(1);
   });
 });

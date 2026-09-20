@@ -264,7 +264,7 @@ export function payloadBody(j: Published, ctx: PublishContext): string {
       if (j.scope) t(P('scope'), lit(j.scope));
       t(P('advice'), lit(j.advice));
       if (j.adviceBasis) t(P('adviceBasis'), lit(j.adviceBasis));
-      if (j.adviceBucket) t(P('adviceBucket'), bn([[P('bucketFrom'), dbl(j.adviceBucket.from)], [P('samples'), `"${j.adviceBucket.samples}"^^xsd:integer`], [P('hitAt1Rate'), dbl(j.adviceBucket.hitAt1 ?? 0)], [P('hitAt3Rate'), dbl(j.adviceBucket.hitAt3 ?? 0)]]));
+      if (j.adviceBucket) t(P('adviceBucket'), bn([[P('bucketFrom'), dbl(j.adviceBucket.from)], [P('samples'), `"${j.adviceBucket.samples}"^^xsd:integer`], [P('hitAt1Rate'), dbl(j.adviceBucket.hitAt1 ?? 0)], [P('hitAt3Rate'), dbl(j.adviceBucket.hitAt3 ?? 0)], [P('bucketSource'), lit(j.adviceBucket.source)]]));
       if (j.directoryProbability !== undefined) t(P('directoryProbability'), dbl(j.directoryProbability));
       t(P('covered'), dbl(j.covered));
       for (const f of j.files) t(P('candidate'), bn([[P('role'), lit('change')], [P('path'), lit(f.path)], [P('probability'), dbl(f.probability)]]));
@@ -306,6 +306,7 @@ export function payloadBody(j: Published, ctx: PublishContext): string {
       t(P('judgmentIri'), iri(j.judgmentIri));
       t(P('judgmentKind'), lit(j.judgmentKind));
       t(P('priorConfidence'), dbl(j.priorConfidence));
+      t(P('outcomeSource'), lit(j.source));
       if (j.hitAt1 !== null) t(P('hitAt1'), bool(j.hitAt1));
       if (j.hitAt3 !== null) t(P('hitAt3'), bool(j.hitAt3));
       if (j.brier !== null) t(P('brier'), dbl(j.brier));
