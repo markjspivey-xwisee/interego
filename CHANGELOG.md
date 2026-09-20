@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-19 — jev-harness vertical: System One development judgments as affordances
+
+New vertical at `applications/jev-harness/`. A bridge serves four development-time judgments a TypeSafe System One model (Jev) makes about the bound repository — task navigation, CI test selection, failure triage and review gating — as `iep:Affordance` entries on `GET /affordances`, publishes each judgment as a Context Descriptor whose payload carries its own next-step `hmd:control` entries, records outcomes that `iep:supersedes` the Hypothetical judgment as Asserted, and exposes a calibration view over those chains. A follower CLI walks the manifest and controls (discover, validate against the declared SHACL input shape, act). Backtested on this repository's own history; the calibration numbers and the two policy rules the replay changed are in the vertical's README.
+
 ## 2026-09-17 — Independent server and client telemetry opt-ins
 
 The existing MCP connection can automatically report allowlisted request metadata through an optional deployment observer. Signed HyperMarkdown controls independently enable server recording and client reporting; both MUST default off. Automatic ingestion MUST recheck durable consent, and a server delivery MUST match the consent revision read before its operation. Client installation and hook trust remain separate from intake consent. Reports identify observation channels, UTC-day relay groups and possible overlap without claiming deduplicated work or universal chat coverage. Private preference history does not publish descriptor projections. The plain relay has no application observer configured, and its tool inventory is unchanged.

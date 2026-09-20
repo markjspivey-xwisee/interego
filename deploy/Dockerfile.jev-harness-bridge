@@ -1,0 +1,90 @@
+# ────────────────────────────────────────────────────────────
+#  jev-harness vertical bridge — System One (Jev) development judgments served as
+#  iep:Affordance entries. Same shape as Dockerfile.foxxi-bridge: the repo layout is
+#  preserved under /app so the vertical's relative imports (`../affordances.ts`,
+#  `../src/...`, `../../_shared/affordance-mcp/...`) work unchanged, @interego/core is
+#  resolved by name to its built dist/, and the bridge runs its TypeScript through tsx.
+#
+#  The bridge judges a repository, so the image carries the whole source tree it was
+#  built from (COPY . below) and binds to it: JEV_HARNESS_REPO=/app. There is no git in
+#  the runtime image, so the inventory walks the tree and the judgment's commit is null;
+#  CI and local followers, which have git, compute diffs and changed files themselves
+#  and pass them in. Set TYPESAFE_API_KEY on the service; set INTEREGO_BEARER to have
+#  every judgment published to the pod; BRIDGE_DEPLOYMENT_URL must be the public origin
+#  so the controls the bridge publishes are followable from the relay.
+# ────────────────────────────────────────────────────────────
+
+ARG NODE_BASE=node:22-slim
+FROM ${NODE_BASE} AS build
+
+ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip
+
+WORKDIR /app
+
+# Workspace manifests — npm ci requires every declared workspace's package.json to exist
+# before it can resolve the tree (kept in step with Dockerfile.foxxi-bridge).
+COPY package.json package-lock.json tsconfig.base.json tsconfig.json ./
+COPY packages/abac/package.json ./packages/abac/
+COPY packages/agent-interop/package.json ./packages/agent-interop/
+COPY packages/compliance/package.json ./packages/compliance/
+COPY packages/connectors/package.json ./packages/connectors/
+COPY packages/constitutional/package.json ./packages/constitutional/
+COPY packages/core/package.json ./packages/core/
+COPY packages/extractors/package.json ./packages/extractors/
+COPY packages/mdvault/package.json ./packages/mdvault/
+COPY packages/ops/package.json ./packages/ops/
+COPY packages/p2p/package.json ./packages/p2p/
+COPY packages/passport/package.json ./packages/passport/
+COPY packages/pgsl/package.json ./packages/pgsl/
+COPY packages/pgsl-store/package.json ./packages/pgsl-store/
+COPY packages/privacy/package.json ./packages/privacy/
+COPY packages/registry/package.json ./packages/registry/
+COPY packages/security-txt/package.json ./packages/security-txt/
+COPY packages/skills/package.json ./packages/skills/
+COPY packages/solid/package.json ./packages/solid/
+COPY packages/transactions/package.json ./packages/transactions/
+COPY packages/workspace-client/package.json ./packages/workspace-client/
+COPY mcp-server/package.json ./mcp-server/
+COPY deploy/mcp-relay/package.json ./deploy/mcp-relay/
+COPY deploy/identity/package.json ./deploy/identity/
+COPY deploy/validator/package.json ./deploy/validator/
+COPY applications/foxxi-content-intelligence/bridge/package.json ./applications/foxxi-content-intelligence/bridge/
+COPY applications/agentic-performance-practice/bridge/package.json ./applications/agentic-performance-practice/bridge/
+COPY applications/learner-performer-companion/bridge/package.json ./applications/learner-performer-companion/bridge/
+COPY applications/agent-collective/bridge/package.json ./applications/agent-collective/bridge/
+COPY applications/agent-development-practice/bridge/package.json ./applications/agent-development-practice/bridge/
+COPY applications/organizational-working-memory/bridge/package.json ./applications/organizational-working-memory/bridge/
+COPY applications/lrs-adapter/bridge/package.json ./applications/lrs-adapter/bridge/
+COPY applications/jev-harness/bridge/package.json ./applications/jev-harness/bridge/
+COPY applications/shared-workspace/desktop/package.json ./applications/shared-workspace/desktop/
+COPY applications/shared-workspace/discord/package.json ./applications/shared-workspace/discord/
+RUN npm ci
+
+# tsx for the runtime.
+RUN npm install --no-save tsx@4.22.0
+
+# The tree the bridge judges, and the sources it runs from. .dockerignore keeps node_modules
+# and build output out of the context.
+COPY . ./
+
+# Compile @interego/* → dist/, which the vertical's turtle guard imports by name.
+RUN npm run build:core
+
+RUN mkdir -p node_modules/@interego \
+  && ln -sfn /app/packages/core node_modules/@interego/core
+
+# ────────────────────────────────────────────────────────────
+#  Runtime stage
+# ────────────────────────────────────────────────────────────
+FROM ${NODE_BASE}
+
+WORKDIR /app
+
+COPY --from=build /app /app
+
+ENV NODE_ENV=production
+ENV PORT=8080
+ENV JEV_HARNESS_REPO=/app
+EXPOSE 8080
+
+CMD ["npx", "tsx", "applications/jev-harness/bridge/server.ts"]

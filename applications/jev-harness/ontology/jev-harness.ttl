@@ -1,0 +1,202 @@
+@prefix jvh:   <https://jev-harness.interego.xwisee.com/ns/jev-harness#> .
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix hydra: <http://www.w3.org/ns/hydra/core#> .
+@prefix sh:    <http://www.w3.org/ns/shacl#> .
+@prefix owl:   <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+@prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
+@prefix prov:  <http://www.w3.org/ns/prov#> .
+@prefix dct:   <http://purl.org/dc/terms/> .
+
+# ── jev-harness — vertical vocabulary ─────────────────────────────────────────
+#
+# Vertical application of Interego, NOT part of the protocol. Layer: application-over-L3.
+# Nothing here extends iep:. Every term is a payload type or a payload property that rides
+# inside an ordinary iep:ContextDescriptor; modal status, confidence, provenance, trust and
+# supersession are the descriptor's own facets, never restated here.
+#
+# What the vertical adds: System One development judgments (TypeSafe Jev) about a source
+# repository — where a task's change belongs, which tests cover a change, what a failing test
+# run means, whether a diff may merge without a human — each published as a descriptor whose
+# payload graph carries the next-step controls an agent may follow. A judgment is
+# Hypothetical when published; a recorded Outcome supersedes it as Asserted, and the
+# Calibration view is computed over that chain. The judgment's iep:epistemicConfidence IS the
+# model's reported confidence, so the substrate's facet is populated by a calibrated number
+# rather than a constant.
+
+<https://jev-harness.interego.xwisee.com/ns/jev-harness> a owl:Ontology ;
+    rdfs:label "jev-harness — System One development judgments"@en ;
+    rdfs:comment "Vertical-scoped vocabulary for judgments a System One model makes about a repository at development time, published as Interego Context Descriptors whose payloads carry their own next-step affordances."@en ;
+    dct:creator "Mark Spivey" ;
+    owl:versionInfo "0.1.0" .
+
+# ── Payload types ─────────────────────────────────────────────────────────────
+
+jvh:Judgment a owl:Class ;
+    rdfs:label "Judgment"@en ;
+    rdfs:comment "A typed decision a System One model returned about a repository state. Composed, not minted: an attestation (the asserting agent vouches for a model's answer) over an event record (the request) — it adds no substrate vocabulary. Published Hypothetical; superseded by a jvh:Outcome."@en ;
+    skos:note "construction: composed"@en .
+
+jvh:Navigation a owl:Class ; rdfs:subClassOf jvh:Judgment ;
+    rdfs:label "Navigation"@en ;
+    rdfs:comment "Where a described task's change most likely belongs: ranked candidate files, the test that most directly covers the behaviour, the document to read first, and whether the behaviour appears covered at all."@en .
+
+jvh:TestSelection a owl:Class ; rdfs:subClassOf jvh:Judgment ;
+    rdfs:label "Test Selection"@en ;
+    rdfs:comment "Which tests a set of changed files warrants: the deterministic import-graph set, the semantic set the model added, and whether the whole suite must run instead."@en .
+
+jvh:FailureTriage a owl:Class ; rdfs:subClassOf jvh:Judgment ;
+    rdfs:label "Failure Triage"@en ;
+    rdfs:comment "Each failure in a test-run log classified by cause class, with the action the class warrants."@en .
+
+jvh:ReviewVerdict a owl:Class ; rdfs:subClassOf jvh:Judgment ;
+    rdfs:label "Review Verdict"@en ;
+    rdfs:comment "Whether a diff may proceed without a human: the hazards the model detected, the deterministic checks that fired, and the verdict the published policy derived from them."@en .
+
+jvh:Outcome a owl:Class ; rdfs:subClassOf jvh:Judgment ;
+    rdfs:label "Outcome"@en ;
+    rdfs:comment "What actually happened after a judgment: the files that changed, the tests that failed, the decision a human made. Asserted, and it iep:supersedes the Hypothetical judgment it scores. The evidence atom of calibration."@en .
+
+jvh:Calibration a owl:Class ;
+    rdfs:label "Calibration"@en ;
+    rdfs:comment "A view, not a store: per judgment kind, how often the model's top answer matched the outcome and the Brier score of its probabilities, computed over the judgment-to-outcome supersession chains."@en ;
+    skos:note "construction: view"@en .
+
+# ── Payload properties ────────────────────────────────────────────────────────
+
+jvh:task a owl:DatatypeProperty ; rdfs:label "task"@en ; rdfs:range xsd:string ;
+    rdfs:comment "The task sentence the judgment was made for."@en .
+jvh:repository a owl:DatatypeProperty ; rdfs:label "repository"@en ; rdfs:range xsd:string .
+jvh:commit a owl:DatatypeProperty ; rdfs:label "commit"@en ; rdfs:range xsd:string ;
+    rdfs:comment "The commit the repository inventory was taken at."@en .
+jvh:scope a owl:DatatypeProperty ; rdfs:label "scope"@en ; rdfs:range xsd:string .
+jvh:model a owl:DatatypeProperty ; rdfs:label "model"@en ; rdfs:range xsd:string ;
+    rdfs:comment "The versioned System One model id that answered (for example jev-1.13.0)."@en .
+jvh:confidence a owl:DatatypeProperty ; rdfs:label "confidence"@en ; rdfs:range xsd:double ;
+    rdfs:comment "The model's reported confidence for the judgment as a whole; mirrored into the descriptor's iep:epistemicConfidence."@en .
+jvh:advice a owl:DatatypeProperty ; rdfs:label "advice"@en ; rdfs:range xsd:string .
+jvh:candidate a owl:ObjectProperty ; rdfs:label "candidate"@en ;
+    rdfs:comment "A ranked candidate (file, test, document) with its probability."@en .
+jvh:role a owl:DatatypeProperty ; rdfs:label "role"@en ; rdfs:range xsd:string ;
+    rdfs:comment "What the candidate is ranked as: change, test or document."@en .
+jvh:path a owl:DatatypeProperty ; rdfs:label "path"@en ; rdfs:range xsd:string .
+jvh:probability a owl:DatatypeProperty ; rdfs:label "probability"@en ; rdfs:range xsd:double .
+jvh:covered a owl:DatatypeProperty ; rdfs:label "covered"@en ; rdfs:range xsd:double ;
+    rdfs:comment "Probability that an existing test already covers the behaviour."@en .
+jvh:changedFile a owl:DatatypeProperty ; rdfs:label "changed file"@en ; rdfs:range xsd:string .
+jvh:selectedTest a owl:ObjectProperty ; rdfs:label "selected test"@en .
+jvh:selectedBy a owl:DatatypeProperty ; rdfs:label "selected by"@en ; rdfs:range xsd:string ;
+    rdfs:comment "deterministic (import graph) or semantic (model)."@en .
+jvh:mode a owl:DatatypeProperty ; rdfs:label "mode"@en ; rdfs:range xsd:string ;
+    rdfs:comment "subset or full."@en .
+jvh:reason a owl:DatatypeProperty ; rdfs:label "reason"@en ; rdfs:range xsd:string .
+jvh:failure a owl:ObjectProperty ; rdfs:label "failure"@en .
+jvh:testName a owl:DatatypeProperty ; rdfs:label "test name"@en ; rdfs:range xsd:string .
+jvh:excerpt a owl:DatatypeProperty ; rdfs:label "excerpt"@en ; rdfs:range xsd:string .
+jvh:causeClass a owl:DatatypeProperty ; rdfs:label "cause class"@en ; rdfs:range xsd:string .
+jvh:action a owl:DatatypeProperty ; rdfs:label "recommended action"@en ; rdfs:range xsd:string .
+jvh:verdict a owl:DatatypeProperty ; rdfs:label "verdict"@en ; rdfs:range xsd:string ;
+    rdfs:comment "auto-ok, needs-human-review or block."@en .
+jvh:hazard a owl:ObjectProperty ; rdfs:label "hazard"@en .
+jvh:hazardName a owl:DatatypeProperty ; rdfs:label "hazard name"@en ; rdfs:range xsd:string .
+jvh:check a owl:DatatypeProperty ; rdfs:label "deterministic check that fired"@en ; rdfs:range xsd:string .
+jvh:policy a owl:DatatypeProperty ; rdfs:label "policy"@en ; rdfs:range xsd:string ;
+    rdfs:comment "The published rule that turned raw judgments into the verdict, so a reader can re-derive it."@en .
+jvh:judgmentIri a owl:ObjectProperty ; rdfs:label "judgment"@en ;
+    rdfs:comment "On an Outcome: the graph IRI of the Hypothetical judgment this outcome scores."@en .
+jvh:hitAt1 a owl:DatatypeProperty ; rdfs:label "hit at 1"@en ; rdfs:range xsd:boolean .
+jvh:hitAt3 a owl:DatatypeProperty ; rdfs:label "hit at 3"@en ; rdfs:range xsd:boolean .
+jvh:brier a owl:DatatypeProperty ; rdfs:label "Brier score"@en ; rdfs:range xsd:double .
+jvh:missed a owl:DatatypeProperty ; rdfs:label "missed"@en ; rdfs:range xsd:string ;
+    rdfs:comment "An item the outcome contained that the judgment did not select."@en .
+jvh:agreement a owl:DatatypeProperty ; rdfs:label "agreement"@en ; rdfs:range xsd:string .
+jvh:argumentsJson a owl:DatatypeProperty ; rdfs:label "prefilled arguments (JSON)"@en ; rdfs:range xsd:string ;
+    rdfs:comment "On a control: the JSON payload the publishing judgment already bound, so a follower posts it verbatim to the control's target."@en .
+jvh:declarative a owl:DatatypeProperty ; rdfs:label "declarative"@en ; rdfs:range xsd:boolean ;
+    rdfs:comment "true on a control that communicates an available step but deliberately promises no execution endpoint; a follower performs it locally or hands it to a human."@en .
+
+# ── Input shapes (what a caller must SEND to each affordance) ────────────────
+#
+# Field IRIs are jvh:<field>; a JSON payload key matches the IRI's local name.
+
+jvh:NavigateInputShape a sh:NodeShape ;
+    rdfs:label "navigate input"@en ;
+    sh:property [ sh:path jvh:task ; sh:name "task" ; sh:description "The task sentence: what is to be changed or found." ;
+                  sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ; sh:minLength 8 ; sh:maxLength 2000 ] ;
+    sh:property [ sh:path jvh:scope ; sh:name "scope" ; sh:description "Optional repository-relative directory to search within." ;
+                  sh:datatype xsd:string ; sh:maxCount 1 ; sh:maxLength 300 ] ;
+    sh:property [ sh:path jvh:top_k ; sh:name "top_k" ; sh:description "How many candidates to return per role (1 to 10)." ;
+                  sh:datatype xsd:integer ; sh:maxCount 1 ; sh:minInclusive 1 ; sh:maxInclusive 10 ] .
+
+jvh:SelectTestsInputShape a sh:NodeShape ;
+    rdfs:label "select-tests input"@en ;
+    sh:or ( [ sh:property [ sh:path jvh:changed_files ; sh:minCount 1 ] ]
+            [ sh:property [ sh:path jvh:base_ref ; sh:minCount 1 ] ] ) ;
+    sh:property [ sh:path jvh:changed_files ; sh:name "changed_files" ; sh:description "Repository-relative paths that changed." ;
+                  sh:datatype xsd:string ] ;
+    sh:property [ sh:path jvh:base_ref ; sh:name "base_ref" ; sh:description "Git ref to diff the working tree or head_ref against, when changed_files is not given." ;
+                  sh:datatype xsd:string ; sh:maxCount 1 ] ;
+    sh:property [ sh:path jvh:head_ref ; sh:name "head_ref" ; sh:datatype xsd:string ; sh:maxCount 1 ] ;
+    sh:property [ sh:path jvh:task ; sh:name "task" ; sh:datatype xsd:string ; sh:maxCount 1 ; sh:maxLength 2000 ] .
+
+jvh:TriageInputShape a sh:NodeShape ;
+    rdfs:label "triage input"@en ;
+    sh:property [ sh:path jvh:log ; sh:name "log" ; sh:description "The test runner's output (vitest text or similar)." ;
+                  sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ; sh:minLength 20 ] ;
+    sh:property [ sh:path jvh:changed_files ; sh:name "changed_files" ; sh:datatype xsd:string ] .
+
+jvh:ReviewGateInputShape a sh:NodeShape ;
+    rdfs:label "review-gate input"@en ;
+    sh:or ( [ sh:property [ sh:path jvh:diff ; sh:minCount 1 ] ]
+            [ sh:property [ sh:path jvh:base_ref ; sh:minCount 1 ] ] ) ;
+    sh:property [ sh:path jvh:diff ; sh:name "diff" ; sh:description "A unified diff." ; sh:datatype xsd:string ; sh:maxCount 1 ] ;
+    sh:property [ sh:path jvh:base_ref ; sh:name "base_ref" ; sh:datatype xsd:string ; sh:maxCount 1 ] ;
+    sh:property [ sh:path jvh:head_ref ; sh:name "head_ref" ; sh:datatype xsd:string ; sh:maxCount 1 ] ;
+    sh:property [ sh:path jvh:title ; sh:name "title" ; sh:datatype xsd:string ; sh:maxCount 1 ; sh:maxLength 500 ] ;
+    sh:property [ sh:path jvh:description ; sh:name "description" ; sh:datatype xsd:string ; sh:maxCount 1 ; sh:maxLength 8000 ] .
+
+jvh:RecordOutcomeInputShape a sh:NodeShape ;
+    rdfs:label "record-outcome input"@en ;
+    sh:property [ sh:path jvh:judgment_iri ; sh:name "judgment_iri" ; sh:description "The urn:graph:jev-harness:* IRI of the judgment being scored." ;
+                  sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:property [ sh:path jvh:files_changed ; sh:name "files_changed" ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path jvh:tests_failed ; sh:name "tests_failed" ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path jvh:tests_run ; sh:name "tests_run" ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path jvh:human_decision ; sh:name "human_decision" ; sh:datatype xsd:string ; sh:maxCount 1 ;
+                  sh:in ( "approved" "changes-requested" "blocked" ) ] ;
+    sh:property [ sh:path jvh:confirmed_classes ; sh:name "confirmed_classes" ; sh:description "JSON object mapping failure id to the confirmed cause class." ;
+                  sh:datatype xsd:string ; sh:maxCount 1 ] .
+
+# ── Payload shapes (what a published judgment graph must CONTAIN) ────────────
+
+jvh:JudgmentShape a sh:NodeShape ;
+    sh:targetClass jvh:Judgment ;
+    sh:property [ sh:path jvh:model ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path jvh:confidence ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:double ; sh:minInclusive 0.0 ; sh:maxInclusive 1.0 ] ;
+    sh:property [ sh:path jvh:repository ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] .
+
+jvh:NavigationShape a sh:NodeShape ;
+    sh:targetClass jvh:Navigation ;
+    sh:property [ sh:path jvh:task ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path jvh:candidate ; sh:minCount 1 ] ;
+    sh:property [ sh:path jvh:advice ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "open-top-file" "open-top-three" "widen-search" ) ] .
+
+jvh:TestSelectionShape a sh:NodeShape ;
+    sh:targetClass jvh:TestSelection ;
+    sh:property [ sh:path jvh:mode ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "subset" "full" ) ] ;
+    sh:property [ sh:path jvh:changedFile ; sh:minCount 1 ] .
+
+jvh:FailureTriageShape a sh:NodeShape ;
+    sh:targetClass jvh:FailureTriage ;
+    sh:property [ sh:path jvh:failure ; sh:minCount 1 ] .
+
+jvh:ReviewVerdictShape a sh:NodeShape ;
+    sh:targetClass jvh:ReviewVerdict ;
+    sh:property [ sh:path jvh:verdict ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "auto-ok" "needs-human-review" "block" ) ] ;
+    sh:property [ sh:path jvh:policy ; sh:minCount 1 ; sh:maxCount 1 ] .
+
+jvh:OutcomeShape a sh:NodeShape ;
+    sh:targetClass jvh:Outcome ;
+    sh:property [ sh:path jvh:judgmentIri ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] .

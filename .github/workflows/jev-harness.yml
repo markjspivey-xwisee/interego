@@ -1,0 +1,107 @@
+name: jev-harness (System One judgments)
+
+# Copy to .github/workflows/ in the monorepo with the vertical at applications/jev-harness.
+#
+# Three jobs on every pull request:
+#   select-and-run   follow select-tests → run the selection → triage the log → score the selection
+#   review-gate      follow review-gate on the PR diff; the job fails for needs-human-review (exit 1)
+#                    and block (exit 3), so branch protection can require a person only when the
+#                    gate asks for one
+#   artifacts        every judgment's JSON, payload Turtle, descriptor TriG and HyperMarkdown
+#
+# Secrets: TYPESAFE_API_KEY (required). INTEREGO_BEARER (optional) publishes each judgment to the
+# pod through the relay and records a trajectory step for the harness's own loop.
+
+on:
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+env:
+  HARNESS_DIR: applications/jev-harness
+  BRIDGE_PORT: '6090'
+
+jobs:
+  select-and-run:
+    name: "select tests → run → triage → outcome"
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Start the bridge bound to this checkout
+        env:
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+          INTEREGO_BEARER: ${{ secrets.INTEREGO_BEARER }}
+          JEV_HARNESS_REPO: ${{ github.workspace }}
+          BRIDGE_DEPLOYMENT_URL: http://localhost:6090
+          PORT: ${{ env.BRIDGE_PORT }}
+        run: |
+          (cd "$HARNESS_DIR" && npx tsx bridge/server.ts > bridge.log 2>&1 &)
+          for i in $(seq 1 30); do curl -sf "http://localhost:$BRIDGE_PORT/health" && break; sleep 1; done
+          curl -sf "http://localhost:$BRIDGE_PORT/health"
+      - name: Follow the selection chain
+        run: |
+          cd "$HARNESS_DIR"
+          npx tsx bin/follow.ts "http://localhost:$BRIDGE_PORT/affordances" select-tests \
+            --arg base_ref="origin/${{ github.base_ref }}" --arg head_ref=HEAD \
+            --then run-selected-tests --run --then triage --outcome \
+            --repo "${{ github.workspace }}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: jev-harness-judgments
+          path: |
+            .jev-harness/
+            ${{ env.HARNESS_DIR }}/bridge.log
+
+  review-gate:
+    name: "review gate"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Start the bridge
+        env:
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+          INTEREGO_BEARER: ${{ secrets.INTEREGO_BEARER }}
+          JEV_HARNESS_REPO: ${{ github.workspace }}
+          BRIDGE_DEPLOYMENT_URL: http://localhost:6090
+          PORT: ${{ env.BRIDGE_PORT }}
+        run: |
+          (cd "$HARNESS_DIR" && npx tsx bridge/server.ts > bridge.log 2>&1 &)
+          for i in $(seq 1 30); do curl -sf "http://localhost:$BRIDGE_PORT/health" && break; sleep 1; done
+      - name: Gate the diff
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          cd "$HARNESS_DIR"
+          printf '%s' "$PR_BODY" > pr-body.md
+          npx tsx bin/follow.ts "http://localhost:$BRIDGE_PORT/affordances" review-gate \
+            --arg base_ref="origin/${{ github.base_ref }}" --arg head_ref=HEAD \
+            --arg title="$PR_TITLE" --file description=pr-body.md --gate \
+            --repo "${{ github.workspace }}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: jev-harness-review
+          path: .jev-harness/
