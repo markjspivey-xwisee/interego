@@ -62,7 +62,9 @@ export function createApp(opts: AppOptions): { app: Express; harness: Harness } 
     base,
     ...(opts.store ? { store: opts.store } : {}),
     relay: opts.relay ?? null,
-    context: { base, ns, agentId: process.env['JEV_HARNESS_AGENT_ID'] ?? 'urn:agent:interego:jev-harness', ...(process.env['JEV_HARNESS_OWNER_WEBID'] ? { ownerWebId: process.env['JEV_HARNESS_OWNER_WEBID'] } : {}) },
+    // The agent named on every descriptor: set explicitly, else the relay agent's own did:key when
+    // the bridge holds a key, else a placeholder IRI for a bridge that publishes nothing.
+    context: { base, ns, agentId: process.env['JEV_HARNESS_AGENT_ID'] ?? opts.relay?.agentDid ?? 'urn:agent:interego:jev-harness', ...(process.env['JEV_HARNESS_OWNER_WEBID'] ? { ownerWebId: process.env['JEV_HARNESS_OWNER_WEBID'] } : {}) },
   });
 
   const app = express();
