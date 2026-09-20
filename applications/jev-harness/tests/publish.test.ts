@@ -20,6 +20,10 @@ const relayState = {
   revoked: new Set<string>(),
   ttlSec: 3600,
   registrations: 0,
+  sessions: new Set<string>(),
+  sessionsIssued: 0,
+  /** Set to make the fake forget every session it issued, as a restarted or expiring relay does. */
+  forgetSessions: false,
 };
 
 const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
@@ -110,9 +114,14 @@ beforeAll(async () => {
       const presented = auth.startsWith('Bearer ') ? auth.slice(7) : '';
       if (!relayState.tokens.has(presented) || relayState.revoked.has(presented)) { reply(401, { error: 'invalid_token' }); return; }
       if (body['method'] === 'initialize') {
-        reply(200, { jsonrpc: '2.0', id: body['id'], result: { protocolVersion: '2025-06-18', capabilities: {}, serverInfo: { name: 'fake-relay' } } }, { 'Mcp-Session-Id': `sess-${presented.slice(-4)}` });
+        const session = `sess-${presented.slice(-4)}-${++relayState.sessionsIssued}`;
+        relayState.sessions.add(session);
+        reply(200, { jsonrpc: '2.0', id: body['id'], result: { protocolVersion: '2025-06-18', capabilities: {}, serverInfo: { name: 'fake-relay' } } }, { 'Mcp-Session-Id': session });
         return;
       }
+      if (relayState.forgetSessions) { relayState.sessions.clear(); relayState.forgetSessions = false; }
+      const sessionHeader = String(req.headers['mcp-session-id'] ?? '');
+      if (sessionHeader && !relayState.sessions.has(sessionHeader)) { reply(404, { error: 'MCP session not found; initialize a new session' }); return; }
       if (body['method'] === 'notifications/initialized') { res.writeHead(202); res.end(); return; }
       if (body['method'] === 'tools/call') {
         const params = body['params'] as { name: string; arguments: Record<string, unknown> };
@@ -148,7 +157,7 @@ describe('relay publishing over MCP streamable HTTP', () => {
     expect(receipt.descriptorUrl).toBe('https://pod.example/u/context-graphs/1.ttl');
     expect(receipt.previousHeadCid).toBe('bafy1');
     const call = seen.find((s) => (s.body['method'] === 'tools/call'))!;
-    expect(call.headers['mcp-session-id']).toBe('sess-oken');
+    expect(String(call.headers['mcp-session-id'])).toMatch(/^sess-oken-\d+$/);
     const args = (call.body['params'] as { arguments: Record<string, unknown> }).arguments;
     expect(args['graph_iri']).toBe(judgment.graphIri);
     expect(args['modal_status']).toBe('Hypothetical');
@@ -256,6 +265,18 @@ describe('minting relay tokens from the agent key', () => {
     expect(minter.mints).toHaveLength(2);
     const calls = toolCalls(before);
     expect(calls[calls.length - 1]!.headers['authorization']).not.toBe(`Bearer ${firstToken}`);
+  });
+
+  it('opens a new session and retries once when the relay has forgotten the session', async () => {
+    const relay = new RelayClient({ url, bearer: 'test-token' });
+    await recordTrajectoryStep(relay, { verb: 'a', objectName: 'b' });
+    relayState.forgetSessions = true;
+    const before = seen.length;
+    const r = await recordTrajectoryStep(relay, { verb: 'c', objectName: 'd' });
+    expect(r.structured).toMatchObject({ ok: true });
+    const methods = seen.slice(before).map((s) => s.body['method']);
+    expect(methods).toEqual(['tools/call', 'initialize', 'notifications/initialized', 'tools/call']);
+    relayState.forgetSessions = false;
   });
 
   it('reports a failed step of the flow by name', async () => {
