@@ -113,3 +113,11 @@ jobs:
         env:
           RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
         run: npx tsx tools/railway-fleet-audit.ts
+      # The question the audit above never asked: is a volume about to fill? On 2026-09-20 the
+      # Postgres volume reached 100% and every pod answered 500. Growing a volume is a dashboard
+      # action, so this says "grow it" while there is still room. Runs even when the audit failed.
+      - name: Fail if any Railway volume is at or over 80%
+        if: always()
+        env:
+          RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
+        run: node tools/railway-volume-check.mjs

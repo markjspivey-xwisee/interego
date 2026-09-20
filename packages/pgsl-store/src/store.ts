@@ -221,6 +221,22 @@ export class PgslStore {
     });
   }
 
+  /**
+   * Forget the overlay of a resource that no longer exists: its O row and the W row that
+   * pointed the top node back at it. The content nodes stay (grow-only); without this, a
+   * deleted resource's overlay kept its nodes reachable for the collector forever.
+   */
+  async clearOverlay(pod: string, resource: string): Promise<boolean> {
+    return this.fdb.transact(async (txn) => {
+      const key = ovKey(pod, resource);
+      const v = await txn.get(key);
+      if (v === undefined) return false;
+      txn.clear(key);
+      try { txn.clear(ovrKey(nodeAddrFromUrn(dec.decode(v)).hash, pod, resource)); } catch { /* an unreadable top: the O row alone goes */ }
+      return true;
+    });
+  }
+
   // ── Mutable control-plane (.internal accounts / idp clients / sessions) ──
   async cpSet(collection: string, id: string, doc: unknown): Promise<void> {
     const key = cpKey(collection, id);

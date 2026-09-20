@@ -56,3 +56,14 @@ export {
   type MigrationReport,
 } from './migrate.js';
 export { runMigration, type PodPlan, type FleetReport } from './runner.js';
+export {
+  collectLive,
+  rebuildTable,
+  readerFromFdb,
+  readerFromPg,
+  keysBySubspace,
+  type KvReader,
+  type LiveSet,
+  type CollectStats,
+  type RebuildResult,
+} from './gc.js';
