@@ -72,10 +72,24 @@ const ANSI_ESCAPES = new RegExp(String.fromCharCode(27) + '\\[[0-9;]*m', 'g');
 const MAX_FAILURES = 60;
 const EXCERPT_LINES = 40;
 const EXCERPT_CHARS = 1400;
+/** vitest's closing summary line, e.g. " Test Files  398 passed | 6 skipped (404)". */
+const SUMMARY_FILES = /^\s*Test Files\s+(.*)$/;
+/** A stack frame ("    at fn (file:line)") is never a failure header, however the runner names it. */
+const STACK_FRAME = /^\s+at\s+\S/;
+
+/** True when the runner's own summary is present and names no failed file: the run was green. */
+export function summarySaysGreen(lines: readonly string[]): boolean {
+  const summary = lines.filter((l) => SUMMARY_FILES.test(l)).pop();
+  return summary !== undefined && !/\bfailed\b/.test(summary);
+}
 
 /** Parse vitest-style output (also tolerable for jest and generic runners) into failures. */
 export function parseTestLog(log: string): Failure[] {
   const lines = log.replace(/\r\n/g, '\n').replace(ANSI_ESCAPES, '').split('\n');
+  // The runner's verdict outranks every heuristic below: a green run has nothing to triage, however
+  // much "Error:" noise its tests wrote to stderr on the way. Without this, a passing CI run was
+  // triaged into four failures that never happened.
+  if (summarySaysGreen(lines)) return [];
   // The "Failed Tests" section (FAIL headers) carries file, name and the error; the tree's
   // × lines only repeat the names. Use the tree only when no FAIL section exists.
   let headers: number[] = [];
@@ -111,7 +125,7 @@ export function parseTestLog(log: string): Failure[] {
   }
   if (failures.length === 0) {
     lines.forEach((line, i) => {
-      if (failures.length >= 30 || !GENERIC_ERROR.test(line)) return;
+      if (failures.length >= 30 || STACK_FRAME.test(line) || !GENERIC_ERROR.test(line)) return;
       push(line, lines.slice(i + 1, i + 4).filter((l) => l.trim()));
     });
   }

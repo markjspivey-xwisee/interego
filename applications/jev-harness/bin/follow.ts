@@ -15,7 +15,7 @@
 
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { act, affordancesIn, dereference, findAffordance, mergeArguments, runSelectedTests, validateAgainstShape, type ResolvedAffordance } from '../src/follower.js';
+import { act, affordancesIn, dereference, findAffordance, mergeArguments, runSelectedTests, validateAgainstShape, type ResolvedAffordance, runNeedsTriage } from '../src/follower.js';
 
 interface Cli {
   url: string;
@@ -125,7 +125,9 @@ async function main(): Promise<void> {
   save(cli.out, cli.verb, current.body);
   const first = last;
   let carried: Record<string, unknown> = {};
+  let skipTriage = false;
   for (const verb of cli.then) {
+    if (verb === 'triage' && skipTriage) { console.log('▸ triage skipped: the run passed, so there is nothing to explain\n'); continue; }
     const from = last.url;
     if (!from) throw new Error(`cannot follow "${verb}": the previous result has no dereferenceable url`);
     const next = await followOne(`${from}.trig`, verb, carriedFor(verb, carried), cli);
@@ -138,6 +140,7 @@ async function main(): Promise<void> {
         writeFileSync(join(cli.out, 'run.log'), run.log);
         console.log(`  ${run.command}\n  exit ${run.exitCode}, ${run.failedTests.length} failing test file(s)\n`);
         carried = { log: run.log, tests_failed: run.failedTests, tests_run: (args['tests'] as string[] | undefined) ?? [] };
+        skipTriage = !runNeedsTriage(run);
         continue;
       }
       console.log(`▸ ${verb} is declarative — perform it yourself:\n${JSON.stringify((next.body as { payload: unknown }).payload, null, 2)}\n`);

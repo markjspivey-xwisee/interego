@@ -3,7 +3,7 @@ name: jev-harness (System One judgments)
 # Copy to .github/workflows/ in the monorepo with the vertical at applications/jev-harness.
 #
 # Three jobs on every pull request:
-#   select-and-run   follow select-tests → run the selection → triage the log → score the selection
+#   select-and-run   follow select-tests → run the selection → triage the log (only when the run failed) → score the selection
 #   review-gate      follow review-gate on the PR diff; the job fails for needs-human-review (exit 1)
 #                    and block (exit 3), so branch protection can require a person only when the
 #                    gate asks for one
@@ -62,6 +62,7 @@ jobs:
         if: always()
         with:
           name: jev-harness-judgments
+          include-hidden-files: true # the store is the dot-directory .jev-harness/
           path: |
             .jev-harness/
             ${{ env.HARNESS_DIR }}/bridge.log
@@ -107,4 +108,5 @@ jobs:
         if: always()
         with:
           name: jev-harness-review
+          include-hidden-files: true
           path: .jev-harness/

@@ -150,6 +150,12 @@ export function runSelectedTests(args: Record<string, unknown>, cwd: string): Ru
   return { command, exitCode: r.status ?? -1, log, failedTests: [...failed] };
 }
 
+/** Whether a run is worth triaging: a run that exited 0 with no failing test file has nothing to explain,
+ *  and asking the model about its stderr noise would record judgments about failures that did not happen. */
+export function runNeedsTriage(run: Pick<RunResult, 'exitCode' | 'failedTests'>): boolean {
+  return run.exitCode !== 0 || run.failedTests.length > 0;
+}
+
 export function mergeArguments(prefilled: Record<string, unknown> | undefined, overrides: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = { ...(prefilled ?? {}) };
   for (const [k, v] of Object.entries(overrides)) if (v !== undefined) out[k] = v;

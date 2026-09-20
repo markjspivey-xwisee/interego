@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { navigate } from '../src/judgments/navigate.js';
 import { selectTests } from '../src/judgments/select-tests.js';
 import { parseTestLog, triage } from '../src/judgments/triage.js';
+import { runNeedsTriage } from '../src/follower.js';
 import { reviewGate, truncateDiff } from '../src/judgments/review-gate.js';
 import { recordOutcome } from '../src/judgments/outcome.js';
 import { inventory, importGraph, testsImporting, isSensitivePath, type RepoInventory, type RepoFile } from '../src/repo.js';
@@ -235,5 +236,43 @@ describe('outcomes and calibration', () => {
     const mixed = computeAdviceBuckets([...replay, ...liveHits]).find((b) => b.samples > 0)!;
     expect(mixed.source).toBe('live');
     expect(mixed.hitAt1).toBe(1);
+  });
+});
+
+describe('a green run is not triaged', () => {
+  // Shaped like the monorepo's own passing suite: tests write "Error:" lines to stderr on purpose, vitest prints a
+  // stack frame, and the closing summary names no failed file.
+  const green = [
+    ' RUN  v3.2.4 /work',
+    'stderr | tests/published-content.test.ts > refuses a write',
+    '[published-content] Error: write refused',
+    '[foxxi:500] unit: Error: internal CSS host https://css.internal:3000 exploded',
+    '    at runWithTimeout (file:///work/node_modules/@vitest/runner/dist/chunk-hooks.js:1863:10)',
+    ' ✓ tests/published-content.test.ts (3 tests) 12ms',
+    ' Test Files  398 passed | 6 skipped (404)',
+    '      Tests  6430 passed | 61 skipped (6491)',
+    '   Duration  9.8s',
+  ].join('\n');
+
+  it('parses no failures out of stderr noise when the runner summary names none', () => {
+    expect(parseTestLog(green)).toEqual([]);
+  });
+
+  it('still parses the red fixture, whose summary names failed files', () => {
+    const red = readFileSync(new URL('./fixtures/vitest-fail.txt', import.meta.url), 'utf8');
+    expect(parseTestLog(red).length).toBeGreaterThan(0);
+  });
+
+  it('without a summary, stack frames are still not failure headers', () => {
+    const noSummary = ['[x] Error: boom', '    at fn (file:///work/a.js:1:1)', '    at other (file:///work/b.js:2:2)'].join('\n');
+    const parsed = parseTestLog(noSummary);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]?.excerpt.startsWith('[x] Error: boom')).toBe(true);
+  });
+
+  it('the follower triages only a run that failed', () => {
+    expect(runNeedsTriage({ exitCode: 0, failedTests: [] })).toBe(false);
+    expect(runNeedsTriage({ exitCode: 1, failedTests: [] })).toBe(true);
+    expect(runNeedsTriage({ exitCode: 0, failedTests: ['tests/a.test.ts'] })).toBe(true);
   });
 });

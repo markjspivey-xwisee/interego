@@ -54,7 +54,7 @@ Then follow the graph:
 # where does this task belong?
 npm run follow -- http://localhost:6090/affordances navigate --arg task="cmi5 block rollup emits satisfied twice"
 
-# the CI chain: select → run the selection locally → triage the log → score the selection
+# the CI chain: select → run the selection locally → triage the log when the run failed → score the selection
 npm run follow -- http://localhost:6090/affordances select-tests --arg base_ref=origin/master --arg head_ref=HEAD \
   --then run-selected-tests --run --then triage --outcome --repo /path/to/repo
 
