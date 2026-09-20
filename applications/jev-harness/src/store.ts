@@ -92,16 +92,34 @@ export class HarnessStore {
     return row ? this.get(row.id) : undefined;
   }
 
+  private indexCache: { readonly size: number; readonly rows: IndexRow[] } | undefined;
+
   index(): IndexRow[] {
     const p = join(this.dir, 'index.jsonl');
     if (!existsSync(p)) return [];
-    return readFileSync(p, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as IndexRow);
+    const text = readFileSync(p, 'utf8');
+    if (this.indexCache && this.indexCache.size === text.length) return this.indexCache.rows;
+    const rows = text.split('\n').filter(Boolean).map((l) => JSON.parse(l) as IndexRow);
+    this.indexCache = { size: text.length, rows };
+    return rows;
   }
 
   outcomes(): OutcomeRecord[] {
     const p = join(this.dir, 'outcomes.jsonl');
     if (!existsSync(p)) return [];
-    return readFileSync(p, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as OutcomeRecord);
+    const rows = readFileSync(p, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as OutcomeRecord);
+    // Outcomes recorded before priorConfidence existed are backfilled from the judgment they
+    // score, so calibration buckets see every sample rather than only the newest ones.
+    const byGraph = new Map<string, number>();
+    return rows.map((o) => {
+      if (typeof o.priorConfidence === 'number') return o;
+      if (!byGraph.has(o.judgmentIri)) {
+        const j = this.findByGraphIri(o.judgmentIri);
+        byGraph.set(o.judgmentIri, j && j.kind !== 'outcome' ? j.confidence : Number.NaN);
+      }
+      const c = byGraph.get(o.judgmentIri);
+      return Number.isFinite(c) ? { ...o, priorConfidence: c as number } : o;
+    });
   }
 
   list(): string[] {

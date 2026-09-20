@@ -110,17 +110,17 @@ $saveBtn.Add_Click({
   $pairs = @(@('TYPESAFE_API_KEY', $keyBox.Text.Trim()), @('INTEREGO_BEARER', $bearerBox.Text.Trim()))
   foreach ($p in $pairs) {
     $name = $p[0]; $value = $p[1]
-    if (-not $value) { $lines += "$name: left blank, unchanged"; continue }
+    if (-not $value) { $lines += "${name}: left blank, unchanged"; continue }
     if ($saveLocal.Checked) {
-      try { [Environment]::SetEnvironmentVariable($name, $value, 'User'); $lines += "$name: saved as a user variable" }
-      catch { $lines += "$name: could not save locally ($($_.Exception.Message))" }
+      try { [Environment]::SetEnvironmentVariable($name, $value, 'User'); $lines += "${name}: saved as a user variable" }
+      catch { $lines += "${name}: could not save locally ($($_.Exception.Message))" }
     }
     if ($saveGh.Checked -and $ghAvailable) {
       $repo = $repoBox.Text.Trim()
       try {
         $out = ($value | & gh secret set $name --repo $repo 2>&1 | Out-String).Trim()
-        if ($LASTEXITCODE -eq 0) { $lines += "$name: set as an Actions secret on $repo" } else { $lines += "$name: gh failed: $out" }
-      } catch { $lines += "$name: gh failed ($($_.Exception.Message))" }
+        if ($LASTEXITCODE -eq 0) { $lines += "${name}: set as an Actions secret on $repo" } else { $lines += "${name}: gh failed: $out" }
+      } catch { $lines += "${name}: gh failed ($($_.Exception.Message))" }
     }
   }
   $status.Text = ($lines -join "`n")
