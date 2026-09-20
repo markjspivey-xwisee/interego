@@ -231,6 +231,10 @@ const HSTS_SOURCE: Record<string, string | typeof NOT_PUBLIC> = {
   // pure-standards. Listed explicitly for the same reason wsp-bridge is — this table is
   // keyed by IMAGE, so sharing a source file with a row above earns no exemption.
   'interego-agp-bridge': 'applications/_shared/vertical-bridge/index.ts',
+  // The tenth image and the fourth deployed vertical bridge. jev-harness does not use the
+  // shared factory (it binds a repository and serves judgments, not a pod-backed vertical), so
+  // it sets the header itself, before its body parser, in its own server.
+  'interego-jev-harness-bridge': 'applications/jev-harness/bridge/server.ts',
   'interego-microsite': SHARED_CONF,
   'interego-main': SHARED_CONF,
   'interego-foxxi-dashboard': SHARED_CONF,
@@ -300,6 +304,7 @@ describe('HSTS is served by every public surface', () => {
       'demos/interego-bridge/server.ts',
       'applications/_shared/vertical-bridge/index.ts',
       'deploy/validator/server.ts',
+      'applications/jev-harness/bridge/server.ts',
     ] as const;
     for (const p of EXPRESS_SURFACES) {
       const src = read(p);

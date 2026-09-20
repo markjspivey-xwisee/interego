@@ -79,6 +79,9 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      # The vertical's IRI guard and descriptor code import @interego/core, which resolves to its
+      # built dist/, so the kernel package is built before anything runs.
+      - run: npm run build:core
       - name: Start the bridge
         env:
           TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}

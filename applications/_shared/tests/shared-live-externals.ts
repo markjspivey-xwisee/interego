@@ -406,8 +406,33 @@ const PUBLIC_RELAY: SharedLiveExternal = {
   fingerprints: [envRead('RUN_PUBLIC_RELAY')],
 };
 
+/**
+ * ★ A METERED THIRD-PARTY MODEL API. TypeSafe's System One endpoint answers the jev-harness
+ * vertical's judgments (task navigation, test selection, triage, review gating). One collected
+ * module reaches it — the vertical's live test — and only under the JEV_LIVE=1 declaration,
+ * which is a declaration in the lrsql-gate sense: declared and unreachable is a failure, not a
+ * skip. No workflow sets JEV_LIVE, so CI never dials it; the vertical's own workflow arms the
+ * BRIDGE with TYPESAFE_API_KEY from a repository secret, but that is a process the test tree
+ * does not import. The credential name itself is read only in imported code (jev-client.ts)
+ * and is registered below in SHARED_ONLY_THROUGH_IMPORTED_CODE for that reason.
+ */
+const TYPESAFE: SharedLiveExternal = {
+  id: 'typesafe',
+  address: "TypeSafe's System One API at https://api.typesafe.ai/v1/systemone; jev-client.ts "
+    + 'builds the URL from a constructor option and no environment name retargets it',
+  contention: 'a metered third-party account: every request is billed to whichever '
+    + 'TYPESAFE_API_KEY the process holds, so two suites arming it at once double the spend',
+  armedBy: ['JEV_LIVE'],
+  offSwitch: [],
+  retargetedBy: [],
+  switchExceptions: [],
+  armedInCi: [],
+  touchedBy: ['applications/jev-harness/tests/live.test.ts'],
+  fingerprints: [envRead('JEV_LIVE')],
+};
+
 export const SHARED_LIVE_EXTERNALS: readonly SharedLiveExternal[] =
-  [POD, LRSQL, SCORM_CLOUD, PUBLIC_RELAY];
+  [POD, LRSQL, SCORM_CLOUD, PUBLIC_RELAY, TYPESAFE];
 
 /**
  * The scan's roots, mirroring `vitest.config.ts`'s `include`. `deploy/` is deliberately out: no
@@ -477,6 +502,55 @@ export const SHARED_ONLY_THROUGH_IMPORTED_CODE: readonly {
   readonly readIn: string;
   readonly why: string;
 }[] = [
+  {
+    name: 'TYPESAFE_API_KEY',
+    readIn: 'applications/jev-harness/src/jev-client.ts',
+    why: 'the credential jev-client.ts sends to api.typesafe.ai, read once when a client is '
+      + 'built (with a Windows user-scope fallback). Every jev-harness test module imports the '
+      + 'client through tests/helpers.ts, which is what makes the name shared; no module in the '
+      + 'test tree reads it, and the one module that reaches TypeSafe is armed by JEV_LIVE, '
+      + 'registered above as the typesafe external.',
+  },
+  {
+    name: 'JEV_MODEL',
+    readIn: 'applications/jev-harness/src/jev-client.ts',
+    why: 'the model name requests are sent with, defaulting to jev-latest. It selects a model '
+      + 'on the same endpoint and retargets nothing; shared only because every jev-harness '
+      + 'test module imports the client.',
+  },
+  {
+    name: 'INTEREGO_BEARER',
+    readIn: 'applications/jev-harness/src/publish.ts',
+    why: 'the relay session token relayFromEnv() turns into a RelayClient. It addresses the '
+      + 'live relay, and no collected module reaches that read: only main() in the bridge '
+      + 'calls relayFromEnv(), tests build the app with relay null and publish.test.ts dials '
+      + 'a fake relay it starts itself. Shared because bridge.test.ts imports the server.',
+  },
+  {
+    name: 'INTEREGO_RELAY_URL',
+    readIn: 'applications/jev-harness/src/publish.ts',
+    why: 'the relay MCP endpoint relayFromEnv() would dial, read beside INTEREGO_BEARER and '
+      + 'reached by no collected module for the same reason.',
+  },
+  {
+    name: 'JEV_HARNESS_NS',
+    readIn: 'applications/jev-harness/src/descriptor.ts',
+    why: 'the vocabulary namespace of the vertical when it is served from somewhere other than '
+      + 'the default origin; a string that names nothing live. Shared because every judgment '
+      + 'serializer reads it and every jev-harness test imports one.',
+  },
+  {
+    name: 'JEV_HARNESS_AGENT_ID',
+    readIn: 'applications/jev-harness/src/descriptor.ts',
+    why: 'the agent IRI written into the provenance and agent facets of a judgment; an attribution, '
+      + 'not an address. Shared the same way as JEV_HARNESS_NS.',
+  },
+  {
+    name: 'JEV_HARNESS_OWNER_WEBID',
+    readIn: 'applications/jev-harness/src/descriptor.ts',
+    why: 'the WebID a judgment is published on behalf of (iep:onBehalfOf, iep:issuer); an '
+      + 'attribution, not an address. Shared the same way as JEV_HARNESS_NS.',
+  },
   {
     name: 'INTEREGO_BUILD_SHA',
     readIn: 'applications/_shared/vertical-bridge/index.ts',

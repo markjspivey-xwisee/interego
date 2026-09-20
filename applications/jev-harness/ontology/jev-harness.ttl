@@ -117,6 +117,38 @@ jvh:argumentsJson a owl:DatatypeProperty ; rdfs:label "prefilled arguments (JSON
 jvh:declarative a owl:DatatypeProperty ; rdfs:label "declarative"@en ; rdfs:range xsd:boolean ;
     rdfs:comment "true on a control that communicates an available step but deliberately promises no execution endpoint; a follower performs it locally or hands it to a human."@en .
 
+# ── Payload properties added by the calibration loop and the review gate ─────
+
+jvh:adviceBasis a owl:DatatypeProperty ; rdfs:label "advice basis"@en ; rdfs:range xsd:string ;
+    rdfs:comment "default when the advice came from the static confidence bands; calibrated when it came from the measured hit rates of the judgment's confidence bucket."@en .
+jvh:adviceBucket a owl:ObjectProperty ; rdfs:label "advice bucket"@en ;
+    rdfs:comment "The 0.2-wide confidence bucket whose measured outcomes produced calibrated advice: its lower bound, sample count, hit rates and source."@en .
+jvh:bucketFrom a owl:DatatypeProperty ; rdfs:label "bucket lower bound"@en ; rdfs:range xsd:double .
+jvh:samples a owl:DatatypeProperty ; rdfs:label "samples"@en ; rdfs:range xsd:integer ;
+    rdfs:comment "How many outcomes the bucket was computed from."@en .
+jvh:hitAt1Rate a owl:DatatypeProperty ; rdfs:label "hit-at-1 rate"@en ; rdfs:range xsd:double .
+jvh:hitAt3Rate a owl:DatatypeProperty ; rdfs:label "hit-at-3 rate"@en ; rdfs:range xsd:double .
+jvh:bucketSource a owl:DatatypeProperty ; rdfs:label "bucket source"@en ; rdfs:range xsd:string ;
+    rdfs:comment "live when the bucket was computed from live outcomes only; all when replayed (backtest) outcomes were included because the bucket did not yet hold enough live ones."@en .
+jvh:directoryProbability a owl:DatatypeProperty ; rdfs:label "directory probability"@en ; rdfs:range xsd:double ;
+    rdfs:comment "On a navigation: the directory pass's probability for the top candidate's directory; the judgment's confidence is the file pass weighted by it."@en .
+jvh:changeTitle a owl:DatatypeProperty ; rdfs:label "change title"@en ; rdfs:range xsd:string ;
+    rdfs:comment "On a review verdict: the title of the change that was gated."@en .
+jvh:descriptionMatch a owl:DatatypeProperty ; rdfs:label "description match"@en ; rdfs:range xsd:double ;
+    rdfs:comment "On a review verdict: the Score of how well the diff matches the change's stated description, when a description was given."@en .
+jvh:risk a owl:DatatypeProperty ; rdfs:label "risk"@en ; rdfs:range xsd:string ;
+    rdfs:comment "On a review verdict: the risk level the model chose for the diff."@en .
+jvh:fired a owl:DatatypeProperty ; rdfs:label "fired"@en ; rdfs:range xsd:boolean ;
+    rdfs:comment "On a hazard: whether its probability reached the policy's hazard threshold."@en .
+jvh:judgmentKind a owl:DatatypeProperty ; rdfs:label "judgment kind"@en ; rdfs:range xsd:string ;
+    rdfs:comment "On an Outcome: the kind of the judgment it scores."@en .
+jvh:priorConfidence a owl:DatatypeProperty ; rdfs:label "prior confidence"@en ; rdfs:range xsd:double ;
+    rdfs:comment "On an Outcome: the confidence the scored judgment reported, so calibration can bucket outcomes without dereferencing the judgment."@en .
+jvh:outcomeSource a owl:DatatypeProperty ; rdfs:label "outcome source"@en ; rdfs:range xsd:string ;
+    rdfs:comment "On an Outcome: live when observed after a real judgment, backtest when replayed from history."@en .
+jvh:summary a owl:DatatypeProperty ; rdfs:label "summary"@en ; rdfs:range xsd:string ;
+    rdfs:comment "On an Outcome: one sentence a reader can act on without opening the judgment."@en .
+
 # ── Input shapes (what a caller must SEND to each affordance) ────────────────
 #
 # Field IRIs are jvh:<field>; a JSON payload key matches the IRI's local name.

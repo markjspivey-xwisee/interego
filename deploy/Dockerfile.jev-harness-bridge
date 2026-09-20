@@ -82,6 +82,10 @@ WORKDIR /app
 
 COPY --from=build /app /app
 
+# The commit this image was built from, surfaced at /health as `build` so a deploy can verify
+# the rollout it just made (build-ghcr.yml passes GIT_SHA; tools/railway-redeploy.mjs reads it).
+ARG GIT_SHA=unknown
+ENV INTEREGO_BUILD_SHA=$GIT_SHA
 ENV NODE_ENV=production
 ENV PORT=8080
 ENV JEV_HARNESS_REPO=/app

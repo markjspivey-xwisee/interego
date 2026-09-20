@@ -67,6 +67,14 @@ export function createApp(opts: AppOptions): { app: Express; harness: Harness } 
 
   const app = express();
   app.disable('x-powered-by');
+  // HSTS before the body parser: a malformed-body 400 leaves the parser's error path before any
+  // later middleware runs, so a header registered after express.json() would be missing from
+  // exactly the responses an attacker provokes. max-age only, as the other bridges send it;
+  // includeSubDomains and preload are separate decisions with blast radius.
+  app.use((_req, res, next) => {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000');
+    next();
+  });
   app.use(express.json({ limit: '25mb' }));
 
   const wants = (req: Request, type: string): boolean => (req.headers.accept ?? '').includes(type);
@@ -87,7 +95,9 @@ export function createApp(opts: AppOptions): { app: Express; harness: Harness } 
 
   app.get('/health', (_req, res) => {
     const inv = harness.inventory();
-    res.json({ status: 'ok', vertical: 'jev-harness', repository: inv.name, commit: inv.commit, files: inv.files.length, model: opts.jev.model, relay: Boolean(opts.relay) });
+    // `build` is the sha the image was built from (INTEREGO_BUILD_SHA, baked by the Dockerfile),
+    // which is how a deploy verifies the rollout it just made; `commit` is the tree being judged.
+    res.json({ status: 'ok', vertical: 'jev-harness', build: process.env['INTEREGO_BUILD_SHA'] ?? null, repository: inv.name, commit: inv.commit, files: inv.files.length, model: opts.jev.model, relay: Boolean(opts.relay) });
   });
 
   app.get('/affordances', (req, res) => {
