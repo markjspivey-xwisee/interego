@@ -76,6 +76,9 @@ COPY benchmarks/ ./benchmarks/
 COPY demos/ ./demos/
 COPY deploy/ ./deploy/
 COPY docs/ ./docs/
+# Named on its own as well: tests/the-images-carry-the-lexicon.test.ts checks that every image
+# bundling packages/pgsl copies the lexicon to the path the loader reads.
+COPY docs/ns/pgsl-lexicon.ttl ./docs/ns/pgsl-lexicon.ttl
 COPY examples/ ./examples/
 COPY integrations/ ./integrations/
 COPY interego-main/ ./interego-main/
