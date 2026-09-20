@@ -30,11 +30,11 @@
  *
  * Deleting tens of millions of rows leaves a table just as large until it is rewritten, and a
  * rewrite of a 45 GB table needs 45 GB free. The live set is small, so `rebuildTable` copies
- * the live rows into a new table under an EXCLUSIVE lock on the old one (readers continue,
- * writers wait), swaps the names in the same transaction, and leaves the old table for the
- * operator to drop once the store has been checked. The collection runs inside that lock, so
- * nothing written during the copy can be missed. `tools/pgsl-store-gc.ts` drives it; a dry run
- * only reads.
+ * the live rows into a new table under an ACCESS EXCLUSIVE lock on the old one (readers and
+ * writers wait for the minutes it takes), swaps the names in the same transaction, and leaves
+ * the old table for the operator to drop once the store has been checked. The collection runs
+ * inside that lock, so nothing written during the copy can be missed. `tools/pgsl-store-gc.ts`
+ * drives it; a dry run only reads.
  */
 
 import { kindByte, nodeAddrFromUrn, type NodeAddr, type NodeKind } from './addressing.js';
@@ -291,9 +291,9 @@ export interface RebuildResult {
 
 /**
  * Copy the live rows into a fresh table and swap it in, inside one transaction that holds an
- * EXCLUSIVE lock on the old table: readers keep reading the old table until the commit, writers
- * wait. The live set is computed INSIDE the lock, so it is exact. The old table is renamed, not
- * dropped; the operator drops it after checking the store.
+ * ACCESS EXCLUSIVE lock on the old table: every other session waits until the commit. The live
+ * set is computed INSIDE the lock, so it is exact. The old table is renamed, not dropped; the
+ * operator drops it after checking the store.
  */
 export async function rebuildTable(
   client: { query(sql: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>>; rowCount: number | null }> },
@@ -307,8 +307,14 @@ export async function rebuildTable(
   const log = opts.log ?? (() => undefined);
   await client.query('BEGIN');
   try {
-    await client.query(`LOCK TABLE ${t} IN EXCLUSIVE MODE`);
-    log('lock held: writers wait, readers continue');
+    // ACCESS EXCLUSIVE from the start, not EXCLUSIVE upgraded at the rename: with EXCLUSIVE held,
+    // a store transaction that had already read (ACCESS SHARE) and now waited to write blocked on
+    // this transaction, whose RENAME then waited on that reader's ACCESS SHARE, and Postgres
+    // resolved the cycle by killing the rebuild after the copy (measured on the first production
+    // run, 2026-09-20). Taking the strongest lock first means readers wait too, for the minutes
+    // the copy takes, and nothing can deadlock against a lock that is never upgraded.
+    await client.query(`LOCK TABLE ${t} IN ACCESS EXCLUSIVE MODE`);
+    log('lock held: readers and writers wait until the swap commits');
     const live = await collectLive(readerFromPg(client as never, t), { log });
     if (live.keys.size === 0) throw new Error('refusing to rebuild: the live set is empty');
     await client.query(`CREATE TABLE ${newTable} (LIKE ${t} INCLUDING ALL)`);
