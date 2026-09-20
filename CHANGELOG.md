@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-20 — jev-harness bridge deployed: Railway service, explicit image bundle
+
+The `jev-harness-bridge` Railway service now runs `interego-jev-harness-bridge` at https://jev-harness-bridge-production.up.railway.app, with its row in `tools/railway-services.mjs` added after the service existed, as the table's own rule requires. The image copies the tracked tree entry by entry instead of the whole build context, so `tools/deploy-bundle-scope.ts` can say when a merge changes what it ships, and its build-arg line reads exactly what the image guard expects. The bridge is bound to the tree it was built from; changed files and diffs still come from the follower that has git.
+
 ## 2026-09-19 — jev-harness vertical: System One development judgments as affordances
 
 New vertical at `applications/jev-harness/`. A bridge serves four development-time judgments a TypeSafe System One model (Jev) makes about the bound repository — task navigation, CI test selection, failure triage and review gating — as `iep:Affordance` entries on `GET /affordances`, publishes each judgment as a Context Descriptor whose payload carries its own next-step `hmd:control` entries, records outcomes that `iep:supersedes` the Hypothetical judgment as Asserted, and exposes a calibration view over those chains. A follower CLI walks the manifest and controls (discover, validate against the declared SHACL input shape, act). Backtested on this repository's own history; the calibration numbers and the two policy rules the replay changed are in the vertical's README.

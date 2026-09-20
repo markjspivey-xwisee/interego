@@ -6,7 +6,7 @@
  * ── WHY THIS FILE EXISTS ─────────────────────────────────────────────────────
  *
  * `tools/railway-redeploy.mjs` used to compute `interego-${service}` inline. That holds
- * for sixteen of the nineteen services and is wrong for three, so the assumption was
+ * for seventeen of the twenty services and is wrong for three, so the assumption was
  * invisible until the day it wasn't — and the day it wasn't, it blocked a legitimate
  * deploy for a naming reason dressed up as a safety one: `css` runs
  * `interego-css-pgsl`, so pinning it was refused even though a sha-tagged image of it
@@ -54,7 +54,7 @@ export const IMAGE_PREFIX = 'ghcr.io/markjspivey-xwisee';
  * them gets a specific refusal instead of "unknown service", which reads like a typo.
  */
 export const SERVICES = {
-  // ★ SIXTEEN of the nineteen rows below have an image that really is `interego-<service>`;
+  // ★ SEVENTEEN of the twenty rows below have an image that really is `interego-<service>`;
   // the three that do not are css (interego-css-pgsl) and postgres/redis (upstream images,
   // repo null). This said "Thirteen" and the table has grown since - the numbers are stated
   // here because the whole point of the file is that the mapping is NOT derivable, and a
@@ -84,6 +84,10 @@ export const SERVICES = {
   // direction. `railway-pins.mjs` reported it `UNTRACKED` in between, which is the check
   // doing its job.
   'agp-bridge': { repo: 'interego-agp-bridge', health: '/health' },
+  // The jev-harness vertical: System One (Jev) development judgments served as affordances,
+  // bound to the tree the image was built from. Its /health reports INTEREGO_BUILD_SHA as
+  // `build`. Added after the service was created, like agp-bridge above.
+  'jev-harness-bridge': { repo: 'interego-jev-harness-bridge', health: '/health' },
   bridge: { repo: 'interego-bridge', health: '/health' },
   dashboard: { repo: 'interego-dashboard', health: '/health' },
   'pgsl-browser': { repo: 'interego-pgsl-browser', health: '/health' },

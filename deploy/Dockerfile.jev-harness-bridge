@@ -63,9 +63,29 @@ RUN npm ci
 # tsx for the runtime.
 RUN npm install --no-save tsx@4.22.0
 
-# The tree the bridge judges, and the sources it runs from. .dockerignore keeps node_modules
-# and build output out of the context.
-COPY . ./
+# The tree the bridge judges, and the sources it runs from: every tracked top-level entry, named
+# one by one. tools/deploy-bundle-scope.ts reads these COPY lines to decide when a merge changes
+# what this image ships, and a `COPY . ./` would leave it unable to answer, so the list is explicit
+# and a new top-level directory has to be added here to be judged. .dockerignore keeps
+# node_modules, dist/ and the benchmark corpora out of the context.
+COPY .gitattributes .gitignore .dockerignore eslint.config.js tsconfig.check.json vitest.config.ts ./
+COPY CHANGELOG.md CLAUDE.md LICENSE README.md STATUS.md RELEASING.md SECURITY.md SECURITY-ACKNOWLEDGMENTS.md REFLEXIVE-DOGFOOD.md ENGAGEMENT-REPORT.md ./
+COPY .github/ ./.github/
+COPY applications/ ./applications/
+COPY benchmarks/ ./benchmarks/
+COPY demos/ ./demos/
+COPY deploy/ ./deploy/
+COPY docs/ ./docs/
+COPY examples/ ./examples/
+COPY integrations/ ./integrations/
+COPY interego-main/ ./interego-main/
+COPY mcp-server/ ./mcp-server/
+COPY packages/ ./packages/
+COPY quickstart/ ./quickstart/
+COPY scripts/ ./scripts/
+COPY spec/ ./spec/
+COPY tests/ ./tests/
+COPY tools/ ./tools/
 
 # Compile @interego/* → dist/, which the vertical's turtle guard imports by name.
 RUN npm run build:core
@@ -84,7 +104,7 @@ COPY --from=build /app /app
 
 # The commit this image was built from, surfaced at /health as `build` so a deploy can verify
 # the rollout it just made (build-ghcr.yml passes GIT_SHA; tools/railway-redeploy.mjs reads it).
-ARG GIT_SHA=unknown
+ARG GIT_SHA=unset
 ENV INTEREGO_BUILD_SHA=$GIT_SHA
 ENV NODE_ENV=production
 ENV PORT=8080
