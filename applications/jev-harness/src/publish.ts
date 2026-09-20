@@ -309,6 +309,14 @@ export class RelayClient {
       if (method !== 'initialize') await this.initialize();
       return this.rpc(method, params, true);
     }
+    if (res.status === 404 && this.sessionId !== undefined && !retried && method !== 'initialize') {
+      // The relay forgot the session (it restarted, or expired it): a long-lived bridge kept
+      // answering "MCP session not found" for every publish until its own restart. Open a new
+      // session and repeat once; the token is still good.
+      this.sessionId = undefined;
+      await this.initialize();
+      return this.rpc(method, params, true);
+    }
     if (!res.ok) throw new Error(`relay ${method} responded ${res.status}: ${text.slice(0, 300)}`);
     const contentType = res.headers.get('content-type') ?? '';
     const body = contentType.includes('text/event-stream') ? lastJsonRpcMessage(text, id) : JSON.parse(text);
