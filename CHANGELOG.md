@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-20 — jev-harness: verdicts on the pull request, calibration from the pod, described directories
+
+Each jev-harness CI job now leaves one comment on the pull request, edited in place on later runs: the review gate's verdict with the hazards that fired and links to the descriptor on the pod, or the test selection with its reasons and the triage table when the run failed (`applications/jev-harness/src/pr-comment.ts`, posted by `tools/upsert-pr-comment.mjs`). The runner's bridge publishes as the same delegate agent as the deployed one when `INTEREGO_AGENT_KEY_JSON` is a repository secret. The bridge reads its outcomes back from the pod at boot and hourly (`src/pod-calibration.ts`), so calibration survives a redeploy and counts every bridge that publishes as the delegate. The navigation directory pass hands the model a one-line description of each directory from its README, CLAUDE.md, index file or package description.
+
 ## 2026-09-20 — jev-harness bridge deployed: Railway service, explicit image bundle
 
 The `jev-harness-bridge` Railway service now runs `interego-jev-harness-bridge` at https://jev-harness-bridge-production.up.railway.app, with its row in `tools/railway-services.mjs` added after the service existed, as the table's own rule requires. The image copies the tracked tree entry by entry instead of the whole build context, so `tools/deploy-bundle-scope.ts` can say when a merge changes what it ships, and its build-arg line reads exactly what the image guard expects. The bridge is bound to the tree it was built from; changed files and diffs still come from the follower that has git.

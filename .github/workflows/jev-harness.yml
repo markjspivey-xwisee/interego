@@ -9,8 +9,10 @@ name: jev-harness (System One judgments)
 #                    gate asks for one
 #   artifacts        every judgment's JSON, payload Turtle, descriptor TriG and HyperMarkdown
 #
-# Secrets: TYPESAFE_API_KEY (required). INTEREGO_BEARER (optional) publishes each judgment to the
-# pod through the relay and records a trajectory step for the harness's own loop.
+# Secrets: TYPESAFE_API_KEY (required). INTEREGO_AGENT_KEY_JSON (optional) makes the runner's bridge the
+# harness's delegate agent, so every judgment and outcome is published to the owner's pod through the
+# relay, attributed to the agent on behalf of the owner, and each job leaves one comment on the pull
+# request with its verdict or selection and links to the descriptors.
 
 on:
   pull_request:
@@ -19,11 +21,16 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
+  pull-requests: write # one comment per job, edited in place on later runs
 
 env:
   HARNESS_DIR: applications/jev-harness
   BRIDGE_PORT: '6090'
+  # The pod the delegate publishes to, the agent it is registered there as, and the owner it acts for.
+  INTEREGO_POD_NAME: u-pk-33d42e6b33dc
+  JEV_HARNESS_AGENT_ID: did:web:identity.interego.xwisee.com:agents:jev-harness-bridge-u-did-6de86e8ba294
+  JEV_HARNESS_OWNER_WEBID: https://identity.interego.xwisee.com/users/u-pk-33d42e6b33dc/profile#me
+  INTEREGO_POD_PUBLIC_ORIGIN: https://gate.interego.xwisee.com
 
 jobs:
   select-and-run:
@@ -43,7 +50,10 @@ jobs:
       - name: Start the bridge bound to this checkout
         env:
           TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
-          INTEREGO_BEARER: ${{ secrets.INTEREGO_BEARER }}
+          INTEREGO_AGENT_KEY_JSON: ${{ secrets.INTEREGO_AGENT_KEY_JSON }}
+          INTEREGO_POD_NAME: ${{ env.INTEREGO_POD_NAME }}
+          JEV_HARNESS_AGENT_ID: ${{ env.JEV_HARNESS_AGENT_ID }}
+          JEV_HARNESS_OWNER_WEBID: ${{ env.JEV_HARNESS_OWNER_WEBID }}
           JEV_HARNESS_REPO: ${{ github.workspace }}
           BRIDGE_DEPLOYMENT_URL: http://localhost:6090
           PORT: ${{ env.BRIDGE_PORT }}
@@ -58,6 +68,15 @@ jobs:
             --arg base_ref="origin/${{ github.base_ref }}" --arg head_ref=HEAD \
             --then run-selected-tests --run --then triage --outcome \
             --repo "${{ github.workspace }}"
+      - name: Comment the selection on the pull request
+        if: ${{ always() && github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          cd "$HARNESS_DIR"
+          npx tsx bin/pr-comment.ts selection --dir "${{ github.workspace }}/.jev-harness/follower" \n            --pod "$INTEREGO_POD_NAME" --pod-public-origin "$INTEREGO_POD_PUBLIC_ORIGIN" > comment.md
+          node tools/upsert-pr-comment.mjs "$PR" comment.md "<!-- jev-harness:selection -->"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -86,7 +105,10 @@ jobs:
       - name: Start the bridge
         env:
           TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
-          INTEREGO_BEARER: ${{ secrets.INTEREGO_BEARER }}
+          INTEREGO_AGENT_KEY_JSON: ${{ secrets.INTEREGO_AGENT_KEY_JSON }}
+          INTEREGO_POD_NAME: ${{ env.INTEREGO_POD_NAME }}
+          JEV_HARNESS_AGENT_ID: ${{ env.JEV_HARNESS_AGENT_ID }}
+          JEV_HARNESS_OWNER_WEBID: ${{ env.JEV_HARNESS_OWNER_WEBID }}
           JEV_HARNESS_REPO: ${{ github.workspace }}
           BRIDGE_DEPLOYMENT_URL: http://localhost:6090
           PORT: ${{ env.BRIDGE_PORT }}
@@ -104,6 +126,15 @@ jobs:
             --arg base_ref="origin/${{ github.base_ref }}" --arg head_ref=HEAD \
             --arg title="$PR_TITLE" --file description=pr-body.md --gate \
             --repo "${{ github.workspace }}"
+      - name: Comment the gate on the pull request
+        if: ${{ always() && github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          cd "$HARNESS_DIR"
+          npx tsx bin/pr-comment.ts gate --dir "${{ github.workspace }}/.jev-harness/follower" \n            --pod "$INTEREGO_POD_NAME" --pod-public-origin "$INTEREGO_POD_PUBLIC_ORIGIN" > comment.md
+          node tools/upsert-pr-comment.mjs "$PR" comment.md "<!-- jev-harness:review-gate -->"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

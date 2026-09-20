@@ -8,7 +8,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, statSync, openSync, readSync, closeSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 
 export interface RepoFile {
@@ -250,4 +250,28 @@ export function groupByPrefix(files: readonly RepoFile[], depth = 2): Map<string
     groups.get(key)!.push(f);
   }
   return groups;
+}
+
+/**
+ * One line that says what a directory is for: the first meaningful line of its README, its
+ * CLAUDE.md or its index file, else the description in its package.json. The directory pass
+ * hands this to the model beside the path and a sample of file names, because a path such as
+ * `packages/solid/` says nothing to a reader who does not already know the repository.
+ */
+export function directoryAbout(root: string, dirKey: string): string | undefined {
+  const dir = join(root, dirKey);
+  for (const name of ['README.md', 'readme.md', 'CLAUDE.md', 'index.ts', 'index.js', 'index.mjs', 'mod.ts']) {
+    const p = join(dir, name);
+    if (!existsSync(p)) continue;
+    const head = readHead(p);
+    if (head) return head;
+  }
+  const pkg = join(dir, 'package.json');
+  if (existsSync(pkg)) {
+    try {
+      const description = (JSON.parse(readFileSync(pkg, 'utf8')) as { description?: unknown }).description;
+      if (typeof description === 'string' && description.trim().length >= 8) return description.trim().slice(0, 160);
+    } catch { /* not JSON: no description */ }
+  }
+  return undefined;
 }

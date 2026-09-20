@@ -99,7 +99,13 @@ export function createApp(opts: AppOptions): { app: Express; harness: Harness } 
     const inv = harness.inventory();
     // `build` is the sha the image was built from (INTEREGO_BUILD_SHA, baked by the Dockerfile),
     // which is how a deploy verifies the rollout it just made; `commit` is the tree being judged.
-    res.json({ status: 'ok', vertical: 'jev-harness', build: process.env['INTEREGO_BUILD_SHA'] ?? null, repository: inv.name, commit: inv.commit, files: inv.files.length, model: opts.jev.model, relay: Boolean(opts.relay) });
+    res.json({
+      status: 'ok', vertical: 'jev-harness', build: process.env['INTEREGO_BUILD_SHA'] ?? null, repository: inv.name, commit: inv.commit, files: inv.files.length, model: opts.jev.model, relay: Boolean(opts.relay),
+      // What calibration is computed from: outcomes this container recorded, outcomes read back
+      // from the pod, and how the last read-back went.
+      outcomes: { local: harness.store.localOutcomes().length, pod: harness.store.podOutcomes().length },
+      podBackfill: harness.store.podBackfill,
+    });
   });
 
   app.get('/affordances', (req, res) => {
@@ -168,7 +174,14 @@ export function createApp(opts: AppOptions): { app: Express; harness: Harness } 
     });
   }));
 
-  app.get('/jev-harness/calibration', (_req, res) => { res.json(harness.calibration()); });
+  // ?refresh=1 reads the pod first, so a caller can see every outcome the delegate has published
+  // rather than waiting for the hourly read-back.
+  app.get('/jev-harness/calibration', async (req, res, next) => {
+    try {
+      const backfill = req.query['refresh'] === '1' ? await harness.backfillFromPod() : harness.store.podBackfill;
+      res.json({ ...harness.calibration(), podBackfill: backfill });
+    } catch (err) { next(err); }
+  });
 
   app.get('/jev-harness/judgments', (_req, res) => { res.json(harness.store.index()); });
 
@@ -202,9 +215,17 @@ export function main(): void {
   const repoRoot = resolve(process.env['JEV_HARNESS_REPO'] ?? process.cwd());
   const base = (process.env['BRIDGE_DEPLOYMENT_URL'] ?? `http://localhost:${port}`).replace(/\/$/, '');
   const relay = relayFromEnv();
-  const { app } = createApp({ jev: jevFromEnv(), repoRoot, base, relay });
+  const { app, harness } = createApp({ jev: jevFromEnv(), repoRoot, base, relay });
   app.listen(port, () => {
     console.log(`[jev-harness] bridge on ${base}  repo=${repoRoot}  manifest=${base}/affordances  relay=${relay ? 'configured' : 'off'}`);
+    // Calibration from the pod: once at boot, then hourly, so a fresh container starts from
+    // everything the delegate has published and picks up outcomes other bridges add.
+    const backfill = async (): Promise<void> => {
+      const s = await harness.backfillFromPod();
+      if (s.status !== 'off') console.log(`[jev-harness] pod calibration: ${s.status}${s.status === 'ok' ? ` (${s.added} new of ${s.total} outcomes; ${s.errors?.length ?? 0} unreadable)` : s.error ? ` ${s.error}` : ''}`);
+    };
+    void backfill();
+    setInterval(() => { void backfill(); }, 60 * 60 * 1000).unref();
   });
 }
 
