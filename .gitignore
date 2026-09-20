@@ -103,3 +103,6 @@ scratchpad/
 # by `npm run package --workspace @interego/workspace-desktop`. `dist/` above already covers the
 # bundled entry points; this is the packaged app around them.
 applications/shared-workspace/desktop/release/
+
+# jev-harness vertical: judgments, outcomes and follower artifacts written next to the repo it judges
+.jev-harness/

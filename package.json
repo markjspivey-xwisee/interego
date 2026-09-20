@@ -1,7 +1,7 @@
 {
   "name": "@interego/workspace",
   "version": "0.2.0",
-  "description": "Interego monorepo — substrate kernel (@interego/core) + per-vertical packages composing it. Primitives + composition mechanics for emergent agent-to-agent context.",
+  "description": "Interego monorepo \u2014 substrate kernel (@interego/core) + per-vertical packages composing it. Primitives + composition mechanics for emergent agent-to-agent context.",
   "author": "Mark Spivey",
   "license": "MIT",
   "private": true,
@@ -19,6 +19,7 @@
     "applications/agent-development-practice/bridge",
     "applications/organizational-working-memory/bridge",
     "applications/lrs-adapter/bridge",
+    "applications/jev-harness/bridge",
     "applications/shared-workspace/desktop",
     "applications/shared-workspace/discord"
   ],

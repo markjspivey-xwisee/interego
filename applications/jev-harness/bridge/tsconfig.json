@@ -1,0 +1,29 @@
+// Workspace bridge tsconfig — the same shape as the other vertical bridges, so
+// .github/workflows/bridge-typecheck.yml picks it up from applications/*/bridge/tsconfig.json.
+// Includes the vertical's sources, follower, tools and the shared affordance type it composes.
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "outDir": "./dist",
+    "rootDir": "../../..",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": false,
+    "baseUrl": ".",
+    "typeRoots": ["./node_modules/@types", "../../../node_modules/@types"]
+  },
+  "include": [
+    "server.ts",
+    "../affordances.ts",
+    "../src/**/*.ts",
+    "../bin/**/*.ts",
+    "../tools/**/*.ts",
+    "../../_shared/affordance-mcp/**/*.ts"
+  ],
+  "exclude": ["node_modules", "dist"]
+}
