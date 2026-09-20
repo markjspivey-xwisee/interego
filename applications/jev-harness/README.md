@@ -77,6 +77,10 @@ A published judgment renders in the HyperMarkdown viewer with one `:::control` b
 
 [`ci/jev-harness.yml`](ci/jev-harness.yml) is a GitHub Actions workflow for the monorepo: it starts the bridge bound to the checkout, runs the selection chain on pull requests, uploads the artifacts, and gates on the review verdict. Add `TYPESAFE_API_KEY` (and `INTEREGO_BEARER` to publish) as repository secrets.
 
+## Deployed
+
+The bridge runs on Railway as the service `jev-harness-bridge` (image `interego-jev-harness-bridge`, built by `build-ghcr.yml` and tagged with the commit) at https://jev-harness-bridge-production.up.railway.app. Its `/health` reports the commit it was built from as `build`; `/affordances` is the manifest a generic agent discovers. Service variables: `TYPESAFE_API_KEY`, `BRIDGE_DEPLOYMENT_URL` (the public origin, so published controls are followable from the relay) and `JEV_HARNESS_OWNER_WEBID`; `INTEREGO_BEARER` is unset, so the deployed bridge judges but does not publish. The image is bound to the tree it was built from and carries no git, so changed files and diffs come from the follower that has one, as they do in CI. A merge to master that changes what the image ships redeploys it through `auto-deploy.yml`; `deploy-railway.yml` does the same by hand.
+
 ## Claude Code
 
 [`.claude/skills/jev-harness/SKILL.md`](.claude/skills/jev-harness/SKILL.md) tells an agent to follow `navigate` at the start of a task, run the selection chain after a change, and gate the diff before finishing.
