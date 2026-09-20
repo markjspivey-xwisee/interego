@@ -130,7 +130,10 @@ describe('review-gate', () => {
 
   it('blocks a secret without calling the model, but not a fixture token inside a test file', async () => {
     const jev = lowHazards();
-    const j = await reviewGate(jev, null, { diff: `${clean}+const key = "sk-abcdefghijklmnopqrstuvwxyz123456";\n`, title: 'fix rollup' });
+    // Built at runtime: the gate scans this repository's own diffs, and a token-shaped literal here
+    // would block the pull request that adds the test.
+    const fakeKey = 'sk-' + 'a'.repeat(24);
+    const j = await reviewGate(jev, null, { diff: `${clean}+const key = "${fakeKey}";\n`, title: 'fix rollup' });
     expect(j.verdict).toBe('block');
     expect(jev.calls).toHaveLength(0);
     const fixture = 'diff --git a/tests/setup.test.ts b/tests/setup.test.ts\n--- a/tests/setup.test.ts\n+++ b/tests/setup.test.ts\n@@ -1 +1,2 @@\n+const token = "testtokenvalue1234567890";\n';
