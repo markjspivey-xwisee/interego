@@ -75,7 +75,7 @@ A published judgment renders in the HyperMarkdown viewer with one `:::control` b
 
 ## CI
 
-[`ci/jev-harness.yml`](ci/jev-harness.yml) is a GitHub Actions workflow for the monorepo: it starts the bridge bound to the checkout, runs the selection chain on pull requests, uploads the artifacts, and gates on the review verdict. Add `TYPESAFE_API_KEY` (and `INTEREGO_BEARER` to publish) as repository secrets.
+`.github/workflows/jev-harness.yml` runs on every pull request: one job starts the bridge bound to the checkout and follows `select-tests` into the run, the triage when the run failed, and the outcome; the other gates the diff and fails when the verdict asks for a person. Each job leaves one comment on the pull request, edited in place on later runs: the verdict with the hazards that fired and links to the descriptor on the pod, or the selection with why it was chosen and the triage table. With `INTEREGO_AGENT_KEY_JSON` as a repository secret the runner's bridge publishes as the same delegate agent as the deployed one, so CI's judgments and outcomes land on the pod beside everyone else's. `TYPESAFE_API_KEY` is the other secret.
 
 ## Deployed
 
@@ -89,7 +89,8 @@ The bridge runs on Railway as the service `jev-harness-bridge` (image `interego-
 
 - Policy is code and it is published: `jvh:policy` on every verdict, `jvh:reason` on every selection, the class-to-action table on every triage. Thresholds live in `NAVIGATION_THRESHOLDS`, `SELECTION_POLICY`, `REVIEW_POLICY`.
 - Jev sees the smallest state that answers the question: paths and head lines, never whole files; diffs under 60k characters with sensitive hunks first.
-- Choice questions are capped at 240 options; larger trees get a directory pass first (`jvh:Navigation` records both passes).
+- Choice questions are capped at 240 options; larger trees get a directory pass first (`jvh:Navigation` records both passes). Each directory is described by the first line of its README, CLAUDE.md or index file, or its package description, beside its path and a sample of file names.
+- Calibration is read back from the pod: at boot and hourly the bridge discovers the Asserted heads of its own graphs, parses their payloads into outcomes and merges them with what this container recorded, so a redeploy forgets nothing and every bridge publishing as the delegate (CI included) contributes. `/health` reports the counts and the last read-back; `GET /jev-harness/calibration?refresh=1` reads first.
 - `auto-ok` means the gate does not demand a person. Nothing here merges anything.
 - Limits: Jev generates nothing and does no arithmetic; every count and score is computed in code. Path-only state can miss a neighbouring file (measured: a rollup task answered `cmi5-course.ts` at 0.39 when `cmi5-lms.ts` was right), which is what the `open-top-three` band and the `refine` control are for.
 

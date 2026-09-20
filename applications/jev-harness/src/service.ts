@@ -14,7 +14,8 @@ import { reviewGate, type ReviewGateInput, type ReviewVerdictJudgment } from './
 import { recordOutcome, type AnyJudgment, type OutcomeInput, type OutcomeRecord } from './judgments/outcome.js';
 import { publishJudgment, recordTrajectoryStep, type RelayClient } from './publish.js';
 import { changedFiles, inventory, unifiedDiff, type RepoInventory } from './repo.js';
-import { HarnessStore, calibratedAdvice, computeAdviceBuckets, type CalibrationView } from './store.js';
+import { fetchPodOutcomes } from './pod-calibration.js';
+import { HarnessStore, calibratedAdvice, computeAdviceBuckets, type CalibrationView, type PodBackfillState } from './store.js';
 import { isIri } from './turtle.js';
 
 export interface HarnessOptions {
@@ -112,6 +113,27 @@ export class Harness {
 
   calibration(): CalibrationView {
     return this.store.calibration();
+  }
+
+  /**
+   * Read the harness outcomes on the pod back into the store, so calibration is the union of
+   * every bridge publishing as this delegate rather than what this container remembers. Off
+   * without a relay that names a pod; a failure is recorded, not thrown, because a bridge that
+   * cannot reach the pod should still judge.
+   */
+  async backfillFromPod(): Promise<PodBackfillState> {
+    if (!this.relay || !this.relay.podName) {
+      this.store.podBackfill = { status: 'off' };
+      return this.store.podBackfill;
+    }
+    try {
+      const r = await fetchPodOutcomes(this.relay, this.relay.podName, { known: this.store.knownPodDescriptors() });
+      const m = this.store.mergePodOutcomes(r.records);
+      this.store.podBackfill = { status: 'ok', at: new Date().toISOString(), scanned: r.scanned, fetched: r.records.length + r.errors.length, added: m.added, total: m.total, errors: r.errors.slice(0, 5) };
+    } catch (err) {
+      this.store.podBackfill = { status: 'failed', at: new Date().toISOString(), error: (err as Error).message };
+    }
+    return this.store.podBackfill;
   }
 
   private async finish<J extends Published>(j: J, step: { verb: string; objectName: string }, supersedes: readonly Published[] = []): Promise<JudgmentResponse<J>> {

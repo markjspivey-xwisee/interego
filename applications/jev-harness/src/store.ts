@@ -10,6 +10,19 @@ import type { Published } from './descriptor.js';
 import type { OutcomeRecord } from './judgments/outcome.js';
 import type { JudgmentKind } from './judgments/common.js';
 import { round } from './judgments/common.js';
+import type { PodOutcome } from './pod-calibration.js';
+
+export interface PodBackfillState {
+  readonly status: 'never' | 'off' | 'ok' | 'failed';
+  readonly at?: string;
+  /** Manifest entries examined, outcome descriptors fetched, new ones kept, all pod outcomes held. */
+  readonly scanned?: number;
+  readonly fetched?: number;
+  readonly added?: number;
+  readonly total?: number;
+  readonly errors?: readonly string[];
+  readonly error?: string;
+}
 
 export interface StoredArtifacts {
   readonly payloadTurtle: string;
@@ -104,7 +117,8 @@ export class HarnessStore {
     return rows;
   }
 
-  outcomes(): OutcomeRecord[] {
+  /** Outcomes this store recorded itself. */
+  localOutcomes(): OutcomeRecord[] {
     const p = join(this.dir, 'outcomes.jsonl');
     if (!existsSync(p)) return [];
     const rows = readFileSync(p, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as OutcomeRecord);
@@ -120,6 +134,45 @@ export class HarnessStore {
       const c = byGraph.get(o.judgmentIri);
       return Number.isFinite(c) ? { ...o, priorConfidence: c as number } : o;
     });
+  }
+
+  /** Outcomes read back from the pod (outcomes.pod.jsonl), keyed by the descriptor they came from. */
+  podOutcomes(): PodOutcome[] {
+    const p = join(this.dir, 'outcomes.pod.jsonl');
+    if (!existsSync(p)) return [];
+    return readFileSync(p, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as PodOutcome);
+  }
+
+  knownPodDescriptors(): Set<string> {
+    return new Set(this.podOutcomes().map((o) => o.descriptorUrl));
+  }
+
+  /** Keep pod outcomes not seen before; a descriptor already held is not written twice. */
+  mergePodOutcomes(records: readonly PodOutcome[]): { added: number; total: number } {
+    const known = this.knownPodDescriptors();
+    let added = 0;
+    for (const r of records) {
+      if (known.has(r.descriptorUrl)) continue;
+      appendFileSync(join(this.dir, 'outcomes.pod.jsonl'), `${JSON.stringify(r)}\n`);
+      known.add(r.descriptorUrl);
+      added += 1;
+    }
+    return { added, total: known.size };
+  }
+
+  /** The last read-back from the pod, for /health; in memory, so a restart reads as never. */
+  podBackfill: PodBackfillState = { status: 'never' };
+
+  /**
+   * Every outcome calibration should see: the ones recorded here plus the ones read back from
+   * the pod, minus duplicates. An outcome this bridge recorded and then published comes back
+   * from the pod under the same id, and the local copy wins.
+   */
+  outcomes(): OutcomeRecord[] {
+    const local = this.localOutcomes();
+    const ids = new Set(local.map((o) => o.id));
+    const fromPod = this.podOutcomes().filter((o) => !ids.has(o.id));
+    return [...local, ...fromPod];
   }
 
   list(): string[] {

@@ -13,7 +13,7 @@
 import { join } from 'node:path';
 import type { JevClient, Question, ChoiceAnswer, NoulAnswer } from '../jev-client.js';
 import { JEV_LIMITS, topK } from '../jev-client.js';
-import { groupByPrefix, readHead, type RepoFile, type RepoInventory } from '../repo.js';
+import { directoryAbout, groupByPrefix, readHead, type RepoFile, type RepoInventory } from '../repo.js';
 import { addUsage, emptyUsage, graphIriFor, newId, round, type JudgmentBase } from './common.js';
 
 export interface NavigateInput {
@@ -91,19 +91,20 @@ export async function navigate(jev: JevClient, inv: RepoInventory, input: Naviga
       key,
       members,
       sample: members.slice(0, DIRECTORY_SAMPLE).map((f) => f.path.slice(key.length)),
+      about: directoryAbout(inv.root, key),
     }));
     const questions: Record<string, Question> = {};
     dirs.forEach((d, i) => {
       questions[d.id] = {
         type: 'noul',
-        instructions: `Could the change described in \`task\` belong in \`directories[${i}]\` (path ${d.key}), judging from its path and sample file names?`,
+        instructions: `Could the change described in \`task\` belong in \`directories[${i}]\` (path ${d.key}), judging from its path, what its \`about\` line says it is for, and its sample file names?`,
         criteria: { true: 'The directory or its files concern what the task changes.', false: 'Nothing in this directory concerns the task.' },
       };
     });
     const state = {
       task: input.task,
       repository: { name: inv.name, commit: inv.commit },
-      directories: dirs.map((d) => ({ id: d.id, path: d.key, files: d.members.length, sample: d.sample })),
+      directories: dirs.map((d) => ({ id: d.id, path: d.key, files: d.members.length, ...(d.about ? { about: d.about } : {}), sample: d.sample })),
     };
     const r = await jev.systemOne(state, questions);
     usage = addUsage(usage, r);
