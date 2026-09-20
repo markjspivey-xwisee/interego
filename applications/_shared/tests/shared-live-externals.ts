@@ -533,6 +533,24 @@ export const SHARED_ONLY_THROUGH_IMPORTED_CODE: readonly {
       + 'reached by no collected module for the same reason.',
   },
   {
+    name: 'INTEREGO_AGENT_KEY_JSON',
+    readIn: 'applications/jev-harness/src/publish.ts',
+    why: 'an Ed25519 JWK that makes the bridge its own relay agent: relayFromEnv() mints relay tokens '
+      + 'from it through the OAuth flow, so nothing dials the relay unless a deployment sets it.',
+  },
+  {
+    name: 'INTEREGO_POD_NAME',
+    readIn: 'applications/jev-harness/src/publish.ts',
+    why: 'the pod a delegate bridge publishes to when it is not its own; read beside the key and '
+      + 'passed as pod_name on publish_context, never dialled on its own.',
+  },
+  {
+    name: 'INTEREGO_CLIENT_NAME',
+    readIn: 'applications/jev-harness/src/publish.ts',
+    why: 'the OAuth client name the relay maps to a surface slug when the bridge registers itself; '
+      + 'a label, not a target.',
+  },
+  {
     name: 'JEV_HARNESS_NS',
     readIn: 'applications/jev-harness/src/descriptor.ts',
     why: 'the vocabulary namespace of the vertical when it is served from somewhere other than '
