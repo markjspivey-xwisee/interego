@@ -9,7 +9,7 @@
  * WHY A REBUILD AND NOT A DELETE: deleting tens of millions of rows leaves the table the same
  * size until it is rewritten, and rewriting a 45 GB table needs 45 GB free, which is precisely
  * what a full volume does not have. The live set is small, so `rebuildTable` copies it into a
- * new table under an EXCLUSIVE lock (readers continue, writers wait for the minutes it takes),
+ * new table under an ACCESS EXCLUSIVE lock (readers and writers wait for the minutes it takes),
  * swaps the names in the same transaction, and leaves the old table for `--drop` after the
  * store has been checked. See packages/pgsl-store/src/gc.ts for what "live" means.
  *
