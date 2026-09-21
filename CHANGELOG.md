@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-21 — jev-harness: no person is required unless the operator says so
+
+The review gate still judges every diff and records its verdict, but needs-human-review is now advisory: the CI job fails only for block (a secret in the diff), `bin/follow.ts --gate-blocks-only` is how, and the repository variable `JEV_REQUIRE_HUMAN_REVIEW=true` restores the old behaviour. The gated auto-merge policy has the same switch: without a person required it merges on armed, token, green tests and any verdict but block; with one, auto-ok and an earned calibration are required as before. An automatic merge is labelled `jev-harness:auto-merged` before it is made, and the close-time job records no human decision for it, so calibration keeps counting only people.
+
 ## 2026-09-21 — one pod for the harness and the fleet, and a deployed bridge that names its repository
 
 The harness now publishes to the pod the operator's live connector owns (`u-pk-f2a9c751075a`), where the fleet's deploy, incident and review evidence already lands and where its payloads can actually be read: an agent can only be registered from a session on the pod it is registered on, which decided the direction. The delegate is registered there PublishOnly; the history on `u-pk-33d42e6b33dc` stays readable. `JEV_HARNESS_REPO_NAME` names the repository a deployed bridge is bound to, so its calibration and attestation graphs form one chain with CI's instead of a second under the image's directory name.

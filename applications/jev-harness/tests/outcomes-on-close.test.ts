@@ -30,4 +30,11 @@ describe('what a closed pull request records', () => {
     expect(outcomeRequests([nav], { merged: true, filesChanged: ['src/x.ts'] })[0]?.body).toEqual({ judgment_iri: 'urn:graph:jev-harness:navigation:n1', files_changed: ['src/x.ts'] });
     expect(outcomeRequests([nav], { merged: false, filesChanged: ['src/x.ts'] })).toEqual([]);
   });
+
+  it('an automatic merge is no person\'s approval: the verdict is left unscored, a navigation still scored', () => {
+    const nav = '<!-- jev-harness:judgment urn:graph:jev-harness:navigation:n1 navigation -->';
+    const reqs = outcomeRequests([gate, nav], { merged: true, filesChanged: ['src/x.ts'], autoMerged: true });
+    expect(reqs.map((r) => r.kind)).toEqual(['navigation']);
+    expect(outcomeRequests([gate], { merged: true, filesChanged: [], autoMerged: false }).map((r) => r.kind)).toEqual(['review-verdict']);
+  });
 });

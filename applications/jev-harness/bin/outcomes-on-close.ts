@@ -12,6 +12,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
+import { AUTO_MERGED_LABEL } from '../src/auto-merge.js';
 import { outcomeRequests } from '../src/outcomes-on-close.js';
 
 function flag(name: string): string | undefined {
@@ -64,6 +65,16 @@ async function prFiles(repo: string, pr: string, token: string): Promise<string[
   return out;
 }
 
+/** The pull request's labels: the auto-merge job leaves AUTO_MERGED_LABEL on what it merged. */
+async function prLabels(repo: string, pr: string, token: string): Promise<string[]> {
+  const res = await fetch(`https://api.github.com/repos/${repo}/pulls/${pr}`, {
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' },
+  });
+  if (!res.ok) throw new Error(`${res.status} reading the pull request`);
+  const body = await res.json() as { labels?: Array<{ name?: string }> };
+  return (body.labels ?? []).map((l) => l.name).filter((n): n is string => typeof n === 'string');
+}
+
 async function main(): Promise<void> {
   const pr = flag('--pr');
   const repo = flag('--repo');
@@ -79,8 +90,12 @@ async function main(): Promise<void> {
     console.log(`the API did not list the files (${err.message}); diffing ${base ?? '?'}...${head ?? '?'} instead`);
     return base && head ? filesChanged(workspace, base, head) : [];
   });
-  const requests = outcomeRequests(bodies, { merged, filesChanged: changed });
-  console.log(`pull request ${pr}: ${merged ? 'merged' : 'closed without merging'}, ${changed.length} file(s) changed, ${requests.length} judgment(s) to score`);
+  const autoMerged = merged && (await prLabels(repo, pr, token).catch((err: Error) => {
+    console.log(`the labels could not be read (${err.message}); treating the merge as a person's`);
+    return [] as string[];
+  })).includes(AUTO_MERGED_LABEL);
+  const requests = outcomeRequests(bodies, { merged, filesChanged: changed, autoMerged });
+  console.log(`pull request ${pr}: ${merged ? (autoMerged ? 'merged automatically, so the verdict is not scored as a person\'s decision' : 'merged') : 'closed without merging'}, ${changed.length} file(s) changed, ${requests.length} judgment(s) to score`);
   let unreachable = false;
   for (const r of requests) {
     try {
