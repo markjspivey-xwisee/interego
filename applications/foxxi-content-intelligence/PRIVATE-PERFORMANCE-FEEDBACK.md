@@ -1,10 +1,10 @@
 # Private empirical performance feedback
 
-This vertical adapter composes AGP diagnosis/calibration with Foxxi's hosted signed-request identity and PGSL encrypted persistence. It adds no generic MCP tool or protocol vocabulary. Existing unsigned/legacy seeded performance routes keep their behavior; the private opt-in never consumes or writes their corpus.
+AGP owns the performance evidence model (`applications/agentic-performance-practice/src/private-outcomes.ts`), encrypted performance store (`src/private-performance-store.ts`), and private HTTP/schema/affordance adapters (`compatibility/private-performance-*.ts`). Its existing `attachPerformanceRoutes` constructs and mounts those adapters. Foxxi supplies only its established signed-request authentication, canonical own-pod binding, encryption keys and guarded fetch through injected capabilities; its catalog composes the AGP-owned compatibility affordances. The Foxxi host does not interpret outcomes or instantiate domain storage. This preserves the dependency direction: performance theory composes the standards host, without a new upward implementation dependency or re-export shim. It adds no generic MCP tool or protocol vocabulary. Existing unsigned/legacy seeded performance routes keep their behavior; the private opt-in never consumes or writes their corpus.
 
 ## Followable contract
 
-Discover the Foxxi catalog, then use its signed affordances through `sign_request` and `act`. Each descriptor embeds the complete input contract; `GET /agent/performance/schema` also returns it as JSON.
+Discover the Foxxi catalog, then use its signed affordances through `sign_request` and `act`. Each descriptor embeds the complete input contract and accurate output properties for subsequent calls; tool names use the `foxxi.` namespace while action IRIs and HTTP paths remain unchanged. `GET /agent/performance/schema` also returns it as JSON.
 
 | Operation | Route | Action |
 |---|---|---|

@@ -21,10 +21,11 @@
  */
 
 import type { Express, Request, Response } from 'express';
-import { PRIVATE_PERFORMANCE_SCHEMA } from '../../foxxi-content-intelligence/src/private-performance-schema.js';
+import { PRIVATE_PERFORMANCE_SCHEMA } from './private-performance-schema.js';
 import { EvidenceError, privateEvidenceContext } from '../src/private-outcomes.js';
-import type { PrivatePerformanceStore } from '../../foxxi-content-intelligence/src/private-performance-store.js';
-import type { VerifyPrivateCaller } from '../../foxxi-content-intelligence/src/private-performance-routes.js';
+import { PrivatePerformanceStore, type PrivateStoreConfig } from '../src/private-performance-store.js';
+import { attachPrivatePerformanceRoutes } from './private-performance-routes.js';
+import type { VerifyPrivateCaller } from '../../foxxi-content-intelligence/src/private-performance-auth.js';
 import { attachInterventionMethodRoutes } from '../bridge/method-routes.js';
 import { foxxiInterventionMethodAffordances } from '../method-affordances.js';
 import { AGP_NS } from '../src/ontology.js';
@@ -317,7 +318,7 @@ const CONTEXTUALIZE_AND_PLAN_AFFORDANCE: Affordance = {
 
 export function attachPerformanceRoutes(app: Express, config: {
   selfBaseUrl: string;
-  privatePerformance?: { store: PrivatePerformanceStore; verify: VerifyPrivateCaller };
+  privatePerformance?: { persistence: PrivateStoreConfig; verify: VerifyPrivateCaller };
   /** Where to mint iep:ContextDescriptor records for outcomes / situations / teaching packages. */
   publishConfig?: DescriptorPublishConfig;
   /** Bridge-provided delegated-auth verifier. When set, a SIGNED followable
@@ -335,6 +336,14 @@ export function attachPerformanceRoutes(app: Express, config: {
   checkWriteRateLimit?: (clientIp: string) => { ok: boolean; retryAfterSeconds?: number };
 }): void {
   const base = config.selfBaseUrl.replace(/\/+$/, '');
+  // AGP owns performance evidence, its persistence orchestration and private
+  // calibration routes. A hosting standards bridge injects only its established
+  // identity/pod/crypto/transport capabilities; it does not interpret outcomes.
+  const privatePerformance = config.privatePerformance ? {
+    verify: config.privatePerformance.verify,
+    store: new PrivatePerformanceStore(config.privatePerformance.persistence),
+  } : undefined;
+  if (privatePerformance) attachPrivatePerformanceRoutes(app, { base, ...privatePerformance });
   attachInterventionMethodRoutes(app, base, foxxiInterventionMethodAffordances);
   const clientIpOf = (req: Request): string =>
     (String(req.headers['x-forwarded-for'] ?? '').split(',')[0]?.trim())
@@ -627,7 +636,7 @@ export function attachPerformanceRoutes(app: Express, config: {
         let replan: unknown;
         let calibration;
         if (p.private_evidence !== undefined || p.private_review === true) {
-          const service = config.privatePerformance;
+          const service = privatePerformance;
           if (!service) throw new EvidenceError('Private performance feedback is not configured.', 503);
           const privateAuth = await service.verify(req.body, p.private_evidence !== undefined);
           if (!privateAuth.ok) { res.status(privateAuth.status).json({ error: privateAuth.error }); return; }

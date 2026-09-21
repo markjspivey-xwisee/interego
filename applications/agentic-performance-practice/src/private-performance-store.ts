@@ -4,11 +4,11 @@
 import { createPGSL, ingest, promoteInstanceEncryptedCAS, resolveLatticeFromPodDetailed } from '@interego/pgsl';
 import type { EncryptionKeyPair, IRI } from '@interego/core';
 import { randomUUID, createHmac, timingSafeEqual } from 'node:crypto';
-import type { Diagnosis, InterventionPlan } from '../../agentic-performance-practice/src/performance-architecture.js';
+import type { Diagnosis, InterventionPlan } from './performance-architecture.js';
 import {
   EvidenceError, canonicalJson, evidenceHash, deriveOutcome, empiricalProfile,
   privateEvidenceContext, type PrivateEvidenceContext, type PrivatePlan, type PrivateOutcome,
-} from '../../agentic-performance-practice/src/private-outcomes.js';
+} from './private-outcomes.js';
 
 type AuthenticatedOutcome = PrivateOutcome & { server_authentication: string };
 interface State { schema: 1; owner: string; plans: PrivatePlan[]; outcomes: AuthenticatedOutcome[] }

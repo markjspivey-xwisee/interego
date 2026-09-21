@@ -5,9 +5,9 @@ import { createHash } from 'node:crypto';
 import { recoverSignedRequest } from '../src/auth.js';
 import type { AddressInfo } from 'node:net';
 import { generateKeyPair, openEncryptedEnvelope, createEncryptedEnvelope } from '@interego/core';
-import { PrivatePerformanceStore } from '../src/private-performance-store.js';
+import { PrivatePerformanceStore } from '../../agentic-performance-practice/src/private-performance-store.js';
 import { makePrivatePerformanceVerifier } from '../src/private-performance-auth.js';
-import { attachPrivatePerformanceRoutes, privatePerformanceAffordances } from '../src/private-performance-routes.js';
+import { privatePerformanceAffordances } from '../../agentic-performance-practice/compatibility/private-performance-affordances.js';
 import { attachPerformanceRoutes } from '../../agentic-performance-practice/compatibility/foxxi-performance-routes.js';
 import { diagnose, recommendInterventions, type PerformanceSituation } from '../../agentic-performance-practice/src/performance-architecture.js';
 import { evidenceHash, privateEvidenceContext, deriveOutcome, empiricalProfile, type Measurement, type PrivatePlan } from '../../agentic-performance-practice/src/private-outcomes.js';
@@ -255,8 +255,7 @@ describe('private transport and scope binding', () => {
         ? { ok: true, callerDid: recovered.agentId, payload: recovered.payload }
         : { ok: false, status: 401, error: 'Test delegation anchor mismatch or invalid signature' };
     } });
-    attachPerformanceRoutes(app, { selfBaseUrl: 'http://test', verifyDelegatedCaller: body => verify(body, false), privatePerformance: { store, verify } });
-    attachPrivatePerformanceRoutes(app, { base: 'http://test', store, verify });
+    attachPerformanceRoutes(app, { selfBaseUrl: 'http://test', verifyDelegatedCaller: body => verify(body, false), privatePerformance: { persistence: pod.config, verify } });
     const server = app.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     const post = async (path: string, body: unknown) => { const signed = JSON.stringify(body); const envelope = { _signed_payload: signed, _signature: await wallet.signMessage('sha256:' + createHash('sha256').update(signed).digest('hex')) }; const r = await fetch(base + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(envelope) }); return { status: r.status, body: await r.json() as Record<string, any> }; };

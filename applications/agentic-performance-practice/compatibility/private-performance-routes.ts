@@ -1,24 +1,13 @@
-/** Foxxi's private adapter for AGP empirical evidence. Uses ordinary delegated
+/** AGP-owned performance HTTP adapter, mounted at legacy Foxxi URLs. Uses delegated
  * identity, never default-tenant membership or a raw-wallet-only endpoint. */
 import type { Express } from 'express';
+import { privatePerformanceAffordances } from './private-performance-affordances.js';
 import { PRIVATE_PERFORMANCE_SCHEMA } from './private-performance-schema.js';
-import type { Affordance } from '../../_shared/affordance-mcp/index.js';
 import { affordancesManifestTurtle } from '../../_shared/affordance-mcp/index.js';
-import type { IRI } from '@interego/core';
-import { EvidenceError } from '../../agentic-performance-practice/src/private-outcomes.js';
-import type { PrivatePerformanceStore } from './private-performance-store.js';
+import { EvidenceError } from '../src/private-outcomes.js';
+import type { PrivatePerformanceStore } from '../src/private-performance-store.js';
 
-import type { VerifyPrivateCaller } from './private-performance-auth.js';
-export type { PrivateAuthResult, VerifyPrivateCaller } from './private-performance-auth.js';
-export const privatePerformanceAffordances: readonly Affordance[] = [
-  ['outcome', 'record-private-performance-outcome', 'Record a private measured intervention episode', 'Signed payload {agent_id,timestamp,outcome:{episode_id,plan_id,plan_sha256,intervention:{type,delivered,artifact:{uri,version,sha256},delivered_at},post,fresh?,assistance,observed_at}}. The server plan is created using private_evidence on contextualize-and-plan. Measurements include exact canonical report content and evidence references. No caller success labels; no causal attribution.'],
-  ['outcomes', 'read-private-performance-outcomes', 'Read your private server plans and measured outcomes', 'Signed payload {agent_id,timestamp,episode_id?}. Reads only the verified caller own encrypted pod.'],
-  ['calibration', 'read-private-performance-calibration', 'Read your own empirical calibration, excluding seeds', 'Signed payload {agent_id,timestamp}. Counts one learner/intervention episode, with eligibility, source and sample counts. No public aggregate publication.'],
-].map(([path, action, title, description]) => ({
-  action: `urn:iep:action:foxxi:${action}-signed` as IRI, toolName: action!.replaceAll('-', '_'), title: title!, description: `${description} Full input contract: /agent/performance/schema.`, method: 'POST' as const, externallyRouted: true,
-  targetTemplate: `{base}/agent/performance/${path}`, mediaType: 'application/json',
-  inputs: [{ name: '_signed_payload', type: 'string', required: true, description: `${description} Full schema: ${JSON.stringify(PRIVATE_PERFORMANCE_SCHEMA)}` }, { name: '_signature', type: 'string', required: true, description: 'Use sign_request; signature binds agent_id and complete payload.' }],
-}));
+import type { VerifyPrivateCaller } from '../../foxxi-content-intelligence/src/private-performance-auth.js';
 export function attachPrivatePerformanceRoutes(app: Express, config: { base: string; verify: VerifyPrivateCaller; store: PrivatePerformanceStore }) {
   app.get('/agent/performance/schema', (_req, res) => res.json(PRIVATE_PERFORMANCE_SCHEMA));
   for (const [index, path] of ['outcome', 'outcomes', 'calibration'].entries()) {

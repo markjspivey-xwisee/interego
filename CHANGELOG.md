@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-21 — Private performance composition and output contracts
+
+Private performance storage and route/schema orchestration now live with AGP's performance model. The existing performance-route integration accepts only host identity/pod/crypto/transport capabilities; Foxxi no longer constructs or imports the performance store and domain error type. The three compatibility affordances declare accurate output contracts and `foxxi.` tool names, preserving HTTP paths, action IRIs and return semantics. No conformance ceiling was changed.
+
 ## 2026-09-21 — Private feedback direct-owner proof
 
 Private performance authorization now distinguishes a direct owner signature from a delegated `did:ethr` identity signed by a different anchor. Only an exact recovered signer/address match bypasses delegation scopes; a DiscoverOnly delegated agent can read but cannot write. A signed-envelope regression reproduces the former prefix-only bypass and verifies owner access plus cross-pod refusal.
