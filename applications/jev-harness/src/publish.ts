@@ -381,18 +381,45 @@ export interface PublishReceipt {
   readonly raw: unknown;
 }
 
+export interface GraphPublish {
+  readonly graphIri: string;
+  readonly content: string;
+  readonly modalStatus: 'Asserted' | 'Hypothetical';
+  readonly confidence?: number;
+  readonly visibility?: 'public' | 'shared' | 'private';
+  readonly ifMatch?: string;
+  readonly signAuthorship?: boolean;
+}
+
 /** publish_context with the judgment's payload as graph_content; the relay adds the facets. */
-export async function publishJudgment(relay: RelayClient, j: Published, payloadTurtle: string, opts: PublishOptions = {}): Promise<PublishReceipt> {
-  const args: Record<string, unknown> = {
-    graph_iri: opts.graphIri ?? j.graphIri,
-    graph_content: payloadTurtle,
-    modal_status: modalStatus(j),
+export function publishJudgment(relay: RelayClient, j: Published, payloadTurtle: string, opts: PublishOptions = {}): Promise<PublishReceipt> {
+  return publishGraph(relay, {
+    graphIri: opts.graphIri ?? j.graphIri,
+    content: payloadTurtle,
+    modalStatus: modalStatus(j),
     confidence: j.confidence,
-    visibility: opts.visibility ?? 'shared',
+    ...(opts.visibility ? { visibility: opts.visibility } : {}),
+    ...(opts.ifMatch ? { ifMatch: opts.ifMatch } : {}),
+    ...(opts.signAuthorship !== undefined ? { signAuthorship: opts.signAuthorship } : {}),
+  });
+}
+
+/**
+ * publish_context for any payload graph the harness authors — a judgment, its outcome, the
+ * calibration view, the attestation — as the delegate on the owner's pod, superseding the
+ * graph's previous head.
+ */
+export async function publishGraph(relay: RelayClient, g: GraphPublish): Promise<PublishReceipt> {
+  const args: Record<string, unknown> = {
+    graph_iri: g.graphIri,
+    graph_content: g.content,
+    modal_status: g.modalStatus,
+    ...(g.confidence !== undefined ? { confidence: g.confidence } : {}),
+    visibility: g.visibility ?? 'shared',
     auto_supersede_prior: true,
-    sign_authorship: opts.signAuthorship ?? true,
+    sign_authorship: g.signAuthorship ?? true,
   };
-  if (opts.ifMatch) args['if_match'] = opts.ifMatch;
+  if (g.ifMatch) args['if_match'] = g.ifMatch;
   if (relay.podName) args['pod_name'] = relay.podName;
   if (relay.agentDid) args['agent_did'] = relay.agentDid;
   const r = await relay.callTool('publish_context', args);

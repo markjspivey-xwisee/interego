@@ -12,7 +12,8 @@ import { selectTests, type SelectTestsInput, type TestSelectionJudgment } from '
 import { triage, type TriageInput, type FailureTriageJudgment } from './judgments/triage.js';
 import { reviewGate, type ReviewGateInput, type ReviewVerdictJudgment } from './judgments/review-gate.js';
 import { recordOutcome, type AnyJudgment, type OutcomeInput, type OutcomeRecord } from './judgments/outcome.js';
-import { publishJudgment, recordTrajectoryStep, type RelayClient } from './publish.js';
+import { publishGraph, publishJudgment, recordTrajectoryStep, type RelayClient } from './publish.js';
+import { attestationGraphIri, attestationPayload, calibrationFingerprint, calibrationGraphIri, calibrationPayload } from './calibration-publish.js';
 import { changedFiles, inventory, unifiedDiff, type RepoInventory } from './repo.js';
 import { fetchPodOutcomes } from './pod-calibration.js';
 import { judgmentFromContent, type PodJudgment } from './pod-judgment.js';
@@ -27,6 +28,15 @@ export interface HarnessOptions {
   readonly store?: HarnessStore;
   readonly relay?: RelayClient | null;
   readonly visibility?: 'public' | 'shared' | 'private';
+}
+
+export interface CalibrationPublishState {
+  readonly status: 'never' | 'off' | 'unchanged' | 'published' | 'failed';
+  readonly at?: string;
+  readonly calibrationUrl?: string;
+  /** Absent when no cell had reached its sample floor, so no attestation was issued. */
+  readonly attestationUrl?: string;
+  readonly error?: string;
 }
 
 export interface PublishState {
@@ -50,6 +60,9 @@ export class Harness {
   readonly relay: RelayClient | null;
   private readonly visibility: 'public' | 'shared' | 'private';
   private inventoryCache: { readonly key: string; readonly inv: RepoInventory } | undefined;
+  /** The last calibration publish, for /health; in memory, so a restart reads as never. */
+  calibrationPublish: CalibrationPublishState = { status: 'never' };
+  private lastCalibrationFingerprint: string | undefined;
 
   constructor(opts: HarnessOptions) {
     this.jev = opts.jev;
@@ -138,6 +151,46 @@ export class Harness {
   }
 
   /**
+   * The calibration view onto the pod as an Asserted jvh:Calibration superseding the previous
+   * one, and — when a cell has reached its sample floor — the harness's amta:Attestation about
+   * itself, grounded in that descriptor. Unchanged views are not re-published unless forced.
+   */
+  async publishCalibration(opts: { readonly force?: boolean } = {}): Promise<CalibrationPublishState> {
+    if (!this.relay) {
+      this.calibrationPublish = { status: 'off' };
+      return this.calibrationPublish;
+    }
+    const view = this.calibration();
+    const fingerprint = calibrationFingerprint(view);
+    if (!opts.force && fingerprint === this.lastCalibrationFingerprint) {
+      this.calibrationPublish = { ...this.calibrationPublish, status: 'unchanged' };
+      return this.calibrationPublish;
+    }
+    const repoName = this.inventory().name;
+    try {
+      const calibration = await publishGraph(this.relay, { graphIri: calibrationGraphIri(repoName), content: calibrationPayload(view, this.ctx, repoName), modalStatus: 'Asserted', confidence: 1, visibility: this.visibility });
+      const attestation = attestationPayload(view, this.ctx, repoName, calibration.descriptorUrl ? { calibrationDescriptorUrl: calibration.descriptorUrl } : {});
+      const issued = attestation ? await publishGraph(this.relay, { graphIri: attestationGraphIri(repoName), content: attestation, modalStatus: 'Asserted', confidence: 1, visibility: this.visibility }) : undefined;
+      this.lastCalibrationFingerprint = fingerprint;
+      this.calibrationPublish = {
+        status: 'published',
+        at: new Date().toISOString(),
+        ...(calibration.descriptorUrl ? { calibrationUrl: calibration.descriptorUrl } : {}),
+        ...(issued?.descriptorUrl ? { attestationUrl: issued.descriptorUrl } : {}),
+      };
+      await recordTrajectoryStep(this.relay, {
+        verb: 'published-calibration',
+        objectName: `${repoName}: ${view.cells.filter((c) => c.status === 'Asserted').length} asserted cell(s)${issued ? ', attested' : ''}`,
+        resultSuccess: true,
+        wasDerivedFrom: [calibration.descriptorUrl, issued?.descriptorUrl].filter((u): u is string => typeof u === 'string'),
+      }).catch(() => undefined);
+    } catch (err) {
+      this.calibrationPublish = { status: 'failed', at: new Date().toISOString(), error: (err as Error).message };
+    }
+    return this.calibrationPublish;
+  }
+
+  /**
    * Read the harness outcomes on the pod back into the store, so calibration is the union of
    * every bridge publishing as this delegate rather than what this container remembers. Off
    * without a relay that names a pod; a failure is recorded, not thrown, because a bridge that
@@ -152,6 +205,9 @@ export class Harness {
       const r = await fetchPodOutcomes(this.relay, this.relay.podName, { known: this.store.knownPodDescriptors() });
       const m = this.store.mergePodOutcomes(r.records);
       this.store.podBackfill = { status: 'ok', at: new Date().toISOString(), scanned: r.scanned, fetched: r.records.length + r.errors.length, added: m.added, total: m.total, errors: r.errors.slice(0, 5) };
+      // New evidence changes the view; publish it. A read-back that added nothing leaves the
+      // pod's calibration head as it is, so a restart does not write a copy of it.
+      if (m.added > 0) void this.publishCalibration().catch(() => undefined);
     } catch (err) {
       this.store.podBackfill = { status: 'failed', at: new Date().toISOString(), error: (err as Error).message };
     }

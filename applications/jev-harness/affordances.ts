@@ -138,4 +138,16 @@ export const jevHarnessAffordances: ReadonlyArray<Affordance> = [
     annotations: { title: 'Calibration', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputs: [],
   },
+  {
+    action: actionIri('urn:iep:action:jev-harness:publish-calibration'),
+    toolName: 'jev_harness.publish_calibration',
+    title: 'Publish the calibration view to the pod, and the attestation it grounds',
+    description: 'Publishes the current calibration view as an Asserted jvh:Calibration descriptor under one graph IRI per repository, each publish superseding the last so the chain is the calibration history, and — once a cell has reached its sample floor — an amta:Attestation the harness issues about itself (direction Self: competence from navigation hit@3, accuracy from review-verdict agreement, relevance from test-selection coverage, honesty from navigation Brier), grounded in the calibration descriptor. Answers with where both landed; skipped without a relay. The bridge also publishes on its own after a pod read-back that added outcomes, and CI after scoring a merged pull request.',
+    method: 'POST',
+    targetTemplate: '{base}/jev-harness/calibration/publish',
+    returns: `${NS}Calibration`,
+    mediaType: 'application/json',
+    annotations: { title: 'Publish calibration', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    inputs: [],
+  },
 ];

@@ -71,6 +71,16 @@ async function main(): Promise<void> {
       console.log(`  ${r.kind} ${r.graphIri}: bridge unreachable: ${(err as Error).message}`);
     }
   }
+  if (requests.length > 0 && !unreachable) {
+    // The outcomes just recorded changed the view: publish it, and the attestation it grounds.
+    try {
+      const res = await fetch(`${bridge}/jev-harness/calibration/publish`, { method: 'POST' });
+      const out = await res.json() as { status?: string; calibrationUrl?: string; attestationUrl?: string; error?: string };
+      console.log(`calibration: ${out.status ?? res.status}${out.calibrationUrl ? ` ${out.calibrationUrl}` : ''}${out.attestationUrl ? `; attestation ${out.attestationUrl}` : ''}${out.error ? `: ${out.error}` : ''}`);
+    } catch (err) {
+      console.log(`calibration: bridge unreachable: ${(err as Error).message}`);
+    }
+  }
   if (unreachable) process.exit(1);
 }
 
