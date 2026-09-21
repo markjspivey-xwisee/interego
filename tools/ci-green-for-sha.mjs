@@ -27,6 +27,18 @@
  * deploy. Cancelled is deliberately NOT forgiven: a cancelled test run is a test that did not
  * report, and "it was probably fine" is the reasoning this gate exists to replace.
  *
+ * ── ★ WHY A SHORT LISTING IS A WAIT, NOT A VERDICT ──────────────────────────────────────────
+ *
+ * GitHub's runs listing is eventually consistent. On 2026-09-21 this gate watched the five runs
+ * for 0f40814b narrow to two still going, and the next poll answered 200 with an EMPTY list; the
+ * floor read that as "too few" and refused a commit whose CI concluded green four minutes later.
+ * So below the floor is now a reason to poll again while time remains, and a refusal only when
+ * the listing is still short at the deadline: a mistyped sha or a token without actions:read is
+ * still never read as green, it is refused at the end of the wait instead of at the start. A
+ * 5xx from GitHub is retried the same way; a 4xx is refused at once, because a token without
+ * permission does not fix itself. `nextStep` and `retryable` are those two decisions, pure and
+ * tested beside `verdict`.
+ *
  *   GITHUB_TOKEN=... GITHUB_REPOSITORY=owner/repo node tools/ci-green-for-sha.mjs <40-hex-sha>
  *
  * Exit 0 = every other workflow concluded successfully. 1 = something failed or never finished.
@@ -58,8 +70,9 @@ export async function runsForSha(sha, { repo, token, self, fetchFn = fetch }) {
     },
   });
   if (!res.ok) {
-    throw new Error(`GitHub answered ${res.status} for ${url} — a deploy gate that cannot read `
-      + 'the check results must refuse, not assume');
+    // The status rides along so the loop can tell an outage (retried) from a refusal (final).
+    throw Object.assign(new Error(`GitHub answered ${res.status} for ${url} — a deploy gate that cannot read `
+      + 'the check results must refuse, not assume'), { status: res.status });
   }
   const body = await res.json();
   const all = Array.isArray(body?.workflow_runs) ? body.workflow_runs : [];
@@ -92,6 +105,23 @@ export function verdict(runs, minRuns = MIN_RUNS) {
   };
 }
 
+/**
+ * What the loop does with a verdict once the clock is known: deploy, refuse, or poll again.
+ * Pure, like `verdict`, so the wait-versus-refuse line is testable without a clock. Green deploys
+ * whatever the time; red refuses at once; pending and too-few wait until the deadline and are
+ * refused there.
+ */
+export function nextStep(v, expired) {
+  if (v.state === 'green') return 'deploy';
+  if (v.state === 'red') return 'refuse';
+  return expired ? 'refuse' : 'wait';
+}
+
+/** A GitHub outage (5xx) is polled again until the deadline; any other answer is final. */
+export function retryable(err) {
+  return Number(err?.status) >= 500;
+}
+
 async function main() {
   const sha = process.argv[2];
   const repo = process.env['GITHUB_REPOSITORY'];
@@ -112,16 +142,23 @@ async function main() {
 
   const deadline = Date.now() + timeoutMs;
   for (;;) {
+    const expired = Date.now() > deadline;
     let runs;
     try {
       runs = await runsForSha(sha, { repo, token, self });
     } catch (err) {
+      if (retryable(err) && !expired) {
+        console.log(`GitHub is not answering (${err.message}); polling again`);
+        await new Promise((r) => setTimeout(r, pollMs));
+        continue;
+      }
       console.error(`could not read workflow runs: ${err.message}`);
       process.exit(2);
     }
     const v = verdict(runs);
+    const step = nextStep(v, expired);
 
-    if (v.state === 'green') {
+    if (step === 'deploy') {
       console.log(`✓ ${runs.length} workflow run(s) for ${sha.slice(0, 12)} all concluded successfully`);
       for (const r of runs) console.log(`    ${r.conclusion.padEnd(9)} ${r.name}`);
       process.exit(0);
@@ -133,18 +170,25 @@ async function main() {
         + '  the next push re-runs this gate.\n');
       process.exit(1);
     }
-    if (v.state === 'too-few') {
+    if (step === 'refuse' && v.state === 'too-few') {
       console.error(`\n★ CI RESULTS FOR ${sha.slice(0, 12)} CANNOT BE TRUSTED — NOT DEPLOYING\n`);
       console.error(`  ${v.detail}\n`);
+      console.error(`  The listing stayed short for ${Math.round(timeoutMs / 60000)} minutes, so this is not one`
+        + ' eventually-consistent answer: check the sha, and that the token has actions:read.\n');
       process.exit(1);
     }
-    if (Date.now() > deadline) {
+    if (step === 'refuse') {
       console.error(`\n★ CI DID NOT FINISH within ${Math.round(timeoutMs / 60000)} minutes — NOT DEPLOYING\n`);
       for (const p of v.pending) console.error(`    still running: ${p}`);
       console.error('\n  A deploy that gives up waiting and ships anyway is not gated at all.\n');
       process.exit(1);
     }
-    console.log(`waiting for ${v.pending.length} run(s): ${v.pending.slice(0, 6).join(', ')}`);
+    if (v.state === 'too-few') {
+      console.log(`${runs.length} run(s) listed for ${sha.slice(0, 12)}, below the floor of ${MIN_RUNS}; `
+        + 'the listing is eventually consistent, so polling again');
+    } else {
+      console.log(`waiting for ${v.pending.length} run(s): ${v.pending.slice(0, 6).join(', ')}`);
+    }
     await new Promise((r) => setTimeout(r, pollMs));
   }
 }
