@@ -137,6 +137,12 @@ What the first run changed in the code:
 
 What did not change: the gate stays conservative on this repository because most of its commits touch the relay, signing or delegation code, and the model reads them as risky; the "P(high) ≥ 0.25" reason fired on 26 of 40. That is a property of the codebase more than of the gate.
 
+## Memory: precedents from the pod
+
+Every navigation outcome carries the task and the files it actually changed (`jvh:task`, `jvh:observedFile`), so an outcome read back from the pod is a precedent on its own. Before the model is asked, a navigation consults the store's precedents — its own outcomes plus every outcome on the pod — for tasks whose content words resemble the new one (Jaccard, at least 0.15, the five strongest). Their files are added to the candidate set when the directory pass left them out, and after the model answers its distribution is mixed with theirs: p' = (1 − λ) p + λ q, λ = 0.5 × the strongest similarity. The judgment records what was consulted (`jvh:precedentsConsulted`, `jvh:precedentWeight`, one `jvh:precedent` per applied outcome), so the calibration view keeps scoring navigation with memory against navigation without it. `tools/backtest.ts --precedents none|run|store` measures the difference on history, replaying oldest first so memory only ever holds what came before.
+
+Measured on this repository's 40 most recent commits (2026-09-21, jev-1.13.0): with memory off, hit@1 0.28, hit@3 0.43, mean Brier 0.158, mean confidence 0.503; with memory on, hit@1 0.33, hit@3 0.43, mean Brier 0.126, mean confidence 0.447. Read that honestly: the two commits that flipped to hits had no precedents applied, so the hit@1 change is model variance; where precedents applied (19 of 40) no hit changed, and their files overlapped the actual change in only 4 — the other 15 were a run of one-file commits sharing a subject, where memory points at what just moved. What memory did do is spread probability off wrong answers: lower Brier, lower confidence on the misses. Every outcome now records the memory share of the judgment it scores (`jvh:priorPrecedentWeight`), and the calibration view's `memory` cell pair reports navigation with precedents against navigation without, so live tasks decide whether the rule earns its weight.
+
 ## Tests
 
 ```bash

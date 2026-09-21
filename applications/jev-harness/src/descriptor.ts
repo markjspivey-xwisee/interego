@@ -267,6 +267,13 @@ export function payloadBody(j: Published, ctx: PublishContext): string {
       if (j.adviceBucket) t(P('adviceBucket'), bn([[P('bucketFrom'), dbl(j.adviceBucket.from)], [P('samples'), `"${j.adviceBucket.samples}"^^xsd:integer`], [P('hitAt1Rate'), dbl(j.adviceBucket.hitAt1 ?? 0)], [P('hitAt3Rate'), dbl(j.adviceBucket.hitAt3 ?? 0)], [P('bucketSource'), lit(j.adviceBucket.source)]]));
       if (j.directoryProbability !== undefined) t(P('directoryProbability'), dbl(j.directoryProbability));
       t(P('covered'), dbl(j.covered));
+      if (j.precedents) {
+        t(P('precedentsConsulted'), `"${j.precedents.consulted}"^^xsd:integer`);
+        t(P('precedentWeight'), dbl(j.precedents.weight));
+        for (const p of j.precedents.applied) {
+          t(P('precedent'), bn([[P('task'), lit(p.task)], [P('similarity'), dbl(p.similarity)], ...p.files.map((f): [string, string] => [P('path'), lit(f)]), ['prov:wasDerivedFrom', iri(p.outcomeIri)]]));
+        }
+      }
       for (const f of j.files) t(P('candidate'), bn([[P('role'), lit('change')], [P('path'), lit(f.path)], [P('probability'), dbl(f.probability)]]));
       for (const f of j.tests) t(P('candidate'), bn([[P('role'), lit('test')], [P('path'), lit(f.path)], [P('probability'), dbl(f.probability)]]));
       for (const f of j.docs) t(P('candidate'), bn([[P('role'), lit('document')], [P('path'), lit(f.path)], [P('probability'), dbl(f.probability)]]));
@@ -313,6 +320,11 @@ export function payloadBody(j: Published, ctx: PublishContext): string {
       if (j.agreement) t(P('agreement'), lit(j.agreement));
       for (const m of j.missed) t(P('missed'), lit(m));
       t(P('summary'), lit(j.summary));
+      // The pair (task, observed files) is what a later navigation consults as a precedent, so
+      // an outcome read back from the pod carries it without dereferencing the judgment.
+      if (j.task) t(P('task'), lit(j.task));
+      for (const f of j.observed.filesChanged ?? []) t(P('observedFile'), lit(f));
+      if (j.priorPrecedentWeight !== undefined) t(P('priorPrecedentWeight'), dbl(j.priorPrecedentWeight));
       break;
   }
 
@@ -441,6 +453,10 @@ export function proseOf(j: Published): string {
       for (const f of j.files) lines.push(`| change | ${f.path} | ${f.probability} |`);
       for (const f of j.tests) lines.push(`| test | ${f.path} | ${f.probability} |`);
       for (const f of j.docs) lines.push(`| document | ${f.path} | ${f.probability} |`);
+      if (j.precedents) {
+        lines.push('', `Memory: ${j.precedents.consulted} precedent(s) consulted, ${j.precedents.applied.length} applied, share ${j.precedents.weight}.`);
+        for (const p of j.precedents.applied) lines.push(`- "${p.task.slice(0, 80)}" (similarity ${p.similarity}) → ${p.files.join(', ')}`);
+      }
       break;
     case 'test-selection':
       lines.push(`Mode: **${j.mode}**. ${j.reasons.join(' ')}`, '', `Changed: ${j.changedFiles.join(', ')}`, '', '| Test | Selected by | Probability |', '| --- | --- | --- |');

@@ -15,11 +15,30 @@ import type { JevClient, Question, ChoiceAnswer, NoulAnswer } from '../jev-clien
 import { JEV_LIMITS, topK } from '../jev-client.js';
 import { directoryAbout, groupByPrefix, readHead, type RepoFile, type RepoInventory } from '../repo.js';
 import { addUsage, emptyUsage, graphIriFor, newId, round, type JudgmentBase } from './common.js';
+import { matchPrecedents, mixWithPrecedents, normalizePath, PRECEDENT_MAX_INJECTED, type MatchedPrecedent, type Precedent } from './precedents.js';
 
 export interface NavigateInput {
   readonly task: string;
   readonly scope?: string;
   readonly topK?: number;
+  /** What earlier tasks changed (the store's outcomes, local and from the pod); the service supplies them. */
+  readonly precedents?: readonly Precedent[];
+}
+
+export interface AppliedPrecedent {
+  readonly task: string;
+  readonly similarity: number;
+  /** The precedent's files that were candidates, and so contributed. */
+  readonly files: readonly string[];
+  readonly outcomeIri: string;
+}
+
+export interface NavigationPrecedents {
+  /** How many precedents were available to consult. */
+  readonly consulted: number;
+  /** The share of the candidate distribution that came from them (0 when none applied). */
+  readonly weight: number;
+  readonly applied: readonly AppliedPrecedent[];
 }
 
 export interface Candidate {
@@ -54,6 +73,8 @@ export interface NavigationJudgment extends JudgmentBase {
   readonly adviceBasis?: 'default' | 'calibrated';
   /** The calibration bucket the advice was read from, when calibrated. */
   readonly adviceBucket?: { readonly from: number; readonly samples: number; readonly hitAt1: number | null; readonly hitAt3: number | null; readonly source: 'live' | 'all' };
+  /** The memory consulted (absent when no precedents were supplied). */
+  readonly precedents?: NavigationPrecedents;
 }
 
 const MAX_OPTIONS = Math.min(240, JEV_LIMITS.choiceOptions - 5);
@@ -123,6 +144,27 @@ export async function navigate(jev: JevClient, inv: RepoInventory, input: Naviga
     candidates = picked.slice(0, MAX_OPTIONS);
   }
 
+  // Memory — precedents whose task resembles this one bring their observed files along: into
+  // the candidate set when the directory pass left them out (the directory pass is where most
+  // misses begin), and into the distribution once the model has answered. ./precedents.ts has
+  // the rule; the judgment records what was consulted and what it contributed.
+  const matched: MatchedPrecedent[] = matchPrecedents(input.task, input.precedents ?? []);
+  if (matched.length > 0) {
+    const have = new Set(candidates.map((f) => normalizePath(f.path)));
+    const byPath = new Map(inv.files.map((f) => [normalizePath(f.path), f] as const));
+    const injected: RepoFile[] = [];
+    for (const m of matched) {
+      for (const f of m.files) {
+        const key = normalizePath(f);
+        const file = byPath.get(key);
+        if (!file || have.has(key) || injected.length >= PRECEDENT_MAX_INJECTED) continue;
+        have.add(key);
+        injected.push(file);
+      }
+    }
+    if (injected.length > 0) candidates = [...candidates.slice(0, Math.max(0, MAX_OPTIONS - injected.length)), ...injected];
+  }
+
   // Pass 2 — files. Heads are read here, for the candidate subset only.
   const files = candidates.map((f) => (f.head ? f : withHead(inv.root, f)));
   const byId = new Map(files.map((f) => [f.id, f]));
@@ -173,6 +215,8 @@ export async function navigate(jev: JevClient, inv: RepoInventory, input: Naviga
   usage = addUsage(usage, r);
   const change = r.answers['change'] as ChoiceAnswer;
   passes.push({ stage: 'files', options: files.length, confidence: round(change.confidence) });
+  const mix = mixWithPrecedents(change.probabilities, (id) => byId.get(id)?.path, matched);
+  const changeProbabilities = mix.probabilities;
 
   const toCandidates = (probabilities: Record<string, number>, exclude: string): Candidate[] =>
     topK(probabilities, k + 1)
@@ -185,9 +229,15 @@ export async function navigate(jev: JevClient, inv: RepoInventory, input: Naviga
   const coveredAnswer = r.answers['covered'] as NoulAnswer | undefined;
   // The judgment's confidence is the file pass weighted by how plausible the directory pass
   // found the top candidate's directory; without a directory pass it is the file pass alone.
-  const topPath = byId.get(topK(change.probabilities, 1)[0]?.key ?? '')?.path ?? '';
+  const topKey = topK(changeProbabilities, 1)[0]?.key ?? '';
+  const topPath = byId.get(topKey)?.path ?? '';
   const topDirectoryProbability = directoryProbability.size > 0 ? directoryProbabilityFor(topPath, directoryProbability) : 1;
-  const confidence = round(change.confidence * topDirectoryProbability);
+  // With precedents in the mix, the model's concentration is blended with the mixed top
+  // probability in the same proportion; without them it is the model's alone, as before.
+  const modelConfidence = mix.weight > 0
+    ? (1 - mix.weight) * change.confidence + mix.weight * (changeProbabilities[topKey] ?? 0)
+    : change.confidence;
+  const confidence = round(modelConfidence * topDirectoryProbability);
   const advice: NavigationAdvice =
     confidence >= NAVIGATION_THRESHOLDS.openTopFile ? 'open-top-file'
       : confidence >= NAVIGATION_THRESHOLDS.openTopThree ? 'open-top-three'
@@ -205,7 +255,7 @@ export async function navigate(jev: JevClient, inv: RepoInventory, input: Naviga
     usage,
     task: input.task,
     ...(input.scope ? { scope: input.scope } : {}),
-    files: toCandidates(change.probabilities, ''),
+    files: toCandidates(changeProbabilities, ''),
     tests: testAnswer ? toCandidates(testAnswer.probabilities, NO_TEST) : [],
     docs: docAnswer ? toCandidates(docAnswer.probabilities, NO_DOC) : [],
     covered: coveredAnswer ? round(coveredAnswer.noul) : 0,
@@ -214,8 +264,17 @@ export async function navigate(jev: JevClient, inv: RepoInventory, input: Naviga
     passes,
     filesConsidered: files.length,
     ...(directoryProbability.size > 0 ? { directoryProbability: round(topDirectoryProbability) } : {}),
+    ...(input.precedents ? { precedents: appliedPrecedents(input.precedents.length, matched, mix.weight, mix.contributed) } : {}),
   };
   return judgment;
+}
+
+function appliedPrecedents(consulted: number, matched: readonly MatchedPrecedent[], weight: number, contributed: readonly string[]): NavigationPrecedents {
+  const present = new Set(contributed.map(normalizePath));
+  const applied = matched
+    .map((m) => ({ task: m.task, similarity: m.similarity, files: m.files.map(normalizePath).filter((f) => present.has(f)), outcomeIri: m.outcomeIri }))
+    .filter((a) => a.files.length > 0);
+  return { consulted, weight, applied };
 }
 
 function directoryProbabilityFor(path: string, probabilities: Map<string, number>): number {

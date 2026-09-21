@@ -69,7 +69,8 @@ export class Harness {
   }
 
   async navigate(input: NavigateInput): Promise<JudgmentResponse<NavigationJudgment>> {
-    const raw = await navigate(this.jev, this.inventory(input.scope), input);
+    // Memory first: every navigation consults what earlier tasks changed, here and on the pod.
+    const raw = await navigate(this.jev, this.inventory(input.scope), { ...input, precedents: this.store.precedents() });
     // The advice, and therefore the controls the judgment affords, come from measured
     // calibration once a confidence bucket has enough recorded outcomes.
     const calibrated = calibratedAdvice(raw.confidence, raw.advice, computeAdviceBuckets(this.store.outcomes()));

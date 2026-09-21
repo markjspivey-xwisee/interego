@@ -11,6 +11,7 @@ import type { OutcomeRecord } from './judgments/outcome.js';
 import type { JudgmentKind } from './judgments/common.js';
 import { round } from './judgments/common.js';
 import type { PodOutcome } from './pod-calibration.js';
+import type { Precedent } from './judgments/precedents.js';
 
 export interface PodBackfillState {
   readonly status: 'never' | 'off' | 'ok' | 'failed';
@@ -49,11 +50,31 @@ export interface CalibrationCell {
   readonly agreement: Readonly<Record<string, number>>;
 }
 
+export interface MemoryCell {
+  readonly samples: number;
+  readonly hitAt1: number | null;
+  readonly hitAt3: number | null;
+  readonly brier: number | null;
+}
+
+/**
+ * Navigation outcomes split by whether precedents contributed to the judgment (its recorded
+ * jvh:precedentWeight above 0). Measured on the 40-commit replay of 2026-09-21: memory changed
+ * no hit, lowered the mean Brier from 0.158 to 0.126 and the mean confidence from 0.503 to
+ * 0.447; this cell pair is what says whether live tasks behave the same way.
+ */
+export interface MemoryCalibration {
+  readonly applied: MemoryCell;
+  readonly none: MemoryCell;
+}
+
 export interface CalibrationView {
   readonly minSamples: number;
   readonly cells: readonly CalibrationCell[];
   /** Navigation hit rates per confidence bucket; the source of calibrated advice. */
   readonly adviceBuckets: readonly AdviceBucket[];
+  /** Navigation with precedents applied against navigation without. */
+  readonly memory: MemoryCalibration;
   readonly computedAt: string;
 }
 
@@ -179,9 +200,25 @@ export class HarnessStore {
     return readdirSync(join(this.dir, 'judgments')).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5));
   }
 
+  /** What earlier tasks actually changed: the navigation outcomes, here and on the pod, that carry a task and observed files. */
+  precedents(): Precedent[] {
+    return precedentsOf(this.outcomes());
+  }
+
   calibration(): CalibrationView {
     return computeCalibration(this.outcomes());
   }
+}
+
+/** The precedents among a set of outcomes: navigation outcomes carrying the task and the files it changed. */
+export function precedentsOf(outcomes: readonly OutcomeRecord[]): Precedent[] {
+  const out: Precedent[] = [];
+  for (const o of outcomes) {
+    const files = o.observed.filesChanged ?? [];
+    if (o.judgmentKind !== 'navigation' || typeof o.task !== 'string' || o.task.length === 0 || files.length === 0) continue;
+    out.push({ task: o.task, files: [...files], source: o.source, at: o.createdAt, outcomeIri: o.graphIri });
+  }
+  return out;
 }
 
 // ── Calibrated advice ─────────────────────────────────────────────────────────
@@ -267,5 +304,21 @@ export function computeCalibration(outcomes: readonly OutcomeRecord[], minSample
       agreement,
     };
   });
-  return { minSamples, cells, adviceBuckets: computeAdviceBuckets(outcomes), computedAt: new Date().toISOString() };
+  return { minSamples, cells, adviceBuckets: computeAdviceBuckets(outcomes), memory: computeMemoryCalibration(outcomes), computedAt: new Date().toISOString() };
+}
+
+export function computeMemoryCalibration(outcomes: readonly OutcomeRecord[]): MemoryCalibration {
+  const navigations = outcomes.filter((o) => o.judgmentKind === 'navigation');
+  const cell = (rows: readonly OutcomeRecord[]): MemoryCell => {
+    const rate = (pick: (o: OutcomeRecord) => boolean | null): number | null => {
+      const vals = rows.map(pick).filter((v): v is boolean => v !== null);
+      return vals.length === 0 ? null : round(vals.filter(Boolean).length / vals.length);
+    };
+    const briers = rows.map((o) => o.brier).filter((b): b is number => b !== null);
+    return { samples: rows.length, hitAt1: rate((o) => o.hitAt1), hitAt3: rate((o) => o.hitAt3), brier: briers.length === 0 ? null : round(briers.reduce((a, b) => a + b, 0) / briers.length, 4) };
+  };
+  return {
+    applied: cell(navigations.filter((o) => (o.priorPrecedentWeight ?? 0) > 0)),
+    none: cell(navigations.filter((o) => (o.priorPrecedentWeight ?? 0) === 0)),
+  };
 }

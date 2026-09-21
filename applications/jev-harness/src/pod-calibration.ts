@@ -71,6 +71,9 @@ export function outcomeFromContent(content: string, meta: { readonly descriptorU
   if (!judgmentIri || priorConfidence === null || !judgmentKind) return undefined;
   const id = localName(subject.value) || meta.descriptorUrl;
   const source: OutcomeSource = one('outcomeSource') === 'backtest' ? 'backtest' : 'live';
+  const filesChanged = values.get('observedFile') ?? [];
+  const task = one('task');
+  const priorPrecedentWeight = num('priorPrecedentWeight');
   return {
     kind: 'outcome',
     id,
@@ -89,8 +92,10 @@ export function outcomeFromContent(content: string, meta: { readonly descriptorU
     brier: num('brier'),
     missed: values.get('missed') ?? [],
     agreement: one('agreement') ?? null,
-    observed: { judgmentIri, source },
+    observed: { judgmentIri, source, ...(filesChanged.length > 0 ? { filesChanged } : {}) },
     summary: one('summary') ?? '',
+    ...(task ? { task } : {}),
+    ...(priorPrecedentWeight !== null ? { priorPrecedentWeight } : {}),
     descriptorUrl: meta.descriptorUrl,
   };
 }
