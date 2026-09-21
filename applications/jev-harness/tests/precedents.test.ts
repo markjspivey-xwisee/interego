@@ -14,7 +14,7 @@ import { contextFromEnv, descriptorTrig, hmdMarkdown, payloadTurtle } from '../s
 import { choiceAnswer, FakeJevClient, type Answer } from '../src/jev-client.js';
 import { outcomeFromContent } from '../src/pod-calibration.js';
 import { inventory, type RepoFile, type RepoInventory } from '../src/repo.js';
-import { HarnessStore, precedentsOf } from '../src/store.js';
+import { HarnessStore, computeCalibration, precedentsOf } from '../src/store.js';
 import { fixtureRepo, idOf, preferringJev } from './helpers.js';
 
 const at = '2026-09-21T02:00:00.000Z';
@@ -172,5 +172,26 @@ describe('an outcome is a precedent wherever it is read from', () => {
     expect(turtle).toContain('jvh:precedentWeight "0.4"^^xsd:double');
     expect(turtle).toContain(`jvh:precedent [ jvh:task "rollup emits satisfied once per block" ; jvh:similarity "0.8"^^xsd:double ; jvh:path "src/rollup.ts" ; prov:wasDerivedFrom <${o.graphIri}> ]`);
     expect(hmdMarkdown(next, ctx)).toContain('Memory: 1 precedent(s) consulted, 1 applied, share 0.4.');
+  });
+});
+
+describe('calibration tells memory from model', () => {
+  it('an outcome carries the memory share of the navigation it scores, round trip, and the view splits on it', async () => {
+    const ctx = contextFromEnv('http://localhost:6090');
+    const inv = inventory(fixtureRepo(), { includeHeads: true });
+    const jev = preferringJev((q, state) => (q === 'change' ? idOf(state, 'src/course.ts') : undefined));
+    const memory = [precedent('rollup emits satisfied once per block', ['src/rollup.ts'])];
+    const withMemory = await navigate(jev, inv, { task: 'rollup emits satisfied per block', precedents: memory });
+    const without = await navigate(jev, inv, { task: 'rollup emits satisfied per block' });
+    const o1 = recordOutcome(withMemory, { judgmentIri: withMemory.graphIri, filesChanged: ['src/course.ts'] });
+    const o2 = recordOutcome(without, { judgmentIri: without.graphIri, filesChanged: ['src/rollup.ts'] });
+    expect(o1.priorPrecedentWeight).toBe(0.4);
+    expect(o2.priorPrecedentWeight).toBeUndefined();
+    expect(payloadTurtle(o1, ctx)).toContain('jvh:priorPrecedentWeight "0.4"^^xsd:double');
+    const back = outcomeFromContent(descriptorTrig(o1, ctx), { descriptorUrl: 'http://css.railway.internal:3456/u-pk-x/context-graphs/10.ttl' });
+    expect(back?.priorPrecedentWeight).toBe(0.4);
+    const view = computeCalibration([o1, o2, back!]);
+    expect(view.memory.applied).toEqual({ samples: 2, hitAt1: 1, hitAt3: 1, brier: o1.brier });
+    expect(view.memory.none).toEqual({ samples: 1, hitAt1: 0, hitAt3: o2.hitAt3 ? 1 : 0, brier: o2.brier });
   });
 });

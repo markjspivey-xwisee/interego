@@ -50,11 +50,31 @@ export interface CalibrationCell {
   readonly agreement: Readonly<Record<string, number>>;
 }
 
+export interface MemoryCell {
+  readonly samples: number;
+  readonly hitAt1: number | null;
+  readonly hitAt3: number | null;
+  readonly brier: number | null;
+}
+
+/**
+ * Navigation outcomes split by whether precedents contributed to the judgment (its recorded
+ * jvh:precedentWeight above 0). Measured on the 40-commit replay of 2026-09-21: memory changed
+ * no hit, lowered the mean Brier from 0.158 to 0.126 and the mean confidence from 0.503 to
+ * 0.447; this cell pair is what says whether live tasks behave the same way.
+ */
+export interface MemoryCalibration {
+  readonly applied: MemoryCell;
+  readonly none: MemoryCell;
+}
+
 export interface CalibrationView {
   readonly minSamples: number;
   readonly cells: readonly CalibrationCell[];
   /** Navigation hit rates per confidence bucket; the source of calibrated advice. */
   readonly adviceBuckets: readonly AdviceBucket[];
+  /** Navigation with precedents applied against navigation without. */
+  readonly memory: MemoryCalibration;
   readonly computedAt: string;
 }
 
@@ -284,5 +304,21 @@ export function computeCalibration(outcomes: readonly OutcomeRecord[], minSample
       agreement,
     };
   });
-  return { minSamples, cells, adviceBuckets: computeAdviceBuckets(outcomes), computedAt: new Date().toISOString() };
+  return { minSamples, cells, adviceBuckets: computeAdviceBuckets(outcomes), memory: computeMemoryCalibration(outcomes), computedAt: new Date().toISOString() };
+}
+
+export function computeMemoryCalibration(outcomes: readonly OutcomeRecord[]): MemoryCalibration {
+  const navigations = outcomes.filter((o) => o.judgmentKind === 'navigation');
+  const cell = (rows: readonly OutcomeRecord[]): MemoryCell => {
+    const rate = (pick: (o: OutcomeRecord) => boolean | null): number | null => {
+      const vals = rows.map(pick).filter((v): v is boolean => v !== null);
+      return vals.length === 0 ? null : round(vals.filter(Boolean).length / vals.length);
+    };
+    const briers = rows.map((o) => o.brier).filter((b): b is number => b !== null);
+    return { samples: rows.length, hitAt1: rate((o) => o.hitAt1), hitAt3: rate((o) => o.hitAt3), brier: briers.length === 0 ? null : round(briers.reduce((a, b) => a + b, 0) / briers.length, 4) };
+  };
+  return {
+    applied: cell(navigations.filter((o) => (o.priorPrecedentWeight ?? 0) > 0)),
+    none: cell(navigations.filter((o) => (o.priorPrecedentWeight ?? 0) === 0)),
+  };
 }

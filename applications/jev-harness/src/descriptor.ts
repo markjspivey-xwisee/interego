@@ -324,6 +324,7 @@ export function payloadBody(j: Published, ctx: PublishContext): string {
       // an outcome read back from the pod carries it without dereferencing the judgment.
       if (j.task) t(P('task'), lit(j.task));
       for (const f of j.observed.filesChanged ?? []) t(P('observedFile'), lit(f));
+      if (j.priorPrecedentWeight !== undefined) t(P('priorPrecedentWeight'), dbl(j.priorPrecedentWeight));
       break;
   }
 

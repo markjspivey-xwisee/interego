@@ -45,6 +45,11 @@ export interface OutcomeRecord extends JudgmentBase {
    * observed files it makes the outcome a precedent on its own, wherever it is read from.
    */
   readonly task?: string;
+  /**
+   * The share of the scored navigation's candidate distribution that came from precedents
+   * (its jvh:precedentWeight), so calibration can split memory from model without a lookup.
+   */
+  readonly priorPrecedentWeight?: number;
 }
 
 export function recordOutcome(judgment: AnyJudgment, input: OutcomeInput, repository?: RepoRef): OutcomeRecord {
@@ -62,6 +67,7 @@ export function recordOutcome(judgment: AnyJudgment, input: OutcomeInput, reposi
     source: input.source ?? 'live',
     observed: input,
     ...(taskOf(judgment) ? { task: taskOf(judgment) } : {}),
+    ...(judgment.kind === 'navigation' && judgment.precedents ? { priorPrecedentWeight: judgment.precedents.weight } : {}),
   };
   const graphIri = graphIriFor('outcome', base.id);
 

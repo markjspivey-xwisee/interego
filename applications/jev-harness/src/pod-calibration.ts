@@ -73,6 +73,7 @@ export function outcomeFromContent(content: string, meta: { readonly descriptorU
   const source: OutcomeSource = one('outcomeSource') === 'backtest' ? 'backtest' : 'live';
   const filesChanged = values.get('observedFile') ?? [];
   const task = one('task');
+  const priorPrecedentWeight = num('priorPrecedentWeight');
   return {
     kind: 'outcome',
     id,
@@ -94,6 +95,7 @@ export function outcomeFromContent(content: string, meta: { readonly descriptorU
     observed: { judgmentIri, source, ...(filesChanged.length > 0 ? { filesChanged } : {}) },
     summary: one('summary') ?? '',
     ...(task ? { task } : {}),
+    ...(priorPrecedentWeight !== null ? { priorPrecedentWeight } : {}),
     descriptorUrl: meta.descriptorUrl,
   };
 }

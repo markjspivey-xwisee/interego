@@ -161,6 +161,8 @@ jvh:precedentsConsulted a owl:DatatypeProperty ; rdfs:label "precedents consulte
     rdfs:comment "On a Navigation: how many precedents (outcomes carrying a task and observed files) were available when it was judged."@en .
 jvh:precedentWeight a owl:DatatypeProperty ; rdfs:label "precedent weight"@en ; rdfs:range xsd:double ;
     rdfs:comment "On a Navigation: the share of the candidate distribution that came from precedents rather than the model, 0 when none applied."@en .
+jvh:priorPrecedentWeight a owl:DatatypeProperty ; rdfs:label "prior precedent weight"@en ; rdfs:range xsd:double ;
+    rdfs:comment "On an Outcome of a navigation: the jvh:precedentWeight the scored judgment reported, so calibration can split navigation with memory from navigation without it."@en .
 
 # ── Input shapes (what a caller must SEND to each affordance) ────────────────
 #
