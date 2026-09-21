@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-21 — jev-harness: reputation from attestations, consumed by the auto-merge; CI controls point at the deployed bridge
+
+The bridge reads every `amta:Attestation` about its agent from the pod and aggregates them with `@interego/registry` under a stated policy (a grounded self-attestation counts at a quarter of a peer's word), served as `GET /jev-harness/reputation` and the `reputation` affordance; with a person required, the gated auto-merge reads the snapshot's accuracy axis as its last condition, so the published evidence is consumed rather than recomputed. `JEV_HARNESS_CONTROL_BASE` lets a CI bridge's executable controls name the deployed bridge, which answers the same verbs and reads any judgment back from the pod, instead of a localhost the relay could only mark declarative. The harness image and CI jobs build the registry package beside core.
+
 ## 2026-09-21 — jev-harness: no person is required unless the operator says so
 
 The review gate still judges every diff and records its verdict, but needs-human-review is now advisory: the CI job fails only for block (a secret in the diff), `bin/follow.ts --gate-blocks-only` is how, and the repository variable `JEV_REQUIRE_HUMAN_REVIEW=true` restores the old behaviour. The gated auto-merge policy has the same switch: without a person required it merges on armed, token, green tests and any verdict but block; with one, auto-ok and an earned calibration are required as before. An automatic merge is labelled `jev-harness:auto-merged` before it is made, and the close-time job records no human decision for it, so calibration keeps counting only people.

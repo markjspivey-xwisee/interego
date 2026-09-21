@@ -7,7 +7,7 @@ import { AUTO_MERGE_POLICY, AUTO_MERGED_LABEL, autoMergeDecision, reviewVerdictE
 
 const earned = { cells: [{ kind: 'navigation', liveSamples: 3 }, { kind: 'review-verdict', liveSamples: 25, liveAgreement: { agree: 23, conservative: 1, disagree: 1 } }] };
 const all = { verdict: 'auto-ok', selectionResult: 'success', armed: true, tokenPresent: true, calibration: earned };
-const withPerson = { ...all, requireHumanReview: true };
+const withPerson = { ...all, requireHumanReview: true, reputation: { axes: { accuracy: 0.92, competence: 0.7 }, contributing: 1 } };
 
 describe('the evidence', () => {
   it('reads live agreement from the review-verdict cell, null before any person decided', () => {
@@ -49,9 +49,19 @@ describe('with a person required', () => {
   it('merges only when every condition holds, and says so six times', () => {
     const d = autoMergeDecision(withPerson);
     expect(d.merge).toBe(true);
-    expect(d.reasons).toHaveLength(5);
+    expect(d.reasons).toHaveLength(6);
     expect(d.reasons.every((r) => r.startsWith('holds: '))).toBe(true);
     expect(d.reasons[4]).toContain('25 live review-verdict outcome(s): agreement 0.92 (floor 0.9), disagreement 0.04 (ceiling 0.05)');
+    expect(d.reasons[5]).toContain('the reputation from 1 attestation(s) rates accuracy 0.92 (floor 0.9)');
+  });
+
+  it('refuses when no published attestation vouches for the verdict', () => {
+    const { reputation: _r, ...unread } = withPerson;
+    const d = autoMergeDecision({ ...unread, reputationError: 'the bridge holds no reputation snapshot yet' });
+    expect(d.merge).toBe(false);
+    expect(d.reasons[5]).toContain('no attestation-based reputation could be read (the bridge holds no reputation snapshot yet)');
+    expect(autoMergeDecision({ ...withPerson, reputation: { axes: { accuracy: 0.6 }, contributing: 2 } }).reasons[5]).toContain('fails: the reputation from 2 attestation(s) rates accuracy 0.6');
+    expect(autoMergeDecision({ ...withPerson, reputation: { axes: { competence: 0.9 }, contributing: 1 } }).reasons[5]).toContain('rate no accuracy axis');
   });
 
   it('refuses any verdict but auto-ok', () => {

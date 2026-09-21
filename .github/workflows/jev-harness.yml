@@ -43,6 +43,10 @@ env:
   JEV_HARNESS_AGENT_ID: did:web:identity.interego.xwisee.com:agents:jev-harness-bridge-u-did-6de86e8ba294
   JEV_HARNESS_OWNER_WEBID: https://identity.interego.xwisee.com/users/u-pk-f2a9c751075a/profile#me
   INTEREGO_POD_PUBLIC_ORIGIN: https://gate.interego.xwisee.com
+  # A CI bridge serves its judgments at localhost, which no reader can follow; its executable
+  # controls name the deployed bridge instead, which answers the same verbs and reads any
+  # judgment back from the pod. The judgment's own URL stays local and is left out of comments.
+  JEV_HARNESS_CONTROL_BASE: https://jev-harness-bridge-production.up.railway.app
   # ★ NO PERSON IS REQUIRED unless this repository variable is `true`. The gate still judges
   # every diff and records its verdict, and a secret in the diff (block) still fails the job;
   # needs-human-review is advisory — the operator said so on 2026-09-21 — so the check stays
@@ -72,6 +76,7 @@ jobs:
           INTEREGO_POD_NAME: ${{ env.INTEREGO_POD_NAME }}
           JEV_HARNESS_AGENT_ID: ${{ env.JEV_HARNESS_AGENT_ID }}
           JEV_HARNESS_OWNER_WEBID: ${{ env.JEV_HARNESS_OWNER_WEBID }}
+          JEV_HARNESS_CONTROL_BASE: ${{ env.JEV_HARNESS_CONTROL_BASE }}
           JEV_HARNESS_REPO: ${{ github.workspace }}
           BRIDGE_DEPLOYMENT_URL: http://localhost:6090
           PORT: ${{ env.BRIDGE_PORT }}
@@ -120,7 +125,8 @@ jobs:
       - run: npm ci
       # The vertical's IRI guard and descriptor code import @interego/core, which resolves to its
       # built dist/, so the kernel package is built before anything runs.
-      - run: npm run build:core
+      # @interego/registry aggregates the attestations the reputation view reads; it builds on core.
+      - run: npm run build:core && npm run build --workspace @interego/registry
       - name: Start the bridge
         env:
           TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
@@ -128,6 +134,7 @@ jobs:
           INTEREGO_POD_NAME: ${{ env.INTEREGO_POD_NAME }}
           JEV_HARNESS_AGENT_ID: ${{ env.JEV_HARNESS_AGENT_ID }}
           JEV_HARNESS_OWNER_WEBID: ${{ env.JEV_HARNESS_OWNER_WEBID }}
+          JEV_HARNESS_CONTROL_BASE: ${{ env.JEV_HARNESS_CONTROL_BASE }}
           JEV_HARNESS_REPO: ${{ github.workspace }}
           BRIDGE_DEPLOYMENT_URL: http://localhost:6090
           PORT: ${{ env.BRIDGE_PORT }}
@@ -187,7 +194,8 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - run: npm run build:core
+      # @interego/registry aggregates the attestations the reputation view reads; it builds on core.
+      - run: npm run build:core && npm run build --workspace @interego/registry
       - uses: actions/download-artifact@v4
         with:
           name: jev-harness-review
@@ -199,12 +207,13 @@ jobs:
           TOKEN_PRESENT: ${{ secrets.JEV_MERGE_TOKEN != '' }}
           SELECTION_RESULT: ${{ needs.select-and-run.result }}
           CALIBRATION_URL: https://jev-harness-bridge-production.up.railway.app/jev-harness/calibration
+          REPUTATION_URL: https://jev-harness-bridge-production.up.railway.app/jev-harness/reputation
         run: |
           cd "$HARNESS_DIR"
           npx tsx bin/auto-merge.ts --pr "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" \
             --dir "${{ github.workspace }}/.jev-harness/follower" --calibration-url "$CALIBRATION_URL" \
             --armed "$ARMED" --token-present "$TOKEN_PRESENT" --selection-result "$SELECTION_RESULT" \
-            --require-human-review "$JEV_REQUIRE_HUMAN_REVIEW"
+            --require-human-review "$JEV_REQUIRE_HUMAN_REVIEW" --reputation-url "$REPUTATION_URL"
 
   outcomes-on-close:
     name: "score the judgments when the pull request closes"
@@ -220,7 +229,8 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - run: npm run build:core
+      # @interego/registry aggregates the attestations the reputation view reads; it builds on core.
+      - run: npm run build:core && npm run build --workspace @interego/registry
       # The bridge that made this pull request's judgments is gone with its run; this one reads
       # them back from the pod (the comments carry their graph IRIs) and publishes each outcome
       # as the Asserted head of the judgment's chain, as the same delegate agent.
@@ -231,6 +241,7 @@ jobs:
           INTEREGO_POD_NAME: ${{ env.INTEREGO_POD_NAME }}
           JEV_HARNESS_AGENT_ID: ${{ env.JEV_HARNESS_AGENT_ID }}
           JEV_HARNESS_OWNER_WEBID: ${{ env.JEV_HARNESS_OWNER_WEBID }}
+          JEV_HARNESS_CONTROL_BASE: ${{ env.JEV_HARNESS_CONTROL_BASE }}
           JEV_HARNESS_REPO: ${{ github.workspace }}
           BRIDGE_DEPLOYMENT_URL: http://localhost:6090
           PORT: ${{ env.BRIDGE_PORT }}

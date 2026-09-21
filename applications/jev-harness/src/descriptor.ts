@@ -34,15 +34,23 @@ export interface PublishContext {
   readonly ns: string;
   readonly agentId: string;
   readonly ownerWebId?: string;
+  /**
+   * Where executable controls point when it is not this bridge: a bridge on a CI runner serves
+   * its judgments at localhost, which no reader can follow, while the deployed bridge answers
+   * the same verbs and reads any judgment back from the pod. The judgment's own URL keeps base.
+   */
+  readonly controlBase?: string;
 }
 
 export function contextFromEnv(base: string): PublishContext {
   const ownerWebId = process.env['JEV_HARNESS_OWNER_WEBID'];
+  const controlBase = process.env['JEV_HARNESS_CONTROL_BASE'];
   return {
     base: base.replace(/\/$/, ''),
     ns: process.env['JEV_HARNESS_NS'] ?? DEFAULT_NS,
     agentId: process.env['JEV_HARNESS_AGENT_ID'] ?? 'urn:agent:interego:jev-harness',
     ...(ownerWebId ? { ownerWebId } : {}),
+    ...(controlBase ? { controlBase: controlBase.replace(/\/$/, '') } : {}),
   };
 }
 
@@ -89,7 +97,7 @@ export function controlsFor(j: Published, ctx: PublishContext): Control[] {
     c(name, {
       title, method,
       action: actionIri(verb),
-      target: `${ctx.base}/jev-harness/${verb === 'record-outcome' ? 'outcome' : verb}`,
+      target: `${ctx.controlBase ?? ctx.base}/jev-harness/${verb === 'record-outcome' ? 'outcome' : verb}`,
       expects: `${ctx.ns}${shapeFor(verb)}`,
       returns: `${ctx.ns}${returnsFor(verb)}`,
       arguments: args,
