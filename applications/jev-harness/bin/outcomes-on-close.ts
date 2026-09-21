@@ -44,6 +44,26 @@ function filesChanged(workspace: string, base: string, head: string): string[] {
   }
 }
 
+/**
+ * The files a pull request changed, from the API. Measured on the first merged pull request
+ * this job scored (#424): the workflow passes base.sha and head.sha, but at the closed event
+ * the base branch already holds the merge, so `base...head` named no file and the navigation
+ * judgments went unscored. The API lists the pull request's own files whatever the merge method.
+ */
+async function prFiles(repo: string, pr: string, token: string): Promise<string[]> {
+  const out: string[] = [];
+  for (let page = 1; page <= 30; page += 1) {
+    const res = await fetch(`https://api.github.com/repos/${repo}/pulls/${pr}/files?per_page=100&page=${page}`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' },
+    });
+    if (!res.ok) throw new Error(`${res.status} listing the pull request's files`);
+    const rows = await res.json() as Array<{ filename?: string }>;
+    for (const r of rows) if (typeof r.filename === 'string') out.push(r.filename);
+    if (rows.length < 100) break;
+  }
+  return out;
+}
+
 async function main(): Promise<void> {
   const pr = flag('--pr');
   const repo = flag('--repo');
@@ -55,7 +75,10 @@ async function main(): Promise<void> {
   const token = process.env['GH_TOKEN'] ?? process.env['GITHUB_TOKEN'];
   if (!pr || !repo || !token) { console.error('usage: --pr <n> --repo <owner/name> [--bridge <url>] --merged true|false --base <sha> --head <sha> [--workspace <dir>], with GH_TOKEN set'); process.exit(2); }
   const bodies = await comments(repo, pr, token);
-  const changed = base && head ? filesChanged(workspace, base, head) : [];
+  const changed = await prFiles(repo, pr, token).catch((err: Error) => {
+    console.log(`the API did not list the files (${err.message}); diffing ${base ?? '?'}...${head ?? '?'} instead`);
+    return base && head ? filesChanged(workspace, base, head) : [];
+  });
   const requests = outcomeRequests(bodies, { merged, filesChanged: changed });
   console.log(`pull request ${pr}: ${merged ? 'merged' : 'closed without merging'}, ${changed.length} file(s) changed, ${requests.length} judgment(s) to score`);
   let unreachable = false;
