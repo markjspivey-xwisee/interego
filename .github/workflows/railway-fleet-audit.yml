@@ -117,7 +117,36 @@ jobs:
       # Postgres volume reached 100% and every pod answered 500. Growing a volume is a dashboard
       # action, so this says "grow it" while there is still room. Runs even when the audit failed.
       - name: Fail if any Railway volume is at or over 80%
+        id: volumes
         if: always()
         env:
           RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
-        run: node tools/railway-volume-check.mjs
+        # The table is kept because a finding becomes evidence below, and the exit code is
+        # kept apart from tee's so the step still fails — 1 (a volume over the line) told from
+        # 2 (the check could not run), because only the first is an incident.
+        run: |
+          set +e
+          node tools/railway-volume-check.mjs 2>&1 | tee volume-check.log
+          rc=${PIPESTATUS[0]}
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          exit "$rc"
+
+      # ★ A FULL VOLUME IS AN INCIDENT, AND THIS AUDIT IS ITS DETECTION SOURCE. On 2026-09-20 the
+      # Postgres volume reached 100% and every pod answered 500; the write-up came afterwards,
+      # from memory. Now the finding lands on the operator's pod as a soc2:IncidentEvent (status
+      # open, the check's own table as the summary) in the run that found it, published by the
+      # fleet's delegate agent (tools/fleet-event.ts). Each day the check stays red is a new
+      # detection; resolving is a person running the same tool with --status resolved and
+      # --supersedes naming the open one.
+      - name: Record the finding as an open incident on the pod
+        if: ${{ always() && steps.volumes.outputs.rc == '1' }}
+        env:
+          INTEREGO_FLEET_AGENT_KEY_JSON: ${{ secrets.INTEREGO_FLEET_AGENT_KEY_JSON }}
+          INTEREGO_FLEET_POD_NAME: ${{ vars.INTEREGO_FLEET_POD_NAME }}
+        run: |
+          npm ci
+          npm run build:core && npm run build --workspace @interego/compliance && npm run build --workspace @interego/ops
+          npx tsx tools/fleet-event.ts incident --severity sev-2 --status open \
+            --title "A Railway volume is at or over 80% of its size" \
+            --source "railway-fleet-audit.yml: tools/railway-volume-check.mjs" \
+            --summary-file volume-check.log
