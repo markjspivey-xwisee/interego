@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-09-21 — Private performance composition and output contracts
+
+Private performance storage and route/schema orchestration now live with AGP's performance model. The existing performance-route integration accepts only host identity/pod/crypto/transport capabilities; Foxxi no longer constructs or imports the performance store and domain error type. The three compatibility affordances declare accurate output contracts and `foxxi.` tool names, preserving HTTP paths, action IRIs and return semantics. No conformance ceiling was changed.
+
+## 2026-09-21 — Private feedback direct-owner proof
+
+Private performance authorization now distinguishes a direct owner signature from a delegated `did:ethr` identity signed by a different anchor. Only an exact recovered signer/address match bypasses delegation scopes; a DiscoverOnly delegated agent can read but cannot write. A signed-envelope regression reproduces the former prefix-only bypass and verifies owner access plus cross-pod refusal.
+
+## 2026-09-21 — Private evidence-bound performance feedback
+
+Foxxi can bind a signed AGP plan to baseline evidence, persist one measured learner/intervention episode in the verified account’s encrypted pod, and read its own empirical calibration without seed outcomes. Private plans/outcomes have server authentication tags, immutable logical retry checks and encrypted ETag compare-and-swap persistence. Authorized ChatGPT/Claude delegates for the same pod share records while retaining actor provenance. Private review invokes the calibration decision helper without adding an episode; caller-supplied assessor evidence remains Hypothetical and cannot trigger automatic rate-driven swaps. Numeric arithmetic and evidence hashes are verified, not assessor truth or causal learning. See `applications/foxxi-content-intelligence/PRIVATE-PERFORMANCE-FEEDBACK.md`.
+
 ## 2026-09-21 — jev-harness: calibration on the pod, a self-attestation from it, and the gated auto-merge that reads them
 
 The calibration view is published as an Asserted `jvh:Calibration` under one graph IRI per repository, each publish superseding the last (after a pod read-back that added outcomes, after CI scores a merged pull request, and on demand through the new `publish-calibration` affordance); once a cell reaches its sample floor the bridge issues an `amta:Attestation` about itself — direction Self, competence, accuracy, relevance and honesty each a measured rate, `amta:fromExecution` naming the calibration descriptor. Calibration cells now carry their live sample and agreement counts. A `gated auto-merge` CI job merges on the gate's auto-ok only when the operator armed it (`JEV_AUTO_MERGE`), a token that triggers auto-deploy is present (`JEV_MERGE_TOKEN`; `GITHUB_TOKEN` merges ship nothing), the selection passed, and the published calibration shows twenty live review-verdict outcomes at ninety percent agreement; unarmed, it prints the decision it would have taken. The close-time job now lists a merged pull request's files from the API: on the first pull request it scored, the diff against a base that already held the merge named no file.
