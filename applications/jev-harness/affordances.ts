@@ -150,4 +150,16 @@ export const jevHarnessAffordances: ReadonlyArray<Affordance> = [
     annotations: { title: 'Publish calibration', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [],
   },
+  {
+    action: actionIri('urn:iep:action:jev-harness:reputation'),
+    toolName: 'jev_harness.reputation',
+    title: 'Read what the pod attests about this agent',
+    description: 'Every amta:Attestation about the harness agent on its pod — the bridge\'s own self-attestation, grounded in the calibration descriptor it names, and any a peer publishes — aggregated by @interego/registry under the harness policy (a grounded self-attestation counts at a quarter of a peer\'s word, half of a high-assurance one\'s; thirty-day recency half-life). Answers with the attestations read, the snapshot (per-axis ratings and the contributing descriptors) or null when nothing attests, and the policy. The gated auto-merge reads the accuracy axis when a person is required.',
+    method: 'GET',
+    targetTemplate: '{base}/jev-harness/reputation',
+    returns: `${NS}Calibration`,
+    mediaType: 'application/json',
+    annotations: { title: 'Reputation', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    inputs: [],
+  },
 ];
