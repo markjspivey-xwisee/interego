@@ -48,7 +48,7 @@ jobs:
         run: npx playwright test --reporter=list --retries=0
       - name: Preserve live browser failure context
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: client-signature-browser-failure-context
           path: deploy/mcp-relay/test-results/**/error-context.md
@@ -56,7 +56,7 @@ jobs:
           if-no-files-found: ignore
       - name: Preserve the public synthetic test report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: client-signature-live-result
           path: ${{ runner.temp }}/client-signature-live.json

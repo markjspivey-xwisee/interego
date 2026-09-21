@@ -41,8 +41,15 @@
  *
  *   B. THE UNDOCUMENTED BACKLOG has a number, and the number is in the file, and git decides
  *      whether it is true. `<!-- documented-through: <sha> -->` names the newest commit the
- *      newest entry describes; everything after it is undocumented. The ceiling below is what
- *      turns "we are behind" from a note somebody wrote once into a value that goes red.
+ *      newest entry describes. After it, a commit counts as undocumented when the first-parent
+ *      step that brought it onto the default branch (the merge of its pull request, or the
+ *      commit itself when it landed directly) changed nothing in CHANGELOG.md: a merge whose
+ *      pull request wrote an entry has documented every commit it carried, which is what
+ *      "notable changes" means in practice, and a merge that wrote none is the backlog. The
+ *      ceiling below is what turns "we are behind" from a note somebody wrote once into a
+ *      value that goes red — and, counted this way, a number that grows only when a merge
+ *      lands without an entry, not with every commit (until 2026-09-21 it was every commit,
+ *      and a day of documented merges raised it twice for nothing).
  *
  * ── SHALLOW CLONES ───────────────────────────────────────────────────────────
  *
@@ -103,7 +110,13 @@ const UNRESOLVABLE_PIN = 78;
 // left undocumented. The headroom is 30 rather than 20 because merges now land without a
 // person, at several a day, and a ceiling that fires every second day is a chore rather than a
 // signal; it is still small on purpose, and the next raise is a diff with a reason like this one.
-const BACKLOG_CEILING = 500;
+// 500 -> 380 (2026-09-21, evening), because the METRIC changed rather than the debt: the count
+// used to be every commit after the marker, which grew with every merge however well
+// documented, and had to be raised twice in one day once merges landed without a person. It
+// now counts only commits that arrived in a first-parent step that touched nothing in
+// CHANGELOG.md. Measured at 364 on the tree that made this change (479 by the old count);
+// pinned with 16 of headroom, small on purpose. A day of documented merges moves it by zero.
+const BACKLOG_CEILING = 380;
 
 /**
  * `<!-- documented-through: <sha> -->` — the newest commit through which the file is
@@ -218,12 +231,13 @@ export function changelogFailures(text, resolves, countSince) {
       );
     } else if (behind > BACKLOG_CEILING) {
       failures.push(
-        `${behind} commits have landed since CHANGELOG.md's documented-through marker; the\n`
-        + `      ceiling is ${BACKLOG_CEILING}. Write an entry and move the marker, or raise\n`
-        + '      BACKLOG_CEILING in tools/changelog-lint.mjs and say why in the same diff.\n'
-        + '      The point is not that the number is small; it is that it is a number that\n'
-        + '      goes red, rather than a figure in a pull request that quietly went from 235\n'
-        + '      to 431 with nothing able to notice.',
+        `${behind} commits have landed since CHANGELOG.md's documented-through marker without\n`
+        + `      an entry in the step that brought them; the ceiling is ${BACKLOG_CEILING}. Write\n`
+        + '      an entry for what is missing and move the marker, or raise BACKLOG_CEILING in\n'
+        + '      tools/changelog-lint.mjs and say why in the same diff. The point is not that\n'
+        + '      the number is small; it is that it is a number that goes red, rather than a\n'
+        + '      figure in a pull request that quietly went from 235 to 431 with nothing able\n'
+        + '      to notice.',
       );
     }
   }
@@ -270,10 +284,26 @@ function main() {
    */
   const isAncestor = sha => git(['merge-base', '--is-ancestor', `${sha}^{commit}`, 'HEAD']).status === 0;
   const anchors = sha => resolves(sha) && isAncestor(sha);
+  /**
+   * Commits after `sha` that no entry accompanied. Every commit since the marker, minus those
+   * brought in by a first-parent step whose diff against its first parent touched CHANGELOG.md
+   * — the merge of a pull request that wrote an entry, or a direct commit that did. `git log
+   * --first-parent -- CHANGELOG.md` lists exactly those steps, so this is one walk and one
+   * count per documented step, not one per commit.
+   */
   const countSince = (sha) => {
     if (!anchors(sha)) return null;
-    const r = git(['rev-list', '--count', `${sha}..HEAD`]);
-    return r.status === 0 ? Number(r.out) : null;
+    const total = git(['rev-list', '--count', `${sha}..HEAD`]);
+    if (total.status !== 0) return null;
+    const documentedSteps = git(['log', '--first-parent', '--format=%H', `${sha}..HEAD`, '--', 'CHANGELOG.md']);
+    if (documentedSteps.status !== 0) return null;
+    let documented = 0;
+    for (const step of documentedSteps.out.split('\n').map((l) => l.trim()).filter(Boolean)) {
+      const brought = git(['rev-list', '--count', `${step}^..${step}`]);
+      if (brought.status !== 0) return null;
+      documented += Number(brought.out);
+    }
+    return Number(total.out) - documented;
   };
 
   const failures = changelogFailures(text, resolves, countSince);
@@ -286,7 +316,7 @@ function main() {
   console.log(`  cited commit hashes: ${cited.length}, of which ${unresolvable} do not resolve `
     + `(pinned at ${UNRESOLVABLE_PIN})`);
   console.log(`  undocumented backlog: ${behind === null ? 'UNKNOWN' : behind} commit(s) since `
-    + `${marker ? marker[1] : 'no marker'} (ceiling ${BACKLOG_CEILING})`);
+    + `${marker ? marker[1] : 'no marker'} without an entry (ceiling ${BACKLOG_CEILING})`);
 
   if (failures.length === 0) {
     console.log('\nPASS: no new unresolvable citation, the file states the truth about the old '

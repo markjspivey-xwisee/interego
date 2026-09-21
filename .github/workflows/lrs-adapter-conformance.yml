@@ -63,8 +63,8 @@ jobs:
         # nothing to do with the LRS and hold the job until it timed out. The step below probes
         # from the runner, which has curl — and fails the job outright if it never answers.
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: '20'
           cache: 'npm'

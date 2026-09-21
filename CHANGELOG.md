@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-21 — the changelog backlog counts merges without an entry; the weekly rebuild fires on bloat and keeps its tuning; deprecated action versions bumped
+
+`tools/changelog-lint.mjs` now counts, after the documented-through marker, only the commits that arrived in a first-parent step that touched nothing in CHANGELOG.md, so a day of documented merges moves the number by zero and the ceiling drops from 500 to a measured 364 plus 16 (the old count was 479). The weekly pod-store run also rebuilds when the table on disk holds at least four times its live values and at least 1 GiB, the TOAST-and-index bloat measured today (2 GB on disk, 0.5 GB live, 7% of rows unreferenced), and `rebuildTable` carries the table's storage parameters (the `--tune` autovacuum settings, heap and TOAST) onto the new table, which `LIKE ... INCLUDING ALL` does not. Thirteen workflows move from `actions/checkout@v4` and `setup-node@v4` to v6 and `setup-python@v5` to v6, the versions the rest of the tree already runs, ending the Node 20 runtime warning.
+
 ## 2026-09-21 — jev-harness: a peer's attestation, drafted by the bridge for a person to publish from their own key
 
 `jev_harness.draft_attestation` (`POST /jev-harness/attestation/draft`) returns an `amta:Attestation` with direction Peer about the harness agent: the attestor is the person (or the session agent acting for them), their ratings where given and the calibration's where not, grounded in the outcome they decided on or in the calibration descriptor, together with the exact `publish_context` arguments to publish it from their own session. The bridge never publishes it itself, since a second voice has to be another key; once on the pod, `GET /jev-harness/reputation` weighs it as PeerAttested (0.5) beside the self-attestation (0.25). Built with the harness itself: navigated with `jev_harness.navigate`, tests selected by `select_tests`, the diff gated by `review_gate`, merged by the gated auto-merge.
@@ -132,12 +136,17 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
   resolve — a typo, or a hash from someone's local branch — fails the gate the day it is
   written.
 - **The undocumented backlog is a measured number.** The marker below names the newest commit
-  through which this file is *continuously* current; everything after it is undocumented, the
-  count is measured from git on every run, and it has a ceiling. It reached 471 against the
-  old anchor and was moved forward when the entry below was written. The ceiling exists
-  because the previous statement of this number lived in a pull request body, said 235, and
-  had reached 431 by the time anyone re-measured — so the figure in this paragraph is
-  deliberately not a figure any more. `node tools/changelog-lint.mjs` prints the current one.
+  through which this file is *continuously* current. After it, a commit counts as undocumented
+  when the step that brought it onto the default branch (the merge of its pull request, or the
+  commit itself when it landed directly) changed nothing in this file; a merge whose pull
+  request wrote an entry has documented every commit it carried. The count is measured from
+  git on every run and it has a ceiling. It reached 471 against the old anchor and was moved
+  forward when the entry below was written; on 2026-09-21 what it counts changed from every
+  commit to this, because a day of documented merges was raising a number that meant nothing.
+  The ceiling exists because the previous statement of this number lived in a pull request
+  body, said 235, and had reached 431 by the time anyone re-measured — so the figure in this
+  paragraph is deliberately not a figure any more. `node tools/changelog-lint.mjs` prints the
+  current one.
 - **★ THE MARKER MUST NAME A COMMIT ON THE DEFAULT BRANCH, and that bites exactly once.** It
   was first moved to the tip of the branch the entry was written on. That sha resolved
   locally — the branch objects were still there — and then **squash-merge collapsed the

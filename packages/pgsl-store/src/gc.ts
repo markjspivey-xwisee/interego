@@ -290,6 +290,35 @@ export interface RebuildResult {
 }
 
 /**
+ * The storage parameters of `from`, applied to `to`: `CREATE TABLE ... (LIKE ... INCLUDING ALL)`
+ * copies columns, constraints, indexes and column storage, but no relation options, so the
+ * autovacuum settings `--tune` put on the table and its TOAST relation would vanish with every
+ * rebuild and the table would drift back to the defaults that let it reach 45 GB. Options are
+ * read from the catalog and applied as they are; anything not of the form name=value is
+ * skipped and named. Returns what was applied.
+ */
+export async function copyStorageParameters(
+  client: { query(sql: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }> },
+  from: string,
+  to: string,
+  log: (line: string) => void = () => undefined,
+): Promise<string[]> {
+  const r = await client.query('SELECT c.reloptions AS heap, tc.reloptions AS toast FROM pg_class c LEFT JOIN pg_class tc ON tc.oid = c.reltoastrelid WHERE c.oid = $1::regclass', [from]);
+  const asList = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
+  const wellFormed = /^[a-z_]+=[A-Za-z0-9_.-]+$/;
+  const heap = asList(r.rows[0]?.['heap']);
+  const toast = asList(r.rows[0]?.['toast']);
+  const skipped = [...heap, ...toast].filter((o) => !wellFormed.test(o));
+  if (skipped.length > 0) log(`storage parameters not carried over (not name=value): ${skipped.join(', ')}`);
+  const heapOk = heap.filter((o) => wellFormed.test(o));
+  const toastOk = toast.filter((o) => wellFormed.test(o)).map((o) => `toast.${o}`);
+  if (heapOk.length > 0) await client.query(`ALTER TABLE ${to} SET (${heapOk.join(', ')})`);
+  if (toastOk.length > 0) await client.query(`ALTER TABLE ${to} SET (${toastOk.join(', ')})`);
+  const applied = [...heapOk, ...toastOk];
+  if (applied.length > 0) log(`storage parameters carried over to ${to}: ${applied.join(', ')}`);
+  return applied;
+}
+/**
  * Copy the live rows into a fresh table and swap it in, inside one transaction that holds an
  * ACCESS EXCLUSIVE lock on the old table: every other session waits until the commit. The live
  * set is computed INSIDE the lock, so it is exact. The old table is renamed, not dropped; the
@@ -318,6 +347,7 @@ export async function rebuildTable(
     const live = await collectLive(readerFromPg(client as never, t), { log });
     if (live.keys.size === 0) throw new Error('refusing to rebuild: the live set is empty');
     await client.query(`CREATE TABLE ${newTable} (LIKE ${t} INCLUDING ALL)`);
+    await copyStorageParameters(client, t, newTable, log);
     const all = [...live.keys];
     let copied = 0;
     for (let i = 0; i < all.length; i += batch) {
