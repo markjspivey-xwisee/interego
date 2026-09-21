@@ -8,8 +8,10 @@
  *                                         --summary "…" | --summary-file <log>
  *                                         [--status open] [--component postgres]
  *                                         [--detected-at <ISO>] [--supersedes <descriptor URL>]
+ *                                         [--modal Hypothetical|Asserted]
  *   npx tsx tools/fleet-event.ts review   --kind monitoring --summary "…" | --summary-file <log>
  *                                         [--quarter 2026-Q3] [--finding "…"] [--finding-count N]
+ *                                         [--modal Hypothetical|Asserted]
  *
  * Environment: INTEREGO_FLEET_AGENT_KEY_JSON is the agent, an Ed25519 OKP JWK whose did:key the
  * pod owner registered as a delegate with a publishing scope; INTEREGO_FLEET_POD_NAME is that
@@ -30,6 +32,16 @@
  * on behalf of the operator whose pod registers it — the delegate shape the jev-harness bridge
  * proved on 2026-09-20 (applications/_shared/relay-agent).
  *
+ * ── A DIAGNOSIS IS HYPOTHETICAL; A ROOT CAUSE IS ASSERTED ──────────────────────────────────
+ *
+ * An incident or a review is Asserted by default: it records what was observed. `--modal
+ * Hypothetical` records what is suspected — the diagnosis while the incident is open — and the
+ * event that names the root cause, Asserted and `--supersedes` the diagnosis, is what a reader
+ * finds at the head of the chain. The 2026-09-20 outage, recorded this way: an open sev-1
+ * "pods answer 500, disk full" (Asserted), a Hypothetical "suspected: unreferenced history from
+ * the grow-only store" superseding it, then the Asserted resolved incident naming the 45 GB of
+ * history and the rebuild, superseding the diagnosis. A deploy is a fact and takes no --modal.
+ *
  * The pure part — arguments in, events and the publish_context call out — is exported for
  * tests/fleet-event.test.ts; main() reads the environment and dials the relay.
  */
@@ -48,6 +60,8 @@ const SEVERITIES: readonly IncidentSeverity[] = ['sev-1', 'sev-2', 'sev-3', 'sev
 const REVIEW_KINDS: readonly ReviewKind[] = ['access', 'change', 'risk', 'vendor', 'monitoring'];
 const STATUSES = ['open', 'contained', 'resolved'] as const;
 type IncidentStatus = (typeof STATUSES)[number];
+const MODALS = ['Hypothetical', 'Asserted'] as const;
+export type FleetModal = (typeof MODALS)[number];
 
 // ── Arguments ─────────────────────────────────────────────────────────────────────────────
 
@@ -132,6 +146,8 @@ export function summaryFromLog(text: string, max = 4000): string {
 export interface FleetEvent {
   readonly kind: FleetEventKind;
   readonly payload: OpsEventPayload;
+  /** Hypothetical for a diagnosis or a provisional review; Asserted (the default) for an observation. */
+  readonly modal: FleetModal;
   /** What the agent's own trajectory step says it did. */
   readonly step: { readonly verb: string; readonly objectName: string };
 }
@@ -167,11 +183,13 @@ export function eventsFromArgs(p: ParsedArgs, ctx: EventContext): FleetEvent[] {
       const matrix = one(p, 'matrix');
       const components = [...all(p, 'component'), ...(matrix ? componentsFromMatrix(matrix) : [])];
       if (components.length === 0) throw new Error('deploy needs --component or --matrix');
+      if (one(p, 'modal') !== undefined) throw new Error('a deploy is a fact and takes no --modal');
       const environment = one(p, 'environment') ?? 'production';
       const rollbackPlan = one(p, 'rollback-plan') ?? DEFAULT_ROLLBACK_PLAN;
       return components.map((component) => ({
         kind: 'deploy' as const,
         payload: buildDeployEvent({ component, commitSha: sha, deployerDid: ctx.agentDid, environment, rollbackPlan, timestamp: ts }),
+        modal: 'Asserted' as const,
         step: { verb: 'deployed', objectName: `${component} at ${sha.slice(0, 12)}` },
       }));
     }
@@ -188,7 +206,8 @@ export function eventsFromArgs(p: ParsedArgs, ctx: EventContext): FleetEvent[] {
         affectedComponents: all(p, 'component'),
         supersedes: all(p, 'supersedes'),
       });
-      return [{ kind: 'incident', payload, step: { verb: 'reported-incident', objectName: title } }];
+      const modal = oneOf<FleetModal>(p, 'modal', MODALS, 'Asserted');
+      return [{ kind: 'incident', payload, modal, step: { verb: modal === 'Hypothetical' ? 'diagnosed-incident' : 'reported-incident', objectName: title } }];
     }
     case 'review': {
       const kind = oneOf(p, 'kind', REVIEW_KINDS);
@@ -198,7 +217,8 @@ export function eventsFromArgs(p: ParsedArgs, ctx: EventContext): FleetEvent[] {
       const findingCount = countFlag === undefined ? findings.length : Number(countFlag);
       if (!Number.isInteger(findingCount) || findingCount < 0) throw new Error('--finding-count must be a whole number');
       const payload = buildQuarterlyReviewEvent({ quarter, kind, reviewerDid: ctx.agentDid, summary: summaryOf(p, ctx), findingCount, findings, timestamp: ts });
-      return [{ kind: 'review', payload, step: { verb: 'reviewed', objectName: `${quarter} ${kind} review` } }];
+      const modal = oneOf<FleetModal>(p, 'modal', MODALS, 'Asserted');
+      return [{ kind: 'review', payload, modal, step: { verb: 'reviewed', objectName: `${quarter} ${kind} review` } }];
     }
   }
 }
@@ -220,7 +240,7 @@ export function publishArgs(e: FleetEvent, target: PublishTarget): Record<string
   return {
     graph_iri: e.payload.graph_iri,
     graph_content: e.payload.graph_content,
-    modal_status: e.payload.modal_status,
+    modal_status: e.modal === 'Hypothetical' ? 'Hypothetical' : e.payload.modal_status,
     compliance: true,
     compliance_framework: e.payload.compliance_framework,
     visibility: target.visibility ?? 'shared',

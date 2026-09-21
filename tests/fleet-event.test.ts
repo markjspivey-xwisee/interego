@@ -84,6 +84,19 @@ describe('incident events', () => {
     expect(e!.payload.graph_iri).toBe('urn:graph:ops:incident:2026-09-20T20%3A37%3A00Z');
     expect(e!.payload.graph_content).toContain('prov:wasDerivedFrom <https://gate.example/u/context-graphs/1.ttl>');
   });
+  it('★ a diagnosis is Hypothetical and supersedes the observation; the root cause is Asserted and supersedes the diagnosis', () => {
+    const [diagnosis] = eventsFromArgs(parseArgs(['incident', '--severity', 'sev-1', '--title', 'disk full', '--source', 'audit', '--summary', 'suspected: unreferenced history', '--modal', 'Hypothetical', '--supersedes', 'https://gate.example/u/context-graphs/1.ttl']), ctx);
+    expect(diagnosis!.modal).toBe('Hypothetical');
+    expect(diagnosis!.step.verb).toBe('diagnosed-incident');
+    expect(publishArgs(diagnosis!, {})['modal_status'], 'a diagnosis was published as an observed fact').toBe('Hypothetical');
+    const [cause] = eventsFromArgs(parseArgs(['incident', '--severity', 'sev-1', '--title', 'disk full', '--source', 'audit', '--summary', 'root cause: 45 GB of history', '--status', 'resolved', '--supersedes', 'https://gate.example/u/context-graphs/2.ttl']), ctx);
+    expect(cause!.modal).toBe('Asserted');
+    expect(publishArgs(cause!, {})['modal_status']).toBe('Asserted');
+  });
+  it('refuses a modal outside the two, and any modal on a deploy', () => {
+    expect(() => eventsFromArgs(parseArgs(['incident', '--severity', 'sev-3', '--title', 't', '--source', 's', '--summary', 'x', '--modal', 'Counterfactual']), ctx)).toThrow(/--modal must be one of/);
+    expect(() => eventsFromArgs(parseArgs(['deploy', '--sha', 'abcdef1234', '--component', 'relay', '--modal', 'Hypothetical']), ctx)).toThrow(/a deploy is a fact/);
+  });
   it('refuses a severity or status outside the scale', () => {
     expect(() => eventsFromArgs(parseArgs(['incident', '--severity', 'high', '--title', 't', '--source', 's', '--summary', 'x']), ctx)).toThrow(/--severity must be one of sev-1/);
     expect(() => eventsFromArgs(parseArgs(['incident', '--severity', 'sev-3', '--title', 't', '--source', 's', '--summary', 'x', '--status', 'done']), ctx)).toThrow(/--status must be one of open/);
