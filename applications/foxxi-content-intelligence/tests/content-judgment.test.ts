@@ -5,8 +5,9 @@
 import { describe, expect, it } from 'vitest';
 import { FakeJevClient, choiceAnswer, type Answer } from '../../_shared/judgment-kit/jev-client.js';
 import {
-  CONTENT_JUDGMENT_GRAPH_PREFIX, EVIDENCE_LEVELS, WORK_REGIMES, contentJudgmentControls, contentJudgmentMarkdown,
-  judgeContentClaim, judgmentQuestion, judgmentState,
+  CONTENT_JUDGMENT_GRAPH_PREFIX, CONTENT_JUDGMENT_OUTCOME_TYPE, EVIDENCE_LEVELS, WORK_REGIMES, contentJudgmentCalibration, contentJudgmentControls,
+  contentJudgmentMarkdown, contentJudgmentOutcome, decodeBundleJson, entityGraphUrl, findEntityEntry, isContentJudgment, isContentJudgmentOutcome,
+  judgeContentClaim, judgmentQuestion, judgmentState, scoreContentJudgment, type ContentJudgment,
 } from '../src/content-judgment.js';
 import { foxxiAdminAffordances } from '../affordances.js';
 import { lookupTerm } from '../src/foxxi-vocab.js';
@@ -103,5 +104,54 @@ describe('the affordance and the vocabulary', () => {
     expect(a!.inputs.filter((i) => i.required).map((i) => i.name).sort()).toEqual(['claim_text', 'judgment_kind']);
     expect(lookupTerm('ContentJudgment')?.kind).toBe('Type');
     expect(lookupTerm('judgmentKind')?.kind).toBe('Extension');
+  });
+});
+
+describe('what a person says is true', () => {
+  const judgment: ContentJudgment = { kind: 'content-judgment', id: 'j9', graphIri: `${CONTENT_JUDGMENT_GRAPH_PREFIX}j9`, createdAt: '2026-09-21T06:00:00.000Z', model: 'jev-fake', confidence: 0.6, judgmentKind: 'work-regime', claimText: claim.claimText, answer: 'Knowable', probabilities: { Knowable: 0.6, Evident: 0.3, Emergent: 0.1 }, evidenceCount: 0, usage: { requests: 1, input_tokens: 10, output_tokens: 0, latencyMs: 1 } };
+
+  it('scores the model against the confirmed answer with a hit and a multiclass Brier', () => {
+    expect(scoreContentJudgment(judgment, 'Knowable')).toEqual({ hit: true, brier: 0.26 });
+    expect(scoreContentJudgment(judgment, 'Evident')).toEqual({ hit: false, brier: 0.86 });
+  });
+
+  it('makes an outcome that names the judgment, the person and the answer, and refuses an answer the judgment never weighed', () => {
+    const o = contentJudgmentOutcome(judgment, 'urn:foxxi:judgment:abc12345', 'Evident', { did: 'did:web:x:le', note: 'the SOP covers it' }, new Date('2026-09-21T07:00:00.000Z'));
+    expect(o).toEqual({ kind: 'content-judgment-outcome', judgmentId: 'j9', judgmentIri: 'urn:foxxi:judgment:abc12345', judgmentKind: 'work-regime', answer: 'Knowable', confirmedAnswer: 'Evident', hit: false, brier: 0.86, confidence: 0.6, confirmedBy: 'did:web:x:le', createdAt: '2026-09-21T07:00:00.000Z', note: 'the SOP covers it' });
+    expect(isContentJudgmentOutcome(o)).toBe(true);
+    expect(() => contentJudgmentOutcome(judgment, 'urn:foxxi:judgment:abc12345', 'Turbulent', { did: 'did:web:x:le' })).toThrow(/must be one of Knowable, Evident, Emergent/);
+  });
+
+  it('reads an entity back from the graph the pod serves, by the manifest or by the slug convention', () => {
+    const b64 = Buffer.from(JSON.stringify(judgment), 'utf8').toString('base64');
+    const graph = `<urn:foxxi:judgment:abc12345> a <${CONTENT_JUDGMENT_OUTCOME_TYPE}> ;\n  foxxi:bundleJson "${b64}"^^xsd:base64Binary ;\n  foxxi:payloadByteLength "10"^^xsd:integer .`;
+    const back = decodeBundleJson(graph);
+    expect(isContentJudgment(back)).toBe(true);
+    expect((back as ContentJudgment).answer).toBe('Knowable');
+    expect(decodeBundleJson('no bundle here')).toBeUndefined();
+    const entries = [{ descriptorUrl: 'https://pod.example/foxxi/judgments/judgment-abc12345.ttl', describes: ['urn:foxxi:judgment:abc12345'], graphUrl: 'https://pod.example/foxxi/judgments/judgment-abc12345-graph.trig' }];
+    expect(findEntityEntry(entries, 'urn:foxxi:judgment:abc12345')).toBe(entries[0]);
+    expect(findEntityEntry(entries, 'urn:foxxi:judgment:other')).toBeUndefined();
+    expect(entityGraphUrl('https://pod.example/', 'urn:foxxi:judgment:abc12345', entries[0])).toBe('https://pod.example/foxxi/judgments/judgment-abc12345-graph.trig');
+    expect(entityGraphUrl('https://pod.example', 'urn:foxxi:judgment-outcome:9f9f9f9f')).toBe('https://pod.example/foxxi/judgments/judgment-outcome-9f9f9f9f-graph.trig');
+    expect(entityGraphUrl('https://pod.example/', 'urn:elsewhere:x')).toBeUndefined();
+  });
+
+  it('calibrates per question kind, Asserted from five outcomes', () => {
+    const mk = (kind: 'evidence-level' | 'work-regime', hit: boolean, brier: number) => ({ kind: 'content-judgment-outcome' as const, judgmentId: 'j', judgmentIri: 'urn:foxxi:judgment:j', judgmentKind: kind, answer: 'a', confirmedAnswer: hit ? 'a' : 'b', hit, brier, confidence: 0.5, confirmedBy: 'did:web:x', createdAt: '2026-09-21T07:00:00.000Z' });
+    const outcomes = [...Array.from({ length: 5 }, (_, i) => mk('work-regime', i < 4, i < 4 ? 0.2 : 1.2)), mk('evidence-level', true, 0.1)];
+    const c = contentJudgmentCalibration(outcomes, 5, new Date('2026-09-21T08:00:00.000Z'));
+    expect(c.samples).toBe(6);
+    expect(c.cells).toEqual([
+      { judgmentKind: 'evidence-level', samples: 1, hitRate: 1, meanBrier: 0.1, status: 'Hypothetical' },
+      { judgmentKind: 'work-regime', samples: 5, hitRate: 0.8, meanBrier: 0.4, status: 'Asserted' },
+    ]);
+  });
+
+  it('declares the outcome affordance, the calibration affordance and the outcome type', () => {
+    const confirm = foxxiAdminAffordances.find((x) => x.toolName === 'foxxi.confirm_content_judgment');
+    expect(confirm?.inputs.filter((i) => i.required).map((i) => i.name).sort()).toEqual(['confirmed_answer', 'judgment_iri']);
+    expect(foxxiAdminAffordances.find((x) => x.toolName === 'foxxi.content_judgment_calibration')?.method).toBe('GET');
+    expect(lookupTerm('ContentJudgmentOutcome')?.kind).toBe('Type');
   });
 });

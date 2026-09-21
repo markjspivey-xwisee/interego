@@ -4,6 +4,11 @@
 
 GitHub's workflow-runs listing is eventually consistent: on 2026-09-21 the CI gate watched the five runs for `0f40814b` narrow to two still running, then one poll answered 200 with an empty list, and `tools/ci-green-for-sha.mjs` refused a deploy whose CI concluded green four minutes later. Below the floor is now a wait while time remains and a refusal only when the listing is still short at the deadline, so an empty answer is still never read as green; a 5xx from GitHub is retried the same way and a 4xx is refused at once. `nextStep` and `retryable` are the pure decisions, tested beside `verdict`.
 
+## 2026-09-21 — Foxxi: content judgments calibrate; the kit scores one answer among options
+
+`foxxi.confirm_content_judgment` lets a learning engineer or admin say what is true about a judged claim: an Asserted `foxxi:ContentJudgmentOutcome` supersedes the judgment descriptor on the tenant pod (the entity publisher can now supersede) and records whether the model had the answer and the multiclass Brier score of its probabilities. `foxxi.content_judgment_calibration` reads those outcomes back and reports, per question kind, hit rate and mean Brier with the same five-sample floor the harness uses. The judgment kit gains `choiceBrier` and `calibrationCell`, the scoring both verticals share.
+
+
 ## 2026-09-21 — jev-harness: reputation from attestations, consumed by the auto-merge; CI controls point at the deployed bridge
 
 The bridge reads every `amta:Attestation` about its agent from the pod and aggregates them with `@interego/registry` under a stated policy (a grounded self-attestation counts at a quarter of a peer's word), served as `GET /jev-harness/reputation` and the `reputation` affordance; with a person required, the gated auto-merge reads the snapshot's accuracy axis as its last condition, so the published evidence is consumed rather than recomputed. `JEV_HARNESS_CONTROL_BASE` lets a CI bridge's executable controls name the deployed bridge, which answers the same verbs and reads any judgment back from the pod, instead of a localhost the relay could only mark declarative. The harness image and CI jobs build the registry package beside core.

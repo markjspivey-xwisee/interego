@@ -195,7 +195,11 @@ import { inferScormAnswerInput, scormAnswerCandidates, validateScormResponses, t
 import { competencyIri, competencyIriForTerm, competencyIdOf } from '../src/competency-identity.js';
 import { activityIri, ACTIVITY_DEFINITIONS } from '../src/activity-identity.js';
 import { FOXXI_NS } from '../src/foxxi-vocab.js';
-import { CONTENT_JUDGMENT_KINDS, contentJudgmentControls, contentJudgmentMarkdown, judgeContentClaim, type ContentJudgmentKind, type EvidenceItem } from '../src/content-judgment.js';
+import {
+  CONTENT_JUDGMENT_KINDS, CONTENT_JUDGMENT_OUTCOME_TYPE, contentJudgmentCalibration, contentJudgmentControls, contentJudgmentMarkdown,
+  contentJudgmentOutcome, decodeBundleJson, entityGraphUrl, findEntityEntry, isContentJudgment, isContentJudgmentOutcome, judgeContentClaim,
+  type ContentJudgmentKind, type ContentJudgmentOutcome, type EntityEntry, type EvidenceItem,
+} from '../src/content-judgment.js';
 import { jevFromEnv } from '../../_shared/judgment-kit/jev-client.js';
 import { publishFoxxiEntity, type DescriptorPublishConfig } from '../src/outcome-descriptor-publisher.js';
 import {
@@ -2607,6 +2611,25 @@ function classifySubjectKind(opts: {
   return opts.actorKindHint === 'agent' ? 'agent' : 'human';
 }
 
+/** Where content judgments and their outcomes are published: the tenant pod, under foxxi/judgments/. */
+function judgmentPublishConfig(): DescriptorPublishConfig {
+  return {
+    podUrl: tenantPodUrl,
+    authoritativeSource,
+    fetch: guardedFetchFn(globalThis.fetch) as unknown as DescriptorPublishConfig['fetch'],
+    containerPath: 'foxxi/judgments/',
+  };
+}
+
+/** An entity's payload read back from the tenant pod through the guarded fetch. */
+async function readEntityPayload(entityIri: string, entry?: EntityEntry): Promise<unknown> {
+  const url = entityGraphUrl(tenantPodUrl, entityIri, entry);
+  if (!url) return undefined;
+  const res = await (guardedFetchFn(globalThis.fetch) as typeof fetch)(url, { headers: { Accept: 'application/trig, text/turtle' } });
+  if (!res.ok) return undefined;
+  return decodeBundleJson(await res.text());
+}
+
 const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknown>> = {
   // ── Emergent standards-extension (agp layer re-integrated) ──────────
   // Afforded by the agentic-performance layer composing Foxxi's standards;
@@ -4723,14 +4746,8 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     let published: Record<string, unknown> = { status: 'skipped', reason: 'no tenant pod configured' };
     if (tenantPodUrl) {
       try {
-        const config: DescriptorPublishConfig = {
-          podUrl: tenantPodUrl,
-          authoritativeSource,
-          fetch: guardedFetchFn(globalThis.fetch) as unknown as DescriptorPublishConfig['fetch'],
-          containerPath: 'foxxi/judgments/',
-        };
         const r = await publishFoxxiEntity({
-          config,
+          config: judgmentPublishConfig(),
           slugPrefix: 'judgment',
           foxxiType: `${FOXXI_NS}ContentJudgment` as IRI,
           payload: judgment as unknown as Record<string, unknown>,
@@ -4751,6 +4768,71 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       markdown: contentJudgmentMarkdown(judgment, controls, bridgeBaseUrl),
       published,
     };
+  },
+
+  // ── A person says what is true about a judged claim: the outcome supersedes the judgment ──
+  'foxxi.confirm_content_judgment': async (args) => {
+    const resolved = await resolveCaller(args);
+    if ('error' in resolved) return resolved;
+    const { ctx } = resolved;
+    if (ctx.role !== 'learning-engineer' && ctx.role !== 'admin') {
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — learning-engineer or admin role required' };
+    }
+    const judgmentIri = typeof args.judgment_iri === 'string' ? args.judgment_iri.trim() : '';
+    const confirmed = typeof args.confirmed_answer === 'string' ? args.confirmed_answer.trim() : '';
+    if (!/^urn:foxxi:judgment:[A-Za-z0-9-]+$/.test(judgmentIri) || !confirmed) {
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 400, 'iep:refusalReason': 'judgment_iri (urn:foxxi:judgment:<id>) and confirmed_answer are required', error: 'bad request' };
+    }
+    if (!tenantPodUrl) return { kind: 'refusal' as const, 'iep:refusalStatus': 503, 'iep:refusalReason': 'no tenant pod is configured, so there is no judgment to confirm', error: 'unavailable' };
+    const entries = (await discover(tenantPodUrl)) as unknown as EntityEntry[];
+    const entry = findEntityEntry(entries, judgmentIri);
+    const payload = await readEntityPayload(judgmentIri, entry);
+    if (!isContentJudgment(payload)) return notFound(`no content judgment ${judgmentIri} on the tenant pod`);
+    let outcome: ContentJudgmentOutcome;
+    try {
+      outcome = contentJudgmentOutcome(payload, judgmentIri, confirmed, { did: ctx.webId, ...(typeof args.note === 'string' ? { note: args.note } : {}) });
+    } catch (err) {
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 400, 'iep:refusalReason': err instanceof Error ? err.message : String(err), error: 'bad request' };
+    }
+    const r = await publishFoxxiEntity({
+      config: judgmentPublishConfig(),
+      slugPrefix: 'judgment-outcome',
+      foxxiType: CONTENT_JUDGMENT_OUTCOME_TYPE as IRI,
+      payload: outcome as unknown as Record<string, unknown>,
+      authoredBy: { id: ctx.webId, kind: 'human', role: ctx.role },
+      modalStatus: 'Asserted',
+      supersedes: [`${judgmentIri}#descriptor` as IRI],
+    });
+    const descriptorUrl = (r as { descriptorUrl?: unknown }).descriptorUrl;
+    return {
+      kind: 'content-judgment-outcome',
+      '@type': [`${FOXXI_NS}ContentJudgmentOutcome`],
+      outcome,
+      published: { status: 'published', descriptorIri: r.descriptorIri, graphIri: r.graphIri, ...(typeof descriptorUrl === 'string' ? { descriptorUrl } : {}), supersedes: `${judgmentIri}#descriptor`, trustLevel: r.trust.trustLevel },
+    };
+  },
+
+  // ── How the content judgments have done, over the outcomes on the tenant pod ──
+  'foxxi.content_judgment_calibration': async (args) => {
+    const resolved = await resolveCaller(args);
+    if ('error' in resolved) return resolved;
+    const { ctx } = resolved;
+    if (ctx.role !== 'learning-engineer' && ctx.role !== 'admin') {
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — learning-engineer or admin role required' };
+    }
+    if (!tenantPodUrl) return { kind: 'refusal' as const, 'iep:refusalStatus': 503, 'iep:refusalReason': 'no tenant pod is configured, so there are no outcomes to read', error: 'unavailable' };
+    const entries = (await discover(tenantPodUrl)) as unknown as EntityEntry[];
+    const outcomeEntries = entries.filter((e) => (e.conformsTo ?? []).some((t) => String(t) === CONTENT_JUDGMENT_OUTCOME_TYPE));
+    const outcomes: ContentJudgmentOutcome[] = [];
+    for (const e of outcomeEntries) {
+      const iri = e.graph ?? e.describes?.[0];
+      if (!iri) continue;
+      try {
+        const payload = await readEntityPayload(String(iri), e);
+        if (isContentJudgmentOutcome(payload)) outcomes.push(payload);
+      } catch { /* a partial read is a smaller sample, not a failure */ }
+    }
+    return { kind: 'content-judgment-calibration', ...contentJudgmentCalibration(outcomes), read: outcomeEntries.length, decoded: outcomes.length };
   },
 
   'foxxi.le_estimate_concept_difficulty': async (args) => {
