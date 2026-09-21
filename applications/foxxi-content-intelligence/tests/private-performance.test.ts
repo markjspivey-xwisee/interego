@@ -7,6 +7,7 @@ import type { AddressInfo } from 'node:net';
 import { generateKeyPair, openEncryptedEnvelope, createEncryptedEnvelope } from '@interego/core';
 import { PrivatePerformanceStore } from '../../agentic-performance-practice/src/private-performance-store.js';
 import { makePrivatePerformanceVerifier } from '../src/private-performance-auth.js';
+import { publicSpellingOf } from '../src/store-origins.js';
 import { privatePerformanceAffordances } from '../../agentic-performance-practice/compatibility/private-performance-affordances.js';
 import { attachPerformanceRoutes } from '../../agentic-performance-practice/compatibility/foxxi-performance-routes.js';
 import { diagnose, recommendInterventions, type PerformanceSituation } from '../../agentic-performance-practice/src/performance-architecture.js';
@@ -204,9 +205,27 @@ describe('private encrypted CAS persistence', () => {
 });
 
 function authConfig(scope = ['discover', 'publish']) {
-  return { recover: (_body: unknown) => ({ ok: true as const, agentId: ACTOR, signer: `0x${"11".repeat(20)}` }), verify: async (body: unknown) => ({ ok: true as const, callerDid: ACTOR, payload: body as Record<string, unknown> }), ownPod: (_actor: string) => POD, samePod: (a: string | undefined, b: string) => a?.replace('http://internal/', 'https://pod.example/') === b, credential: async () => ({ pod: POD, scope }) };
+  return { recover: (_body: unknown) => ({ ok: true as const, agentId: ACTOR, signer: `0x${"11".repeat(20)}` }), verify: async (body: unknown) => ({ ok: true as const, callerDid: ACTOR, payload: body as Record<string, unknown> }), ownPod: (_actor: string) => POD, canonicalPod: (pod: string) => publicSpellingOf(pod, { publicPodUrl: POD, internalPodUrl: 'http://internal/u-pk-123456789abc/' }), samePod: (a: string | undefined, b: string) => a === b, credential: async () => ({ pod: POD, scope }) };
 }
 describe('private transport and scope binding', () => {
+  it('accepts the configured internal spelling of an own-pod credential without accepting foreign pods', async () => {
+    const config = {
+      ...authConfig(),
+      samePod: (a: string | undefined, b: string) => a === b,
+      credential: async () => ({ pod: 'http://internal/u-pk-123456789abc/', scope: ['discover', 'publish'] }),
+    };
+    const verify = makePrivatePerformanceVerifier(config);
+    expect((await verify({ subject_pod_url: POD }, false)).ok).toBe(true);
+    expect((await verify({ subject_pod_url: 'http://internal/u-pk-123456789abc/' }, true)).ok).toBe(true);
+    for (const foreign of ['https://foreign.example/u-pk-123456789abc/', 'http://internal.attacker.example/u-pk-123456789abc/', 'http://internal/victim/']) {
+      expect(await verify({ subject_pod_url: foreign }, true)).toMatchObject({ ok: false, status: 403 });
+      const otherCredential = makePrivatePerformanceVerifier({ ...config, credential: async () => ({ pod: foreign, scope: ['discover', 'publish'] }) });
+      expect(await otherCredential({}, false)).toMatchObject({ ok: false, status: 403 });
+    }
+    const readOnly = makePrivatePerformanceVerifier({ ...config, credential: async () => ({ pod: 'http://internal/u-pk-123456789abc/', scope: ['discover'] }) });
+    expect((await readOnly({}, false)).ok).toBe(true);
+    expect(await readOnly({}, true)).toMatchObject({ ok: false, status: 403 });
+  });
   it('accepts relay-stamped own pod and rejects steering, missing publish and unsigned calls', async () => {
     const normal = makePrivatePerformanceVerifier(authConfig());
     expect((await normal({ subject_pod_url: 'http://internal/u-pk-123456789abc/' }, true)).ok).toBe(true);
