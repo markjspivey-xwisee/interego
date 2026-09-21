@@ -143,6 +143,10 @@ Every navigation outcome carries the task and the files it actually changed (`jv
 
 Measured on this repository's 40 most recent commits (2026-09-21, jev-1.13.0): with memory off, hit@1 0.28, hit@3 0.43, mean Brier 0.158, mean confidence 0.503; with memory on, hit@1 0.33, hit@3 0.43, mean Brier 0.126, mean confidence 0.447. Read that honestly: the two commits that flipped to hits had no precedents applied, so the hit@1 change is model variance; where precedents applied (19 of 40) no hit changed, and their files overlapped the actual change in only 4 — the other 15 were a run of one-file commits sharing a subject, where memory points at what just moved. What memory did do is spread probability off wrong answers: lower Brier, lower confidence on the misses. Every outcome now records the memory share of the judgment it scores (`jvh:priorPrecedentWeight`), and the calibration view's `memory` cell pair reports navigation with precedents against navigation without, so live tasks decide whether the rule earns its weight.
 
+## The judgment kit
+
+Everything a judgment needs that is not about repositories lives in `applications/_shared/judgment-kit` since 2026-09-21: the System One client and its fake, the Turtle helpers, the payload prefixes, the control triples, the seven-facet descriptor renderer, the HyperMarkdown projection and the scoring arithmetic. `src/descriptor.ts` keeps what is this vertical's own — which triples each judgment kind emits, which controls emerge from it, how it reads as prose — and renders through the kit; `src/jev-client.ts` re-exports the client. Foxxi's `judge_content_claim` is the second vertical on the kit.
+
 ## Tests
 
 ```bash

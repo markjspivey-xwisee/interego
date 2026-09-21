@@ -504,16 +504,17 @@ export const SHARED_ONLY_THROUGH_IMPORTED_CODE: readonly {
 }[] = [
   {
     name: 'TYPESAFE_API_KEY',
-    readIn: 'applications/jev-harness/src/jev-client.ts',
+    readIn: 'applications/_shared/judgment-kit/jev-client.ts',
     why: 'the credential jev-client.ts sends to api.typesafe.ai, read once when a client is '
       + 'built (with a Windows user-scope fallback). Every jev-harness test module imports the '
-      + 'client through tests/helpers.ts, which is what makes the name shared; no module in the '
+      + 'client through tests/helpers.ts, and Foxxi\'s content judgment imports it from the shared '
+      + 'judgment kit, which is what makes the name shared; no module in the '
       + 'test tree reads it, and the one module that reaches TypeSafe is armed by JEV_LIVE, '
       + 'registered above as the typesafe external.',
   },
   {
     name: 'JEV_MODEL',
-    readIn: 'applications/jev-harness/src/jev-client.ts',
+    readIn: 'applications/_shared/judgment-kit/jev-client.ts',
     why: 'the model name requests are sent with, defaulting to jev-latest. It selects a model '
       + 'on the same endpoint and retargets nothing; shared only because every jev-harness '
       + 'test module imports the client.',
