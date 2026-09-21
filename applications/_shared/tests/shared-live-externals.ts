@@ -552,6 +552,13 @@ export const SHARED_ONLY_THROUGH_IMPORTED_CODE: readonly {
       + 'a label, not a target.',
   },
   {
+    name: 'JEV_HARNESS_REPO_NAME',
+    readIn: 'applications/jev-harness/src/repo.ts',
+    why: 'the name a deployed bridge gives the repository it is bound to, when its directory does '
+      + 'not (the Railway image runs at /app); a label on the calibration graph, naming nothing '
+      + 'live. Shared because every jev-harness test builds an inventory.',
+  },
+  {
     name: 'JEV_HARNESS_NS',
     readIn: 'applications/jev-harness/src/descriptor.ts',
     why: 'the vocabulary namespace of the vertical when it is served from somewhere other than '
