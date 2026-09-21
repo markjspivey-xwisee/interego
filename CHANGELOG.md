@@ -1,8 +1,12 @@
 # Changelog
 
+## 2026-09-21 — the derived input shape goes through `turtleIriRef`, keeping the Turtle-IRI ratchet at its budget
+
+`inputShapeTurtle` had added one raw `<${…}>` interpolation, which put the whole-tree count at 653 against a budget of 652: the ratchet test fails in every job that runs the full suite, so three CI runs went red on master and the auto-deploy refused the commit, as designed. The shape IRI and the property paths now go through `turtleIriRef`, which refuses a value that would break out of an IRI reference.
+
 ## 2026-09-21 — judgment kit: the input contract as SHACL, served by every bridge; the Trust facet cites the agent's attestation
 
-`inputShapeTurtle` (in `applications/_shared/affordance-mcp`, re-exported by the judgment kit) renders an affordance's `inputs` as a `sh:NodeShape` — the same declaration the MCP tool schema and `hydra:expects` come from, so the three cannot drift — and every vertical bridge serves it at `/affordances/<tool>/input` for `Accept: text/turtle` (or `?format=shacl`), under the affordance's `inputShape` IRI when it declares one; Foxxi's `judge_content_claim` and `confirm_content_judgment` now declare theirs. The harness's descriptors carry the newest attestation about the agent on the pod as the Trust facet's `iep:verifiableCredential`, read once after the boot-time read-back and refreshed when the bridge issues one, so a reader of any judgment can follow to the measured rates behind it.
+`inputShapeTurtle` (in `applications/_shared/affordance-mcp`, re-exported by the judgment kit) renders an affordance's `inputs` as a `sh:NodeShape` — the same declaration the MCP tool schema and `hydra:expects` come from, so the three cannot drift — and every bridge built on the shared vertical bridge serves it at `/affordances/<tool>/input` (the harness bridge has its own server and keeps its hand-written shapes in its ontology) for `Accept: text/turtle` (or `?format=shacl`), under the affordance's `inputShape` IRI when it declares one; Foxxi's `judge_content_claim` and `confirm_content_judgment` now declare theirs. The harness's descriptors carry the newest attestation about the agent on the pod as the Trust facet's `iep:verifiableCredential`, read once after the boot-time read-back and refreshed when the bridge issues one, so a reader of any judgment can follow to the measured rates behind it.
 
 ## 2026-09-21 — the collector rebuilds above a line and drops last week's copy; a fleet diagnosis is Hypothetical
 
