@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { AUTO_MERGE_POLICY, AUTO_MERGED_LABEL, autoMergeDecision, reviewVerdictEvidence } from '../src/auto-merge.js';
 
 const earned = { cells: [{ kind: 'navigation', liveSamples: 3 }, { kind: 'review-verdict', liveSamples: 25, liveAgreement: { agree: 23, conservative: 1, disagree: 1 } }] };
-const all = { verdict: 'auto-ok', selectionResult: 'success', armed: true, tokenPresent: true, calibration: earned };
+const all = { verdict: 'auto-ok', selectionResult: 'success', armed: true, tokenPresent: true, calibration: earned, mergeable: 'MERGEABLE' };
 const withPerson = { ...all, requireHumanReview: true, reputation: { axes: { accuracy: 0.92, competence: 0.7 }, contributing: 1 } };
 
 describe('the evidence', () => {
@@ -18,10 +18,10 @@ describe('the evidence', () => {
 });
 
 describe('without a person required (the default)', () => {
-  it('merges on armed, token, green tests and any verdict but block — four conditions, no calibration bar', () => {
+  it('merges on armed, token, green tests, any verdict but block and a mergeable branch — five conditions, no calibration bar', () => {
     const d = autoMergeDecision(all);
     expect(d.merge).toBe(true);
-    expect(d.reasons).toHaveLength(4);
+    expect(d.reasons).toHaveLength(5);
     expect(d.reasons[3]).toContain('needs-human-review is advisory');
     const advisory = autoMergeDecision({ ...all, verdict: 'needs-human-review', calibration: undefined });
     expect(advisory.merge).toBe(true);
@@ -46,10 +46,10 @@ describe('without a person required (the default)', () => {
 });
 
 describe('with a person required', () => {
-  it('merges only when every condition holds, and says so six times', () => {
+  it('merges only when every condition holds, and says so seven times', () => {
     const d = autoMergeDecision(withPerson);
     expect(d.merge).toBe(true);
-    expect(d.reasons).toHaveLength(6);
+    expect(d.reasons).toHaveLength(7);
     expect(d.reasons.every((r) => r.startsWith('holds: '))).toBe(true);
     expect(d.reasons[4]).toContain('25 live review-verdict outcome(s): agreement 0.92 (floor 0.9), disagreement 0.04 (ceiling 0.05)');
     expect(d.reasons[5]).toContain('the reputation from 1 attestation(s) rates accuracy 0.92 (floor 0.9)');
@@ -83,5 +83,26 @@ describe('with a person required', () => {
 
   it('applies the policy it is given', () => {
     expect(autoMergeDecision({ ...withPerson, calibration: { cells: [{ kind: 'review-verdict', liveSamples: 5, liveAgreement: { agree: 5 } }] } }, { ...AUTO_MERGE_POLICY, minLiveSamples: 5 }).merge).toBe(true);
+  });
+});
+
+describe('★ a branch that conflicts with master merges for nobody', () => {
+  // #436, 2026-09-21: the job decided MERGE, labelled the pull request, and the merge command
+  // failed on a changelog conflict the Foxxi merge had just created — leaving the label on a
+  // pull request whose next merge could have been a person's.
+  it('refuses a conflicting branch, and says what to do', () => {
+    const d = autoMergeDecision({ ...all, mergeable: 'CONFLICTING' });
+    expect(d.merge).toBe(false);
+    expect(d.reasons[4]).toContain('fails: the pull request conflicts with master (merge master in and push');
+  });
+  it('refuses while GitHub has not settled mergeability, and when nothing was read', () => {
+    expect(autoMergeDecision({ ...all, mergeable: 'UNKNOWN' }).reasons[4]).toContain('has not settled whether the pull request is mergeable (mergeable: UNKNOWN)');
+    const { mergeable: _m, ...unread } = all;
+    expect(autoMergeDecision(unread).merge).toBe(false);
+  });
+  it('is the last condition in the person-required mode too', () => {
+    const d = autoMergeDecision({ ...withPerson, mergeable: 'CONFLICTING' });
+    expect(d.merge).toBe(false);
+    expect(d.reasons[6]).toContain('conflicts with master');
   });
 });
