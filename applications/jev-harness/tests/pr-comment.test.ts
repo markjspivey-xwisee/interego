@@ -34,8 +34,9 @@ describe('the review-gate comment', () => {
   };
 
   it('leads with the verdict, lists the reasons, marks the hazard that fired, and links the descriptor', () => {
-    const md = gateComment(body, links);
+    const md = gateComment({ ...body, judgment: { ...body.judgment, graphIri: 'urn:graph:jev-harness:review-verdict:x1' } }, links);
     expect(md.startsWith('<!-- jev-harness:review-gate -->')).toBe(true);
+    expect(md).toContain('<!-- jev-harness:judgment urn:graph:jev-harness:review-verdict:x1 review-verdict -->');
     expect(md).toContain('Review gate: **needs-human-review**');
     expect(md).toContain('a person should read this diff');
     expect(md).toContain('- deterministic checks fired: sensitive-path:deploy/Dockerfile');

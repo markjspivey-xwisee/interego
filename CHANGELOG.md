@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-21 — jev-harness: outcomes on merge
+
+When a pull request closes, a third CI job scores the judgments the harness's own comments name (each comment now carries a hidden marker with the judgment's graph IRI): the merge, or the close without one, becomes the human decision the review verdict is scored against, and a linked navigation is scored against the files the pull request changed. The bridge that made the judgments is gone with its run, so the closing job's bridge reads each judgment back from the pod (`applications/jev-harness/src/pod-judgment.ts` mirrors the payload writer term for term) and publishes the outcome as the Asserted head of the chain, with the pod descriptor as the compare-and-swap precondition. Calibration is now fed by every merge rather than by replayed history.
+
 ## 2026-09-21 — fleet operations as descriptors: deploys, audit findings and the collector's measurement land on the pod
 
 `tools/fleet-event.ts` publishes a soc2:DeployEvent, soc2:IncidentEvent or soc2:QuarterlyReviewEvent (built by @interego/ops) to the operator's pod as the fleet's own delegate agent (`INTEREGO_FLEET_AGENT_KEY_JSON`, registered PublishOnly; the pod is the repository variable `INTEREGO_FLEET_POD_NAME`). auto-deploy.yml records every service a rollout shipped, railway-fleet-audit.yml records a volume at or over 80% as an open incident in the run that found it, and the weekly pod-store collector records its dry run as the quarter's monitoring review. The agent key, did:key, relay OAuth minting and MCP client moved from jev-harness to applications/_shared/relay-agent, re-exported where they were.

@@ -51,6 +51,32 @@ export function descriptorLinks(descriptorUrl: string, links: CommentLinks): { d
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 const num = (v: unknown): number | undefined => (typeof v === 'number' ? v : undefined);
 
+/**
+ * One hidden line per judgment the comment reports, naming its graph IRI and kind, so the
+ * workflow that runs when the pull request closes can find the judgments to score without a
+ * store: the comment is the only thing that survives the CI run.
+ */
+export const JUDGMENT_MARKER = /<!-- jev-harness:judgment (\S+) (\S+) -->/g;
+export function judgmentMarkers(judgments: ReadonlyArray<Record<string, unknown>>): string[] {
+  return judgments
+    .filter((j) => typeof j['graphIri'] === 'string' && typeof j['kind'] === 'string')
+    .map((j) => `<!-- jev-harness:judgment ${j['graphIri'] as string} ${j['kind'] as string} -->`);
+}
+/** The judgments a set of comment bodies name, in order of appearance, without duplicates. */
+export function judgmentsInComments(bodies: readonly string[]): Array<{ graphIri: string; kind: string }> {
+  const out: Array<{ graphIri: string; kind: string }> = [];
+  const seen = new Set<string>();
+  for (const body of bodies) {
+    for (const m of body.matchAll(JUDGMENT_MARKER)) {
+      const graphIri = m[1]!;
+      if (seen.has(graphIri)) continue;
+      seen.add(graphIri);
+      out.push({ graphIri, kind: m[2]! });
+    }
+  }
+  return out;
+}
+
 function publishLine(body: Record<string, unknown>, links: CommentLinks): string {
   const publish = body['publish'] as { status?: string; descriptorUrl?: string; error?: string } | undefined;
   if (!publish || publish.status !== 'published' || !publish.descriptorUrl) {
@@ -72,6 +98,7 @@ export function gateComment(body: Record<string, unknown>, links: CommentLinks =
       : 'a person should read this diff before it merges';
   const lines: string[] = [];
   lines.push('<!-- jev-harness:review-gate -->');
+  lines.push(...judgmentMarkers([j]));
   lines.push(`### ${icon} Review gate: **${verdict}**`);
   lines.push('');
   lines.push(`${meaning}. Confidence ${num(j['confidence']) ?? '?'}, model ${str(j['model']) || '?'}.`);
@@ -112,6 +139,7 @@ export function selectionComment(results: readonly SavedResult[], links: Comment
     return lines.join('\n');
   }
   const j = (sel['judgment'] ?? {}) as Record<string, unknown>;
+  lines.push(...judgmentMarkers([j, ((by('triage') ?? {})['judgment'] ?? {}) as Record<string, unknown>]));
   const mode = str(j['mode']) || 'unknown';
   const tests = (j['tests'] as Array<{ path: string; selectedBy?: string }> | undefined) ?? [];
   const reasons = (j['reasons'] as string[] | undefined) ?? [];
