@@ -45,6 +45,35 @@ describe('pgsl-store: compose-on-write + structural indexes (in-memory fake)', (
     expect(await store.levelSlice(2)).toEqual([frag.uri]);
   });
 
+  it('a replay of existing nodes writes only the two overlay rows, never their projection rows again', async () => {
+    // Re-setting V, P, I, B, L and R for a node that already exists changed nothing and cost a
+    // dead tuple per row; on the production store that was thousands of row updates per manifest
+    // publish. Count the writes through a wrapper around the in-memory transaction.
+    const fdb = new InMemoryFdb();
+    let sets = 0;
+    const counting = {
+      transact: <T>(fn: (txn: import('../packages/pgsl-store/src/fdb-like.js').FdbTxn) => Promise<T>): Promise<T> =>
+        fdb.transact((txn) => fn({
+          get: (k) => txn.get(k),
+          set: (k, v) => { sets += 1; txn.set(k, v); },
+          clear: (k) => txn.clear(k),
+          clearRange: (b, e) => txn.clearRange(b, e),
+          getRange: (b, e, o) => txn.getRange(b, e, o),
+          compareAndSet: (k, exp, v) => txn.compareAndSet(k, exp, v),
+        })),
+      close: () => fdb.close(),
+    };
+    const store = openStore(counting);
+    await store.compose(slice, { pod: 'https://pod/u1/', resource: 'ctx/frag' });
+    const firstWrite = sets;
+    // 4 nodes: N + V + P each = 12; the fragment adds 3 I + 3 B + L + R = 8; the overlay adds O + W = 2.
+    expect(firstWrite).toBe(22);
+    sets = 0;
+    await store.compose(slice, { pod: 'https://pod/u1/', resource: 'ctx/frag' });
+    expect(sets).toBe(2);
+    expect(await store.fragmentItems(frag.uri)).toEqual([a.uri, b.uri, c.uri]);
+  });
+
   it('compose is idempotent: replay writes 0 new nodes and leaves indexes intact', async () => {
     const fdb = new InMemoryFdb();
     const store = openStore(fdb);
