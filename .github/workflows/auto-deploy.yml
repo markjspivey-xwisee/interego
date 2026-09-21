@@ -166,3 +166,36 @@ jobs:
       service: ${{ matrix.service }}
       tag: ${{ github.sha }}
     secrets: inherit
+
+  # ── The rollout as evidence ──────────────────────────────────────────────────────────────────
+  # Every service this run shipped becomes a soc2:DeployEvent on the operator's pod — the commit
+  # sha, the component, the environment and the rollback plan — published by the fleet's own
+  # delegate agent through tools/fleet-event.ts. spec/SOC2-PREPARATION.md has said since 2026-07
+  # that the operator eats its own dog food; this is the first place a deploy actually writes it.
+  #
+  # Only after a rollout that succeeded for EVERY service in the matrix. With fail-fast off,
+  # `needs.deploy.result` is `failure` when any leg failed, and this job then records nothing
+  # rather than guessing which legs landed: a deploy event for a service the called workflow
+  # rolled back would be false evidence, which is worse than a gap.
+  record-deploys:
+    name: Record the deploys on the pod
+    needs: [scope, deploy]
+    if: ${{ needs.scope.outputs.count != '0' && needs.deploy.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with: { node-version: '20', cache: npm }
+      - run: npm ci
+      # The event builders are @interego/ops, which imports @interego/core and types from
+      # @interego/compliance: three packages built, not the whole tree.
+      - run: npm run build:core && npm run build --workspace @interego/compliance && npm run build --workspace @interego/ops
+      - name: Publish one deploy event per service shipped
+        env:
+          INTEREGO_FLEET_AGENT_KEY_JSON: ${{ secrets.INTEREGO_FLEET_AGENT_KEY_JSON }}
+          INTEREGO_FLEET_POD_NAME: ${{ vars.INTEREGO_FLEET_POD_NAME }}
+          DEPLOY_MATRIX: ${{ needs.scope.outputs.deploy_matrix }}
+        run: npx tsx tools/fleet-event.ts deploy --matrix "$DEPLOY_MATRIX" --sha "${{ github.sha }}"
