@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-21 — jev-harness: a peer's attestation, drafted by the bridge for a person to publish from their own key
+
+`jev_harness.draft_attestation` (`POST /jev-harness/attestation/draft`) returns an `amta:Attestation` with direction Peer about the harness agent: the attestor is the person (or the session agent acting for them), their ratings where given and the calibration's where not, grounded in the outcome they decided on or in the calibration descriptor, together with the exact `publish_context` arguments to publish it from their own session. The bridge never publishes it itself, since a second voice has to be another key; once on the pod, `GET /jev-harness/reputation` weighs it as PeerAttested (0.5) beside the self-attestation (0.25). Built with the harness itself: navigated with `jev_harness.navigate`, tests selected by `select_tests`, the diff gated by `review_gate`, merged by the gated auto-merge.
+
 ## 2026-09-21 — the derived input shape goes through `turtleIriRef`, keeping the Turtle-IRI ratchet at its budget
 
 `inputShapeTurtle` had added one raw `<${…}>` interpolation, which put the whole-tree count at 653 against a budget of 652: the ratchet test fails in every job that runs the full suite, so three CI runs went red on master and the auto-deploy refused the commit, as designed. The shape IRI and the property paths now go through `turtleIriRef`, which refuses a value that would break out of an IRI reference.

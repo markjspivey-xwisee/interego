@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { attestationPayload } from '../src/calibration-publish.js';
+import { attestationAxes, attestationPayload, peerAttestationPayload } from '../src/calibration-publish.js';
 import { contextFromEnv } from '../src/descriptor.js';
 import type { OutcomeRecord } from '../src/judgments/outcome.js';
 import { RelayClient } from '../src/publish.js';
@@ -117,5 +117,55 @@ describe('the service', () => {
   it('is off without a relay', async () => {
     const harness = new Harness({ jev: preferringJev(() => undefined), repoRoot: fixtureRepo(), base: 'http://localhost:6090', store: new HarnessStore(mkdtempSync(join(tmpdir(), 'jev-reputation-'))), relay: null, context: ctx });
     expect((await harness.reputation()).status).toBe('off');
+  });
+});
+
+describe('a peer\'s word, drafted by the harness for someone else to publish', () => {
+  const view = attestedView();
+  it('is Peer, names the attestor and the agent, takes the calibration where the attestor gives nothing, and reads back as PeerAttested', () => {
+    const d = peerAttestationPayload(view, ctx, 'fixture', { attestor: 'did:key:z6MkpeerPerson', note: 'The navigation found my files.' }, { calibrationDescriptorUrl: url(77), attestedAt: '2026-09-21T06:00:00.000Z' });
+    expect(d.graphIri).toBe('urn:graph:jev-harness:attestation:fixture:peer:did-key-z6mkpeerperson');
+    const a = attestationFromContent(podContent(d.content, d.graphIri, url(90)), { descriptorUrl: url(90) })!;
+    expect(a.direction).toBe('Peer');
+    expect(a.attestor).toBe('did:key:z6MkpeerPerson');
+    expect(a.subject).toBe(ctx.agentId);
+    expect(a.fromExecution).toBe(url(77));
+    expect(a.axes['competence']).toBe(attestationAxes(view)!.competence);
+    expect(toAttestationInput(a).issuerTrustLevel).toBe('PeerAttested');
+    expect(d.content).toContain('The navigation found my files.');
+    expect(d.content).toContain('jvh:draftedBy <' + ctx.agentId + '>');
+  });
+  it('the attestor\'s own rating wins over the calibration\'s, is bounded, and grounds in what they name', () => {
+    const d = peerAttestationPayload(view, ctx, 'fixture', { attestor: 'https://id.example/me#me', about: url(55), axes: { accuracy: 0.9 } }, { attestedAt: '2026-09-21T06:00:00.000Z' });
+    expect(d.axes.accuracy).toBe(0.9);
+    expect(d.groundedIn).toBe(url(55));
+    expect(d.content).toContain('amta:accuracy "0.9"^^xsd:double');
+    expect(() => peerAttestationPayload(view, ctx, 'fixture', { attestor: 'did:key:z6Mkx', axes: { accuracy: 1.5 } })).toThrow(/from 0 to 1/);
+    expect(() => peerAttestationPayload(view, ctx, 'fixture', { attestor: 'not an iri' })).toThrow(/absolute IRI/);
+  });
+  it('refuses to draft when neither the attestor nor the calibration rates anything', () => {
+    expect(() => peerAttestationPayload(computeCalibration([]), ctx, 'fixture', { attestor: 'did:key:z6Mkx' })).toThrow(/nothing to attest/);
+  });
+  it('★ moves the snapshot toward the peer: a half beside the self-attestation\'s quarter', () => {
+    const self = attestationFromContent(podContent(attestationPayload(view, ctx, 'fixture', { calibrationDescriptorUrl: url(77), attestedAt: '2026-09-21T05:00:00.000Z' })!, 'urn:graph:jev-harness:attestation:fixture', url(78)), { descriptorUrl: url(78) })!;
+    const alone = reputationOf(ctx.agentId, [self], REPUTATION_POLICY, '2026-09-21T07:00:00.000Z')!;
+    const own = alone.axes['competence']!;
+    const rating = own > 0.5 ? 0 : 1;
+    const draft = peerAttestationPayload(view, ctx, 'fixture', { attestor: 'did:key:z6Mkpeer', axes: { competence: rating } }, { attestedAt: '2026-09-21T06:00:00.000Z' });
+    const peer = attestationFromContent(podContent(draft.content, draft.graphIri, url(91)), { descriptorUrl: url(91) })!;
+    const both = reputationOf(ctx.agentId, [self, peer], REPUTATION_POLICY, '2026-09-21T07:00:00.000Z')!;
+    expect(both.contributingAttestations).toHaveLength(2);
+    expect(both.axes['competence']).not.toBe(own);
+    expect(Math.abs(both.axes['competence']! - rating)).toBeLessThan(Math.abs(own - rating));
+  });
+  it('the service returns the draft with the publish_context call for the attestor\'s own session', () => {
+    const harness = new Harness({ jev: preferringJev(() => undefined), repoRoot: fixtureRepo(), base: 'http://localhost:6090', store: new HarnessStore(mkdtempSync(join(tmpdir(), 'jev-peer-'))), relay: null, context: ctx });
+    expect(() => harness.draftAttestation({ attestor: 'did:key:z6Mkpeer' })).toThrow(/nothing to attest/);
+    const d = harness.draftAttestation({ attestor: 'did:key:z6Mkpeer', axes: { accuracy: 0.8 } });
+    expect(d.publish.tool).toBe('publish_context');
+    expect(d.publish.arguments['graph_iri']).toBe(d.graphIri);
+    expect(d.publish.arguments['graph_content']).toBe(d.content);
+    expect(d.publish.arguments['modal_status']).toBe('Asserted');
+    expect(d.reputationUrl).toBe('http://localhost:6090/jev-harness/reputation');
   });
 });

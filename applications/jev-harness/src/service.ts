@@ -13,7 +13,7 @@ import { triage, type TriageInput, type FailureTriageJudgment } from './judgment
 import { reviewGate, type ReviewGateInput, type ReviewVerdictJudgment } from './judgments/review-gate.js';
 import { recordOutcome, type AnyJudgment, type OutcomeInput, type OutcomeRecord } from './judgments/outcome.js';
 import { publishGraph, publishJudgment, recordTrajectoryStep, type RelayClient } from './publish.js';
-import { attestationGraphIri, attestationPayload, calibrationFingerprint, calibrationGraphIri, calibrationPayload } from './calibration-publish.js';
+import { attestationGraphIri, attestationPayload, calibrationFingerprint, calibrationGraphIri, calibrationPayload, peerAttestationPayload, type AttestationDraft, type PeerAttestationInput } from './calibration-publish.js';
 import { fetchPodAttestations, reputationOf, REPUTATION_POLICY, type PodAttestation } from './reputation.js';
 import type { AggregationPolicy, ReputationSnapshot } from '@interego/registry';
 import { changedFiles, inventory, unifiedDiff, type RepoInventory } from './repo.js';
@@ -171,6 +171,23 @@ export class Harness {
    * the bridge's own grounded self-attestation and any a peer publishes. The gated auto-merge
    * reads the snapshot's accuracy axis when a person is required.
    */
+  /**
+   * An attestation drafted for a PERSON, or the session agent acting for one, to publish about
+   * this agent from their own key: direction Peer, grounded in what they decided on or in the
+   * calibration. The harness never publishes it itself; a second voice has to be another key,
+   * and the reputation weighs it as PeerAttested the moment it lands on the pod.
+   */
+  draftAttestation(input: PeerAttestationInput): AttestationDraft & { readonly modalStatus: 'Asserted'; readonly publish: { readonly tool: 'publish_context'; readonly arguments: Record<string, unknown> }; readonly reputationUrl: string } {
+    const repoName = this.inventory().name;
+    const calibrationUrl = this.calibrationPublish.calibrationUrl;
+    const draft = peerAttestationPayload(this.calibration(), this.ctx, repoName, input, calibrationUrl ? { calibrationDescriptorUrl: calibrationUrl } : {});
+    return {
+      ...draft,
+      modalStatus: 'Asserted',
+      publish: { tool: 'publish_context', arguments: { graph_iri: draft.graphIri, graph_content: draft.content, modal_status: 'Asserted', visibility: 'shared', sign_authorship: true, auto_supersede_prior: true } },
+      reputationUrl: `${this.ctx.controlBase ?? this.ctx.base}/jev-harness/reputation`,
+    };
+  }
   /** The publish context, carrying the newest attestation once one is known. */
   get ctx(): PublishContext {
     return this.attestationUrl ? { ...this.baseCtx, attestationUrl: this.attestationUrl } : this.baseCtx;

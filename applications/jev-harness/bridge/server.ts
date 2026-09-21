@@ -188,6 +188,12 @@ export function createApp(opts: AppOptions): { app: Express; harness: Harness } 
   app.get('/jev-harness/reputation', async (_req, res, next) => {
     try { res.json(await harness.reputation()); } catch (err) { next(err); }
   });
+  app.post('/jev-harness/attestation/draft', guarded('DraftAttestationInputShape', (b) => Promise.resolve(harness.draftAttestation({
+    attestor: b['attestor'] as string,
+    ...(str(b['about']) ? { about: str(b['about'])! } : {}),
+    ...(str(b['note']) ? { note: str(b['note'])! } : {}),
+    axes: Object.fromEntries((['accuracy', 'competence', 'relevance', 'honesty'] as const).filter((a) => typeof b[a] === 'number').map((a) => [a, b[a] as number])),
+  }))));
 
   // The view onto the pod, and the attestation it grounds. Forced unless ?if_changed=1.
   app.post('/jev-harness/calibration/publish', async (req, res, next) => {
