@@ -40,6 +40,12 @@ export interface PublishContext {
    * the same verbs and reads any judgment back from the pod. The judgment's own URL keeps base.
    */
   readonly controlBase?: string;
+  /**
+   * The newest attestation about this agent on the pod, once one has been read or issued: every
+   * descriptor's Trust facet cites it as its verifiable credential, so a reader of any judgment
+   * can follow to the measured rates behind it.
+   */
+  readonly attestationUrl?: string;
 }
 
 export function contextFromEnv(base: string): PublishContext {
@@ -318,6 +324,7 @@ export function descriptorTrig(j: Published, ctx: PublishContext, opts: Descript
     payloadUrl: `${url}.trig`,
     payloadMediaType: 'application/trig',
     ...(opts.supersedes ? { supersedes: opts.supersedes } : {}),
+    ...(ctx.attestationUrl ? { trust: { credential: ctx.attestationUrl } } : {}),
     prefixes: payloadPrefixes(ctx),
     payloadBody: payloadBody(j, ctx),
   });

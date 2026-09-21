@@ -183,6 +183,12 @@ export interface Affordance {
   /** Input parameters. */
   readonly inputs: ReadonlyArray<AffordanceInput>;
   /**
+   * The input contract as a SHACL node shape IRI, when the vertical declares one. The bridge
+   * serves `inputShapeTurtle` for every affordance at /affordances/<tool>/input with
+   * `Accept: text/turtle`, under this IRI when it is declared.
+   */
+  readonly inputShape?: string;
+  /**
    * The stores this affordance READS to compose its answer.
    *
    * ── ★★ THE OTHER HALF OF THE CONTRACT, WHICH WAS NEVER WRITTEN ──────────────
@@ -732,4 +738,52 @@ function escapeLit(s: string): string {
    * its own header names this exact drift as the reason it exists.
    */
   return escapeTurtleLiteral(s);
+}
+
+/**
+ * The affordance's input contract as a SHACL node shape, derived from the same `inputs` the MCP
+ * tool schema and `hydra:expects` come from, so the three cannot drift. The vertical bridge
+ * serves it at /affordances/<tool>/input for `Accept: text/turtle` (or `?format=shacl`), naming
+ * the affordance's `inputShape` IRI when it declares one. Property paths live in the shape's own
+ * namespace (everything up to its last `#` or `/`) unless `pathNs` says otherwise. String
+ * literals are JSON-encoded, which is valid Turtle escaping.
+ */
+export function inputShapeTurtle(spec: {
+  readonly shapeIri: string;
+  readonly inputs: ReadonlyArray<AffordanceInput>;
+  readonly label?: string;
+  readonly pathNs?: string;
+}): string {
+  const q = (text: string): string => JSON.stringify(text);
+  const ref = (value: string): string => `<${value}>`;
+  const cut = Math.max(spec.shapeIri.lastIndexOf('#'), spec.shapeIri.lastIndexOf('/'));
+  const pathNs = spec.pathNs ?? (cut >= 0 ? spec.shapeIri.slice(0, cut + 1) : `${spec.shapeIri}#`);
+  const DATATYPES: Readonly<Record<string, string>> = { string: 'xsd:string', integer: 'xsd:integer', number: 'xsd:double', boolean: 'xsd:boolean' };
+  const numeric = (n: number, integer: boolean): string => (integer ? `"${Math.trunc(n)}"^^xsd:integer` : `"${n}"^^xsd:double`);
+  const properties = spec.inputs.map((input) => {
+    const isArray = input.type === 'array';
+    const valueType = isArray ? input.itemType : input.type;
+    const datatype = valueType === undefined ? undefined : DATATYPES[valueType];
+    const clauses: string[] = [`sh:path ${ref(pathNs + input.name)}`, `sh:name ${q(input.name)}`, `sh:description ${q(input.description)}`];
+    if (datatype) clauses.push(`sh:datatype ${datatype}`);
+    else if (valueType === 'object') clauses.push('sh:nodeKind sh:BlankNodeOrIRI');
+    const minCount = Math.max(input.required ? 1 : 0, isArray ? input.minItems ?? 0 : 0);
+    if (minCount > 0) clauses.push(`sh:minCount ${minCount}`);
+    if (!isArray) clauses.push('sh:maxCount 1');
+    if (input.enum && input.enum.length > 0) clauses.push(`sh:in ( ${input.enum.map(q).join(' ')} )`);
+    const integer = input.type === 'integer';
+    if (input.minimum !== undefined) clauses.push(`sh:minInclusive ${numeric(input.minimum, integer)}`);
+    if (input.maximum !== undefined) clauses.push(`sh:maxInclusive ${numeric(input.maximum, integer)}`);
+    return `sh:property [ ${clauses.join(' ; ')} ]`;
+  });
+  const shape = ['a sh:NodeShape', ...(spec.label ? [`rdfs:label ${q(spec.label)}`] : []), ...properties];
+  return [
+    '@prefix sh: <http://www.w3.org/ns/shacl#> .',
+    '@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .',
+    '@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .',
+    '',
+    ref(spec.shapeIri),
+    `    ${shape.join(' ;\n    ')} .`,
+    '',
+  ].join('\n');
 }

@@ -165,6 +165,12 @@ export interface DescriptorSpec {
   readonly payloadUrl: string;
   readonly payloadMediaType: string;
   readonly supersedes?: readonly string[];
+  /**
+   * What the Trust facet cites as the descriptor's verifiable credential: for a judgment, the
+   * newest attestation about the agent on the pod, so a reader can follow to the measured rates
+   * behind it.
+   */
+  readonly trust?: { readonly credential?: string };
   /** The @prefix block the payload body needs (see payloadPrefixes), plus any extras. */
   readonly prefixes: string;
   /** The payload graph's triples, prefixed names, one per line. */
@@ -178,6 +184,7 @@ export function renderDescriptorTrig(spec: DescriptorSpec): string {
   const issuer = spec.ownerWebId ?? spec.agentId;
   const prefixes = [spec.prefixes, prefixLine('ieh', IEH), prefixLine('as', AS), prefixLine('dcat', DCAT)].join('\n');
   const supersedes = (spec.supersedes ?? []).map((s) => `    iep:supersedes ${iri(s)} ;`).join('\n');
+  const credential = spec.trust?.credential ? `        iep:verifiableCredential ${iri(spec.trust.credential)} ;\n` : '';
   const semiotic = spec.status === 'Asserted'
     ? `        iep:groundTruth ${bool(true)} ;\n        iep:modalStatus iep:Asserted ;`
     : `        iep:modalStatus iep:Hypothetical ;`;
@@ -219,7 +226,7 @@ ${semiotic}
     ] ;
     iep:hasFacet [
         a iep:TrustFacet ;
-        iep:issuer ${iri(issuer)} ;
+${credential}        iep:issuer ${iri(issuer)} ;
         iep:trustLevel iep:SelfAsserted
     ] ;
     iep:hasFacet [
@@ -356,3 +363,6 @@ export function calibrationCell(rows: readonly { readonly hit: boolean | null; r
     status: rows.length >= minSamples ? 'Asserted' : 'Hypothetical',
   };
 }
+
+/** The input contract as SHACL, derived beside the tool schema it must agree with. */
+export { inputShapeTurtle } from '../affordance-mcp/index.js';

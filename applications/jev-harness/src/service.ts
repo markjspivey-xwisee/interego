@@ -69,7 +69,9 @@ export interface JudgmentResponse<J extends Published> {
 export class Harness {
   readonly jev: JevClient;
   readonly repoRoot: string;
-  readonly ctx: PublishContext;
+  private readonly baseCtx: PublishContext;
+  /** The newest attestation about the agent on the pod; see PublishContext.attestationUrl. */
+  private attestationUrl?: string;
   readonly store: HarnessStore;
   readonly relay: RelayClient | null;
   private readonly visibility: 'public' | 'shared' | 'private';
@@ -81,7 +83,7 @@ export class Harness {
   constructor(opts: HarnessOptions) {
     this.jev = opts.jev;
     this.repoRoot = opts.repoRoot;
-    this.ctx = opts.context ?? contextFromEnv(opts.base);
+    this.baseCtx = opts.context ?? contextFromEnv(opts.base);
     this.store = opts.store ?? new HarnessStore(opts.repoRoot);
     this.relay = opts.relay ?? null;
     this.visibility = opts.visibility ?? 'shared';
@@ -169,12 +171,18 @@ export class Harness {
    * the bridge's own grounded self-attestation and any a peer publishes. The gated auto-merge
    * reads the snapshot's accuracy axis when a person is required.
    */
+  /** The publish context, carrying the newest attestation once one is known. */
+  get ctx(): PublishContext {
+    return this.attestationUrl ? { ...this.baseCtx, attestationUrl: this.attestationUrl } : this.baseCtx;
+  }
   async reputation(): Promise<ReputationView> {
     const computedAt = new Date().toISOString();
     const subject = this.ctx.agentId;
     if (!this.relay || !this.relay.podName) return { status: 'off', subject, policy: REPUTATION_POLICY, attestations: [], snapshot: null, scanned: 0, errors: [], computedAt };
     try {
       const r = await fetchPodAttestations(this.relay, this.relay.podName);
+      const own = r.attestations.filter((a) => a.attestor === subject).sort((a, b) => b.attestedAt.localeCompare(a.attestedAt))[0];
+      if (own) this.attestationUrl = own.descriptorUrl;
       return { status: 'ok', subject, policy: REPUTATION_POLICY, attestations: r.attestations, snapshot: reputationOf(subject, r.attestations, REPUTATION_POLICY, computedAt), scanned: r.scanned, errors: r.errors.slice(0, 5), computedAt };
     } catch (err) {
       return { status: 'failed', subject, policy: REPUTATION_POLICY, attestations: [], snapshot: null, scanned: 0, errors: [(err as Error).message], computedAt };
@@ -202,6 +210,7 @@ export class Harness {
       const calibration = await publishGraph(this.relay, { graphIri: calibrationGraphIri(repoName), content: calibrationPayload(view, this.ctx, repoName), modalStatus: 'Asserted', confidence: 1, visibility: this.visibility });
       const attestation = attestationPayload(view, this.ctx, repoName, calibration.descriptorUrl ? { calibrationDescriptorUrl: calibration.descriptorUrl } : {});
       const issued = attestation ? await publishGraph(this.relay, { graphIri: attestationGraphIri(repoName), content: attestation, modalStatus: 'Asserted', confidence: 1, visibility: this.visibility }) : undefined;
+      if (issued?.descriptorUrl) this.attestationUrl = issued.descriptorUrl;
       this.lastCalibrationFingerprint = fingerprint;
       this.calibrationPublish = {
         status: 'published',
@@ -239,6 +248,9 @@ export class Harness {
       // New evidence changes the view; publish it. A read-back that added nothing leaves the
       // pod's calibration head as it is, so a restart does not write a copy of it.
       if (m.added > 0) void this.publishCalibration().catch(() => undefined);
+      // The pod also holds the agent's attestations; reading them once fills the credential every
+      // descriptor's Trust facet cites, without waiting for a caller of /jev-harness/reputation.
+      void this.reputation().catch(() => undefined);
     } catch (err) {
       this.store.podBackfill = { status: 'failed', at: new Date().toISOString(), error: (err as Error).message };
     }
