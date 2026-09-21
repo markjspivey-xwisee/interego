@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-21 — pgsl-store: compose stops rewriting the projection rows of existing nodes; the collector runs weekly
+
+`PgslStore.compose` re-set the V, P, I, B, L and R rows of every node in a slice on every write, including nodes that already existed, which changed nothing and cost a dead tuple per row: measured at two thousand row updates a minute on the production store, the churn behind the history that filled the volume. A node that exists now contributes only its overlay rows. `.github/workflows/pgsl-store-gc.yml` runs the collector's dry run every week through `tools/pgsl-store-gc-remote.mjs`, which opens a temporary TCP route to the database with the project token and removes it afterwards, and offers rebuild, tune and drop on dispatch.
+
 ## 2026-09-20 — pgsl-store: a collector for the unreferenced history, and a volume check
 
 The pod store's Postgres table reached 45 GB, of which almost everything was history: the store is grow-only and content-addressed, `LdpStore` repointed a resource's record on overwrite and left the old nodes behind, and one pod's manifest had been rewritten a few thousand times while it was 30 to 45 MB. `packages/pgsl-store/src/gc.ts` computes the live set (the closure of every resource record, overlay row, attribute and non-derived persistence entry) and `rebuildTable` copies it into a fresh table under an EXCLUSIVE lock and swaps the names, so the space comes back when the old table is dropped, without a 45 GB rewrite. `tools/pgsl-store-gc.ts` drives it (dry run by default, `--rebuild`, `--drop`, `--tune` for autovacuum thresholds that fit the table). `deleteResource` now clears the overlay rows it used to leave, which kept deleted resources reachable. `tools/railway-volume-check.mjs` runs after the fleet audit and fails when a volume is at or over 80%, which is the warning nobody had.

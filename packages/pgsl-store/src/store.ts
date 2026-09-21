@@ -101,8 +101,17 @@ export class PgslStore {
       for (const node of slice) {
         const addr = nodeAddrFromUrn(node.uri);
         const nkey = nodeKey(addr);
-        if ((await txn.get(nkey)) === undefined) { txn.set(nkey, encodeNode(node)); created++; }
-        else dedup++;
+        // ★ A NODE THAT EXISTS ALREADY HAS ITS PROJECTION ROWS. Every row below is a function of
+        // the node's content and address, so re-setting them for a deduplicated node changes
+        // nothing and costs a dead tuple per row. This used to run unconditionally: on the
+        // production store a publish that rewrote a manifest re-set thousands of I/B rows for
+        // fragments that had not changed, measured at two thousand row updates a minute with
+        // no reader ever seeing a difference, and that churn is what filled the volume behind
+        // the unreferenced history (2026-09-20). The collector in gc.ts reconstructs exactly
+        // these rows for every live node, so a node's presence implies its rows' presence.
+        if ((await txn.get(nkey)) !== undefined) { dedup++; continue; }
+        txn.set(nkey, encodeNode(node));
+        created++;
         txn.set(lvKey(node.level, addr), EMPTY);
         txn.set(prKey(addr, 2), encodeJson({ tier: 2 }));
         if (node.kind === 'fragment') {
