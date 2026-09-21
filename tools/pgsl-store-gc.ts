@@ -4,6 +4,8 @@
  *   PGSL_PG_CONNSTR=... npx tsx tools/pgsl-store-gc.ts                 # dry run: reads only, reports the live set
  *   PGSL_PG_CONNSTR=... npx tsx tools/pgsl-store-gc.ts --rebuild       # copy the live rows into a new table and swap
  *   PGSL_PG_CONNSTR=... npx tsx tools/pgsl-store-gc.ts --drop <old>    # drop the previous table once the store checks out
+ *   ... --rebuild-above 0.5 [--min-rows 2000000]                       # measure, then rebuild only above that unreferenced share
+ *   ... --drop-previous-older-than 7                                   # first drop <table>_old_YYYYMMDD tables older than that
  *   ... --table pgsl_kv                                                # the table (default pgsl_kv)
  *
  * WHY A REBUILD AND NOT A DELETE: deleting tens of millions of rows leaves the table the same
@@ -13,15 +15,72 @@
  * swaps the names in the same transaction, and leaves the old table for `--drop` after the
  * store has been checked. See packages/pgsl-store/src/gc.ts for what "live" means.
  *
+ * ── THE WEEKLY RUN, AND WHERE ITS LINE IS ──────────────────────────────────────────────────
+ *
+ * pgsl-store-gc.yml runs `--drop-previous-older-than 7 --rebuild-above 0.5` every Sunday at the
+ * quietest hour. The measurement is the same dry run; the decision is `rebuildDecision`, which
+ * rebuilds only when at least half of a table of at least --min-rows rows is unreferenced
+ * history — the shape the 2026-09-20 outage had (78.7M rows, 1.19M live) and the shape a small
+ * weekly gap does not. A table below the row floor is never rebuilt automatically: the lock
+ * would cost more than the space. The table a rebuild leaves behind stays a week, so the store
+ * has run on the new one before `previousTablesToDrop` lets the next run drop it. Both
+ * decisions are pure and tested (tests/pgsl-store-gc-tool.test.ts); a person can still
+ * dispatch any mode by hand.
+ *
  * The connection string is read from the environment and never printed.
  */
 
+import { basename } from 'node:path';
 import { Client } from 'pg';
 import { collectLive, keysBySubspace, readerFromPg, rebuildTable } from '../packages/pgsl-store/src/gc.js';
 
 function flag(name: string): string | undefined {
   const i = process.argv.indexOf(name);
   return i >= 0 ? process.argv[i + 1] : undefined;
+}
+
+export interface RebuildDecision {
+  readonly rebuild: boolean;
+  /** The share of the table's rows that a rebuild would not keep, 0..1. */
+  readonly reclaimableShare: number;
+  readonly reason: string;
+}
+
+/**
+ * Whether the weekly run rebuilds: the unreferenced share of a table big enough to matter has
+ * crossed the line. An unknown row estimate (a table never analysed reports -1) decides nothing.
+ */
+export function rebuildDecision(input: { readonly liveKeys: number; readonly tableRows: number; readonly line: number; readonly minRows: number }): RebuildDecision {
+  const { liveKeys, tableRows, line, minRows } = input;
+  if (!(line > 0 && line <= 1)) throw new Error('--rebuild-above takes a share between 0 and 1');
+  if (!Number.isFinite(tableRows) || tableRows < 0) {
+    return { rebuild: false, reclaimableShare: 0, reason: 'the table row estimate is unknown (never analysed), so nothing is decided on it' };
+  }
+  const share = tableRows === 0 ? 0 : Math.max(0, (tableRows - liveKeys) / tableRows);
+  const pct = (n: number): string => `${Math.round(n * 100)}%`;
+  if (tableRows < minRows) {
+    return { rebuild: false, reclaimableShare: share, reason: `${tableRows} rows is below the floor of ${minRows}; a rebuild would reclaim too little to hold a lock for` };
+  }
+  const history = `${pct(share)} of ${tableRows} rows are unreferenced history (${liveKeys} live)`;
+  return share >= line
+    ? { rebuild: true, reclaimableShare: share, reason: `${history}, at or above the line of ${pct(line)}` }
+    : { rebuild: false, reclaimableShare: share, reason: `${history}, below the line of ${pct(line)}` };
+}
+
+/**
+ * The tables earlier rebuilds left behind (`<table>_old_YYYYMMDD`) that are older than `days`:
+ * the store has run on the new table for that long, so the copy has served its purpose.
+ */
+export function previousTablesToDrop(names: readonly string[], table: string, now: Date, days: number): string[] {
+  const re = new RegExp(`^${table}_old_([0-9]{4})([0-9]{2})([0-9]{2})$`);
+  const cutoff = now.getTime() - days * 86_400_000;
+  return names
+    .filter((n) => {
+      const m = re.exec(n);
+      if (!m) return false;
+      return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) <= cutoff;
+    })
+    .sort();
 }
 
 async function main(): Promise<void> {
@@ -53,6 +112,18 @@ async function main(): Promise<void> {
       log('tuned: autovacuum fires at 2% churn on the table and its toast; idle transactions end after five minutes');
       return;
     }
+    const dropOlder = flag('--drop-previous-older-than');
+    if (dropOlder !== undefined) {
+      const days = Number(dropOlder);
+      if (!Number.isInteger(days) || days < 1) throw new Error('--drop-previous-older-than takes a whole number of days');
+      const names = (await client.query(`SELECT relname FROM pg_class WHERE relkind = 'r' AND relname LIKE $1`, [`${table}_old_%`])).rows.map((r) => String(r['relname']));
+      const due = previousTablesToDrop(names, table, new Date(), days);
+      if (due.length === 0) log(`no previous table older than ${days} day(s) to drop (${names.length} present)`);
+      for (const t of due) {
+        log(`dropping ${t} (${await size(t)}), left by a rebuild more than ${days} day(s) ago`);
+        await client.query(`DROP TABLE ${t}`);
+      }
+    }
     if (process.argv.includes('--rebuild')) {
       const r = await rebuildTable(client, table, { log });
       log(`rebuild done: ${r.newRows} rows live in ${table} (${await size(table)}); previous table ${r.oldTable} (${await size(r.oldTable)}) awaits --drop`);
@@ -67,9 +138,21 @@ async function main(): Promise<void> {
     if (live.stats.danglingRoots.length > 0) log(`first dangling roots: ${live.stats.danglingRoots.slice(0, 5).join(', ')}`);
     const total = await client.query(`SELECT reltuples::bigint AS n FROM pg_class WHERE relname = $1`, [table]);
     log(`table rows (planner estimate): ${total.rows[0]?.['n']}; the rebuild would keep ${live.keys.size}`);
+    const line = flag('--rebuild-above');
+    if (line !== undefined) {
+      const d = rebuildDecision({ liveKeys: live.keys.size, tableRows: Number(total.rows[0]?.['n'] ?? -1), line: Number(line), minRows: Number(flag('--min-rows') ?? 2_000_000) });
+      log(`${d.rebuild ? 'rebuilding' : 'not rebuilding'}: ${d.reason}`);
+      if (d.rebuild) {
+        const r = await rebuildTable(client, table, { log });
+        log(`rebuild done: ${r.newRows} rows live in ${table} (${await size(table)}); previous table ${r.oldTable} (${await size(r.oldTable)}) is dropped by a later run's --drop-previous-older-than`);
+        await client.query(`ANALYZE ${table}`);
+      }
+    }
   } finally {
     await client.end();
   }
 }
 
-main().catch((err) => { console.error(err instanceof Error ? err.message : String(err)); process.exit(1); });
+if (process.argv[1] && basename(process.argv[1]) === 'pgsl-store-gc.ts') {
+  main().catch((err) => { console.error(err instanceof Error ? err.message : String(err)); process.exit(1); });
+}

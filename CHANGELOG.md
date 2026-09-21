@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-21 — the collector rebuilds above a line and drops last week's copy; a fleet diagnosis is Hypothetical
+
+The weekly pod-store run (`pgsl-store-gc.yml`, mode `weekly`) now measures, then rebuilds when at least half of a table of at least two million rows is unreferenced history — the outage's shape, not a normal week's — and first drops the copy a rebuild left behind once it is a week old; `rebuildDecision` and `previousTablesToDrop` in `tools/pgsl-store-gc.ts` are the decisions, tested, and the log says which way each went. `tools/fleet-event.ts` takes `--modal Hypothetical` on an incident or a review, so a diagnosis is published as what it is and the Asserted root cause supersedes it; a deploy is a fact and refuses the flag.
+
 ## 2026-09-21 — changelog gate: the backlog ceiling moves to 500, the marker does not
 
 Today's merges pushed the undocumented backlog past 470 and the gate went red on master, as designed. Every one of those merges has an entry above; the count is the gap after the documented-through marker, which still names the last commit the file is continuously current through, and moving it forward would claim coverage nobody wrote. So `BACKLOG_CEILING` in `tools/changelog-lint.mjs` rises 470 → 500 with the reason beside it, with slightly more headroom than last time because the gated auto-merge now lands several merges a day.
