@@ -11,6 +11,7 @@ import type { OutcomeRecord } from './judgments/outcome.js';
 import type { JudgmentKind } from './judgments/common.js';
 import { round } from './judgments/common.js';
 import type { PodOutcome } from './pod-calibration.js';
+import type { Precedent } from './judgments/precedents.js';
 
 export interface PodBackfillState {
   readonly status: 'never' | 'off' | 'ok' | 'failed';
@@ -179,9 +180,25 @@ export class HarnessStore {
     return readdirSync(join(this.dir, 'judgments')).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5));
   }
 
+  /** What earlier tasks actually changed: the navigation outcomes, here and on the pod, that carry a task and observed files. */
+  precedents(): Precedent[] {
+    return precedentsOf(this.outcomes());
+  }
+
   calibration(): CalibrationView {
     return computeCalibration(this.outcomes());
   }
+}
+
+/** The precedents among a set of outcomes: navigation outcomes carrying the task and the files it changed. */
+export function precedentsOf(outcomes: readonly OutcomeRecord[]): Precedent[] {
+  const out: Precedent[] = [];
+  for (const o of outcomes) {
+    const files = o.observed.filesChanged ?? [];
+    if (o.judgmentKind !== 'navigation' || typeof o.task !== 'string' || o.task.length === 0 || files.length === 0) continue;
+    out.push({ task: o.task, files: [...files], source: o.source, at: o.createdAt, outcomeIri: o.graphIri });
+  }
+  return out;
 }
 
 // ── Calibrated advice ─────────────────────────────────────────────────────────

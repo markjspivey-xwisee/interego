@@ -149,6 +149,19 @@ jvh:outcomeSource a owl:DatatypeProperty ; rdfs:label "outcome source"@en ; rdfs
 jvh:summary a owl:DatatypeProperty ; rdfs:label "summary"@en ; rdfs:range xsd:string ;
     rdfs:comment "On an Outcome: one sentence a reader can act on without opening the judgment."@en .
 
+# ── Payload properties added by navigation precedents (memory on the pod) ───────────
+
+jvh:observedFile a owl:DatatypeProperty ; rdfs:label "observed file"@en ; rdfs:range xsd:string ;
+    rdfs:comment "On an Outcome of a navigation: a file the task actually changed, whether or not the judgment named it. With jvh:task, the pair is a precedent later navigations consult."@en .
+jvh:precedent a owl:ObjectProperty ; rdfs:label "precedent"@en ;
+    rdfs:comment "On a Navigation: an earlier outcome whose task resembled this one and whose observed files were mixed into the candidates — its task, the similarity, the paths it contributed, and prov:wasDerivedFrom naming the outcome graph."@en .
+jvh:similarity a owl:DatatypeProperty ; rdfs:label "similarity"@en ; rdfs:range xsd:double ;
+    rdfs:comment "On a precedent: lexical similarity (Jaccard over content words) of its task to the judged task, 0 to 1."@en .
+jvh:precedentsConsulted a owl:DatatypeProperty ; rdfs:label "precedents consulted"@en ; rdfs:range xsd:integer ;
+    rdfs:comment "On a Navigation: how many precedents (outcomes carrying a task and observed files) were available when it was judged."@en .
+jvh:precedentWeight a owl:DatatypeProperty ; rdfs:label "precedent weight"@en ; rdfs:range xsd:double ;
+    rdfs:comment "On a Navigation: the share of the candidate distribution that came from precedents rather than the model, 0 when none applied."@en .
+
 # ── Input shapes (what a caller must SEND to each affordance) ────────────────
 #
 # Field IRIs are jvh:<field>; a JSON payload key matches the IRI's local name.

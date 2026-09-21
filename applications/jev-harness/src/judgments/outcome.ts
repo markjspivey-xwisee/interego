@@ -40,6 +40,11 @@ export interface OutcomeRecord extends JudgmentBase {
   readonly agreement: string | null;
   readonly observed: OutcomeInput;
   readonly summary: string;
+  /**
+   * The task the scored judgment was made for (navigation and test selection). With the
+   * observed files it makes the outcome a precedent on its own, wherever it is read from.
+   */
+  readonly task?: string;
 }
 
 export function recordOutcome(judgment: AnyJudgment, input: OutcomeInput, repository?: RepoRef): OutcomeRecord {
@@ -56,6 +61,7 @@ export function recordOutcome(judgment: AnyJudgment, input: OutcomeInput, reposi
     priorConfidence: judgment.confidence,
     source: input.source ?? 'live',
     observed: input,
+    ...(taskOf(judgment) ? { task: taskOf(judgment) } : {}),
   };
   const graphIri = graphIriFor('outcome', base.id);
 
@@ -95,6 +101,10 @@ export function recordOutcome(judgment: AnyJudgment, input: OutcomeInput, reposi
   return { ...base, graphIri, hitAt1: pairs.length > 0 ? agree === pairs.length : null, hitAt3: null, brier,
     missed: pairs.filter((f) => confirmed[f.id] !== f.causeClass).map((f) => f.id), agreement: pairs.length > 0 ? `${agree}/${pairs.length}` : null,
     summary: pairs.length === 0 ? 'no confirmed classes were reported' : `${agree} of ${pairs.length} classifications confirmed` };
+}
+
+function taskOf(j: AnyJudgment): string | undefined {
+  return j.kind === 'navigation' ? j.task : j.kind === 'test-selection' ? j.task : undefined;
 }
 
 function norm(p: string): string {
