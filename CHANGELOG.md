@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-21 — one pod for the harness and the fleet, and a deployed bridge that names its repository
+
+The harness now publishes to the pod the operator's live connector owns (`u-pk-f2a9c751075a`), where the fleet's deploy, incident and review evidence already lands and where its payloads can actually be read: an agent can only be registered from a session on the pod it is registered on, which decided the direction. The delegate is registered there PublishOnly; the history on `u-pk-33d42e6b33dc` stays readable. `JEV_HARNESS_REPO_NAME` names the repository a deployed bridge is bound to, so its calibration and attestation graphs form one chain with CI's instead of a second under the image's directory name.
+
 ## 2026-09-21 — Renew measured application and test inventories
 
 The merged application tree measures 552 scannable files; its previous 521-file inventory pin exceeded the gate's 27-file slack and correctly stopped CI despite zero covered lint errors. Renew `UNLINTED_FRONTIER.applications.files` to the measured 552, exactly as the fired guard requests. The inventory selftest also measured 416 tracked test modules, consuming all 20 modules of headroom above the previous 396-module floor; renew `MIN_TEST_MODULES` to the measured 416. Accumulated merged files prompted both guard-directed renewals. The 1452-error pin, tolerance formulas, lint `MIN_FILES` floor, exclusions and assertions are unchanged.

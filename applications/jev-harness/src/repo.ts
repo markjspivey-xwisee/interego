@@ -80,7 +80,11 @@ export function inventory(rootPath: string, opts: InventoryOptions = {}): RepoIn
     return base;
   });
   const commit = git(root, ['rev-parse', 'HEAD'])?.trim() ?? null;
-  return { root, name: root.split(/[\\/]/).filter(Boolean).pop() ?? root, commit, files };
+  // The directory names the repository, unless the deployment says otherwise: the Railway image
+  // runs at /app, and "app" would give the deployed bridge a calibration chain of its own
+  // (urn:graph:jev-harness:calibration:app) beside CI's (...:interego) for the same code.
+  const name = process.env['JEV_HARNESS_REPO_NAME'] ?? root.split(/[\\/]/).filter(Boolean).pop() ?? root;
+  return { root, name, commit, files };
 }
 
 function listPaths(root: string): string[] {

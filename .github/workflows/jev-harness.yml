@@ -34,9 +34,14 @@ env:
   HARNESS_DIR: applications/jev-harness
   BRIDGE_PORT: '6090'
   # The pod the delegate publishes to, the agent it is registered there as, and the owner it acts for.
-  INTEREGO_POD_NAME: u-pk-33d42e6b33dc
+  # ★ ONE POD. Until 2026-09-21 the harness published to u-pk-33d42e6b33dc while the fleet's own
+  # evidence (deploys, incidents, reviews) landed on u-pk-f2a9c751075a, the pod the operator's live
+  # connector owns — and the harness's payloads could not be read from that connector at all. An
+  # agent can only be registered from a session on the pod it is registered on, so everything
+  # moved to the pod the operator can reach; the history on the old pod stays readable there.
+  INTEREGO_POD_NAME: u-pk-f2a9c751075a
   JEV_HARNESS_AGENT_ID: did:web:identity.interego.xwisee.com:agents:jev-harness-bridge-u-did-6de86e8ba294
-  JEV_HARNESS_OWNER_WEBID: https://identity.interego.xwisee.com/users/u-pk-33d42e6b33dc/profile#me
+  JEV_HARNESS_OWNER_WEBID: https://identity.interego.xwisee.com/users/u-pk-f2a9c751075a/profile#me
   INTEREGO_POD_PUBLIC_ORIGIN: https://gate.interego.xwisee.com
 
 jobs:
