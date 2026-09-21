@@ -10,7 +10,8 @@
  * --then chains along the controls each result affords: the follower re-dereferences every
  * result and follows the named control from THAT document. --run performs the declarative
  * run-selected-tests control locally and feeds the log into the next --then triage.
- * --gate exits 1 for needs-human-review and 3 for block, so CI can gate on it.
+ * --gate exits 1 for needs-human-review and 3 for block, so CI can gate on it;
+ * --gate-blocks-only exits 3 for block alone, for an operator who requires no person.
  */
 
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -26,6 +27,7 @@ interface Cli {
   repo: string;
   validate: boolean;
   gate: boolean;
+  gateBlocksOnly: boolean;
   outcome: boolean;
   out: string;
 }
@@ -33,10 +35,10 @@ interface Cli {
 function parseCli(argv: string[]): Cli {
   const [url, verb, ...rest] = argv;
   if (!url || !verb) {
-    console.error('usage: follow <manifest-or-judgment-url> <verb> [--arg k=v] [--json {...}] [--file k=path] [--then verb] [--run] [--outcome] [--repo dir] [--no-validate] [--gate] [--out dir]');
+    console.error('usage: follow <manifest-or-judgment-url> <verb> [--arg k=v] [--json {...}] [--file k=path] [--then verb] [--run] [--outcome] [--repo dir] [--no-validate] [--gate | --gate-blocks-only] [--out dir]');
     process.exit(64);
   }
-  const cli: Cli = { url, verb, args: {}, then: [], run: false, repo: process.cwd(), validate: true, gate: false, outcome: false, out: '' };
+  const cli: Cli = { url, verb, args: {}, then: [], run: false, repo: process.cwd(), validate: true, gate: false, gateBlocksOnly: false, outcome: false, out: '' };
   for (let i = 0; i < rest.length; i += 1) {
     const flag = rest[i]!;
     const next = (): string => { const v = rest[i + 1]; if (v === undefined) throw new Error(`${flag} needs a value`); i += 1; return v; };
@@ -49,6 +51,7 @@ function parseCli(argv: string[]): Cli {
       case '--repo': cli.repo = resolve(next()); break;
       case '--no-validate': cli.validate = false; break;
       case '--gate': cli.gate = true; break;
+      case '--gate-blocks-only': cli.gateBlocksOnly = true; break;
       case '--outcome': cli.outcome = true; break;
       case '--out': cli.out = resolve(next()); break;
       default: throw new Error(`unknown flag ${flag}`);
@@ -158,9 +161,11 @@ async function main(): Promise<void> {
     console.log(`▸ record-outcome\n${summarize(o.body)}\n`);
     save(cli.out, 'record-outcome', o.body);
   }
-  if (cli.gate && last.judgment?.kind === 'review-verdict') {
+  if ((cli.gate || cli.gateBlocksOnly) && last.judgment?.kind === 'review-verdict') {
     const v = last.judgment.verdict;
-    process.exit(v === 'block' ? 3 : v === 'needs-human-review' ? 1 : 0);
+    // A secret in the diff fails the job whatever the operator requires; needs-human-review
+    // fails it only when a person is required (--gate), and is advisory otherwise.
+    process.exit(v === 'block' ? 3 : v === 'needs-human-review' && cli.gate ? 1 : 0);
   }
 }
 
