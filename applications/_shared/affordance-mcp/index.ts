@@ -23,7 +23,7 @@ import type {
 import { actionUrl, mcpOutputSchema } from '@interego/core';
 // The one Turtle-literal escaper. See packages/core/src/rdf/escape.ts — its header names the
 // scattered-subsets drift that this import ends.
-import { escapeTurtleLiteral } from '@interego/core';
+import { escapeTurtleLiteral, turtleIriRef } from '@interego/core';
 
 // ── Types ─────────────────────────────────────────────────────────────
 
@@ -755,7 +755,14 @@ export function inputShapeTurtle(spec: {
   readonly pathNs?: string;
 }): string {
   const q = (text: string): string => JSON.stringify(text);
-  const ref = (value: string): string => `<${value}>`;
+  // turtleIriRef refuses a value that would break out of an IRI reference. These values come
+  // from code (the shape IRI, its namespace, the input names), so a refusal is a programming
+  // error to surface, not a graph to emit.
+  const ref = (value: string): string => {
+    const r = turtleIriRef(value);
+    if (r === null) throw new Error(`not an absolute IRI for the input shape: ${JSON.stringify(value)}`);
+    return r;
+  };
   const cut = Math.max(spec.shapeIri.lastIndexOf('#'), spec.shapeIri.lastIndexOf('/'));
   const pathNs = spec.pathNs ?? (cut >= 0 ? spec.shapeIri.slice(0, cut + 1) : `${spec.shapeIri}#`);
   const DATATYPES: Readonly<Record<string, string>> = { string: 'xsd:string', integer: 'xsd:integer', number: 'xsd:double', boolean: 'xsd:boolean' };

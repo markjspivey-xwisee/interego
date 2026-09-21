@@ -58,6 +58,9 @@ describe('the input contract as a node shape', () => {
     expect(empty.filter((q) => q.predicate.value === `${SH}property`)).toHaveLength(0);
     expect(empty.some((q) => q.object.value === `${SH}NodeShape`)).toBe(true);
   });
+  it('refuses a shape IRI that would break out of an IRI reference, rather than emitting it', () => {
+    expect(() => inputShapeTurtle({ shapeIri: 'https://vert.example/x#Shape> . <urn:evil', inputs: [] })).toThrow(/not an absolute IRI/);
+  });
   it('takes its paths from a given namespace when the shape IRI is not where the fields live', () => {
     const t = inputShapeTurtle({ shapeIri: 'https://bridge.example/affordances/x/input#Shape', pathNs: 'https://vert.example/ns/vert#', inputs: inputs.slice(0, 1) });
     expect(t).toContain('sh:path <https://vert.example/ns/vert#task>');
