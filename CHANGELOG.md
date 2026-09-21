@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-21 — fleet operations as descriptors: deploys, audit findings and the collector's measurement land on the pod
+
+`tools/fleet-event.ts` publishes a soc2:DeployEvent, soc2:IncidentEvent or soc2:QuarterlyReviewEvent (built by @interego/ops) to the operator's pod as the fleet's own delegate agent (`INTEREGO_FLEET_AGENT_KEY_JSON`, registered PublishOnly; the pod is the repository variable `INTEREGO_FLEET_POD_NAME`). auto-deploy.yml records every service a rollout shipped, railway-fleet-audit.yml records a volume at or over 80% as an open incident in the run that found it, and the weekly pod-store collector records its dry run as the quarter's monitoring review. The agent key, did:key, relay OAuth minting and MCP client moved from jev-harness to applications/_shared/relay-agent, re-exported where they were.
+
 ## 2026-09-21 — pgsl-store: compose stops rewriting the projection rows of existing nodes; the collector runs weekly
 
 `PgslStore.compose` re-set the V, P, I, B, L and R rows of every node in a slice on every write, including nodes that already existed, which changed nothing and cost a dead tuple per row: measured at two thousand row updates a minute on the production store, the churn behind the history that filled the volume. A node that exists now contributes only its overlay rows. `.github/workflows/pgsl-store-gc.yml` runs the collector's dry run every week through `tools/pgsl-store-gc-remote.mjs`, which opens a temporary TCP route to the database with the project token and removes it afterwards, and offers rebuild, tune and drop on dispatch.

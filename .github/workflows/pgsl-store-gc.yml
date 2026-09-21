@@ -56,8 +56,9 @@ jobs:
           MODE: ${{ github.event.inputs.mode || 'dry-run' }}
           DROP_TABLE: ${{ github.event.inputs.drop_table }}
         run: |
+          set -o pipefail
           case "$MODE" in
-            dry-run) node tools/pgsl-store-gc-remote.mjs ;;
+            dry-run) node tools/pgsl-store-gc-remote.mjs 2>&1 | tee collector.log ;;
             rebuild) node tools/pgsl-store-gc-remote.mjs --rebuild ;;
             tune)    node tools/pgsl-store-gc-remote.mjs --tune ;;
             drop)
@@ -65,3 +66,18 @@ jobs:
               node tools/pgsl-store-gc-remote.mjs --drop "$DROP_TABLE" ;;
             *) echo "unknown mode $MODE" >&2; exit 2 ;;
           esac
+
+      # ★ THE WEEKLY MEASUREMENT IS THE QUARTER'S MONITORING REVIEW. What the dry run measured —
+      # live keys against table rows, what a rebuild would keep — lands on the operator's pod as
+      # this quarter's soc2:QuarterlyReviewEvent of kind monitoring, published by the fleet's
+      # delegate agent (tools/fleet-event.ts). The graph IRI is the quarter's, so each week's run
+      # supersedes the last and the review is always the latest reading with the earlier ones
+      # behind it in the chain. Only after a dry run that succeeded: a failed run measured nothing.
+      - name: Record the dry run as this quarter's monitoring review
+        if: ${{ (github.event.inputs.mode || 'dry-run') == 'dry-run' }}
+        env:
+          INTEREGO_FLEET_AGENT_KEY_JSON: ${{ secrets.INTEREGO_FLEET_AGENT_KEY_JSON }}
+          INTEREGO_FLEET_POD_NAME: ${{ vars.INTEREGO_FLEET_POD_NAME }}
+        run: |
+          npm run build:core && npm run build --workspace @interego/compliance && npm run build --workspace @interego/ops
+          npx tsx tools/fleet-event.ts review --kind monitoring --summary-file collector.log
