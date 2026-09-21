@@ -1,8 +1,13 @@
 # Changelog
 
+## 2026-09-21 — auto-deploy: a short runs listing is polled again, not refused on sight
+
+GitHub's workflow-runs listing is eventually consistent: on 2026-09-21 the CI gate watched the five runs for `0f40814b` narrow to two still running, then one poll answered 200 with an empty list, and `tools/ci-green-for-sha.mjs` refused a deploy whose CI concluded green four minutes later. Below the floor is now a wait while time remains and a refusal only when the listing is still short at the deadline, so an empty answer is still never read as green; a 5xx from GitHub is retried the same way and a 4xx is refused at once. `nextStep` and `retryable` are the pure decisions, tested beside `verdict`.
+
 ## 2026-09-21 — Foxxi: content judgments calibrate; the kit scores one answer among options
 
 `foxxi.confirm_content_judgment` lets a learning engineer or admin say what is true about a judged claim: an Asserted `foxxi:ContentJudgmentOutcome` supersedes the judgment descriptor on the tenant pod (the entity publisher can now supersede) and records whether the model had the answer and the multiclass Brier score of its probabilities. `foxxi.content_judgment_calibration` reads those outcomes back and reports, per question kind, hit rate and mean Brier with the same five-sample floor the harness uses. The judgment kit gains `choiceBrier` and `calibrationCell`, the scoring both verticals share.
+
 
 ## 2026-09-21 — jev-harness: reputation from attestations, consumed by the auto-merge; CI controls point at the deployed bridge
 

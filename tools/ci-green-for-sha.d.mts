@@ -28,3 +28,12 @@ export declare function verdict(
   failed: string[];
   detail?: string;
 };
+
+/** What the loop does with a verdict once the clock is known: deploy, refuse, or poll again. */
+export declare function nextStep(
+  v: { state: 'green' | 'red' | 'pending' | 'too-few' },
+  expired: boolean,
+): 'deploy' | 'refuse' | 'wait';
+
+/** Whether a failed listing (a 5xx from GitHub) is polled again rather than refused. */
+export declare function retryable(err: unknown): boolean;

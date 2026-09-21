@@ -22,7 +22,7 @@
  * malformed one.
  */
 import { describe, it, expect } from 'vitest';
-import { verdict, runsForSha, MIN_RUNS } from '../tools/ci-green-for-sha.mjs';
+import { verdict, runsForSha, nextStep, retryable, MIN_RUNS } from '../tools/ci-green-for-sha.mjs';
 
 const done = (name: string, conclusion: string) => ({ name, status: 'completed', conclusion });
 /** Enough concluded runs to clear the floor, so a leg tests what it says it tests. */
@@ -109,5 +109,42 @@ describe('the gate excludes its own run, or it waits for itself forever', () => 
       repo: 'o/r', token: 't', self: 'x',
       fetchFn: async () => ({ ok: false, status: 403, json: async () => ({}) }) as unknown as Response,
     })).rejects.toThrow(/403/);
+  });
+});
+
+describe('★ a short listing is a wait until the deadline, not a refusal on sight', () => {
+  // 2026-09-21, commit 0f40814b: five runs listed, then two, then one poll answered 200 with an
+  // empty list while the mutation gate was still running. The floor read it as final and refused
+  // a deploy whose CI concluded green four minutes later.
+  it('polls again while time remains, for an empty list and for one just below the floor', () => {
+    expect(nextStep(verdict([]), false)).toBe('wait');
+    expect(nextStep(verdict(filler(MIN_RUNS - 1)), false)).toBe('wait');
+  });
+
+  it('★ refuses a listing that is still short at the deadline — a mistyped sha never turns green', () => {
+    expect(nextStep(verdict([]), true), 'an empty listing at the deadline was not refused').toBe('refuse');
+    expect(nextStep(verdict(filler(MIN_RUNS - 1)), true)).toBe('refuse');
+  });
+
+  it('deploys on green whatever the clock, refuses red at once, and waits on pending only until the deadline', () => {
+    expect(nextStep(verdict(filler(MIN_RUNS)), true)).toBe('deploy');
+    expect(nextStep(verdict([...filler(MIN_RUNS), done('ESLint', 'failure')]), false)).toBe('refuse');
+    const pending = verdict([...filler(MIN_RUNS), { name: 'Mutation Gate', status: 'in_progress', conclusion: null }]);
+    expect(nextStep(pending, false)).toBe('wait');
+    expect(nextStep(pending, true)).toBe('refuse');
+  });
+});
+
+describe('a GitHub outage is polled again; a refusal is final', () => {
+  const answer = (status: number) => async () => ({ ok: false, status, json: async () => ({}) }) as unknown as Response;
+  const ask = (status: number) => runsForSha('a'.repeat(40), { repo: 'o/r', token: 't', self: 'x', fetchFn: answer(status) }).catch((e: unknown) => e);
+
+  it('carries the status on the error, and only a 5xx is retryable', async () => {
+    const outage = await ask(502);
+    expect((outage as { status?: number }).status).toBe(502);
+    expect(retryable(outage)).toBe(true);
+    expect(retryable(await ask(403)), 'a 403 — a token without actions:read — was retried instead of refused').toBe(false);
+    expect(retryable(new Error('no status'))).toBe(false);
+    expect(retryable(undefined)).toBe(false);
   });
 });
