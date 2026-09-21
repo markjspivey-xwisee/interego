@@ -392,6 +392,11 @@ import {
   attachScormSequencingRoutes, parseManifest, createSession, processNavigation,
   commitTracking, sessionView, type SeqSession, type TrackingUpdate,
 } from '../src/scorm-sequencing.js';
+import { resolveAgentEncryptionKey } from '@interego/solid';
+import { PrivatePerformanceStore } from '../src/private-performance-store.js';
+import { makePrivatePerformanceVerifier } from '../src/private-performance-auth.js';
+import { attachPrivatePerformanceRoutes, type PrivateAuthResult } from '../src/private-performance-routes.js';
+import { EvidenceError } from '../../agentic-performance-practice/src/private-outcomes.js';
 import { attachPerformanceRoutes } from '../src/performance-routes.js';
 import { attachContentDeliveryRoutes, restorePublishedCourse } from '../src/content-delivery.js';
 // Re-integration with the agentic-performance (agp:) layer: Foxxi surfaces the
@@ -4987,7 +4992,15 @@ const app = createVerticalBridge({
     // dispositional probes for Emergent work); content is composed only when
     // the diagnosis says it is the answer. Routes: GET /performance,
     // POST /performance/plan, /content/compose-course, /content/personalize.
+    const privatePerformanceStore = new PrivatePerformanceStore({
+      podFor: privatePerformancePod,
+      keypair: bridgeEncryptionKeypair,
+      ownerKey: pod => resolveAgentEncryptionKey(pod, { fetch: guardedFetchFn(globalThis.fetch) as never }).catch(() => null),
+      fetch: guardedFetchFn(globalThis.fetch) as typeof fetch,
+    });
+    attachPrivatePerformanceRoutes(a, { base: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080', verify: verifyPrivatePerformanceCaller, store: privatePerformanceStore });
     attachPerformanceRoutes(a, {
+      privatePerformance: { store: privatePerformanceStore, verify: verifyPrivatePerformanceCaller },
       selfBaseUrl: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080',
       // Per-IP bound on the UNAUTHENTICATED pod-write endpoints (/performance/plan,
       // /agent/attest) — each call PUTs a descriptor+graph+atom to the tenant pod with
@@ -6926,6 +6939,24 @@ app.post('/agent/verify-presentation', async (req, res) => {
 // embeds the recovered address). DELEGATED: the relay signed via sign_request — the
 // agent's on-pod delegation must be CryptographicallyVerified AND the request signer
 // must be its anchor key.
+/** This surface only accepts an actor whose own pod is structurally bound to
+ * this deployment. No shared-tenant fallback, public promotion or pod override. */
+function privatePerformancePod(owner: string): string {
+  if (!ownPodSegment(owner)) throw new EvidenceError('Private performance requires a canonical own-pod identity.', 403);
+  const pod = resolveSubjectPodUrl(owner);
+  if (!sameStore(pod, tenantPodUrl) || samePod(pod, tenantPodUrl)) throw new EvidenceError('Private performance must use the caller own pod.', 403);
+  return canonicalPublicPodUrl(pod);
+}
+async function verifyPrivatePerformanceCaller(body: unknown, write: boolean): Promise<PrivateAuthResult> {
+  return makePrivatePerformanceVerifier({
+    recover: recoverSignedRequest,
+    verify: verifyDelegatedCaller,
+    ownPod: privatePerformancePod,
+    samePod,
+    credential: async (pod, actor) => (await readDelegationCredential(pod, actor as IRI, { fetch: guardedFetchFn(globalThis.fetch) as never }).catch(() => null))?.credentialSubject ?? null,
+  })(body, write);
+}
+
 async function verifyDelegatedCaller(body: unknown):
   Promise<{ ok: true; callerDid: string; signer: string; payload: Record<string, unknown> } | { ok: false; status: number; error: string }> {
   const rec = recoverSignedRequest(body);

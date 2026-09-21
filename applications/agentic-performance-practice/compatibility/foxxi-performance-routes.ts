@@ -21,6 +21,10 @@
  */
 
 import type { Express, Request, Response } from 'express';
+import { PRIVATE_PERFORMANCE_SCHEMA } from '../../foxxi-content-intelligence/src/private-performance-schema.js';
+import { EvidenceError, privateEvidenceContext } from '../src/private-outcomes.js';
+import type { PrivatePerformanceStore } from '../../foxxi-content-intelligence/src/private-performance-store.js';
+import type { VerifyPrivateCaller } from '../../foxxi-content-intelligence/src/private-performance-routes.js';
 import { attachInterventionMethodRoutes } from '../bridge/method-routes.js';
 import { foxxiInterventionMethodAffordances } from '../method-affordances.js';
 import { AGP_NS } from '../src/ontology.js';
@@ -31,7 +35,7 @@ import {
 } from '../src/performance-architecture.js';
 import {
   buildCalibrationProfile, expandOutcomeCorpus, composeCalibrationProfiles,
-  calibrate, calibrationReadout, federationView,
+  calibrate, calibrationReadout, federationView, calibrationDrivenReplan,
   type OutcomeRecord, type CauseKey,
 } from '../src/performance-calibration.js';
 import { SAMPLE_OUTCOMES, SAMPLE_PEER_OUTCOMES } from '../src/sample-outcomes.js';
@@ -301,18 +305,19 @@ const CONTEXTUALIZE_AND_PLAN_AFFORDANCE: Affordance = {
   action: 'urn:iep:action:foxxi:contextualize-and-plan-signed' as Affordance['action'],
   toolName: 'contextualize_and_plan',
   title: 'Contextualize a performance situation (classify regime → plan) as yourself',
-  description: "Read a performance situation's work regime (Evident/Knowable/Emergent/Turbulent) and get the regime-appropriate intervention plan — the gap frame (idealize → close) is used ONLY for Knowable; Emergent gets probes+coaching; Evident an established practice; Turbulent stabilise-first — authenticated by your delegation so the classification is attributed to YOU. Supply your `trajectories` to DERIVE the regime from signal (the honest, calibratable path); an asserted situation.domain or gap-intent evidence (exemplary/factorEvidence) is honoured but carries NO calibration authority and never overrides a derived/asserted non-Knowable regime (see diagnosis.regimeSource in the response). No regime signal at all → diagnosis.method='classify-first' and it refuses to gap-plan. Reach it: sign_request the args, then act this affordance.",
+  description: "Read a performance situation's work regime (Evident/Knowable/Emergent/Turbulent) and get the regime-appropriate intervention plan — the gap frame (idealize → close) is used ONLY for Knowable; Emergent gets probes+coaching; Evident an established practice; Turbulent stabilise-first — authenticated by your delegation so the classification is attributed to YOU. Opt in to private server plan binding and own empirical calibration by adding private_evidence (see /agent/performance/outcome/affordance); this requires own-pod read/write delegation. Supply your `trajectories` to DERIVE the regime from signal (the honest, calibratable path); an asserted situation.domain or gap-intent evidence (exemplary/factorEvidence) is honoured but carries NO calibration authority and never overrides a derived/asserted non-Knowable regime (see diagnosis.regimeSource in the response). No regime signal at all → diagnosis.method='classify-first' and it refuses to gap-plan. Reach it: sign_request the args, then act this affordance.",
   method: 'POST',
   targetTemplate: '{base}/agent/contextualize-and-plan',
   mediaType: 'application/json',
   inputs: [
-    { name: '_signed_payload', type: 'string', required: true, description: "JSON.stringify({ agent_id, timestamp, situation:{ id, competency, workContext, observed, performer:{ id, kind }, frequency?, modalStatus?, domain? }, trajectories?:[{ agentDid, agentName?, steps:[{ modalStatus, granularity, verb, objectId, objectName, result? }] }], exemplary?, factorEvidence?, couldPerformUnderIdealConditions?, performedWellBefore? })" },
+    { name: '_signed_payload', type: 'string', required: true, description: "JSON.stringify({ agent_id, timestamp, situation:{ id, competency, workContext, observed, performer:{ id, kind }, frequency?, modalStatus?, domain? }, trajectories?:[{ agentDid, agentName?, steps:[{ modalStatus, granularity, verb, objectId, objectName, result? }] }], exemplary?, factorEvidence?, couldPerformUnderIdealConditions?, performedWellBefore?, private_evidence?, private_review? }) Full private evidence contract: " + JSON.stringify(PRIVATE_PERFORMANCE_SCHEMA) },
     { name: '_signature', type: 'string', required: true, description: 'secp256k1 over sha256:<hex(sha256(_signed_payload))> by the wallet matching agent_id (use the relay sign_request tool).' },
   ],
 };
 
 export function attachPerformanceRoutes(app: Express, config: {
   selfBaseUrl: string;
+  privatePerformance?: { store: PrivatePerformanceStore; verify: VerifyPrivateCaller };
   /** Where to mint iep:ContextDescriptor records for outcomes / situations / teaching packages. */
   publishConfig?: DescriptorPublishConfig;
   /** Bridge-provided delegated-auth verifier. When set, a SIGNED followable
@@ -611,19 +616,48 @@ export function attachPerformanceRoutes(app: Express, config: {
         const p = auth.payload;
         const situation = coerceSituation(p.situation);
         if (typeof situation === 'string') { res.status(400).json({ error: situation }); return; }
-        const diagnosis = diagnose(coerceDiagnoseInput(situation, p));
+        let diagnosis = diagnose(coerceDiagnoseInput(situation, p));
         // The classification is attributed to the verified caller — its own
         // disposition, read as itself.
         const author: Performer = { id: auth.callerDid, kind: 'agent', role: 'performance consultant (self, delegated)' };
-        const plan = recommendInterventions({ diagnosis, situation, author });
+        let plan = recommendInterventions({ diagnosis, situation, author });
+        if (p.private_review !== undefined && p.private_review !== true) throw new EvidenceError('private_review must be true when supplied.');
+        let privatePlan: unknown;
+        let empirical: unknown;
+        let replan: unknown;
+        let calibration;
+        if (p.private_evidence !== undefined || p.private_review === true) {
+          const service = config.privatePerformance;
+          if (!service) throw new EvidenceError('Private performance feedback is not configured.', 503);
+          const privateAuth = await service.verify(req.body, p.private_evidence !== undefined);
+          if (!privateAuth.ok) { res.status(privateAuth.status).json({ error: privateAuth.error }); return; }
+          if (['pod_url', 'tenant_pod_url'].some(k => k in p)) throw new EvidenceError('Private plan does not accept pod overrides.');
+          const profile = await service.store.profile(auth.callerDid);
+          calibration = calibrate(diagnosis, plan, profile.profile);
+          const decision = calibrationDrivenReplan(plan, calibration);
+          plan = decision.plan;
+          empirical = profile;
+          if (p.private_evidence !== undefined) {
+            if (p.private_review !== undefined) throw new EvidenceError('Choose private_evidence or private_review, not both.');
+            const context = privateEvidenceContext(p.private_evidence);
+            const logicalInput = Object.fromEntries(Object.entries(p).filter(([k]) => !['agent_id', 'timestamp', 'subject_pod_url', 'private_evidence'].includes(k)));
+            const saved = await service.store.savePlan(auth.callerDid, context, logicalInput, diagnosis, plan);
+            diagnosis = saved.diagnosis; plan = saved.plan;
+            calibration = calibrate(diagnosis, plan, profile.profile);
+            privatePlan = { plan_id: saved.plan_id, sha256: saved.sha256, created_at: saved.created_at, episode_id: saved.context.episode_id, durable: true, private: true, read: `${base}/agent/performance/outcomes/affordance` };
+            replan = { evaluated: true, current_candidate_replanned: decision.replanned, current_candidate_reasoning: decision.reasoning, applied_plan_id: saved.plan_id, applied_plan_immutable: true, note: 'Returns the stored plan on retry. Current candidate review is advisory and never revises that stored plan.' };
+          } else {
+            replan = { replanned: decision.replanned, reasoning: decision.reasoning, persisted: false, note: 'Private empirical review only; no new plan or counted episode was minted.' };
+          }
+        } else calibration = calibrate(diagnosis, plan, calibrationProfiles().federated);
         const scaffold = scaffoldFromPlan(plan, situation.competency);
-        const calibration = calibrate(diagnosis, plan, calibrationProfiles().federated);
         res.json({
           classifiedBy: auth.callerDid,
           diagnosis, plan, scaffold, calibration,
+          ...(empirical ? { ...(privatePlan ? { privatePlan } : {}), empirical, replan } : {}),
           note: "Classification attributed to your verified delegation. diagnosis.regimeSource is the provenance — supply trajectories to DERIVE the regime from signal (the honest, calibratable path); asserted/gap-intent carry no calibration authority. Compose your situation descriptor + the regime-appropriate intervention on your OWN pod from this.",
         });
-      } catch (err) { sendServerError(res, err, 'performance-plan'); }
+      } catch (err) { if (err instanceof EvidenceError) res.status(err.status).json({ error: err.message }); else sendServerError(res, err, 'performance-plan'); }
     });
   }
 
