@@ -24,6 +24,7 @@
     "../bin/**/*.ts",
     "../tools/**/*.ts",
     "../../_shared/affordance-mcp/**/*.ts",
+    "../../_shared/relay-agent/**/*.ts",
     "../../_shared/judgment-kit/**/*.ts"
   ],
   "exclude": ["node_modules", "dist"]
