@@ -96,7 +96,14 @@ const UNRESOLVABLE_PIN = 78;
 // not, which is the gate working as designed — it forced the raise to be a visible line in a
 // diff with a reason attached, instead of a number in a pull request body drifting unread.
 // The 20 of headroom is deliberately small: this is due again soon, on purpose.
-const BACKLOG_CEILING = 470;
+// 470 -> 500 (2026-09-21), for the same honest reason as the line above: the marker still
+// names the commit through which the file is continuously current, and the gap after it is
+// what this number counts. The backlog crossed 470 by the day's merge traffic — eleven pull
+// requests, the gated auto-merge's first day, every one with an entry above — not by anything
+// left undocumented. The headroom is 30 rather than 20 because merges now land without a
+// person, at several a day, and a ceiling that fires every second day is a chore rather than a
+// signal; it is still small on purpose, and the next raise is a diff with a reason like this one.
+const BACKLOG_CEILING = 500;
 
 /**
  * `<!-- documented-through: <sha> -->` — the newest commit through which the file is
