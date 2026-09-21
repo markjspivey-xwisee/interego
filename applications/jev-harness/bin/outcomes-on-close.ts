@@ -1,0 +1,77 @@
+/**
+ * Record the outcomes of a closed pull request's judgments through a bridge.
+ *
+ *   npx tsx bin/outcomes-on-close.ts --pr <number> --repo <owner/name> --bridge http://localhost:6090 \
+ *     --merged true|false --base <sha> --head <sha> --workspace <checkout>
+ *
+ * Reads the pull request's comments (GH_TOKEN), finds the judgments the harness's own comments
+ * name, works out the files the pull request changed, and posts an outcome for each judgment
+ * to the bridge, which reads the judgment back from the pod and publishes the outcome as the
+ * Asserted head of its chain. Prints one line per judgment. Exits 1 only when the bridge
+ * could not be reached at all; a judgment the pod no longer holds is reported, not fatal.
+ */
+
+import { execFileSync } from 'node:child_process';
+import { outcomeRequests } from '../src/outcomes-on-close.js';
+
+function flag(name: string): string | undefined {
+  const i = process.argv.indexOf(name);
+  return i >= 0 ? process.argv[i + 1] : undefined;
+}
+
+async function comments(repo: string, pr: string, token: string): Promise<string[]> {
+  const bodies: string[] = [];
+  for (let page = 1; page <= 10; page += 1) {
+    const res = await fetch(`https://api.github.com/repos/${repo}/issues/${pr}/comments?per_page=100&page=${page}`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' },
+    });
+    if (!res.ok) throw new Error(`GitHub comments responded ${res.status}`);
+    const list = await res.json() as Array<{ body?: string }>;
+    for (const c of list) if (typeof c.body === 'string') bodies.push(c.body);
+    if (list.length < 100) break;
+  }
+  return bodies;
+}
+
+function filesChanged(workspace: string, base: string, head: string): string[] {
+  try {
+    execFileSync('git', ['fetch', '--no-tags', '--depth=1', 'origin', base, head], { cwd: workspace, stdio: 'ignore' });
+  } catch { /* the refs may already be present, or one may be gone: the diff below decides */ }
+  try {
+    return execFileSync('git', ['diff', '--name-only', `${base}...${head}`], { cwd: workspace, encoding: 'utf8' }).split('\n').filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+async function main(): Promise<void> {
+  const pr = flag('--pr');
+  const repo = flag('--repo');
+  const bridge = (flag('--bridge') ?? 'http://localhost:6090').replace(/\/$/, '');
+  const merged = flag('--merged') === 'true';
+  const base = flag('--base');
+  const head = flag('--head');
+  const workspace = flag('--workspace') ?? process.cwd();
+  const token = process.env['GH_TOKEN'] ?? process.env['GITHUB_TOKEN'];
+  if (!pr || !repo || !token) { console.error('usage: --pr <n> --repo <owner/name> [--bridge <url>] --merged true|false --base <sha> --head <sha> [--workspace <dir>], with GH_TOKEN set'); process.exit(2); }
+  const bodies = await comments(repo, pr, token);
+  const changed = base && head ? filesChanged(workspace, base, head) : [];
+  const requests = outcomeRequests(bodies, { merged, filesChanged: changed });
+  console.log(`pull request ${pr}: ${merged ? 'merged' : 'closed without merging'}, ${changed.length} file(s) changed, ${requests.length} judgment(s) to score`);
+  let unreachable = false;
+  for (const r of requests) {
+    try {
+      const res = await fetch(`${bridge}/jev-harness/outcome`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(r.body) });
+      const text = await res.text();
+      if (!res.ok) { console.log(`  ${r.kind} ${r.graphIri}: ${res.status} ${text.slice(0, 160)}`); continue; }
+      const out = JSON.parse(text) as { judgment?: { summary?: string }; publish?: { status?: string; descriptorUrl?: string } };
+      console.log(`  ${r.kind} ${r.graphIri}: ${out.judgment?.summary ?? 'recorded'}; publish ${out.publish?.status ?? '?'}${out.publish?.descriptorUrl ? ` ${out.publish.descriptorUrl}` : ''}`);
+    } catch (err) {
+      unreachable = true;
+      console.log(`  ${r.kind} ${r.graphIri}: bridge unreachable: ${(err as Error).message}`);
+    }
+  }
+  if (unreachable) process.exit(1);
+}
+
+main().catch((err) => { console.error(err instanceof Error ? err.message : String(err)); process.exit(1); });

@@ -15,6 +15,7 @@ import { recordOutcome, type AnyJudgment, type OutcomeInput, type OutcomeRecord 
 import { publishJudgment, recordTrajectoryStep, type RelayClient } from './publish.js';
 import { changedFiles, inventory, unifiedDiff, type RepoInventory } from './repo.js';
 import { fetchPodOutcomes } from './pod-calibration.js';
+import { judgmentFromContent, type PodJudgment } from './pod-judgment.js';
 import { HarnessStore, calibratedAdvice, computeAdviceBuckets, type CalibrationView, type PodBackfillState } from './store.js';
 import { isIri } from './turtle.js';
 
@@ -104,11 +105,31 @@ export class Harness {
   async recordOutcome(input: OutcomeInput): Promise<JudgmentResponse<OutcomeRecord>> {
     // The judgment IRI is caller-supplied and is emitted into Turtle as an IRI reference.
     if (!isIri(input.judgmentIri)) throw new HarnessError(400, 'judgment_iri must be an absolute IRI without whitespace or <>"{}|^`\\');
-    const prior = this.store.findByGraphIri(input.judgmentIri);
-    if (!prior) throw new HarnessError(404, `no judgment with graph IRI ${input.judgmentIri} in this bridge's store`);
+    const prior = this.store.findByGraphIri(input.judgmentIri) ?? await this.judgmentFromPod(input.judgmentIri);
     if (prior.kind === 'outcome') throw new HarnessError(409, 'an outcome cannot be scored by another outcome');
     const o = recordOutcome(prior as AnyJudgment, input);
     return this.finish(o, { verb: 'recorded-outcome', objectName: o.summary.slice(0, 120) }, [prior]);
+  }
+
+  /**
+   * A judgment this bridge did not make, read back from the pod so it can still be scored: the
+   * bridge in a CI run makes a pull request's judgments and is gone when the run ends, and the
+   * outcome is known only when the pull request closes. The pod's current head for the graph
+   * is either the Hypothetical judgment (scorable) or the Asserted outcome that already scored
+   * it (refused with 409, so a second close cannot fork the chain).
+   */
+  private async judgmentFromPod(graphIri: string): Promise<PodJudgment> {
+    if (!this.relay || !this.relay.podName) throw new HarnessError(404, `no judgment with graph IRI ${graphIri} in this bridge's store, and no pod to read it from`);
+    const head = await this.relay.callTool('get_current_head', { urn: graphIri, pod_name: this.relay.podName });
+    const url = (head.structured?.['head'] as { descriptorUrl?: unknown } | undefined)?.descriptorUrl;
+    if (typeof url !== 'string') throw new HarnessError(404, `the pod holds no descriptor for ${graphIri}`);
+    const d = await this.relay.callTool('get_descriptor', { url });
+    const graph = d.structured?.['graph'] as { content?: unknown } | undefined;
+    const content = typeof graph?.content === 'string' ? graph.content : typeof d.structured?.['turtle'] === 'string' ? d.structured['turtle'] as string : '';
+    const parsed = judgmentFromContent(content, { graphIri, descriptorUrl: url });
+    if (parsed.kind === 'outcome') throw new HarnessError(409, `${graphIri} is already scored on the pod`);
+    if (parsed.kind === 'none') throw new HarnessError(404, `the pod's descriptor for ${graphIri} holds no readable judgment`);
+    return parsed.judgment;
   }
 
   calibration(): CalibrationView {
@@ -138,7 +159,9 @@ export class Harness {
 
   private async finish<J extends Published>(j: J, step: { verb: string; objectName: string }, supersedes: readonly Published[] = []): Promise<JudgmentResponse<J>> {
     const payload = payloadTurtle(j, this.ctx);
-    const trig = descriptorTrig(j, this.ctx, supersedes.length > 0 ? { supersedes: supersedes.map((s) => `${judgmentUrl(s, this.ctx)}.trig`) } : {});
+    // A judgment read back from the pod is superseded at its pod descriptor; a local one at its own URL.
+    const podUrlOf = (s: Published): string | undefined => (s as { podDescriptorUrl?: string }).podDescriptorUrl;
+    const trig = descriptorTrig(j, this.ctx, supersedes.length > 0 ? { supersedes: supersedes.map((s) => podUrlOf(s) ?? `${judgmentUrl(s, this.ctx)}.trig`) } : {});
     const markdown = hmdMarkdown(j, this.ctx);
     this.store.save(j, { payloadTurtle: payload, descriptorTrig: trig, markdown });
     let publish: PublishState = { status: 'skipped' };
@@ -147,7 +170,7 @@ export class Harness {
         // An outcome lands as the next version of the judgment it scores, so the pod's chain flips
         // Hypothetical → Asserted; if_match makes that a compare-and-swap on the published head.
         const prior = supersedes[0];
-        const ifMatch = prior ? this.store.relayDescriptorUrl(prior.id) : undefined;
+        const ifMatch = prior ? podUrlOf(prior) ?? this.store.relayDescriptorUrl(prior.id) : undefined;
         const receipt = await publishJudgment(this.relay, j, payload, {
           visibility: this.visibility,
           ...(prior ? { graphIri: prior.graphIri } : {}),

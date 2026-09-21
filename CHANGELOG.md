@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-21 — jev-harness: outcomes on merge
+
+When a pull request closes, a third CI job scores the judgments the harness's own comments name (each comment now carries a hidden marker with the judgment's graph IRI): the merge, or the close without one, becomes the human decision the review verdict is scored against, and a linked navigation is scored against the files the pull request changed. The bridge that made the judgments is gone with its run, so the closing job's bridge reads each judgment back from the pod (`applications/jev-harness/src/pod-judgment.ts` mirrors the payload writer term for term) and publishes the outcome as the Asserted head of the chain, with the pod descriptor as the compare-and-swap precondition. Calibration is now fed by every merge rather than by replayed history.
+
 ## 2026-09-20 — pgsl-store: a collector for the unreferenced history, and a volume check
 
 The pod store's Postgres table reached 45 GB, of which almost everything was history: the store is grow-only and content-addressed, `LdpStore` repointed a resource's record on overwrite and left the old nodes behind, and one pod's manifest had been rewritten a few thousand times while it was 30 to 45 MB. `packages/pgsl-store/src/gc.ts` computes the live set (the closure of every resource record, overlay row, attribute and non-derived persistence entry) and `rebuildTable` copies it into a fresh table under an EXCLUSIVE lock and swaps the names, so the space comes back when the old table is dropped, without a 45 GB rewrite. `tools/pgsl-store-gc.ts` drives it (dry run by default, `--rebuild`, `--drop`, `--tune` for autovacuum thresholds that fit the table). `deleteResource` now clears the overlay rows it used to leave, which kept deleted resources reachable. `tools/railway-volume-check.mjs` runs after the fleet audit and fails when a volume is at or over 80%, which is the warning nobody had.

@@ -17,6 +17,9 @@ name: jev-harness (System One judgments)
 on:
   pull_request:
     branches: [master]
+    # closed is what records outcomes: the merge, or the close without one, is the human
+    # decision the review verdict is scored against.
+    types: [opened, synchronize, reopened, closed]
   workflow_dispatch:
 
 permissions:
@@ -35,6 +38,7 @@ env:
 jobs:
   select-and-run:
     name: "select tests → run → triage → outcome"
+    if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -88,6 +92,7 @@ jobs:
 
   review-gate:
     name: "review gate"
+    if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -141,3 +146,45 @@ jobs:
           name: jev-harness-review
           include-hidden-files: true
           path: .jev-harness/
+
+  outcomes-on-close:
+    name: "score the judgments when the pull request closes"
+    if: ${{ github.event_name == 'pull_request' && github.event.action == 'closed' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build:core
+      # The bridge that made this pull request's judgments is gone with its run; this one reads
+      # them back from the pod (the comments carry their graph IRIs) and publishes each outcome
+      # as the Asserted head of the judgment's chain, as the same delegate agent.
+      - name: Start the bridge
+        env:
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+          INTEREGO_AGENT_KEY_JSON: ${{ secrets.INTEREGO_AGENT_KEY_JSON }}
+          INTEREGO_POD_NAME: ${{ env.INTEREGO_POD_NAME }}
+          JEV_HARNESS_AGENT_ID: ${{ env.JEV_HARNESS_AGENT_ID }}
+          JEV_HARNESS_OWNER_WEBID: ${{ env.JEV_HARNESS_OWNER_WEBID }}
+          JEV_HARNESS_REPO: ${{ github.workspace }}
+          BRIDGE_DEPLOYMENT_URL: http://localhost:6090
+          PORT: ${{ env.BRIDGE_PORT }}
+        run: |
+          (cd "$HARNESS_DIR" && npx tsx bridge/server.ts > bridge.log 2>&1 &)
+          for i in $(seq 1 30); do curl -sf "http://localhost:$BRIDGE_PORT/health" && break; sleep 1; done
+      - name: Record the outcomes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          MERGED: ${{ github.event.pull_request.merged }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          cd "$HARNESS_DIR"
+          npx tsx bin/outcomes-on-close.ts --pr "$PR" --repo "$GITHUB_REPOSITORY" --bridge "http://localhost:$BRIDGE_PORT"             --merged "$MERGED" --base "$BASE" --head "$HEAD" --workspace "${{ github.workspace }}"
