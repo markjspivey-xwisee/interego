@@ -65,7 +65,7 @@ jobs:
       # ★ THE LEGS TO RUN, not just a yes/no. See the note on the step below.
       matrix: ${{ steps.plan.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Check the requested image, and compute the legs to run
         # ── ★★ WHY THIS EMITS A MATRIX AND NOT ONLY A VERDICT ──────────────────
         #
@@ -121,7 +121,7 @@ jobs:
             echo 'skip=false' >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         if: steps.gate.outputs.skip != 'true'
 
       # Only interego-css-pgsl needs this. Its Dockerfile COPYs
@@ -139,7 +139,7 @@ jobs:
       # to be the image the tests exercised.
       - name: Pre-build the workspace dist this image's Dockerfile expects in the context
         if: steps.gate.outputs.skip != 'true' && matrix.prebuild == 'pgsl-store'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with: { node-version: '20' }
       - name: Build @interego/pgsl-store dist
         if: steps.gate.outputs.skip != 'true' && matrix.prebuild == 'pgsl-store'

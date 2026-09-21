@@ -19,10 +19,11 @@
  *
  * pgsl-store-gc.yml runs `--drop-previous-older-than 7 --rebuild-above 0.5` every Sunday at the
  * quietest hour. The measurement is the same dry run; the decision is `rebuildDecision`, which
- * rebuilds only when at least half of a table of at least --min-rows rows is unreferenced
- * history — the shape the 2026-09-20 outage had (78.7M rows, 1.19M live) and the shape a small
- * weekly gap does not. A table below the row floor is never rebuilt automatically: the lock
- * would cost more than the space. The table a rebuild leaves behind stays a week, so the store
+ * rebuilds when at least half of a table of at least --min-rows rows is unreferenced history —
+ * the shape the 2026-09-20 outage had (78.7M rows, 1.19M live) — or when the table on disk holds
+ * at least four times its live values and at least 1 GiB, the TOAST-and-index bloat the
+ * 2026-09-21 measurement showed (2 GB on disk, 0.5 GB live, 7% of rows unreferenced). Below both
+ * a table is never rebuilt automatically: the lock would cost more than the space. The table a rebuild leaves behind stays a week, so the store
  * has run on the new one before `previousTablesToDrop` lets the next run drop it. Both
  * decisions are pure and tested (tests/pgsl-store-gc-tool.test.ts); a person can still
  * dispatch any mode by hand.
@@ -50,21 +51,46 @@ export interface RebuildDecision {
  * Whether the weekly run rebuilds: the unreferenced share of a table big enough to matter has
  * crossed the line. An unknown row estimate (a table never analysed reports -1) decides nothing.
  */
-export function rebuildDecision(input: { readonly liveKeys: number; readonly tableRows: number; readonly line: number; readonly minRows: number }): RebuildDecision {
+export function rebuildDecision(input: {
+  readonly liveKeys: number;
+  readonly tableRows: number;
+  readonly line: number;
+  readonly minRows: number;
+  /** What the table takes on disk, heap + TOAST + indexes; with liveBytes, the second criterion. */
+  readonly totalBytes?: number;
+  /** The bytes of node values the live set holds: what a rebuilt table would carry. */
+  readonly liveBytes?: number;
+  /** On-disk bytes per live byte at or above which a rebuild is worth its lock (default 4). */
+  readonly bloatFactor?: number;
+  /** Below this many bytes on disk the bloat criterion never fires (default 1 GiB). */
+  readonly minBytes?: number;
+}): RebuildDecision {
   const { liveKeys, tableRows, line, minRows } = input;
+  const bloatFactor = input.bloatFactor ?? 4;
+  const minBytes = input.minBytes ?? 1_073_741_824;
   if (!(line > 0 && line <= 1)) throw new Error('--rebuild-above takes a share between 0 and 1');
+  const mb = (n: number): string => `${Math.round(n / 1_048_576)} MB`;
+  const pct = (n: number): string => `${Math.round(n * 100)}%`;
+  // TOAST and index space: the rows can be few and live while the table on disk holds several
+  // times what they need, which the 2026-09-21 measurement showed (2 GB on disk, 0.5 GB live,
+  // 7% of rows unreferenced). A rebuild copies the live rows into a fresh table and returns it.
+  const bloat = input.totalBytes !== undefined && input.liveBytes !== undefined && input.liveBytes > 0 ? input.totalBytes / input.liveBytes : undefined;
+  const bloated = bloat !== undefined && (input.totalBytes as number) >= minBytes && bloat >= bloatFactor;
+  const bloatNote = bloat === undefined ? '' : `; ${mb(input.totalBytes as number)} on disk holds ${mb(input.liveBytes as number)} of live values (${bloat.toFixed(1)}x, ${bloat >= bloatFactor ? 'at or above' : 'below'} ${bloatFactor}x${(input.totalBytes as number) < minBytes ? `, under the ${mb(minBytes)} floor` : ''})`;
   if (!Number.isFinite(tableRows) || tableRows < 0) {
-    return { rebuild: false, reclaimableShare: 0, reason: 'the table row estimate is unknown (never analysed), so nothing is decided on it' };
+    return { rebuild: false, reclaimableShare: 0, reason: `the table row estimate is unknown (never analysed), so nothing is decided on it${bloatNote}` };
   }
   const share = tableRows === 0 ? 0 : Math.max(0, (tableRows - liveKeys) / tableRows);
-  const pct = (n: number): string => `${Math.round(n * 100)}%`;
+  if (bloated) {
+    return { rebuild: true, reclaimableShare: share, reason: `${mb(input.totalBytes as number)} on disk holds ${mb(input.liveBytes as number)} of live values (${(bloat as number).toFixed(1)}x, at or above ${bloatFactor}x with at least ${mb(minBytes)}): TOAST and index space a rebuild returns` };
+  }
   if (tableRows < minRows) {
-    return { rebuild: false, reclaimableShare: share, reason: `${tableRows} rows is below the floor of ${minRows}; a rebuild would reclaim too little to hold a lock for` };
+    return { rebuild: false, reclaimableShare: share, reason: `${tableRows} rows is below the floor of ${minRows}; a rebuild would reclaim too little to hold a lock for${bloatNote}` };
   }
   const history = `${pct(share)} of ${tableRows} rows are unreferenced history (${liveKeys} live)`;
   return share >= line
     ? { rebuild: true, reclaimableShare: share, reason: `${history}, at or above the line of ${pct(line)}` }
-    : { rebuild: false, reclaimableShare: share, reason: `${history}, below the line of ${pct(line)}` };
+    : { rebuild: false, reclaimableShare: share, reason: `${history}, below the line of ${pct(line)}${bloatNote}` };
 }
 
 /**
@@ -140,7 +166,8 @@ async function main(): Promise<void> {
     log(`table rows (planner estimate): ${total.rows[0]?.['n']}; the rebuild would keep ${live.keys.size}`);
     const line = flag('--rebuild-above');
     if (line !== undefined) {
-      const d = rebuildDecision({ liveKeys: live.keys.size, tableRows: Number(total.rows[0]?.['n'] ?? -1), line: Number(line), minRows: Number(flag('--min-rows') ?? 2_000_000) });
+      const bytes = await client.query(`SELECT pg_total_relation_size($1) AS b`, [table]);
+      const d = rebuildDecision({ liveKeys: live.keys.size, tableRows: Number(total.rows[0]?.['n'] ?? -1), line: Number(line), minRows: Number(flag('--min-rows') ?? 2_000_000), totalBytes: Number(bytes.rows[0]?.['b'] ?? -1), liveBytes: live.stats.liveNodeBytes });
       log(`${d.rebuild ? 'rebuilding' : 'not rebuilding'}: ${d.reason}`);
       if (d.rebuild) {
         const r = await rebuildTable(client, table, { log });

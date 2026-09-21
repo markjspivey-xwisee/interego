@@ -186,7 +186,7 @@ jobs:
               npx tsx "$launcher" "$bin"
               ;;
           esac
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: desktop-${{ matrix.os }}
           # Unpacked trees are the build's scratch space, not a deliverable, and on Windows the

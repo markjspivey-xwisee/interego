@@ -34,6 +34,25 @@ describe('the rebuild line', () => {
   });
 });
 
+describe('the bloat line', () => {
+  it('★ rebuilds a table whose disk holds four times its live values, even with few rows unreferenced (2026-09-21)', () => {
+    const d = rebuildDecision({ liveKeys: 1_231_930, tableRows: 1_329_857, line: 0.5, minRows: 2_000_000, totalBytes: 2_086_027_264, liveBytes: 521_500_000 });
+    expect(d.rebuild, 'a bloated table was left alone because its rows were live').toBe(true);
+    expect(d.reason).toContain('1989 MB on disk holds 497 MB of live values (4.0x, at or above 4x with at least 1024 MB)');
+  });
+  it('leaves a small or lightly bloated table alone, and says how far from the line', () => {
+    const small = rebuildDecision({ liveKeys: 100, tableRows: 1_000, line: 0.5, minRows: 2_000_000, totalBytes: 600_000_000, liveBytes: 10_000_000 });
+    expect(small.rebuild).toBe(false);
+    expect(small.reason).toContain('under the 1024 MB floor');
+    const light = rebuildDecision({ liveKeys: 1_231_930, tableRows: 1_329_857, line: 0.5, minRows: 2_000_000, totalBytes: 2_086_027_264, liveBytes: 900_000_000 });
+    expect(light.rebuild).toBe(false);
+    expect(light.reason).toContain('(2.3x, below 4x)');
+  });
+  it('decides on rows alone when no sizes are given', () => {
+    expect(rebuildDecision({ liveKeys: 1_192_421, tableRows: 78_700_000, line: 0.5, minRows: 2_000_000 }).rebuild).toBe(true);
+    expect(rebuildDecision({ liveKeys: 1_231_930, tableRows: 1_329_857, line: 0.5, minRows: 2_000_000 }).reason).not.toContain('on disk');
+  });
+});
 describe('the previous tables', () => {
   const now = new Date('2026-09-28T06:30:00Z');
   it('drops only the copies older than the given days, oldest first, and never the live table', () => {

@@ -60,10 +60,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: npm
@@ -100,7 +100,7 @@ jobs:
           cd "$HARNESS_DIR"
           npx tsx bin/pr-comment.ts selection --dir "${{ github.workspace }}/.jev-harness/follower" \n            --pod "$INTEREGO_POD_NAME" --pod-public-origin "$INTEREGO_POD_PUBLIC_ORIGIN" > comment.md
           node tools/upsert-pr-comment.mjs "$PR" comment.md "<!-- jev-harness:selection -->"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: jev-harness-judgments
@@ -115,10 +115,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: npm
@@ -163,7 +163,7 @@ jobs:
           cd "$HARNESS_DIR"
           npx tsx bin/pr-comment.ts gate --dir "${{ github.workspace }}/.jev-harness/follower" \n            --pod "$INTEREGO_POD_NAME" --pod-public-origin "$INTEREGO_POD_PUBLIC_ORIGIN" > comment.md
           node tools/upsert-pr-comment.mjs "$PR" comment.md "<!-- jev-harness:review-gate -->"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: jev-harness-review
@@ -188,15 +188,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: npm
       - run: npm ci
       # @interego/registry aggregates the attestations the reputation view reads; it builds on core.
       - run: npm run build:core && npm run build --workspace @interego/registry
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: jev-harness-review
           path: .jev-harness
@@ -221,10 +221,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: npm
