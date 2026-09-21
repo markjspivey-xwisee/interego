@@ -87,7 +87,6 @@
     "@anthropic-ai/claude-code": "^2.1.81",
     "@anthropic-ai/sdk": "^0.80.0",
     "@eslint/js": "^9.39.5",
-    "@huggingface/transformers": "^3.8.1",
     "@types/adm-zip": "^0.5.8",
     "@types/express": "^5.0.6",
     "@types/jsdom": "^21.1.7",
