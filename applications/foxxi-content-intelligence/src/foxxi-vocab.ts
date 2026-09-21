@@ -142,6 +142,7 @@ export const FOXXI_TERMS: readonly FoxxiTerm[] = [
 
   // ── Knowledge architecture ─────────────────────────────────────────
   { name: 'WorkRegime', kind: 'Type', label: 'Work Regime', definition: 'How knowable the relationship between act and outcome is for a piece of work — Evident, Knowable, Emergent, or Turbulent. The regime decides which consulting and knowledge method is valid.' },
+  { name: 'ContentJudgment', kind: 'Type', label: 'Content Judgment', definition: 'A System One model judgment about a unit of course content — how well a claim is supported by its context and evidence (evidence-level), or which work regime the work it describes falls in (work-regime) — carried as typed probabilities with the model confidence. Hypothetical until a person confirms or refutes it; the descriptor controls say how.' },
   { name: 'CompetenceDecomposition', kind: 'Type', label: 'Competence Decomposition', definition: 'A competency broken into knowledge components (recorded / trained / judged / lived / innate) by codifiability — how much of it can honestly become content.' },
   { name: 'KnowledgeAsset', kind: 'Type', label: 'Knowledge Asset', definition: 'A unit of knowledge — a codified artefact, a narrative, or a connection to a holder; carries a codification level and, for codified assets, an explicit uncodified residue.' },
   { name: 'KnowledgeMap', kind: 'Type', label: 'Knowledge Map', definition: 'A regime-routed knowledge strategy for a competency: what to codify into content and what to enable as a flow — connection, narrative, apprenticeship.' },
@@ -160,6 +161,7 @@ export const FOXXI_TERMS: readonly FoxxiTerm[] = [
   // Envelope-derived signals carried verbatim from the context-descriptor (never reinterpreted).
   { name: 'supersededDescriptor', kind: 'Extension', label: 'supersededDescriptor', definition: 'IRI of a prior descriptor this one revises/closes — the iep:supersedes link carried into xAPI as a structural revision signal (not a domain closure verb).' },
   { name: 'trustLevel', kind: 'Extension', label: 'trustLevel', definition: 'The descriptor\'s TrustFacet level (SelfAsserted / ThirdPartyAttested / CryptographicallyVerified), passed through verbatim.' },
+  { name: 'judgmentKind', kind: 'Extension', label: 'judgmentKind', definition: 'On a ContentJudgment: which question the model was asked — evidence-level (a Score over the evidence scale) or work-regime (a Choice among the four regimes).' },
   { name: 'epistemicConfidence', kind: 'Extension', label: 'epistemicConfidence', definition: 'The descriptor\'s SemioticFacet epistemic confidence [0.0–1.0] — confidence that the DESCRIPTOR itself is accurate (infrastructure-level), NOT a performance score. Carried as its own extension, never as result.score.scaled.' },
   { name: 'groundTruth', kind: 'Extension', label: 'groundTruth', definition: 'The descriptor\'s tri-state groundTruth (true for Asserted, false for Counterfactual, undefined for Hypothetical), passed through verbatim.' },
   { name: 'endorsed', kind: 'Extension', label: 'endorsed', definition: 'False when the descriptor is Quoted (recorded with no endorsement / source-attributed).' },

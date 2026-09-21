@@ -195,6 +195,9 @@ import { inferScormAnswerInput, scormAnswerCandidates, validateScormResponses, t
 import { competencyIri, competencyIriForTerm, competencyIdOf } from '../src/competency-identity.js';
 import { activityIri, ACTIVITY_DEFINITIONS } from '../src/activity-identity.js';
 import { FOXXI_NS } from '../src/foxxi-vocab.js';
+import { CONTENT_JUDGMENT_KINDS, contentJudgmentControls, contentJudgmentMarkdown, judgeContentClaim, type ContentJudgmentKind, type EvidenceItem } from '../src/content-judgment.js';
+import { jevFromEnv } from '../../_shared/judgment-kit/jev-client.js';
+import { publishFoxxiEntity, type DescriptorPublishConfig } from '../src/outcome-descriptor-publisher.js';
 import {
   buildTrajectory, trajectoryShape, projectTrajectoryToXapi,
   type AgentTrajectory, type TrajectoryStepInput,
@@ -4672,6 +4675,79 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       randomization: args.randomization as 'simple' | 'stratified-by-audience-tag' | undefined,
       perWeekEnrolment: args.per_week_enrolment as number | undefined,
     });
+  },
+
+  // ── A System One judgment about content: a typed answer with probabilities, Hypothetical
+  // until a person confirms it. Built on the shared judgment kit (applications/_shared/
+  // judgment-kit) that jev-harness proved; the model is metered to the operator, so the
+  // caller must hold the learning-engineer or admin role, like the other le_ tools.
+  'foxxi.judge_content_claim': async (args) => {
+    const resolved = await resolveCaller(args);
+    if ('error' in resolved) return resolved;
+    const { ctx } = resolved;
+    if (ctx.role !== 'learning-engineer' && ctx.role !== 'admin') {
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — learning-engineer or admin role required' };
+    }
+    const judgmentKind = args.judgment_kind as string;
+    if (!(CONTENT_JUDGMENT_KINDS as readonly string[]).includes(judgmentKind)) {
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 400, 'iep:refusalReason': `judgment_kind must be one of ${CONTENT_JUDGMENT_KINDS.join(', ')}`, error: 'bad request' };
+    }
+    const claimText = typeof args.claim_text === 'string' ? args.claim_text.trim() : '';
+    if (claimText.length < 8) {
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 400, 'iep:refusalReason': 'claim_text is required (at least 8 characters)', error: 'bad request' };
+    }
+    let jev: ReturnType<typeof jevFromEnv>;
+    try {
+      jev = jevFromEnv();
+    } catch (err) {
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 503, 'iep:refusalReason': 'this bridge has no TYPESAFE_API_KEY, so it cannot judge content', error: err instanceof Error ? err.message : String(err) };
+    }
+    const evidence = Array.isArray(args.evidence)
+      ? (args.evidence as unknown[]).filter((e): e is EvidenceItem => typeof e === 'object' && e !== null && typeof (e as EvidenceItem).type === 'string' && typeof (e as EvidenceItem).id === 'string')
+      : [];
+    const judgment = await judgeContentClaim(jev, {
+      judgmentKind: judgmentKind as ContentJudgmentKind,
+      claimText,
+      ...(typeof args.context === 'string' ? { context: args.context } : {}),
+      evidence,
+      ...(typeof args.course_iri === 'string' ? { courseIri: args.course_iri } : {}),
+      ...(typeof args.slide_id === 'string' ? { slideId: args.slide_id } : {}),
+      ...(Array.isArray(args.concept_ids) ? { conceptIds: (args.concept_ids as unknown[]).filter((c): c is string => typeof c === 'string') } : {}),
+    });
+    const controls = contentJudgmentControls(judgment);
+    // Published Hypothetical to the tenant pod when the bridge has one. The judgment is
+    // answered either way, and the answer says what happened to it.
+    let published: Record<string, unknown> = { status: 'skipped', reason: 'no tenant pod configured' };
+    if (tenantPodUrl) {
+      try {
+        const config: DescriptorPublishConfig = {
+          podUrl: tenantPodUrl,
+          authoritativeSource,
+          fetch: guardedFetchFn(globalThis.fetch) as unknown as DescriptorPublishConfig['fetch'],
+          containerPath: 'foxxi/judgments/',
+        };
+        const r = await publishFoxxiEntity({
+          config,
+          slugPrefix: 'judgment',
+          foxxiType: `${FOXXI_NS}ContentJudgment` as IRI,
+          payload: judgment as unknown as Record<string, unknown>,
+          authoredBy: { id: authoritativeSource, kind: 'agent', role: 'system-one-judge' },
+          modalStatus: 'Hypothetical',
+        });
+        const descriptorUrl = (r as { descriptorUrl?: unknown }).descriptorUrl;
+        published = { status: 'published', descriptorIri: r.descriptorIri, graphIri: r.graphIri, ...(typeof descriptorUrl === 'string' ? { descriptorUrl } : {}), trustLevel: r.trust.trustLevel };
+      } catch (err) {
+        published = { status: 'failed', error: err instanceof Error ? err.message : String(err) };
+      }
+    }
+    return {
+      kind: 'content-judgment',
+      '@type': [`${FOXXI_NS}ContentJudgment`],
+      judgment,
+      controls,
+      markdown: contentJudgmentMarkdown(judgment, controls, bridgeBaseUrl),
+      published,
+    };
   },
 
   'foxxi.le_estimate_concept_difficulty': async (args) => {
