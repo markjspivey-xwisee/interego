@@ -23,7 +23,8 @@
     "../src/**/*.ts",
     "../bin/**/*.ts",
     "../tools/**/*.ts",
-    "../../_shared/affordance-mcp/**/*.ts"
+    "../../_shared/affordance-mcp/**/*.ts",
+    "../../_shared/relay-agent/**/*.ts"
   ],
   "exclude": ["node_modules", "dist"]
 }
