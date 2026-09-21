@@ -1,8 +1,13 @@
 # Changelog
 
+## 2026-09-21 — jev-harness: the auto-merge reads mergeability before it labels, and a failed merge takes its label back
+
+The first armed decision (#436) held on all four conditions, put `jev-harness:auto-merged` on the pull request, and then failed on the merge command because a changelog conflict had just landed under it — leaving a label that would have scored the next merge, a person's, as the machine's. GitHub's mergeability is now the last condition in both modes (`mergeable` MERGEABLE; CONFLICTING and UNKNOWN are refused with what to do, and the next push decides again), and if the merge command still fails the label is removed before the job goes red.
+
 ## 2026-09-21 — auto-deploy: a short runs listing is polled again, not refused on sight
 
 GitHub's workflow-runs listing is eventually consistent: on 2026-09-21 the CI gate watched the five runs for `0f40814b` narrow to two still running, then one poll answered 200 with an empty list, and `tools/ci-green-for-sha.mjs` refused a deploy whose CI concluded green four minutes later. Below the floor is now a wait while time remains and a refusal only when the listing is still short at the deadline, so an empty answer is still never read as green; a 5xx from GitHub is retried the same way and a 4xx is refused at once. `nextStep` and `retryable` are the pure decisions, tested beside `verdict`.
+
 
 ## 2026-09-21 — Foxxi: content judgments calibrate; the kit scores one answer among options
 

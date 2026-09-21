@@ -28,6 +28,16 @@
  *      accuracy at least MIN_AGREEMENT with at least one contributing attestation. This is the
  *      published evidence being consumed, not recomputed.
  *
+ * and, in both modes, last:
+ *
+ *   8. GitHub reports the pull request mergeable. A branch that conflicts with master merges for
+ *      nobody, and bin/auto-merge.ts labels BEFORE it merges (so the close-time job never scores
+ *      an automatic merge as a person's), so a merge command that then failed would leave the
+ *      label on a pull request a person merges next — which is what #436 did on 2026-09-21 when
+ *      the Foxxi merge landed a changelog conflict under it. Mergeability is read at decision
+ *      time; UNKNOWN (GitHub still computing) is refused like a conflict, and the next push
+ *      decides again.
+ *
  * The operator turned the person off on 2026-09-21 ("i dont need human review"), so by default
  * needs-human-review is advisory: the gate still judges every diff and records its verdict,
  * and calibration keeps scoring it, but nothing waits. An automatic merge is labelled
@@ -74,6 +84,8 @@ export interface AutoMergeInputs {
   /** The reputation snapshot (GET /jev-harness/reputation): per-axis ratings and how many attestations contributed. */
   readonly reputation?: { readonly axes: Readonly<Record<string, number>>; readonly contributing: number };
   readonly reputationError?: string;
+  /** GitHub's mergeability of the pull request at decision time: MERGEABLE, CONFLICTING or UNKNOWN. */
+  readonly mergeable?: string;
 }
 
 export interface AutoMergeEvidence {
@@ -139,6 +151,13 @@ export function autoMergeDecision(input: AutoMergeInputs, policy: AutoMergePolic
         : `the reputation from ${input.reputation.contributing} attestation(s) rates accuracy ${accuracy} (floor ${policy.minAgreement})`);
     }
   }
+
+  const mergeable = input.mergeable ?? 'UNKNOWN';
+  check(mergeable === 'MERGEABLE', mergeable === 'MERGEABLE'
+    ? 'GitHub reports the pull request mergeable'
+    : mergeable === 'CONFLICTING'
+      ? 'the pull request conflicts with master (merge master in and push; the next run decides again)'
+      : `GitHub has not settled whether the pull request is mergeable (mergeable: ${mergeable}); the next run decides again`);
 
   return { merge: holds.every(Boolean), reasons, evidence };
 }
