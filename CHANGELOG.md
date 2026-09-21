@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-21 — Private feedback direct-owner proof
+
+Private performance authorization now distinguishes a direct owner signature from a delegated `did:ethr` identity signed by a different anchor. Only an exact recovered signer/address match bypasses delegation scopes; a DiscoverOnly delegated agent can read but cannot write. A signed-envelope regression reproduces the former prefix-only bypass and verifies owner access plus cross-pod refusal.
+
 ## 2026-09-21 — Private evidence-bound performance feedback
 
 Foxxi can bind a signed AGP plan to baseline evidence, persist one measured learner/intervention episode in the verified account’s encrypted pod, and read its own empirical calibration without seed outcomes. Private plans/outcomes have server authentication tags, immutable logical retry checks and encrypted ETag compare-and-swap persistence. Authorized ChatGPT/Claude delegates for the same pod share records while retaining actor provenance. Private review invokes the calibration decision helper without adding an episode; caller-supplied assessor evidence remains Hypothetical and cannot trigger automatic rate-driven swaps. Numeric arithmetic and evidence hashes are verified, not assessor truth or causal learning. See `applications/foxxi-content-intelligence/PRIVATE-PERFORMANCE-FEEDBACK.md`.

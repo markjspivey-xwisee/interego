@@ -204,7 +204,7 @@ describe('private encrypted CAS persistence', () => {
 });
 
 function authConfig(scope = ['discover', 'publish']) {
-  return { recover: (_body: unknown) => ({ ok: true as const, agentId: ACTOR }), verify: async (body: unknown) => ({ ok: true as const, callerDid: ACTOR, payload: body as Record<string, unknown> }), ownPod: (_actor: string) => POD, samePod: (a: string | undefined, b: string) => a?.replace('http://internal/', 'https://pod.example/') === b, credential: async () => ({ pod: POD, scope }) };
+  return { recover: (_body: unknown) => ({ ok: true as const, agentId: ACTOR, signer: `0x${"11".repeat(20)}` }), verify: async (body: unknown) => ({ ok: true as const, callerDid: ACTOR, payload: body as Record<string, unknown> }), ownPod: (_actor: string) => POD, samePod: (a: string | undefined, b: string) => a?.replace('http://internal/', 'https://pod.example/') === b, credential: async () => ({ pod: POD, scope }) };
 }
 describe('private transport and scope binding', () => {
   it('accepts relay-stamped own pod and rejects steering, missing publish and unsigned calls', async () => {
@@ -217,6 +217,34 @@ describe('private transport and scope binding', () => {
     expect(await unsigned({}, false)).toMatchObject({ ok: false, status: 401 });
     const wrongScope = makePrivatePerformanceVerifier({ ...authConfig(), credential: async () => ({ pod: 'https://pod.example/victim/', scope: ['discover', 'publish'] }) });
     expect((await wrongScope({}, true)).ok).toBe(false);
+  });
+  it('enforces delegated did:ethr scopes while allowing the proven direct owner key', async () => {
+    const owner = Wallet.createRandom(), anchor = Wallet.createRandom();
+    const actor = `did:ethr:${owner.address}`;
+    let credentialReads = 0;
+    const verifier = makePrivatePerformanceVerifier({
+      ...authConfig(), recover: recoverSignedRequest,
+      // Existing bridge verifier accepts a separately anchored delegation and
+      // returns the AGENT did:ethr, not the anchor's DID. Only that I/O is doubled.
+      verify: async body => {
+        const rec = recoverSignedRequest(body);
+        return rec.ok && rec.agentId === actor && [owner.address, anchor.address].includes(rec.signer)
+          ? { ok: true, callerDid: actor, payload: rec.payload }
+          : { ok: false, status: 401, error: 'Unrecognized owner/delegation anchor' };
+      },
+      credential: async () => { credentialReads++; return { pod: POD, scope: ['discover'] }; },
+    });
+    const sign = async (wallet: typeof owner, pod = POD) => {
+      const payload = JSON.stringify({ agent_id: actor, timestamp: new Date().toISOString(), subject_pod_url: pod });
+      return { _signed_payload: payload, _signature: await wallet.signMessage('sha256:' + createHash('sha256').update(payload).digest('hex')) };
+    };
+    const delegated = await sign(anchor);
+    expect(await verifier(delegated, true)).toMatchObject({ ok: false, status: 403 });
+    expect((await verifier(delegated, false)).ok).toBe(true);
+    expect(credentialReads).toBe(2);
+    expect((await verifier(await sign(owner), true)).ok).toBe(true);
+    expect(credentialReads).toBe(2); // direct owner bypass rests on proof, not prefix
+    expect(await verifier(await sign(owner, "https://pod.example/victim/"), true)).toMatchObject({ ok: false, status: 403 });
   });
   it('exercises discoverable signed plan, own profile, immutable retry, outcome/read and review-only routes', async () => {
     const pod = podDouble(), store = pod.store(), app = express(); app.use(express.json());
