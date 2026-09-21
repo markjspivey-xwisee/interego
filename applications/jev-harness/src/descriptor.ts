@@ -15,22 +15,14 @@
 
 import type { AnyJudgment } from './judgments/outcome.js';
 import type { OutcomeRecord } from './judgments/outcome.js';
-import { iriRef } from './turtle.js';
+import {
+  attributionLines, bool, controlLines, dbl, documentHeadLines, hmdDocument, iri, lit,
+  payloadPrefixes as kitPayloadPrefixes, renderDescriptorTrig, HMD_PROFILE, type Control,
+} from '../../_shared/judgment-kit/index.js';
 import { round } from './judgments/common.js';
 
-export const IEP = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
-export const IEH = 'https://markjspivey-xwisee.github.io/interego/ns/harness#';
-export const HMD = 'https://relay.interego.xwisee.com/ns/maintainer/hmd#';
-export const HMD_PROFILE = 'https://relay.interego.xwisee.com/ns/maintainer/hmd';
-export const HYDRA = 'http://www.w3.org/ns/hydra/core#';
-export const PROV = 'http://www.w3.org/ns/prov#';
-export const DCT = 'http://purl.org/dc/terms/';
-export const SKOS = 'http://www.w3.org/2004/02/skos/core#';
-export const SCHEMA = 'https://schema.org/';
-export const XSD = 'http://www.w3.org/2001/XMLSchema#';
-export const RDF = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#';
-export const AS = 'https://www.w3.org/ns/activitystreams#';
-export const DCAT = 'http://www.w3.org/ns/dcat#';
+export { IEP, IEH, HMD, HMD_PROFILE, HYDRA, PROV, DCT, SKOS, SCHEMA, XSD, RDF, AS, DCAT, PAYLOAD_PREFIXES, escapeTurtleLiteral } from '../../_shared/judgment-kit/index.js';
+export type { Control } from '../../_shared/judgment-kit/index.js';
 export const DEFAULT_NS = 'https://jev-harness.interego.xwisee.com/ns/jev-harness#';
 
 export type Published = AnyJudgment | OutcomeRecord;
@@ -42,20 +34,6 @@ export interface PublishContext {
   readonly ns: string;
   readonly agentId: string;
   readonly ownerWebId?: string;
-}
-
-export interface Control {
-  readonly id: string;
-  readonly name: string;
-  readonly title: string;
-  readonly action: string;
-  readonly method: 'GET' | 'POST';
-  readonly target?: string;
-  readonly expects?: string;
-  readonly returns?: string;
-  readonly arguments?: unknown;
-  readonly scopeNote: string;
-  readonly declarative: boolean;
 }
 
 export function contextFromEnv(base: string): PublishContext {
@@ -204,29 +182,14 @@ function returnsFor(verb: string): string {
 }
 
 // ── Turtle ────────────────────────────────────────────────────────────────────
-
-/** Turtle STRING_LITERAL_QUOTE escaping: backslash, quote, LF, CR, TAB. */
-export function escapeTurtleLiteral(s: string): string {
-  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
-}
-
-const lit = (s: string): string => `"${escapeTurtleLiteral(s)}"`;
-const dbl = (n: number): string => `"${Number.isFinite(n) ? n : 0}"^^xsd:double`;
-const bool = (b: boolean): string => `"${b}"^^xsd:boolean`;
-const iri = (i: string): string => iriRef(i);
-const prefixLine = (prefix: string, ns: string): string => `@prefix ${prefix}: ${iriRef(ns)} .`;
-
-/** Prefixes the payload body uses. Predicates are written as prefixed names on purpose: the
- *  relay's note projection recognises a payload as readable by the tokens `schema:text`,
- *  `schema:name`, `dct:title` and friends in the Turtle it stores (deploy/mcp-relay/note-view.ts),
- *  and projects `hmd:control` entries into :::control blocks the same way. Absolute IRIs are
- *  semantically identical and render nothing — measured on the first published judgment. */
-export const PAYLOAD_PREFIXES: ReadonlyArray<readonly [string, string]> = [
-  ['rdf', RDF], ['dct', DCT], ['schema', SCHEMA], ['prov', PROV], ['skos', SKOS], ['hmd', HMD], ['iep', IEP], ['hydra', HYDRA], ['xsd', XSD],
-];
+//
+// The literal and IRI helpers, the payload prefixes and the descriptor renderers live in the
+// shared judgment kit (applications/_shared/judgment-kit) since 2026-09-21, because Foxxi
+// publishes judgments the same way. This file keeps what is the harness's own: which triples
+// each judgment kind emits, which controls emerge from it, and how it reads as prose.
 
 export function payloadPrefixes(ctx: PublishContext): string {
-  return [...PAYLOAD_PREFIXES.map(([p, ns]) => prefixLine(p, ns)), prefixLine('jvh', ctx.ns)].join('\n');
+  return kitPayloadPrefixes(ctx.ns, 'jvh');
 }
 
 /** The judgment's named-graph triples as a complete Turtle document — what publish_context stores. */
@@ -242,20 +205,12 @@ export function payloadBody(j: Published, ctx: PublishContext): string {
   const t = (p: string, o: string): void => { lines.push(`${S} ${p} ${o} .`); };
   const controls = controlsFor(j, ctx);
 
-  t('a', P(payloadType(j)));
-  t('a', P('Judgment'));
-  t('a', 'hmd:Document');
-  t('dct:conformsTo', iri(HMD_PROFILE));
-  t('dct:title', lit(titleOf(j)));
-  t('schema:name', lit(titleOf(j)));
-  t('schema:text', lit(proseOf(j)));
-  t('schema:encodingFormat', lit('text/markdown; charset=UTF-8; variant=CommonMark'));
+  lines.push(...documentHeadLines(S, { types: [P(payloadType(j)), P('Judgment')], title: titleOf(j), prose: proseOf(j) }));
   t(P('model'), lit(j.model));
   t(P('confidence'), dbl(j.confidence));
   t(P('repository'), lit(j.repository.name));
   if (j.repository.commit) t(P('commit'), lit(j.repository.commit));
-  t('prov:wasAttributedTo', iri(ctx.agentId));
-  t('dct:created', `"${j.createdAt}"^^xsd:dateTime`);
+  lines.push(...attributionLines(S, ctx.agentId, j.createdAt));
 
   const bn = (props: Array<[string, string]>): string => `[ ${props.map(([p, o]) => `${p} ${o}`).join(' ; ')} ]`;
   switch (j.kind) {
@@ -328,22 +283,7 @@ export function payloadBody(j: Published, ctx: PublishContext): string {
       break;
   }
 
-  for (const c of controls) {
-    const C = iri(c.id);
-    t('hmd:control', C);
-    lines.push(`${C} a hmd:Control, iep:Affordance, hydra:Operation .`);
-    lines.push(`${C} dct:title ${lit(c.title)} .`);
-    lines.push(`${C} hmd:rel ${iri(c.action)} .`);
-    lines.push(`${C} iep:action ${iri(c.action)} .`);
-    lines.push(`${C} hmd:method ${lit(c.method)} .`);
-    lines.push(`${C} hydra:method ${lit(c.method)} .`);
-    if (c.target) lines.push(`${C} hydra:target ${iri(c.target)} .`);
-    if (c.expects) { lines.push(`${C} hydra:expects ${iri(c.expects)} .`); lines.push(`${C} iep:inputShape ${iri(c.expects)} .`); }
-    if (c.returns) lines.push(`${C} hydra:returns ${iri(c.returns)} .`);
-    if (c.arguments !== undefined) lines.push(`${C} ${P('argumentsJson')} ${lit(JSON.stringify(c.arguments))} .`);
-    lines.push(`${C} ${P('declarative')} ${bool(c.declarative)} .`);
-    lines.push(`${C} skos:scopeNote ${lit(c.scopeNote)} .`);
-  }
+  lines.push(...controlLines(S, controls, P));
   return lines.join('\n') + '\n';
 }
 
@@ -354,81 +294,25 @@ export interface DescriptorOptions {
 
 /** A self-contained descriptor (facets, affordance, payload graph) in TriG. */
 export function descriptorTrig(j: Published, ctx: PublishContext, opts: DescriptorOptions = {}): string {
-  const D = iri(descriptorIri(j));
-  const status = modalStatus(j);
-  const validFrom = opts.validFrom ?? j.createdAt;
-  const issuer = ctx.ownerWebId ?? ctx.agentId;
   const url = judgmentUrl(j, ctx);
-  const prefixes = [payloadPrefixes(ctx), prefixLine('ieh', IEH), prefixLine('as', AS), prefixLine('dcat', DCAT)].join('\n');
-  const supersedes = (opts.supersedes ?? []).map((s) => `    iep:supersedes ${iri(s)} ;`).join('\n');
-  const semiotic = status === 'Asserted'
-    ? `        iep:groundTruth ${bool(true)} ;\n        iep:modalStatus iep:Asserted ;`
-    : `        iep:modalStatus iep:Hypothetical ;`;
-  const descriptor = `${D}
-    a iep:ContextDescriptor ;
-    iep:version "1"^^xsd:integer ;
-    iep:validFrom "${validFrom}"^^xsd:dateTime ;
-${supersedes}
-    dct:conformsTo ${iri(`${ctx.ns}${payloadType(j)}Shape`)} ;
-    dct:conformsTo ${iri(HMD_PROFILE)} ;
-    iep:describes ${iri(j.graphIri)} ;
-    iep:hasFacet [
-        a iep:TemporalFacet ;
-        iep:validFrom "${validFrom}"^^xsd:dateTime
-    ] ;
-    iep:hasFacet [
-        a iep:ProvenanceFacet ;
-        prov:wasGeneratedBy [
-            a prov:Activity ;
-            prov:wasAssociatedWith ${iri(ctx.agentId)} ;
-            prov:used ${iri(`urn:typesafe:model:${j.model}`)} ;
-            prov:endedAtTime "${j.createdAt}"^^xsd:dateTime
-        ] ;
-        prov:wasAttributedTo ${iri(issuer)} ;
-        prov:generatedAtTime "${j.createdAt}"^^xsd:dateTime
-    ] ;
-    iep:hasFacet [
-        a iep:AgentFacet ;
-        iep:assertingAgent [
-            a prov:SoftwareAgent, as:Application ;
-            iep:agentIdentity ${iri(ctx.agentId)}
-        ] ;
-        iep:agentRole iep:Author${ctx.ownerWebId ? ` ;\n        iep:onBehalfOf ${iri(ctx.ownerWebId)}` : ''}
-    ] ;
-    iep:hasFacet [
-        a iep:SemioticFacet ;
-${semiotic}
-        iep:epistemicConfidence ${dbl(j.confidence)}
-    ] ;
-    iep:hasFacet [
-        a iep:TrustFacet ;
-        iep:issuer ${iri(issuer)} ;
-        iep:trustLevel iep:SelfAsserted
-    ] ;
-    iep:hasFacet [
-        a iep:FederationFacet ;
-        iep:origin ${iri(ctx.base + '/')} ;
-        iep:storageEndpoint ${iri(ctx.base + '/')}
-    ] .
-
-${D} iep:affordance [
-    a iep:Affordance, ieh:Affordance, hydra:Operation, dcat:Distribution ;
-    iep:action iep:canFetchPayload ;
-    hydra:method "GET" ;
-    hydra:target ${iri(`${url}.trig`)} ;
-    hydra:returns iep:GraphPayload ;
-    hydra:title "Fetch graph payload" ;
-    dcat:accessURL ${iri(`${url}.trig`)} ;
-    dcat:mediaType "application/trig" ;
-    iep:encrypted false ;
-    iep:visibility "public"
-] .
-
-${iri(j.graphIri)} {
-${payloadBody(j, ctx).split('\n').filter(Boolean).map((l) => `    ${l}`).join('\n')}
-}
-`;
-  return `${prefixes}\n\n${descriptor}`;
+  return renderDescriptorTrig({
+    descriptorIri: descriptorIri(j),
+    graphIri: j.graphIri,
+    status: modalStatus(j),
+    confidence: j.confidence,
+    createdAt: j.createdAt,
+    ...(opts.validFrom ? { validFrom: opts.validFrom } : {}),
+    model: j.model,
+    agentId: ctx.agentId,
+    ...(ctx.ownerWebId ? { ownerWebId: ctx.ownerWebId } : {}),
+    base: ctx.base,
+    conformsTo: [`${ctx.ns}${payloadType(j)}Shape`, HMD_PROFILE],
+    payloadUrl: `${url}.trig`,
+    payloadMediaType: 'application/trig',
+    ...(opts.supersedes ? { supersedes: opts.supersedes } : {}),
+    prefixes: payloadPrefixes(ctx),
+    payloadBody: payloadBody(j, ctx),
+  });
 }
 
 // ── HyperMarkdown projection ──────────────────────────────────────────────────
@@ -484,39 +368,14 @@ export function proseOf(j: Published): string {
 }
 
 export function hmdMarkdown(j: Published, ctx: PublishContext): string {
-  const url = judgmentUrl(j, ctx);
-  const controls = controlsFor(j, ctx);
-  const front = [
-    '---',
-    '"@context":',
-    `  - iep: "${IEP}"`,
-    `    hydra: "${HYDRA}"`,
-    `    hmd: "${HMD}"`,
-    `    jvh: "${ctx.ns}"`,
-    `"@id": "${url}"`,
-    `"@type": ["jvh:${payloadType(j)}", "hmd:Document"]`,
-    `descriptorUrl: "${url}.trig"`,
-    `state: "${modalStatus(j).toLowerCase()}"`,
-    `graph: "${j.graphIri}"`,
-    '---',
-    '',
-  ];
-  const body = [proseOf(j), '', `_${modalStatus(j)} judgment — its controls are below. Executable controls name this bridge's own targets; declarative ones are performed by the follower or a person._`, ''];
-  for (const c of controls) {
-    body.push(`:::control ${c.name}`);
-    body.push(`type: ["hmd:Control", "hydra:Operation"]`);
-    body.push(`title: ${JSON.stringify(c.title)}`);
-    body.push(`rel: "${c.action}"`);
-    body.push(`method: "${c.method}"`);
-    if (c.target) body.push(`target: "${c.target}"`);
-    else body.push('declarative: true');
-    if (c.expects) body.push(`expects: "${c.expects}"`);
-    if (c.returns) body.push(`returns: "${c.returns}"`);
-    if (c.arguments !== undefined) body.push(`arguments: ${JSON.stringify(c.arguments)}`);
-    body.push(`source: "${url}.trig"`);
-    body.push(`note: ${JSON.stringify(c.scopeNote)}`);
-    body.push(':::', '');
-  }
-  body.push('> To act: dereference the descriptor and follow a control by its `rel` — the follower re-resolves the live `target` from the signed source, never from this rendering.');
-  return `${front.join('\n')}${body.join('\n')}\n`;
+  return hmdDocument({
+    url: judgmentUrl(j, ctx),
+    nsPrefix: 'jvh',
+    ns: ctx.ns,
+    payloadType: payloadType(j),
+    state: modalStatus(j) === 'Asserted' ? 'asserted' : 'hypothetical',
+    graphIri: j.graphIri,
+    prose: proseOf(j),
+    controls: controlsFor(j, ctx),
+  });
 }
