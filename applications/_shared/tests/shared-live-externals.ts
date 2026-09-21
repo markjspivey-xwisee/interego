@@ -559,6 +559,13 @@ export const SHARED_ONLY_THROUGH_IMPORTED_CODE: readonly {
       + 'live. Shared because every jev-harness test builds an inventory.',
   },
   {
+    name: 'JEV_HARNESS_CONTROL_BASE',
+    readIn: 'applications/jev-harness/src/descriptor.ts',
+    why: 'where a bridge\'s executable controls point when it is not the bridge itself (a CI '
+      + 'bridge names the deployed one, which answers the same verbs); a URL the controls carry, '
+      + 'never dialled by the code that reads it. Shared because every judgment serializer reads it.',
+  },
+  {
     name: 'JEV_HARNESS_NS',
     readIn: 'applications/jev-harness/src/descriptor.ts',
     why: 'the vocabulary namespace of the vertical when it is served from somewhere other than '

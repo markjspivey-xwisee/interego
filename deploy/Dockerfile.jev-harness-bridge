@@ -91,7 +91,7 @@ COPY tests/ ./tests/
 COPY tools/ ./tools/
 
 # Compile @interego/* → dist/, which the vertical's turtle guard imports by name.
-RUN npm run build:core
+RUN npm run build:core && npm run build --workspace @interego/registry
 
 RUN mkdir -p node_modules/@interego \
   && ln -sfn /app/packages/core node_modules/@interego/core

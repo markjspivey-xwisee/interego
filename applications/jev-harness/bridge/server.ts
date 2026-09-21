@@ -184,6 +184,11 @@ export function createApp(opts: AppOptions): { app: Express; harness: Harness } 
     } catch (err) { next(err); }
   });
 
+  // What the pod attests about this agent, aggregated by the registry under the harness policy.
+  app.get('/jev-harness/reputation', async (_req, res, next) => {
+    try { res.json(await harness.reputation()); } catch (err) { next(err); }
+  });
+
   // The view onto the pod, and the attestation it grounds. Forced unless ?if_changed=1.
   app.post('/jev-harness/calibration/publish', async (req, res, next) => {
     try { res.json(await harness.publishCalibration({ force: req.query['if_changed'] !== '1' })); } catch (err) { next(err); }

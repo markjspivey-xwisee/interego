@@ -23,6 +23,10 @@
  *      review verdict agreeing with people at least MIN_AGREEMENT of the time over at least
  *      MIN_LIVE_SAMPLES live outcomes, disagreeing (auto-ok where a person then asked for
  *      changes or blocked) at most MAX_DISAGREEMENT. Replayed history does not count.
+ *   7. the attestation says so too: the reputation the bridge serves (every attestation about
+ *      the agent on the pod, aggregated by the registry under the harness policy) rates
+ *      accuracy at least MIN_AGREEMENT with at least one contributing attestation. This is the
+ *      published evidence being consumed, not recomputed.
  *
  * The operator turned the person off on 2026-09-21 ("i dont need human review"), so by default
  * needs-human-review is advisory: the gate still judges every diff and records its verdict,
@@ -67,6 +71,9 @@ export interface AutoMergeInputs {
   readonly calibration?: { readonly cells: readonly CalibrationCellLike[] };
   /** Why the calibration could not be read, when it could not. */
   readonly calibrationError?: string;
+  /** The reputation snapshot (GET /jev-harness/reputation): per-axis ratings and how many attestations contributed. */
+  readonly reputation?: { readonly axes: Readonly<Record<string, number>>; readonly contributing: number };
+  readonly reputationError?: string;
 }
 
 export interface AutoMergeEvidence {
@@ -121,6 +128,15 @@ export function autoMergeDecision(input: AutoMergeInputs, policy: AutoMergePolic
     } else {
       const earned = evidence.agreeRate >= policy.minAgreement && (evidence.disagreeRate ?? 0) <= policy.maxDisagreement;
       check(earned, `${evidence.liveSamples} live review-verdict outcome(s): agreement ${evidence.agreeRate} (floor ${policy.minAgreement}), disagreement ${evidence.disagreeRate} (ceiling ${policy.maxDisagreement})`);
+    }
+    if (!input.reputation) {
+      check(false, `no attestation-based reputation could be read${input.reputationError ? ` (${input.reputationError})` : ''}, so no published evidence vouches for the verdict`);
+    } else {
+      const accuracy = input.reputation.axes['accuracy'];
+      const vouched = input.reputation.contributing > 0 && accuracy !== undefined && accuracy >= policy.minAgreement;
+      check(vouched, accuracy === undefined
+        ? `the ${input.reputation.contributing} attestation(s) on the pod rate no accuracy axis`
+        : `the reputation from ${input.reputation.contributing} attestation(s) rates accuracy ${accuracy} (floor ${policy.minAgreement})`);
     }
   }
 

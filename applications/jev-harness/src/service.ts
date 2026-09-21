@@ -14,6 +14,8 @@ import { reviewGate, type ReviewGateInput, type ReviewVerdictJudgment } from './
 import { recordOutcome, type AnyJudgment, type OutcomeInput, type OutcomeRecord } from './judgments/outcome.js';
 import { publishGraph, publishJudgment, recordTrajectoryStep, type RelayClient } from './publish.js';
 import { attestationGraphIri, attestationPayload, calibrationFingerprint, calibrationGraphIri, calibrationPayload } from './calibration-publish.js';
+import { fetchPodAttestations, reputationOf, REPUTATION_POLICY, type PodAttestation } from './reputation.js';
+import type { AggregationPolicy, ReputationSnapshot } from '@interego/registry';
 import { changedFiles, inventory, unifiedDiff, type RepoInventory } from './repo.js';
 import { fetchPodOutcomes } from './pod-calibration.js';
 import { judgmentFromContent, type PodJudgment } from './pod-judgment.js';
@@ -37,6 +39,18 @@ export interface CalibrationPublishState {
   /** Absent when no cell had reached its sample floor, so no attestation was issued. */
   readonly attestationUrl?: string;
   readonly error?: string;
+}
+
+export interface ReputationView {
+  readonly status: 'ok' | 'off' | 'failed';
+  readonly subject: string;
+  readonly policy: AggregationPolicy;
+  readonly attestations: readonly PodAttestation[];
+  /** null when nothing on the pod attests to the agent. */
+  readonly snapshot: ReputationSnapshot | null;
+  readonly scanned: number;
+  readonly errors: readonly string[];
+  readonly computedAt: string;
 }
 
 export interface PublishState {
@@ -148,6 +162,23 @@ export class Harness {
 
   calibration(): CalibrationView {
     return this.store.calibration();
+  }
+
+  /**
+   * What the pod says about this agent, aggregated under the harness policy by the registry:
+   * the bridge's own grounded self-attestation and any a peer publishes. The gated auto-merge
+   * reads the snapshot's accuracy axis when a person is required.
+   */
+  async reputation(): Promise<ReputationView> {
+    const computedAt = new Date().toISOString();
+    const subject = this.ctx.agentId;
+    if (!this.relay || !this.relay.podName) return { status: 'off', subject, policy: REPUTATION_POLICY, attestations: [], snapshot: null, scanned: 0, errors: [], computedAt };
+    try {
+      const r = await fetchPodAttestations(this.relay, this.relay.podName);
+      return { status: 'ok', subject, policy: REPUTATION_POLICY, attestations: r.attestations, snapshot: reputationOf(subject, r.attestations, REPUTATION_POLICY, computedAt), scanned: r.scanned, errors: r.errors.slice(0, 5), computedAt };
+    } catch (err) {
+      return { status: 'failed', subject, policy: REPUTATION_POLICY, attestations: [], snapshot: null, scanned: 0, errors: [(err as Error).message], computedAt };
+    }
   }
 
   /**

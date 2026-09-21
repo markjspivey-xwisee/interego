@@ -72,7 +72,7 @@ export function calibrationControls(ctx: PublishContext, repoName: string): Cont
     title: 'Read the live calibration view',
     action: actionIri('calibration'),
     method: 'GET',
-    target: `${ctx.base}/jev-harness/calibration`,
+    target: `${ctx.controlBase ?? ctx.base}/jev-harness/calibration`,
     returns: `${ctx.ns}Calibration`,
     scopeNote: 'The view this descriptor was computed from, as it stands now; this descriptor is the snapshot the chain keeps.',
     declarative: false,
