@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-21 — Foxxi: content judgments calibrate; the kit scores one answer among options
+
+`foxxi.confirm_content_judgment` lets a learning engineer or admin say what is true about a judged claim: an Asserted `foxxi:ContentJudgmentOutcome` supersedes the judgment descriptor on the tenant pod (the entity publisher can now supersede) and records whether the model had the answer and the multiclass Brier score of its probabilities. `foxxi.content_judgment_calibration` reads those outcomes back and reports, per question kind, hit rate and mean Brier with the same five-sample floor the harness uses. The judgment kit gains `choiceBrier` and `calibrationCell`, the scoring both verticals share.
+
 ## 2026-09-21 — jev-harness: no person is required unless the operator says so
 
 The review gate still judges every diff and records its verdict, but needs-human-review is now advisory: the CI job fails only for block (a secret in the diff), `bin/follow.ts --gate-blocks-only` is how, and the repository variable `JEV_REQUIRE_HUMAN_REVIEW=true` restores the old behaviour. The gated auto-merge policy has the same switch: without a person required it merges on armed, token, green tests and any verdict but block; with one, auto-ok and an earned calibration are required as before. An automatic merge is labelled `jev-harness:auto-merged` before it is made, and the close-time job records no human decision for it, so calibration keeps counting only people.

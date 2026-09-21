@@ -26,7 +26,7 @@
  * The model supplies the semantic reading. Nothing here touches the network except the client.
  */
 
-import { hmdDocument, type Control } from '../../_shared/judgment-kit/index.js';
+import { calibrationCell, choiceBrier, hmdDocument, type CalibrationCellSummary, type Control } from '../../_shared/judgment-kit/index.js';
 import { estimateTokens, type ChoiceAnswer, type JevClient, type Question, type ScoreAnswer } from '../../_shared/judgment-kit/jev-client.js';
 import { FOXXI_NS } from './foxxi-vocab.js';
 
@@ -249,4 +249,108 @@ export function contentJudgmentMarkdown(j: ContentJudgment, controls: readonly C
     prose: contentJudgmentProse(j),
     controls,
   });
+}
+
+// ── Outcomes and calibration ──────────────────────────────────────────────────────────
+//
+// A judgment is Hypothetical until a person says what is true. The outcome is that saying:
+// Asserted, superseding the judgment on the pod, carrying whether the model had it and how
+// far off its probabilities were. Calibration is computed over the outcomes on the pod, per
+// question kind, with the same floor the harness uses.
+
+export const CONTENT_JUDGMENT_TYPE = `${FOXXI_NS}ContentJudgment`;
+export const CONTENT_JUDGMENT_OUTCOME_TYPE = `${FOXXI_NS}ContentJudgmentOutcome`;
+export const CONTENT_JUDGMENT_MIN_SAMPLES = 5;
+
+export interface ContentJudgmentOutcome {
+  readonly kind: 'content-judgment-outcome';
+  readonly judgmentId: string;
+  /** The judgment entity on the pod (urn:foxxi:judgment:<uid>). */
+  readonly judgmentIri: string;
+  readonly judgmentKind: ContentJudgmentKind;
+  /** What the model answered. */
+  readonly answer: string;
+  /** What the person holds to be true. */
+  readonly confirmedAnswer: string;
+  readonly hit: boolean;
+  /** Multiclass Brier of the model's probabilities against the confirmed answer (0 best, 2 worst). */
+  readonly brier: number;
+  readonly confidence: number;
+  readonly confirmedBy: string;
+  readonly createdAt: string;
+  readonly note?: string;
+}
+
+export function scoreContentJudgment(j: Pick<ContentJudgment, 'answer' | 'probabilities'>, confirmed: string): { hit: boolean; brier: number } {
+  return { hit: j.answer === confirmed, brier: choiceBrier(j.probabilities, confirmed) };
+}
+
+/** The outcome a person's confirmation makes of a judgment; the answer must be one the judgment weighed. */
+export function contentJudgmentOutcome(j: ContentJudgment, judgmentIri: string, confirmed: string, by: { readonly did: string; readonly note?: string }, now: Date = new Date()): ContentJudgmentOutcome {
+  const alternatives = Object.keys(j.probabilities);
+  if (!alternatives.includes(confirmed)) throw new Error(`the confirmed answer must be one of ${alternatives.join(', ')}`);
+  const { hit, brier } = scoreContentJudgment(j, confirmed);
+  return {
+    kind: 'content-judgment-outcome', judgmentId: j.id, judgmentIri, judgmentKind: j.judgmentKind, answer: j.answer,
+    confirmedAnswer: confirmed, hit, brier, confidence: j.confidence, confirmedBy: by.did, createdAt: now.toISOString(),
+    ...(by.note ? { note: by.note } : {}),
+  };
+}
+
+/** The JSON a Foxxi entity graph carries as foxxi:bundleJson, or undefined when it carries none. */
+export function decodeBundleJson(graphTurtle: string): unknown {
+  const m = graphTurtle.match(/foxxi:bundleJson\s+"([^"]+)"\^\^xsd:base64Binary/);
+  if (!m) return undefined;
+  try { return JSON.parse(Buffer.from(m[1]!, 'base64').toString('utf8')); } catch { return undefined; }
+}
+
+export function isContentJudgment(v: unknown): v is ContentJudgment {
+  const j = v as Partial<ContentJudgment> | null;
+  return typeof j === 'object' && j !== null && j.kind === 'content-judgment' && typeof j.id === 'string' && typeof j.answer === 'string'
+    && typeof j.probabilities === 'object' && j.probabilities !== null && (CONTENT_JUDGMENT_KINDS as readonly string[]).includes(String(j.judgmentKind));
+}
+
+export function isContentJudgmentOutcome(v: unknown): v is ContentJudgmentOutcome {
+  const o = v as Partial<ContentJudgmentOutcome> | null;
+  return typeof o === 'object' && o !== null && o.kind === 'content-judgment-outcome' && typeof o.hit === 'boolean' && typeof o.brier === 'number'
+    && (CONTENT_JUDGMENT_KINDS as readonly string[]).includes(String(o.judgmentKind));
+}
+
+/** A manifest entry as the pod's discover() lists it; only the fields read here are named. */
+export interface EntityEntry {
+  readonly descriptorUrl?: string;
+  readonly describes?: readonly string[];
+  readonly graph?: string;
+  readonly graphUrl?: string;
+  readonly conformsTo?: readonly string[];
+}
+
+/** The entry describing an entity IRI, if the pod lists one. */
+export function findEntityEntry(entries: readonly EntityEntry[], entityIri: string): EntityEntry | undefined {
+  return entries.find((e) => e.graph === entityIri || (e.describes ?? []).some((d) => String(d) === entityIri));
+}
+
+/** Where an entity's graph is served: what the manifest says, else the publisher's slug convention under foxxi/judgments/. */
+export function entityGraphUrl(podUrl: string, entityIri: string, entry?: EntityEntry): string | undefined {
+  if (entry?.graphUrl) return entry.graphUrl;
+  const m = entityIri.match(/^urn:foxxi:([a-z-]+):([A-Za-z0-9-]+)$/);
+  if (!m) return undefined;
+  return `${podUrl.endsWith('/') ? podUrl : `${podUrl}/`}foxxi/judgments/${m[1]}-${m[2]}-graph.trig`;
+}
+
+export interface ContentCalibrationCell extends CalibrationCellSummary {
+  readonly judgmentKind: ContentJudgmentKind;
+}
+
+export interface ContentJudgmentCalibration {
+  readonly cells: readonly ContentCalibrationCell[];
+  readonly samples: number;
+  readonly minSamples: number;
+  readonly computedAt: string;
+}
+
+/** Per question kind: how often the model had the confirmed answer, and how far off its probabilities were. */
+export function contentJudgmentCalibration(outcomes: readonly ContentJudgmentOutcome[], minSamples: number = CONTENT_JUDGMENT_MIN_SAMPLES, now: Date = new Date()): ContentJudgmentCalibration {
+  const cells = CONTENT_JUDGMENT_KINDS.map((judgmentKind) => ({ judgmentKind, ...calibrationCell(outcomes.filter((o) => o.judgmentKind === judgmentKind), minSamples) }));
+  return { cells, samples: outcomes.length, minSamples, computedAt: now.toISOString() };
 }

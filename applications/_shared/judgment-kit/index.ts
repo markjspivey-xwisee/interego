@@ -322,3 +322,37 @@ export function brierScore(candidates: readonly { readonly key: string; readonly
   const sum = candidates.reduce((s, c) => s + (c.probability - (norm.has(normalizePath(c.key)) ? 1 : 0)) ** 2, 0);
   return Math.round((sum / candidates.length) * 1e4) / 1e4;
 }
+
+/**
+ * The multiclass Brier score of a Choice or Score answer against the answer a person
+ * confirmed: the sum over options of the squared distance between the probability given and
+ * whether the option was the truth, 0 for a certain right answer, 2 for a certain wrong one.
+ * (rankHits and brierScore above are for a RANKED list of candidates; this is for one answer
+ * among named options.)
+ */
+export function choiceBrier(probabilities: Readonly<Record<string, number>>, truth: string): number {
+  const options = new Set([...Object.keys(probabilities), truth]);
+  let sum = 0;
+  for (const o of options) sum += ((probabilities[o] ?? 0) - (o === truth ? 1 : 0)) ** 2;
+  return Math.round(sum * 1e4) / 1e4;
+}
+
+export interface CalibrationCellSummary {
+  readonly samples: number;
+  readonly hitRate: number | null;
+  readonly meanBrier: number | null;
+  /** Hypothetical until the cell holds the sample floor, Asserted after. */
+  readonly status: 'Hypothetical' | 'Asserted';
+}
+
+/** Hit rate and mean Brier over scored outcomes, with the status the sample floor gives them. */
+export function calibrationCell(rows: readonly { readonly hit: boolean | null; readonly brier: number | null }[], minSamples: number): CalibrationCellSummary {
+  const hits = rows.map((r) => r.hit).filter((h): h is boolean => h !== null);
+  const briers = rows.map((r) => r.brier).filter((b): b is number => b !== null);
+  return {
+    samples: rows.length,
+    hitRate: hits.length === 0 ? null : Math.round((hits.filter(Boolean).length / hits.length) * 1000) / 1000,
+    meanBrier: briers.length === 0 ? null : Math.round((briers.reduce((a, b) => a + b, 0) / briers.length) * 1e4) / 1e4,
+    status: rows.length >= minSamples ? 'Asserted' : 'Hypothetical',
+  };
+}

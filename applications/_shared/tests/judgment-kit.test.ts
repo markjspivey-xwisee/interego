@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import { Parser } from 'n3';
 import {
-  brierScore, controlLines, documentHeadLines, hmdDocument, payloadPrefixes, rankHits, renderDescriptorTrig,
+  brierScore, calibrationCell, choiceBrier, controlLines, documentHeadLines, hmdDocument, payloadPrefixes, rankHits, renderDescriptorTrig,
   attributionLines, lit, dbl, int, iri, HMD_PROFILE, type Control,
 } from '../judgment-kit/index.js';
 
@@ -110,5 +110,19 @@ describe('scoring', () => {
     expect(brierScore([{ key: 'a', probability: 1 }], new Set(['a']))).toBe(0);
     expect(brierScore([], new Set(['a']))).toBeNull();
     expect(brierScore([{ key: 'a', probability: 1 }], new Set())).toBeNull();
+  });
+});
+
+describe('scoring one answer among options', () => {
+  it('the multiclass Brier score is 0 for a certain right answer and 2 for a certain wrong one', () => {
+    expect(choiceBrier({ a: 1, b: 0 }, 'a')).toBe(0);
+    expect(choiceBrier({ a: 1, b: 0 }, 'b')).toBe(2);
+    expect(choiceBrier({ a: 0.5, b: 0.5 }, 'a')).toBe(0.5);
+    expect(choiceBrier({ a: 0.7 }, 'c')).toBe(1.49);
+  });
+  it('a cell reports hit rate and mean Brier and is Asserted from the floor', () => {
+    expect(calibrationCell([{ hit: true, brier: 0.2 }, { hit: false, brier: 1.2 }, { hit: null, brier: null }], 5)).toEqual({ samples: 3, hitRate: 0.5, meanBrier: 0.7, status: 'Hypothetical' });
+    expect(calibrationCell(Array.from({ length: 5 }, () => ({ hit: true, brier: 0 })), 5).status).toBe('Asserted');
+    expect(calibrationCell([], 5)).toEqual({ samples: 0, hitRate: null, meanBrier: null, status: 'Hypothetical' });
   });
 });

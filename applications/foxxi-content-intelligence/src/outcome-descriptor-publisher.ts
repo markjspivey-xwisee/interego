@@ -231,6 +231,7 @@ function buildDescriptor(args: {
   modalStatus?: 'Asserted' | 'Hypothetical' | 'Counterfactual';
   source?: string;
   trust?: ResolvedTrust;
+  supersedes?: readonly IRI[];
 }): ContextDescriptorData {
   const now = new Date().toISOString();
   const temporal: TemporalFacetData = { type: 'Temporal', validFrom: now };
@@ -296,6 +297,7 @@ function buildDescriptor(args: {
     describes: [args.entityIri],
     conformsTo: [args.typeIri],
     facets,
+    ...(args.supersedes && args.supersedes.length > 0 ? { supersedes: [...args.supersedes] } : {}),
   };
 }
 
@@ -327,6 +329,8 @@ interface PublishEntityArgs {
   modalStatus?: 'Asserted' | 'Hypothetical' | 'Counterfactual';
   /** Optional tenant/source label for the Federation facet. */
   source?: string;
+  /** Descriptor IRIs this entity supersedes: an outcome supersedes the judgment it scores. */
+  supersedes?: readonly IRI[];
 }
 
 /**
@@ -419,6 +423,7 @@ export async function publishFoxxiEntity(args: PublishEntityArgs): Promise<Publi
     modalStatus: args.modalStatus,
     source: args.source,
     trust,
+    supersedes: args.supersedes,
   });
 
   // SHACL-equivalent validation: assertValid() walks the seven-facet
