@@ -7109,6 +7109,7 @@ async function verifyPrivatePerformanceCaller(body: unknown, write: boolean): Pr
     recover: recoverSignedRequest,
     verify: verifyDelegatedCaller,
     ownPod: privatePerformancePod,
+    canonicalPod: canonicalPublicPodUrl,
     samePod,
     credential: async (pod, actor) => (await readDelegationCredential(pod, actor as IRI, { fetch: guardedFetchFn(globalThis.fetch) as never }).catch(() => null))?.credentialSubject ?? null,
   })(body, write);
