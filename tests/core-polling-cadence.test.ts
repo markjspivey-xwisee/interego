@@ -37,9 +37,24 @@ afterEach(() => { vi.useRealTimers(); });
 /** The shared quiet ceiling, restated here so a change to it fails these tests loudly. */
 const QUIET_MS = 10_000;
 
+/**
+ * ★ ONE CLOCK AT A TIME. Measured on 2026-09-21 (run 35552497204 on a loaded runner): the 300 s
+ * quiet test overran the 20 s budget, and vitest moves on from a timed-out test WITHOUT stopping
+ * it — its loop kept advancing the fake clock under the next test, which then counted 10 reads in
+ * what it believed was 60 s and failed for a reason that had nothing to do with the cadence. Each
+ * run takes a generation number and stops advancing the moment another run has begun; the steps
+ * are 1 s rather than 250 ms (the shortest cadence under test is 1 s, and timers still fire in
+ * order within a step), and the long test states its own budget.
+ */
+let generation = 0;
+async function advance(mine: number, forMs: number, step = 1_000): Promise<void> {
+  for (let t = 0; t < forMs && generation === mine; t += step) await vi.advanceTimersByTimeAsync(step);
+}
+
 /** Drive the watcher's timers deterministically, and count the reads it makes. */
 async function run(payloads: readonly unknown[], forMs: number, ceiling = QUIET_MS): Promise<number> {
   vi.useFakeTimers();
+  const mine = ++generation;
   let i = 0;
   let reads = 0;
   const stop = pollingWatch(
@@ -47,8 +62,7 @@ async function run(payloads: readonly unknown[], forMs: number, ceiling = QUIET_
     'read_channel', {}, () => { /* events are not what these tests are about */ },
     { refetchInterval: ceiling },
   );
-  // Advance in small steps so every scheduled timer fires in order.
-  for (let t = 0; t < forMs; t += 250) await vi.advanceTimersByTimeAsync(250);
+  await advance(mine, forMs);
   stop();
   return reads;
 }
@@ -71,7 +85,7 @@ describe('the cadence follows the conversation', () => {
     const reads = await run([{ same: true }], 300_000);
     expect(reads).toBeGreaterThan(20);
     expect(reads).toBeLessThan(40);
-  });
+  }, 60_000);
 
   it('★ the price of that is stated rather than hidden: ~6 reads a minute per watcher when idle', async () => {
     // Written down as a test so the cost cannot drift without somebody deciding to change it.
@@ -82,13 +96,14 @@ describe('the cadence follows the conversation', () => {
 
   it('★ a failing relay is backed off to the ceiling, not retried every two seconds', async () => {
     vi.useFakeTimers();
+    const mine = ++generation;
     let reads = 0;
     const stop = pollingWatch(
       async () => { reads++; throw new Error('relay is down'); },
       'read_channel', {}, () => { /* the error event itself is not under test */ },
       { refetchInterval: QUIET_MS },
     );
-    for (let t = 0; t < 60_000; t += 250) await vi.advanceTimersByTimeAsync(250);
+    await advance(mine, 60_000);
     stop();
     // At the ceiling, not the active cadence: a relay returning errors is not a live conversation,
     // and 30 failed reads a minute helps nobody.
@@ -97,16 +112,17 @@ describe('the cadence follows the conversation', () => {
 
   it('★ stopping actually stops it', async () => {
     vi.useFakeTimers();
+    const mine = ++generation;
     let reads = 0;
     const stop = pollingWatch(
       async () => { reads++; return { n: reads }; },
       'read_channel', {}, () => { /* ignored */ },
       { refetchInterval: QUIET_MS },
     );
-    for (let t = 0; t < 10_000; t += 250) await vi.advanceTimersByTimeAsync(250);
+    await advance(mine, 10_000);
     const atStop = reads;
     stop();
-    for (let t = 0; t < 60_000; t += 250) await vi.advanceTimersByTimeAsync(250);
+    await advance(mine, 60_000);
     // ★ The loop reschedules itself from inside a promise callback, so "stopped" has to be checked
     // on the way out as well as on the way in. Without that a cancelled watch keeps polling
     // forever, which on a client that opens one per workspace is a leak nobody would see.
