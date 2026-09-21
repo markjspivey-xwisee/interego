@@ -43,6 +43,9 @@ export interface IndexRow {
 export interface CalibrationCell {
   readonly kind: JudgmentKind;
   readonly samples: number;
+  /** Outcomes observed after real judgments (not replayed history), and their agreement counts. */
+  readonly liveSamples: number;
+  readonly liveAgreement: Readonly<Record<string, number>>;
   readonly status: 'Hypothetical' | 'Asserted';
   readonly hitAt1: number | null;
   readonly hitAt3: number | null;
@@ -294,9 +297,14 @@ export function computeCalibration(outcomes: readonly OutcomeRecord[], minSample
     const briers = rows.map((o) => o.brier).filter((b): b is number => b !== null);
     const agreement: Record<string, number> = {};
     for (const o of rows) if (o.agreement) agreement[o.agreement] = (agreement[o.agreement] ?? 0) + 1;
+    const live = rows.filter((o) => o.source === 'live');
+    const liveAgreement: Record<string, number> = {};
+    for (const o of live) if (o.agreement) liveAgreement[o.agreement] = (liveAgreement[o.agreement] ?? 0) + 1;
     return {
       kind,
       samples: rows.length,
+      liveSamples: live.length,
+      liveAgreement,
       status: rows.length >= minSamples ? 'Asserted' : 'Hypothetical',
       hitAt1: rate((o) => o.hitAt1),
       hitAt3: rate((o) => o.hitAt3),

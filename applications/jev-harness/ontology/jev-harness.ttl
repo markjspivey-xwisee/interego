@@ -164,6 +164,27 @@ jvh:precedentWeight a owl:DatatypeProperty ; rdfs:label "precedent weight"@en ; 
 jvh:priorPrecedentWeight a owl:DatatypeProperty ; rdfs:label "prior precedent weight"@en ; rdfs:range xsd:double ;
     rdfs:comment "On an Outcome of a navigation: the jvh:precedentWeight the scored judgment reported, so calibration can split navigation with memory from navigation without it."@en .
 
+# ── Payload properties of a published Calibration ───────────────────────────────
+
+jvh:cell a owl:ObjectProperty ; rdfs:label "cell"@en ;
+    rdfs:comment "On a Calibration: one judgment kind's measured record — its kind, sample counts, status, hit rates, Brier score and agreement counts."@en .
+jvh:cellStatus a owl:DatatypeProperty ; rdfs:label "cell status"@en ; rdfs:range xsd:string ;
+    rdfs:comment "On a cell: Hypothetical until the cell holds the sample floor, Asserted after."@en .
+jvh:liveSamples a owl:DatatypeProperty ; rdfs:label "live samples"@en ; rdfs:range xsd:integer ;
+    rdfs:comment "On a cell: how many of its outcomes were observed after real judgments rather than replayed from history."@en .
+jvh:agreementCount a owl:ObjectProperty ; rdfs:label "agreement count"@en ;
+    rdfs:comment "On a cell: how many outcomes carried one agreement value (agree, conservative, disagree, or a ratio)."@en .
+jvh:memory a owl:ObjectProperty ; rdfs:label "memory"@en ;
+    rdfs:comment "On a Calibration: navigation outcomes split by whether precedents contributed to the judgment."@en .
+jvh:memoryApplied a owl:ObjectProperty ; rdfs:label "with memory"@en ;
+    rdfs:comment "The cell of navigation outcomes whose judgment had a precedent weight above zero."@en .
+jvh:memoryNone a owl:ObjectProperty ; rdfs:label "without memory"@en ;
+    rdfs:comment "The cell of navigation outcomes whose judgment consulted no precedent that contributed."@en .
+jvh:minSamples a owl:DatatypeProperty ; rdfs:label "sample floor"@en ; rdfs:range xsd:integer ;
+    rdfs:comment "On a Calibration: the number of outcomes a cell needs before it is Asserted."@en .
+jvh:computedAt a owl:DatatypeProperty ; rdfs:label "computed at"@en ; rdfs:range xsd:dateTime ;
+    rdfs:comment "On a Calibration: when the view was computed."@en .
+
 # ── Input shapes (what a caller must SEND to each affordance) ────────────────
 #
 # Field IRIs are jvh:<field>; a JSON payload key matches the IRI's local name.

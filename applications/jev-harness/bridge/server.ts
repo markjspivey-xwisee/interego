@@ -105,6 +105,7 @@ export function createApp(opts: AppOptions): { app: Express; harness: Harness } 
       // from the pod, and how the last read-back went.
       outcomes: { local: harness.store.localOutcomes().length, pod: harness.store.podOutcomes().length },
       podBackfill: harness.store.podBackfill,
+      calibrationPublish: harness.calibrationPublish,
     });
   });
 
@@ -181,6 +182,11 @@ export function createApp(opts: AppOptions): { app: Express; harness: Harness } 
       const backfill = req.query['refresh'] === '1' ? await harness.backfillFromPod() : harness.store.podBackfill;
       res.json({ ...harness.calibration(), podBackfill: backfill });
     } catch (err) { next(err); }
+  });
+
+  // The view onto the pod, and the attestation it grounds. Forced unless ?if_changed=1.
+  app.post('/jev-harness/calibration/publish', async (req, res, next) => {
+    try { res.json(await harness.publishCalibration({ force: req.query['if_changed'] !== '1' })); } catch (err) { next(err); }
   });
 
   app.get('/jev-harness/judgments', (_req, res) => { res.json(harness.store.index()); });
