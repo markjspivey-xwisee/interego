@@ -8,6 +8,10 @@ name: jev-harness (System One judgments)
 #                    and block (exit 3), so branch protection can require a person only when the
 #                    gate asks for one
 #   artifacts        every judgment's JSON, payload Turtle, descriptor TriG and HyperMarkdown
+#   gated auto-merge merges on the gate's auto-ok alone, and only once the verdict has earned it
+#                    (armed by the JEV_AUTO_MERGE variable and the JEV_MERGE_TOKEN secret; the
+#                    policy is applications/jev-harness/src/auto-merge.ts); unarmed, it prints
+#                    the decision it would have taken
 #
 # Secrets: TYPESAFE_API_KEY (required). INTEREGO_AGENT_KEY_JSON (optional) makes the runner's bridge the
 # harness's delegate agent, so every judgment and outcome is published to the owner's pod through the
@@ -146,6 +150,47 @@ jobs:
           name: jev-harness-review
           include-hidden-files: true
           path: .jev-harness/
+
+  # ── Gated auto-merge ──────────────────────────────────────────────────────────────────
+  # Merges on the gate's auto-ok alone, and only when the verdict has earned it: the operator
+  # armed it (repository variable JEV_AUTO_MERGE=true), a token that triggers auto-deploy is
+  # present (secret JEV_MERGE_TOKEN — a merge made with GITHUB_TOKEN starts no workflows, so it
+  # would land the commit and ship nothing), the selection ran green, and the calibration the
+  # deployed bridge publishes from the pod shows at least twenty live review-verdict outcomes
+  # at ninety percent agreement (applications/jev-harness/src/auto-merge.ts is the policy, with
+  # its tests). Unarmed, the job prints the decision it would have taken and exits green, so the
+  # record accrues before anyone trusts it. It runs whatever the gate concluded, because the
+  # verdict it reads is in the gate's artifact, not in the gate's exit code.
+  auto-merge:
+    name: "gated auto-merge"
+    needs: [select-and-run, review-gate]
+    if: ${{ always() && github.event_name == 'pull_request' && github.event.action != 'closed' && needs.review-gate.result != 'cancelled' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build:core
+      - uses: actions/download-artifact@v4
+        with:
+          name: jev-harness-review
+          path: .jev-harness
+      - name: Decide, and merge only when every condition holds
+        env:
+          GH_TOKEN: ${{ secrets.JEV_MERGE_TOKEN }}
+          ARMED: ${{ vars.JEV_AUTO_MERGE }}
+          TOKEN_PRESENT: ${{ secrets.JEV_MERGE_TOKEN != '' }}
+          SELECTION_RESULT: ${{ needs.select-and-run.result }}
+          CALIBRATION_URL: https://jev-harness-bridge-production.up.railway.app/jev-harness/calibration
+        run: |
+          cd "$HARNESS_DIR"
+          npx tsx bin/auto-merge.ts --pr "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" \
+            --dir "${{ github.workspace }}/.jev-harness/follower" --calibration-url "$CALIBRATION_URL" \
+            --armed "$ARMED" --token-present "$TOKEN_PRESENT" --selection-result "$SELECTION_RESULT"
 
   outcomes-on-close:
     name: "score the judgments when the pull request closes"
