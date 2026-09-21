@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-21 — merge to live in a third of the time: the mutation gate runs on pull requests only, services deploy three at a time, installs are cached
+
+Measured on the day's merges: the mutation gate took 19-21 minutes on every master push and the deploy gate waited for it, so every rollout began twenty minutes after the pull request's own run of the same gate had passed; it now runs on pull requests only, while Bridge Typecheck keeps the whole unit suite on every master push (9-10 minutes, now the critical path). `auto-deploy.yml` rolls three services at a time instead of one, with the per-service concurrency, health assertion and rollback unchanged. The harness, typecheck and mutation workflows cache npm installs.
+
 ## 2026-09-21 — the changelog backlog counts merges without an entry; the weekly rebuild fires on bloat and keeps its tuning; deprecated action versions bumped
 
 `tools/changelog-lint.mjs` now counts, after the documented-through marker, only the commits that arrived in a first-parent step that touched nothing in CHANGELOG.md, so a day of documented merges moves the number by zero and the ceiling drops from 500 to a measured 364 plus 16 (the old count was 479). The weekly pod-store run also rebuilds when the table on disk holds at least four times its live values and at least 1 GiB, the TOAST-and-index bloat measured today (2 GB on disk, 0.5 GB live, 7% of rows unreferenced), and `rebuildTable` carries the table's storage parameters (the `--tune` autovacuum settings, heap and TOAST) onto the new table, which `LIKE ... INCLUDING ALL` does not. Thirteen workflows move from `actions/checkout@v4` and `setup-node@v4` to v6 and `setup-python@v5` to v6, the versions the rest of the tree already runs, ending the Node 20 runtime warning.

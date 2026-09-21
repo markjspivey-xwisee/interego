@@ -153,11 +153,14 @@ jobs:
     needs: [scope, build]
     if: ${{ needs.scope.outputs.count != '0' }}
     strategy:
-      # Sequential, not parallel. The bridges and the relay talk to one another, and rolling them
-      # all at once turns one bad image into a fleet-wide outage instead of one refused deploy.
-      # max-parallel: 1 also keeps the called workflow's per-service concurrency group from
-      # queueing behind itself.
-      max-parallel: 1
+      # Three at a time, not all at once and not one by one. Rolling every service at once turns
+      # one bad image into a fleet-wide outage instead of one refused deploy; one at a time made a
+      # ten-service rollout take half an hour (measured 2026-09-21) for services that do not talk
+      # to one another while they start. The called workflow's per-service concurrency group
+      # keeps each service to one deployment at a time, its health assertion and rollback are per
+      # service, and three in flight bounds the blast radius of a bad image to three services
+      # while the other legs wait on their own refusals.
+      max-parallel: 3
       fail-fast: false
       matrix: ${{ fromJSON(needs.scope.outputs.deploy_matrix) }}
     permissions: {}        # it talks only to Railway and GHCR, with secrets, not the run token

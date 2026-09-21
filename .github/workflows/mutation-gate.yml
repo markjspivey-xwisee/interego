@@ -27,12 +27,21 @@ name: Mutation Gate
 # LINK TARGET. A lint's coverage and its trigger are independent facts; widening one reads like
 # widening both.
 #
-# So this runs on every push and PR, like lint.yml and the conformance runner, which are here
-# for the same reason. Six minutes is cheaper than one audit round finding one decorative gate.
+# So this runs on every pull request with no path filter, like lint.yml and the conformance
+# runner, which are here for the same reason. Six minutes is cheaper than one audit round
+# finding one decorative gate.
+#
+# ── WHY NOT ON MASTER PUSHES (since 2026-09-21) ────────────────────────────────────────────
+#
+# Measured at 19-21 minutes, the longest run on every master commit, and the auto-deploy gate
+# waits for every run before it ships: this job alone held every rollout for twenty minutes
+# after the pull request's own run of it had passed on the merge ref minutes earlier. The
+# gates it exercises are meta-checks with tests of their own; two pull requests merged in
+# quick succession do not change whether a gate fails on its known defect. Bridge Typecheck
+# still runs the whole unit suite on every master push, so master is never untested; this
+# job is where a pull request proves the gates, and that proof is not repeated on merge.
 
 on:
-  push:
-    branches: [master]
   pull_request:
     branches: [master]
 
@@ -50,7 +59,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
-        with: { node-version: '20' }
+        with: { node-version: '20', cache: npm }
       - run: npm ci
       # The gates import built packages, not source — @interego/* export ./dist only. A mutant
       # in packages/*/src would otherwise be invisible to the gate that should catch it, which
