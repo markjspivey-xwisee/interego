@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-21 — Renew measured application and test inventories
+
+The merged application tree measures 552 scannable files; its previous 521-file inventory pin exceeded the gate's 27-file slack and correctly stopped CI despite zero covered lint errors. Renew `UNLINTED_FRONTIER.applications.files` to the measured 552, exactly as the fired guard requests. The inventory selftest also measured 416 tracked test modules, consuming all 20 modules of headroom above the previous 396-module floor; renew `MIN_TEST_MODULES` to the measured 416. Accumulated merged files prompted both guard-directed renewals. The 1452-error pin, tolerance formulas, lint `MIN_FILES` floor, exclusions and assertions are unchanged.
+
 ## 2026-09-21 — Private performance composition and output contracts
 
 Private performance storage and route/schema orchestration now live with AGP's performance model. The existing performance-route integration accepts only host identity/pod/crypto/transport capabilities; Foxxi no longer constructs or imports the performance store and domain error type. The three compatibility affordances declare accurate output contracts and `foxxi.` tool names, preserving HTTP paths, action IRIs and return semantics. No conformance ceiling was changed.
