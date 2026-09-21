@@ -54,7 +54,7 @@ jobs:
       - uses: actions/checkout@v6
         with: { fetch-depth: 0 }
       - uses: actions/setup-node@v6
-        with: { node-version: '20' }
+        with: { node-version: '20', cache: npm }
       - name: Install
         run: npm ci
       # Fails on: any error in a file not on the baseline; any pinned file whose count

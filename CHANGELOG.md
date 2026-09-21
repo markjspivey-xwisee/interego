@@ -1,8 +1,13 @@
 # Changelog
 
+## 2026-09-21 — merge to live in a third of the time: the mutation gate runs on pull requests only, services deploy three at a time, installs are cached
+
+Measured on the day's merges: the mutation gate took 19-21 minutes on every master push and the deploy gate waited for it, so every rollout began twenty minutes after the pull request's own run of the same gate had passed; it now runs on pull requests only, while Bridge Typecheck keeps the whole unit suite on every master push (9-10 minutes, now the critical path). `auto-deploy.yml` rolls three services at a time instead of one, with the per-service concurrency, health assertion and rollback unchanged. The harness, typecheck and mutation workflows cache npm installs.
+
 ## 2026-09-21 — private performance accepts the configured internal spelling of its own pod
 
 Private feedback rejected a valid signed ReadWrite delegation when its credential named the internal CSS origin and Foxxi derived the public gate URL. The private verifier now uses the bridge's existing allow-listed public spelling before comparing account pods, including the signed corroborating stamp. Foreign origins, other account paths, missing read/write capabilities and unverified signatures remain refused. The regression reproduces the live 403 and covers the internal/public match, lookalike origins, cross-account denial and read-only scope.
+
 
 ## 2026-09-21 — the changelog backlog counts merges without an entry; the weekly rebuild fires on bloat and keeps its tuning; deprecated action versions bumped
 
