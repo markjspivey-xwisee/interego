@@ -135,7 +135,10 @@ function composedAffordanceSource(file, visited = new Set()) {
     const names = match[1].split(',').map(s => s.trim().split(/\s+as\s+/).at(-1));
     if (!names.some(name => new RegExp('\\.\\.\\.\\s*' + name + '\\b').test(source))) continue;
     const imported = resolve(dirname(file), match[2].replace(/\.js$/, '.ts'));
-    if (!imported.startsWith(ROOT + '/')) throw new Error('affordance composition escapes repository');
+    // Compared with forward slashes: path.resolve answers with backslashes on Windows, and a check
+    // that cannot run on the maintainer's machine is a check that runs only in CI.
+    const slashes = (q) => q.split('\\').join('/');
+    if (!slashes(imported).startsWith(slashes(ROOT) + '/')) throw new Error('affordance composition escapes repository');
     parts.push(composedAffordanceSource(imported, visited));
   }
   return parts.join('\n');

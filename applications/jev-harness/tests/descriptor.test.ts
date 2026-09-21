@@ -37,6 +37,11 @@ describe('descriptor projection', () => {
     expect(types).toContain(`${DEFAULT_NS}Judgment`);
   });
 
+  it('with an attestation known, the Trust facet cites it as the verifiable credential; without one, it cites none', () => {
+    const cited = parseTrig(descriptorTrig(navigation, { ...ctx, attestationUrl: 'https://pod.example/u/context-graphs/9.ttl' }));
+    expect(cited.getQuads(null, DataFactory.namedNode(`${IEP}verifiableCredential`), null, null).map((q) => q.object.value)).toEqual(['https://pod.example/u/context-graphs/9.ttl']);
+    expect(parseTrig(descriptorTrig(navigation, ctx)).getQuads(null, DataFactory.namedNode(`${IEP}verifiableCredential`), null, null)).toHaveLength(0);
+  });
   it('a Hypothetical descriptor carries no groundTruth; an Asserted outcome carries groundTruth true', () => {
     const trig = descriptorTrig(navigation, ctx);
     const store = parseTrig(trig);

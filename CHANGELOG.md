@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-21 — judgment kit: the input contract as SHACL, served by every bridge; the Trust facet cites the agent's attestation
+
+`inputShapeTurtle` (in `applications/_shared/affordance-mcp`, re-exported by the judgment kit) renders an affordance's `inputs` as a `sh:NodeShape` — the same declaration the MCP tool schema and `hydra:expects` come from, so the three cannot drift — and every vertical bridge serves it at `/affordances/<tool>/input` for `Accept: text/turtle` (or `?format=shacl`), under the affordance's `inputShape` IRI when it declares one; Foxxi's `judge_content_claim` and `confirm_content_judgment` now declare theirs. The harness's descriptors carry the newest attestation about the agent on the pod as the Trust facet's `iep:verifiableCredential`, read once after the boot-time read-back and refreshed when the bridge issues one, so a reader of any judgment can follow to the measured rates behind it.
+
 ## 2026-09-21 — the collector rebuilds above a line and drops last week's copy; a fleet diagnosis is Hypothetical
 
 The weekly pod-store run (`pgsl-store-gc.yml`, mode `weekly`) now measures, then rebuilds when at least half of a table of at least two million rows is unreferenced history — the outage's shape, not a normal week's — and first drops the copy a rebuild left behind once it is a week old; `rebuildDecision` and `previousTablesToDrop` in `tools/pgsl-store-gc.ts` are the decisions, tested, and the log says which way each went. `tools/fleet-event.ts` takes `--modal Hypothetical` on an incident or a review, so a diagnosis is published as what it is and the Asserted root cause supersedes it; a deploy is a fact and refuses the flag.

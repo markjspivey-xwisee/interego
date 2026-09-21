@@ -75,6 +75,10 @@ describe('the descriptor', () => {
     expect(trig).toContain('dcat:mediaType "application/trig"');
     expect(quads.some((q) => q.graph.value === 'urn:graph:vert:j1' && q.predicate.value === 'https://schema.org/text')).toBe(true);
   });
+  it('cites the credential the Trust facet is given, and none when it is not', () => {
+    expect(renderDescriptorTrig({ ...spec, trust: { credential: 'https://pod.example/u/context-graphs/9.ttl' } })).toContain('iep:verifiableCredential <https://pod.example/u/context-graphs/9.ttl>');
+    expect(renderDescriptorTrig(spec)).not.toContain('iep:verifiableCredential');
+  });
   it('an Asserted descriptor carries groundTruth and what it supersedes; without an owner the agent issues', () => {
     const { ownerWebId: _o, ...noOwner } = spec;
     const trig = renderDescriptorTrig({ ...noOwner, status: 'Asserted', supersedes: ['https://vert.example/j/j0.trig'] });

@@ -13,6 +13,7 @@
  */
 
 import type { Affordance } from '../_shared/affordance-mcp/index.js';
+import { FOXXI_NS } from './src/foxxi-vocab.js';
 import { foxxiInterventionMethodAffordances } from '../agentic-performance-practice/method-affordances.js';
 import { privatePerformanceAffordances } from '../agentic-performance-practice/compatibility/private-performance-affordances.js';
 import { telemetryAffordances } from '../llm-telemetry/affordances.js';
@@ -2032,6 +2033,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
   {
     action: 'urn:iep:action:foxxi:judge-content-claim' as IRI,
     toolName: 'foxxi.judge_content_claim',
+    inputShape: `${FOXXI_NS}ContentClaimInputShape`,
     title: '[learning-engineer] Judge a content claim with a System One model: a typed answer with probabilities, Hypothetical until confirmed',
     description: 'One narrow question to TypeSafe System One about a unit of course content, answered as typed probabilities rather than prose. judgment_kind evidence-level scores how well claim_text is supported by context and evidence on a five-level scale (unsupported, asserted-only, supported-by-context, supported-by-cited-evidence, corroborated); work-regime chooses among the Foxxi work regimes (Evident, Knowable, Emergent, Turbulent) for the work the content describes. Policy is code: which question is asked, what the answer means, and which controls a person is offered (cite-evidence, choose-method-for-regime, confirm-or-refute). Published to the tenant pod as a Hypothetical foxxi:ContentJudgment when the bridge has one. Needs TYPESAFE_API_KEY on the bridge (503 otherwise). Built on the shared judgment kit jev-harness proved.',
     method: 'POST',
@@ -2061,6 +2063,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
   {
     action: 'urn:iep:action:foxxi:confirm-content-judgment' as IRI,
     toolName: 'foxxi.confirm_content_judgment',
+    inputShape: `${FOXXI_NS}ConfirmContentJudgmentInputShape`,
     title: '[learning-engineer] Say what is true about a judged claim: the outcome supersedes the judgment',
     description: 'A person confirms or refutes a ContentJudgment: confirmed_answer must be one of the answers the judgment weighed (an evidence level, or a work regime). Publishes an Asserted foxxi:ContentJudgmentOutcome to the tenant pod that supersedes the judgment descriptor and records whether the model had it and the Brier score of its probabilities; foxxi.content_judgment_calibration is computed over these. Learning-engineer or admin only.',
     method: 'POST',

@@ -36,6 +36,7 @@ import express, { type Request, type Response, type Express } from 'express';
 import {
   affordanceToMcpToolSchema,
   affordancesManifestTurtle,
+  inputShapeTurtle,
   type Affordance,
 } from '../affordance-mcp/index.js';
 import {
@@ -523,6 +524,15 @@ export function createVerticalBridge(opts: VerticalBridgeOptions): Express {
   app.get('/affordances/:tool/input', (req, res) => {
     const affordance = opts.affordances.find(a => a.toolName === req.params.tool);
     if (!affordance) { res.status(404).json({ error: 'Unknown affordance input contract' }); return; }
+    res.vary('Accept');
+    // The same inputs as SHACL, for a reader that validates RDF rather than JSON: under the
+    // affordance's declared inputShape IRI, or under this route when it declares none.
+    const wantsShacl = req.query['format'] === 'shacl' || req.accepts(['application/schema+json', 'text/turtle']) === 'text/turtle';
+    if (wantsShacl) {
+      const shapeIri = affordance.inputShape ?? `${deploymentUrl}/affordances/${affordance.toolName}/input#Shape`;
+      res.type('text/turtle').send(inputShapeTurtle({ shapeIri, label: `${affordance.title} input`, inputs: affordance.inputs }));
+      return;
+    }
     res.type('application/schema+json').json(affordanceToMcpToolSchema(affordance).inputSchema);
   });
 
