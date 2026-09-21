@@ -59,6 +59,10 @@ jvh:Outcome a owl:Class ; rdfs:subClassOf jvh:Judgment ;
     rdfs:label "Outcome"@en ;
     rdfs:comment "What actually happened after a judgment: the files that changed, the tests that failed, the decision a human made. Asserted, and it iep:supersedes the Hypothetical judgment it scores. The evidence atom of calibration."@en .
 
+jvh:AttestationDraft a owl:Class ;
+    rdfs:label "Attestation draft"@en ;
+    rdfs:comment "An amta:Attestation the harness drafts for a person, or the session agent acting for one, to publish from their own key: direction Peer, the attestor their identity, the subject the harness agent, grounded in an outcome they decided on or in the calibration. The harness never publishes it itself."@en ;
+    skos:note "construction: view"@en .
 jvh:Calibration a owl:Class ;
     rdfs:label "Calibration"@en ;
     rdfs:comment "A view, not a store: per judgment kind, how often the model's top answer matched the outcome and the Brier score of its probabilities, computed over the judgment-to-outcome supersession chains."@en ;
@@ -68,6 +72,22 @@ jvh:Calibration a owl:Class ;
 
 jvh:task a owl:DatatypeProperty ; rdfs:label "task"@en ; rdfs:range xsd:string ;
     rdfs:comment "The task sentence the judgment was made for."@en .
+jvh:draftedBy a owl:ObjectProperty ; rdfs:label "drafted by"@en ;
+    rdfs:comment "The agent that drafted an attestation another party publishes."@en .
+jvh:attestor a owl:DatatypeProperty ; rdfs:label "attestor"@en ; rdfs:range xsd:string ;
+    rdfs:comment "Input: the DID or WebID that will publish the attestation."@en .
+jvh:about a owl:DatatypeProperty ; rdfs:label "about"@en ; rdfs:range xsd:string ;
+    rdfs:comment "Input: the descriptor URL the attestation is grounded in; the calibration descriptor when absent."@en .
+jvh:note a owl:DatatypeProperty ; rdfs:label "note"@en ; rdfs:range xsd:string ;
+    rdfs:comment "Input: why, in a sentence; becomes the prose of the attestation."@en .
+jvh:accuracy a owl:DatatypeProperty ; rdfs:label "accuracy"@en ; rdfs:range xsd:double ;
+    rdfs:comment "Input: the attestor's rating 0..1 of review-verdict agreement; the calibration's when absent."@en .
+jvh:competence a owl:DatatypeProperty ; rdfs:label "competence"@en ; rdfs:range xsd:double ;
+    rdfs:comment "Input: the attestor's rating 0..1 of navigation; the calibration's when absent."@en .
+jvh:relevance a owl:DatatypeProperty ; rdfs:label "relevance"@en ; rdfs:range xsd:double ;
+    rdfs:comment "Input: the attestor's rating 0..1 of test selection; the calibration's when absent."@en .
+jvh:honesty a owl:DatatypeProperty ; rdfs:label "honesty"@en ; rdfs:range xsd:double ;
+    rdfs:comment "Input: the attestor's rating 0..1 of probability faithfulness; the calibration's when absent."@en .
 jvh:repository a owl:DatatypeProperty ; rdfs:label "repository"@en ; rdfs:range xsd:string .
 jvh:commit a owl:DatatypeProperty ; rdfs:label "commit"@en ; rdfs:range xsd:string ;
     rdfs:comment "The commit the repository inventory was taken at."@en .
@@ -225,6 +245,18 @@ jvh:ReviewGateInputShape a sh:NodeShape ;
     sh:property [ sh:path jvh:title ; sh:name "title" ; sh:datatype xsd:string ; sh:maxCount 1 ; sh:maxLength 500 ] ;
     sh:property [ sh:path jvh:description ; sh:name "description" ; sh:datatype xsd:string ; sh:maxCount 1 ; sh:maxLength 8000 ] .
 
+jvh:DraftAttestationInputShape a sh:NodeShape ;
+    rdfs:label "draft-attestation input"@en ;
+    sh:property [ sh:path jvh:attestor ; sh:name "attestor" ; sh:description "The DID or WebID that will publish the attestation." ;
+                  sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ; sh:minLength 8 ; sh:maxLength 500 ] ;
+    sh:property [ sh:path jvh:about ; sh:name "about" ; sh:description "The descriptor URL the attestation is grounded in." ;
+                  sh:datatype xsd:string ; sh:maxCount 1 ; sh:maxLength 500 ] ;
+    sh:property [ sh:path jvh:note ; sh:name "note" ; sh:description "Why, in a sentence." ;
+                  sh:datatype xsd:string ; sh:maxCount 1 ; sh:maxLength 2000 ] ;
+    sh:property [ sh:path jvh:accuracy ; sh:name "accuracy" ; sh:datatype xsd:double ; sh:maxCount 1 ; sh:minInclusive 0 ; sh:maxInclusive 1 ] ;
+    sh:property [ sh:path jvh:competence ; sh:name "competence" ; sh:datatype xsd:double ; sh:maxCount 1 ; sh:minInclusive 0 ; sh:maxInclusive 1 ] ;
+    sh:property [ sh:path jvh:relevance ; sh:name "relevance" ; sh:datatype xsd:double ; sh:maxCount 1 ; sh:minInclusive 0 ; sh:maxInclusive 1 ] ;
+    sh:property [ sh:path jvh:honesty ; sh:name "honesty" ; sh:datatype xsd:double ; sh:maxCount 1 ; sh:minInclusive 0 ; sh:maxInclusive 1 ] .
 jvh:RecordOutcomeInputShape a sh:NodeShape ;
     rdfs:label "record-outcome input"@en ;
     sh:property [ sh:path jvh:judgment_iri ; sh:name "judgment_iri" ; sh:description "The urn:graph:jev-harness:* IRI of the judgment being scored." ;
