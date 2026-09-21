@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-21 — drop the unused `@huggingface/transformers` dev dependency, whose installer fetched NVIDIA CUDA binaries on every install
+
+Nothing in the tree imports it (a benchmark prints a note about it, and two comments recall an older design). It brought in ONNX Runtime, whose install script on Linux x64 downloads the CUDA GPU binaries from GitHub releases by default, on every `npm ci` in CI and in every image build; on 2026-09-21 that download answered 504 and the close-time jobs for #436 and #437 failed before scoring anything. Interego runs no GPU code. Removed from `package.json` and the lockfile; the sub-project lockfiles that still mention it are not what CI installs from.
+
 ## 2026-09-21 — jev-harness: the auto-merge reads mergeability before it labels, and a failed merge takes its label back
 
 The first armed decision (#436) held on all four conditions, put `jev-harness:auto-merged` on the pull request, and then failed on the merge command because a changelog conflict had just landed under it — leaving a label that would have scored the next merge, a person's, as the machine's. GitHub's mergeability is now the last condition in both modes (`mergeable` MERGEABLE; CONFLICTING and UNKNOWN are refused with what to do, and the next push decides again), and if the merge command still fails the label is removed before the job goes red.
