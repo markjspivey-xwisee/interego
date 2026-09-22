@@ -170,3 +170,7 @@ npm test              # 36 tests, fake model, fake relay, real HTTP bridge
 JEV_LIVE=1 npm test   # declared live model test; fails loudly if the model is unreachable
 npx tsx tools/backtest.ts --repo <repo> --commits 40   # replay history and fill the calibration view
 ```
+
+## From push to live
+
+Every pull request runs one job: the bridge starts once, selects and runs the tests the diff warrants, gates the diff, and decides the merge from the same workspace. A merge rolls the fleet through `auto-deploy.yml`, whose gate waits for the runs master starts, whose bridge images reuse the packages the pull request built, and which deploys three services at a time. The harness workflow, the image recipes and the deploy workflow each say why they are shaped this way; the changelog carries the measurements.
