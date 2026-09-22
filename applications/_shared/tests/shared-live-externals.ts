@@ -261,10 +261,11 @@ const POD: SharedLiveExternal = {
   // switch on its own.
   switchExceptions: [],
   // MEASURED on 843fc4fa: no tracked workflow sets either name. bridge-typecheck.yml's "The
-  // whole root test suite" step runs a bare `npx vitest run` with no `env:` block, so all 22
-  // bodies below are permanent CI skips. The test beside this file re-measures BOTH halves of
-  // that sentence — the absence of an arming workflow AND the existence of that step — so the
-  // day CI arms them this goes red.
+  // whole root test suite" runs `npx vitest run` with no `env:` block — as two parts since
+  // 2026-09-22, the five suites below in the part that runs everything the other does not — so
+  // all 22 bodies below are permanent CI skips. The test beside this file re-measures BOTH halves
+  // of that sentence — the absence of an arming workflow AND the existence of that step, with
+  // none of the five excluded from it — so the day CI arms them this goes red.
   armedInCi: [],
   touchedBy: [
     'applications/_shared/tests/tier2-azure-css.test.ts',

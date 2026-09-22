@@ -1166,15 +1166,25 @@ describe('CI runs the pod suites as permanent skips', () => {
   // nothing arms the pod, and there IS a step that would run all 22 bodies if something did.
   const WHOLE_TREE = '.github/workflows/bridge-typecheck.yml';
 
-  it('has a workflow step that runs the whole tree with no arguments', () => {
+  it('has a workflow step that runs the whole tree, and the part that carries the pod suites excludes none of them', () => {
+    // Since 2026-09-22 the suite runs as two parts (tests/suite-partition.test.ts holds the cut
+    // exact): one names the slowest modules, the other runs everything else through `--exclude`.
+    // The pod suites are collected by that second part, so the claim is measured there: the
+    // parts step exists, exactly one part is the complement, and it excludes none of the five.
     const lines = stripYamlComments(read(WHOLE_TREE)).split('\n');
-    const bare = lines.filter(l => /^\s*(?:-\s*)?run:\s*npx vitest run\s*$/.test(l));
+    const parts = lines.filter(l => /^\s*(?:-\s*)?run:\s*npx vitest run \$\{\{ matrix\.part\.files \}\}\s*$/.test(l));
     expect(
-      bare.length,
-      `${WHOLE_TREE} no longer contains a bare \`run: npx vitest run\`. If the whole-tree step `
-      + 'moved, point this at its new home; if it was deleted, the five pod suites are no '
+      parts.length,
+      `${WHOLE_TREE} no longer runs the suite's parts through \`npx vitest run \${{ matrix.part.files }}\`. If the `
+      + 'step moved, point this at its new home; if it was deleted, the five pod suites are no '
       + 'longer collected on every pull request and this registry is describing something else.',
     ).toBe(1);
+    const complements = lines.map(l => /^\s*files:\s*(.*\S)\s*$/.exec(l)?.[1]).filter((v): v is string => v !== undefined && v.includes('--exclude'));
+    expect(complements, 'exactly one part runs everything the others do not').toHaveLength(1);
+    const excluded = [...complements[0]!.matchAll(/--exclude\s+(\S+)/g)].map(m => m[1]!);
+    for (const suite of POD.touchedBy) {
+      expect(excluded, `${suite} is a pod suite and the complement part excludes it, so no part collects it`).not.toContain(suite);
+    }
   });
 
   it('arms nothing that would make those suites run there', () => {
