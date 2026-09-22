@@ -119,7 +119,13 @@ jobs:
           for i in $(seq 1 30); do curl -sf "http://localhost:$BRIDGE_PORT/health" && break; sleep 1; done
           curl -sf "http://localhost:$BRIDGE_PORT/health"
       # The selection may fail (a red test); the gate and the decision still run, and the decision
-      # reads this step's outcome as the selection result it used to read from a job.
+      # reads this step's outcome as the selection result it used to read from a job. ★ It CAN fail
+      # since 2026-09-22: bin/follow.ts ended 0 whatever the run did, so this outcome was always
+      # success and "the selected tests passed" was read from a step that could not say otherwise
+      # (#454 ran the whole suite to exit 1 and merged on it). --skip-full-run leaves a full-mode
+      # selection (a sensitive path changed) to bridge-typecheck.yml, which runs the whole suite on
+      # this same head and which the decision waits for, instead of running it here a second time
+      # (eight minutes on #454, calibrating nothing).
       - name: Follow the selection chain
         id: selection
         continue-on-error: true
@@ -127,7 +133,7 @@ jobs:
           cd "$HARNESS_DIR"
           npx tsx bin/follow.ts "http://localhost:$BRIDGE_PORT/affordances" select-tests \
             --arg base_ref="origin/${{ github.base_ref }}" --arg head_ref=HEAD \
-            --then run-selected-tests --run --then triage --outcome \
+            --then run-selected-tests --run --skip-full-run --then triage --outcome \
             --repo "${{ github.workspace }}"
       - name: Comment the selection on the pull request
         if: ${{ always() && github.event_name == 'pull_request' }}

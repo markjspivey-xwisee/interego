@@ -156,6 +156,27 @@ export function runNeedsTriage(run: Pick<RunResult, 'exitCode' | 'failedTests'>)
   return run.exitCode !== 0 || run.failedTests.length > 0;
 }
 
+/**
+ * The exit code a chain that performed runs ends with: 1 when any run failed, else 0. Until
+ * 2026-09-22 bin/follow.ts ended 0 whatever the run did, so the judge step it runs in could not
+ * fail and the auto-merge condition "the selected tests passed" was read from a step that
+ * always passed — #454 ran the whole suite to exit 1 and merged on it.
+ */
+export function chainExitCode(runs: readonly Pick<RunResult, 'exitCode' | 'failedTests'>[]): number {
+  return runs.some(runNeedsTriage) ? 1 : 0;
+}
+
+/**
+ * Whether a run-selected-tests control is left unperformed because the selection is the whole
+ * suite and the caller said the suite runs elsewhere (--skip-full-run): in CI, a sensitive path
+ * puts the selection in full mode, and bridge-typecheck.yml already runs the whole suite on the
+ * same head, which the merge decision waits for. Running it again inside the judge cost eight
+ * minutes on #454 and calibrated nothing (a full selection ranks nothing, so hit@k is null).
+ */
+export function fullRunLeftToTheSuite(args: Record<string, unknown>, skipFullRun: boolean): boolean {
+  return skipFullRun && args['mode'] === 'full';
+}
+
 export function mergeArguments(prefilled: Record<string, unknown> | undefined, overrides: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = { ...(prefilled ?? {}) };
   for (const [k, v] of Object.entries(overrides)) if (v !== undefined) out[k] = v;
