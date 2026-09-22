@@ -586,7 +586,21 @@ export interface PrebuildRecipe {
  * Returns undefined when the named recipe builds no workspace, which the caller must treat
  * as "this artifact's sources are unknown" rather than "there are none".
  */
-export function prebuildRecipe(prebuild: string, workflowText: string): PrebuildRecipe | undefined {
+/**
+ * The root manifest's scripts at HEAD, for a recipe that runs one by name. Undefined when the
+ * manifest cannot be read, and then a bare `npm run build` stays unresolved rather than guessed.
+ */
+function rootScripts(root: string): Readonly<Record<string, string>> | undefined {
+  try {
+    const scripts = (JSON.parse(readAtHead('package.json', root)) as { scripts?: unknown }).scripts;
+    if (!scripts || typeof scripts !== 'object') return undefined;
+    return Object.fromEntries(Object.entries(scripts as Record<string, unknown>).filter((e): e is [string, string] => typeof e[1] === 'string'));
+  } catch {
+    return undefined;
+  }
+}
+
+export function prebuildRecipe(prebuild: string, workflowText: string, scripts?: Readonly<Record<string, string>>): PrebuildRecipe | undefined {
   // The name goes into a RegExp below. Anything outside this class is refused rather than
   // escaped: a `prebuild:` value containing regex metacharacters is not a thing this
   // repository has, and a guess about one is how a confident wrong answer gets in.
@@ -616,23 +630,43 @@ export function prebuildRecipe(prebuild: string, workflowText: string): Prebuild
 
   const workspaces: string[] = [];
   let installsFromLockfile = false;
+  let refused = false;
+  const expanded = new Set<string>();
+  const read = (line: string): void => {
+    if (refused) return;
+    // Anywhere in the line, not anchored: `npm ci && npm run build …` on one line is the
+    // same install, and reading it as "no install" drops the lockfile — the file that
+    // decides which compiler emits the artifact — out of scope entirely.
+    if (/(^|[\s;&|(])npm\s+(ci|install)\b/.test(line)) installsFromLockfile = true;
+    // ★ `--workspaces` (plural) means EVERY workspace, which this does not enumerate.
+    // Refusing beats resolving the few that happen to be named alongside it.
+    if (/--workspaces\b/.test(line)) { refused = true; return; }
+    // matchAll, not exec: npm accepts the flag repeated, and taking only the first left
+    // the rest of a `--workspace a --workspace b` line out of the recipe.
+    let named = false;
+    for (const m of line.matchAll(/(?:--workspace[= ]|(?:^|\s)-w[= ]\s*)\s*(\S+)/g)) {
+      if (m[1]) { workspaces.push(m[1]); named = true; }
+    }
+    // A root script run with no workspace flag is what its package.json entry runs: the root
+    // `npm run build` is the chain of twenty `--workspace` runs the manifest spells out, so the
+    // recipe follows it there, once per script. A workspace-scoped run is that workspace's own
+    // script and is not followed; a script that names nothing leaves the recipe unresolved.
+    if (named || !scripts) return;
+    for (const m of line.matchAll(/(?:^|[\s;&|(])npm\s+run\s+([A-Za-z0-9:_.-]+)/g)) {
+      const script = m[1] as string;
+      const body = scripts[script];
+      if (body === undefined || expanded.has(script)) continue;
+      expanded.add(script);
+      for (const part of body.split(/&&|\|\||;/)) read(part.trim());
+    }
+  };
   for (const block of blocks) {
     if (!block.some((l) => /^\s*if:/.test(l) && gate.test(l))) continue;
     for (const raw of block) {
       const line = raw.trim();
       if (line.startsWith('#')) continue;
-      // Anywhere in the line, not anchored: `npm ci && npm run build …` on one line is the
-      // same install, and reading it as "no install" drops the lockfile — the file that
-      // decides which compiler emits the artifact — out of scope entirely.
-      if (/(^|[\s;&|(])npm\s+(ci|install)\b/.test(line)) installsFromLockfile = true;
-      // ★ `--workspaces` (plural) means EVERY workspace, which this does not enumerate.
-      // Refusing beats resolving the few that happen to be named alongside it.
-      if (/--workspaces\b/.test(line)) return undefined;
-      // matchAll, not exec: npm accepts the flag repeated, and taking only the first left
-      // the rest of a `--workspace a --workspace b` line out of the recipe.
-      for (const m of line.matchAll(/(?:--workspace[= ]|(?:^|\s)-w[= ]\s*)\s*(\S+)/g)) {
-        if (m[1]) workspaces.push(m[1]);
-      }
+      read(line);
+      if (refused) return undefined;
     }
   }
   if (workspaces.length === 0) return undefined;
@@ -910,7 +944,7 @@ export function prebuildInputs(
   prebuild: string, workflowText: string, root: string,
 ): PrebuildInputs | { reason: string } {
   const refuse = (why: string): { reason: string } => ({ reason: `the \`prebuild: ${prebuild}\` recipe ${why}` });
-  const recipe = prebuildRecipe(prebuild, workflowText);
+  const recipe = prebuildRecipe(prebuild, workflowText, rootScripts(root));
   if (!recipe) {
     return refuse(`has no workflow step gated on \`matrix.prebuild == '${prebuild}'\` that builds a workspace`);
   }

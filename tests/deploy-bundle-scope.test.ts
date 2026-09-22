@@ -351,17 +351,34 @@ describe('prebuildRecipe — a produced directory resolves to what the build act
       .toBeUndefined();
   });
 
+  it('★ follows a root script run without a workspace flag through the manifest, once per script, and never through a workspace-scoped run', () => {
+    const scripts = { build: 'npm run build:core && npm run build:leaves', 'build:core': 'npm run build --workspace @acme/a', 'build:leaves': 'npm run build --workspace @acme/b && npm run build', noop: 'echo nothing' };
+    expect(prebuildRecipe('widget', step('Build', 'widget', ['npm ci && npm run build']), scripts))
+      .toEqual({ workspaces: ['@acme/a', '@acme/b'], installsFromLockfile: true });
+    expect(prebuildRecipe('widget', step('Build', 'widget', ['npm run noop']), scripts)).toBeUndefined();
+    expect(prebuildRecipe('widget', step('Build', 'widget', ['npm run build --workspace @acme/z']), scripts))
+      .toEqual({ workspaces: ['@acme/z'], installsFromLockfile: false });
+  });
   it('reads the real workflow: css\'s leg names a recipe that builds three workspaces', () => {
     const leg = matrixLegs().get('interego-css-pgsl');
     expect(leg?.prebuild).toBe('pgsl-store');
     const recipe = prebuildRecipe(leg?.prebuild as string, WORKFLOW);
     expect(recipe?.installsFromLockfile).toBe(true);
     expect(recipe?.workspaces).toEqual(['@interego/core', '@interego/abac', '@interego/pgsl-store']);
-    // ★ And no other leg has one, so nothing else in the fleet takes this path today. If
-    // that changes, the resolution applies to it identically — there is no service name
-    // anywhere in tools/deploy-bundle-scope.ts.
-    const withPrebuild = [...matrixLegs()].filter(([, l]) => l.prebuild).map(([image]) => image);
-    expect(withPrebuild).toEqual(['interego-css-pgsl']);
+    // ★ The four bridges take the `dist` recipe as well (2026-09-22): the pull request's built
+    // packages restored into the context. The resolution applies to every leg identically —
+    // there is no service name anywhere in tools/deploy-bundle-scope.ts.
+    const withPrebuild = [...matrixLegs()].filter(([, l]) => l.prebuild).map(([image]) => image).sort();
+    expect(withPrebuild).toEqual(['interego-agp-bridge', 'interego-css-pgsl', 'interego-foxxi-bridge', 'interego-jev-harness-bridge', 'interego-wsp-bridge']);
+    // The `dist` recipe runs the root `npm run build`, which the reader follows through the
+    // manifest to the twenty workspaces it chains, core first; without the scripts it is unresolved.
+    const scripts = (JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { scripts: Record<string, string> }).scripts;
+    const dist = prebuildRecipe('dist', WORKFLOW, scripts);
+    expect(dist?.installsFromLockfile).toBe(true);
+    expect(dist?.workspaces[0]).toBe('@interego/core');
+    expect(dist?.workspaces).toContain('@interego/registry');
+    expect(dist?.workspaces.length).toBeGreaterThan(15);
+    expect(prebuildRecipe('dist', WORKFLOW)).toBeUndefined();
   });
 
   it('★ a commented-out leg cannot inject a prebuild into the live one', () => {
