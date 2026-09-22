@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-22 — small changes fast: the merge job runs with nothing installed, the bridge jobs cache their installs and builds, a branch master moved under is updated rather than merged, and the typecheck-and-suite runs on pull requests only
+
+The gated auto-merge job no longer installs or builds anything: its decision reads a JSON file, two HTTP endpoints and GitHub, and its modules import only node built-ins, so `npx --yes tsx` is its whole runtime (two and a half minutes off every pull request). The three bridge jobs cache `node_modules` by the lockfile and the built packages by their sources, so an unchanged tree skips `npm ci` and `npm run build`. The auto-merge gains a last condition: the run must have tested the branch against master's current head (`--base-sha`); when master moved since, the decision refuses and `gh pr update-branch` starts the run that decides again, so what passed is always what lands. With that guarantee `bridge-typecheck.yml`, the nine-to-ten-minute run of every bridge's tsc and the whole unit suite, triggers on pull requests only, and the deploy gate on master waits for ESLint, Ontology Lint and pages: about two minutes.
+
 ## 2026-09-22 — the deploy gate's floor names the run every push starts, instead of counting to four
 
 With the mutation gate on pull requests only, the merge of #446 (workflows and changelog) produced three runs on master and `tools/ci-green-for-sha.mjs` refused it after waiting half an hour for a fourth that nothing would ever start; the floor of four had been calibrated when that gate ran everywhere. The floor is now two, and the listing must contain the ESLint run, which every push to master starts with no path filter: that presence is what proves the listing is this commit's CI, which the count was only ever a proxy for.

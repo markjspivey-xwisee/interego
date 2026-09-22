@@ -23,92 +23,18 @@ name: Bridge Typecheck
 # through the workspace symlinks, so those packages' emitted .d.ts must exist for the
 # program to typecheck at all.
 
-# NOTE: the two `paths` lists below are duplicated on purpose. GitHub Actions does
-# not officially support YAML anchors in workflow files, and a trigger that silently
-# fails to fire is the exact failure mode this workflow exists to prevent — so this
-# stays explicit rather than clever. Keep the two lists identical.
+# ── WHY PULL REQUESTS ONLY (since 2026-09-22) ─────────────────────────────────────────────
+#
+# This job ran on every master push as well, nine to ten minutes for a repeat of what the pull
+# request had just run, and the auto-deploy gate waited for it before any rollout. The gated
+# auto-merge now refuses a branch that master has moved under and updates it instead, so the
+# pull request run is always of the tree that lands; repeating it on the merge commit proved
+# nothing further. ESLint and Ontology Lint still run on every master push, and the deploy gate
+# requires the ESLint run to be present, so a listing without it is never read as green.
+#
+# NOTE: the `paths` list below once existed twice, for push and pull_request, and was kept
+# identical by hand; with the push trigger gone (above) there is one.
 on:
-  push:
-    branches: [master]
-    paths:
-      - 'applications/**'
-      - 'mcp-server/**'
-      - 'examples/**'
-      - 'packages/**'
-      - 'tests/**'
-      # ★ THE WHOLE deploy/ TREE, NOT JUST deploy/mcp-relay/**.
-      #
-      # tests/static-sites-404-and-hsts.test.ts and tests/build-sha-is-verifiable.test.ts
-      # assert against deploy/Dockerfile.* and the nginx configs beside them — whether each
-      # public surface registers HSTS before its body parser, and whether each image takes
-      # the GIT_SHA build-arg it is deployed by. This job is the ONLY workflow that runs
-      # `npx vitest run`, so while this entry read `deploy/mcp-relay/**` a Dockerfile-only
-      # change could not re-run the gate that reads it: the assertions existed and the
-      # trigger did not fire.
-      - 'deploy/**'
-      # ★ THE WHOLE docs/ AND spec/ TREES, NOT `docs/ns/**` AND `spec/conformance/**`.
-      # tests/docs-*.test.ts and tests/spec-*.test.ts read prose files across both trees
-      # (spec/LAYERS.md, spec/AGGREGATE-PRIVACY.md, spec/CRDT-OFFLINE-MERGE.md,
-      # docs/ARCHITECTURAL-FOUNDATIONS.md, docs/AGGREGATE-PRIVACY-MODES.md,
-      # docs/applications/**/*.ttl). Under the narrow globs a commit deleting or
-      # rewriting one of those merged with the assertion about it never executed.
-      - 'docs/**'
-      - 'spec/**'
-      - 'demos/**'
-      - 'integrations/**'
-      - 'tsconfig.base.json'
-      - 'tsconfig.check.json'
-      # ★ NOT just `tools/typecheck-gate.mjs`. This job is the ONLY workflow that runs
-      # `npx vitest run`, and vitest.config.ts holds the `include` globs, the `globalSetup`
-      # typecheck hook AND the `reporters` wiring for tools/vitest-run-integrity.mjs — the
-      # run-integrity floor that was ratcheted 175 -> 179 precisely so a glob that stopped
-      # matching a directory could not report a green whole-tree run. Neither file was in
-      # this list. The only push/PR workflow with no `paths` filter is lint.yml, whose gate
-      # targets do not read either. So a PR editing ONLY vitest.config.ts, or only
-      # vitest-run-integrity.mjs, got exactly one check — ESLint — and setting
-      # MIN_TEST_MODULES back to 3, or deleting the reporter, merged green.
-      - 'vitest.config.ts'
-      - 'tools/**'
-      # ★ THE WHOLE WORKFLOW DIRECTORY, NOT THREE FILES BY NAME.
-      #
-      # This list used to name `security-txt-expiry.yml` and this file, because those were
-      # the two workflows someone remembered a test reads. The root suite reads four more —
-      # deploy-railway.yml (tests/build-sha-is-verifiable.test.ts), build-ghcr.yml
-      # (tests/static-sites-404-and-hsts.test.ts), lint.yml (tests/lint-gate-ci-claim.test.ts)
-      # and the whole directory (tests/workflow-header-matches-triggers.test.ts). Every
-      # other workflow is path-filtered and none listed `.github/workflows/**`, so a pull
-      # request confined to one of those files ran ESLint and nothing else. MEASURED: the
-      # `verify_url` input this repo deliberately removed from deploy-railway.yml can be
-      # re-added and `npx vitest run tests/build-sha-is-verifiable.test.ts` goes red — the
-      # assertion existed, and no job would have executed it.
-      #
-      # The class is "a gate cannot re-run for the file it guards", so the fix is the
-      # DIRECTORY. Naming a seventh file would leave the eighth.
-      - '.github/workflows/**'
-      # Root documents the suite reads byte-for-byte: ENGAGEMENT-REPORT.html is compared
-      # against ENGAGEMENT-REPORT.md, and README/STATUS/CLAUDE carry pinned claims.
-      - 'CLAUDE.md'
-      - 'README.md'
-      - 'STATUS.md'
-      - 'ENGAGEMENT-REPORT.md'
-      - 'ENGAGEMENT-REPORT.html'
-      - 'REFLEXIVE-DOGFOOD.md'
-      # ★ ADDED BY tests/workflow-trigger-covers-the-suite.test.ts, not by anyone noticing.
-      # tests/changelog-lint.test.ts reads CHANGELOG.md and asserts its preamble no longer
-      # claims that its 78 cited commit hashes resolve — none of them do. Without this entry
-      # a commit restoring that sentence, which touches only CHANGELOG.md, would merge with
-      # the assertion about it never executed: exactly the "a gate cannot re-run for the file
-      # it guards" class the `.github/workflows/**` entry above was widened for.
-      - 'CHANGELOG.md'
-      - 'package.json'
-      - 'package-lock.json'
-      - '.gitattributes'
-      # ★ ADDED BY tests/workflow-trigger-covers-the-suite.test.ts, again, and again not by
-      # anyone noticing. tests/deploy-bundle-scope.test.ts asserts that `.dockerignore` is in
-      # EVERY service's image scope — it is the file that decides what reaches a `context: .`
-      # build at all, and commit 857c536 touched only it. Without this entry a commit editing
-      # only .dockerignore would merge with the assertion about it never executed.
-      - '.dockerignore'
   pull_request:
     branches: [master]
     paths:
