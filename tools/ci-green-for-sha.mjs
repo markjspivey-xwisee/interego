@@ -105,7 +105,7 @@ export async function runsForSha(sha, { repo, token, self, ignore = POST_DEPLOY_
   const all = Array.isArray(body?.workflow_runs) ? body.workflow_runs : [];
   return all
     .filter((r) => r?.name !== self && !ignore.includes(r?.name))
-    .map((r) => ({ name: r?.name ?? '(unnamed)', status: r?.status, conclusion: r?.conclusion }));
+    .map((r) => ({ name: r?.name ?? '(unnamed)', status: r?.status, conclusion: r?.conclusion, ...(typeof r?.html_url === 'string' ? { url: r.html_url } : {}) }));
 }
 
 /** Green / not-yet / red, given a snapshot of runs. Pure, so the states are testable. */

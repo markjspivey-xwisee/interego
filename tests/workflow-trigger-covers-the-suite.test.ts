@@ -88,17 +88,20 @@ describe('the workflow that runs the root suite triggers on everything the suite
   const config = readFileSync(`${ROOT}vitest.config.ts`, 'utf8');
   const blocks = pathsBlocks(workflow);
 
-  it('still has a paths list for both push and pull_request', () => {
-    // Guards the guard: if the parser stops finding the blocks, every assertion below
-    // iterates an empty array and passes vacuously.
-    expect(blocks.length).toBe(2);
+  it('still has the pull_request paths list — one list since the push trigger left on 2026-09-22', () => {
+    // Guards the guard: if the parser stops finding the block, every assertion below
+    // iterates an empty array and passes vacuously. There is ONE list now: the workflow runs
+    // on pull requests only (its header says why), so the second copy this test once kept
+    // identical to the first no longer exists. This assertion was written for two and was red
+    // from 02:24Z to 16:31Z on 2026-09-22 on every pull request, and nothing read the result:
+    // the gated auto-merge decided on its selected tests alone. It waits for this suite now.
+    expect(blocks.length).toBe(1);
     for (const block of blocks) expect(block.length).toBeGreaterThan(5);
   });
 
-  it('keeps the two duplicated lists identical — the header says so, nothing checked it', () => {
-    const [push, pr] = blocks;
-    expect(push).toBeDefined();
-    expect(pr).toEqual(push);
+  it('runs on pull requests only, as its header says — a push trigger would repeat the run the merge already waited for', () => {
+    expect(/^on:\s*\n\s+pull_request:/m.test(workflow)).toBe(true);
+    expect(/^\s+push:\s*$/m.test(workflow)).toBe(false);
   });
 
   it('names every root directory vitest collects tests from', () => {

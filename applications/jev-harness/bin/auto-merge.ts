@@ -5,6 +5,7 @@
  *     --calibration-url <bridge>/jev-harness/calibration --reputation-url <bridge>/jev-harness/reputation \
  *     --armed true|false --token-present true|false --selection-result success|failure|cancelled|skipped \
  *     --base-sha <the base sha this run's merge ref was built from> \
+ *     --suite-result <success|absent|failure|...> [--suite-gates true|false] [--suite-url <run page>] \
  *     [--require-human-review true|false] [--dry-run]
  *
  * Reads the gate's verdict from the follower's saved results (the artifact the review-gate
@@ -74,7 +75,7 @@ async function main(): Promise<void> {
   const calibrationUrl = flag('--calibration-url');
   const reputationUrl = flag('--reputation-url');
   if (!pr || !repo || !dir || !calibrationUrl) {
-    console.error('usage: --pr <n> --repo <owner/name> --dir <results dir> --calibration-url <url> [--reputation-url <url>] --armed true|false --token-present true|false --selection-result <result> [--require-human-review true|false] [--dry-run]');
+    console.error('usage: --pr <n> --repo <owner/name> --dir <results dir> --calibration-url <url> [--reputation-url <url>] --armed true|false --token-present true|false --selection-result <result> --base-sha <sha> --suite-result <word> [--suite-gates true|false] [--suite-url <url>] [--require-human-review true|false] [--dry-run]');
     process.exit(2);
   }
   const gate = loadSavedResults(dir).find((r) => r.verb === 'review-gate');
@@ -99,6 +100,7 @@ async function main(): Promise<void> {
     ...(!snapshot ? { reputationError: reputation.error ?? 'the bridge holds no reputation snapshot yet' } : {}),
     ...(mergeable ? { mergeable } : {}),
     ...(base ? { base } : {}),
+    ...(flag('--suite-result') ? { suite: { result: flag('--suite-result') as string, gates: flag('--suite-gates') !== 'false', ...(flag('--suite-url') ? { url: flag('--suite-url') as string } : {}) } } : {}),
   });
   // When the one failing condition is that master moved, update the branch before reporting: the
   // push starts the run that decides again, and the report says so in the same breath.

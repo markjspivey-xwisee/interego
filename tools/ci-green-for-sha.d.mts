@@ -16,6 +16,8 @@ export interface RunSnapshot {
   readonly name: string;
   readonly status: string | null | undefined;
   readonly conclusion: string | null | undefined;
+  /** The run's page, when the listing gave one. */
+  readonly url?: string;
 }
 
 /** Workflow runs for `sha`, excluding the calling workflow's own run and the post-deploy checks it dispatches. */
