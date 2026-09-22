@@ -200,6 +200,7 @@ import {
   contentJudgmentOutcome, decodeBundleJson, entityGraphUrl, findEntityEntry, isContentJudgment, isContentJudgmentOutcome, judgeContentClaim,
   type ContentJudgmentKind, type ContentJudgmentOutcome, type EntityEntry, type EvidenceItem,
 } from '../src/content-judgment.js';
+import { CONTENT_JUDGMENT_ATTESTATION_TYPE, CONTENT_REPUTATION_POLICY, attestationFromEntity, contentJudgmentAttestation, contentJudgmentReputation, isContentJudgmentAttestation } from '../src/content-reputation.js';
 import { jevFromEnv } from '../../_shared/judgment-kit/jev-client.js';
 import { publishFoxxiEntity, type DescriptorPublishConfig } from '../src/outcome-descriptor-publisher.js';
 import {
@@ -4833,6 +4834,80 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       } catch { /* a partial read is a smaller sample, not a failure */ }
     }
     return { kind: 'content-judgment-calibration', ...contentJudgmentCalibration(outcomes), read: outcomeEntries.length, decoded: outcomes.length };
+  },
+
+  // The calibration becomes a Self attestation by the judging agent about itself, grounded in the
+  // judgments container the outcomes live in, published as the head of the pod's attestation
+  // chain (every earlier attestation entity is superseded). Refused, not empty, when no question
+  // kind has reached its sample floor: an attestation with nothing behind it is what the
+  // registry weighs, and it must weigh only earned ones.
+  'foxxi.attest_content_judgments': async (args) => {
+    const resolved = await resolveCaller(args);
+    if ('error' in resolved) return resolved;
+    const { ctx } = resolved;
+    if (ctx.role !== 'learning-engineer' && ctx.role !== 'admin') {
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden' };
+    }
+    if (!tenantPodUrl) return { kind: 'refusal' as const, 'iep:refusalStatus': 503, 'iep:refusalReason': 'no tenant pod is configured, so there are no outcomes to attest from', error: 'no tenant pod' };
+    const entries = (await discover(tenantPodUrl)) as unknown as EntityEntry[];
+    const outcomes: ContentJudgmentOutcome[] = [];
+    for (const e of entries.filter((x) => (x.conformsTo ?? []).some((t) => String(t) === CONTENT_JUDGMENT_OUTCOME_TYPE))) {
+      const iri = e.graph ?? e.describes?.[0];
+      if (!iri) continue;
+      try {
+        const payload = await readEntityPayload(String(iri), e);
+        if (isContentJudgmentOutcome(payload)) outcomes.push(payload);
+      } catch { /* a partial read is a smaller sample, not a failure */ }
+    }
+    const calibration = contentJudgmentCalibration(outcomes);
+    const container = `${tenantPodUrl.endsWith('/') ? tenantPodUrl : `${tenantPodUrl}/`}foxxi/judgments/`;
+    const attestation = contentJudgmentAttestation(calibration, authoritativeSource, { fromExecution: container });
+    if (!attestation) {
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 409, 'iep:refusalReason': 'no question kind has reached its sample floor, so there is nothing earned to attest', error: 'nothing earned', calibration };
+    }
+    const previous = entries.filter((x) => (x.conformsTo ?? []).some((t) => String(t) === CONTENT_JUDGMENT_ATTESTATION_TYPE)).map((x) => x.graph ?? x.describes?.[0]).filter((iri): iri is string => typeof iri === 'string');
+    const r = await publishFoxxiEntity({
+      config: judgmentPublishConfig(),
+      slugPrefix: 'judgment-attestation',
+      foxxiType: CONTENT_JUDGMENT_ATTESTATION_TYPE as IRI,
+      payload: attestation as unknown as Record<string, unknown>,
+      authoredBy: { id: authoritativeSource, kind: 'agent', role: 'system-one-judge' },
+      modalStatus: 'Asserted',
+      ...(previous.length > 0 ? { supersedes: previous.map((p) => `${p}#descriptor` as IRI) } : {}),
+    });
+    const descriptorUrl = (r as { descriptorUrl?: unknown }).descriptorUrl;
+    return {
+      kind: 'content-judgment-attestation',
+      '@type': [CONTENT_JUDGMENT_ATTESTATION_TYPE],
+      attestation,
+      published: { status: 'published', descriptorIri: r.descriptorIri, graphIri: r.graphIri, ...(typeof descriptorUrl === 'string' ? { descriptorUrl } : {}), supersedes: previous.length },
+      calibration,
+    };
+  },
+
+  // Every attestation about the judging agent on the tenant pod — its own, and any a learning
+  // engineer publishes as a Peer — aggregated by the registry under the content policy.
+  'foxxi.content_judgment_reputation': async (args) => {
+    const resolved = await resolveCaller(args);
+    if ('error' in resolved) return resolved;
+    const { ctx } = resolved;
+    if (ctx.role !== 'learning-engineer' && ctx.role !== 'admin') {
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden' };
+    }
+    if (!tenantPodUrl) return { kind: 'refusal' as const, 'iep:refusalStatus': 503, 'iep:refusalReason': 'no tenant pod is configured, so there are no attestations to read', error: 'no tenant pod' };
+    const entries = (await discover(tenantPodUrl)) as unknown as EntityEntry[];
+    const attestationEntries = entries.filter((e) => (e.conformsTo ?? []).some((t) => String(t) === CONTENT_JUDGMENT_ATTESTATION_TYPE));
+    const attestations = [];
+    for (const e of attestationEntries) {
+      const iri = e.graph ?? e.describes?.[0];
+      if (!iri) continue;
+      try {
+        const payload = await readEntityPayload(String(iri), e);
+        if (isContentJudgmentAttestation(payload)) attestations.push(attestationFromEntity(payload, entityGraphUrl(tenantPodUrl, String(iri), e) ?? String(iri)));
+      } catch { /* a partial read is a smaller sample, not a failure */ }
+    }
+    const computedAt = new Date().toISOString();
+    return { kind: 'content-judgment-reputation', subject: authoritativeSource, policy: CONTENT_REPUTATION_POLICY, attestations, snapshot: contentJudgmentReputation(authoritativeSource, attestations, computedAt), read: attestationEntries.length, decoded: attestations.length, computedAt };
   },
 
   'foxxi.le_estimate_concept_difficulty': async (args) => {
