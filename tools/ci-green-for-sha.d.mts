@@ -5,6 +5,9 @@
 /** How many concluded runs must exist before "nothing failed" is allowed to mean anything. */
 export declare const MIN_RUNS: number;
 
+/** Workflows that run on every push to master; their presence proves the listing is real. */
+export declare const REQUIRED_RUNS: readonly string[];
+
 /** One workflow run's state, as this gate reads it. */
 export interface RunSnapshot {
   readonly name: string;
@@ -22,6 +25,7 @@ export declare function runsForSha(
 export declare function verdict(
   runs: readonly RunSnapshot[],
   minRuns?: number,
+  required?: readonly string[],
 ): {
   state: 'green' | 'red' | 'pending' | 'too-few';
   pending: string[];
