@@ -153,7 +153,10 @@ jobs:
         with:
           path: packages/*/dist
           key: dist-${{ runner.os }}-${{ hashFiles('package-lock.json', 'packages/*/src/**', 'packages/*/package.json', 'packages/*/tsconfig*.json', 'tsconfig.base.json') }}
-      - if: steps.gate.outputs.skip != 'true' && matrix.prebuild == 'dist' && steps.dist.outputs.cache-hit != 'true'
+      # Name first, then the gate: tools/deploy-bundle-scope.ts reads a gated step by its `if:`
+      # line and follows `npm run build` through the root scripts to the workspaces it chains.
+      - name: Build the packages when nothing is cached
+        if: steps.gate.outputs.skip != 'true' && matrix.prebuild == 'dist' && steps.dist.outputs.cache-hit != 'true'
         run: npm ci && npm run build
       - name: Pre-build the workspace dist this image's Dockerfile expects in the context
         if: steps.gate.outputs.skip != 'true' && matrix.prebuild == 'pgsl-store'
