@@ -67,8 +67,25 @@ jobs:
         with:
           node-version: 20
           cache: npm
-      - run: npm ci
-      - run: npm run build
+      # node_modules keyed by the lockfile: a hit skips npm ci (about a minute per job). Workspace
+      # links inside it are symlinks, which the cache tar keeps.
+      - uses: actions/cache@v5
+        id: node-modules
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - if: steps.node-modules.outputs.cache-hit != 'true'
+        run: npm ci
+      # The built packages keyed by their sources: a hit skips the whole build (two to three
+      # minutes). This job saves the full build; the others restore it and build only what they
+      # need on a miss, so a partial build never sits under the key of a full one.
+      - uses: actions/cache@v5
+        id: dist
+        with:
+          path: packages/*/dist
+          key: dist-${{ runner.os }}-${{ hashFiles('package-lock.json', 'packages/*/src/**', 'packages/*/package.json', 'packages/*/tsconfig*.json', 'tsconfig.base.json') }}
+      - if: steps.dist.outputs.cache-hit != 'true'
+        run: npm run build
       - name: Start the bridge bound to this checkout
         env:
           TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
@@ -122,11 +139,25 @@ jobs:
         with:
           node-version: 20
           cache: npm
-      - run: npm ci
+      # node_modules keyed by the lockfile: a hit skips npm ci (about a minute per job). Workspace
+      # links inside it are symlinks, which the cache tar keeps.
+      - uses: actions/cache@v5
+        id: node-modules
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - if: steps.node-modules.outputs.cache-hit != 'true'
+        run: npm ci
+      - uses: actions/cache/restore@v5
+        id: dist
+        with:
+          path: packages/*/dist
+          key: dist-${{ runner.os }}-${{ hashFiles('package-lock.json', 'packages/*/src/**', 'packages/*/package.json', 'packages/*/tsconfig*.json', 'tsconfig.base.json') }}
       # The vertical's IRI guard and descriptor code import @interego/core, which resolves to its
       # built dist/, so the kernel package is built before anything runs.
       # @interego/registry aggregates the attestations the reputation view reads; it builds on core.
-      - run: npm run build:core && npm run build --workspace @interego/registry
+      - if: steps.dist.outputs.cache-hit != 'true'
+        run: npm run build:core && npm run build --workspace @interego/registry
       - name: Start the bridge
         env:
           TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
@@ -192,10 +223,11 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 20
-          cache: npm
-      - run: npm ci
-      # @interego/registry aggregates the attestations the reputation view reads; it builds on core.
-      - run: npm run build:core && npm run build --workspace @interego/registry
+      # No install and no build. The decision reads the gate's saved verdict (a JSON file), the
+      # deployed bridge's calibration and reputation over HTTP, and GitHub through gh; its two
+      # source modules import only node built-ins, so tsx from npx is the whole runtime. The
+      # install and package build that used to sit here cost two and a half minutes per pull
+      # request for nothing they ran.
       - uses: actions/download-artifact@v8
         with:
           name: jev-harness-review
@@ -210,7 +242,8 @@ jobs:
           REPUTATION_URL: https://jev-harness-bridge-production.up.railway.app/jev-harness/reputation
         run: |
           cd "$HARNESS_DIR"
-          npx tsx bin/auto-merge.ts --pr "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" \
+          npx --yes tsx bin/auto-merge.ts --pr "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" \
+            --base-sha "${{ github.event.pull_request.base.sha }}" \
             --dir "${{ github.workspace }}/.jev-harness/follower" --calibration-url "$CALIBRATION_URL" \
             --armed "$ARMED" --token-present "$TOKEN_PRESENT" --selection-result "$SELECTION_RESULT" \
             --require-human-review "$JEV_REQUIRE_HUMAN_REVIEW" --reputation-url "$REPUTATION_URL"
@@ -228,9 +261,25 @@ jobs:
         with:
           node-version: 20
           cache: npm
-      - run: npm ci
+      # node_modules keyed by the lockfile: a hit skips npm ci (about a minute per job). Workspace
+      # links inside it are symlinks, which the cache tar keeps.
+      - uses: actions/cache@v5
+        id: node-modules
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - if: steps.node-modules.outputs.cache-hit != 'true'
+        run: npm ci
+      - uses: actions/cache/restore@v5
+        id: dist
+        with:
+          path: packages/*/dist
+          key: dist-${{ runner.os }}-${{ hashFiles('package-lock.json', 'packages/*/src/**', 'packages/*/package.json', 'packages/*/tsconfig*.json', 'tsconfig.base.json') }}
+      # The vertical's IRI guard and descriptor code import @interego/core, which resolves to its
+      # built dist/, so the kernel package is built before anything runs.
       # @interego/registry aggregates the attestations the reputation view reads; it builds on core.
-      - run: npm run build:core && npm run build --workspace @interego/registry
+      - if: steps.dist.outputs.cache-hit != 'true'
+        run: npm run build:core && npm run build --workspace @interego/registry
       # The bridge that made this pull request's judgments is gone with its run; this one reads
       # them back from the pod (the comments carry their graph IRIs) and publishes each outcome
       # as the Asserted head of the judgment's chain, as the same delegate agent.

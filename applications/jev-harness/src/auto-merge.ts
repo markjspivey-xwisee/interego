@@ -37,6 +37,13 @@
  *      the Foxxi merge landed a changelog conflict under it. Mergeability is read at decision
  *      time; UNKNOWN (GitHub still computing) is refused like a conflict, and the next push
  *      decides again.
+ *   9. The run tested the branch against master's CURRENT head. A pull_request run builds its
+ *      merge ref from the base as it was when the run started; if master moved since, what
+ *      passed is not what would land. Rather than test master again after the merge (which
+ *      held every deploy for ten to twenty minutes on 2026-09-21), the decision refuses and
+ *      bin/auto-merge.ts updates the branch, so the next run tests exactly what merges. With
+ *      this, the workflows that test on master pushes are redundant and run on pull requests
+ *      only.
  *
  * The operator turned the person off on 2026-09-21 ("i dont need human review"), so by default
  * needs-human-review is advisory: the gate still judges every diff and records its verdict,
@@ -86,6 +93,8 @@ export interface AutoMergeInputs {
   readonly reputationError?: string;
   /** GitHub's mergeability of the pull request at decision time: MERGEABLE, CONFLICTING or UNKNOWN. */
   readonly mergeable?: string;
+  /** The base sha this run's merge ref was built from, and master's head at decision time. */
+  readonly base?: { readonly tested: string; readonly current: string };
 }
 
 export interface AutoMergeEvidence {
@@ -158,6 +167,14 @@ export function autoMergeDecision(input: AutoMergeInputs, policy: AutoMergePolic
     : mergeable === 'CONFLICTING'
       ? 'the pull request conflicts with master (merge master in and push; the next run decides again)'
       : `GitHub has not settled whether the pull request is mergeable (mergeable: ${mergeable}); the next run decides again`);
+
+  if (!input.base) {
+    check(false, 'the base sha this run tested was not given (--base-sha), so whether master moved since is unknown');
+  } else if (input.base.tested === input.base.current) {
+    check(true, `the run tested the branch against master's current head (${input.base.current.slice(0, 8)})`);
+  } else {
+    check(false, `master moved from ${input.base.tested.slice(0, 8)} to ${input.base.current.slice(0, 8)} since this run's merge ref was built; the branch is updated and the next run decides again`);
+  }
 
   return { merge: holds.every(Boolean), reasons, evidence };
 }

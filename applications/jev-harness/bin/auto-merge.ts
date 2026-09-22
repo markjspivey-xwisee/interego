@@ -4,6 +4,7 @@
  *   npx tsx bin/auto-merge.ts --pr <number> --repo <owner/name> --dir <follower results dir> \
  *     --calibration-url <bridge>/jev-harness/calibration --reputation-url <bridge>/jev-harness/reputation \
  *     --armed true|false --token-present true|false --selection-result success|failure|cancelled|skipped \
+ *     --base-sha <the base sha this run's merge ref was built from> \
  *     [--require-human-review true|false] [--dry-run]
  *
  * Reads the gate's verdict from the follower's saved results (the artifact the review-gate
@@ -16,7 +17,9 @@
  * approval. Exits 0 unless the merge command itself fails: an unarmed or unearned decision is
  * a green job that says so, not a red one — and a conflicting branch is one of those, read
  * before the label goes on. If the merge command still fails, the label is taken back first, so
- * the merge that follows, a person's, is scored as one. src/auto-merge.ts is the policy.
+ * the merge that follows, a person's, is scored as one. When the one condition that fails is that
+ * master moved since the run's merge ref was built, the branch is updated (gh pr update-branch) so
+ * the next run tests exactly what merges. src/auto-merge.ts is the policy.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -56,6 +59,14 @@ async function readMergeable(pr: string, repo: string): Promise<string | undefin
   return 'UNKNOWN';
 }
 
+/** master's head at decision time, or undefined when GitHub could not be asked. */
+function readMasterHead(repo: string): string | undefined {
+  try {
+    return execFileSync('gh', ['api', `repos/${repo}/branches/master`, '--jq', '.commit.sha'], { encoding: 'utf8' }).trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
 async function main(): Promise<void> {
   const pr = flag('--pr');
   const repo = flag('--repo');
@@ -73,6 +84,9 @@ async function main(): Promise<void> {
   const reputation = reputationUrl ? await readJson(reputationUrl) : { error: 'no --reputation-url was given' };
   const snapshot = reputation.body?.['snapshot'] as { axes?: Record<string, number>; contributingAttestations?: unknown[] } | null | undefined;
   const mergeable = process.argv.includes('--dry-run') ? 'MERGEABLE' : await readMergeable(pr, repo);
+  const tested = flag('--base-sha');
+  const current = process.argv.includes('--dry-run') ? tested : readMasterHead(repo);
+  const base = tested && current ? { tested, current } : undefined;
   const decision = autoMergeDecision({
     ...(verdict ? { verdict } : {}),
     ...(flag('--selection-result') ? { selectionResult: flag('--selection-result') } : {}),
@@ -84,8 +98,21 @@ async function main(): Promise<void> {
     ...(snapshot ? { reputation: { axes: snapshot.axes ?? {}, contributing: Array.isArray(snapshot.contributingAttestations) ? snapshot.contributingAttestations.length : 0 } } : {}),
     ...(!snapshot ? { reputationError: reputation.error ?? 'the bridge holds no reputation snapshot yet' } : {}),
     ...(mergeable ? { mergeable } : {}),
+    ...(base ? { base } : {}),
   });
-  console.log([`gated auto-merge for ${repo}#${pr}: ${decision.merge ? 'MERGE' : 'no merge'}`, ...decision.reasons.map((r) => `  ${r}`)].join('\n'));
+  // When the one failing condition is that master moved, update the branch before reporting: the
+  // push starts the run that decides again, and the report says so in the same breath.
+  let note: string | undefined;
+  const failing = decision.reasons.filter((r) => r.startsWith('fails:'));
+  if (failing.length === 1 && failing[0]!.includes('master moved') && mergeable === 'MERGEABLE' && !process.argv.includes('--dry-run')) {
+    try {
+      execFileSync('gh', ['pr', 'update-branch', pr, '--repo', repo], { stdio: 'inherit' });
+      note = '  the branch was updated with master; the push starts the run that decides again';
+    } catch (err) {
+      note = `  the branch could not be updated: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+  console.log([`gated auto-merge for ${repo}#${pr}: ${decision.merge ? 'MERGE' : 'no merge'}`, ...decision.reasons.map((r) => `  ${r}`), ...(note ? [note] : [])].join('\n'));
   if (!decision.merge) return;
   if (process.argv.includes('--dry-run')) { console.log('  dry run: the label and the merge command were not run'); return; }
   try {

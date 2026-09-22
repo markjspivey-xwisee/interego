@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { AUTO_MERGE_POLICY, AUTO_MERGED_LABEL, autoMergeDecision, reviewVerdictEvidence } from '../src/auto-merge.js';
 
 const earned = { cells: [{ kind: 'navigation', liveSamples: 3 }, { kind: 'review-verdict', liveSamples: 25, liveAgreement: { agree: 23, conservative: 1, disagree: 1 } }] };
-const all = { verdict: 'auto-ok', selectionResult: 'success', armed: true, tokenPresent: true, calibration: earned, mergeable: 'MERGEABLE' };
+const all = { verdict: 'auto-ok', selectionResult: 'success', armed: true, tokenPresent: true, calibration: earned, mergeable: 'MERGEABLE', base: { tested: 'aaaaaaaa1', current: 'aaaaaaaa1' } };
 const withPerson = { ...all, requireHumanReview: true, reputation: { axes: { accuracy: 0.92, competence: 0.7 }, contributing: 1 } };
 
 describe('the evidence', () => {
@@ -18,10 +18,10 @@ describe('the evidence', () => {
 });
 
 describe('without a person required (the default)', () => {
-  it('merges on armed, token, green tests, any verdict but block and a mergeable branch — five conditions, no calibration bar', () => {
+  it('merges on armed, token, green tests, any verdict but block, a mergeable branch and a fresh base — six conditions, no calibration bar', () => {
     const d = autoMergeDecision(all);
     expect(d.merge).toBe(true);
-    expect(d.reasons).toHaveLength(5);
+    expect(d.reasons).toHaveLength(6);
     expect(d.reasons[3]).toContain('needs-human-review is advisory');
     const advisory = autoMergeDecision({ ...all, verdict: 'needs-human-review', calibration: undefined });
     expect(advisory.merge).toBe(true);
@@ -46,10 +46,10 @@ describe('without a person required (the default)', () => {
 });
 
 describe('with a person required', () => {
-  it('merges only when every condition holds, and says so seven times', () => {
+  it('merges only when every condition holds, and says so eight times', () => {
     const d = autoMergeDecision(withPerson);
     expect(d.merge).toBe(true);
-    expect(d.reasons).toHaveLength(7);
+    expect(d.reasons).toHaveLength(8);
     expect(d.reasons.every((r) => r.startsWith('holds: '))).toBe(true);
     expect(d.reasons[4]).toContain('25 live review-verdict outcome(s): agreement 0.92 (floor 0.9), disagreement 0.04 (ceiling 0.05)');
     expect(d.reasons[5]).toContain('the reputation from 1 attestation(s) rates accuracy 0.92 (floor 0.9)');
@@ -104,5 +104,22 @@ describe('★ a branch that conflicts with master merges for nobody', () => {
     const d = autoMergeDecision({ ...withPerson, mergeable: 'CONFLICTING' });
     expect(d.merge).toBe(false);
     expect(d.reasons[6]).toContain('conflicts with master');
+  });
+});
+
+describe('★ a branch master moved under is not what was tested', () => {
+  it('refuses when master moved since the run\'s merge ref, naming both heads, so the branch is updated instead', () => {
+    const d = autoMergeDecision({ ...all, base: { tested: 'aaaaaaaa1', current: 'bbbbbbbb2' } });
+    expect(d.merge).toBe(false);
+    expect(d.reasons[5]).toContain('fails: master moved from aaaaaaaa to bbbbbbbb since this run');
+  });
+  it('refuses when the tested base is unknown, and holds when master has not moved', () => {
+    const { base: _b, ...unknown } = all;
+    expect(autoMergeDecision(unknown).reasons[5]).toContain('was not given (--base-sha)');
+    expect(autoMergeDecision(unknown).merge).toBe(false);
+    expect(autoMergeDecision(all).reasons[5]).toContain('holds: the run tested the branch against master\'s current head (aaaaaaaa)');
+  });
+  it('is the last condition in the person-required mode too', () => {
+    expect(autoMergeDecision({ ...withPerson, base: { tested: 'a', current: 'b' } }).reasons[7]).toContain('master moved');
   });
 });
