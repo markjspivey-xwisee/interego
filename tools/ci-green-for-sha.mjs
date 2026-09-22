@@ -66,17 +66,28 @@ export const MIN_RUNS = 2;
  */
 export const REQUIRED_RUNS = ['ESLint'];
 
+/**
+ * Workflows that run AFTER a deploy, about that deploy, and never gate one. auto-deploy.yml
+ * dispatches the live client-signature check once the fleet is rolled out, and a dispatched run
+ * lands on the branch head of that moment — possibly the next merge. It takes as long as its
+ * synthetic approval test takes (18 minutes on 2026-09-22); counted here it would hold that next
+ * commit's deploy for the whole of it, the wait the dispatch removed, moved rather than removed.
+ * So these are dropped from the listing like the gate's own run; their result is read in the
+ * Actions tab, not by this gate. Keep the names in step with the workflows' `name:`.
+ */
+export const POST_DEPLOY_WORKFLOWS = ['Client signature live check'];
+
 /** A conclusion that does not stop a deploy. `cancelled` is absent on purpose — see the header. */
 const PASSING = new Set(['success', 'skipped', 'neutral']);
 
 /**
- * Runs for `sha`, excluding this workflow's own.
+ * Runs for `sha`, excluding this workflow's own and the post-deploy checks it dispatches.
  *
  * ★ EXCLUDING SELF IS NOT OPTIONAL: this tool runs INSIDE one of the runs it would otherwise wait
  * for, so counting itself deadlocks until the timeout and then reports a failure that is only the
  * gate waiting for the gate.
  */
-export async function runsForSha(sha, { repo, token, self, fetchFn = fetch }) {
+export async function runsForSha(sha, { repo, token, self, ignore = POST_DEPLOY_WORKFLOWS, fetchFn = fetch }) {
   const url = `${API}/repos/${repo}/actions/runs?head_sha=${sha}&per_page=100`;
   const res = await fetchFn(url, {
     headers: {
@@ -93,8 +104,8 @@ export async function runsForSha(sha, { repo, token, self, fetchFn = fetch }) {
   const body = await res.json();
   const all = Array.isArray(body?.workflow_runs) ? body.workflow_runs : [];
   return all
-    .filter((r) => r?.name !== self)
-    .map((r) => ({ name: r?.name ?? '(unnamed)', status: r?.status, conclusion: r?.conclusion }));
+    .filter((r) => r?.name !== self && !ignore.includes(r?.name))
+    .map((r) => ({ name: r?.name ?? '(unnamed)', status: r?.status, conclusion: r?.conclusion, ...(typeof r?.html_url === 'string' ? { url: r.html_url } : {}) }));
 }
 
 /** Green / not-yet / red, given a snapshot of runs. Pure, so the states are testable. */

@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { AUTO_MERGE_POLICY, AUTO_MERGED_LABEL, autoMergeDecision, reviewVerdictEvidence } from '../src/auto-merge.js';
 
 const earned = { cells: [{ kind: 'navigation', liveSamples: 3 }, { kind: 'review-verdict', liveSamples: 25, liveAgreement: { agree: 23, conservative: 1, disagree: 1 } }] };
-const all = { verdict: 'auto-ok', selectionResult: 'success', armed: true, tokenPresent: true, calibration: earned, mergeable: 'MERGEABLE', base: { tested: 'aaaaaaaa1', current: 'aaaaaaaa1' } };
+const all = { verdict: 'auto-ok', selectionResult: 'success', armed: true, tokenPresent: true, calibration: earned, mergeable: 'MERGEABLE', base: { tested: 'aaaaaaaa1', current: 'aaaaaaaa1' }, suite: { result: 'success', gates: true } };
 const withPerson = { ...all, requireHumanReview: true, reputation: { axes: { accuracy: 0.92, competence: 0.7 }, contributing: 1 } };
 
 describe('the evidence', () => {
@@ -18,10 +18,10 @@ describe('the evidence', () => {
 });
 
 describe('without a person required (the default)', () => {
-  it('merges on armed, token, green tests, any verdict but block, a mergeable branch and a fresh base — six conditions, no calibration bar', () => {
+  it('merges on armed, token, green tests, any verdict but block, a mergeable branch, a fresh base and a green suite — seven conditions, no calibration bar', () => {
     const d = autoMergeDecision(all);
     expect(d.merge).toBe(true);
-    expect(d.reasons).toHaveLength(6);
+    expect(d.reasons).toHaveLength(7);
     expect(d.reasons[3]).toContain('needs-human-review is advisory');
     const advisory = autoMergeDecision({ ...all, verdict: 'needs-human-review', calibration: undefined });
     expect(advisory.merge).toBe(true);
@@ -46,10 +46,10 @@ describe('without a person required (the default)', () => {
 });
 
 describe('with a person required', () => {
-  it('merges only when every condition holds, and says so eight times', () => {
+  it('merges only when every condition holds, and says so nine times', () => {
     const d = autoMergeDecision(withPerson);
     expect(d.merge).toBe(true);
-    expect(d.reasons).toHaveLength(8);
+    expect(d.reasons).toHaveLength(9);
     expect(d.reasons.every((r) => r.startsWith('holds: '))).toBe(true);
     expect(d.reasons[4]).toContain('25 live review-verdict outcome(s): agreement 0.92 (floor 0.9), disagreement 0.04 (ceiling 0.05)');
     expect(d.reasons[5]).toContain('the reputation from 1 attestation(s) rates accuracy 0.92 (floor 0.9)');
@@ -121,5 +121,32 @@ describe('★ a branch master moved under is not what was tested', () => {
   });
   it('is the last condition in the person-required mode too', () => {
     expect(autoMergeDecision({ ...withPerson, base: { tested: 'a', current: 'b' } }).reasons[7]).toContain('master moved');
+  });
+});
+
+describe('★ the whole suite on the head is the last condition: a red suite merged seven times before anything waited for it', () => {
+  // 2026-09-22, 02:24Z to 16:31Z: bridge-typecheck.yml was red on every pull request and the
+  // decision, taken on the selected tests alone, merged #446 to #452 over it.
+  it('refuses a red, cancelled or timed-out suite, naming the run', () => {
+    const d = autoMergeDecision({ ...all, suite: { result: 'failure', gates: true, url: 'https://github.com/o/r/actions/runs/9' } });
+    expect(d.merge).toBe(false);
+    expect(d.reasons[6]).toBe('fails: the whole suite on this head did not pass (failure, https://github.com/o/r/actions/runs/9); nothing merges over a red suite');
+    expect(autoMergeDecision({ ...all, suite: { result: 'timeout', gates: true } }).merge).toBe(false);
+    expect(autoMergeDecision({ ...all, suite: { result: 'untrusted', gates: true } }).merge).toBe(false);
+  });
+  it('holds on success, and on absent — no run for a head whose paths did not match, in a listing that holds this run', () => {
+    expect(autoMergeDecision(all).reasons[6]).toBe('holds: the whole suite on this head passed (Bridge Typecheck)');
+    expect(autoMergeDecision({ ...all, suite: { result: 'absent', gates: true } }).merge).toBe(true);
+  });
+  it('refuses when no result was given at all, and only prints it when the operator made the suite advisory', () => {
+    const { suite: _s, ...none } = all;
+    expect(autoMergeDecision(none).merge).toBe(false);
+    expect(autoMergeDecision(none).reasons[6]).toContain('was not given (--suite-result)');
+    const advisory = autoMergeDecision({ ...all, suite: { result: 'failure', gates: false } });
+    expect(advisory.merge).toBe(true);
+    expect(advisory.reasons[6]).toContain('advisory (JEV_MERGE_WAITS_FOR_SUITE is false): failure');
+  });
+  it('is the last condition in the person-required mode too', () => {
+    expect(autoMergeDecision({ ...withPerson, suite: { result: 'failure', gates: true } }).reasons[8]).toContain('nothing merges over a red suite');
   });
 });

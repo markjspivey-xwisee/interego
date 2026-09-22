@@ -8,17 +8,22 @@ export declare const MIN_RUNS: number;
 /** Workflows that run on every push to master; their presence proves the listing is real. */
 export declare const REQUIRED_RUNS: readonly string[];
 
+/** Workflows dispatched after a deploy, about it; never waited for by the gate. */
+export declare const POST_DEPLOY_WORKFLOWS: readonly string[];
+
 /** One workflow run's state, as this gate reads it. */
 export interface RunSnapshot {
   readonly name: string;
   readonly status: string | null | undefined;
   readonly conclusion: string | null | undefined;
+  /** The run's page, when the listing gave one. */
+  readonly url?: string;
 }
 
-/** Workflow runs for `sha`, excluding the calling workflow's own run. */
+/** Workflow runs for `sha`, excluding the calling workflow's own run and the post-deploy checks it dispatches. */
 export declare function runsForSha(
   sha: string,
-  opts: { repo: string; token: string; self: string; fetchFn?: typeof fetch },
+  opts: { repo: string; token: string; self: string; ignore?: readonly string[]; fetchFn?: typeof fetch },
 ): Promise<RunSnapshot[]>;
 
 /** Green / not-yet / red / cannot-be-trusted, given a snapshot of runs. */

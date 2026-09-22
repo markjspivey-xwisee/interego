@@ -44,6 +44,16 @@
  *      bin/auto-merge.ts updates the branch, so the next run tests exactly what merges. With
  *      this, the workflows that test on master pushes are redundant and run on pull requests
  *      only.
+ *  10. The whole suite passed on this head. bridge-typecheck.yml runs the root suite (422 modules)
+ *      on the pull request, ten minutes, and until 2026-09-22 nothing waited for it: the decision
+ *      merged on the selected tests while the suite was still running, and from 02:24Z to
+ *      16:31Z that day it was red on every pull request (two tests about that workflow's own
+ *      trigger, never selected because no changed file imported them) and seven merged over it.
+ *      The workflow now waits for that run (tools/wait-for-workflow-run.mjs) and hands the
+ *      decision one word: success holds, absent (no run listed, in a listing that holds the
+ *      judge's own run) holds, anything else fails. JEV_MERGE_WAITS_FOR_SUITE=false makes the
+ *      word advisory — printed, not gating — for an operator who would rather have the two
+ *      minutes back than the ten.
  *
  * The operator turned the person off on 2026-09-21 ("i dont need human review"), so by default
  * needs-human-review is advisory: the gate still judges every diff and records its verdict,
@@ -95,6 +105,12 @@ export interface AutoMergeInputs {
   readonly mergeable?: string;
   /** The base sha this run's merge ref was built from, and master's head at decision time. */
   readonly base?: { readonly tested: string; readonly current: string };
+  /**
+   * The whole-suite run on the pull request's head, as tools/wait-for-workflow-run.mjs reported it:
+   * success, absent, or why not (failure, cancelled, timeout, untrusted, ...). `gates` is false when
+   * the operator made it advisory (JEV_MERGE_WAITS_FOR_SUITE=false).
+   */
+  readonly suite?: { readonly result: string; readonly gates: boolean; readonly url?: string };
 }
 
 export interface AutoMergeEvidence {
@@ -174,6 +190,18 @@ export function autoMergeDecision(input: AutoMergeInputs, policy: AutoMergePolic
     check(true, `the run tested the branch against master's current head (${input.base.current.slice(0, 8)})`);
   } else {
     check(false, `master moved from ${input.base.tested.slice(0, 8)} to ${input.base.current.slice(0, 8)} since this run's merge ref was built; the branch is updated and the next run decides again`);
+  }
+
+  if (!input.suite) {
+    check(false, 'the whole-suite result on this head was not given (--suite-result), so whether the suite passed is unknown');
+  } else if (!input.suite.gates) {
+    check(true, `the whole suite on this head is advisory (JEV_MERGE_WAITS_FOR_SUITE is false): ${input.suite.result}`);
+  } else if (input.suite.result === 'success') {
+    check(true, 'the whole suite on this head passed (Bridge Typecheck)');
+  } else if (input.suite.result === 'absent') {
+    check(true, 'no whole-suite run was started for this head (its paths did not match), in a listing that holds this run');
+  } else {
+    check(false, `the whole suite on this head did not pass (${input.suite.result}${input.suite.url ? `, ${input.suite.url}` : ''}); nothing merges over a red suite`);
   }
 
   return { merge: holds.every(Boolean), reasons, evidence };

@@ -9,7 +9,9 @@ name: jev-harness (System One judgments)
 #                    is true, for needs-human-review (exit 1); otherwise that verdict is advisory
 #   artifacts        every judgment's JSON, payload Turtle, descriptor TriG and HyperMarkdown
 #   gated auto-merge merges when every condition holds (armed by the JEV_AUTO_MERGE variable and
-#                    the JEV_MERGE_TOKEN secret; the policy is applications/jev-harness/src/auto-merge.ts);
+#                    the JEV_MERGE_TOKEN secret; the policy is applications/jev-harness/src/auto-merge.ts),
+#                    after waiting for the whole-suite run (bridge-typecheck.yml) on the same head:
+#                    a red suite never merges (JEV_MERGE_WAITS_FOR_SUITE=false makes it advisory);
 #                    unarmed, it prints the decision it would have taken
 #
 # Secrets: TYPESAFE_API_KEY (required). INTEREGO_AGENT_KEY_JSON (optional) makes the runner's bridge the
@@ -58,6 +60,9 @@ env:
   # needs-human-review is advisory — the operator said so on 2026-09-21 — so the check stays
   # green and the gated auto-merge, once armed, waits for nobody.
   JEV_REQUIRE_HUMAN_REVIEW: ${{ vars.JEV_REQUIRE_HUMAN_REVIEW }}
+  # Unset or anything but `false`: the decision waits for the whole-suite run on the head and
+  # refuses over a red one. `false`: the suite's word is printed, not gating.
+  JEV_MERGE_WAITS_FOR_SUITE: ${{ vars.JEV_MERGE_WAITS_FOR_SUITE }}
 
 jobs:
   # ── One machine for the whole pull request ────────────────────────────────────────────────
@@ -166,6 +171,23 @@ jobs:
           path: |
             .jev-harness/
             ${{ env.HARNESS_DIR }}/bridge.log
+      # ── The whole suite, before the decision ────────────────────────────────────────────────
+      # bridge-typecheck.yml runs the whole root suite on this same head, ten minutes, and until
+      # 2026-09-22 nothing here read its result: the decision merged on the selected tests while
+      # the suite ran on. From 02:24Z to 16:31Z that day the suite was red on every pull request
+      # (two tests about that workflow's own trigger, never selected) and seven merged over it.
+      # tools/wait-for-workflow-run.mjs polls the runs listed for the head until the suite has
+      # concluded and writes one word for the decision (success, absent, failure, timeout, ...).
+      - name: Wait for the whole suite on this head (Bridge Typecheck)
+        id: suite
+        if: ${{ always() && github.event_name == 'pull_request' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SELF_WORKFLOW: jev-harness (System One judgments)
+          SUITE_WORKFLOW: Bridge Typecheck
+          SUITE_WAIT_MS: '1200000'
+        run: node tools/wait-for-workflow-run.mjs "${{ github.event.pull_request.head.sha }}"
       # ── Gated auto-merge ──────────────────────────────────────────────────────────────────
       # Merges without a person once the operator armed it (repository variable JEV_AUTO_MERGE=true)
       # and a token that triggers auto-deploy is present (secret JEV_MERGE_TOKEN — a merge made with
@@ -186,13 +208,17 @@ jobs:
           SELECTION_RESULT: ${{ steps.selection.outcome }}
           CALIBRATION_URL: https://jev-harness-bridge-production.up.railway.app/jev-harness/calibration
           REPUTATION_URL: https://jev-harness-bridge-production.up.railway.app/jev-harness/reputation
+          SUITE_RESULT: ${{ steps.suite.outputs.result }}
+          SUITE_URL: ${{ steps.suite.outputs.url }}
+          SUITE_GATES: ${{ env.JEV_MERGE_WAITS_FOR_SUITE != 'false' }}
         run: |
           cd "$HARNESS_DIR"
           npx tsx bin/auto-merge.ts --pr "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" \
             --base-sha "${{ github.event.pull_request.base.sha }}" \
             --dir "${{ github.workspace }}/.jev-harness/follower" --calibration-url "$CALIBRATION_URL" \
             --armed "$ARMED" --token-present "$TOKEN_PRESENT" --selection-result "$SELECTION_RESULT" \
-            --require-human-review "$JEV_REQUIRE_HUMAN_REVIEW" --reputation-url "$REPUTATION_URL"
+            --require-human-review "$JEV_REQUIRE_HUMAN_REVIEW" --reputation-url "$REPUTATION_URL" \
+            --suite-result "$SUITE_RESULT" --suite-gates "$SUITE_GATES" --suite-url "$SUITE_URL"
   outcomes-on-close:
     name: "score the judgments when the pull request closes"
     if: ${{ github.event_name == 'pull_request' && github.event.action == 'closed' }}

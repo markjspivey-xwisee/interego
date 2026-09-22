@@ -132,11 +132,20 @@ jobs:
       image: ${{ matrix.image }}
     secrets: inherit
 
-  # This is a POST-deployment assertion inside the same run, not an exception to
-  # the CI gate. All pre-deploy tests must still pass before any rollout occurs.
-  # Also check tool-only changes when the services already run the required code.
+  # ★ A POST-deployment assertion, STARTED from this run and RUN OUTSIDE IT. Until 2026-09-22 this
+  # was a `uses:` of client-signature-live.yml, so the synthetic approval test ran inside the run
+  # that holds the fleet's rollout lock (concurrency group auto-deploy-master): 18 minutes on run
+  # 35753761634, during which the next merge's deploy sat queued for 21 of its 27 minutes from
+  # merge to live. The test is real work, not a wait (each signing round is a minute against the
+  # live relay), so it is dispatched as its own run of the same workflow and this job ends in
+  # seconds; the lock is released when the deploys are recorded. tools/ci-green-for-sha.mjs
+  # ignores that workflow's runs (POST_DEPLOY_WORKFLOWS), because a dispatched run lands on
+  # whatever master is by then — possibly the next merge — and would otherwise hold that commit's
+  # deploy for the same 18 minutes. Not an exception to the CI gate: all pre-deploy tests must
+  # still pass before any rollout occurs. Also started for tool-only changes when the services
+  # already run the required code.
   client-signatures:
-    name: Verify live client signatures after deployment
+    name: Start the live client-signature check, outside the rollout lock
     needs: [scope, deploy]
     if: >-
       ${{ always() && needs.scope.result == 'success'
@@ -144,9 +153,19 @@ jobs:
           && (needs.scope.outputs.signing_test_changed == 'true'
               || contains(needs.scope.outputs.deploy_matrix, 'relay')
               || contains(needs.scope.outputs.deploy_matrix, 'identity')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
+      actions: write       # gh workflow run — a workflow_dispatch created with GITHUB_TOKEN does start a run
       contents: read
-    uses: ./.github/workflows/client-signature-live.yml
+    steps:
+      # No expected_build: the check tests whatever is live, as the in-run call did. Requiring
+      # this commit's build would fail a check that starts after a newer merge replaced it.
+      - name: Dispatch the check as its own run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run client-signature-live.yml --ref master
 
   deploy:
     name: "Deploy ${{ matrix.service }}"
