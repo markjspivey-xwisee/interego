@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-09-22 — tsx is a pinned root devDependency; the bridge recipes stop reinstalling it after the cached install
+
+Six recipes ran `npm install --no-save tsx@4.22.0` after `npm ci`: a 24-second layer on every image build that also downgraded the tsx the lockfile already held (4.22.4) and made the node_modules layer differ each time, so the registry cache export and the runtime layer both re-uploaded it, the fifty-five seconds left in the harness image build. `tsx@4.22.4` is now a root devDependency, installed by the cached `npm ci`, and the six lines are gone.
+
+
 ## 2026-09-22 — the fast path: one machine for the pull request, images that reuse the build and push only what changed, deploy events without a rebuild
 
 The harness workflow is one job: one bridge answers the selection and the gate in turn and the decision reads the gate's verdict from the same workspace, ending two runner starts and two installs per pull request; a new push cancels the run in flight. The four bridge images take the pull request's built packages (`prebuild: dist` in `deploy/images.json`, restored from the cache the pull request saved and passed as `PREBUILT=1`, which the recipes honour), keep `node_modules` as its own runtime layer so a push moves the sources rather than 700 MB, and cache layers in the registry beside each image, where the Actions cache's ten-gigabyte limit had been missing the `npm ci` layer on every build. The deploy-event step restores the same packages instead of building three.
