@@ -22,7 +22,9 @@
  * malformed one.
  */
 import { describe, it, expect } from 'vitest';
-import { verdict, runsForSha, nextStep, retryable, MIN_RUNS, REQUIRED_RUNS } from '../tools/ci-green-for-sha.mjs';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { verdict, runsForSha, nextStep, retryable, MIN_RUNS, REQUIRED_RUNS, POST_DEPLOY_WORKFLOWS } from '../tools/ci-green-for-sha.mjs';
 
 const done = (name: string, conclusion: string) => ({ name, status: 'completed', conclusion });
 /** The run every push starts, whose presence proves the listing is real. */
@@ -121,6 +123,31 @@ describe('the gate excludes its own run, or it waits for itself forever', () => 
     ).toEqual(['ESLint']);
   });
 
+  it('★ drops the post-deploy live check too: dispatched onto whatever master is by then, it takes as long as its test', async () => {
+    // 2026-09-22, run 35753761634: the check held the rollout lock for 18 minutes and the next
+    // deploy queued behind it. Dispatched instead, it lands on the next merge's sha — and counted
+    // here it would hold THAT deploy for the same 18 minutes.
+    const got = await runsForSha('a'.repeat(40), {
+      repo: 'o/r', token: 't', self: 'Auto-deploy master',
+      fetchFn: async () => reply([
+        { name: 'Client signature live check', status: 'in_progress', conclusion: null },
+        { name: 'ESLint', status: 'completed', conclusion: 'success' },
+        { name: 'Bridge Typecheck', status: 'completed', conclusion: 'success' },
+      ]),
+    });
+    expect(got.map((r) => r.name)).toEqual(['ESLint', 'Bridge Typecheck']);
+    expect(verdict(got).state, 'an in-progress post-deploy check must not read as pending CI').toBe('green');
+  });
+
+  it('★ the name it ignores is the name the workflow has, and auto-deploy.yml dispatches that workflow rather than running it inside the locked run', () => {
+    const workflow = readFileSync(fileURLToPath(new URL('../.github/workflows/client-signature-live.yml', import.meta.url)), 'utf8');
+    const name = /^name:\s*(.+?)\s*$/m.exec(workflow)?.[1];
+    expect(name).toBeDefined();
+    expect(POST_DEPLOY_WORKFLOWS).toContain(name);
+    const deploy = readFileSync(fileURLToPath(new URL('../.github/workflows/auto-deploy.yml', import.meta.url)), 'utf8');
+    expect(deploy).toMatch(/gh workflow run client-signature-live\.yml/);
+    expect(deploy, 'a uses: of the check inside auto-deploy.yml holds the rollout lock for the whole test').not.toMatch(/uses:\s*\.\/\.github\/workflows\/client-signature-live\.yml/);
+  });
   it('★ refuses when GitHub does not answer, rather than reporting an empty list', async () => {
     await expect(runsForSha('a'.repeat(40), {
       repo: 'o/r', token: 't', self: 'x',
