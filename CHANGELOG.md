@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-22 — the other three bridge images are one stage too
+
+`deploy/Dockerfile.foxxi-bridge`, `Dockerfile.agp-bridge` and `Dockerfile.wsp-bridge` take the single stage the harness image took in the previous entry: the same files and command, without the runtime stage that moved node_modules aside, copied /app back and made every intermediate layer a cache export. The harness image's cached build went from 2:40 to 0:43 (job 1:08, beside 2:04–2:29 for the three two-stage bridges in the same run).
+
 ## 2026-09-22 — the judge step is red when the selected run is, and a full-mode selection is left to the suite workflow
 
 `bin/follow.ts` ended 0 whatever the local run did, so the judge's selection step could not fail and the auto-merge condition "the selected tests passed" was read from a step that always passed: #454's selection was the whole suite (a workflow and a Dockerfile changed, both sensitive paths), it exited 1, and the decision merged on it — the suite workflow, which the decision now waits for, was green, so nothing wrong landed, but the condition was hollow. The chain now ends with `chainExitCode(runs)`: 1 when any performed run exited non-zero or reported a failing file. And `--skip-full-run` leaves a full-mode selection unperformed in CI (no run, no triage, no outcome): `bridge-typecheck.yml` runs the whole suite on the same head and the merge waits for it, so running it again inside the judge cost eight minutes on #454 and calibrated nothing.
