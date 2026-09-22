@@ -15,8 +15,13 @@
 # advertise targets nothing answers, which is the defect
 # demos/interego-bridge/availability.test.mjs exists to prevent. The order matters:
 # the service exists first, THEN the manifest is true.
+# ★ ONE STAGE (2026-09-22), as Dockerfile.jev-harness-bridge: a runtime stage that copied /app out
+# of a build stage cost 15 s to move node_modules aside, 8 s to copy /app back and 40 s to re-hash
+# every intermediate layer for the registry cache (a second stage needs cache-to mode=max). A
+# single stage already has the layers the runtime stage assembled by hand, each cached and pushed
+# on its own; the harness image's cached build went from 2:40 to 0:43 (job 1:08, beside 2:04–2:29 for the three two-stage bridges in the same run). Same files, same command.
 ARG NODE_BASE=node:22-slim
-FROM ${NODE_BASE} AS build
+FROM ${NODE_BASE}
 
 ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip
 
@@ -108,20 +113,6 @@ RUN mkdir -p node_modules/@interego \
   && ln -sfn /app/packages/pgsl node_modules/@interego/pgsl \
   && ln -sfn /app/packages/workspace-client node_modules/@interego/workspace-client
 
-# ────────────────────────────────────────────────────────────
-#  Runtime stage
-# node_modules as its own layer in the runtime image, so the layer that changes with every commit
-# (the sources) is small: the registry keeps the unchanged node_modules layer and a push moves
-# megabytes, not the 700 MB that one /app layer moved (74 s of every harness rollout, measured
-# 2026-09-22). Moved out of /app so the second COPY below does not carry it twice.
-RUN mv node_modules /node_modules
-# ────────────────────────────────────────────────────────────
-FROM ${NODE_BASE}
-
-WORKDIR /app
-
-COPY --from=build /node_modules /app/node_modules
-COPY --from=build /app /app
 
 EXPOSE 6030
 ENV PORT=6030

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-09-22 — the other three bridge images are one stage too
+
+`deploy/Dockerfile.foxxi-bridge`, `Dockerfile.agp-bridge` and `Dockerfile.wsp-bridge` take the single stage the harness image took in the previous entry: the same files and command, without the runtime stage that moved node_modules aside, copied /app back and made every intermediate layer a cache export. The harness image's cached build went from 2:40 to 0:43 (job 1:08, beside 2:04–2:29 for the three two-stage bridges in the same run).
+
+## 2026-09-22 — the judge step is red when the selected run is, and a full-mode selection is left to the suite workflow
+
+`bin/follow.ts` ended 0 whatever the local run did, so the judge's selection step could not fail and the auto-merge condition "the selected tests passed" was read from a step that always passed: #454's selection was the whole suite (a workflow and a Dockerfile changed, both sensitive paths), it exited 1, and the decision merged on it — the suite workflow, which the decision now waits for, was green, so nothing wrong landed, but the condition was hollow. The chain now ends with `chainExitCode(runs)`: 1 when any performed run exited non-zero or reported a failing file. And `--skip-full-run` leaves a full-mode selection unperformed in CI (no run, no triage, no outcome): `bridge-typecheck.yml` runs the whole suite on the same head and the merge waits for it, so running it again inside the judge cost eight minutes on #454 and calibrated nothing.
+
 ## 2026-09-22 — the suite runs as two parts beside the typechecks, and the harness image is one stage
 
 `bridge-typecheck.yml` ran everything in one job, ten minutes, and since the gated auto-merge waits for it that was the merge's length. Four modules were 4.1 of the suite's 7.6 minutes (workspace-adversarial 155 s, whose AXIS A enumerates 76,800 configurations on purpose; workspace-desktop-renderer 55 s; solid 22 s; cas-split 15 s), so the suite now runs as two parts on two runners — those four on one, everything else via `--exclude` on the other — with the typechecks and guards in a third job, all restoring the built packages from the cache the judge job saves. Each part is still one single-fork vitest process, so nothing vitest.config.ts pins changes. `tests/suite-partition.test.ts` holds the cut exact: the named modules and the excluded ones must be the same set, and every one must exist. `deploy/Dockerfile.jev-harness-bridge` is one stage: the runtime stage that copied /app out of a build stage cost 15 s to move node_modules aside, 8 s to copy /app back and 40 s to re-hash every intermediate layer for the registry cache, on an image whose layers a single stage already has.

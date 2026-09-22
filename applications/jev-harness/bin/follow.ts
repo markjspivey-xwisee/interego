@@ -3,20 +3,23 @@
  * jev-harness follower CLI.
  *
  *   follow <manifest-or-judgment-url> <verb> [--arg k=v]... [--json '{...}'] [--file k=path]
- *          [--then <verb>]... [--run] [--repo <dir>] [--no-validate] [--gate]
+ *          [--then <verb>]... [--run] [--skip-full-run] [--repo <dir>] [--no-validate] [--gate]
  *
  * Verbs are the vertical's action verbs (navigate, select-tests, triage, review-gate,
  * record-outcome, calibration) or a judgment's control names (run-selected-tests, refine, ...).
  * --then chains along the controls each result affords: the follower re-dereferences every
  * result and follows the named control from THAT document. --run performs the declarative
- * run-selected-tests control locally and feeds the log into the next --then triage.
+ * run-selected-tests control locally and feeds the log into the next --then triage; the process
+ * then exits 1 when that run failed, so a step that runs this chain is red when the tests are.
+ * --skip-full-run leaves a FULL-mode selection unperformed (no run, no triage, no outcome):
+ * the whole suite runs in bridge-typecheck.yml on the same head and the merge waits for it.
  * --gate exits 1 for needs-human-review and 3 for block, so CI can gate on it;
  * --gate-blocks-only exits 3 for block alone, for an operator who requires no person.
  */
 
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { act, affordancesIn, dereference, findAffordance, mergeArguments, runSelectedTests, validateAgainstShape, type ResolvedAffordance, runNeedsTriage } from '../src/follower.js';
+import { act, affordancesIn, chainExitCode, dereference, findAffordance, fullRunLeftToTheSuite, mergeArguments, runSelectedTests, validateAgainstShape, type ResolvedAffordance, runNeedsTriage } from '../src/follower.js';
 
 interface Cli {
   url: string;
@@ -30,15 +33,16 @@ interface Cli {
   gateBlocksOnly: boolean;
   outcome: boolean;
   out: string;
+  skipFullRun: boolean;
 }
 
 function parseCli(argv: string[]): Cli {
   const [url, verb, ...rest] = argv;
   if (!url || !verb) {
-    console.error('usage: follow <manifest-or-judgment-url> <verb> [--arg k=v] [--json {...}] [--file k=path] [--then verb] [--run] [--outcome] [--repo dir] [--no-validate] [--gate | --gate-blocks-only] [--out dir]');
+    console.error('usage: follow <manifest-or-judgment-url> <verb> [--arg k=v] [--json {...}] [--file k=path] [--then verb] [--run] [--skip-full-run] [--outcome] [--repo dir] [--no-validate] [--gate | --gate-blocks-only] [--out dir]');
     process.exit(64);
   }
-  const cli: Cli = { url, verb, args: {}, then: [], run: false, repo: process.cwd(), validate: true, gate: false, gateBlocksOnly: false, outcome: false, out: '' };
+  const cli: Cli = { url, verb, args: {}, then: [], run: false, repo: process.cwd(), validate: true, gate: false, gateBlocksOnly: false, outcome: false, out: '', skipFullRun: false };
   for (let i = 0; i < rest.length; i += 1) {
     const flag = rest[i]!;
     const next = (): string => { const v = rest[i + 1]; if (v === undefined) throw new Error(`${flag} needs a value`); i += 1; return v; };
@@ -48,6 +52,7 @@ function parseCli(argv: string[]): Cli {
       case '--file': { const kv = next(); const eq = kv.indexOf('='); if (eq < 0) throw new Error('--file needs key=path'); cli.args[kv.slice(0, eq)] = readFileSync(kv.slice(eq + 1), 'utf8'); break; }
       case '--then': cli.then.push(next()); break;
       case '--run': cli.run = true; break;
+      case '--skip-full-run': cli.skipFullRun = true; break;
       case '--repo': cli.repo = resolve(next()); break;
       case '--no-validate': cli.validate = false; break;
       case '--gate': cli.gate = true; break;
@@ -129,6 +134,8 @@ async function main(): Promise<void> {
   const first = last;
   let carried: Record<string, unknown> = {};
   let skipTriage = false;
+  let skipOutcome = false;
+  const runs: Parameters<typeof chainExitCode>[0][number][] = [];
   for (const verb of cli.then) {
     if (verb === 'triage' && skipTriage) { console.log('▸ triage skipped: the run passed, so there is nothing to explain\n'); continue; }
     const from = last.url;
@@ -138,8 +145,13 @@ async function main(): Promise<void> {
       const control = next.aff;
       if (actionName(control.action) === 'run-selected-tests' && cli.run) {
         const args = (next.body as { payload: Record<string, unknown> }).payload;
-        console.log(`▸ ${verb} (performed locally in ${cli.repo})`);
+        const leftToSuite = fullRunLeftToTheSuite(args, cli.skipFullRun);
+        console.log(leftToSuite
+          ? `▸ ${verb} left to the suite workflow: the selection is the whole suite, which bridge-typecheck.yml runs on this head and the merge decision waits for; not run, triaged or scored here\n`
+          : `▸ ${verb} (performed locally in ${cli.repo})`);
+        if (leftToSuite) { skipTriage = true; skipOutcome = true; continue; }
         const run = runSelectedTests(args, cli.repo);
+        runs.push(run);
         writeFileSync(join(cli.out, 'run.log'), run.log);
         console.log(`  ${run.command}\n  exit ${run.exitCode}, ${run.failedTests.length} failing test file(s)\n`);
         carried = { log: run.log, tests_failed: run.failedTests, tests_run: (args['tests'] as string[] | undefined) ?? [] };
@@ -154,7 +166,7 @@ async function main(): Promise<void> {
     console.log(`▸ ${verb}\n${summarize(current.body)}\n`);
     save(cli.out, verb, current.body);
   }
-  if (cli.outcome && first.url) {
+  if (cli.outcome && first.url && !skipOutcome) {
     // Score the FIRST judgment of the chain with what the chain observed (or what --arg supplied).
     const observed = carriedFor('record-outcome', { ...carried, ...pick(cli.args, ['files_changed', 'tests_failed', 'tests_run', 'human_decision', 'confirmed_classes']) });
     const o = await followOne(`${first.url}.trig`, 'record-outcome', observed, cli);
@@ -165,8 +177,10 @@ async function main(): Promise<void> {
     const v = last.judgment.verdict;
     // A secret in the diff fails the job whatever the operator requires; needs-human-review
     // fails it only when a person is required (--gate), and is advisory otherwise.
-    process.exit(v === 'block' ? 3 : v === 'needs-human-review' && cli.gate ? 1 : 0);
+    process.exit(v === 'block' ? 3 : v === 'needs-human-review' && cli.gate ? 1 : chainExitCode(runs));
   }
+  // A chain that performed a run and saw it fail ends red, after the outcome was recorded.
+  process.exitCode = chainExitCode(runs);
 }
 
 function actionName(action: string): string {
