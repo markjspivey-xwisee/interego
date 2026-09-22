@@ -14,8 +14,16 @@
 #  so the controls the bridge publishes are followable from the relay.
 # ────────────────────────────────────────────────────────────
 
+# ★ ONE STAGE (2026-09-22). Until then a runtime stage copied /app out of a build stage: first as
+# one 700 MB layer (74 s of every rollout), then with node_modules moved aside and copied back
+# as its own layer — 15 s to move it, 8 s to copy /app again, and 40 s to prepare the build
+# cache for export, because a second stage needs cache-to mode=max and every 700 MB
+# intermediate layer is re-hashed for it. A single stage already has the layers the runtime
+# stage was assembling by hand — the base, the manifests, the install, the sources, the build —
+# each cached and pushed on its own, and an unchanged install layer is a cache hit rather than
+# a re-hash. The image carries the same files it did.
 ARG NODE_BASE=node:22-slim
-FROM ${NODE_BASE} AS build
+FROM ${NODE_BASE}
 
 ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip
 
@@ -100,21 +108,6 @@ RUN if [ "$PREBUILT" = "1" ] && [ -f packages/registry/dist/index.js ]; then ech
 
 RUN mkdir -p node_modules/@interego \
   && ln -sfn /app/packages/core node_modules/@interego/core
-
-# ────────────────────────────────────────────────────────────
-#  Runtime stage
-# node_modules as its own layer in the runtime image, so the layer that changes with every commit
-# (the sources) is small: the registry keeps the unchanged node_modules layer and a push moves
-# megabytes, not the 700 MB that one /app layer moved (74 s of every harness rollout, measured
-# 2026-09-22). Moved out of /app so the second COPY below does not carry it twice.
-RUN mv node_modules /node_modules
-# ────────────────────────────────────────────────────────────
-FROM ${NODE_BASE}
-
-WORKDIR /app
-
-COPY --from=build /node_modules /app/node_modules
-COPY --from=build /app /app
 
 # The commit this image was built from, surfaced at /health as `build` so a deploy can verify
 # the rollout it just made (build-ghcr.yml passes GIT_SHA; tools/railway-redeploy.mjs reads it).

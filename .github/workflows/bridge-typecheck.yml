@@ -121,15 +121,31 @@ permissions:
   contents: read
 
 jobs:
+  # ── ★ TWO JOBS SINCE 2026-09-22, AND THE SUITE IN TWO PARTS ────────────────────────────────
+  #
+  # One job ran everything in sequence: the typechecks, the boots, the whole suite, the guards —
+  # ten minutes, of which the suite was 7.6 and four modules were 4.1 of those
+  # (workspace-adversarial 155 s: its AXIS A enumerates 76,800 configurations on purpose;
+  # workspace-desktop-renderer 55 s; solid 22 s; cas-split 15 s). The gated auto-merge now waits
+  # for this workflow before it merges, so its length is the merge's length. The suite runs as
+  # two parts on two runners: the four slowest modules on one, everything else on the other,
+  # with the typechecks and the guards beside them. Each part is still one single-fork vitest
+  # process, so nothing vitest.config.ts pins (and says why) changes: no two modules share a
+  # process, and the live pod suites all sit in the second part.
+  #
+  # ★ THE PARTITION IS A LIST, AND A LIST FAILS SILENTLY, so tests/suite-partition.test.ts reads
+  # this file and refuses a `files:` line whose named modules and the other part's `--exclude`
+  # flags are not the same set, or name a module that does not exist. A module dropped from one
+  # side and not added to the other is exactly the "an inclusion list fails silently" class the
+  # step note below was written for. Note that with `--exclude` no CI invocation is a whole-tree
+  # run in tools/vitest-run-integrity.mjs's sense (planned < treeTotal), so its scalar floor
+  # fires only for a local `npx vitest run`; its per-glob presence check and its drift ratchet
+  # read the tree, not the plan, and still run in both parts.
   typecheck:
     name: "MCP surface typecheck (tsx never typechecks it — this is the only guard)"
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      # ★ `fetch-depth: 0` IS LOAD-BEARING. This job runs the whole root suite, which
-      # includes `railway-pins-freshness.test.ts` — it reads a real commit date out of this
-      # clone to prove a deployed pin is not stale. Under the default depth-1 clone that
-      # lookup fails and the test reds for a reason that has nothing to do with pins, which
-      # is exactly the kind of red whose obvious "fix" is to weaken the assertion.
       - uses: actions/checkout@v6
         with: { fetch-depth: 0 }
       - uses: actions/setup-node@v6
@@ -138,8 +154,16 @@ jobs:
           cache: 'npm'
       - name: Install
         run: npm ci
+      # The built packages keyed by their sources, the key jev-harness.yml saves under: a hit
+      # skips the build (about forty seconds), and a miss builds and saves for the other jobs.
+      - uses: actions/cache@v5
+        id: dist
+        with:
+          path: packages/*/dist
+          key: dist-${{ runner.os }}-${{ hashFiles('package-lock.json', 'packages/*/src/**', 'packages/*/package.json', 'packages/*/tsconfig*.json', 'tsconfig.base.json') }}
       - name: Build @interego/* packages
         # Not for the artifacts — for the .d.ts each bridge tsconfig resolves.
+        if: steps.dist.outputs.cache-hit != 'true'
         run: npm run build
 
       # ── Every bridge, not just the one that happened to be covered ──────────
@@ -198,26 +222,6 @@ jobs:
       - name: The stdio server actually serves a client (both eras, real subprocess)
         run: npx vitest run --root mcp-server tests/stdio-serves-both-eras.test.ts
 
-      # ★ THE WHOLE SUITE, NOT A HAND-PICKED LIST.
-      #
-      # This step used to name 13 test files explicitly. That made it an INCLUSION list,
-      # and an inclusion list fails silently: 98 of the 111 files in tests/ ran in no
-      # workflow at all. Locally green, gating nothing. It was found the fifth time in
-      # one session that a newly written test turned out not to run in CI — that time
-      # the test pinning a security fix (the caller-reachable entailment bypass, #217),
-      # which had already merged with its guard inert.
-      #
-      # The header of this very workflow already says it: "Adding a path to one workflow
-      # is not the fix." Naming one more file would have repeated the mistake in the same
-      # shape. So the default is inverted, from opt-in to opt-out: run everything, and
-      # let an exclusion be a visible, argued deletion rather than an omission nobody sees.
-      #
-      # Affordable: the full root suite is ~3m24s and only 12 of 111 files touch the
-      # network — several of which (action-identity, competency-identity,
-      # activity-identity) were already running here, so network access in CI is proven,
-      # not assumed.
-      - name: The whole root test suite
-        run: npx vitest run
       # A credential is a statement BY an issuer. /agent/prove-competency derived its
       # BBS+ issuer seed from a caller-supplied issuer_did, so two unrelated holders
       # naming the same authority got credentials signed by the SAME key — anyone
@@ -259,3 +263,59 @@ jobs:
         env:
           CONFORMANCE_REQUIRE_ENGINE: '1'
         run: node spec/conformance/runner.mjs
+
+  # ★ THE WHOLE SUITE, NOT A HAND-PICKED LIST.
+  #
+  # This step used to name 13 test files explicitly. That made it an INCLUSION list,
+  # and an inclusion list fails silently: 98 of the 111 files in tests/ ran in no
+  # workflow at all. Locally green, gating nothing. It was found the fifth time in
+  # one session that a newly written test turned out not to run in CI — that time
+  # the test pinning a security fix (the caller-reachable entailment bypass, #217),
+  # which had already merged with its guard inert.
+  #
+  # The header of this very workflow already says it: "Adding a path to one workflow
+  # is not the fix." Naming one more file would have repeated the mistake in the same
+  # shape. So the default is inverted, from opt-in to opt-out: run everything, and
+  # let an exclusion be a visible, argued deletion rather than an omission nobody sees.
+  # The two parts below are that same whole, cut once, and tests/suite-partition.test.ts
+  # holds the cut exact.
+  #
+  # ★ `fetch-depth: 0` IS LOAD-BEARING. The suite includes `railway-pins-freshness.test.ts`
+  # — it reads a real commit date out of this clone to prove a deployed pin is not stale.
+  # Under the default depth-1 clone that lookup fails and the test reds for a reason that
+  # has nothing to do with pins, which is exactly the kind of red whose obvious "fix" is
+  # to weaken the assertion.
+  suite:
+    name: "The whole root test suite: ${{ matrix.part.name }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        part:
+          - name: the four slowest modules
+            files: tests/workspace-adversarial.test.ts tests/workspace-desktop-renderer.test.ts tests/solid.test.ts tests/cas-split.test.ts
+          - name: everything else
+            files: --exclude tests/workspace-adversarial.test.ts --exclude tests/workspace-desktop-renderer.test.ts --exclude tests/solid.test.ts --exclude tests/cas-split.test.ts
+    steps:
+      - uses: actions/checkout@v6
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Install
+        run: npm ci
+      # The built packages keyed by their sources, the key jev-harness.yml saves under: a hit
+      # skips the build (about forty seconds), and a miss builds and saves for the other jobs.
+      - uses: actions/cache@v5
+        id: dist
+        with:
+          path: packages/*/dist
+          key: dist-${{ runner.os }}-${{ hashFiles('package-lock.json', 'packages/*/src/**', 'packages/*/package.json', 'packages/*/tsconfig*.json', 'tsconfig.base.json') }}
+      - name: Build @interego/* packages
+        # Not for the artifacts — for the .d.ts each bridge tsconfig resolves.
+        if: steps.dist.outputs.cache-hit != 'true'
+        run: npm run build
+      - name: This part of the suite
+        run: npx vitest run ${{ matrix.part.files }}
