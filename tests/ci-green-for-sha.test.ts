@@ -22,11 +22,13 @@
  * malformed one.
  */
 import { describe, it, expect } from 'vitest';
-import { verdict, runsForSha, nextStep, retryable, MIN_RUNS } from '../tools/ci-green-for-sha.mjs';
+import { verdict, runsForSha, nextStep, retryable, MIN_RUNS, REQUIRED_RUNS } from '../tools/ci-green-for-sha.mjs';
 
 const done = (name: string, conclusion: string) => ({ name, status: 'completed', conclusion });
-/** Enough concluded runs to clear the floor, so a leg tests what it says it tests. */
-const filler = (n: number) => Array.from({ length: n }, (_, i) => done(`filler-${i}`, 'success'));
+/** The run every push starts, whose presence proves the listing is real. */
+const lint = () => done('ESLint', 'success');
+/** Enough concluded runs to clear the floor (the always-on run among them), so a leg tests what it says it tests. */
+const filler = (n: number) => [lint(), ...Array.from({ length: Math.max(0, n - 1) }, (_, i) => done(`filler-${i}`, 'success'))];
 
 describe('a deploy waits for every other run to conclude', () => {
   it('is pending while anything is still running', () => {
@@ -73,6 +75,21 @@ describe('★ an empty or short result is refused, not read as green', () => {
   it('refuses just below the floor, and allows just at it', () => {
     expect(verdict(filler(MIN_RUNS - 1)).state).toBe('too-few');
     expect(verdict(filler(MIN_RUNS)).state).toBe('green');
+  });
+
+  it('★ refuses a listing without the run every push starts, however long it is — that list is not this commit\'s CI', () => {
+    const others = Array.from({ length: 10 }, (_, i) => done(`other-${i}`, 'success'));
+    const v = verdict(others);
+    expect(v.state, 'ten green runs without ESLint were read as this commit\'s CI').toBe('too-few');
+    expect(v.detail).toContain('no ESLint run');
+    expect(REQUIRED_RUNS).toEqual(['ESLint']);
+    expect(verdict([lint(), ...others]).state).toBe('green');
+  });
+
+  it('the floor is two: the always-on run and one more, which is what a workflows-only merge has (c24a74a8, 2026-09-22)', () => {
+    expect(MIN_RUNS).toBe(2);
+    expect(verdict([lint(), done('pages build and deployment', 'success')]).state).toBe('green');
+    expect(verdict([lint()]).state).toBe('too-few');
   });
 
   it('a short list that is also RED reports red, because pending is checked first', () => {

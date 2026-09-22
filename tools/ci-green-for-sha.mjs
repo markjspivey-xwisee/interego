@@ -47,8 +47,24 @@
 
 const API = process.env['GITHUB_API_URL'] ?? 'https://api.github.com';
 
-/** How many concluded runs must exist before "nothing failed" is allowed to mean anything. */
-export const MIN_RUNS = 4;
+/**
+ * How many concluded runs must exist before "nothing failed" is allowed to mean anything.
+ *
+ * 4 -> 2 (2026-09-22): the floor was calibrated while the mutation gate ran on every master
+ * push with no path filter, so four runs always existed. Once that gate moved to pull
+ * requests only, a merge touching only workflows and the changelog produced three (ESLint,
+ * Bridge Typecheck, pages) and the gate refused c24a74a8 after waiting half an hour for a
+ * fourth that nothing would ever start. Counting was always a proxy for "is this listing
+ * real"; REQUIRED_RUNS asks that directly, and the count only has to exceed the empty list.
+ */
+export const MIN_RUNS = 2;
+
+/**
+ * Workflows that run on EVERY push to master with no path filter. Their presence in the listing
+ * is what proves the listing is real: a mistyped sha, a token without actions:read and a query
+ * made too early all return a list without them. Keep this in step with lint.yml.
+ */
+export const REQUIRED_RUNS = ['ESLint'];
 
 /** A conclusion that does not stop a deploy. `cancelled` is absent on purpose — see the header. */
 const PASSING = new Set(['success', 'skipped', 'neutral']);
@@ -82,10 +98,21 @@ export async function runsForSha(sha, { repo, token, self, fetchFn = fetch }) {
 }
 
 /** Green / not-yet / red, given a snapshot of runs. Pure, so the states are testable. */
-export function verdict(runs, minRuns = MIN_RUNS) {
+export function verdict(runs, minRuns = MIN_RUNS, required = REQUIRED_RUNS) {
   const pending = runs.filter((r) => r.status !== 'completed');
   if (pending.length > 0) {
     return { state: 'pending', pending: pending.map((r) => r.name), failed: [] };
+  }
+  const missing = required.filter((name) => !runs.some((r) => r.name === name));
+  if (missing.length > 0) {
+    return {
+      state: 'too-few',
+      pending: [],
+      failed: [],
+      detail: `the listing for this commit has no ${missing.join(', ')} run, which every push to master starts. `
+        + 'A list without it is not this commit\'s CI (a mistyped sha, a token without actions:read, or a '
+        + 'query made before the runs registered), so it is refused rather than deployed on.',
+    };
   }
   if (runs.length < minRuns) {
     return {

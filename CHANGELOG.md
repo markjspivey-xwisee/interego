@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-22 — the deploy gate's floor names the run every push starts, instead of counting to four
+
+With the mutation gate on pull requests only, the merge of #446 (workflows and changelog) produced three runs on master and `tools/ci-green-for-sha.mjs` refused it after waiting half an hour for a fourth that nothing would ever start; the floor of four had been calibrated when that gate ran everywhere. The floor is now two, and the listing must contain the ESLint run, which every push to master starts with no path filter: that presence is what proves the listing is this commit's CI, which the count was only ever a proxy for.
+
 ## 2026-09-21 — merge to live in a third of the time: the mutation gate runs on pull requests only, services deploy three at a time, installs are cached
 
 Measured on the day's merges: the mutation gate took 19-21 minutes on every master push and the deploy gate waited for it, so every rollout began twenty minutes after the pull request's own run of the same gate had passed; it now runs on pull requests only, while Bridge Typecheck keeps the whole unit suite on every master push (9-10 minutes, now the critical path). `auto-deploy.yml` rolls three services at a time instead of one, with the per-service concurrency, health assertion and rollback unchanged. The harness, typecheck and mutation workflows cache npm installs.
