@@ -2,16 +2,15 @@ name: jev-harness (System One judgments)
 
 # Copy to .github/workflows/ in the monorepo with the vertical at applications/jev-harness.
 #
-# Three jobs on every pull request:
-#   select-and-run   follow select-tests → run the selection → triage the log (only when the run failed) → score the selection
+# One job on every pull request (three until 2026-09-22; see the job's own note), in order:
+#   select-tests     follow select-tests → run the selection → triage the log (only when the run failed) → score the selection
 #   review-gate      follow review-gate on the PR diff; the job fails for block (a secret in the
 #                    diff, exit 3) and, only when the repository variable JEV_REQUIRE_HUMAN_REVIEW
 #                    is true, for needs-human-review (exit 1); otherwise that verdict is advisory
 #   artifacts        every judgment's JSON, payload Turtle, descriptor TriG and HyperMarkdown
-#   gated auto-merge merges on the gate's auto-ok alone, and only once the verdict has earned it
-#                    (armed by the JEV_AUTO_MERGE variable and the JEV_MERGE_TOKEN secret; the
-#                    policy is applications/jev-harness/src/auto-merge.ts); unarmed, it prints
-#                    the decision it would have taken
+#   gated auto-merge merges when every condition holds (armed by the JEV_AUTO_MERGE variable and
+#                    the JEV_MERGE_TOKEN secret; the policy is applications/jev-harness/src/auto-merge.ts);
+#                    unarmed, it prints the decision it would have taken
 #
 # Secrets: TYPESAFE_API_KEY (required). INTEREGO_AGENT_KEY_JSON (optional) makes the runner's bridge the
 # harness's delegate agent, so every judgment and outcome is published to the owner's pod through the
@@ -28,7 +27,14 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write # one comment per job, edited in place on later runs
+  pull-requests: write # two comments per pull request, edited in place on later runs
+
+# A new push to the same pull request makes the run in flight moot: its judgments are of a diff
+# that no longer exists and its decision would merge a head it did not test. Cancel it. The
+# close-time run is grouped apart so a merge never cancels the scoring of its own judgments.
+concurrency:
+  group: jev-harness-${{ github.event.pull_request.number || github.run_id }}-${{ github.event.action == 'closed' && 'close' || 'judge' }}
+  cancel-in-progress: true
 
 env:
   HARNESS_DIR: applications/jev-harness
@@ -54,8 +60,14 @@ env:
   JEV_REQUIRE_HUMAN_REVIEW: ${{ vars.JEV_REQUIRE_HUMAN_REVIEW }}
 
 jobs:
-  select-and-run:
-    name: "select tests → run → triage → outcome"
+  # ── One machine for the whole pull request ────────────────────────────────────────────────
+  # Until 2026-09-22 this was three jobs: the selection, the gate and the merge decision, each
+  # on its own runner with its own install and build, the decision waiting for both. Measured
+  # on a one-file change, the three runner starts and the repeated installs cost more than every
+  # judgment and test combined. One bridge, started once, now answers the selection and the gate
+  # in turn, and the decision reads the gate's verdict from the same workspace, not an artifact.
+  judge:
+    name: "select tests → run → gate → decide"
     if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -67,8 +79,8 @@ jobs:
         with:
           node-version: 20
           cache: npm
-      # node_modules keyed by the lockfile: a hit skips npm ci (about a minute per job). Workspace
-      # links inside it are symlinks, which the cache tar keeps.
+      # node_modules keyed by the lockfile: a hit skips npm ci (about a minute). Workspace links
+      # inside it are symlinks, which the cache tar keeps.
       - uses: actions/cache@v5
         id: node-modules
         with:
@@ -77,8 +89,8 @@ jobs:
       - if: steps.node-modules.outputs.cache-hit != 'true'
         run: npm ci
       # The built packages keyed by their sources: a hit skips the whole build (two to three
-      # minutes). This job saves the full build; the others restore it and build only what they
-      # need on a miss, so a partial build never sits under the key of a full one.
+      # minutes). Saved here; auto-deploy restores the same key on master, where a change outside
+      # packages/ then ships prebuilt into the images.
       - uses: actions/cache@v5
         id: dist
         with:
@@ -101,7 +113,11 @@ jobs:
           (cd "$HARNESS_DIR" && npx tsx bridge/server.ts > bridge.log 2>&1 &)
           for i in $(seq 1 30); do curl -sf "http://localhost:$BRIDGE_PORT/health" && break; sleep 1; done
           curl -sf "http://localhost:$BRIDGE_PORT/health"
+      # The selection may fail (a red test); the gate and the decision still run, and the decision
+      # reads this step's outcome as the selection result it used to read from a job.
       - name: Follow the selection chain
+        id: selection
+        continue-on-error: true
         run: |
           cd "$HARNESS_DIR"
           npx tsx bin/follow.ts "http://localhost:$BRIDGE_PORT/affordances" select-tests \
@@ -115,64 +131,11 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
         run: |
           cd "$HARNESS_DIR"
-          npx tsx bin/pr-comment.ts selection --dir "${{ github.workspace }}/.jev-harness/follower" \n            --pod "$INTEREGO_POD_NAME" --pod-public-origin "$INTEREGO_POD_PUBLIC_ORIGIN" > comment.md
+          npx tsx bin/pr-comment.ts selection --dir "${{ github.workspace }}/.jev-harness/follower" \
+            --pod "$INTEREGO_POD_NAME" --pod-public-origin "$INTEREGO_POD_PUBLIC_ORIGIN" > comment.md
           node tools/upsert-pr-comment.mjs "$PR" comment.md "<!-- jev-harness:selection -->"
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: jev-harness-judgments
-          include-hidden-files: true # the store is the dot-directory .jev-harness/
-          path: |
-            .jev-harness/
-            ${{ env.HARNESS_DIR }}/bridge.log
-
-  review-gate:
-    name: "review gate"
-    if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 20
-          cache: npm
-      # node_modules keyed by the lockfile: a hit skips npm ci (about a minute per job). Workspace
-      # links inside it are symlinks, which the cache tar keeps.
-      - uses: actions/cache@v5
-        id: node-modules
-        with:
-          path: node_modules
-          key: node-modules-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
-      - if: steps.node-modules.outputs.cache-hit != 'true'
-        run: npm ci
-      - uses: actions/cache/restore@v5
-        id: dist
-        with:
-          path: packages/*/dist
-          key: dist-${{ runner.os }}-${{ hashFiles('package-lock.json', 'packages/*/src/**', 'packages/*/package.json', 'packages/*/tsconfig*.json', 'tsconfig.base.json') }}
-      # The vertical's IRI guard and descriptor code import @interego/core, which resolves to its
-      # built dist/, so the kernel package is built before anything runs.
-      # @interego/registry aggregates the attestations the reputation view reads; it builds on core.
-      - if: steps.dist.outputs.cache-hit != 'true'
-        run: npm run build:core && npm run build --workspace @interego/registry
-      - name: Start the bridge
-        env:
-          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
-          INTEREGO_AGENT_KEY_JSON: ${{ secrets.INTEREGO_AGENT_KEY_JSON }}
-          INTEREGO_POD_NAME: ${{ env.INTEREGO_POD_NAME }}
-          JEV_HARNESS_AGENT_ID: ${{ env.JEV_HARNESS_AGENT_ID }}
-          JEV_HARNESS_OWNER_WEBID: ${{ env.JEV_HARNESS_OWNER_WEBID }}
-          JEV_HARNESS_CONTROL_BASE: ${{ env.JEV_HARNESS_CONTROL_BASE }}
-          JEV_HARNESS_REPO: ${{ github.workspace }}
-          BRIDGE_DEPLOYMENT_URL: http://localhost:6090
-          PORT: ${{ env.BRIDGE_PORT }}
-        run: |
-          (cd "$HARNESS_DIR" && npx tsx bridge/server.ts > bridge.log 2>&1 &)
-          for i in $(seq 1 30); do curl -sf "http://localhost:$BRIDGE_PORT/health" && break; sleep 1; done
       - name: Gate the diff
+        id: gate
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
@@ -192,62 +155,44 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
         run: |
           cd "$HARNESS_DIR"
-          npx tsx bin/pr-comment.ts gate --dir "${{ github.workspace }}/.jev-harness/follower" \n            --pod "$INTEREGO_POD_NAME" --pod-public-origin "$INTEREGO_POD_PUBLIC_ORIGIN" > comment.md
+          npx tsx bin/pr-comment.ts gate --dir "${{ github.workspace }}/.jev-harness/follower" \
+            --pod "$INTEREGO_POD_NAME" --pod-public-origin "$INTEREGO_POD_PUBLIC_ORIGIN" > comment.md
           node tools/upsert-pr-comment.mjs "$PR" comment.md "<!-- jev-harness:review-gate -->"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: jev-harness-review
-          include-hidden-files: true
-          path: .jev-harness/
-
-  # ── Gated auto-merge ──────────────────────────────────────────────────────────────────
-  # Merges without a person once the operator armed it (repository variable JEV_AUTO_MERGE=true)
-  # and a token that triggers auto-deploy is present (secret JEV_MERGE_TOKEN — a merge made with
-  # GITHUB_TOKEN starts no workflows, so it would land the commit and ship nothing), the selection
-  # ran green, and the gate found no secret (block). With JEV_REQUIRE_HUMAN_REVIEW=true the bar
-  # rises: the verdict must be auto-ok and the calibration the deployed bridge publishes must show
-  # at least twenty live review-verdict outcomes at ninety percent agreement
-  # (applications/jev-harness/src/auto-merge.ts is the policy, with its tests). Unarmed, the job
-  # prints the decision it would have taken and exits green. An automatic merge is labelled
-  # jev-harness:auto-merged first, so the close-time job never scores it as a person's approval.
-  # It runs whatever the gate concluded, because the verdict it reads is in the gate's artifact.
-  auto-merge:
-    name: "gated auto-merge"
-    needs: [select-and-run, review-gate]
-    if: ${{ always() && github.event_name == 'pull_request' && github.event.action != 'closed' && needs.review-gate.result != 'cancelled' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 20
-      # No install and no build. The decision reads the gate's saved verdict (a JSON file), the
-      # deployed bridge's calibration and reputation over HTTP, and GitHub through gh; its two
-      # source modules import only node built-ins, so tsx from npx is the whole runtime. The
-      # install and package build that used to sit here cost two and a half minutes per pull
-      # request for nothing they ran.
-      - uses: actions/download-artifact@v8
-        with:
-          name: jev-harness-review
-          path: .jev-harness
+          name: jev-harness-judgments
+          include-hidden-files: true # the store is the dot-directory .jev-harness/
+          path: |
+            .jev-harness/
+            ${{ env.HARNESS_DIR }}/bridge.log
+      # ── Gated auto-merge ──────────────────────────────────────────────────────────────────
+      # Merges without a person once the operator armed it (repository variable JEV_AUTO_MERGE=true)
+      # and a token that triggers auto-deploy is present (secret JEV_MERGE_TOKEN — a merge made with
+      # GITHUB_TOKEN starts no workflows, so it would land the commit and ship nothing), the
+      # selection ran green, the gate found no secret (block), GitHub reports the branch mergeable
+      # and master has not moved since this run's merge ref (a moved base is updated instead). With
+      # JEV_REQUIRE_HUMAN_REVIEW=true the bar rises: auto-ok and an earned calibration
+      # (applications/jev-harness/src/auto-merge.ts is the policy, with its tests). Unarmed, it
+      # prints the decision it would have taken. An automatic merge is labelled
+      # jev-harness:auto-merged first, so the close-time job never scores it as a person's approval.
+      # It runs whatever the gate concluded: a block is a printed refusal, not a skipped decision.
       - name: Decide, and merge only when every condition holds
+        if: ${{ always() && github.event_name == 'pull_request' }}
         env:
           GH_TOKEN: ${{ secrets.JEV_MERGE_TOKEN }}
           ARMED: ${{ vars.JEV_AUTO_MERGE }}
           TOKEN_PRESENT: ${{ secrets.JEV_MERGE_TOKEN != '' }}
-          SELECTION_RESULT: ${{ needs.select-and-run.result }}
+          SELECTION_RESULT: ${{ steps.selection.outcome }}
           CALIBRATION_URL: https://jev-harness-bridge-production.up.railway.app/jev-harness/calibration
           REPUTATION_URL: https://jev-harness-bridge-production.up.railway.app/jev-harness/reputation
         run: |
           cd "$HARNESS_DIR"
-          npx --yes tsx bin/auto-merge.ts --pr "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" \
+          npx tsx bin/auto-merge.ts --pr "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" \
             --base-sha "${{ github.event.pull_request.base.sha }}" \
             --dir "${{ github.workspace }}/.jev-harness/follower" --calibration-url "$CALIBRATION_URL" \
             --armed "$ARMED" --token-present "$TOKEN_PRESENT" --selection-result "$SELECTION_RESULT" \
             --require-human-review "$JEV_REQUIRE_HUMAN_REVIEW" --reputation-url "$REPUTATION_URL"
-
   outcomes-on-close:
     name: "score the judgments when the pull request closes"
     if: ${{ github.event_name == 'pull_request' && github.event.action == 'closed' }}

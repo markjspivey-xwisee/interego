@@ -137,6 +137,27 @@ jobs:
       # and abac compiled first. Kept in step with that workflow deliberately: two
       # different recipes for the same artifact is how a CI-green image turns out not
       # to be the image the tests exercised.
+      # ── prebuild: dist ─────────────────────────────────────────────────────────────────────
+      # The bridges' recipes build @interego/* inside the image, a minute that the pull request's
+      # job had already spent on the same sources. The built packages are restored here from the
+      # cache that job saved (a master run reads the default branch's caches) and travel into the
+      # context, where the Dockerfile skips its build when PREBUILT=1 finds them. A change under
+      # packages/ misses the cache and builds once here, for every leg, and is then cached.
+      - name: Restore the built packages, or build them once
+        if: steps.gate.outputs.skip != 'true' && matrix.prebuild == 'dist'
+        uses: actions/setup-node@v6
+        with: { node-version: '20', cache: npm }
+      - uses: actions/cache@v5
+        if: steps.gate.outputs.skip != 'true' && matrix.prebuild == 'dist'
+        id: dist
+        with:
+          path: packages/*/dist
+          key: dist-${{ runner.os }}-${{ hashFiles('package-lock.json', 'packages/*/src/**', 'packages/*/package.json', 'packages/*/tsconfig*.json', 'tsconfig.base.json') }}
+      # Name first, then the gate: tools/deploy-bundle-scope.ts reads a gated step by its `if:`
+      # line and follows `npm run build` through the root scripts to the workspaces it chains.
+      - name: Build the packages when nothing is cached
+        if: steps.gate.outputs.skip != 'true' && matrix.prebuild == 'dist' && steps.dist.outputs.cache-hit != 'true'
+        run: npm ci && npm run build
       - name: Pre-build the workspace dist this image's Dockerfile expects in the context
         if: steps.gate.outputs.skip != 'true' && matrix.prebuild == 'pgsl-store'
         uses: actions/setup-node@v6
@@ -235,6 +256,7 @@ jobs:
           build-args: |
             ${{ matrix.build_args }}
             GIT_SHA=${{ github.sha }}
+            PREBUILT=${{ matrix.prebuild == 'dist' && '1' || '0' }}
           # Immutable sha tag is what Railway pins to; :latest is for humans.
           tags: |
             ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:${{ github.sha }}
@@ -243,8 +265,14 @@ jobs:
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Layers cached in the registry as well as in the Actions cache: eighteen images at
+          # mode=max blow through the ten-gigabyte Actions cache and the npm ci layer missed on
+          # every build (a minute each, measured 2026-09-22). The registry keeps each image's
+          # cache beside it with no such limit.
+          cache-from: |
+            type=registry,ref=ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:buildcache
+            type=gha
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:buildcache,mode=max
 
       - name: Image pushed
         if: steps.gate.outputs.skip != 'true'

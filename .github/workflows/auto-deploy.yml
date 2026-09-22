@@ -192,10 +192,24 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with: { node-version: '20', cache: npm }
-      - run: npm ci
+      - uses: actions/cache@v5
+        id: node-modules
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - if: steps.node-modules.outputs.cache-hit != 'true'
+        run: npm ci
       # The event builders are @interego/ops, which imports @interego/core and types from
-      # @interego/compliance: three packages built, not the whole tree.
-      - run: npm run build:core && npm run build --workspace @interego/compliance && npm run build --workspace @interego/ops
+      # @interego/compliance. The built packages are restored from the cache the pull request
+      # job saved under the same key (a master run reads the default branch's caches); three
+      # packages are built only when nothing is cached.
+      - uses: actions/cache/restore@v5
+        id: dist
+        with:
+          path: packages/*/dist
+          key: dist-${{ runner.os }}-${{ hashFiles('package-lock.json', 'packages/*/src/**', 'packages/*/package.json', 'packages/*/tsconfig*.json', 'tsconfig.base.json') }}
+      - if: steps.dist.outputs.cache-hit != 'true'
+        run: npm run build:core && npm run build --workspace @interego/compliance && npm run build --workspace @interego/ops
       - name: Publish one deploy event per service shipped
         env:
           INTEREGO_FLEET_AGENT_KEY_JSON: ${{ secrets.INTEREGO_FLEET_AGENT_KEY_JSON }}
