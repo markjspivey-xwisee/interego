@@ -60,8 +60,9 @@ COPY applications/shared-workspace/desktop/package.json ./applications/shared-wo
 COPY applications/shared-workspace/discord/package.json ./applications/shared-workspace/discord/
 RUN npm ci
 
-# tsx for the runtime.
-RUN npm install --no-save tsx@4.22.0
+# tsx is a root devDependency now (pinned in package.json), so npm ci above installs it and no
+# layer below the cached install changes node_modules: the separate install that sat here re-ran
+# on every build (24 s) and made the node_modules layer differ each time.
 
 # The tree the bridge judges, and the sources it runs from: every tracked top-level entry, named
 # one by one. tools/deploy-bundle-scope.ts reads these COPY lines to decide when a merge changes

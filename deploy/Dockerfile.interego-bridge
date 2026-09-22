@@ -44,7 +44,6 @@ COPY applications/agent-development-practice/bridge/package.json ./applications/
 COPY applications/organizational-working-memory/bridge/package.json ./applications/organizational-working-memory/bridge/
 COPY applications/lrs-adapter/bridge/package.json ./applications/lrs-adapter/bridge/
 RUN npm ci
-RUN npm install --no-save tsx@4.22.0
 
 # Sources: the @interego/* packages + the demo bridge.
 COPY packages/ ./packages/

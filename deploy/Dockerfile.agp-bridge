@@ -66,8 +66,9 @@ COPY applications/organizational-working-memory/bridge/package.json ./applicatio
 COPY applications/lrs-adapter/bridge/package.json ./applications/lrs-adapter/bridge/
 RUN npm ci
 
-# tsx for the runtime — the vertical ships as TS.
-RUN npm install --no-save tsx@4.22.0
+# tsx is a root devDependency now (pinned in package.json), so npm ci above installs it and no
+# layer below the cached install changes node_modules: the separate install that sat here re-ran
+# on every build (24 s) and made the node_modules layer differ each time.
 
 # Only what this bridge transitively needs:
 #   packages/                     the @interego/* substrate it imports

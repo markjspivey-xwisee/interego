@@ -1,7 +1,7 @@
 {
   "name": "@interego/workspace",
   "version": "0.2.0",
-  "description": "Interego monorepo \u2014 substrate kernel (@interego/core) + per-vertical packages composing it. Primitives + composition mechanics for emergent agent-to-agent context.",
+  "description": "Interego monorepo — substrate kernel (@interego/core) + per-vertical packages composing it. Primitives + composition mechanics for emergent agent-to-agent context.",
   "author": "Mark Spivey",
   "license": "MIT",
   "private": true,
@@ -101,6 +101,7 @@
     "jose": "^6.2.3",
     "jsdom": "^24.1.0",
     "n3": "^1.17.0",
+    "tsx": "^4.22.4",
     "typescript": "^5.7.0",
     "typescript-eslint": "^8.65.0",
     "vitest": "^3.0.0"
