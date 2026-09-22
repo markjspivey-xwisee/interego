@@ -68,8 +68,9 @@ COPY applications/lrs-adapter/bridge/package.json ./applications/lrs-adapter/bri
 COPY applications/shared-workspace/discord/package.json ./applications/shared-workspace/discord/
 RUN npm ci
 
-# tsx for the runtime — the bot ships as TS and is never compiled.
-RUN npm install --no-save tsx@4.22.0
+# tsx is a root devDependency now (pinned in package.json), so npm ci above installs it and no
+# layer below the cached install changes node_modules: the separate install that sat here re-ran
+# on every build (24 s) and made the node_modules layer differ each time.
 
 # Only what the bot transitively needs:
 #   packages/                     the @interego/* substrate it imports
