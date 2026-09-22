@@ -91,18 +91,28 @@ COPY tests/ ./tests/
 COPY tools/ ./tools/
 
 # Compile @interego/* → dist/, which the vertical's turtle guard imports by name.
-RUN npm run build:core && npm run build --workspace @interego/registry
+# The pull request built these packages already; build-ghcr.yml restores them into the context
+# and passes PREBUILT=1, and the build below is skipped when they are present. A local build
+# without them still builds. (.dockerignore stopped excluding dist/ for this.)
+ARG PREBUILT=0
+RUN if [ "$PREBUILT" = "1" ] && [ -f packages/registry/dist/index.js ]; then echo "prebuilt packages present; skipping the build"; else npm run build:core && npm run build --workspace @interego/registry; fi
 
 RUN mkdir -p node_modules/@interego \
   && ln -sfn /app/packages/core node_modules/@interego/core
 
 # ────────────────────────────────────────────────────────────
 #  Runtime stage
+# node_modules as its own layer in the runtime image, so the layer that changes with every commit
+# (the sources) is small: the registry keeps the unchanged node_modules layer and a push moves
+# megabytes, not the 700 MB that one /app layer moved (74 s of every harness rollout, measured
+# 2026-09-22). Moved out of /app so the second COPY below does not carry it twice.
+RUN mv node_modules /node_modules
 # ────────────────────────────────────────────────────────────
 FROM ${NODE_BASE}
 
 WORKDIR /app
 
+COPY --from=build /node_modules /app/node_modules
 COPY --from=build /app /app
 
 # The commit this image was built from, surfaced at /health as `build` so a deploy can verify
