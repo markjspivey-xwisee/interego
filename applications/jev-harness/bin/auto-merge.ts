@@ -100,19 +100,20 @@ async function main(): Promise<void> {
     ...(mergeable ? { mergeable } : {}),
     ...(base ? { base } : {}),
   });
-  console.log([`gated auto-merge for ${repo}#${pr}: ${decision.merge ? 'MERGE' : 'no merge'}`, ...decision.reasons.map((r) => `  ${r}`)].join('\n'));
-  if (!decision.merge) {
-    const failing = decision.reasons.filter((r) => r.startsWith('fails:'));
-    if (failing.length === 1 && failing[0]!.includes('master moved') && mergeable === 'MERGEABLE' && !process.argv.includes('--dry-run')) {
-      try {
-        execFileSync('gh', ['pr', 'update-branch', pr, '--repo', repo], { stdio: 'inherit' });
-        console.log('  the branch was updated with master; the push starts the run that decides again');
-      } catch (err) {
-        console.error(`  the branch could not be updated: ${err instanceof Error ? err.message : String(err)}`);
-      }
+  // When the one failing condition is that master moved, update the branch before reporting: the
+  // push starts the run that decides again, and the report says so in the same breath.
+  let note: string | undefined;
+  const failing = decision.reasons.filter((r) => r.startsWith('fails:'));
+  if (failing.length === 1 && failing[0]!.includes('master moved') && mergeable === 'MERGEABLE' && !process.argv.includes('--dry-run')) {
+    try {
+      execFileSync('gh', ['pr', 'update-branch', pr, '--repo', repo], { stdio: 'inherit' });
+      note = '  the branch was updated with master; the push starts the run that decides again';
+    } catch (err) {
+      note = `  the branch could not be updated: ${err instanceof Error ? err.message : String(err)}`;
     }
-    return;
   }
+  console.log([`gated auto-merge for ${repo}#${pr}: ${decision.merge ? 'MERGE' : 'no merge'}`, ...decision.reasons.map((r) => `  ${r}`), ...(note ? [note] : [])].join('\n'));
+  if (!decision.merge) return;
   if (process.argv.includes('--dry-run')) { console.log('  dry run: the label and the merge command were not run'); return; }
   try {
     execFileSync('gh', ['pr', 'edit', pr, '--repo', repo, '--add-label', AUTO_MERGED_LABEL], { stdio: 'inherit' });
