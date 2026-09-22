@@ -198,3 +198,9 @@ npx tsx applications/foxxi-content-intelligence/tools/seed-federation-peer.mjs
 ```
 
 See [`EMERGENT-COLLECTIVE.md`](EMERGENT-COLLECTIVE.md) for what the three editions share and where they differ, and [`CLOSING-THE-LOOP.md`](CLOSING-THE-LOOP.md) for the end-to-end content path.
+
+## Content judgments, and what they earn
+
+A learning engineer or admin can ask a System One model about a unit of content: `foxxi.judge_content_claim` returns a Hypothetical `foxxi:ContentJudgment` (how well a claim is supported by its context and evidence, or which work regime a piece of work is in), published to the tenant pod with the controls a person needs next; `foxxi.confirm_content_judgment` records what the person holds to be true as an Asserted `foxxi:ContentJudgmentOutcome` superseding the judgment; `foxxi.content_judgment_calibration` reads the outcomes back and reports, per question kind, how often the model had it and the mean multiclass Brier, Asserted from five samples.
+
+From there the judgments earn a reputation the way the harness's do. `foxxi.attest_content_judgments` turns the calibration into a Self attestation by the judging agent about itself (accuracy from the evidence-level hit rate, competence from the work-regime hit rate, honesty from the Brier; Asserted cells only, refused when none has reached its floor), published as a `foxxi:ContentJudgmentAttestation` that supersedes the earlier ones. `foxxi.content_judgment_reputation` aggregates every attestation about the agent on the pod with `@interego/registry`: a self-attestation at a quarter, a peer's word at a half, half-life thirty days. A learning engineer who publishes their own attestation as a Peer moves the snapshot the moment it lands. The mapping to the registry lives in the shared judgment kit, so the harness and Foxxi are weighed the same way.

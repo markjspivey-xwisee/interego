@@ -23,34 +23,18 @@
  */
 
 import { Parser } from 'n3';
-import type { IRI } from '@interego/core';
-import { aggregateReputation, type AggregationPolicy, type AttestationInput, type ReputationSnapshot } from '@interego/registry';
+import type { AggregationPolicy, ReputationSnapshot } from '@interego/registry';
+import { RATED_AXES, reputationOf as aggregate, reputationPolicy, toAttestationInput, type Attestation } from '../../_shared/judgment-kit/attestations.js';
 import type { RelayClient } from './publish.js';
 import { AMTA, ATTESTATION_GRAPH_PREFIX } from './calibration-publish.js';
 import type { ManifestEntry } from './pod-calibration.js';
 
-export const REPUTATION_POLICY: AggregationPolicy = {
-  trustWeights: { HighAssurance: 1, PeerAttested: 0.5, SelfAsserted: 0.25 },
-  recencyHalfLifeDays: 30,
-  minContributingAttestations: 1,
-  policyId: 'urn:jev-harness:policy:reputation-v1',
-};
+export const REPUTATION_POLICY: AggregationPolicy = reputationPolicy('urn:jev-harness:policy:reputation-v1');
 
-export const RATED_AXES = ['competence', 'accuracy', 'relevance', 'honesty', 'recency'] as const;
-
-export interface PodAttestation {
-  readonly descriptorUrl: string;
-  readonly attestor: string;
-  readonly subject: string;
-  /** Self (the agent rating its own work, grounded) or Peer (another party). */
-  readonly direction: string;
-  readonly axes: Readonly<Record<string, number>>;
-  readonly attestedAt: string;
-  /** The execution evidence the ratings were derived from; required for the attestation to count. */
-  readonly fromExecution: string;
-  readonly samples?: number;
-}
-
+// The record, the axes and the mapping to the registry live in the judgment kit now; the harness
+// keeps its names so its callers and tests read unchanged.
+export { RATED_AXES, toAttestationInput };
+export type PodAttestation = Attestation;
 const localName = (iri: string): string => iri.slice(Math.max(iri.lastIndexOf('#'), iri.lastIndexOf('/'), iri.lastIndexOf(':')) + 1);
 
 /** The amta:Attestation inside a descriptor's graph content, or undefined when it holds none it can vouch for. */
@@ -91,18 +75,6 @@ export function attestationFromContent(content: string, meta: { readonly descrip
     attestedAt,
     fromExecution,
     ...(samples !== undefined && !Number.isNaN(Number(samples)) ? { samples: Number(samples) } : {}),
-  };
-}
-
-/** The registry's input for a pod attestation: a self-attestation is SelfAsserted, anything else a peer's word. */
-export function toAttestationInput(a: PodAttestation): AttestationInput {
-  return {
-    id: a.descriptorUrl as IRI,
-    issuer: a.attestor as IRI,
-    subject: a.subject as IRI,
-    axes: a.axes,
-    issuedAt: a.attestedAt,
-    issuerTrustLevel: a.direction === 'Self' ? 'SelfAsserted' : 'PeerAttested',
   };
 }
 
@@ -151,5 +123,5 @@ export async function fetchPodAttestations(relay: RelayClient, podName: string, 
 
 /** The agent's reputation under the harness policy, or null when nothing on the pod attests to it. */
 export function reputationOf(agentId: string, attestations: readonly PodAttestation[], policy: AggregationPolicy = REPUTATION_POLICY, now?: string): ReputationSnapshot | null {
-  return aggregateReputation(agentId as IRI, attestations.map(toAttestationInput), policy, now ?? new Date().toISOString());
+  return aggregate(agentId, attestations, policy, now);
 }

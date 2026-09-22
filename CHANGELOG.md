@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-22 — Foxxi: content judgments earn a reputation; the attestation-to-registry mapping moves into the judgment kit
+
+`foxxi.attest_content_judgments` turns the content-judgment calibration into a Self attestation by the judging agent about itself (accuracy from the evidence-level hit rate, competence from the work-regime hit rate, honesty from the Brier; Asserted cells only, 409 when none has reached its floor), published on the tenant pod as a `foxxi:ContentJudgmentAttestation` superseding the earlier ones; `foxxi.content_judgment_reputation` aggregates every attestation about that agent with `@interego/registry` under a stated content policy (self a quarter, peer a half). The record, the axes, the policy weights and the registry mapping now live in `applications/_shared/judgment-kit/attestations.ts`, which the harness's reputation reads too, so both verticals are weighed the same way. Built with the harness: navigated (widen-search, confidence 0.28; its top files were the right ones), tests selected and run, the diff gated, merged by the gated auto-merge.
+
 ## 2026-09-22 — tsx is a pinned root devDependency; the bridge recipes stop reinstalling it after the cached install
 
 Six recipes ran `npm install --no-save tsx@4.22.0` after `npm ci`: a 24-second layer on every image build that also downgraded the tsx the lockfile already held (4.22.4) and made the node_modules layer differ each time, so the registry cache export and the runtime layer both re-uploaded it, the fifty-five seconds left in the harness image build. `tsx@4.22.4` is now a root devDependency, installed by the cached `npm ci`, and the six lines are gone.
