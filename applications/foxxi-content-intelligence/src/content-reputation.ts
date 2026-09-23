@@ -59,15 +59,15 @@ export function contentAttestationAxes(cal: ContentJudgmentCalibration): { reado
   };
 }
 
-/** The Self attestation the calibration earns, or undefined when it earns none yet. */
-export function contentJudgmentAttestation(cal: ContentJudgmentCalibration, agent: string, opts: { readonly fromExecution: string; readonly attestedAt?: string }): ContentJudgmentAttestation | undefined {
+/** The attestation the calibration earns — Self when the attestor is the subject, Peer when it attests about another judge — or undefined when it earns none yet. */
+export function contentJudgmentAttestation(cal: ContentJudgmentCalibration, agent: string, opts: { readonly fromExecution: string; readonly attestedAt?: string; readonly subject?: string }): ContentJudgmentAttestation | undefined {
   const derived = contentAttestationAxes(cal);
   if (!derived) return undefined;
   return {
     type: CONTENT_JUDGMENT_ATTESTATION_TYPE,
     attestor: agent,
-    subject: agent,
-    direction: 'Self',
+    subject: opts.subject ?? agent,
+    direction: opts.subject && opts.subject !== agent ? 'Peer' : 'Self',
     axes: derived.axes,
     attestedAt: opts.attestedAt ?? cal.computedAt,
     fromExecution: opts.fromExecution,

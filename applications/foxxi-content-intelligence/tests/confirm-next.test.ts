@@ -21,9 +21,10 @@ const outcome = (id: string, kind: 'evidence-level' | 'work-regime', hit: boolea
 const empty = contentJudgmentCalibration([], 5);
 
 describe('pending means no outcome names the judgment', () => {
-  it('drops the confirmed ones and keeps the rest', () => {
+  it('drops the ones a person confirmed and keeps the rest — an agent\'s confirmation does not retire a judgment', () => {
     const js = [judgment('a', 'work-regime', 0.9, 1, '2026-09-22T10:00:00.000Z'), judgment('b', 'work-regime', 0.4, 0, '2026-09-22T11:00:00.000Z')];
     expect(pendingJudgments(js, [outcome('a', 'work-regime', true)]).map((p) => p.judgmentIri)).toEqual(['urn:foxxi:judgment:b']);
+    expect(pendingJudgments(js, [{ ...outcome('a', 'work-regime', true), confirmedByKind: 'agent' }])).toHaveLength(2);
     expect(pendingJudgments(js, [])).toHaveLength(2);
   });
 });
@@ -49,10 +50,13 @@ describe('the three factors', () => {
     expect(evidenceWeaknessOf({ evidenceCount: 3 })).toBe(0.25);
   });
   it('combines them with the stated weights, which sum to one', () => {
-    expect(CONFIRM_NEXT_WEIGHTS.uncertainty + CONFIRM_NEXT_WEIGHTS.cellNeed + CONFIRM_NEXT_WEIGHTS.evidenceWeakness).toBeCloseTo(1, 10);
+    expect(CONFIRM_NEXT_WEIGHTS.uncertainty + CONFIRM_NEXT_WEIGHTS.cellNeed + CONFIRM_NEXT_WEIGHTS.evidenceWeakness + CONFIRM_NEXT_WEIGHTS.disagreement).toBeCloseTo(1, 10);
     const { priority, why } = priorityOf(judgment('p', 'work-regime', 0.6, 1, '2026-09-22T10:00:00.000Z').judgment, empty);
-    expect(why).toEqual({ uncertainty: 0.4, cellNeed: 1, evidenceWeakness: 0.5, cellStatus: 'none', cellSamples: 0 });
-    expect(priority).toBe(0.6);
+    expect(why).toEqual({ uncertainty: 0.4, cellNeed: 1, evidenceWeakness: 0.5, disagreement: 0, disagreesWith: [], cellStatus: 'none', cellSamples: 0 });
+    expect(priority).toBe(0.41);
+    const contested = priorityOf(judgment('p', 'work-regime', 0.6, 1, '2026-09-22T10:00:00.000Z').judgment, empty, [{ judge: 'did:web:other', answer: 'Emergent', judgmentIri: 'urn:foxxi:judgment:x' }]);
+    expect(contested.priority).toBe(0.71);
+    expect(contested.why.disagreement).toBe(1);
   });
 });
 
