@@ -407,6 +407,25 @@ export function readmeSuiteFailures(readmeText, measured, suiteExists) {
   return failures;
 }
 
+/**
+ * How many modules THIS invocation will run, given every specification vitest hands the
+ * reporter and the shard it was started with.
+ *
+ * ★ UNDER `--shard=i/n` vitest hands `onTestRunStart` EVERY specification that survived the
+ * filters and runs only this shard's slice of them. bridge-typecheck.yml's "everything else,
+ * second half" (2026-09-23) planned 420, ran 210, and this gate called the other 210 "never
+ * finished" — the worst kind of red, one whose obvious fix is to weaken the unfinished check.
+ * The slice is vitest's own: ceil(total / n) per shard, the last one shorter. Planning that
+ * slice keeps the check meaning what it says inside the shard: a shard whose worker dies still
+ * reports fewer modules than its slice, and still fails here.
+ */
+export function shardPlan(total, shard) {
+  const count = Number(shard?.count);
+  const index = Number(shard?.index);
+  if (!(count > 1) || !(index >= 1) || index > count) return total;
+  const size = Math.ceil(total / count);
+  return Math.max(0, Math.min(size, total - size * (index - 1)));
+}
 export default class RunIntegrityReporter {
   onInit(vitest) {
     this.vitest = vitest;
@@ -416,7 +435,7 @@ export default class RunIntegrityReporter {
     // Captured here rather than counted from `testModules` at the end: a module that was
     // never reached may not be in that array at all, and the count of what was PLANNED is
     // the only number that survives the worker dying.
-    this.planned = specifications.length;
+    this.planned = shardPlan(specifications.length, this.vitest?.config?.shard);
   }
 
   async onTestRunEnd(testModules, unhandledErrors, reason) {
