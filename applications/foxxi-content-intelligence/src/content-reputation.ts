@@ -28,6 +28,8 @@ export interface ContentJudgmentAttestation {
   readonly fromExecution: string;
   readonly samples: number;
   readonly kinds: readonly string[];
+  /** How many of the outcomes behind the ratings a person confirmed, and how many an agent did. */
+  readonly confirmers?: { readonly human: number; readonly agent: number };
   readonly note?: string;
 }
 
@@ -38,7 +40,7 @@ const round3 = (n: number): number => Math.round(n * 1000) / 1000;
  * rate, competence the work-regime hit rate, honesty one minus half the mean multiclass Brier
  * (0..2) over the Asserted cells. Undefined when no cell has reached its floor.
  */
-export function contentAttestationAxes(cal: ContentJudgmentCalibration): { readonly axes: Partial<Record<ContentAxis, number>>; readonly samples: number; readonly kinds: string[] } | undefined {
+export function contentAttestationAxes(cal: ContentJudgmentCalibration): { readonly axes: Partial<Record<ContentAxis, number>>; readonly samples: number; readonly kinds: string[]; readonly confirmers: { human: number; agent: number } } | undefined {
   const asserted = cal.cells.filter((c) => c.status === 'Asserted');
   if (asserted.length === 0) return undefined;
   const axes: Partial<Record<ContentAxis, number>> = {};
@@ -49,7 +51,12 @@ export function contentAttestationAxes(cal: ContentJudgmentCalibration): { reado
   const briers = asserted.map((c) => c.meanBrier).filter((b): b is number => b !== null);
   if (briers.length > 0) axes.honesty = round3(1 - briers.reduce((a, b) => a + b, 0) / briers.length / 2);
   if (Object.keys(axes).length === 0) return undefined;
-  return { axes, samples: asserted.reduce((n, c) => n + c.samples, 0), kinds: asserted.map((c) => c.judgmentKind) };
+  return {
+    axes,
+    samples: asserted.reduce((n, c) => n + c.samples, 0),
+    kinds: asserted.map((c) => c.judgmentKind),
+    confirmers: { human: asserted.reduce((n, c) => n + (c.humanSamples ?? c.samples), 0), agent: asserted.reduce((n, c) => n + (c.agentSamples ?? 0), 0) },
+  };
 }
 
 /** The Self attestation the calibration earns, or undefined when it earns none yet. */
@@ -66,6 +73,7 @@ export function contentJudgmentAttestation(cal: ContentJudgmentCalibration, agen
     fromExecution: opts.fromExecution,
     samples: derived.samples,
     kinds: derived.kinds,
+    confirmers: derived.confirmers,
   };
 }
 

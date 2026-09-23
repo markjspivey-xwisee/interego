@@ -277,6 +277,8 @@ export interface ContentJudgmentOutcome {
   readonly brier: number;
   readonly confidence: number;
   readonly confirmedBy: string;
+  /** Who confirmed: a person (the default, and every record before 2026-09-23) or an agent — a second model's reading, recorded as such. */
+  readonly confirmedByKind?: 'human' | 'agent';
   readonly createdAt: string;
   readonly note?: string;
 }
@@ -286,13 +288,13 @@ export function scoreContentJudgment(j: Pick<ContentJudgment, 'answer' | 'probab
 }
 
 /** The outcome a person's confirmation makes of a judgment; the answer must be one the judgment weighed. */
-export function contentJudgmentOutcome(j: ContentJudgment, judgmentIri: string, confirmed: string, by: { readonly did: string; readonly note?: string }, now: Date = new Date()): ContentJudgmentOutcome {
+export function contentJudgmentOutcome(j: ContentJudgment, judgmentIri: string, confirmed: string, by: { readonly did: string; readonly kind?: 'human' | 'agent'; readonly note?: string }, now: Date = new Date()): ContentJudgmentOutcome {
   const alternatives = Object.keys(j.probabilities);
   if (!alternatives.includes(confirmed)) throw new Error(`the confirmed answer must be one of ${alternatives.join(', ')}`);
   const { hit, brier } = scoreContentJudgment(j, confirmed);
   return {
     kind: 'content-judgment-outcome', judgmentId: j.id, judgmentIri, judgmentKind: j.judgmentKind, answer: j.answer,
-    confirmedAnswer: confirmed, hit, brier, confidence: j.confidence, confirmedBy: by.did, createdAt: now.toISOString(),
+    confirmedAnswer: confirmed, hit, brier, confidence: j.confidence, confirmedBy: by.did, confirmedByKind: by.kind ?? 'human', createdAt: now.toISOString(),
     ...(by.note ? { note: by.note } : {}),
   };
 }
@@ -340,6 +342,9 @@ export function entityGraphUrl(podUrl: string, entityIri: string, entry?: Entity
 
 export interface ContentCalibrationCell extends CalibrationCellSummary {
   readonly judgmentKind: ContentJudgmentKind;
+  /** How many of the samples a person confirmed, and how many an agent did: the same measurement, but a reader weighs them differently. */
+  readonly humanSamples: number;
+  readonly agentSamples: number;
 }
 
 export interface ContentJudgmentCalibration {
@@ -351,6 +356,10 @@ export interface ContentJudgmentCalibration {
 
 /** Per question kind: how often the model had the confirmed answer, and how far off its probabilities were. */
 export function contentJudgmentCalibration(outcomes: readonly ContentJudgmentOutcome[], minSamples: number = CONTENT_JUDGMENT_MIN_SAMPLES, now: Date = new Date()): ContentJudgmentCalibration {
-  const cells = CONTENT_JUDGMENT_KINDS.map((judgmentKind) => ({ judgmentKind, ...calibrationCell(outcomes.filter((o) => o.judgmentKind === judgmentKind), minSamples) }));
+  const cells = CONTENT_JUDGMENT_KINDS.map((judgmentKind) => {
+    const ofKind = outcomes.filter((o) => o.judgmentKind === judgmentKind);
+    const agentSamples = ofKind.filter((o) => o.confirmedByKind === 'agent').length;
+    return { judgmentKind, ...calibrationCell(ofKind, minSamples), humanSamples: ofKind.length - agentSamples, agentSamples };
+  });
   return { cells, samples: outcomes.length, minSamples, computedAt: now.toISOString() };
 }

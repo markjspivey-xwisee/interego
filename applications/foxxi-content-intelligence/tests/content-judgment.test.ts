@@ -117,7 +117,7 @@ describe('what a person says is true', () => {
 
   it('makes an outcome that names the judgment, the person and the answer, and refuses an answer the judgment never weighed', () => {
     const o = contentJudgmentOutcome(judgment, 'urn:foxxi:judgment:abc12345', 'Evident', { did: 'did:web:x:le', note: 'the SOP covers it' }, new Date('2026-09-21T07:00:00.000Z'));
-    expect(o).toEqual({ kind: 'content-judgment-outcome', judgmentId: 'j9', judgmentIri: 'urn:foxxi:judgment:abc12345', judgmentKind: 'work-regime', answer: 'Knowable', confirmedAnswer: 'Evident', hit: false, brier: 0.86, confidence: 0.6, confirmedBy: 'did:web:x:le', createdAt: '2026-09-21T07:00:00.000Z', note: 'the SOP covers it' });
+    expect(o).toEqual({ kind: 'content-judgment-outcome', judgmentId: 'j9', judgmentIri: 'urn:foxxi:judgment:abc12345', judgmentKind: 'work-regime', answer: 'Knowable', confirmedAnswer: 'Evident', hit: false, brier: 0.86, confidence: 0.6, confirmedBy: 'did:web:x:le', confirmedByKind: 'human', createdAt: '2026-09-21T07:00:00.000Z', note: 'the SOP covers it' });
     expect(isContentJudgmentOutcome(o)).toBe(true);
     expect(() => contentJudgmentOutcome(judgment, 'urn:foxxi:judgment:abc12345', 'Turbulent', { did: 'did:web:x:le' })).toThrow(/must be one of Knowable, Evident, Emergent/);
   });
@@ -143,8 +143,8 @@ describe('what a person says is true', () => {
     const c = contentJudgmentCalibration(outcomes, 5, new Date('2026-09-21T08:00:00.000Z'));
     expect(c.samples).toBe(6);
     expect(c.cells).toEqual([
-      { judgmentKind: 'evidence-level', samples: 1, hitRate: 1, meanBrier: 0.1, status: 'Hypothetical' },
-      { judgmentKind: 'work-regime', samples: 5, hitRate: 0.8, meanBrier: 0.4, status: 'Asserted' },
+      { judgmentKind: 'evidence-level', samples: 1, hitRate: 1, meanBrier: 0.1, status: 'Hypothetical', humanSamples: 1, agentSamples: 0 },
+      { judgmentKind: 'work-regime', samples: 5, hitRate: 0.8, meanBrier: 0.4, status: 'Asserted', humanSamples: 5, agentSamples: 0 },
     ]);
   });
 

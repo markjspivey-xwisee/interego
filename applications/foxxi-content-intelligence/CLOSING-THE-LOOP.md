@@ -167,3 +167,15 @@ produces the channel-ready payload and records the delivery; wiring a
 specific live transport is a bounded, separate step. The cmi5 path is
 the fully wired, browser-verified completion loop; the SCORM `.zip` is a
 generated, round-trip-validated artifact.
+
+## 6. The content-judgment loop, and who closes it
+
+The other loop this vertical closes is about judgment rather than delivery: a System One
+model judges a unit of content (`foxxi.judge_content_claim`), a person or an agent confirms
+what is true (`foxxi.confirm_content_judgment`, which records who did), the calibration
+measures the model against those confirmations, an attestation grounded in it earns the
+judging agent a reputation, and `foxxi.confirm_next` says where the next confirmation teaches
+the most. Since 2026-09-23 every one of those affordances takes `tenant_pod_url`, so the owner
+of a self-sovereign pod, human or agent, closes the whole loop on their own pod;
+`tools/content-judgment-loop.ts` does it end to end from a claims file. The README section
+"Content judgments, and what they earn" has the details.

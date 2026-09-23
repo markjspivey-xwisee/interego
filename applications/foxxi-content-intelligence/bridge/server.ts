@@ -2614,9 +2614,9 @@ function classifySubjectKind(opts: {
 }
 
 /** Where content judgments and their outcomes are published: the tenant pod, under foxxi/judgments/. */
-function judgmentPublishConfig(): DescriptorPublishConfig {
+function judgmentPublishConfig(podUrl: string = tenantPodUrl): DescriptorPublishConfig {
   return {
-    podUrl: tenantPodUrl,
+    podUrl,
     authoritativeSource,
     fetch: guardedFetchFn(globalThis.fetch) as unknown as DescriptorPublishConfig['fetch'],
     containerPath: 'foxxi/judgments/',
@@ -2624,14 +2624,43 @@ function judgmentPublishConfig(): DescriptorPublishConfig {
 }
 
 /** An entity's payload read back from the tenant pod through the guarded fetch. */
-async function readEntityPayload(entityIri: string, entry?: EntityEntry): Promise<unknown> {
-  const url = entityGraphUrl(tenantPodUrl, entityIri, entry);
+async function readEntityPayload(entityIri: string, entry?: EntityEntry, podUrl: string = tenantPodUrl): Promise<unknown> {
+  const url = entityGraphUrl(podUrl, entityIri, entry);
   if (!url) return undefined;
   const res = await (guardedFetchFn(globalThis.fetch) as typeof fetch)(url, { headers: { Accept: 'application/trig, text/turtle' } });
   if (!res.ok) return undefined;
   return decodeBundleJson(await res.text());
 }
 
+/**
+ * Where a content-judgment call reads and writes, and who may make it.
+ *
+ * Without `tenant_pod_url` the scope is the configured tenant, and the caller must be one of its
+ * learning engineers or its admin. With `tenant_pod_url` naming ANOTHER pod, the scope is that
+ * self-sovereign pod and the caller must be its owner: a member whose WebID lives under the pod.
+ * Self-enrolment constrains a member's web_id to their own pod (foxxi.register_self_sovereign_learner),
+ * and resolveCaller grants the configured tenant's roles nowhere else, so ownership is the
+ * membership the bridge already resolved. A learner, human or agent, runs the whole loop on their
+ * pod — judgments, outcomes, calibration, attestation, reputation — about the same judging agent.
+ * 2026-09-23: the identity that runs this repository's live proofs is a valid signer and no member
+ * of the configured tenant; this is what lets it close the loop as itself.
+ */
+function judgmentScope(args: Record<string, unknown>, ctx: CallerContext): { podUrl: string; container: string; self: boolean } | Refusal {
+  const containerOf = (pod: string): string => `${pod.endsWith('/') ? pod : `${pod}/`}foxxi/judgments/`;
+  const requested = typeof args.tenant_pod_url === 'string' && args.tenant_pod_url.trim() ? canonicalPodUrl(args.tenant_pod_url.trim()) : '';
+  const self = requested !== '' && !samePod(requested, tenantPodUrl);
+  if (!self) {
+    if (ctx.role !== 'learning-engineer' && ctx.role !== 'admin') {
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation on the configured tenant; pass tenant_pod_url = your own pod to run the loop there', error: 'forbidden — learning-engineer or admin role required' };
+    }
+    if (!tenantPodUrl) return { kind: 'refusal' as const, 'iep:refusalStatus': 503, 'iep:refusalReason': 'no tenant pod is configured, so there is nowhere to read or publish content judgments', error: 'no tenant pod' };
+    return { podUrl: tenantPodUrl, container: containerOf(tenantPodUrl), self: false };
+  }
+  if (!ctx.webId || podBaseOf(ctx.webId) !== podBaseOf(requested)) {
+    return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': "on a self-sovereign pod the content-judgment loop is the owner's: the caller's WebID must live under tenant_pod_url", error: 'forbidden — not the owner of this self-sovereign pod' };
+  }
+  return { podUrl: requested, container: containerOf(requested), self: true };
+}
 const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknown>> = {
   // ── Emergent standards-extension (agp layer re-integrated) ──────────
   // Afforded by the agentic-performance layer composing Foxxi's standards;
@@ -4713,9 +4742,8 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
-    if (ctx.role !== 'learning-engineer' && ctx.role !== 'admin') {
-      return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — learning-engineer or admin role required' };
-    }
+    const scope = judgmentScope(args, ctx);
+    if ('kind' in scope) return scope;
     const judgmentKind = args.judgment_kind as string;
     if (!(CONTENT_JUDGMENT_KINDS as readonly string[]).includes(judgmentKind)) {
       return { kind: 'refusal' as const, 'iep:refusalStatus': 400, 'iep:refusalReason': `judgment_kind must be one of ${CONTENT_JUDGMENT_KINDS.join(', ')}`, error: 'bad request' };
@@ -4746,10 +4774,10 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // Published Hypothetical to the tenant pod when the bridge has one. The judgment is
     // answered either way, and the answer says what happened to it.
     let published: Record<string, unknown> = { status: 'skipped', reason: 'no tenant pod configured' };
-    if (tenantPodUrl) {
+    if (scope.podUrl) {
       try {
         const r = await publishFoxxiEntity({
-          config: judgmentPublishConfig(),
+          config: judgmentPublishConfig(scope.podUrl),
           slugPrefix: 'judgment',
           foxxiType: `${FOXXI_NS}ContentJudgment` as IRI,
           payload: judgment as unknown as Record<string, unknown>,
@@ -4777,31 +4805,32 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
-    if (ctx.role !== 'learning-engineer' && ctx.role !== 'admin') {
-      return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — learning-engineer or admin role required' };
-    }
+    const scope = judgmentScope(args, ctx);
+    if ('kind' in scope) return scope;
     const judgmentIri = typeof args.judgment_iri === 'string' ? args.judgment_iri.trim() : '';
     const confirmed = typeof args.confirmed_answer === 'string' ? args.confirmed_answer.trim() : '';
     if (!/^urn:foxxi:judgment:[A-Za-z0-9-]+$/.test(judgmentIri) || !confirmed) {
       return { kind: 'refusal' as const, 'iep:refusalStatus': 400, 'iep:refusalReason': 'judgment_iri (urn:foxxi:judgment:<id>) and confirmed_answer are required', error: 'bad request' };
     }
-    if (!tenantPodUrl) return { kind: 'refusal' as const, 'iep:refusalStatus': 503, 'iep:refusalReason': 'no tenant pod is configured, so there is no judgment to confirm', error: 'unavailable' };
-    const entries = (await discover(tenantPodUrl)) as unknown as EntityEntry[];
+    const entries = (await discover(scope.podUrl)) as unknown as EntityEntry[];
     const entry = findEntityEntry(entries, judgmentIri);
-    const payload = await readEntityPayload(judgmentIri, entry);
+    const payload = await readEntityPayload(judgmentIri, entry, scope.podUrl);
+    // Who is confirming, as they declare it: a person (the default) or an agent, whose reading is a
+    // second model's opinion and is recorded as such — the calibration counts the two apart.
+    const byKind = args.confirmed_by_kind === 'agent' ? 'agent' as const : 'human' as const;
     if (!isContentJudgment(payload)) return notFound(`no content judgment ${judgmentIri} on the tenant pod`);
     let outcome: ContentJudgmentOutcome;
     try {
-      outcome = contentJudgmentOutcome(payload, judgmentIri, confirmed, { did: ctx.webId, ...(typeof args.note === 'string' ? { note: args.note } : {}) });
+      outcome = contentJudgmentOutcome(payload, judgmentIri, confirmed, { did: ctx.webId, kind: byKind, ...(typeof args.note === 'string' ? { note: args.note } : {}) });
     } catch (err) {
       return { kind: 'refusal' as const, 'iep:refusalStatus': 400, 'iep:refusalReason': err instanceof Error ? err.message : String(err), error: 'bad request' };
     }
     const r = await publishFoxxiEntity({
-      config: judgmentPublishConfig(),
+      config: judgmentPublishConfig(scope.podUrl),
       slugPrefix: 'judgment-outcome',
       foxxiType: CONTENT_JUDGMENT_OUTCOME_TYPE as IRI,
       payload: outcome as unknown as Record<string, unknown>,
-      authoredBy: { id: ctx.webId, kind: 'human', role: ctx.role },
+      authoredBy: { id: ctx.webId, kind: byKind, role: ctx.role },
       modalStatus: 'Asserted',
       supersedes: [`${judgmentIri}#descriptor` as IRI],
     });
@@ -4819,18 +4848,16 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
-    if (ctx.role !== 'learning-engineer' && ctx.role !== 'admin') {
-      return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — learning-engineer or admin role required' };
-    }
-    if (!tenantPodUrl) return { kind: 'refusal' as const, 'iep:refusalStatus': 503, 'iep:refusalReason': 'no tenant pod is configured, so there are no outcomes to read', error: 'unavailable' };
-    const entries = (await discover(tenantPodUrl)) as unknown as EntityEntry[];
+    const scope = judgmentScope(args, ctx);
+    if ('kind' in scope) return scope;
+    const entries = (await discover(scope.podUrl)) as unknown as EntityEntry[];
     const outcomeEntries = entries.filter((e) => (e.conformsTo ?? []).some((t) => String(t) === CONTENT_JUDGMENT_OUTCOME_TYPE));
     const outcomes: ContentJudgmentOutcome[] = [];
     for (const e of outcomeEntries) {
       const iri = e.graph ?? e.describes?.[0];
       if (!iri) continue;
       try {
-        const payload = await readEntityPayload(String(iri), e);
+        const payload = await readEntityPayload(String(iri), e, scope.podUrl);
         if (isContentJudgmentOutcome(payload)) outcomes.push(payload);
       } catch { /* a partial read is a smaller sample, not a failure */ }
     }
@@ -4846,29 +4873,27 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
-    if (ctx.role !== 'learning-engineer' && ctx.role !== 'admin') {
-      return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden' };
-    }
-    if (!tenantPodUrl) return { kind: 'refusal' as const, 'iep:refusalStatus': 503, 'iep:refusalReason': 'no tenant pod is configured, so there are no outcomes to attest from', error: 'no tenant pod' };
-    const entries = (await discover(tenantPodUrl)) as unknown as EntityEntry[];
+    const scope = judgmentScope(args, ctx);
+    if ('kind' in scope) return scope;
+    const entries = (await discover(scope.podUrl)) as unknown as EntityEntry[];
     const outcomes: ContentJudgmentOutcome[] = [];
     for (const e of entries.filter((x) => (x.conformsTo ?? []).some((t) => String(t) === CONTENT_JUDGMENT_OUTCOME_TYPE))) {
       const iri = e.graph ?? e.describes?.[0];
       if (!iri) continue;
       try {
-        const payload = await readEntityPayload(String(iri), e);
+        const payload = await readEntityPayload(String(iri), e, scope.podUrl);
         if (isContentJudgmentOutcome(payload)) outcomes.push(payload);
       } catch { /* a partial read is a smaller sample, not a failure */ }
     }
     const calibration = contentJudgmentCalibration(outcomes);
-    const container = `${tenantPodUrl.endsWith('/') ? tenantPodUrl : `${tenantPodUrl}/`}foxxi/judgments/`;
+    const container = scope.container;
     const attestation = contentJudgmentAttestation(calibration, authoritativeSource, { fromExecution: container });
     if (!attestation) {
       return { kind: 'refusal' as const, 'iep:refusalStatus': 409, 'iep:refusalReason': 'no question kind has reached its sample floor, so there is nothing earned to attest', error: 'nothing earned', calibration };
     }
     const previous = entries.filter((x) => (x.conformsTo ?? []).some((t) => String(t) === CONTENT_JUDGMENT_ATTESTATION_TYPE)).map((x) => x.graph ?? x.describes?.[0]).filter((iri): iri is string => typeof iri === 'string');
     const r = await publishFoxxiEntity({
-      config: judgmentPublishConfig(),
+      config: judgmentPublishConfig(scope.podUrl),
       slugPrefix: 'judgment-attestation',
       foxxiType: CONTENT_JUDGMENT_ATTESTATION_TYPE as IRI,
       payload: attestation as unknown as Record<string, unknown>,
@@ -4892,19 +4917,17 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
-    if (ctx.role !== 'learning-engineer' && ctx.role !== 'admin') {
-      return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden' };
-    }
-    if (!tenantPodUrl) return { kind: 'refusal' as const, 'iep:refusalStatus': 503, 'iep:refusalReason': 'no tenant pod is configured, so there are no attestations to read', error: 'no tenant pod' };
-    const entries = (await discover(tenantPodUrl)) as unknown as EntityEntry[];
+    const scope = judgmentScope(args, ctx);
+    if ('kind' in scope) return scope;
+    const entries = (await discover(scope.podUrl)) as unknown as EntityEntry[];
     const attestationEntries = entries.filter((e) => (e.conformsTo ?? []).some((t) => String(t) === CONTENT_JUDGMENT_ATTESTATION_TYPE));
     const attestations = [];
     for (const e of attestationEntries) {
       const iri = e.graph ?? e.describes?.[0];
       if (!iri) continue;
       try {
-        const payload = await readEntityPayload(String(iri), e);
-        if (isContentJudgmentAttestation(payload)) attestations.push(attestationFromEntity(payload, entityGraphUrl(tenantPodUrl, String(iri), e) ?? String(iri)));
+        const payload = await readEntityPayload(String(iri), e, scope.podUrl);
+        if (isContentJudgmentAttestation(payload)) attestations.push(attestationFromEntity(payload, entityGraphUrl(scope.podUrl, String(iri), e) ?? String(iri)));
       } catch { /* a partial read is a smaller sample, not a failure */ }
     }
     const computedAt = new Date().toISOString();
@@ -4917,18 +4940,16 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
-    if (ctx.role !== 'learning-engineer' && ctx.role !== 'admin') {
-      return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden' };
-    }
-    if (!tenantPodUrl) return { kind: 'refusal' as const, 'iep:refusalStatus': 503, 'iep:refusalReason': 'no tenant pod is configured, so there are no judgments to rank', error: 'no tenant pod' };
-    const entries = (await discover(tenantPodUrl)) as unknown as EntityEntry[];
+    const scope = judgmentScope(args, ctx);
+    if ('kind' in scope) return scope;
+    const entries = (await discover(scope.podUrl)) as unknown as EntityEntry[];
     const typed = (type: string) => entries.filter((e) => (e.conformsTo ?? []).some((t) => String(t) === type));
     const judgments: PendingJudgment[] = [];
     for (const e of typed(CONTENT_JUDGMENT_TYPE)) {
       const iri = e.graph ?? e.describes?.[0];
       if (!iri) continue;
       try {
-        const payload = await readEntityPayload(String(iri), e);
+        const payload = await readEntityPayload(String(iri), e, scope.podUrl);
         if (isContentJudgment(payload)) judgments.push({ judgmentIri: String(iri), judgment: payload });
       } catch { /* a partial read is a shorter queue, not a failure */ }
     }
@@ -4937,7 +4958,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       const iri = e.graph ?? e.describes?.[0];
       if (!iri) continue;
       try {
-        const payload = await readEntityPayload(String(iri), e);
+        const payload = await readEntityPayload(String(iri), e, scope.podUrl);
         if (isContentJudgmentOutcome(payload)) outcomes.push(payload);
       } catch { /* a partial read is a smaller sample, not a failure */ }
     }
