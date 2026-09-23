@@ -5129,7 +5129,9 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const table = judges.flatMap(({ subject, snapshot }) => CONTENT_JUDGMENT_KINDS.map((kind) => {
       const latest = payloads.filter((p) => p.subject === subject).sort((a, b) => b.attestedAt.localeCompare(a.attestedAt))[0];
       const decision = autonomyDecision(policy, standingOf(subject, kind, snapshot, latest));
-      return { judge: subject, kind, granted: decision.granted, reason: decision.reason, standing: decision.standing, rule: decision.rule };
+      // `why`, not `reason`: tests/a-refusal-answers-a-refusing-status.test.ts reads every handler
+      // return with a `reason` key as a decline, and this row is a decision, not a refusal.
+      return { judge: subject, kind, granted: decision.granted, why: decision.reason, standing: decision.standing, rule: decision.rule };
     }));
     return { kind: 'autonomy-status', policy, ...(iri ? { policyIri: iri } : {}), policiesPublished: published, table, computedAt };
   },

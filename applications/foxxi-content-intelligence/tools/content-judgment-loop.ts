@@ -213,8 +213,8 @@ async function main(): Promise<void> {
 
   const status = await call('foxxi.autonomy_status', {});
   steps.push({ step: 'autonomy_status', answer: status });
-  const table = status['table'] as { judge: string; kind: string; granted: boolean; reason: string }[] | undefined;
-  out(`▸ autonomy (policy ${String((status['policy'] as { id?: string } | undefined)?.id)}): ${refused(status) ?? (table ?? []).map((t) => `${t.judge.slice(-24)} on ${t.kind}: ${t.granted ? 'may assert alone' : 'needs a person'} — ${t.reason}`).join('; ')}`);
+  const table = status['table'] as { judge: string; kind: string; granted: boolean; why: string }[] | undefined;
+  out(`▸ autonomy (policy ${String((status['policy'] as { id?: string } | undefined)?.id)}): ${refused(status) ?? (table ?? []).map((t) => `${t.judge.slice(-24)} on ${t.kind}: ${t.granted ? 'may assert alone' : 'needs a person'} — ${t.why}`).join('; ')}`);
 
   return finish(report, 0);
 }
