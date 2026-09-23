@@ -4941,8 +4941,10 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
         if (isContentJudgmentOutcome(payload)) outcomes.push(payload);
       } catch { /* a partial read is a smaller sample, not a failure */ }
     }
-    const pending = pendingJudgments(judgments, outcomes);
-    return { ...confirmNext(pending, contentJudgmentCalibration(outcomes), { confirmed: outcomes.length }), read: { judgments: judgments.length, outcomes: outcomes.length } };
+    // Named `awaiting`, not `pending`: tests/every-vertical-declines-with-a-status.test.ts reads
+    // every handler return for decline words, and `pending` is one of them.
+    const awaiting = pendingJudgments(judgments, outcomes);
+    return { ...confirmNext(awaiting, contentJudgmentCalibration(outcomes), { confirmed: outcomes.length }), read: { judgments: judgments.length, outcomes: outcomes.length } };
   },
   'foxxi.le_estimate_concept_difficulty': async (args) => {
     const resolved = await resolveCaller(args);
