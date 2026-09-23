@@ -29,8 +29,8 @@
       }
     ],
     "slide_id": "etq-play",
-    "confirmed_answer": "corroborated",
-    "note": "The slide states it and the cited rule states the same, independently."
+    "confirmed_answer": "supported-by-cited-evidence",
+    "note": "One evidence item from outside the passage (Rule 6.4) supports the claim; the slide item is the context itself. Corroborated needs two outside items."
   },
   {
     "judgment_kind": "evidence-level",
@@ -93,8 +93,8 @@
       }
     ],
     "slide_id": "etq-distracting",
-    "confirmed_answer": "supported-by-context",
-    "note": "The only evidence item names the slide the claim sits in, which is the context, not evidence beyond it; the slide states the practice as an instruction."
+    "confirmed_answer": "asserted-only",
+    "note": "The slide states the instruction and nothing backs it beyond the statement: no example, no mechanism, no source outside the passage. Supported-by-context needs an explanation or a demonstration."
   },
   {
     "judgment_kind": "evidence-level",
@@ -112,8 +112,8 @@
       }
     ],
     "slide_id": "hcp-overview",
-    "confirmed_answer": "corroborated",
-    "note": "The slide states it and the cited rules define the same thing independently."
+    "confirmed_answer": "supported-by-cited-evidence",
+    "note": "One evidence item from outside the passage (the World Handicap System definition) supports the claim; the slide item is the context itself."
   },
   {
     "judgment_kind": "work-regime",
