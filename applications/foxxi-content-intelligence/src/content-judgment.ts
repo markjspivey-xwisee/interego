@@ -43,22 +43,40 @@ export const EVIDENCE_LEVELS = [
 ] as const;
 export type EvidenceLevel = (typeof EVIDENCE_LEVELS)[number];
 
+/**
+ * ★ WHAT COUNTS AS CITED EVIDENCE, since the live run of 2026-09-23: an evidence item that only
+ * names the passage the claim sits in (the claim's own slide, the section it is quoted from) is
+ * the context under another name, not evidence beyond it. The first run scored "stay still while
+ * another player takes their shot", cited with its own slide and nothing else, as
+ * supported-by-cited-evidence; by the letter of the old wording that was right, and it made the
+ * two middle levels indistinguishable whenever a caller cited the slide. Cited evidence is what
+ * lies outside the passage: a rule, a source, a record, another slide.
+ */
 const EVIDENCE_CRITERIA: Record<EvidenceLevel, string> = {
-  'unsupported': 'The context or the evidence contradicts the claim, or the claim is about something they do not cover at all.',
-  'asserted-only': 'The claim is stated in the context, but nothing in the context or the evidence backs it beyond the statement itself.',
-  'supported-by-context': 'The context explains or demonstrates the claim (an example, a mechanism, a derivation), with no cited evidence beyond it.',
-  'supported-by-cited-evidence': 'At least one evidence item directly supports the claim, and the context is consistent with it.',
-  'corroborated': 'Two or more independent evidence items support the claim and the context agrees with them.',
+  'unsupported': 'The context or the evidence contradicts the claim, or the claim is about something they do not cover at all. A claim the context corrects (the passage states it and then says otherwise) is unsupported, not asserted.',
+  'asserted-only': 'The claim is stated in the context, and nothing in the context or the evidence backs it beyond the statement itself: no example, no mechanism, no derivation, no source outside the passage.',
+  'supported-by-context': 'The context explains or demonstrates the claim (an example, a mechanism, a derivation), and any evidence item merely names the passage the claim sits in — its own slide or section — which is the context, not evidence beyond it.',
+  'supported-by-cited-evidence': 'At least one evidence item from outside the passage — a rule, a source, a record, another slide — directly supports the claim, and the context is consistent with it.',
+  'corroborated': 'Two or more independent evidence items from outside the passage support the claim and the context agrees with them.',
 };
 
 /** Foxxi's work regimes, as WorkRegime in foxxi-vocab.ts defines them. */
 export const WORK_REGIMES = ['Evident', 'Knowable', 'Emergent', 'Turbulent'] as const;
 export type WorkRegime = (typeof WORK_REGIMES)[number];
 
+/**
+ * ★ A PRACTICE IS NOT A REGIME, since the live run of 2026-09-23: the model answered Evident for
+ * every claim phrased as a practice — "make friends on the course: conversation between shots,
+ * compliments after good play" at 0.77, "relax and enjoy the round" at 0.70 — because the old
+ * wording made "an established practice applies" sufficient. In the regimes as Foxxi defines
+ * them (foxxi-vocab.ts, after Cynefin), what decides is whether following the practice DETERMINES
+ * the result. When the result turns on how other people or the situation respond, no practice
+ * determines it, and the work is Emergent however familiar the practice is.
+ */
 const REGIME_CRITERIA: Record<WorkRegime, string> = {
-  Evident: 'The relationship between what is done and what results is plain to anyone doing the work: an established practice applies and following it is enough.',
-  Knowable: 'Cause and effect hold but take expertise or analysis to see: the right method is investigated, then applied.',
-  Emergent: 'The relationship only becomes clear in retrospect: the valid method is to probe, sense what happens, and respond.',
+  Evident: 'Following an established practice determines the result: anyone doing the work gets the same outcome by doing the same steps, as with a calculation, a checklist, or a rule applied to known facts.',
+  Knowable: 'Cause and effect hold, but which method gives the result takes expertise or analysis to find: the right method is investigated, then applied, and then it determines the result.',
+  Emergent: 'No practice determines the result, because the result turns on how other people or the situation respond — making friends, changing someone\'s mind, enjoying oneself, finding what a group wants — and only becomes clear in retrospect: the valid method is to probe, sense what happens, and respond.',
   Turbulent: 'No stable relationship between act and outcome can be found while the situation lasts: the valid method is to act to stabilise first, then reassess.',
 };
 
