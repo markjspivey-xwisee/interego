@@ -1,0 +1,23 @@
+[
+  {
+    "claim_text": "A handicap index is the average of a golfer's best score differentials, multiplied by 0.96.",
+    "revised_text": "Under the World Handicap System a Handicap Index is the average of the lowest 8 of a player's most recent 20 score differentials; the 0.96 multiplier belonged to the USGA formula that preceded it and no longer applies.",
+    "context": "Slide 'Calculating your handicap' in the Handicapping module of the demo course, revised: the Handicap Index is the average of the lowest 8 of the most recent 20 score differentials (Rules of Handicapping, Rule 5.2); the former 0.96 'bonus for excellence' was removed when the World Handicap System took effect in 2020.",
+    "evidence": [
+      { "type": "rule", "id": "whs-rules-of-handicapping-5.2", "narrative": "Rules of Handicapping, Rule 5.2: Calculation of a Handicap Index — the average of the lowest 8 Score Differentials of the most recent 20." },
+      { "type": "source", "id": "usga-whs-2020-changes", "narrative": "USGA: what changed with the World Handicap System in 2020 — the bonus for excellence (0.96) was removed." }
+    ],
+    "slide_id": "hcp-calc-handi",
+    "note": "The slide taught the pre-2020 formula; the revision states the current rule and cites it."
+  },
+  {
+    "claim_text": "The USGA Rules of Golf govern competitive play everywhere.",
+    "revised_text": "The Rules of Golf are written jointly by the USGA and The R&A; the USGA administers them in the United States and Mexico, and The R&A everywhere else.",
+    "context": "Slide 'Rules of golf' in the Playing module of the demo course, revised: the Rules of Golf are a joint publication of the USGA and The R&A, administered by the USGA in the United States and Mexico and by The R&A in the rest of the world.",
+    "evidence": [
+      { "type": "source", "id": "rules-of-golf-joint-governance", "narrative": "The Rules of Golf: jointly written and published by the USGA and The R&A; each governs in its own jurisdiction." }
+    ],
+    "slide_id": "play-rules",
+    "note": "'Everywhere' overreached; the revision names both governing bodies and their jurisdictions."
+  }
+]

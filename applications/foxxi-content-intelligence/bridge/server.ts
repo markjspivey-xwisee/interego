@@ -204,6 +204,7 @@ import { CONTENT_JUDGMENT_ATTESTATION_TYPE, CONTENT_REPUTATION_POLICY, attestati
 import { confirmNext, pendingJudgments, type PendingJudgment } from '../src/confirm-next.js';
 import { bestJudges, crossConfirmPairs, disagreementsFor, judgeAttestations, latestJudgmentsByClaim } from '../src/judges.js';
 import { AUTONOMY_POLICY_TYPE, DEFAULT_AUTONOMY_POLICY, amendAutonomyPolicy, autonomyDecision, isAutonomyPolicy, parseRules, standingOf, type AutonomyPolicy } from '../src/autonomy.js';
+import { CONTENT_REVISION_TYPE, contentRevision, revisionJudged, weakestClaims } from '../src/revisions.js';
 import { jevFromEnv } from '../../_shared/judgment-kit/jev-client.js';
 import { publishFoxxiEntity, type DescriptorPublishConfig } from '../src/outcome-descriptor-publisher.js';
 import {
@@ -5134,6 +5135,92 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       return { judge: subject, kind, granted: decision.granted, why: decision.reason, standing: decision.standing, rule: decision.rule };
     }));
     return { kind: 'autonomy-status', policy, ...(iri ? { policyIri: iri } : {}), policiesPublished: published, table, computedAt };
+  },
+  // ── The weakest claims on the pod: every evidence-level claim graded from the confirmations
+  // before the judgments, weakest first, each with a revision control ──
+  'foxxi.weakest_claims': async (args) => {
+    const resolved = await resolveCaller(args);
+    if ('error' in resolved) return resolved;
+    const { ctx } = resolved;
+    const scope = judgmentScope(args, ctx);
+    if ('kind' in scope) return scope;
+    const { judgments, outcomes } = await readJudgmentsAndOutcomes(scope.podUrl);
+    const limit = typeof args.limit === 'number' && args.limit > 0 ? Math.floor(args.limit) : 12;
+    const claims = weakestClaims(judgments, outcomes, authoritativeSource, limit).map((c) => ({
+      ...c,
+      revise: { tool: 'foxxi.revise_claim', arguments: { claim_text: c.claimText, revised_text: c.claimText, evidence: [], ...(c.slideId ? { slide_id: c.slideId } : {}) } },
+    }));
+    return { kind: 'weakest-claims', claims, judged: judgments.length, computedAt: new Date().toISOString() };
+  },
+
+  // ── A revision: new words and evidence from outside the passage, recorded as a
+  // foxxi:ContentRevision and judged again at once, so the record says the grade before and after ──
+  'foxxi.revise_claim': async (args) => {
+    const resolved = await resolveCaller(args);
+    if ('error' in resolved) return resolved;
+    const { ctx } = resolved;
+    const scope = judgmentScope(args, ctx);
+    if ('kind' in scope) return scope;
+    const evidence = Array.isArray(args.evidence)
+      ? (args.evidence as unknown[]).filter((e): e is EvidenceItem => typeof e === 'object' && e !== null && typeof (e as EvidenceItem).type === 'string' && typeof (e as EvidenceItem).id === 'string')
+      : [];
+    const originalText = typeof args.claim_text === 'string' ? args.claim_text.trim() : '';
+    // The grade the claim had: the newest judgment of it on the pod, and the confirmations that scored it.
+    const { judgments, outcomes } = await readJudgmentsAndOutcomes(scope.podUrl);
+    const graded = weakestClaims(judgments, outcomes, authoritativeSource, 1000).find((c) => c.claimText === originalText);
+    const byKind = args.revised_by_kind === 'agent' ? 'agent' as const : 'human' as const;
+    let revision;
+    try {
+      revision = contentRevision({
+        originalClaimText: originalText,
+        ...(graded ? { originalJudgmentIri: graded.judgmentIri, originalLevel: graded.level } : {}),
+        revisedClaimText: typeof args.revised_text === 'string' ? args.revised_text : '',
+        ...(typeof args.context === 'string' ? { context: args.context } : {}),
+        evidence,
+        revisedBy: ctx.webId,
+        revisedByKind: byKind,
+        ...(typeof args.slide_id === 'string' ? { slideId: args.slide_id } : {}),
+        ...(typeof args.course_iri === 'string' ? { courseIri: args.course_iri } : {}),
+        ...(typeof args.note === 'string' ? { note: args.note } : {}),
+      });
+    } catch (err) {
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 400, 'iep:refusalReason': err instanceof Error ? err.message : String(err), error: 'bad request' };
+    }
+    let jev: ReturnType<typeof jevFromEnv>;
+    try {
+      jev = jevFromEnv();
+    } catch (err) {
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 503, 'iep:refusalReason': 'this bridge has no TYPESAFE_API_KEY, so it cannot judge the revised claim', error: err instanceof Error ? err.message : String(err) };
+    }
+    // The revised claim, judged by the bridge's own judge as any claim is, under the autonomy policy.
+    const judged = await judgeContentClaim(jev, { judgmentKind: 'evidence-level', claimText: revision.revised.claimText, ...(revision.revised.context ? { context: revision.revised.context } : {}), evidence: [...revision.revised.evidence], ...(revision.slideId ? { slideId: revision.slideId } : {}), ...(revision.courseIri ? { courseIri: revision.courseIri } : {}) });
+    const judgment: ContentJudgment = { ...judged, judge: authoritativeSource };
+    const autonomy = await judgeAutonomy(scope.podUrl, (await discover(scope.podUrl)) as unknown as EntityEntry[], authoritativeSource, 'evidence-level');
+    const j = await publishFoxxiEntity({
+      config: judgmentPublishConfig(scope.podUrl),
+      slugPrefix: 'judgment',
+      foxxiType: CONTENT_JUDGMENT_TYPE as IRI,
+      payload: judgment as unknown as Record<string, unknown>,
+      authoredBy: { id: authoritativeSource, kind: 'agent', role: 'system-one-judge' },
+      modalStatus: autonomy.granted ? 'Asserted' : 'Hypothetical',
+    });
+    const complete = revisionJudged(revision, judgment, j.graphIri);
+    const r = await publishFoxxiEntity({
+      config: judgmentPublishConfig(scope.podUrl),
+      slugPrefix: 'revision',
+      foxxiType: CONTENT_REVISION_TYPE as IRI,
+      payload: complete as unknown as Record<string, unknown>,
+      authoredBy: { id: ctx.webId, kind: byKind, role: ctx.role },
+      modalStatus: 'Asserted',
+    });
+    return {
+      kind: 'content-revision',
+      '@type': [CONTENT_REVISION_TYPE],
+      revision: complete,
+      judgment,
+      autonomy,
+      published: { status: 'published', revision: { descriptorIri: r.descriptorIri, graphIri: r.graphIri }, judgment: { descriptorIri: j.descriptorIri, graphIri: j.graphIri } },
+    };
   },
   // ── Judges confirm each other: for every two judges' newest judgments of one claim, each
   // judgment gets an outcome from the other's answer, once, naming the peer judgment it came from ──

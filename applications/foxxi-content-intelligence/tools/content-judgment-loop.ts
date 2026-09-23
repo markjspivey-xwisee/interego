@@ -6,7 +6,7 @@
  *     applications/foxxi-content-intelligence/tools/content-judgment-loop.ts \
  *     --bridge https://foxxi-bridge.interego.xwisee.com \
  *     --pod https://gate.interego.xwisee.com/<your pod>/ [--enroll] \
- *     --claims <claims.json> [--confirm-as agent|human] [--record-own <model name>] [--report <out.json>] [--dry-run]
+ *     --claims <claims.json> [--confirm-as agent|human] [--record-own <model name>] [--revise <revisions.json>] [--report <out.json>] [--dry-run]
  *
  * ── WHY ────────────────────────────────────────────────────────────────────────────────────
  *
@@ -75,11 +75,12 @@ const claimsPath = flag('--claims');
 const confirmAs = flag('--confirm-as', 'agent') === 'human' ? 'human' : 'agent';
 const reportPath = flag('--report');
 const recordOwn = flag('--record-own');
+const revisePath = flag('--revise');
 const dryRun = has('--dry-run');
 const keyFile = process.env['FOXXI_AGENT_KEY_FILE'];
 
 if (!claimsPath || !keyFile) {
-  out('usage: FOXXI_AGENT_KEY_FILE=<wallet json> npx tsx content-judgment-loop.ts --claims <file> [--bridge <url>] [--pod <pod url>] [--enroll] [--confirm-as agent|human] [--record-own <model name>] [--report <file>] [--dry-run]');
+  out('usage: FOXXI_AGENT_KEY_FILE=<wallet json> npx tsx content-judgment-loop.ts --claims <file> [--bridge <url>] [--pod <pod url>] [--enroll] [--confirm-as agent|human] [--record-own <model name>] [--revise <revisions.json>] [--report <file>] [--dry-run]');
   process.exit(64);
 }
 
@@ -101,7 +102,7 @@ async function call(tool: string, args: Record<string, unknown>): Promise<Answer
   if (dryRun) {
     out(`  (dry run) ${tool} ${JSON.stringify(scoped).slice(0, 160)}`);
     // Enough shape for the loop to walk every step without dereferencing anything.
-    return { kind: 'dry-run', judgment: { answer: '(dry run)', confidence: 0 }, published: { status: 'published', graphIri: `urn:foxxi:judgment:dry-run-${Math.random().toString(36).slice(2, 8)}` }, queue: [], pending: 0, outcome: { hit: false, brier: 0 }, cells: [], attestation: {}, snapshot: null, recorded: [], ranked: [], judges: [] };
+    return { kind: 'dry-run', judgment: { answer: '(dry run)', confidence: 0 }, published: { status: 'published', graphIri: `urn:foxxi:judgment:dry-run-${Math.random().toString(36).slice(2, 8)}` }, queue: [], pending: 0, outcome: { hit: false, brier: 0 }, cells: [], attestation: {}, snapshot: null, recorded: [], ranked: [], judges: [], claims: [], table: [], revision: { judged: { from: null, level: '(dry run)', improved: null } } };
   }
   const res = await fetch(`${bridge}/mcp`, {
     method: 'POST',
@@ -215,6 +216,22 @@ async function main(): Promise<void> {
   steps.push({ step: 'autonomy_status', answer: status });
   const table = status['table'] as { judge: string; kind: string; granted: boolean; why: string }[] | undefined;
   out(`▸ autonomy (policy ${String((status['policy'] as { id?: string } | undefined)?.id)}): ${refused(status) ?? (table ?? []).map((t) => `${t.judge.slice(-24)} on ${t.kind}: ${t.granted ? 'may assert alone' : 'needs a person'} — ${t.why}`).join('; ')}`);
+
+  if (revisePath) {
+    const weakest = await call('foxxi.weakest_claims', { limit: 5 });
+    steps.push({ step: 'weakest_claims', answer: weakest });
+    const wc = weakest['claims'] as { claimText: string; level: string; gradedBy: string }[] | undefined;
+    out(`▸ weakest claims: ${refused(weakest) ?? (wc ?? []).map((c) => `${c.level} (${c.gradedBy}): ${c.claimText.slice(0, 50)}…`).join('; ')}`);
+    const revisions = JSON.parse(readFileSync(revisePath, 'utf8')) as { claim_text: string; revised_text: string; context?: string; evidence?: unknown[]; slide_id?: string; note?: string }[];
+    for (const rev of revisions) {
+      const r = await call('foxxi.revise_claim', { ...rev, revised_by_kind: confirmAs });
+      steps.push({ step: 'revise', claim: rev.claim_text.slice(0, 80), answer: r });
+      const why = refused(r);
+      if (why) { out(`▸ revise: refused — ${why}`); continue; }
+      const judged = (r['revision'] as { judged?: { from: string | null; level: string; improved: boolean | null } } | undefined)?.judged;
+      out(`▸ revised "${rev.claim_text.slice(0, 50)}…": ${judged?.from ?? 'ungraded'} → ${judged?.level} ${judged?.improved === true ? '(improved)' : judged?.improved === false ? '(not improved)' : ''}`);
+    }
+  }
 
   return finish(report, 0);
 }
