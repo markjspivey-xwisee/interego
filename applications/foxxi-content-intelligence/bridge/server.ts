@@ -196,11 +196,12 @@ import { competencyIri, competencyIriForTerm, competencyIdOf } from '../src/comp
 import { activityIri, ACTIVITY_DEFINITIONS } from '../src/activity-identity.js';
 import { FOXXI_NS } from '../src/foxxi-vocab.js';
 import {
-  CONTENT_JUDGMENT_KINDS, CONTENT_JUDGMENT_OUTCOME_TYPE, contentJudgmentCalibration, contentJudgmentControls, contentJudgmentMarkdown,
+  CONTENT_JUDGMENT_KINDS, CONTENT_JUDGMENT_OUTCOME_TYPE, CONTENT_JUDGMENT_TYPE, contentJudgmentCalibration, contentJudgmentControls, contentJudgmentMarkdown,
   contentJudgmentOutcome, decodeBundleJson, entityGraphUrl, findEntityEntry, isContentJudgment, isContentJudgmentOutcome, judgeContentClaim,
   type ContentJudgmentKind, type ContentJudgmentOutcome, type EntityEntry, type EvidenceItem,
 } from '../src/content-judgment.js';
 import { CONTENT_JUDGMENT_ATTESTATION_TYPE, CONTENT_REPUTATION_POLICY, attestationFromEntity, contentJudgmentAttestation, contentJudgmentReputation, isContentJudgmentAttestation } from '../src/content-reputation.js';
+import { confirmNext, pendingJudgments, type PendingJudgment } from '../src/confirm-next.js';
 import { jevFromEnv } from '../../_shared/judgment-kit/jev-client.js';
 import { publishFoxxiEntity, type DescriptorPublishConfig } from '../src/outcome-descriptor-publisher.js';
 import {
@@ -4910,6 +4911,39 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     return { kind: 'content-judgment-reputation', subject: authoritativeSource, policy: CONTENT_REPUTATION_POLICY, attestations, snapshot: contentJudgmentReputation(authoritativeSource, attestations, computedAt), read: attestationEntries.length, decoded: attestations.length, computedAt };
   },
 
+  // ── Which judgment a person should confirm next: the pending ones, ranked by what a
+  // confirmation would teach, from the judgments' own signals and the calibration's state ──
+  'foxxi.confirm_next': async (args) => {
+    const resolved = await resolveCaller(args);
+    if ('error' in resolved) return resolved;
+    const { ctx } = resolved;
+    if (ctx.role !== 'learning-engineer' && ctx.role !== 'admin') {
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden' };
+    }
+    if (!tenantPodUrl) return { kind: 'refusal' as const, 'iep:refusalStatus': 503, 'iep:refusalReason': 'no tenant pod is configured, so there are no judgments to rank', error: 'no tenant pod' };
+    const entries = (await discover(tenantPodUrl)) as unknown as EntityEntry[];
+    const typed = (type: string) => entries.filter((e) => (e.conformsTo ?? []).some((t) => String(t) === type));
+    const judgments: PendingJudgment[] = [];
+    for (const e of typed(CONTENT_JUDGMENT_TYPE)) {
+      const iri = e.graph ?? e.describes?.[0];
+      if (!iri) continue;
+      try {
+        const payload = await readEntityPayload(String(iri), e);
+        if (isContentJudgment(payload)) judgments.push({ judgmentIri: String(iri), judgment: payload });
+      } catch { /* a partial read is a shorter queue, not a failure */ }
+    }
+    const outcomes: ContentJudgmentOutcome[] = [];
+    for (const e of typed(CONTENT_JUDGMENT_OUTCOME_TYPE)) {
+      const iri = e.graph ?? e.describes?.[0];
+      if (!iri) continue;
+      try {
+        const payload = await readEntityPayload(String(iri), e);
+        if (isContentJudgmentOutcome(payload)) outcomes.push(payload);
+      } catch { /* a partial read is a smaller sample, not a failure */ }
+    }
+    const pending = pendingJudgments(judgments, outcomes);
+    return { ...confirmNext(pending, contentJudgmentCalibration(outcomes), { confirmed: outcomes.length }), read: { judgments: judgments.length, outcomes: outcomes.length } };
+  },
   'foxxi.le_estimate_concept_difficulty': async (args) => {
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;

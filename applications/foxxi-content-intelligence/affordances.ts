@@ -2127,6 +2127,21 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     },
   },
   {
+    action: 'urn:iep:action:foxxi:confirm-next' as IRI,
+    toolName: 'foxxi.confirm_next',
+    title: '[learning-engineer] Which content judgment to confirm next',
+    description: 'The pending Hypothetical foxxi:ContentJudgment entities on the tenant pod, ranked by what a person\'s confirmation would teach: the model\'s own uncertainty (1 − confidence), how far the question kind\'s calibration cell is from earning anything, and how little evidence the claim carried. No new model call: the factors are the judgments\' own and the calibration\'s, the weights are stated in the answer, and each entry carries the confirm call to make with the model\'s answer filled in, to keep or change. Ties break oldest first.',
+    method: 'GET',
+    targetTemplate: '{base}/foxxi/confirm_next',
+    annotations: { title: 'Confirm next', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    inputs: [],
+    outputs: {
+      description: 'The queue (highest priority first, twelve at most) with each entry\'s factors and confirm call; how many judgments are pending and confirmed; the weights.',
+      properties: { kind: { type: 'string' }, queue: { type: 'array' }, pending: { type: 'number' }, confirmed: { type: 'number' }, weights: { type: 'object' }, read: { type: 'object' } },
+      required: ['kind', 'queue', 'pending'],
+    },
+  },
+  {
     action: 'urn:iep:action:foxxi:le-estimate-concept-difficulty' as IRI,
     toolName: 'foxxi.le_estimate_concept_difficulty',
     title: '[learning-engineer] Rank a course\'s concepts by estimated difficulty',
