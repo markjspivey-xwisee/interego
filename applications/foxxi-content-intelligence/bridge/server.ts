@@ -198,10 +198,11 @@ import { FOXXI_NS } from '../src/foxxi-vocab.js';
 import {
   CONTENT_JUDGMENT_KINDS, CONTENT_JUDGMENT_OUTCOME_TYPE, CONTENT_JUDGMENT_TYPE, contentJudgmentCalibration, contentJudgmentControls, contentJudgmentMarkdown,
   contentJudgmentOutcome, decodeBundleJson, entityGraphUrl, findEntityEntry, isContentJudgment, isContentJudgmentOutcome, judgeContentClaim,
-  type ContentJudgmentKind, type ContentJudgmentOutcome, type EntityEntry, type EvidenceItem,
+  recordedContentJudgment, type ContentJudgment, type ContentJudgmentKind, type ContentJudgmentOutcome, type EntityEntry, type EvidenceItem,
 } from '../src/content-judgment.js';
 import { CONTENT_JUDGMENT_ATTESTATION_TYPE, CONTENT_REPUTATION_POLICY, attestationFromEntity, contentJudgmentAttestation, contentJudgmentReputation, isContentJudgmentAttestation } from '../src/content-reputation.js';
 import { confirmNext, pendingJudgments, type PendingJudgment } from '../src/confirm-next.js';
+import { bestJudges, crossConfirmPairs, disagreementsFor, judgeAttestations, latestJudgmentsByClaim } from '../src/judges.js';
 import { jevFromEnv } from '../../_shared/judgment-kit/jev-client.js';
 import { publishFoxxiEntity, type DescriptorPublishConfig } from '../src/outcome-descriptor-publisher.js';
 import {
@@ -2661,6 +2662,58 @@ function judgmentScope(args: Record<string, unknown>, ctx: CallerContext): { pod
   }
   return { podUrl: requested, container: containerOf(requested), self: true };
 }
+/** Every content judgment and every outcome the pod lists, decoded. */
+async function readJudgmentsAndOutcomes(podUrl: string): Promise<{ entries: EntityEntry[]; judgments: PendingJudgment[]; outcomes: ContentJudgmentOutcome[] }> {
+  const entries = (await discover(podUrl)) as unknown as EntityEntry[];
+  const typed = (type: string) => entries.filter((e) => (e.conformsTo ?? []).some((t) => String(t) === type));
+  const judgments: PendingJudgment[] = [];
+  for (const e of typed(CONTENT_JUDGMENT_TYPE)) {
+    const iri = e.graph ?? e.describes?.[0];
+    if (!iri) continue;
+    try {
+      const payload = await readEntityPayload(String(iri), e, podUrl);
+      if (isContentJudgment(payload)) judgments.push({ judgmentIri: String(iri), judgment: payload });
+    } catch { /* a partial read is a shorter list, not a failure */ }
+  }
+  const outcomes: ContentJudgmentOutcome[] = [];
+  for (const e of typed(CONTENT_JUDGMENT_OUTCOME_TYPE)) {
+    const iri = e.graph ?? e.describes?.[0];
+    if (!iri) continue;
+    try {
+      const payload = await readEntityPayload(String(iri), e, podUrl);
+      if (isContentJudgmentOutcome(payload)) outcomes.push(payload);
+    } catch { /* a partial read is a smaller sample, not a failure */ }
+  }
+  return { entries, judgments, outcomes };
+}
+
+/** Every attestation entity the pod lists, decoded to the registry's record, with the subject each is about. */
+async function readAttestations(podUrl: string, entries: readonly EntityEntry[]): Promise<{ read: number; attestations: ReturnType<typeof attestationFromEntity>[]; entities: { iri: string; subject: string }[] }> {
+  const list = entries.filter((e) => (e.conformsTo ?? []).some((t) => String(t) === CONTENT_JUDGMENT_ATTESTATION_TYPE));
+  const attestations: ReturnType<typeof attestationFromEntity>[] = [];
+  const entities: { iri: string; subject: string }[] = [];
+  for (const e of list) {
+    const iri = e.graph ?? e.describes?.[0];
+    if (!iri) continue;
+    try {
+      const payload = await readEntityPayload(String(iri), e, podUrl);
+      if (isContentJudgmentAttestation(payload)) {
+        attestations.push(attestationFromEntity(payload, entityGraphUrl(podUrl, String(iri), e) ?? String(iri)));
+        entities.push({ iri: String(iri), subject: payload.subject });
+      }
+    } catch { /* a partial read is a smaller sample, not a failure */ }
+  }
+  return { read: list.length, attestations, entities };
+}
+
+/** The registry snapshot per judge the pod holds attestations about, the bridge's own judge first. */
+function judgeSnapshots(attestations: readonly ReturnType<typeof attestationFromEntity>[], computedAt: string): { subject: string; snapshot: ReturnType<typeof contentJudgmentReputation>; attestations: number }[] {
+  const subjects = [authoritativeSource, ...new Set(attestations.map((a) => a.subject).filter((x) => x !== authoritativeSource))];
+  return subjects.map((subject) => {
+    const about = attestations.filter((a) => a.subject === subject);
+    return { subject, snapshot: contentJudgmentReputation(subject, about, computedAt), attestations: about.length };
+  });
+}
 const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknown>> = {
   // ── Emergent standards-extension (agp layer re-integrated) ──────────
   // Afforded by the agentic-performance layer composing Foxxi's standards;
@@ -4761,7 +4814,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const evidence = Array.isArray(args.evidence)
       ? (args.evidence as unknown[]).filter((e): e is EvidenceItem => typeof e === 'object' && e !== null && typeof (e as EvidenceItem).type === 'string' && typeof (e as EvidenceItem).id === 'string')
       : [];
-    const judgment = await judgeContentClaim(jev, {
+    const judged = await judgeContentClaim(jev, {
       judgmentKind: judgmentKind as ContentJudgmentKind,
       claimText,
       ...(typeof args.context === 'string' ? { context: args.context } : {}),
@@ -4770,6 +4823,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       ...(typeof args.slide_id === 'string' ? { slideId: args.slide_id } : {}),
       ...(Array.isArray(args.concept_ids) ? { conceptIds: (args.concept_ids as unknown[]).filter((c): c is string => typeof c === 'string') } : {}),
     });
+    const judgment: ContentJudgment = { ...judged, judge: authoritativeSource };
     const controls = contentJudgmentControls(judgment);
     // Published Hypothetical to the tenant pod when the bridge has one. The judgment is
     // answered either way, and the answer says what happened to it.
@@ -4875,44 +4929,42 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const { ctx } = resolved;
     const scope = judgmentScope(args, ctx);
     if ('kind' in scope) return scope;
-    const entries = (await discover(scope.podUrl)) as unknown as EntityEntry[];
-    const outcomes: ContentJudgmentOutcome[] = [];
-    for (const e of entries.filter((x) => (x.conformsTo ?? []).some((t) => String(t) === CONTENT_JUDGMENT_OUTCOME_TYPE))) {
-      const iri = e.graph ?? e.describes?.[0];
-      if (!iri) continue;
-      try {
-        const payload = await readEntityPayload(String(iri), e, scope.podUrl);
-        if (isContentJudgmentOutcome(payload)) outcomes.push(payload);
-      } catch { /* a partial read is a smaller sample, not a failure */ }
+    const { entries, outcomes } = await readJudgmentsAndOutcomes(scope.podUrl);
+    const previous = await readAttestations(scope.podUrl, entries);
+    const perJudge = judgeAttestations(outcomes, authoritativeSource, { fromExecution: scope.container });
+    const earned = perJudge.filter((p) => p.attestation);
+    if (earned.length === 0) {
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 409, 'iep:refusalReason': 'no judge has a question kind at its sample floor, so there is nothing earned to attest', error: 'nothing earned', calibrations: perJudge.map((p) => ({ judge: p.judge, calibration: p.calibration })) };
     }
-    const calibration = contentJudgmentCalibration(outcomes);
-    const container = scope.container;
-    const attestation = contentJudgmentAttestation(calibration, authoritativeSource, { fromExecution: container });
-    if (!attestation) {
-      return { kind: 'refusal' as const, 'iep:refusalStatus': 409, 'iep:refusalReason': 'no question kind has reached its sample floor, so there is nothing earned to attest', error: 'nothing earned', calibration };
+    const published: Record<string, unknown>[] = [];
+    for (const p of earned) {
+      const attestation = p.attestation!;
+      const superseded = previous.entities.filter((e) => e.subject === p.judge).map((e) => e.iri);
+      const r = await publishFoxxiEntity({
+        config: judgmentPublishConfig(scope.podUrl),
+        slugPrefix: 'judgment-attestation',
+        foxxiType: CONTENT_JUDGMENT_ATTESTATION_TYPE as IRI,
+        payload: attestation as unknown as Record<string, unknown>,
+        authoredBy: { id: authoritativeSource, kind: 'agent', role: 'system-one-judge' },
+        modalStatus: 'Asserted',
+        ...(superseded.length > 0 ? { supersedes: superseded.map((iri) => `${iri}#descriptor` as IRI) } : {}),
+      });
+      const descriptorUrl = (r as { descriptorUrl?: unknown }).descriptorUrl;
+      published.push({ judge: p.judge, direction: attestation.direction, attestation, published: { status: 'published', descriptorIri: r.descriptorIri, graphIri: r.graphIri, ...(typeof descriptorUrl === 'string' ? { descriptorUrl } : {}), supersedes: superseded.length }, calibration: p.calibration });
     }
-    const previous = entries.filter((x) => (x.conformsTo ?? []).some((t) => String(t) === CONTENT_JUDGMENT_ATTESTATION_TYPE)).map((x) => x.graph ?? x.describes?.[0]).filter((iri): iri is string => typeof iri === 'string');
-    const r = await publishFoxxiEntity({
-      config: judgmentPublishConfig(scope.podUrl),
-      slugPrefix: 'judgment-attestation',
-      foxxiType: CONTENT_JUDGMENT_ATTESTATION_TYPE as IRI,
-      payload: attestation as unknown as Record<string, unknown>,
-      authoredBy: { id: authoritativeSource, kind: 'agent', role: 'system-one-judge' },
-      modalStatus: 'Asserted',
-      ...(previous.length > 0 ? { supersedes: previous.map((p) => `${p}#descriptor` as IRI) } : {}),
-    });
-    const descriptorUrl = (r as { descriptorUrl?: unknown }).descriptorUrl;
+    const own = published.find((p) => p.judge === authoritativeSource);
     return {
       kind: 'content-judgment-attestation',
       '@type': [CONTENT_JUDGMENT_ATTESTATION_TYPE],
-      attestation,
-      published: { status: 'published', descriptorIri: r.descriptorIri, graphIri: r.graphIri, ...(typeof descriptorUrl === 'string' ? { descriptorUrl } : {}), supersedes: previous.length },
-      calibration,
+      // The bridge's own judge first, as the fields callers already read; every judge under `judges`.
+      ...(own ? { attestation: own['attestation'], published: own['published'], calibration: own['calibration'] } : {}),
+      judges: published,
+      notEarned: perJudge.filter((p) => !p.attestation).map((p) => ({ judge: p.judge, calibration: p.calibration })),
     };
   },
 
-  // Every attestation about the judging agent on the tenant pod — its own, and any a learning
-  // engineer publishes as a Peer — aggregated by the registry under the content policy.
+  // Every attestation on the pod, aggregated by the registry per judge it is about, under the content policy.
+
   'foxxi.content_judgment_reputation': async (args) => {
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
@@ -4920,53 +4972,131 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const scope = judgmentScope(args, ctx);
     if ('kind' in scope) return scope;
     const entries = (await discover(scope.podUrl)) as unknown as EntityEntry[];
-    const attestationEntries = entries.filter((e) => (e.conformsTo ?? []).some((t) => String(t) === CONTENT_JUDGMENT_ATTESTATION_TYPE));
-    const attestations = [];
-    for (const e of attestationEntries) {
-      const iri = e.graph ?? e.describes?.[0];
-      if (!iri) continue;
-      try {
-        const payload = await readEntityPayload(String(iri), e, scope.podUrl);
-        if (isContentJudgmentAttestation(payload)) attestations.push(attestationFromEntity(payload, entityGraphUrl(scope.podUrl, String(iri), e) ?? String(iri)));
-      } catch { /* a partial read is a smaller sample, not a failure */ }
-    }
+    const { read, attestations } = await readAttestations(scope.podUrl, entries);
     const computedAt = new Date().toISOString();
-    return { kind: 'content-judgment-reputation', subject: authoritativeSource, policy: CONTENT_REPUTATION_POLICY, attestations, snapshot: contentJudgmentReputation(authoritativeSource, attestations, computedAt), read: attestationEntries.length, decoded: attestations.length, computedAt };
+    const judges = judgeSnapshots(attestations, computedAt);
+    const own = judges[0]!;
+    return { kind: 'content-judgment-reputation', subject: own.subject, policy: CONTENT_REPUTATION_POLICY, attestations, snapshot: own.snapshot, judges, read, decoded: attestations.length, computedAt };
   },
 
-  // ── Which judgment a person should confirm next: the pending ones, ranked by what a
-  // confirmation would teach, from the judgments' own signals and the calibration's state ──
+  // ── Who has earned what on which kind of question: the judges the pod attests about, ranked
+  // by the registry's rating on that kind's axis ──
+  'foxxi.best_judge': async (args) => {
+    const resolved = await resolveCaller(args);
+    if ('error' in resolved) return resolved;
+    const { ctx } = resolved;
+    const scope = judgmentScope(args, ctx);
+    if ('kind' in scope) return scope;
+    const kind = typeof args.judgment_kind === 'string' && (CONTENT_JUDGMENT_KINDS as readonly string[]).includes(args.judgment_kind) ? args.judgment_kind : 'evidence-level';
+    const entries = (await discover(scope.podUrl)) as unknown as EntityEntry[];
+    const { attestations } = await readAttestations(scope.podUrl, entries);
+    const computedAt = new Date().toISOString();
+    const ranked = bestJudges(judgeSnapshots(attestations, computedAt), kind);
+    return { kind: 'best-judge', judgmentKind: kind, axis: ranked[0]?.axis ?? 'accuracy', best: ranked.find((r) => r.value !== null) ?? null, ranked, policy: CONTENT_REPUTATION_POLICY, computedAt };
+  },
+
+  // ── An agent records a judgment it made itself: the same entity the bridge's model produces,
+  // with the agent as judge, so it can be confirmed, cross-confirmed and earn its own reputation ──
+  'foxxi.record_content_judgment': async (args) => {
+    const resolved = await resolveCaller(args);
+    if ('error' in resolved) return resolved;
+    const { ctx } = resolved;
+    const scope = judgmentScope(args, ctx);
+    if ('kind' in scope) return scope;
+    const model = typeof args.model === 'string' ? args.model.trim() : '';
+    if (!model) return { kind: 'refusal' as const, 'iep:refusalStatus': 400, 'iep:refusalReason': 'model is required: the model the judge used, as the judge names it', error: 'bad request' };
+    const evidence = Array.isArray(args.evidence)
+      ? (args.evidence as unknown[]).filter((e): e is EvidenceItem => typeof e === 'object' && e !== null && typeof (e as EvidenceItem).type === 'string' && typeof (e as EvidenceItem).id === 'string')
+      : [];
+    let judgment: ContentJudgment;
+    try {
+      judgment = recordedContentJudgment({
+        judgmentKind: String(args.judgment_kind) as ContentJudgmentKind,
+        claimText: typeof args.claim_text === 'string' ? args.claim_text.trim() : '',
+        ...(typeof args.context === 'string' ? { context: args.context } : {}),
+        evidence,
+        ...(typeof args.course_iri === 'string' ? { courseIri: args.course_iri } : {}),
+        ...(typeof args.slide_id === 'string' ? { slideId: args.slide_id } : {}),
+        ...(Array.isArray(args.concept_ids) ? { conceptIds: (args.concept_ids as unknown[]).filter((c): c is string => typeof c === 'string') } : {}),
+        answer: typeof args.answer === 'string' ? args.answer.trim() : '',
+        ...(args.probabilities && typeof args.probabilities === 'object' ? { probabilities: args.probabilities as Record<string, number> } : {}),
+        ...(typeof args.confidence === 'number' ? { confidence: args.confidence } : {}),
+        model,
+        judge: ctx.webId,
+      });
+    } catch (err) {
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 400, 'iep:refusalReason': err instanceof Error ? err.message : String(err), error: 'bad request' };
+    }
+    const controls = contentJudgmentControls(judgment);
+    const r = await publishFoxxiEntity({
+      config: judgmentPublishConfig(scope.podUrl),
+      slugPrefix: 'judgment',
+      foxxiType: CONTENT_JUDGMENT_TYPE as IRI,
+      payload: judgment as unknown as Record<string, unknown>,
+      authoredBy: { id: ctx.webId, kind: 'agent', role: 'judge' },
+      modalStatus: 'Hypothetical',
+    });
+    const descriptorUrl = (r as { descriptorUrl?: unknown }).descriptorUrl;
+    return {
+      kind: 'content-judgment',
+      '@type': [CONTENT_JUDGMENT_TYPE],
+      judgment,
+      controls,
+      markdown: contentJudgmentMarkdown(judgment, controls, bridgeBaseUrl),
+      published: { status: 'published', descriptorIri: r.descriptorIri, graphIri: r.graphIri, ...(typeof descriptorUrl === 'string' ? { descriptorUrl } : {}), trustLevel: r.trust.trustLevel },
+    };
+  },
+
+  // ── Judges confirm each other: for every two judges' newest judgments of one claim, each
+  // judgment gets an outcome from the other's answer, once, naming the peer judgment it came from ──
+  'foxxi.cross_confirm': async (args) => {
+    const resolved = await resolveCaller(args);
+    if ('error' in resolved) return resolved;
+    const { ctx } = resolved;
+    const scope = judgmentScope(args, ctx);
+    if ('kind' in scope) return scope;
+    const { judgments, outcomes } = await readJudgmentsAndOutcomes(scope.podUrl);
+    const pairs = crossConfirmPairs(judgments, outcomes, authoritativeSource);
+    const recorded: Record<string, unknown>[] = [];
+    for (const pair of pairs) {
+      let outcome: ContentJudgmentOutcome;
+      try {
+        outcome = contentJudgmentOutcome(pair.judgment, pair.judgmentIri, pair.peerAnswer, { did: pair.peerJudge, kind: 'agent', from: pair.peerJudgmentIri, note: `peer judgment ${pair.peerJudgmentIri}` });
+      } catch { continue; /* a peer answer outside this judgment's alternatives scores nothing */ }
+      const r = await publishFoxxiEntity({
+        config: judgmentPublishConfig(scope.podUrl),
+        slugPrefix: 'judgment-outcome',
+        foxxiType: CONTENT_JUDGMENT_OUTCOME_TYPE as IRI,
+        payload: outcome as unknown as Record<string, unknown>,
+        authoredBy: { id: authoritativeSource, kind: 'agent', role: 'cross-confirm' },
+        modalStatus: 'Asserted',
+      });
+      recorded.push({ judgmentIri: pair.judgmentIri, judge: pair.judge, peerJudge: pair.peerJudge, peerJudgmentIri: pair.peerJudgmentIri, hit: outcome.hit, brier: outcome.brier, graphIri: r.graphIri });
+    }
+    return { kind: 'cross-confirmation', recorded, judgments: judgments.length, pairs: pairs.length };
+  },
+
+  // ── Which judgment a person should confirm next: the ones no person has decided, ranked by what
+  // a confirmation would teach — a disagreement between judges first ──
+
   'foxxi.confirm_next': async (args) => {
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
     const scope = judgmentScope(args, ctx);
     if ('kind' in scope) return scope;
-    const entries = (await discover(scope.podUrl)) as unknown as EntityEntry[];
-    const typed = (type: string) => entries.filter((e) => (e.conformsTo ?? []).some((t) => String(t) === type));
-    const judgments: PendingJudgment[] = [];
-    for (const e of typed(CONTENT_JUDGMENT_TYPE)) {
-      const iri = e.graph ?? e.describes?.[0];
-      if (!iri) continue;
-      try {
-        const payload = await readEntityPayload(String(iri), e, scope.podUrl);
-        if (isContentJudgment(payload)) judgments.push({ judgmentIri: String(iri), judgment: payload });
-      } catch { /* a partial read is a shorter queue, not a failure */ }
-    }
-    const outcomes: ContentJudgmentOutcome[] = [];
-    for (const e of typed(CONTENT_JUDGMENT_OUTCOME_TYPE)) {
-      const iri = e.graph ?? e.describes?.[0];
-      if (!iri) continue;
-      try {
-        const payload = await readEntityPayload(String(iri), e, scope.podUrl);
-        if (isContentJudgmentOutcome(payload)) outcomes.push(payload);
-      } catch { /* a partial read is a smaller sample, not a failure */ }
-    }
+    const { judgments, outcomes } = await readJudgmentsAndOutcomes(scope.podUrl);
+    const byClaim = latestJudgmentsByClaim(judgments, authoritativeSource);
     // Named `awaiting`, not `pending`: tests/every-vertical-declines-with-a-status.test.ts reads
     // every handler return for decline words, and `pending` is one of them.
-    const awaiting = pendingJudgments(judgments, outcomes);
+    const awaiting = pendingJudgments(judgments, outcomes).map((p) => ({
+      ...p,
+      disagreesWith: disagreementsFor(p, byClaim, authoritativeSource),
+      agentConfirmations: outcomes.filter((o) => o.judgmentIri === p.judgmentIri && o.confirmedByKind === 'agent').map((o) => ({ by: o.confirmedBy, answer: o.confirmedAnswer })),
+    }));
     return { ...confirmNext(awaiting, contentJudgmentCalibration(outcomes), { confirmed: outcomes.length }), read: { judgments: judgments.length, outcomes: outcomes.length } };
   },
+
   'foxxi.le_estimate_concept_difficulty': async (args) => {
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;

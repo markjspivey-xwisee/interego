@@ -118,6 +118,8 @@ export interface ContentJudgment {
   readonly conceptIds?: readonly string[];
   readonly evidenceCount: number;
   readonly usage: { readonly requests: number; readonly input_tokens: number; readonly output_tokens: number; readonly latencyMs: number };
+  /** The agent that made this judgment: the bridge's own judge for its model's, the caller for a recorded one. Absent on judgments from before 2026-09-23: the bridge's own. */
+  readonly judge?: string;
 }
 
 export const CONTENT_JUDGMENT_GRAPH_PREFIX = 'urn:graph:foxxi:content-judgment:';
@@ -299,6 +301,10 @@ export interface ContentJudgmentOutcome {
   readonly confirmedByKind?: 'human' | 'agent';
   readonly createdAt: string;
   readonly note?: string;
+  /** The judge the outcome scores (the judgment's), so calibrations are per judge. */
+  readonly judge?: string;
+  /** When the confirmation is another judge's judgment of the same claim: that judgment's IRI. */
+  readonly confirmedFrom?: string;
 }
 
 export function scoreContentJudgment(j: Pick<ContentJudgment, 'answer' | 'probabilities'>, confirmed: string): { hit: boolean; brier: number } {
@@ -306,7 +312,7 @@ export function scoreContentJudgment(j: Pick<ContentJudgment, 'answer' | 'probab
 }
 
 /** The outcome a person's confirmation makes of a judgment; the answer must be one the judgment weighed. */
-export function contentJudgmentOutcome(j: ContentJudgment, judgmentIri: string, confirmed: string, by: { readonly did: string; readonly kind?: 'human' | 'agent'; readonly note?: string }, now: Date = new Date()): ContentJudgmentOutcome {
+export function contentJudgmentOutcome(j: ContentJudgment, judgmentIri: string, confirmed: string, by: { readonly did: string; readonly kind?: 'human' | 'agent'; readonly note?: string; readonly from?: string }, now: Date = new Date()): ContentJudgmentOutcome {
   const alternatives = Object.keys(j.probabilities);
   if (!alternatives.includes(confirmed)) throw new Error(`the confirmed answer must be one of ${alternatives.join(', ')}`);
   const { hit, brier } = scoreContentJudgment(j, confirmed);
@@ -314,9 +320,68 @@ export function contentJudgmentOutcome(j: ContentJudgment, judgmentIri: string, 
     kind: 'content-judgment-outcome', judgmentId: j.id, judgmentIri, judgmentKind: j.judgmentKind, answer: j.answer,
     confirmedAnswer: confirmed, hit, brier, confidence: j.confidence, confirmedBy: by.did, confirmedByKind: by.kind ?? 'human', createdAt: now.toISOString(),
     ...(by.note ? { note: by.note } : {}),
+    ...(j.judge ? { judge: j.judge } : {}),
+    ...(by.from ? { confirmedFrom: by.from } : {}),
   };
 }
 
+export interface RecordedJudgmentInput extends ContentJudgmentInput {
+  /** The judge's answer: an evidence level or a work regime. */
+  readonly answer: string;
+  /** The judge's distribution over the alternatives; concentrated on the answer at `confidence` when absent. */
+  readonly probabilities?: Readonly<Record<string, number>>;
+  readonly confidence?: number;
+  /** The model the judge used, as it names it (a System One model, a reasoning model, a person's own name). */
+  readonly model: string;
+  /** The judging agent's identity. */
+  readonly judge: string;
+}
+
+/**
+ * A judgment an agent made itself and records: the same entity the bridge's model produces,
+ * with the answer, the distribution and the model the agent declares, and the agent as judge.
+ * The answer must be one of the kind's alternatives; the distribution is normalised and, when
+ * absent, concentrated on the answer at the declared confidence (0.8 by default) with the rest
+ * spread evenly, so a Brier score means the same thing for every judge.
+ */
+export function recordedContentJudgment(input: RecordedJudgmentInput, now: Date = new Date()): ContentJudgment {
+  if (!(CONTENT_JUDGMENT_KINDS as readonly string[]).includes(input.judgmentKind)) throw new Error(`judgment kind must be one of ${CONTENT_JUDGMENT_KINDS.join(', ')}`);
+  if (input.claimText.trim().length < 8) throw new Error('the claim is too short to judge');
+  const alternatives: readonly string[] = input.judgmentKind === 'evidence-level' ? EVIDENCE_LEVELS : WORK_REGIMES;
+  if (!alternatives.includes(input.answer)) throw new Error(`the answer must be one of ${alternatives.join(', ')}`);
+  const declared = input.confidence !== undefined ? Math.min(1, Math.max(0, input.confidence)) : 0.8;
+  let probabilities: Record<string, number>;
+  if (input.probabilities && Object.keys(input.probabilities).length > 0) {
+    const total = alternatives.reduce((n, a) => n + Math.max(0, input.probabilities?.[a] ?? 0), 0);
+    if (total <= 0) throw new Error('the probabilities must put weight on at least one alternative');
+    probabilities = Object.fromEntries(alternatives.map((a) => [a, Math.max(0, input.probabilities?.[a] ?? 0) / total]));
+  } else {
+    const rest = alternatives.length > 1 ? (1 - declared) / (alternatives.length - 1) : 0;
+    // Not rounded: four thirds of 0.2 rounded to three places sum to 1.001, and a distribution is a distribution.
+    probabilities = Object.fromEntries(alternatives.map((a) => [a, a === input.answer ? declared : rest]));
+  }
+  const confidence = input.confidence !== undefined ? round(declared) : round(probabilities[input.answer] ?? declared);
+  const id = newId();
+  return {
+    kind: 'content-judgment',
+    id,
+    graphIri: `${CONTENT_JUDGMENT_GRAPH_PREFIX}${id}`,
+    createdAt: now.toISOString(),
+    model: input.model,
+    confidence,
+    judgmentKind: input.judgmentKind,
+    claimText: input.claimText,
+    answer: input.answer,
+    probabilities,
+    ...(input.judgmentKind === 'evidence-level' ? { score: round(EVIDENCE_LEVELS.reduce((sum, l, i) => sum + i * (probabilities[l] ?? 0), 0)) } : {}),
+    ...(input.courseIri ? { courseIri: input.courseIri } : {}),
+    ...(input.slideId ? { slideId: input.slideId } : {}),
+    ...(input.conceptIds && input.conceptIds.length > 0 ? { conceptIds: [...input.conceptIds] } : {}),
+    evidenceCount: (input.evidence ?? []).length,
+    usage: { requests: 0, input_tokens: 0, output_tokens: 0, latencyMs: 0 },
+    judge: input.judge,
+  };
+}
 /** The JSON a Foxxi entity graph carries as foxxi:bundleJson, or undefined when it carries none. */
 export function decodeBundleJson(graphTurtle: string): unknown {
   const m = graphTurtle.match(/foxxi:bundleJson\s+"([^"]+)"\^\^xsd:base64Binary/);
