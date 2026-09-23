@@ -205,6 +205,14 @@ import { confirmNext, pendingJudgments, type PendingJudgment } from '../src/conf
 import { bestJudges, crossConfirmPairs, disagreementsFor, judgeAttestations, latestJudgmentsByClaim } from '../src/judges.js';
 import { AUTONOMY_POLICY_TYPE, DEFAULT_AUTONOMY_POLICY, amendAutonomyPolicy, autonomyDecision, isAutonomyPolicy, parseRules, standingOf, type AutonomyPolicy } from '../src/autonomy.js';
 import { CONTENT_REVISION_TYPE, contentRevision, revisionJudged, weakestClaims } from '../src/revisions.js';
+import { readEach } from '../src/bounded.js';
+
+/**
+ * How many pod entities a content-judgment read fetches at once. One at a time, a pod that had
+ * held five live runs (over a hundred judgments and as many outcomes, 2026-09-23) took the
+ * runner's whole 120 s inside `foxxi.cross_confirm`; the pod serves a few reads in parallel.
+ */
+const POD_READ_CONCURRENCY = 8;
 import { jevFromEnv } from '../../_shared/judgment-kit/jev-client.js';
 import { publishFoxxiEntity, type DescriptorPublishConfig } from '../src/outcome-descriptor-publisher.js';
 import {
@@ -2668,46 +2676,37 @@ function judgmentScope(args: Record<string, unknown>, ctx: CallerContext): { pod
 async function readJudgmentsAndOutcomes(podUrl: string): Promise<{ entries: EntityEntry[]; judgments: PendingJudgment[]; outcomes: ContentJudgmentOutcome[] }> {
   const entries = (await discover(podUrl)) as unknown as EntityEntry[];
   const typed = (type: string) => entries.filter((e) => (e.conformsTo ?? []).some((t) => String(t) === type));
-  const judgments: PendingJudgment[] = [];
-  for (const e of typed(CONTENT_JUDGMENT_TYPE)) {
+  // A partial read is a shorter list, not a failure: readEach leaves out what it cannot read.
+  const judgments = await readEach(typed(CONTENT_JUDGMENT_TYPE), POD_READ_CONCURRENCY, async (e): Promise<PendingJudgment | undefined> => {
     const iri = e.graph ?? e.describes?.[0];
-    if (!iri) continue;
-    try {
-      const payload = await readEntityPayload(String(iri), e, podUrl);
-      if (isContentJudgment(payload)) judgments.push({ judgmentIri: String(iri), judgment: payload });
-    } catch { /* a partial read is a shorter list, not a failure */ }
-  }
-  const outcomes: ContentJudgmentOutcome[] = [];
-  for (const e of typed(CONTENT_JUDGMENT_OUTCOME_TYPE)) {
+    if (!iri) return undefined;
+    const payload = await readEntityPayload(String(iri), e, podUrl);
+    return isContentJudgment(payload) ? { judgmentIri: String(iri), judgment: payload } : undefined;
+  });
+  const outcomes = await readEach(typed(CONTENT_JUDGMENT_OUTCOME_TYPE), POD_READ_CONCURRENCY, async (e): Promise<ContentJudgmentOutcome | undefined> => {
     const iri = e.graph ?? e.describes?.[0];
-    if (!iri) continue;
-    try {
-      const payload = await readEntityPayload(String(iri), e, podUrl);
-      if (isContentJudgmentOutcome(payload)) outcomes.push(payload);
-    } catch { /* a partial read is a smaller sample, not a failure */ }
-  }
+    if (!iri) return undefined;
+    const payload = await readEntityPayload(String(iri), e, podUrl);
+    return isContentJudgmentOutcome(payload) ? payload : undefined;
+  });
   return { entries, judgments, outcomes };
 }
 
 /** Every attestation entity the pod lists, decoded to the registry's record, with the subject each is about. */
 async function readAttestations(podUrl: string, entries: readonly EntityEntry[]): Promise<{ read: number; attestations: ReturnType<typeof attestationFromEntity>[]; entities: { iri: string; subject: string }[]; payloads: ContentJudgmentAttestation[] }> {
   const list = entries.filter((e) => (e.conformsTo ?? []).some((t) => String(t) === CONTENT_JUDGMENT_ATTESTATION_TYPE));
-  const attestations: ReturnType<typeof attestationFromEntity>[] = [];
-  const entities: { iri: string; subject: string }[] = [];
-  const payloads: ContentJudgmentAttestation[] = [];
-  for (const e of list) {
+  const read = await readEach(list, POD_READ_CONCURRENCY, async (e): Promise<{ iri: string; payload: ContentJudgmentAttestation; entry: EntityEntry } | undefined> => {
     const iri = e.graph ?? e.describes?.[0];
-    if (!iri) continue;
-    try {
-      const payload = await readEntityPayload(String(iri), e, podUrl);
-      if (isContentJudgmentAttestation(payload)) {
-        attestations.push(attestationFromEntity(payload, entityGraphUrl(podUrl, String(iri), e) ?? String(iri)));
-        entities.push({ iri: String(iri), subject: payload.subject });
-        payloads.push(payload);
-      }
-    } catch { /* a partial read is a smaller sample, not a failure */ }
-  }
-  return { read: list.length, attestations, entities, payloads };
+    if (!iri) return undefined;
+    const payload = await readEntityPayload(String(iri), e, podUrl);
+    return isContentJudgmentAttestation(payload) ? { iri: String(iri), payload, entry: e } : undefined;
+  });
+  return {
+    read: list.length,
+    attestations: read.map((r) => attestationFromEntity(r.payload, entityGraphUrl(podUrl, r.iri, r.entry) ?? r.iri)),
+    entities: read.map((r) => ({ iri: r.iri, subject: r.payload.subject })),
+    payloads: read.map((r) => r.payload),
+  };
 }
 
 /** The registry snapshot per judge the pod holds attestations about, the bridge's own judge first. */
@@ -2721,16 +2720,15 @@ function judgeSnapshots(attestations: readonly ReturnType<typeof attestationFrom
 /** The autonomy policy in force on the pod: the newest ratified foxxi:AutonomyPolicy entity, else the default. */
 async function readAutonomyPolicy(podUrl: string, entries: readonly EntityEntry[]): Promise<{ policy: AutonomyPolicy; iri?: string; published: number }> {
   const list = entries.filter((e) => (e.conformsTo ?? []).some((t) => String(t) === AUTONOMY_POLICY_TYPE));
-  let best: { policy: AutonomyPolicy; iri: string } | undefined;
-  for (const e of list) {
+  // An unreadable policy is no policy; the newest ratified one wins.
+  const ratified = await readEach(list, POD_READ_CONCURRENCY, async (e): Promise<{ policy: AutonomyPolicy; iri: string } | undefined> => {
     const iri = e.graph ?? e.describes?.[0];
-    if (!iri) continue;
-    try {
-      const payload = await readEntityPayload(String(iri), e, podUrl);
-      if (!isAutonomyPolicy(payload) || !payload.ratifiedAt) continue;
-      if (!best || (best.policy.ratifiedAt ?? '') < payload.ratifiedAt) best = { policy: payload, iri: String(iri) };
-    } catch { /* an unreadable policy is no policy */ }
-  }
+    if (!iri) return undefined;
+    const payload = await readEntityPayload(String(iri), e, podUrl);
+    return isAutonomyPolicy(payload) && payload.ratifiedAt ? { policy: payload, iri: String(iri) } : undefined;
+  });
+  let best: { policy: AutonomyPolicy; iri: string } | undefined;
+  for (const r of ratified) if (!best || (best.policy.ratifiedAt ?? '') < (r.policy.ratifiedAt ?? '')) best = r;
   return best ? { ...best, published: list.length } : { policy: DEFAULT_AUTONOMY_POLICY, published: list.length };
 }
 
@@ -4940,15 +4938,12 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     if ('kind' in scope) return scope;
     const entries = (await discover(scope.podUrl)) as unknown as EntityEntry[];
     const outcomeEntries = entries.filter((e) => (e.conformsTo ?? []).some((t) => String(t) === CONTENT_JUDGMENT_OUTCOME_TYPE));
-    const outcomes: ContentJudgmentOutcome[] = [];
-    for (const e of outcomeEntries) {
+    const outcomes = await readEach(outcomeEntries, POD_READ_CONCURRENCY, async (e): Promise<ContentJudgmentOutcome | undefined> => {
       const iri = e.graph ?? e.describes?.[0];
-      if (!iri) continue;
-      try {
-        const payload = await readEntityPayload(String(iri), e, scope.podUrl);
-        if (isContentJudgmentOutcome(payload)) outcomes.push(payload);
-      } catch { /* a partial read is a smaller sample, not a failure */ }
-    }
+      if (!iri) return undefined;
+      const payload = await readEntityPayload(String(iri), e, scope.podUrl);
+      return isContentJudgmentOutcome(payload) ? payload : undefined;
+    });
     return { kind: 'content-judgment-calibration', ...contentJudgmentCalibration(outcomes), read: outcomeEntries.length, decoded: outcomes.length };
   },
 
