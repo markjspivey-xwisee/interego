@@ -155,7 +155,8 @@ async function main(): Promise<void> {
     const published = r['published'] as { status?: string; graphIri?: string } | undefined;
     if (published?.status !== 'published' || !published.graphIri) { out(`▸ judge: not published (${String(JSON.stringify(published ?? null)).slice(0, 160)})`); return finish(report, 1); }
     judged.push({ claim, judgmentIri: published.graphIri, answer: String(j?.answer), confidence: Number(j?.confidence) });
-    out(`▸ judged ${claim.judgment_kind}: "${claim.claim_text.slice(0, 60)}…" → ${String(j?.answer)} (confidence ${Number(j?.confidence).toFixed(2)}) ${published.graphIri}`);
+    const autonomy = r['autonomy'] as { granted?: boolean; reason?: string } | undefined;
+    out(`▸ judged ${claim.judgment_kind}: "${claim.claim_text.slice(0, 60)}…" → ${String(j?.answer)} (confidence ${Number(j?.confidence).toFixed(2)}) ${published.graphIri}${autonomy ? ` [${autonomy.granted ? 'ASSERTED without a person' : 'Hypothetical'}: ${autonomy.reason}]` : ''}`);
   }
 
   if (recordOwn) {
@@ -209,6 +210,11 @@ async function main(): Promise<void> {
     const ranked = best['ranked'] as { subject: string; value: number | null; contributing: number }[] | undefined;
     out(`▸ best judge for ${kind} (${String(best['axis'])}): ${refused(best) ?? (ranked ?? []).map((r) => `${r.subject.slice(-24)} ${r.value ?? '-'} (${r.contributing})`).join(' > ')}`);
   }
+
+  const status = await call('foxxi.autonomy_status', {});
+  steps.push({ step: 'autonomy_status', answer: status });
+  const table = status['table'] as { judge: string; kind: string; granted: boolean; why: string }[] | undefined;
+  out(`▸ autonomy (policy ${String((status['policy'] as { id?: string } | undefined)?.id)}): ${refused(status) ?? (table ?? []).map((t) => `${t.judge.slice(-24)} on ${t.kind}: ${t.granted ? 'may assert alone' : 'needs a person'} — ${t.why}`).join('; ')}`);
 
   return finish(report, 0);
 }

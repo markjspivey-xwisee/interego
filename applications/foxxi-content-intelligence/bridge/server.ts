@@ -200,9 +200,10 @@ import {
   contentJudgmentOutcome, decodeBundleJson, entityGraphUrl, findEntityEntry, isContentJudgment, isContentJudgmentOutcome, judgeContentClaim,
   recordedContentJudgment, type ContentJudgment, type ContentJudgmentKind, type ContentJudgmentOutcome, type EntityEntry, type EvidenceItem,
 } from '../src/content-judgment.js';
-import { CONTENT_JUDGMENT_ATTESTATION_TYPE, CONTENT_REPUTATION_POLICY, attestationFromEntity, contentJudgmentAttestation, contentJudgmentReputation, isContentJudgmentAttestation } from '../src/content-reputation.js';
+import { CONTENT_JUDGMENT_ATTESTATION_TYPE, CONTENT_REPUTATION_POLICY, attestationFromEntity, contentJudgmentAttestation, contentJudgmentReputation, isContentJudgmentAttestation, type ContentJudgmentAttestation } from '../src/content-reputation.js';
 import { confirmNext, pendingJudgments, type PendingJudgment } from '../src/confirm-next.js';
 import { bestJudges, crossConfirmPairs, disagreementsFor, judgeAttestations, latestJudgmentsByClaim } from '../src/judges.js';
+import { AUTONOMY_POLICY_TYPE, DEFAULT_AUTONOMY_POLICY, amendAutonomyPolicy, autonomyDecision, isAutonomyPolicy, parseRules, standingOf, type AutonomyPolicy } from '../src/autonomy.js';
 import { jevFromEnv } from '../../_shared/judgment-kit/jev-client.js';
 import { publishFoxxiEntity, type DescriptorPublishConfig } from '../src/outcome-descriptor-publisher.js';
 import {
@@ -2688,10 +2689,11 @@ async function readJudgmentsAndOutcomes(podUrl: string): Promise<{ entries: Enti
 }
 
 /** Every attestation entity the pod lists, decoded to the registry's record, with the subject each is about. */
-async function readAttestations(podUrl: string, entries: readonly EntityEntry[]): Promise<{ read: number; attestations: ReturnType<typeof attestationFromEntity>[]; entities: { iri: string; subject: string }[] }> {
+async function readAttestations(podUrl: string, entries: readonly EntityEntry[]): Promise<{ read: number; attestations: ReturnType<typeof attestationFromEntity>[]; entities: { iri: string; subject: string }[]; payloads: ContentJudgmentAttestation[] }> {
   const list = entries.filter((e) => (e.conformsTo ?? []).some((t) => String(t) === CONTENT_JUDGMENT_ATTESTATION_TYPE));
   const attestations: ReturnType<typeof attestationFromEntity>[] = [];
   const entities: { iri: string; subject: string }[] = [];
+  const payloads: ContentJudgmentAttestation[] = [];
   for (const e of list) {
     const iri = e.graph ?? e.describes?.[0];
     if (!iri) continue;
@@ -2700,10 +2702,11 @@ async function readAttestations(podUrl: string, entries: readonly EntityEntry[])
       if (isContentJudgmentAttestation(payload)) {
         attestations.push(attestationFromEntity(payload, entityGraphUrl(podUrl, String(iri), e) ?? String(iri)));
         entities.push({ iri: String(iri), subject: payload.subject });
+        payloads.push(payload);
       }
     } catch { /* a partial read is a smaller sample, not a failure */ }
   }
-  return { read: list.length, attestations, entities };
+  return { read: list.length, attestations, entities, payloads };
 }
 
 /** The registry snapshot per judge the pod holds attestations about, the bridge's own judge first. */
@@ -2713,6 +2716,32 @@ function judgeSnapshots(attestations: readonly ReturnType<typeof attestationFrom
     const about = attestations.filter((a) => a.subject === subject);
     return { subject, snapshot: contentJudgmentReputation(subject, about, computedAt), attestations: about.length };
   });
+}
+/** The autonomy policy in force on the pod: the newest ratified foxxi:AutonomyPolicy entity, else the default. */
+async function readAutonomyPolicy(podUrl: string, entries: readonly EntityEntry[]): Promise<{ policy: AutonomyPolicy; iri?: string; published: number }> {
+  const list = entries.filter((e) => (e.conformsTo ?? []).some((t) => String(t) === AUTONOMY_POLICY_TYPE));
+  let best: { policy: AutonomyPolicy; iri: string } | undefined;
+  for (const e of list) {
+    const iri = e.graph ?? e.describes?.[0];
+    if (!iri) continue;
+    try {
+      const payload = await readEntityPayload(String(iri), e, podUrl);
+      if (!isAutonomyPolicy(payload) || !payload.ratifiedAt) continue;
+      if (!best || (best.policy.ratifiedAt ?? '') < payload.ratifiedAt) best = { policy: payload, iri: String(iri) };
+    } catch { /* an unreadable policy is no policy */ }
+  }
+  return best ? { ...best, published: list.length } : { policy: DEFAULT_AUTONOMY_POLICY, published: list.length };
+}
+
+/** Whether `judge` may assert on `kind` without a person, under the pod's policy and the registry's view of it. */
+async function judgeAutonomy(podUrl: string, entries: readonly EntityEntry[], judge: string, kind: string): Promise<ReturnType<typeof autonomyDecision> & { policyIri?: string }> {
+  const { policy, iri } = await readAutonomyPolicy(podUrl, entries);
+  const { attestations, payloads } = await readAttestations(podUrl, entries);
+  const about = attestations.filter((a) => a.subject === judge);
+  const snapshot = contentJudgmentReputation(judge, about, new Date().toISOString());
+  const latest = payloads.filter((p) => p.subject === judge).sort((a, b) => b.attestedAt.localeCompare(a.attestedAt))[0];
+  const decision = autonomyDecision(policy, standingOf(judge, kind, snapshot, latest));
+  return iri ? { ...decision, policyIri: iri } : decision;
 }
 const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknown>> = {
   // ── Emergent standards-extension (agp layer re-integrated) ──────────
@@ -4825,6 +4854,9 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     });
     const judgment: ContentJudgment = { ...judged, judge: authoritativeSource };
     const controls = contentJudgmentControls(judgment);
+    // Asserted without a person only when the pod's autonomy policy says this judge has earned it on
+    // this kind of question; Hypothetical otherwise, with the reason beside it.
+    const autonomy = scope.podUrl ? await judgeAutonomy(scope.podUrl, (await discover(scope.podUrl)) as unknown as EntityEntry[], authoritativeSource, judgmentKind) : undefined;
     // Published Hypothetical to the tenant pod when the bridge has one. The judgment is
     // answered either way, and the answer says what happened to it.
     let published: Record<string, unknown> = { status: 'skipped', reason: 'no tenant pod configured' };
@@ -4836,7 +4868,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
           foxxiType: `${FOXXI_NS}ContentJudgment` as IRI,
           payload: judgment as unknown as Record<string, unknown>,
           authoredBy: { id: authoritativeSource, kind: 'agent', role: 'system-one-judge' },
-          modalStatus: 'Hypothetical',
+          modalStatus: autonomy?.granted ? 'Asserted' : 'Hypothetical',
         });
         const descriptorUrl = (r as { descriptorUrl?: unknown }).descriptorUrl;
         published = { status: 'published', descriptorIri: r.descriptorIri, graphIri: r.graphIri, ...(typeof descriptorUrl === 'string' ? { descriptorUrl } : {}), trustLevel: r.trust.trustLevel };
@@ -4851,6 +4883,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       controls,
       markdown: contentJudgmentMarkdown(judgment, controls, bridgeBaseUrl),
       published,
+      ...(autonomy ? { autonomy } : {}),
     };
   },
 
@@ -5028,13 +5061,14 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       return { kind: 'refusal' as const, 'iep:refusalStatus': 400, 'iep:refusalReason': err instanceof Error ? err.message : String(err), error: 'bad request' };
     }
     const controls = contentJudgmentControls(judgment);
+    const autonomy = await judgeAutonomy(scope.podUrl, (await discover(scope.podUrl)) as unknown as EntityEntry[], ctx.webId, judgment.judgmentKind);
     const r = await publishFoxxiEntity({
       config: judgmentPublishConfig(scope.podUrl),
       slugPrefix: 'judgment',
       foxxiType: CONTENT_JUDGMENT_TYPE as IRI,
       payload: judgment as unknown as Record<string, unknown>,
       authoredBy: { id: ctx.webId, kind: 'agent', role: 'judge' },
-      modalStatus: 'Hypothetical',
+      modalStatus: autonomy.granted ? 'Asserted' : 'Hypothetical',
     });
     const descriptorUrl = (r as { descriptorUrl?: unknown }).descriptorUrl;
     return {
@@ -5044,9 +5078,63 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       controls,
       markdown: contentJudgmentMarkdown(judgment, controls, bridgeBaseUrl),
       published: { status: 'published', descriptorIri: r.descriptorIri, graphIri: r.graphIri, ...(typeof descriptorUrl === 'string' ? { descriptorUrl } : {}), trustLevel: r.trust.trustLevel },
+      autonomy,
     };
   },
 
+  // ── The autonomy policy: who may assert what without a person, amended through the
+  // constitutional machinery (propose, vote, ratify), each policy superseding the last ──
+  'foxxi.set_autonomy_policy': async (args) => {
+    const resolved = await resolveCaller(args);
+    if ('error' in resolved) return resolved;
+    const { ctx } = resolved;
+    const scope = judgmentScope(args, ctx);
+    if ('kind' in scope) return scope;
+    let rules;
+    try {
+      rules = parseRules(args.rules);
+    } catch (err) {
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 400, 'iep:refusalReason': err instanceof Error ? err.message : String(err), error: 'bad request' };
+    }
+    const entries = (await discover(scope.podUrl)) as unknown as EntityEntry[];
+    const previous = await readAutonomyPolicy(scope.podUrl, entries);
+    // A self-sovereign pod is its owner's: tier 4, one vote, in force at once. The configured tenant
+    // amends at tier 3 unless the admin says otherwise: the amendment waits for a quorum.
+    const tier = typeof args.tier === 'number' && [1, 2, 3, 4].includes(args.tier) ? args.tier as 1 | 2 | 3 | 4 : scope.self ? 4 : 3;
+    const { policy, amendment, inForce } = amendAutonomyPolicy(previous.policy, rules, { did: ctx.webId, tier, ...(typeof args.description === 'string' ? { description: args.description } : {}), ...(previous.iri ? { previousIri: previous.iri } : {}) });
+    const r = await publishFoxxiEntity({
+      config: judgmentPublishConfig(scope.podUrl),
+      slugPrefix: 'autonomy-policy',
+      foxxiType: AUTONOMY_POLICY_TYPE as IRI,
+      payload: policy as unknown as Record<string, unknown>,
+      authoredBy: { id: ctx.webId, kind: scope.self ? 'agent' : 'human', role: ctx.role },
+      modalStatus: inForce ? 'Asserted' : 'Hypothetical',
+      ...(previous.iri && inForce ? { supersedes: [`${previous.iri}#descriptor` as IRI] } : {}),
+    });
+    return { kind: 'autonomy-policy', '@type': [AUTONOMY_POLICY_TYPE], policy, inForce, amendment: { id: amendment.id, status: amendment.status, tier, votes: amendment.votes.length }, published: { status: 'published', descriptorIri: r.descriptorIri, graphIri: r.graphIri, supersedes: previous.iri && inForce ? previous.iri : null } };
+  },
+
+  // ── The autonomy table: every judge the pod attests about, on every kind, against the policy in force ──
+  'foxxi.autonomy_status': async (args) => {
+    const resolved = await resolveCaller(args);
+    if ('error' in resolved) return resolved;
+    const { ctx } = resolved;
+    const scope = judgmentScope(args, ctx);
+    if ('kind' in scope) return scope;
+    const entries = (await discover(scope.podUrl)) as unknown as EntityEntry[];
+    const { policy, iri, published } = await readAutonomyPolicy(scope.podUrl, entries);
+    const { attestations, payloads } = await readAttestations(scope.podUrl, entries);
+    const computedAt = new Date().toISOString();
+    const judges = judgeSnapshots(attestations, computedAt);
+    const table = judges.flatMap(({ subject, snapshot }) => CONTENT_JUDGMENT_KINDS.map((kind) => {
+      const latest = payloads.filter((p) => p.subject === subject).sort((a, b) => b.attestedAt.localeCompare(a.attestedAt))[0];
+      const decision = autonomyDecision(policy, standingOf(subject, kind, snapshot, latest));
+      // `why`, not `reason`: tests/a-refusal-answers-a-refusing-status.test.ts reads every handler
+      // return with a `reason` key as a decline, and this row is a decision, not a refusal.
+      return { judge: subject, kind, granted: decision.granted, why: decision.reason, standing: decision.standing, rule: decision.rule };
+    }));
+    return { kind: 'autonomy-status', policy, ...(iri ? { policyIri: iri } : {}), policiesPublished: published, table, computedAt };
+  },
   // ── Judges confirm each other: for every two judges' newest judgments of one claim, each
   // judgment gets an outcome from the other's answer, once, naming the peer judgment it came from ──
   'foxxi.cross_confirm': async (args) => {
