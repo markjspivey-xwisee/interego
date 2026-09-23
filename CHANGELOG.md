@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-22 — Foxxi: which content judgment to confirm next
+
+`foxxi.confirm_next` (GET, learning-engineer or admin) ranks the pending Hypothetical `foxxi:ContentJudgment` entities on the tenant pod by what a person's confirmation would teach: 0.5 × the model's uncertainty (1 − confidence), 0.3 × the question kind's calibration need (1 with no cell, above a half below the floor, a quarter of the miss rate once Asserted), 0.2 × evidence weakness (1 / (1 + items)). Ties break oldest first; each entry carries the `foxxi.confirm_content_judgment` call with the model's answer filled in, to keep or change. No new model call — the factors are the judgments' own and the calibration's — so the queue is deterministic and returns every factor beside the priority. `applications/foxxi-content-intelligence/src/confirm-next.ts`, with tests; built through the harness (navigation mudgo70j-51a712, which put affordances.ts first and the README as the doc).
+
 ## 2026-09-22 — the other three bridge images are one stage too
 
 `deploy/Dockerfile.foxxi-bridge`, `Dockerfile.agp-bridge` and `Dockerfile.wsp-bridge` take the single stage the harness image took in the previous entry: the same files and command, without the runtime stage that moved node_modules aside, copied /app back and made every intermediate layer a cache export. The harness image's cached build went from 2:40 to 0:43 (job 1:08, beside 2:04–2:29 for the three two-stage bridges in the same run).
