@@ -1,0 +1,55 @@
+[
+  {
+    "judgment_kind": "evidence-level",
+    "claim_text": "A handicap index is the average of a golfer's best score differentials, multiplied by 0.96.",
+    "context": "Slide 'Calculating your handicap' in the Handicapping module of the demo course: 'Average of best differentials, multiplied by 0.96.' The World Handicap System in force since 2020 averages the best 8 of the last 20 score differentials and applies no 0.96 factor; the 0.96 'bonus for excellence' belonged to the USGA formula that preceded it.",
+    "evidence": [{ "type": "slide", "id": "hcp-calc-handi" }],
+    "slide_id": "hcp-calc-handi",
+    "confirmed_answer": "asserted-only",
+    "note": "The slide asserts the pre-2020 formula; the current rules in the context contradict the 0.96 factor, so the context does not support the claim as stated."
+  },
+  {
+    "judgment_kind": "evidence-level",
+    "claim_text": "The player furthest from the hole plays first, and honour on the tee goes to the previous hole's low scorer.",
+    "context": "Slide 'Order of play' in the Etiquette module of the demo course: 'Player furthest from the hole plays first; honor goes to the previous hole's low scorer.' Rule 6.4 of the Rules of Golf states both: the honour on the teeing area and order of play by distance from the hole.",
+    "evidence": [{ "type": "slide", "id": "etq-play" }, { "type": "rule", "id": "rules-of-golf-6.4", "narrative": "Rule 6.4 Order of Play When Playing Hole" }],
+    "slide_id": "etq-play",
+    "confirmed_answer": "corroborated",
+    "note": "The slide states it and the cited rule states the same, independently."
+  },
+  {
+    "judgment_kind": "evidence-level",
+    "claim_text": "Strokes per hole are tallied and adjusted by stroke index to produce the score used for handicapping.",
+    "context": "Slide 'Calculating your score' in the Handicapping module of the demo course: 'Strokes per hole are tallied and adjusted by stroke index.'",
+    "slide_id": "hcp-calc-score",
+    "confirmed_answer": "supported-by-context",
+    "note": "The slide text says it; nothing beyond the slide is cited."
+  },
+  {
+    "judgment_kind": "evidence-level",
+    "claim_text": "The USGA Rules of Golf govern competitive play everywhere.",
+    "context": "Slide 'Rules of golf' in the Playing module of the demo course: 'The USGA Rules of Golf govern competitive play.' The Rules of Golf are published jointly by the USGA and The R&A, and The R&A administers them outside the United States and Mexico.",
+    "evidence": [{ "type": "slide", "id": "play-rules" }],
+    "slide_id": "play-rules",
+    "confirmed_answer": "asserted-only",
+    "note": "'Everywhere' overreaches: the context itself says the rules are joint and The R&A administers them outside the USGA's territory."
+  },
+  {
+    "judgment_kind": "work-regime",
+    "claim_text": "Work through a handicap calculation across 20 rounds, step by step, using the published formula.",
+    "context": "Slide 'Worked example' in the Handicapping module of the demo course: 'Step-through of a handicap calculation across 20 rounds.'",
+    "evidence": [{ "type": "slide", "id": "hcp-example" }],
+    "slide_id": "hcp-example",
+    "confirmed_answer": "Evident",
+    "note": "A published formula applied to given numbers: the answer is known before the work starts."
+  },
+  {
+    "judgment_kind": "work-regime",
+    "claim_text": "Make friends on the course: conversation between shots, compliments after good play, a shared lunch after.",
+    "context": "Slide 'Making friends' in the Having Fun module of the demo course: 'Conversation between shots, compliments after good play, shared lunch after.'",
+    "evidence": [{ "type": "slide", "id": "fun-friends" }],
+    "slide_id": "fun-friends",
+    "confirmed_answer": "Emergent",
+    "note": "Whether it works is only knowable afterwards; there is no procedure that guarantees a friendship."
+  }
+]

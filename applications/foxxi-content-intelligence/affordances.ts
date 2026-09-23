@@ -2047,6 +2047,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
       { name: 'course_iri', type: 'string', required: false, description: 'The course the content belongs to.' },
       { name: 'slide_id', type: 'string', required: false, description: 'The slide the claim is on.' },
       { name: 'concept_ids', type: 'array', required: false, description: 'Concept ids the claim concerns.' },
+      { name: 'tenant_pod_url', type: 'string', required: false, description: 'A self-sovereign pod to run the loop on instead of the configured tenant: yours, enrolled with foxxi.register_self_sovereign_learner, whose owner you are. Omitted, the configured tenant is meant and a learning-engineer or admin role is required.' },
     ],
     outputs: {
       description: 'The judgment (answer, probabilities, confidence, model), the controls it affords, a HyperMarkdown projection, and where it was published.',
@@ -2073,6 +2074,8 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
       { name: 'judgment_iri', type: 'string', required: true, description: 'The judgment entity on the pod, as foxxi.judge_content_claim returned it in published.graphIri (urn:foxxi:judgment:<id>).' },
       { name: 'confirmed_answer', type: 'string', required: true, description: 'The answer held to be true, one of the judgment\'s alternatives.' },
       { name: 'note', type: 'string', required: false, description: 'Why, in a sentence.' },
+      { name: 'confirmed_by_kind', type: 'string', required: false, description: 'human (the default) or agent: who is confirming. An agent\'s reading is a second model\'s opinion and is recorded as such; the calibration and the attestation count the two apart.' },
+      { name: 'tenant_pod_url', type: 'string', required: false, description: 'A self-sovereign pod to run the loop on instead of the configured tenant: yours, enrolled with foxxi.register_self_sovereign_learner, whose owner you are. Omitted, the configured tenant is meant and a learning-engineer or admin role is required.' },
     ],
     outputs: {
       description: 'The outcome (answer, confirmed answer, hit, Brier) and where it was published, superseding the judgment.',
@@ -2088,7 +2091,9 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     method: 'GET',
     targetTemplate: '{base}/foxxi/content_judgment_calibration',
     annotations: { title: 'Content judgment calibration', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-    inputs: [],
+    inputs: [
+      { name: 'tenant_pod_url', type: 'string', required: false, description: 'A self-sovereign pod to run the loop on instead of the configured tenant: yours, enrolled with foxxi.register_self_sovereign_learner, whose owner you are. Omitted, the configured tenant is meant and a learning-engineer or admin role is required.' },
+    ],
     outputs: {
       description: 'Cells per question kind with samples, hit rate, mean Brier and status; how many outcome entries were read and decoded.',
       properties: { kind: { type: 'string' }, cells: { type: 'array' }, samples: { type: 'number' }, minSamples: { type: 'number' }, read: { type: 'number' }, decoded: { type: 'number' } },
@@ -2104,7 +2109,9 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     targetTemplate: '{base}/foxxi/attest_content_judgments',
     inputShape: `${FOXXI_NS}AttestContentJudgmentsInputShape`,
     annotations: { title: 'Attest content judgments', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-    inputs: [],
+    inputs: [
+      { name: 'tenant_pod_url', type: 'string', required: false, description: 'A self-sovereign pod to run the loop on instead of the configured tenant: yours, enrolled with foxxi.register_self_sovereign_learner, whose owner you are. Omitted, the configured tenant is meant and a learning-engineer or admin role is required.' },
+    ],
     outputs: {
       description: 'The attestation published, where it landed and what it superseded, and the calibration it came from.',
       properties: { kind: { type: 'string' }, attestation: { type: 'object' }, published: { type: 'object' }, calibration: { type: 'object' } },
@@ -2119,7 +2126,9 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     method: 'GET',
     targetTemplate: '{base}/foxxi/content_judgment_reputation',
     annotations: { title: 'Content judgment reputation', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-    inputs: [],
+    inputs: [
+      { name: 'tenant_pod_url', type: 'string', required: false, description: 'A self-sovereign pod to run the loop on instead of the configured tenant: yours, enrolled with foxxi.register_self_sovereign_learner, whose owner you are. Omitted, the configured tenant is meant and a learning-engineer or admin role is required.' },
+    ],
     outputs: {
       description: 'The subject, the policy, the attestations read, and the snapshot (null when nothing attests yet).',
       properties: { kind: { type: 'string' }, subject: { type: 'string' }, policy: { type: 'object' }, attestations: { type: 'array' }, snapshot: { type: 'object' }, read: { type: 'number' }, decoded: { type: 'number' } },
@@ -2134,7 +2143,9 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     method: 'GET',
     targetTemplate: '{base}/foxxi/confirm_next',
     annotations: { title: 'Confirm next', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-    inputs: [],
+    inputs: [
+      { name: 'tenant_pod_url', type: 'string', required: false, description: 'A self-sovereign pod to run the loop on instead of the configured tenant: yours, enrolled with foxxi.register_self_sovereign_learner, whose owner you are. Omitted, the configured tenant is meant and a learning-engineer or admin role is required.' },
+    ],
     outputs: {
       description: 'The queue (highest priority first, twelve at most) with each entry\'s factors and confirm call; how many judgments are pending and confirmed; the weights.',
       properties: { kind: { type: 'string' }, queue: { type: 'array' }, pending: { type: 'number' }, confirmed: { type: 'number' }, weights: { type: 'object' }, read: { type: 'object' } },
