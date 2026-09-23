@@ -124,20 +124,25 @@ jobs:
   # ── ★ TWO JOBS SINCE 2026-09-22, AND THE SUITE IN TWO PARTS ────────────────────────────────
   #
   # One job ran everything in sequence: the typechecks, the boots, the whole suite, the guards —
-  # ten minutes, of which the suite was 7.6 and four modules were 4.1 of those
+  # ten minutes, of which the suite was 7.6 and six modules were 4.6 of those
   # (workspace-adversarial 155 s: its AXIS A enumerates 76,800 configurations on purpose;
-  # workspace-desktop-renderer 55 s; solid 22 s; cas-split 15 s). The gated auto-merge now waits
-  # for this workflow before it merges, so its length is the merge's length. The suite runs as
-  # two parts on two runners: the four slowest modules on one, everything else on the other,
-  # with the typechecks and the guards beside them. Each part is still one single-fork vitest
+  # workspace-desktop-renderer 55 s; solid 22 s; cas-split 15 s; bounded-manifest 15 s;
+  # egress-dns-screen 11 s). The gated auto-merge now waits for this workflow before it merges,
+  # so its length is the merge's length. The suite runs as FOUR parts on four runners: the
+  # adversarial enumeration alone (it is the floor: nothing else runs that long), the next five
+  # slowest together, and everything else in two `--shard`s — with the typechecks and the guards
+  # beside them. Two parts of two-then-four: measured 5:05 for the four slowest on one runner
+  # against 3:50 for the rest, so the wall was the slow part; cut this way the wall is the
+  # adversarial module plus a runner's fixed minute. Each part is still one single-fork vitest
   # process, so nothing vitest.config.ts pins (and says why) changes: no two modules share a
-  # process, and the live pod suites all sit in the second part.
+  # process, and the live pod suites are permanent CI skips wherever a shard puts them.
   #
   # ★ THE PARTITION IS A LIST, AND A LIST FAILS SILENTLY, so tests/suite-partition.test.ts reads
-  # this file and refuses a `files:` line whose named modules and the other part's `--exclude`
-  # flags are not the same set, or name a module that does not exist. A module dropped from one
-  # side and not added to the other is exactly the "an inclusion list fails silently" class the
-  # step note below was written for. Note that with `--exclude` no CI invocation is a whole-tree
+  # this file and refuses a `files:` line whose named modules and the complement parts' `--exclude`
+  # flags are not the same set, complement parts whose excludes differ or whose shards do not
+  # make one whole (1/n … n/n, once each), or a module that does not exist. A module dropped from
+  # one side and not added to the other is exactly the "an inclusion list fails silently" class
+  # the step note below was written for. Note that with `--exclude` no CI invocation is a whole-tree
   # run in tools/vitest-run-integrity.mjs's sense (planned < treeTotal), so its scalar floor
   # fires only for a local `npx vitest run`; its per-glob presence check and its drift ratchet
   # read the tree, not the plan, and still run in both parts.
@@ -277,8 +282,8 @@ jobs:
   # is not the fix." Naming one more file would have repeated the mistake in the same
   # shape. So the default is inverted, from opt-in to opt-out: run everything, and
   # let an exclusion be a visible, argued deletion rather than an omission nobody sees.
-  # The two parts below are that same whole, cut once, and tests/suite-partition.test.ts
-  # holds the cut exact.
+  # The four parts below are that same whole, cut three times, and tests/suite-partition.test.ts
+  # holds every cut exact.
   #
   # ★ `fetch-depth: 0` IS LOAD-BEARING. The suite includes `railway-pins-freshness.test.ts`
   # — it reads a real commit date out of this clone to prove a deployed pin is not stale.
@@ -293,10 +298,14 @@ jobs:
       fail-fast: false
       matrix:
         part:
-          - name: the four slowest modules
-            files: tests/workspace-adversarial.test.ts tests/workspace-desktop-renderer.test.ts tests/solid.test.ts tests/cas-split.test.ts
-          - name: everything else
-            files: --exclude tests/workspace-adversarial.test.ts --exclude tests/workspace-desktop-renderer.test.ts --exclude tests/solid.test.ts --exclude tests/cas-split.test.ts
+          - name: the adversarial enumeration
+            files: tests/workspace-adversarial.test.ts
+          - name: the next five slowest modules
+            files: tests/workspace-desktop-renderer.test.ts tests/solid.test.ts tests/cas-split.test.ts tests/bounded-manifest.test.ts tests/egress-dns-screen.test.ts
+          - name: everything else, first half
+            files: --exclude tests/workspace-adversarial.test.ts --exclude tests/workspace-desktop-renderer.test.ts --exclude tests/solid.test.ts --exclude tests/cas-split.test.ts --exclude tests/bounded-manifest.test.ts --exclude tests/egress-dns-screen.test.ts --shard=1/2
+          - name: everything else, second half
+            files: --exclude tests/workspace-adversarial.test.ts --exclude tests/workspace-desktop-renderer.test.ts --exclude tests/solid.test.ts --exclude tests/cas-split.test.ts --exclude tests/bounded-manifest.test.ts --exclude tests/egress-dns-screen.test.ts --shard=2/2
     steps:
       - uses: actions/checkout@v6
         with: { fetch-depth: 0 }

@@ -1180,10 +1180,14 @@ describe('CI runs the pod suites as permanent skips', () => {
       + 'longer collected on every pull request and this registry is describing something else.',
     ).toBe(1);
     const complements = lines.map(l => /^\s*files:\s*(.*\S)\s*$/.exec(l)?.[1]).filter((v): v is string => v !== undefined && v.includes('--exclude'));
-    expect(complements, 'exactly one part runs everything the others do not').toHaveLength(1);
-    const excluded = [...complements[0]!.matchAll(/--exclude\s+(\S+)/g)].map(m => m[1]!);
-    for (const suite of POD.touchedBy) {
-      expect(excluded, `${suite} is a pod suite and the complement part excludes it, so no part collects it`).not.toContain(suite);
+    expect(complements.length, 'at least one part runs everything the others do not').toBeGreaterThanOrEqual(1);
+    // The complement may run in shards (tests/suite-partition.test.ts holds them to one whole);
+    // a pod suite lands in one of them, and none may exclude it.
+    for (const complement of complements) {
+      const excluded = [...complement.matchAll(/--exclude\s+(\S+)/g)].map(m => m[1]!);
+      for (const suite of POD.touchedBy) {
+        expect(excluded, `${suite} is a pod suite and a complement part excludes it, so no part collects it`).not.toContain(suite);
+      }
     }
   });
 
