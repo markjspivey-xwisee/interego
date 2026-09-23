@@ -73,19 +73,19 @@ const INCLUDE = [
  * here — and it would be blamed on whichever file ran last, not on this one. That is the
  * shared-realm pollution class. The `finally` below is load-bearing; do not simplify it.
  */
-async function drive(opts: { root: string; specs: string[]; planned: number }): Promise<{
+async function drive(opts: { root: string; specs: string[]; planned: number; shard?: { index: number; count: number }; ran?: number }): Promise<{
   failed: boolean; out: string;
 }> {
   const Reporter = await load();
   const r = new Reporter();
   const specs = opts.specs.map((p) => ({ moduleId: resolve(opts.root, p) }));
   r.onInit({
-    config: { root: opts.root },
+    config: { root: opts.root, ...(opts.shard ? { shard: opts.shard } : {}) },
     projects: [{ config: { include: INCLUDE } }],
     globTestSpecifications: async () => specs,
   });
   r.onTestRunStart(new Array(opts.planned));
-  const modules = Array.from({ length: opts.planned }, (_, i) => ({
+  const modules = Array.from({ length: opts.ran ?? opts.planned }, (_, i) => ({
     moduleId: `m${i}`, state: () => 'passed',
   }));
   const priorExit = process.exitCode;
@@ -106,6 +106,30 @@ const spread = (n: number): string[] => Array.from({ length: n }, (_, i) => ([
   `tests/t${i}.test.ts`, `applications/a/tests/t${i}.test.ts`,
   `integrations/i/tests/t${i}.test.ts`, `mcp-server/tests/t${i}.test.ts`,
 ][i % 4] as string));
+
+describe('★ under --shard the plan is this shard\'s slice, not every specification vitest hands over', () => {
+  // bridge-typecheck.yml, 2026-09-23: the complement part ran as two shards, vitest handed the
+  // reporter all 420 surviving specifications, the second shard ran its 210, and the gate
+  // called the other 210 "never finished".
+  it('plans vitest\'s own slice: ceil(total / n) per shard, the last one shorter, everything without a shard', async () => {
+    const { shardPlan } = await import(new URL('../tools/vitest-run-integrity.mjs', import.meta.url).href) as { shardPlan: (t: number, s?: { index: number; count: number }) => number };
+    expect(shardPlan(420, { index: 1, count: 2 })).toBe(210);
+    expect(shardPlan(420, { index: 2, count: 2 })).toBe(210);
+    expect(shardPlan(5, { index: 1, count: 2 })).toBe(3);
+    expect(shardPlan(5, { index: 2, count: 2 })).toBe(2);
+    expect(shardPlan(5, { index: 3, count: 3 })).toBe(1);
+    expect(shardPlan(5, undefined)).toBe(5);
+    expect(shardPlan(5, { index: 1, count: 1 })).toBe(5);
+  });
+  it('passes a shard that ran its whole slice, and still fails one that did not', async () => {
+    const specs = spread(5);
+    expect((await drive({ root: ROOT, specs, planned: 5, shard: { index: 2, count: 2 }, ran: 2 })).failed).toBe(false);
+    expect((await drive({ root: ROOT, specs, planned: 5, shard: { index: 1, count: 2 }, ran: 3 })).failed).toBe(false);
+    const short = await drive({ root: ROOT, specs, planned: 5, shard: { index: 2, count: 2 }, ran: 1 });
+    expect(short.failed).toBe(true);
+    expect(short.out).toContain('1 of 2 planned test module(s) never finished');
+  });
+});
 
 describe('the run-integrity floor', () => {
   it('★ passes an honest whole-tree run — the control, without which every case below is satisfied by a gate that always fails', async () => {
