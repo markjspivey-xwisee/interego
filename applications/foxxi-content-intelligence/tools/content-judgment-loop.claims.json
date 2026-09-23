@@ -10,8 +10,8 @@
       }
     ],
     "slide_id": "hcp-calc-handi",
-    "confirmed_answer": "asserted-only",
-    "note": "The slide asserts the pre-2020 formula; the current rules in the context contradict the 0.96 factor, so the context does not support the claim as stated."
+    "confirmed_answer": "unsupported",
+    "note": "The passage states the 0.96 formula and then says the current rules contradict it: a claim the context corrects is unsupported, not merely asserted."
   },
   {
     "judgment_kind": "evidence-level",
@@ -37,8 +37,8 @@
     "claim_text": "Strokes per hole are tallied and adjusted by stroke index to produce the score used for handicapping.",
     "context": "Slide 'Calculating your score' in the Handicapping module of the demo course: 'Strokes per hole are tallied and adjusted by stroke index.'",
     "slide_id": "hcp-calc-score",
-    "confirmed_answer": "supported-by-context",
-    "note": "The slide text says it; nothing beyond the slide is cited."
+    "confirmed_answer": "asserted-only",
+    "note": "The slide states it and nothing backs it beyond the statement: no example, no mechanism, no source."
   },
   {
     "judgment_kind": "evidence-level",
@@ -51,8 +51,8 @@
       }
     ],
     "slide_id": "play-rules",
-    "confirmed_answer": "asserted-only",
-    "note": "'Everywhere' overreaches: the context itself says the rules are joint and The R&A administers them outside the USGA's territory."
+    "confirmed_answer": "unsupported",
+    "note": "'Everywhere' is contradicted by the context itself, which says the rules are joint and The R&A administers them outside the USGA's territory."
   },
   {
     "judgment_kind": "work-regime",
@@ -94,7 +94,7 @@
     ],
     "slide_id": "etq-distracting",
     "confirmed_answer": "supported-by-context",
-    "note": "The slide says exactly this; nothing beyond the slide is cited."
+    "note": "The only evidence item names the slide the claim sits in, which is the context, not evidence beyond it; the slide states the practice as an instruction."
   },
   {
     "judgment_kind": "evidence-level",
@@ -140,8 +140,8 @@
       }
     ],
     "slide_id": "etq-play",
-    "confirmed_answer": "Knowable",
-    "note": "There is a right answer, but it takes knowing the rule for a halved hole, which the slide does not state."
+    "confirmed_answer": "Evident",
+    "note": "A rule applied to known facts determines the result, whether or not this slide states the rule for a halved hole: the work is Evident, the slide is incomplete."
   },
   {
     "judgment_kind": "work-regime",
