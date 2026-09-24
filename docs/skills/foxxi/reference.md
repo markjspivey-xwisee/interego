@@ -1,6 +1,6 @@
 # Foxxi content intelligence, learner surface: every affordance
 
-Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 38 affordances.
+Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 41 affordances.
 
 ## `foxxi.record_private_performance_outcome`
 
@@ -72,6 +72,51 @@ Walk the L&D admin's policy descriptors + the learner's audience-tag membership,
 | `learner_did` | string | yes | Learner DID (web_id pattern from the tenant identity service). |
 | `tenant_pod_url` | string | yes | Pod URL of the L&D tenant where policy descriptors live. |
 | `audience_tags` | array | no | Optional caller-supplied audience tags to override the learner's default audience membership (e.g., temporary access). |
+
+## `foxxi.earned_credentials`
+
+**Where every assigned course stands**
+
+For each course assigned to the learner: credentialed (a verified, unexpired completion credential in their pod wallet), claimable (their own xAPI record demonstrates mastery — a passed, completed, mastered, satisfied or waived statement about the course with success not false and any score at or above the course's threshold, graded by this bridge itself — and no credential is in force), in progress (statements about the course, none demonstrating mastery), or not started. The claimable ones carry the foxxi.claim_credential call; a lapsed credential is named. Reads the learner's own record (shared lattice, lens and durable records) and wallet. A learner asks about themselves; an admin about anyone.
+
+- Action: `urn:iep:action:foxxi:earned-credentials`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/foxxi/earned_credentials`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `learner_did` | string | no | The learner's WebID; omitted, the caller. An admin may name any learner. |
+| `learner_pod_url` | string | no | The learner's pod when it is not derived from their identity; bounded to the pod space this deployment reads. |
+| `tenant_pod_url` | string | no | The tenant whose catalog and assignments apply; omitted, the configured tenant. |
+| `audience_tags` | array of string | no | Audience tags to resolve the assignments with, for a learner the tenant directory does not list. |
+
+## `foxxi.claim_credential`
+
+**Claim a credential the record has earned**
+
+The tenant issues an Open Badges 3.0 completion credential for a catalog course only from the learner's own record: a passed, completed, mastered, satisfied or waived xAPI statement about the course, with success not false and any score at or above the course's threshold, and graded by this bridge itself: the SCORM engine's completions carry the bridge's grading tag, so a statement the learner recorded is in the record but does not earn a credential. The credential names that evidence, is signed by the tenant's issuer key, is valid for a year, and is written to the learner's pod wallet; a credentialed statement joins their record. Already held and in force: the held credential comes back and nothing is issued. Not earned: a 409 refusal saying what statement would earn it. A learner claims for themselves; an admin may claim for a learner.
+
+- Action: `urn:iep:action:foxxi:claim-credential`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/foxxi/claim_credential`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `course_id` | string | yes | The tenant catalog course id the credential is for. |
+| `learner_did` | string | no | The learner's WebID; omitted, the caller. An admin may name any learner. |
+| `learner_pod_url` | string | no | The learner's pod when it is not derived from their identity; bounded to the pod space this deployment reads. |
+| `tenant_pod_url` | string | no | The tenant whose catalog applies and whose issuer signs; omitted, the configured tenant. |
+
+## `foxxi.verify_credential`
+
+**Verify a credential**
+
+What a relying party should check before believing an Open Badges 3.0 credential: the Data Integrity proof verifies against the issuer's key and the proof's key is the stated issuer; validUntil has not passed and validFrom has; the issuer is one this tenant stands behind (its own issuer key); the credential names its subject. Answers every check and, in words, what each failed one found. No caller identity is needed: anyone may verify.
+
+- Action: `urn:iep:action:foxxi:verify-credential`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/foxxi/verify_credential`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `credential` | object | yes | The credential JSON, with its Data Integrity proof. |
 
 ## `foxxi.consume_lesson`
 

@@ -4,7 +4,7 @@ One agentskills.io skill per vertical, each derived from that vertical's `afford
 
 | Skill | Vertical | Affordances | Bridge | Files |
 | --- | --- | --- | --- | --- |
-| `interego-foxxi` | Foxxi content intelligence, learner surface | 38 | `https://foxxi-bridge.interego.xwisee.com` | [SKILL.md](foxxi/SKILL.md), [reference.md](foxxi/reference.md) |
+| `interego-foxxi` | Foxxi content intelligence, learner surface | 41 | `https://foxxi-bridge.interego.xwisee.com` | [SKILL.md](foxxi/SKILL.md), [reference.md](foxxi/reference.md) |
 | `interego-foxxi-admin` | Foxxi content intelligence, administration | 73 | `https://foxxi-bridge.interego.xwisee.com` | [SKILL.md](foxxi-admin/SKILL.md), [reference.md](foxxi-admin/reference.md) |
 | `interego-llm-telemetry` | LLM telemetry | 8 | `https://foxxi-bridge.interego.xwisee.com` | [SKILL.md](llm-telemetry/SKILL.md), [reference.md](llm-telemetry/reference.md) |
 | `interego-jev-harness` | jev-harness development judgments | 9 | `https://jev-harness-bridge-production.up.railway.app` | [SKILL.md](jev-harness/SKILL.md), [reference.md](jev-harness/reference.md) |
