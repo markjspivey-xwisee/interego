@@ -172,6 +172,7 @@ export const FOXXI_TERMS: readonly FoxxiTerm[] = [
   { name: 'observedBy', kind: 'Extension', label: 'observedBy', definition: 'DID of the observer/evaluator who attested a performance record (provenance).' },
   { name: 'costUsd', kind: 'Extension', label: 'costUsd', definition: 'Cost of a performance execution in USD — agent performance economics.' },
   { name: 'contextKind', kind: 'Extension', label: 'contextKind', definition: 'Whether a statement records `production` work, `training`, or `performance-support`.' },
+  { name: 'gradedTag', kind: 'Extension', label: 'gradedTag', definition: 'HMAC the bridge puts on a result it graded itself, keyed by a secret only it holds; a credential earned from evidence counts only mastery statements that carry it, so a learner\'s own report is in the record but is not evidence.' },
   { name: 'deliveryChannel', kind: 'Extension', label: 'deliveryChannel', definition: 'The channel a generated text artifact was delivered through — document, email, chat, or sms.' },
   { name: 'recipient', kind: 'Extension', label: 'recipient', definition: 'The recipient address/handle a generated artifact was delivered to.' },
   { name: 'deliveredBody', kind: 'Extension', label: 'deliveredBody', definition: 'Base64-encoded body text of a delivered-content artifact published to the pod.' },
