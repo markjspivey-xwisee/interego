@@ -163,10 +163,14 @@ import {
   isSectionAbsentError,
 } from '../src/tenant-fetcher.js';
 import {
+  achievementIdFor,
+  deriveTenantIssuer,
   issueCourseCompletionCredential,
   type CourseCompletionSubject,
 } from '../src/credentials.js';
 import { exportClr } from '../src/clr.js';
+import { claimDecision, courseStandings, masteryEvidence, verifyCredentialChecks, type CourseIdentity, type HeldCredential, type MasteryEvidence } from '../src/earned-credentials.js';
+import { isGradedBy, withGradedTag } from '../src/graded-evidence.js';
 import {
   readDurableRecordedStatements,
   persistRecordedStatement,
@@ -3216,6 +3220,84 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     });
     const trace = emitAccessDecision({ ctx, tool: 'foxxi.discover_course_catalogs', decision: 'allow', appliedPolicies: ['tenant-member'] });
     return { kind: 'course-catalog-discovery', ...found, accessDecision: trace };
+  },
+
+  // ── Credentials earned from evidence ──────────────────────────────────────
+
+  'foxxi.earned_credentials': async (args) => {
+    const resolved = await resolveCaller(args);
+    if ('error' in resolved) return resolved;
+    const { ctx, admin } = resolved;
+    const subject = credentialSubjectFor(ctx, args);
+    if ('kind' in subject) return subject;
+    const enrollments = discoverAssignedCourses({ admin, learnerWebId: subject.did, audienceTagsOverride: args.audience_tags as readonly string[] | undefined }).enrollments;
+    const [held, statements] = await Promise.all([heldCredentialsFor(subject.podUrl, subject.did), learnerStatementsFor(subject.podUrl, subject.did)]);
+    const evidence = new Map<string, MasteryEvidence>();
+    for (const e of enrollments) evidence.set(e.courseId, masteryEvidence(courseIdentityFor(admin, e.courseId), statements, undefined, gradedHere));
+    const now = new Date();
+    const standings = courseStandings(enrollments, evidence, held, (id) => achievementIdFor(tenantProfileDid, id), now);
+    const trace = emitAccessDecision({ ctx, tool: 'foxxi.earned_credentials', decision: 'allow', appliedPolicies: [ctx.role === 'admin' ? 'admin-full-access' : 'learner-self'] });
+    return {
+      kind: 'earned-credentials', learner: subject.did, learnerPodUrl: subject.podUrl, computedAt: now.toISOString(),
+      standings: standings.map((st) => (st.state === 'claimable' ? { ...st, claim: { tool: 'foxxi.claim_credential', arguments: { course_id: st.courseId, ...(typeof args.learner_pod_url === 'string' ? { learner_pod_url: args.learner_pod_url } : {}) } } } : st)),
+      held: held.length, accessDecision: trace,
+    };
+  },
+
+  'foxxi.claim_credential': async (args) => {
+    const resolved = await resolveCaller(args);
+    if ('error' in resolved) return resolved;
+    const { ctx, admin } = resolved;
+    const subject = credentialSubjectFor(ctx, args);
+    if ('kind' in subject) return subject;
+    if (!issuerKeySeed) return notConfigured('bridge is not configured to issue credentials — FOXXI_ISSUER_KEY_SEED is unset');
+    const courseId = typeof args.course_id === 'string' ? args.course_id.trim() : '';
+    if (!courseId) return invalidArguments('course_id is required: the tenant catalog course the learner claims a credential for');
+    const entry = admin.catalog.find((c) => c.course_id === courseId);
+    if (!entry) return notFound(`course ${courseId} is not in the tenant catalog`);
+    const [held, statements] = await Promise.all([heldCredentialsFor(subject.podUrl, subject.did), learnerStatementsFor(subject.podUrl, subject.did)]);
+    const evidence = masteryEvidence(courseIdentityFor(admin, courseId), statements, undefined, gradedHere);
+    const now = new Date();
+    const achievementId = achievementIdFor(tenantProfileDid, courseId);
+    const decision = claimDecision(evidence, held, { achievementId, validityDays: CREDENTIAL_VALIDITY_DAYS }, now);
+    const policies = [ctx.role === 'admin' ? 'admin-full-access' : 'learner-self', 'credential-from-evidence'];
+    if (decision.decision === 'not-earned') {
+      const trace = emitAccessDecision({ ctx, tool: 'foxxi.claim_credential', decision: 'deny', appliedPolicies: policies });
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 409, 'iep:refusalReason': 'the learner\'s record does not yet demonstrate mastery of the course as graded by this bridge', error: `not earned — ${decision.missing}`, courseId, statements: decision.statements, unattested: evidence.unattested, accessDecision: trace };
+    }
+    const trace = emitAccessDecision({ ctx, tool: 'foxxi.claim_credential', decision: 'allow', appliedPolicies: policies });
+    if (decision.decision === 'already-held') {
+      return { kind: 'credential-claim', decision: 'already-held', courseId, credential: decision.credential, learner: subject.did, learnerPodUrl: subject.podUrl, accessDecision: trace };
+    }
+    const verbs = [...new Set(decision.evidence.map((e) => e.verb.split('/').pop() ?? e.verb))];
+    const result = await issueCourseCompletionCredential({
+      subject: {
+        learnerDid: subject.did, courseId, courseTitle: entry.title, achievementId,
+        criterionNarrative: `Demonstrated mastery of ${entry.title}: ${decision.evidence.length} ${decision.evidence.length === 1 ? 'result' : 'results'} (${verbs.join(', ')}) graded by the Foxxi bridge, in the learner's own record.`,
+        evidence: decision.evidence.map((e) => ({ type: 'fxa:LearningExperience', id: statementIri(e.id), narrative: `${e.verb} ${e.object}${e.scoreScaled !== undefined ? `, scaled score ${e.scoreScaled}` : ''}${e.timestamp ? `, at ${e.timestamp}` : ''}` })),
+        validUntil: decision.validUntil,
+      },
+      tenantProfileDid, tenantProfileName, issuerSeed: issuerKeySeed, learnerPodUrl: subject.podUrl,
+      fetch: guardedFetchFn(globalThis.fetch) as never,
+    });
+    const credentialId = result.vc.id ?? achievementId;
+    const credentialed = recordCredentialed({ learnerDid: subject.did, podUrl: subject.podUrl, credentialId, courseTitle: entry.title, evidenceIds: decision.evidence.map((e) => statementIri(e.id)) });
+    return {
+      kind: 'credential-claim', decision: 'issued', courseId, credentialId, descriptorUrl: result.publishResult.descriptorUrl, graphUrl: result.publishResult.graphUrl,
+      issuer: result.vc.issuer, validUntil: decision.validUntil, evidence: decision.evidence, ...(credentialed ? { credentialedStatement: credentialed } : {}),
+      learner: subject.did, learnerPodUrl: subject.podUrl, vc: result.vc, accessDecision: trace,
+    };
+  },
+
+  'foxxi.verify_credential': async (args) => {
+    const credential = (args.credential && typeof args.credential === 'object' && !Array.isArray(args.credential)) ? args.credential as Record<string, unknown> : undefined;
+    if (!credential) return invalidArguments('credential is required: the Open Badges 3.0 credential JSON with its Data Integrity proof');
+    let proof: { verified: boolean; issuerDid?: string; reason?: string };
+    try { proof = verifyDataIntegrityProof(credential as unknown as VerifiableCredentialJson); }
+    catch (e) { proof = { verified: false, reason: `the proof could not be checked: ${(e as Error).message}` }; }
+    const trusted = await trustedIssuerDids();
+    const verification = verifyCredentialChecks(credential, proof, trusted, new Date());
+    return { kind: 'credential-verification', checked: true, ...verification, trustedIssuers: trusted.length };
   },
 
   'foxxi.export_clr': async (args) => {
@@ -9421,6 +9503,99 @@ function emitAgentActivity(args: {
   } catch (e) { console.warn('[agent-activity]', (e as Error).message); return null; }
 }
 
+// ── Credentials earned from evidence ─────────────────────────────────────────────────────
+//
+// The tenant issues a completion credential only from what the learner's own record shows;
+// the learner sees where every assigned course stands; anyone can verify a credential the way
+// a relying party should: proof, window, issuer, subject. src/earned-credentials.ts holds the
+// logic; these read the pod, sign, and write the wallet.
+
+/** How long a credential earned from evidence stays valid. Policy in code, stated on the credential. */
+const CREDENTIAL_VALIDITY_DAYS = 365;
+
+/**
+ * The key the bridge tags its own grades with, derived from the issuer seed so the two stand or fall
+ * together: no seed, no credentials and no grades to rest them on. A learner's own report of a pass
+ * has no tag and earns nothing.
+ */
+const gradedKey = issuerKeySeed ? createHash('sha256').update(`foxxi-graded:${issuerKeySeed}`).digest('hex') : '';
+const gradedHere = (statement: Record<string, unknown>): boolean => gradedKey !== '' && isGradedBy(statement, gradedKey);
+
+const statementIri = (id: string): string => (id.includes(':') ? id : `urn:uuid:${id}`);
+
+/** The learner a credential call is about and the pod it reads: the caller, or a learner an admin names. */
+function credentialSubjectFor(ctx: CallerContext, args: Record<string, unknown>): { did: string; podUrl: string; isSelf: boolean } | Refusal {
+  const raw = typeof args.learner_did === 'string' ? args.learner_did.trim() : '';
+  const looksLikeWalletDid = /^did:(ethr|key|pkh):/i.test(raw);
+  const did = (!raw || looksLikeWalletDid) ? ctx.webId : raw;
+  if (did !== ctx.webId && ctx.role !== 'admin') {
+    return { kind: 'refusal', 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: `forbidden — caller ${ctx.webId} (role: ${ctx.role}) cannot act on the credentials of ${did}` };
+  }
+  const target = readTargetFor({ callerDid: ctx.webId, subjectIdentity: did !== ctx.webId ? did : undefined, namedPodUrl: (args.learner_pod_url ?? args.subject_pod_url) as string | undefined });
+  if (!target.ok) return propagateRefusal(target, 'the caller named a pod outside the pod space this deployment reads for them');
+  return { did, podUrl: target.podUrl, isSelf: target.isSelf };
+}
+
+/** The learner's statements as one list: the shared lattice, the in-memory lens, and the durable records on their pod. */
+async function learnerStatementsFor(podUrl: string, did: string): Promise<ReturnType<typeof mergeStatementsById>> {
+  const label = actorForPod(podUrl, MESH_ACTOR_LABELS);
+  await ensureResident(podUrl, did, label);
+  const durable = await readDurableRecordedStatements({ podUrl });
+  return mergeStatementsById([...latticeStatements(label), ...await listStoredStatements(lensTenantFor(label))], durable);
+}
+
+/** Every credential the learner's wallet holds, read and verified the way the CLR export reads them. */
+async function heldCredentialsFor(podUrl: string, did: string): Promise<HeldCredential[]> {
+  const clr = await exportClr({ learnerPodUrl: podUrl, learnerDid: did });
+  return clr.credentialEntries.map((e) => {
+    const c = e.credential as unknown as Record<string, unknown>;
+    const subject = (c.credentialSubject && typeof c.credentialSubject === 'object') ? c.credentialSubject as { achievement?: { id?: string } } : undefined;
+    const issuer = typeof c.issuer === 'string' ? c.issuer : ((c.issuer as { id?: string } | undefined)?.id ?? '');
+    return {
+      id: typeof c.id === 'string' ? c.id : e.sourceDescriptor, descriptorUrl: e.sourceDescriptor,
+      ...(subject?.achievement?.id ? { achievementId: subject.achievement.id } : {}), issuer,
+      ...(typeof c.validFrom === 'string' ? { validFrom: c.validFrom } : {}), ...(typeof c.validUntil === 'string' ? { validUntil: c.validUntil } : {}),
+      verified: e.verified,
+    };
+  });
+}
+
+/** Every IRI a catalog course is known by, so a statement about any of them counts. */
+function courseIdentityFor(admin: { readonly catalog: ReadonlyArray<{ readonly course_id: string; readonly course_iri?: string }> }, courseId: string): CourseIdentity {
+  const entry = admin.catalog.find((c) => c.course_id === courseId);
+  const iris = new Set<string>([courseIri(courseId)]);
+  if (entry?.course_iri) { iris.add(String(entry.course_iri)); iris.add(String(entry.course_iri).replace(/#package$/, '')); }
+  const declared = (entry as unknown as { mastery_score?: unknown } | undefined)?.mastery_score;
+  const threshold = typeof declared === 'number' ? declared : undefined;
+  return { courseId, courseIris: [...iris], ...(threshold !== undefined ? { masteryScore: threshold } : {}) };
+}
+
+/** The issuers a verifier here stands behind: the tenant's own issuer key. */
+async function trustedIssuerDids(): Promise<string[]> {
+  if (!issuerKeySeed) return [];
+  const issuer = await deriveTenantIssuer(issuerKeySeed);
+  return [issuer.did];
+}
+
+/** The credentialed statement in the learner's own record: who earned what, when, from which evidence. Best effort. */
+function recordCredentialed(args: { learnerDid: string; podUrl: string; credentialId: string; courseTitle: string; evidenceIds: readonly string[] }): string | null {
+  try {
+    const label = actorForPod(args.podUrl, MESH_ACTOR_LABELS);
+    const statement: Record<string, unknown> = {
+      id: randomUUID(), version: '2.0.0',
+      actor: { objectType: 'Agent', account: { homePage: String(authoritativeSource), name: args.learnerDid } },
+      verb: { id: CREDENTIALED_VERB, display: { en: 'credentialed' } },
+      object: { objectType: 'Activity', id: args.credentialId, definition: { name: { en: args.courseTitle }, type: `${FOXXI_NS}activities/credential` } },
+      context: { extensions: { [PERF_EXT.observedBy]: String(authoritativeSource), [PERF_EXT.contextKind]: 'credential' }, contextActivities: { other: args.evidenceIds.map((id) => ({ objectType: 'Activity', id })) } },
+      timestamp: new Date().toISOString(),
+    };
+    const lens = lensTenantFor(label);
+    const id = storeStatementInternal(statement, lens);
+    forwardToTargets(lens, { ...statement, id }).catch(() => {});
+    return id;
+  } catch { return null; }
+}
+
 function emitScormCompletion(play: ScormPlay, course: AgentScormCourse, passed: boolean, score: number): string[] {
   const ADL = 'http://adlnet.gov/expapi/verbs/';
   const courseObj = { objectType: 'Activity', id: courseIri(course.courseId), definition: { name: { en: course.title }, type: 'http://adlnet.gov/expapi/activities/course' } };
@@ -9431,10 +9606,12 @@ function emitScormCompletion(play: ScormPlay, course: AgentScormCourse, passed: 
     context: { extensions: { [PERF_EXT.observedBy]: play.learnerDid, [PERF_EXT.contextKind]: 'training' } },
     timestamp: new Date().toISOString(),
   });
-  const stmts: Array<Record<string, unknown>> = [ base('completed', 'completed', { completion: true }) ];
+  // The bridge graded these: its tag lets a credential tell them from a learner's own report.
+  const graded = (verb: string, name: string, result: Record<string, unknown>): Record<string, unknown> => (gradedKey ? withGradedTag(base(verb, name, result), gradedKey) : base(verb, name, result));
+  const stmts: Array<Record<string, unknown>> = [ graded('completed', 'completed', { completion: true }) ];
   stmts.push(passed
-    ? base('passed', 'passed', { success: true, completion: true, score: { scaled: score } })
-    : base('failed', 'failed', { success: false, completion: true, score: { scaled: score } }));
+    ? graded('passed', 'passed', { success: true, completion: true, score: { scaled: score } })
+    : graded('failed', 'failed', { success: false, completion: true, score: { scaled: score } }));
   const ids: string[] = [];
   const learnerPod = resolveSubjectPodUrl(play.learnerDid);
   for (const s of stmts) {

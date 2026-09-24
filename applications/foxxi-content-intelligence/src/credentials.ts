@@ -147,7 +147,7 @@ export function buildCourseCompletionVc(args: IssueCompletionArgs, issuerDid: st
   const now = new Date();
   const validFrom = args.subject.validFrom ?? now.toISOString();
   const achievementId = args.subject.achievementId
-    ?? `urn:foxxi:achievement:${slugTenant(args.tenantProfileDid)}:${args.subject.courseId}`;
+    ?? achievementIdFor(args.tenantProfileDid, args.subject.courseId);
 
   // The VC id is a dereferenceable URL: its OWN on-pod descriptor location, computed by
   // the issuer before signing (credentialIdOverride). GET it → this credential. A term,
@@ -346,6 +346,11 @@ function wrapCredentialAsGraph(graphIri: IRI, signed: VerifiableCredentialJson):
 
 function slugTenant(did: string): string {
   return did.replace(/^did:/, '').replace(/[^a-zA-Z0-9.-]/g, '-');
+}
+
+/** The achievement a completion credential for a course names, so a held credential can be matched before another is issued. */
+export function achievementIdFor(tenantProfileDid: string, courseId: string): string {
+  return `urn:foxxi:achievement:${slugTenant(tenantProfileDid)}:${courseId}`;
 }
 
 function slugDid(did: string): string {
