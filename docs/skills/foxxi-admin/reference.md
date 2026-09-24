@@ -1,6 +1,6 @@
 # Foxxi content intelligence, administration: every affordance
 
-Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 73 affordances.
+Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 74 affordances.
 
 ## `foxxi.read_intervention_methods`
 
@@ -778,6 +778,20 @@ Ebbinghaus 1/7/30-day intervals, with early-week reminders for concepts other co
 | `learner_did` | string | yes | Learner DID (web_id pattern from the tenant identity service). |
 | `completed_concepts` | array | yes | Array of { conceptId, completedAt }. |
 | `prereq_edges` | array | yes | Array of { from, to } prereq edges from the course graph. |
+
+## `foxxi.publish_course_catalog_product`
+
+**Publish the course catalog as a federated data product**
+
+The tenant's course catalog as a HyprCat FederatedCatalog on the tenant pod: a public, Asserted descriptor that conforms to hyprcat:FederatedCatalog, so any pod walk finds it by type, describing a graph in which each course is a FederatedDataProduct issued by the tenant in the service world, with its title, category, audience keywords, standard, landing page, and an output port that is a followable distribution (a GET of the course's own IRI). Republishing supersedes the previous catalog under the same IRI. federated_with names peer catalogs on other pods. Admin only.
+
+- Action: `urn:iep:action:foxxi:publish-course-catalog-product`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/foxxi/publish_course_catalog_product`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `federated_with` | array of string | no | IRIs of catalogs on other pods this one federates with. |
+| `tenant_pod_url` | string | no | The tenant whose catalog is published; omitted, the configured tenant. |
 
 ## `foxxi.discover_framework_registry`
 

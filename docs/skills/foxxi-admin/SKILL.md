@@ -1,11 +1,11 @@
 ---
 name: interego-foxxi-admin
-description: "Foxxi content intelligence, administration as Interego affordances: 73 tools (read-intervention-methods, review-method-evidence, ingest-content-package, publish-authoring-policy, connect-lms, assign-audience, and more). Use when administering a Foxxi tenant: ingesting SCORM, cmi5 or xAPI packages, assigning audiences, publishing policies and ontologies, running coverage and audit queries, issuing credentials, judging and confirming content claims, or connecting an LMS."
+description: "Foxxi content intelligence, administration as Interego affordances: 74 tools (read-intervention-methods, review-method-evidence, ingest-content-package, publish-authoring-policy, connect-lms, assign-audience, and more). Use when administering a Foxxi tenant: ingesting SCORM, cmi5 or xAPI packages, assigning audiences, publishing policies and ontologies, running coverage and audit queries, issuing credentials, judging and confirming content claims, or connecting an LMS."
 license: MIT
 metadata:
   vertical: foxxi-content-intelligence
   source: applications/foxxi-content-intelligence/affordances.ts
-  affordances: 73
+  affordances: 74
   manifest: "https://foxxi-bridge.interego.xwisee.com/affordances"
   generator: tools/build-skills.ts
 ---
@@ -76,6 +76,7 @@ Every answer is a JSON object; a refusal is typed `iep:Refusal` with `iep:refusa
 | `foxxi.upload_scorm_package` | Upload a SCORM / cmi5 .zip. | `POST https://foxxi-bridge.interego.xwisee.com/foxxi/upload_scorm_package` |
 | `foxxi.derive_adaptive_policy` | Takes the output of foxxi.cohort_concept_intelligence and derives a fxa:AdaptiveSequencingPolicy document naming the concepts a cohort is struggling with and t… | `POST https://foxxi-bridge.interego.xwisee.com/foxxi/derive_adaptive_policy` |
 | `foxxi.schedule_spaced_repetition` | Ebbinghaus 1/7/30-day intervals, with early-week reminders for concepts other concepts depend on (foundation signal). | `POST https://foxxi-bridge.interego.xwisee.com/foxxi/schedule_spaced_repetition` |
+| `foxxi.publish_course_catalog_product` | The tenant's course catalog as a HyprCat FederatedCatalog on the tenant pod: a public, Asserted descriptor that conforms to hyprcat:FederatedCatalog, so any po… | `POST https://foxxi-bridge.interego.xwisee.com/foxxi/publish_course_catalog_product` |
 | `foxxi.discover_framework_registry` | Walk N pod URLs, return every fxs:CourseCatalog / fxs:SkillFramework / fxa:CASEAlignment descriptor — the public-registry pattern without a central registry. | `POST https://foxxi-bridge.interego.xwisee.com/foxxi/discover_framework_registry` |
 | `foxxi.register_tutor_agent` | Builds a fxa:TutorAgentProfile descriptor from your specialties + contact endpoint. | `POST https://foxxi-bridge.interego.xwisee.com/foxxi/register_tutor_agent` |
 | `foxxi.find_tutor_for_competency` | Rank-search tutor candidates by competency match + number of independent human-countersigned competency assertions they've signed (a proxy for teaching quality… | `POST https://foxxi-bridge.interego.xwisee.com/foxxi/find_tutor_for_competency` |

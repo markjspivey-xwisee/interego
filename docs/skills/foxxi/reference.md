@@ -1,6 +1,6 @@
 # Foxxi content intelligence, learner surface: every affordance
 
-Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 41 affordances.
+Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 42 affordances.
 
 ## `foxxi.record_private_performance_outcome`
 
@@ -72,6 +72,20 @@ Walk the L&D admin's policy descriptors + the learner's audience-tag membership,
 | `learner_did` | string | yes | Learner DID (web_id pattern from the tenant identity service). |
 | `tenant_pod_url` | string | yes | Pod URL of the L&D tenant where policy descriptors live. |
 | `audience_tags` | array | no | Optional caller-supplied audience tags to override the learner's default audience membership (e.g., temporary access). |
+
+## `foxxi.discover_course_catalogs`
+
+**Discover course catalogs across pods**
+
+Every federated course catalog the given pods publish, found by its descriptor type (hyprcat:FederatedCatalog) in each pod's manifest and read back: the catalog's issuer and world, and each course as a data product with its title, category, keywords, standard, landing page and the port that fetches it. The issuer is checked against the identity the manifest attributes the descriptor to. No registry: the pods are the ones the caller names, or the tenant pod and the pods this deployment federates with. A pod that cannot be reached is reported, not fatal.
+
+- Action: `urn:iep:action:foxxi:discover-course-catalogs`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/foxxi/discover_course_catalogs`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `pod_urls` | array of string | no | The pods to walk; omitted, the tenant pod and this deployment's federation peers. |
+| `tenant_pod_url` | string | no | The tenant the caller belongs to; omitted, the configured tenant. |
 
 ## `foxxi.earned_credentials`
 

@@ -339,7 +339,9 @@ import {
   readDelegationCredential,
   rebuildManifestFromPod,
   publishAgentEncryptionKey,
+  parseDistributionFromDescriptorTurtle,
 } from '@interego/solid';
+import { courseCatalogProductTurtle, discoverCourseCatalogs, FEDERATED_CATALOG_TYPE } from '../src/course-catalog-product.js';
 import { queryFederatedStatements, type FederatedLrsEndpoint } from '../../lrs-adapter/src/experience-index.js';
 import {
   issueBbsCompletionCredential,
@@ -3153,6 +3155,71 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       vc: result.vc,
       accessDecision: trace,
     };
+  },
+
+  // ── Courses as federated data products ─────────────────────────────────────
+  //
+  // The tenant's catalog as a HyprCat FederatedCatalog on its pod, typed on the descriptor so a
+  // manifest walk finds it; and the walk itself, over the pods this deployment federates with or
+  // the ones the caller names. src/course-catalog-product.ts renders and reads; these publish and fetch.
+
+  'foxxi.publish_course_catalog_product': async (args) => {
+    const resolved = await resolveCaller(args);
+    if ('error' in resolved) return resolved;
+    const { ctx, admin } = resolved;
+    if (ctx.role !== 'admin') {
+      const trace = emitAccessDecision({ ctx, tool: 'foxxi.publish_course_catalog_product', decision: 'deny', appliedPolicies: ['admin-full-access'] });
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: `forbidden — only admins publish the tenant's course catalog as a data product (caller role: ${ctx.role})`, accessDecision: trace };
+    }
+    const federatedWith = Array.isArray(args.federated_with) ? (args.federated_with as unknown[]).filter((x): x is string => typeof x === 'string' && /^https?:\/\//.test(x)) : [];
+    const catalogIri = `${tenantPodUrl.replace(/\/$/, '')}/foxxi/course-catalog-product`;
+    const courses = admin.catalog.map((c) => ({
+      courseId: c.course_id, title: c.title, courseIri: String((c as { course_iri?: string }).course_iri || courseIri(c.course_id)),
+      ...(c.category ? { category: c.category } : {}), audienceTags: c.audience_tags ?? [], ...(c.standard ? { standard: c.standard } : {}),
+      ...(typeof c.slide_count === 'number' ? { slideCount: c.slide_count } : {}), ...(typeof c.concept_count === 'number' ? { conceptCount: c.concept_count } : {}),
+    }));
+    const publishedAt = new Date().toISOString();
+    const turtle = courseCatalogProductTurtle({ catalogIri, tenantDid: String(authoritativeSource), tenantName: tenantProfileName, courses, federatedWith, publishedAt });
+    const descriptor: ContextDescriptorData = {
+      id: `${catalogIri}#descriptor` as IRI,
+      describes: [catalogIri as IRI],
+      conformsTo: [FEDERATED_CATALOG_TYPE as IRI],
+      facets: [
+        { type: 'Temporal', validFrom: publishedAt },
+        { type: 'Provenance', wasAttributedTo: authoritativeSource },
+        { type: 'Agent', assertingAgent: { identity: authoritativeSource } },
+        { type: 'Semiotic', modalStatus: 'Asserted' },
+      ],
+    };
+    const result = await publish(descriptor, turtle, tenantPodUrl, { fetch: guardedFetchFn(globalThis.fetch) as never, containerPath: 'foxxi/', descriptorSlug: 'course-catalog-product', graphSlug: 'course-catalog-product-graph', visibility: 'public' });
+    const trace = emitAccessDecision({ ctx, tool: 'foxxi.publish_course_catalog_product', decision: 'allow', appliedPolicies: ['admin-full-access'] });
+    return { kind: 'course-catalog-product', catalogIri, descriptorUrl: result.descriptorUrl, graphUrl: result.graphUrl, conformsTo: FEDERATED_CATALOG_TYPE, products: courses.length, federatedWith, publishedAt, accessDecision: trace };
+  },
+
+  'foxxi.discover_course_catalogs': async (args) => {
+    const resolved = await resolveCaller(args);
+    if ('error' in resolved) return resolved;
+    const { ctx } = resolved;
+    const named = Array.isArray(args.pod_urls) ? (args.pod_urls as unknown[]).filter((x): x is string => typeof x === 'string' && x.trim() !== '') : [];
+    const pods = named.length > 0 ? named : [...new Set([tenantPodUrl, ...FEDERATION_PODS])];
+    for (const pod of pods) {
+      try { await assertSafeFetchTarget(pod); }
+      catch (e) { return invalidArguments(`pod_urls: ${pod} is not a pod this bridge may fetch (${(e as Error).message})`); }
+    }
+    const fetchFn = guardedFetchFn(globalThis.fetch) as never;
+    const found = await discoverCourseCatalogs(pods, {
+      entries: async (pod) => (await discover(pod, undefined, { fetch: fetchFn })).map((e) => ({ descriptorUrl: e.descriptorUrl, ...(e.conformsTo ? { conformsTo: e.conformsTo } : {}), ...(e.issuer ? { issuer: e.issuer } : {}) })),
+      graph: async (descriptorUrl) => {
+        const res = await (guardedFetchFn(globalThis.fetch) as typeof fetch)(descriptorUrl, { headers: { Accept: 'text/turtle' } });
+        if (!res.ok) return undefined;
+        const link = parseDistributionFromDescriptorTurtle(await res.text());
+        if (!link) return undefined;
+        const { content } = await fetchGraphContent(link.accessURL, { fetch: fetchFn });
+        return content ?? undefined;
+      },
+    });
+    const trace = emitAccessDecision({ ctx, tool: 'foxxi.discover_course_catalogs', decision: 'allow', appliedPolicies: ['tenant-member'] });
+    return { kind: 'course-catalog-discovery', ...found, accessDecision: trace };
   },
 
   // ── Credentials earned from evidence ──────────────────────────────────────
