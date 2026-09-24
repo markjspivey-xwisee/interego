@@ -99,6 +99,28 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
   },
 
   {
+    action: 'urn:iep:action:foxxi:discover-course-catalogs' as IRI,
+    toolName: 'foxxi.discover_course_catalogs',
+    title: 'Discover course catalogs across pods',
+    description: 'Every federated course catalog the given pods publish, found by its descriptor type (hyprcat:FederatedCatalog) in each pod\'s manifest and read back: the catalog\'s issuer and world, and each course as a data product with its title, category, keywords, standard, landing page and the port that fetches it. The issuer is checked against the identity the manifest attributes the descriptor to. No registry: the pods are the ones the caller names, or the tenant pod and the pods this deployment federates with. A pod that cannot be reached is reported, not fatal.',
+    method: 'POST',
+    targetTemplate: '{base}/foxxi/discover_course_catalogs',
+    annotations: { title: 'Discover course catalogs', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    inputs: [
+      { name: 'pod_urls', type: 'array', required: false, description: 'The pods to walk; omitted, the tenant pod and this deployment\'s federation peers.', itemType: 'string' },
+      { name: 'tenant_pod_url', type: 'string', required: false, description: 'The tenant the caller belongs to; omitted, the configured tenant.' },
+    ],
+    appliesTo: { collections: ['catalog'] },
+    outputs: {
+      description: 'The catalogs found, each with its pod, descriptor, issuer, whether the issuer matches the attribution, its federation peers and its products with ports; and a line per pod walked.',
+      properties: {
+        catalogs: { type: 'array', description: 'Per catalog: iri, pod, descriptorUrl, title, issuedBy, attributedTo, issuerMatches, world, modified, federatedWith, products (iri, courseId, title, description, category, standard, keywords, landingPage, ports).', items: { type: 'object', additionalProperties: true } },
+        pods: { type: 'array', description: 'Per pod walked: entries seen, catalogs found, unreachable when it could not be read.', items: { type: 'object', additionalProperties: true } },
+        accessDecision: { type: 'object', description: 'ABAC trace: caller role + applied policies + the decision.', additionalProperties: true },
+      },
+    },
+  },
+  {
     action: 'urn:iep:action:foxxi:consume-lesson' as IRI,
     toolName: 'foxxi.consume_lesson',
     title: 'Consume a lesson + emit consumption descriptor',
@@ -1911,6 +1933,33 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
       { name: 'completed_concepts', type: 'array', required: true, description: 'Array of { conceptId, completedAt }.' },
       { name: 'prereq_edges', type: 'array', required: true, description: 'Array of { from, to } prereq edges from the course graph.' },
     ],
+  },
+  {
+    action: 'urn:iep:action:foxxi:publish-course-catalog-product' as IRI,
+    toolName: 'foxxi.publish_course_catalog_product',
+    title: 'Publish the course catalog as a federated data product',
+    description: 'The tenant\'s course catalog as a HyprCat FederatedCatalog on the tenant pod: a public, Asserted descriptor that conforms to hyprcat:FederatedCatalog, so any pod walk finds it by type, describing a graph in which each course is a FederatedDataProduct issued by the tenant in the service world, with its title, category, audience keywords, standard, landing page, and an output port that is a followable distribution (a GET of the course\'s own IRI). Republishing supersedes the previous catalog under the same IRI. federated_with names peer catalogs on other pods. Admin only.',
+    method: 'POST',
+    targetTemplate: '{base}/foxxi/publish_course_catalog_product',
+    annotations: { title: 'Publish the catalog as a data product', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    inputs: [
+      { name: 'federated_with', type: 'array', required: false, description: 'IRIs of catalogs on other pods this one federates with.', itemType: 'string' },
+      { name: 'tenant_pod_url', type: 'string', required: false, description: 'The tenant whose catalog is published; omitted, the configured tenant.' },
+    ],
+    appliesTo: { collections: ['catalog'] },
+    outputs: {
+      description: 'Where the catalog was published and what it lists.',
+      properties: {
+        catalogIri: { type: 'string', description: 'The catalog\'s IRI, fixed per tenant pod.' },
+        descriptorUrl: { type: 'string', description: 'The published descriptor.' },
+        graphUrl: { type: 'string', description: 'The published catalog graph (Turtle).' },
+        conformsTo: { type: 'string', description: 'hyprcat:FederatedCatalog.' },
+        products: { type: 'integer', description: 'How many courses the catalog lists.' },
+        federatedWith: { type: 'array', description: 'The peer catalogs named.', items: { type: 'string' } },
+        publishedAt: { type: 'string', description: 'When it was published (ISO 8601).' },
+        accessDecision: { type: 'object', description: 'ABAC trace: caller role + applied policies + the decision.', additionalProperties: true },
+      },
+    },
   },
   {
     action: 'urn:iep:action:foxxi:discover-framework-registry' as IRI,
