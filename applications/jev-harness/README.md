@@ -83,7 +83,7 @@ The bridge runs on Railway as the service `jev-harness-bridge` (image `interego-
 
 ## Claude Code
 
-[`.claude/skills/jev-harness/SKILL.md`](.claude/skills/jev-harness/SKILL.md) tells an agent to follow `navigate` at the start of a task, run the selection chain after a change, and gate the diff before finishing.
+[`claude-skill/SKILL.md`](claude-skill/SKILL.md) tells an agent to follow `navigate` at the start of a task, run the selection chain after a change, and gate the diff before finishing (copy it to `.claude/skills/jev-harness/` to install it; `.claude/` is ignored in this tree). The complete list of the bridge's affordances as a skill is generated beside every other vertical's at [`docs/skills/jev-harness/`](../../docs/skills/jev-harness/SKILL.md).
 
 ## Design notes
 
