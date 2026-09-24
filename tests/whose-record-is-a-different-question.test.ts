@@ -187,15 +187,17 @@ describe('an identity that resolves to nothing must not resolve to everybody', (
   });
 });
 
-describe('the three signed read sites all reach this rule, and none of them keeps the old one', () => {
+describe('the four signed read sites all reach this rule, and none of them keeps the old one', () => {
   const src = readFileSync(join(
     dirname(fileURLToPath(import.meta.url)),
     '..', 'applications', 'foxxi-content-intelligence', 'bridge', 'server.ts',
   ), 'utf8');
   const code = src.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l));
 
-  it('review-record, verify-extension and assemble_learner_record each call readTargetFor', () => {
-    expect(code.filter((l) => /readTargetFor\(\{/.test(l))).toHaveLength(3);
+  it('review-record, verify-extension, assemble_learner_record and the credential subject helper each call readTargetFor', () => {
+    // The fourth site (2026-09-24) is credentialSubjectFor, which earned_credentials and claim_credential
+    // share: the learner a credential call is about, and the pod it reads, decided by this rule.
+    expect(code.filter((l) => /readTargetFor\(\{/.test(l))).toHaveLength(4);
   });
 
   it('★ and no read site passes subject_pod_url as the pod to read', () => {
