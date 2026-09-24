@@ -5,6 +5,10 @@
 > standard into a federated, attestable, governable layer — without
 > any new substrate types.
 
+## Generated skills
+
+Since 2026-09-24 the reverse direction is also automatic for the verticals in this tree: `tools/build-skills.ts` derives one agentskills.io skill per vertical from its `affordances.ts` and writes it under [`docs/skills/`](../skills/README.md), a `SKILL.md` an agent runtime loads beside a `reference.md` with every description and input. `tests/skills-from-affordances.test.ts` keeps the committed files equal to a fresh build.
+
 ## What this is
 
 [agentskills.io](https://agentskills.io/specification) is the
@@ -51,7 +55,7 @@ code** — once skills are typed descriptors:
 
 ## Translator API
 
-`src/skills/index.ts`:
+`packages/skills/src/index.ts`:
 
 ```typescript
 import {
@@ -124,4 +128,5 @@ SKILL.md directories.
 * [Path 2 — OpenClaw memory plugin](path-2-openclaw-memory-plugin.md)
 * [Path 4 — compliance overlay](path-4-compliance-overlay.md)
 * [agentskills.io specification](https://agentskills.io/specification)
-* [`src/skills/`](../../src/skills/) — the translator implementation
+* [`packages/skills/`](../../packages/skills/) — the translator implementation
+* [`docs/skills/`](../skills/README.md) — one skill per vertical, derived from its affordances by [`tools/build-skills.ts`](../../tools/build-skills.ts)
