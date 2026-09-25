@@ -180,12 +180,13 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     action: 'urn:iep:action:foxxi:verify-credential' as IRI,
     toolName: 'foxxi.verify_credential',
     title: 'Verify a credential',
-    description: 'What a relying party should check before believing an Open Badges 3.0 credential: the Data Integrity proof verifies against the issuer\'s key and the proof\'s key is the stated issuer; validUntil has not passed and validFrom has; the issuer is one this tenant stands behind (its own issuer key); the credential names its subject. Answers every check and, in words, what each failed one found. No caller identity is needed: anyone may verify.',
+    description: 'What a relying party should check before believing an Open Badges 3.0 credential: the Data Integrity proof verifies against the issuer\'s key and the proof\'s key is the stated issuer; validUntil has not passed and validFrom has; the issuer is one this tenant stands behind (its own issuer key); the credential names its subject. Answers every check and, in words, what each failed one found. Give the credential\'s link in its holder\'s wallet and the bridge reads the exact bytes that were signed; a pasted copy is only as good as whoever copied it, and an agent that retypes a credential can change it. No caller identity is needed: anyone may verify.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/verify_credential',
     annotations: { title: 'Verify a credential', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputs: [
-      { name: 'credential', type: 'object', required: true, description: 'The credential JSON, with its Data Integrity proof.' },
+      { name: 'credential_url', type: 'string', required: false, description: 'A link to the credential in its holder\'s wallet on this deployment\'s pod store: its wallet descriptor (the credential\'s id, as a claim returns it) or the graph beside it. Preferred: nothing is retyped. Give this or credential.' },
+      { name: 'credential', type: 'object', required: false, description: 'The credential JSON, with its Data Integrity proof, when there is no link to it. Give this or credential_url.' },
     ],
     outputs: {
       description: 'Whether the credential is valid here, each check (signature, notExpired, inForce, issuerTrusted, subjectBound), what the credential says (issuer, subject, achievement, validFrom, validUntil), and the notes for the checks that failed.',
@@ -197,6 +198,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
         achievement: { type: 'object', description: 'The achievement\'s id and name, when present.', additionalProperties: true },
         notes: { type: 'array', description: 'What each failed check found, in words.', items: { type: 'string' } },
         trustedIssuers: { type: 'integer', description: 'How many issuers this verifier stands behind.' },
+        readFrom: { type: 'string', description: 'The link the credential was read from, when one was given.' },
       },
     },
   },

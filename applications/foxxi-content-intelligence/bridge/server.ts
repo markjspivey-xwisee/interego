@@ -168,7 +168,7 @@ import {
   issueCourseCompletionCredential,
   type CourseCompletionSubject,
 } from '../src/credentials.js';
-import { exportClr } from '../src/clr.js';
+import { exportClr, fetchCredentialAt } from '../src/clr.js';
 import { claimDecision, courseIdsInRecord, courseStandings, masteryEvidence, verifyCredentialChecks, type CourseIdentity, type HeldCredential, type MasteryEvidence } from '../src/earned-credentials.js';
 import { isGradedBy, withGradedTag } from '../src/graded-evidence.js';
 import {
@@ -3329,14 +3329,26 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
   },
 
   'foxxi.verify_credential': async (args) => {
-    const credential = (args.credential && typeof args.credential === 'object' && !Array.isArray(args.credential)) ? args.credential as Record<string, unknown> : undefined;
-    if (!credential) return invalidArguments('credential is required: the Open Badges 3.0 credential JSON with its Data Integrity proof');
+    let credential = (args.credential && typeof args.credential === 'object' && !Array.isArray(args.credential)) ? args.credential as Record<string, unknown> : undefined;
+    // A link reads the exact bytes the issuer signed from the holder's wallet; a pasted copy is only
+    // as good as whoever copied it. The link selects among pods on this deployment's store and cannot
+    // point the read anywhere else.
+    const link = typeof args.credential_url === 'string' ? args.credential_url.trim() : '';
+    const readFrom = !credential && link ? link : undefined;
+    if (readFrom) {
+      if (!sameStore(link, tenantPodUrl)) {
+        return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'credential_url must name a credential on this deployment\'s pod store', error: `forbidden — ${link} is outside the pod store this bridge reads; pass the credential JSON instead` };
+      }
+      try { credential = await fetchCredentialAt(link, guardedFetchFn(globalThis.fetch)) as unknown as Record<string, unknown>; }
+      catch (e) { return { kind: 'refusal' as const, 'iep:refusalStatus': 404, 'iep:refusalReason': 'no credential could be read at credential_url', error: `no credential at ${link}: ${(e as Error).message}` }; }
+    }
+    if (!credential) return invalidArguments('credential or credential_url is required: the Open Badges 3.0 credential JSON with its Data Integrity proof, or a link to it in its holder\'s wallet');
     let proof: { verified: boolean; issuerDid?: string; reason?: string };
     try { proof = verifyDataIntegrityProof(credential as unknown as VerifiableCredentialJson); }
     catch (e) { proof = { verified: false, reason: `the proof could not be checked: ${(e as Error).message}` }; }
     const trusted = await trustedIssuerDids();
     const verification = verifyCredentialChecks(credential, proof, trusted, new Date());
-    return { kind: 'credential-verification', checked: true, ...verification, trustedIssuers: trusted.length };
+    return { kind: 'credential-verification', checked: true, ...verification, trustedIssuers: trusted.length, ...(readFrom ? { readFrom } : {}) };
   },
 
   'foxxi.export_clr': async (args) => {
@@ -10157,12 +10169,16 @@ app.post('/agent/credentials/claim', async (req, res) => {
       return;
     }
     const verbs = [...new Set(decision.evidence.map((e) => e.verb.split('/').pop() ?? e.verb))];
+    // One principal can carry two names here: a wallet authors as its did:ethr, and the person who
+    // signed in with that wallet learns under their WebID. So the pods the two names derive are
+    // compared too, twins folded, the rule every self-read on this bridge uses.
+    const selfAuthored = learner.did.toLowerCase() === String(course.authoredBy).toLowerCase() || samePodPrincipal(resolveSubjectPodUrl(String(course.authoredBy)), learner.podUrl);
     const result = await issueCourseCompletionCredential({
       subject: {
         learnerDid: learner.did, courseId, courseTitle: course.title, achievementId,
         // A learner who authored the course knew its answers; the credential says so rather than letting
         // a relying party mistake a self-set test for someone else's.
-        criterionNarrative: `Passed ${course.title}, a SCORM 2004 course authored by ${course.authoredBy}${learner.did.toLowerCase() === String(course.authoredBy).toLowerCase() ? ' (the learner is its author)' : ''}: ${decision.evidence.length} ${decision.evidence.length === 1 ? 'result' : 'results'} (${verbs.join(', ')}) graded by the Foxxi bridge's sequencing engine, in the learner's own record.`,
+        criterionNarrative: `Passed ${course.title}, a SCORM 2004 course authored by ${course.authoredBy}${selfAuthored ? ' (the learner is its author)' : ''}: ${decision.evidence.length} ${decision.evidence.length === 1 ? 'result' : 'results'} (${verbs.join(', ')}) graded by the Foxxi bridge's sequencing engine, in the learner's own record.`,
         evidence: decision.evidence.map((e) => ({ type: 'fxa:LearningExperience', id: statementIri(e.id), narrative: `${e.verb} ${e.object}${e.scoreScaled !== undefined ? `, scaled score ${e.scoreScaled}` : ''}${e.timestamp ? `, at ${e.timestamp}` : ''}` })),
         validUntil: decision.validUntil,
       },

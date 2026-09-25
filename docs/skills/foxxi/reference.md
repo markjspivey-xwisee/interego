@@ -123,14 +123,15 @@ The tenant issues an Open Badges 3.0 completion credential for a catalog course 
 
 **Verify a credential**
 
-What a relying party should check before believing an Open Badges 3.0 credential: the Data Integrity proof verifies against the issuer's key and the proof's key is the stated issuer; validUntil has not passed and validFrom has; the issuer is one this tenant stands behind (its own issuer key); the credential names its subject. Answers every check and, in words, what each failed one found. No caller identity is needed: anyone may verify.
+What a relying party should check before believing an Open Badges 3.0 credential: the Data Integrity proof verifies against the issuer's key and the proof's key is the stated issuer; validUntil has not passed and validFrom has; the issuer is one this tenant stands behind (its own issuer key); the credential names its subject. Answers every check and, in words, what each failed one found. Give the credential's link in its holder's wallet and the bridge reads the exact bytes that were signed; a pasted copy is only as good as whoever copied it, and an agent that retypes a credential can change it. No caller identity is needed: anyone may verify.
 
 - Action: `urn:iep:action:foxxi:verify-credential`
 - HTTP: `POST https://foxxi-bridge.interego.xwisee.com/foxxi/verify_credential`
 
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
-| `credential` | object | yes | The credential JSON, with its Data Integrity proof. |
+| `credential_url` | string | no | A link to the credential in its holder's wallet on this deployment's pod store: its wallet descriptor (the credential's id, as a claim returns it) or the graph beside it. Preferred: nothing is retyped. Give this or credential. |
+| `credential` | object | no | The credential JSON, with its Data Integrity proof, when there is no link to it. Give this or credential_url. |
 
 ## `foxxi.earned_credentials_signed`
 
