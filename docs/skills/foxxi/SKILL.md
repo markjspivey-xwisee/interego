@@ -1,11 +1,11 @@
 ---
 name: interego-foxxi
-description: "Foxxi content intelligence, learner surface as Interego affordances: 42 tools (record-private-performance-outcome-signed, read-private-performance-outcomes-signed, read-private-performance-calibration-signed, discover-lrs, discover-assigned-courses, discover-course-catalogs, and more). Use when a learner or an agent acting for one needs their assigned courses, a course's concept map or context, an answer grounded in course content, a credential, a learner record, a SCORM or cmi5 session, or private performance feedback on an Interego pod."
+description: "Foxxi content intelligence, learner surface as Interego affordances: 44 tools (record-private-performance-outcome-signed, read-private-performance-outcomes-signed, read-private-performance-calibration-signed, discover-lrs, discover-assigned-courses, discover-course-catalogs, and more). Use when a learner or an agent acting for one needs their assigned courses, a course's concept map or context, an answer grounded in course content, a credential, a learner record, a SCORM or cmi5 session, or private performance feedback on an Interego pod."
 license: MIT
 metadata:
   vertical: foxxi-content-intelligence
   source: applications/foxxi-content-intelligence/affordances.ts
-  affordances: 42
+  affordances: 44
   manifest: "https://foxxi-bridge.interego.xwisee.com/affordances"
   generator: tools/build-skills.ts
 ---
@@ -35,8 +35,10 @@ Every answer is a JSON object; a refusal is typed `iep:Refusal` with `iep:refusa
 | `foxxi.discover_assigned_courses` | Walk the L&D admin's policy descriptors + the learner's audience-tag membership, returning the courses currently assigned to this learner (required + suggested… | `POST https://foxxi-bridge.interego.xwisee.com/foxxi/discover_assigned_courses` |
 | `foxxi.discover_course_catalogs` | Every federated course catalog the given pods publish, found by its descriptor type (hyprcat:FederatedCatalog) in each pod's manifest and read back: the catalo… | `POST https://foxxi-bridge.interego.xwisee.com/foxxi/discover_course_catalogs` |
 | `foxxi.earned_credentials` | For each course assigned to the learner: credentialed (a verified, unexpired completion credential in their pod wallet), claimable (their own xAPI record demon… | `POST https://foxxi-bridge.interego.xwisee.com/foxxi/earned_credentials` |
-| `foxxi.claim_credential` | The tenant issues an Open Badges 3.0 completion credential for a catalog course only from the learner's own record: a passed, completed, mastered, satisfied or… | `POST https://foxxi-bridge.interego.xwisee.com/foxxi/claim_credential` |
+| `foxxi.claim_credential` | The tenant issues an Open Badges 3.0 completion credential for a catalog course only from the learner's own record: a passed, mastered, satisfied or waived xAP… | `POST https://foxxi-bridge.interego.xwisee.com/foxxi/claim_credential` |
 | `foxxi.verify_credential` | What a relying party should check before believing an Open Badges 3.0 credential: the Data Integrity proof verifies against the issuer's key and the proof's ke… | `POST https://foxxi-bridge.interego.xwisee.com/foxxi/verify_credential` |
+| `foxxi.earned_credentials_signed` | foxxi.earned_credentials for the courses this bridge's SCORM engine grades, signed the way the engine's own routes are: by your wallet, or by an agent holding… | `POST https://foxxi-bridge.interego.xwisee.com/agent/credentials/earned` *(HTTP only)* |
+| `foxxi.claim_credential_signed` | foxxi.claim_credential for a course this bridge's SCORM engine grades, signed by your wallet or by an agent holding your delegation (a relay connection, such a… | `POST https://foxxi-bridge.interego.xwisee.com/agent/credentials/claim` *(HTTP only)* |
 | `foxxi.consume_lesson` | Stream-load a Foxxi-parsed lesson's structural stratum (slides, audio, transcripts) for consumption, and emit an fxa:ConsumptionEvent descriptor + an xAPI Stat… | `POST https://foxxi-bridge.interego.xwisee.com/foxxi/consume_lesson` |
 | `foxxi.ask_course_question` | Grounded Q&A over a course's narration transcripts + extracted concepts. | `POST https://foxxi-bridge.interego.xwisee.com/foxxi/ask_course_question` |
 | `foxxi.ask_course_question_agentic` | Multi-step agentic retrieval + LLM synthesis: (1) federated concept-graph search across the primary course + any loaded federation peers, (2) prereq + modifier… | `POST https://foxxi-bridge.interego.xwisee.com/foxxi/ask_course_question_agentic` |

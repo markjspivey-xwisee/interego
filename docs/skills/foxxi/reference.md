@@ -1,6 +1,6 @@
 # Foxxi content intelligence, learner surface: every affordance
 
-Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 42 affordances.
+Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 44 affordances.
 
 ## `foxxi.record_private_performance_outcome`
 
@@ -91,7 +91,7 @@ Every federated course catalog the given pods publish, found by its descriptor t
 
 **Where every assigned course stands**
 
-For each course assigned to the learner: credentialed (a verified, unexpired completion credential in their pod wallet), claimable (their own xAPI record demonstrates mastery — a passed, completed, mastered, satisfied or waived statement about the course with success not false and any score at or above the course's threshold, graded by this bridge itself — and no credential is in force), in progress (statements about the course, none demonstrating mastery), or not started. The claimable ones carry the foxxi.claim_credential call; a lapsed credential is named. Reads the learner's own record (shared lattice, lens and durable records) and wallet. A learner asks about themselves; an admin about anyone.
+For each course assigned to the learner: credentialed (a verified, unexpired completion credential in their pod wallet), claimable (their own xAPI record demonstrates mastery — a passed, mastered, satisfied or waived statement about the course with success not false and any score at or above the course's threshold, graded by this bridge itself — and no credential is in force), in progress (statements about the course, none demonstrating mastery), or not started. The claimable ones carry the foxxi.claim_credential call; a lapsed credential is named. Reads the learner's own record (shared lattice, lens and durable records) and wallet. A learner asks about themselves; an admin about anyone.
 
 - Action: `urn:iep:action:foxxi:earned-credentials`
 - HTTP: `POST https://foxxi-bridge.interego.xwisee.com/foxxi/earned_credentials`
@@ -107,7 +107,7 @@ For each course assigned to the learner: credentialed (a verified, unexpired com
 
 **Claim a credential the record has earned**
 
-The tenant issues an Open Badges 3.0 completion credential for a catalog course only from the learner's own record: a passed, completed, mastered, satisfied or waived xAPI statement about the course, with success not false and any score at or above the course's threshold, and graded by this bridge itself: the SCORM engine's completions carry the bridge's grading tag, so a statement the learner recorded is in the record but does not earn a credential. The credential names that evidence, is signed by the tenant's issuer key, is valid for a year, and is written to the learner's pod wallet; a credentialed statement joins their record. Already held and in force: the held credential comes back and nothing is issued. Not earned: a 409 refusal saying what statement would earn it. A learner claims for themselves; an admin may claim for a learner.
+The tenant issues an Open Badges 3.0 completion credential for a catalog course only from the learner's own record: a passed, mastered, satisfied or waived xAPI statement about the course, with success not false and any score at or above the course's threshold, and graded by this bridge itself: the SCORM engine's completions carry the bridge's grading tag, so a statement the learner recorded is in the record but does not earn a credential. The credential names that evidence, is signed by the tenant's issuer key, is valid for a year, and is written to the learner's pod wallet; a credentialed statement joins their record. Already held and in force: the held credential comes back and nothing is issued. Not earned: a 409 refusal saying what statement would earn it. A learner claims for themselves; an admin may claim for a learner.
 
 - Action: `urn:iep:action:foxxi:claim-credential`
 - HTTP: `POST https://foxxi-bridge.interego.xwisee.com/foxxi/claim_credential`
@@ -131,6 +131,36 @@ What a relying party should check before believing an Open Badges 3.0 credential
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
 | `credential` | object | yes | The credential JSON, with its Data Integrity proof. |
+
+## `foxxi.earned_credentials_signed`
+
+**Where my courses stand, signed as myself**
+
+foxxi.earned_credentials for the courses this bridge's SCORM engine grades, signed the way the engine's own routes are: by your wallet, or by an agent holding your delegation (a relay connection, such as a Claude connector). Reads your own record and wallet — the pod the signature derives, never one you name — and reports each course your record is about, and any you list in course_ids: credentialed, claimable (with the claim to make), in progress, or not started. Externally routed: sign_request the args, then POST the envelope.
+
+- Action: `urn:iep:action:foxxi:earned-credentials-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/credentials/earned` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, course_ids? }). |
+| `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.claim_credential_signed`
+
+**Claim a credential the record earned, signed as myself**
+
+foxxi.claim_credential for a course this bridge's SCORM engine grades, signed by your wallet or by an agent holding your delegation (a relay connection, such as a Claude connector). The tenant issues an Open Badges 3.0 completion credential only from your own record — a passed, mastered, satisfied or waived statement about the course with success not false and any score at or above its threshold, graded by this bridge (the engine's results carry its grading tag; a statement you wrote yourself is in the record but is not evidence). The credential names that evidence and the course's author, is signed by the tenant's issuer key, is valid for a year, and is written to your pod's wallet; a delegated claim is issued to the person the delegation names. Already held and in force: the held credential comes back. Not earned: 409 saying what would earn it. Externally routed: sign_request the args, then POST the envelope.
+
+- Action: `urn:iep:action:foxxi:claim-credential-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/credentials/claim` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, course_id }). |
+| `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
 
 ## `foxxi.consume_lesson`
 
