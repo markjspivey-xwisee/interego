@@ -214,11 +214,13 @@ const BODIES = {
       return [
         h('div', { class: 'actions' },
           spinnerButton('Sign in with your passkey', async () => {
+            // Opened inside the click, so a popup blocker lets it through; it goes to the relay once
+            // this app has registered there. Without a window, this page goes instead and comes back.
+            const w = window.open('about:blank', 'interego-signin', 'width=520,height=760');
             const r = await api('/api/signin', {});
             if (r.authorizeUrl) {
-              const w = window.open(r.authorizeUrl, 'interego-signin', 'width=520,height=760');
-              if (!w) location.href = r.authorizeUrl;
-            } else toast(r.error ?? 'Could not start sign-in');
+              if (w && !w.closed) w.location.href = r.authorizeUrl; else location.href = r.authorizeUrl;
+            } else { w?.close(); toast(r.error ?? 'Could not start sign-in'); }
           }, { runningLabel: 'Opening the relay…' }),
           h('span', { class: 'muted' }, 'A window opens on relay.interego.xwisee.com; your passkey never touches this page.')),
         problem(d),
