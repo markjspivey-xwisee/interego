@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-09-25 — jev-harness: the follower sees a failing test file through color codes
+
+A local full run on 2026-09-25 ended `Test Files 1 failed | 430 passed`, but the follower printed `exit 1, 0 failing test file(s)`, and the outcome it recorded said no failing tests were reported.
+
+- **The cause.** The log was colored: the escape sequence between `FAIL` and the path defeated the `\s+` of the regex that read failing files. The run asked for color without meaning to. It set `FORCE_COLOR: '0'` and `CI: '1'`, and vitest's color library turns color on when either is merely present, and on Windows regardless.
+- **The fix.** The run now sets `NO_COLOR`, the switch that library obeys, and keeps `FORCE_COLOR=0` for libraries built on supports-color. The log is stripped of escape sequences before it is read or handed to triage. A file counts as failing from its `FAIL` line or from vitest's per-file summary (`❯ tests/x.test.ts (6 tests | 1 failed)`).
+- **Tests.** `failingTestFiles`, `stripAnsi` and `runEnvironment` in `applications/jev-harness/src/follower.ts` have tests that use the escape sequences from that log, a failure named only in the summary line, and passing lines that mention failure.
+- **Checked on real logs.** On the two colored CI logs of today's failing runs, the old regex found no file and the new reader finds the one that failed.
+
 ## 2026-09-25 — Foxxi: a self-sovereign pod is its own wallet's to enroll, not the first caller's
 
 `foxxi.register_self_sovereign_learner` never asked whether the pod it was given belonged to the signer. The first signer to name an unclaimed pod became its owner, and every later call keys membership on the recovered signer. So whoever enrolled another wallet's `eth-<12 hex>` pod first could:

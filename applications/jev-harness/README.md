@@ -63,7 +63,7 @@ npm run follow -- http://localhost:6090/affordances review-gate --arg base_ref=o
   --arg title="..." --file description=pr-body.md --gate
 ```
 
-`follow <document> <verb>` dereferences the document (the manifest or any judgment), finds the affordance or control by its `iep:action`, merges the control's prefilled `arguments` with `--arg/--json/--file`, validates, and acts. `--then` chains along the controls each result affords; `--run` performs the declarative `run-selected-tests` locally; `--outcome` scores the first judgment of the chain with what the chain observed.
+`follow <document> <verb>` dereferences the document (the manifest or any judgment), finds the affordance or control by its `iep:action`, merges the control's prefilled `arguments` with `--arg/--json/--file`, validates, and acts. `--then` chains along the controls each result affords; `--run` performs the declarative `run-selected-tests` locally (vitest with color off, the log stripped of escape codes, and a file counted as failing from its FAIL line or its per-file summary); `--outcome` scores the first judgment of the chain with what the chain observed.
 
 Artifacts land in `<repo>/.jev-harness/judgments/<id>.{json,payload.ttl,trig,md}`.
 

@@ -137,17 +137,57 @@ export interface RunResult {
   readonly failedTests: string[];
 }
 
+/** An ANSI escape sequence: the colors and cursor moves a terminal-aware reporter writes. */
+const ANSI = /\u001b\[[0-?]*[ -/]*[@-~]/g;
+
+/** Text with its escape sequences removed: what a person reads, and what the matching below expects. */
+export function stripAnsi(text: string): string {
+  return text.replace(ANSI, '');
+}
+
+const TEST_FILE = String.raw`([\w@./+-]+\.(?:test|spec|check)\.[cm]?[jt]sx?)`;
+/** A failing file's own line: `FAIL tests/x.test.ts > …`, or a failure marker before its path. */
+const FAIL_LINE = new RegExp(String.raw`(?:FAIL|×|✖|✗)\s+${TEST_FILE}`, 'g');
+/** The per-file summary vitest prints for a file with failures: `❯ tests/x.test.ts (6 tests | 1 failed) 66976ms`. */
+const FILE_SUMMARY = new RegExp(String.raw`❯\s+${TEST_FILE}\s+\([^)]*?\b[1-9]\d*\s+failed`, 'g');
+
+/**
+ * The test files a vitest log says failed.
+ *
+ * ★ A COLORED LOG READ AS A CLEAN ONE. On 2026-09-25 a full run ended `Test Files 1 failed | 430
+ * passed`, its log carried `\u001b[41m\u001b[1m FAIL \u001b[22m\u001b[49m tests/core-polling-cadence.test.ts`,
+ * and this found nothing: the escape sequence between FAIL and the path defeated the `\s+`. The
+ * follower printed "0 failing test file(s)", and the outcome it recorded said no failing tests
+ * were reported. So the log is stripped first, and the per-file summary line counts too, since it
+ * names the file even where no FAIL line survives.
+ */
+export function failingTestFiles(log: string): string[] {
+  const text = stripAnsi(log);
+  const failed = new Set<string>();
+  for (const re of [FAIL_LINE, FILE_SUMMARY]) for (const m of text.matchAll(re)) if (m[1]) failed.add(m[1]);
+  return [...failed];
+}
+
+/**
+ * The environment a run is spawned with. vitest colors its output through tinyrainbow, which
+ * turns color ON when FORCE_COLOR or CI is merely present, and on Windows regardless, so the
+ * `FORCE_COLOR: '0'` this sent alone asked it for color. Only NO_COLOR (or --no-color) turns it
+ * off. FORCE_COLOR=0 stays for the libraries built on supports-color, which read its value.
+ */
+export function runEnvironment(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return { ...base, CI: '1', FORCE_COLOR: '0', NO_COLOR: '1' };
+}
+
 /** Perform the declarative run-selected-tests control locally. */
 export function runSelectedTests(args: Record<string, unknown>, cwd: string): RunResult {
   const tests = Array.isArray(args['tests']) ? (args['tests'] as string[]) : [];
   const mode = args['mode'] === 'full' ? 'full' : 'subset';
   const cmdArgs = ['vitest', 'run', '--reporter=default', ...(mode === 'full' ? [] : tests)];
   const command = `npx ${cmdArgs.join(' ')}`;
-  const r = spawnSync(process.platform === 'win32' ? 'npx.cmd' : 'npx', cmdArgs, { cwd, encoding: 'utf8', shell: process.platform === 'win32', maxBuffer: 64 * 1024 * 1024, env: { ...process.env, CI: '1', FORCE_COLOR: '0' } });
-  const log = `${r.stdout ?? ''}\n${r.stderr ?? ''}`;
-  const failed = new Set<string>();
-  for (const m of log.matchAll(/(?:FAIL|×|✖|✗)\s+([\w@./+-]+\.(?:test|spec|check)\.[cm]?[jt]sx?)/g)) if (m[1]) failed.add(m[1]);
-  return { command, exitCode: r.status ?? -1, log, failedTests: [...failed] };
+  const r = spawnSync(process.platform === 'win32' ? 'npx.cmd' : 'npx', cmdArgs, { cwd, encoding: 'utf8', shell: process.platform === 'win32', maxBuffer: 64 * 1024 * 1024, env: runEnvironment(process.env) });
+  // Stripped here too, so run.log and the triage that reads it are plain text even if color slips through.
+  const log = stripAnsi(`${r.stdout ?? ''}\n${r.stderr ?? ''}`);
+  return { command, exitCode: r.status ?? -1, log, failedTests: failingTestFiles(log) };
 }
 
 /** Whether a run is worth triaging: a run that exited 0 with no failing test file has nothing to explain,
