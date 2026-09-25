@@ -59,6 +59,44 @@ const slug = (s: string): string => s.replace(/[^A-Za-z0-9._-]+/g, '-');
 /** The IRI a course's data product carries inside the catalog graph. */
 export const productIri = (catalogIri: string, courseId: string): string => `${catalogIri}/product/${slug(courseId)}`;
 
+/** A course the bridge's SCORM engine grades, as authoring stores it. */
+export interface AuthoredCourse {
+  readonly courseId: string;
+  readonly title?: string;
+  readonly authoredBy?: string;
+  readonly masteryScore?: number;
+  readonly scos?: readonly { readonly assessment?: readonly unknown[] }[];
+}
+
+/**
+ * The courses `authorDid` authored, as products of its catalog: once each, skipping any already
+ * `listed`. The candidates come from every place a course is kept (the process's cache and the
+ * author's own pod), so one course can arrive more than once; reading only the cache would publish
+ * an empty catalog after every restart. A did:ethr compares without case, since its checksummed
+ * and lower-case spellings name the same key.
+ */
+export function authoredCourseProducts(
+  candidates: readonly (AuthoredCourse | null | undefined)[],
+  authorDid: string,
+  listed: ReadonlySet<string>,
+  iriOf: (courseId: string) => string,
+): CourseProductInput[] {
+  const author = authorDid.toLowerCase();
+  if (!author) return [];
+  const seen = new Set(listed);
+  const out: CourseProductInput[] = [];
+  for (const c of candidates) {
+    if (!c?.courseId || !Array.isArray(c.scos) || String(c.authoredBy ?? '').toLowerCase() !== author || seen.has(c.courseId)) continue;
+    seen.add(c.courseId);
+    const assessed = c.scos.filter((s) => (s.assessment?.length ?? 0) > 0).length;
+    out.push({
+      courseId: c.courseId, title: c.title ?? c.courseId, courseIri: iriOf(c.courseId), category: 'SCORM 2004, graded by this bridge', audienceTags: [], standard: 'scorm-2004',
+      description: `${c.scos.length} sections, ${assessed} assessed${c.masteryScore !== undefined ? `; mastery ${c.masteryScore}` : ''}; authored by ${c.authoredBy}.`, slideCount: c.scos.length,
+    });
+  }
+  return out;
+}
+
 /**
  * The catalog as Turtle: a `hyprcat:FederatedCatalog` in the service world, issued by the
  * tenant, listing one `hyprcat:FederatedDataProduct` per course whose output port is a
