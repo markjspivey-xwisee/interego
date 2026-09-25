@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-09-25 — Interego, live: a demo you click through, signed in as yourself
+
+`demos/live` is a local web app (`npx tsx demos/live/server.ts`, then http://localhost:4747). It runs the week's Foxxi features end to end against the deployed services, with real identities, and shows every call in a live ledger as it happens.
+
+- **You** sign in with your passkey on the relay's own page, the way a Claude connector does: OAuth 2.1 with PKCE on a loopback redirect. You then authorize the app's session agent on your pod with `register_agent`. Everything done in your name is the relay's `act` following a Foxxi affordance.
+- **The Claude Code agent** writes a course with a headless Claude and authors it on the SCORM engine with its own wallet. Its pod publishes a HyprCat catalog offering the course.
+- **Your connection** finds the catalog across pods with the relay's `discover_context` and checks its issuer against the descriptor's attribution. **Jev** ranks the courses for your goal.
+- You take the course on the engine and claim an Open Badges 3.0 credential. You then send its link to **a fresh Claude** that knows only the generated skill, or a tampered copy, and the page shows exactly what that agent checked.
+- The agent's forged "passed" is written to its own record and refused at the claim.
+
+Building it found the fixes in the three entries below this one.
+
 ## 2026-09-25 — Foxxi: verify a credential by its link; an author under another name is still the author
 
 `foxxi.verify_credential` takes `credential_url`, a link to the credential in its holder's wallet on this deployment's pod store (the wallet descriptor a claim returns as the credential's id, or the graph beside it). The bridge reads the bytes the issuer signed, each hop SSRF-guarded, and says where it read them (`readFrom`); a link off the pod store is refused. Running the live demo, a fresh agent that loaded the generated skill and was handed a freshly issued credential moved `evidence` from the subject into the achievement while retyping the JSON into its tool call, and the signature check failed on a credential nothing had touched; the same credential passed every check when sent unchanged. A copy still works when there is no link. `fetchCredentialAt` in `src/clr.ts`, with tests. A signed claim's criteria say "the learner is its author" when the learner's pod and the author's are one principal (twins folded, the self-read rule), not only when the two names match: a wallet authors as its did:ethr and its owner learns under a WebID. For the same reason, an owner's course catalog now reads the pod the author's did:ethr derives (`eth-…`), where authoring puts each course, as well as the one it is published to (`u-eth-…`, where the owner enrolled). The previous entry's fix read only the second, which on the live pods holds the learner's record rather than the courses.

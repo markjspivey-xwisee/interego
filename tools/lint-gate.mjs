@@ -243,7 +243,9 @@ const UNLINTED_FRONTIER = {
   // The controller comparison adds two lint-clean audit modules; the census is 46.
   // Re-pin the file floor to that measured count without raising the error ceiling.
   benchmarks: { errors: 193, files: 46 },
-  demos: { errors: 48, files: 45 },
+  // 45 -> 54 files, errors unchanged: the nine script files of demos/live, the interactive demo, all
+  // lint-clean.
+  demos: { errors: 48, files: 54 },
   // A declared npm workspace (see package.json `workspaces`), never linted.
   'mcp-server': { errors: 33, files: 4 },
   scripts: { errors: 7, files: 10 },
