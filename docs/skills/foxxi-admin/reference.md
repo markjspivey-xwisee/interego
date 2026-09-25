@@ -657,7 +657,7 @@ Walk a list of learner pods, pull every fxa:LearnerQuestionEvent in the time win
 
 **Register a learner identity (human or AI agent) with their own DID + pod**
 
-Self-enroll into a self-sovereign tenant. Send a rev-196 proof-of-possession envelope ({_signature,_signed_payload}) signed by your wallet; the bridge recovers your address and appends it to a PUBLIC tenant-membership allowlist on your own pod. Any bridge then reads that public section via the substrate (no shared admin key) and authorizes you on foxxi.discover_assigned_courses / retrieve_course_context / etc. You can only enroll yourself (the address written is the recovered signer), and admin-managed (encrypted-directory) tenants are refused.
+Self-enroll into a self-sovereign tenant. Send a rev-196 proof-of-possession envelope ({_signature,_signed_payload}) signed by your wallet; the bridge recovers your address and appends it to a PUBLIC tenant-membership allowlist on your own pod. Any bridge then reads that public section via the substrate (no shared admin key) and authorizes you on foxxi.discover_assigned_courses / retrieve_course_context / etc. You can only enroll yourself (the address written is the recovered signer), only on your own pod: the one your wallet is named for (eth-<first 12 hex of your address>, or its u-eth- spelling), on this store, signed by that wallet for itself (agent_id = its did:ethr). A pod whose name says no wallet (a passkey or named pod), another wallet's pod, a path inside a pod and a request signed for another identity (a relay session or a delegate) are refused, each with its reason; a row another wallet enrolled on your pod before this rule is removed when you enroll. Admin-managed (encrypted-directory) tenants are refused.
 
 - Action: `urn:iep:action:foxxi:register-self-sovereign-learner`
 - HTTP: `POST https://foxxi-bridge.interego.xwisee.com/foxxi/register_self_sovereign_learner`
@@ -665,8 +665,8 @@ Self-enroll into a self-sovereign tenant. Send a rev-196 proof-of-possession env
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
 | `_signature` | string | yes | rev-196 signature over _signed_payload (EIP-191). Proof-of-possession — you can only enroll the address this recovers to. |
-| `_signed_payload` | string | yes | JSON string carrying at least { agent_id, timestamp, tenant_pod_url }. May also carry learner_id / learner_pod_url / tenant_did. |
-| `tenant_pod_url` | string | yes | The pod that hosts your self-sovereign tenant membership (usually your own pod). Sign it inside _signed_payload; sent in the clear it is advisory only. |
+| `_signed_payload` | string | yes | JSON string carrying at least { agent_id, timestamp, tenant_pod_url }, with agent_id = did:ethr:<the address that signs>. May also carry learner_id / learner_pod_url / tenant_did. |
+| `tenant_pod_url` | string | yes | Your own pod root, the one your wallet is named for: https://<store>/eth-<first 12 hex of your address>/ or its u-eth- spelling. Sign it inside _signed_payload; sent in the clear it is advisory only. |
 | `learner_pod_url` | string | no | Your pod / WebID base (defaults tenant_pod_url). Used to derive your web_id. |
 | `learner_id` | string | no | Preferred user_id for your membership entry (defaults to u-eth-<addr-prefix>). |
 

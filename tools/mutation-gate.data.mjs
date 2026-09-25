@@ -145,8 +145,10 @@ export const MUTANTS = [
   {
     name: 'wrongPod-drops-its-status',
     file: FOXXI,
-    find: "    'iep:refusalStatus': 403,\n    'iep:refusalReason': 'this pod is administered elsewhere",
-    replace: "    'iep:refusalReason': 'this pod is administered elsewhere",
+    // Anchored on the signature: the reason became a parameter (with this default) when enrolment
+    // started naming why a pod is not the caller's, so the body no longer quotes it.
+    find: "function wrongPod(error: string, reason = 'this pod is administered elsewhere; the operation belongs on a pod the caller owns'): Refusal {\n  return {\n    kind: 'refusal',\n    'iep:refusalStatus': 403,\n",
+    replace: "function wrongPod(error: string, reason = 'this pod is administered elsewhere; the operation belongs on a pod the caller owns'): Refusal {\n  return {\n    kind: 'refusal',\n",
     mustFail: [STATUS_GATE],
     why: 'leg 2 excused any refusal carrying a resolvedBy; wrongPod names an enrolment one',
   },
