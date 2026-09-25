@@ -1,11 +1,12 @@
 /**
  * Courses as federated data products: the HyprCat catalog a tenant publishes renders as Turtle
- * that parses back to the same products, and a discovery over pods finds catalogs by their
- * descriptor type, checks the issuer against the attribution, and survives an unreachable pod.
+ * that parses back to the same products, an owner's catalog lists each course they authored once,
+ * and a discovery over pods finds catalogs by their descriptor type, checks the issuer against the
+ * attribution, and survives an unreachable pod.
  */
 import { describe, expect, it } from 'vitest';
 import { Parser } from 'n3';
-import { courseCatalogProductTurtle, discoverCourseCatalogs, FEDERATED_CATALOG_TYPE, HYPRCAT_NS, parseCourseCatalogProducts, productIri } from '../src/course-catalog-product.js';
+import { authoredCourseProducts, courseCatalogProductTurtle, discoverCourseCatalogs, FEDERATED_CATALOG_TYPE, HYPRCAT_NS, parseCourseCatalogProducts, productIri } from '../src/course-catalog-product.js';
 import { foxxiAffordances, foxxiAdminAffordances } from '../affordances.js';
 
 const TENANT = 'did:web:acme.example';
@@ -44,6 +45,24 @@ describe('the catalog as Turtle', () => {
     const [empty] = parseCourseCatalogProducts(courseCatalogProductTurtle({ ...input, courses: [], federatedWith: [] }));
     expect(empty).toMatchObject({ iri: CATALOG, products: [], federatedWith: [] });
     expect(parseCourseCatalogProducts('@prefix ex: <http://example/> . ex:a ex:b ex:c .')).toEqual([]);
+  });
+});
+
+describe('an owner\'s authored courses as products', () => {
+  const AUTHOR = 'did:ethr:0x42C2FFd7e4c048F2Ee757B26eE16A2c2339882ab';
+  const iriOf = (id: string): string => `https://bridge.example/agent/scorm/course/${id}`;
+  const course = (courseId: string, authoredBy = AUTHOR) => ({ courseId, title: `Course ${courseId}`, authoredBy, masteryScore: 0.5, scos: [{}, { assessment: [{}] }, { assessment: [{}, {}] }] });
+  it('lists a course once when the cache and the pod both hold it, whatever the case of the author\'s address', () => {
+    const products = authoredCourseProducts([course('A'), course('A'), course('B')], AUTHOR.toLowerCase(), new Set(), iriOf);
+    expect(products.map((p) => p.courseId)).toEqual(['A', 'B']);
+    expect(products[0]).toMatchObject({ title: 'Course A', courseIri: iriOf('A'), standard: 'scorm-2004', slideCount: 3, description: `3 sections, 2 assessed; mastery 0.5; authored by ${AUTHOR}.` });
+  });
+  it('leaves out another author\'s course, one already listed, and anything that is not a course', () => {
+    const products = authoredCourseProducts([course('A', 'did:ethr:0x0000000000000000000000000000000000000001'), course('B'), course('C'), null, { courseId: 'D', authoredBy: AUTHOR }], AUTHOR, new Set(['B']), iriOf);
+    expect(products.map((p) => p.courseId)).toEqual(['C']);
+  });
+  it('lists nothing for an owner with no wallet, rather than every course with no author', () => {
+    expect(authoredCourseProducts([{ courseId: 'X', scos: [{}] }], '', new Set(), iriOf)).toEqual([]);
   });
 });
 

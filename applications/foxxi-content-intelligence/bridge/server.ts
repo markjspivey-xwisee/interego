@@ -341,7 +341,7 @@ import {
   publishAgentEncryptionKey,
   parseDistributionFromDescriptorTurtle,
 } from '@interego/solid';
-import { courseCatalogProductTurtle, discoverCourseCatalogs, FEDERATED_CATALOG_TYPE } from '../src/course-catalog-product.js';
+import { authoredCourseProducts, courseCatalogProductTurtle, discoverCourseCatalogs, FEDERATED_CATALOG_TYPE } from '../src/course-catalog-product.js';
 import { queryFederatedStatements, type FederatedLrsEndpoint } from '../../lrs-adapter/src/experience-index.js';
 import {
   issueBbsCompletionCredential,
@@ -3190,12 +3190,19 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       // signer's wallet, never a caller-supplied name.
       // Self-enrolment writes the member's wallet_address beside the directory fields the type declares.
       const wallet = String((admin.users.find((u) => u.user_id === ctx.userId) as { wallet_address?: string } | undefined)?.wallet_address ?? '').toLowerCase();
-      const listed = new Set(courses.map((c) => c.courseId));
-      for (const c of agentScormCourses.values()) {
-        if (!wallet || String(c.authoredBy).toLowerCase() !== `did:ethr:${wallet}` || listed.has(c.courseId)) continue;
-        const assessed = c.scos.filter((x) => x.assessment?.length).length;
-        courses.push({ courseId: c.courseId, title: c.title, courseIri: courseIri(c.courseId), category: 'SCORM 2004, graded by this bridge', audienceTags: [], standard: 'scorm-2004',
-          description: `${c.scos.length} sections, ${assessed} assessed; mastery ${c.masteryScore}; authored by ${c.authoredBy}.`, slideCount: c.scos.length } as typeof courses[number]);
+      if (wallet) {
+        // Authoring composes each course into its author's own lattice, which outlives this process;
+        // the cache alone empties on every restart. Read both, as course hydration does.
+        const candidates: Array<AgentScormCourse | null> = [...agentScormCourses.values()];
+        const label = actorForPod(pod, MESH_ACTOR_LABELS);
+        try {
+          await ensureResident(pod, pod, label);
+          for (const a of latticeArtifacts(label, 'foxxi:Course')) candidates.push(a.content as AgentScormCourse | null);
+        } catch (e) { console.warn(`[foxxi-bridge][catalog] lattice read failed for ${label}: ${(e as Error).message}`); }
+        try {
+          for (const c of await listScormCourses({ podUrl: pod })) candidates.push(c as unknown as AgentScormCourse);
+        } catch (e) { console.warn(`[foxxi-bridge][catalog] pod records read failed for ${label}: ${(e as Error).message}`); }
+        courses.push(...authoredCourseProducts(candidates, `did:ethr:${wallet}`, new Set(courses.map((c) => c.courseId)), courseIri) as typeof courses);
       }
     }
     const publishedAt = new Date().toISOString();
@@ -3211,7 +3218,14 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
         { type: 'Semiotic', modalStatus: 'Asserted' },
       ],
     };
-    const result = await publish(descriptor, turtle, pod, { fetch: guardedFetchFn(globalThis.fetch) as never, containerPath: 'foxxi/', descriptorSlug: 'course-catalog-product', graphSlug: 'course-catalog-product-graph', visibility: 'public' });
+    // publish() writes the graph create-only and tolerates the 412, so a catalog republished under
+    // its fixed slug kept its first graph beside a new descriptor and reported success. The catalog
+    // changes in place, so clear the old copy first, as the tenant's own sections do
+    // (src/tenant-publisher.ts). Best-effort: a 404 on the first publish is fine.
+    const container = `${pod.replace(/\/$/, '')}/foxxi/`;
+    const podFetch = guardedFetchFn(globalThis.fetch);
+    await Promise.allSettled([`${container}course-catalog-product.ttl`, `${container}course-catalog-product-graph.trig`].map((u) => podFetch(u, { method: 'DELETE' })));
+    const result = await publish(descriptor, turtle, pod, { fetch: podFetch as never, containerPath: 'foxxi/', descriptorSlug: 'course-catalog-product', graphSlug: 'course-catalog-product-graph', visibility: 'public' });
     const trace = emitAccessDecision({ ctx, tool: 'foxxi.publish_course_catalog_product', decision: 'allow', appliedPolicies: [own ? 'self-sovereign-owner' : 'admin-full-access'] });
     return { kind: 'course-catalog-product', catalogIri, pod, issuer, descriptorUrl: result.descriptorUrl, graphUrl: result.graphUrl, conformsTo: FEDERATED_CATALOG_TYPE, products: courses.length, courses: courses.map((c) => ({ courseId: c.courseId, title: c.title, courseIri: c.courseIri })), federatedWith, publishedAt, accessDecision: trace };
   },
