@@ -3191,18 +3191,23 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       // Self-enrolment writes the member's wallet_address beside the directory fields the type declares.
       const wallet = String((admin.users.find((u) => u.user_id === ctx.userId) as { wallet_address?: string } | undefined)?.wallet_address ?? '').toLowerCase();
       if (wallet) {
-        // Authoring composes each course into its author's own lattice, which outlives this process;
-        // the cache alone empties on every restart. Read both, as course hydration does.
+        // Authoring composes each course into the lattice of the pod its author's did:ethr derives
+        // (eth-…), which outlives this process; the cache alone empties on every restart. That pod is
+        // the twin of the one the identity service made (u-eth-…), where the owner enrolled and this
+        // catalog is published, so read the cache and then both pods, as course hydration reads each.
+        const authorDid = `did:ethr:${wallet}`;
         const candidates: Array<AgentScormCourse | null> = [...agentScormCourses.values()];
-        const label = actorForPod(pod, MESH_ACTOR_LABELS);
-        try {
-          await ensureResident(pod, pod, label);
-          for (const a of latticeArtifacts(label, 'foxxi:Course')) candidates.push(a.content as AgentScormCourse | null);
-        } catch (e) { console.warn(`[foxxi-bridge][catalog] lattice read failed for ${label}: ${(e as Error).message}`); }
-        try {
-          for (const c of await listScormCourses({ podUrl: pod })) candidates.push(c as unknown as AgentScormCourse);
-        } catch (e) { console.warn(`[foxxi-bridge][catalog] pod records read failed for ${label}: ${(e as Error).message}`); }
-        courses.push(...authoredCourseProducts(candidates, `did:ethr:${wallet}`, new Set(courses.map((c) => c.courseId)), courseIri) as typeof courses);
+        for (const at of [...new Set([resolveSubjectPodUrl(authorDid), pod])]) {
+          const label = actorForPod(at, MESH_ACTOR_LABELS);
+          try {
+            await ensureResident(at, authorDid, label);
+            for (const a of latticeArtifacts(label, 'foxxi:Course')) candidates.push(a.content as AgentScormCourse | null);
+          } catch (e) { console.warn(`[foxxi-bridge][catalog] lattice read failed for ${label}: ${(e as Error).message}`); }
+          try {
+            for (const c of await listScormCourses({ podUrl: at })) candidates.push(c as unknown as AgentScormCourse);
+          } catch (e) { console.warn(`[foxxi-bridge][catalog] pod records read failed for ${label}: ${(e as Error).message}`); }
+        }
+        courses.push(...authoredCourseProducts(candidates, authorDid, new Set(courses.map((c) => c.courseId)), courseIri) as typeof courses);
       }
     }
     const publishedAt = new Date().toISOString();
