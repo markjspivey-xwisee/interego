@@ -481,14 +481,15 @@ app.post('/api/signin', async (_req, res) => {
 app.get('/oauth/callback', async (req, res) => {
   const code = String(req.query['code'] ?? '');
   const st = String(req.query['state'] ?? '');
-  const page = (msg: string, ok: boolean): string => `<!doctype html><meta charset="utf-8"><title>Interego, live</title><body style="font:15px system-ui;padding:40px;background:#0b0e13;color:#e5e7eb"><h2 style="color:${ok ? '#34c77b' : '#f06a6a'}">${ok ? 'Signed in' : 'Sign-in did not finish'}</h2><p>${msg}</p><script>try{window.opener&&window.opener.focus()}catch(e){}${ok ? 'setTimeout(()=>window.close(),900)' : ''}</script></body>`;
+  // In the sign-in window this closes itself; when the demo's own tab came here instead, it goes back.
+  const page = (msg: string, ok: boolean): string => `<!doctype html><meta charset="utf-8"><title>Interego, live</title><body style="font:15px system-ui;padding:40px;background:#0b0e13;color:#e5e7eb"><h2 style="color:${ok ? '#34c77b' : '#f06a6a'}">${ok ? 'Signed in' : 'Sign-in did not finish'}</h2><p>${msg}</p><p><a href="/" style="color:#a78bfa">Back to the demo</a></p><script>var o=null;try{o=window.opener}catch(e){}${ok ? 'setTimeout(function(){if(o){try{o.focus()}catch(e){}window.close()}else{location.href="/"}},900)' : ''}</script></body>`;
   if (!code) { res.status(400).send(page(`The relay sent no code: ${String(req.query['error_description'] ?? req.query['error'] ?? 'unknown')}`, false)); return; }
   try {
     await hub.track({ actor: 'you', service: 'relay', tool: 'token', summary: 'exchanging the code for your session token (PKCE)' }, async () => {
       const t = await auth.finish(code, st);
       return { value: t, summary: `token for scope ${t.scope ?? 'mcp'}, good for ${Math.round((t.expiresAt - Date.now()) / 60000)} minutes` };
     });
-    res.send(page('You can close this window; the demo carries on in the other one.', true));
+    res.send(page('Your relay connection is open. The demo carries on from here.', true));
     afterSignIn().catch((e: Error) => { setChapter('signin', { data: { error: e.message } }); hub.toast(e.message); });
   } catch (e) { res.status(400).send(page((e as Error).message, false)); }
 });
