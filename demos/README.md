@@ -14,6 +14,14 @@ Each scenario:
 4. Parses the agent's tool-use chain + final response.
 5. Asserts invariants and writes a markdown report to `demos/output/`.
 
+## The interactive one: `live/`
+
+[`live/`](live/README.md) is not a scenario. It is a local web app you click through in your browser, signed in as yourself through your own relay connection (your passkey), against the deployed services instead of local bridges. An agent writes a course and offers it from its pod; you find it, take it, and claim an Open Badges credential; a fresh agent that knows only the generated skill verifies it; and a forgery fails. Every call appears in a live ledger as it happens.
+
+```bash
+npx tsx demos/live/server.ts   # then open http://localhost:4747
+```
+
 ## Prerequisites
 
 - **Claude Code CLI** on `PATH`, already authenticated. No API key needed.

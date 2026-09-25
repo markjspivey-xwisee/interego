@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Interego, live</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%236d4aff'/%3E%3Ccircle cx='16' cy='16' r='7' fill='%23fff'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="mark" aria-hidden="true"></span> Interego <span class="live">live</span></div>
+    <div class="services" id="services" aria-live="polite"></div>
+    <button class="theme-toggle" id="theme" type="button" title="Switch light and dark">Theme</button>
+  </header>
+
+  <div class="layout">
+    <aside class="rail left" aria-label="The cast">
+      <div class="section-title">The cast</div>
+      <div id="cast"></div>
+    </aside>
+
+    <main class="story" id="story">
+      <section class="hero">
+        <h1>An agent writes a course, you earn a credential, another agent checks it</h1>
+        <p>Everything on this page is a live call to the deployed Interego services, made with real identities: you, through your own relay connection, and the agents beside you. Nothing is simulated. Every call appears in the ledger as it happens, with what it left on a pod.</p>
+        <div class="facts" id="facts"></div>
+      </section>
+      <div id="chapters"></div>
+    </main>
+
+    <aside class="rail right" aria-label="Every call, as it happens">
+      <div class="ledger">
+        <div class="ledger-head"><span class="dot busy" id="ledger-dot"></span><h2>Every call, as it happens</h2><span class="count" id="ledger-count">0</span></div>
+        <div class="ledger-list" id="ledger"><div class="empty">Calls appear here the moment anyone makes one.</div></div>
+      </div>
+    </aside>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
