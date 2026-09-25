@@ -159,6 +159,10 @@ describe('the affordances', () => {
       expect(foxxiAdminAffordances.some((x) => x.toolName === n)).toBe(false);
     }
     expect(foxxiAffordances.find((x) => x.toolName === 'foxxi.claim_credential')?.inputs.find((i) => i.name === 'course_id')?.required).toBe(true);
-    expect(foxxiAffordances.find((x) => x.toolName === 'foxxi.verify_credential')?.inputs).toEqual([expect.objectContaining({ name: 'credential', type: 'object', required: true })]);
+    // A link or a copy, either one: the link first, since it reads the bytes the issuer signed.
+    expect(foxxiAffordances.find((x) => x.toolName === 'foxxi.verify_credential')?.inputs).toEqual([
+      expect.objectContaining({ name: 'credential_url', type: 'string', required: false }),
+      expect.objectContaining({ name: 'credential', type: 'object', required: false }),
+    ]);
   });
 });

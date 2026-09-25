@@ -257,7 +257,10 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // inside the proportional allowance rather than arming the next addition to fail.
 // The MCP sealed-interface regression brings the tree to 370 modules; retain headroom.
 // The uniform-HMD regression brings the tracked tree to 372; pin the measured floor.
-export const MIN_TEST_MODULES = 416;
+// 416 -> 437, measured by CI on the tree that tripped the allowance: the credential-link reader's
+// module (`credential-by-link`) is the one that used the last of it, and the twenty before it are
+// the verticals' tests from the rounds since the last pin.
+export const MIN_TEST_MODULES = 437;
 
 /**
  * How far below the real module count MIN_TEST_MODULES may sit before that is itself a

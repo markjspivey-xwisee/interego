@@ -26,9 +26,6 @@ import {
 } from '@interego/solid';
 import { assertSafeFetchTarget, safeFetch, guardedFetchFn } from './ssrf-guard.js';
 import type {
-  ManifestEntry,
-} from '@interego/core';
-import type {
   IRI,
 } from '@interego/core';
 import {
@@ -116,7 +113,7 @@ export async function exportClr(config: FetchClrConfig): Promise<ClrEnvelope> {
   const composedEntries: ClrEntry[] = [];
   for (const entry of credentialEntries) {
     try {
-      const credential = await fetchCredential(entry, config);
+      const credential = await fetchCredential(entry.descriptorUrl, config.fetch);
       // Subject-binding check: the credential's subject must match the
       // learner DID we're composing for. Defends against an attacker who
       // could write someone else's credential into this pod.
@@ -230,21 +227,36 @@ export async function exportClr(config: FetchClrConfig): Promise<ClrEnvelope> {
 
 // ── Helpers ───────────────────────────────────────────────────
 
-async function fetchCredential(entry: ManifestEntry, config: FetchClrConfig): Promise<VerifiableCredentialJson> {
-  const fetchFn = (config.fetch ?? globalThis.fetch) as typeof globalThis.fetch;
+/**
+ * One credential, by the link its holder shares: the wallet descriptor (the credential's own id, as
+ * a claim returns it) or the graph beside it. Every hop is SSRF-guarded, as in the wallet walk. A
+ * relying party that reads the credential from the holder's pod checks the bytes that were signed.
+ * One handed a copy checks whatever the copy says, and an agent that retypes a credential into a
+ * tool call can change it: moving one field is enough to break the proof.
+ */
+export async function fetchCredentialAt(url: string, fetch?: typeof globalThis.fetch): Promise<VerifiableCredentialJson> {
+  await assertSafeFetchTarget(url);
+  if (!/\.trig(?:[?#]|$)/.test(url)) return fetchCredential(url, fetch);
+  const { content } = await fetchGraphContent(url, { fetch: guardedFetchFn(fetch) as never });
+  if (!content) throw new Error(`graph at ${url} returned empty or encrypted content`);
+  return extractCredentialJson(content);
+}
+
+async function fetchCredential(descriptorUrl: string, fetch?: typeof globalThis.fetch): Promise<VerifiableCredentialJson> {
+  const fetchFn = (fetch ?? globalThis.fetch) as typeof globalThis.fetch;
   // Second-hop SSRF guard: descriptorUrl (from a discovered manifest) + hydra:target (from
   // the fetched descriptor) are attacker-influenceable pod content.
-  const descRes = await safeFetch(entry.descriptorUrl, { headers: { Accept: 'text/turtle' } }, fetchFn as never); // 2nd-hop SSRF + redirect-safe
+  const descRes = await safeFetch(descriptorUrl, { headers: { Accept: 'text/turtle' } }, fetchFn as never); // 2nd-hop SSRF + redirect-safe
   if (!descRes.ok) {
-    throw new Error(`fetch descriptor ${entry.descriptorUrl}: ${descRes.status} ${descRes.statusText}`);
+    throw new Error(`fetch descriptor ${descriptorUrl}: ${descRes.status} ${descRes.statusText}`);
   }
   const descTurtle = await descRes.text();
   const graphUrl = extractDistributionTarget(descTurtle);
   if (!graphUrl) {
-    throw new Error(`no hydra:target on ${entry.descriptorUrl}`);
+    throw new Error(`no hydra:target on ${descriptorUrl}`);
   }
   await assertSafeFetchTarget(graphUrl);
-  const { content } = await fetchGraphContent(graphUrl, { fetch: guardedFetchFn(config.fetch) as never }); // graph hop: re-guard + redirect-safe
+  const { content } = await fetchGraphContent(graphUrl, { fetch: guardedFetchFn(fetch) as never }); // graph hop: re-guard + redirect-safe
   if (!content) {
     throw new Error(`graph at ${graphUrl} returned empty or encrypted content`);
   }
