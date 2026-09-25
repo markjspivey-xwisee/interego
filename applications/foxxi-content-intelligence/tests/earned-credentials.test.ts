@@ -3,7 +3,7 @@
  * claim gets, where each assigned course stands, and the checks a verifier makes beyond the proof.
  */
 import { describe, expect, it } from 'vitest';
-import { aboutCourse, actorIdentifiers, claimDecision, courseStandings, credentialInForce, masteryEvidence, verifyCredentialChecks, type HeldCredential, type StatementRecord } from '../src/earned-credentials.js';
+import { aboutCourse, actorIdentifiers, claimDecision, courseIdsInRecord, courseStandings, credentialInForce, masteryEvidence, verifyCredentialChecks, type HeldCredential, type StatementRecord } from '../src/earned-credentials.js';
 import { foxxiAffordances, foxxiAdminAffordances } from '../affordances.js';
 
 const ADL = 'http://adlnet.gov/expapi/verbs/';
@@ -31,7 +31,7 @@ describe('what counts as being about the course, and whose statement it is', () 
 });
 
 describe('mastery evidence', () => {
-  it('is a passed, completed, mastered, satisfied or waived statement with success not false and a score at the threshold', () => {
+  it('is a passed, mastered, satisfied or waived statement with success not false and a score at the threshold', () => {
     const statements = [
       stmt('s1', `${ADL}launched`, COURSE.courseIris[0]!),
       stmt('s2', `${ADL}passed`, COURSE.courseIris[0]!, { result: { success: true, score: { scaled: 0.8 } } }),
@@ -59,11 +59,34 @@ describe('mastery evidence', () => {
     expect(onlyOwn.decision === 'not-earned' ? onlyOwn.missing : '').toMatch(/1 mastery statement\(s\) about the course that this bridge did not grade/);
   });
   it('takes every statement when no learner is named, since a lens is already the subject\'s', () => {
-    expect(masteryEvidence(COURSE, [stmt('x', `${ADL}completed`, COURSE.courseIris[0]!, {}, { mbox: 'mailto:someone@example' })]).earned).toBe(true);
+    expect(masteryEvidence(COURSE, [stmt('x', `${ADL}passed`, COURSE.courseIris[0]!, {}, { mbox: 'mailto:someone@example' })]).earned).toBe(true);
+  });
+  it('a failed attempt earns nothing: the engine records `completed` beside `failed`, and completing is not passing', () => {
+    const attempt = [
+      stmt('c1', `${ADL}completed`, COURSE.courseIris[0]!, { result: { completion: true } }),
+      stmt('f1', `${ADL}failed`, COURSE.courseIris[0]!, { result: { success: false, completion: true, score: { scaled: 0.4 } } }),
+    ];
+    const ev = masteryEvidence(COURSE, attempt, LEARNER);
+    expect(ev).toMatchObject({ earned: false, mastery: [] });
+    expect(ev.statements).toHaveLength(2);
   });
 });
 
 const held = (over: Partial<HeldCredential> = {}): HeldCredential => ({ id: 'urn:cred:1', descriptorUrl: 'https://pod.example/w/1.ttl', achievementId: 'urn:foxxi:achievement:t:golf-explained', issuer: 'did:key:z6MkTenant', validFrom: '2026-01-01T00:00:00.000Z', validUntil: '2027-01-01T00:00:00.000Z', verified: true, ...over });
+
+describe('the courses a record is about', () => {
+  it('reads course ids from objects and from parent and grouping activities, once each, skipping the voided', () => {
+    const idOf = (iri: string): string | null => /\/agent\/scorm\/course\/([^/?#]+)/.exec(iri)?.[1] ?? null;
+    const records = [
+      stmt('a', `${ADL}passed`, 'https://bridge.example/agent/scorm/course/ONE'),
+      stmt('b', `${ADL}answered`, 'https://bridge.example/q/7', { context: { contextActivities: { parent: [{ id: 'https://bridge.example/agent/scorm/course/TWO' }] } } }),
+      stmt('c', `${ADL}passed`, 'https://bridge.example/agent/scorm/course/ONE'),
+      { ...stmt('d', `${ADL}passed`, 'https://bridge.example/agent/scorm/course/THREE'), voided: true },
+      stmt('e', `${ADL}launched`, 'https://elsewhere.example/x'),
+    ];
+    expect(courseIdsInRecord(records, idOf)).toEqual(['ONE', 'TWO']);
+  });
+});
 
 describe('a claim', () => {
   const policy = { achievementId: 'urn:foxxi:achievement:t:golf-explained', validityDays: 365 };

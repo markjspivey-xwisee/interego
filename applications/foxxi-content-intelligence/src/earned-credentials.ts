@@ -23,8 +23,13 @@ export interface StatementRecord {
 const ADL = 'http://adlnet.gov/expapi/verbs/';
 const CMI5 = 'https://w3id.org/xapi/adl/verbs/';
 
-/** The verbs whose statement demonstrates the course was mastered: ADL passed / completed / mastered, cmi5 satisfied / waived. */
-export const MASTERY_VERBS: ReadonlySet<string> = new Set([`${ADL}passed`, `${ADL}completed`, `${ADL}mastered`, `${CMI5}satisfied`, `${CMI5}waived`]);
+/**
+ * The verbs whose statement demonstrates the course was mastered: ADL passed / mastered, cmi5
+ * satisfied / waived. Not `completed`: the SCORM engine records `completed` beside `failed` for an
+ * attempt that did not pass (2026-09-25, found reading emitScormCompletion), and in xAPI completing
+ * a course says nothing about passing it.
+ */
+export const MASTERY_VERBS: ReadonlySet<string> = new Set([`${ADL}passed`, `${ADL}mastered`, `${CMI5}satisfied`, `${CMI5}waived`]);
 
 export interface EvidenceStatement {
   readonly id: string;
@@ -114,6 +119,23 @@ export function masteryEvidence(course: CourseIdentity, statements: readonly Sta
   return { courseId: course.courseId, statements: out, mastery, unattested, earned: mastery.length > 0 };
 }
 
+/**
+ * The courses a learner's record is about: every course id `idOf` reads from a statement's object
+ * or its parent and grouping activities, in first-seen order. Standings that follow the record
+ * rather than an assignment start here.
+ */
+export function courseIdsInRecord(statements: readonly StatementRecord[], idOf: (iri: string) => string | null): string[] {
+  const ids = new Set<string>();
+  const take = (v: unknown): void => { const id = typeof v === 'string' ? idOf(v) : null; if (id) ids.add(id); };
+  for (const s of statements) {
+    if (s.voided) continue;
+    take(obj(s.statement['object'])?.['id']);
+    const activities = obj(obj(s.statement['context'])?.['contextActivities']);
+    for (const k of ['parent', 'grouping']) { const list = activities?.[k]; if (Array.isArray(list)) for (const a of list) take(obj(a)?.['id']); }
+  }
+  return [...ids];
+}
+
 export interface HeldCredential {
   readonly id: string;
   readonly descriptorUrl: string;
@@ -154,10 +176,10 @@ export function claimDecision(evidence: MasteryEvidence, held: readonly HeldCred
     return { decision: 'issue', validUntil: until.toISOString(), evidence: evidence.mastery };
   }
   const missing = evidence.statements.length === 0
-    ? `no statement of the learner about the course; a passed, completed, mastered, satisfied or waived statement${evidence.courseId ? ` for ${evidence.courseId}` : ''}, graded by this bridge, would earn it`
+    ? `no statement of the learner about the course; a passed, mastered, satisfied or waived statement${evidence.courseId ? ` for ${evidence.courseId}` : ''}, graded by this bridge, would earn it`
     : evidence.unattested > 0
       ? `${evidence.unattested} mastery statement(s) about the course that this bridge did not grade itself (a learner's own report is in the record but is not evidence); a result graded here would earn it`
-      : `${evidence.statements.length} statement(s) about the course, none of which demonstrates mastery (a passed, completed, mastered, satisfied or waived statement with success not false and any score at or above the course's threshold)`;
+      : `${evidence.statements.length} statement(s) about the course, none of which demonstrates mastery (a passed, mastered, satisfied or waived statement with success not false and any score at or above the course's threshold)`;
   return { decision: 'not-earned', missing, statements: evidence.statements.length };
 }
 

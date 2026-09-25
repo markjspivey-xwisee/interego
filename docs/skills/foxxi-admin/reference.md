@@ -783,7 +783,7 @@ Ebbinghaus 1/7/30-day intervals, with early-week reminders for concepts other co
 
 **Publish the course catalog as a federated data product**
 
-The tenant's course catalog as a HyprCat FederatedCatalog on the tenant pod: a public, Asserted descriptor that conforms to hyprcat:FederatedCatalog, so any pod walk finds it by type, describing a graph in which each course is a FederatedDataProduct issued by the tenant in the service world, with its title, category, audience keywords, standard, landing page, and an output port that is a followable distribution (a GET of the course's own IRI). Republishing supersedes the previous catalog under the same IRI. federated_with names peer catalogs on other pods. Admin only.
+The tenant's course catalog as a HyprCat FederatedCatalog on the tenant pod: a public, Asserted descriptor that conforms to hyprcat:FederatedCatalog, so any pod walk finds it by type, describing a graph in which each course is a FederatedDataProduct issued by the tenant in the service world, with its title, category, audience keywords, standard, landing page, and an output port that is a followable distribution (a GET of the course's own IRI). Republishing supersedes the previous catalog under the same IRI. federated_with names peer catalogs on other pods. The configured tenant's catalog is its admin's to publish; with tenant_pod_url naming a self-sovereign pod, that pod's owner publishes that pod's catalog, to that pod and issued by it, including the SCORM courses the owner authored on this bridge.
 
 - Action: `urn:iep:action:foxxi:publish-course-catalog-product`
 - HTTP: `POST https://foxxi-bridge.interego.xwisee.com/foxxi/publish_course_catalog_product`

@@ -169,7 +169,7 @@ import {
   type CourseCompletionSubject,
 } from '../src/credentials.js';
 import { exportClr } from '../src/clr.js';
-import { claimDecision, courseStandings, masteryEvidence, verifyCredentialChecks, type CourseIdentity, type HeldCredential, type MasteryEvidence } from '../src/earned-credentials.js';
+import { claimDecision, courseIdsInRecord, courseStandings, masteryEvidence, verifyCredentialChecks, type CourseIdentity, type HeldCredential, type MasteryEvidence } from '../src/earned-credentials.js';
 import { isGradedBy, withGradedTag } from '../src/graded-evidence.js';
 import {
   readDurableRecordedStatements,
@@ -3167,33 +3167,53 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx, admin } = resolved;
-    if (ctx.role !== 'admin') {
-      const trace = emitAccessDecision({ ctx, tool: 'foxxi.publish_course_catalog_product', decision: 'deny', appliedPolicies: ['admin-full-access'] });
-      return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: `forbidden — only admins publish the tenant's course catalog as a data product (caller role: ${ctx.role})`, accessDecision: trace };
+    // Whose catalog: the configured tenant's, which only its admin publishes; or a self-sovereign
+    // pod's, which only its owner (a member whose WebID lives under it) publishes, to that pod.
+    const requested = typeof args.tenant_pod_url === 'string' && args.tenant_pod_url.trim() ? canonicalPodUrl(args.tenant_pod_url.trim()) : '';
+    const own = requested !== '' && !samePod(requested, tenantPodUrl);
+    if (own ? (!ctx.webId || podBaseOf(ctx.webId) !== podBaseOf(requested)) : ctx.role !== 'admin') {
+      const trace = emitAccessDecision({ ctx, tool: 'foxxi.publish_course_catalog_product', decision: 'deny', appliedPolicies: [own ? 'self-sovereign-owner' : 'admin-full-access'] });
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': own ? 'a self-sovereign pod\'s catalog is its owner\'s to publish: the caller\'s WebID must live under tenant_pod_url' : 'the caller is authenticated but not permitted this operation', error: own ? 'forbidden — not the owner of this self-sovereign pod' : `forbidden — only admins publish the tenant's course catalog as a data product (caller role: ${ctx.role})`, accessDecision: trace };
     }
+    const pod = own ? (requested.endsWith('/') ? requested : `${requested}/`) : tenantPodUrl;
+    const issuer = own ? String(sourceForPod(pod)) : String(authoritativeSource);
     const federatedWith = Array.isArray(args.federated_with) ? (args.federated_with as unknown[]).filter((x): x is string => typeof x === 'string' && /^https?:\/\//.test(x)) : [];
-    const catalogIri = `${tenantPodUrl.replace(/\/$/, '')}/foxxi/course-catalog-product`;
+    const catalogIri = `${pod.replace(/\/$/, '')}/foxxi/course-catalog-product`;
     const courses = admin.catalog.map((c) => ({
       courseId: c.course_id, title: c.title, courseIri: String((c as { course_iri?: string }).course_iri || courseIri(c.course_id)),
       ...(c.category ? { category: c.category } : {}), audienceTags: c.audience_tags ?? [], ...(c.standard ? { standard: c.standard } : {}),
       ...(typeof c.slide_count === 'number' ? { slideCount: c.slide_count } : {}), ...(typeof c.concept_count === 'number' ? { conceptCount: c.concept_count } : {}),
     }));
+    if (own) {
+      // A pod's owner also offers the SCORM courses they authored on this bridge: its engine grades
+      // them, and each port is the course's own dereferenceable IRI. Authorship is the verified
+      // signer's wallet, never a caller-supplied name.
+      // Self-enrolment writes the member's wallet_address beside the directory fields the type declares.
+      const wallet = String((admin.users.find((u) => u.user_id === ctx.userId) as { wallet_address?: string } | undefined)?.wallet_address ?? '').toLowerCase();
+      const listed = new Set(courses.map((c) => c.courseId));
+      for (const c of agentScormCourses.values()) {
+        if (!wallet || String(c.authoredBy).toLowerCase() !== `did:ethr:${wallet}` || listed.has(c.courseId)) continue;
+        const assessed = c.scos.filter((x) => x.assessment?.length).length;
+        courses.push({ courseId: c.courseId, title: c.title, courseIri: courseIri(c.courseId), category: 'SCORM 2004, graded by this bridge', audienceTags: [], standard: 'scorm-2004',
+          description: `${c.scos.length} sections, ${assessed} assessed; mastery ${c.masteryScore}; authored by ${c.authoredBy}.`, slideCount: c.scos.length } as typeof courses[number]);
+      }
+    }
     const publishedAt = new Date().toISOString();
-    const turtle = courseCatalogProductTurtle({ catalogIri, tenantDid: String(authoritativeSource), tenantName: tenantProfileName, courses, federatedWith, publishedAt });
+    const turtle = courseCatalogProductTurtle({ catalogIri, tenantDid: issuer, tenantName: own ? `${podBaseOf(pod).split('/').pop() ?? 'pod'}` : tenantProfileName, courses, federatedWith, publishedAt });
     const descriptor: ContextDescriptorData = {
       id: `${catalogIri}#descriptor` as IRI,
       describes: [catalogIri as IRI],
       conformsTo: [FEDERATED_CATALOG_TYPE as IRI],
       facets: [
         { type: 'Temporal', validFrom: publishedAt },
-        { type: 'Provenance', wasAttributedTo: authoritativeSource },
-        { type: 'Agent', assertingAgent: { identity: authoritativeSource } },
+        { type: 'Provenance', wasAttributedTo: issuer as IRI },
+        { type: 'Agent', assertingAgent: { identity: issuer as IRI } },
         { type: 'Semiotic', modalStatus: 'Asserted' },
       ],
     };
-    const result = await publish(descriptor, turtle, tenantPodUrl, { fetch: guardedFetchFn(globalThis.fetch) as never, containerPath: 'foxxi/', descriptorSlug: 'course-catalog-product', graphSlug: 'course-catalog-product-graph', visibility: 'public' });
-    const trace = emitAccessDecision({ ctx, tool: 'foxxi.publish_course_catalog_product', decision: 'allow', appliedPolicies: ['admin-full-access'] });
-    return { kind: 'course-catalog-product', catalogIri, descriptorUrl: result.descriptorUrl, graphUrl: result.graphUrl, conformsTo: FEDERATED_CATALOG_TYPE, products: courses.length, federatedWith, publishedAt, accessDecision: trace };
+    const result = await publish(descriptor, turtle, pod, { fetch: guardedFetchFn(globalThis.fetch) as never, containerPath: 'foxxi/', descriptorSlug: 'course-catalog-product', graphSlug: 'course-catalog-product-graph', visibility: 'public' });
+    const trace = emitAccessDecision({ ctx, tool: 'foxxi.publish_course_catalog_product', decision: 'allow', appliedPolicies: [own ? 'self-sovereign-owner' : 'admin-full-access'] });
+    return { kind: 'course-catalog-product', catalogIri, pod, issuer, descriptorUrl: result.descriptorUrl, graphUrl: result.graphUrl, conformsTo: FEDERATED_CATALOG_TYPE, products: courses.length, courses: courses.map((c) => ({ courseId: c.courseId, title: c.title, courseIri: c.courseIri })), federatedWith, publishedAt, accessDecision: trace };
   },
 
   'foxxi.discover_course_catalogs': async (args) => {
@@ -3239,7 +3259,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const trace = emitAccessDecision({ ctx, tool: 'foxxi.earned_credentials', decision: 'allow', appliedPolicies: [ctx.role === 'admin' ? 'admin-full-access' : 'learner-self'] });
     return {
       kind: 'earned-credentials', learner: subject.did, learnerPodUrl: subject.podUrl, computedAt: now.toISOString(),
-      standings: standings.map((st) => (st.state === 'claimable' ? { ...st, claim: { tool: 'foxxi.claim_credential', arguments: { course_id: st.courseId, ...(typeof args.learner_pod_url === 'string' ? { learner_pod_url: args.learner_pod_url } : {}) } } } : st)),
+      standings: standings.map((st) => (st.state === 'claimable' ? { ...st, claim: { tool: 'foxxi.claim_credential', arguments: { course_id: st.courseId, ...(typeof args.tenant_pod_url === 'string' ? { tenant_pod_url: args.tenant_pod_url } : {}), ...(typeof args.learner_pod_url === 'string' ? { learner_pod_url: args.learner_pod_url } : {}) } } } : st)),
       held: held.length, accessDecision: trace,
     };
   },
@@ -10049,6 +10069,95 @@ app.get('/agent/memories', async (req, res) => {
     return;
   }
   res.json({ ok: true, count: memories.length, commons: `${base}/agent/memories`, inbox, memories });
+});
+
+// ── Credentials through any signed connection ─────────────────────────────────────────────────
+//
+// The same claim as foxxi.claim_credential, for the courses this bridge's SCORM engine grades,
+// signed the way the engine's own routes are: DIRECT by a wallet, or DELEGATED by an agent whose
+// delegation credential is anchored by the signer — which is how a relay connection (a Claude
+// connector, or anyone signed in to the relay) reaches Foxxi. The record read is the signer's
+// own pod, derived from the signature and never named by the caller; a delegated claim is
+// issued to the person the delegation names, not to the agent carrying it.
+
+/** Who a signed caller is learning as, and whose record and wallet that means. */
+async function signedLearner(auth: { callerDid: string }): Promise<{ did: string; podUrl: string; via?: string }> {
+  const podUrl = selfBoundPod(auth.callerDid);
+  if (auth.callerDid.startsWith('did:ethr:')) return { did: auth.callerDid, podUrl };
+  const vc = await readDelegationCredential(resolveSubjectPodUrl(auth.callerDid), auth.callerDid as IRI, { fetch: guardedFetchFn(globalThis.fetch) as never }).catch(() => null);
+  const person = String(vc?.credentialSubject?.delegatedBy ?? vc?.issuer ?? auth.callerDid);
+  return { did: person, podUrl, via: auth.callerDid };
+}
+
+/** A course this bridge's engine grades, as the evidence reader needs it. */
+function scormCourseIdentity(c: AgentScormCourse): CourseIdentity {
+  return { courseId: c.courseId, courseIris: [...new Set([courseIri(c.courseId), scormCourseIri(c.courseId)])], masteryScore: c.masteryScore };
+}
+
+app.post('/agent/credentials/earned', async (req, res) => {
+  try {
+    const auth = await verifyDelegatedCaller(req.body);
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
+    const learner = await signedLearner(auth);
+    const [held, statements] = await Promise.all([heldCredentialsFor(learner.podUrl, learner.did), learnerStatementsFor(learner.podUrl, learner.did)]);
+    const asked = Array.isArray(auth.payload.course_ids) ? (auth.payload.course_ids as unknown[]).filter((x): x is string => typeof x === 'string') : [];
+    const ids = [...new Set([...asked, ...courseIdsInRecord(statements, (iri) => courseIdOf(iri))])].slice(0, 25);
+    const courses = (await Promise.all(ids.map((id) => resolveCourseForRead(id).catch(() => null)))).filter((c): c is AgentScormCourse => c !== null);
+    const evidence = new Map<string, MasteryEvidence>(courses.map((c) => [c.courseId, masteryEvidence(scormCourseIdentity(c), statements, undefined, gradedHere)]));
+    const now = new Date();
+    const standings = courseStandings(courses.map((c) => ({ courseId: c.courseId, courseTitle: c.title })), evidence, held, (id) => achievementIdFor(tenantProfileDid, id), now);
+    res.json({
+      kind: 'earned-credentials', learner: learner.did, ...(learner.via ? { via: learner.via } : {}), learnerPodUrl: learner.podUrl, computedAt: now.toISOString(),
+      standings: standings.map((st) => (st.state === 'claimable' ? { ...st, claim: { affordance: actionUrl('urn:iep:action:foxxi:claim-credential-signed'), target: `${bridgeBaseUrl}/agent/credentials/claim`, payload: { course_id: st.courseId } } } : st)),
+      held: held.length,
+    });
+  } catch (err) { sendServerError(res, err, 'credentials-earned'); }
+});
+
+app.post('/agent/credentials/claim', async (req, res) => {
+  try {
+    const auth = await verifyDelegatedCaller(req.body);
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
+    if (!issuerKeySeed) { res.status(503).json({ error: 'bridge is not configured to issue credentials — FOXXI_ISSUER_KEY_SEED is unset' }); return; }
+    const courseId = typeof auth.payload.course_id === 'string' ? auth.payload.course_id.trim() : '';
+    if (!courseId) { res.status(400).json({ error: 'course_id is required: a course this bridge\'s SCORM engine grades' }); return; }
+    const course = await resolveCourseForRead(courseId);
+    if (!course) { res.status(404).json({ error: `no course ${courseId} is played on this bridge's SCORM engine` }); return; }
+    const learner = await signedLearner(auth);
+    const [held, statements] = await Promise.all([heldCredentialsFor(learner.podUrl, learner.did), learnerStatementsFor(learner.podUrl, learner.did)]);
+    const evidence = masteryEvidence(scormCourseIdentity(course), statements, undefined, gradedHere);
+    const now = new Date();
+    const achievementId = achievementIdFor(tenantProfileDid, courseId);
+    const decision = claimDecision(evidence, held, { achievementId, validityDays: CREDENTIAL_VALIDITY_DAYS }, now);
+    if (decision.decision === 'not-earned') {
+      res.status(409).json({ error: `not earned — ${decision.missing}`, courseId, statements: decision.statements, unattested: evidence.unattested, learner: learner.did });
+      return;
+    }
+    if (decision.decision === 'already-held') {
+      res.json({ ok: true, kind: 'credential-claim', decision: 'already-held', courseId, credential: decision.credential, learner: learner.did, ...(learner.via ? { via: learner.via } : {}), learnerPodUrl: learner.podUrl });
+      return;
+    }
+    const verbs = [...new Set(decision.evidence.map((e) => e.verb.split('/').pop() ?? e.verb))];
+    const result = await issueCourseCompletionCredential({
+      subject: {
+        learnerDid: learner.did, courseId, courseTitle: course.title, achievementId,
+        // A learner who authored the course knew its answers; the credential says so rather than letting
+        // a relying party mistake a self-set test for someone else's.
+        criterionNarrative: `Passed ${course.title}, a SCORM 2004 course authored by ${course.authoredBy}${learner.did.toLowerCase() === String(course.authoredBy).toLowerCase() ? ' (the learner is its author)' : ''}: ${decision.evidence.length} ${decision.evidence.length === 1 ? 'result' : 'results'} (${verbs.join(', ')}) graded by the Foxxi bridge's sequencing engine, in the learner's own record.`,
+        evidence: decision.evidence.map((e) => ({ type: 'fxa:LearningExperience', id: statementIri(e.id), narrative: `${e.verb} ${e.object}${e.scoreScaled !== undefined ? `, scaled score ${e.scoreScaled}` : ''}${e.timestamp ? `, at ${e.timestamp}` : ''}` })),
+        validUntil: decision.validUntil,
+      },
+      tenantProfileDid, tenantProfileName, issuerSeed: issuerKeySeed, learnerPodUrl: learner.podUrl,
+      fetch: guardedFetchFn(globalThis.fetch) as never,
+    });
+    const credentialId = result.vc.id ?? achievementId;
+    const credentialed = recordCredentialed({ learnerDid: learner.did, podUrl: learner.podUrl, credentialId, courseTitle: course.title, evidenceIds: decision.evidence.map((e) => statementIri(e.id)) });
+    res.json({
+      ok: true, kind: 'credential-claim', decision: 'issued', courseId, credentialId, descriptorUrl: result.publishResult.descriptorUrl, graphUrl: result.publishResult.graphUrl,
+      issuer: result.vc.issuer, validUntil: decision.validUntil, evidence: decision.evidence, ...(credentialed ? { credentialedStatement: credentialed } : {}),
+      learner: learner.did, ...(learner.via ? { via: learner.via } : {}), learnerPodUrl: learner.podUrl, courseAuthor: course.authoredBy, vc: result.vc,
+    });
+  } catch (err) { sendServerError(res, err, 'credentials-claim'); }
 });
 
 app.post('/agent/scorm/author', async (req, res) => {
