@@ -235,7 +235,11 @@ const UNLINTED_FRONTIER = {
   //    applications 415 -> 464 files, 1323 -> 1452 errors; demos 37 -> 45 files, 48 unchanged
   //    (its .tsx files are clean). Written here rather than argued about later: this is the one
   //    kind of repin that is legitimate, and it is legitimate only because the SCAN widened.
-  applications: { errors: 1452, files: 552 },
+  //
+  //    552 -> 581 files, errors not raised: the tests and modules the verticals added since that
+  //    pin used the slack, and the credential-link reader's test
+  //    (foxxi-content-intelligence/tests/credential-by-link.test.ts) took the root one past it.
+  applications: { errors: 1452, files: 581 },
   // The controller comparison adds two lint-clean audit modules; the census is 46.
   // Re-pin the file floor to that measured count without raising the error ceiling.
   benchmarks: { errors: 193, files: 46 },
