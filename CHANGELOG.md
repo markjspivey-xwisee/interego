@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-09-25 — Foxxi: a self-sovereign pod is its own wallet's to enroll, not the first caller's
+
+`foxxi.register_self_sovereign_learner` never asked whether the pod it was given belonged to the signer. The first signer to name an unclaimed pod became its owner, and every later call keys membership on the recovered signer. So whoever enrolled another wallet's `eth-<12 hex>` pod first could:
+
+- lock the real owner out with the single-owner 409;
+- read that wallet's engine-graded evidence through the standings and a claim's evidence list, since evidence is read by pod;
+- have credentials issued into that pod's wallet.
+
+Enrolment now decides whose pod it is before it reads or writes anything (`src/enrollment-ownership.ts`, with tests). It uses the comparison `selfBoundPod` makes for every write: one principal with a wallet's `eth-`/`u-eth-` spellings folded (`samePodPrincipal`), on one store (`sameStore`).
+
+- **Accepted:** only the pod the signing wallet is named for, in either spelling, signed by that wallet for itself (`agent_id` = its did:ethr).
+- **Refused, each with its reason:**
+  - a request signed for another identity (a relay session or a delegate), whose key would make its membership everyone's it signs for;
+  - a path inside a pod;
+  - a pod whose name says no wallet (a passkey `u-pk-` pod, a `u-did-` pod, a named tenant), where nothing in a signature can say whose it is and the alternative is first-come;
+  - another wallet's pod;
+  - a wallet-named pod on another store.
+- **Squatted rows:** a row another wallet enrolled on a wallet's pod before this rule is removed when the owner enrolls. Until then it authorizes nothing, because `resolveCaller` refuses a membership on a pod named for another wallet, reading the pod a URL is in rather than its last segment.
+
+The live content-judgment runner's own pod (`u-eth-42c2ffd7e4c0`, signed by its wallet) enrolls as before. Found by a code survey on 2026-09-24.
+
 ## 2026-09-25 — Interego, live: a demo you click through, signed in as yourself
 
 `demos/live` is a local web app (`npx tsx demos/live/server.ts`, then http://localhost:4747). It runs the week's Foxxi features end to end against the deployed services, with real identities, and shows every call in a live ledger as it happens.

@@ -342,6 +342,7 @@ import {
   parseDistributionFromDescriptorTurtle,
 } from '@interego/solid';
 import { authoredCourseProducts, courseCatalogProductTurtle, discoverCourseCatalogs, FEDERATED_CATALOG_TYPE } from '../src/course-catalog-product.js';
+import { enrollmentDecision, membershipHolds, ownersOf, type OwnershipRules } from '../src/enrollment-ownership.js';
 import { queryFederatedStatements, type FederatedLrsEndpoint } from '../../lrs-adapter/src/experience-index.js';
 import {
   issueBbsCompletionCredential,
@@ -896,11 +897,11 @@ function upstreamFailed(error: string): Refusal {
 
 /** A 403 for "not HERE" — the operation is legitimate, on a different pod. The way out is an
  *  address, so it is named rather than described. */
-function wrongPod(error: string): Refusal {
+function wrongPod(error: string, reason = 'this pod is administered elsewhere; the operation belongs on a pod the caller owns'): Refusal {
   return {
     kind: 'refusal',
     'iep:refusalStatus': 403,
-    'iep:refusalReason': 'this pod is administered elsewhere; the operation belongs on a pod the caller owns',
+    'iep:refusalReason': reason,
     error,
     'iep:resolvedBy': {
       action: 'urn:iep:action:use-your-own-pod',
@@ -986,7 +987,7 @@ async function assertSelfSovereignOwner(podUrl: string, identity: string | null)
         action: 'urn:iep:action:establish-ownership',
         title: 'Establish ownership of this pod by self-enrolling',
         toolName: 'foxxi.register_self_sovereign_learner',
-        note: 'The first enrollee becomes the owner; this call then succeeds.',
+        note: 'Only the wallet a pod is named for (eth-<12 hex> or u-eth-<12 hex>) may enroll it, signing for itself; once it has, this call succeeds.',
       },
     };
   }
@@ -1158,6 +1159,14 @@ function ontologyHtml(ontologyIri: string, turtle: string, meta: { owner: string
     + `</body>`;
 }
 
+/** The pod whose membership `autoFetchAdmin` reads for these args: the caller's tenant_pod_url
+ *  when it is a safe public URL, else the configured tenant. One derivation, shared by the read
+ *  and by resolveCaller's check on whose pod that membership is. */
+function membershipPodFor(args: Record<string, unknown>): string {
+  const raw = (args.tenant_pod_url as string) || tenantPodUrl;
+  return safePublicUrlOrUndefined(raw) ?? tenantPodUrl;
+}
+
 async function autoFetchAdmin(args: Record<string, unknown>): Promise<FoxxiAdminPayload | null> {
   // SSRF/DoS choke point: this directory fetch runs on essentially every foxxi.* tool
   // call, BEFORE any auth, and issues ~8 concurrent server-side discover() requests to the
@@ -1165,8 +1174,7 @@ async function autoFetchAdmin(args: Record<string, unknown>): Promise<FoxxiAdmin
   // it at an internal host (css.railway.internal) or a filtered private IP — reaching the
   // internal network + holding sockets (blind SSRF + resource-exhaustion DoS). Drop a private
   // literal (fall back to the configured tenant) and DNS-resolve-guard the rest before fetching.
-  const raw = (args.tenant_pod_url as string) || tenantPodUrl;
-  const podUrl = safePublicUrlOrUndefined(raw) ?? tenantPodUrl;
+  const podUrl = membershipPodFor(args);
   if (!podUrl) return null;
   try {
     await assertSafeFetchTarget(podUrl);
@@ -2250,9 +2258,21 @@ async function resolveCaller(args: Record<string, unknown>): Promise<{ ctx: Call
           action: 'urn:iep:action:self-enroll',
           title: 'Enroll yourself on your own pod, then retry',
           toolName: 'foxxi.register_self_sovereign_learner',
-          note: 'Pass tenant_pod_url = your own pod; the first enrollee owns it.',
+          note: 'Pass tenant_pod_url = the pod your wallet is named for; only that wallet may enroll it.',
         },
         'iep:refusalReason': 'the request signature is valid but the signer is not a member of this tenant', error: `auth: signer ${signedSigner} is not a member of the tenant at ${podChecked} (proof-of-possession).${usedDefault ? ` No tenant_pod_url was supplied, so the bridge checked its DEFAULT tenant — pass tenant_pod_url = your own pod to be checked against YOUR self-sovereign membership, and self-enroll first via foxxi.register_self_sovereign_learner.` : ` Self-enroll first via foxxi.register_self_sovereign_learner, then retry.`}${da.reason ? ` (delegated-admin fallback also declined: ${da.reason})` : ''}` };
+    }
+    // ★ A MEMBERSHIP ROW IS NOT OWNERSHIP BY ITSELF. Enrolment used to be first-come, so a row
+    // for another wallet can sit on a pod named for a wallet, and every read keyed on it would hand
+    // that pod's evidence and wallet to whoever enrolled it first. On such a pod only its own
+    // wallet's row authorizes (src/enrollment-ownership.ts); the owner takes the pod back by
+    // enrolling. A pod whose name says no wallet has no owner to check against.
+    const membershipPod = membershipPodFor(args);
+    if (!samePod(membershipPod, tenantPodUrl) && !membershipHolds(signedSigner, membershipPod, POD_OWNERSHIP)) {
+      return wrongPod(
+        `auth: ${membershipPod} is named for another wallet, so its membership authorizes only that wallet and not ${signedSigner}. Use the pod your own wallet is named for: ${resolveSubjectPodUrl(`did:ethr:${signedSigner}`)}.`,
+        'the pod is named for another wallet, and its membership authorizes only that wallet',
+      );
     }
     const ctx = resolveCallerContext({
       callerWebId: member.webId,
@@ -2539,6 +2559,18 @@ function samePodPrincipal(a: string, b: string): boolean {
   // Fail closed: if either side cannot be reduced to a pod, this is not a demonstrated self-read.
   return own !== null && subject !== null && own === subject;
 }
+
+/**
+ * Whose pod is it, by the comparison every write already makes: `samePodPrincipal` folds a
+ * wallet's two pod spellings, `sameStore` pins the store, and a wallet's own pod is the one its
+ * did:ethr derives. Self-sovereign enrolment and the membership read both decide with these
+ * (src/enrollment-ownership.ts), so neither can drift from `selfBoundPod`.
+ */
+const POD_OWNERSHIP: OwnershipRules = {
+  samePrincipal: samePodPrincipal,
+  sameStore,
+  podOfWallet: (address) => resolveSubjectPodUrl(`did:ethr:${address}`),
+};
 
 /**
  * The PUBLICLY-RESOLVABLE spelling of a pod on this store — for identifiers that get PUBLISHED,
@@ -4577,11 +4609,14 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // PUBLIC tenant-membership allowlist on the tenant's OWN pod. Any bridge then
     // reads that public section via the substrate — no shared admin key, no per-tenant
     // bridge env — and PoP-authorizes the member on discover_assigned_courses et al.
-    // Two invariants keep this from becoming a self-service backdoor:
+    // Three invariants keep this from becoming a self-service backdoor:
     //   1. You can only enroll YOURSELF — the address written is the recovered signer,
     //      never an arbitrary/attacker-supplied one.
     //   2. A CLOSED (admin-encrypted) tenant is refused — a public allowlist can never
     //      overlay an admin-managed directory, so this can't grant access to acme et al.
+    //   3. You can only enroll YOUR OWN pod — the one your wallet is named for, signed by that
+    //      wallet for itself. Without this, whoever named an unclaimed pod first owned it (see
+    //      src/enrollment-ownership.ts).
     const rec = recoverSignedRequest(args);
     if (!rec.ok) {
       return signRequestRefusal(
@@ -4607,6 +4642,22 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     if (samePod(podUrl, tenantPodUrl)) {
       return wrongPod('this pod is the bridge\'s configured (closed) tenant — enrollment is via the tenant admin, not self-enrollment');
     }
+    // Invariant 3: whose pod is it? Decided before anything is read or written, by the comparison
+    // selfBoundPod makes for every write. It was first-come: the first signer to name an unclaimed
+    // pod owned it, and every later read keyed on that signer.
+    const ownership = enrollmentDecision({ podUrl, signer, agentId: rec.agentId }, POD_OWNERSHIP);
+    if (!ownership.ok) {
+      if (ownership.status === 400) return invalidArguments(ownership.error, ownership.reason);
+      if (ownership.refused !== 'signed-for-another') return wrongPod(ownership.error, ownership.reason);
+      // The way out is a different signature, not a different pod, so it is named as one.
+      return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': ownership.reason, error: ownership.error,
+        'iep:resolvedBy': {
+          action: 'urn:iep:action:sign-as-your-wallet',
+          title: 'Sign as the wallet you enroll',
+          toolName: 'foxxi.register_self_sovereign_learner',
+          note: 'Sign the payload with your own wallet, set agent_id = did:ethr:<its address>, and name the pod that wallet is named for.',
+        } };
+    }
     try {
       await fetchSection(TENANT_TYPES.TenantDirectory, { ...fetcherConfig(), podUrl });
       // Resolved → an encrypted directory exists (and decrypted) → closed tenant.
@@ -4625,6 +4676,11 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       const mem = await fetchSection(TENANT_TYPES.TenantMembership, { ...fetcherConfig(), podUrl }) as { users?: typeof members };
       if (Array.isArray(mem?.users)) members = mem.users.filter(Boolean);
     } catch { /* none published yet */ }
+    // A row for another wallet on this pod could only have been enrolled first-come, before
+    // enrolment asked whose pod it was. The pod's own wallet is enrolling now, so its rows stay and
+    // any other goes; kept, it would lock the owner out of their own pod with the 409 below.
+    const { kept, displaced } = ownersOf(members, ownership.podRoot, POD_OWNERSHIP);
+    members = kept;
     const learnerId = (p.learner_id as string) || (args.learner_id as string) || `u-eth-${signer.slice(2, 14).toLowerCase()}`;
     // web_id is published in a PUBLIC self-sovereign membership AND drives role
     // resolution downstream, so constrain it to the caller's OWN pod (same origin +
@@ -4642,10 +4698,12 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const audienceTags = Array.isArray(p.audience_tags) ? (p.audience_tags as unknown[]).map(String)
       : Array.isArray(args.audience_tags) ? (args.audience_tags as unknown[]).map(String) : [];
     const existing = members.find(m => (m.wallet_address ?? '').toLowerCase() === signer.toLowerCase());
-    // Single-owner self-sovereign tenant: the first PoP enroller owns the pod;
-    // a DIFFERENT signer cannot join it (enroll on your OWN pod instead). Closes
+    // Single-owner self-sovereign tenant: the pod's own wallet owns it, and a
+    // DIFFERENT signer cannot join it (enroll on your OWN pod instead). Closes
     // the open-join hole — nobody can inject themselves into someone else's
-    // self-sovereign tenant via the bridge's cross-pod write key.
+    // self-sovereign tenant via the bridge's cross-pod write key. After the
+    // ownership check above, only a second wallet whose address shares the pod
+    // name's twelve hex digits can still reach this.
     if (members.length > 0 && !existing) {
       // ★ 409, NOT 404. The tenant EXISTS and is owned — that is a conflict with the caller's
       // request, not an absence. 404 told a caller "no such tenant" about a pod that is very
@@ -4685,7 +4743,8 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       tenant_pod_url: podUrl,
       membershipDescriptorUrl: descriptorUrl,
       memberCount: members.length,
-      note: `Public self-sovereign membership published. Call foxxi.discover_assigned_courses with a PoP envelope signed by ${signer} and tenant_pod_url=${podUrl} — you will be authorized as a member.`,
+      ...(displaced.length > 0 ? { displacedMembers: displaced.map((m) => m.wallet_address) } : {}),
+      note: `Public self-sovereign membership published. Call foxxi.discover_assigned_courses with a PoP envelope signed by ${signer} and tenant_pod_url=${podUrl} — you will be authorized as a member.${displaced.length > 0 ? ` ${displaced.length} row(s) for other wallets, enrolled on this pod before enrolment asked whose it was, were removed.` : ''}`,
     };
   },
 
