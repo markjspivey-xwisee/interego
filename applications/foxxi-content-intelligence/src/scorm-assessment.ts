@@ -1,13 +1,94 @@
-/** Shared answer contract for the native grader and exported assessment forms. */
+/**
+ * Shared answer contract for the native grader and exported assessment forms.
+ *
+ * The types are the xAPI interaction types (SCORM 2004 names them the same), so one authored
+ * question records the same way in a SCORM package, a cmi5 activity or a plain xAPI statement.
+ * `text` is a fill-in and `integer`/`number` a numeric, kept under their old names so a stored
+ * course reads unchanged. A learner names an option, item or target by its letter (A, B, …) or
+ * by its text.
+ */
 export interface ScormAnswerInput {
-  type: 'text' | 'integer' | 'number';
+  type: 'text' | 'integer' | 'number' | 'choice' | 'true-false' | 'sequencing' | 'matching' | 'likert' | 'long-fill-in';
   min?: number;
   max?: number;
+  /** choice: the options in the order shown; likert: the scale, lowest first. */
+  options?: string[];
+  /** choice: more than one option is right, and a reply names all of them. */
+  multiple?: boolean;
+  /** sequencing: the items in the (scrambled) order shown; matching: the prompts, in order. */
+  items?: string[];
+  /** matching: what each prompt can be matched with, in the order shown. */
+  targets?: string[];
+  /** Mixed into an exact question's verifier, so a right answer never hashes to a value shared by every course. */
+  salt?: string;
 }
 export interface ScormAssessmentQuestion {
   question: string;
-  answerHash: string;
+  /** SHA-256 of the canonical right answer. Absent for a question nothing grades (likert, long-fill-in). */
+  answerHash?: string;
+  /** fill-in: verifiers of the other answers the author accepts. */
+  acceptHashes?: string[];
   input?: ScormAnswerInput;
+  /** Why the answer is right, shown once the question has been answered. */
+  explanation?: string;
+}
+
+/**
+ * The option a learner named: its letter (A, B, …) or its text, or -1 when it names none.
+ * Embedded in generated pages by its source, like everything the answer contract exports.
+ */
+export function scormOptionIndex(token: string, labels: readonly string[]): number {
+  const text = String(token ?? '').trim();
+  const letter = /^\(?([a-z])\)?[.:)]?$/i.exec(text);
+  if (letter) {
+    const index = String(letter[1]).toLowerCase().charCodeAt(0) - 97;
+    return index < labels.length ? index : -1;
+  }
+  const said = normalizeScormAnswer(text);
+  return said ? labels.findIndex(label => normalizeScormAnswer(label) === said) : -1;
+}
+
+/**
+ * The options, items or targets a reply names, as indices, or what to fix. One part unless `many`.
+ * Letters may be separated by commas, spaces, semicolons or "and"; texts by semicolons or new lines.
+ */
+export function scormAnswerParts(value: string, labels: readonly string[], many: boolean): number[] | string {
+  const text = String(value ?? '').trim();
+  const lettered = /^\(?[a-z]\)?[.:)]?(?:\s*(?:,|;|\band\b|\s)\s*\(?[a-z]\)?[.:)]?)*$/i.test(text);
+  const tokens = !many ? [text]
+    : lettered ? text.split(/\s*(?:,|;|\band\b)\s*|\s+/i).filter(Boolean)
+    : text.split(/\s*[;\n]\s*/).filter(Boolean);
+  const parts = tokens.map(token => scormOptionIndex(token, labels));
+  const last = String.fromCharCode(64 + labels.length);
+  if (!tokens.length || parts.some(part => part < 0)) {
+    return many ? `Name each one by its letter, A to ${last}, separated by commas.` : `Choose one, by its letter (A to ${last}) or its text.`;
+  }
+  return parts;
+}
+
+/** The xAPI (and SCORM) interaction type a question records as. */
+export function scormInteractionType(input?: ScormAnswerInput): string {
+  if (!input || input.type === 'text') return 'fill-in';
+  if (input.type === 'integer' || input.type === 'number') return 'numeric';
+  return input.type;
+}
+
+/**
+ * A valid reply in the response format xAPI and SCORM both define: choice, likert and sequencing
+ * as ids joined by `[,]`, matching as `prompt[.]target` pairs joined by `[,]`. Ids are the letters
+ * a to z of the options, items and targets, and 1 to n of the prompts.
+ */
+export function scormInteractionResponse(value: string, input?: ScormAnswerInput): string {
+  const text = String(value ?? '').trim();
+  if (!input || input.type === 'text' || input.type === 'long-fill-in') return text;
+  if (input.type === 'integer' || input.type === 'number') return String(Number(text));
+  if (input.type === 'true-false') return /^(true|t|yes|y)$/i.test(text) ? 'true' : 'false';
+  const labels = input.type === 'sequencing' ? (input.items ?? []) : input.type === 'matching' ? (input.targets ?? []) : (input.options ?? []);
+  const parts = scormAnswerParts(text, labels, input.type !== 'likert' && (input.type !== 'choice' || !!input.multiple));
+  if (typeof parts === 'string') return text;
+  if (input.type === 'matching') return parts.map((part, i) => `${i + 1}[.]${String.fromCharCode(97 + part)}`).join('[,]');
+  const ordered = input.type === 'choice' ? [...new Set(parts)].sort((a, b) => a - b) : parts;
+  return ordered.map(part => String.fromCharCode(97 + part)).join('[,]');
 }
 
 /** A numeric authored answer has a numeric contract unless the author overrides it. */
@@ -26,8 +107,24 @@ export function normalizeScormAnswer(value: string): string {
 
 export function validateScormAnswer(value: unknown, input?: ScormAnswerInput): string | null {
   if (typeof value !== 'string' || !value.trim()) return 'Enter an answer before submitting.';
+  if (input && input.type === 'long-fill-in') return value.length > 4000 ? 'Use 4000 characters or fewer.' : null;
   if (value.length > 250) return 'Use 250 characters or fewer.';
   if (!input || input.type === 'text') return null;
+  if (input.type === 'true-false') return /^(true|false|t|f|yes|no|y|n)$/i.test(value.trim()) ? null : 'Answer true or false.';
+  if (input.type === 'choice' || input.type === 'likert' || input.type === 'sequencing' || input.type === 'matching') {
+    const labels = input.type === 'sequencing' ? (input.items ?? []) : input.type === 'matching' ? (input.targets ?? []) : (input.options ?? []);
+    const parts = scormAnswerParts(value, labels, input.type === 'sequencing' || input.type === 'matching' || (input.type === 'choice' && !!input.multiple));
+    if (typeof parts === 'string') return parts;
+    const last = String.fromCharCode(64 + labels.length);
+    if (input.type === 'sequencing' && (parts.length !== labels.length || new Set(parts).size !== parts.length)) {
+      return `Put all ${labels.length} items in order, each once, as letters such as ${labels.map((_, i) => String.fromCharCode(65 + i)).reverse().join(', ')}.`;
+    }
+    if (input.type === 'matching' && parts.length !== (input.items ?? []).length) {
+      return `Match each of the ${(input.items ?? []).length} prompts, in order, to a letter from A to ${last}.`;
+    }
+    if (input.type === 'choice' && input.multiple && new Set(parts).size !== parts.length) return 'Name each option once.';
+    return null;
+  }
   const text = value.trim();
   if (input.type === 'integer' && !/^[+-]?\d+$/.test(text)) return 'Enter a whole number, such as 0, 1, or -1.';
   if (input.type === 'number' && !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(text)) return 'Enter a number.';
@@ -38,8 +135,24 @@ export function validateScormAnswer(value: unknown, input?: ScormAnswerInput): s
   return null;
 }
 
+/**
+ * The strings a reply's verifier is checked against, already canonical: hash them as they are.
+ * A fill-in gives its normalized text and each of its words of four letters or more; a numeric its
+ * number. An exact question gives one string naming its type, its salt and the indices it chose, so
+ * option order and wording in the reply do not matter. A likert or long-fill-in gives none: nothing
+ * grades it.
+ */
 export function scormAnswerCandidates(value: string, input?: ScormAnswerInput): string[] {
   if (validateScormAnswer(value, input)) return [];
+  if (input && (input.type === 'likert' || input.type === 'long-fill-in')) return [];
+  if (input && input.type === 'true-false') return [`true-false|${input.salt ?? ''}|${/^(true|t|yes|y)$/i.test(value.trim()) ? 'true' : 'false'}`];
+  if (input && (input.type === 'choice' || input.type === 'sequencing' || input.type === 'matching')) {
+    const labels = input.type === 'sequencing' ? (input.items ?? []) : input.type === 'matching' ? (input.targets ?? []) : (input.options ?? []);
+    const parts = scormAnswerParts(value, labels, input.type !== 'choice' || !!input.multiple);
+    if (typeof parts === 'string') return [];
+    const chosen = input.type === 'choice' ? [...new Set(parts)].sort((a, b) => a - b) : parts;
+    return [`${input.type}|${input.salt ?? ''}|${chosen.join(',')}`];
+  }
   if (input && input.type !== 'text') return [String(Number(value.trim()))];
   const normalized = normalizeScormAnswer(value);
   return normalized ? [...new Set([normalized, ...normalized.split(' ').filter(token => token.length >= 4)])] : [];
@@ -131,5 +244,6 @@ export function validateScormResponses(questions: readonly ScormAssessmentQuesti
 
 /** Embedded functions have no dependencies beyond this same shared contract. */
 export function scormAssessmentScript(): string {
-  return [normalizeScormAnswer, validateScormAnswer, scormAnswerCandidates, validateScormResponses].map(fn => fn.toString()).join('\n');
+  return [normalizeScormAnswer, scormOptionIndex, scormAnswerParts, validateScormAnswer, scormAnswerCandidates, validateScormResponses, scormInteractionType, scormInteractionResponse]
+    .map(fn => fn.toString()).join('\n');
 }
