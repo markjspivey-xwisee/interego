@@ -51,7 +51,12 @@ export function courseFromForm(input: unknown, courseId: string): AuthoredCourse
   const scos = rawScos.map((s, i) => {
     const questions = (Array.isArray(s?.assessment) ? (s.assessment as Array<{ question?: unknown; answer?: unknown }>) : [])
       .filter((q) => String(q?.question ?? '').trim())
-      .map((q) => ({ question: String(q.question).trim(), answer: String(q.answer ?? '').trim().toLowerCase().replace(/[^\p{L}\p{N}-]+/gu, '') }));
+      .map((q) => {
+        const said = String(q.answer ?? '').trim().toLowerCase();
+        // One word, as the engine grades it: joining "machine learning" into "machinelearning" would publish an answer no reader can give.
+        if (said.split(/\s+/).filter(Boolean).length > 1) throw new Error(`the answer to “${String(q.question).trim()}” must be one word, not “${said}”`);
+        return { question: String(q.question).trim(), answer: said.replace(/[^\p{L}\p{N}-]+/gu, '') };
+      });
     return { id: `SCO-${i + 1}`, title: String(s?.title ?? '').trim() || `Section ${i + 1}`, body: String(s?.body ?? '').trim(), ...(questions.length ? { assessment: questions } : {}) };
   });
   if (scos.length === 0) throw new Error('your course needs at least one section');
