@@ -37,8 +37,9 @@ import { callerIsOperator, trustedTenantOf, type OperatorAuthConfig } from './op
 import { buildCmi5Statement, evaluateMoveOn } from './cmi5.js';
 import {
   parseCmi5Course, auById, precedingAu, flatAus, flatBlocks, blockAuIds,
-  type Cmi5Course,
+  type Cmi5Course, type Cmi5AuNode,
 } from './cmi5-course.js';
+import { stageStateDocument } from './xapi-lrs.js';
 
 const CMI5_CATEGORY = 'https://w3id.org/xapi/cmi5/context/categories/cmi5';
 const V_PASSED = 'http://adlnet.gov/expapi/verbs/passed';
@@ -86,6 +87,9 @@ export interface Cmi5LaunchRequest {
   returnUrl?: string;
   /** The parent course activity id, for course-level rollup. */
   courseId?: string;
+  /** A signed learner's own pod: set when the learner launched for themselves, so the AU's
+   *  statements and the LMS's `satisfied` can be kept on that pod as well as in the lens. */
+  learnerPod?: string;
 }
 
 export interface Cmi5Launch {
@@ -129,6 +133,8 @@ interface LaunchRecord {
   learner: { id: string; name?: string };
   authoritativeSource: string;
   courseId?: string;
+  /** See Cmi5LaunchRequest.learnerPod. */
+  learnerPod?: string;
   satisfied: boolean;
   satisfiedAt?: string;
   reason: string;
@@ -320,6 +326,7 @@ export function buildCmi5Launch(req: Cmi5LaunchRequest): Cmi5Launch {
     learner: { id: req.learner.id, ...(req.learner.name ? { name: req.learner.name } : {}) },
     authoritativeSource: req.authoritativeSource,
     ...(req.courseId ? { courseId: req.courseId } : {}),
+    ...(req.learnerPod ? { learnerPod: req.learnerPod } : {}),
     satisfied: false,
     reason: 'launched — awaiting the AU\'s cmi5 statements',
   });
@@ -353,6 +360,48 @@ export function buildCmi5Launch(req: Cmi5LaunchRequest): Cmi5Launch {
   };
 
   return { registration, launchUrl, actor, launchData, fetchToken };
+}
+
+/**
+ * Stage a launch's `LMS.LaunchData` into the State resource (cmi5 §10.1), where the AU reads it:
+ * the AU's activity id, the launch's actor as the JSON string the launch URL carries, the
+ * registration. Before this, the launch returned the document and only told the caller to stage it.
+ */
+export function stageLaunchData(tenant: TenantId, launch: Cmi5Launch, auId: string): void {
+  stageStateDocument(tenant, { activityId: auId, agent: JSON.stringify(launch.actor), stateId: 'LMS.LaunchData', registration: launch.registration }, launch.launchData);
+}
+
+/**
+ * The learner a registration belongs to when they launched it for themselves, with their pod,
+ * but only for a statement stored in that launch's own tenant. An auth-token writes into the
+ * tenant its launch minted it for, so a statement naming somebody else's registration arrives in
+ * the wrong tenant and gets nothing here: nothing is kept on a pod its writer does not own.
+ */
+export function signedLaunchLearner(registration: string, tenant: TenantId): { did: string; podUrl: string } | undefined {
+  const l = launches.get(registration);
+  return l?.learnerPod && l.tenant === tenant ? { did: l.learner.id, podUrl: l.learnerPod } : undefined;
+}
+
+export type AuChoice =
+  | { readonly ok: true; readonly au: Cmi5AuNode }
+  | { readonly ok: false; readonly status: 404 | 409; readonly error: string; readonly missingPrerequisites?: readonly string[] };
+
+/**
+ * Which AU a learner launches: the one they name, or the first in the course they have not yet
+ * satisfied. Sequential progression (cmi5 §8.1) holds either way: an AU whose predecessor is not
+ * satisfied is refused, naming what is missing. A course they have finished answers with its
+ * first AU, since relaunching for review is allowed.
+ */
+export function chooseAu(course: Cmi5Course, satisfied: ReadonlySet<string>, requested?: string): AuChoice {
+  const aus = flatAus(course);
+  if (aus.length === 0) return { ok: false, status: 404, error: `course ${course.id} has no assignable units` };
+  const au = requested ? auById(course, requested) : (aus.find((a) => !satisfied.has(a.id)) ?? aus[0]);
+  if (!au) return { ok: false, status: 404, error: `course ${course.id} has no AU ${requested}` };
+  const before = precedingAu(course, au.id);
+  if (before && !satisfied.has(before.id)) {
+    return { ok: false, status: 409, error: `launch gated: ${before.id} comes first and is not yet satisfied`, missingPrerequisites: [before.id] };
+  }
+  return { ok: true, au };
 }
 
 /**
@@ -634,10 +683,13 @@ export function attachCmi5LmsRoutes(app: Express, config: {
       returnUrl: req.query.return_url as string | undefined,
       courseId: courseId ?? course?.id,
     });
+    // The LMS stages LaunchData itself (cmi5 §10); this route used to hand it back and ask the caller to.
+    stageLaunchData(tenant, launch, auId);
     res.status(200).json({
       ...launch,
+      launchDataStaged: true,
       ...(course ? { course: { id: course.id, prerequisiteGate: structuralPrereq ?? null } } : {}),
-      note: 'Navigate the learner to launchUrl. Stage launchData into the LRS State resource as stateId=LMS.LaunchData. The AU POSTs the fetch URL once for its auth-token. The LMS watches the registration: when the AU\'s statements meet moveOn it auto-emits `satisfied`, and rolls satisfaction up the course structure to blocks and the course.',
+      note: 'Navigate the learner to launchUrl. LMS.LaunchData is already staged in the State resource. The AU POSTs the fetch URL once for its auth-token. The LMS watches the registration: when the AU\'s statements meet moveOn it auto-emits `satisfied`, and rolls satisfaction up the course structure to blocks and the course.',
     });
   });
 

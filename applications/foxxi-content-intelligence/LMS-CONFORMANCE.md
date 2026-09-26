@@ -42,7 +42,8 @@ always-runnable evidence above is what the microsite proves.
 |---|---|---|
 | The 9 cmi5 Statement types + verb IRIs | **Conformant** | `src/cmi5.ts` |
 | moveOn evaluation (the 5 criteria) | **Implemented** | `src/cmi5.ts` |
-| **AU launch contract** — launch URL (`endpoint`/`fetch`/`actor`/`activityId`/`registration`) + `LMS.LaunchData` | **Implemented** | `src/cmi5-lms.ts`, `GET /cmi5/launch` |
+| **AU launch contract** — launch URL (`endpoint`/`fetch`/`actor`/`activityId`/`registration`) + `LMS.LaunchData`, staged by the LMS in the State resource where the AU reads it (cmi5 §10) | **Implemented** | `src/cmi5-lms.ts` (`buildCmi5Launch`, `stageLaunchData`), `GET /cmi5/launch` |
+| **A learner launches for themselves**: signed by their wallet or a delegated agent (a relay session), for the signer only. The AU's statements and the LMS's `satisfied` land in the learner's own record and are kept on their pod. They count as experience, not as graded evidence for a credential, since a cmi5 AU reports its own result. | **Implemented** | `POST /agent/cmi5/launch` (`foxxi.cmi5_launch_signed`); `tests/cmi5-signed-launch.test.ts` |
 | **Fetch endpoint** — one-time `auth-token` exchange (cmi5 §8) | **Implemented** | `POST /cmi5/fetch/:token`, single-use enforced |
 | AU auth-token accepted by the LRS, tenant-scoped | **Implemented** | `cmi5BearerTenant` → LRS auth gate |
 | moveOn **orchestration** — auto-emit `satisfied` when an AU's statements meet the moveOn rule (cmi5 §11) | **Implemented** | `observeCmi5Statement` in `src/cmi5-lms.ts`, wired via `XapiLrsConfig.onStatementStored`; verified: a `completed` statement auto-fires `satisfied` |

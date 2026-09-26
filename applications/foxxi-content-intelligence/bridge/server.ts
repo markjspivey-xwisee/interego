@@ -240,7 +240,7 @@ import { persistForwardingConfig, loadForwardingConfig } from '../src/forwarding
 import { bridgeEncryptionKeypair } from '../src/foundation-holon-altitude.js';
 import { EvaluationRegistry, type CandidateRun } from '../src/agent-evaluation.js';
 import { comparePortfolio, type CandidateEvidence } from '../src/agent-portfolio.js';
-import { TenantPartition, tenantIdOf, type TenantId } from '../src/tenant-context.js';
+import { DEFAULT_TENANT, TenantPartition, tenantIdOf, type TenantId } from '../src/tenant-context.js';
 
 // ── Tenant-partitioned bridge stores ────────────────────────────────
 // One Foxxi bridge can serve many tenants. Every in-memory store is
@@ -412,7 +412,7 @@ import {
 import { deriveAdminKeyPair, publishTenantMembership, publishCourseCatalog, publishTenantAssignments, publishCoursePackage, publishMeshEnrolmentRegister, TENANT_TYPES, type TenantPublishConfig } from '../src/tenant-publisher.js';
 import { attachXapiLrsRoutes, listStoredStatements, storeStatementInternal, getStatementStore } from '../src/xapi-lrs.js';
 import type { StoredStatement } from '../src/statement-store.js';
-import { attachCmi5LmsRoutes, cmi5BearerTenant, observeCmi5Statement } from '../src/cmi5-lms.js';
+import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerTenant, getCmi5Course, learnerSatisfiedAus, observeCmi5Statement, signedLaunchLearner, stageLaunchData } from '../src/cmi5-lms.js';
 import { attachLti13Routes } from '../src/lti13.js';
 import { attachOneRosterRoutes } from '../src/oneroster.js';
 import {
@@ -5776,11 +5776,16 @@ const app = createVerticalBridge({
       // cmi5 moveOn orchestration — after each Statement is stored, the
       // LMS re-evaluates the AU's moveOn and auto-emits `satisfied`.
       onStatementStored: (stmt, tenant) => {
+        // A learner's own cmi5 launch (POST /agent/cmi5/launch) keeps its record on the learner's
+        // pod as well as in the lens: the AU's statements, and the LMS's `satisfied` below.
+        const reg = (stmt.context as { registration?: string } | undefined)?.registration;
+        const own = reg ? signedLaunchLearner(reg, tenant) : undefined;
+        if (own) keepCmi5OnLearnerPod(stmt, own);
         void observeCmi5Statement(stmt, tenant, {
           statementsForRegistration: async (reg) =>
             (await getStatementStore(tenant).query({ registration: reg, limit: 500 }))
               .statements.map(r => r.statement),
-          emit: (s) => { storeStatementInternal(s, tenant); },
+          emit: (s) => { const id = storeStatementInternal(s, tenant); if (id && own) keepCmi5OnLearnerPod({ ...s, id }, own); },
         }).catch(() => undefined);
       },
     });
@@ -10252,6 +10257,71 @@ app.post('/agent/credentials/claim', async (req, res) => {
       learner: learner.did, ...(learner.via ? { via: learner.via } : {}), learnerPodUrl: learner.podUrl, courseAuthor: course.authoredBy, vc: result.vc,
     });
   } catch (err) { sendServerError(res, err, 'credentials-claim'); }
+});
+
+// ── cmi5 for a signed learner ─────────────────────────────────────────────────────────────────
+//
+// GET /cmi5/launch names any learner, so it is the operator's. This is the learner's own, signed
+// like the SCORM engine's routes (a wallet, or a delegated agent such as a relay session): the
+// launch is FOR the signer, and its tenant is the learner's own lens, so the AU's statements and
+// the LMS's `satisfied` land in the learner's record and are kept on their pod. They carry no
+// grading tag. A cmi5 AU reports its own result, so it adds experience to the record, not graded
+// evidence for a credential.
+
+/** Keep one of a learner's own cmi5 statements on their pod, where the learner record reads it. */
+function keepCmi5OnLearnerPod(statement: Record<string, unknown>, learner: { did: string; podUrl: string }): void {
+  // Only the launch's own actor: an AU is handed that actor, and a statement about anyone else is
+  // not this learner's record to keep.
+  const actorName = (statement.actor as { account?: { name?: unknown } } | undefined)?.account?.name;
+  if (actorName !== learner.did) return;
+  const verbId = String((statement.verb as { id?: unknown } | undefined)?.id ?? '');
+  const objectId = String((statement.object as { id?: unknown } | undefined)?.id ?? '');
+  void composeIntoSharedLattice({
+    podUrl: learner.podUrl, agentDid: learner.did, label: actorForPod(learner.podUrl, MESH_ACTOR_LABELS),
+    terms: [learner.did, verbId, objectId], content: statement, contentType: 'xapi:Statement',
+    ...(typeof statement.timestamp === 'string' ? { ts: statement.timestamp } : {}),
+    projections: ['rdf', 'vc', 'activity'],
+  // eslint-disable-next-line no-console -- the bridge's log is its operator's only view of a failed pod write
+  }).catch((e) => console.warn('[foxxi][cmi5] keeping a statement on the learner pod failed:', (e as Error).message));
+}
+
+app.post('/agent/cmi5/launch', async (req, res) => {
+  try {
+    const auth = await verifyDelegatedCaller(req.body);
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
+    const courseId = typeof auth.payload.course_id === 'string' ? auth.payload.course_id.trim() : '';
+    if (!courseId) { res.status(400).json({ error: 'course_id is required: a cmi5 course published on this bridge (POST /content/publish-course)' }); return; }
+    // Published courses are registered in the default tenant, and come back from the pod after a restart.
+    if (!getCmi5Course(DEFAULT_TENANT, courseId)) { try { await restorePublishedCourse(DEFAULT_TENANT, courseId); } catch { /* answered as absent below */ } }
+    const course = getCmi5Course(DEFAULT_TENANT, courseId);
+    if (!course) { res.status(404).json({ error: `no cmi5 course ${courseId} is published on this bridge` }); return; }
+    const learner = await signedLearner(auth);
+    const tenant = lensTenantFor(actorForPod(learner.podUrl, MESH_ACTOR_LABELS));
+    const choice = chooseAu(course, new Set(learnerSatisfiedAus(tenant, learner.did)), typeof auth.payload.au_id === 'string' ? auth.payload.au_id.trim() : undefined);
+    if (!choice.ok) { res.status(choice.status).json({ error: choice.error, ...(choice.missingPrerequisites ? { missingPrerequisites: choice.missingPrerequisites } : {}) }); return; }
+    const au = choice.au;
+    const returnUrl = typeof auth.payload.return_url === 'string' && /^https?:\/\//.test(auth.payload.return_url) ? auth.payload.return_url : undefined;
+    const launch = buildCmi5Launch({
+      au: { id: au.id, url: new URL(au.url, `${bridgeBaseUrl}/`).toString(), moveOn: au.moveOn, title: au.title, ...(typeof au.masteryScore === 'number' ? { masteryScore: au.masteryScore } : {}) },
+      learner: { id: learner.did },
+      lrsEndpoint: `${bridgeBaseUrl}/xapi`,
+      fetchBaseUrl: `${bridgeBaseUrl}/cmi5/fetch`,
+      authoritativeSource: String(authoritativeSource),
+      tenant,
+      courseId: course.id,
+      ...(returnUrl ? { returnUrl } : {}),
+      learnerPod: learner.podUrl,
+    });
+    stageLaunchData(tenant, launch, au.id);
+    res.json({
+      kind: 'cmi5-launch', courseId: course.id, auId: au.id, auTitle: au.title, moveOn: au.moveOn,
+      ...(typeof au.masteryScore === 'number' ? { masteryScore: au.masteryScore } : {}),
+      registration: launch.registration, launchUrl: launch.launchUrl, actor: launch.actor, launchDataStaged: true,
+      learner: learner.did, ...(learner.via ? { via: learner.via } : {}), learnerPodUrl: learner.podUrl,
+      progress: `${bridgeBaseUrl}/cmi5/registration/${launch.registration}`,
+      note: 'Open launchUrl. The AU fetches its auth-token once, and its statements land in your own record. When they meet moveOn, the LMS records `satisfied` there too. They count as experience, not as graded evidence: a cmi5 AU reports its own result.',
+    });
+  } catch (err) { sendServerError(res, err, 'cmi5-launch-signed'); }
 });
 
 app.post('/agent/scorm/author', async (req, res) => {
