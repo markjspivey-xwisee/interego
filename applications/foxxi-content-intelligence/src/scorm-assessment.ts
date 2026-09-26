@@ -77,7 +77,7 @@ export function matchesAnswerKey(reply: string, key: string): boolean {
   const input = inferScormAnswerInput(key);
   const keyWords = normalizeScormAnswer(String(key ?? '').replace(/n['’]t\b/gi, ' not')).split(' ').filter(Boolean);
   const replyWords = normalizeScormAnswer(String(reply ?? '').replace(/n['’]t\b/gi, ' not')).split(' ').filter(Boolean);
-  const negations = new Set(['no', 'not', 'never', 'none', 'nor', 'neither', 'nothing', 'nobody', 'nowhere', 'cannot']);
+  const negations = new Set(['no', 'not', 'never', 'none', 'nor', 'neither', 'nothing', 'nobody', 'nowhere', 'cannot', 'without']);
   if (!keyWords.some(word => negations.has(word)) && replyWords.some(word => negations.has(word))) return false;
   const expected = scormAnswerCandidates(key, input)[0];
   if (expected !== undefined && scormAnswerCandidates(reply, input).includes(expected)) return true;

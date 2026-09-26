@@ -737,7 +737,11 @@ const handlers: Record<string, Handler> = {
       gradebook['agent'] = r.status >= 400 ? { error: String(r.json['error'] ?? r.status) } : { rows: r.json['rows'] ?? [], learner: r.json['learner'] };
     }
     setChapter('lti', { data: { gradebook } });
-    const graded = (who: 'you' | 'agent'): boolean => ((gradebook[who] as { rows?: { result?: unknown }[] } | undefined)?.rows ?? []).some((row) => row.result);
+    // Done when the courses launched in THIS chapter have grades: you took the agent's, the agent took
+    // yours. A row from any other course in the gradebook says nothing about this chapter.
+    const launchedFor = { you: agentsCourse()?.courseId, agent: (chapters.teach.data as { published?: { courseId?: string } }).published?.courseId };
+    const graded = (who: 'you' | 'agent'): boolean => launchedFor[who] !== undefined
+      && ((gradebook[who] as { rows?: { courseId?: string; result?: unknown }[] } | undefined)?.rows ?? []).some((row) => row.courseId === launchedFor[who] && row.result);
     if (graded('you') && graded('agent')) setChapter('lti', { status: 'done' });
     if (graded('you') || graded('agent')) unlock('after');
   },
