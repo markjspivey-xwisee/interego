@@ -1,14 +1,14 @@
 # Changelog
 
-## 2026-09-26 — Foxxi: a negation after the key denies it too, and a comparative bound is no negation
+## 2026-09-26 — Foxxi: a negation after the key denies it too, and a comparative bound keeps its quantity
 
 The automated review of #488 found that `matchesAnswerKey` passed "fraud was neither found nor suspected" for the key "fraud". #488 made "neither" and "nor" reach forward only, so a key word said before them stayed said. The same held for "no" after a verb: "fraud was no issue", "fraud is no longer suspected" and "fraud found no support" all passed.
 
 - **"neither" and "nor" deny their whole clause**, like "not" and "never".
 - **"no" reaches forward only where it governs an object**: where it opens its clause, or follows a preposition or a conjunction ("no evidence of fraud", "proceed with no delay", "a team lead and no one else"). After any other word it denies its whole clause.
-- **A comparative bound is not a negation.** "no more than 30 days", "not later than 30 days" and "no longer than 30 days" now give "30 days", which every earlier version of the check refused. "not 30 days" still does not.
+- **A comparative bound denies its comparative, not the quantity it bounds.** "no more than 30 days", "not later than 30 days" and "no longer than 30 days" now give "30 days", which every earlier version of the check refused. "not greater than 30" still does not give "greater than 30" (the automated review of #490), and "not 30 days" does not give "30 days".
 
-`tests/au-explained-answers.test.ts` adds the review's case and each rule. Six mutants were checked, one per rule, and each fails the tests. The cmi5 page and the live demo's scoring embed the same function.
+`tests/au-explained-answers.test.ts` adds the review's case and each rule. Seven mutants were checked, one per rule, and each fails the tests. The cmi5 page and the live demo's scoring embed the same function.
 
 ## 2026-09-26 — Foxxi: one cmi5 launch can no longer void or erase another's
 

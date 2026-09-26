@@ -64,8 +64,9 @@ lessons, then turned into:
   the learner has answered. A negation denies only what it reaches within its
   own clause: "fraud occurred without warning" gives "fraud", while "no
   evidence of fraud", "fraud was not found" and "fraud was neither found nor
-  suspected" do not. A comparative bound is not a negation: "no more than 30 days"
-  gives "30 days".
+  suspected" do not. A comparative bound denies its comparative, not its quantity:
+  "no more than 30 days" gives "30 days", and "not greater than 30" does not give
+  "greater than 30".
 - a **SCORM 2004 package** — an `imsmanifest.xml` (with sequencing) plus
   one SCO per lesson, zipped — a real, conformant `.zip` artifact.
 

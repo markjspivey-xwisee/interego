@@ -79,9 +79,10 @@ export function explainedAnswer(authored: string): { key: string; why: string } 
  * still denies fraud, and "proceed with no delay" still says proceed. Everywhere else a negation
  * denies its whole clause, the words before it too: "fraud was not found", "fraud was neither found
  * nor suspected" (the automated review of #488), "fraud was no issue" and "the audit found no
- * fraud" all deny it. A comparative bound is not a negation: "no more than 30 days" and "not later
- * than 30 days" say 30 days. A key word is denied when the reply says it only where a negation
- * reaches it, so "fraud, not negligence" gives "fraud".
+ * fraud" all deny it. A comparative bound denies its comparative and not the quantity it bounds:
+ * "no more than 30 days" and "not later than 30 days" say 30 days, while "not greater than 30"
+ * does not say "greater than 30". A key word is denied when the reply says it only where a
+ * negation reaches it, so "fraud, not negligence" gives "fraud".
  *
  * A numeric key keeps its numeric contract. No inner named functions, and nothing outside it but
  * the shared scoring helpers: this is embedded in generated pages by its source.
@@ -102,11 +103,12 @@ export function matchesAnswerKey(reply: string, key: string): boolean {
     const said = new Set<string>();
     for (const clause of String(reply ?? '').replace(/n['’]t\b/gi, ' not').split(/[,;:.!?()]|\s[-\u2013\u2014]+\s|\b(?:but|however|although|though|whereas|except|rather|instead)\b/i)) {
       const words = normalizeScormAnswer(clause).split(' ').filter(Boolean);
-      const negates = words.map((word, i) => (forward.has(word) || clausal.has(word)) && !(comparative.has(words[i + 1] ?? '') && words[i + 2] === 'than'));
+      const bound = words.map((word, i) => (forward.has(word) || clausal.has(word)) && comparative.has(words[i + 1] ?? '') && words[i + 2] === 'than');
+      const negates = words.map((word, i) => (forward.has(word) || clausal.has(word)) && !bound[i]);
       let reached = words.some((word, i) => negates[i] && (clausal.has(word) || (word === 'no' && !governs.has(words[i - 1] ?? ''))));
       for (let i = 0; i < words.length; i++) {
         if (negates[i]) reached = true;
-        (reached ? denied : said).add(words[i] ?? '');
+        (reached || bound[i] || bound[i - 1] || bound[i - 2] ? denied : said).add(words[i] ?? '');
       }
     }
     if (required.some(word => denied.has(word) && !said.has(word))) return false;

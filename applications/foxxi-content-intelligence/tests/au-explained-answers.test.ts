@@ -95,6 +95,10 @@ describe('an explained answer', () => {
     expect(matchesAnswerKey('no longer than 30 days', '30 days')).toBe(true);
     expect(matchesAnswerKey('not 30 days', '30 days')).toBe(false);
     expect(matchesAnswerKey('no 30 days', '30 days')).toBe(false);
+    // ...and it still denies its comparative: "not greater than 30" is the opposite of "greater than 30".
+    expect(matchesAnswerKey('not greater than 30', 'greater than 30')).toBe(false);
+    expect(matchesAnswerKey('no more than 30 days', 'more than 30 days')).toBe(false);
+    expect(matchesAnswerKey('greater than 30', 'greater than 30')).toBe(true);
   });
 
   it('keeps the engine\'s own rule for a one-word key, and the numeric contract for a number', () => {
