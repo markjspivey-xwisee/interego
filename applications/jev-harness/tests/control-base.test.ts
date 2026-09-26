@@ -3,13 +3,17 @@
  * localhost, which no reader can follow; its executable controls can still name the deployed
  * bridge, which answers the same verbs and reads any judgment back from the pod.
  */
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { contextFromEnv, controlsFor, judgmentUrl, type PublishContext } from '../src/descriptor.js';
 import { calibrationControls } from '../src/calibration-publish.js';
 import { navigate } from '../src/judgments/navigate.js';
 import { inventory } from '../src/repo.js';
 import { fixtureRepo, idOf, preferringJev } from './helpers.js';
 
+// contextFromEnv reads JEV_HARNESS_CONTROL_BASE, which the jev-harness workflow sets to the deployed
+// bridge for its whole job. This file expects the controls of a bridge at localhost, so it clears it.
+vi.stubEnv('JEV_HARNESS_CONTROL_BASE', '');
+afterAll(() => { vi.unstubAllEnvs(); });
 const local: PublishContext = { ...contextFromEnv('http://localhost:6090'), controlBase: 'https://harness.example' };
 
 describe('the control base', () => {
