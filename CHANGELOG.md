@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-09-26 — Registry: a reputation axis is exact where one score sets it
+
+`aggregateReputation` (`packages/registry`) computes each axis as Σ(score × w) / Σw. The weight w is the issuer's trust weight times 0.5^(age in days / half-life), so it changes with the clock, and in floating point (s × w) / w is not always s. Under the jev-harness policy (trust 1 / 0.5 / 0.25, 30-day half-life), about 18% of clock readings gave an inexact axis for a single attestation, and about 5% landed below the true score. The jev-harness auto-merge requires `accuracy >= 0.9`, so an attestation rating accuracy exactly 0.9 was refused on some days as "0.8999999999999999 (floor 0.9)". PR #489 only made the flaky test tolerant.
+
+- **Each axis is held between the lowest and highest score that carries weight.** A weighted mean can never leave that range, so clamping only undoes rounding. When one attestation sets an axis, or several give it the same score, the lowest and the highest are that score, and the axis is exactly it. That holds whatever the ages and trust levels, which normalizing the weights (Σ score × (w / W)) would not guarantee for several equal scores.
+- **A mixed mean is unchanged.** It is the same Σ(score × w) / Σw as before, unless rounding took it outside its scores.
+- **An attestation too old to carry weight does not widen the range.** Its weight underflows to 0, so its score takes no part.
+- **The overall score** is held within its axes the same way: three axes of 0.7 now average to 0.7, not 0.6999999999999998.
+- The result is still deterministic for the same inputs.
+
+`tests/registry.test.ts` pins `now` at moments the old arithmetic got wrong, and asserts that first so the tests cannot pass on the clock's luck: 0.8 at 2026-09-26T08:15:09Z, 0.9 at 08:00:06Z, and two agreeing 0.9s at 08:00:00Z. It also covers a weightless ancient attestation, three equal axes, and a mixed mean equal to the plain one. Against the previous build, the exactness tests fail. Four mutants were checked, and each fails the tests: axes unheld, the overall score unheld, weightless scores widening the range, and a wrong bound.
 ## 2026-09-26 — Foxxi: a session token no longer lets a squatted row through
 
 #475 made a membership row on a pod named for a wallet authorize only that wallet, so a row squatted there before the rule authorizes nothing. The automated review of #475 found the rule applied on one way in only. `resolveCaller` checked it for a proof-of-possession envelope's signer. For `Authorization: Bearer` (a wallet-signed session token), `signedSigner` stayed null, `verifySessionToken` accepted the squatter's wallet from the fetched membership, and the caller context came back with no ownership check. The old row still authorized reads and credential operations on another wallet's pod.

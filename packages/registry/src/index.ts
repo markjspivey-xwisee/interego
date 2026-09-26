@@ -116,9 +116,24 @@ function recencyWeight(issuedAtIso: string, nowIso: string, halfLifeDays: number
   return Math.pow(0.5, ageDays / halfLifeDays);
 }
 
+/** `x`, held within [low, high]. */
+function within(x: number, low: number, high: number): number {
+  return Math.min(Math.max(x, low), high);
+}
+
 /**
  * Compute a reputation snapshot from a set of attestations under a
  * given policy. Deterministic for the same inputs.
+ *
+ * ★ A WEIGHTED MEAN LIES BETWEEN THE SCORES IT WEIGHS, AND THE ARITHMETIC IS HELD TO THAT.
+ * Each axis is Σ(score × w) / Σw, where w is the issuer's trust weight times a recency weight
+ * that decays with `now`. In floating point (s × w) / w is not always s. For one attestation
+ * scored 0.9, some clock readings gave 0.8999999999999999, and a consumer comparing the axis
+ * with a floor refused it on those days: the jev-harness auto-merge needs accuracy >= 0.9. So each
+ * axis is clamped to the lowest and highest score that carries weight. A mean of one attestation,
+ * or of several that give the axis the same score, is then exactly that score; a mixed mean
+ * moves only by rounding that took it outside a range no weighted mean can leave. The overall
+ * score, a mean of the axes, is held within its axes the same way.
  */
 export function aggregateReputation(
   subject: IRI,
@@ -133,6 +148,9 @@ export function aggregateReputation(
   // weighted by (issuer trust × recency).
   const axisSums: Record<string, number> = {};
   const axisWeights: Record<string, number> = {};
+  // The lowest and highest score that carries weight, per axis: the mean is held between them.
+  const axisLow: Record<string, number> = {};
+  const axisHigh: Record<string, number> = {};
 
   for (const att of relevant) {
     const trustWeight = policy.trustWeights[att.issuerTrustLevel ?? 'PeerAttested'] ?? 0;
@@ -142,16 +160,20 @@ export function aggregateReputation(
     for (const [axis, score] of Object.entries(att.axes)) {
       axisSums[axis] = (axisSums[axis] ?? 0) + score * totalWeight;
       axisWeights[axis] = (axisWeights[axis] ?? 0) + totalWeight;
+      if (totalWeight > 0) {
+        axisLow[axis] = Math.min(axisLow[axis] ?? score, score);
+        axisHigh[axis] = Math.max(axisHigh[axis] ?? score, score);
+      }
     }
   }
 
   const axes: Record<string, number> = {};
   for (const axis of Object.keys(axisSums)) {
-    axes[axis] = axisWeights[axis]! > 0 ? axisSums[axis]! / axisWeights[axis]! : 0;
+    axes[axis] = axisWeights[axis]! > 0 ? within(axisSums[axis]! / axisWeights[axis]!, axisLow[axis]!, axisHigh[axis]!) : 0;
   }
   const axisValues = Object.values(axes);
   const overallScore = axisValues.length > 0
-    ? axisValues.reduce((a, b) => a + b, 0) / axisValues.length
+    ? within(axisValues.reduce((a, b) => a + b, 0) / axisValues.length, Math.min(...axisValues), Math.max(...axisValues))
     : 0;
 
   return {
