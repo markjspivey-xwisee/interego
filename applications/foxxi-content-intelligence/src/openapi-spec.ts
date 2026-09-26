@@ -161,7 +161,22 @@ function buildOpenApiDoc(config: Config): Record<string, unknown> {
     get: { summary: 'OIDC 3rd-party-initiated login (LTI 1.3 §5.1.1)', tags: ['lti'], responses: { 302: { description: 'Redirect to platform auth endpoint' } } },
     post: { summary: 'OIDC 3rd-party-initiated login (POST form)', tags: ['lti'], responses: { 302: { description: 'Redirect to platform auth endpoint' } } },
   };
-  paths['/lti/launch'] = { post: { summary: 'Resource-link launch (id_token verify + session creation)', tags: ['lti'], responses: { 302: { description: 'Redirect to Foxxi dashboard with launch ticket' } } } };
+  paths['/lti/launch'] = { post: { summary: 'Resource-link launch (id_token verify + session creation)', tags: ['lti'], responses: { 302: { description: 'Redirect to the course player (a launch from Foxxi\'s own LMS) or to the Foxxi dashboard with a launch ticket' } } } };
+  paths['/lti/play/{id}'] = {
+    get: { summary: 'The course a launch opened: the current SCO as a page, or JSON', tags: ['lti'], parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: { description: 'The current SCO' }, 404: { description: 'The launch has ended or expired' } } },
+    post: { summary: 'Submit the current SCO; at the end, the outcome and the grade posted back over AGS', tags: ['lti'], parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: { description: 'The next SCO, or the outcome' }, 422: { description: 'Answers that do not fit the questions' } } },
+  };
+  // Foxxi as its own LMS: the LTI 1.3 Platform that launches the Tool above.
+  paths['/lti/platform/.well-known/openid-configuration'] = { get: { summary: 'Platform OpenID configuration with the LTI platform configuration', tags: ['lti'], responses: { 200: { description: 'Issuer, endpoints, keys' } } } };
+  paths['/lti/platform/jwks.json'] = { get: { summary: 'Platform JWKS: the keys id_tokens are signed with', tags: ['lti'], responses: { 200: { description: 'JWK set' } } } };
+  paths['/lti/platform/auth'] = {
+    get: { summary: 'OIDC authorization (LTI 1.3 §5.1.1): the id_token, form-posted to the Tool', tags: ['lti'], responses: { 200: { description: 'A self-posting form, or the form as JSON' }, 400: { description: 'A request the Platform will not answer' }, 401: { description: 'No launch pending for this learner' } } },
+    post: { summary: 'OIDC authorization (POST form)', tags: ['lti'], responses: { 200: { description: 'A self-posting form, or the form as JSON' } } },
+  };
+  paths['/lti/platform/token'] = { post: { summary: 'client_credentials with the Tool\'s signed JWT assertion (RFC 7523)', tags: ['lti'], responses: { 200: { description: 'A bearer token for the AGS scopes granted' }, 401: { description: 'The assertion did not verify' } } } };
+  paths['/lti/platform/contexts/{context}/lineitems'] = { get: { summary: 'AGS line items of the LMS course context', tags: ['lti'], parameters: [{ name: 'context', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: { description: 'Line item container' } } } };
+  paths['/lti/platform/contexts/{context}/lineitems/{id}/results'] = { get: { summary: 'AGS results for a line item', tags: ['lti'], parameters: [{ name: 'context', in: 'path', required: true, schema: { type: 'string' } }, { name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: { description: 'Result container' } } } };
+  paths['/lti/platform/contexts/{context}/lineitems/{id}/scores'] = { post: { summary: 'AGS score publish', tags: ['lti'], parameters: [{ name: 'context', in: 'path', required: true, schema: { type: 'string' } }, { name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 204: { description: 'Score recorded' }, 409: { description: 'A later score is already on record' } } } };
   paths['/lti/ags/scores'] = { post: { summary: 'Post a score back to the LMS (AGS 2.0)', tags: ['lti'], responses: { 200: { description: 'Score accepted upstream' } } } };
   paths['/lti/nrps/members'] = { get: { summary: 'Names & Roles Provisioning members (NRPS 2.0)', tags: ['lti'], responses: { 200: { description: 'Member roster' } } } };
 

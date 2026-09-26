@@ -1,6 +1,6 @@
 # Foxxi content intelligence, learner surface: every affordance
 
-Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 45 affordances.
+Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 47 affordances.
 
 ## `foxxi.record_private_performance_outcome`
 
@@ -176,6 +176,36 @@ Launch an Assignable Unit of a cmi5 course published on this bridge, for yoursel
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
 | `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, course_id, au_id?, return_url? }): the published course, optionally the AU, optionally where the AU returns you. |
+| `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.lti_launch_signed`
+
+**Launch a course from Foxxi's own LMS over LTI 1.3**
+
+Launch a course this bridge's SCORM engine grades from Foxxi's own LMS, the LTI 1.3 Platform this bridge runs beside its Tool, for yourself, signed by your wallet or by an agent holding your delegation (a relay connection, such as a Claude connector). The LMS knows who you are from the signature and returns an initiation URL, used once within five minutes. From there it is a standard launch over HTTP: the Tool's OIDC login, the LMS's authorization, a signed id_token posted to the Tool, then the course. A browser does all of it; a client without one follows the redirects, asks the authorization step for JSON, posts the form it returns, and plays the course as JSON. When the attempt ends the SCORM engine's outcome is in your record, where your IEEE P2997 learner record reads it, and the Tool posts your grade to the LMS gradebook over Assignment and Grade Services (foxxi.lti_gradebook_signed reads it). Externally routed: sign_request the args, then POST the envelope.
+
+- Action: `urn:iep:action:foxxi:lti-launch-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/lti/launch` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, course_id }): a course this bridge's SCORM engine grades. |
+| `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.lti_gradebook_signed`
+
+**Read my grades in Foxxi's own LMS**
+
+Your row of the gradebook in Foxxi's own LMS, signed by your wallet or by an agent holding your delegation: every course in the LMS course context, and the grade the Tool posted for you over LTI Assignment and Grade Services, or null where there is none yet. Only your own row; who you are comes from the signature. Externally routed: sign_request the args, then POST the envelope.
+
+- Action: `urn:iep:action:foxxi:lti-gradebook-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/lti/gradebook` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp }). |
 | `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
 
 ## `foxxi.consume_lesson`

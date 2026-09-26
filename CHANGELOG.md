@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-09-26 — Foxxi is its own LMS: a course launched over LTI 1.3, and the grade comes back
+
+The bridge was an LTI 1.3 Tool with no LMS to launch it: a launch ended in a ticket on the dashboard URL that nothing read, and a grade had nowhere to go. It is now both sides.
+
+- **The Platform** (`src/lti-platform.ts`, `/lti/platform/*`). It has an OIDC authorization endpoint that signs an ES256 `id_token` and posts it by `form_post`, a published JWKS and OpenID configuration, a `client_credentials` token endpoint that verifies the Tool's signed client assertion, and AGS line items, results and score publish.
+- **Who a launch is for.** A signed learner asks for the launch (`foxxi.lti_launch_signed`, `POST /agent/lti/launch`): a wallet, or the person a relay delegation names. There are no passwords. The Platform mints one grant bound to that learner and course, spent by the first authorization and gone in five minutes.
+- **A standard launch, over HTTP.** From the initiation URL on, it is plain LTI: the Tool's login, the Platform's authorization, and an `id_token` the Tool verifies against the Platform's published keys. A client without a browser asks the authorization step for JSON and posts the form itself.
+- **The Tool finishes the launch.** A launch from this bridge's own LMS opens the course in the SCORM engine (`/lti/play/:id`, a page or JSON), with the same grading step as `/agent/scorm/submit` (`advanceScormPlay`). The outcome goes to the learner's record, on the pod the Platform vouched for, with the LMS as xAPI context. A launch from any other LMS still gets the dashboard ticket.
+- **The grade comes back.** At the end, the Tool signs a client assertion, gets a token from the Platform, and posts an AGS Score to the launch's line item. The Platform keeps a score only for a learner it launched, and never one older than the score on record. `foxxi.lti_gradebook_signed` reads your own row. The gradebook is kept on the tenant pod (`foxxi:LtiPlatformSnapshot`).
+- **A grade that did not arrive is sent again.** An ended attempt keeps its outcome until the grade is in, so a passback the platform did not answer is resent from the same URL (a button on the page, `retry` in the JSON), not lost with the attempt.
+- **No live assertion is forgotten.** A client assertion must expire within ten minutes, and a full replay cache refuses with 503 until live ids expire, rather than evicting one whose assertion could then buy a second token. Both were found by the automated review of this change.
+- **Docs.** `CONFORMANCE.md` §13 said Deep Linking, AGS line items and NRPS were stubs, which stopped being true some time ago. It now says what is there, including the Platform.
+
+Tests in `tests/lti-own-lms.test.ts`, which runs the exchange over HTTP, and `tests/lti-player.test.ts`.
+
 ## 2026-09-26 — Foxxi: authoring a course is work in a learner record, not a competency
 
 A person who authored a SCORM course and read their own IEEE P2997 learner record got "Inferred: course" beside the competencies from courses they passed. The agent's record had the same, from the six courses it has written.

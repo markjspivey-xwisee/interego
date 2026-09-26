@@ -30,7 +30,7 @@ import { telemetryView, captureView } from '../../llm-telemetry/view.js';
 import { mountTelemetryClientSetup } from '../../llm-telemetry/client-setup-routes.js';
 import { captureResource, readCapturePreferences, updateCapturePreferences, withCaptureConsent, createTelemetryRateLimit, CaptureError, type CaptureStore } from '../../llm-telemetry/capture.js';
 import { persistedLatticeArtifacts } from '../src/foundation-shared-lattice.js';
-import type { RequestHandler } from 'express';
+import express, { type RequestHandler } from 'express';
 
 // ── Pod-write auth: attach Authorization: Bearer on writes that target
 // the configured tenant pod URL. The CSS deployment sits behind a
@@ -413,7 +413,9 @@ import { deriveAdminKeyPair, publishTenantMembership, publishCourseCatalog, publ
 import { attachXapiLrsRoutes, listStoredStatements, storeStatementInternal, getStatementStore } from '../src/xapi-lrs.js';
 import type { StoredStatement } from '../src/statement-store.js';
 import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerTenant, getCmi5Course, learnerSatisfiedAus, observeCmi5Statement, signedLaunchLearner, stageLaunchData } from '../src/cmi5-lms.js';
-import { attachLti13Routes } from '../src/lti13.js';
+import { AGS_SCOPE, attachLti13Routes, type Lti13Tool, type VerifiedResourceLaunch } from '../src/lti13.js';
+import { LtiPlatform, attachLtiPlatformRoutes, type PlatformSnapshot } from '../src/lti-platform.js';
+import { agsScore, answersFrom, renderGonePage, renderOutcomePage, renderScoPage, type GradePassback, type GradedView, type ScoView } from '../src/lti-player.js';
 import { attachOneRosterRoutes } from '../src/oneroster.js';
 import {
   attachScormSequencingRoutes, parseManifest, createSession, processNavigation,
@@ -5683,6 +5685,19 @@ const instrumentedHandlers = Object.fromEntries(
   ]),
 );
 
+// Foxxi as its own LMS: the LTI 1.3 Platform that launches this bridge's own Tool over HTTP, the
+// way any LMS would, and keeps the gradebook the Tool posts grades to. The gradebook is kept on
+// the tenant pod like the Tool's line items. Its key is fresh per process unless one is set.
+const ltiPlatform = new LtiPlatform({
+  selfBaseUrl: bridgeBaseUrl,
+  ...(process.env.FOXXI_LTI_PLATFORM_PRIVATE_KEY_PEM ? { privateKeyPem: process.env.FOXXI_LTI_PLATFORM_PRIVATE_KEY_PEM.replace(/\\n/g, '\n') } : {}),
+  onChange: () => markBridgeDirty('lti-platform'),
+});
+registerBridgeSnap({ surface: 'lti-platform', typeIri: BRIDGE_SNAP_TYPES.LtiPlatformGradebook, collect: () => ltiPlatform.snapshot() });
+void loadBridgeSnap<PlatformSnapshot>('lti-platform').then((snap) => ltiPlatform.restore(snap)).catch(() => undefined);
+/** The Tool's side, once mounted: how a grade gets back to the platform that launched the course. */
+let ltiTool: Lti13Tool | undefined;
+
 const app = createVerticalBridge({
   verticalName: 'foxxi-content-intelligence',
   affordances: activeAffordances,
@@ -5815,15 +5830,19 @@ const app = createVerticalBridge({
     // deep linking / AGS / NRPS. Lets any 1EdTech-compliant LMS launch
     // Foxxi as a Tool. Platforms registered via FOXXI_LTI_PLATFORMS env
     // (comma-separated `issuer||client_id||deployment_id||jwks_url||
-    // auth_login_url||auth_token_url`).
-    attachLti13Routes(a, {
+    // auth_login_url||auth_token_url`), and this bridge's own LMS.
+    ltiTool = attachLti13Routes(a, {
       selfBaseUrl: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080',
       tenantDid: authoritativeSource,
       keySeed: process.env.FOXXI_LTI_KEY_SEED ?? `${authoritativeSource}-lti-2026-05`,
       dashboardUrl: process.env.FOXXI_DASHBOARD_URL ?? (process.env.FOXXI_DASHBOARD_ORIGIN?.split(',')[0] ?? 'http://localhost:5173'),
       platformsConfig: process.env.FOXXI_LTI_PLATFORMS ?? '',
+      extraPlatforms: [ltiPlatform.registration()],
+      onResourceLaunch: (launch) => startLtiPlay(launch),
       ...operatorAuth,
     });
+    // Foxxi as its own LMS: the Platform that launches the Tool above.
+    attachLtiPlatformRoutes(a, ltiPlatform);
 
     // OneRoster 1.2 — SIS / HR roster sync. Both a producer (Foxxi
     // exposes its roster) and a consumer (`POST /oneroster/v1p2/import`
@@ -9538,7 +9557,13 @@ app.get('/llm-telemetry/coverage', (_req, res) => res.json({
 // bridge grades by hash compare rather than leak the key.
 interface AgentScormSco { id: string; title: string; body: string; assessment?: ScormAssessmentQuestion[]; }
 interface AgentScormCourse { courseId: string; title: string; masteryScore: number; scos: AgentScormSco[]; authoredBy: string; }
-interface ScormPlay { seq: SeqSession; courseId: string; learnerDid: string; lens: TenantId; masteryScore: number; course: AgentScormCourse; }
+interface ScormPlay {
+  seq: SeqSession; courseId: string; learnerDid: string; lens: TenantId; masteryScore: number; course: AgentScormCourse;
+  /** The pod the learner's record is on, when the launcher knows it (an LTI launch from this bridge's LMS); else derived from learnerDid. */
+  learnerPod?: string;
+  /** xAPI context an LMS launch adds to the outcome: the platform, and the course context the attempt ran in. */
+  xapiContext?: { platform: string; grouping: Array<Record<string, unknown>> };
+}
 const agentScormCourses = new Map<string, AgentScormCourse>();
 /** Cap the agent-authored SCORM course cache (+ its parallel courseAuthors map) — a signed
  *  wallet looping /agent/scorm/author with distinct courseIds + large scos[] would otherwise
@@ -9719,7 +9744,10 @@ function emitScormCompletion(play: ScormPlay, course: AgentScormCourse, passed: 
     id: randomUUID(), version: '2.0.0',
     actor: { objectType: 'Agent', account: { homePage: String(authoritativeSource), name: play.learnerDid } },
     verb: { id: ADL + verb, display: { en: name } }, object: courseObj, result,
-    context: { extensions: { [PERF_EXT.observedBy]: play.learnerDid, [PERF_EXT.contextKind]: 'training' } },
+    context: {
+      ...(play.xapiContext ? { platform: play.xapiContext.platform, contextActivities: { grouping: play.xapiContext.grouping } } : {}),
+      extensions: { [PERF_EXT.observedBy]: play.learnerDid, [PERF_EXT.contextKind]: 'training' },
+    },
     timestamp: new Date().toISOString(),
   });
   // The bridge graded these: its tag lets a credential tell them from a learner's own report.
@@ -9729,7 +9757,7 @@ function emitScormCompletion(play: ScormPlay, course: AgentScormCourse, passed: 
     ? graded('passed', 'passed', { success: true, completion: true, score: { scaled: score } })
     : graded('failed', 'failed', { success: false, completion: true, score: { scaled: score } }));
   const ids: string[] = [];
-  const learnerPod = resolveSubjectPodUrl(play.learnerDid);
+  const learnerPod = play.learnerPod ?? resolveSubjectPodUrl(play.learnerDid);
   for (const s of stmts) {
     const sid = storeStatementInternal(s, play.lens);
     if (sid) ids.push(sid);   // a refused statement has no retrievable id
@@ -10469,52 +10497,254 @@ app.post('/agent/scorm/submit', async (req, res) => {
     const play = agentScormPlays.get(sessionId);
     if (!play) { res.status(404).json({ error: 'no SCORM play session — launch first' }); return; }
     if (play.learnerDid !== callerDid) { res.status(403).json({ error: 'not your SCORM session' }); return; }
-    const course = play.course;   // resolved at launch (cache or durable pod)
-    if (!course) { res.status(410).json({ error: 'course no longer available' }); return; }
-    const cur = play.seq.current;
-    if (!cur) { res.status(409).json({ error: 'no current SCO to submit' }); return; }
-    const sco = scoForActivity(course, cur.id);
-    let update: TrackingUpdate = { completion: 'completed' };
-    let graded: unknown;
-    if (sco?.assessment?.length) {
-      const errors = validateScormResponses(sco.assessment, p.answers);
-      if (errors.length) {
-        res.status(422).json({ error: 'Invalid assessment answers; the current SCO has not advanced.', validationErrors: errors }); return;
-      }
-      const answers = p.answers as string[];
-      let correct = 0;
-      const detail = sco.assessment.map((item, i) => {
-        const raw = answers[i]!;
-        const ok = scormAnswerCandidates(raw, item.input).some(candidate => hashAnswer(candidate) === item.answerHash);
-        if (ok) correct++;
-        return { question: item.question, your: raw, correct: ok };
-      });
-      const score = correct / sco.assessment.length;
-      // masteryScore may be authored on either scale: a 0-1 fraction (the 0.7
-      // default / cmi5) or a 0-100 percentage (e.g. 80). Normalize the
-      // threshold by magnitude before comparing, so a percentage author does
-      // not make a perfect 0-1 score (1.0) fail against 80. No-op for [0,1].
-      const threshold = play.masteryScore > 1 ? play.masteryScore / 100 : play.masteryScore;
-      const passed = score >= threshold;
-      update = { completion: 'completed', success: passed ? 'passed' : 'failed', scoreScaled: score };
-      graded = { score: Number(score.toFixed(3)), correct, total: sco.assessment.length, passed, detail };
-    }
-    commitTracking(play.seq, update);
-    const nav = processNavigation(play.seq, 'continue');
-    if (nav.ok && nav.delivered && !nav.sequencingEnded) {
-      sendActionResult(req, res, { ok: true, sessionId, done: false, ...(graded ? { graded } : {}), sco: scoViewForLearner(scoForActivity(course, nav.delivered.activityId)) }, bridgeBaseUrl, 'Next SCO', activeAffordances.filter(a => a.toolName === 'foxxi.scorm_submit'));
+    const step = advanceScormPlay(play, p.answers);
+    if (!step.ok) { res.status(step.status).json(step.body); return; }
+    if (!step.done) {
+      sendActionResult(req, res, { ok: true, sessionId, done: false, ...(step.graded ? { graded: step.graded } : {}), sco: step.sco }, bridgeBaseUrl, 'Next SCO', activeAffordances.filter(a => a.toolName === 'foxxi.scorm_submit'));
       return;
     }
-    // Sequencing ended — the SN engine's ROLLUP on the root is the course outcome.
-    const view = sessionView(play.seq) as { tree?: { tracking?: { completion?: string; success?: string; normalizedMeasure?: number } } };
-    const root = view.tree?.tracking ?? {};
-    const completed = root.completion === 'completed';
-    const passed = root.success === 'satisfied';
-    const score = typeof root.normalizedMeasure === 'number' ? root.normalizedMeasure : (passed ? 1 : 0);
-    const statementIds = emitScormCompletion(play, course, passed, score);
     agentScormPlays.delete(sessionId);
-    sendActionResult(req, res, { ok: true, sessionId, done: true, ...(graded ? { graded } : {}), course: { id: play.courseId, title: course.title }, completed, passed, score: Number(score.toFixed(3)), recordedStatements: statementIds.length, lens: play.lens, note: 'The SCORM 2004 SN runtime rolled up this outcome from your committed SCO tracking — recorded to your ELR.' }, bridgeBaseUrl, 'SCORM attempt outcome', activeAffordances.filter(a => a.toolName === 'foxxi.review_record'));
+    sendActionResult(req, res, { ok: true, sessionId, done: true, ...(step.graded ? { graded: step.graded } : {}), course: { id: play.courseId, title: play.course.title }, completed: step.completed, passed: step.passed, score: Number(step.score.toFixed(3)), recordedStatements: step.statementIds.length, lens: play.lens, note: 'The SCORM 2004 SN runtime rolled up this outcome from your committed SCO tracking — recorded to your ELR.' }, bridgeBaseUrl, 'SCORM attempt outcome', activeAffordances.filter(a => a.toolName === 'foxxi.review_record'));
   } catch (err) { sendServerError(res, err, 'route-handler'); }
+});
+
+type ScormStep =
+  | { ok: false; status: number; body: Record<string, unknown> }
+  | { ok: true; done: false; graded?: GradedView; sco: unknown }
+  | { ok: true; done: true; graded?: GradedView; completed: boolean; passed: boolean; score: number; statementIds: string[] };
+
+/**
+ * One step of an attempt, whoever is playing it: grade the current SCO's answers against their
+ * hashes, commit the tracking to the SN engine, and move on. When sequencing ends, the engine's
+ * rollup on the root is the course outcome, recorded to the learner's record.
+ */
+function advanceScormPlay(play: ScormPlay, answersGiven: unknown): ScormStep {
+  const course = play.course;   // resolved at launch (cache or durable pod)
+  if (!course) return { ok: false, status: 410, body: { error: 'course no longer available' } };
+  const cur = play.seq.current;
+  if (!cur) return { ok: false, status: 409, body: { error: 'no current SCO to submit' } };
+  const sco = scoForActivity(course, cur.id);
+  let update: TrackingUpdate = { completion: 'completed' };
+  let graded: GradedView | undefined;
+  if (sco?.assessment?.length) {
+    const errors = validateScormResponses(sco.assessment, answersGiven);
+    if (errors.length) {
+      return { ok: false, status: 422, body: { error: 'Invalid assessment answers; the current SCO has not advanced.', validationErrors: errors } };
+    }
+    const answers = answersGiven as string[];
+    let correct = 0;
+    const detail = sco.assessment.map((item, i) => {
+      const raw = answers[i]!;
+      const ok = scormAnswerCandidates(raw, item.input).some(candidate => hashAnswer(candidate) === item.answerHash);
+      if (ok) correct++;
+      return { question: item.question, your: raw, correct: ok };
+    });
+    const score = correct / sco.assessment.length;
+    // masteryScore may be authored on either scale: a 0-1 fraction (the 0.7
+    // default / cmi5) or a 0-100 percentage (e.g. 80). Normalize the
+    // threshold by magnitude before comparing, so a percentage author does
+    // not make a perfect 0-1 score (1.0) fail against 80. No-op for [0,1].
+    const threshold = play.masteryScore > 1 ? play.masteryScore / 100 : play.masteryScore;
+    const passed = score >= threshold;
+    update = { completion: 'completed', success: passed ? 'passed' : 'failed', scoreScaled: score };
+    graded = { score: Number(score.toFixed(3)), correct, total: sco.assessment.length, passed, detail };
+  }
+  commitTracking(play.seq, update);
+  const nav = processNavigation(play.seq, 'continue');
+  if (nav.ok && nav.delivered && !nav.sequencingEnded) {
+    return { ok: true, done: false, ...(graded ? { graded } : {}), sco: scoViewForLearner(scoForActivity(course, nav.delivered.activityId)) };
+  }
+  // Sequencing ended — the SN engine's ROLLUP on the root is the course outcome.
+  const view = sessionView(play.seq) as { tree?: { tracking?: { completion?: string; success?: string; normalizedMeasure?: number } } };
+  const root = view.tree?.tracking ?? {};
+  const completed = root.completion === 'completed';
+  const passed = root.success === 'satisfied';
+  const score = typeof root.normalizedMeasure === 'number' ? root.normalizedMeasure : (passed ? 1 : 0);
+  const statementIds = emitScormCompletion(play, course, passed, score);
+  return { ok: true, done: true, ...(graded ? { graded } : {}), completed, passed, score, statementIds };
+}
+
+// ── Foxxi's own LMS: a course launched over LTI 1.3 ──────────────────────────────────────────
+//
+// A signed learner asks this bridge's LMS (src/lti-platform.ts) to launch a course. The LMS knows
+// who they are from the signature, the same way every learner route here does: a wallet, or the
+// person a relay delegation names. From there it is plain LTI over HTTP. The learner's browser, or
+// a client standing in for one, follows the initiation URL to this bridge's Tool, which sends it
+// to the LMS's authorization endpoint. The LMS posts back a signed id_token, and the Tool verifies
+// it against the LMS's published keys and opens the course in the SCORM engine. When the attempt
+// ends, the outcome goes to the learner's record and the Tool posts the grade to the LMS gradebook
+// over AGS, with a token it gets by signing a client assertion. Only this bridge's own LMS vouches
+// for which pod is the learner's, since it checked their signature before it launched. A launch
+// from another LMS keeps the dashboard hand-off.
+
+/**
+ * An attempt a launch opened: the engine's play, and where its grade goes. Once the attempt ends,
+ * its outcome stays here until the grade reaches the platform, so a passback that failed (a token or
+ * score request the platform did not answer) is sent again from the same URL, not lost with it.
+ */
+interface LtiPlay { play: ScormPlay; issuer: string; clientId: string; sub: string; lineItem?: string; expiresAt: number; ended?: EndedAttempt }
+interface EndedAttempt { completed: boolean; passed: boolean; score: number; recordedStatements: number; graded?: GradedView; gradebook?: GradePassback }
+const ltiPlays = new Map<string, LtiPlay>();
+/** Bound the in-process LTI attempts: each holds a course and an SN tree (the same bound as SCORM plays). */
+const LTI_PLAYS_MAX = 5000;
+const LTI_PLAY_TTL_MS = 3 * 60 * 60_000;
+
+async function startLtiPlay(launch: VerifiedResourceLaunch): Promise<{ ok: true; redirect: string } | { ok: false; status: number; error: string } | null> {
+  if (launch.issuer !== ltiPlatform.issuer) return null;
+  const courseId = typeof launch.custom.foxxi_course_id === 'string' ? launch.custom.foxxi_course_id : '';
+  const podUrl = typeof launch.custom.foxxi_learner_pod === 'string' ? launch.custom.foxxi_learner_pod : '';
+  if (!courseId || !podUrl || !launch.sub) return { ok: false, status: 400, error: 'this launch names no course, or no learner record, for the SCORM engine to play' };
+  const course = await resolveCourseForRead(courseId);
+  if (!course) return { ok: false, status: 404, error: `no course ${courseId} is played on this bridge's SCORM engine` };
+  let tree;
+  try { tree = parseManifest(buildAgentScormManifest(course)); }
+  catch (e) { return { ok: false, status: 500, error: `the course's manifest did not parse: ${(e as Error).message}` }; }
+  const seq = createSession(tenantIdOf(`scorm:${launch.sub}`), tree);
+  const nav = processNavigation(seq, 'start');
+  if (!nav.ok || !nav.delivered) return { ok: false, status: 409, error: `SCORM start failed: ${nav.exception ?? nav.message ?? 'no SCO delivered'}` };
+  const contextId = typeof launch.context?.id === 'string' ? launch.context.id : '';
+  const contextTitle = typeof launch.context?.title === 'string' ? launch.context.title : 'LMS course';
+  const play: ScormPlay = {
+    seq, courseId: course.courseId, learnerDid: launch.sub, lens: lensTenantFor(actorForPod(podUrl, MESH_ACTOR_LABELS)),
+    masteryScore: course.masteryScore, course, learnerPod: podUrl,
+    xapiContext: {
+      platform: 'Foxxi LMS over LTI 1.3',
+      grouping: contextId ? [{ objectType: 'Activity', id: `${launch.issuer}/contexts/${encodeURIComponent(contextId)}`, definition: { name: { en: contextTitle }, type: 'http://adlnet.gov/expapi/activities/course' } }] : [],
+    },
+  };
+  const now = Date.now();
+  for (const [k, v] of ltiPlays) if (v.expiresAt < now) ltiPlays.delete(k);
+  if (ltiPlays.size >= LTI_PLAYS_MAX) { const oldest = ltiPlays.keys().next().value; if (oldest !== undefined) ltiPlays.delete(oldest); }
+  const id = randomBytes(24).toString('base64url');
+  // The grade goes back only where the platform offered it: a line item, and the score scope.
+  const lineItem = launch.ags?.scope.includes(AGS_SCOPE.score) ? launch.ags.lineitem : undefined;
+  ltiPlays.set(id, { play, issuer: launch.issuer, clientId: launch.clientId, sub: launch.sub, ...(lineItem ? { lineItem } : {}), expiresAt: now + LTI_PLAY_TTL_MS });
+  return { ok: true, redirect: `${bridgeBaseUrl}/lti/play/${id}` };
+}
+
+/** The attempt behind a play URL, while it lasts. The URL is the capability: unguessable, and gone when the attempt ends. */
+function ltiPlayAt(id: string): LtiPlay | undefined {
+  const lp = ltiPlays.get(id);
+  if (lp && lp.expiresAt < Date.now()) { ltiPlays.delete(id); return undefined; }
+  return lp;
+}
+
+/** Send the ended attempt's grade to the gradebook of the platform that launched it. */
+async function passGradeBack(lp: LtiPlay, outcome: { passed: boolean; score: number }): Promise<GradePassback> {
+  if (!lp.lineItem) return { posted: false, why: 'the launch offered no line item with the score scope' };
+  if (!ltiTool) return { posted: false, why: 'the LTI Tool is not mounted' };
+  const score = agsScore(lp.sub, outcome, new Date());
+  const sent = { lineItem: lp.lineItem, scoreGiven: score.scoreGiven as number, scoreMaximum: score.scoreMaximum as number };
+  try {
+    const r = await ltiTool.postScore({ issuer: lp.issuer, clientId: lp.clientId, lineItemUrl: lp.lineItem, score });
+    return { posted: r.ok, status: r.status, ...sent, ...(r.error ? { why: r.error } : {}) };
+  } catch (e) {
+    return { posted: false, ...sent, why: `the platform could not be reached: ${(e as Error).message}` };
+  }
+}
+
+/**
+ * Send an ended attempt's grade, and answer with its outcome. The attempt is forgotten only once the
+ * grade is in, or when no gradebook was offered; until then the same URL sends the grade again.
+ */
+async function answerEndedAttempt(req: import('express').Request, res: import('express').Response, id: string, lp: LtiPlay, ended: EndedAttempt): Promise<void> {
+  const gradebook = await passGradeBack(lp, ended);
+  ended.gradebook = gradebook;
+  if (gradebook.posted || !lp.lineItem) ltiPlays.delete(id);
+  sendEndedAttempt(req, res, id, lp, ended);
+}
+
+function sendEndedAttempt(req: import('express').Request, res: import('express').Response, id: string, lp: LtiPlay, ended: EndedAttempt): void {
+  const gradebook = ended.gradebook ?? { posted: false, why: 'the grade has not been sent yet' };
+  const retry = !gradebook.posted && lp.lineItem ? { method: 'POST', href: `${bridgeBaseUrl}/lti/play/${id}` } : undefined;
+  const course = { id: lp.play.courseId, title: lp.play.course.title };
+  const outcome = { completed: ended.completed, passed: ended.passed, score: ended.score, recordedStatements: ended.recordedStatements, gradebook };
+  if (wantsJson(req)) { res.json({ kind: 'lti-play', done: true, ...(ended.graded ? { graded: ended.graded } : {}), course, ...outcome, ...(retry ? { retry } : {}), learner: lp.sub, lens: lp.play.lens }); return; }
+  res.type('html').send(renderOutcomePage({ courseTitle: course.title, outcome, ...(ended.graded ? { graded: ended.graded } : {}), ...(retry ? { retry: true } : {}) }));
+}
+
+const ltiPlayGone = 'This launch has ended, or it expired. Launch the course again from your LMS.';
+const wantsJson = (req: import('express').Request): boolean => req.accepts(['html', 'json']) === 'json';
+
+app.get('/lti/play/:id', (req, res) => {
+  const lp = ltiPlayAt(String(req.params.id ?? ''));
+  res.set('Cache-Control', 'no-store').set('Referrer-Policy', 'no-referrer');
+  if (!lp) { if (wantsJson(req)) res.status(404).json({ error: ltiPlayGone }); else res.status(404).type('html').send(renderGonePage(ltiPlayGone)); return; }
+  if (lp.ended) { sendEndedAttempt(req, res, String(req.params.id ?? ''), lp, lp.ended); return; }
+  const sco = scoViewForLearner(lp.play.seq.current ? scoForActivity(lp.play.course, lp.play.seq.current.id) : undefined) as ScoView | null;
+  if (!sco) { res.status(409).json({ error: 'no current SCO' }); return; }
+  if (wantsJson(req)) {
+    res.json({ kind: 'lti-play', course: { id: lp.play.courseId, title: lp.play.course.title }, sco, submit: { method: 'POST', href: `${bridgeBaseUrl}/lti/play/${req.params.id}`, body: '{ "answers": ["one answer per question, in order"] }' } });
+    return;
+  }
+  res.type('html').send(renderScoPage({ courseTitle: lp.play.course.title, sco }));
+});
+
+app.post('/lti/play/:id', express.urlencoded({ extended: false, limit: '64kb' }), async (req, res) => {
+  try {
+    const id = String(req.params.id ?? '');
+    const lp = ltiPlayAt(id);
+    res.set('Cache-Control', 'no-store').set('Referrer-Policy', 'no-referrer');
+    if (!lp) { if (wantsJson(req)) res.status(404).json({ error: ltiPlayGone }); else res.status(404).type('html').send(renderGonePage(ltiPlayGone)); return; }
+    // An attempt that has ended takes no answers; a POST to it sends its grade again.
+    if (lp.ended) { await answerEndedAttempt(req, res, id, lp, lp.ended); return; }
+    const current = lp.play.seq.current ? scoForActivity(lp.play.course, lp.play.seq.current.id) : undefined;
+    const step = advanceScormPlay(lp.play, answersFrom(req.body, current?.assessment?.length ?? 0));
+    if (!step.ok) {
+      if (wantsJson(req) || !current) { res.status(step.status).json(step.body); return; }
+      res.status(step.status).type('html').send(renderScoPage({ courseTitle: lp.play.course.title, sco: scoViewForLearner(current) as ScoView, error: String(step.body.error ?? 'That did not go through.') }));
+      return;
+    }
+    const course = { id: lp.play.courseId, title: lp.play.course.title };
+    if (!step.done) {
+      if (wantsJson(req)) { res.json({ kind: 'lti-play', done: false, ...(step.graded ? { graded: step.graded } : {}), course, sco: step.sco, submit: { method: 'POST', href: `${bridgeBaseUrl}/lti/play/${id}` } }); return; }
+      res.type('html').send(renderScoPage({ courseTitle: course.title, sco: step.sco as ScoView, ...(step.graded ? { graded: step.graded } : {}) }));
+      return;
+    }
+    lp.ended = { completed: step.completed, passed: step.passed, score: Number(step.score.toFixed(3)), recordedStatements: step.statementIds.length, ...(step.graded ? { graded: step.graded } : {}) };
+    await answerEndedAttempt(req, res, id, lp, lp.ended);
+  } catch (err) { sendServerError(res, err, 'lti-play'); }
+});
+
+app.post('/agent/lti/launch', async (req, res) => {
+  try {
+    const auth = await verifyDelegatedCaller(req.body);
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
+    // Rate-limit: a launch grows the LMS's grants (capped) and may add a course and a member to its gradebook.
+    const xffL = req.headers['x-forwarded-for'];
+    const ipL = typeof xffL === 'string' ? xffL.split(',').at(-1)!.trim() : Array.isArray(xffL) ? xffL.at(-1)!.trim() : req.ip ?? 'unknown';
+    const rlL = checkAgenticRateLimit(ipL);
+    if (!rlL.ok) { res.status(429).json({ error: `rate limit — retry in ${rlL.retryAfterSeconds}s` }); return; }
+    const courseId = typeof auth.payload.course_id === 'string' ? auth.payload.course_id.trim() : '';
+    if (!courseId) { res.status(400).json({ error: 'course_id is required: a course this bridge\'s SCORM engine grades' }); return; }
+    const course = await resolveCourseForRead(courseId);
+    if (!course) { res.status(404).json({ error: `no course ${courseId} is played on this bridge's SCORM engine` }); return; }
+    const learner = await signedLearner(auth);
+    const start = ltiPlatform.beginLaunch({ sub: learner.did, podUrl: learner.podUrl }, { id: course.courseId, title: course.title });
+    if (!start.ok) { res.status(start.status).json({ error: start.error }); return; }
+    res.json({
+      kind: 'lti-launch', courseId: course.courseId, title: course.title,
+      initiationUrl: start.initiationUrl, expiresAt: start.expiresAt,
+      platform: { issuer: ltiPlatform.issuer, configuration: `${ltiPlatform.issuer}/.well-known/openid-configuration` },
+      context: start.context, resourceLink: start.resourceLink, lineItem: start.lineItem,
+      learner: learner.did, ...(learner.via ? { via: learner.via } : {}), learnerPodUrl: learner.podUrl,
+      gradebook: { affordance: actionUrl('urn:iep:action:foxxi:lti-gradebook-signed'), target: `${bridgeBaseUrl}/agent/lti/gradebook` },
+      note: 'Open initiationUrl once, within five minutes. It is a standard LTI 1.3 launch: the Tool\'s login, this LMS\'s authorization, a signed id_token posted to the Tool, then the course. A client without a browser follows the redirects, asks the authorization step for JSON, posts the form it returns, and plays the course as JSON. When the attempt ends it is in your record, and the Tool posts your grade to this LMS\'s gradebook over AGS.',
+    });
+  } catch (err) { sendServerError(res, err, 'lti-launch-signed'); }
+});
+
+app.post('/agent/lti/gradebook', async (req, res) => {
+  try {
+    const auth = await verifyDelegatedCaller(req.body);
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
+    const learner = await signedLearner(auth);
+    res.json({
+      kind: 'lti-gradebook', platform: ltiPlatform.issuer, context: ltiPlatform.context,
+      learner: learner.did, ...(learner.via ? { via: learner.via } : {}),
+      rows: ltiPlatform.gradebookFor(learner.did),
+    });
+  } catch (err) { sendServerError(res, err, 'lti-gradebook-signed'); }
 });
 
 // PUSH path: a relay (or any observer) POSTs a single context-descriptor for

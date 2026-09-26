@@ -19,6 +19,10 @@
  *   POST /lti/ags/scores               AGS — submit a Score back to the platform
  *   GET  /lti/nrps/members             NRPS — tenant roster, or ?members_url proxy
  *
+ * A resource-link launch goes to the bridge's `onResourceLaunch` first: a launch from Foxxi's own
+ * LMS (lti-platform.ts) opens the course in the SCORM engine, and `postScore` on the returned
+ * handle sends the grade back. Anything the bridge does not take gets the dashboard ticket.
+ *
  * Platforms are registered per-tenant via the
  * `foxxi.register_lti_platform` affordance (issuer, client_id,
  * deployment_id, JWKS url, auth-login url, auth-token url). Multi-tenant
@@ -68,9 +72,36 @@ export interface Lti13Config extends OperatorAuthConfig {
    * Empty = no platforms registered (calls 4xx until at least one is added).
    */
   platformsConfig: string;
+  /** Platforms registered in code rather than env: the bridge's own LMS (lti-platform.ts). After the env rows. */
+  extraPlatforms?: readonly PlatformRegistration[];
+  /**
+   * Takes a verified resource-link launch: where to send the learner, a refusal, or null for the
+   * default hand-off (a signed ticket on the dashboard URL).
+   */
+  onResourceLaunch?: (launch: VerifiedResourceLaunch) => Promise<{ ok: true; redirect: string } | { ok: false; status: number; error: string } | null>;
 }
 
-interface PlatformRegistration {
+/** A resource-link launch whose id_token verified against its platform's keys, with every claim checked. */
+export interface VerifiedResourceLaunch {
+  readonly issuer: string;
+  readonly clientId: string;
+  readonly deploymentId: string;
+  readonly sub: string;
+  readonly roles: readonly string[];
+  readonly context?: Record<string, unknown>;
+  readonly resourceLink?: Record<string, unknown>;
+  readonly custom: Record<string, unknown>;
+  /** The AGS endpoint claim, when the platform offers grade services for this link. */
+  readonly ags?: { readonly scope: readonly string[]; readonly lineitems?: string; readonly lineitem?: string };
+}
+
+/** What attachLti13Routes gives the bridge to call. */
+export interface Lti13Tool {
+  /** Post an AGS Score to a line item of a registered platform, with a token from that platform's token endpoint. */
+  postScore(args: { issuer: string; clientId: string; lineItemUrl: string; score: Record<string, unknown> }): Promise<{ ok: boolean; status: number; error?: string }>;
+}
+
+export interface PlatformRegistration {
   issuer: string;
   client_id: string;
   deployment_id: string;
@@ -88,7 +119,7 @@ function parsePlatforms(s: string): PlatformRegistration[] {
 
 // ── Keypair derivation (ES256) ──────────────────────────────────────
 
-interface Es256Keys {
+export interface Es256Keys {
   privateKey: ReturnType<typeof createPrivateKey>;
   publicKey: ReturnType<typeof createPublicKey>;
   /** Public key as JWK (JSON Web Key per RFC 7517). */
@@ -120,25 +151,25 @@ function deriveKeys(seed: string): Es256Keys {
   // node:crypto generateKeyPair lacks a seedable variant. Use a deterministic
   // PEM if one is provided via env (FOXXI_LTI_PRIVATE_KEY_PEM); otherwise
   // generate fresh and remember it process-wide.
-  const pem = process.env.FOXXI_LTI_PRIVATE_KEY_PEM?.replace(/\\n/g, '\n');
-  let privateKey: ReturnType<typeof createPrivateKey>;
-  if (pem) {
-    privateKey = createPrivateKey({ key: pem, format: 'pem' });
-  } else {
-    const { privateKey: pk } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
-    privateKey = pk;
-  }
+  const out = es256Keys('foxxi-lti', seed, process.env.FOXXI_LTI_PRIVATE_KEY_PEM?.replace(/\\n/g, '\n'));
+  _cachedKeys = out;
+  _cachedSeed = seed;
+  return out;
+}
+
+/** An ES256 keypair from a PEM, or a fresh one; the kid is `<prefix>-` and a hash of the seed and the public key. */
+export function es256Keys(kidPrefix: string, seed: string, pem?: string): Es256Keys {
+  const privateKey = pem
+    ? createPrivateKey({ key: pem, format: 'pem' })
+    : generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey;
   const publicKey = createPublicKey(privateKey);
   const jwkRaw = publicKey.export({ format: 'jwk' }) as { kty: 'EC'; crv: 'P-256'; x: string; y: string };
-  const kid = `foxxi-lti-${createHash('sha256').update(`${seed}:${jwkRaw.x}:${jwkRaw.y}`).digest('hex').slice(0, 16)}`;
-  const out: Es256Keys = {
+  const kid = `${kidPrefix}-${createHash('sha256').update(`${seed}:${jwkRaw.x}:${jwkRaw.y}`).digest('hex').slice(0, 16)}`;
+  return {
     privateKey,
     publicKey,
     jwk: { ...jwkRaw, use: 'sig', alg: 'ES256', kid },
   };
-  _cachedKeys = out;
-  _cachedSeed = seed;
-  return out;
 }
 
 // ── JWS sign / verify ───────────────────────────────────────────────
@@ -154,7 +185,7 @@ function base64urlDecode(s: string): Buffer {
   return Buffer.from(s.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
 }
 
-function jwsSignEs256(header: Record<string, unknown>, payload: Record<string, unknown>, keys: Es256Keys): string {
+export function jwsSignEs256(header: Record<string, unknown>, payload: Record<string, unknown>, keys: Es256Keys): string {
   const h = base64url(JSON.stringify({ ...header, alg: 'ES256', typ: 'JWT', kid: keys.jwk.kid }));
   const p = base64url(JSON.stringify(payload));
   const signingInput = `${h}.${p}`;
@@ -187,7 +218,7 @@ interface VerifyResult {
   error?: string;
 }
 
-async function jwsVerifyRs256OrEs256(jwt: string, jwksUrl: string): Promise<VerifyResult> {
+export async function jwsVerifyRs256OrEs256(jwt: string, jwksUrl: string): Promise<VerifyResult> {
   const parts = jwt.split('.');
   if (parts.length !== 3) return { ok: false, error: 'malformed JWT' };
   const headerRaw = base64urlDecode(parts[0]!).toString('utf8');
@@ -277,7 +308,7 @@ function consumeLoginState(state: string): LoginState | undefined {
 
 // ── LTI 1.3 standard claim IRIs ─────────────────────────────────────
 
-const LTI_CLAIMS = {
+export const LTI_CLAIMS = {
   messageType: 'https://purl.imsglobal.org/spec/lti/claim/message_type',
   version: 'https://purl.imsglobal.org/spec/lti/claim/version',
   deploymentId: 'https://purl.imsglobal.org/spec/lti/claim/deployment_id',
@@ -296,7 +327,7 @@ const LTI_CLAIMS = {
 
 // ── AGS / NRPS scopes + LIS role IRIs ───────────────────────────────
 
-const AGS_SCOPE = {
+export const AGS_SCOPE = {
   lineItem: 'https://purl.imsglobal.org/spec/lti-ags/scope/lineitem',
   score: 'https://purl.imsglobal.org/spec/lti-ags/scope/score',
   result: 'https://purl.imsglobal.org/spec/lti-ags/scope/result.readonly',
@@ -496,9 +527,28 @@ function platformFetchTargetOk(rawUrl: string, platform: PlatformRegistration):
 
 // ── Route attachment ────────────────────────────────────────────────
 
-export function attachLti13Routes(app: Express, config: Lti13Config): void {
-  const platforms = parsePlatforms(config.platformsConfig);
+export function attachLti13Routes(app: Express, config: Lti13Config): Lti13Tool {
+  // Env rows first, so `platforms[0]` stays the operator's first registered LMS.
+  const platforms = [...parsePlatforms(config.platformsConfig), ...(config.extraPlatforms ?? [])];
   const keys = deriveKeys(config.keySeed);
+
+  /** Post a Score to a platform's line item: the URL held to the platform's own hosts, the token from its token endpoint. */
+  const sendScore = async (platform: PlatformRegistration, lineItemUrl: string, score: Record<string, unknown>):
+    Promise<{ kind: 'rejected'; error: string } | { kind: 'no-token'; status: number; error: string } | { kind: 'posted'; ok: boolean; status: number }> => {
+    const guard = platformFetchTargetOk(lineItemUrl, platform);
+    if (!guard.ok) return { kind: 'rejected', error: guard.error };
+    const tok = await platformToken(platform, AGS_SCOPE.score, keys);
+    if (!tok.ok) return { kind: 'no-token', status: tok.status, error: tok.error };
+    const scorePost = await safeFetch(`${guard.url.replace(/\/$/, '')}/scores`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/vnd.ims.lis.v1.score+json',
+        'Authorization': `Bearer ${tok.token}`,
+      },
+      body: JSON.stringify(score),
+    });
+    return { kind: 'posted', ok: scorePost.ok, status: scorePost.status };
+  };
   // The global JSON parser does not cover `application/x-www-form-urlencoded`
   // bodies — and an OIDC/LTI form-post arrives exactly that way. Apply a
   // route-scoped urlencoded parser to every form-post endpoint.
@@ -628,10 +678,31 @@ export function attachLti13Routes(app: Express, config: Lti13Config): void {
       return;
     }
 
-    // LtiResourceLinkRequest — an authentic content launch. Build a
-    // launch context the dashboard reads on next page load, signed as a
-    // short-lived ticket passed on the redirect URL; the dashboard
-    // exchanges it for a session.
+    // LtiResourceLinkRequest — an authentic content launch. The bridge
+    // may take it (the course the link names, for the learner the
+    // platform vouches for); otherwise build a launch context the
+    // dashboard reads on next page load, signed as a short-lived ticket
+    // passed on the redirect URL.
+    if (config.onResourceLaunch) {
+      const agsClaim = p[LTI_CLAIMS.ags] as { scope?: unknown; lineitems?: unknown; lineitem?: unknown } | undefined;
+      const taken = await config.onResourceLaunch({
+        issuer: platform.issuer,
+        clientId: platform.client_id,
+        deploymentId: platform.deployment_id,
+        sub: typeof p.sub === 'string' ? p.sub : '',
+        roles: Array.isArray(p[LTI_CLAIMS.roles]) ? (p[LTI_CLAIMS.roles] as unknown[]).filter((r): r is string => typeof r === 'string') : [],
+        ...(p[LTI_CLAIMS.context] && typeof p[LTI_CLAIMS.context] === 'object' ? { context: p[LTI_CLAIMS.context] as Record<string, unknown> } : {}),
+        ...(p[LTI_CLAIMS.resourceLink] && typeof p[LTI_CLAIMS.resourceLink] === 'object' ? { resourceLink: p[LTI_CLAIMS.resourceLink] as Record<string, unknown> } : {}),
+        custom: (p[LTI_CLAIMS.custom] && typeof p[LTI_CLAIMS.custom] === 'object' ? p[LTI_CLAIMS.custom] : {}) as Record<string, unknown>,
+        ...(agsClaim && typeof agsClaim === 'object' ? { ags: {
+          scope: Array.isArray(agsClaim.scope) ? agsClaim.scope.filter((s): s is string => typeof s === 'string') : [],
+          ...(typeof agsClaim.lineitems === 'string' ? { lineitems: agsClaim.lineitems } : {}),
+          ...(typeof agsClaim.lineitem === 'string' ? { lineitem: agsClaim.lineitem } : {}),
+        } } : {}),
+      });
+      if (taken?.ok) { res.redirect(302, taken.redirect); return; }
+      if (taken) { res.status(taken.status).json({ error: taken.error }); return; }
+    }
     const ticketJson = signTicket({
       iss: platform.issuer,
       sub: p.sub,
@@ -900,20 +971,10 @@ ${courseItems || '<p><em>No cmi5 courses registered yet — the generic Foxxi li
     if (!lineItemUrl || !score) { res.status(400).json({ error: 'lineItemUrl + score required' }); return; }
     const platform = platforms[0];
     if (!platform) { res.status(400).json({ error: 'no LTI platforms registered' }); return; }
-    const guard = platformFetchTargetOk(lineItemUrl, platform);
-    if (!guard.ok) { res.status(400).json({ error: `lineItemUrl rejected: ${guard.error}` }); return; }
-    const tok = await platformToken(platform, AGS_SCOPE.score, keys);
-    if (!tok.ok) { res.status(tok.status).json({ error: tok.error }); return; }
-    const scoreUrl = `${guard.url.replace(/\/$/, '')}/scores`;
-    const scorePost = await safeFetch(scoreUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/vnd.ims.lis.v1.score+json',
-        'Authorization': `Bearer ${tok.token}`,
-      },
-      body: JSON.stringify(score),
-    });
-    res.status(scorePost.status).json({ ok: scorePost.ok, status: scorePost.status });
+    const sent = await sendScore(platform, lineItemUrl, score);
+    if (sent.kind === 'rejected') { res.status(400).json({ error: `lineItemUrl rejected: ${sent.error}` }); return; }
+    if (sent.kind === 'no-token') { res.status(sent.status).json({ error: sent.error }); return; }
+    res.status(sent.status).json({ ok: sent.ok, status: sent.status });
   })().catch(err => { sendServerError(res, err, 'lti13'); }); });
 
   // (7) NRPS — Names and Role Provisioning Service 2.0 (IMS-LTI-NRPS-2).
@@ -963,4 +1024,15 @@ ${courseItems || '<p><em>No cmi5 courses registered yet — the generic Foxxi li
       members,
     }));
   })().catch(err => { sendServerError(res, err, 'lti13'); }); });
+
+  return {
+    async postScore({ issuer, clientId, lineItemUrl, score }) {
+      const platform = platforms.find(pl => pl.issuer === issuer && pl.client_id === clientId);
+      if (!platform) return { ok: false, status: 400, error: 'no registered platform has that issuer and client_id' };
+      const sent = await sendScore(platform, lineItemUrl, score);
+      if (sent.kind === 'rejected') return { ok: false, status: 400, error: `line item URL rejected: ${sent.error}` };
+      if (sent.kind === 'no-token') return { ok: false, status: sent.status, error: sent.error };
+      return sent.ok ? { ok: true, status: sent.status } : { ok: false, status: sent.status, error: `the platform answered ${sent.status}` };
+    },
+  };
 }

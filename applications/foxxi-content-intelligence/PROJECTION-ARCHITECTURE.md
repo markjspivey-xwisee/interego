@@ -122,6 +122,7 @@ same seven-facet shape.
 | SCORM 2004 SeqSession             | `pod-snapshot`     | `foxxi:ScormTenantSnapshot`           | per-surface   |
 | cmi5 launches + AU satisfaction   | `pod-snapshot`     | `foxxi:Cmi5TenantSnapshot`            | per-surface   |
 | LTI 1.3 line items                | `pod-snapshot`     | `foxxi:LtiTenantSnapshot`             | per-surface   |
+| LTI 1.3 Platform gradebook        | `pod-snapshot`     | `foxxi:LtiPlatformSnapshot`           | per-surface   |
 | OneRoster imported overlay        | `pod-snapshot`     | `foxxi:OneRosterSnapshot`             | per-surface   |
 | Agent trajectories                | `pod-snapshot`     | `foxxi:AgentTrajectorySnapshot`       | per-surface (dirty-triggered) |
 | Performance probes                | `pod-snapshot`     | `foxxi:PerformanceProbeSnapshot`      | per-surface (dirty-triggered) |
