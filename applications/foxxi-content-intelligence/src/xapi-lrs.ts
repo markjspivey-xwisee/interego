@@ -335,6 +335,24 @@ function strayFromRegistration(req: Request, batch: readonly Record<string, unkn
 const OUTSIDE_LAUNCH = 'a cmi5 auth-token reads and writes only its own launch: context.registration must be the registration it was minted for';
 
 /**
+ * The first statement in a batch that voids another launch's statement, or -1. A voiding statement
+ * can carry its own launch's registration and still name a StatementRef from another launch, and
+ * voiding marks that target: so a registration-bound bearer may void only its own launch's statements.
+ */
+async function voidsOutsideRegistration(req: Request, batch: readonly Record<string, unknown>[]): Promise<number> {
+  const reg = boundRegistration(req);
+  if (reg === undefined) return -1;
+  const store = statementStores.for(tenantOf(req));
+  for (let i = 0; i < batch.length; i++) {
+    const target = isVoidingStatement(batch[i]!);
+    if (!target) continue;
+    const existing = await store.get(target);
+    if (existing && registrationOfStatement(existing.statement) !== reg) return i;
+  }
+  return -1;
+}
+
+/**
  * The single gate on every LRS resource. Order matters and is
  * conformance-driven:
  *   1. `X-Experience-API-Version` MUST be present and a value the LRS
@@ -675,6 +693,8 @@ async function handlePostStatements(req: Request, res: Response, config: XapiLrs
   }
   const stray = strayFromRegistration(req, batch);
   if (stray >= 0) { res.status(403).json({ error: `statement[${stray}]: ${OUTSIDE_LAUNCH}` }); return; }
+  const voidsAnother = await voidsOutsideRegistration(req, batch);
+  if (voidsAnother >= 0) { res.status(403).json({ error: `statement[${voidsAnother}] voids a statement of another launch: ${OUTSIDE_LAUNCH}` }); return; }
 
   // §4.1.11: every multipart attachment part MUST be referenced by an
   // attachment in the Statements — excess parts are rejected.
@@ -873,6 +893,7 @@ async function handlePutStatement(req: Request, res: Response, config: XapiLrsCo
   const attachErr = checkStatementAttachments(stmt, multipartParts);
   if (attachErr) { res.status(400).json({ error: attachErr }); return; }
   if (strayFromRegistration(req, [stmt]) >= 0) { res.status(403).json({ error: OUTSIDE_LAUNCH }); return; }
+  if (await voidsOutsideRegistration(req, [stmt]) >= 0) { res.status(403).json({ error: `it voids a statement of another launch: ${OUTSIDE_LAUNCH}` }); return; }
   if (multipartParts) {
     const referenced = collectAttachmentHashes([stmt]);
     for (const hash of multipartParts.keys()) {
@@ -1342,6 +1363,11 @@ function handleDocResource(
   const scopePrefix = kind === 'state'
     ? `${q.activityId ?? ''}::${q.agent ?? ''}`
     : `${(kind === 'activityProfile' ? q.activityId : q.agent) ?? ''}`;
+  // ★ A State context is Activity + Agent, AND the registration when one is given (xAPI State
+  // Resource: multiple-document GET and DELETE). A State key ends in its registration, so the
+  // prefix alone let a DELETE for one registration erase every other launch's State of the same AU.
+  const inScope = (k: string): boolean => k.startsWith(`${scopePrefix}::`)
+    && (kind !== 'state' || q.registration === undefined || k.endsWith(`::${q.registration}`));
 
   // ── GET / HEAD ──────────────────────────────────────────────────
   if (method === 'GET') {
@@ -1349,7 +1375,7 @@ function handleDocResource(
       // Multiple-document GET — return the array of document ids in scope.
       const since = q.since ? Date.parse(q.since) : NaN;
       const ids = [...resourceStore.entries()]
-        .filter(([k]) => k.startsWith(`${scopePrefix}::`))
+        .filter(([k]) => inScope(k))
         .filter(([, v]) => Number.isNaN(since) || Date.parse(v.updated) > since)
         .map(([k]) => k.slice(scopePrefix.length + 2).split('::')[0]);
       res.status(200).json(ids);
@@ -1441,7 +1467,7 @@ function handleDocResource(
       resourceStore.delete(key);
     } else {
       for (const k of Array.from(resourceStore.keys())) {
-        if (k.startsWith(`${scopePrefix}::`)) resourceStore.delete(k);
+        if (inScope(k)) resourceStore.delete(k);
       }
     }
     xapiDocsPodDirty();

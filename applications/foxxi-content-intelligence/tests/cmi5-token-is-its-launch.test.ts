@@ -14,7 +14,7 @@ import { randomUUID } from 'node:crypto';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { IRI } from '@interego/core';
-import { buildCmi5Launch, cmi5BearerRegistration, cmi5BearerTenant, redeemFetchToken, signedLaunchLearner } from '../src/cmi5-lms.js';
+import { buildCmi5Launch, cmi5BearerRegistration, cmi5BearerTenant, redeemFetchToken, signedLaunchLearner, stageLaunchData } from '../src/cmi5-lms.js';
 import { attachXapiLrsRoutes } from '../src/xapi-lrs.js';
 import type { TenantId } from '../src/tenant-context.js';
 
@@ -34,6 +34,9 @@ const redeem = (fetchToken: string): string => {
 };
 const tokenA = redeem(A.fetchToken);
 const tokenB = redeem(B.fetchToken);
+/** A second launch of A's AU: same activity, same actor, another registration. */
+const C = launch(1);
+const tokenC = redeem(C.fetchToken);
 
 let server: Server;
 let base = '';
@@ -99,6 +102,34 @@ describe('a cmi5 auth-token is bound to its launch', () => {
     expect((await state(tokenA, B.registration)).status).toBe(403);
     expect((await state(tokenA)).status).toBe(403);
     expect((await state(tokenA, A.registration)).status).not.toBe(403);
+  });
+
+  it('voids only its own launch\'s statements (the review of #485)', async () => {
+    const mine = statement(A.registration, 'completed');
+    expect((await post(tokenA, mine)).status).toBe(200);
+    const voiding = (registration: string) => ({ id: randomUUID(), actor: A.actor, verb: { id: 'http://adlnet.gov/expapi/verbs/voided' }, object: { objectType: 'StatementRef', id: mine.id }, context: { registration } });
+    // B's own registration on the voiding statement, A's statement as its target: refused.
+    expect((await post(tokenB, voiding(B.registration))).status).toBe(403);
+    expect((await get(tokenA, `statementId=${mine.id}`)).status).toBe(200);
+    expect((await post(tokenA, voiding(A.registration))).status).toBe(200);
+    expect((await get(tokenA, `statementId=${mine.id}`)).status).toBe(404);
+  });
+
+  it('deletes and lists only its own launch\'s State, even for a relaunch of the same AU (the review of #485)', async () => {
+    stageLaunchData(tenant, A, au(1).id);
+    stageLaunchData(tenant, C, au(1).id);
+    const scope = (token: string, registration: string, method = 'GET') => {
+      const u = new URL(`${base}/xapi/activities/state`);
+      u.searchParams.set('activityId', new URL(A.launchUrl).searchParams.get('activityId') ?? '');
+      u.searchParams.set('agent', JSON.stringify(A.actor));
+      u.searchParams.set('registration', registration);
+      return fetch(u, { method, headers: headers(token) });
+    };
+    expect(await (await scope(tokenC, C.registration)).json()).toEqual(['LMS.LaunchData']);
+    expect((await scope(tokenA, A.registration, 'DELETE')).status).toBe(204);
+    expect(await (await scope(tokenA, A.registration)).json()).toEqual([]);
+    // C's State for the same AU and actor is still there.
+    expect(await (await scope(tokenC, C.registration)).json()).toEqual(['LMS.LaunchData']);
   });
 
   it('keeps the launch\'s whole actor for the pod: its type and both account fields', () => {
