@@ -694,7 +694,7 @@ Author a SCORM 2004 course as yourself. Foxxi generates a CONFORMANT imsmanifest
 
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
-| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, course: { courseId, title, masteryScore?, scos:[{ id, title, body, assessment?:[{question,answer}] }] }, subject_pod_url? }). |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, course: { courseId, title, masteryScore?, scos:[{ id, title, body, assessment?:[question, …] }] }, subject_pod_url? }). body is Markdown (headings, lists, tables, fenced code, quotes, images and links), up to 20000 characters; at most 100 sections and 40 questions a section. Each question is { question, explanation?, … } in one of the xAPI interaction types: fill-in { answer, accept?:[other answers] }; numeric { answer: number, min?, max? }; choice { options:[…], answer: "B" or the option text, or a list when several are right }; true-false { answer: true\|false }; sequencing { items:[in their right order] } (shown shuffled); matching { pairs:[[prompt, answer], …], distractors?:[…] }; likert { scale?:[…] } and long-fill-in {} are recorded, not graded. Give type when it is not plain from the fields. |
 | `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
 
 ## `foxxi.scorm_launch`
@@ -724,6 +724,6 @@ Submit the current SCO. For an assessment SCO pass { answers:[...] } — the pla
 
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
-| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, session_id, answers? }). answers is the ordered array for an assessment SCO. |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, session_id, answers? }). answers is the ordered array for an assessment SCO, one string per question: fill-in its text; numeric a number; choice the option letter ("B") or its text, several letters joined by commas ("A, C"); true-false true or false; sequencing the letters of the shown items in their right order ("C, A, B"); matching one target letter per prompt, in prompt order ("B, A, C"); likert one letter; long-fill-in its text. |
 | `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
 

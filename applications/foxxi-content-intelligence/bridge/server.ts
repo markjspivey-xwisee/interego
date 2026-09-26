@@ -194,8 +194,10 @@ import { recoverSignedRequest } from '../src/auth.js';
 import { makeWalletDelegationVerifier, parseTrig, TENANT_ADMIN_CAPABILITY, pgslNodeKind, pgslNodeHash, actionUrl, ownPodSegment } from '@interego/core';
 import { proveCompetency } from '../src/competency-proof.js';
 import { courseIri, courseIdOf, sameCourse } from '../src/course-identity.js';
-import { attachAgentScormArtifacts, scormArtifactLinks, scormArtifactManifest, hashScormAnswer } from '../src/scorm-artifacts.js';
-import { inferScormAnswerInput, scormAnswerCandidates, validateScormResponses, type ScormAnswerInput, type ScormAssessmentQuestion } from '../src/scorm-assessment.js';
+import { attachAgentScormArtifacts, scormArtifactLinks, scormArtifactManifest } from '../src/scorm-artifacts.js';
+import { validateScormResponses, type ScormAssessmentQuestion } from '../src/scorm-assessment.js';
+import { authorQuestion, questionForLearner, questionIsRight, QuestionError } from '../src/course-questions.js';
+import { courseMarkdownHtml } from '../src/course-markdown.js';
 import { competencyIri, competencyIriForTerm, competencyIdOf } from '../src/competency-identity.js';
 import { activityIri, ACTIVITY_DEFINITIONS } from '../src/activity-identity.js';
 import { FOXXI_NS } from '../src/foxxi-vocab.js';
@@ -9582,6 +9584,8 @@ interface ScormPlay {
   xapiContext?: { platform: string; grouping: Array<Record<string, unknown>> };
 }
 const agentScormCourses = new Map<string, AgentScormCourse>();
+/** How large an authored course may be: sections, questions in a section, and characters of a section's text. */
+const COURSE_LIMITS = { sections: 100, questions: 40, body: 20_000 } as const;
 /** Cap the agent-authored SCORM course cache (+ its parallel courseAuthors map) — a signed
  *  wallet looping /agent/scorm/author with distinct courseIds + large scos[] would otherwise
  *  grow both maps without limit (round-38 DoS). Evict oldest past the cap. */
@@ -9615,11 +9619,15 @@ function scoForActivity(course: AgentScormCourse, activityId: string | undefined
   if (!activityId) return undefined;
   return course.scos.find(s => `ITEM-${scormSlug(s.id)}` === activityId);
 }
+/**
+ * A SCO as a learner sees it: its Markdown (what an agent reads) and that Markdown rendered
+ * safely (what a page shows), and each question's type and what to choose from. Never a
+ * verifier, salt or explanation; an explanation comes back with the grade.
+ */
 function scoViewForLearner(sco: AgentScormSco | undefined): unknown {
   if (!sco) return null;
-  return { id: sco.id, title: sco.title, body: sco.body, ...(sco.assessment?.length ? { assessment: sco.assessment.map((q, i) => ({ index: i, question: q.question, ...(q.input ? { input: q.input } : {}) })) } : {}) };
+  return { id: sco.id, title: sco.title, body: sco.body, bodyHtml: courseMarkdownHtml(sco.body), ...(sco.assessment?.length ? { assessment: sco.assessment.map((q, i) => questionForLearner(q, i)) } : {}) };
 }
-function hashAnswer(s: string, input?: ScormAnswerInput): string { return hashScormAnswer(s, input); }
 /** Record a first-class AGENT ACTIVITY (a teacher/author/issuer act) into the
  *  actor's OWN lens + durable pod, with an EXPRESSIVE verb. Unlike record-
  *  performance (verb=performed → ELR performance rollup), this carries a distinct
@@ -10385,25 +10393,36 @@ app.post('/agent/scorm/author', async (req, res) => {
       res.status(400).json({ error: 'course { courseId, title, masteryScore?, scos:[{ id, title, body, assessment? }] } required' }); return;
     }
     let course: AgentScormCourse;
-    try { course = {
-      courseId: String(c.courseId), title: String(c.title ?? c.courseId),
-      masteryScore: typeof c.masteryScore === 'number' ? c.masteryScore : 0.7,
-      scos: (c.scos as Array<{ id: unknown; title?: unknown; body?: unknown; assessment?: Array<{ question: unknown; answer?: unknown; answerHash?: unknown; input?: ScormAnswerInput }> }>).map(s => ({
-        id: String(s.id), title: String(s.title ?? s.id), body: String(s.body ?? ''),
-        // Hash answers at author time — plaintext never touches the Map or the pod.
-        // Accept an already-hashed answerHash (a course loaded from a pod re-authored).
-        ...(Array.isArray(s.assessment) ? { assessment: s.assessment.map(q => {
-          const input = q.input ?? (typeof q.answer === 'string' ? inferScormAnswerInput(q.answer) : undefined);
-          return { question: String(q.question),
-            answerHash: typeof q.answerHash === 'string' && q.answerHash ? q.answerHash : hashAnswer(String(q.answer ?? ''), input),
-            ...(input ? { input } : {}),
+    try {
+      if (c.scos.length > COURSE_LIMITS.sections) throw new QuestionError(`a course has at most ${COURSE_LIMITS.sections} sections`);
+      course = {
+        courseId: String(c.courseId), title: String(c.title ?? c.courseId),
+        masteryScore: typeof c.masteryScore === 'number' ? c.masteryScore : 0.7,
+        scos: (c.scos as Array<{ id: unknown; title?: unknown; body?: unknown; assessment?: unknown }>).map((s, si) => {
+          const body = String(s.body ?? '');
+          if (body.length > COURSE_LIMITS.body) throw new QuestionError(`section ${si + 1} is longer than ${COURSE_LIMITS.body} characters`);
+          if (s.assessment !== undefined && !Array.isArray(s.assessment)) throw new QuestionError(`section ${si + 1}: assessment must be an array of questions`);
+          const asked = (s.assessment ?? []) as unknown[];
+          if (asked.length > COURSE_LIMITS.questions) throw new QuestionError(`section ${si + 1} has more than ${COURSE_LIMITS.questions} questions`);
+          return {
+            id: String(s.id), title: String(s.title ?? s.id), body,
+            // Hash answers at author time — plaintext never touches the Map or the pod. Each
+            // question is authored in its xAPI interaction type (src/course-questions.ts); an
+            // already-hashed question (a course loaded from a pod re-authored) is kept as it is.
+            ...(asked.length ? { assessment: asked.map((q, qi) => {
+              try { return authorQuestion(q, `${String(c.courseId)}\n${String(s.id)}\n${qi}`); }
+              catch (e) { throw e instanceof QuestionError ? new QuestionError(`section ${si + 1}, question ${qi + 1}: ${e.message}`) : e; }
+            }) } : {}),
           };
-        }) } : {}),
-      })),
-      authoredBy: auth.callerDid,
-    };
-    parseManifest(buildAgentScormManifest(course)); }
-    catch (e) { res.status(400).json({ error: `generated SCORM manifest did not parse on the SN runtime: ${(e as Error).message}` }); return; }
+        }),
+        authoredBy: auth.callerDid,
+      };
+      parseManifest(buildAgentScormManifest(course));
+    }
+    catch (e) {
+      res.status(400).json({ error: e instanceof QuestionError ? `course not authored: ${e.message}` : `generated SCORM manifest did not parse on the SN runtime: ${(e as Error).message}` });
+      return;
+    }
     // FIRST-AUTHOR LOCK (round-40 blocker): the global course cache is keyed by courseId,
     // so a wallet re-authoring another agent's courseId would overwrite the content AND
     // reassign courseAuthors → attacker (content-substitution + attribution takeover served
@@ -10550,21 +10569,29 @@ function advanceScormPlay(play: ScormPlay, answersGiven: unknown): ScormStep {
     }
     const answers = answersGiven as string[];
     let correct = 0;
+    let gradedCount = 0;
+    // Each reply is checked against its verifier as the question's type reads it (questionIsRight);
+    // a likert or long-fill-in is recorded, with no grade. An explanation comes back with the grade.
     const detail = sco.assessment.map((item, i) => {
       const raw = answers[i]!;
-      const ok = scormAnswerCandidates(raw, item.input).some(candidate => hashAnswer(candidate) === item.answerHash);
-      if (ok) correct++;
-      return { question: item.question, your: raw, correct: ok };
+      const ok = questionIsRight(raw, item);
+      if (ok !== null) { gradedCount++; if (ok) correct++; }
+      return { question: item.question, your: raw, correct: ok, ...(item.explanation ? { explanation: item.explanation } : {}) };
     });
-    const score = correct / sco.assessment.length;
-    // masteryScore may be authored on either scale: a 0-1 fraction (the 0.7
-    // default / cmi5) or a 0-100 percentage (e.g. 80). Normalize the
-    // threshold by magnitude before comparing, so a percentage author does
-    // not make a perfect 0-1 score (1.0) fail against 80. No-op for [0,1].
-    const threshold = play.masteryScore > 1 ? play.masteryScore / 100 : play.masteryScore;
-    const passed = score >= threshold;
-    update = { completion: 'completed', success: passed ? 'passed' : 'failed', scoreScaled: score };
-    graded = { score: Number(score.toFixed(3)), correct, total: sco.assessment.length, passed, detail };
+    if (gradedCount > 0) {
+      const score = correct / gradedCount;
+      // masteryScore may be authored on either scale: a 0-1 fraction (the 0.7
+      // default / cmi5) or a 0-100 percentage (e.g. 80). Normalize the
+      // threshold by magnitude before comparing, so a percentage author does
+      // not make a perfect 0-1 score (1.0) fail against 80. No-op for [0,1].
+      const threshold = play.masteryScore > 1 ? play.masteryScore / 100 : play.masteryScore;
+      const passed = score >= threshold;
+      update = { completion: 'completed', success: passed ? 'passed' : 'failed', scoreScaled: score };
+      graded = { score: Number(score.toFixed(3)), correct, total: gradedCount, passed, detail };
+    } else {
+      // Nothing here grades: the section completes, as one without questions does.
+      graded = { score: 0, correct: 0, total: 0, passed: true, detail };
+    }
   }
   commitTracking(play.seq, update);
   const nav = processNavigation(play.seq, 'continue');
@@ -10706,7 +10733,7 @@ app.post('/lti/play/:id', express.urlencoded({ extended: false, limit: '64kb' })
     // An attempt that has ended takes no answers; a POST to it sends its grade again.
     if (lp.ended) { await answerEndedAttempt(req, res, id, lp, lp.ended); return; }
     const current = lp.play.seq.current ? scoForActivity(lp.play.course, lp.play.seq.current.id) : undefined;
-    const step = advanceScormPlay(lp.play, answersFrom(req.body, current?.assessment?.length ?? 0));
+    const step = advanceScormPlay(lp.play, answersFrom(req.body, current?.assessment?.map((q, i) => questionForLearner(q, i)) ?? 0));
     if (!step.ok) {
       if (wantsJson(req) || !current) { res.status(step.status).json(step.body); return; }
       res.status(step.status).type('html').send(renderScoPage({ courseTitle: lp.play.course.title, sco: scoViewForLearner(current) as ScoView, error: String(step.body.error ?? 'That did not go through.') }));

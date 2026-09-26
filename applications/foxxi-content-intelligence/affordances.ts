@@ -1264,7 +1264,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     externallyRouted: true,
     annotations: { title: 'Author a SCORM course', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
-      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, course: { courseId, title, masteryScore?, scos:[{ id, title, body, assessment?:[{question,answer}] }] }, subject_pod_url? }).' },
+      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, course: { courseId, title, masteryScore?, scos:[{ id, title, body, assessment?:[question, …] }] }, subject_pod_url? }). body is Markdown (headings, lists, tables, fenced code, quotes, images and links), up to 20000 characters; at most 100 sections and 40 questions a section. Each question is { question, explanation?, … } in one of the xAPI interaction types: fill-in { answer, accept?:[other answers] }; numeric { answer: number, min?, max? }; choice { options:[…], answer: "B" or the option text, or a list when several are right }; true-false { answer: true|false }; sequencing { items:[in their right order] } (shown shuffled); matching { pairs:[[prompt, answer], …], distractors?:[…] }; likert { scale?:[…] } and long-fill-in {} are recorded, not graded. Give type when it is not plain from the fields.' },
       { name: '_signature', type: 'string', required: true, description: 'sign_request signature (secp256k1 over sha256 of _signed_payload).' },
     ],
     appliesTo: { collections: ['courses', 'profiles'] },
@@ -1308,7 +1308,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
         sessionId: { type: 'string', description: 'SCORM play session id — pass to /agent/scorm/submit.' },
         launchedBy: { type: 'string', description: 'Caller DID.' },
         course: { type: 'object', description: '{ id, title }.', additionalProperties: true },
-        sco: { type: 'object', description: 'The delivered SCO view (content + assessment questions, answers withheld).', additionalProperties: true },
+        sco: { type: 'object', description: 'The delivered SCO view: body (Markdown), bodyHtml (its safe rendering), and assessment questions { index, question, type, input: { options | items | targets | min/max }, graded } with answers withheld.', additionalProperties: true },
         sequencingEnded: { type: 'boolean' },
         instruction: { type: 'string', description: 'How to proceed.' },
       },
@@ -1327,7 +1327,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     externallyRouted: true,
     annotations: { title: 'Submit a SCORM SCO', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     inputs: [
-      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, session_id, answers? }). answers is the ordered array for an assessment SCO.' },
+      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, session_id, answers? }). answers is the ordered array for an assessment SCO, one string per question: fill-in its text; numeric a number; choice the option letter ("B") or its text, several letters joined by commas ("A, C"); true-false true or false; sequencing the letters of the shown items in their right order ("C, A, B"); matching one target letter per prompt, in prompt order ("B, A, C"); likert one letter; long-fill-in its text.' },
       { name: '_signature', type: 'string', required: true, description: 'sign_request signature (secp256k1 over sha256 of _signed_payload).' },
     ],
     appliesTo: { collections: ['courses', 'profiles'] },
@@ -1336,7 +1336,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
       properties: {
         ok: { type: 'boolean' },
         done: { type: 'boolean', description: 'True when sequencing ended (final outcome present).' },
-        graded: { type: 'object', description: 'Assessment grading { score, correct, total, passed, detail } (for an assessment SCO).', additionalProperties: true },
+        graded: { type: 'object', description: 'Assessment grading { score, correct, total, passed, detail:[{ question, your, correct (null when not graded), explanation? }] } (for an assessment SCO).', additionalProperties: true },
         sco: { type: 'object', description: 'The next delivered SCO view (when done:false).', additionalProperties: true },
         course: { type: 'object', description: '{ id, title } (when done:true).', additionalProperties: true },
         completed: { type: 'boolean', description: 'Engine rollup completion (when done:true).' },

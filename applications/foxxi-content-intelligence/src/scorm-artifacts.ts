@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto';
 import AdmZip from 'adm-zip';
 import type { Express } from 'express';
 import { normalizeScormAnswer, scormAnswerCandidates, scormAssessmentScript, type ScormAnswerInput, type ScormAssessmentQuestion } from './scorm-assessment.js';
+import { checkStoredInput } from './course-questions.js';
+import { courseMarkdownHtml } from './course-markdown.js';
 export { normalizeScormAnswer } from './scorm-assessment.js';
 
 export interface ScormArtifactSco {
@@ -33,13 +35,14 @@ export function validateScormArtifacts(course: ScormArtifactCourse): void {
     if (files.has(file)) throw new Error(`SCO identifiers collide at ${file}.`);
     files.add(file);
     for (const q of sco.assessment ?? []) {
-      if (!q.question || !/^[0-9a-f]{64}$/.test(q.answerHash)) throw new Error('An assessment question requires a SHA-256 answer verifier.');
-      if (q.input) {
-        if (!['text', 'integer', 'number'].includes(q.input.type)) throw new Error('Invalid assessment input type.');
-        for (const bound of [q.input.min, q.input.max]) if (bound !== undefined && (!Number.isFinite(bound) || (q.input.type === 'integer' && !Number.isSafeInteger(bound)))) throw new Error('Invalid assessment input bounds.');
-        if (q.input.type === 'text' && (q.input.min !== undefined || q.input.max !== undefined)) throw new Error('Text inputs cannot have numeric bounds.');
-        if (q.input.min !== undefined && q.input.max !== undefined && q.input.min > q.input.max) throw new Error('Assessment minimum exceeds maximum.');
+      if (!q.question) throw new Error('An assessment question requires its text.');
+      checkStoredInput(q.input);
+      const ungraded = q.input?.type === 'likert' || q.input?.type === 'long-fill-in';
+      if (ungraded ? q.answerHash !== undefined : !/^[0-9a-f]{64}$/.test(q.answerHash ?? '')) {
+        throw new Error(ungraded ? `A ${q.input!.type} question has no answer verifier.` : 'An assessment question requires a SHA-256 answer verifier.');
       }
+      if (q.acceptHashes !== undefined && (!Array.isArray(q.acceptHashes) || q.acceptHashes.some((h: unknown) => typeof h !== 'string' || !/^[0-9a-f]{64}$/.test(h)))) throw new Error('Invalid accepted-answer verifiers.');
+      if (q.explanation !== undefined && (typeof q.explanation !== 'string' || q.explanation.length > 2000)) throw new Error('Invalid assessment explanation.');
     }
   }
 }
@@ -83,46 +86,81 @@ ${course.scos.map(s => `    <resource identifier="RES-${scormArtifactSlug(s.id)}
 </manifest>`;
 }
 
-/** Runs in any SCORM 2004 host. A preview cannot record completion. */
+/**
+ * Runs in any SCORM 2004 host. A preview cannot record completion.
+ *
+ * The section's Markdown is rendered here, on the server, by course-markdown.ts. Each question
+ * gets the control its type calls for, and records as that xAPI/SCORM interaction type with its
+ * response in the standard format. A question nothing grades (likert, long-fill-in) records as
+ * neutral and counts toward no score. An explanation shows once the attempt is recorded.
+ */
 export function scormScoHtml(course: ScormArtifactCourse, sco: ScormArtifactSco): string {
   validateScormArtifacts(course);
   if (!course.scos.includes(sco)) throw new Error('SCO does not belong to this course.');
   const mastery = course.masteryScore > 1 ? course.masteryScore / 100 : course.masteryScore;
+  const asked = sco.assessment?.length ?? 0;
+  const graded = (sco.assessment ?? []).filter(q => q.answerHash).length;
+  const note = !asked ? ''
+    : `Answer all ${asked} question${asked === 1 ? '' : 's'}. ${graded ? `Each of the ${graded} graded answer${graded === 1 ? '' : 's'} is worth one point. Passing score: ${Math.round(mastery * 100)}%.` : 'None of them is graded.'} Submitting records this attempt.`;
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(sco.title)}</title><style>
 body{font-family:system-ui,sans-serif;max-width:720px;margin:auto;padding:24px;line-height:1.6;color:#172033}
-#body{white-space:pre-wrap}a{color:#3531cc;text-underline-offset:3px}label{display:block;margin:20px 0 5px}
-input{display:block;box-sizing:border-box;width:100%;padding:10px;font:inherit;border:1px solid #6c7485;border-radius:5px}
-input[aria-invalid=true]{border:2px solid #a12626}input:disabled{background:#f4f5f8;color:#172033}
-.hint{color:#4a5364;font-size:.9rem;margin:4px 0}.feedback{margin:4px 0}.error,.incorrect{color:#a12626}.correct{color:#17602e}
+a{color:#3531cc;text-underline-offset:3px}#body img{max-width:100%;height:auto}
+#body table{border-collapse:collapse;margin:12px 0}#body th,#body td{border:1px solid #c9ceda;padding:6px 10px;vertical-align:top}
+#body pre{background:#f4f5f8;padding:12px;border-radius:6px;overflow:auto}#body code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
+#body blockquote{border-left:4px solid #c9ceda;margin:12px 0;padding:2px 14px;color:#4a5364}
+fieldset{border:0;padding:0;margin:22px 0 6px}legend{padding:0;margin-bottom:6px;font-weight:600}
+.opt{display:flex;gap:8px;align-items:baseline;margin:4px 0}
+input[type=text],input:not([type]),textarea{display:block;box-sizing:border-box;width:100%;padding:10px;font:inherit;border:1px solid #6c7485;border-radius:5px}
+textarea{min-height:120px}select{font:inherit;padding:6px;border:1px solid #6c7485;border-radius:5px;margin:2px 0;max-width:100%}
+fieldset[aria-invalid=true] legend{color:#a12626}input:disabled,textarea:disabled,select:disabled{background:#f4f5f8;color:#172033}
+.hint{color:#4a5364;font-size:.9rem;margin:4px 0}.feedback{margin:4px 0}.explanation{color:#4a5364;margin:2px 0 0}
+.error,.incorrect{color:#a12626}.correct{color:#17602e}
 button{padding:12px 20px;background:#3531cc;color:white;border:0;border-radius:6px;font:inherit;cursor:pointer}
 button:disabled{opacity:.5;cursor:default}#status{margin-top:16px}
 </style></head><body>
-<p>${esc(course.title)}</p><h1>${esc(sco.title)}</h1><div id="body">${scormProseHtml(sco.body)}</div>
-${sco.assessment?.length ? `<p id="scoring">Answer all ${sco.assessment.length} questions. Each answer is worth one point. Passing score: ${Math.round(mastery * 100)}%. Submitting records this attempt.</p>` : ''}
-<form id="assessment" novalidate><div id="questions"></div><button id="submit" disabled>${sco.assessment?.length ? 'Submit answers' : 'Mark complete'}</button></form><p id="status" role="status" aria-live="polite"></p>
+<p>${esc(course.title)}</p><h1>${esc(sco.title)}</h1><div id="body">${courseMarkdownHtml(sco.body)}</div>
+${note ? `<p id="scoring">${esc(note)}</p>` : ''}
+<form id="assessment" novalidate><div id="questions"></div><button id="submit" disabled>${asked ? 'Submit answers' : 'Mark complete'}</button></form><p id="status" role="status" aria-live="polite"></p>
 <script>
 const SCO=${scriptData(sco)}, MASTERY=${mastery};
 ${scormAssessmentScript()}
 const button=document.getElementById('submit'), status=document.getElementById('status');
-const questions=SCO.assessment||[], inputs=[], feedback=[];
+const questions=SCO.assessment||[], groups=[], feedback=[], readers=[];
+const letter=k=>String.fromCharCode(65+k);
 for(const [i,q] of questions.entries()){
-  const group=document.createElement('div'), label=document.createElement('label');
-  label.textContent=q.question;label.htmlFor='answer-'+i;
-  const input=document.createElement('input');input.id='answer-'+i;input.name='answer-'+i;input.autocomplete='off';input.required=true;input.maxLength=250;
+  const type=(q.input&&q.input.type)||'text';
+  const group=document.createElement('fieldset'), legend=document.createElement('legend');
+  legend.textContent=q.question;group.id='question-'+i;group.appendChild(legend);
   const hint=document.createElement('p');hint.id='hint-'+i;hint.className='hint';
-  if(q.input&&q.input.type!=='text'){
-    input.inputMode=q.input.type==='integer'?'numeric':'decimal';
-    hint.textContent=q.input.type==='integer'?'Enter a whole number.':'Enter a number.';
-    if(q.input.min!==undefined&&q.input.max!==undefined)hint.textContent+=' Allowed range: '+q.input.min+' to '+q.input.max+'.';
-    else if(q.input.min!==undefined)hint.textContent+=' Minimum: '+q.input.min+'.';
-    else if(q.input.max!==undefined)hint.textContent+=' Maximum: '+q.input.max+'.';
-  }else hint.textContent='Required. Use 250 characters or fewer.';
   const message=document.createElement('p');message.id='feedback-'+i;message.className='feedback';
-  input.setAttribute('aria-describedby',hint.id+' '+message.id);
-  input.addEventListener('input',()=>{input.removeAttribute('aria-invalid');input.setCustomValidity('');message.textContent='';message.className='feedback';});
-  group.append(label,input,hint,message);document.getElementById('questions').appendChild(group);inputs.push(input);feedback.push(message);
+  group.setAttribute('aria-describedby',hint.id+' '+message.id);
+  let read;
+  if(type==='choice'||type==='likert'||type==='true-false'){
+    const labels=type==='true-false'?['True','False']:q.input.options, many=type==='choice'&&!!q.input.multiple;
+    const boxes=labels.map((text,k)=>{const row=document.createElement('label');row.className='opt';const box=document.createElement('input');box.type=many?'checkbox':'radio';box.name='answer-'+i;box.value=type==='true-false'?(k===0?'true':'false'):letter(k);const span=document.createElement('span');span.textContent=(type==='true-false'?'':letter(k)+'. ')+text;row.append(box,span);group.appendChild(row);return box;});
+    hint.textContent=many?'Choose every option that applies.':type==='likert'?'Choose one. This is not graded.':'Choose one.';
+    read=()=>boxes.filter(b=>b.checked).map(b=>b.value).join(', ');
+  }else if(type==='sequencing'||type==='matching'){
+    const rows=type==='sequencing'?q.input.items.map((_,k)=>'Position '+(k+1)):q.input.items, choices=type==='sequencing'?q.input.items:q.input.targets;
+    const selects=rows.map((rowLabel,k)=>{const row=document.createElement('label');row.className='opt';const span=document.createElement('span');span.textContent=rowLabel;const select=document.createElement('select');select.name='answer-'+i+'-'+k;const blank=document.createElement('option');blank.value='';blank.textContent='Choose…';select.appendChild(blank);choices.forEach((text,c)=>{const o=document.createElement('option');o.value=letter(c);o.textContent=letter(c)+'. '+text;select.appendChild(o);});row.append(span,select);group.appendChild(row);return select;});
+    hint.textContent=type==='sequencing'?'Put the items in order: choose the first, then the second, and so on, each once.':'Match each prompt to one answer.';
+    read=()=>selects.some(s=>!s.value)?'':selects.map(s=>s.value).join(', ');
+  }else{
+    const input=document.createElement(type==='long-fill-in'?'textarea':'input');input.id='answer-'+i;input.name='answer-'+i;input.autocomplete='off';input.required=true;input.maxLength=type==='long-fill-in'?4000:250;
+    if(type==='integer'||type==='number'){
+      input.inputMode=type==='integer'?'numeric':'decimal';
+      hint.textContent=type==='integer'?'Enter a whole number.':'Enter a number.';
+      if(q.input.min!==undefined&&q.input.max!==undefined)hint.textContent+=' Allowed range: '+q.input.min+' to '+q.input.max+'.';
+      else if(q.input.min!==undefined)hint.textContent+=' Minimum: '+q.input.min+'.';
+      else if(q.input.max!==undefined)hint.textContent+=' Maximum: '+q.input.max+'.';
+    }else hint.textContent=type==='long-fill-in'?'Write your answer, up to 4000 characters. This is not graded.':'Required. Use 250 characters or fewer.';
+    group.appendChild(input);read=()=>input.value;
+  }
+  group.addEventListener('input',()=>{group.removeAttribute('aria-invalid');message.textContent='';message.className='feedback';});
+  group.addEventListener('change',()=>{group.removeAttribute('aria-invalid');message.textContent='';message.className='feedback';});
+  group.append(hint,message);document.getElementById('questions').appendChild(group);groups.push(group);feedback.push(message);readers.push(read);
 }
 function findAPI(w){for(let n=0;w&&n<12;n++){try{if(w.API_1484_11)return w.API_1484_11;if(w.parent===w)break;w=w.parent;}catch(e){break;}}return null;}
 let API=findAPI(window);if(!API){try{API=findAPI(window.opener);}catch(e){}}
@@ -132,40 +170,49 @@ try{if(API){call('Initialize','');initialized=true;interactionOffset=Number(API.
 async function digestAnswer(normalized){const bytes=new TextEncoder().encode(normalized);const digest=await crypto.subtle.digest('SHA-256',bytes);return Array.from(new Uint8Array(digest)).map(b=>b.toString(16).padStart(2,'0')).join('');}
 document.getElementById('assessment').onsubmit=async function(event){event.preventDefault();if(!initialized||button.disabled)return;
   if(!pending){
-    const answers=inputs.map(input=>input.value), errors=validateScormResponses(questions,answers);
+    const answers=readers.map(read=>read()), errors=validateScormResponses(questions,answers);
     if(errors.length){
-      for(const error of errors){if(error.index>=0){const input=inputs[error.index],message=feedback[error.index];input.setAttribute('aria-invalid','true');input.setCustomValidity(error.message);message.textContent=error.message;message.className='feedback error';}}
+      for(const error of errors){if(error.index>=0){groups[error.index].setAttribute('aria-invalid','true');feedback[error.index].textContent=error.message;feedback[error.index].className='feedback error';}}
       status.textContent='Check the highlighted answers. No score has been recorded.';
-      inputs.find(input=>input.getAttribute('aria-invalid')==='true')?.focus();return;
+      groups.find(group=>group.getAttribute('aria-invalid')==='true')?.querySelector('input,textarea,select')?.focus();return;
     }
     // Freeze before the first asynchronous operation; a recording retry uses these answers.
-    pending={answers,results:null,score:null,timestamp:new Date().toISOString()};inputs.forEach(input=>input.disabled=true);
+    pending={answers,results:null,score:null,timestamp:new Date().toISOString()};groups.forEach(group=>{group.disabled=true;group.querySelectorAll('input,textarea,select').forEach(control=>control.disabled=true);});
   }
   button.disabled=true;status.textContent='Checking answers and recording this attempt…';
+  const gradedCount=questions.filter(q=>q.answerHash).length;
   try{
     if(!pending.results){
       const results=[];
-      for(let i=0;i<questions.length;i++){let correct=false;for(const candidate of scormAnswerCandidates(pending.answers[i],questions[i].input)){if(await digestAnswer(candidate)===questions[i].answerHash){correct=true;break;}}results.push(correct);}
-      pending.results=results;pending.score=questions.length?results.filter(Boolean).length/questions.length:null;
+      for(let i=0;i<questions.length;i++){
+        if(!questions[i].answerHash){results.push(null);continue;}
+        const verifiers=[questions[i].answerHash].concat(questions[i].acceptHashes||[]);let correct=false;
+        for(const candidate of scormAnswerCandidates(pending.answers[i],questions[i].input)){if(verifiers.includes(await digestAnswer(candidate))){correct=true;break;}}
+        results.push(correct);
+      }
+      pending.results=results;pending.score=gradedCount?results.filter(r=>r===true).length/gradedCount:null;
     }
-    const score=pending.score, correct=pending.results.filter(Boolean).length;
+    const score=pending.score, correct=pending.results.filter(r=>r===true).length;
     if(!committed){
       for(let i=0;i<questions.length;i++){
-        const prefix='cmi.interactions.'+(interactionOffset+i)+'.', numeric=questions[i].input&&questions[i].input.type!=='text';
+        const prefix='cmi.interactions.'+(interactionOffset+i)+'.', type=scormInteractionType(questions[i].input);
         call('SetValue',prefix+'id','urn:foxxi:sco:'+encodeURIComponent(SCO.id)+':question:'+(i+1));
-        call('SetValue',prefix+'type',numeric?'numeric':'fill-in');
+        call('SetValue',prefix+'type',type);
         call('SetValue',prefix+'description',questions[i].question.slice(0,250));
-        call('SetValue',prefix+'learner_response',numeric?String(Number(pending.answers[i].trim())):pending.answers[i]);
-        call('SetValue',prefix+'result',pending.results[i]?'correct':'incorrect');
+        call('SetValue',prefix+'learner_response',scormInteractionResponse(pending.answers[i],questions[i].input).slice(0,type==='long-fill-in'?4000:250));
+        call('SetValue',prefix+'result',pending.results[i]===null?'neutral':pending.results[i]?'correct':'incorrect');
         call('SetValue',prefix+'timestamp',pending.timestamp);
       }
-      if(score!==null){call('SetValue','cmi.score.raw',String(correct));call('SetValue','cmi.score.min','0');call('SetValue','cmi.score.max',String(questions.length));call('SetValue','cmi.score.scaled',String(score));call('SetValue','cmi.success_status',score>=MASTERY?'passed':'failed');}
+      if(score!==null){call('SetValue','cmi.score.raw',String(correct));call('SetValue','cmi.score.min','0');call('SetValue','cmi.score.max',String(gradedCount));call('SetValue','cmi.score.scaled',String(score));call('SetValue','cmi.success_status',score>=MASTERY?'passed':'failed');}
       call('SetValue','cmi.completion_status','completed');call('Commit','');committed=true;
     }
     if(!terminated){call('Terminate','');terminated=true;}if(API.__foxxiFlush)await API.__foxxiFlush();initialized=false;
-    for(let i=0;i<questions.length;i++){feedback[i].textContent=pending.results[i]?'Correct.':'Incorrect. Review the lesson before your next attempt.';feedback[i].className='feedback '+(pending.results[i]?'correct':'incorrect');}
+    for(let i=0;i<questions.length;i++){
+      const r=pending.results[i];feedback[i].textContent=r===null?'Recorded.':r?'Correct.':'Incorrect. Review the lesson before your next attempt.';feedback[i].className='feedback '+(r===null?'':r?'correct':'incorrect');
+      if(questions[i].explanation){const why=document.createElement('p');why.className='explanation';why.textContent=questions[i].explanation;feedback[i].after(why);}
+    }
     button.textContent='Attempt recorded';
-    status.textContent=score===null?'Recorded: completed. No assessment score.':'Recorded: '+correct+'/'+questions.length+' correct ('+Math.round(score*100)+'%) — '+(score>=MASTERY?'passed':'failed')+'. Passing score: '+Math.round(MASTERY*100)+'%. Use the learning system to continue or start another attempt.';
+    status.textContent=score===null?'Recorded: completed. No assessment score.':'Recorded: '+correct+'/'+gradedCount+' correct ('+Math.round(score*100)+'%) — '+(score>=MASTERY?'passed':'failed')+'. Passing score: '+Math.round(MASTERY*100)+'%. Use the learning system to continue or start another attempt.';
   }catch(e){status.textContent='Could not finish recording: '+e.message+' Your submitted answers are retained. Retry recording this same attempt.';button.textContent='Retry recording';button.disabled=false;}
 };
 </script></body></html>`;
