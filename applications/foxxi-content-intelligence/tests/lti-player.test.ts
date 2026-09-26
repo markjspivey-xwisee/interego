@@ -26,6 +26,9 @@ describe('the pages a learner reads', () => {
     expect(posted).toContain('Your LMS has the grade: 100 of 100');
     const refused = renderOutcomePage({ courseTitle: 'C', outcome: { completed: true, passed: false, score: 0.5, recordedStatements: 2, gradebook: { posted: false, why: 'line item URL rejected: <target URL must be https>' } } });
     expect(refused).toContain('The grade did not reach your LMS: line item URL rejected: &lt;target URL must be https&gt;');
+    expect(refused).not.toContain('Send the grade again');
+    const retry = renderOutcomePage({ courseTitle: 'C', outcome: { completed: true, passed: true, score: 1, recordedStatements: 2, gradebook: { posted: false, why: 'the platform answered 503' } }, retry: true });
+    expect(retry).toContain('<form method="POST"><button type="submit">Send the grade again</button></form>');
   });
 });
 
@@ -66,5 +69,12 @@ describe('the bridge wires its own LMS to its own Tool', () => {
     expect(src.match(/advanceScormPlay\(/g)?.length).toBeGreaterThanOrEqual(3);
     expect(src).toMatch(/const learnerPod = play\.learnerPod \?\? resolveSubjectPodUrl\(play\.learnerDid\)/);
     expect(src).toMatch(/launch\.ags\?\.scope\.includes\(AGS_SCOPE\.score\)/);
+  });
+
+  it('keeps an ended attempt until its grade is in, so a failed passback is sent again, not lost', () => {
+    const post = src.slice(src.indexOf("app.post('/lti/play/:id'"), src.indexOf("app.post('/agent/lti/launch'"));
+    expect(post).toMatch(/if \(lp\.ended\) \{ await answerEndedAttempt\(req, res, id, lp, lp\.ended\); return; \}/);
+    expect(post).not.toMatch(/ltiPlays\.delete\(id\)/);
+    expect(src).toMatch(/if \(gradebook\.posted \|\| !lp\.lineItem\) ltiPlays\.delete\(id\);/);
   });
 });

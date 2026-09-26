@@ -95,7 +95,7 @@ ${paragraphs(sco.body)}
 }
 
 /** The end of the attempt: the engine's outcome and what happened to the grade. */
-export function renderOutcomePage(args: { courseTitle: string; outcome: PlayOutcome; graded?: GradedView }): string {
+export function renderOutcomePage(args: { courseTitle: string; outcome: PlayOutcome; graded?: GradedView; retry?: boolean }): string {
   const { outcome } = args;
   const pct = Math.round(outcome.score * 100);
   const gb = outcome.gradebook;
@@ -106,7 +106,7 @@ export function renderOutcomePage(args: { courseTitle: string; outcome: PlayOutc
 <h1>${outcome.passed ? 'Passed' : 'Not passed yet'}: ${pct}%</h1>
 ${grade}
 <p>The attempt is in your learner record: ${outcome.recordedStatements} statement${outcome.recordedStatements === 1 ? '' : 's'}, graded by the SCORM engine.</p>
-<p class="muted">You can close this window.</p>`;
+${args.retry ? '<form method="POST"><button type="submit">Send the grade again</button></form>' : '<p class="muted">You can close this window.</p>'}`;
   return page(`${outcome.passed ? 'Passed' : 'Not passed'} · ${args.courseTitle}`, `${args.courseTitle} · launched from your LMS over LTI 1.3`, inner);
 }
 

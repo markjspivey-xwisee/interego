@@ -10576,8 +10576,13 @@ function advanceScormPlay(play: ScormPlay, answersGiven: unknown): ScormStep {
 // for which pod is the learner's, since it checked their signature before it launched. A launch
 // from another LMS keeps the dashboard hand-off.
 
-/** An attempt a launch opened: the engine's play, and where its grade goes. */
-interface LtiPlay { play: ScormPlay; issuer: string; clientId: string; sub: string; lineItem?: string; expiresAt: number }
+/**
+ * An attempt a launch opened: the engine's play, and where its grade goes. Once the attempt ends,
+ * its outcome stays here until the grade reaches the platform, so a passback that failed (a token or
+ * score request the platform did not answer) is sent again from the same URL, not lost with it.
+ */
+interface LtiPlay { play: ScormPlay; issuer: string; clientId: string; sub: string; lineItem?: string; expiresAt: number; ended?: EndedAttempt }
+interface EndedAttempt { completed: boolean; passed: boolean; score: number; recordedStatements: number; graded?: GradedView; gradebook?: GradePassback }
 const ltiPlays = new Map<string, LtiPlay>();
 /** Bound the in-process LTI attempts: each holds a course and an SN tree (the same bound as SCORM plays). */
 const LTI_PLAYS_MAX = 5000;
@@ -10628,8 +10633,33 @@ async function passGradeBack(lp: LtiPlay, outcome: { passed: boolean; score: num
   if (!lp.lineItem) return { posted: false, why: 'the launch offered no line item with the score scope' };
   if (!ltiTool) return { posted: false, why: 'the LTI Tool is not mounted' };
   const score = agsScore(lp.sub, outcome, new Date());
-  const r = await ltiTool.postScore({ issuer: lp.issuer, clientId: lp.clientId, lineItemUrl: lp.lineItem, score });
-  return { posted: r.ok, status: r.status, lineItem: lp.lineItem, scoreGiven: score.scoreGiven as number, scoreMaximum: score.scoreMaximum as number, ...(r.error ? { why: r.error } : {}) };
+  const sent = { lineItem: lp.lineItem, scoreGiven: score.scoreGiven as number, scoreMaximum: score.scoreMaximum as number };
+  try {
+    const r = await ltiTool.postScore({ issuer: lp.issuer, clientId: lp.clientId, lineItemUrl: lp.lineItem, score });
+    return { posted: r.ok, status: r.status, ...sent, ...(r.error ? { why: r.error } : {}) };
+  } catch (e) {
+    return { posted: false, ...sent, why: `the platform could not be reached: ${(e as Error).message}` };
+  }
+}
+
+/**
+ * Send an ended attempt's grade, and answer with its outcome. The attempt is forgotten only once the
+ * grade is in, or when no gradebook was offered; until then the same URL sends the grade again.
+ */
+async function answerEndedAttempt(req: import('express').Request, res: import('express').Response, id: string, lp: LtiPlay, ended: EndedAttempt): Promise<void> {
+  const gradebook = await passGradeBack(lp, ended);
+  ended.gradebook = gradebook;
+  if (gradebook.posted || !lp.lineItem) ltiPlays.delete(id);
+  sendEndedAttempt(req, res, id, lp, ended);
+}
+
+function sendEndedAttempt(req: import('express').Request, res: import('express').Response, id: string, lp: LtiPlay, ended: EndedAttempt): void {
+  const gradebook = ended.gradebook ?? { posted: false, why: 'the grade has not been sent yet' };
+  const retry = !gradebook.posted && lp.lineItem ? { method: 'POST', href: `${bridgeBaseUrl}/lti/play/${id}` } : undefined;
+  const course = { id: lp.play.courseId, title: lp.play.course.title };
+  const outcome = { completed: ended.completed, passed: ended.passed, score: ended.score, recordedStatements: ended.recordedStatements, gradebook };
+  if (wantsJson(req)) { res.json({ kind: 'lti-play', done: true, ...(ended.graded ? { graded: ended.graded } : {}), course, ...outcome, ...(retry ? { retry } : {}), learner: lp.sub, lens: lp.play.lens }); return; }
+  res.type('html').send(renderOutcomePage({ courseTitle: course.title, outcome, ...(ended.graded ? { graded: ended.graded } : {}), ...(retry ? { retry: true } : {}) }));
 }
 
 const ltiPlayGone = 'This launch has ended, or it expired. Launch the course again from your LMS.';
@@ -10639,6 +10669,7 @@ app.get('/lti/play/:id', (req, res) => {
   const lp = ltiPlayAt(String(req.params.id ?? ''));
   res.set('Cache-Control', 'no-store').set('Referrer-Policy', 'no-referrer');
   if (!lp) { if (wantsJson(req)) res.status(404).json({ error: ltiPlayGone }); else res.status(404).type('html').send(renderGonePage(ltiPlayGone)); return; }
+  if (lp.ended) { sendEndedAttempt(req, res, String(req.params.id ?? ''), lp, lp.ended); return; }
   const sco = scoViewForLearner(lp.play.seq.current ? scoForActivity(lp.play.course, lp.play.seq.current.id) : undefined) as ScoView | null;
   if (!sco) { res.status(409).json({ error: 'no current SCO' }); return; }
   if (wantsJson(req)) {
@@ -10654,6 +10685,8 @@ app.post('/lti/play/:id', express.urlencoded({ extended: false, limit: '64kb' })
     const lp = ltiPlayAt(id);
     res.set('Cache-Control', 'no-store').set('Referrer-Policy', 'no-referrer');
     if (!lp) { if (wantsJson(req)) res.status(404).json({ error: ltiPlayGone }); else res.status(404).type('html').send(renderGonePage(ltiPlayGone)); return; }
+    // An attempt that has ended takes no answers; a POST to it sends its grade again.
+    if (lp.ended) { await answerEndedAttempt(req, res, id, lp, lp.ended); return; }
     const current = lp.play.seq.current ? scoForActivity(lp.play.course, lp.play.seq.current.id) : undefined;
     const step = advanceScormPlay(lp.play, answersFrom(req.body, current?.assessment?.length ?? 0));
     if (!step.ok) {
@@ -10667,11 +10700,8 @@ app.post('/lti/play/:id', express.urlencoded({ extended: false, limit: '64kb' })
       res.type('html').send(renderScoPage({ courseTitle: course.title, sco: step.sco as ScoView, ...(step.graded ? { graded: step.graded } : {}) }));
       return;
     }
-    ltiPlays.delete(id);
-    const gradebook = await passGradeBack(lp, step);
-    const outcome = { completed: step.completed, passed: step.passed, score: Number(step.score.toFixed(3)), recordedStatements: step.statementIds.length, gradebook };
-    if (wantsJson(req)) { res.json({ kind: 'lti-play', done: true, ...(step.graded ? { graded: step.graded } : {}), course, ...outcome, learner: lp.sub, lens: lp.play.lens }); return; }
-    res.type('html').send(renderOutcomePage({ courseTitle: course.title, outcome, ...(step.graded ? { graded: step.graded } : {}) }));
+    lp.ended = { completed: step.completed, passed: step.passed, score: Number(step.score.toFixed(3)), recordedStatements: step.statementIds.length, ...(step.graded ? { graded: step.graded } : {}) };
+    await answerEndedAttempt(req, res, id, lp, lp.ended);
   } catch (err) { sendServerError(res, err, 'lti-play'); }
 });
 

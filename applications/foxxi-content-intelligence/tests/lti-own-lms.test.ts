@@ -171,6 +171,26 @@ describe('the Tool\'s token and the gradebook it posts to', () => {
     expect(await none.json()).toMatchObject({ error: 'invalid_scope' });
   });
 
+  it('refuses an assertion that lives longer than ten minutes, and never evicts a live one to take another', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    expect((await tokenRequest(assertion({ exp: now + 3600 }), AGS_SCOPE.score)).status).toBe(401);
+    // A small cache, and a verifier that trusts any payload, so the cache is what is under test.
+    const small = new LtiPlatform({ selfBaseUrl: `${base}/small`, tool: second.tool, maxLiveAssertions: 2,
+      verifyJwt: async (jwt) => ({ ok: true, payload: JSON.parse(Buffer.from(jwt, 'base64url').toString('utf8')) as Record<string, unknown> }) });
+    const form = (jti: string, exp: number) => ({
+      grant_type: 'client_credentials', client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer', scope: AGS_SCOPE.score,
+      client_assertion: Buffer.from(JSON.stringify({ iss: 'test-tool', sub: 'test-tool', aud: small.tokenUrl, iat: now, exp, jti })).toString('base64url'),
+    });
+    const t0 = now * 1000;
+    expect(await small.token(form('j1', now + 300), t0)).toMatchObject({ ok: true });
+    expect(await small.token(form('j2', now + 600), t0)).toMatchObject({ ok: true });
+    expect(await small.token(form('j3', now + 300), t0)).toMatchObject({ ok: false, status: 503 });
+    // The first two are still live, and still refused a second time: nothing was evicted.
+    expect(await small.token(form('j1', now + 300), t0)).toMatchObject({ ok: false, status: 401 });
+    // Once j1 has expired its slot frees, and a new assertion is taken.
+    expect(await small.token(form('j4', now + 900), t0 + 301_000)).toMatchObject({ ok: true });
+  });
+
   it('takes a score only with the score scope, only for a learner it launched, and never an older one', async () => {
     const start = second.beginLaunch({ sub: 'learner-1', podUrl: 'https://pod.example/learner-1/' }, course);
     if (!start.ok) throw new Error(start.error);

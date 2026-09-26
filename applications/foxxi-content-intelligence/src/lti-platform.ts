@@ -59,6 +59,8 @@ const TOKEN_TTL_S = 3600;
 const MAX_GRANTS = 5000;
 const MAX_TOKENS = 5000;
 const MAX_SEEN_JTI = 10_000;
+/** How far out a client assertion may expire. Its jti is kept until then, so the bound keeps the replay cache sweepable. */
+const MAX_ASSERTION_LIFETIME_MS = 10 * 60_000;
 const MAX_LINE_ITEMS = 5000;
 const MAX_MEMBERS = 50_000;
 const MAX_RESULTS_PER_ITEM = 10_000;
@@ -87,6 +89,8 @@ export interface LtiPlatformConfig {
   readonly onChange?: () => void;
   /** Verify a JWT against a JWKS URL. lti13's verifier when absent. */
   readonly verifyJwt?: (jwt: string, jwksUrl: string) => Promise<{ ok: boolean; payload?: Record<string, unknown>; error?: string }>;
+  /** How many unexpired client assertions are remembered for replay protection (10,000 by default). */
+  readonly maxLiveAssertions?: number;
 }
 
 /** The learner a launch is for: who the Platform says they are, and the pod their record is on. */
@@ -185,6 +189,7 @@ export class LtiPlatform {
   private readonly keys: Es256Keys;
   private readonly onChange: () => void;
   private readonly verifyJwt: NonNullable<LtiPlatformConfig['verifyJwt']>;
+  private readonly maxLiveAssertions: number;
   private readonly grants = new Map<string, Grant>();
   private readonly tokens = new Map<string, AccessToken>();
   private readonly seenJti = new Map<string, number>();
@@ -198,6 +203,7 @@ export class LtiPlatform {
     this.keys = es256Keys('foxxi-lms', this.issuer, config.privateKeyPem);
     this.onChange = config.onChange ?? (() => undefined);
     this.verifyJwt = config.verifyJwt ?? jwsVerifyRs256OrEs256;
+    this.maxLiveAssertions = config.maxLiveAssertions ?? MAX_SEEN_JTI;
   }
 
   get authorizationUrl(): string { return `${this.issuer}/auth`; }
@@ -349,13 +355,16 @@ export class LtiPlatform {
     if (!aud.includes(this.tokenUrl)) return { ok: false, status: 401, error: 'invalid_client', description: 'the assertion\'s aud must be this token endpoint' };
     const exp = Number(a.exp);
     if (!Number.isFinite(exp) || exp * 1000 <= now) return { ok: false, status: 401, error: 'invalid_client', description: 'the assertion has expired' };
+    if (exp * 1000 - now > MAX_ASSERTION_LIFETIME_MS) return { ok: false, status: 401, error: 'invalid_client', description: 'the assertion must expire within ten minutes' };
     const iat = Number(a.iat);
     if (Number.isFinite(iat) && iat * 1000 > now + 60_000) return { ok: false, status: 401, error: 'invalid_client', description: 'the assertion is issued in the future' };
     const jti = str(a.jti);
     if (!jti) return { ok: false, status: 401, error: 'invalid_client', description: 'the assertion needs a jti' };
     this.sweep(now);
     if (this.seenJti.has(jti)) return { ok: false, status: 401, error: 'invalid_client', description: 'this assertion was already used' };
-    if (this.seenJti.size >= MAX_SEEN_JTI) { const oldest = this.seenJti.keys().next().value; if (oldest !== undefined) this.seenJti.delete(oldest); }
+    // ★ A live jti is never evicted to make room: that would let its still-valid assertion buy a
+    // second token. Every entry expires within ten minutes, so a full cache refuses until it drains.
+    if (this.seenJti.size >= this.maxLiveAssertions) return { ok: false, status: 503, error: 'temporarily_unavailable', description: 'too many client assertions are still live; try again in a few minutes' };
     this.seenJti.set(jti, exp * 1000);
     const asked = str(form.scope).split(/\s+/).filter(Boolean);
     const granted = asked.filter((s) => GRANTABLE_SCOPES.has(s));
