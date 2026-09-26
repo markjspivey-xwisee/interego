@@ -57,21 +57,35 @@ export function explainedAnswer(authored: string): { key: string; why: string } 
 }
 
 /**
- * Whether a reply gives an answer key. The engine's own rule first: the reply's normalized text,
- * or one of its words, is the key. A key of several words also matches a reply that has every one
- * of its content words (four letters or more; every word when it has none of that length), so
- * "team lead" gives "a team lead". A numeric key keeps its numeric contract. No inner named
- * functions: this is embedded in generated pages by its source.
+ * Whether a reply gives an answer key.
+ *
+ * A reply that negates when the key does not ("not a team lead") never gives it. Otherwise the
+ * engine's own rule comes first: the reply's normalized text, or one of its words, is the key. A key
+ * of several words also matches a reply with every word of the key except the articles and
+ * connectives, so "team lead" gives "a team lead".
+ *
+ * ★ A SHORT WORD IS NOT AN UNIMPORTANT ONE. This used to require only the key's words of four
+ * letters or more, so "escalate" gave "do not escalate", "fraud" gave "no fraud" and "limit" gave
+ * "the $250 limit": an opposite answer passed (the automated review of #480). Negations and numbers
+ * are always required now; only the words in `minor` may be left out. "don't" counts as "do not"
+ * on both sides.
+ *
+ * A numeric key keeps its numeric contract. No inner named functions, and nothing outside it but
+ * the shared scoring helpers: this is embedded in generated pages by its source.
  */
 export function matchesAnswerKey(reply: string, key: string): boolean {
   const input = inferScormAnswerInput(key);
+  const keyWords = normalizeScormAnswer(String(key ?? '').replace(/n['’]t\b/gi, ' not')).split(' ').filter(Boolean);
+  const replyWords = normalizeScormAnswer(String(reply ?? '').replace(/n['’]t\b/gi, ' not')).split(' ').filter(Boolean);
+  const negations = new Set(['no', 'not', 'never', 'none', 'nor', 'neither', 'nothing', 'nobody', 'nowhere', 'cannot']);
+  if (!keyWords.some(word => negations.has(word)) && replyWords.some(word => negations.has(word))) return false;
   const expected = scormAnswerCandidates(key, input)[0];
   if (expected !== undefined && scormAnswerCandidates(reply, input).includes(expected)) return true;
   if (input && input.type !== 'text') return false;
-  const keyWords = normalizeScormAnswer(key).split(' ').filter(Boolean);
-  const content = keyWords.filter(word => word.length >= 4);
+  const minor = new Set(['a', 'an', 'the', 'and', 'or', 'of', 'to', 'in', 'on', 'at', 'for', 'by', 'with', 'from', 'as', 'is', 'are', 'was', 'were', 'be', 'it', 'its', 'this', 'that', 'do', 'does', 'did']);
+  const content = keyWords.filter(word => !minor.has(word));
   const required = content.length > 0 ? content : keyWords;
-  const have = new Set(normalizeScormAnswer(String(reply ?? '')).split(' ').filter(Boolean));
+  const have = new Set(replyWords);
   return required.length > 0 && required.every(word => have.has(word));
 }
 
