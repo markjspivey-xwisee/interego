@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-09-26 — Foxxi: a negation in a reply denies only what it reaches
+
+The automated review of #486 found that the polarity check in `matchesAnswerKey` failed any reply with a negation anywhere in it. Once "without" counted as one, "fraud occurred without warning" no longer gave the key "fraud", and "proceed without delay" no longer gave "proceed". Both are right answers.
+
+A negation now denies only the words it reaches, and it reaches no further than its own clause. A clause ends at punctuation, a spaced dash, or a contrast (but, however, although, though, whereas, except, rather, instead).
+
+- **"no", "without", "neither" and "nor" reach forward**, to what they govern. "proceed without delay" gives "proceed", and "no evidence of fraud" still denies "fraud".
+- **"not", "never", "cannot" and the negative pronouns deny their whole clause**, including the words before them. "fraud was not found" denies "fraud", as it did before.
+- **A reply fails when it says a word of the key only where a negation reaches it.** "fraud, not negligence" and "not negligence but fraud" now give "fraud". "not fraud but negligence" still does not.
+
+A key that itself negates is answered as before, by a reply with every one of its words. The cmi5 page embeds the same function, and so does the live demo's scoring. `tests/au-explained-answers.test.ts` adds the review's cases and the clause boundaries, plus one page-level case. Each rule was mutation-checked: with any one removed, the tests fail.
+
 ## 2026-09-26 — Two review findings: "without" negates, and the LTI chapter checks its own courses
 
 Two findings from the automated reviews of #483 and #482.

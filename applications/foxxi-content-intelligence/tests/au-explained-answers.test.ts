@@ -51,6 +51,33 @@ describe('an explained answer', () => {
     expect(matchesAnswerKey('no, never', 'no')).toBe(true);
   });
 
+  it('lets a negation deny only what it reaches, not the whole reply (the review of #486)', () => {
+    // "without" governs what follows it: a right answer said "without" something is still right.
+    expect(matchesAnswerKey('fraud occurred without warning', 'fraud')).toBe(true);
+    expect(matchesAnswerKey('proceed without delay', 'proceed')).toBe(true);
+    expect(matchesAnswerKey('the team lead, without delay', 'a team lead')).toBe(true);
+    expect(matchesAnswerKey('fraud and no other finding', 'fraud')).toBe(true);
+    // ...and it still denies what it governs, however far into its clause.
+    expect(matchesAnswerKey('no evidence of fraud', 'fraud')).toBe(false);
+    expect(matchesAnswerKey('proceed with no fraud', 'fraud')).toBe(false);
+    expect(matchesAnswerKey('neither fraud nor theft', 'theft')).toBe(false);
+    // "not" and "never" deny their whole clause, the key before them too.
+    expect(matchesAnswerKey('fraud was not found', 'fraud')).toBe(false);
+    expect(matchesAnswerKey("fraud wasn't involved", 'fraud')).toBe(false);
+    expect(matchesAnswerKey('the team lead never approves it', 'a team lead')).toBe(false);
+    expect(matchesAnswerKey('not really fraud', 'fraud')).toBe(false);
+    // A negation stops at its clause: punctuation, a spaced dash, or a contrast.
+    expect(matchesAnswerKey('fraud, not negligence', 'fraud')).toBe(true);
+    expect(matchesAnswerKey('fraud — not negligence', 'fraud')).toBe(true);
+    expect(matchesAnswerKey('not negligence but fraud', 'fraud')).toBe(true);
+    expect(matchesAnswerKey('no, it is fraud', 'fraud')).toBe(true);
+    expect(matchesAnswerKey('nobody except the team lead', 'a team lead')).toBe(true);
+    expect(matchesAnswerKey('not fraud but negligence', 'fraud')).toBe(false);
+    // A key word said where no negation reaches it is given, whatever is denied elsewhere.
+    expect(matchesAnswerKey('the team lead, not the lead auditor', 'a team lead')).toBe(true);
+    expect(matchesAnswerKey('not the team lead, the lead auditor', 'a team lead')).toBe(false);
+  });
+
   it('keeps the engine\'s own rule for a one-word key, and the numeric contract for a number', () => {
     expect(matchesAnswerKey('The answer is ALPHA!', 'alpha')).toBe(true);
     expect(matchesAnswerKey('wrong', 'alpha')).toBe(false);
@@ -88,6 +115,12 @@ describe('the pages and packages a course becomes', () => {
     const { statements, feedback } = await submit('Who authorises it? ::: a team lead — the $250 would carry the customer past the $1,000 cap', 'a manager');
     expect(statements.find(s => s.verb.id.endsWith('/failed'))?.result).toMatchObject({ success: false, score: { scaled: 0 } });
     expect(feedback).toBe('The answer: a team lead. The $250 would carry the customer past the $1,000 cap');
+  });
+
+  it('grade a negation in the cmi5 page by what it reaches (the review of #486)', async () => {
+    const body = 'Who authorises it? ::: a team lead — the $250 would carry the customer past the $1,000 cap';
+    expect((await submit(body, 'the team lead, without delay')).statements.find(s => s.verb.id.endsWith('/passed'))?.result).toMatchObject({ success: true });
+    expect((await submit(body, 'no team lead')).statements.find(s => s.verb.id.endsWith('/failed'))?.result).toMatchObject({ success: false });
   });
 
   it('hash the key in the SCORM package, not the explanation', () => {
