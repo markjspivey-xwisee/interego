@@ -487,11 +487,22 @@ const handlers: Record<string, Handler> = {
     }
     setChapter('agentLearns', { data: { running: false, result } });
     if (!result?.['passed']) return;
-    const claim = await hub.track({ actor: 'claude', service: 'foxxi', tool: 'claim-credential-signed', summary: 'the agent claims what its own record earned', request: { course_id: pub.courseId } }, async () => {
-      const r = await signedRoute('/agent/credentials/claim', { course_id: pub.courseId }, agent);
+    await handlers['agent-claim']!({});
+  },
+
+  /** The agent claims its credential for your course. A refusal leaves the chapter open to claim again. */
+  async 'agent-claim'() {
+    if (!agent) throw new Error('no agent wallet');
+    const d = chapters.agentLearns.data as { result?: { passed?: unknown }; course?: { courseId?: string } };
+    const pub = (chapters.teach.data as { published?: { courseId?: string } }).published;
+    if (d.result?.passed !== true || !pub?.courseId) throw new Error('the agent claims a credential only for a course it has passed');
+    const courseId = pub.courseId;
+    const claim = await hub.track({ actor: 'claude', service: 'foxxi', tool: 'claim-credential-signed', summary: 'the agent claims what its own record earned', request: { course_id: courseId } }, async () => {
+      const r = await signedRoute('/agent/credentials/claim', { course_id: courseId }, agent);
       return { value: r, status: r.status >= 400 ? 'refused' : 'ok', code: r.status, response: r.json, summary: r.status >= 400 ? String(r.json['error'] ?? r.status) : `${String(r.json['decision'] ?? 'issued')}: a credential in the agent's own wallet` };
     });
-    setChapter('agentLearns', { status: 'done', data: claim.status >= 400 ? { claimError: String(claim.json['error'] ?? claim.status) } : { credential: claim.json } });
+    if (claim.status >= 400) { setChapter('agentLearns', { data: { claimError: String(claim.json['error'] ?? claim.status) } }); return; }
+    setChapter('agentLearns', { status: 'done', data: { credential: claim.json, claimError: undefined } });
     unlock('work');
   },
 
@@ -501,7 +512,10 @@ const handlers: Record<string, Handler> = {
       if (!you) throw new Error('sign in first');
       const pub = (chapters.teach.data as { published?: { courseIri?: string; title?: string } }).published;
       if (!pub?.courseIri) throw new Error('publish your course first: it is the evidence of your work');
-      const score = ((chapters.agentLearns.data as { result?: { score?: unknown } }).result?.score);
+      // Teaching succeeded only if the learner passed: a course that was merely published taught nobody.
+      const learned = (chapters.agentLearns.data as { result?: { passed?: unknown; score?: unknown } }).result;
+      if (learned?.passed !== true) throw new Error('your teaching is recorded once the agent has passed your course (chapter 9)');
+      const score = learned.score;
       const payload = { task_name: `Taught “${pub.title}” to an AI agent`, task_id: pub.courseIri, success: true, ...(typeof score === 'number' ? { quality: score } : {}), actor_kind: 'human', activity_type: TEACHING };
       const r = await youAct('record-performance-signed', payload, 'recording your work as a person, so your record stays private');
       setChapter('work', { data: { you: r.status >= 400 ? { error: String(r.body['error'] ?? r.status) } : { ...r.body, payload } } });
@@ -509,7 +523,9 @@ const handlers: Record<string, Handler> = {
       if (!agent) throw new Error('no agent wallet');
       const course = agentsCourse();
       if (!course?.courseIri) throw new Error('let the agent write the course you take in part one first: it is the evidence of its work');
-      const score = ((chapters.learn.data as { result?: { score?: unknown } }).result?.score);
+      const learned = (chapters.learn.data as { result?: { passed?: unknown; score?: unknown } }).result;
+      if (learned?.passed !== true) throw new Error('the agent\'s teaching is recorded once you have passed its course (chapter 4)');
+      const score = learned.score;
       const payload = { task_name: `Taught “${course.title ?? course.courseId}” to a person`, task_id: course.courseIri, success: true, ...(typeof score === 'number' ? { quality: score } : {}), activity_type: TEACHING };
       const r = await hub.track({ actor: 'claude', service: 'foxxi', tool: 'record-performance-signed', summary: 'the agent records its work as an agent, which makes its record public', request: payload }, async () => {
         const s = await signedRoute('/agent/record-performance', payload, agent);
@@ -980,7 +996,7 @@ app.post('/api/chapter/:action', async (req, res) => {
   const action = String(req.params['action']);
   const h = handlers[action];
   if (!h) { res.status(404).json({ ok: false, error: `no action ${action}` }); return; }
-  const chapterOf: Record<string, ChapterId> = { authorize: 'signin', author: 'author', 'reset-author': 'author', publish: 'author', discover: 'discover', rank: 'discover', pick: 'learn', launch: 'learn', submit: 'learn', standings: 'claim', claim: 'claim', verify: 'verify', forgery: 'forgery', 'draft-course': 'teach', 'publish-course': 'teach', 'agent-learn': 'agentLearns', 'record-work': 'work', 'review-records': 'records', recommend: 'next', 'cmi5-launch': 'cmi5', 'lti-launch': 'lti', 'lti-gradebook': 'lti', 'records-after': 'after' };
+  const chapterOf: Record<string, ChapterId> = { authorize: 'signin', author: 'author', 'reset-author': 'author', publish: 'author', discover: 'discover', rank: 'discover', pick: 'learn', launch: 'learn', submit: 'learn', standings: 'claim', claim: 'claim', verify: 'verify', forgery: 'forgery', 'draft-course': 'teach', 'publish-course': 'teach', 'agent-learn': 'agentLearns', 'agent-claim': 'agentLearns', 'record-work': 'work', 'review-records': 'records', recommend: 'next', 'cmi5-launch': 'cmi5', 'lti-launch': 'lti', 'lti-gradebook': 'lti', 'records-after': 'after' };
   try {
     await h((req.body ?? {}) as Record<string, unknown>);
     res.json({ ok: true, state: state() });

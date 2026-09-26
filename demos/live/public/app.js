@@ -502,7 +502,8 @@ const BODIES = {
       if (!d.result.passed) out.push(h('div', { class: 'actions' }, spinnerButton('Let it try again', () => run('agent-learn'), { primary: false, runningLabel: 'The agent is reading…' })));
     }
     if (d.credential?.vc) out.push(...badgeCard(d.credential, 'in the agent’s wallet'));
-    if (d.claimError) out.push(h('div', { class: 'note warn' }, h('strong', {}, 'Claim refused: '), d.claimError));
+    if (d.claimError) out.push(h('div', { class: 'note warn' }, h('strong', {}, 'Claim refused: '), d.claimError),
+      h('div', { class: 'actions' }, spinnerButton('Claim it again', () => run('agent-claim'), { key: 'agent-claim', runningLabel: 'Claiming…' })));
     out.push(problem(d));
     return out;
   },
