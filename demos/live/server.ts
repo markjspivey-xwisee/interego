@@ -14,7 +14,8 @@
  *   Verifier       a fresh headless Claude that gets only the skill generated from Foxxi's
  *                  affordance declarations, and the bridge's MCP endpoint.
  *   Jev            TypeSafe's System One model (TYPESAFE_API_KEY), choosing among the courses.
- *   Foxxi bridge   https://foxxi-bridge.interego.xwisee.com: grades, issues, verifies.
+ *   Foxxi bridge   https://foxxi-bridge.interego.xwisee.com: grades, issues, verifies; its own
+ *                  cmi5 LMS and LTI 1.3 LMS launch courses for both learners in part three.
  *
  * Keys and tokens stay in this process. The page gets state and a ledger of every call.
  */
@@ -29,10 +30,12 @@ import { RelayAuth, RelayMcp, RELAY } from './lib/relay.js';
 import { BRIDGE, callTool, getJson, signedRoute, walletSigner } from './lib/foxxi.js';
 import { claudeBin, runClaudeAgent, type AgentEvent } from './lib/claude-agent.js';
 import { authorCourse, courseFromForm, type AuthoredCourse } from './lib/author.js';
-import { answerSection, type DeliveredSection } from './lib/learner.js';
+import { answerSection, takeaway, type DeliveredSection } from './lib/learner.js';
+import { lessonForLearner, lessonOfAuPage, reportAu, scoreLesson, type AuScore } from './lib/au.js';
 import { rankCourses, recommendNext, type RankableCourse, type RecordForRecommendation } from './lib/jev.js';
 import { freshChapters, type ChapterId, type DemoState, type CastMember, type Service } from './lib/cast.js';
 import { parseCourseCatalogProducts, FEDERATED_CATALOG_TYPE, type FederatedCourseCatalog } from '../../applications/foxxi-content-intelligence/src/course-catalog-product.js';
+import { SAMPLE_COURSE } from '../../applications/foxxi-content-intelligence/src/sample-content.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..', '..');
@@ -141,7 +144,7 @@ async function afterSignIn(): Promise<void> {
   const verified = await agentVerified(you.sessionDid);
   you.authorized = verified;
   setChapter('signin', { data: { signedIn: true, pod: you.pod, signer: you.sessionDid, surface: 'interego-live-demo', authorized: verified }, ...(verified ? { status: 'done' } : {}) });
-  for (const id of ['discover', 'claim', 'teach'] as ChapterId[]) unlock(id);
+  for (const id of ['discover', 'claim', 'teach', 'cmi5'] as ChapterId[]) unlock(id);
 }
 
 /**
@@ -238,6 +241,7 @@ const handlers: Record<string, Handler> = {
     if (typeof r.answer['graphUrl'] === 'string') { try { turtle = await (await fetch(String(r.answer['graphUrl']), { headers: { accept: 'text/turtle, application/trig' } })).text(); } catch { turtle = undefined; } }
     setChapter('author', { status: 'done', data: { published: { ...r.answer, ...(turtle ? { turtle } : {}) }, publishError: undefined } });
     unlock('forgery');
+    unlockLti();
   },
 
   async discover() {
@@ -435,6 +439,7 @@ const handlers: Record<string, Handler> = {
     const meta = await getJson(`/agent/scorm/course/${encodeURIComponent(course.courseId)}?author_did=${encodeURIComponent(authorDid)}`);
     setChapter('teach', { status: 'done', data: { published: { ...meta.json, authorDid }, error: undefined } });
     unlock('agentLearns');
+    unlockLti();
   },
 
   async 'agent-learn'() {
@@ -521,12 +526,7 @@ const handlers: Record<string, Handler> = {
     if (!you || !agent) throw new Error('sign in first');
     const self = you;
     setChapter('records', { replace: true, status: 'active', data: { running: true } });
-    // Your record is read as YOU, the person the credentials name, not as this app's session agent.
-    const yours = await youAct('review-record', { subject_did: self.webId }, 'assembling your IEEE P2997 learner record, as yourself');
-    const theirs = await hub.track({ actor: 'claude', service: 'foxxi', tool: 'review-record', summary: 'the agent assembles its own learner record' }, async () => {
-      const r = await signedRoute('/agent/review-record', {}, agent);
-      return { value: r, status: r.status >= 400 ? 'refused' : 'ok', code: r.status, response: recordView(r.json, r.status), summary: r.status >= 400 ? String(r.json['error'] ?? r.status) : 'its record, public because it records as an agent' };
-    });
+    const both = await readRecords();
     const youReadAgent = await youAct('review-record', { subject_did: agent.did }, 'you read the agent\'s record');
     const agentReadYou = await hub.track({ actor: 'claude', service: 'foxxi', tool: 'review-record', summary: 'the agent tries to read your record', request: { subject_did: self.webId } }, async () => {
       const r = await signedRoute('/agent/review-record', { subject_did: self.webId }, agent);
@@ -534,8 +534,8 @@ const handlers: Record<string, Handler> = {
     });
     setChapter('records', { status: 'done', data: {
       running: false,
-      you: recordView(yours.body, yours.status),
-      agent: recordView(theirs.json, theirs.status),
+      you: both.you,
+      agent: both.agent,
       cross: {
         youReadAgent: { status: youReadAgent.status, ...(youReadAgent.status >= 400 ? { error: String(youReadAgent.body['error'] ?? '') } : { subjectKind: recordView(youReadAgent.body, youReadAgent.status).subjectKind }) },
         agentReadYou: { status: agentReadYou.status, ...(agentReadYou.status >= 400 ? { error: String(agentReadYou.json['error'] ?? '') } : {}) },
@@ -566,7 +566,257 @@ const handlers: Record<string, Handler> = {
     }
     setChapter('next', { status: 'done', data: out });
   },
+
+  // ── Part three: the standards the rest of the learning world speaks ───────────────────────────
+
+  async 'cmi5-launch'(body) {
+    const who = body['who'] === 'agent' ? 'agent' : 'you';
+    const course = await hub.track({ actor: 'bridge', service: 'foxxi', tool: 'cmi5 course', summary: 'finding the cmi5 course the bridge publishes of its own' }, async () => {
+      const c = await cmi5Course();
+      return { value: c, summary: `${c.title}: ${c.aus.length} activities`, response: c };
+    });
+    setChapter('cmi5', { data: { course, error: undefined } });
+    if (who === 'you') {
+      if (!you) throw new Error('sign in first: the launch is for you');
+      const r = await youAct('cmi5-launch-signed', { course_id: course.id }, 'launching your next activity in the course, signed as you');
+      if (r.status >= 400) throw new Error(String(r.body['error'] ?? `the launch answered ${r.status}`));
+      const launch = launchOf(r.body);
+      setChapter('cmi5', { data: { you: { ...launch, state: 'launched' } } });
+      void watchRegistration('you', launch.registration).catch(() => undefined);
+      return;
+    }
+    if (!agent) throw new Error('no agent wallet');
+    const launched = await hub.track({ actor: 'claude', service: 'foxxi', tool: 'cmi5-launch-signed', summary: 'the agent launches its next activity with its own wallet', request: { course_id: course.id } }, async () => {
+      const r = await signedRoute('/agent/cmi5/launch', { course_id: course.id }, agent);
+      return { value: r, status: r.status >= 400 ? 'refused' : 'ok', code: r.status, response: r.json, summary: r.status >= 400 ? String(r.json['error'] ?? r.status) : `“${String(r.json['auTitle'] ?? '')}”, moveOn ${String(r.json['moveOn'] ?? '')}, launch data staged` };
+    });
+    if (launched.status >= 400) throw new Error(String(launched.json['error'] ?? `the launch answered ${launched.status}`));
+    const launch = launchOf(launched.json);
+    const transcript: { kind: string; section: string; text?: string }[] = [];
+    setChapter('cmi5', { data: { agent: { ...launch, state: 'reading', transcript } } });
+    const lesson = await hub.track({ actor: 'claude', service: 'foxxi', tool: 'open the activity', summary: 'the agent opens the activity page its launch URL names', request: { launchUrl: launch.launchUrl.split('?')[0] } }, async () => {
+      const page = await (await fetch(launch.launchUrl)).text();
+      const l = lessonOfAuPage(page);
+      return { value: l, summary: `${l.title}: ${l.fragments.length} parts` };
+    });
+    const section = lessonForLearner(lesson);
+    const onEvent = (e: AgentEvent): void => { if (e.kind === 'thinking' && e.text) { transcript.push({ kind: 'thinking', section: section.id, text: e.text.slice(0, 500) }); setChapter('cmi5', { data: { agent: { ...launch, state: 'reading', transcript } } }); } };
+    let score: AuScore | null = null;
+    let note: string | undefined;
+    if (section.assessment?.length) {
+      const read = await hub.track({ actor: 'claude', service: 'claude-cli', tool: 'read and answer', summary: `the agent reads “${lesson.title}” and answers ${section.assessment.length} question(s)` }, async () => {
+        const a = await answerSection(section, onEvent, 'phrase');
+        return { value: a, summary: `answered ${a.answers.map((x) => `“${x}”`).join(', ')}${a.costUsd !== undefined ? ` · $${a.costUsd.toFixed(3)}` : ''}` };
+      });
+      score = scoreLesson(lesson, read.answers);
+    } else {
+      const read = await hub.track({ actor: 'claude', service: 'claude-cli', tool: 'read', summary: `the agent reads “${lesson.title}”` }, async () => {
+        const t = await takeaway(section, onEvent);
+        return { value: t, summary: `${t.text.slice(0, 160)}${t.costUsd !== undefined ? ` · $${t.costUsd.toFixed(3)}` : ''}` };
+      });
+      note = read.text;
+    }
+    const reported = await hub.track({ actor: 'claude', service: 'foxxi', tool: 'cmi5 AU → LRS', summary: 'the activity trades its one-time URL for an auth-token and reports to the LRS', request: { registration: launch.registration } }, async () => {
+      const r = await reportAu(launch.launchUrl, lesson, score);
+      return { value: r, summary: `${r.sent.join(', ')}${score ? ` · scored itself ${Math.round(score.scaled * 100)}%` : ''}` };
+    });
+    setChapter('cmi5', { data: { agent: { ...launch, state: 'reported', transcript, sent: reported.sent, ...(score ? { score } : {}), ...(note ? { note } : {}) } } });
+    await watchRegistration('agent', launch.registration, 60_000);
+  },
+
+  async 'lti-launch'(body) {
+    const who = body['who'] === 'agent' ? 'agent' : 'you';
+    if (who === 'you') {
+      if (!you) throw new Error('sign in first: the LMS launches the course for you');
+      const course = agentsCourse();
+      if (!course?.courseId) throw new Error('let the agent write its course in part one first: that is the course your LMS launches for you');
+      const r = await youAct('lti-launch-signed', { course_id: course.courseId }, `asking Foxxi's LMS to launch “${course.title ?? course.courseId}” for you`);
+      if (r.status >= 400) throw new Error(String(r.body['error'] ?? `the launch answered ${r.status}`));
+      setChapter('lti', { data: { error: undefined, you: { course, initiationUrl: String(r.body['initiationUrl'] ?? ''), expiresAt: r.body['expiresAt'], lineItem: r.body['lineItem'], resourceLink: r.body['resourceLink'], context: r.body['context'], platform: r.body['platform'], learner: r.body['learner'] } } });
+      return;
+    }
+    if (!agent) throw new Error('no agent wallet');
+    const pub = (chapters.teach.data as { published?: { courseId?: string; title?: string } }).published;
+    if (!pub?.courseId) throw new Error('publish your course in chapter 8 first: that is the course the LMS launches for the agent');
+    const hops: { step: string; status: number; detail: string }[] = [];
+    const sections: { id: string; title: string; questions: string[]; answers?: string[]; graded?: unknown }[] = [];
+    const transcript: { kind: string; section: string; text?: string }[] = [];
+    const show = (extra: Record<string, unknown> = {}): void => setChapter('lti', { data: { error: undefined, agent: { course: pub, hops, sections, transcript, ...extra } } });
+    show({ running: true });
+    const started = await hub.track({ actor: 'claude', service: 'foxxi · LMS', tool: 'lti-launch-signed', summary: `the agent asks Foxxi's LMS to launch your course “${pub.title ?? pub.courseId}”`, request: { course_id: pub.courseId } }, async () => {
+      const r = await signedRoute('/agent/lti/launch', { course_id: pub.courseId }, agent);
+      return { value: r, status: r.status >= 400 ? 'refused' : 'ok', code: r.status, response: r.json, summary: r.status >= 400 ? String(r.json['error'] ?? r.status) : 'a one-use launch, good for five minutes' };
+    });
+    if (started.status >= 400) throw new Error(String(started.json['error'] ?? `the launch answered ${started.status}`));
+    hops.push({ step: 'The LMS starts the launch for the signer', status: started.status, detail: `line item “${String((started.json['lineItem'] as { label?: string } | undefined)?.label ?? '')}”` });
+    const login = await hub.track({ actor: 'claude', service: 'foxxi · tool', tool: 'OIDC login', summary: 'the Tool starts the login and sends the agent to the LMS to authorize it' }, async () => {
+      const r = await fetch(String(started.json['initiationUrl']), { redirect: 'manual' });
+      return { value: { status: r.status, location: r.headers.get('location') ?? '' }, status: r.status === 302 ? 'ok' : 'err', code: r.status, summary: `${r.status} to the LMS's authorization endpoint` };
+    });
+    hops.push({ step: 'The Tool’s OIDC login', status: login.status, detail: 'redirects to the LMS with a state and a nonce' });
+    if (login.status !== 302 || !login.location) throw new Error(`the Tool's login answered ${login.status}`);
+    const authz = await hub.track({ actor: 'claude', service: 'foxxi · LMS', tool: 'authorize', summary: 'the LMS spends the one-use grant and signs an id_token for the Tool' }, async () => {
+      const r = await fetch(login.location, { headers: { accept: 'application/json' } });
+      const j = await r.json().catch(() => ({})) as { form_post?: { action?: string; fields?: Record<string, string> }; error?: string; error_description?: string };
+      return { value: { status: r.status, ...j }, status: r.ok ? 'ok' : 'refused', code: r.status, summary: r.ok ? 'a signed id_token, to post to the Tool' : String(j.error_description ?? j.error ?? r.status) };
+    });
+    if (authz.status !== 200 || !authz.form_post?.action || !authz.form_post.fields) throw new Error(`the LMS's authorization answered ${authz.status}: ${String(authz.error_description ?? authz.error ?? '')}`);
+    const claims = claimsOf(authz.form_post.fields['id_token'] ?? '');
+    hops.push({ step: 'The LMS’s authorization', status: authz.status, detail: `an id_token for ${short(String(claims['sub'] ?? ''))}, signed by the LMS` });
+    show({ running: true, claims });
+    const toolLaunch = await hub.track({ actor: 'claude', service: 'foxxi · tool', tool: 'launch', summary: "the Tool checks the id_token against the LMS's published keys and opens the course" }, async () => {
+      const r = await fetch(authz.form_post!.action!, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(authz.form_post!.fields!).toString() });
+      return { value: { status: r.status, location: r.headers.get('location') ?? '' }, status: r.status === 302 ? 'ok' : 'refused', code: r.status, summary: r.status === 302 ? 'verified; the course is open' : `answered ${r.status}` };
+    });
+    hops.push({ step: 'The Tool’s launch', status: toolLaunch.status, detail: 'id_token verified against the LMS’s published keys' });
+    if (toolLaunch.status !== 302 || !toolLaunch.location) throw new Error(`the Tool's launch answered ${toolLaunch.status}`);
+    const playUrl = toolLaunch.location;
+    let view = await (await fetch(playUrl, { headers: { accept: 'application/json' } })).json() as Record<string, unknown>;
+    let result: Record<string, unknown> | undefined;
+    for (let step = 0; step < 12 && !result; step++) {
+      const sco = view['sco'] as DeliveredSection | undefined;
+      if (!sco) throw new Error(String(view['error'] ?? 'the course player gave no section'));
+      const entry: (typeof sections)[number] = { id: sco.id, title: sco.title, questions: (sco.assessment ?? []).map((q) => q.question) };
+      sections.push(entry);
+      show({ running: true, claims });
+      let answers: string[] = [];
+      if (sco.assessment?.length) {
+        const read = await hub.track({ actor: 'claude', service: 'claude-cli', tool: 'read and answer', summary: `the agent reads section ${sco.id} and answers ${sco.assessment.length} question(s)` }, async () => {
+          const a = await answerSection(sco, (e: AgentEvent) => { if (e.kind === 'thinking' && e.text) { transcript.push({ kind: 'thinking', section: sco.id, text: e.text.slice(0, 500) }); show({ running: true, claims }); } });
+          return { value: a, summary: `answered ${a.answers.map((x) => `“${x}”`).join(', ')}${a.costUsd !== undefined ? ` · $${a.costUsd.toFixed(3)}` : ''}` };
+        });
+        answers = read.answers;
+        entry.answers = answers;
+      }
+      const sent = answers;
+      const next = await hub.track({ actor: 'claude', service: 'foxxi · tool', tool: 'course player', summary: sent.length ? `submitting ${sent.length} answer(s)` : 'continuing', request: sent.length ? { answers: sent } : {} }, async () => {
+        const r = await fetch(playUrl, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json' }, body: JSON.stringify({ answers: sent }) });
+        const j = await r.json().catch(() => ({})) as Record<string, unknown>;
+        const g = j['graded'] as { correct?: number; total?: number } | undefined;
+        return { value: { status: r.status, json: j }, status: r.ok ? 'ok' : 'refused', code: r.status, response: j, summary: !r.ok ? String(j['error'] ?? r.status) : j['done'] ? `done: ${j['passed'] ? 'passed' : 'not passed'}, grade ${(j['gradebook'] as { posted?: boolean } | undefined)?.posted ? 'posted to the LMS' : 'not posted'}` : g ? `${g.correct} of ${g.total} correct` : 'next section' };
+      });
+      if (next.status >= 400) throw new Error(String(next.json['error'] ?? `the course player answered ${next.status}`));
+      if (next.json['graded']) entry.graded = next.json['graded'];
+      if (next.json['done']) result = next.json;
+      else view = next.json;
+      show({ running: true, claims });
+    }
+    const gb = result?.['gradebook'] as { posted?: boolean; status?: number; scoreGiven?: number; scoreMaximum?: number; why?: string } | undefined;
+    if (gb) hops.push({ step: 'The grade back to the LMS (AGS)', status: gb.status ?? 0, detail: gb.posted ? `${gb.scoreGiven} of ${gb.scoreMaximum}, with a token for the Tool's signed assertion` : String(gb.why ?? 'not posted') });
+    show({ running: false, claims, ...(result ? { result } : {}) });
+    await handlers['lti-gradebook']!({});
+  },
+
+  async 'lti-gradebook'() {
+    const gradebook: Record<string, unknown> = {};
+    if (you) {
+      const r = await youAct('lti-gradebook-signed', {}, 'reading your row of the LMS gradebook');
+      gradebook['you'] = r.status >= 400 ? { error: String(r.body['error'] ?? r.status) } : { rows: r.body['rows'] ?? [], learner: r.body['learner'] };
+    }
+    if (agent) {
+      const r = await hub.track({ actor: 'claude', service: 'foxxi · LMS', tool: 'lti-gradebook-signed', summary: 'the agent reads its row of the LMS gradebook' }, async () => {
+        const s = await signedRoute('/agent/lti/gradebook', {}, agent);
+        return { value: s, status: s.status >= 400 ? 'refused' : 'ok', code: s.status, response: s.json, summary: s.status >= 400 ? String(s.json['error'] ?? s.status) : `${(s.json['rows'] as unknown[] | undefined)?.length ?? 0} course(s) in the gradebook` };
+      });
+      gradebook['agent'] = r.status >= 400 ? { error: String(r.json['error'] ?? r.status) } : { rows: r.json['rows'] ?? [], learner: r.json['learner'] };
+    }
+    setChapter('lti', { data: { gradebook } });
+    const graded = (who: 'you' | 'agent'): boolean => ((gradebook[who] as { rows?: { result?: unknown }[] } | undefined)?.rows ?? []).some((row) => row.result);
+    if (graded('you') && graded('agent')) setChapter('lti', { status: 'done' });
+    if (graded('you') || graded('agent')) unlock('after');
+  },
+
+  async 'records-after'() {
+    if (!you || !agent) throw new Error('sign in first');
+    const before = chapters.records.data as { you?: RecordView; agent?: RecordView };
+    setChapter('after', { replace: true, status: 'active', data: { running: true, before: { you: before.you?.summary, agent: before.agent?.summary } } });
+    const both = await readRecords();
+    setChapter('after', { status: 'done', data: { running: false, you: both.you, agent: both.agent } });
+  },
 };
+
+/** Both learner records, each read as its own subject: you as the person your credentials name, the agent as itself. */
+async function readRecords(): Promise<{ you: RecordView; agent: RecordView }> {
+  if (!you || !agent) throw new Error('sign in first');
+  const self = you;
+  const signer = agent;
+  // Your record is read as YOU, the person the credentials name, not as this app's session agent.
+  const yours = await youAct('review-record', { subject_did: self.webId }, 'assembling your IEEE P2997 learner record, as yourself');
+  const theirs = await hub.track({ actor: 'claude', service: 'foxxi', tool: 'review-record', summary: 'the agent assembles its own learner record' }, async () => {
+    const r = await signedRoute('/agent/review-record', {}, signer, 120_000);
+    return { value: r, status: r.status >= 400 ? 'refused' : 'ok', code: r.status, response: recordView(r.json, r.status), summary: r.status >= 400 ? String(r.json['error'] ?? r.status) : 'its record, public because it records as an agent' };
+  });
+  return { you: recordView(yours.body, yours.status), agent: recordView(theirs.json, theirs.status) };
+}
+
+// ── Part three: cmi5 and LTI ──────────────────────────────────────────────────────────────────
+
+interface Cmi5CourseView { id: string; title: string; aus: { id: string; title: string; moveOn?: string }[] }
+let cmi5CourseCache: Cmi5CourseView | undefined;
+
+/**
+ * The cmi5 course the bridge publishes of its own, found the way any client would: compose the
+ * sample course (the id is the composition's), and read its registration on the LMS. The bridge
+ * seeds it at boot; if it is not registered, publishing it is open to anyone.
+ */
+async function cmi5Course(): Promise<Cmi5CourseView> {
+  if (cmi5CourseCache) return cmi5CourseCache;
+  const post = async (path: string, body: unknown): Promise<Record<string, unknown>> => {
+    const r = await fetch(`${BRIDGE}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(60_000) });
+    if (!r.ok) throw new Error(`${path} answered ${r.status}`);
+    return await r.json() as Record<string, unknown>;
+  };
+  const course = (await post('/content/compose-course', SAMPLE_COURSE))['course'] as { id: string; title: string } | undefined;
+  if (!course?.id) throw new Error('the bridge composed no course');
+  let reg = await getJson(`/cmi5/course/${encodeURIComponent(course.id)}`);
+  if (reg.status === 404) { await post('/content/publish-course', { course }); reg = await getJson(`/cmi5/course/${encodeURIComponent(course.id)}`); }
+  if (reg.status !== 200) throw new Error(`the cmi5 LMS has no course ${course.id}`);
+  type Node = { kind?: string; id?: string; title?: string; moveOn?: string; children?: Node[] };
+  const aus: Cmi5CourseView['aus'] = [];
+  const walk = (nodes: Node[]): void => { for (const n of nodes) { if (n.kind === 'au' && n.id) aus.push({ id: n.id, title: n.title ?? n.id, ...(n.moveOn ? { moveOn: n.moveOn } : {}) }); else if (Array.isArray(n.children)) walk(n.children); } };
+  walk((reg.json['structure'] ?? []) as Node[]);
+  cmi5CourseCache = { id: course.id, title: String(reg.json['title'] ?? course.title), aus };
+  return cmi5CourseCache;
+}
+
+interface Cmi5Launch { launchUrl: string; registration: string; auId: string; auTitle: string; moveOn: string; progress: string; learner: string; launchDataStaged: boolean }
+function launchOf(j: Record<string, unknown>): Cmi5Launch {
+  return {
+    launchUrl: String(j['launchUrl'] ?? ''), registration: String(j['registration'] ?? ''), auId: String(j['auId'] ?? ''), auTitle: String(j['auTitle'] ?? ''),
+    moveOn: String(j['moveOn'] ?? ''), progress: String(j['progress'] ?? ''), learner: String(j['learner'] ?? ''), launchDataStaged: j['launchDataStaged'] === true,
+  };
+}
+
+/** Watch a registration on the LMS until its moveOn is met: the LMS records satisfied, and the chapter says so. */
+async function watchRegistration(who: 'you' | 'agent', registration: string, forMs = 20 * 60_000): Promise<void> {
+  const until = Date.now() + forMs;
+  while (Date.now() < until) {
+    const r = await getJson(`/cmi5/registration/${registration}`).catch(() => ({ status: 0, json: {} as Record<string, unknown> }));
+    if (r.json['satisfied'] === true) {
+      await hub.track({ actor: 'bridge', service: 'foxxi · LMS', tool: 'satisfied', summary: `the LMS recorded satisfied for ${who === 'you' ? 'your' : "the agent's"} activity: ${String(r.json['reason'] ?? '')}`, request: { registration } }, async () => ({ value: r.json, summary: 'moveOn met', response: r.json }));
+      const d = chapters.cmi5.data as Record<string, Record<string, unknown> | undefined>;
+      if (d[who]?.['registration'] !== registration) return;
+      setChapter('cmi5', { data: { [who]: { ...d[who], state: 'satisfied', satisfiedAt: r.json['satisfiedAt'] } } });
+      const now = chapters.cmi5.data as Record<string, { state?: string } | undefined>;
+      if (now['you']?.state === 'satisfied' && now['agent']?.state === 'satisfied') setChapter('cmi5', { status: 'done' });
+      unlock('after');
+      return;
+    }
+    await new Promise((res) => setTimeout(res, 3000));
+  }
+}
+
+/** What an id_token says: its claims, read without checking the signature. The Tool is what checks it. */
+function claimsOf(jwt: string): Record<string, unknown> {
+  try { return JSON.parse(Buffer.from(jwt.split('.')[1] ?? '', 'base64url').toString('utf8')) as Record<string, unknown>; } catch { return {}; }
+}
+const short = (s: string, n = 14): string => (s.length > n * 2 + 1 ? `${s.slice(0, n)}…${s.slice(-n)}` : s);
+
+/** The LTI chapter opens once both courses exist: the agent's, which your LMS launches for you, and yours, which it launches for the agent. */
+function unlockLti(): void {
+  const yours = (chapters.teach.data as { published?: { courseId?: string } }).published?.courseId;
+  if (yours && agentsCourse()?.courseId) unlock('lti');
+}
 
 /** The competency both of you exercise by teaching the other: an IRI, since it becomes the activity's type. */
 const TEACHING = `${BRIDGE}/ns/foxxi/competency/instructional-design`;
@@ -730,7 +980,7 @@ app.post('/api/chapter/:action', async (req, res) => {
   const action = String(req.params['action']);
   const h = handlers[action];
   if (!h) { res.status(404).json({ ok: false, error: `no action ${action}` }); return; }
-  const chapterOf: Record<string, ChapterId> = { authorize: 'signin', author: 'author', 'reset-author': 'author', publish: 'author', discover: 'discover', rank: 'discover', pick: 'learn', launch: 'learn', submit: 'learn', standings: 'claim', claim: 'claim', verify: 'verify', forgery: 'forgery', 'draft-course': 'teach', 'publish-course': 'teach', 'agent-learn': 'agentLearns', 'record-work': 'work', 'review-records': 'records', recommend: 'next' };
+  const chapterOf: Record<string, ChapterId> = { authorize: 'signin', author: 'author', 'reset-author': 'author', publish: 'author', discover: 'discover', rank: 'discover', pick: 'learn', launch: 'learn', submit: 'learn', standings: 'claim', claim: 'claim', verify: 'verify', forgery: 'forgery', 'draft-course': 'teach', 'publish-course': 'teach', 'agent-learn': 'agentLearns', 'record-work': 'work', 'review-records': 'records', recommend: 'next', 'cmi5-launch': 'cmi5', 'lti-launch': 'lti', 'lti-gradebook': 'lti', 'records-after': 'after' };
   try {
     await h((req.body ?? {}) as Record<string, unknown>);
     res.json({ ok: true, state: state() });

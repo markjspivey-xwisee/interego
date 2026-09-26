@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-09-26 — Interego, live, part three: cmi5 and LTI, for a person and an AI agent
+
+`demos/live` gains part three, three chapters (13 to 15) on the rest of the ADL Total Learning Architecture, for both learners, on the deployed services.
+
+- **An activity launched the cmi5 way.** Each of you launches your next activity in the bridge's own cmi5 course, signed as yourselves (`foxxi.cmi5_launch_signed`).
+  - Yours runs in a window.
+  - The agent's runs in its own process (`lib/au.ts`): Claude reads the lesson without the answers the page carries, the replies are scored by the page's own rule, and the same statements are reported.
+  - The chapter watches each registration until the LMS records `satisfied`.
+- **Your LMS launches a course, and the grade comes back.** Foxxi's own LTI 1.3 LMS launches the agent's course for you and yours for the agent (`foxxi.lti_launch_signed`).
+  - Yours is a real launch in a window.
+  - The agent follows the same redirects without a browser, and the chapter shows each hop and the `id_token`'s claims.
+  - The Tool posts each grade to the LMS gradebook over AGS, and each of you reads your own row (`foxxi.lti_gradebook_signed`).
+- **The records, after everything.** Both IEEE P2997 records, read again, with what changed since chapter 11.
+
+`lib/learner.ts` can ask for a short phrase (the cmi5 course's keys are phrases) and gives a lesson with nothing to answer a one-line takeaway.
+
 ## 2026-09-26 — Foxxi is its own LMS: a course launched over LTI 1.3, and the grade comes back
 
 The bridge was an LTI 1.3 Tool with no LMS to launch it: a launch ended in a ticket on the dashboard URL that nothing read, and a grade had nowhere to go. It is now both sides.
