@@ -192,6 +192,13 @@ const CHAPTERS = [
     lede: 'The bridge assembles an IEEE P2997 Enterprise Learner Record for each of you from your own pod: the experiences, the work, the competencies they add up to, and the credentials in your wallet. Then each tries to read the other’s. Yours is private; the agent’s is not.' },
   { id: 'next', n: 12, title: 'What each should learn next', actors: ['jev'],
     lede: 'Jev decides each learner’s next course from their record alone: the competencies it shows and how they were earned, and the credentials already held. Same question, same courses, two records.' },
+  { id: 'cmi5', n: 13, title: 'An activity launched the cmi5 way', actors: ['you', 'claude', 'bridge'],
+    part: { title: 'Part three · The standards the rest of the learning world speaks', lede: 'Two more pieces of the ADL Total Learning Architecture, for both learners: cmi5 (IEEE 9274.2.1), how an LMS launches an activity and trusts what it reports, and LTI 1.3, how an LMS launches a tool and gets the grade back. Both land in the same learner records.' },
+    lede: 'The bridge publishes a cmi5 course of its own. Each of you launches your next activity in it, signed as yourselves. The LMS stages the launch data, the activity trades a one-time URL for its auth-token and reports to the LRS, and when its statements meet the activity’s moveOn rule the LMS records satisfied. A cmi5 activity scores itself, so what it reports adds experience to your record, not evidence for a credential.' },
+  { id: 'lti', n: 14, title: 'Your LMS launches a course, and the grade comes back', actors: ['you', 'claude', 'bridge'],
+    lede: 'Foxxi also runs an LMS of its own. It launches the agent’s course for you and yours for the agent over LTI 1.3: the Tool’s login, the LMS’s authorization, an id_token the Tool checks against the LMS’s published keys, the course in the SCORM engine, and the grade back to the LMS gradebook over Assignment and Grade Services. The LMS knows who you are from your signature. There is no LMS password.' },
+  { id: 'after', n: 15, title: 'The records, after everything', actors: ['you', 'claude', 'bridge'],
+    lede: 'The two IEEE P2997 records from chapter 11, read again. The cmi5 activity and the LMS-launched course are in them now, beside everything else each of you learned, taught and earned.' },
 ];
 
 function chapterStatus(id) { return state.chapters[id]?.status ?? 'locked'; }
@@ -543,6 +550,114 @@ const BODIES = {
           h('div', {}, h('strong', {}, o.title), h('div', { class: 'bar' }, h('span', { style: { width: pct(o.p) } }))),
           h('div', { class: 'p' }, pct(o.p))))));
     if (d.you || d.agent) out.push(h('div', { class: 'grid' }, col('For you', d.you, d.youCourses), col('For the agent', d.agent, d.agentCourses)));
+    out.push(problem(d));
+    return out;
+  },
+
+  cmi5() {
+    const d = chapterData('cmi5');
+    const launchYou = async () => {
+      // Opened inside the click, so a popup blocker lets it through; the activity loads once the LMS has launched it.
+      const w = window.open('about:blank', 'interego-cmi5', 'width=760,height=860');
+      const r = await run('cmi5-launch', { who: 'you' });
+      const url = r.state?.chapters?.cmi5?.data?.you?.launchUrl;
+      if (r.ok !== false && url) { if (w && !w.closed) w.location.href = url; else window.open(url, '_blank', 'noopener'); } else w?.close();
+    };
+    const card = (who, title, sub, x) => h('div', { class: 'card' }, h('h3', {}, title), h('div', { class: 'meta' }, sub),
+      x ? h('dl', { class: 'kv' },
+        h('dt', {}, 'activity'), h('dd', { class: 'prose' }, x.auTitle),
+        h('dt', {}, 'moveOn'), h('dd', {}, x.moveOn),
+        h('dt', {}, 'launch data'), h('dd', { class: 'prose' }, x.launchDataStaged ? 'staged in the State resource, where the activity reads it' : 'not staged'),
+        h('dt', {}, 'registration'), h('dd', {}, link(x.progress, short(x.registration, 10)))) : null,
+      x?.score ? h('div', { class: 'sections' }, x.score.detail.map((q) => h('div', { class: 'sco-result' },
+        h('div', { class: 'qa-result' }, h('span', { class: 'muted' }, q.question), ' → ', h('code', {}, q.reply || '…'), h('span', { class: `mark ${q.right ? 'ok' : 'err'}` }, q.right ? ' right' : ' not right')),
+        !q.right ? h('div', { class: 'muted' }, `The answer: ${q.key}.`) : null))) : null,
+      x?.note ? h('div', { class: 'note' }, h('strong', {}, 'What it takes from the lesson: '), x.note) : null,
+      x?.transcript?.length ? h('details', { class: 'raw' }, h('summary', {}, `What the agent thought while it read (${x.transcript.length})`), transcriptView(x.transcript, 'claude')) : null,
+      x?.state === 'launched' ? h('div', { class: 'muted', style: { marginTop: '8px' } }, 'Work through it in the window that opened. This updates when the LMS records satisfied.') : null,
+      x?.state === 'reading' ? h('div', { class: 'muted', style: { marginTop: '8px' } }, 'The agent is reading…') : null,
+      x?.state === 'reported' ? h('div', { class: 'muted', style: { marginTop: '8px' } }, `Reported ${(x.sent ?? []).join(', ')}; waiting for the LMS.`) : null,
+      x?.state === 'satisfied' ? h('div', { class: 'note ok' }, h('strong', {}, 'Satisfied. '), `The LMS recorded it${x.satisfiedAt ? ` at ${new Date(x.satisfiedAt).toLocaleTimeString()}` : ''}: the activity’s statements met its moveOn rule (${x.moveOn}).`) : null,
+      h('div', { class: 'actions' }, who === 'you'
+        ? spinnerButton(x ? 'Launch your next activity' : 'Launch it for yourself', launchYou, { key: 'cmi5-you', primary: !x || x.state === 'satisfied', runningLabel: 'Launching…' })
+        : spinnerButton(x ? 'Send the agent to its next one' : 'Send the agent', () => run('cmi5-launch', { who: 'agent' }), { key: 'cmi5-agent', primary: !x || x.state === 'satisfied', runningLabel: 'The agent is at it…' })));
+    return [
+      d.course ? h('div', { class: 'meta' }, `${d.course.title} · ${d.course.aus?.length ?? '?'} activities, taken in order · published by the bridge`) : null,
+      h('div', { class: 'grid' }, card('you', 'Your activity', 'Launched for you, run in your browser', d.you), card('agent', 'The agent’s activity', 'Launched with its wallet, run by its own process', d.agent)),
+      problem(d),
+    ];
+  },
+
+  lti() {
+    const d = chapterData('lti');
+    const openYou = async () => {
+      const w = window.open('about:blank', 'interego-lti', 'width=760,height=860');
+      const r = await run('lti-launch', { who: 'you' });
+      const url = r.state?.chapters?.lti?.data?.you?.initiationUrl;
+      if (r.ok !== false && url) { if (w && !w.closed) w.location.href = url; else window.open(url, '_blank', 'noopener'); } else w?.close();
+    };
+    const y = d.you;
+    const a = d.agent;
+    const youCard = h('div', { class: 'card' }, h('h3', {}, 'Your launch'), h('div', { class: 'meta' }, 'The agent’s course, launched from your LMS'),
+      y ? h('dl', { class: 'kv' },
+        h('dt', {}, 'course'), h('dd', { class: 'prose' }, y.course?.title ?? ''),
+        h('dt', {}, 'gradebook column'), h('dd', { class: 'prose' }, y.lineItem?.label ?? ''),
+        h('dt', {}, 'LMS'), h('dd', {}, link(y.platform?.configuration, y.platform?.issuer)),
+        h('dt', {}, 'you, to the LMS'), h('dd', {}, short(y.learner ?? '', 16))) : null,
+      y ? h('div', { class: 'muted', style: { marginTop: '8px' } }, 'The launch runs in the window: the Tool’s login, the LMS’s authorization, the id_token, then the course. When you finish, read the gradebook.') : null,
+      h('div', { class: 'actions' }, spinnerButton(y ? 'Launch it again' : 'Open it from your LMS', openYou, { key: 'lti-you', primary: !y, runningLabel: 'Launching…' })));
+    const agentCard = h('div', { class: 'card' }, h('h3', {}, 'The agent’s launch'), h('div', { class: 'meta' }, 'Your course, launched from its LMS'),
+      a?.hops?.length ? h('ol', { class: 'hops' }, a.hops.map((x) => h('li', {}, h('strong', {}, x.step), ' ', h('code', {}, String(x.status)), h('div', { class: 'muted' }, x.detail)))) : null,
+      a?.claims ? raw('The id_token the LMS signed, as claims', a.claims) : null,
+      a?.sections?.length ? h('div', { class: 'sections' }, a.sections.map((s) => h('div', { class: 'sco-result' },
+        h('strong', {}, `${s.id} · ${s.title}`),
+        s.questions?.length
+          ? s.questions.map((q, i) => {
+            const g = s.graded?.detail?.[i];
+            return h('div', { class: 'qa-result' }, h('span', { class: 'muted' }, q), ' → ', h('code', {}, s.answers?.[i] ?? '…'),
+              g ? h('span', { class: `mark ${g.correct ? 'ok' : 'err'}` }, g.correct ? ' correct' : ' wrong') : null);
+          })
+          : h('div', { class: 'muted' }, 'No questions here; it read on.')))) : null,
+      a?.result ? h('div', { class: `note ${a.result.passed ? 'ok' : 'warn'}` }, h('strong', {}, a.result.passed ? 'Passed. ' : 'Not passed. '),
+        `Score ${a.result.score}, graded by the SCORM engine. `, a.result.gradebook?.posted ? `The Tool posted ${a.result.gradebook.scoreGiven} of ${a.result.gradebook.scoreMaximum} to the LMS gradebook.` : `The grade did not reach the LMS: ${a.result.gradebook?.why ?? 'unknown'}.`) : null,
+      h('div', { class: 'actions' }, spinnerButton(a ? 'Send it through again' : 'Send the agent through the LMS', () => run('lti-launch', { who: 'agent' }), { key: 'lti-agent', primary: !a, runningLabel: 'The agent is in class…' })));
+    const out = [h('div', { class: 'grid' }, youCard, agentCard)];
+    const gb = d.gradebook;
+    if (gb) {
+      const columns = new Map();
+      for (const who of ['you', 'agent']) for (const row of gb[who]?.rows ?? []) columns.set(row.lineItem?.id, row.lineItem?.label ?? row.courseId);
+      const cell = (who, id) => {
+        const row = (gb[who]?.rows ?? []).find((r) => r.lineItem?.id === id);
+        return row?.result ? `${row.result.resultScore ?? '—'} / ${row.result.resultMaximum}` : '—';
+      };
+      out.push(h('table', { class: 'gradebook' },
+        h('thead', {}, h('tr', {}, h('th', {}, 'The LMS gradebook'), [...columns.values()].map((label) => h('th', {}, label)))),
+        h('tbody', {}, [['you', 'You'], ['agent', 'The agent']].map(([who, name]) => h('tr', {}, h('td', {}, name), gb[who]?.error ? h('td', { colspan: String(columns.size || 1) }, gb[who].error) : [...columns.keys()].map((id) => h('td', {}, cell(who, id))))))));
+    }
+    out.push(h('div', { class: 'actions' }, spinnerButton('Read the gradebook', () => run('lti-gradebook'), { key: 'lti-gradebook', primary: false, runningLabel: 'Reading…' }),
+      h('span', { class: 'muted' }, 'Each of you reads your own row, signed; the LMS shows nobody else’s.')));
+    out.push(problem(d));
+    return out;
+  },
+
+  after() {
+    const d = chapterData('after');
+    const out = [h('div', { class: 'actions' }, spinnerButton(d.you ? 'Read them again' : 'Read both records again', () => run('records-after'), { primary: !d.you, runningLabel: 'Reading two pods…' }))];
+    const change = (label, key, before, now) => {
+      const b = before?.[key];
+      const n = now?.[key];
+      if (n === undefined) return null;
+      const diff = typeof b === 'number' && typeof n === 'number' ? n - b : undefined;
+      return h('div', {}, `${label}: `, b === undefined ? String(n) : `${b} → ${n}`, diff ? h('span', { class: 'mark ok' }, ` (+${diff})`) : null);
+    };
+    const changes = (title, before, now) => h('div', { class: 'card delta' }, h('h3', {}, title),
+      before ? null : h('div', { class: 'muted' }, 'Chapter 11 was not read, so there is nothing to compare with.'),
+      change('experiences', 'experienceCount', before, now), change('at work', 'performanceCount', before, now),
+      change('competencies', 'competencyCount', before, now), change('credentials verified', 'verifiedCredentialCount', before, now));
+    if (d.you || d.agent) {
+      out.push(h('div', { class: 'grid' }, changes('Your record, since chapter 11', d.before?.you, d.you?.summary), changes('The agent’s record, since chapter 11', d.before?.agent, d.agent?.summary)));
+      out.push(h('div', { class: 'grid' }, recordColumn('Your record', 'private to you', d.you), recordColumn('The agent’s record', 'public', d.agent)));
+    }
     out.push(problem(d));
     return out;
   },
