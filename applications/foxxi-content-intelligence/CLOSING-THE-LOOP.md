@@ -55,7 +55,11 @@ lessons, then turned into:
   load reads the cmi5 launch parameters from its own URL, exchanges the
   one-time fetch token for an auth-token, renders the lesson's text, and
   on completion emits the cmi5 xAPI statements straight to the LRS. An
-  assessment-item lesson ("question ::: answer") is scored.
+  assessment-item lesson ("question ::: answer") is scored. An answer may
+  explain itself after a spaced dash ("a team lead — the $250 would carry
+  the customer past the cap"). The part before the dash is the key, a reply
+  with every content word of the key gives it, and the page shows the key
+  and the reason once the learner has answered.
 - a **SCORM 2004 package** — an `imsmanifest.xml` (with sequencing) plus
   one SCO per lesson, zipped — a real, conformant `.zip` artifact.
 

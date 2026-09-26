@@ -9608,7 +9608,8 @@ function hashAnswer(s: string, input?: ScormAnswerInput): string { return hashSc
  *  performance (verb=performed → ELR performance rollup), this carries a distinct
  *  verb (authored / credentialed) so the actor's record reflects the WORK they did
  *  — ending the 'performed' monoculture for the teacher side — without manufacturing
- *  a learned competency (these project as experiences, not performances). Best-effort
+ *  a learned competency: stamped as production work, it lands in the ELR's work leg,
+ *  and its verb keys no competency there (MAKING_VERBS in learner-record.ts). Best-effort
  *  side effect; returns the statement id (or null if the actor pod can't be resolved). */
 function emitAgentActivity(args: {
   actorDid: string;

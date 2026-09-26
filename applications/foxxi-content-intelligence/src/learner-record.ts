@@ -22,7 +22,10 @@
  *                      (Asserted).
  *                    · inferred    — predicted from a passed/completed
  *                      experience alone (Hypothetical — iep:modalStatus
- *                      keeps the prediction honest).
+ *                      keeps the prediction honest). A completion the
+ *                      record shows failed and never passed predicts
+ *                      nothing, and making something (authoring a course,
+ *                      issuing a credential) is work, never a competency.
  *   provenance   ← P2997's hallmark: every entry points back to where its
  *                  raw record lives.
  *
@@ -48,8 +51,19 @@ const ELR_CONTEXT = [
 
 const ADL = 'http://adlnet.gov/expapi/verbs/';
 const FOXXI_VOCAB = FOXXI_NS;
-/** Verbs that imply the subject demonstrated something (→ inferred competency). */
+/**
+ * Verbs that imply the subject demonstrated something (→ inferred competency).
+ *
+ * ★ `completed` IS HERE AND NOT IN THE CREDENTIAL GATE, ON PURPOSE. earned-credentials.ts leaves it
+ * out of MASTERY_VERBS because the SCORM engine writes `completed` beside `failed` for an attempt
+ * that did not pass, and a credential is an Asserted, signed claim a third party relies on. An
+ * inferred competency is only a Hypothetical prediction, and `completed` is the only signal an
+ * unassessed lesson gives, so it stays — except for an activity this record shows failed and never
+ * passed (see `failedAndNeverPassed`), where the completion is the failed attempt's own.
+ */
 const MASTERY_VERBS = new Set([`${ADL}passed`, `${ADL}completed`, `${ADL}mastered`]);
+const COMPLETED_VERB = `${ADL}completed`;
+const FAILED_VERB = `${ADL}failed`;
 /** The verb a `performed` production-work statement carries. */
 export const PERFORMED_VERB = `${FOXXI_VOCAB}performed`;
 /** Structural modal verbs (GAP 5): an Asserted descriptor PERFORMED work; a
@@ -61,11 +75,24 @@ export const INTENDED_VERB = `${FOXXI_VOCAB}verbs/intended`;
 export const CONSIDERED_VERB = `${FOXXI_VOCAB}verbs/considered`;
 /** Agent-declared ACTIVITY verbs — the teacher/issuer's OWN work is real activity
  *  and is recorded with an EXPRESSIVE verb (not a `performed` monoculture) so a
- *  teacher's record reflects what they DID. These name the act, not a learned
- *  competency, so they project as experiences (no manufactured competency for the
- *  author). Declared in the Foxxi xAPI Profile + dereferenceable. */
+ *  teacher's record reflects what they DID. Declared in the Foxxi xAPI Profile +
+ *  dereferenceable. */
 export const AUTHORED_VERB = `${FOXXI_VOCAB}verbs/authored`;
 export const CREDENTIALED_VERB = `${FOXXI_VOCAB}verbs/credentialed`;
+/**
+ * ★ MAKING SOMETHING IS WORK, NOT A COMPETENCY.
+ *
+ * The bridge stamps an authored or credentialed statement as production work (emitAgentActivity),
+ * so it lands in the work leg, which is where it belongs: it is what the subject did. But its
+ * object type names the thing made (an ADL `course`, a Foxxi `credential`), not a skill, and the
+ * work leg keys a competency on a domain object type. So a course author's record grew
+ * "Inferred: course" and a credential issuer's grew an Asserted "Demonstrated: credential"
+ * (2026-09-26, live). These were meant to name the act and manufacture no competency (the June
+ * design); a July change that let `contextKind=production` mark work swept them into the leg that
+ * infers one. Teaching as a skill is recorded explicitly, as a performance naming its competency.
+ * Only the verbs this bridge emits are listed.
+ */
+const MAKING_VERBS: ReadonlySet<string> = new Set([AUTHORED_VERB, CREDENTIALED_VERB]);
 /** Context-extension IRIs the record_performance handler stamps. */
 export const PERF_EXT = {
   observedBy: `${FOXXI_VOCAB}observedBy`,
@@ -278,6 +305,8 @@ export async function assembleEnterpriseLearnerRecord(
   //    everything else → learning experiences.
   const experiences: ElrExperience[] = [];
   const performanceRecords: ElrPerformanceRecord[] = [];
+  // The work a competency may rest on: every performance except making something (MAKING_VERBS).
+  const skillEvidence: ElrPerformanceRecord[] = [];
   for (const rec of config.statements) {
     if (rec.voided) continue;
     const s = rec.statement;
@@ -288,7 +317,9 @@ export async function assembleEnterpriseLearnerRecord(
     const objType = (s.object as { definition?: { type?: string } } | undefined)?.definition?.type;
     if (isCredentialEnvelope(objType)) continue;
     if (isProductionPerformance(s)) {
-      performanceRecords.push(projectPerformance(rec, config.lrsEndpoint));
+      const record = projectPerformance(rec, config.lrsEndpoint);
+      performanceRecords.push(record);
+      if (!MAKING_VERBS.has(String((s.verb as { id?: unknown } | undefined)?.id ?? ''))) skillEvidence.push(record);
     } else {
       experiences.push(projectExperience(rec, config.lrsEndpoint));
     }
@@ -297,7 +328,7 @@ export async function assembleEnterpriseLearnerRecord(
   // 3. Competencies — merge three provenance-distinct sources, keyed by a
   //    normalised label so performance evidence can supersede a weaker
   //    training inference for the same competency.
-  const competencies = buildCompetencies(clr, experiences, performanceRecords, config.tenantDid, config.learnerDid, config.learnerPodUrl);
+  const competencies = buildCompetencies(clr, experiences, skillEvidence, config.tenantDid, config.learnerDid, config.learnerPodUrl);
 
   // 4. Credentials projection.
   const credentials: ElrCredential[] = (clr?.credentialEntries ?? []).map(e => {
@@ -584,9 +615,11 @@ function buildCompetencies(
     }
   }
 
-  // Inferred competencies — mastery-verb training experiences.
+  // Inferred competencies — mastery-verb training experiences. A making verb is never one of them.
+  const failedOnly = failedAndNeverPassed(experiences);
   for (const exp of experiences) {
     if (!MASTERY_VERBS.has(exp.verb)) continue;
+    if (exp.verb === COMPLETED_VERB && failedOnly.has(exp.activityId)) continue;
     const label = exp.activityName ?? exp.activityId.split(/[#/]/).pop() ?? exp.activityId;
     if (!label) continue;
     // Evidence is the DEREFERENCEABLE raw-data location (pod descriptor / LRS URL),
@@ -720,6 +753,21 @@ function buildCompetencies(
     });
   }
   return out;
+}
+
+/**
+ * The activities this record shows failed and never passed or mastered. The SCORM engine writes
+ * `completed` beside `failed` for an attempt that did not pass, so a completion of one of these
+ * is the failed attempt's own and predicts no competency. A later pass restores the inference.
+ */
+function failedAndNeverPassed(experiences: readonly ElrExperience[]): ReadonlySet<string> {
+  const failed = new Set<string>();
+  const passed = new Set<string>();
+  for (const e of experiences) {
+    if (e.verb === FAILED_VERB) failed.add(e.activityId);
+    else if (e.verb === `${ADL}passed` || e.verb === `${ADL}mastered`) passed.add(e.activityId);
+  }
+  return new Set([...failed].filter((a) => !passed.has(a)));
 }
 
 function pickLang(m: Record<string, string> | undefined): string | undefined {

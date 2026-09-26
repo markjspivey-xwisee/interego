@@ -45,6 +45,36 @@ export function scormAnswerCandidates(value: string, input?: ScormAnswerInput): 
   return normalized ? [...new Set([normalized, ...normalized.split(' ').filter(token => token.length >= 4)])] : [];
 }
 
+/**
+ * An authored answer may explain itself after a spaced em or en dash, as the sample course's do:
+ * `a team lead — the $250 would carry the customer past the $1,000 rolling cap`. The key is what
+ * comes before the dash, and the rest is why. Without a dash the whole answer is the key.
+ */
+export function explainedAnswer(authored: string): { key: string; why: string } {
+  const text = String(authored ?? '');
+  const dash = /\s[\u2014\u2013]\s/.exec(text);
+  return dash ? { key: text.slice(0, dash.index).trim(), why: text.slice(dash.index + dash[0].length).trim() } : { key: text.trim(), why: '' };
+}
+
+/**
+ * Whether a reply gives an answer key. The engine's own rule first: the reply's normalized text,
+ * or one of its words, is the key. A key of several words also matches a reply that has every one
+ * of its content words (four letters or more; every word when it has none of that length), so
+ * "team lead" gives "a team lead". A numeric key keeps its numeric contract. No inner named
+ * functions: this is embedded in generated pages by its source.
+ */
+export function matchesAnswerKey(reply: string, key: string): boolean {
+  const input = inferScormAnswerInput(key);
+  const expected = scormAnswerCandidates(key, input)[0];
+  if (expected !== undefined && scormAnswerCandidates(reply, input).includes(expected)) return true;
+  if (input && input.type !== 'text') return false;
+  const keyWords = normalizeScormAnswer(key).split(' ').filter(Boolean);
+  const content = keyWords.filter(word => word.length >= 4);
+  const required = content.length > 0 ? content : keyWords;
+  const have = new Set(normalizeScormAnswer(String(reply ?? '')).split(' ').filter(Boolean));
+  return required.length > 0 && required.every(word => have.has(word));
+}
+
 /** Validate the whole submission before writing tracking or advancing a SCO. */
 export function validateScormResponses(questions: readonly ScormAssessmentQuestion[], answers: unknown): Array<{ index: number; message: string }> {
   if (!Array.isArray(answers) || answers.length !== questions.length) return [{ index: -1, message: 'Submit exactly one answer for each question.' }];
