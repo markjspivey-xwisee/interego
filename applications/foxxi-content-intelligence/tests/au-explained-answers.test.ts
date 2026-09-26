@@ -44,6 +44,9 @@ describe('an explained answer', () => {
     // A reply that negates a key that does not is the opposite answer, whatever else it says.
     expect(matchesAnswerKey('not a team lead', 'a team lead')).toBe(false);
     expect(matchesAnswerKey('never the policy window', 'the policy window')).toBe(false);
+    expect(matchesAnswerKey('without fraud', 'fraud')).toBe(false);
+    expect(matchesAnswerKey('without a team lead', 'a team lead')).toBe(false);
+    expect(matchesAnswerKey('proceed without escalating', 'proceed without escalating')).toBe(true);
     // A key that is itself a negation can be answered in more than one.
     expect(matchesAnswerKey('no, never', 'no')).toBe(true);
   });

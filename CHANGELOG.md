@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-09-26 — Two review findings: "without" negates, and the LTI chapter checks its own courses
+
+Two findings from the automated reviews of #483 and #482.
+
+- **"without" is a negation** (`matchesAnswerKey`, #483). "without fraud" still passed for the key "fraud", because `without` was not among the negators the polarity check reads. It is now. A key that itself says "without" is still answered by a reply that says it too.
+- **The LTI chapter is done when its own courses are graded** (`demos/live`, #482). The chapter counted any gradebook row with a result, and `foxxi.lti_gradebook_signed` returns every course in the learner's gradebook. So a grade from an earlier course could close the chapter, and unlock the last one, while this chapter's launches were never completed. Now each learner's row must be the course launched for them here: the agent's course for you, and yours for the agent.
+
 ## 2026-09-26 — Foxxi: a cmi5 auth-token reads and writes only its own launch
 
 The automated review of #478 found two gaps in cmi5 for signed learners.
