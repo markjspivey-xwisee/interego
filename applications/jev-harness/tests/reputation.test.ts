@@ -109,7 +109,9 @@ describe('the service', () => {
     expect(view.status).toBe('ok');
     expect(view.subject).toBe(ctx.agentId);
     expect(view.attestations).toHaveLength(1);
-    expect(view.snapshot?.axes).toEqual({ competence: 0.8, honesty: 0.8, recency: 1 });
+    // The registry's mean is (0.8 × w) / w, and its recency weight w depends on the clock, so on some
+    // days it comes back as 0.8000000000000002. Compare the ratings as numbers, not as bit patterns.
+    expect(view.snapshot?.axes).toEqual({ competence: expect.closeTo(0.8, 12), honesty: expect.closeTo(0.8, 12), recency: expect.closeTo(1, 12) });
     expect(view.snapshot?.contributingAttestations).toEqual([url(78)]);
     expect(view.policy.policyId).toBe(REPUTATION_POLICY.policyId);
   });

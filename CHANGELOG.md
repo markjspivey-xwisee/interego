@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-09-26 — jev-harness: the reputation test no longer depends on the day it runs
+
+`tests/reputation.test.ts` compared the snapshot's axes to `{ competence: 0.8, honesty: 0.8, recency: 1 }` exactly. The registry computes each axis as a weighted mean, `(0.8 × w) / w`, and the recency weight `w` decays from the fixture attestation's date (2026-09-21) to the current time. On about one run in six, depending on the time, the result is 0.8000000000000002, and the check on #487 failed that way. The test now compares each axis with `expect.closeTo(…, 12)`. With the clock pinned at a failing moment (2026-09-26T08:15:09Z), the old assertion fails with that exact value and the new one passes.
 ## 2026-09-26 — Foxxi: the void checks the target's launch as it marks it
 
 The automated review of #487 found that its registration check on voiding read the target before the void. With a file- or pod-backed store, another launch could store that statement between the read and the void, and the void would then mark it.
