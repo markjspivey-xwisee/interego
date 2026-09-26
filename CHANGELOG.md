@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-09-26 — Foxxi: an answer key keeps its negations and numbers
+
+The automated review of #480 found that `matchesAnswerKey` let an opposite answer pass. It required only a key's words of four letters or more, so "escalate" gave "do not escalate", "fraud" gave "no fraud", and "limit" gave "the $250 limit". A generated cmi5 activity would then have reported a pass.
+
+- **Only articles and connectives may be left out.** A key of several words now requires every word except those (a, the, and, of, to, …), so negations and numbers are always required. "team lead" still gives "a team lead".
+- **A reply that negates never gives a key that does not.** "not a team lead" is the opposite of "a team lead", whatever else it says. A key that is itself a negation can still be answered in more than one ("no, never" for "no").
+- **"don't" counts as "do not"**, on both sides.
+
+The page embeds the function by its source, so the word lists live inside it. Tests in `tests/au-explained-answers.test.ts`, including the three cases the review named.
+
 ## 2026-09-26 — Interego, live, part three: cmi5 and LTI, for a person and an AI agent
 
 `demos/live` gains part three, three chapters (13 to 15) on the rest of the ADL Total Learning Architecture, for both learners, on the deployed services.

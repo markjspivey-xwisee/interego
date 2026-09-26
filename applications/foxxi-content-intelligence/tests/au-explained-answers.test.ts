@@ -31,6 +31,23 @@ describe('an explained answer', () => {
     expect(matchesAnswerKey('the window', 'the policy window')).toBe(false);
   });
 
+  it('never lets an opposite answer through: a negation or a number is never dropped for being short', () => {
+    // The automated review of #480: these three all used to pass.
+    expect(matchesAnswerKey('escalate', 'do not escalate')).toBe(false);
+    expect(matchesAnswerKey('fraud', 'no fraud')).toBe(false);
+    expect(matchesAnswerKey('limit', 'the $250 limit')).toBe(false);
+    // The right answers, in the words people use.
+    expect(matchesAnswerKey('not escalate', 'do not escalate')).toBe(true);
+    expect(matchesAnswerKey("Don't escalate it", 'do not escalate')).toBe(true);
+    expect(matchesAnswerKey('no fraud found', 'no fraud')).toBe(true);
+    expect(matchesAnswerKey('a $250 limit', 'the $250 limit')).toBe(true);
+    // A reply that negates a key that does not is the opposite answer, whatever else it says.
+    expect(matchesAnswerKey('not a team lead', 'a team lead')).toBe(false);
+    expect(matchesAnswerKey('never the policy window', 'the policy window')).toBe(false);
+    // A key that is itself a negation can be answered in more than one.
+    expect(matchesAnswerKey('no, never', 'no')).toBe(true);
+  });
+
   it('keeps the engine\'s own rule for a one-word key, and the numeric contract for a number', () => {
     expect(matchesAnswerKey('The answer is ALPHA!', 'alpha')).toBe(true);
     expect(matchesAnswerKey('wrong', 'alpha')).toBe(false);

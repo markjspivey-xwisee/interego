@@ -57,9 +57,11 @@ lessons, then turned into:
   on completion emits the cmi5 xAPI statements straight to the LRS. An
   assessment-item lesson ("question ::: answer") is scored. An answer may
   explain itself after a spaced dash ("a team lead — the $250 would carry
-  the customer past the cap"). The part before the dash is the key, a reply
-  with every content word of the key gives it, and the page shows the key
-  and the reason once the learner has answered.
+  the customer past the cap"). The part before the dash is the key. A reply
+  with every word of the key but its articles and connectives gives it (a
+  negation or a number is always required), a reply that negates a key that
+  does not never does, and the page shows the key and the reason once the
+  learner has answered.
 - a **SCORM 2004 package** — an `imsmanifest.xml` (with sequencing) plus
   one SCO per lesson, zipped — a real, conformant `.zip` artifact.
 
