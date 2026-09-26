@@ -2,7 +2,7 @@
  * Who is in the demo and what state they are in: the services, the cast, the facts, the
  * chapters. One object the page renders, rebuilt and pushed whenever anything changes.
  */
-export type ChapterId = 'signin' | 'author' | 'discover' | 'learn' | 'claim' | 'verify' | 'forgery';
+export type ChapterId = 'signin' | 'author' | 'discover' | 'learn' | 'claim' | 'verify' | 'forgery' | 'teach' | 'agentLearns' | 'work' | 'records' | 'next';
 export type ChapterStatus = 'locked' | 'active' | 'done';
 
 export interface Service { id: string; label: string; status: 'ok' | 'warn' | 'err' | 'busy' | ''; detail?: string }
@@ -27,7 +27,7 @@ export interface DemoState {
   chapters: Record<ChapterId, { status: ChapterStatus; data: Record<string, unknown> }>;
 }
 
-export const CHAPTER_ORDER: readonly ChapterId[] = ['signin', 'author', 'discover', 'learn', 'claim', 'verify', 'forgery'];
+export const CHAPTER_ORDER: readonly ChapterId[] = ['signin', 'author', 'discover', 'learn', 'claim', 'verify', 'forgery', 'teach', 'agentLearns', 'work', 'records', 'next'];
 
 /** You sign in and the agent writes its course at the same time; the rest opens as they finish. */
 export function freshChapters(): DemoState['chapters'] {
