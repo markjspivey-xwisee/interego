@@ -17,7 +17,7 @@
  *   POST /lti/ags/lineitems            AGS — create a line item (+ optional platform mirror)
  *   GET/PUT/DELETE /lti/ags/lineitems/:id   AGS — line-item read / update / delete
  *   POST /lti/ags/scores               AGS — submit a Score back to the platform
- *   GET  /lti/nrps/members             NRPS — tenant roster, or ?members_url proxy
+ *   GET  /lti/nrps/members             NRPS — tenant roster, or ?members_url proxy (both operator-only)
  *
  * A resource-link launch goes to the bridge's `onResourceLaunch` first: a launch from Foxxi's own
  * LMS (lti-platform.ts) opens the course in the SCORM engine, and `postScore` on the returned
@@ -979,7 +979,7 @@ ${courseItems || '<p><em>No cmi5 courses registered yet — the generic Foxxi li
 
   // (7) NRPS — Names and Role Provisioning Service 2.0 (IMS-LTI-NRPS-2).
   //
-  // Two modes, both conformant:
+  // Two modes, both conformant, both operator-only:
   //  · `?members_url=` — Foxxi acts as an NRPS *consumer*: it calls the
   //    platform's context-membership endpoint with a Tool-signed JWT and
   //    returns the platform's membership container (the true Tool role).
@@ -987,6 +987,17 @@ ${courseItems || '<p><em>No cmi5 courses registered yet — the generic Foxxi li
   //    tenant roster (Foxxi directory + any imported OneRoster overlay)
   //    as a conformant NRPS MembershipContainer.
   app.get('/lti/nrps/members', (req, res) => { void (async () => {
+    // Both modes return roster PII (names, emails, roles), so the operator check comes first,
+    // before any platform or token work. Producer mode returns this tenant's roster, the SAME
+    // roster source OneRoster /users gates; NRPS 2.0 itself mandates an OAuth2 bearer with the
+    // contextmembership.readonly scope. Consumer mode reads a registered LMS's course roster
+    // with a platform token the bridge obtains with its own key: ungated, any anonymous caller
+    // could read that roster through the bridge, and every such call requested a platform token.
+    // The AGS consumer paths (?platformLineItemsUrl, POST /lti/ags/scores) were already gated.
+    if (!callerIsOperator(req, config)) {
+      res.status(401).json({ error: 'NRPS membership requires an authenticated operator session (OAuth2 Bearer with contextmembership.readonly / operator token)' });
+      return;
+    }
     const membersUrl = req.query.members_url as string | undefined;
     if (membersUrl) {
       const platform = platforms[0];
@@ -1002,20 +1013,8 @@ ${courseItems || '<p><em>No cmi5 courses registered yet — the generic Foxxi li
       res.status(r.status).type('application/vnd.ims.lti-nrps.v2.membershipcontainer+json').send(text);
       return;
     }
-    // Producer-mode NRPS returns this tenant's full member roster (PII:
-    // names/emails/employee-ids/roles) — the SAME roster source OneRoster
-    // /users gates. NRPS 2.0 itself mandates an OAuth2 bearer with the
-    // contextmembership.readonly scope, so gate this on the same operator
-    // auth the OneRoster read path uses. Without it an anonymous caller
-    // reads the default tenant's membership PII (the sibling of the gated
-    // OneRoster endpoint).
-    if (!callerIsOperator(req, config)) {
-      res.status(401).json({ error: 'NRPS membership requires an authenticated operator session (OAuth2 Bearer with contextmembership.readonly / operator token)' });
-      return;
-    }
-    // Honor ?tenant_pod_url only for a verified operator; pin everyone else
-    // to DEFAULT_TENANT so an anonymous caller can't read a victim tenant's
-    // membership by naming it.
+    // Producer mode: this tenant's full member roster (names/emails/employee-ids/roles). The
+    // caller is a verified operator by now, so trustedTenantOf honors ?tenant_pod_url.
     const tenant = trustedTenantOf(req, config);
     const members = tenantOrUsers(tenant).map(orUserToNrpsMember);
     res.type('application/vnd.ims.lti-nrps.v2.membershipcontainer+json').send(JSON.stringify({

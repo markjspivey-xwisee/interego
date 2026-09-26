@@ -702,6 +702,15 @@ export const SHARED_ONLY_THROUGH_IMPORTED_CODE: readonly {
       + 'stays in memory. Same read site and same argument.',
   },
   {
+    name: 'FOXXI_LTI_PRIVATE_KEY_PEM',
+    readIn: 'applications/foxxi-content-intelligence/src/lti13.ts',
+    why: 'the PEM the LTI Tool keypair is taken from when set; unset, deriveKeys() generates a '
+      + 'fresh keypair and keeps it for the process (the seed only names its kid). Two suites '
+      + 'reach the read now that the NRPS consumer test mounts attachLti13Routes beside '
+      + 'tests/lti-own-lms.test.ts. A KEY, not an address: it decides which keypair signs, never '
+      + 'where anything goes.',
+  },
+  {
     name: 'FOXXI_TENANT_POD_URL',
     readIn: 'applications/foxxi-content-intelligence/src/pod-snapshot-publisher.ts',
     why: 'GENUINELY A LIVE ADDRESS — a Solid pod that podConfig() hands to a globalThis.fetch '
