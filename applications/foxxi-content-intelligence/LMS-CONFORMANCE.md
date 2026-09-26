@@ -80,12 +80,24 @@ selection/randomization controls.
 | Deep Linking 2.0 — content-item selection round trip: a content picker UI + a signed `LtiDeepLinkingResponse` JWT auto-posted to the platform's return URL | **Implemented** | `GET` + `POST /lti/deeplink` |
 | NRPS 2.0 — Names & Roles: Foxxi as a roster *provider* (tenant directory + imported OneRoster overlay → membership container) and as a *consumer* (`?members_url=` proxies a platform with a Tool-signed JWT) | **Implemented** | `GET /lti/nrps/members` |
 | AGS 2.0 — line-item management: per-tenant create / read / update / delete, optional mirror onto a platform's line-item container | **Implemented** | `GET/POST /lti/ags/lineitems`, `GET/PUT/DELETE /lti/ags/lineitems/:id` |
-| LTI Platform role (Foxxi launching external tools) | **Roadmap** | Foxxi is a Tool, not a Platform |
+| LTI Platform role — Foxxi as its own LMS: OIDC authorization issuing an ES256 `id_token` by `form_post` (published JWKS and OpenID configuration), a `client_credentials` token endpoint that verifies the Tool's signed JWT assertion, AGS line items, results and score publish, and each learner's own gradebook row | **Implemented** for launching the bridge's own Tool | `src/lti-platform.ts`; `/lti/platform/*`, `POST /agent/lti/launch`, `POST /agent/lti/gradebook` |
+| Tool: a launch from Foxxi's own LMS opens the course in the SCORM engine, for the learner the LMS vouches for; the outcome goes to their record and the grade to the LMS gradebook over AGS | **Implemented** | `onResourceLaunch` in `src/lti13.ts`; `/lti/play/:id` in `bridge/server.ts`; `src/lti-player.ts` |
+| The LMS launching Tools other than the bridge's own (a Tool registry) | **Roadmap** | the Platform registers one Tool |
+| A course launched from an external LMS played in the SCORM engine | **Roadmap** | such a launch still hands a signed ticket to the dashboard: only Foxxi's own LMS checked the learner's signature, so only its launches name a pod to record to |
 
 An external LMS (Canvas, Moodle, Blackboard, Open edX) can launch Foxxi
 as a Tool today — resource-link launch, deep-link content selection,
 roster sync, and grade passback all close end-to-end. All three LTI
 Advantage services are verified by `tools/lms-conformance-smoke.ts`.
+
+Foxxi is also its own LMS. A signed learner, a person through their relay
+connection or an agent with its own wallet, asks it to launch a course. From
+there it is a standard launch over HTTP with the bridge on both sides: the
+Tool's login, the Platform's authorization, a signed `id_token` the Tool
+verifies against the Platform's published keys, the course in the SCORM
+engine, and the grade back to the Platform's gradebook with a token the Tool
+gets by signing a client assertion. `tests/lti-own-lms.test.ts` runs that
+exchange over HTTP.
 
 ## 5. OneRoster 1.2
 
@@ -137,11 +149,12 @@ An incumbent xAPI LRS becomes a *data source under the substrate* — see
   **and enforces SCORM 2004 Sequencing & Navigation at runtime**. It is
   a full LTI 1.3 Advantage Tool — resource-link launch, Deep Linking 2.0
   content selection, NRPS roster, and AGS line-item management + score
-  passback. It is a OneRoster 1.2 producer (incl. courses) and an
+  passback — and an LTI 1.3 Platform that launches that Tool and keeps
+  the gradebook its grades come back to. It is a OneRoster 1.2 producer (incl. courses) and an
   applying CSV consumer.
 - **The remaining Roadmap items** are genuinely lower-priority and
-  honestly scoped: the LTI *Platform* role (Foxxi launching external
-  tools — Foxxi is a Tool today), and the SN edge cases noted in §3
+  honestly scoped: the LTI Platform launching Tools other than the
+  bridge's own, external launches played in the SCORM engine, and the SN edge cases noted in §3
   (time limits, attempt-absolute-duration limits, randomization). None
   blocks any core LMS loop.
 - **Verification**: `tools/lms-conformance-smoke.ts` is a self-contained

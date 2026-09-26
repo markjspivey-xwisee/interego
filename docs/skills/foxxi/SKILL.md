@@ -1,11 +1,11 @@
 ---
 name: interego-foxxi
-description: "Foxxi content intelligence, learner surface as Interego affordances: 45 tools (record-private-performance-outcome-signed, read-private-performance-outcomes-signed, read-private-performance-calibration-signed, discover-lrs, discover-assigned-courses, discover-course-catalogs, and more). Use when a learner or an agent acting for one needs their assigned courses, a course's concept map or context, an answer grounded in course content, a credential, a learner record, a SCORM or cmi5 session, or private performance feedback on an Interego pod."
+description: "Foxxi content intelligence, learner surface as Interego affordances: 47 tools (record-private-performance-outcome-signed, read-private-performance-outcomes-signed, read-private-performance-calibration-signed, discover-lrs, discover-assigned-courses, discover-course-catalogs, and more). Use when a learner or an agent acting for one needs their assigned courses, a course's concept map or context, an answer grounded in course content, a credential, a learner record, a SCORM or cmi5 session, or private performance feedback on an Interego pod."
 license: MIT
 metadata:
   vertical: foxxi-content-intelligence
   source: applications/foxxi-content-intelligence/affordances.ts
-  affordances: 45
+  affordances: 47
   manifest: "https://foxxi-bridge.interego.xwisee.com/affordances"
   generator: tools/build-skills.ts
 ---
@@ -40,6 +40,8 @@ Every answer is a JSON object; a refusal is typed `iep:Refusal` with `iep:refusa
 | `foxxi.earned_credentials_signed` | foxxi.earned_credentials for the courses this bridge's SCORM engine grades, signed the way the engine's own routes are: by your wallet, or by an agent holding… | `POST https://foxxi-bridge.interego.xwisee.com/agent/credentials/earned` *(HTTP only)* |
 | `foxxi.claim_credential_signed` | foxxi.claim_credential for a course this bridge's SCORM engine grades, signed by your wallet or by an agent holding your delegation (a relay connection, such a… | `POST https://foxxi-bridge.interego.xwisee.com/agent/credentials/claim` *(HTTP only)* |
 | `foxxi.cmi5_launch_signed` | Launch an Assignable Unit of a cmi5 course published on this bridge, for yourself, signed by your wallet or by an agent holding your delegation (a relay connec… | `POST https://foxxi-bridge.interego.xwisee.com/agent/cmi5/launch` *(HTTP only)* |
+| `foxxi.lti_launch_signed` | Launch a course this bridge's SCORM engine grades from Foxxi's own LMS, the LTI 1.3 Platform this bridge runs beside its Tool, for yourself, signed by your wal… | `POST https://foxxi-bridge.interego.xwisee.com/agent/lti/launch` *(HTTP only)* |
+| `foxxi.lti_gradebook_signed` | Your row of the gradebook in Foxxi's own LMS, signed by your wallet or by an agent holding your delegation: every course in the LMS course context, and the gra… | `POST https://foxxi-bridge.interego.xwisee.com/agent/lti/gradebook` *(HTTP only)* |
 | `foxxi.consume_lesson` | Stream-load a Foxxi-parsed lesson's structural stratum (slides, audio, transcripts) for consumption, and emit an fxa:ConsumptionEvent descriptor + an xAPI Stat… | `POST https://foxxi-bridge.interego.xwisee.com/foxxi/consume_lesson` |
 | `foxxi.ask_course_question` | Grounded Q&A over a course's narration transcripts + extracted concepts. | `POST https://foxxi-bridge.interego.xwisee.com/foxxi/ask_course_question` |
 | `foxxi.ask_course_question_agentic` | Multi-step agentic retrieval + LLM synthesis: (1) federated concept-graph search across the primary course + any loaded federation peers, (2) prereq + modifier… | `POST https://foxxi-bridge.interego.xwisee.com/foxxi/ask_course_question_agentic` |

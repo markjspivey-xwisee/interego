@@ -336,6 +336,7 @@ export const FOXXI_SNAPSHOT_TYPES = {
   ScormSessions:    `${FOXXI}ScormTenantSnapshot`       as IRI,
   Cmi5Launches:     `${FOXXI}Cmi5TenantSnapshot`        as IRI,
   LtiLineItems:     `${FOXXI}LtiTenantSnapshot`         as IRI,
+  LtiPlatformGradebook: `${FOXXI}LtiPlatformSnapshot` as IRI,
   OneRoster:        `${FOXXI}OneRosterSnapshot`         as IRI,
   AgentTrajectories:`${FOXXI}AgentTrajectorySnapshot`   as IRI,
   PerformanceProbes:`${FOXXI}PerformanceProbeSnapshot`  as IRI,
