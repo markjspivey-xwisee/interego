@@ -59,16 +59,26 @@ export function explainedAnswer(authored: string): { key: string; why: string } 
 /**
  * Whether a reply gives an answer key.
  *
- * A reply that negates when the key does not ("not a team lead") never gives it. Otherwise the
- * engine's own rule comes first: the reply's normalized text, or one of its words, is the key. A key
- * of several words also matches a reply with every word of the key except the articles and
- * connectives, so "team lead" gives "a team lead".
+ * A reply that denies the key when the key denies nothing ("not a team lead") never gives it.
+ * Otherwise the engine's own rule comes first: the reply's normalized text, or one of its words, is
+ * the key. A key of several words also matches a reply with every word of the key except the
+ * articles and connectives, so "team lead" gives "a team lead".
  *
  * ★ A SHORT WORD IS NOT AN UNIMPORTANT ONE. This used to require only the key's words of four
  * letters or more, so "escalate" gave "do not escalate", "fraud" gave "no fraud" and "limit" gave
  * "the $250 limit": an opposite answer passed (the automated review of #480). Negations and numbers
  * are always required now; only the words in `minor` may be left out. "don't" counts as "do not"
  * on both sides.
+ *
+ * ★ A NEGATION DENIES WHAT IT REACHES, AND NOTHING ELSE. Any negation anywhere in a reply used to
+ * fail it, so "fraud occurred without warning" did not give "fraud" and "proceed without delay" did
+ * not give "proceed" (the automated review of #486). A negation now reaches no further than its own
+ * clause, which ends at punctuation, a spaced dash, or a contrast (but, however, although, though,
+ * whereas, except, rather, instead). "no", "without", "neither" and "nor" reach forward, to what
+ * they govern: "no evidence of fraud" still denies fraud. "not", "never", "cannot" and the negative
+ * pronouns deny their whole clause, the words before them too: "fraud was not found" denies it as
+ * well. A key word is denied when the reply says it only where a negation reaches it, so "fraud,
+ * not negligence" gives "fraud".
  *
  * A numeric key keeps its numeric contract. No inner named functions, and nothing outside it but
  * the shared scoring helpers: this is embedded in generated pages by its source.
@@ -77,14 +87,27 @@ export function matchesAnswerKey(reply: string, key: string): boolean {
   const input = inferScormAnswerInput(key);
   const keyWords = normalizeScormAnswer(String(key ?? '').replace(/n['’]t\b/gi, ' not')).split(' ').filter(Boolean);
   const replyWords = normalizeScormAnswer(String(reply ?? '').replace(/n['’]t\b/gi, ' not')).split(' ').filter(Boolean);
-  const negations = new Set(['no', 'not', 'never', 'none', 'nor', 'neither', 'nothing', 'nobody', 'nowhere', 'cannot', 'without']);
-  if (!keyWords.some(word => negations.has(word)) && replyWords.some(word => negations.has(word))) return false;
-  const expected = scormAnswerCandidates(key, input)[0];
-  if (expected !== undefined && scormAnswerCandidates(reply, input).includes(expected)) return true;
-  if (input && input.type !== 'text') return false;
   const minor = new Set(['a', 'an', 'the', 'and', 'or', 'of', 'to', 'in', 'on', 'at', 'for', 'by', 'with', 'from', 'as', 'is', 'are', 'was', 'were', 'be', 'it', 'its', 'this', 'that', 'do', 'does', 'did']);
   const content = keyWords.filter(word => !minor.has(word));
   const required = content.length > 0 ? content : keyWords;
+  const forward = new Set(['no', 'without', 'neither', 'nor']);
+  const clausal = new Set(['not', 'never', 'cannot', 'none', 'nothing', 'nobody', 'nowhere']);
+  if (!keyWords.some(word => forward.has(word) || clausal.has(word))) {
+    const denied = new Set<string>();
+    const said = new Set<string>();
+    for (const clause of String(reply ?? '').replace(/n['’]t\b/gi, ' not').split(/[,;:.!?()]|\s[-\u2013\u2014]+\s|\b(?:but|however|although|though|whereas|except|rather|instead)\b/i)) {
+      const words = normalizeScormAnswer(clause).split(' ').filter(Boolean);
+      let reached = words.some(word => clausal.has(word));
+      for (const word of words) {
+        if (forward.has(word)) reached = true;
+        (reached ? denied : said).add(word);
+      }
+    }
+    if (required.some(word => denied.has(word) && !said.has(word))) return false;
+  }
+  const expected = scormAnswerCandidates(key, input)[0];
+  if (expected !== undefined && scormAnswerCandidates(reply, input).includes(expected)) return true;
+  if (input && input.type !== 'text') return false;
   const have = new Set(replyWords);
   return required.length > 0 && required.every(word => have.has(word));
 }
