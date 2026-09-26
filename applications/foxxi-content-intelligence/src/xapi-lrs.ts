@@ -715,7 +715,7 @@ async function handlePostStatements(req: Request, res: Response, config: XapiLrs
   for (const stmt of batch) {
     const enriched = ensureStatementFields(stmt, authority);
     const id = enriched.id as string;
-    await applyVoiding(enriched, id, store);
+    await applyVoiding(enriched, id, store, boundRegistration(req));
     try {
       await store.put({ id, statement: enriched, stored: enriched.stored as string, voided: false });
     } catch (err) {
@@ -740,14 +740,19 @@ async function handlePostStatements(req: Request, res: Response, config: XapiLrs
 /**
  * Apply xAPI §4.1.7 voiding semantics for an inbound voiding Statement:
  * void the target — UNLESS the target is itself a voiding Statement
- * (a Voiding Statement cannot be voided).
+ * (a Voiding Statement cannot be voided), or the voider is bound to a
+ * registration and the target belongs to another launch.
+ *
+ * ★ BOTH ARE CHECKED ON THE RECORD AS IT IS MARKED. `voidsOutsideRegistration` refuses the
+ * request before anything is stored, but it reads the target earlier: another launch could
+ * store that statement between its read and this void, and the void would then mark it (the
+ * automated review of #487). The store evaluates the guard against the very record it marks.
  */
-async function applyVoiding(stmt: Record<string, unknown>, voidingId: string, store: StatementStore): Promise<void> {
+async function applyVoiding(stmt: Record<string, unknown>, voidingId: string, store: StatementStore, registration: string | undefined): Promise<void> {
   const target = isVoidingStatement(stmt);
   if (!target) return;
-  const existing = await store.get(target);
-  if (existing && isVoidingStatement(existing.statement)) return; // can't void a voiding Statement
-  await store.markVoided(target, voidingId);
+  await store.markVoided(target, voidingId, (existing) => !isVoidingStatement(existing.statement)
+    && (registration === undefined || registrationOfStatement(existing.statement) === registration));
 }
 
 /** Validate the structural headers of every non-first multipart part. */
@@ -907,7 +912,7 @@ async function handlePutStatement(req: Request, res: Response, config: XapiLrsCo
   (stmt as Record<string, unknown>).id = statementId;
   const store = statementStores.for(tenantOf(req));
   const enriched = ensureStatementFields(stmt, { homePage: config.selfBaseUrl, name: 'foxxi-lrs' });
-  await applyVoiding(enriched, statementId, store);
+  await applyVoiding(enriched, statementId, store, boundRegistration(req));
   try {
     await store.put({ id: statementId, statement: enriched, stored: enriched.stored as string, voided: false });
   } catch (err) {

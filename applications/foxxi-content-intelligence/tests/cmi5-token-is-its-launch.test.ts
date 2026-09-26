@@ -8,14 +8,14 @@
  * carries its registration: a statement it writes must name it, a query is held to it, a statement
  * outside it is not found, and the State it reads and writes is its own launch's.
  */
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import { randomUUID } from 'node:crypto';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { IRI } from '@interego/core';
 import { buildCmi5Launch, cmi5BearerRegistration, cmi5BearerTenant, redeemFetchToken, signedLaunchLearner, stageLaunchData } from '../src/cmi5-lms.js';
-import { attachXapiLrsRoutes } from '../src/xapi-lrs.js';
+import { attachXapiLrsRoutes, getStatementStore } from '../src/xapi-lrs.js';
 import type { TenantId } from '../src/tenant-context.js';
 
 const tenant = 'lens:token-is-its-launch' as TenantId;
@@ -113,6 +113,24 @@ describe('a cmi5 auth-token is bound to its launch', () => {
     expect((await get(tokenA, `statementId=${mine.id}`)).status).toBe(200);
     expect((await post(tokenA, voiding(A.registration))).status).toBe(200);
     expect((await get(tokenA, `statementId=${mine.id}`)).status).toBe(404);
+  });
+
+  it('checks the target\'s launch as it voids it, not only in an earlier read (the review of #487)', async () => {
+    const theirs = statement(A.registration, 'completed');
+    expect((await post(tokenA, theirs)).status).toBe(200);
+    // B's request reads the target before launch A has stored it (the race), and A's statement is
+    // there by the time B's void marks it. The read before is not the check that counts.
+    const earlierRead = vi.spyOn(getStatementStore(tenant), 'get').mockResolvedValueOnce(null);
+    try {
+      const voiding = { id: randomUUID(), actor: A.actor, verb: { id: 'http://adlnet.gov/expapi/verbs/voided' }, object: { objectType: 'StatementRef', id: theirs.id }, context: { registration: B.registration } };
+      expect((await post(tokenB, voiding)).status).toBe(200);
+      expect(earlierRead).toHaveBeenCalledWith(theirs.id);
+    } finally {
+      earlierRead.mockRestore();
+    }
+    // B's voiding statement is its own and is kept, but A's statement is not voided.
+    expect((await get(tokenA, `statementId=${theirs.id}`)).status).toBe(200);
+    expect((await get(tokenA, `voidedStatementId=${theirs.id}`)).status).toBe(404);
   });
 
   it('deletes and lists only its own launch\'s State, even for a relaunch of the same AU (the review of #485)', async () => {

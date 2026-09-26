@@ -4,10 +4,10 @@
 
 The automated review of #485 found two ways around the per-launch binding it added.
 
-- **Voiding.** Launch B's token could post a voiding statement that carried B's own registration and named a statement of launch A as its target, and the LRS voided A's statement. A registration-bound token now voids only statements of its own launch (403 otherwise), checked before anything in the batch is stored.
+- **Voiding.** Launch B's token could post a voiding statement that carried B's own registration and named a statement of launch A as its target, and the LRS voided A's statement. A registration-bound token now voids only statements of its own launch (403 otherwise), checked before anything in the batch is stored. That check reads the target early, and another launch can store the target between that read and the void (the automated review of #487). So the void itself checks again: `StatementStore.markVoided` takes a guard and evaluates it against the very record it marks, in the same step. A voiding statement whose target fails the guard is stored, but voids nothing, the way a voiding statement that targets another voiding statement already did.
 - **State scope.** A State multiple-document GET and a bulk DELETE (no `stateId`) matched keys by Activity + Agent only. So a relaunch of the same AU (same activity and actor, a new registration) could list and erase the earlier launch's State. The xAPI State resource scopes both to the registration when one is given, and now so does this LRS, for every caller.
 
-Tests extend `tests/cmi5-token-is-its-launch.test.ts`: B's voiding of A's statement is refused while A's own is taken, and a relaunch's State survives the first launch's bulk DELETE. The xAPI conformance tests pass unchanged.
+Tests extend `tests/cmi5-token-is-its-launch.test.ts`: B's voiding of A's statement is refused while A's own is taken, and a relaunch's State survives the first launch's bulk DELETE. A race case makes the early read miss the target, and checks that A's statement is still not voided. The xAPI conformance tests pass unchanged.
 ## 2026-09-26 — Foxxi: a negation in a reply denies only what it reaches
 
 The automated review of #486 found that the polarity check in `matchesAnswerKey` failed any reply with a negation anywhere in it. Once "without" counted as one, "fraud occurred without warning" no longer gave the key "fraud", and "proceed without delay" no longer gave "proceed". Both are right answers.
