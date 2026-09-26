@@ -115,6 +115,8 @@ export interface XapiLrsConfig {
   /** Optional: resolve a Bearer token to its tenant (e.g. a cmi5
    *  auth-token minted by a launch). Returns null for unknown tokens. */
   bearerTenantResolver?: (token: string) => TenantId | null;
+  /** The launch registration a cmi5 auth-token is bound to. Such a bearer reads and writes only that launch's statements and State. */
+  bearerRegistrationResolver?: (token: string) => string | null;
   /** Optional: the published tenant directory (user_id + web_id), used to VERIFY
    *  wallet-signed Foxxi session tokens presented as Bearer auth. Directory users get a
    *  deterministic wallet (the same derivation mintSessionToken uses), so a token minted
@@ -319,6 +321,19 @@ function tenantOf(req: Request): TenantId {
   return (req as Request & { xapiTenant?: TenantId }).xapiTenant ?? DEFAULT_TENANT;
 }
 
+/** The launch registration the request's bearer is bound to (a cmi5 AU's auth-token), if any. */
+function boundRegistration(req: Request): string | undefined {
+  return (req as Request & { xapiRegistration?: string }).xapiRegistration;
+}
+const registrationOfStatement = (s: unknown): unknown => ((s as { context?: { registration?: unknown } } | undefined)?.context?.registration);
+
+/** The first statement a registration-bound bearer may not write (one not of its own launch), or -1. */
+function strayFromRegistration(req: Request, batch: readonly Record<string, unknown>[]): number {
+  const reg = boundRegistration(req);
+  return reg === undefined ? -1 : batch.findIndex((s) => registrationOfStatement(s) !== reg);
+}
+const OUTSIDE_LAUNCH = 'a cmi5 auth-token reads and writes only its own launch: context.registration must be the registration it was minted for';
+
 /**
  * The single gate on every LRS resource. Order matters and is
  * conformance-driven:
@@ -350,7 +365,7 @@ function makeAuthGate(config: XapiLrsConfig) {
     setXapiHeaders(res, version.startsWith('2.') ? version : version);
 
     const authHeader = (req.headers['authorization'] ?? req.headers['Authorization']) as string | undefined;
-    const r = req as Request & { xapiAuth?: unknown; xapiTenant?: TenantId };
+    const r = req as Request & { xapiAuth?: unknown; xapiTenant?: TenantId; xapiRegistration?: string };
     const basicTenant = basicAuthTenant(authHeader, credTenants);
     if (basicTenant !== null) {
       const decoded = Buffer.from((authHeader ?? '').replace(/^Basic\s+/i, ''), 'base64').toString('utf8');
@@ -370,6 +385,8 @@ function makeAuthGate(config: XapiLrsConfig) {
       if (cmi5Tenant) {
         r.xapiAuth = { kind: 'bearer', token: bearer };
         r.xapiTenant = cmi5Tenant;
+        const registration = config.bearerRegistrationResolver?.(bearer);
+        if (registration) r.xapiRegistration = registration;
         return next();
       }
 
@@ -656,6 +673,8 @@ async function handlePostStatements(req: Request, res: Response, config: XapiLrs
     const attachErr = checkStatementAttachments(stmt, multipartParts);
     if (attachErr) { res.status(400).json({ error: `statement[${i}]: ${attachErr}` }); return; }
   }
+  const stray = strayFromRegistration(req, batch);
+  if (stray >= 0) { res.status(403).json({ error: `statement[${stray}]: ${OUTSIDE_LAUNCH}` }); return; }
 
   // §4.1.11: every multipart attachment part MUST be referenced by an
   // attachment in the Statements — excess parts are rejected.
@@ -853,6 +872,7 @@ async function handlePutStatement(req: Request, res: Response, config: XapiLrsCo
   }
   const attachErr = checkStatementAttachments(stmt, multipartParts);
   if (attachErr) { res.status(400).json({ error: attachErr }); return; }
+  if (strayFromRegistration(req, [stmt]) >= 0) { res.status(403).json({ error: OUTSIDE_LAUNCH }); return; }
   if (multipartParts) {
     const referenced = collectAttachmentHashes([stmt]);
     for (const hash of multipartParts.keys()) {
@@ -1045,7 +1065,8 @@ async function handleGetStatements(req: Request, res: Response): Promise<void> {
   if (statementId !== undefined) {
     if (!isUuid(statementId)) { res.status(400).json({ error: 'statementId must be a UUID' }); return; }
     const rec = await store.get(statementId);
-    if (!rec || rec.voided) { res.status(404).json({ error: 'statement not found or voided' }); return; }
+    const outside = rec !== null && rec !== undefined && boundRegistration(req) !== undefined && registrationOfStatement(rec.statement) !== boundRegistration(req);
+    if (!rec || rec.voided || outside) { res.status(404).json({ error: 'statement not found or voided' }); return; }
     res.setHeader('Last-Modified', new Date(rec.stored).toUTCString());
     sendStatementsResponse(res, applyFormat(rec.statement, format, langs), [rec.statement], wantAttachments, attachStore);
     return;
@@ -1053,7 +1074,8 @@ async function handleGetStatements(req: Request, res: Response): Promise<void> {
   if (voidedStatementId !== undefined) {
     if (!isUuid(voidedStatementId)) { res.status(400).json({ error: 'voidedStatementId must be a UUID' }); return; }
     const rec = await store.get(voidedStatementId);
-    if (!rec || !rec.voided) { res.status(404).json({ error: 'statement not voided (use ?statementId= for non-voided)' }); return; }
+    const outside = rec !== null && rec !== undefined && boundRegistration(req) !== undefined && registrationOfStatement(rec.statement) !== boundRegistration(req);
+    if (!rec || !rec.voided || outside) { res.status(404).json({ error: 'statement not voided (use ?statementId= for non-voided)' }); return; }
     res.setHeader('Last-Modified', new Date(rec.stored).toUTCString());
     sendStatementsResponse(res, applyFormat(rec.statement, format, langs), [rec.statement], wantAttachments, attachStore);
     return;
@@ -1087,11 +1109,17 @@ async function handleGetStatements(req: Request, res: Response): Promise<void> {
   // and letting a caller half-override it would produce a page sequence that is
   // neither the original query nor a coherent new one.
   const resumed = decodeCursor(cursorToken)?.q;
+  const bound = boundRegistration(req);
+  const askedRegistration = resumed ? resumed.registration : (req.query.registration as string | undefined);
+  if (bound !== undefined && askedRegistration !== undefined && askedRegistration !== bound) {
+    res.status(403).json({ error: OUTSIDE_LAUNCH });
+    return;
+  }
   const filter = {
     agent: resumed ? resumed.agent : agent,
     verb: resumed ? resumed.verb : (req.query.verb as string | undefined),
     activity: resumed ? resumed.activity : (req.query.activity as string | undefined),
-    registration: resumed ? resumed.registration : (req.query.registration as string | undefined),
+    registration: bound ?? askedRegistration,
     since: resumed ? resumed.since : (req.query.since as string | undefined),
     until: resumed ? resumed.until : (req.query.until as string | undefined),
     ascending: resumed ? !!resumed.ascending : (req.query.ascending as string | undefined) === 'true',
@@ -1279,6 +1307,10 @@ function handleDocResource(
   }
   if (q.registration !== undefined && !isUuid(q.registration)) {
     res.status(400).json({ error: '"registration" must be a UUID' });
+    return;
+  }
+  if (kind === 'state' && boundRegistration(req) !== undefined && q.registration !== boundRegistration(req)) {
+    res.status(403).json({ error: OUTSIDE_LAUNCH });
     return;
   }
   // §4.2.x: `since` (multi-document GET) MUST be an ISO 8601 timestamp.

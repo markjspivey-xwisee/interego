@@ -412,7 +412,7 @@ import {
 import { deriveAdminKeyPair, publishTenantMembership, publishCourseCatalog, publishTenantAssignments, publishCoursePackage, publishMeshEnrolmentRegister, TENANT_TYPES, type TenantPublishConfig } from '../src/tenant-publisher.js';
 import { attachXapiLrsRoutes, listStoredStatements, storeStatementInternal, getStatementStore } from '../src/xapi-lrs.js';
 import type { StoredStatement } from '../src/statement-store.js';
-import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerTenant, getCmi5Course, learnerSatisfiedAus, observeCmi5Statement, signedLaunchLearner, stageLaunchData } from '../src/cmi5-lms.js';
+import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerRegistration, cmi5BearerTenant, getCmi5Course, learnerSatisfiedAus, observeCmi5Statement, signedLaunchLearner, stageLaunchData } from '../src/cmi5-lms.js';
 import { AGS_SCOPE, attachLti13Routes, type Lti13Tool, type VerifiedResourceLaunch } from '../src/lti13.js';
 import { LtiPlatform, attachLtiPlatformRoutes, type PlatformSnapshot } from '../src/lti-platform.js';
 import { agsScore, answersFrom, renderGonePage, renderOutcomePage, renderScoPage, type GradePassback, type GradedView, type ScoView } from '../src/lti-player.js';
@@ -5769,6 +5769,8 @@ const app = createVerticalBridge({
       selfBaseUrl: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080',
       // A cmi5 launch's auth-token resolves to the launch's tenant.
       bearerTenantResolver: cmi5BearerTenant,
+      // ...and to the launch's registration: one launch's token cannot read or write another's.
+      bearerRegistrationResolver: cmi5BearerRegistration,
       // Verify wallet-signed Foxxi session-token Bearers against the published directory
       // (round-47: the gate previously accepted ANY Bearer as DEFAULT_TENANT). Directory
       // users get a deterministic wallet so a token minted for a known user_id verifies.
@@ -10298,11 +10300,11 @@ app.post('/agent/credentials/claim', async (req, res) => {
 // evidence for a credential.
 
 /** Keep one of a learner's own cmi5 statements on their pod, where the learner record reads it. */
-function keepCmi5OnLearnerPod(statement: Record<string, unknown>, learner: { did: string; podUrl: string }): void {
-  // Only the launch's own actor: an AU is handed that actor, and a statement about anyone else is
-  // not this learner's record to keep.
-  const actorName = (statement.actor as { account?: { name?: unknown } } | undefined)?.account?.name;
-  if (actorName !== learner.did) return;
+function keepCmi5OnLearnerPod(statement: Record<string, unknown>, learner: { did: string; podUrl: string; homePage: string }): void {
+  // Only the launch's own actor, whole: an AU is handed that Agent, and a statement about anyone
+  // else (another homePage naming the same DID, or a Group) is not this learner's record to keep.
+  const actor = statement.actor as { objectType?: unknown; account?: { homePage?: unknown; name?: unknown } } | undefined;
+  if ((actor?.objectType ?? 'Agent') !== 'Agent' || actor?.account?.name !== learner.did || actor?.account?.homePage !== learner.homePage) return;
   const verbId = String((statement.verb as { id?: unknown } | undefined)?.id ?? '');
   const objectId = String((statement.object as { id?: unknown } | undefined)?.id ?? '');
   void composeIntoSharedLattice({

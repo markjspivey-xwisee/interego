@@ -55,7 +55,7 @@ describe('a signed learner\'s launch', () => {
   });
 
   it('is recognized as the learner\'s own only in its own tenant', () => {
-    expect(signedLaunchLearner(launch.registration, tenant)).toEqual({ did: 'did:ethr:0x1111111111aa00000000000000000000000beef1', podUrl: 'https://pod.example/eth-1111111111aa/' });
+    expect(signedLaunchLearner(launch.registration, tenant)).toEqual({ did: 'did:ethr:0x1111111111aa00000000000000000000000beef1', podUrl: 'https://pod.example/eth-1111111111aa/', homePage: 'did:web:bridge.example' });
     // A statement that names this registration from another auth-token arrives in another tenant.
     expect(signedLaunchLearner(launch.registration, 'lens:someone-else' as TenantId)).toBeUndefined();
     const operatorLaunch = buildCmi5Launch({ au: { id: first, url: 'https://bridge.example/content/au/p/0' }, learner: { id: 'did:ethr:0x2' }, lrsEndpoint: 'x', fetchBaseUrl: 'y', authoritativeSource: 'z', tenant });
@@ -84,7 +84,8 @@ describe('the bridge wires the learner\'s own launch', () => {
     expect(route).toMatch(/const learner = await signedLearner\(auth\)/);
     expect(route).toMatch(/const tenant = lensTenantFor\(actorForPod\(learner\.podUrl, MESH_ACTOR_LABELS\)\)/);
     expect(route).toMatch(/stageLaunchData\(tenant, launch, au\.id\)/);
-    expect(src).toMatch(/if \(actorName !== learner\.did\) return;/);
+    expect(src).toMatch(/\(actor\?\.objectType \?\? 'Agent'\) !== 'Agent' \|\| actor\?\.account\?\.name !== learner\.did \|\| actor\?\.account\?\.homePage !== learner\.homePage/);
+    expect(src).toMatch(/bearerRegistrationResolver: cmi5BearerRegistration/);
     expect(src).toMatch(/signedLaunchLearner\(reg, tenant\)/);
   });
 });

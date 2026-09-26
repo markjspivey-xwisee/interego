@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-09-26 — Foxxi: a cmi5 auth-token reads and writes only its own launch
+
+The automated review of #478 found two gaps in cmi5 for signed learners.
+
+- **An auth-token was good for every launch of its learner.** All of a learner's launches resolve to their one lens tenant, and the LRS let any token for that tenant read and write all of it. Launch A's token could query the tenant, find launch B's registration, and POST `passed` for B with the learner's actor. The bridge kept it on the learner's pod and the LMS marked B satisfied. A token now carries its registration (`cmi5BearerRegistration`), and the LRS holds it there:
+  - a statement it writes must carry that registration (403 otherwise, and a batch with one stray statement is refused whole);
+  - a statements query is held to it (naming another registration is refused), and another launch's statement is not found by id;
+  - the State it reads and writes must be its own launch's.
+- **The pod kept any actor whose account named the learner's DID.** A statement with another `homePage`, or a Group, passed that check. The bridge now compares the launch's whole actor (the Agent type and both account fields) before keeping a statement on the learner's pod.
+
+Basic-auth and operator access to the LRS are unchanged. Tests in `tests/cmi5-token-is-its-launch.test.ts`, which mounts the LRS and runs two launches of one learner against each other.
+
 ## 2026-09-26 — Foxxi: an answer key keeps its negations and numbers
 
 The automated review of #480 found that `matchesAnswerKey` let an opposite answer pass. It required only a key's words of four letters or more, so "escalate" gave "do not escalate", "fraud" gave "no fraud", and "limit" gave "the $250 limit". A generated cmi5 activity would then have reported a pass.
