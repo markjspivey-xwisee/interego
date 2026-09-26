@@ -22,6 +22,7 @@ import { attachLti13Routes } from '../src/lti13.js';
 import { attachOneRosterRoutes } from '../src/oneroster.js';
 import { applyCsvBundle, tenantOrUsers } from '../src/oneroster.js';
 import { DEFAULT_TENANT } from '../src/tenant-context.js';
+import { deriveUserWallet, mintSessionToken } from '../src/auth.js';
 
 let passed = 0;
 let failed = 0;
@@ -168,6 +169,16 @@ function testScormSequencing(): void {
 
 // ── HTTP integration over a throwaway Express app ────────────────────
 
+// NRPS, AGS and OneRoster answer only a verified operator (admin or learning-engineer), so the
+// throwaway app has one: an admin whose session token is signed by a wallet from a private seed.
+// Every trust boundary refuses a wallet derived from the public demo seed.
+const OPERATOR = { userId: 'smoke-operator', webId: 'https://operator.example/profile#me' };
+const OPERATOR_SEED = 'lms-conformance-smoke-operator';
+const operatorAuth = {
+  adminWebId: OPERATOR.webId,
+  loadUsers: () => [{ user_id: OPERATOR.userId, web_id: OPERATOR.webId, wallet_address: deriveUserWallet(OPERATOR.userId, OPERATOR_SEED).address }],
+};
+
 async function testHttpRoutes(): Promise<void> {
   console.log('\nLTI 1.3 / OneRoster / SCORM HTTP routes');
 
@@ -179,8 +190,9 @@ async function testHttpRoutes(): Promise<void> {
     keySeed: 'smoke-test-seed',
     dashboardUrl: 'http://localhost/dash',
     platformsConfig: 'https://platform.example||client-123||deploy-1||https://platform.example/jwks||https://platform.example/auth||https://platform.example/token',
+    ...operatorAuth,
   });
-  attachOneRosterRoutes(app, { tenantDid: 'did:web:test' });
+  attachOneRosterRoutes(app, { tenantDid: 'did:web:test', ...operatorAuth });
   attachScormSequencingRoutes(app, { selfBaseUrl: 'http://localhost' });
   attachPerformanceRoutes(app, { selfBaseUrl: 'http://localhost' });
 
@@ -188,39 +200,49 @@ async function testHttpRoutes(): Promise<void> {
   await new Promise<void>(r => server.once('listening', () => r()));
   const port = (server.address() as AddressInfo).port;
   const base = `http://localhost:${port}`;
+  const operator = { Authorization: `Bearer ${await mintSessionToken({ ...OPERATOR, seed: OPERATOR_SEED })}` };
+  const asOperator = { ...operator, 'Content-Type': 'application/json' };
 
   try {
     // ── LTI JWKS ──
     const jwks = await fetch(`${base}/lti/.well-known/jwks.json`).then(r => r.json()) as { keys?: unknown[] };
     check('LTI JWKS exposes a key', Array.isArray(jwks.keys) && jwks.keys.length === 1, jwks);
 
+    // ── LTI NRPS — operator-only in both modes: each returns roster PII ──
+    const anonNrps = await fetch(`${base}/lti/nrps/members`);
+    check('NRPS roster refuses an anonymous caller (401)', anonNrps.status === 401, anonNrps.status);
+    const anonConsumer = await fetch(`${base}/lti/nrps/members?members_url=${encodeURIComponent('https://platform.example/api/lti/courses/1/names_and_roles')}`);
+    check('NRPS consumer mode refuses an anonymous caller (401), before any platform token request', anonConsumer.status === 401, anonConsumer.status);
+
     // ── LTI NRPS — Foxxi roster as a membership container ──
-    const nrpsResp = await fetch(`${base}/lti/nrps/members`);
+    const nrpsResp = await fetch(`${base}/lti/nrps/members`, { headers: operator });
     const nrps = await nrpsResp.json() as { members?: unknown[]; context?: unknown };
     check('NRPS returns a membership container', nrpsResp.status === 200 && Array.isArray(nrps.members), nrps);
     check('NRPS members are populated from the tenant directory', (nrps.members?.length ?? 0) > 0, nrps.members?.length);
 
     // ── LTI AGS line-item CRUD ──
-    const emptyList = await fetch(`${base}/lti/ags/lineitems`).then(r => r.json()) as unknown[];
+    const anonLineItems = await fetch(`${base}/lti/ags/lineitems`);
+    check('AGS line items refuse an anonymous caller (401)', anonLineItems.status === 401, anonLineItems.status);
+    const emptyList = await fetch(`${base}/lti/ags/lineitems`, { headers: operator }).then(r => r.json()) as unknown[];
     check('AGS line items start empty', Array.isArray(emptyList) && emptyList.length === 0, emptyList);
     const created = await fetch(`${base}/lti/ags/lineitems`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: asOperator,
       body: JSON.stringify({ label: 'Quiz 1', scoreMaximum: 100, tag: 'quiz' }),
     });
     const li = await created.json() as { id?: string; label?: string };
     check('AGS create returns 201 + a line item', created.status === 201 && li.label === 'Quiz 1', li);
     const liId = (li.id ?? '').split('/').pop() ?? '';
-    const got = await fetch(`${base}/lti/ags/lineitems/${liId}`);
+    const got = await fetch(`${base}/lti/ags/lineitems/${liId}`, { headers: operator });
     check('AGS line item is retrievable by id', got.status === 200, got.status);
-    const list2 = await fetch(`${base}/lti/ags/lineitems`).then(r => r.json()) as unknown[];
+    const list2 = await fetch(`${base}/lti/ags/lineitems`, { headers: operator }).then(r => r.json()) as unknown[];
     check('AGS list now has 1 line item', list2.length === 1, list2.length);
     const put = await fetch(`${base}/lti/ags/lineitems/${liId}`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      method: 'PUT', headers: asOperator,
       body: JSON.stringify({ scoreMaximum: 50 }),
     });
     const updated = await put.json() as { scoreMaximum?: number };
     check('AGS line item update applies', put.status === 200 && updated.scoreMaximum === 50, updated);
-    const del = await fetch(`${base}/lti/ags/lineitems/${liId}`, { method: 'DELETE' });
+    const del = await fetch(`${base}/lti/ags/lineitems/${liId}`, { method: 'DELETE', headers: operator });
     check('AGS line item delete returns 204', del.status === 204, del.status);
 
     // ── LTI Deep Linking — picker rejects an unsigned ticket ──
@@ -267,20 +289,20 @@ async function testHttpRoutes(): Promise<void> {
       'enrollments.csv': 'sourcedId,classSourcedId,userSourcedId,role\ne-imp-1,cls-1,u-imp-1,student',
     };
     const imp = await fetch(`${base}/ims/oneroster/v1p2/import`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: asOperator,
       body: JSON.stringify(bundle),
     });
     const impBody = await imp.json() as { ok?: boolean; applied?: Record<string, number> };
     check('OneRoster import applies users', imp.status === 200 && impBody.applied?.users === 2, impBody);
     check('OneRoster import applies courses', impBody.applied?.courses === 1, impBody);
 
-    const orUsers = await fetch(`${base}/ims/oneroster/v1p2/users`).then(r => r.json()) as { users?: Array<{ sourcedId: string }> };
+    const orUsers = await fetch(`${base}/ims/oneroster/v1p2/users`, { headers: operator }).then(r => r.json()) as { users?: Array<{ sourcedId: string }> };
     check('GET /users reflects the imported overlay',
       !!orUsers.users?.some(u => u.sourcedId === 'u-imp-1'), orUsers.users?.length);
-    const orCourses = await fetch(`${base}/ims/oneroster/v1p2/courses`).then(r => r.json()) as { courses?: Array<{ sourcedId: string }> };
+    const orCourses = await fetch(`${base}/ims/oneroster/v1p2/courses`, { headers: operator }).then(r => r.json()) as { courses?: Array<{ sourcedId: string }> };
     check('GET /courses returns the imported course',
       !!orCourses.courses?.some(c => c.sourcedId === 'c-imp-1'), orCourses.courses?.length);
-    const oneCourse = await fetch(`${base}/ims/oneroster/v1p2/courses/c-imp-1`);
+    const oneCourse = await fetch(`${base}/ims/oneroster/v1p2/courses/c-imp-1`, { headers: operator });
     check('GET /courses/:id resolves the imported course', oneCourse.status === 200, oneCourse.status);
 
     // ── SCORM sequencing over HTTP ──

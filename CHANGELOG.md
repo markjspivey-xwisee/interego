@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-09-26 — Foxxi: NRPS consumer mode is operator-only
+
+`GET /lti/nrps/members?members_url=<platform URL>` reads a registered LMS's course roster (names, emails, roles) with a platform token the bridge obtains with its own key. The producer mode (no query) was already operator-only, and so were the AGS consumer paths (`?platformLineItemsUrl`, `POST /lti/ags/scores`). The consumer mode was not. `platformFetchTargetOk` keeps the URL on the platform's own hosts, so it was never SSRF, but any anonymous caller could read a registered LMS's roster through the bridge, and every such call requested a platform token.
+
+- **One check covers both modes** (`src/lti13.ts`). `callerIsOperator` now runs first in the handler, before the platform lookup and any token request, and answers 401 "NRPS membership requires an authenticated operator session".
+- **Tests.** `tests/nrps-consumer-is-operator-only.test.ts` mounts the routes with one registered platform and a fetch stub that records and refuses every request to it. An anonymous caller and a signed-in learner both get 401, and the platform sees no request. An operator gets through to the platform's token endpoint, which shows the stub sees the request. Against master's `lti13.ts`, the two refusal cases fail.
+- **The smoke tool works again for LTI and OneRoster** (`tools/lms-conformance-smoke.ts`). It called NRPS, AGS and OneRoster anonymously, so since those became operator-only it failed six checks and then crashed on a non-JSON reply. Its throwaway app now has an operator, the calls send that operator's session, and new checks assert that an anonymous caller gets 401 from NRPS (both modes) and AGS. Four checks outside LTI still fail: `/performance/plan` and `/content/compose-course` have changed contracts since the tool was written. That is separate from this change.
+- **Docs.** The NRPS rows in CONFORMANCE.md §13 and LMS-CONFORMANCE.md §4 now say both modes are operator-only.
 ## 2026-09-26 — jev-harness: three tests no longer depend on the day or the CI job they run in
 
 `tests/reputation.test.ts` compared the snapshot's axes to `{ competence: 0.8, honesty: 0.8, recency: 1 }` exactly. The registry computes each axis as a weighted mean, `(0.8 × w) / w`, and the recency weight `w` decays from the fixture attestation's date (2026-09-21) to the current time. On about one run in six, depending on the time, the result is 0.8000000000000002, and the check on #487 failed that way. The test now compares each axis with `expect.closeTo(…, 12)`. With the clock pinned at a failing moment (2026-09-26T08:15:09Z), the old assertion fails with that exact value and the new one passes.
