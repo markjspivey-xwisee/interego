@@ -10583,19 +10583,19 @@ const ltiPlays = new Map<string, LtiPlay>();
 const LTI_PLAYS_MAX = 5000;
 const LTI_PLAY_TTL_MS = 3 * 60 * 60_000;
 
-async function startLtiPlay(launch: VerifiedResourceLaunch): Promise<{ redirect: string } | { status: number; error: string } | null> {
+async function startLtiPlay(launch: VerifiedResourceLaunch): Promise<{ ok: true; redirect: string } | { ok: false; status: number; error: string } | null> {
   if (launch.issuer !== ltiPlatform.issuer) return null;
   const courseId = typeof launch.custom.foxxi_course_id === 'string' ? launch.custom.foxxi_course_id : '';
   const podUrl = typeof launch.custom.foxxi_learner_pod === 'string' ? launch.custom.foxxi_learner_pod : '';
-  if (!courseId || !podUrl || !launch.sub) return { status: 400, error: 'this launch names no course, or no learner record, for the SCORM engine to play' };
+  if (!courseId || !podUrl || !launch.sub) return { ok: false, status: 400, error: 'this launch names no course, or no learner record, for the SCORM engine to play' };
   const course = await resolveCourseForRead(courseId);
-  if (!course) return { status: 404, error: `no course ${courseId} is played on this bridge's SCORM engine` };
+  if (!course) return { ok: false, status: 404, error: `no course ${courseId} is played on this bridge's SCORM engine` };
   let tree;
   try { tree = parseManifest(buildAgentScormManifest(course)); }
-  catch (e) { return { status: 500, error: `the course's manifest did not parse: ${(e as Error).message}` }; }
+  catch (e) { return { ok: false, status: 500, error: `the course's manifest did not parse: ${(e as Error).message}` }; }
   const seq = createSession(tenantIdOf(`scorm:${launch.sub}`), tree);
   const nav = processNavigation(seq, 'start');
-  if (!nav.ok || !nav.delivered) return { status: 409, error: `SCORM start failed: ${nav.exception ?? nav.message ?? 'no SCO delivered'}` };
+  if (!nav.ok || !nav.delivered) return { ok: false, status: 409, error: `SCORM start failed: ${nav.exception ?? nav.message ?? 'no SCO delivered'}` };
   const contextId = typeof launch.context?.id === 'string' ? launch.context.id : '';
   const contextTitle = typeof launch.context?.title === 'string' ? launch.context.title : 'LMS course';
   const play: ScormPlay = {
@@ -10613,7 +10613,7 @@ async function startLtiPlay(launch: VerifiedResourceLaunch): Promise<{ redirect:
   // The grade goes back only where the platform offered it: a line item, and the score scope.
   const lineItem = launch.ags?.scope.includes(AGS_SCOPE.score) ? launch.ags.lineitem : undefined;
   ltiPlays.set(id, { play, issuer: launch.issuer, clientId: launch.clientId, sub: launch.sub, ...(lineItem ? { lineItem } : {}), expiresAt: now + LTI_PLAY_TTL_MS });
-  return { redirect: `${bridgeBaseUrl}/lti/play/${id}` };
+  return { ok: true, redirect: `${bridgeBaseUrl}/lti/play/${id}` };
 }
 
 /** The attempt behind a play URL, while it lasts. The URL is the capability: unguessable, and gone when the attempt ends. */
@@ -10625,11 +10625,11 @@ function ltiPlayAt(id: string): LtiPlay | undefined {
 
 /** Send the ended attempt's grade to the gradebook of the platform that launched it. */
 async function passGradeBack(lp: LtiPlay, outcome: { passed: boolean; score: number }): Promise<GradePassback> {
-  if (!lp.lineItem) return { posted: false, reason: 'the launch offered no line item with the score scope' };
-  if (!ltiTool) return { posted: false, reason: 'the LTI Tool is not mounted' };
+  if (!lp.lineItem) return { posted: false, why: 'the launch offered no line item with the score scope' };
+  if (!ltiTool) return { posted: false, why: 'the LTI Tool is not mounted' };
   const score = agsScore(lp.sub, outcome, new Date());
   const r = await ltiTool.postScore({ issuer: lp.issuer, clientId: lp.clientId, lineItemUrl: lp.lineItem, score });
-  return { posted: r.ok, status: r.status, lineItem: lp.lineItem, scoreGiven: score.scoreGiven as number, scoreMaximum: score.scoreMaximum as number, ...(r.error ? { error: r.error } : {}) };
+  return { posted: r.ok, status: r.status, lineItem: lp.lineItem, scoreGiven: score.scoreGiven as number, scoreMaximum: score.scoreMaximum as number, ...(r.error ? { why: r.error } : {}) };
 }
 
 const ltiPlayGone = 'This launch has ended, or it expired. Launch the course again from your LMS.';

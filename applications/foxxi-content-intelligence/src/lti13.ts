@@ -78,7 +78,7 @@ export interface Lti13Config extends OperatorAuthConfig {
    * Takes a verified resource-link launch: where to send the learner, a refusal, or null for the
    * default hand-off (a signed ticket on the dashboard URL).
    */
-  onResourceLaunch?: (launch: VerifiedResourceLaunch) => Promise<{ redirect: string } | { status: number; error: string } | null>;
+  onResourceLaunch?: (launch: VerifiedResourceLaunch) => Promise<{ ok: true; redirect: string } | { ok: false; status: number; error: string } | null>;
 }
 
 /** A resource-link launch whose id_token verified against its platform's keys, with every claim checked. */
@@ -700,7 +700,7 @@ export function attachLti13Routes(app: Express, config: Lti13Config): Lti13Tool 
           ...(typeof agsClaim.lineitem === 'string' ? { lineitem: agsClaim.lineitem } : {}),
         } } : {}),
       });
-      if (taken && 'redirect' in taken) { res.redirect(302, taken.redirect); return; }
+      if (taken?.ok) { res.redirect(302, taken.redirect); return; }
       if (taken) { res.status(taken.status).json({ error: taken.error }); return; }
     }
     const ticketJson = signTicket({

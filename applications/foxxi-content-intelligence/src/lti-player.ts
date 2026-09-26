@@ -22,15 +22,14 @@ export interface GradedView {
   readonly detail: ReadonlyArray<{ readonly question: string; readonly your: string; readonly correct: boolean }>;
 }
 
-/** Where the grade went: the platform's gradebook, or why it did not get there. */
+/** Where the grade went: the platform's gradebook, or why it did not get there. Not a refusal: the attempt itself is done. */
 export interface GradePassback {
   readonly posted: boolean;
   readonly status?: number;
   readonly lineItem?: string;
   readonly scoreGiven?: number;
   readonly scoreMaximum?: number;
-  readonly error?: string;
-  readonly reason?: string;
+  readonly why?: string;
 }
 
 export interface PlayOutcome {
@@ -102,7 +101,7 @@ export function renderOutcomePage(args: { courseTitle: string; outcome: PlayOutc
   const gb = outcome.gradebook;
   const grade = gb.posted
     ? `<p class="ok">Your LMS has the grade: ${gb.scoreGiven ?? pct} of ${gb.scoreMaximum ?? 100}, posted to its gradebook over LTI Assignment and Grade Services.</p>`
-    : `<p class="bad">The grade did not reach your LMS: ${htmlEscape(gb.error ?? gb.reason ?? 'no gradebook was offered for this launch')}.</p>`;
+    : `<p class="bad">The grade did not reach your LMS: ${htmlEscape(gb.why ?? 'no gradebook was offered for this launch')}.</p>`;
   const inner = `${gradedCard(args.graded)}
 <h1>${outcome.passed ? 'Passed' : 'Not passed yet'}: ${pct}%</h1>
 ${grade}

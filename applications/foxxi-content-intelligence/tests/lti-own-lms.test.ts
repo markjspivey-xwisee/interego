@@ -38,7 +38,7 @@ beforeAll(async () => {
   tool = attachLti13Routes(app, {
     selfBaseUrl: base, tenantDid: 'did:web:test', keySeed: 'lti-own-lms-test', dashboardUrl: `${base}/dash`, platformsConfig: '',
     extraPlatforms: [platform.registration()],
-    onResourceLaunch: async (l) => { launches.push(l); return { redirect: `${base}/played` }; },
+    onResourceLaunch: async (l) => { launches.push(l); return { ok: true, redirect: `${base}/played` }; },
   });
   attachLtiPlatformRoutes(app, platform);
   const testTool: ToolRegistration = {

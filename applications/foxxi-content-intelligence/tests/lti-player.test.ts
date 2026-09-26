@@ -24,7 +24,7 @@ describe('the pages a learner reads', () => {
   it('says where the grade went, or that it did not get there', () => {
     const posted = renderOutcomePage({ courseTitle: 'C', outcome: { completed: true, passed: true, score: 1, recordedStatements: 2, gradebook: { posted: true, scoreGiven: 100, scoreMaximum: 100 } } });
     expect(posted).toContain('Your LMS has the grade: 100 of 100');
-    const refused = renderOutcomePage({ courseTitle: 'C', outcome: { completed: true, passed: false, score: 0.5, recordedStatements: 2, gradebook: { posted: false, error: 'line item URL rejected: <target URL must be https>' } } });
+    const refused = renderOutcomePage({ courseTitle: 'C', outcome: { completed: true, passed: false, score: 0.5, recordedStatements: 2, gradebook: { posted: false, why: 'line item URL rejected: <target URL must be https>' } } });
     expect(refused).toContain('The grade did not reach your LMS: line item URL rejected: &lt;target URL must be https&gt;');
   });
 });
