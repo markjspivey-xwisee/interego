@@ -25,7 +25,7 @@
  */
 
 import { scormArtifactZip, hashScormAnswer, type ScormArtifactCourse } from './scorm-artifacts.js';
-import { inferScormAnswerInput, scormAssessmentScript } from './scorm-assessment.js';
+import { explainedAnswer, inferScormAnswerInput, matchesAnswerKey, scormAssessmentScript } from './scorm-assessment.js';
 import type { Course, Module, Lesson, GroundingFragment } from './emergent-content.js';
 
 const CMI5_NS = 'https://w3id.org/xapi/profiles/cmi5/v1/CourseStructure.xsd';
@@ -138,6 +138,7 @@ export function generateAuHtml(courseTitle: string, lesson: AuLessonView): strin
  button:disabled{opacity:.5;cursor:default}
  input{padding:.4rem;border:1px solid #ccd;border-radius:5px;font-size:.95rem;width:60%}
  .status{margin-top:14px;font-size:13px;color:#667}.ok{color:#1a7f37}.err{color:#c62828}
+ .feedback{margin-top:6px;font-size:13px}
 </style></head><body>
 <div class="crumb">${htmlEsc(courseTitle)}</div>
 <h1>${htmlEsc(lesson.title)}</h1>
@@ -152,6 +153,8 @@ const LESSON = ${jsStr(lesson)};
 const IS_ASSESSMENT = ${isAssessment};
 ${scormAssessmentScript()}
 const inferScormAnswerInput = ${inferScormAnswerInput.toString()};
+const explainedAnswer = ${explainedAnswer.toString()};
+const matchesAnswerKey = ${matchesAnswerKey.toString()};
 const CMI5_CAT = 'https://w3id.org/xapi/cmi5/context/categories/cmi5';
 const VERB = {
   initialized: 'http://adlnet.gov/expapi/verbs/initialized',
@@ -205,7 +208,8 @@ function render(){
       const parts = f.body.split(':::');
       const label = document.createElement('div'); label.textContent = parts[0].trim();
       const inp = document.createElement('input'); inp.className='answer'; inp.dataset.answer=(parts[1]||'').trim();
-      d.appendChild(label); d.appendChild(document.createElement('br')); d.appendChild(inp);
+      const fb = document.createElement('div'); fb.className='feedback';
+      d.appendChild(label); d.appendChild(document.createElement('br')); d.appendChild(inp); d.appendChild(fb);
     } else {
       const m = document.createElement('div'); m.className='mod'; m.textContent=f.modality;
       const b = document.createElement('div'); b.textContent=f.body;
@@ -236,9 +240,16 @@ document.getElementById('go').onclick = async () => {
   try {
     if (IS_ASSESSMENT){
       const inputs = [...document.querySelectorAll('.answer')];
-      if(submittedScore===null){for(const input of inputs){const error=validateScormAnswer(input.value,inferScormAnswerInput(input.dataset.answer||''));if(error){input.focus();throw new Error(error);}}}
-      const correct = inputs.filter(i => { const input=inferScormAnswerInput(i.dataset.answer||'');const expected=scormAnswerCandidates(i.dataset.answer||'',input)[0];return scormAnswerCandidates(i.value,input).includes(expected); }).length;
-      if (submittedScore === null) submittedScore = inputs.length ? correct / inputs.length : 0;
+      if(submittedScore===null){for(const input of inputs){const error=validateScormAnswer(input.value,inferScormAnswerInput(explainedAnswer(input.dataset.answer||'').key));if(error){input.focus();throw new Error(error);}}}
+      if (submittedScore === null) {
+        let correct = 0;
+        for (const i of inputs) {
+          const a = explainedAnswer(i.dataset.answer||''); const right = matchesAnswerKey(i.value, a.key); if (right) correct++;
+          const fb = i.parentElement.querySelector('.feedback');
+          if (fb) { fb.textContent = (right ? 'Right. ' : 'The answer: ' + a.key + '. ') + (a.why ? a.why.charAt(0).toUpperCase() + a.why.slice(1) : ''); fb.className = 'feedback ' + (right ? 'ok' : 'err'); }
+        }
+        submittedScore = inputs.length ? correct / inputs.length : 0;
+      }
       const scaled = submittedScore;
       const passed = scaled >= 0.6;
       await sendStatement(passed ? 'passed' : 'failed', { score: { scaled: scaled }, success: passed, completion: true });
@@ -268,7 +279,7 @@ export function composedScormCourse(course: Course): ScormArtifactCourse {
       assessment: fl.fragments.filter(f => f.modality === 'assessment-item').map(f => {
         const separator = f.body.indexOf(':::');
         if (separator < 0 || !f.body.slice(separator + 3).trim()) throw new Error('An assessment fragment must contain question ::: answer.');
-        const answer = f.body.slice(separator + 3).trim(), input = inferScormAnswerInput(answer);
+        const answer = explainedAnswer(f.body.slice(separator + 3)).key || f.body.slice(separator + 3).trim(), input = inferScormAnswerInput(answer);
         return { question: f.body.slice(0, separator).trim(), answerHash: hashScormAnswer(answer, input), ...(input ? { input } : {}) };
       }),
     })),

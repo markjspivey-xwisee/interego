@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-09-26 — Foxxi: a generated cmi5 activity grades an explained answer by its key
+
+The content pipeline's assessment items read `question ::: answer`, and the sample course writes its answers with the reason attached: `a team lead — the $250 would carry the customer past the $1,000 rolling 90-day cap`. The generated AU page graded a reply against that whole sentence. A learner who answered "a team lead", which is right, scored 0% and failed. Only a copy of the sentence passed. The SCORM package of the same course hashed the whole sentence too.
+
+- **The key and the reason.** `explainedAnswer` splits an authored answer at the first spaced em or en dash. What comes before it is the key; the rest is why. Without a dash, the whole answer is the key.
+- **Graded by the key's content words.** `matchesAnswerKey` keeps the engine's rule first: the reply, or one of its words, is the key. A key of several words also matches a reply with every one of its content words, four letters or more, or every word when it has none that long. So "team lead" gives "a team lead", and "a manager" or "lead" does not. A numeric key keeps its numeric contract.
+- **The page says why.** Once a learner has answered, each question shows "Right." or the key, then the reason. The page embeds both functions by their source, as it does the other shared scoring code.
+- **The SCORM package hashes the key.** It grades by hash, so it can only hold one answer; now that is the key, not the sentence with its reason.
+
+A cmi5 activity scores itself, so this changes what the activity reports, not what earns a credential. Its results already count as experience, not evidence. Tests in `tests/au-explained-answers.test.ts`.
+
 ## 2026-09-26 — Foxxi: a learner launches cmi5 for themselves, and it reaches their record
 
 cmi5 is the ADL TLA's own launch standard, and on the bridge it was the operator's alone, in three ways:
