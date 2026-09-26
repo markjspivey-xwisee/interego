@@ -3,7 +3,7 @@
  * the registry's input, the policy weighs it as a grounded self-attestation, a peer's word
  * weighs more, and the service serves the snapshot through a relay faked at the fetch level.
  */
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,6 +16,10 @@ import { Harness } from '../src/service.js';
 import { HarnessStore, computeCalibration } from '../src/store.js';
 import { fixtureRepo, preferringJev } from './helpers.js';
 
+// contextFromEnv reads JEV_HARNESS_CONTROL_BASE, which the jev-harness workflow sets to the deployed
+// bridge for its whole job. This file expects the controls of a bridge at localhost, so it clears it.
+vi.stubEnv('JEV_HARNESS_CONTROL_BASE', '');
+afterAll(() => { vi.unstubAllEnvs(); });
 const ctx = contextFromEnv('http://localhost:6090');
 const POD = 'http://css.railway.internal:3456/u-pk-x/';
 const url = (n: number): string => `${POD}context-graphs/${n}.ttl`;

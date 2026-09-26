@@ -2,7 +2,7 @@
  * Calibration on the pod: the view as a descriptor, the attestation it grounds, and the
  * service's publish — through a relay faked at the fetch level, so nothing dials out.
  */
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,6 +17,10 @@ import { Harness } from '../src/service.js';
 import { HarnessStore, computeCalibration } from '../src/store.js';
 import { fixtureRepo, idOf, preferringJev } from './helpers.js';
 
+// contextFromEnv reads JEV_HARNESS_CONTROL_BASE, which the jev-harness workflow sets to the deployed
+// bridge for its whole job. This file expects the controls of a bridge at localhost, so it clears it.
+vi.stubEnv('JEV_HARNESS_CONTROL_BASE', '');
+afterAll(() => { vi.unstubAllEnvs(); });
 const ctx = contextFromEnv('http://localhost:6090');
 
 /** Outcomes shaped like the store's: n navigation live outcomes with the given hits, and review verdicts with agreements. */
