@@ -176,6 +176,14 @@ describe('registry — the aggregate is exact where arithmetic can make it so', 
     expect(s.score).toBe(0.7);
   });
 
+  it('takes an attestation with any number of axes, without spreading them into arguments (the review of #494)', () => {
+    // Past the engine's argument limit (~125,000 in Node): Math.min(...axes) would throw a RangeError.
+    const axes = Object.fromEntries(Array.from({ length: 300_000 }, (_, i) => [`axis-${i}`, 0.5]));
+    const s = aggregateReputation(AGENT, [att('wide', axes)], HARNESS, '2026-09-26T08:15:09Z')!;
+    expect(Object.keys(s.axes)).toHaveLength(300_000);
+    expect(s.score).toBe(0.5);
+  });
+
   it('does not let an attestation too old to weigh anything widen the range', () => {
     const now = '2026-09-26T08:00:06Z';
     const ancient = '1900-01-01T00:00:00Z';

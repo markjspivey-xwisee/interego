@@ -171,9 +171,19 @@ export function aggregateReputation(
   for (const axis of Object.keys(axisSums)) {
     axes[axis] = axisWeights[axis]! > 0 ? within(axisSums[axis]! / axisWeights[axis]!, axisLow[axis]!, axisHigh[axis]!) : 0;
   }
+  // One pass for the sum and the bounds: an attestation can carry any number of axes, and
+  // spreading them into Math.min/Math.max throws past the engine's argument limit.
   const axisValues = Object.values(axes);
+  let axisSum = 0;
+  let lowestAxis = Infinity;
+  let highestAxis = -Infinity;
+  for (const value of axisValues) {
+    axisSum += value;
+    if (value < lowestAxis) lowestAxis = value;
+    if (value > highestAxis) highestAxis = value;
+  }
   const overallScore = axisValues.length > 0
-    ? within(axisValues.reduce((a, b) => a + b, 0) / axisValues.length, Math.min(...axisValues), Math.max(...axisValues))
+    ? within(axisSum / axisValues.length, lowestAxis, highestAxis)
     : 0;
 
   return {
