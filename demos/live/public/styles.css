@@ -266,7 +266,8 @@ button { font: inherit; }
 
 /* ── Cards inside chapters ────────────────────────────────────────────────── */
 
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; margin-top: 12px; }
+/* min(240px, 100%): on a phone the chapter body is narrower than one 240px column. */
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr)); gap: 12px; margin-top: 12px; }
 .card {
   padding: 14px; border-radius: var(--radius-sm); border: 1px solid var(--line);
   background: var(--panel-2); min-width: 0;
@@ -396,3 +397,38 @@ details.raw summary { cursor: pointer; color: var(--muted); font-size: 12px; }
   background: var(--ink); color: var(--panel); padding: 10px 16px; border-radius: 10px;
   font-size: 13px; box-shadow: var(--shadow); z-index: 50;
 }
+
+/* ── Part two: two learners, one record standard ──────────────────────────── */
+
+.part { margin: 28px 2px 10px; }
+.part h2 { margin: 0 0 4px; font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent); }
+.part p { margin: 0; color: var(--ink-2); max-width: 78ch; font-size: 13.5px; }
+
+.course-form { display: grid; gap: 10px; margin-top: 12px; }
+.sco-form { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-2); }
+.field { display: grid; gap: 4px; font-size: 12px; }
+.field .input { width: 100%; box-sizing: border-box; font: inherit; font-size: 13.5px; }
+.field textarea.input { resize: vertical; min-height: 84px; line-height: 1.5; }
+.qa { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 8px; }
+@media (max-width: 700px) { .qa { grid-template-columns: minmax(0, 1fr); } }
+
+.sections { display: grid; gap: 8px; margin-top: 12px; }
+.sco-result { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-2); font-size: 13px; }
+.qa-result { overflow-wrap: anywhere; }
+.qa-result code { font: 12px var(--mono); padding: 0 5px; border-radius: 5px; background: var(--panel); border: 1px solid var(--line); }
+.mark { font-weight: 650; }
+.mark.ok { color: var(--ok); }
+.mark.err { color: var(--err); }
+
+/* minmax(0, 1fr): an auto column grows to its widest child, and a level pill cannot shrink. */
+.card.record { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; align-content: start; }
+.stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.stat { padding: 8px; border-radius: var(--radius-sm); background: var(--panel-2); border: 1px solid var(--line); text-align: center; font-size: 11px; }
+.stat .n { font-size: 18px; font-weight: 700; color: var(--ink); }
+@media (max-width: 700px) { .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.comps, .creds { display: grid; gap: 5px; font-size: 12.5px; }
+.comp { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 8px; align-items: baseline; }
+.comp > span:first-child { overflow-wrap: anywhere; }
+.pill { flex: none; font: 600 10.5px var(--mono); padding: 1px 7px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
+.pill.performance { background: var(--ok-soft); color: var(--ok); }
+.cred { overflow-wrap: anywhere; }

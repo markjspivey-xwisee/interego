@@ -28,8 +28,9 @@ import { Hub } from './lib/ledger.js';
 import { RelayAuth, RelayMcp, RELAY } from './lib/relay.js';
 import { BRIDGE, callTool, getJson, signedRoute, walletSigner } from './lib/foxxi.js';
 import { claudeBin, runClaudeAgent, type AgentEvent } from './lib/claude-agent.js';
-import { authorCourse, type AuthoredCourse } from './lib/author.js';
-import { rankCourses } from './lib/jev.js';
+import { authorCourse, courseFromForm, type AuthoredCourse } from './lib/author.js';
+import { answerSection, type DeliveredSection } from './lib/learner.js';
+import { rankCourses, recommendNext, type RankableCourse, type RecordForRecommendation } from './lib/jev.js';
 import { freshChapters, type ChapterId, type DemoState, type CastMember, type Service } from './lib/cast.js';
 import { parseCourseCatalogProducts, FEDERATED_CATALOG_TYPE, type FederatedCourseCatalog } from '../../applications/foxxi-content-intelligence/src/course-catalog-product.js';
 
@@ -140,7 +141,7 @@ async function afterSignIn(): Promise<void> {
   const verified = await agentVerified(you.sessionDid);
   you.authorized = verified;
   setChapter('signin', { data: { signedIn: true, pod: you.pod, signer: you.sessionDid, surface: 'interego-live-demo', authorized: verified }, ...(verified ? { status: 'done' } : {}) });
-  for (const id of ['discover', 'claim'] as ChapterId[]) unlock(id);
+  for (const id of ['discover', 'claim', 'teach'] as ChapterId[]) unlock(id);
 }
 
 /**
@@ -407,7 +408,238 @@ const handlers: Record<string, Handler> = {
     });
     setChapter('forgery', { status: 'done', data: claim.status >= 400 ? { refusal: { status: claim.status, error: String(claim.json['error'] ?? '') } } : { issued: claim.json } });
   },
+
+  // ── Part two: two learners, one record standard ─────────────────────────────────────────────
+
+  async 'draft-course'(body) {
+    if (!you) throw new Error('sign in first: the course is published as yours');
+    const topic = String(body['topic'] ?? '').trim() || 'how to tell an agent\'s claim from its evidence';
+    const transcript: { kind: string; text?: string }[] = [];
+    setChapter('teach', { data: { drafting: true, transcript, draft: undefined, error: undefined } });
+    const { course, costUsd } = await hub.track({ actor: 'claude', service: 'claude-cli', tool: 'draft a course for you', summary: `drafting a course on “${topic}” for you to edit` }, async () => {
+      const r = await authorCourse(topic, `YOU-${Date.now().toString(36).toUpperCase()}`, (e: AgentEvent) => {
+        if (e.kind === 'thinking' || e.kind === 'started') { transcript.push({ kind: e.kind, text: e.text?.slice(0, 600) }); setChapter('teach', { data: { transcript } }); }
+      });
+      return { value: r, summary: `${r.course.title}: ${r.course.scos.length} sections, yours to edit${r.costUsd !== undefined ? ` · $${r.costUsd.toFixed(3)}` : ''}` };
+    });
+    // Your draft: the answers are yours to see and change, so they go to the page. Nothing is published yet.
+    setChapter('teach', { data: { drafting: false, draft: course, ...(costUsd !== undefined ? { draftCostUsd: costUsd } : {}) } });
+  },
+
+  async 'publish-course'(body) {
+    if (!you) throw new Error('sign in first: the course is published as yours');
+    const course = courseFromForm(body['course'], `YOU-${Date.now().toString(36).toUpperCase()}`);
+    const r = await youAct('scorm-author-signed', { course }, 'publishing your course on the SCORM engine, signed as you; the answers are hashed there');
+    if (r.status >= 400) { setChapter('teach', { data: { error: String(r.body['error'] ?? r.status), refused: r.status < 500 } }); return; }
+    const authorDid = String(r.body['authoredBy'] ?? you.sessionDid);
+    const meta = await getJson(`/agent/scorm/course/${encodeURIComponent(course.courseId)}?author_did=${encodeURIComponent(authorDid)}`);
+    setChapter('teach', { status: 'done', data: { published: { ...meta.json, authorDid }, error: undefined } });
+    unlock('agentLearns');
+  },
+
+  async 'agent-learn'() {
+    if (!agent) throw new Error('no agent wallet');
+    const pub = (chapters.teach.data as { published?: { courseId?: string; title?: string; authorDid?: string } }).published;
+    if (!pub?.courseId) throw new Error('publish your course first');
+    const sections: { id: string; title: string; questions: string[]; answers?: string[]; graded?: unknown }[] = [];
+    const transcript: { kind: string; section: string; text?: string }[] = [];
+    setChapter('agentLearns', { replace: true, data: { running: true, course: pub, sections, transcript } });
+    const launched = await hub.track({ actor: 'claude', service: 'foxxi', tool: 'scorm-launch-signed', summary: `the agent starts your course “${pub.title}” with its own wallet`, request: { course_id: pub.courseId, author_did: pub.authorDid } }, async () => {
+      const r = await signedRoute('/agent/scorm/launch', { course_id: pub.courseId, ...(pub.authorDid ? { author_did: pub.authorDid } : {}) }, agent);
+      return { value: r, status: r.status >= 400 ? 'refused' : 'ok', code: r.status, response: r.json, summary: r.status >= 400 ? String(r.json['error'] ?? r.status) : 'an attempt started on the engine' };
+    });
+    if (launched.status >= 400) throw new Error(String(launched.json['error'] ?? `launch failed with HTTP ${launched.status}`));
+    const sessionId = String(launched.json['sessionId'] ?? '');
+    let sco = launched.json['sco'] as DeliveredSection | undefined;
+    let result: Record<string, unknown> | undefined;
+    for (let step = 0; step < 12 && sco && !result; step++) {
+      const section: DeliveredSection = sco;
+      const entry: (typeof sections)[number] = { id: section.id, title: section.title, questions: (section.assessment ?? []).map((q) => q.question) };
+      sections.push(entry);
+      setChapter('agentLearns', { data: { sections } });
+      let answers: string[] = [];
+      if (section.assessment?.length) {
+        const read = await hub.track({ actor: 'claude', service: 'claude-cli', tool: 'read and answer', summary: `the agent reads section ${section.id} and answers ${section.assessment.length} question(s)` }, async () => {
+          const a = await answerSection(section, (e: AgentEvent) => {
+            if (e.kind === 'thinking' && e.text) { transcript.push({ kind: 'thinking', section: section.id, text: e.text.slice(0, 500) }); setChapter('agentLearns', { data: { transcript } }); }
+          });
+          return { value: a, summary: `answered ${a.answers.map((x) => `“${x}”`).join(', ')}${a.costUsd !== undefined ? ` · $${a.costUsd.toFixed(3)}` : ''}` };
+        });
+        answers = read.answers;
+        entry.answers = answers;
+      }
+      const sent = answers;
+      const submitted = await hub.track({ actor: 'claude', service: 'foxxi', tool: 'scorm-submit-signed', summary: sent.length ? `submitting ${sent.length} answer(s) to the engine` : 'continuing', request: { session_id: sessionId, ...(sent.length ? { answers: sent } : {}) } }, async () => {
+        const r = await signedRoute('/agent/scorm/submit', { session_id: sessionId, ...(sent.length ? { answers: sent } : {}) }, agent);
+        const g = r.json['graded'] as { correct?: number; total?: number } | undefined;
+        return { value: r, status: r.status >= 400 ? 'refused' : 'ok', code: r.status, response: r.json, summary: r.status >= 400 ? String(r.json['error'] ?? r.status) : g ? `${g.correct} of ${g.total} correct` : 'next section' };
+      });
+      if (submitted.status >= 400) throw new Error(String(submitted.json['error'] ?? `submit failed with HTTP ${submitted.status}`));
+      if (submitted.json['graded']) entry.graded = submitted.json['graded'];
+      if (submitted.json['done']) result = submitted.json;
+      else sco = submitted.json['sco'] as DeliveredSection | undefined;
+      setChapter('agentLearns', { data: { sections } });
+    }
+    setChapter('agentLearns', { data: { running: false, result } });
+    if (!result?.['passed']) return;
+    const claim = await hub.track({ actor: 'claude', service: 'foxxi', tool: 'claim-credential-signed', summary: 'the agent claims what its own record earned', request: { course_id: pub.courseId } }, async () => {
+      const r = await signedRoute('/agent/credentials/claim', { course_id: pub.courseId }, agent);
+      return { value: r, status: r.status >= 400 ? 'refused' : 'ok', code: r.status, response: r.json, summary: r.status >= 400 ? String(r.json['error'] ?? r.status) : `${String(r.json['decision'] ?? 'issued')}: a credential in the agent's own wallet` };
+    });
+    setChapter('agentLearns', { status: 'done', data: claim.status >= 400 ? { claimError: String(claim.json['error'] ?? claim.status) } : { credential: claim.json } });
+    unlock('work');
+  },
+
+  async 'record-work'(body) {
+    const who = body['who'] === 'agent' ? 'agent' : 'you';
+    if (who === 'you') {
+      if (!you) throw new Error('sign in first');
+      const pub = (chapters.teach.data as { published?: { courseIri?: string; title?: string } }).published;
+      if (!pub?.courseIri) throw new Error('publish your course first: it is the evidence of your work');
+      const score = ((chapters.agentLearns.data as { result?: { score?: unknown } }).result?.score);
+      const payload = { task_name: `Taught “${pub.title}” to an AI agent`, task_id: pub.courseIri, success: true, ...(typeof score === 'number' ? { quality: score } : {}), actor_kind: 'human', activity_type: TEACHING };
+      const r = await youAct('record-performance-signed', payload, 'recording your work as a person, so your record stays private');
+      setChapter('work', { data: { you: r.status >= 400 ? { error: String(r.body['error'] ?? r.status) } : { ...r.body, payload } } });
+    } else {
+      if (!agent) throw new Error('no agent wallet');
+      const course = agentsCourse();
+      if (!course?.courseIri) throw new Error('let the agent write the course you take in part one first: it is the evidence of its work');
+      const score = ((chapters.learn.data as { result?: { score?: unknown } }).result?.score);
+      const payload = { task_name: `Taught “${course.title ?? course.courseId}” to a person`, task_id: course.courseIri, success: true, ...(typeof score === 'number' ? { quality: score } : {}), activity_type: TEACHING };
+      const r = await hub.track({ actor: 'claude', service: 'foxxi', tool: 'record-performance-signed', summary: 'the agent records its work as an agent, which makes its record public', request: payload }, async () => {
+        const s = await signedRoute('/agent/record-performance', payload, agent);
+        return { value: s, status: s.status >= 400 ? 'refused' : 'ok', code: s.status, response: s.json, summary: s.status >= 400 ? String(s.json['error'] ?? s.status) : `recorded as statement ${String(s.json['statementId'] ?? '').slice(0, 8)}…` };
+      });
+      setChapter('work', { data: { agent: r.status >= 400 ? { error: String(r.json['error'] ?? r.status) } : { ...r.json, payload } } });
+    }
+    const w = chapters.work.data as { you?: { recorded?: boolean }; agent?: { recorded?: boolean } };
+    if (w.you?.recorded || w.agent?.recorded) unlock('records');
+    if (w.you?.recorded && w.agent?.recorded) setChapter('work', { status: 'done' });
+  },
+
+  async 'review-records'() {
+    if (!you || !agent) throw new Error('sign in first');
+    const self = you;
+    setChapter('records', { replace: true, status: 'active', data: { running: true } });
+    // Your record is read as YOU, the person the credentials name, not as this app's session agent.
+    const yours = await youAct('review-record', { subject_did: self.webId }, 'assembling your IEEE P2997 learner record, as yourself');
+    const theirs = await hub.track({ actor: 'claude', service: 'foxxi', tool: 'review-record', summary: 'the agent assembles its own learner record' }, async () => {
+      const r = await signedRoute('/agent/review-record', {}, agent);
+      return { value: r, status: r.status >= 400 ? 'refused' : 'ok', code: r.status, response: recordView(r.json, r.status), summary: r.status >= 400 ? String(r.json['error'] ?? r.status) : 'its record, public because it records as an agent' };
+    });
+    const youReadAgent = await youAct('review-record', { subject_did: agent.did }, 'you read the agent\'s record');
+    const agentReadYou = await hub.track({ actor: 'claude', service: 'foxxi', tool: 'review-record', summary: 'the agent tries to read your record', request: { subject_did: self.webId } }, async () => {
+      const r = await signedRoute('/agent/review-record', { subject_did: self.webId }, agent);
+      return { value: r, status: r.status >= 400 ? 'refused' : 'ok', code: r.status, response: r.json, summary: r.status >= 400 ? String(r.json['error'] ?? r.status) : 'read it' };
+    });
+    setChapter('records', { status: 'done', data: {
+      running: false,
+      you: recordView(yours.body, yours.status),
+      agent: recordView(theirs.json, theirs.status),
+      cross: {
+        youReadAgent: { status: youReadAgent.status, ...(youReadAgent.status >= 400 ? { error: String(youReadAgent.body['error'] ?? '') } : { subjectKind: recordView(youReadAgent.body, youReadAgent.status).subjectKind }) },
+        agentReadYou: { status: agentReadYou.status, ...(agentReadYou.status >= 400 ? { error: String(agentReadYou.json['error'] ?? '') } : {}) },
+      },
+    } });
+    unlock('next');
+  },
+
+  async recommend() {
+    const recs = chapters.records.data as { you?: RecordView; agent?: RecordView };
+    if (!recs.you?.summary || !recs.agent?.summary) throw new Error('assemble the two records first');
+    const out: Record<string, unknown> = {};
+    for (const [who, view] of [['you', recs.you], ['agent', recs.agent]] as const) {
+      const courses = candidateCourses(who);
+      out[`${who}Courses`] = courses.length;
+      if (courses.length === 0) { out[who] = { none: 'Every course the demo knows of was written by this learner.' }; continue; }
+      const record: RecordForRecommendation = {
+        learner: who === 'you' ? 'a person' : 'an AI agent',
+        competencies: (view.competencies ?? []).map((c) => ({ label: c.label, ...(c.level ? { level: c.level } : {}), ...(c.basis ? { basis: c.basis } : {}), ...(c.status ? { status: c.status } : {}) })),
+        credentialsHeld: (view.credentials ?? []).filter((c) => c.verified).map((c) => c.name),
+        experiences: Number(view.summary?.['experienceCount'] ?? 0),
+        performances: Number(view.summary?.['performanceCount'] ?? 0),
+      };
+      out[who] = await hub.track({ actor: 'jev', service: 'typesafe', tool: 'systemone · choice', summary: `what ${who === 'you' ? 'you' : 'the agent'} should learn next, from the record alone`, request: { record, courses } }, async () => {
+        const r = await recommendNext(record, courses);
+        return { value: r, summary: `${r.options[0]?.title ?? '?'} at ${Math.round((r.options[0]?.p ?? 0) * 100)}%, ${r.latencyMs} ms`, response: r };
+      });
+    }
+    setChapter('next', { status: 'done', data: out });
+  },
 };
+
+/** The competency both of you exercise by teaching the other: an IRI, since it becomes the activity's type. */
+const TEACHING = `${BRIDGE}/ns/foxxi/competency/instructional-design`;
+
+/** The course the agent wrote and you took: its evidence of teaching. */
+function agentsCourse(): { courseId?: string; courseIri?: string; title?: string } | undefined {
+  type Course = { courseId?: string; courseIri?: string; title?: string; authoredBy?: string };
+  const written = (chapters.author.data as { course?: Course }).course;
+  const taken = (chapters.learn.data as { course?: Course }).course;
+  if (taken?.courseIri && agent && taken.authoredBy && sameIdentity(taken.authoredBy, agent.did)) return taken;
+  return written?.courseIri ? written : undefined;
+}
+
+interface RecordView {
+  status: number;
+  error?: string;
+  learner?: string;
+  subjectKind?: string;
+  summary?: Record<string, unknown>;
+  competencies?: { label: string; level?: string; basis?: string; status?: string }[];
+  credentials?: { name: string; verified: boolean; id: string }[];
+  recordId?: string;
+}
+
+/** What the page shows of an IEEE P2997 record: the summary, the competencies and the credentials. */
+function recordView(body: Record<string, unknown>, status: number): RecordView {
+  if (status >= 400) return { status, error: String(body['error'] ?? status) };
+  const elr = (body['elr'] ?? {}) as Record<string, unknown>;
+  const levelOf = (c: Record<string, unknown>): string | undefined => {
+    const l = c['level'] ?? c['proficiencyLevel'] ?? c['tla:level'];
+    const s = typeof l === 'string' ? l : typeof (l as { label?: unknown } | undefined)?.label === 'string' ? String((l as { label: string }).label) : undefined;
+    // A TLA level IRI ends in its name, `LevelAdvancedBeginner`: shown as the words it stands for.
+    return s ? s.split(/[#/]/).pop()?.replace(/^Level/, '').replace(/([a-z])([A-Z])/g, '$1 $2') : undefined;
+  };
+  return {
+    status,
+    learner: String((elr['learner'] as { did?: unknown } | undefined)?.did ?? ''),
+    subjectKind: String(elr['subjectKind'] ?? body['subjectKind'] ?? ''),
+    summary: (elr['summary'] ?? {}) as Record<string, unknown>,
+    competencies: ((elr['competencies'] ?? []) as Record<string, unknown>[]).map((c) => ({
+      label: String(c['label'] ?? c['id'] ?? ''),
+      ...(levelOf(c) ? { level: levelOf(c) } : {}),
+      ...(typeof c['basis'] === 'string' ? { basis: c['basis'] } : {}),
+      ...(typeof c['modalStatus'] === 'string' ? { status: c['modalStatus'] } : {}),
+    })),
+    credentials: ((elr['credentials'] ?? []) as Record<string, unknown>[]).map((c) => ({ name: String(c['achievementName'] ?? c['id'] ?? ''), verified: c['verified'] === true, id: String(c['id'] ?? '') })),
+    ...(typeof elr['id'] === 'string' ? { recordId: elr['id'] } : {}),
+  };
+}
+
+/**
+ * The courses a learner could take next: every course the demo knows of (the catalogs the walk
+ * found, the one you wrote, the agent's) except those the learner wrote. That is a rule, so it is
+ * applied here rather than asked of Jev; a learner record says what you learned, not what you taught.
+ */
+function candidateCourses(forWho: 'you' | 'agent'): RankableCourse[] {
+  const all = new Map<string, RankableCourse & { author?: string }>();
+  const d = chapters.discover.data as { catalogs?: (FederatedCourseCatalog & { podLabel?: string })[] };
+  for (const c of d.catalogs ?? []) for (const p of c.products) {
+    const key = p.courseId ?? p.iri;
+    // An owner's catalog says who authored each engine-graded course in its description.
+    const author = /authored by (\S+?)\.?$/.exec(p.description ?? '')?.[1];
+    all.set(key, { key, title: p.title ?? key, ...(p.description ? { description: p.description } : {}), provider: c.podLabel ?? c.issuedBy ?? '', ...(author ? { author } : {}) });
+  }
+  const pub = (chapters.teach.data as { published?: { courseId?: string; title?: string; authorDid?: string } }).published;
+  if (pub?.courseId && !all.has(pub.courseId)) all.set(pub.courseId, { key: pub.courseId, title: pub.title ?? pub.courseId, provider: 'you', ...(pub.authorDid ? { author: pub.authorDid } : {}) });
+  const theirs = agentsCourse();
+  if (theirs?.courseId && !all.has(theirs.courseId)) all.set(theirs.courseId, { key: theirs.courseId, title: theirs.title ?? theirs.courseId, provider: 'Claude Code agent', ...(agent ? { author: agent.did } : {}) });
+  const mine = forWho === 'you' ? [you?.sessionDid, you?.personDid, you?.webId] : [agent?.did];
+  const wroteIt = (c: { key: string; author?: string }): boolean =>
+    (forWho === 'you' && c.key === pub?.courseId) || (c.author !== undefined && mine.some((m) => m !== undefined && sameIdentity(m, c.author!)));
+  return [...all.values()].filter((c) => !wroteIt(c)).map(({ author: _author, ...c }) => c);
+}
 
 function publicCourse(c: AuthoredCourse): AuthoredCourse {
   // What the page shows of the agent's draft: the answers stay out of the ledger and the page.
@@ -498,7 +730,7 @@ app.post('/api/chapter/:action', async (req, res) => {
   const action = String(req.params['action']);
   const h = handlers[action];
   if (!h) { res.status(404).json({ ok: false, error: `no action ${action}` }); return; }
-  const chapterOf: Record<string, ChapterId> = { authorize: 'signin', author: 'author', 'reset-author': 'author', publish: 'author', discover: 'discover', rank: 'discover', pick: 'learn', launch: 'learn', submit: 'learn', standings: 'claim', claim: 'claim', verify: 'verify', forgery: 'forgery' };
+  const chapterOf: Record<string, ChapterId> = { authorize: 'signin', author: 'author', 'reset-author': 'author', publish: 'author', discover: 'discover', rank: 'discover', pick: 'learn', launch: 'learn', submit: 'learn', standings: 'claim', claim: 'claim', verify: 'verify', forgery: 'forgery', 'draft-course': 'teach', 'publish-course': 'teach', 'agent-learn': 'agentLearns', 'record-work': 'work', 'review-records': 'records', recommend: 'next' };
   try {
     await h((req.body ?? {}) as Record<string, unknown>);
     res.json({ ok: true, state: state() });

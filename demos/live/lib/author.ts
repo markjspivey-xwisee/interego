@@ -42,6 +42,27 @@ export function parseCourse(text: string, courseId: string): AuthoredCourse {
   return c;
 }
 
+/** A course a person wrote in the page, checked and normalized as the author's JSON is; throws with what to fix. */
+export function courseFromForm(input: unknown, courseId: string): AuthoredCourse {
+  const c = (input && typeof input === 'object' ? input : {}) as { title?: unknown; summary?: unknown; scos?: unknown };
+  const title = String(c.title ?? '').trim();
+  if (!title) throw new Error('give your course a title');
+  const rawScos = Array.isArray(c.scos) ? (c.scos as Array<{ title?: unknown; body?: unknown; assessment?: unknown }>) : [];
+  const scos = rawScos.map((s, i) => {
+    const questions = (Array.isArray(s?.assessment) ? (s.assessment as Array<{ question?: unknown; answer?: unknown }>) : [])
+      .filter((q) => String(q?.question ?? '').trim())
+      .map((q) => ({ question: String(q.question).trim(), answer: String(q.answer ?? '').trim().toLowerCase().replace(/[^\p{L}\p{N}-]+/gu, '') }));
+    return { id: `SCO-${i + 1}`, title: String(s?.title ?? '').trim() || `Section ${i + 1}`, body: String(s?.body ?? '').trim(), ...(questions.length ? { assessment: questions } : {}) };
+  });
+  if (scos.length === 0) throw new Error('your course needs at least one section');
+  for (const s of scos) {
+    if (!s.body) throw new Error(`“${s.title}” has no text`);
+    for (const q of s.assessment ?? []) if (!q.answer) throw new Error(`the question “${q.question}” has no one-word answer`);
+  }
+  if (!scos.some((s) => s.assessment?.length)) throw new Error('ask at least one question, or the engine has nothing to grade');
+  return { courseId, title, masteryScore: 0.5, summary: String(c.summary ?? '').trim(), scos };
+}
+
 /** Have a Claude agent write the course; its steps stream through `onEvent`. */
 export async function authorCourse(topic: string, courseId: string, onEvent: (e: AgentEvent) => void): Promise<{ course: AuthoredCourse; costUsd?: number }> {
   const run = await runClaudeAgent({ prompt: PROMPT(topic, courseId), mcpServers: {}, tools: '', maxTurns: 2, timeoutMs: 180_000, onEvent });

@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-09-26 — Interego, live, part two: a person and an AI agent as learners, one record standard
+
+`demos/live` gains five chapters (8 to 12) that run the IEEE learner-record flow for a person and an agent side by side, on the deployed services. A survey found every piece of that stack live but not joined into one flow, and no demo in the tree with a human and an agent both learning.
+
+- **You teach the agent.** You write a short course in the page, or have Claude draft one for you to edit, and publish it as yours through your relay connection (`foxxi.scorm_author` via the relay's `act`).
+- **The agent takes your course.** It launches your course with its own wallet. A Claude with no tools (`lib/learner.ts`) reads each section the SCORM engine delivers and answers, seeing only what you saw. It then claims its own Open Badges credential from its own record.
+- **Both of you at work.** Each of you taught the other, so each records a performance in the xAPI production context with the course taught as fetchable evidence. You record as a person and stay private; the agent records as an agent and its record becomes public.
+- **Two learner records, side by side.** The IEEE P2997 Enterprise Learner Record for each of you, read from your own pods. Your record is read as you, the person your credentials name. Read as the relay session instead, it showed 0 of 2 credentials verified. It includes experiences, performance, competencies (inferred, or performance-verified at a Dreyfus level) and verified credentials. The cross-reads show the privacy rule: you may read the agent's record, and the agent is refused yours.
+- **What each should learn next.** Jev picks each learner's next course from the record alone (`recommendNext` in `lib/jev.ts`, one Choice with a no-match option). A learner's own courses are left out by rule, not by judgment.
+
+Run end to end against the live bridge with a headless test session: part one, the agent's reading (it passed a Claude-drafted course 1.0), both work records, both learner records, and both recommendations. The agent was told none of the courses fit, since the only one it did not write is one it already holds. Also fixed: a grid column wider than a phone's chapter body.
+
 ## 2026-09-25 — jev-harness: the follower sees a failing test file through color codes
 
 A local full run on 2026-09-25 ended `Test Files 1 failed | 430 passed`, but the follower printed `exit 1, 0 failing test file(s)`, and the outcome it recorded said no failing tests were reported.
