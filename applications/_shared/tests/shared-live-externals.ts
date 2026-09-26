@@ -479,14 +479,16 @@ export const SHARED_BUT_NOT_LIVE: readonly { readonly name: string; readonly why
  * whose read site stops reading it is red, in the same both-directions discipline as
  * `switchExceptions` and `IMPORTS_BUT_NEVER_DIALS`.
  *
- * ★★ TWO OF THE TWENTY-ONE ADDRESS SOMETHING LIVE, AND THAT IS THE FINDING RATHER THAN AN
+ * ★★ SOME OF THEM ADDRESS SOMETHING LIVE, AND THAT IS THE FINDING RATHER THAN AN
  * EMBARRASSMENT. `FOXXI_TENANT_POD_URL` (with `FOXXI_AUTHORITATIVE_SOURCE`) names a real Solid
- * pod that `pod-snapshot-publisher.ts` writes to with `globalThis.fetch`, and
- * `RELAY_PGSL_PG_CONNSTR` names a real PostgreSQL that `engagement-store.ts` opens. They are
- * here rather than in `SHARED_LIVE_EXTERNALS` because of a fact that is MEASURED, not assumed:
- * nothing in this tree and no workflow sets any of the three, and every dial behind them is
- * guarded by the value being present — `podConfig()` returns null, `createStatementStore('pod')`
- * throws before constructing anything, `isConfigured()` is false and
+ * pod that `pod-snapshot-publisher.ts` writes to with `globalThis.fetch`,
+ * `RELAY_PGSL_PG_CONNSTR` names a real PostgreSQL that `engagement-store.ts` opens, and
+ * `FOXXI_LRS_BACKEND` and `FOXXI_XAPI_PROFILE_URL` can name another LRS to forward to and a
+ * profile document to fetch. They are here rather than in `SHARED_LIVE_EXTERNALS` because of a
+ * fact that is MEASURED, not assumed: nothing in this tree and no workflow sets any of them, and
+ * every dial behind them is guarded by the value being present — `podConfig()` returns null,
+ * `createStatementStore()` builds the in-memory store and `createStatementStore('pod')` throws
+ * before constructing anything, the built-in profile is used, `isConfigured()` is false and
  * `defaultEngagementStore()` returns null. The test asserts the unset half, over the tree and
  * over `.github`, so the day one of them is armed this goes red.
  *
@@ -672,10 +674,32 @@ export const SHARED_ONLY_THROUGH_IMPORTED_CODE: readonly {
       + 'site and same argument as the base above.',
   },
   {
+    name: 'FOXXI_LRS_BACKEND',
+    readIn: 'applications/foxxi-content-intelligence/src/xapi-lrs.ts',
+    why: 'CAN NAME A LIVE ADDRESS: the store a tenant\'s statements are kept in, where '
+      + '`forward:<endpoint>||…` sends every statement to another LRS and `pod` writes to the '
+      + 'tenant pod. Unset, createStatementStore() builds the in-memory store. Shared because '
+      + 'the modules that import the LRS reach that read; nothing in this tree and no workflow '
+      + 'sets it, which the dormancy test beside this file asserts.',
+  },
+  {
     name: 'FOXXI_LRS_MEMORY_MAX_STATEMENTS',
     readIn: 'applications/foxxi-content-intelligence/src/statement-store.ts',
     why: 'an override for the resident statement budget, which is otherwise derived from the '
       + 'V8 heap limit. A cap on an in-memory Map; nothing outside the process is named.',
+  },
+  {
+    name: 'FOXXI_LRS_MEMORY_TENANTS',
+    readIn: 'applications/foxxi-content-intelligence/src/xapi-lrs.ts',
+    why: 'a csv allowlist of tenants whose statements stay in the in-memory store whatever '
+      + 'FOXXI_LRS_BACKEND says. It chooses between stores inside the process and names nothing '
+      + 'outside it.',
+  },
+  {
+    name: 'FOXXI_LRS_MEMORY_TENANT_PREFIXES',
+    readIn: 'applications/foxxi-content-intelligence/src/xapi-lrs.ts',
+    why: 'the prefix form of the allowlist above, defaulting to `lens:` so every per-agent view '
+      + 'stays in memory. Same read site and same argument.',
   },
   {
     name: 'FOXXI_TENANT_POD_URL',
@@ -694,6 +718,13 @@ export const SHARED_ONLY_THROUGH_IMPORTED_CODE: readonly {
       + 'FOXXI_ISSUER_KEY_SEED. It is the name whose reader count was got wrong twice — once by '
       + 'counting a mention in prose as a read, and once by counting only the test tree — so it '
       + 'is written down here with the read site that actually makes it shared.',
+  },
+  {
+    name: 'FOXXI_XAPI_PROFILE_URL',
+    readIn: 'applications/foxxi-content-intelligence/src/xapi-lrs.ts',
+    why: 'CAN NAME A LIVE ADDRESS: an external xAPI profile document fetched in place of the '
+      + 'built-in one when set. Unset, the profile is built in the process and nothing is '
+      + 'fetched. Nothing in this tree and no workflow sets it, which the dormancy test asserts.',
   },
   {
     name: 'INTEREGO_DISCORD_STATE',

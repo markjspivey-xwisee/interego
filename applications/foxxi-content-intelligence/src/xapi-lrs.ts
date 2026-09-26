@@ -1208,6 +1208,27 @@ type DocKind = 'state' | 'activityProfile' | 'agentProfile';
 function stateKey(activityId: string, agent: string, stateId: string, registration?: string): string {
   return `${activityId}::${agent}::${stateId}::${registration ?? ''}`;
 }
+
+/** Where a State document lives: the parameters the State resource is addressed by. `agent` is the
+ *  JSON string an Activity Provider sends, which for a cmi5 AU is the launch URL's `actor`. */
+export interface StateAddress { readonly activityId: string; readonly agent: string; readonly stateId: string; readonly registration?: string }
+
+/**
+ * Put a JSON State document as the LMS, not over HTTP. A cmi5 LMS must stage `LMS.LaunchData`
+ * before the AU reads it (cmi5 §10); this is that write, stored exactly as a PUT to the State
+ * resource would store it, so the AU's GET finds it.
+ */
+export function stageStateDocument(tenant: TenantId, at: StateAddress, content: Record<string, unknown>): void {
+  const body = JSON.stringify(content);
+  const etag = `"${createHash('sha1').update(body).digest('hex')}"`;
+  cappedMapSet(stateStores.for(tenant), stateKey(at.activityId, at.agent, at.stateId, at.registration), { content, etag, updated: nowIso(), contentType: 'application/json' });
+  xapiDocsPodDirty();
+}
+
+/** Read a State document the way the State resource's GET would find it; undefined when absent. */
+export function readStateDocument(tenant: TenantId, at: StateAddress): unknown {
+  return stateStores.for(tenant).get(stateKey(at.activityId, at.agent, at.stateId, at.registration))?.content;
+}
 function profileKey(iri: string, profileId: string): string {
   return `${iri}::${profileId}`;
 }

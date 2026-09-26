@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-09-26 — Foxxi: a learner launches cmi5 for themselves, and it reaches their record
+
+cmi5 is the ADL TLA's own launch standard, and on the bridge it was the operator's alone, in three ways:
+
+- only an operator could launch, since `GET /cmi5/launch` names any learner;
+- `LMS.LaunchData` was never staged: the route returned the document and told the caller to stage it;
+- an AU's statements landed in the launching tenant's partition, which no learner record reads.
+
+`foxxi.cmi5_launch_signed` (`POST /agent/cmi5/launch`) is the learner's own launch, signed like the SCORM engine's routes: by a wallet, or by a delegated agent such as a relay session.
+
+- **For the signer only.** The launch is for the learner the signature names, and its auth-token writes into that learner's own lens.
+- **Which AU.** It launches the AU the learner names, or the first they have not satisfied, with sequential progression enforced (`chooseAu`).
+- **Launch data staged.** The LMS stages `LMS.LaunchData` where a conformant AU reads it (`stageLaunchData`, also used by the operator route now).
+- **In the learner's record.** The AU's statements and the LMS's `satisfied` are kept on the learner's pod, where their IEEE P2997 learner record reads them.
+- **Scoped to the launch.** A statement is kept only when it arrives in the launch's own tenant and names the launch's own actor. A registration named from another auth-token gets nothing.
+- **Experience, not evidence.** These statements carry no grading tag, because a cmi5 AU reports its own result. They add experience to the record, not graded evidence for a credential, which is the rule the SCORM engine's results already follow.
+
+Tests in `tests/cmi5-signed-launch.test.ts`.
+
 ## 2026-09-26 — Interego, live, part two: a person and an AI agent as learners, one record standard
 
 `demos/live` gains five chapters (8 to 12) that run the IEEE learner-record flow for a person and an agent side by side, on the deployed services. A survey found every piece of that stack live but not joined into one flow, and no demo in the tree with a human and an agent both learning.

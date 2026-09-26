@@ -797,11 +797,12 @@ describe('the registry names every shared live external, by rule rather than by 
     }
   });
 
-  it('measures the dormancy the two live-addressing names rest on', () => {
-    // ★★ THE ONE CLAIM IN THAT LIST THAT IS NOT ABOUT A CONSTANT. FOXXI_TENANT_POD_URL and
+  it('measures the dormancy the live-addressing names rest on', () => {
+    // ★★ THE CLAIMS IN THAT LIST THAT ARE NOT ABOUT A CONSTANT. FOXXI_TENANT_POD_URL and
     // FOXXI_AUTHORITATIVE_SOURCE name a real pod that pod-snapshot-publisher writes to with
     // globalThis.fetch; RELAY_PGSL_PG_CONNSTR names a real PostgreSQL that engagement-store
-    // opens. Each dial is guarded on the value being present, so what makes them dormant is
+    // opens; FOXXI_LRS_BACKEND can name an LRS to forward to and FOXXI_XAPI_PROFILE_URL a
+    // profile to fetch. Each dial is guarded on the value being present, so what makes them dormant is
     // that NOTHING SUPPLIES ONE — and that is a fact about this tree, re-measured here over
     // every scannable file and every workflow rather than restated from the entry's prose.
     //
@@ -809,7 +810,7 @@ describe('the registry names every shared live external, by rule rather than by 
     // `process.env["RELAY_PGSL_PG_CONNSTR"] = "postgres://…"` reds this, naming the file and
     // the variable. The file was untracked, which is the case `--others --exclude-standard` in
     // `scannableFiles` exists for — armed on a branch before anything is committed.
-    const LIVE_ADDRESSING = ['FOXXI_TENANT_POD_URL', 'FOXXI_AUTHORITATIVE_SOURCE', 'RELAY_PGSL_PG_CONNSTR'];
+    const LIVE_ADDRESSING = ['FOXXI_TENANT_POD_URL', 'FOXXI_AUTHORITATIVE_SOURCE', 'RELAY_PGSL_PG_CONNSTR', 'FOXXI_LRS_BACKEND', 'FOXXI_XAPI_PROFILE_URL'];
     for (const n of LIVE_ADDRESSING) {
       expect(
         SHARED_ONLY_THROUGH_IMPORTED_CODE.map(e => e.name),
@@ -835,8 +836,8 @@ describe('the registry names every shared live external, by rule rather than by 
       scanned += 1;
       const text = read(f);
       // The substring test first: `codeOf` walks a file character by character, and running it
-      // over every source file in the tree — 4.8 MB of them, measured — for three names almost
-      // none of them contain would be the slowest thing here by a wide margin.
+      // over every source file in the tree — 4.8 MB of them, measured — for a handful of names
+      // almost none of them contain would be the slowest thing here by a wide margin.
       for (const n of LIVE_ADDRESSING) {
         if (text.includes(n) && setsEnvName(text, n)) armed.push(`${f} sets ${n}`);
       }
