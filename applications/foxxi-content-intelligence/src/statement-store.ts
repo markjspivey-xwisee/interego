@@ -71,8 +71,12 @@ export interface StatementStore {
   put(record: StoredStatement): Promise<void>;
   /** Single get by id. Returns the record even if voided (caller decides). */
   get(id: string): Promise<StoredStatement | null>;
-  /** Mark `id` voided + record which voiding-statement caused it. */
-  markVoided(id: string, voidingStatementId: string): Promise<void>;
+  /**
+   * Mark `id` voided + record which voiding-statement caused it. With `onlyIf`, the store marks
+   * the record only when `onlyIf` holds for the very record it marks, checked in the same step
+   * rather than in an earlier read. Resolves whether it marked.
+   */
+  markVoided(id: string, voidingStatementId: string, onlyIf?: (target: StoredStatement) => boolean): Promise<boolean>;
   /** Filtered query with pagination (returns continuation cursor when more results exist). */
   query(filter: QueryFilter): Promise<QueryResult>;
   /** Snapshot all statements (for admin browser, aggregates, conformance). */
@@ -373,9 +377,12 @@ export class InMemoryStatementStore implements StatementStore {
     if (this.budgeted) { residentStatements++; evictToBudget(); }
   }
   async get(id: string): Promise<StoredStatement | null> { return this.store.get(id) ?? null; }
-  async markVoided(id: string, voidingStatementId: string): Promise<void> {
+  async markVoided(id: string, voidingStatementId: string, onlyIf?: (target: StoredStatement) => boolean): Promise<boolean> {
+    // No await between the read, the check and the write: they are one step.
     const r = this.store.get(id);
-    if (r) { r.voided = true; r.voidingStatementId = voidingStatementId; }
+    if (!r || (onlyIf && !onlyIf(r))) return false;
+    r.voided = true; r.voidingStatementId = voidingStatementId;
+    return true;
   }
   async query(filter: QueryFilter): Promise<QueryResult> {
     if (filter.statementId) {
@@ -447,12 +454,13 @@ export class FileStatementStore implements StatementStore {
     await this.ensureLoaded();
     return this.memory.get(id);
   }
-  async markVoided(id: string, voidingStatementId: string): Promise<void> {
+  async markVoided(id: string, voidingStatementId: string, onlyIf?: (target: StoredStatement) => boolean): Promise<boolean> {
     await this.ensureLoaded();
-    await this.memory.markVoided(id, voidingStatementId);
+    if (!await this.memory.markVoided(id, voidingStatementId, onlyIf)) return false;
     // Append-only marker; on reload, replay reapplies (would need a rewrite
     // pass in production — file backend is best for low-volume tenants).
     await fs.appendFile(join(this.dir, 'voided.jsonl'), JSON.stringify({ id, voidingStatementId, at: new Date().toISOString() }) + '\n');
+    return true;
   }
   async query(filter: QueryFilter): Promise<QueryResult> { await this.ensureLoaded(); return this.memory.query(filter); }
   async listAll(): Promise<StoredStatement[]> { await this.ensureLoaded(); return this.memory.listAll(); }
@@ -507,7 +515,7 @@ export class PrimaryForwardStatementStore implements StatementStore {
     }
   }
   async get(id: string): Promise<StoredStatement | null> { return this.cache.get(id); }
-  async markVoided(id: string, voidingStatementId: string): Promise<void> { return this.cache.markVoided(id, voidingStatementId); }
+  async markVoided(id: string, voidingStatementId: string, onlyIf?: (target: StoredStatement) => boolean): Promise<boolean> { return this.cache.markVoided(id, voidingStatementId, onlyIf); }
   async query(filter: QueryFilter): Promise<QueryResult> { return this.cache.query(filter); }
   async listAll(): Promise<StoredStatement[]> { return this.cache.listAll(); }
   async count(): Promise<number> { return this.cache.count(); }

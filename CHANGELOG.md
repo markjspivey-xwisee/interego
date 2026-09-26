@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-09-26 — Foxxi: the void checks the target's launch as it marks it
+
+The automated review of #487 found that its registration check on voiding read the target before the void. With a file- or pod-backed store, another launch could store that statement between the read and the void, and the void would then mark it.
+
+- **`StatementStore.markVoided(id, voidingId, onlyIf?)`** now takes a guard and resolves whether it marked. Each store evaluates the guard against the very record it marks. The memory store reads, checks and writes with no await in between. The file and primary-forward stores delegate to it. The pod store checks the record it reads and republishes.
+- **`applyVoiding` passes the guard**: the target is not a voiding statement and, for a registration-bound voider, belongs to its own launch. The earlier 403 stays for the ordinary case. A voiding statement whose target fails the guard is stored but voids nothing, as one that targets another voiding statement already did.
+
+`tests/cmi5-token-is-its-launch.test.ts` adds a race case: a spy on the store's `get` makes the early read miss the target, and the test checks that A's statement is not voided. Three mutants were checked and each fails the tests: no launch check in the guard, the memory store ignoring the guard, and the old read-then-mark.
 ## 2026-09-26 — Foxxi: a negation after the key denies it too, and a comparative bound keeps its quantity
 
 The automated review of #488 found that `matchesAnswerKey` passed "fraud was neither found nor suspected" for the key "fraud". #488 made "neither" and "nor" reach forward only, so a key word said before them stayed said. The same held for "no" after a verb: "fraud was no issue", "fraud is no longer suspected" and "fraud found no support" all passed.

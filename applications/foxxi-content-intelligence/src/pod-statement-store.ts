@@ -294,12 +294,13 @@ export class PodStatementStore implements StatementStore {
     } catch { return null; }
   }
 
-  async markVoided(id: string, voidingStatementId: string): Promise<void> {
+  async markVoided(id: string, voidingStatementId: string, onlyIf?: (target: StoredStatement) => boolean): Promise<boolean> {
     // Voiding republishes the statement descriptor with foxxi:isVoided
     // true + foxxi:voidedBy pointing at the voiding statement. The pod
     // manifest CAS keeps the operation safe under concurrent writes.
+    // `onlyIf` is checked against the record read here, the one republished.
     const rec = await this.get(id);
-    if (!rec) return;
+    if (!rec || (onlyIf && !onlyIf(rec))) return false;
     const voidedRec: StoredStatement = { ...rec, voided: true, voidingStatementId };
     const payloadJson = JSON.stringify(voidedRec.statement);
     const payloadAtom = mintAtom(pgsl(), payloadJson);
@@ -314,6 +315,7 @@ export class PodStatementStore implements StatementStore {
       graphSlug: `statement-${id}-graph`,
     });
     this.hot.set(id, voidedRec);
+    return true;
   }
 
   /** Filtered query — applies the in-memory filter against the rehydrated mirror. */
