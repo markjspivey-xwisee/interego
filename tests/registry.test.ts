@@ -15,6 +15,7 @@ import type {
 } from '@interego/core';
 import {
   aggregateReputation,
+  type AggregationPolicy,
   type AttestationInput,
   createRegistry,
   DEFAULT_AGGREGATION_POLICY,
@@ -125,6 +126,81 @@ describe('registry — reputation aggregation', () => {
     // means weight ≈ 0.5^4 = 0.0625), so the result skews toward 0.95.
     expect(s!.axes.honesty).toBeGreaterThan(0.85);
     expect(s!.axes.honesty).toBeLessThan(0.95);
+  });
+});
+
+describe('registry — the aggregate is exact where arithmetic can make it so', () => {
+  // The jev-harness policy (applications/_shared/judgment-kit/attestations.ts, reputationPolicy):
+  // trust weights 1 / 0.5 / 0.25 and a 30-day half-life.
+  const HARNESS: AggregationPolicy = { trustWeights: { HighAssurance: 1, PeerAttested: 0.5, SelfAsserted: 0.25 }, recencyHalfLifeDays: 30, minContributingAttestations: 1, policyId: 'urn:test:harness-reputation' };
+  const AGENT = 'urn:agent:harness' as IRI;
+  const ISSUED = '2026-09-21T05:00:00Z';
+  type Trust = NonNullable<AttestationInput['issuerTrustLevel']>;
+  const att = (id: string, axes: Record<string, number>, issuedAt = ISSUED, issuerTrustLevel: Trust = 'PeerAttested'): AttestationInput =>
+    ({ id: `urn:att:${id}` as IRI, issuer: 'urn:agent:peer' as IRI, subject: AGENT, axes, issuedAt, issuerTrustLevel });
+  /** The weight the aggregator gives an attestation: trust times 0.5^(age in days / 30). */
+  const weight = (issuedAt: string, now: string, trust: Trust): number =>
+    HARNESS.trustWeights[trust]! * Math.pow(0.5, ((Date.parse(now) - Date.parse(issuedAt)) / (1000 * 60 * 60 * 24)) / HARNESS.recencyHalfLifeDays);
+  /** The per-axis arithmetic before this change: Σ(score × w) / Σw, unheld. */
+  const plainMean = (terms: ReadonlyArray<readonly [number, number]>): number =>
+    terms.reduce((sum, [s, w]) => sum + s * w, 0) / terms.reduce((sum, [, w]) => sum + w, 0);
+
+  it('gives one attestation its own scores, at a moment the plain arithmetic does not', () => {
+    const now = '2026-09-26T08:15:09Z';
+    // The moment is one the old code got wrong, so the test cannot pass by the clock's luck.
+    expect(plainMean([[0.8, weight(ISSUED, now, 'PeerAttested')]])).toBe(0.8000000000000002);
+    const s = aggregateReputation(AGENT, [att('one', { competence: 0.8, honesty: 0.8, recency: 1 })], HARNESS, now)!;
+    expect(s.axes).toEqual({ competence: 0.8, honesty: 0.8, recency: 1 });
+  });
+
+  it('keeps an accuracy of exactly 0.9 at a 0.9 floor, not a hair under it', () => {
+    const now = '2026-09-26T08:00:06Z';
+    expect(plainMean([[0.9, weight(ISSUED, now, 'PeerAttested')]])).toBe(0.8999999999999999);
+    const s = aggregateReputation(AGENT, [att('floor', { accuracy: 0.9 })], HARNESS, now)!;
+    expect(s.axes.accuracy).toBe(0.9);
+    expect(s.axes.accuracy! >= 0.9).toBe(true);
+    expect(s.score).toBe(0.9);
+  });
+
+  it('gives attestations that agree their shared score, whatever their ages and trust', () => {
+    const now = '2026-09-26T08:00:00Z';
+    const older = '2026-09-11T00:00:00Z';
+    expect(plainMean([[0.9, weight(ISSUED, now, 'PeerAttested')], [0.9, weight(older, now, 'HighAssurance')]])).toBe(0.8999999999999999);
+    const s = aggregateReputation(AGENT, [att('a', { accuracy: 0.9 }), att('b', { accuracy: 0.9 }, older, 'HighAssurance')], HARNESS, now)!;
+    expect(s.axes.accuracy).toBe(0.9);
+  });
+
+  it('holds the overall score within its axes: three axes of 0.7 average to 0.7', () => {
+    expect((0.7 + 0.7 + 0.7) / 3).toBe(0.6999999999999998);
+    const s = aggregateReputation(AGENT, [att('three', { accuracy: 0.7, competence: 0.7, honesty: 0.7 })], HARNESS, '2026-09-26T08:15:09Z')!;
+    expect(s.score).toBe(0.7);
+  });
+
+  it('takes an attestation with any number of axes, without spreading them into arguments (the review of #494)', () => {
+    // Past the engine's argument limit (~125,000 in Node): Math.min(...axes) would throw a RangeError.
+    const axes = Object.fromEntries(Array.from({ length: 300_000 }, (_, i) => [`axis-${i}`, 0.5]));
+    const s = aggregateReputation(AGENT, [att('wide', axes)], HARNESS, '2026-09-26T08:15:09Z')!;
+    expect(Object.keys(s.axes)).toHaveLength(300_000);
+    expect(s.score).toBe(0.5);
+  });
+
+  it('does not let an attestation too old to weigh anything widen the range', () => {
+    const now = '2026-09-26T08:00:06Z';
+    const ancient = '1900-01-01T00:00:00Z';
+    expect(weight(ancient, now, 'PeerAttested')).toBe(0);
+    const s = aggregateReputation(AGENT, [att('floor', { accuracy: 0.9 }), att('ancient', { accuracy: 0.2 }, ancient)], HARNESS, now)!;
+    expect(s.axes.accuracy).toBe(0.9);
+  });
+
+  it('leaves a mixed mean where it was, between its scores, and gives the same inputs the same snapshot', () => {
+    const now = '2026-09-26T08:15:09Z';
+    const older = '2026-09-11T00:00:00Z';
+    const inputs = [att('lo', { accuracy: 0.7 }), att('hi', { accuracy: 0.95 }, older, 'HighAssurance')];
+    const s = aggregateReputation(AGENT, inputs, HARNESS, now)!;
+    expect(s.axes.accuracy).toBe(plainMean([[0.7, weight(ISSUED, now, 'PeerAttested')], [0.95, weight(older, now, 'HighAssurance')]]));
+    expect(s.axes.accuracy).toBeGreaterThan(0.7);
+    expect(s.axes.accuracy).toBeLessThan(0.95);
+    expect(aggregateReputation(AGENT, inputs, HARNESS, now)).toEqual(s);
   });
 });
 
