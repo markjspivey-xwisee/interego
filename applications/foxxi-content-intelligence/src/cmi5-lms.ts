@@ -116,8 +116,12 @@ interface FetchTokenRecord {
 
 /** Fetch tokens minted by launches, keyed by the token the AU presents. */
 const fetchTokens = new Map<string, FetchTokenRecord>();
-/** Auth-tokens the LRS accepts as Bearer → their tenant. */
-const authTokenTenants = new Map<string, TenantId>();
+/**
+ * Auth-tokens the LRS accepts as Bearer → their tenant, and the one launch registration they may
+ * touch. A learner's launches all share their lens tenant, so the tenant alone let one launch's
+ * token read another's statements and write `passed` into it (the automated review of #478).
+ */
+const authTokenLaunch = new Map<string, { tenant: TenantId; registration: string }>();
 const FETCH_TOKEN_TTL_MS = 30 * 60_000; // a launch must be fetched within 30 min
 
 // ── moveOn orchestration state ──────────────────────────────────────
@@ -377,9 +381,9 @@ export function stageLaunchData(tenant: TenantId, launch: Cmi5Launch, auId: stri
  * tenant its launch minted it for, so a statement naming somebody else's registration arrives in
  * the wrong tenant and gets nothing here: nothing is kept on a pod its writer does not own.
  */
-export function signedLaunchLearner(registration: string, tenant: TenantId): { did: string; podUrl: string } | undefined {
+export function signedLaunchLearner(registration: string, tenant: TenantId): { did: string; podUrl: string; homePage: string } | undefined {
   const l = launches.get(registration);
-  return l?.learnerPod && l.tenant === tenant ? { did: l.learner.id, podUrl: l.learnerPod } : undefined;
+  return l?.learnerPod && l.tenant === tenant ? { did: l.learner.id, podUrl: l.learnerPod, homePage: l.authoritativeSource } : undefined;
 }
 
 export type AuChoice =
@@ -420,7 +424,7 @@ export function redeemFetchToken(token: string):
     return { ok: false, status: 401, body: { 'error-code': '4', 'error-text': 'fetch token already used (single-use, cmi5 §8)' } };
   }
   rec.redeemed = true;
-  authTokenTenants.set(rec.authToken, rec.tenant);
+  authTokenLaunch.set(rec.authToken, { tenant: rec.tenant, registration: rec.registration });
   return { ok: true, body: { 'auth-token': rec.authToken } };
 }
 
@@ -430,7 +434,12 @@ export function redeemFetchToken(token: string):
  * Returns null for tokens this module did not mint.
  */
 export function cmi5BearerTenant(token: string): TenantId | null {
-  return authTokenTenants.get(token) ?? null;
+  return authTokenLaunch.get(token)?.tenant ?? null;
+}
+
+/** The launch registration a cmi5-issued auth-token is bound to: the LRS holds its reads and writes to it. */
+export function cmi5BearerRegistration(token: string): string | null {
+  return authTokenLaunch.get(token)?.registration ?? null;
 }
 
 // ── moveOn orchestration — closing the cmi5 loop ─────────────────────
