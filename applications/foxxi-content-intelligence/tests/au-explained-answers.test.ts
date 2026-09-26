@@ -78,6 +78,29 @@ describe('an explained answer', () => {
     expect(matchesAnswerKey('not the team lead, the lead auditor', 'a team lead')).toBe(false);
   });
 
+  it('lets a negation after the key deny it too, and reads a comparative bound as no negation (the review of #488)', () => {
+    // "neither ... nor" after the key denies it.
+    expect(matchesAnswerKey('fraud was neither found nor suspected', 'fraud')).toBe(false);
+    expect(matchesAnswerKey('fraud, but neither theft nor loss', 'fraud')).toBe(true);
+    // "no" after a verb denies its clause; after a preposition or a conjunction it governs what follows.
+    expect(matchesAnswerKey('fraud was no issue', 'fraud')).toBe(false);
+    expect(matchesAnswerKey('fraud is no longer suspected', 'fraud')).toBe(false);
+    expect(matchesAnswerKey('fraud found no support', 'fraud')).toBe(false);
+    expect(matchesAnswerKey('the audit found no fraud', 'fraud')).toBe(false);
+    expect(matchesAnswerKey('proceed at no cost', 'proceed')).toBe(true);
+    expect(matchesAnswerKey('a team lead and no one else', 'a team lead')).toBe(true);
+    // A comparative bound says the quantity it bounds.
+    expect(matchesAnswerKey('no more than 30 days', '30 days')).toBe(true);
+    expect(matchesAnswerKey('not later than 30 days', '30 days')).toBe(true);
+    expect(matchesAnswerKey('no longer than 30 days', '30 days')).toBe(true);
+    expect(matchesAnswerKey('not 30 days', '30 days')).toBe(false);
+    expect(matchesAnswerKey('no 30 days', '30 days')).toBe(false);
+    // ...and it still denies its comparative: "not greater than 30" is the opposite of "greater than 30".
+    expect(matchesAnswerKey('not greater than 30', 'greater than 30')).toBe(false);
+    expect(matchesAnswerKey('no more than 30 days', 'more than 30 days')).toBe(false);
+    expect(matchesAnswerKey('greater than 30', 'greater than 30')).toBe(true);
+  });
+
   it('keeps the engine\'s own rule for a one-word key, and the numeric contract for a number', () => {
     expect(matchesAnswerKey('The answer is ALPHA!', 'alpha')).toBe(true);
     expect(matchesAnswerKey('wrong', 'alpha')).toBe(false);

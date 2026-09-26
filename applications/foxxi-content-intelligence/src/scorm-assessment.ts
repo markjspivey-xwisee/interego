@@ -74,11 +74,15 @@ export function explainedAnswer(authored: string): { key: string; why: string } 
  * fail it, so "fraud occurred without warning" did not give "fraud" and "proceed without delay" did
  * not give "proceed" (the automated review of #486). A negation now reaches no further than its own
  * clause, which ends at punctuation, a spaced dash, or a contrast (but, however, although, though,
- * whereas, except, rather, instead). "no", "without", "neither" and "nor" reach forward, to what
- * they govern: "no evidence of fraud" still denies fraud. "not", "never", "cannot" and the negative
- * pronouns deny their whole clause, the words before them too: "fraud was not found" denies it as
- * well. A key word is denied when the reply says it only where a negation reaches it, so "fraud,
- * not negligence" gives "fraud".
+ * whereas, except, rather, instead). "without" reaches forward, to what it governs, and so does
+ * "no" where it opens its clause or follows a preposition or a conjunction: "no evidence of fraud"
+ * still denies fraud, and "proceed with no delay" still says proceed. Everywhere else a negation
+ * denies its whole clause, the words before it too: "fraud was not found", "fraud was neither found
+ * nor suspected" (the automated review of #488), "fraud was no issue" and "the audit found no
+ * fraud" all deny it. A comparative bound denies its comparative and not the quantity it bounds:
+ * "no more than 30 days" and "not later than 30 days" say 30 days, while "not greater than 30"
+ * does not say "greater than 30". A key word is denied when the reply says it only where a
+ * negation reaches it, so "fraud, not negligence" gives "fraud".
  *
  * A numeric key keeps its numeric contract. No inner named functions, and nothing outside it but
  * the shared scoring helpers: this is embedded in generated pages by its source.
@@ -90,17 +94,21 @@ export function matchesAnswerKey(reply: string, key: string): boolean {
   const minor = new Set(['a', 'an', 'the', 'and', 'or', 'of', 'to', 'in', 'on', 'at', 'for', 'by', 'with', 'from', 'as', 'is', 'are', 'was', 'were', 'be', 'it', 'its', 'this', 'that', 'do', 'does', 'did']);
   const content = keyWords.filter(word => !minor.has(word));
   const required = content.length > 0 ? content : keyWords;
-  const forward = new Set(['no', 'without', 'neither', 'nor']);
-  const clausal = new Set(['not', 'never', 'cannot', 'none', 'nothing', 'nobody', 'nowhere']);
+  const forward = new Set(['no', 'without']);
+  const clausal = new Set(['not', 'never', 'cannot', 'neither', 'nor', 'none', 'nothing', 'nobody', 'nowhere']);
+  const governs = new Set(['with', 'at', 'in', 'on', 'for', 'by', 'from', 'to', 'of', 'into', 'under', 'about', 'and', 'or', 'as', 'than']);
+  const comparative = new Set(['more', 'less', 'fewer', 'greater', 'later', 'earlier', 'sooner', 'longer', 'shorter', 'higher', 'lower']);
   if (!keyWords.some(word => forward.has(word) || clausal.has(word))) {
     const denied = new Set<string>();
     const said = new Set<string>();
     for (const clause of String(reply ?? '').replace(/n['’]t\b/gi, ' not').split(/[,;:.!?()]|\s[-\u2013\u2014]+\s|\b(?:but|however|although|though|whereas|except|rather|instead)\b/i)) {
       const words = normalizeScormAnswer(clause).split(' ').filter(Boolean);
-      let reached = words.some(word => clausal.has(word));
-      for (const word of words) {
-        if (forward.has(word)) reached = true;
-        (reached ? denied : said).add(word);
+      const bound = words.map((word, i) => (forward.has(word) || clausal.has(word)) && comparative.has(words[i + 1] ?? '') && words[i + 2] === 'than');
+      const negates = words.map((word, i) => (forward.has(word) || clausal.has(word)) && !bound[i]);
+      let reached = words.some((word, i) => negates[i] && (clausal.has(word) || (word === 'no' && !governs.has(words[i - 1] ?? ''))));
+      for (let i = 0; i < words.length; i++) {
+        if (negates[i]) reached = true;
+        (reached || bound[i] || bound[i - 1] || bound[i - 2] ? denied : said).add(words[i] ?? '');
       }
     }
     if (required.some(word => denied.has(word) && !said.has(word))) return false;
