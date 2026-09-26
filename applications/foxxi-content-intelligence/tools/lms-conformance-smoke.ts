@@ -319,6 +319,11 @@ async function testHttpRoutes(): Promise<void> {
     check('SCORM navigate(start) delivers over HTTP', navBody.delivered?.activityId === 'SCO-A1', navBody);
 
     // ── Performance Architecture routes ──
+    // A performer's or an author's id lands in IRI positions of the descriptors these routes publish,
+    // so they take only an absolute IRI (isSafeIri) and answer 400 to anything else, a bare 'u-1' too.
+    const PERFORMER_1 = 'urn:foxxi:smoke:performer:u-1';
+    const PERFORMER_2 = 'urn:foxxi:smoke:performer:u-2';
+    const DESIGNER = 'urn:foxxi:smoke:designer:sme-1';
     const perfIndex = await fetch(`${base}/performance`).then(r => r.json()) as { _affordances?: Record<string, unknown> };
     check('GET /performance is a self-describing index', !!perfIndex._affordances, perfIndex);
 
@@ -327,7 +332,7 @@ async function testHttpRoutes(): Promise<void> {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         situation: {
-          performer: { id: 'u-1', kind: 'human' }, workContext: 'support', competency: 'escalation',
+          performer: { id: PERFORMER_1, kind: 'human' }, workContext: 'support', competency: 'escalation',
           observed: 'does not escalate', frequency: 'frequent',
           criticality: 'high', modalStatus: 'Asserted', domain: 'Knowable',
         },
@@ -338,14 +343,14 @@ async function testHttpRoutes(): Promise<void> {
     }).then(r => r.json()) as { plan?: { contentWarranted?: boolean; selected?: Array<{ type: string }> } };
     check('POST /performance/plan routes an environmental cause away from content',
       envPlan.plan?.contentWarranted === false && !!envPlan.plan?.selected?.some(o => o.type === 'environmental-fix'),
-      envPlan.plan);
+      envPlan.plan ?? envPlan);
 
     // A genuine frequent skill gap (Knowable) — the plan must warrant instruction.
     const instrPlan = await fetch(`${base}/performance/plan`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         situation: {
-          performer: { id: 'u-2', kind: 'human' }, workContext: 'disputes', competency: 'resolving disputes',
+          performer: { id: PERFORMER_2, kind: 'human' }, workContext: 'disputes', competency: 'resolving disputes',
           observed: 'over-escalates', frequency: 'continuous',
           criticality: 'moderate', modalStatus: 'Asserted', domain: 'Knowable',
         },
@@ -356,14 +361,14 @@ async function testHttpRoutes(): Promise<void> {
     }).then(r => r.json()) as { plan?: { contentWarranted?: boolean; selected?: Array<{ type: string }> } };
     check('POST /performance/plan warrants instruction for a real skill gap',
       instrPlan.plan?.contentWarranted === true && !!instrPlan.plan?.selected?.some(o => o.type === 'instruction'),
-      instrPlan.plan);
+      instrPlan.plan ?? instrPlan);
 
     // Author a course, then personalise it.
     const composed = await fetch(`${base}/content/compose-course`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         title: 'Dispute Resolution', competency: 'resolving disputes', audience: 'human',
-        authoredBy: { id: 'sme-1', kind: 'human' },
+        authoredBy: { id: DESIGNER, kind: 'human' },
         modules: [{
           title: 'Core', competencyPoint: 'resolving disputes',
           lessons: [{ title: 'Thresholds', competencyPoint: 'thresholds', fragments: [
@@ -372,18 +377,18 @@ async function testHttpRoutes(): Promise<void> {
         }],
       }),
     });
-    const composedBody = await composed.json() as { course?: { syntagm?: unknown[] }; cmi5Outline?: { blocks?: unknown[] } };
+    const composedBody = await composed.json() as { course?: { syntagm?: unknown[] }; cmi5Outline?: { blocks?: unknown[] }; error?: string };
     check('POST /content/compose-course authors an emergent course',
       composed.status === 200 && Array.isArray(composedBody.course?.syntagm) && !!composedBody.cmi5Outline,
-      composed.status);
+      composedBody.error ? `${composed.status} ${composedBody.error}` : composed.status);
     const personalized = await fetch(`${base}/content/personalize`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ course: composedBody.course, performer: { id: 'u-2', kind: 'human' } }),
+      body: JSON.stringify({ course: composedBody.course, performer: { id: PERFORMER_2, kind: 'human' } }),
     });
-    const personalizedBody = await personalized.json() as { resolved?: { lessons?: unknown[] }; rendering?: { direction?: string } };
+    const personalizedBody = await personalized.json() as { resolved?: { lessons?: unknown[] }; rendering?: { direction?: string }; error?: string };
     check('POST /content/personalize resolves the course (composition algebra)',
       personalized.status === 200 && Array.isArray(personalizedBody.resolved?.lessons) && !!personalizedBody.rendering?.direction,
-      personalized.status);
+      personalizedBody.error ? `${personalized.status} ${personalizedBody.error}` : personalized.status);
   } finally {
     server.close();
   }

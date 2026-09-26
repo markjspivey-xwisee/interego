@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-09-26 — The LMS conformance smoke tool passes again: performer ids are IRIs
+
+`tools/lms-conformance-smoke.ts` still failed four checks after #492: two on `POST /performance/plan`, and one each on `/content/compose-course` and `/content/personalize`. No behaviour behind them was lost. They failed on the request: the tool named performers and the course author `u-1`, `u-2` and `sme-1`, and the routes now refuse any id that is not an absolute IRI (`isSafeIri`). The check exists because the id lands in IRI positions of the descriptors they publish, where a malformed one could inject triples. Each request was answered 400, so there was no plan to check and no course to personalize.
+
+- **The tool** (`applications/foxxi-content-intelligence/tools/lms-conformance-smoke.ts`) now names them `urn:foxxi:smoke:performer:u-1`, `urn:foxxi:smoke:performer:u-2` and `urn:foxxi:smoke:designer:sme-1`. Every check asserts what it did before:
+  - an environmental cause does not warrant content, and the plan selects an environmental fix;
+  - a real skill gap warrants instruction;
+  - compose produces a course with a syntagm and a cmi5 outline;
+  - personalize resolves its lessons with a rendering direction.
+  The tool ends at 49 passed, 0 failed. When a request is refused, a failing check now shows the route's error instead of nothing or a bare 400.
+- **The refusal says what it checks.** The routes answered "performer must be { id, kind }" to a well-formed object whose id was not an IRI. The five performer refusals in `applications/agentic-performance-practice/compatibility/foxxi-performance-routes.ts` now say the id must be an absolute IRI such as `did:…` or `urn:…`: situation performer, course author, personalize performer, teacher and learner.
+
 ## 2026-09-26 — Registry: a reputation axis is exact where one score sets it
 
 `aggregateReputation` (`packages/registry`) computes each axis as Σ(score × w) / Σw. The weight w is the issuer's trust weight times 0.5^(age in days / half-life), so it changes with the clock, and in floating point (s × w) / w is not always s. Under the jev-harness policy (trust 1 / 0.5 / 0.25, 30-day half-life), about 18% of clock readings gave an inexact axis for a single attestation, and about 5% landed below the true score. The jev-harness auto-merge requires `accuracy >= 0.9`, so an attestation rating accuracy exactly 0.9 was refused on some days as "0.8999999999999999 (floor 0.9)". PR #489 only made the flaky test tolerant.

@@ -208,7 +208,7 @@ function coerceSituation(v: unknown): PerformanceSituation | string {
   if (!v || typeof v !== 'object') return 'a "situation" object is required';
   const g = v as Record<string, unknown>;
   const performer = asPerformer(g.performer);
-  if (!performer) return 'situation.performer must be { id, kind: "human"|"agent" }';
+  if (!performer) return 'situation.performer must be { id: an absolute IRI such as did:… or urn:…, kind: "human"|"agent" }';
   for (const f of ['workContext', 'competency', 'observed']) {
     if (typeof g[f] !== 'string' || !g[f]) return `situation.${f} (string) is required`;
   }
@@ -978,8 +978,8 @@ export function attachPerformanceRoutes(app: Express, config: {
     const b = (req.body ?? {}) as Record<string, unknown>;
     const teacher = asPerformer(b.teacher);
     const learner = asPerformer(b.learner);
-    if (!teacher || teacher.kind !== 'agent') { bad(res, 'teacher must be an agent — { id, kind: "agent" }'); return; }
-    if (!learner || learner.kind !== 'agent') { bad(res, 'learner must be an agent — { id, kind: "agent" }'); return; }
+    if (!teacher || teacher.kind !== 'agent') { bad(res, 'teacher must be an agent — { id: an absolute IRI such as did:… or urn:…, kind: "agent" }'); return; }
+    if (!learner || learner.kind !== 'agent') { bad(res, 'learner must be an agent — { id: an absolute IRI such as did:… or urn:…, kind: "agent" }'); return; }
 
     // Signature gate (Option D): the TEACHER must sign the teaching
     // package + targetBehaviour they're transmitting. Without a verified
@@ -1122,7 +1122,7 @@ export function attachPerformanceRoutes(app: Express, config: {
     res.setHeader('Access-Control-Allow-Origin', '*');
     const body = (req.body ?? {}) as Record<string, unknown>;
     const author = asPerformer(body.authoredBy);
-    if (!author) { bad(res, 'authoredBy must be { id, kind: "human"|"agent" } — the human or agent acting as instructional designer'); return; }
+    if (!author) { bad(res, 'authoredBy must be { id: an absolute IRI such as did:… or urn:…, kind: "human"|"agent" } — the human or agent acting as instructional designer'); return; }
     if (typeof body.title !== 'string' || typeof body.competency !== 'string') {
       bad(res, 'title and competency (strings) are required'); return;
     }
@@ -1196,7 +1196,7 @@ export function attachPerformanceRoutes(app: Express, config: {
       bad(res, 'a "course" object (from /content/compose-course) is required'); return;
     }
     const performer = asPerformer(body.performer);
-    if (!performer) { bad(res, 'performer must be { id, kind: "human"|"agent" }'); return; }
+    if (!performer) { bad(res, 'performer must be { id: an absolute IRI such as did:… or urn:…, kind: "human"|"agent" }'); return; }
     // A syntagm that is an array of SHAPE-invalid entries passes the Array.isArray check
     // but throws inside personalize()/forAudience(); catch it as a 400 rather than a 500
     // (an unauthenticated endpoint must never surface a stack/path via the terminal handler).
