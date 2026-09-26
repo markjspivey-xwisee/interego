@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-09-26 — Foxxi: authoring a course is work in a learner record, not a competency
+
+A person who authored a SCORM course and read their own IEEE P2997 learner record got "Inferred: course" beside the competencies from courses they passed. The agent's record had the same, from the six courses it has written.
+
+**What caused it.** The survey guessed the training leg, but the six "executions" behind it were the authored courses themselves, so the cause was the work leg. `/agent/scorm/author` records the author's act with `emitAgentActivity`, which stamps `contextKind: production`. Since #95 (July), production context is what files a statement as work. The work leg then keys a competency on the object's type, and for an authored statement that is the ADL `course` activity type: the thing made, not a skill. None of those records asserts success, so it came out Inferred, Hypothetical and Novice. A credential issuer's `credentialed` statement has the same shape with `success: true`, so it came out as an Asserted "Demonstrated: credential". The June change that introduced both verbs meant them to name the act and manufacture no competency.
+
+**The fix** (`src/learner-record.ts`):
+
+- **Making something is left out of competency inference.** Authored and credentialed statements stay in the record's work leg (`performanceRecords`), because they are what the subject did. They are not offered as performance evidence for a competency, because nothing in them names a skill. Teaching as a skill is recorded explicitly, as a performance naming its competency, the way the live demo records instructional design.
+- **A completion still predicts a competency, unless the record shows it failed.** The credential gate (`src/earned-credentials.ts`) leaves `completed` out of its mastery verbs, because the SCORM engine writes `completed` beside `failed` for an attempt that did not pass, and a credential is an Asserted claim a third party relies on. The learner record keeps `completed` for its inferred competencies: they are Hypothetical predictions, and a completion is the only signal a lesson with nothing to pass gives. The one exception closes the gap that made the two lists disagree. A completion of an activity the record shows failed and never passed infers nothing, and a later pass restores it.
+
+The comments that said these statements "project as experiences" now say where they actually land. Tests in `tests/making-something-is-not-a-competency.test.ts`.
+
 ## 2026-09-26 — Foxxi: a generated cmi5 activity grades an explained answer by its key
 
 The content pipeline's assessment items read `question ::: answer`, and the sample course writes its answers with the reason attached: `a team lead — the $250 would carry the customer past the $1,000 rolling 90-day cap`. The generated AU page graded a reply against that whole sentence. A learner who answered "a team lead", which is right, scored 0% and failed. Only a copy of the sentence passed. The SCORM package of the same course hashed the whole sentence too.
