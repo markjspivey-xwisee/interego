@@ -2174,6 +2174,27 @@ interface Refusal {
   readonly 'iep:refusalStatus'?: number;
 }
 
+/**
+ * ★ A MEMBERSHIP ROW IS NOT OWNERSHIP BY ITSELF. Enrolment used to be first-come, so a row
+ * for another wallet can sit on a pod named for a wallet, and every read keyed on it would hand
+ * that pod's evidence and wallet to whoever enrolled it first. On such a pod only its own
+ * wallet's row authorizes (src/enrollment-ownership.ts); the owner takes the pod back by
+ * enrolling. A pod whose name says no wallet has no owner to check against.
+ *
+ * resolveCaller asks this of the wallet a request authenticated as, whichever way it did: the
+ * proof-of-possession signer and a session token's wallet alike. The token path used to skip it,
+ * so a squatter's row still authorized a squatter who sent `Authorization: Bearer` instead of an
+ * envelope (the automated review of #475).
+ */
+function foreignPodRefusal(args: Record<string, unknown>, wallet: string): Refusal | null {
+  const membershipPod = membershipPodFor(args);
+  if (samePod(membershipPod, tenantPodUrl) || membershipHolds(wallet, membershipPod, POD_OWNERSHIP)) return null;
+  return wrongPod(
+    `auth: ${membershipPod} is named for another wallet, so its membership authorizes only that wallet and not ${wallet}. Use the pod your own wallet is named for: ${resolveSubjectPodUrl(`did:ethr:${wallet}`)}.`,
+    'the pod is named for another wallet, and its membership authorizes only that wallet',
+  );
+}
+
 async function resolveCaller(args: Record<string, unknown>): Promise<{ ctx: CallerContext; admin: FoxxiAdminPayload } | Refusal> {
   // ── Real proof-of-possession (rev-196 signed request) — the substrate-native
   //    auth path, composing Interego's recoverSignedRequest (the SAME envelope the
@@ -2264,18 +2285,9 @@ async function resolveCaller(args: Record<string, unknown>): Promise<{ ctx: Call
         },
         'iep:refusalReason': 'the request signature is valid but the signer is not a member of this tenant', error: `auth: signer ${signedSigner} is not a member of the tenant at ${podChecked} (proof-of-possession).${usedDefault ? ` No tenant_pod_url was supplied, so the bridge checked its DEFAULT tenant — pass tenant_pod_url = your own pod to be checked against YOUR self-sovereign membership, and self-enroll first via foxxi.register_self_sovereign_learner.` : ` Self-enroll first via foxxi.register_self_sovereign_learner, then retry.`}${da.reason ? ` (delegated-admin fallback also declined: ${da.reason})` : ''}` };
     }
-    // ★ A MEMBERSHIP ROW IS NOT OWNERSHIP BY ITSELF. Enrolment used to be first-come, so a row
-    // for another wallet can sit on a pod named for a wallet, and every read keyed on it would hand
-    // that pod's evidence and wallet to whoever enrolled it first. On such a pod only its own
-    // wallet's row authorizes (src/enrollment-ownership.ts); the owner takes the pod back by
-    // enrolling. A pod whose name says no wallet has no owner to check against.
-    const membershipPod = membershipPodFor(args);
-    if (!samePod(membershipPod, tenantPodUrl) && !membershipHolds(signedSigner, membershipPod, POD_OWNERSHIP)) {
-      return wrongPod(
-        `auth: ${membershipPod} is named for another wallet, so its membership authorizes only that wallet and not ${signedSigner}. Use the pod your own wallet is named for: ${resolveSubjectPodUrl(`did:ethr:${signedSigner}`)}.`,
-        'the pod is named for another wallet, and its membership authorizes only that wallet',
-      );
-    }
+    // A membership row is not ownership by itself (foreignPodRefusal).
+    const foreignSigner = foreignPodRefusal(args, signedSigner);
+    if (foreignSigner) return foreignSigner;
     const ctx = resolveCallerContext({
       callerWebId: member.webId,
       callerUserId: member.userId,
@@ -2320,6 +2332,9 @@ async function resolveCaller(args: Record<string, unknown>): Promise<{ ctx: Call
   const verified = verifySessionToken(token, addressMap);
   // Same dead end as the envelope check above, on the delegated path.
   if (!verified.ok) return signRequestRefusal(`auth: ${verified.reason}`, 'the signed-request envelope did not verify');
+  // The token's wallet is held to the same rule as an envelope's signer (foreignPodRefusal).
+  const foreignToken = foreignPodRefusal(args, verified.token.address);
+  if (foreignToken) return foreignToken;
 
   const ctx = resolveCallerContext({
     callerWebId: verified.callerDid,

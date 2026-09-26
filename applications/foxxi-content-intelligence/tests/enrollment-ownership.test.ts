@@ -8,6 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { enrollmentDecision, isPodRoot, isWalletPod, membershipHolds, ownersOf, podContaining, type OwnershipRules } from '../src/enrollment-ownership.js';
+import { deriveUserWallet, mintSessionToken, trustedAddressMap, verifySessionToken } from '../src/auth.js';
 
 const STORE = 'https://gate.interego.xwisee.com';
 /** The live runner's wallet (a public address) and its two pod spellings. */
@@ -106,6 +107,30 @@ describe('a row squatted before the rule', () => {
   });
 });
 
+describe('a session token is held to the same rule as a signed envelope (the automated review of #475)', () => {
+  // Two wallets from a private seed, both with a row in the membership of the pod OWNER's wallet is
+  // named for: the squatter's row was written first-come, before the rule.
+  const SEED = 'enrollment-ownership-bearer';
+  const SQUATTER = { userId: 'squatter', webId: 'https://squatter.example/profile#me' };
+  const OWNER = { userId: 'owner', webId: 'https://owner.example/profile#me' };
+  const walletOf = (u: { userId: string }): string => deriveUserWallet(u.userId, SEED).address;
+  const ownerPod = rules.podOfWallet(walletOf(OWNER));
+  const membership = trustedAddressMap([SQUATTER, OWNER].map((u) => ({ user_id: u.userId, web_id: u.webId, wallet_address: walletOf(u) })));
+
+  it('refuses the squatter: its token verifies against the membership, but its wallet does not hold the pod', async () => {
+    const verified = verifySessionToken(await mintSessionToken({ ...SQUATTER, seed: SEED }), membership);
+    // Verification alone is what the token path used to hand a caller context on.
+    expect(verified.ok && verified.callerDid).toBe(SQUATTER.webId);
+    expect(verified.ok && membershipHolds(verified.token.address, ownerPod, rules)).toBe(false);
+  });
+
+  it('still lets the pod\'s own wallet through with its token', async () => {
+    const verified = verifySessionToken(await mintSessionToken({ ...OWNER, seed: SEED }), membership);
+    expect(verified.ok && verified.callerDid).toBe(OWNER.webId);
+    expect(verified.ok && membershipHolds(verified.token.address, ownerPod, rules)).toBe(true);
+  });
+});
+
 describe('the bridge applies the rule with its own comparisons', () => {
   const src = readFileSync(new URL('../bridge/server.ts', import.meta.url), 'utf8');
   const handler = src.slice(src.indexOf("'foxxi.register_self_sovereign_learner': async"), src.indexOf("'foxxi.publish_ontology': async"));
@@ -123,9 +148,20 @@ describe('the bridge applies the rule with its own comparisons', () => {
     expect(handler).toMatch(/ownersOf\(members, ownership\.podRoot, POD_OWNERSHIP\)/);
   });
 
-  it('the membership read refuses a row on a pod named for another wallet', () => {
-    expect(src).toMatch(/!membershipHolds\(signedSigner, membershipPod, POD_OWNERSHIP\)/);
+  it('the membership read refuses a row on a pod named for another wallet, whichever way the caller authenticated', () => {
+    expect(src).toMatch(/membershipHolds\(wallet, membershipPod, POD_OWNERSHIP\)\) return null;\s*return wrongPod\(/);
     expect(src).toMatch(/const podUrl = membershipPodFor\(args\);/);
+    const caller = src.slice(src.indexOf('async function resolveCaller('), src.indexOf('// ── Handlers'));
+    expect(caller.length).toBeGreaterThan(1000);
+    // The proof-of-possession signer, before its context is built...
+    const signer = caller.indexOf('foreignPodRefusal(args, signedSigner)');
+    expect(signer).toBeGreaterThan(-1);
+    expect(signer).toBeLessThan(caller.indexOf('callerWebId: member.webId'));
+    // ...and a session token's wallet, once the token verifies and before its context is built
+    // (the automated review of #475: the token path returned a context without asking).
+    const token = caller.indexOf('foreignPodRefusal(args, verified.token.address)');
+    expect(token).toBeGreaterThan(caller.indexOf('verifySessionToken(token, addressMap)'));
+    expect(token).toBeLessThan(caller.indexOf('callerWebId: verified.callerDid'));
   });
 
   it('and nothing published still promises the pod to whoever enrolls first', () => {
