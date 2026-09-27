@@ -45,6 +45,7 @@ import { courseMarkdownHtml } from './course-markdown.js';
 import { authorQuestion, questionForLearner, QuestionError } from './course-questions.js';
 import type { CognitiveLevel, FragmentModality } from './emergent-content.js';
 import type { ScormAssessmentQuestion } from './scorm-assessment.js';
+import { COGNITIVE_LEVELS, FRAGMENT_KIND_LIST, type QuestionPolicy } from './fragment-kinds.js';
 
 const sha256 = (s: string): string => createHash('sha256').update(s).digest('hex');
 
@@ -58,8 +59,7 @@ export class ContentError extends Error {}
 
 export type FragmentKind = FragmentModality;
 
-/** Whether a kind carries questions, and which. */
-export type QuestionPolicy = 'optional' | 'required' | 'ungraded-only';
+export type { QuestionPolicy } from './fragment-kinds.js';
 
 export interface FragmentKindDefinition {
   kind: FragmentKind;
@@ -68,23 +68,15 @@ export interface FragmentKindDefinition {
   definition: string;
 }
 
-/** Every form a fragment can take, and what each may ask. The bridge publishes it as it is. */
-export const FRAGMENT_KINDS: readonly FragmentKindDefinition[] = [
-  { kind: 'concept', label: 'Concept', questions: 'optional', definition: 'A concept told: what it is, why it matters, how it relates.' },
-  { kind: 'worked-example', label: 'Worked example', questions: 'optional', definition: 'A problem solved step by step, with the reasoning shown.' },
-  { kind: 'video', label: 'Video', questions: 'optional', definition: 'A recorded demonstration, with its transcript in the body.' },
-  { kind: 'simulation', label: 'Simulation', questions: 'optional', definition: 'An environment to try the skill in, with what to try.' },
-  { kind: 'practice-task', label: 'Practice task', questions: 'optional', definition: 'A deliberate-practice repetition of a skill that already exists.' },
-  { kind: 'assessment-item', label: 'Assessment item', questions: 'required', definition: 'Questions or a task that measure; they teach nothing new.' },
-  { kind: 'job-aid', label: 'Job aid', questions: 'optional', definition: 'Support used in the flow of work, at the moment it is needed.' },
-  { kind: 'reference', label: 'Reference', questions: 'optional', definition: 'Knowledge to look up rather than learn.' },
-  { kind: 'context-descriptor', label: 'Context', questions: 'optional', definition: 'Doctrine or policy an agent takes into its working context.' },
-  { kind: 'probe', label: 'Probe', questions: 'ungraded-only', definition: 'A safe-to-fail experiment: what is uncertain, what to try, when to stop, and what to watch. Nothing in it is graded, because in an emergent situation there is no right answer yet.' },
-  { kind: 'reflection', label: 'Reflection', questions: 'ungraded-only', definition: 'Prompts to make sense of what happened, the material of coaching. Recorded, never graded.' },
-];
+/**
+ * Every form a fragment can take, and what each may ask. The bridge publishes it as it is. The list
+ * lives in fragment-kinds.ts, which imports nothing, so the dashboard's author tools offer the very
+ * same one; typed here, each of its kinds must be one of this engine's.
+ */
+export const FRAGMENT_KINDS: readonly FragmentKindDefinition[] = FRAGMENT_KIND_LIST;
 
 const KIND_INDEX = new Map(FRAGMENT_KINDS.map(k => [k.kind, k]));
-const LEVELS: readonly CognitiveLevel[] = ['foundational', 'working', 'applied', 'advanced'];
+const LEVELS: readonly CognitiveLevel[] = COGNITIVE_LEVELS;
 
 /** The definition of a fragment kind. */
 export function fragmentKind(kind: string): FragmentKindDefinition | undefined {

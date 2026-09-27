@@ -1,5 +1,41 @@
 # Changelog
 
+## 2026-09-27 — Foxxi dashboard: author tools, and what a composition has learned
+
+The dashboard gains **Author**: write fragments, compose them, and see what each composition has learned. Each is an affordance an agent uses the same way, signed as the author: `foxxi.content_fragment`, `foxxi.content_compose`, `foxxi.content_mine`, and a composition's efficacy.
+
+- **Write a fragment** (`/author`).
+  - Its form and level come from the engine's own list. An author writes the body in Markdown and previews it with the engine's own renderer.
+  - Questions of every kind are written the way it is natural to write them: the options and which are right, the items in their right order, the pairs that match, the answer and what else to accept, and an explanation shown once a question is answered.
+  - The editor says what is still missing before anything is sent, including what a kind asks of its questions: an assessment item needs a graded one, and a probe or reflection takes none. The bridge checks the rest and says so.
+  - An unsent draft is kept in the browser, per identity. What is made goes on the author's shelf.
+- **Compose.** A title, the competency, and positions, each with its ways in in the author's order of preference, drawn from the shelf or pasted by IRI from anywhere. A refusal names the alternatives the bridge cannot reach. The result links to playing it and to what it has learned.
+- **What it has learned** (`/author/<hash>`). Position by position, how learners at each level did after meeting each alternative, and what the composition leans to now.
+  - It says only what the engine says: a cell too small to show says so, and a leaning withheld says why.
+- **What you made.** The author's compositions from their own record.
+- **Picking up by IRI** reads the item's public form to name it on the shelf. A refusal other than a missing item (a 503, say) now says so and shelves nothing.
+- **Duplicate alternatives** are told apart as the engine tells content apart, by kind and hash: the same fragment under two bridges' IRIs is one alternative, not two.
+- **The signed-only notice** now also points a wallet or a pasted key to Author, which is signed as it too.
+- **One list of forms** (`src/fragment-kinds.ts`). The kinds and levels now live in a module that imports nothing, so the engine builds fragments from the very list the author tools offer in the browser, where the engine's own modules cannot load. The engine types that list against its own kinds.
+
+`applications/foxxi-content-intelligence/tests/the-author-tools-speak-the-bridges-language.test.ts` (13 tests) checks the tools against the engine's own code:
+- a fragment written in the editor with every kind of question goes through `fragmentFrom` and `compositionFrom`, is played as the bridge serves it, and is answered through the learner portal's drafts: every answer its author marked right is graded right by `advancePlay`, 7 of 7, with the explanations;
+- each kind of question in the form the engine takes, with what was left blank left out;
+- what is missing, said before sending;
+- the shelf;
+- the efficacy view, as the engine's `compositionEfficacy` gives it.
+
+Twenty-nine mutants each fail a named test, among them the engine keeping its own copy of the kinds, a refusal shelved as content, and the same content under another IRI offered twice.
+
+The whole flow was run in a browser against the deployed bridge, as the demo learner Joshua Liu:
+- a concept written and previewed;
+- an assessment item written, the editor saying what was missing until an option was marked right;
+- both composed with a worked example pasted by IRI;
+- what the composition has learned read back from the live tally: a cell too small to show, and a leaning withheld;
+- "What you made" listing it from his record.
+
+The un-linted `applications/` frontier is repinned 612 -> 650 files, with errors not raised: every new file lints clean (`tools/lint-gate.mjs`).
+
 ## 2026-09-27 — Foxxi: a void the LRS applied is kept with the voided statement's owner
 
 A defect the automated review found in #528 after it merged. A merge of a learner's record now keeps only the voids the store applied, as its mark on the voided statement. But a lens tenant's store is a view:
@@ -33,6 +69,7 @@ Two defects the automated review found in #529 after it merged.
 - **The way to read *My forwarding* could vanish.** Through a wallet extension it is read only when asked. If the first of its two reads succeeded and the second did not, or a target was added before the first read, the control to read it went away, leaving the inbound list blank. The control now stays until both lists are read.
 
 `tests/the-learner-portal-speaks-the-bridges-language.test.ts` covers both. Two mutants each fail a named test.
+
 
 ## 2026-09-27 — Foxxi dashboard: a wallet or a pasted key lands on Learn, and forwarding reads one signature at a time
 

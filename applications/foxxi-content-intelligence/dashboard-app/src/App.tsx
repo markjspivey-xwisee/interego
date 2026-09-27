@@ -53,6 +53,8 @@ import { PerformanceDemoSuitePanel } from './components/PerformanceDemoSuitePane
 import { AgentCoursesCard } from './components/AgentCoursesCard.js';
 import { LearnPanel } from './components/LearnPanel.js';
 import { CompositionPlayer } from './components/CompositionPlayer.js';
+import { AuthorPanel } from './components/AuthorPanel.js';
+import { EfficacyPanel } from './components/EfficacyPanel.js';
 import { Header, Card } from './components/common.js';
 import { loadSession, saveSession, clearSession, signsOnly, type FoxxiSession } from './auth/session.js';
 import { getTransport, resetTransportProbe } from './interego/client.js';
@@ -143,6 +145,8 @@ function AppRoutes() {
           {isPriv && <Route path="/content" element={<ContentPage session={session} />} />}
           <Route path="/learn" element={<LearnPage session={session} />} />
           <Route path="/learn/:hash" element={<PlayPage session={session} />} />
+          <Route path="/author" element={<AuthorPage session={session} />} />
+          <Route path="/author/:hash" element={<EfficacyPage />} />
           <Route path="/my-activity" element={<MyActivityPage session={session} />} />
           <Route path="/my-forwarding" element={<MyForwardingPage session={session} />} />
           <Route path="/demo-suite" element={<DemoSuitePage />} />
@@ -218,6 +222,7 @@ function TopNav({ session }: { session: FoxxiSession }) {
       {!signsOnly(session) && <NavLink to={ownProfileUrl} label="My profile" />}
       <NavLink to="/courses" label="Courses" />
       <NavLink to="/learn" label="Learn" />
+      <NavLink to="/author" label="Author" />
       {!signsOnly(session) && <NavLink to="/my-activity" label="My activity" />}
       <NavLink to="/my-forwarding" label="My forwarding" />
       <NavLink to="/demo-suite" label="Demo suite" />
@@ -263,8 +268,8 @@ function SignsOnlyNotice({ what }: { what: string }) {
       <Card title="Not for a wallet or a key signed in here">
         <div style={{ color: 'var(--text-dim)' }}>
           {what} are read with a session token this tenant's directory issues, and no directory knows the wallet or key
-          you signed in with. What you do here is signed as you: <a href="/learn" onClick={go('/learn')}>Learn</a> and{' '}
-          <a href="/my-forwarding" onClick={go('/my-forwarding')}>My forwarding</a>.
+          you signed in with. What you do here is signed as you: <a href="/learn" onClick={go('/learn')}>Learn</a>,{' '}
+          <a href="/author" onClick={go('/author')}>Author</a> and <a href="/my-forwarding" onClick={go('/my-forwarding')}>My forwarding</a>.
         </div>
       </Card>
     </div>
@@ -347,6 +352,12 @@ function LearnPage({ session }: { session: FoxxiSession }) {
 }
 function PlayPage({ session }: { session: FoxxiSession }) {
   return <div style={{ maxWidth: 900, margin: '24px auto', padding: 20 }}><CompositionPlayer session={session} /></div>;
+}
+function AuthorPage({ session }: { session: FoxxiSession }) {
+  return <div style={{ maxWidth: 980, margin: '24px auto', padding: 20 }}><AuthorPanel session={session} /></div>;
+}
+function EfficacyPage() {
+  return <div style={{ maxWidth: 980, margin: '24px auto', padding: 20 }}><EfficacyPanel /></div>;
 }
 function MyActivityPage({ session }: { session: FoxxiSession }) {
   if (signsOnly(session)) return <SignsOnlyNotice what="Your activity and its statements" />;

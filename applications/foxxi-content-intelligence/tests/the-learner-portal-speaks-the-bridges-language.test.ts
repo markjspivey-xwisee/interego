@@ -123,7 +123,7 @@ describe('a session that acts through signed requests alone', () => {
     const app = readFileSync(new URL('../dashboard-app/src/App.tsx', import.meta.url), 'utf8');
     const notice = app.slice(app.indexOf('function SignsOnlyNotice'), app.indexOf('\n}\n', app.indexOf('function SignsOnlyNotice')));
     const links = [...notice.matchAll(/<a href="([^"]+)"([^>]*)>/g)];
-    expect(links.map(l => l[1])).toEqual(['/learn', '/my-forwarding']);
+    expect(links.map(l => l[1])).toEqual(['/learn', '/author', '/my-forwarding']);
     for (const [, to, rest] of links) expect(rest).toContain(`onClick={go('${to}')}`);
     expect(notice).toMatch(/const go = \(to: string\) => \(e: React\.MouseEvent\) => \{ e\.preventDefault\(\); navigate\(to\); \};/);
   });

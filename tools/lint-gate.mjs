@@ -244,7 +244,11 @@ const UNLINTED_FRONTIER = {
   //    (fragments, compositions, plays, efficacy, folding, kept admissions; #499 to #509) used
   //    the slack, and the admission store (src/admission-store.ts and its test) took the root
   //    one past it. All of them lint clean.
-  applications: { errors: 1452, files: 612 },
+  //
+  //    612 -> 650 files, errors not raised: the Foxxi dashboard's learner portal (#527) and its
+  //    author tools (dashboard-app/src/learn, dashboard-app/src/author, their components and
+  //    tests) used the slack, and the author tools took the root past it. All of them lint clean.
+  applications: { errors: 1452, files: 650 },
   // The controller comparison adds two lint-clean audit modules; the census is 46.
   // Re-pin the file floor to that measured count without raising the error ceiling.
   benchmarks: { errors: 193, files: 46 },
