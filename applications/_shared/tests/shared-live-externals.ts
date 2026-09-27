@@ -719,6 +719,16 @@ export const SHARED_ONLY_THROUGH_IMPORTED_CODE: readonly {
       + 'where anything goes.',
   },
   {
+    name: 'FOXXI_FEDERATION_PODS',
+    readIn: 'applications/agentic-performance-practice/compatibility/foxxi-performance-routes.ts',
+    why: 'GENUINELY A LIVE ADDRESS: the federation peers\' pods whose outcomes '
+      + 'refreshFederationPeerProfile() reads through FederationOutcomeLoader. It is read when '
+      + 'attachPerformanceRoutes() mounts the practice\'s routes, which the private-performance '
+      + 'test and the plan-offers-its-admission test both do. It is not an entry above because '
+      + 'nothing in this tree and no workflow sets it, and the loader returns before dialling '
+      + 'anything while the list is empty, keeping the seed corpus. Production sets it.',
+  },
+  {
     name: 'FOXXI_TENANT_POD_URL',
     readIn: 'applications/foxxi-content-intelligence/src/pod-snapshot-publisher.ts',
     why: 'GENUINELY A LIVE ADDRESS — a Solid pod that podConfig() hands to a globalThis.fetch '
