@@ -180,7 +180,7 @@ import {
   NON_PROJECTABLE_LOCALNAMES,
 } from '../src/durable-records.js';
 import { envelopeToClr1 } from '../src/clr-1.js';
-import { assembleEnterpriseLearnerRecord, PERFORMED_VERB, AUTHORED_VERB, CREDENTIALED_VERB, PERF_EXT, WorkStepError, labelCompetencyIri, performanceCompetency, workAt, workStepsFrom, type WorkStep } from '../src/learner-record.js';
+import { assembleEnterpriseLearnerRecord, PERFORMED_VERB, AUTHORED_VERB, CREDENTIALED_VERB, PERF_EXT, WorkStepError, durationRefusalOf, labelCompetencyIri, performanceCompetency, workAt, workStepsFrom, type WorkStep } from '../src/learner-record.js';
 import { composeIntoSharedLattice, dereferenceTerm, latticeNamespaceView, isResident, readArtifact, projectAs, latticeStatements, latticeArtifacts, ensureResident, loadArtifactFromLattice, loadCourseFromLattice, resolvePublicNode, markLatticePublic, isLabelPublic, type ProjectionKind } from '../src/foundation-shared-lattice.js';
 import { fingerprintAuthoringTool } from '../src/scorm-fingerprint.js';
 import { manifestToAgenticCourse, agentScormToAgenticCourse, buildConceptNavGraph, type AgentScormCourseLike } from '../src/course-graph.js';
@@ -3578,6 +3578,8 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const taskName = args.task_name as string;
     if (!taskName || !taskName.trim()) return invalidArguments('task_name is required');
     if (typeof args.success !== 'boolean') return invalidArguments('success (boolean) is required');
+    const durationRefused = durationRefusalOf(args.duration_iso);
+    if (durationRefused) return invalidArguments(durationRefused);
     const taskId = productionTaskIri(args.task_id, taskName);
     // ★ THE CLAIM IS BOUND TO EVIDENCE BEFORE IT IS RECORDED — see performance-evidence.ts
     // for the live reproduction (six fabricated task_ids, all 404, all recorded, rolled up
@@ -8985,6 +8987,8 @@ app.post('/agent/record-performance', async (req, res) => {
     }
     const quality = typeof p.quality === 'number' ? p.quality : undefined;
     if (quality !== undefined && (quality < -1 || quality > 1)) { res.status(400).json({ error: 'quality (result.score.scaled) must be in [-1,1]' }); return; }
+    const durationRefused = durationRefusalOf(p.duration_iso);
+    if (durationRefused) { res.status(400).json({ error: durationRefused }); return; }
     // How the work went, kept with it (PERF_EXT.workTrajectory): what a failure's regime is read from.
     let workSteps: WorkStep[] | undefined;
     try { workSteps = workStepsFrom(p.trajectory); }
@@ -9012,7 +9016,7 @@ app.post('/agent/record-performance', async (req, res) => {
       result: {
         success: p.success,
         ...(quality !== undefined ? { score: { scaled: quality } } : {}),
-        ...(typeof p.duration_iso === 'string' ? { duration: p.duration_iso } : {}),
+        ...(typeof p.duration_iso === 'string' && p.duration_iso ? { duration: p.duration_iso } : {}),
       },
       context: {
         registration: randomUUID(),

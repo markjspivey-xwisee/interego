@@ -43,6 +43,8 @@ import { competencyIri, competencyIdOf, competencyOfTerm } from './competency-id
 import type { StoredStatement } from './statement-store.js';
 import { FOXXI_NS } from './foxxi-vocab.js';
 import { evaluateProficiency, LER_NS } from './ler-tla-vocab.js';
+import { WORK_STEP_LIMITS } from './work-step-limits.js';
+import { isXapiDuration } from './xapi-validate.js';
 
 const ELR_CONTEXT = [
   'https://www.w3.org/ns/credentials/v2',
@@ -122,10 +124,25 @@ export interface WorkStep {
   recordedAt?: string;
 }
 
-/** How much of a unit's trajectory is kept with it: at most this many steps, each text this long. */
-export const WORK_STEP_LIMITS = { steps: 100, text: 200 } as const;
+/** How much of a unit's trajectory is kept with it: at most this many steps, each text this long (work-step-limits.ts). */
+export { WORK_STEP_LIMITS };
 
 export class WorkStepError extends Error {}
+
+/**
+ * Why a performance's `duration_iso` cannot be recorded, or undefined when it can or none was sent.
+ *
+ * It becomes the statement's `result.duration`, which xAPI requires to be an ISO 8601 duration.
+ * Unchecked, `25m` went into the statement, the LRS refused the statement, and the caller was
+ * answered 500 for what was their own input. So both record-performance doors check it with the
+ * validator's own rule before anything is fetched or kept, and refuse it as a 400 that names it.
+ */
+export function durationRefusalOf(v: unknown): string | undefined {
+  if (v === undefined || v === null || v === '') return undefined;
+  if (typeof v === 'string' && isXapiDuration(v)) return undefined;
+  const received = typeof v === 'string' ? JSON.stringify(v.slice(0, 80)) : `a ${typeof v}`;
+  return `duration_iso must be an ISO 8601 duration, such as PT25M or PT1H30M: it becomes result.duration, which xAPI requires to be one. Received ${received}.`;
+}
 
 const WORK_MODAL = new Set(['Asserted', 'Hypothetical', 'Counterfactual']);
 const WORK_GRAIN = new Set(['task', 'subtask', 'tool-call']);

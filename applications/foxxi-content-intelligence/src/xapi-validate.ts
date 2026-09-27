@@ -80,6 +80,11 @@ const isDuration = (v: unknown): boolean => {
   if (v.includes('W')) return WEEK_DURATION_RE.test(v);
   return true;
 };
+/**
+ * Whether `v` is a duration xAPI takes as `result.duration`. What a caller's own duration is checked
+ * against before a statement carries it, on the bridge and in the dashboard alike.
+ */
+export function isXapiDuration(v: unknown): boolean { return isDuration(v); }
 const isLangTag = (v: unknown): boolean => typeof v === 'string' && LANG_TAG_RE.test(v);
 
 /** Keys of `obj` that are not in `allowed`. */

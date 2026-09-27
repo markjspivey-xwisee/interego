@@ -19,7 +19,7 @@ import { postSigned } from '../auth/signed-request.js';
 import { competencyLabel } from '../learn/play.js';
 import { moved } from '../author/draft.js';
 import {
-  CERTAINTIES, GRAINS, answerableFailure, missingFromWork, newStep, newWork, workPayload,
+  AGENT_RECORD_IS_PUBLIC, CERTAINTIES, GRAINS, afterRecording, answerableFailure, doneBy, missingFromWork, newStep, newWork, workPayload,
   type Certainty, type Grain, type StepDraft, type WorkDraft,
 } from '../work/record.js';
 import { keepArgs, keptLine, kindsLine, withdrawArgs, type KeptAdmission, type Recorded, type WorkOffer } from '../work/offer.js';
@@ -58,7 +58,7 @@ export function WorkPanel({ session }: { session: FoxxiSession }) {
     try {
       setRecorded(await postSigned<Recorded>(record.href, signerFor(session), workPayload(draft)));
       setKeptOffer(false);
-      setDraft(d => ({ ...newWork(d.forKind), activityType: d.activityType }));
+      setDraft(afterRecording);
     } catch (e) { setError((e as Error).message); }
     finally { setSending(false); }
   }
@@ -97,6 +97,23 @@ export function WorkPanel({ session }: { session: FoxxiSession }) {
               </label>
             ))}
           </div>
+          <div role="radiogroup" aria-label="Done by" style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
+            <span className="label">Done by</span>
+            {([['human', 'a person'], ['agent', 'an agent']] as const).map(([k, label]) => (
+              <label key={k} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <input type="radio" name="work-done-by" checked={draft.forKind === k} onChange={() => { setDraft(d => doneBy(d, k)); setError(null); }} />{label}
+              </label>
+            ))}
+          </div>
+          {draft.forKind === 'agent' && (
+            <div role="note" style={{ border: '1px solid var(--warn)', borderRadius: 6, padding: '8px 10px', fontSize: 13, display: 'grid', gap: 6 }}>
+              <div>{AGENT_RECORD_IS_PUBLIC}</div>
+              <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <input type="checkbox" checked={draft.publicAsAgent} onChange={e => set({ publicAsAgent: e.target.checked })} />
+                I understand, and it is an agent&apos;s work
+              </label>
+            </div>
+          )}
           <details>
             <summary style={{ cursor: 'pointer', fontSize: 13 }}>Its kind, the artifact, quality and duration</summary>
             <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
@@ -116,12 +133,6 @@ export function WorkPanel({ session }: { session: FoxxiSession }) {
                 <label style={{ display: 'grid', gap: 4, flex: 1 }}>
                   <span className="label">Duration, e.g. PT25M</span>
                   <input value={draft.duration} onChange={e => set({ duration: e.target.value })} style={fieldStyle} />
-                </label>
-                <label style={{ display: 'grid', gap: 4, flex: 1 }}>
-                  <span className="label">Done by</span>
-                  <select value={draft.forKind} onChange={e => set({ forKind: e.target.value as WorkDraft['forKind'] })} style={fieldStyle}>
-                    <option value="human">a person</option><option value="agent">an agent</option>
-                  </select>
                 </label>
               </div>
             </div>
@@ -180,6 +191,8 @@ export function WorkPanel({ session }: { session: FoxxiSession }) {
           <div style={{ ...small, marginBottom: 8 }}>
             <strong style={{ color: 'var(--text)' }}>{recorded.taskName}</strong> is in your record{recorded.success ? ', as succeeded' : ', as failed'}.
           </div>
+          {recorded.recordVisibility && <div role="note" style={{ fontSize: 13, color: 'var(--warn)', marginBottom: 8 }}>{recorded.recordVisibility.note}</div>}
+          {recorded.samePrincipalAlsoHolds && <div style={{ ...small, marginBottom: 8 }}>{recorded.samePrincipalAlsoHolds.note}</div>}
           {recorded.offer && <OfferCard offer={recorded.offer} canKeep={!!admit && !keptOffer} keeping={keeping} asks={asks}
             onKeep={() => { void change(keepArgs(recorded.offer!)).then(ok => setKeptOffer(ok)); }} />}
           {keptOffer && <div style={small}>Kept. It is listed under what you keep.</div>}
