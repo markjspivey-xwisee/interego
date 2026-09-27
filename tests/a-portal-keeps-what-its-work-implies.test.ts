@@ -186,8 +186,10 @@ describe("recording work as an agent's is chosen knowing what it does to the rec
     expect(route).toMatch(new RegExp([
       String.raw`if \(\(p\.actor_kind === 'human' \? 'human' : 'agent'\) === 'agent'\) \{`,
       String.raw`let kindNow: 'human' \| 'agent' \| undefined;`,
-      String.raw`try \{ kindNow = classifySubjectKind\(\{ isSelf: false, statements: await learnerStatementsFor\(subjectPod, callerDid\), subjectPodUrl: subjectPod \}\); \}`,
-      String.raw`catch \(e\) \{ console\.warn\('\[foxxi\]\[record-visibility\]', \(e as Error\)\.message\); \}`,
+      String.raw`try \{`,
+      String.raw`const read = await learnerStatementsReadWhole\(subjectPod, callerDid\);`,
+      String.raw`if \(read\.complete\) kindNow = classifySubjectKind\(\{ isSelf: false, statements: read\.statements, subjectPodUrl: subjectPod \}\);`,
+      String.raw`\} catch \(e\) \{ console\.warn\('\[foxxi\]\[record-visibility\]', \(e as Error\)\.message\); \}`,
       String.raw`recordVisibility = recordVisibilityAfterAgentWork\(kindNow\);`,
     ].join(String.raw`\s+`)));
     expect(route.indexOf('kindNow = classifySubjectKind(')).toBeGreaterThan(route.indexOf('const statementId = storeStatementInternal(statement'));

@@ -270,9 +270,16 @@ async function getLattice(podUrl: string, agentDid: string, label: string, fetch
         const d = await resolveLatticeFromPodDetailed(resourceUrl, kp, guardedFetchFn(fetchFn) as unknown as typeof fetch);
         if (d.status === 'ok') {
           // Adopt the pod copy if we have no in-memory ingests; if we DO (we composed
-          // while fenced), keep ours — the write path's CAS will merge them onto the
-          // pod. Either way: record the etag, un-fence, clear the backoff.
+          // while fenced), MERGE it into ours. Either way: record the etag, un-fence,
+          // clear the backoff.
+          //
+          // ★ IT USED TO KEEP OURS UNMERGED, trusting "the write path's CAS will merge them
+          // onto the pod". It would not: the etag recorded here is the pod's current one, so
+          // the next write's If-Match succeeded and put OUR instance over the pod's, and what
+          // only the pod held was gone. Until then, a reader was served a lattice missing it
+          // as if whole (latticeReadWhole). mergeReseat is the CAS path's own merge.
           if (!pgsl || pgsl.nodes.size === 0) pgsl = rebuildInstance(d.nodes!, agentDid);
+          else pgsl = mergeReseat(label, pgsl, d.nodes!, agentDid);
           const s = podS(resourceUrl); s.etag = d.etag; s.absent = false;
           unreadable.delete(label); clearRetry(resourceUrl);
         } else if (d.status === 'absent') {
@@ -790,6 +797,16 @@ export async function loadCourseFromLattice(podUrl: string, agentDid: string, la
 /** Best-effort: load an agent's lattice into residence (load-from-pod on a cold
  *  miss) so the read path can source statements from PGSL. Returns whether the
  *  resident lattice has any content. Never throws. */
+/**
+ * Whether `label`'s lattice holds all that its pod copy does: resident, and not fenced as
+ * unreadable. False while the pod copy could not be read (no key, a body that would not decrypt,
+ * or a load that threw before anything was kept), when the lattice holds only what this process
+ * has composed since. ensureResident swallows those failures; a reader that must not mistake part
+ * of a record for the whole of it asks this after it. Once a fenced lattice reads its pod copy
+ * again, getLattice merges that copy in before it un-fences, so "not fenced" does mean "whole".
+ */
+export function latticeReadWhole(label: string): boolean { return resident.has(label) && !unreadable.has(label); }
+
 export async function ensureResident(podUrl: string, agentDid: string, label: string, fetchFn?: FetchFn, resourceName?: string): Promise<boolean> {
   try { await getLattice(podUrl, agentDid, label, fetchFn ?? (globalThis.fetch as unknown as FetchFn), false, resourceName); } catch { /* best-effort */ }
   const a = resident.get(label);
