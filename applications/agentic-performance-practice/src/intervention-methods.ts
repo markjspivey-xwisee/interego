@@ -1,7 +1,8 @@
 /** Method profiles are published data. This module projects and checks evidence coverage;
  * it neither selects an intervention nor certifies the quality of a referenced artifact. */
-import { findSubjectsOfType, parseTrig, readIntegerValue, readStringValue,
+import { findSubjectsOfType, parseTrig, readIntegerValue, readStringValue, readStringValues,
   type IRI, type ParsedSubject } from '@interego/core';
+import { fragmentKind } from '../../foxxi-content-intelligence/src/content-fragments.js';
 import { AGP_NS, readMethodsTurtle } from './ontology.js';
 
 const RDFS = 'http://www.w3.org/2000/01/rdf-schema#';
@@ -40,6 +41,8 @@ export interface InterventionMethod {
   '@id': string; '@type': string; token: string; intervention?: string;
   title: string; version: string; appliesWhen: string; entryStep: string;
   consultingProcess?: string; steps: MethodStep[]; criteria: MethodCriterion[];
+  /** The Foxxi fragment kinds this intervention is delivered as; none when it is not content. */
+  contentForms?: string[];
 }
 export interface MethodReference { '@id': string; token: string; version: string }
 
@@ -89,11 +92,18 @@ export function loadInterventionMethods(turtle = readMethodsTurtle()): Intervent
     const intervention = readStringValue(s, `${AGP_NS}interventionToken` as IRI);
     const consultingProcess = values(s, `${AGP_NS}consultingProcess`)[0];
     if (consultingProcess) resolve(consultingProcess);
+    // Each form must be one Foxxi can store, or resolution would admit a kind nothing can be authored as.
+    const contentForms = [...readStringValues(s, `${AGP_NS}contentFormToken` as IRI)];
+    for (const form of contentForms) {
+      if (!fragmentKind(form)) throw new Error(`Method ${String(s.subject)} names the content form "${form}", which is not a Foxxi fragment kind`);
+    }
+    if (contentForms.length && !intervention) throw new Error(`Method ${String(s.subject)} names content forms but no intervention`);
     return { '@id': String(s.subject), '@type': intervention ? 'agp:InterventionMethodology' : 'agp:Methodology',
       token: literal(s, `${AGP_NS}profileToken`), title: literal(s, `${RDFS}label`),
       version: literal(s, `${DCT}hasVersion`), appliesWhen: literal(s, `${AGP_NS}appliesWhen`),
       entryStep, steps, criteria: requiredCriteria,
-      ...(intervention ? { intervention } : {}), ...(consultingProcess ? { consultingProcess } : {}) };
+      ...(intervention ? { intervention } : {}), ...(consultingProcess ? { consultingProcess } : {}),
+      ...(contentForms.length ? { contentForms } : {}) };
   });
   if (!result.length || new Set(result.map(m => m.token)).size !== result.length) {
     throw new Error('Method data must contain unique method tokens');

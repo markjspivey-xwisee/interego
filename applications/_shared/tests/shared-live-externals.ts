@@ -648,6 +648,14 @@ export const SHARED_ONLY_THROUGH_IMPORTED_CODE: readonly {
       + 'into a competency IRI. An identifier authority, not a dial target.',
   },
   {
+    name: 'FOXXI_CONTENT_ID_BASE',
+    readIn: 'applications/foxxi-content-intelligence/src/content-fragments.ts',
+    why: 'the per-kind override of the identifier base above, read at module scope and joined '
+      + 'into fragment and composition IRIs. Two suites reach it: the composition tests, and the '
+      + 'performance practice, whose method loader checks each content form against the fragment '
+      + 'kinds. An identifier authority, not a dial target; a content hash never includes it.',
+  },
+  {
     name: 'FOXXI_COURSE_ID_BASE',
     readIn: 'applications/foxxi-content-intelligence/src/course-identity.ts',
     why: 'the per-kind override of the identifier base above, read at module scope and joined '

@@ -1,5 +1,45 @@
 # Changelog
 
+## 2026-09-26 — Foxxi: content is a composition each learner gets resolved from their own record
+
+`emergent-content.ts` has long described a course as "a recipe, not a record": a chain of positions, each holding interchangeable alternatives, collapsed for each performer. But that model lived only in memory. Its fragment ids resolved nothing, and its restriction took a mastered list from the caller. This change makes the recipe data, for a person and an agent alike, as learner and as author.
+
+- **A fragment is identified by its content** (`src/content-fragments.ts`).
+  - Its IRI is `/ns/foxxi/fragment/<sha256>` over its canonical JSON (core's `canonicalJson`), with competencies taken by id rather than by this deployment's URLs. So it names the same content on every bridge.
+  - `fragmentIsIntact` checks a copy fetched from anywhere by hashing it again. Content under an IRI a learner already holds cannot change.
+  - The body is Markdown. Questions are the xAPI interaction types from #496, salted from the fragment itself, so authoring the same fragment twice gives the same IRI.
+  - Its kind is one of the existing forms (concept, worked example, video, simulation, practice task, assessment item, job aid, reference, context), plus two new ones for emergent work: `probe` and `reflection`. Those two take no graded question, because such work has no right answer yet. An assessment item must carry at least one graded question.
+- **A composition is one type at every size** (`src/compositions.ts`). Each position names a competency and the fragments or compositions that can fill it, by reference, so a lesson used in three courses is one lesson. Its IRI hashes its content too, and a revision names what it `supersedes`.
+- **`resolveComposition` makes each learner's version:**
+  - It skips a position the learner has *demonstrated*: an Asserted competency on their record at the position's rank (Competent by default). A training-only inference is Hypothetical and skips nothing.
+  - It admits only the forms said to suit the competency.
+  - It chooses the alternative pitched nearest the learner's level, then the author's order.
+  - Nested compositions resolve the same way, to a depth of 8, and a composition that contains itself is refused.
+  - Every step, skip and unmet position is traced in words.
+- **Which forms suit the work is published data, and the dependency runs one way.** Foxxi is the standards vertical, and the performance practice composes it (`tests/the-layer-below-may-not-grow-a-dependency-upward.test.ts` pins that). So Foxxi's resolver only takes an admission.
+  - Each intervention method in `agp-methods.ttl` now names the forms that deliver it with `agp:contentFormToken`, declared in `agp.ttl` and constrained in `agp-shapes.ttl`.
+  - The method loader reads the forms and refuses a form that is not a Foxxi fragment kind.
+  - `admissionFromPlan` (`applications/agentic-performance-practice/src/content-admission.ts`) turns a plan into an admission. With the plans the practice actually makes:
+    - Emergent work gets a probe, never a lesson.
+    - Turbulent work gets no content, and the resolution says so.
+    - Evident work gets the procedure to look up.
+    - Knowable work nobody has measured gets a check before any teaching.
+  - The published copies under `docs/applications/agentic-performance-practice/` are re-rendered with `tools/render-agp-ontology.mjs`.
+- **Docs.** `PERFORMANCE-ARCHITECTURE.md` §5 describes the data model, what it does, and what is not wired yet: signed authoring and live delivery, choosing alternatives by what has worked, regime sources beyond a supplied plan, and folding the older `Course` model and authored SCORM courses into this one.
+- **Shared externals.** `FOXXI_CONTENT_ID_BASE` (the identifier authority for fragments and compositions) is registered in `SHARED_ONLY_THROUGH_IMPORTED_CODE`, since two suites now reach its read site.
+
+**Tests.**
+- `applications/foxxi-content-intelligence/tests/composable-learning.test.ts` (14 tests):
+  - content identity across authorities and competency spellings, and intactness against a changed body, a changed verifier, and a copy served by another bridge;
+  - stored questions, and each kind's question rules;
+  - composition identity and refusals;
+  - resolution: level choice, demonstrated versus inferred, the rank a position asks for, audience, admission and an empty admission, nesting and cycles, and missing alternatives.
+- `tests/a-plan-admits-only-the-content-that-delivers-it.test.ts`:
+  - the published forms cover every fragment kind, and give an environmental fix none;
+  - the loader refuses an unknown form;
+  - each regime's real plan resolves as above, for a person and for an agent.
+- Fourteen mutants were checked, judged by these tests with the typecheck gate set aside, and each one fails a named test.
+
 ## 2026-09-26 — jev-harness: a file named for its author is not an auth path
 
 For every changed file that matches `SENSITIVE_PATTERNS` (`applications/jev-harness/src/repo.ts`), the review gate adds a `sensitive-path:<file>` check and select-tests runs the whole suite. The first pattern was `/auth/i`, which also matches "author". On #496 it flagged `applications/foxxi-content-intelligence/src/course-authoring.ts`, a course question module with no authentication or authorization in it. So for the file's name alone, the gate asked for a human and the selection ran the whole suite.

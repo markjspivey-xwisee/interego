@@ -54,7 +54,9 @@ export type FragmentModality =
   | 'assessment-item'   // a question / task that measures
   | 'reference'         // a looked-up knowledge entry
   | 'practice-task'     // a deliberate-practice repetition
-  | 'context-descriptor'; // doctrine/policy an agent ingests as context
+  | 'context-descriptor' // doctrine/policy an agent ingests as context
+  | 'probe'             // a safe-to-fail probe: where the Emergent regime learns by acting
+  | 'reflection';       // a prompt to make sense of what happened: coaching's material
 
 /**
  * The cognitive level a fragment pitches at — how much prior grasp it
