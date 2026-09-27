@@ -3478,10 +3478,11 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const lensStatements = await listStoredStatements(lensTenantFor(subjectLabel));
     const durable = await readDurableRecordedStatementsDetailed({ podUrl: subjectPodUrl });
     const learnerStatements = mergeStatementsById([...latticeStmts, ...lensStatements], durable.statements, appliedVoidsOf(subjectLabel));
-    // A record read only in part is not classified for anyone but its subject (src/whole-record-gate.ts):
-    // part of it can hold none of the person's work that keeps it private. An admin reads it here
-    // whatever it is, so the classification decides nothing for them.
-    if (!(durable.complete && latticeReadWhole(subjectLabel)) && !servedInPart({ isSelf, unconditional: ctx.role === 'admin' })) {
+    // A record read only in part is served to its subject alone, who is told so (src/whole-record-gate.ts):
+    // part of it can hold none of the person's work that keeps it private, and the record served
+    // names what its subject is. An admin is refused a part like anyone else.
+    const readWhole = durable.complete && latticeReadWhole(subjectLabel);
+    if (!readWhole && !servedInPart({ isSelf })) {
       const trace = emitAccessDecision({ ctx, tool: 'foxxi.assemble_learner_record', decision: 'deny', appliedPolicies: ['record-read-whole'] });
       return { ...recordNotReadWhole(), accessDecision: trace };
     }
@@ -3549,13 +3550,16 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     return {
       ...elr,
       accessDecision: trace,
+      // Only its subject is served a record read in part, and is told: what it shows, and the kind
+      // it names, come from the part that was read.
+      readWhole,
       _readDiag: {
         subjectPodUrl,
         subjectLabel,
         lensTenant: lensTenantFor(subjectLabel),
         latticeCount: latticeStmts.length,
         lensCount: lensStatements.length,
-        durableCount: durableStatements.length,
+        durableCount: durable.statements.length,
         mergedCount: learnerStatements.length,
       },
     };
@@ -7165,8 +7169,9 @@ app.post('/agent/review-record', async (req, res) => {
       ? mergeStatementsById(latticeStmts, [], appliedVoidsOf(subjectLabel))
       : wholeRecord;
     const statementSource = p.source === 'pgsl' ? 'pgsl-lattice-only' : 'pgsl-lattice+lens+durable-rdf-fallback';
-    // A record read only in part is not classified for anyone but its subject (src/whole-record-gate.ts).
-    if (!(durable.complete && latticeReadWhole(subjectLabel)) && !servedInPart({ isSelf, unconditional: false })) {
+    // A record read only in part is served to its subject alone, who is told so (src/whole-record-gate.ts).
+    const readWhole = durable.complete && latticeReadWhole(subjectLabel);
+    if (!readWhole && !servedInPart({ isSelf })) {
       res.status(503).json(recordNotReadWhole());
       return;
     }
@@ -7299,7 +7304,7 @@ app.post('/agent/review-record', async (req, res) => {
       // was arrived at is the difference between an answer a caller can check and one it can only
       // believe: 'caller' = your own, 'subject-identity' = derived from the DID you named (snapped
       // to the enrolled spelling), 'named-pod' = the pod you named, inside this deployment's space.
-      subject: { did: subjectDid, podUrl: subjectPodUrl, podChosenBy: target.basis, label: subjectLabel, kind: subjectKind, lensTenant: lensTenantFor(subjectLabel), statementCount: statements.length, statementSource, latticeStatements: latticeStmts.length },
+      subject: { did: subjectDid, podUrl: subjectPodUrl, podChosenBy: target.basis, label: subjectLabel, kind: subjectKind, lensTenant: lensTenantFor(subjectLabel), statementCount: statements.length, statementSource, latticeStatements: latticeStmts.length, readWhole },
       projection: projectionMode,
       elr: projectionMode === 'links' ? elrAsLinks(elr, subjectDid, bridgeBaseUrl) : elr,
       ...(clr !== undefined ? { clr } : {}),
@@ -7660,8 +7665,9 @@ app.post('/agent/verify-extension', async (req, res) => {
     const lensStatements = await listStoredStatements(lensTenantFor(subjectLabel));
     const durable = await readDurableRecordedStatementsDetailed({ podUrl: subjectPodUrl });
     const statements = mergeStatementsById([...latticeStatements(subjectLabel), ...lensStatements], durable.statements, appliedVoidsOf(subjectLabel));
-    // A record read only in part is not classified for anyone but its subject (src/whole-record-gate.ts).
-    if (!(durable.complete && latticeReadWhole(subjectLabel)) && !servedInPart({ isSelf, unconditional: false })) {
+    // A record read only in part is served to its subject alone, who is told so (src/whole-record-gate.ts).
+    const readWhole = durable.complete && latticeReadWhole(subjectLabel);
+    if (!readWhole && !servedInPart({ isSelf })) {
       res.status(503).json(recordNotReadWhole());
       return;
     }
@@ -7735,7 +7741,7 @@ app.post('/agent/verify-extension', async (req, res) => {
     res.json({
       ok: true,
       verifiedBy: auth.callerDid,
-      subject: { did: subjectDid, podUrl: subjectPodUrl, statementCount: statements.length },
+      subject: { did: subjectDid, podUrl: subjectPodUrl, statementCount: statements.length, readWhole },
       verified,
       checks: { independentlyGraded, gradedScore, performanceRecorded, selfAttestedPerformance, shapeConformant },
       ...(iri ? { iri, conformsTo } : {}),

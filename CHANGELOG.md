@@ -11,17 +11,18 @@ Each reads the record from three places: the shared lattice, the in-memory lens,
 
 Now each gate asks whether it read the record whole (`latticeReadWhole` and `readDurableRecordedStatementsDetailed`, from #538). A reader the gate would have to classify the record for is refused while it did not, before anything is classified or served.
 
-The rule is in `src/whole-record-gate.ts` (new): `servedInPart`, and the refusal `recordNotReadWhole`. The refusal is a 503 saying the record could not be read whole. It is not a private classification: calling an agent's public record "a human learner record, private" because the pod did not answer would say something false about the subject, and the reader could not tell an outage from a policy. The refusal serves nothing partial, and a retry once the pod answers is decided by the whole record. The subject's own reads are served as before, and so are an admin's at `foxxi.assemble_learner_record`, which lets an admin read either kind of record.
+The rule is in `src/whole-record-gate.ts` (new): `servedInPart`, and the refusal `recordNotReadWhole`. The refusal is a 503 saying the record could not be read whole. It is not a private classification: calling an agent's public record "a human learner record, private" because the pod did not answer would say something false about the subject, and the reader could not tell an outage from a policy. The refusal serves nothing partial, and a retry once the pod answers is decided by the whole record. The subject's own reads are served as before, and each answer says whether the record was read whole (`readWhole`). No one else is served a part, an admin included: the record an admin is served names what its subject is, and part of a record cannot say that (Codex, on the first draft).
 
 `/agent/review-record` also classified `source: 'pgsl'` requests from the lattice alone: a part of the record the caller chose. A person's work kept only in the durable records was left out of the decision. That gate now classifies from the whole record, whatever source it serves from.
 
-`tests/a-record-not-read-whole-is-not-served-to-others.test.ts` (6 tests):
+`tests/a-record-not-read-whole-is-not-served-to-others.test.ts` (7 tests):
 - the policy: who may be served a record read in part, and the refusal's words and status;
 - a census of the bridge's doors. It finds the three that classify a subject, and requires each to read completeness and refuse a partial read before it classifies or assembles anything. A gate added later without it fails here;
-- who each gate lets read a partial record, matching the gate's own rule;
+- that only the subject is served a partial read, and is told so, at every gate;
+- that the diagnostic counts the detailed read: the first draft left one use of the old name, which threw after every record was assembled (Codex, on the first draft);
 - the review gate classifying from the whole record.
 
-`subject-kind-not-caller-controlled.test.ts` still holds. Twelve mutants each fail a named test.
+`subject-kind-not-caller-controlled.test.ts` still holds. Mutants each fail a named test.
 
 
 ## 2026-09-27 — Foxxi: part of a record is not read as the whole of it

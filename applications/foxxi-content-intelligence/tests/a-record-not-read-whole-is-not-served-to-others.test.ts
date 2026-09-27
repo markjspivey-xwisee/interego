@@ -36,11 +36,9 @@ function doors(): Array<{ name: string; body: string }> {
 const gates = () => doors().filter(d => d.body.includes('const subjectKind = classifySubjectKind('));
 
 describe('whether a record read in part may be served', () => {
-  it('is served to its subject, and to a reader the gate lets read it whatever it is, and to no one else', () => {
-    expect(servedInPart({ isSelf: true, unconditional: false })).toBe(true);
-    expect(servedInPart({ isSelf: false, unconditional: true })).toBe(true);
-    expect(servedInPart({ isSelf: true, unconditional: true })).toBe(true);
-    expect(servedInPart({ isSelf: false, unconditional: false })).toBe(false);
+  it('is served to its subject, and to no one else', () => {
+    expect(servedInPart({ isSelf: true })).toBe(true);
+    expect(servedInPart({ isSelf: false })).toBe(false);
   });
 
   it('is refused as a 503 that says the record could not be read whole, and not as a private record', () => {
@@ -64,9 +62,10 @@ describe('every privacy gate', () => {
     for (const { name, body } of gates()) {
       expect(body, `${name} reads the durable records without asking whether it read them all`).toContain('const durable = await readDurableRecordedStatementsDetailed({ podUrl: subjectPodUrl });');
       expect(body, `${name} still reads the durable records the old way`).not.toContain('await readDurableRecordedStatements({');
-      const refusal = body.search(/if \(!\(durable\.complete && latticeReadWhole\(subjectLabel\)\) && !servedInPart\(\{ isSelf, unconditional: [^}]+\}\)\) \{/);
-      expect(refusal, `${name} classifies a record it may have read only in part`).toBeGreaterThan(-1);
-      expect(refusal).toBeGreaterThan(body.indexOf('await ensureResident('));
+      const whole = body.indexOf('const readWhole = durable.complete && latticeReadWhole(subjectLabel);');
+      expect(whole, `${name} does not ask whether it read the record whole`).toBeGreaterThan(body.indexOf('await ensureResident('));
+      const refusal = body.indexOf('if (!readWhole && !servedInPart({ isSelf })) {');
+      expect(refusal, `${name} classifies a record it may have read only in part`).toBeGreaterThan(whole);
       // Nothing of the record is used before the refusal: the classification comes first in every
       // gate, and a gate that assembles the record assembles it after that.
       expect(refusal, `${name} classifies before it refuses`).toBeLessThan(body.indexOf('const subjectKind = classifySubjectKind('));
@@ -76,18 +75,23 @@ describe('every privacy gate', () => {
     }
   });
 
-  it('lets only the reader it already lets read any record read one in part: the subject everywhere, an admin where the gate has one', () => {
-    const unconditional = Object.fromEntries(gates().map(g => [g.name, /!servedInPart\(\{ isSelf, unconditional: ([^}]+) \}\)/.exec(g.body)?.[1]]));
-    expect(unconditional).toEqual({
-      'foxxi.assemble_learner_record': "ctx.role === 'admin'",
-      '/agent/review-record': 'false',
-      '/agent/verify-extension': 'false',
-    });
-    // Each matches the gate's own rule for who may read a person's record.
-    expect(gates().find(g => g.name === 'foxxi.assemble_learner_record')!.body).toContain("if (subjectKind === 'human' && ctx.role !== 'admin' && !isSelf) {");
-    for (const name of ['/agent/review-record', '/agent/verify-extension']) {
-      expect(gates().find(g => g.name === name)!.body).toContain("if (subjectKind === 'human' && !isSelf) {");
+  it('serves a record read in part to its subject alone, an admin included, and tells the subject', () => {
+    // The record an admin is served names what its subject is, and part of it cannot say that
+    // (Codex, on the first draft, which let an admin through): no gate names anyone else.
+    for (const { name, body } of gates()) {
+      expect(body.match(/servedInPart\(\{[^}]*\}\)/g), `${name} serves a part to someone besides the subject`).toEqual(['servedInPart({ isSelf })']);
     }
+    const assemble = gates().find(g => g.name === 'foxxi.assemble_learner_record')!.body;
+    expect(assemble).toMatch(/return \{\n\s+\.\.\.elr,\n\s+accessDecision: trace,\n(?:\s+\/\/[^\n]*\n)*\s+readWhole,\n/);
+    expect(gates().find(g => g.name === '/agent/review-record')!.body).toMatch(/subject: \{ [^\n]*statementCount: statements\.length, [^\n]*readWhole \},/);
+    expect(gates().find(g => g.name === '/agent/verify-extension')!.body).toContain('subject: { did: subjectDid, podUrl: subjectPodUrl, statementCount: statements.length, readWhole },');
+  });
+
+  it('reports the durable records it read by the read that says whether it read them all', () => {
+    // The first draft renamed the read and left one use of the old name, so every learner record
+    // it assembled threw a ReferenceError after assembly (Codex, on the first draft).
+    for (const { name, body } of gates()) expect(body, `${name} names a read that no longer exists`).not.toMatch(/\bdurableStatements\b/);
+    expect(gates().find(g => g.name === 'foxxi.assemble_learner_record')!.body).toContain('durableCount: durable.statements.length,');
   });
 
   it('decides who may read a record from the whole of it, whatever source it is served from', () => {

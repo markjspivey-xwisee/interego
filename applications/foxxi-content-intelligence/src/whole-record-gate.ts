@@ -19,22 +19,21 @@
  * reader could not tell a pod outage from a policy. A 503 says what happened and serves nothing
  * partial. A retry once the pod answers is then decided by the whole record.
  *
- * The subject reads their own record as before, whole or not. So does a reader the gate lets read
- * a record whatever it is (an admin, at the gate that has one): for them, the classification
- * decides nothing.
+ * The subject reads their own record as before, whole or not, and is told when it was read in part:
+ * what they are is theirs to say (a self read takes their own word that they are an agent). No one
+ * else is served a part, an admin included. An admin may read a record whatever it is, but the
+ * record they are served says what it is, and part of a record cannot say that.
  */
 
 /** Who is reading a record, as far as its gate is concerned. */
 export interface RecordReader {
   /** The reader is the record's subject. */
   isSelf: boolean;
-  /** The gate lets this reader read the record whatever it is. */
-  unconditional: boolean;
 }
 
-/** Whether a record read only in part may still be served to this reader. */
+/** Whether a record read only in part may still be served to this reader: its subject only. */
 export function servedInPart(reader: RecordReader): boolean {
-  return reader.isSelf || reader.unconditional;
+  return reader.isSelf;
 }
 
 /** The refusal a reader gets when a record the gate must classify for them was not read whole. */
