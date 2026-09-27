@@ -449,7 +449,9 @@ Nobody declares which explanation of a competency works; the plays show it.
     the learner, pitched nearest their level, then in the author's order,
     with a composition counting as pitched at every level.
   - Where a composition comes first, learners go into it when it resolves,
-    and outcomes decide nothing: the leaning says so (`into`).
+    and otherwise take the next alternative as ranked (`otherwise`), by
+    the author's order among those pitched alike. Outcomes decide nothing
+    at such a level, and the leaning says so (`into`).
   - Otherwise the leaning is `chooseByEfficacy` among the fragments
     pitched alike. Where an alternative is meant for one kind of learner,
     people and agents get a leaning each.

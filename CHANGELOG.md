@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-09-27 — Foxxi: where a leading composition does not resolve, the leaning names what is taken
+
+A review of #520 found its account of a leading composition half wrong ([Codex](https://github.com/markjspivey-xwisee/interego/pull/520#discussion_r4114979366)). A composition's efficacy view says, at a level where a nested composition comes first, that learners go into it when it resolves. It added that outcomes among the fragments decide when it does not.
+
+They do not. Resolution weighs no outcomes once a composition leads: where the composition does not resolve for a learner, it takes the next alternative as ranked, by the author's order among those pitched alike (`src/compositions.ts`). Now the leaning names that alternative (`otherwise`, `src/composition-efficacy.ts`) and says outcomes decide nothing at that level. `PERFORMANCE-ARCHITECTURE.md` §5 says so.
+
+`applications/foxxi-content-intelligence/tests/a-composition-shows-what-it-has-learned.test.ts` pins the alternative named and the reason given. Two mutants were checked, and each fails it:
+- the alternative not named;
+- the alternative named as the last rather than the next.
+
 ## 2026-09-27 — Foxxi: a composition's leaning is resolution's own choice, for each kind of learner
 
 A review of #519 found that the leaning a composition's efficacy view reported could be a choice no learner would meet ([Codex](https://github.com/markjspivey-xwisee/interego/pull/519#discussion_r4114936130), [twice](https://github.com/markjspivey-xwisee/interego/pull/519#discussion_r4114936133)). Now it ranks as resolution ranks (`src/composition-efficacy.ts`).
