@@ -19,8 +19,11 @@ import {
   policyOf, questionPayload, withoutOption, type FragmentDraft, type QuestionDraft,
 } from '../dashboard-app/src/author/draft.js';
 import { compositionPayload, contentKindOf, missingFromComposition, newComposition, offer } from '../dashboard-app/src/author/compose.js';
+import { readFileSync } from 'node:fs';
 import { SHELF_MAX, readShelf, shelfKey, shelve, unshelve, type ShelfItem } from '../dashboard-app/src/author/shelf.js';
 import { cellLine, hasOutcomes, leaningLine, type CompositionEfficacy } from '../dashboard-app/src/author/efficacy.js';
+import { exportLinks, resolutionLine, stepLine, type ResolvedStepView } from '../dashboard-app/src/author/resolution.js';
+import { fragmentForLearner } from '../src/content-fragments.js';
 import { draftFor, matchTo, move, pick, repliesFor, type Draft, type LearnerQuestion } from '../dashboard-app/src/learn/answers.js';
 
 const as = <K extends Draft['kind']>(d: Draft, kind: K): Extract<Draft, { kind: K }> => {
@@ -200,5 +203,42 @@ describe('what a composition has learned, as the engine says it', () => {
     expect(leaningLine({ level: 'applied', for: 'agent', into: 'c', otherwise: ['a', 'b'], why: 'It resolves.' }, name)).toBe('At applied, for agents: goes into C, otherwise A, then B. It resolves.');
     expect(leaningLine({ level: 'advanced', for: 'anyone', withheld: 'a cell is too small' }, name)).toBe('At advanced, for any learner: not said, a cell is too small');
     expect(cellLine({ level: 'working', n: 20, successes: 10, lowerBound: 0.29, modalStatus: 'Hypothetical', competency: 'c', fragment: 'f' })).toBe('working: 10 of 20 went on to succeed, at least 29% (still hypothetical)');
+  });
+});
+
+describe("a composition's page: how it resolves, and where it can be taken", () => {
+  const c = 'refund-authority';
+  const told = fragmentFrom({ kind: 'concept', level: 'foundational', competencies: [c], title: 'Told', body: 'Told.' });
+  const forAgents = fragmentFrom({ kind: 'context-descriptor', level: 'foundational', competencies: [c], title: 'Doctrine', body: 'Policy.', audience: 'agent' });
+  const comp = compositionFrom({ title: 'Refunds', competency: c, positions: [{ competency: c, paradigm: [told['@id']] }, { competency: c, paradigm: [forAgents['@id']] }] });
+  const store = new Map<string, unknown>([[told['@id'], told], [forAgents['@id'], forAgents]]);
+  // As foxxi.content_resolve serves it: each step's fragment in the form a learner receives.
+  const served = (kind: 'human' | 'agent') => {
+    const r = resolveComposition({ composition: comp, learner: { id: 'did:ethr:0x0000000000000000000000000000000000000001', kind }, lookup: i => store.get(i) as never });
+    return { ...r, steps: r.steps.map(s => ({ ...s, fragment: fragmentForLearner(s.fragment) })) as unknown as ResolvedStepView[] };
+  };
+
+  it('says what it resolves to for a person, and what nothing could fill', () => {
+    const r = served('human');
+    expect(resolutionLine(r)).toBe('one step, 1 that nothing could fill');
+    expect(stepLine(r.steps[0]!)).toBe('Told (concept, pitched foundational)');
+  });
+
+  it('says what it resolves to for an agent, where the fragment meant for agents fills the position', () => {
+    const r = served('agent');
+    expect(resolutionLine(r)).toBe('2 steps');
+    expect(stepLine(r.steps[1]!)).toBe('Doctrine (context-descriptor, pitched foundational)');
+    expect(resolutionLine({ steps: [], skipped: [{ competency: c, path: [], position: 0, because: 'shown' }], unmet: [] })).toBe('nothing to play, 1 position skipped');
+  });
+
+  it('takes a composition elsewhere by the bridge\'s own routes for it', () => {
+    const hash = 'a'.repeat(64);
+    expect(exportLinks('https://bridge.example/', hash)).toEqual({
+      cmi5: `https://bridge.example/ns/foxxi/composition/${hash}/cmi5.xml`,
+      scorm: `https://bridge.example/ns/foxxi/composition/${hash}/scorm.zip`,
+    });
+    const server = readFileSync(new URL('../bridge/server.ts', import.meta.url), 'utf8');
+    expect(server).toContain("app.get('/ns/foxxi/composition/:hash/cmi5.xml'");
+    expect(server).toContain("app.get('/ns/foxxi/composition/:hash/scorm.zip'");
   });
 });
