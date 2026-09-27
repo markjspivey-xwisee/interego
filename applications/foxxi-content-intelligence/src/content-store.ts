@@ -40,17 +40,33 @@ export const GATHER_LIMITS = { items: 5_000, parallel: 16 } as const;
  */
 export const LOCATIONS_PER_ITEM = 5;
 
-/** Two location indexes (content key → author DIDs) as one: each key's DIDs in first-seen order, at most LOCATIONS_PER_ITEM. */
-export function mergeLocations(first: unknown, second: unknown): Map<string, string[]> {
-  const out = new Map<string, string[]>();
+/**
+ * Where one author put an item: their DID, and the pod the write went to. The pod is kept as it
+ * was, not derived again from the DID, because an author may write to a twin pod of their own
+ * that the DID does not name. An empty pod means "derive it from the DID".
+ */
+export interface ContentLocation { did: string; pod: string }
+
+/**
+ * Two location indexes (content key → where it was written) as one: each key's locations in
+ * first-seen order, at most LOCATIONS_PER_ITEM. A bare DID string, the form the index first had,
+ * is read as a location with no pod.
+ */
+export function mergeLocations(first: unknown, second: unknown): Map<string, ContentLocation[]> {
+  const out = new Map<string, ContentLocation[]>();
   for (const source of [first, second]) {
     if (!source || typeof source !== 'object') continue;
     const entries = source instanceof Map ? [...source.entries()] : Object.entries(source as Record<string, unknown>);
     for (const [key, value] of entries) {
       if (typeof key !== 'string' || !/^(fragment|composition):[0-9a-f]{64}$/.test(key)) continue;
       const list = out.get(key) ?? [];
-      for (const did of Array.isArray(value) ? value : [value]) {
-        if (typeof did === 'string' && did && !list.includes(did) && list.length < LOCATIONS_PER_ITEM) list.push(did);
+      for (const entry of Array.isArray(value) ? value : [value]) {
+        const at: ContentLocation | undefined = typeof entry === 'string' ? { did: entry, pod: '' }
+          : entry && typeof entry === 'object' && typeof (entry as ContentLocation).did === 'string' && typeof ((entry as ContentLocation).pod ?? '') === 'string'
+            ? { did: (entry as ContentLocation).did, pod: (entry as ContentLocation).pod ?? '' } : undefined;
+        if (!at || !at.did || at.did.length > 500 || at.pod.length > 2000 || (at.pod && !/^https?:\/\//.test(at.pod))) continue;
+        if (list.some(l => l.did === at.did && l.pod === at.pod) || list.length >= LOCATIONS_PER_ITEM) continue;
+        list.push(at);
       }
       if (list.length) out.set(key, list);
     }

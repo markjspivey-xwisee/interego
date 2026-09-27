@@ -15,8 +15,12 @@
  *
  * ★ ONE SOURCE, TWO READERS. The body is Markdown (course-markdown.ts): an agent reads it as it
  * is, and a person reads it rendered. Questions take the xAPI interaction types
- * (course-questions.ts) and are stored with verifiers, never with answers. Their salts come from
- * the fragment's own content, so authoring the same fragment twice gives the same IRI.
+ * (course-questions.ts) and are stored with verifiers, never with answers. A fragment with a
+ * graded question also carries a random blinding value (`blind`), kept with the stored form and
+ * never served, that goes into every salt and commitment. So the same quiz authored twice is two
+ * fragments, each with its own grading secret, while a stored form sent back keeps its IRI. A
+ * fragment with nothing graded carries no such value and is the same fragment wherever it is
+ * authored.
  *
  * ★ ITS PUBLIC FORM CAN BE CHECKED WITHOUT ITS VERIFIERS. The hash does not take a question as it
  * is stored: it takes the question's public view (what a learner sees) and a commitment, the hash
@@ -34,7 +38,7 @@
  *
  * Layer: L3 vertical. `foxxi:` terms only; no protocol-ontology change.
  */
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { canonicalJson } from '@interego/core';
 import { competencyIdOf, competencyIri, competencyIriForTerm, isCompetencyIri } from './competency-identity.js';
 import { courseMarkdownHtml } from './course-markdown.js';
@@ -108,6 +112,13 @@ export interface Fragment {
   suits?: string[];
   /** BCP 47 language tag. */
   language?: string;
+  /**
+   * A random 256-bit value, as hex, kept with the stored form and never served. Present when a
+   * question is graded; it goes into each question's salt and commitment, so nobody holding the
+   * public form can rebuild a stored question for each answer they might try and see which one's
+   * commitment matches.
+   */
+  blind?: string;
 }
 
 const FRAGMENT_PATH = '/ns/foxxi/fragment/';
@@ -159,9 +170,14 @@ function text(value: unknown, what: string, max: number): string {
   return value;
 }
 
-/** A question's commitment: the hash of its stored form, salt, verifiers and explanation included. */
-export function questionCommitment(q: ScormAssessmentQuestion): string {
-  return sha256(canonicalJson(q));
+/**
+ * A question's commitment: the hash of its stored form (salt, verifiers and explanation included)
+ * and the fragment's blinding value when it has one. Without that value, a graded question with a
+ * few options would be an oracle: its salt comes from public fields, so the stored form for each
+ * answer could be rebuilt and hashed until one matched.
+ */
+export function questionCommitment(q: ScormAssessmentQuestion, blind?: string): string {
+  return sha256(canonicalJson(blind ? { blind, question: q } : q));
 }
 
 /** What anyone may see of a question: its words, its type, what to choose from, whether it is graded, and its commitment. */
@@ -174,18 +190,18 @@ export interface PublicQuestion {
 }
 
 /** A fragment in the form anyone may be served: each question as its public view and commitment. */
-export interface PublicFragment extends Omit<Fragment, 'questions'> {
+export interface PublicFragment extends Omit<Fragment, 'questions' | 'blind'> {
   questions?: PublicQuestion[];
 }
 
-function publicQuestion(q: ScormAssessmentQuestion): PublicQuestion {
+function publicQuestion(q: ScormAssessmentQuestion, blind: string | undefined): PublicQuestion {
   const { index: _index, ...view } = questionForLearner(q, 0);
-  return { ...view, commitment: questionCommitment(q) };
+  return { ...view, commitment: questionCommitment(q, blind) };
 }
 
 function toPublic(content: Omit<Fragment, '@id'>): Omit<PublicFragment, '@id'> {
-  const { questions, ...rest } = content;
-  return { ...rest, ...(questions?.length ? { questions: questions.map(publicQuestion) } : {}) };
+  const { questions, blind, ...rest } = content;
+  return { ...rest, ...(questions?.length ? { questions: questions.map(q => publicQuestion(q, blind)) } : {}) };
 }
 
 /** What a fragment's hash is taken over: its public form, with competencies by id. */
@@ -228,11 +244,16 @@ export function fragmentFrom(raw: unknown): Fragment {
   const language = r.language === undefined ? undefined : text(r.language, 'language', FRAGMENT_LIMITS.language).trim();
   if (language !== undefined && !/^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$/.test(language)) throw new ContentError('language must be a BCP 47 tag such as en or pt-BR');
 
-  // Questions: salted from the fragment's own content, so the same fragment always hashes alike.
+  // Questions: salted from the fragment's content and a random blinding value, so neither a salt
+  // nor a commitment can be rebuilt from the public form. A stored form sent back carries its
+  // value, and so keeps its IRI. A fragment with no graded question keeps no value at all, and is
+  // the same fragment wherever it is authored.
   const asked = r.questions === undefined ? [] : r.questions;
   if (!Array.isArray(asked)) throw new ContentError('questions must be an array');
   if (asked.length > FRAGMENT_LIMITS.questions) throw new ContentError(`a fragment has at most ${FRAGMENT_LIMITS.questions} questions`);
-  const seed = sha256(canonicalJson({ kind: def.kind, level, competencies: competencies.map(competencyKey), title, body }));
+  if (r.blind !== undefined && (typeof r.blind !== 'string' || !/^[0-9a-f]{64}$/.test(r.blind))) throw new ContentError('blind is the 64 hex characters a stored fragment carries');
+  const blind = (r.blind as string | undefined) ?? randomBytes(32).toString('hex');
+  const seed = sha256(canonicalJson({ kind: def.kind, level, competencies: competencies.map(competencyKey), title, body, blind }));
   const questions = asked.map((q, i) => {
     try { return authorQuestion(q, `${seed}\n${i}`); }
     catch (e) { throw e instanceof QuestionError ? new ContentError(`question ${i + 1}: ${e.message}`) : e; }
@@ -252,6 +273,7 @@ export function fragmentFrom(raw: unknown): Fragment {
     ...(audience ? { audience } : {}),
     ...(suits ? { suits } : {}),
     ...(language ? { language } : {}),
+    ...(questions.some(q => q.answerHash) ? { blind } : {}),
   };
   return { '@id': fragmentIri(sha256(canonicalJson(hashedForm(toPublic(content))))), ...content };
 }

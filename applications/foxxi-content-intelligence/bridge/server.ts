@@ -200,7 +200,7 @@ import { authorQuestion, questionForLearner, questionIsRight, QuestionError } fr
 import { courseMarkdownHtml } from '../src/course-markdown.js';
 import { ContentError, compositionIri, contentRefOf, fragmentForLearner, fragmentFrom, fragmentIri, publicFragment, sameContent, type Fragment } from '../src/content-fragments.js';
 import { admissionFrom, compositionFrom, resolveComposition, type Admission, type Composition, type RecordedCompetency } from '../src/compositions.js';
-import { ContentStore, isCompositionItem, LOCATIONS_PER_ITEM, mergeLocations, type ContentItem } from '../src/content-store.js';
+import { ContentStore, isCompositionItem, LOCATIONS_PER_ITEM, mergeLocations, type ContentItem, type ContentLocation } from '../src/content-store.js';
 import { competencyIri, competencyIriForTerm, competencyIdOf } from '../src/competency-identity.js';
 import { activityIri, ACTIVITY_DEFINITIONS } from '../src/activity-identity.js';
 import { FOXXI_NS } from '../src/foxxi-vocab.js';
@@ -10388,7 +10388,7 @@ app.post('/agent/cmi5/launch', async (req, res) => {
 // item lives on its author's pod, composed into their shared lattice like an authored course; the
 // bridge keeps a bounded cache and remembers whose pod each item came from.
 const CONTENT_TYPES = { fragment: 'foxxi:GroundingFragment', composition: 'foxxi:Composition' } as const;
-let contentLocations = new Map<string, string[]>();   // content key (type:hash) → the pods (author DIDs) that hold it
+let contentLocations = new Map<string, ContentLocation[]>();   // content key (type:hash) → where each author wrote it
 const CONTENT_LOCATIONS_MAX = 200_000;
 const CONTENT_LOCATIONS_RESOURCE = tenantPodUrl ? `${tenantPodUrl.replace(/\/$/, '')}/foxxi-lattice/content-locations.json` : '';
 let contentLocationsDirty = false;
@@ -10416,21 +10416,26 @@ async function loadContentLocations(): Promise<void> {
     if (r.ok) contentLocations = mergeLocations(contentLocations, await r.json());
   } catch { /* best-effort */ }
 }
-function recordContentLocation(key: string, authorDid: string): void {
+function recordContentLocation(key: string, authorDid: string, pod: string): void {
   const held = contentLocations.get(key) ?? [];
-  if (held.includes(authorDid) || held.length >= LOCATIONS_PER_ITEM) return;
+  if (held.some(l => l.did === authorDid && l.pod === pod) || held.length >= LOCATIONS_PER_ITEM) return;
   if (!held.length && contentLocations.size >= CONTENT_LOCATIONS_MAX) { const oldest = contentLocations.keys().next().value; if (oldest !== undefined) contentLocations.delete(oldest); }
-  contentLocations.set(key, [...held, authorDid]);
+  contentLocations.set(key, [...held, { did: authorDid, pod }]);
   contentLocationsDirty = true;
   void persistContentLocations();
 }
 const contentStore = new ContentStore(20_000, {
-  // Each pod that holds the item is tried in turn; whatever comes back is checked by the store.
+  // Each pod that holds the item is tried in turn, the pod it was written to rather than one
+  // derived again from the DID. Only pods on this tenant's own server are read (that is where
+  // pods live), and whatever comes back is checked by the store.
   load: async ({ type, hash, iri }) => {
     const key = `${type}:${hash}`;
     if (!contentLocations.has(key) && !contentLocationsLoaded) await loadContentLocations();
-    for (const did of contentLocations.get(key) ?? []) {
-      const pod = resolveSubjectPodUrl(did);
+    const tenantOrigin = (() => { try { return new URL(tenantPodUrl).origin; } catch { return ''; } })();
+    for (const { did, pod: written } of contentLocations.get(key) ?? []) {
+      const pod = written || resolveSubjectPodUrl(did);
+      const podOrigin = (() => { try { return new URL(pod).origin; } catch { return ''; } })();
+      if (!tenantOrigin || podOrigin !== tenantOrigin) continue;
       const found = await loadArtifactFromLattice(pod, did, actorForPod(pod, MESH_ACTOR_LABELS), CONTENT_TYPES[type],
         c => !!c && typeof c === 'object' && sameContent(String((c as { '@id'?: unknown })['@id'] ?? ''), iri)).catch(() => null);
       if (found) return found as ContentItem;
@@ -10439,24 +10444,46 @@ const contentStore = new ContentStore(20_000, {
   },
 });
 
-/** Keep what an author published: in the cache, on their pod's shared lattice, and as their `authored` statement. */
-async function keepAuthoredContent(item: ContentItem, authorDid: string, subjectPodUrl: unknown): Promise<Record<string, unknown>> {
-  contentStore.put(item);
-  const ref = contentRefOf(item['@id'])!;
-  recordContentLocation(`${ref.type}:${ref.hash}`, authorDid);
+/**
+ * Keep what an author published. The write to their pod's shared lattice comes first, and only if
+ * it lands is the item cached, its pod remembered and the `authored` statement recorded: an item
+ * the pod does not hold would last only as long as the cache, while being reported as kept.
+ */
+async function keepAuthoredContent(item: ContentItem, authorDid: string, subjectPodUrl: unknown):
+  Promise<{ ok: true; kept: Record<string, unknown> } | { ok: false; error: string }> {
   const isComposition = isCompositionItem(item);
   const authorPod = selfBoundPod(authorDid, typeof subjectPodUrl === 'string' ? subjectPodUrl : undefined);
+  let sharedLattice: Awaited<ReturnType<typeof composeIntoSharedLattice>>;
+  try {
+    sharedLattice = await composeIntoSharedLattice({
+      podUrl: authorPod, agentDid: authorDid, label: actorForPod(authorPod, MESH_ACTOR_LABELS),
+      terms: [authorDid, AUTHORED_VERB, item['@id']], content: item as unknown as Record<string, unknown>,
+      contentType: isComposition ? CONTENT_TYPES.composition : CONTENT_TYPES.fragment, projections: ['rdf', 'vc', 'activity'],
+    });
+  } catch (e) { return { ok: false, error: `could not store it on your pod: ${(e as Error).message}` }; }
+  if (!sharedLattice?.persisted) {
+    return { ok: false, error: `could not store it on your pod${sharedLattice?.persistError ? `: ${sharedLattice.persistError}` : ''}` };
+  }
+  contentStore.put(item);
+  const ref = contentRefOf(item['@id'])!;
+  recordContentLocation(`${ref.type}:${ref.hash}`, authorDid, authorPod);
   const authoredStatementId = emitAgentActivity({
     actorDid: authorDid, verbIri: AUTHORED_VERB, verbDisplay: 'authored', objectId: item['@id'],
     objectName: isComposition ? item.title : (item.title ?? `${item.kind} fragment`),
     objectType: `${FOXXI_NS}activities/${isComposition ? 'composition' : 'fragment'}`, result: { completion: true },
   });
-  const sharedLattice = await composeIntoSharedLattice({
-    podUrl: authorPod, agentDid: authorDid, label: actorForPod(authorPod, MESH_ACTOR_LABELS),
-    terms: [authorDid, AUTHORED_VERB, item['@id']], content: item as unknown as Record<string, unknown>,
-    contentType: isComposition ? CONTENT_TYPES.composition : CONTENT_TYPES.fragment, projections: ['rdf', 'vc', 'activity'],
-  });
-  return { durable: authorPod, ...(authoredStatementId ? { authoredStatementId } : {}), ...(sharedLattice ? { sharedLattice } : {}) };
+  return { ok: true, kept: { durable: authorPod, ...(authoredStatementId ? { authoredStatementId } : {}), sharedLattice } };
+}
+
+/** The per-IP limit every authoring route takes, applied before anything is read or written. Answers 429 and returns true when it is spent. */
+function contentRateLimited(req: import('express').Request, res: import('express').Response): boolean {
+  const xff = req.headers['x-forwarded-for'];
+  const ip = typeof xff === 'string' ? xff.split(',').at(-1)?.trim() ?? 'unknown'
+    : Array.isArray(xff) ? xff.at(-1)?.trim() ?? 'unknown' : req.ip ?? 'unknown';
+  const rl = checkAgenticRateLimit(ip);
+  if (rl.ok) return false;
+  res.status(429).json({ ok: false, error: `rate limit — retry in ${rl.retryAfterSeconds}s` });
+  return true;
 }
 
 /** A learner's competencies from their own record (read from their pod, as the learner record route reads it). */
@@ -10480,19 +10507,22 @@ async function learnerCompetencies(learnerDid: string, kind: 'human' | 'agent'):
 
 app.post('/agent/content/fragment', async (req, res) => {
   try {
+    if (contentRateLimited(req, res)) return;
     const auth = await verifyDelegatedCaller(req.body);
     if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
     let fragment: Fragment;
     try { fragment = fragmentFrom(auth.payload.fragment); }
     catch (e) { if (e instanceof ContentError) { res.status(400).json({ error: `fragment not authored: ${e.message}` }); return; } throw e; }
     const kept = await keepAuthoredContent(fragment, auth.callerDid, auth.payload.subject_pod_url);
-    sendActionResult(req, res, { ok: true, '@id': fragment['@id'], authoredBy: auth.callerDid, fragment: publicFragment(fragment), ...kept },
+    if (!kept.ok) { res.status(503).json({ error: `fragment not kept: ${kept.error}` }); return; }
+    sendActionResult(req, res, { ok: true, '@id': fragment['@id'], authoredBy: auth.callerDid, fragment: publicFragment(fragment), ...kept.kept },
       bridgeBaseUrl, 'Fragment authored', activeAffordances.filter(a => a.toolName === 'foxxi.content_compose'));
   } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 
 app.post('/agent/content/composition', async (req, res) => {
   try {
+    if (contentRateLimited(req, res)) return;
     const auth = await verifyDelegatedCaller(req.body);
     if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
     let composition: Composition;
@@ -10507,13 +10537,15 @@ app.post('/agent/content/composition', async (req, res) => {
       return;
     }
     const kept = await keepAuthoredContent(composition, auth.callerDid, auth.payload.subject_pod_url);
-    sendActionResult(req, res, { ok: true, '@id': composition['@id'], authoredBy: auth.callerDid, composition, ...kept },
+    if (!kept.ok) { res.status(503).json({ error: `composition not kept: ${kept.error}` }); return; }
+    sendActionResult(req, res, { ok: true, '@id': composition['@id'], authoredBy: auth.callerDid, composition, ...kept.kept },
       bridgeBaseUrl, 'Composition authored', activeAffordances.filter(a => a.toolName === 'foxxi.content_resolve'));
   } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 
 app.post('/agent/content/resolve', async (req, res) => {
   try {
+    if (contentRateLimited(req, res)) return;
     const auth = await verifyDelegatedCaller(req.body);
     if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
     const p = auth.payload;
