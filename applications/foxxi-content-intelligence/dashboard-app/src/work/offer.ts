@@ -35,8 +35,11 @@ export interface Recorded {
   success: boolean;
   offer?: WorkOffer;
   offerWithheld?: string;
-  /** Said whenever the work was recorded as an agent's: what that makes of the performer's record, and who can read it. */
-  recordVisibility?: { subjectKind: 'agent'; publiclyReadable: boolean; note: string };
+  /**
+   * Said whenever the work was recorded as an agent's: what the performer's record now classifies as,
+   * read from the record, and who can read it (readFromRecord false: it could not be read, and public is assumed).
+   */
+  recordVisibility?: { subjectKind: 'human' | 'agent'; publiclyReadable: boolean; readFromRecord?: boolean; note: string };
   /** Said when the same wallet holds another pod this deployment reads: where this record landed, and how to write to the other. */
   samePrincipalAlsoHolds?: { pod: string; note: string };
 }

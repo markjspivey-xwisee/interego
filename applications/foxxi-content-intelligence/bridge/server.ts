@@ -180,7 +180,7 @@ import {
   NON_PROJECTABLE_LOCALNAMES,
 } from '../src/durable-records.js';
 import { envelopeToClr1 } from '../src/clr-1.js';
-import { assembleEnterpriseLearnerRecord, PERFORMED_VERB, AUTHORED_VERB, CREDENTIALED_VERB, PERF_EXT, WorkStepError, durationRefusalOf, labelCompetencyIri, performanceCompetency, workAt, workStepsFrom, type WorkStep } from '../src/learner-record.js';
+import { assembleEnterpriseLearnerRecord, PERFORMED_VERB, AUTHORED_VERB, CREDENTIALED_VERB, PERF_EXT, WorkStepError, durationRefusalOf, labelCompetencyIri, performanceCompetency, recordVisibilityAfterAgentWork, workAt, workStepsFrom, type RecordVisibility, type WorkStep } from '../src/learner-record.js';
 import { composeIntoSharedLattice, dereferenceTerm, latticeNamespaceView, isResident, readArtifact, projectAs, latticeStatements, latticeArtifacts, ensureResident, loadArtifactFromLattice, loadCourseFromLattice, resolvePublicNode, markLatticePublic, isLabelPublic, type ProjectionKind } from '../src/foundation-shared-lattice.js';
 import { fingerprintAuthoringTool } from '../src/scorm-fingerprint.js';
 import { manifestToAgenticCourse, agentScormToAgenticCourse, buildConceptNavGraph, type AgentScormCourseLike } from '../src/course-graph.js';
@@ -9087,15 +9087,29 @@ app.post('/agent/record-performance', async (req, res) => {
      *
      * An agent with NO signed evidence classifies `human` and its record is private — the correct
      * fail-closed default, and the reason a brand-new agent is unreadable. ONE authenticated
-     * performance recorded as `actor_kind: agent` is what flips it, and from that moment the
-     * subject's whole learner record is a PUBLIC capability record that any signed caller may read.
+     * performance recorded as `actor_kind: agent` is what flips it, when nothing in the record was
+     * recorded as a person's, and from that moment the subject's whole learner record is a PUBLIC
+     * capability record that any signed caller may read.
      *
      * A delegate asked for this to be published on the CONTROL rather than only in the affordance,
      * because "this is the moment the consequence attaches", and it is the one fact here that could
      * surprise somebody badly. It is not a warning about a defect: fail-closed-to-human was
      * protecting a party who had not chosen anything yet, and this is the choice.
+     *
+     * ★ SO IT IS READ FROM THE RECORD, NOT FROM THIS REQUEST. It was said whenever `actor_kind` was
+     * agent, and a record that also holds a person's work stays a person's, and private: a performer
+     * shown "public from now on" was shown a false privacy status. What is said now is what the
+     * record classifies as with this unit in it, by the one classifier every gate uses, asked as a
+     * reader other than the subject (visibility is what somebody else can read); or, if it cannot
+     * be read, the rule and the assumption that protects the performer.
      */
-    const flipsToPublic = (p.actor_kind === 'human' ? 'human' : 'agent') === 'agent';
+    let recordVisibility: RecordVisibility | undefined;
+    if ((p.actor_kind === 'human' ? 'human' : 'agent') === 'agent') {
+      let kindNow: 'human' | 'agent' | undefined;
+      try { kindNow = classifySubjectKind({ isSelf: false, statements: await learnerStatementsFor(subjectPod, callerDid), subjectPodUrl: subjectPod }); }
+      catch (e) { console.warn('[foxxi][record-visibility]', (e as Error).message); }
+      recordVisibility = recordVisibilityAfterAgentWork(kindNow);
+    }
     /**
      * ★ AND WHERE IT LANDED, PLUS THE OTHER POD IF THERE IS ONE — see otherPodForPrincipal.
      *
@@ -9130,15 +9144,7 @@ app.post('/agent/record-performance', async (req, res) => {
           },
         }
         : {}),
-      ...(flipsToPublic
-        ? {
-          recordVisibility: {
-            subjectKind: 'agent',
-            publiclyReadable: true,
-            note: 'Recording a performance as an agent is what classifies you. An agent capability record is PUBLIC: from now on any signed caller can read your competencies, your performance history and your credentials by naming your DID. A subject with no signed evidence classifies human and stays private — that default was protecting a party who had not chosen; this is the choice.',
-          },
-        }
-        : {}),
+      ...(recordVisibility ? { recordVisibility } : {}),
       ...(sharedLattice ? { sharedLattice } : {}),
     }, bridgeBaseUrl, 'Performance recorded', activeAffordances.filter(a => a.toolName === 'foxxi.review_record'));
   } catch (err) {
