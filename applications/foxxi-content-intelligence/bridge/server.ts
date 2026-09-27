@@ -202,6 +202,8 @@ import { ContentError, compositionIri, contentRefOf, fragmentForLearner, fragmen
 import { admissionFrom, compositionFrom, resolveComposition, type Admission, type Composition, type RecordedCompetency } from '../src/compositions.js';
 import { bundledItem, ContentStore, isCompositionItem, LOCATIONS_PER_ITEM, mergeLocations, type ContentItem, type ContentLocation } from '../src/content-store.js';
 import { foldCourse, type FoldedCourse, type FoldOptions } from '../src/course-fold.js';
+import { attemptStatements, closingStatements, cmi5AttemptFrom, compositionCourseStructure, definedStatement, type Cmi5Attempt } from '../src/composition-cmi5.js';
+import { compositionAuPage } from '../src/composition-au-page.js';
 import { currentView, startPlay, takeStep, type CompositionPlay, type PlayInProgress } from '../src/composition-play.js';
 import { EFFICACY_POLICY, EfficacyTally, efficacyTokenKey, openTally, outcomeToken, sealTally } from '../src/fragment-efficacy.js';
 import { stateWriter } from '../src/state-writer.js';
@@ -10899,6 +10901,89 @@ app.get('/ns/foxxi/composition/:hash', async (req, res) => {
     const item = await contentStore.fetch(compositionIri(hash));
     if (!item || !isCompositionItem(item)) { res.status(404).json({ error: 'no such composition here' }); return; }
     res.type('application/json').send(JSON.stringify(item, null, 2));
+  } catch (err) { sendServerError(res, err, 'route-handler'); }
+});
+
+// ── A composition projected as a cmi5 course (src/composition-cmi5.ts) ──────
+// Any cmi5 LMS can import a composition's course structure and launch its one AU, whose page is
+// this bridge's player. The attempt's learner is the actor the LMS names, which the bridge cannot
+// verify: so the play resolves with no record, counts nothing toward what has worked, and keeps
+// nothing here beyond the play itself. The LMS keeps the record, sent by the page to its LRS.
+const PROJECTED_PLAYS_MAX = 5000;
+const projectedPlays = new Map<string, PlayInProgress & { attempt: Cmi5Attempt; startedAt: number; expiresAt: number }>();
+app.get('/ns/foxxi/composition/:hash/cmi5.xml', async (req, res) => {
+  try {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    const hash = String(req.params.hash);
+    if (!/^[0-9a-f]{64}$/.test(hash)) { res.status(404).json({ error: 'a composition id is a sha256 hash' }); return; }
+    const item = await contentStore.fetch(compositionIri(hash));
+    if (!item || !isCompositionItem(item)) { res.status(404).json({ error: 'no such composition here' }); return; }
+    res.type('application/xml').send(compositionCourseStructure(item, `${bridgeBaseUrl}/ns/foxxi/composition/${hash}/au`));
+  } catch (err) { sendServerError(res, err, 'route-handler'); }
+});
+
+app.get('/ns/foxxi/composition/:hash/au', async (req, res) => {
+  try {
+    const hash = String(req.params.hash);
+    if (!/^[0-9a-f]{64}$/.test(hash)) { res.status(404).json({ error: 'a composition id is a sha256 hash' }); return; }
+    const item = await contentStore.fetch(compositionIri(hash));
+    if (!item || !isCompositionItem(item)) { res.status(404).json({ error: 'no such composition here' }); return; }
+    res.type('text/html').send(compositionAuPage({ title: item.title, sessionBase: `${bridgeBaseUrl}/ns/foxxi/composition/${hash}/au` }));
+  } catch (err) { sendServerError(res, err, 'route-handler'); }
+});
+
+app.post('/ns/foxxi/composition/:hash/au/session', async (req, res) => {
+  try {
+    if (contentRateLimited(req, res)) return;
+    const hash = String(req.params.hash);
+    if (!/^[0-9a-f]{64}$/.test(hash)) { res.status(404).json({ error: 'a composition id is a sha256 hash' }); return; }
+    const attempt = cmi5AttemptFrom((req.body ?? {}) as Record<string, unknown>);
+    if (typeof attempt === 'string') { res.status(400).json({ error: attempt }); return; }
+    const root = await contentStore.fetch(compositionIri(hash));
+    if (!root || !isCompositionItem(root)) { res.status(404).json({ error: 'no such composition here' }); return; }
+    await contentStore.gather(root);
+    // No record, no kept admissions, no efficacy: a learner the bridge cannot verify gets the
+    // composition as it resolves for anyone new to it, and adds nothing to what has worked.
+    const learner = { id: `urn:foxxi:lms-learner:${createHash('sha256').update(JSON.stringify(attempt.actor)).digest('hex')}`, kind: 'human' as const };
+    const resolution = resolveComposition({ composition: root, learner, lookup: iri => contentStore.get(iri) });
+    const now = new Date().toISOString();
+    const at = { now, newId: randomUUID };
+    const opening = [definedStatement('initialized', attempt, at)];
+    const play = startPlay(resolution, root.title, learner, { session: randomUUID(), registration: attempt.registration }, now);
+    if (!play) {
+      res.json({ ok: true, done: true, summary: { steps: 0, graded: { correct: 0, total: 0 } }, statements: [...opening, ...closingStatements(attempt, { correct: 0, total: 0 }, at, 0)] });
+      return;
+    }
+    const t = Date.now();
+    for (const [k, v] of projectedPlays) if (v.expiresAt < t) projectedPlays.delete(k);
+    if (projectedPlays.size >= PROJECTED_PLAYS_MAX) { const oldest = projectedPlays.keys().next().value; if (oldest !== undefined) projectedPlays.delete(oldest); }
+    projectedPlays.set(play.id, { play, attempt, startedAt: t, expiresAt: t + CONTENT_PLAY_TTL_MS });
+    res.json({ ok: true, session: play.id, title: root.title, done: false, step: currentView(play), statements: opening });
+  } catch (err) { sendServerError(res, err, 'route-handler'); }
+});
+
+app.post('/ns/foxxi/composition/:hash/au/next', async (req, res) => {
+  try {
+    if (contentRateLimited(req, res)) return;
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    const entry = typeof b.session === 'string' ? projectedPlays.get(b.session) : undefined;
+    if (!entry || entry.expiresAt < Date.now() || !entry.play.composition.iri.endsWith(`/${String(req.params.hash)}`)) {
+      res.status(404).json({ error: 'no such attempt: launch the course again from your LMS' }); return;
+    }
+    // Nothing is kept here: the page sends the statements to the LMS, which keeps the record.
+    const taken = await takeStep(entry, b.answers, { actor: entry.attempt.actor, now: new Date().toISOString(), newId: randomUUID, platform: 'Foxxi' },
+      async statements => statements.map(x => String(x.id)));
+    if (!taken.ok) { res.status(taken.status).json({ error: taken.error, ...(taken.validationErrors ? { validationErrors: taken.validationErrors } : {}) }); return; }
+    const statements = attemptStatements(taken.step.statements, entry.attempt);
+    if (taken.step.done) {
+      statements.push(...closingStatements(entry.attempt, entry.play.graded, { now: new Date().toISOString(), newId: randomUUID }, Date.now() - entry.startedAt));
+      projectedPlays.delete(entry.play.id);
+    }
+    res.json({
+      ok: true, done: taken.step.done, statements,
+      ...(taken.step.graded ? { graded: taken.step.graded } : {}),
+      ...(taken.step.done ? { summary: { steps: entry.play.steps.length, graded: entry.play.graded } } : { step: currentView(entry.play) }),
+    });
   } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 

@@ -1,5 +1,51 @@
 # Changelog
 
+## 2026-09-27 — Foxxi: a composition projects as a cmi5 course any LMS can import
+
+A composition could be resolved and played through the bridge's own routes, by a learner the bridge could verify. An LMS that knows nothing of Foxxi had no way to offer it. Now any cmi5 LMS can import a composition as a course and launch it, and each learner it launches still gets what resolution chooses for them.
+
+- **One AU, resolved per learner** (`src/composition-cmi5.ts`). `GET <composition IRI>/cmi5.xml` is a course structure (cmi5 §13): the composition as the course, and one AU whose page is the bridge's player. A cmi5 course lists its AUs when it is published, while a composition decides its steps for each learner when it is played. So the LMS sees one course and an attempt.
+- **The page** (`src/composition-au-page.ts`, `GET <composition IRI>/au`) does what cmi5 asks of an AU and no more:
+  - It takes the auth-token from the fetch URL and sends it under Basic, or as it came when it already carries a scheme.
+  - It reads `LMS.LaunchData` and shows each step.
+  - It sends every statement the bridge hands it to the LMS's LRS, over xAPI 1.0.3.
+  - A statement the LMS refused is sent again before anything more is taken, and the page always moves with the bridge.
+  - Grading stays on the bridge, so the page never holds an answer.
+- **Every statement is the LMS's.**
+  - Each carries the LMS's actor, registration and context template (§10.2.1).
+  - Order: `initialized` first, then the play's statements at the fragment grain as cmi5 allowed statements, then `completed`. `passed` or `failed` follow when there is a mastery score to judge by: the LMS's, or every graded question right when moveOn asks for a pass without one. `terminated` comes last, and durations are given.
+  - Only the defined statements carry the cmi5 category (§7.1.3).
+  - The play's own completion of the composition is left out, so the AU's `completed` is the only one.
+  - No statement claims an xAPI version, since an LMS's LRS may speak 1.0.3.
+- **A learner the bridge cannot verify is not counted** (`bridge/server.ts`). The LMS names its learner as an xAPI actor, which the bridge cannot check.
+  - A projected attempt resolves with no record, and counts nothing toward what has worked.
+  - Its statements are kept nowhere on the bridge; the LMS keeps them.
+  - An attempt plays only under the composition it was launched for.
+  - The session and next routes take the content routes' per-IP budget before anything else.
+  - A launch that does not describe an attempt (actor, registration UUID, activity IRI, template, mastery score, moveOn) is refused with 400 (`cmi5AttemptFrom`).
+- **Docs.** The compose and fold affordances name the projection, and `docs/skills` is regenerated. `PERFORMANCE-ARCHITECTURE.md` §5 describes it, and its not-yet-wired list now names a SCORM projection. `LMS-CONFORMANCE.md` has a row for it.
+
+`applications/foxxi-content-intelligence/tests/composition-cmi5.test.ts` covers:
+- the course structure, read back by the bridge's own cmi5 reader;
+- launches that do and do not describe an attempt;
+- the context template, the registration and the category rules;
+- the whole attempt's stream in order;
+- the pass judgment with and without a mastery score;
+- the page played through in a DOM against an LMS and a bridge built from the same modules the routes use, with no answer on the page and every statement sent under Basic, in order;
+- the page sending again what the LMS refused;
+- the routes, checked in the bridge's source.
+
+Fifteen mutants were checked, and each fails a named test:
+- the AU named as the course;
+- a statement overriding the template, keeping its own registration, or keeping its xAPI version;
+- an allowed statement keeping the cmi5 category, or a defined one lacking it;
+- the play's own completion sent too;
+- a pass judged with nothing asking for one, or the LMS's mastery score ignored;
+- terminated not last;
+- any actor taken;
+- the page sending Bearer, speaking xAPI 2.0 to the LMS, or dropping what the LMS refused;
+- an attempt played under any composition.
+
 ## 2026-09-27 — Foxxi: a cmi5 auth-token travels under the Basic scheme, as the spec has an AU send it
 
 cmi5 §8.2.2 has an AU put the auth-token its fetch URL returned into the Authorization header under the Basic scheme (RFC 1945), as the token itself. Foxxi had it the other way round on both sides, so neither half of a launch across vendors worked.
