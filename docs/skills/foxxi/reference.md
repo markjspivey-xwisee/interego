@@ -724,7 +724,7 @@ Fold a course you authored (foxxi.scorm_author), or an emergent course as POST /
 
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
-| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, course_id, competency?, section_competencies?: { <section id>: competency }, level?, language?, subject_pod_url? }), or JSON.stringify({ agent_id, timestamp, course: <an emergent course>, subject_pod_url? }). An emergent course answers mapped: which IRI each of its ids became. competency is what the course develops: a competency IRI, another authority's term IRI, or a slug; without one, the course's own IRI names it. section_competencies names a section's own where it differs. level is foundational, working (default), applied or advanced; language is a BCP 47 tag. |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, course_id, competency?, section_competencies?: { <section id>: competency }, level?, language?, subject_pod_url? }), or JSON.stringify({ agent_id, timestamp, course: <an emergent course>, subject_pod_url? }). An emergent course answers mapped: which IRIs each of its ids became, one each unless the older model gave several things one id (two lessons titled alike share one). competency is what the course develops: a competency IRI, another authority's term IRI, or a slug; without one, the course's own IRI names it. section_competencies names a section's own where it differs. level is foundational, working (default), applied or advanced; language is a BCP 47 tag. |
 | `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
 
 ## `foxxi.content_resolve`
