@@ -11,12 +11,15 @@ A composition could be resolved and played through the bridge's own routes, by a
   - It sends every statement the bridge hands it to the LMS's LRS, over xAPI 1.0.3.
   - A statement the LMS refused is sent again before anything more is taken, and the page always moves with the bridge.
   - Grading stays on the bridge, so the page never holds an answer.
+  - It is served with a Content-Security-Policy that lets its one script run, by hash, and no other, and it offers the LMS's `returnURL` only when it is a web address. LaunchData comes from whatever LMS launched the page, and must not name a script to run in the bridge's origin.
 - **Every statement is the LMS's.**
   - Each carries the LMS's actor, registration and context template (§10.2.1).
   - Order: `initialized` first, then the play's statements at the fragment grain as cmi5 allowed statements, then `completed`. `passed` or `failed` follow when there is a mastery score to judge by: the LMS's, or every graded question right when moveOn asks for a pass without one. `terminated` comes last, and durations are given.
   - Only the defined statements carry the cmi5 category (§7.1.3).
   - The play's own completion of the composition is left out, so the AU's `completed` is the only one.
   - No statement claims an xAPI version, since an LMS's LRS may speak 1.0.3.
+  - A Browse or Review launch is not judged (§10.2.2): only `terminated` closes it, so a look never satisfies an LMS's moveOn.
+- **The automated review of this change found two problems, fixed here:** a `javascript:` returnURL would have run as a link in the bridge's origin, and a Browse or Review launch was played as a judged attempt.
 - **A learner the bridge cannot verify is not counted** (`bridge/server.ts`). The LMS names its learner as an xAPI actor, which the bridge cannot check.
   - A projected attempt resolves with no record, and counts nothing toward what has worked.
   - Its statements are kept nowhere on the bridge; the LMS keeps them.
@@ -33,9 +36,11 @@ A composition could be resolved and played through the bridge's own routes, by a
 - the pass judgment with and without a mastery score;
 - the page played through in a DOM against an LMS and a bridge built from the same modules the routes use, with no answer on the page and every statement sent under Basic, in order;
 - the page sending again what the LMS refused;
+- a Browse launch played without judgment, and no way back offered that is not a web address;
+- the page's policy matching its one script;
 - the routes, checked in the bridge's source.
 
-Fifteen mutants were checked, and each fails a named test:
+Twenty-two mutants were checked, and each fails a named test:
 - the AU named as the course;
 - a statement overriding the template, keeping its own registration, or keeping its xAPI version;
 - an allowed statement keeping the cmi5 category, or a defined one lacking it;
@@ -44,7 +49,10 @@ Fifteen mutants were checked, and each fails a named test:
 - terminated not last;
 - any actor taken;
 - the page sending Bearer, speaking xAPI 2.0 to the LMS, or dropping what the LMS refused;
-- an attempt played under any composition.
+- an attempt played under any composition;
+- any return address offered, or one of any scheme taken for a web address;
+- the launch mode dropped by the page, not checked, or a Browse launch judged;
+- the page served without its policy, or a policy that lets any script run.
 
 ## 2026-09-27 — Foxxi: a cmi5 auth-token travels under the Basic scheme, as the spec has an AU send it
 

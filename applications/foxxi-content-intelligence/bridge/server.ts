@@ -203,7 +203,7 @@ import { admissionFrom, compositionFrom, resolveComposition, type Admission, typ
 import { bundledItem, ContentStore, isCompositionItem, LOCATIONS_PER_ITEM, mergeLocations, type ContentItem, type ContentLocation } from '../src/content-store.js';
 import { foldCourse, type FoldedCourse, type FoldOptions } from '../src/course-fold.js';
 import { attemptStatements, closingStatements, cmi5AttemptFrom, compositionCourseStructure, definedStatement, type Cmi5Attempt } from '../src/composition-cmi5.js';
-import { compositionAuPage } from '../src/composition-au-page.js';
+import { compositionAuPage, compositionAuPageCsp } from '../src/composition-au-page.js';
 import { currentView, startPlay, takeStep, type CompositionPlay, type PlayInProgress } from '../src/composition-play.js';
 import { EFFICACY_POLICY, EfficacyTally, efficacyTokenKey, openTally, outcomeToken, sealTally } from '../src/fragment-efficacy.js';
 import { stateWriter } from '../src/state-writer.js';
@@ -10928,7 +10928,10 @@ app.get('/ns/foxxi/composition/:hash/au', async (req, res) => {
     if (!/^[0-9a-f]{64}$/.test(hash)) { res.status(404).json({ error: 'a composition id is a sha256 hash' }); return; }
     const item = await contentStore.fetch(compositionIri(hash));
     if (!item || !isCompositionItem(item)) { res.status(404).json({ error: 'no such composition here' }); return; }
-    res.type('text/html').send(compositionAuPage({ title: item.title, sessionBase: `${bridgeBaseUrl}/ns/foxxi/composition/${hash}/au` }));
+    const page = compositionAuPage({ title: item.title, sessionBase: `${bridgeBaseUrl}/ns/foxxi/composition/${hash}/au` });
+    // Its one script, by hash, and no other: whatever an LMS's LaunchData says cannot run here.
+    res.setHeader('Content-Security-Policy', compositionAuPageCsp(page));
+    res.type('text/html').send(page);
   } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 

@@ -10,7 +10,8 @@ import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { parseCmi5Course } from '../src/cmi5-course.js';
 import { currentView, PLAY_EXT, startPlay, takeStep, type CompositionPlay, type PlayInProgress, type Statement } from '../src/composition-play.js';
-import { compositionAuPage } from '../src/composition-au-page.js';
+import { compositionAuPage, compositionAuPageCsp } from '../src/composition-au-page.js';
+import { createHash } from 'node:crypto';
 import {
   attemptContext, attemptStatements, auIdOf, closingStatements, CMI5_IRIS, cmi5AttemptFrom, compositionCourseStructure, definedStatement, type Cmi5Attempt,
 } from '../src/composition-cmi5.js';
@@ -72,6 +73,7 @@ describe('a composition projects as a cmi5 course', () => {
       [{ ...attempt, contextTemplate: 'nope' }, /contextTemplate/],
       [{ ...attempt, masteryScore: 1.5 }, /masteryScore/],
       [{ ...attempt, moveOn: 'Whenever' }, /moveOn/],
+      [{ ...attempt, launchMode: 'Preview' }, /launchMode/],
     ] as const) expect(cmi5AttemptFrom(bad as Record<string, unknown>), JSON.stringify(bad).slice(0, 80)).toMatch(why);
   });
 });
@@ -134,6 +136,13 @@ describe('every statement in the attempt is the LMS\'s', () => {
     expect(verbs({ ...attempt, moveOn: 'CompletedAndPassed' }, { correct: 2, total: 2 })).toEqual(['completed', 'passed', 'terminated']);
     expect(verbs(withMastery, { correct: 0, total: 0 })).toEqual(['completed', 'terminated']);   // nothing graded, nothing to judge
   });
+
+  it('does not judge a Browse or Review launch: only terminated closes it', () => {
+    for (const launchMode of ['Browse', 'Review'] as const) {
+      expect(closingStatements({ ...attempt, masteryScore: 0.5, launchMode }, { correct: 2, total: 2 }, at(), 0).map(verbOf)).toEqual(['terminated']);
+    }
+    expect(closingStatements({ ...attempt, launchMode: 'Normal' }, { correct: 2, total: 2 }, at(), 0).map(verbOf)).toEqual(['completed', 'terminated']);
+  });
 });
 
 describe('the AU page an LMS launches', () => {
@@ -141,7 +150,7 @@ describe('the AU page an LMS launches', () => {
   afterAll(() => { for (const w of windows) w.window.close(); });
 
   /** An LMS with an LRS, and a bridge built from the modules its routes use, behind one fetch. */
-  function world(opts: { refuseFirstStatements?: boolean; returnURL?: string } = {}) {
+  function world(opts: { refuseFirstStatements?: boolean; returnURL?: string; launchMode?: string } = {}) {
     const lrs: Array<{ auth: string; version: string; statements: Statement[] }> = [];
     let refused = !opts.refuseFirstStatements;
     let play: PlayInProgress & { attempt?: Cmi5Attempt; startedAt?: number } = { play: undefined as unknown as CompositionPlay };
@@ -150,7 +159,7 @@ describe('the AU page an LMS launches', () => {
       const u = new URL(url);
       const headers = (init.headers ?? {}) as Record<string, string>;
       if (u.pathname === '/cmi5/fetch/one') return json(200, { 'auth-token': 'launch-token' });
-      if (u.pathname === '/xapi/activities/state') return json(200, { contextTemplate: attempt.contextTemplate, launchMode: 'Normal', moveOn: 'Completed', ...(opts.returnURL ? { returnURL: opts.returnURL } : {}) });
+      if (u.pathname === '/xapi/activities/state') return json(200, { contextTemplate: attempt.contextTemplate, launchMode: opts.launchMode ?? 'Normal', moveOn: 'Completed', ...(opts.returnURL ? { returnURL: opts.returnURL } : {}) });
       if (u.pathname === '/xapi/statements') {
         if (!refused) { refused = true; return json(503, {}); }
         lrs.push({ auth: headers.Authorization!, version: headers['X-Experience-API-Version']!, statements: JSON.parse(String(init.body)) });
@@ -204,6 +213,31 @@ describe('the AU page an LMS launches', () => {
     expect(w.lrs.every(x => x.auth === 'Basic launch-token' && x.version === '1.0.3')).toBe(true);
   });
 
+  it('offers no way back that is not a web address, and plays a Browse launch without judging it', async () => {
+    const w = world({ returnURL: 'javascript:alert(document.cookie)', launchMode: 'Browse' });
+    await expect.poll(() => w.go().disabled).toBe(false);
+    w.go().click();
+    await expect.poll(() => w.doc.querySelectorAll('input[name="q0"]').length).toBe(2);
+    (w.doc.querySelector('input[name="q0"][value="B"]') as HTMLInputElement).checked = true;
+    (w.doc.querySelector('input[name="q1"][value="true"]') as HTMLInputElement).checked = true;
+    await expect.poll(() => w.go().disabled).toBe(false);
+    w.go().click();
+    await expect.poll(() => w.status()).toContain('Done');
+    expect(w.doc.querySelector('#status a')).toBeNull();
+    expect(w.lrs.flatMap(x => x.statements).map(verbOf)).toEqual(['initialized', 'experienced', 'answered', 'answered', 'experienced', 'terminated']);
+  });
+
+  it('is served with a policy that lets its one script run and no other', () => {
+    const html = compositionAuPage({ title: course.title, sessionBase: 'https://bridge.example/ns/foxxi/composition/abc/au' });
+    const script = html.slice(html.indexOf('<script>') + '<script>'.length, html.indexOf('</script>'));
+    const csp = compositionAuPageCsp(html);
+    const scriptSrc = csp.split('; ').find(d => d.startsWith('script-src '))!;
+    expect(scriptSrc).toBe(`script-src 'sha256-${createHash('sha256').update(script, 'utf8').digest('base64')}'`);
+    expect(csp).toContain("default-src 'none'");
+    expect(csp).toContain('frame-ancestors *');   // an LMS frames it
+    expect((html.match(/<script>/g) ?? []).length).toBe(1);
+  });
+
   it('sends again what the LMS refused, before anything more is taken', async () => {
     const w = world({ refuseFirstStatements: true });
     await expect.poll(() => w.status()).toMatch(/did not take the record \(503\)/);
@@ -232,5 +266,6 @@ describe('the bridge serves the projection and plays an attempt without keeping 
     // An attempt is played only under the composition it was launched for.
     expect(next).toMatch(/!entry\.play\.composition\.iri\.endsWith\(`\/\$\{String\(req\.params\.hash\)\}`\)/);
     expect(route("app.get('/ns/foxxi/composition/:hash/cmi5.xml'")).toMatch(/compositionCourseStructure\(item, `\$\{bridgeBaseUrl\}\/ns\/foxxi\/composition\/\$\{hash\}\/au`\)/);
+    expect(route("app.get('/ns/foxxi/composition/:hash/au'")).toMatch(/res\.setHeader\('Content-Security-Policy', compositionAuPageCsp\(page\)\);/);
   });
 });

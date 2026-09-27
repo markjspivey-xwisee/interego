@@ -65,6 +65,8 @@ export interface Cmi5Attempt {
   contextTemplate?: Record<string, unknown>;
   masteryScore?: number;
   moveOn?: string;
+  /** LaunchData's launchMode (cmi5 §10.2.2): a Browse or Review launch is not judged. */
+  launchMode?: 'Normal' | 'Browse' | 'Review';
 }
 
 export const CMI5_MOVE_ON = ['Passed', 'Completed', 'CompletedAndPassed', 'CompletedOrPassed', 'NotApplicable'];
@@ -83,11 +85,13 @@ export function cmi5AttemptFrom(b: Record<string, unknown>): Cmi5Attempt | strin
   if (template !== undefined && (!template || typeof template !== 'object' || Array.isArray(template) || JSON.stringify(template).length > 8000)) return 'contextTemplate is LMS.LaunchData\'s context template';
   if (b.masteryScore !== undefined && (typeof b.masteryScore !== 'number' || b.masteryScore < 0 || b.masteryScore > 1)) return 'masteryScore is between 0 and 1';
   if (b.moveOn !== undefined && !CMI5_MOVE_ON.includes(String(b.moveOn))) return `moveOn is one of ${CMI5_MOVE_ON.join(', ')}`;
+  if (b.launchMode !== undefined && !['Normal', 'Browse', 'Review'].includes(String(b.launchMode))) return 'launchMode is Normal, Browse or Review';
   return {
     actor, registration: b.registration, activityId: b.activityId,
     ...(template ? { contextTemplate: template as Record<string, unknown> } : {}),
     ...(typeof b.masteryScore === 'number' ? { masteryScore: b.masteryScore } : {}),
     ...(b.moveOn !== undefined ? { moveOn: String(b.moveOn) } : {}),
+    ...(b.launchMode !== undefined ? { launchMode: String(b.launchMode) as Cmi5Attempt['launchMode'] } : {}),
   };
 }
 
@@ -166,9 +170,13 @@ export function isoDuration(ms: number): string {
  * How the attempt ends, in cmi5's order. `completed` always. `passed` or `failed` when something
  * was graded and there is a mastery score to judge by: the LMS's, or, when the LMS asks for a pass
  * (moveOn names Passed) and gives none, every graded question right. `terminated` last.
+ *
+ * A Browse or Review launch is not judged (cmi5 §10.2.2): the learner looks, or looks back, and
+ * only `terminated` closes it, so an LMS's moveOn is never satisfied by a look.
  */
 export function closingStatements(attempt: Cmi5Attempt, graded: { correct: number; total: number }, at: { now: string; newId: () => string }, elapsedMs: number): Statement[] {
   const duration = isoDuration(elapsedMs);
+  if (attempt.launchMode === 'Browse' || attempt.launchMode === 'Review') return [definedStatement('terminated', attempt, at, { duration })];
   const out: Statement[] = [definedStatement('completed', attempt, at, { completion: true, duration })];
   const wantsPass = attempt.masteryScore !== undefined || /Passed/.test(attempt.moveOn ?? '');
   if (graded.total > 0 && wantsPass) {

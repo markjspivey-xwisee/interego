@@ -14,7 +14,24 @@
  * literal, where a backslash would not survive into the page.
  */
 
+import { createHash } from 'node:crypto';
+
 const esc = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+/**
+ * The Content-Security-Policy the page is served with: its one script, by hash, and no other that
+ * could run, a `javascript:` address included. It talks to whatever LRS the launching LMS names and
+ * is framed by whatever LMS launches it, so connections and framing stay open; scripts do not.
+ */
+export function compositionAuPageCsp(html: string): string {
+  const start = html.indexOf('<script>') + '<script>'.length;
+  const end = html.indexOf('</script>', start);
+  const hash = createHash('sha256').update(html.slice(start, end), 'utf8').digest('base64');
+  return [
+    "default-src 'none'", `script-src 'sha256-${hash}'`, "style-src 'unsafe-inline'", 'img-src * data:', 'media-src *',
+    'connect-src *', 'frame-ancestors *', "base-uri 'none'", "form-action 'none'",
+  ].join('; ');
+}
 
 /** The AU page for a composition, whose session routes live under `sessionBase`. */
 export function compositionAuPage(opts: { title: string; sessionBase: string }): string {
@@ -164,10 +181,17 @@ export function compositionAuPage(opts: { title: string; sessionBase: string }):
     var graded = finished.graded;
     var said = graded && graded.total ? 'Done: ' + graded.correct + ' of ' + graded.total + ' graded questions right.' : 'Done.';
     status(said, 'ok');
-    if (launchData.returnURL) {
-      var a = document.createElement('a'); a.href = launchData.returnURL; a.textContent = 'Return to your course';
+    var back = webAddress(launchData.returnURL);
+    if (back) {
+      var a = document.createElement('a'); a.href = back; a.textContent = 'Return to your course';
       $('status').appendChild(document.createElement('br')); $('status').appendChild(a);
     }
+  }
+  // Only a web address is offered as the way back: LaunchData comes from whatever LMS launched
+  // this page, and must not name a script to run here.
+  function webAddress(value) {
+    try { var u = new URL(String(value || '')); return u.protocol === 'https:' || u.protocol === 'http:' ? u.href : ''; }
+    catch (e) { return ''; }
   }
 
   // The page moves with the bridge, and waits for the LMS: once a step is taken it is shown, but
@@ -213,7 +237,7 @@ export function compositionAuPage(opts: { title: string; sessionBase: string }):
       launchData = ld.ok ? await ld.json() : {};
       j = await bridge('/session', {
         actor: JSON.parse(actorText), registration: registration, activityId: activityId,
-        contextTemplate: launchData.contextTemplate, masteryScore: launchData.masteryScore, moveOn: launchData.moveOn,
+        contextTemplate: launchData.contextTemplate, masteryScore: launchData.masteryScore, moveOn: launchData.moveOn, launchMode: launchData.launchMode,
       });
     } catch (e) {
       status(String((e && e.message) || e), 'err');

@@ -312,7 +312,9 @@ speaks cmi5 can take a composition as it takes any other course.
   `LMS.LaunchData`, shows each step, and sends every statement the bridge
   hands it to the LMS's LRS, sending again what the LMS refused before
   anything more is taken. Grading stays on the bridge: the page never holds
-  an answer.
+  an answer. It is served with a policy that lets its one script run and no
+  other, and offers the LMS's return address only when it is a web address.
+  A Browse or Review launch is not judged: only `terminated` closes it.
 - **Every statement is the LMS's.**
   - Each carries the LMS's actor, registration and context template.
   - Order: `initialized` first, then the play's statements at the fragment
