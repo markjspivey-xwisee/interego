@@ -54,16 +54,17 @@ export function EfficacyPanel({ session }: { session: FoxxiSession }) {
 
   if (!/^[0-9a-f]{64}$/.test(hash)) return <Card title="Not a composition"><div>This link names no composition.</div></Card>;
   if (entryError) return <Card title="The bridge could not be reached"><div style={{ color: 'var(--text-dim)' }}>{entryError}</div></Card>;
-  if (read.at === 'loading') return <Card title="What it has learned" right={links}><div style={{ color: 'var(--text-dim)' }}>Reading…</div></Card>;
   if (read.at === 'absent') return <Card title="What it has learned" right={links}><div style={{ color: 'var(--bad)' }}>This bridge holds no composition with this hash.</div></Card>;
 
-  // Resolving it and taking it elsewhere do not wait on what it has learned: while its tally cannot be
-  // read (the bridge answers 503 then), the composition resolves and exports as ever.
-  const actions = <><ResolveCard session={session} iri={compositionIriOn(base, hash)} /><ExportCard base={base} hash={hash} /></>;
-  if (read.at === 'failed') {
+  // Resolving it and taking it elsewhere do not wait on what it has learned: while its tally is
+  // being read, however long that takes, or cannot be read (the bridge answers 503 then), the
+  // composition resolves and exports as ever. They wait only for the bridge's base, which their
+  // links are made from.
+  const actions = base ? <><ResolveCard session={session} iri={compositionIriOn(base, hash)} /><ExportCard base={base} hash={hash} /></> : null;
+  if (read.at === 'loading' || read.at === 'failed') {
     return (
       <div style={{ display: 'grid', gap: 14 }}>
-        <Card title="What it has learned" right={links}><div role="alert" style={{ color: 'var(--bad)' }}>{read.why}</div></Card>
+        <Card title="What it has learned" right={links}>{read.at === 'loading' ? <div style={{ color: 'var(--text-dim)' }}>Reading…</div> : <div role="alert" style={{ color: 'var(--bad)' }}>{read.why}</div>}</Card>
         {actions}
       </div>
     );

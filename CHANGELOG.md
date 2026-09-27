@@ -8,13 +8,13 @@ Codex found two things in the composition page (#534) after it merged.
   - both exports are fetched and saved from the page, under the name the bridge gives its SCORM package (`composition-<first 12 of the hash>-…`, `exportFileNames`);
   - an answer the bridge refused is said, not saved;
   - the links stay links, to copy for an LMS that imports by URL, and a click meant for another tab is left to the browser.
-- **Resolving and exporting do not wait on what the composition has learned.** They were drawn only once its efficacy tally was read, so the 503 the bridge answers while the tally cannot be read hid both. Now the page says the tally could not be read and still offers both. Only a composition the bridge does not hold goes without them.
+- **Resolving and exporting do not wait on what the composition has learned.** They were drawn only once its efficacy tally was read. So a slow read, or the 503 the bridge answers while the tally cannot be read, hid both. Now both are offered while the tally is being read, however long that takes, and when it cannot be read, and the page says which. They wait only for the bridge's base, which their links are made from. Only a composition the bridge does not hold goes without them.
 
 In `tests/the-author-tools-speak-the-bridges-language.test.ts`:
 - the export test also checks the file names against the bridge's name for its package;
-- two new tests pin the save flow, and the actions shown in both states.
+- two new tests pin the save flow, and the actions shown while the tally is read, when it cannot be, and with it.
 
-Eight mutants each fail a named test.
+Eleven mutants each fail a named test.
 
 In a browser against the deployed bridge, as the demo learner Joshua Liu:
 - both exports were saved from the page with the tab kept, as `composition-da9ddee6ae0e-cmi5.xml` (its `courseStructure`) and `composition-da9ddee6ae0e-scorm.zip` (2927 bytes); they were caught before the browser saved them;

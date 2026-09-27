@@ -283,11 +283,15 @@ describe("a composition's page: how it resolves, and where it can be taken", () 
     expect(save).toMatch(/a\.href = url; a\.download = names\[which\];/);
   });
 
-  it('resolves and exports even while what it has learned cannot be read', () => {
+  it('resolves and exports while what it has learned is being read, or cannot be read', () => {
     const panel = readFileSync(new URL('../dashboard-app/src/components/EfficacyPanel.tsx', import.meta.url), 'utf8');
-    expect(panel).toMatch(/const actions = <><ResolveCard session=\{session\} iri=\{compositionIriOn\(base, hash\)\} \/><ExportCard base=\{base\} hash=\{hash\} \/><\/>;/);
-    const failed = panel.slice(panel.indexOf("if (read.at === 'failed') {"), panel.indexOf('const view = read.view;'));
-    expect(failed).toMatch(/\{read\.why\}<\/div><\/Card>\s+\{actions\}/);
+    // Made once the bridge's base is known, which their links are made from.
+    expect(panel).toMatch(/const actions = base \? <><ResolveCard session=\{session\} iri=\{compositionIriOn\(base, hash\)\} \/><ExportCard base=\{base\} hash=\{hash\} \/><\/> : null;/);
+    // Offered while the tally is read, however long that takes, and when it cannot be.
+    expect(panel).not.toMatch(/if \(read\.at === 'loading'\) return/);
+    const pending = panel.slice(panel.indexOf("if (read.at === 'loading' || read.at === 'failed') {"), panel.indexOf('const view = read.view;'));
+    expect(pending).toContain("{read.at === 'loading' ? <div style={{ color: 'var(--text-dim)' }}>Reading…</div> : <div role=\"alert\" style={{ color: 'var(--bad)' }}>{read.why}</div>}</Card>");
+    expect(pending).toMatch(/<\/Card>\s+\{actions\}\s+<\/div>/);
     expect(panel.slice(panel.indexOf('const view = read.view;'))).toMatch(/<\/Card>\s+\{actions\}\s+\{view\.positions\.map/);
     // Only a composition the bridge does not hold goes without them.
     expect(panel.indexOf("if (read.at === 'absent')")).toBeLessThan(panel.indexOf('const actions ='));
