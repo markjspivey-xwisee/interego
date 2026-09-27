@@ -22,7 +22,13 @@ Codex found three things in the Work page (#533) after it merged; one also neede
 - the confirmation, a change of mind, and the unit after;
 - the page's warning, and the bridge's own word shown with the record.
 
-Twenty-four mutants each fail a named test. The other doors that take a caller's duration (an external agent run, a cmi5 session, a course completion) are left for a follow-up.
+Twenty-four mutants each fail a named test.
+
+The page was run in a browser against the deployed bridge, as the demo learner Joshua Liu, with nothing sent:
+- a 201-character step and `25m` were each stopped with their reason, and 200 characters and ` PT25M ` were let through;
+- choosing an agent showed what it does, and Record waited for the confirmation, which a change of mind cleared.
+
+The other doors that take a caller's duration (an external agent run, a cmi5 session, a course completion) are left for a follow-up.
 
 ## 2026-09-27 — Foxxi dashboard: recording your own work, and keeping what it implies
 
