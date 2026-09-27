@@ -716,7 +716,7 @@ Author a composition as yourself: a path of positions, each naming a competency 
 
 **Resolve a composition for yourself, from your own record**
 
-Resolve a composition for yourself: which fragment you are shown at each position and why. A position whose competency your record shows you have demonstrated (an Asserted competency, from performance or a credential, at the position's rank) is skipped; a training-only inference skips nothing. An admission, if given, limits each position to the forms that suit the work (the performance practice makes one from a plan). Among what is left, the alternative pitched nearest your level is chosen. Content that does not hash to its IRI is never used, and the trace says so. The same for a person and for an agent.
+Resolve a composition for yourself: which fragment you are shown at each position and why. A position whose competency your record shows you have demonstrated (an Asserted competency, from performance or a credential, at the position's rank) is skipped; a training-only inference skips nothing. An admission, if given, limits each position to the forms that suit the work (the performance practice makes one from a plan). Among what is left, the alternative pitched nearest your level is chosen, and among those pitched equally near, the one that has worked best here for learners at your level, while one not yet tried enough still gets its turn (each fragment IRI's /efficacy shows what it has done where). Content that does not hash to its IRI is never used, and the trace says so. The same for a person and for an agent.
 
 - Action: `urn:iep:action:foxxi:content-resolve-signed`
 - HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/content/resolve` (served by a bespoke route; not through the bridge's MCP endpoint)
@@ -746,7 +746,7 @@ Resolve a composition for yourself (as foxxi.content_resolve does, from your own
 
 **Answer the step you are on and go on**
 
-Answer the questions of the step you are on, if it has any, and move to the next. The bridge grades graded questions against their verifiers (never your word) and records the step in your own record as xAPI: an answered statement per question, the question as an interaction activity without its correct responses, and an experienced statement for the fragment carrying the competency, position, alternatives offered and why it was chosen. On the last step the composition is completed. Every statement follows the Foxxi xAPI profile's composition-attempt pattern.
+Answer the questions of the step you are on, if it has any, and move to the next. The bridge grades graded questions against their verifiers (never your word) and records the step in your own record as xAPI: an answered statement per question, the question as an interaction activity without its correct responses, and an experienced statement for the fragment carrying the competency, position, alternatives offered and why it was chosen. On the last step the composition is completed. Every statement follows the Foxxi xAPI profile's composition-attempt pattern. A step counts only once its record is kept: if it cannot be kept, the answers you gave stand and the next call keeps them before anything else.
 
 - Action: `urn:iep:action:foxxi:content-next-signed`
 - HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/content/next` (served by a bespoke route; not through the bridge's MCP endpoint)

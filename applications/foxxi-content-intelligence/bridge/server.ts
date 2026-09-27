@@ -201,7 +201,8 @@ import { courseMarkdownHtml } from '../src/course-markdown.js';
 import { ContentError, compositionIri, contentRefOf, fragmentForLearner, fragmentFrom, fragmentIri, publicFragment, sameContent, type Fragment } from '../src/content-fragments.js';
 import { admissionFrom, compositionFrom, resolveComposition, type Admission, type Composition, type RecordedCompetency } from '../src/compositions.js';
 import { ContentStore, isCompositionItem, LOCATIONS_PER_ITEM, mergeLocations, type ContentItem, type ContentLocation } from '../src/content-store.js';
-import { advancePlay, currentView, startPlay, type CompositionPlay } from '../src/composition-play.js';
+import { currentView, startPlay, takeStep, type CompositionPlay, type PlayInProgress } from '../src/composition-play.js';
+import { EFFICACY_POLICY, EfficacyTally, openTally, outcomeToken, sealTally } from '../src/fragment-efficacy.js';
 import { competencyIri, competencyIriForTerm, competencyIdOf } from '../src/competency-identity.js';
 import { activityIri, ACTIVITY_DEFINITIONS } from '../src/activity-identity.js';
 import { FOXXI_NS } from '../src/foxxi-vocab.js';
@@ -416,7 +417,7 @@ import {
   type AccessDecisionTrace,
 } from '../src/policy.js';
 import { deriveAdminKeyPair, publishTenantMembership, publishCourseCatalog, publishTenantAssignments, publishCoursePackage, publishMeshEnrolmentRegister, TENANT_TYPES, type TenantPublishConfig } from '../src/tenant-publisher.js';
-import { attachXapiLrsRoutes, listStoredStatements, storeStatementInternal, getStatementStore } from '../src/xapi-lrs.js';
+import { attachXapiLrsRoutes, listStoredStatements, storeStatementDurably, storeStatementInternal, getStatementStore } from '../src/xapi-lrs.js';
 import type { StoredStatement } from '../src/statement-store.js';
 import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerRegistration, cmi5BearerTenant, getCmi5Course, learnerSatisfiedAus, observeCmi5Statement, signedLaunchLearner, stageLaunchData } from '../src/cmi5-lms.js';
 import { AGS_SCOPE, attachLti13Routes, type Lti13Tool, type VerifiedResourceLaunch } from '../src/lti13.js';
@@ -10556,6 +10557,58 @@ app.post('/agent/content/composition', async (req, res) => {
   } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 
+// ── What has worked where ────────────────────────────────────────────
+// Outcomes from plays, tallied per competency, fragment and level with no learner in them, each
+// learner counted once per cell (src/fragment-efficacy.ts), and read by resolution. Kept on the
+// tenant pod sealed to the bridge's own key (sealTally); with no key, it lives in the process only.
+// One bridge writes it, and the stored tally is read before anything is counted.
+const efficacySeal = bridgeEncryptionKeypair();
+const EFFICACY_RESOURCE = tenantPodUrl && efficacySeal ? `${tenantPodUrl.replace(/\/$/, '')}/foxxi-lattice/fragment-efficacy.envelope.json` : '';
+/** The key a learner's per-cell token is made under: the bridge's grading key, or one for this process only. */
+const efficacyKey = gradedKey || randomBytes(32).toString('hex');
+let fragmentEfficacy = new EfficacyTally();
+/** Whether the stored tally has been read, or found absent: only then is an outcome counted, or the tally written back. */
+let efficacyRead = !EFFICACY_RESOURCE;
+let efficacyLoad: Promise<boolean> | undefined;
+let efficacyPersisting: Promise<void> | undefined;
+let efficacyDirty = false;
+/**
+ * Read the stored tally once. A pod that cannot be read now is tried again on the next call, and
+ * until it has been read nothing is counted: writing back a tally that never saw the stored one
+ * would replace everything learned so far with what this process alone has seen.
+ */
+function ensureEfficacy(): Promise<boolean> {
+  if (efficacyRead) return Promise.resolve(true);
+  efficacyLoad ??= (async () => {
+    try {
+      const r = await (globalThis.fetch as typeof fetch)(EFFICACY_RESOURCE, { headers: { Accept: 'application/json' } });
+      if (r.status === 404) return (efficacyRead = true);
+      if (!r.ok) return false;
+      // A stored tally this bridge did not seal, or cannot open, is replaced by what is counted from
+      // now on; EfficacyTally.from drops any cell it cannot trust.
+      fragmentEfficacy = openTally(await r.text(), efficacySeal!) ?? new EfficacyTally();
+      return (efficacyRead = true);
+    } catch { return false; }
+    finally { efficacyLoad = undefined; }
+  })();
+  return efficacyLoad;
+}
+function persistEfficacy(): void {
+  if (!EFFICACY_RESOURCE) return;
+  if (efficacyPersisting) { efficacyDirty = true; return; }
+  const f = globalThis.fetch as typeof fetch;
+  efficacyPersisting = (async () => {
+    do {
+      efficacyDirty = false;
+      try {
+        await f(EFFICACY_RESOURCE.replace(/[^/]+$/, ''), { method: 'PUT', headers: { 'Content-Type': 'text/turtle', Link: '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"' }, body: '' }).catch(() => undefined);
+        const r = await f(EFFICACY_RESOURCE, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: sealTally(fragmentEfficacy, efficacySeal!) });
+        if (!r.ok) throw new Error(`the pod answered ${r.status}`);
+      } catch { efficacyDirty = true; break; }   // retried after the next outcome
+    } while (efficacyDirty);
+  })().finally(() => { efficacyPersisting = undefined; });
+}
+
 /** Resolve a composition for a verified caller from their own record: the one path resolve and launch share. */
 async function resolveForCaller(callerDid: string, signer: string, p: Record<string, unknown>): Promise<
   | { ok: true; root: Composition; kind: 'human' | 'agent'; resolution: ReturnType<typeof resolveComposition>; missing: string[] }
@@ -10569,9 +10622,11 @@ async function resolveForCaller(callerDid: string, signer: string, p: Record<str
     const admission: Admission | undefined = p.admission === undefined ? undefined : admissionFrom(p.admission);
     const { missing } = await contentStore.gather(root);
     const record = await learnerCompetencies(callerDid, kind);
+    await ensureEfficacy();
     const resolution = resolveComposition({
       composition: root, learner: { id: callerDid, kind }, record,
       ...(admission ? { admission: () => admission } : {}), lookup: iri => contentStore.get(iri),
+      efficacy: (competency, fragment, level) => fragmentEfficacy.counts(competency, fragment, level),
     });
     return { ok: true, root, kind, resolution, missing };
   } catch (e) {
@@ -10597,11 +10652,11 @@ app.post('/agent/content/resolve', async (req, res) => {
 // ── Playing a composition ────────────────────────────────────────────
 // A learner, person or agent, steps through what resolution chose for them
 // (src/composition-play.ts). The bridge grades each step against the stored questions and
-// records it in the learner's own lens at the grain of the fragment, the evidence choosing
-// among alternatives by what has worked will read. Sessions live in the process, like SCORM plays.
+// records it in the learner's own lens at the grain of the fragment: the evidence that choosing
+// among alternatives by what has worked reads. Sessions live in the process, like SCORM plays.
 const CONTENT_PLAYS_MAX = 5000;
 const CONTENT_PLAY_TTL_MS = 3 * 60 * 60 * 1000;
-const contentPlays = new Map<string, { play: CompositionPlay; expiresAt: number }>();
+const contentPlays = new Map<string, PlayInProgress & { expiresAt: number }>();
 function keepPlay(play: CompositionPlay): void {
   const now = Date.now();
   for (const [k, v] of contentPlays) if (v.expiresAt < now) contentPlays.delete(k);
@@ -10609,27 +10664,51 @@ function keepPlay(play: CompositionPlay): void {
   contentPlays.set(play.id, { play, expiresAt: now + CONTENT_PLAY_TTL_MS });
 }
 
-/** Store a play's statements in the learner's own lens, with the bridge's mark on what it graded, and compose them into their lattice. */
-function recordPlayStatements(learnerDid: string, statements: ReadonlyArray<Record<string, unknown>>): string[] {
+/** A play's statement with the bridge's mark on it when the bridge graded it, fixed once so a retry keeps the same statement. */
+function markIfGraded(raw: Record<string, unknown>): Record<string, unknown> {
+  const result = raw.result as Record<string, unknown> | undefined;
+  const graded = !!result && ('success' in result || 'score' in result);
+  return graded && gradedKey ? withGradedTag(raw, gradedKey) : raw;
+}
+
+/** Forwarding runs one statement after another for each lens, so a receiver sees a learner's statements in the order they were kept. */
+const forwardQueues = new Map<string, Promise<void>>();
+function forwardInOrder(lens: string, statements: ReadonlyArray<Record<string, unknown>>): void {
+  const next = (forwardQueues.get(lens) ?? Promise.resolve()).then(async () => {
+    for (const s of statements) await forwardToTargets(lens, s).catch(() => {});
+  });
+  forwardQueues.set(lens, next);
+  void next.finally(() => { if (forwardQueues.get(lens) === next) forwardQueues.delete(lens); });
+}
+
+/**
+ * Keep a step's statements in the learner's record, in order, waiting for every write: the
+ * learner's lens, then their lattice on their own pod, each write confirmed where this bridge keeps
+ * records on pods. Returns the statements' ids, or null when any could not be kept. Keeping the
+ * same statements again is harmless: the lens holds an identical statement once, and the lattice is
+ * content-addressed. Forwarding follows only what was kept.
+ */
+async function recordPlayStatements(learnerDid: string, statements: ReadonlyArray<Record<string, unknown>>): Promise<string[] | null> {
   const pod = resolveSubjectPodUrl(learnerDid);
   const label = actorForPod(pod, MESH_ACTOR_LABELS);
   const lens = lensTenantFor(label);
-  const ids: string[] = [];
-  for (const raw of statements) {
-    const result = raw.result as Record<string, unknown> | undefined;
-    const graded = !!result && ('success' in result || 'score' in result);
-    const s = graded && gradedKey ? withGradedTag(raw, gradedKey) : raw;
-    const id = storeStatementInternal(s, lens);
-    if (!id) continue;   // refused as non-conformant: no id to report
-    ids.push(id);
-    void composeIntoSharedLattice({
+  const kept: Array<Record<string, unknown> & { id: string }> = [];
+  for (const s of statements) {
+    const id = await storeStatementDurably(s, lens);
+    if (!id) return null;
+    kept.push({ ...s, id });
+  }
+  const onPods = bridgeEncryptionKeypair() !== null;
+  for (const s of kept) {
+    const composed = await composeIntoSharedLattice({
       podUrl: pod, agentDid: learnerDid, label,
       terms: [learnerDid, String((s.verb as { id?: string } | undefined)?.id ?? ''), String((s.object as { id?: string } | undefined)?.id ?? '')],
       content: s, contentType: 'xapi:Statement', projections: ['rdf', 'vc', 'activity'],
     });
-    forwardToTargets(lens, { ...s, id }).catch(() => {});
+    if (onPods && composed?.persisted !== true) return null;
   }
-  return ids;
+  forwardInOrder(lens, kept);
+  return kept.map(s => s.id);
 }
 
 app.post('/agent/content/launch', async (req, res) => {
@@ -10664,15 +10743,28 @@ app.post('/agent/content/next', async (req, res) => {
     if (!entry || entry.expiresAt < Date.now()) { res.status(404).json({ error: 'no such play session: launch the composition' }); return; }
     // A play is its learner's: nobody else can answer for them or read their next step.
     if (entry.play.learner.id !== auth.callerDid) { res.status(403).json({ error: 'this play session belongs to another learner' }); return; }
-    const outcome = advancePlay(entry.play, p.answers, {
+    // The step counts only once its record is kept (takeStep): until then nothing is counted, and
+    // the play is not finished, and a step that could not be kept is kept on the next request with
+    // the answers already given.
+    const taken = await takeStep(entry, p.answers, {
       actor: { objectType: 'Agent', account: { homePage: String(authoritativeSource), name: auth.callerDid } },
       now: new Date().toISOString(), newId: randomUUID, platform: 'Foxxi',
-    });
-    if (!outcome.ok) { res.status(outcome.status).json({ error: outcome.error, ...(outcome.validationErrors ? { validationErrors: outcome.validationErrors } : {}) }); return; }
-    const recorded = recordPlayStatements(auth.callerDid, outcome.statements);
+    }, statements => recordPlayStatements(auth.callerDid, statements), markIfGraded);
+    if (!taken.ok) { res.status(taken.status).json({ error: taken.error, ...(taken.validationErrors ? { validationErrors: taken.validationErrors } : {}) }); return; }
+    const outcome = taken.step;
+    // Each outcome counted once for this learner in its cell, under a token that names nobody,
+    // and only against the stored tally: while it cannot be read, outcomes go uncounted.
+    let counted = 0;
+    if (await ensureEfficacy()) {
+      for (const o of outcome.outcomes) {
+        const token = outcomeToken(efficacyKey, auth.callerDid, o);
+        if (token && fragmentEfficacy.record(o, token) === 'counted') counted++;
+      }
+    }
+    if (counted) persistEfficacy();
     if (outcome.done) contentPlays.delete(entry.play.id);
     sendActionResult(req, res, {
-      ok: true, sessionId: entry.play.id, recorded, done: outcome.done,
+      ok: true, sessionId: entry.play.id, recorded: taken.recorded, done: outcome.done, ...(taken.resumed ? { keptEarlierAnswers: true } : {}),
       ...(outcome.graded ? { graded: outcome.graded } : {}),
       ...(outcome.done ? { summary: { steps: entry.play.steps.length, graded: entry.play.graded } } : { step: currentView(entry.play) }),
     }, bridgeBaseUrl, outcome.done ? 'Composition completed' : 'Next step', outcome.done ? [] : activeAffordances.filter(a => a.toolName === 'foxxi.content_next'));
@@ -10693,6 +10785,23 @@ app.get('/ns/foxxi/fragment/:hash', async (req, res) => {
       res.type('text/markdown').send(item.body); return;
     }
     res.type('application/json').send(JSON.stringify(publicFragment(item), null, 2));
+  } catch (err) { sendServerError(res, err, 'route-handler'); }
+});
+
+// What has worked where, for one fragment: per competency and level, how learners who met it went
+// on to do. A cell is shown only once it holds EFFICACY_POLICY.publishAt outcomes, so a cell of one
+// cannot be read as one learner's result.
+app.get('/ns/foxxi/fragment/:hash/efficacy', async (req, res) => {
+  try {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    const hash = String(req.params.hash);
+    if (!/^[0-9a-f]{64}$/.test(hash)) { res.status(404).json({ error: 'a fragment id is a sha256 hash' }); return; }
+    await ensureEfficacy();
+    const iri = fragmentIri(hash);
+    const cells = fragmentEfficacy.cellsOf(iri).map(({ competencyId, level, counts }) => (counts.n >= EFFICACY_POLICY.publishAt
+      ? fragmentEfficacy.view(competencyIri(competencyId), iri, level)
+      : { competency: competencyIri(competencyId), level, n: `fewer than ${EFFICACY_POLICY.publishAt}` }));
+    res.type('application/json').send(JSON.stringify({ fragment: iri, policy: EFFICACY_POLICY, cells }, null, 2));
   } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 

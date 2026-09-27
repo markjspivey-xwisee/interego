@@ -14,6 +14,16 @@
  * `correctResponsesPattern`. These leave it out: the definition is built from the question's
  * public view, and the profile template for `answered` requires the pattern's absence.
  *
+ * ★ EACH STEP'S OUTCOME IS CREDITED TO WHAT PREPARED IT. A graded step's result (every graded
+ * question right, or not) is an outcome for its own fragment and for each teaching fragment at the
+ * same competency the learner met since the last check: an explanation is judged by the check that
+ * follows it. The outcomes carry no learner (fragment-efficacy.ts tallies them).
+ *
+ * ★ A STEP COUNTS ONLY ONCE ITS RECORD IS KEPT. takeStep hands a step's statements to whoever
+ * keeps them and returns the step's outcome only once they are kept. Until then the step stays
+ * answered but pending, and taking it again keeps the very same statements, so a retry never
+ * grades new answers or writes a second copy of what an earlier attempt managed to keep.
+ *
  * The statements are built here and nothing is stored. The bridge marks the results it graded
  * (graded-evidence.ts), stores them in the learner's own lens and composes them into their lattice.
  */
@@ -22,6 +32,7 @@ import { fragmentForLearner, publicFragment, type PublicQuestion } from './conte
 import type { Resolution, ResolvedStep } from './compositions.js';
 import { questionIsRight } from './course-questions.js';
 import { scormInteractionResponse, validateScormResponses } from './scorm-assessment.js';
+import type { Outcome } from './fragment-efficacy.js';
 
 const ADL = 'http://adlnet.gov/expapi';
 
@@ -51,6 +62,8 @@ export interface CompositionPlay {
   /** The step the learner is on; equals steps.length once the play is done. */
   at: number;
   graded: { correct: number; total: number };
+  /** Teaching fragments met since the last check at their competency, waiting to be credited with it. */
+  waiting: Record<string, Array<{ fragment: string; level: ResolvedStep['pitchedAt'] }>>;
   startedAt: string;
   endedAt?: string;
 }
@@ -64,7 +77,7 @@ export function startPlay(resolution: Resolution, title: string, learner: Compos
   return {
     id: ids.session, registration: ids.registration, learner,
     composition: { iri: resolution.composition, title }, steps: resolution.steps,
-    at: 0, graded: { correct: 0, total: 0 }, startedAt: now,
+    at: 0, graded: { correct: 0, total: 0 }, waiting: {}, startedAt: now,
   };
 }
 
@@ -78,32 +91,37 @@ export function currentView(play: CompositionPlay): Record<string, unknown> | un
   };
 }
 
-/** A question as an xAPI interaction activity: its type, words and choices, never its correct responses. */
-export function interactionDefinition(q: PublicQuestion): Record<string, unknown> {
-  const def: Record<string, unknown> = { type: PLAY_TYPES.interaction, interactionType: q.type, description: { en: q.question } };
+/**
+ * A question as an xAPI interaction activity: its type, words and choices, never its correct
+ * responses. Its language maps are keyed by the fragment's language, so a question authored in
+ * Portuguese is not declared English downstream.
+ */
+export function interactionDefinition(q: PublicQuestion, language = 'en'): Record<string, unknown> {
+  const def: Record<string, unknown> = { type: PLAY_TYPES.interaction, interactionType: q.type, description: { [language]: q.question } };
   const input = q.input;
-  const letters = (xs: readonly string[] | undefined): Array<{ id: string; description: { en: string } }> =>
-    (xs ?? []).map((x, i) => ({ id: String.fromCharCode(97 + i), description: { en: x } }));
+  const letters = (xs: readonly string[] | undefined): Array<{ id: string; description: Record<string, string> }> =>
+    (xs ?? []).map((x, i) => ({ id: String.fromCharCode(97 + i), description: { [language]: x } }));
   if (input?.type === 'choice' || input?.type === 'sequencing') def.choices = letters(input.type === 'choice' ? input.options : input.items);
   if (input?.type === 'likert') def.scale = letters(input.options);
   if (input?.type === 'matching') {
-    def.source = (input.items ?? []).map((x, i) => ({ id: String(i + 1), description: { en: x } }));
+    def.source = (input.items ?? []).map((x, i) => ({ id: String(i + 1), description: { [language]: x } }));
     def.target = letters(input.targets);
   }
   return def;
 }
 
 export type Advance =
-  | { ok: true; statements: Statement[]; graded?: { correct: number; total: number; detail: Array<{ question: string; correct: boolean | null; explanation?: string }> }; done: boolean }
+  | { ok: true; statements: Statement[]; outcomes: Outcome[]; graded?: { correct: number; total: number; detail: Array<{ question: string; correct: boolean | null; explanation?: string }> }; done: boolean }
   | { ok: false; status: number; error: string; validationErrors?: Array<{ index: number; message: string }> };
 
 /**
  * Take the learner's answers to the step they are on, grade them against the stored questions,
  * build the statements that record it, and move on. On the last step the composition is completed.
  */
-export function advancePlay(play: CompositionPlay, answers: unknown, ctx: {
-  actor: Record<string, unknown>; now: string; newId: () => string; platform?: string;
-}): Advance {
+/** What a step's statements are made with: who the learner is to xAPI, the time, and fresh statement ids. */
+export interface AdvanceContext { actor: Record<string, unknown>; now: string; newId: () => string; platform?: string }
+
+export function advancePlay(play: CompositionPlay, answers: unknown, ctx: AdvanceContext): Advance {
   const step = play.steps[play.at];
   if (!step) return { ok: false, status: 409, error: 'this play is done; launch the composition again to replay it' };
   const questions = step.fragment.questions ?? [];
@@ -138,18 +156,29 @@ export function advancePlay(play: CompositionPlay, answers: unknown, ctx: {
     if (right !== null) { total++; if (right) correct++; }
     detail.push({ question: q.question, correct: right, ...(q.explanation ? { explanation: q.explanation } : {}) });
     statements.push(statement('answered',
-      { id: `${fragmentIri}#question-${i + 1}`, definition: interactionDefinition(views[i]!) },
+      { id: `${fragmentIri}#question-${i + 1}`, definition: interactionDefinition(views[i]!, step.fragment.language) },
       { response: scormInteractionResponse(reply, q.input).slice(0, 4000), completion: true, ...(right !== null ? { success: right } : {}) },
       context([{ id: fragmentIri, type: PLAY_TYPES.fragment }], step.path, { [PLAY_EXT.competency]: step.competency })));
   });
   statements.push(statement('experienced',
-    { id: fragmentIri, definition: { type: PLAY_TYPES.fragment, name: { en: step.fragment.title ?? `${step.fragment.kind} fragment` } } },
+    { id: fragmentIri, definition: { type: PLAY_TYPES.fragment, name: { [step.fragment.language ?? 'en']: step.fragment.title ?? `${step.fragment.kind} fragment` } } },
     { completion: true, ...(total ? { score: { raw: correct, max: total, min: 0, scaled: Number((correct / total).toFixed(4)) }, success: correct === total } : {}) },
     context([{ id: step.path[step.path.length - 1] ?? play.composition.iri, type: PLAY_TYPES.composition }], step.path.slice(0, -1), {
       [PLAY_EXT.competency]: step.competency, [PLAY_EXT.position]: step.position,
       [PLAY_EXT.alternatives]: step.alternatives, [PLAY_EXT.chosenBecause]: step.chosenBecause,
     })));
 
+  // Credit the outcome: a graded step to itself and to what taught it since the last check; a
+  // step with nothing graded waits for the next check at its competency.
+  const outcomes: Outcome[] = [];
+  if (total) {
+    const success = correct === total;
+    outcomes.push({ competency: step.competency, fragment: fragmentIri, level: step.pitchedAt, success });
+    for (const w of play.waiting[step.competency] ?? []) outcomes.push({ competency: step.competency, fragment: w.fragment, level: w.level, success });
+    delete play.waiting[step.competency];
+  } else {
+    (play.waiting[step.competency] ??= []).push({ fragment: fragmentIri, level: step.pitchedAt });
+  }
   play.graded.correct += correct;
   play.graded.total += total;
   play.at++;
@@ -162,5 +191,46 @@ export function advancePlay(play: CompositionPlay, answers: unknown, ctx: {
       { completion: true, ...(g.total ? { score: { raw: g.correct, max: g.total, min: 0, scaled: Number((g.correct / g.total).toFixed(4)) } } : {}) },
       { registration: play.registration, ...(ctx.platform ? { platform: ctx.platform } : {}), extensions: { [PLAY_EXT.contextKind]: 'training', [PLAY_EXT.actorKind]: play.learner.kind } }));
   }
-  return { ok: true, statements, ...(questions.length ? { graded: { correct, total, detail } } : {}), done };
+  return { ok: true, statements, outcomes, ...(questions.length ? { graded: { correct, total, detail } } : {}), done };
+}
+
+/** A play in progress: the step whose record is not kept yet, if any, and whether a step is being taken now. */
+export interface PlayInProgress {
+  play: CompositionPlay;
+  /** A step answered and graded whose statements could not be kept yet: taking a step keeps these very statements first. */
+  pending?: Extract<Advance, { ok: true }>;
+  /** A step is being taken; another request for this play waits its turn. */
+  busy?: boolean;
+}
+
+export type Taken =
+  | { ok: true; recorded: string[]; step: Extract<Advance, { ok: true }>; resumed: boolean }
+  | Extract<Advance, { ok: false }>;
+
+/**
+ * Take the learner's next step and keep its record. `keep` stores the statements, in order, and
+ * answers their ids once every write has settled, or null when any could not be kept; `mark`
+ * fixes each statement's final form (the bridge's mark on what it graded) once, before the first
+ * attempt. The step's outcome is returned only once its record is kept. Until then it stays
+ * pending: the answers given stand, nothing is credited, and the next take keeps the same
+ * statements before anything else. One take at a time per play.
+ */
+export async function takeStep(entry: PlayInProgress, answers: unknown, ctx: AdvanceContext,
+  keep: (statements: readonly Statement[]) => Promise<string[] | null>,
+  mark: (s: Statement) => Statement = s => s): Promise<Taken> {
+  if (entry.busy) return { ok: false, status: 409, error: 'a step of this play is still being recorded; send it again in a moment' };
+  entry.busy = true;
+  try {
+    const resumed = !!entry.pending;
+    if (!entry.pending) {
+      const advanced = advancePlay(entry.play, answers, ctx);
+      if (!advanced.ok) return advanced;
+      entry.pending = { ...advanced, statements: advanced.statements.map(mark) };
+    }
+    const step = entry.pending;
+    const recorded = await keep(step.statements);
+    if (!recorded) return { ok: false, status: 503, error: 'your answers to this step were taken but could not be kept in your record yet; take the step again to keep them (the answers already given stand)' };
+    delete entry.pending;
+    return { ok: true, recorded, step, resumed };
+  } finally { entry.busy = false; }
 }

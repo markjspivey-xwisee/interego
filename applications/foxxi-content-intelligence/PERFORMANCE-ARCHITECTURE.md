@@ -185,8 +185,10 @@ agent, as learner and as author.
     position's rank. A training-only inference is Hypothetical and skips
     nothing.
   - *Admission* keeps only the forms said to suit the competency.
-  - *Choice* takes the alternative pitched nearest the learner's level,
-    then the author's order. A nested composition is chosen only if it
+  - *Choice* takes the alternative pitched nearest the learner's level.
+    Among fragments pitched equally near, it takes what has worked there
+    for learners at that level (below), and otherwise the author's order.
+    A nested composition is chosen only if it
     resolves; one that leaves positions unmet falls back to the next
     alternative, and the reason says why the branch fell short. Nested
     resolutions are remembered per composition, so the work stays
@@ -251,15 +253,54 @@ play. `foxxi.content_next` answers the step they are on and moves on.
 - **Every statement follows the Foxxi xAPI profile's
   `composition-attempt` pattern.** Its templates are `question-answered`,
   `fragment-experienced` and `composition-completed`, with the `answered`
-  verb and the interaction, fragment and composition activity types.
+  verb and the interaction, fragment and composition activity types. Its
+  language maps are keyed by the fragment's language.
+- **A step counts only once its record is kept** (`takeStep`). Every
+  statement is written to the learner's lens and composed into their lattice
+  on their own pod, and each write is waited for. If one fails, the step
+  stays answered but pending: nothing is credited, a finished play is not
+  let go, and the next call keeps the same statements, with the answers
+  already given. So a retry never grades new answers or writes a second
+  copy. Only kept statements are forwarded, one after another for each
+  learner, in the pattern's order.
 - **The content routes share a per-IP budget of their own.** Content is
   authored a fragment at a time and played a step at a time, so one course
   is dozens of requests.
 
+**Alternatives that learn** ([`src/fragment-efficacy.ts`](src/fragment-efficacy.ts)).
+Nobody declares which explanation of a competency works; the plays show it.
+
+- **A cell is a fragment at a competency, for learners at one level.** It
+  counts the learners who met the fragment there and how many then
+  succeeded.
+- **A teaching fragment is credited with the check that follows it.** An
+  explanation has no answer of its own, so it takes the outcome of the next
+  graded step at the same competency in the same play.
+- **Each learner counts once per cell.** The count is kept under an HMAC
+  of the learner and the cell, with a key only the bridge holds. The token
+  names nobody and differs from cell to cell, so replaying a composition
+  cannot push a fragment up or down, and one learner's outcomes cannot be
+  linked across fragments. A cell stops growing at 1,000 learners.
+- **A cell's success rate is read at its Wilson lower bound.** At 12
+  outcomes the cell turns from Hypothetical to Asserted: the same flip the
+  practice's calibration makes for an intervention.
+- **Choice prefers what has worked, and still tries what has no record
+  yet.** An alternative with no outcome yet for learners at that level gets
+  its turn first.
+  After that, the upper confidence bound decides, so a new explanation can
+  earn its place. `chosenBecause` says which rule chose, and the counts
+  once they may be shown.
+- **Nothing about a person is published.** A cell's counts are shown only
+  once it holds 5 outcomes: by `GET <fragment IRI>/efficacy`, and in the
+  reason a resolution gives, which the learner sees and the step's record
+  keeps. Pod resources are world-readable, so the tally is kept on the
+  tenant pod sealed to the bridge's own key, and taken back only if that
+  key sealed it. A bridge with no key keeps it in the process only.
+- **A pod that cannot be read now keeps its tally.** Outcomes are counted
+  only once the stored tally has been read, so it is never replaced by one
+  process's view.
+
 Not yet wired:
-- choosing among alternatives by what has worked for learners like this
-  one (the Hypothetical-to-Asserted flip on each fragment's record at each
-  position);
 - regime sources beyond a supplied plan;
 - folding the older in-memory `Course` model and authored SCORM courses
   into this one.

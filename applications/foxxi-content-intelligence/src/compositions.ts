@@ -43,6 +43,7 @@ import {
   type Fragment, type FragmentKind,
 } from './content-fragments.js';
 import type { CognitiveLevel } from './emergent-content.js';
+import { chooseByEfficacy, type EfficacyCounts } from './fragment-efficacy.js';
 import type { ElrCompetency } from './learner-record.js';
 
 const sha256 = (s: string): string => createHash('sha256').update(s).digest('hex');
@@ -173,6 +174,8 @@ export interface ResolveInput {
   admission?: (competency: string) => Admission | undefined;
   /** Dereference an alternative. Returns undefined when it cannot be found. */
   lookup: (iri: string) => Fragment | Composition | undefined;
+  /** How learners at a level did after meeting a fragment at a competency (fragment-efficacy.ts). */
+  efficacy?: (competency: string, fragment: string, level: CognitiveLevel) => EfficacyCounts | undefined;
 }
 
 export interface ResolvedStep {
@@ -184,6 +187,8 @@ export interface ResolvedStep {
   /** The alternatives the position offered. */
   alternatives: string[];
   chosenBecause: string;
+  /** The level the learner was pitched at, which their outcome is counted under. */
+  pitchedAt: CognitiveLevel;
 }
 
 export interface PositionNote {
@@ -328,6 +333,18 @@ export function resolveComposition(input: ResolveInput): Resolution {
       const want = levelFor(Math.max(demonstrated?.proficiencyRank ?? 0, inferred?.proficiencyRank ?? 0) || undefined);
       const distance = (x: Fragment | Composition): number => (isComposition(x) ? 0 : Math.abs(LEVEL_INDEX[x.level] - LEVEL_INDEX[want]));
       const ranked = admitted.map((x, k) => ({ x, k })).sort((a, b) => distance(a.x) - distance(b.x) || a.k - b.k).map(r => r.x);
+      // Among the fragments pitched nearest this learner, what has worked for learners at this level
+      // decides, and one with no outcome here yet gets its turn (fragment-efficacy.ts).
+      let byEfficacy: { chosen: string; why: string } | undefined;
+      const lead = ranked[0];
+      if (input.efficacy && lead && !isComposition(lead)) {
+        const group = ranked.filter((x): x is Fragment => !isComposition(x) && distance(x) === distance(lead));
+        if (group.length > 1) {
+          byEfficacy = chooseByEfficacy(group.map(g => g['@id']), iri => input.efficacy!(pos.competency, iri, want));
+          const at = ranked.findIndex(x => x['@id'] === byEfficacy!.chosen);
+          if (at > 0) ranked.unshift(...ranked.splice(at, 1));
+        }
+      }
       // A branch that falls short says why: the first of its unmet reasons, briefly, and any content
       // refused inside it for not hashing to its IRI. A branch's text is summarized rather than
       // copied, because copying it up through every level would grow with the number of paths.
@@ -365,7 +382,9 @@ export function resolveComposition(input: ResolveInput): Resolution {
         ? `the first alternative that could be used (${passedOver.join('; ')})`
         : admitted.length === 1
           ? (pos.paradigm.length === 1 ? 'the only alternative' : `the only admissible alternative (${refused.join('; ')})`)
-          : isComposition(pick) ? 'a composition, which resolves its own positions at this learner\'s level' : `pitched at ${pick.level}, nearest the ${want} level this learner is at`;
+          : isComposition(pick) ? 'a composition, which resolves its own positions at this learner\'s level'
+            : byEfficacy?.chosen === pick['@id'] ? `pitched at ${pick.level} for a learner at ${want}; ${byEfficacy.why}`
+              : `pitched at ${pick.level}, nearest the ${want} level this learner is at`;
       if (isComposition(pick)) {
         out.trace.push(`${at}: into "${pick.title}", ${why}`);
         const inner = under(self, chosen.branch!);
@@ -375,7 +394,7 @@ export function resolveComposition(input: ResolveInput): Resolution {
         checkSize(out);
         return;
       }
-      out.steps.push({ fragment: pick, competency: pos.competency, path: self, position: i, alternatives: pos.paradigm, chosenBecause: why });
+      out.steps.push({ fragment: pick, competency: pos.competency, path: self, position: i, alternatives: pos.paradigm, chosenBecause: why, pitchedAt: want });
       out.trace.push(`${at}: ${pick.kind}${pick.title ? ` "${pick.title}"` : ''}, ${why}`);
     });
     checkSize(out);

@@ -143,6 +143,26 @@ export type XapiStatementRecord = StoredStatement;
 /** The LRS's own identity as statement authority (xAPI 2.0 §4.1.9) for
  *  internally-emitted statements. homePage is an https IRL in prod. */
 const INTERNAL_LRS_AUTHORITY = { homePage: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080', name: 'foxxi-lrs' };
+
+/** An internally emitted statement authored and checked for storage, or null when it is not conformant. */
+function internalRecord(stmt: Record<string, unknown>, emitter: string): StoredStatement | null {
+  // Author + structurally validate on the internal emission path too, exactly as
+  // the inbound POST /xapi/statements path does — so an internally-stored statement
+  // carries an LRS authority (§4.1.9) and is checked against the xAPI shape.
+  const enriched = ensureStatementFields(stmt, INTERNAL_LRS_AUTHORITY);
+  const id = enriched.id as string;
+  const errs = validateStatement(enriched);
+  if (errs.length > 0) {
+    // ENFORCE (don't merely warn): a non-conformant statement is NOT stored, mirroring
+    // the inbound POST /xapi/statements 400 — so the LRS never holds a spec-violating
+    // statement. A loud error surfaces the offending emit path.
+    // eslint-disable-next-line no-console
+    console.error(`[${emitter}] REJECTED non-conformant statement ${id} (not stored):`, errs.slice(0, 5).join('; '));
+    return null;
+  }
+  return { id, statement: enriched, stored: enriched.stored as string, voided: false };
+}
+
 /**
  * Store an internally-emitted statement. Returns the statement id, or NULL when the
  * statement was refused for non-conformance.
@@ -161,28 +181,31 @@ const INTERNAL_LRS_AUTHORITY = { homePage: process.env.BRIDGE_DEPLOYMENT_URL ?? 
  * to see that nothing was stored, so null is the signal.
  */
 export function storeStatementInternal(stmt: Record<string, unknown>, tenant: TenantId = DEFAULT_TENANT): string | null {
-  // Author + structurally validate on the internal emission path too, exactly as
-  // the inbound POST /xapi/statements path does — so an internally-stored statement
-  // carries an LRS authority (§4.1.9) and is checked against the xAPI shape. A
-  // non-conformant internal emission is logged (not dropped) so no system flow breaks
-  // while the non-conformance is surfaced.
-  const enriched = ensureStatementFields(stmt, INTERNAL_LRS_AUTHORITY);
-  const id = enriched.id as string;
-  const errs = validateStatement(enriched);
-  if (errs.length > 0) {
-    // ENFORCE (don't merely warn): a non-conformant statement is NOT stored, mirroring
-    // the inbound POST /xapi/statements 400 — so the LRS never holds a spec-violating
-    // statement. A loud error surfaces the offending emit path.
-    // eslint-disable-next-line no-console
-    console.error(`[storeStatementInternal] REJECTED non-conformant statement ${id} (not stored):`, errs.slice(0, 5).join('; '));
-    return null;
-  }
-  const rec: StoredStatement = { id, statement: enriched, stored: enriched.stored as string, voided: false };
+  const rec = internalRecord(stmt, 'storeStatementInternal');
+  if (!rec) return null;
   void statementStores.for(tenant).put(rec).catch(err => {
     // eslint-disable-next-line no-console
     console.warn('[storeStatementInternal]', (err as Error).message);
   });
-  return id;
+  return rec.id;
+}
+
+/**
+ * storeStatementInternal, waiting until the store holds it: the id once the write has settled, or
+ * null when the statement is not conformant or the write failed. For a caller that must not move
+ * on, or report an id, until the record is kept.
+ */
+export async function storeStatementDurably(stmt: Record<string, unknown>, tenant: TenantId = DEFAULT_TENANT): Promise<string | null> {
+  const rec = internalRecord(stmt, 'storeStatementDurably');
+  if (!rec) return null;
+  try {
+    await statementStores.for(tenant).put(rec);
+    return rec.id;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[storeStatementDurably]', (err as Error).message);
+    return null;
+  }
 }
 
 export async function listStoredStatements(tenant: TenantId = DEFAULT_TENANT): Promise<StoredStatement[]> {

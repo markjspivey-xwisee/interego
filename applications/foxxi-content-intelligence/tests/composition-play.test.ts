@@ -2,11 +2,15 @@
  * Playing a composition: a learner, person or agent, steps through what resolution chose for them,
  * graded against the stored questions, and each step is recorded as xAPI naming the fragment, its
  * position and the alternatives it was chosen from. Every statement follows the Foxxi xAPI
- * profile, and no interaction activity carries its correct responses.
+ * profile, and no interaction activity carries its correct responses. A step counts only once its
+ * record is kept: until then it stays answered but pending, and taking it again keeps the very
+ * same statements.
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { advancePlay, currentView, interactionDefinition, PLAY_EXT, PLAY_TYPES, startPlay, type Statement } from '../src/composition-play.js';
+import { advancePlay, currentView, interactionDefinition, PLAY_EXT, PLAY_TYPES, startPlay, takeStep, type PlayInProgress, type Statement } from '../src/composition-play.js';
+import { getStatementStore, storeStatementDurably } from '../src/xapi-lrs.js';
+import type { TenantId } from '../src/tenant-context.js';
 import { fragmentFrom, publicFragment, type Fragment } from '../src/content-fragments.js';
 import { compositionFrom, resolveComposition, type Composition } from '../src/compositions.js';
 import { validateAgainstProfileTemplates } from '../src/xapi-profile.js';
@@ -138,6 +142,102 @@ describe('answers are graded by the bridge and recorded as interactions without 
       choices: [{ id: 'a', description: { en: 'Agent' } }, { id: 'b', description: { en: 'Team lead' } }],
     });
   });
+
+  it('keys every language map by the fragment\'s language, not by English', () => {
+    const pt = fragmentFrom({
+      kind: 'assessment-item', language: 'pt-BR', competencies: ['refund-authority'], title: 'Verificação', body: 'Verifique.',
+      questions: [{ question: 'Quem aprova R$600?', options: ['Agente', 'Líder'], answer: 'B' }, { question: 'Ordene', items: ['Verificar', 'Reembolsar'] }],
+    });
+    const c = compositionFrom({ title: 'Reembolsos', competency: 'refund-authority', positions: [{ competency: 'refund-authority', paradigm: [pt['@id']] }] });
+    const p = startPlay(resolveComposition({ composition: c, learner, lookup: i => (i === pt['@id'] ? pt : undefined) }), c.title, learner, { session: 's3', registration: 'r3' }, ctx.now)!;
+    const shown = pt.questions![1]!.input!.items!;
+    const r = advancePlay(p, ['B', ['Verificar', 'Reembolsar'].map(i => String.fromCharCode(65 + shown.indexOf(i))).join(', ')], ctx);
+    if (!r.ok) throw new Error(r.error);
+    const [choice, order, experienced] = r.statements.map(x => (x.object as { definition: Record<string, unknown> }).definition);
+    expect(choice).toMatchObject({ description: { 'pt-BR': 'Quem aprova R$600?' }, choices: [{ id: 'a', description: { 'pt-BR': 'Agente' } }, { id: 'b', description: { 'pt-BR': 'Líder' } }] });
+    expect(order!.choices).toEqual(shown.map((x, i) => ({ id: String.fromCharCode(97 + i), description: { 'pt-BR': x } })));
+    expect(experienced!.name).toEqual({ 'pt-BR': 'Verificação' });
+    for (const d of [choice, order, experienced]) expect(JSON.stringify(d)).not.toMatch(/"en"/);
+    expect(interactionDefinition(publicFragment(check).questions![2]!, 'fr')).toMatchObject({
+      source: [{ id: '1', description: { fr: '$100' } }, { id: '2', description: { fr: '$600' } }],
+      target: expect.arrayContaining([expect.objectContaining({ description: { fr: 'Agent' } })]),
+    });
+  });
+});
+
+describe('a step counts only once its record is kept', () => {
+  const keepAll = async (st: readonly Statement[]): Promise<string[]> => st.map(x => String(x.id));
+
+  it('keeps a step answered but pending when its record cannot be kept, and keeps the very same statements next time', async () => {
+    const entry: PlayInProgress = { play: play() };
+    expect(await takeStep(entry, undefined, ctx, keepAll)).toMatchObject({ ok: true, resumed: false, step: { done: false } });
+    const offered: Statement[][] = [];
+    const flaky = async (st: readonly Statement[]): Promise<string[] | null> => { offered.push([...st]); return offered.length === 1 ? null : st.map(x => String(x.id)); };
+    expect(await takeStep(entry, rightAnswers(), ctx, flaky)).toMatchObject({ ok: false, status: 503 });
+    expect(entry.pending).toBeDefined();
+    // Answers sent with the retry are not taken: the step was answered, only its record is outstanding.
+    const other = rightAnswers();
+    other[0] = 'A';
+    const retried = await takeStep(entry, other, ctx, flaky);
+    if (!retried.ok) throw new Error(retried.error);
+    expect(retried.resumed).toBe(true);
+    expect(offered[1]).toEqual(offered[0]);
+    expect(retried.recorded).toEqual(offered[0]!.map(x => x.id));
+    expect(retried.step).toMatchObject({ done: true, graded: { correct: 3, total: 3 } });
+    expect(retried.step.outcomes.map(o => [o.fragment, o.success])).toEqual([[check['@id'], true], [lesson['@id'], true]]);
+    expect(entry.pending).toBeUndefined();
+    expect(await takeStep(entry, [], ctx, keepAll)).toMatchObject({ ok: false, status: 409 });   // the play is done
+  });
+
+  it('fixes each statement\'s final form once, before the first attempt to keep it', async () => {
+    const entry: PlayInProgress = { play: play() };
+    let marks = 0;
+    const mark = (st: Statement): Statement => ({ ...st, context: { ...(st.context as object), extensions: { ...((st.context as { extensions?: object }).extensions), 'https://example.org/mark': ++marks } } });
+    let attempts = 0;
+    const keep = async (st: readonly Statement[]): Promise<string[] | null> => (++attempts === 1 ? null : st.map(x => String(x.id)));
+    await takeStep(entry, undefined, ctx, keep, mark);
+    expect(marks).toBe(1);
+    const r = await takeStep(entry, undefined, ctx, keep, mark);
+    expect(marks).toBe(1);
+    expect(r).toMatchObject({ ok: true, resumed: true });
+  });
+
+  it('takes one step at a time for a play, and a refused answer leaves nothing pending', async () => {
+    const entry: PlayInProgress = { play: play() };
+    let release: (ids: string[] | null) => void = () => undefined;
+    const slow = (): Promise<string[] | null> => new Promise(r => { release = r; });
+    const first = takeStep(entry, undefined, ctx, slow);
+    expect(await takeStep(entry, rightAnswers(), ctx, keepAll)).toMatchObject({ ok: false, status: 409 });
+    release(['kept']);
+    expect(await first).toMatchObject({ ok: true, recorded: ['kept'] });
+    expect(currentView(entry.play)).toMatchObject({ step: 2 });
+    expect(await takeStep(entry, ['B'], ctx, keepAll)).toMatchObject({ ok: false, status: 422 });
+    expect(entry.pending).toBeUndefined();
+    expect(entry.busy).toBe(false);
+  });
+
+  it('leaves the step pending, and the play free, when keeping it throws', async () => {
+    const entry: PlayInProgress = { play: play() };
+    await expect(takeStep(entry, undefined, ctx, async () => { throw new Error('pod unreachable'); })).rejects.toThrow('pod unreachable');
+    expect(entry.busy).toBe(false);
+    expect(entry.pending).toBeDefined();
+    expect(await takeStep(entry, undefined, ctx, keepAll)).toMatchObject({ ok: true, resumed: true });
+  });
+
+  it('waits for the store to hold a statement, and says so only when it does', async () => {
+    const tenant = 'lens:kept-statements-test' as TenantId;
+    const statement = {
+      id: '0f0e0d0c-0b0a-4009-8008-070605040302', actor,
+      verb: { id: 'http://adlnet.gov/expapi/verbs/experienced', display: { en: 'experienced' } },
+      object: { objectType: 'Activity', id: 'https://example.org/fragment' }, timestamp: ctx.now,
+    };
+    expect(await storeStatementDurably(statement, tenant)).toBe(statement.id);
+    expect((await getStatementStore(tenant).get(statement.id))?.statement).toMatchObject({ id: statement.id });
+    expect(await storeStatementDurably(statement, tenant)).toBe(statement.id);   // the same statement again: held once
+    expect(await storeStatementDurably({ ...statement, object: { objectType: 'Activity', id: 'https://example.org/other' } }, tenant)).toBeNull();   // the write is refused
+    expect(await storeStatementDurably({ ...statement, id: '1f0e0d0c-0b0a-4009-8008-070605040302', verb: { id: 'not an IRI' } }, tenant)).toBeNull();   // not conformant
+    expect(await getStatementStore(tenant).get('1f0e0d0c-0b0a-4009-8008-070605040302')).toBeNull();
+  });
 });
 
 describe('the bridge launches and steps a play for its own learner', () => {
@@ -156,15 +256,28 @@ describe('the bridge launches and steps a play for its own learner', () => {
     expect(launch).toMatch(/keepPlay\(play\)/);
     const next = route("app.post('/agent/content/next'");
     expect(next.indexOf('entry.play.learner.id !== auth.callerDid')).toBeGreaterThan(0);
-    expect(next.indexOf('entry.play.learner.id !== auth.callerDid')).toBeLessThan(next.indexOf('advancePlay('));
+    expect(next.indexOf('entry.play.learner.id !== auth.callerDid')).toBeLessThan(next.indexOf('takeStep('));
     expect(next).toMatch(/res\.status\(403\)/);
-    expect(next).toMatch(/recordPlayStatements\(auth\.callerDid, outcome\.statements\)/);
+    expect(next).toMatch(/statements => recordPlayStatements\(auth\.callerDid, statements\), markIfGraded\)/);
+    // Nothing is counted, and a finished play is not let go, before the step's record is kept.
+    const refused = next.indexOf('if (!taken.ok)');
+    expect(refused).toBeGreaterThan(next.indexOf('takeStep('));
+    for (const after of ['fragmentEfficacy.record(', 'contentPlays.delete(']) expect(next.indexOf(after), after).toBeGreaterThan(refused);
   });
 
-  it('marks what it graded, stores in the learner\'s own lens, and gives content routes a budget of their own', () => {
-    const record = route('function recordPlayStatements');
-    expect(record).toMatch(/withGradedTag\(raw, gradedKey\)/);
+  it('marks what it graded, and keeps every statement in the learner\'s lens and on their pod before it answers', () => {
+    const fn = (from: string): string => src.slice(src.indexOf(from), src.indexOf('\n}\n', src.indexOf(from)));
+    expect(fn('function markIfGraded')).toMatch(/withGradedTag\(raw, gradedKey\)/);
+    const record = fn('async function recordPlayStatements');
     expect(record).toMatch(/lensTenantFor\(label\)/);
+    expect(record).toMatch(/const id = await storeStatementDurably\(s, lens\);\n\s+if \(!id\) return null;/);
+    expect(record).toMatch(/const composed = await composeIntoSharedLattice\(/);
+    expect(record).toMatch(/if \(onPods && composed\?\.persisted !== true\) return null;/);
+    expect(record).toMatch(/const onPods = bridgeEncryptionKeypair\(\) !== null;/);
+    // Forwarded only once kept, one statement after another.
+    expect(record.indexOf('forwardInOrder(lens, kept)')).toBeGreaterThan(record.indexOf('composed?.persisted'));
+    expect(fn('function forwardInOrder')).toMatch(/for \(const s of statements\) await forwardToTargets\(lens, s\)/);
+    expect(fn('function forwardInOrder')).toMatch(/\(forwardQueues\.get\(lens\) \?\? Promise\.resolve\(\)\)\.then\(/);
     const limit = route('function contentRateLimited');
     expect(limit).not.toMatch(/checkAgenticRateLimit/);
     expect(src).toMatch(/const RL_CONTENT_MAX = parseInt\(process\.env\.FOXXI_CONTENT_RATE_LIMIT_PER_IP \?\? '120', 10\);/);
