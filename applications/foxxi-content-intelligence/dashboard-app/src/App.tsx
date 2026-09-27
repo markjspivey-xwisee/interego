@@ -58,6 +58,7 @@ import { EfficacyPanel } from './components/EfficacyPanel.js';
 import { WorkPanel } from './components/WorkPanel.js';
 import { Header, Card } from './components/common.js';
 import { loadSession, saveSession, clearSession, signsOnly, type FoxxiSession } from './auth/session.js';
+import { signsAloneBecause, standingSettled, tokenStandingOf, type SignsAloneBecause, type TokenStanding } from './auth/token-standing.js';
 import { getTransport, resetTransportProbe } from './interego/client.js';
 import { SAMPLE_ADMIN_PAYLOAD } from './sample/data.js';
 import {
@@ -90,8 +91,10 @@ function AppRoutes() {
     // Land on the user's canonical profile item URL — no shortcut, no
     // session-implicit magic resource. Just the same /profiles/<id>
     // anyone else would use to view this profile.
-    // A wallet or a pasted key acts through signed requests alone, so it lands where it signs.
-    navigate(signsOnly(s) ? '/learn' : `/profiles/${userIdToUuid(s.userId)}`, { replace: true });
+    // A wallet or a pasted key acts through signed requests alone, so it lands where it signs. A
+    // roster identity lands at the root, which waits for the bridge to say whether it takes the
+    // session's token, then goes on to the profile, or to Learn if it does not.
+    navigate(signsOnly(s) ? '/learn' : '/', { replace: true });
   }
   function onLogout() {
     clearSession();
@@ -109,22 +112,56 @@ function AppRoutes() {
     );
   }
 
+  return (
+    <HypermediaProvider bearer={session.bearerToken}>
+      <SignedIn session={session} onLogout={onLogout} transport={transport} />
+    </HypermediaProvider>
+  );
+}
+
+/** Asks once, of the session's own profile, whether this bridge takes its token (auth/token-standing.ts). */
+function useTokenStanding(session: FoxxiSession): TokenStanding {
+  const { entry, error } = useHypermedia();
+  const [standing, setStanding] = useState<TokenStanding>('asking');
+  const profiles = entry?._links.profiles?.href;
+  const asksNothing = signsOnly(session);
+  useEffect(() => {
+    if (asksNothing) return;   // its kind already says: no directory knows its key
+    if (error) { setStanding('unknown'); return; }
+    if (!profiles) return;
+    let cancel = false;
+    setStanding('asking');
+    const headers: Record<string, string> = { Accept: 'application/ld+json, application/json' };
+    if (session.bearerToken) headers.Authorization = `Bearer ${session.bearerToken}`;
+    fetch(`${profiles}/${userIdToUuid(session.userId)}`, { headers })
+      .then(r => { if (!cancel) setStanding(tokenStandingOf(r.status)); })
+      .catch(() => { if (!cancel) setStanding('unknown'); });
+    return () => { cancel = true; };
+  }, [asksNothing, profiles, error, session.userId, session.bearerToken]);
+  return standing;
+}
+
+function SignedIn({ session, onLogout, transport }: { session: FoxxiSession; onLogout: () => void; transport: 'bridge' | 'sample' | 'probing' }) {
+  const standing = useTokenStanding(session);
+  const alone = signsAloneBecause(session, standing);
+  const settled = standingSettled(session, standing);
   const isAdmin = session.role === 'admin';
   const isLe = session.audienceTags?.includes('learning-engineering');
   const isPriv = isAdmin || isLe;
   const ownProfileUrl = `/profiles/${userIdToUuid(session.userId)}`;
-  const home = signsOnly(session) ? '/learn' : ownProfileUrl;
+  const home = alone ? '/learn' : ownProfileUrl;
+  // Where a redirect to home goes: home once the bridge has said, else the root, which waits for it.
+  const landing = settled ? home : '/';
 
   return (
-    <HypermediaProvider bearer={session.bearerToken}>
     <div style={{ minHeight: '100vh', background: 'var(--bg)', display: 'flex', flexDirection: 'column' }}>
       <Header session={session} onLogout={onLogout} transport={transport} />
-      <TopNav session={session} />
+      <TopNav session={session} alone={alone} />
       <div style={{ flex: 1 }}>
         <Routes>
           {/* Canonical resource routes — collection + item, opaque ids */}
           <Route path="/profiles" element={isPriv ? <ProfilesCollectionPage /> : <Navigate to={ownProfileUrl} replace />} />
-          <Route path="/profiles/:profileUuid" element={<ProfilePage session={session} />} />
+          <Route path="/profiles/:profileUuid" element={<ProfilePage session={session} alone={alone} settled={settled} />} />
 
           <Route path="/courses" element={<CoursesPage session={session} />} />
           <Route path="/courses/:courseId" element={<CourseDetailPage session={session} />} />
@@ -149,19 +186,19 @@ function AppRoutes() {
           <Route path="/author" element={<AuthorPage session={session} />} />
           <Route path="/author/:hash" element={<EfficacyPage session={session} />} />
           <Route path="/work" element={<WorkPage session={session} />} />
-          <Route path="/my-activity" element={<MyActivityPage session={session} />} />
+          <Route path="/my-activity" element={<MyActivityPage session={session} alone={alone} settled={settled} />} />
           <Route path="/my-forwarding" element={<MyForwardingPage session={session} />} />
           <Route path="/demo-suite" element={<DemoSuitePage />} />
 
           {/* Convenience redirects — `/me` and `/profile` resolve to the
               caller's canonical profile item URL. They're not resources
               in their own right per Amundsen §5; just rel="self" shortcuts. */}
-          <Route path="/login" element={<Navigate to={home} replace />} />
-          <Route path="/me" element={<Navigate to={home} replace />} />
-          <Route path="/profile" element={<Navigate to={home} replace />} />
+          <Route path="/login" element={<Navigate to={landing} replace />} />
+          <Route path="/me" element={<Navigate to={landing} replace />} />
+          <Route path="/profile" element={<Navigate to={landing} replace />} />
 
           {/* Legacy redirects */}
-          <Route path="/learner" element={<Navigate to={home} replace />} />
+          <Route path="/learner" element={<Navigate to={landing} replace />} />
           <Route path="/learner/courses/:courseId" element={<RedirectCourse />} />
           <Route path="/users" element={<Navigate to="/profiles" replace />} />
           <Route path="/users/u-:rest" element={<LegacyUserRedirect />} />
@@ -182,19 +219,27 @@ function AppRoutes() {
           <Route path="/admin/:any" element={<Navigate to="/courses" replace />} />
           <Route path="/admin/lrs/:any" element={<Navigate to="/statements" replace />} />
 
-          <Route path="/" element={<Navigate to={home} replace />} />
+          <Route path="/" element={settled ? <Navigate to={home} replace /> : <AskingBridge />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </div>
       <Footer session={session} transport={transport} />
     </div>
-    </HypermediaProvider>
+  );
+}
+
+/** While the bridge is asked whether it takes the session's token, before anything is read with it. */
+function AskingBridge() {
+  return (
+    <div style={{ maxWidth: 720, margin: '40px auto', padding: 20 }}>
+      <Card title="Signing you in"><div style={{ color: 'var(--text-dim)' }}>Asking the bridge whether it takes this session…</div></Card>
+    </div>
   );
 }
 
 // ── Top navigation ──────────────────────────────────────────────────
 
-function TopNav({ session }: { session: FoxxiSession }) {
+function TopNav({ session, alone }: { session: FoxxiSession; alone: SignsAloneBecause | null }) {
   const isAdmin = session.role === 'admin';
   const isLe = session.audienceTags?.includes('learning-engineering');
   const isPriv = isAdmin || isLe;
@@ -221,12 +266,12 @@ function TopNav({ session }: { session: FoxxiSession }) {
       display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap',
       position: 'sticky', top: 65, zIndex: 40,
     }}>
-      {!signsOnly(session) && <NavLink to={ownProfileUrl} label="My profile" />}
+      {!alone && <NavLink to={ownProfileUrl} label="My profile" />}
       <NavLink to="/courses" label="Courses" />
       <NavLink to="/learn" label="Learn" />
       <NavLink to="/author" label="Author" />
       <NavLink to="/work" label="Work" />
-      {!signsOnly(session) && <NavLink to="/my-activity" label="My activity" />}
+      {!alone && <NavLink to="/my-activity" label="My activity" />}
       <NavLink to="/my-forwarding" label="My forwarding" />
       <NavLink to="/demo-suite" label="Demo suite" />
       {isPriv && <span style={{ width: 12 }} />}
@@ -246,32 +291,36 @@ function TopNav({ session }: { session: FoxxiSession }) {
 
 // ── Pages ───────────────────────────────────────────────────────────
 
-function ProfilePage({ session }: { session: FoxxiSession }) {
+function ProfilePage({ session, alone, settled }: { session: FoxxiSession; alone: SignsAloneBecause | null; settled: boolean }) {
   const { profileUuid } = useParams();
   const targetUserId = profileUuid ? uuidToUserId(profileUuid) : null;
   // Future: if targetUserId !== session.userId AND caller isn't admin/LE,
   // show a 403. For now render LearnerShell with the signed-in identity
   // (it only shows the caller's own enrollments anyway).
   void targetUserId;
-  if (signsOnly(session)) return <SignsOnlyNotice what="Your profile and learner record" />;
+  if (alone) return <SignsOnlyNotice what="Your profile and learner record" because={alone} />;
+  if (!settled) return <AskingBridge />;
   return <LearnerShell session={session} />;
 }
 
 /**
  * For a session that acts through signed requests alone: the page it asked for reads with the
- * session token, which a tenant directory issues, and no directory knows this wallet or key.
+ * session token, and either no directory knows this wallet or key, or this bridge does not take the
+ * demo roster's tokens (auth/token-standing.ts).
  */
-function SignsOnlyNotice({ what }: { what: string }) {
+function SignsOnlyNotice({ what, because }: { what: string; because: SignsAloneBecause }) {
   // Moved within the app, never by reloading the page: a pasted key lives in memory only, and a
   // reload would sign its session out.
   const navigate = useNavigate();
   const go = (to: string) => (e: React.MouseEvent) => { e.preventDefault(); navigate(to); };
   return (
     <div style={{ maxWidth: 720, margin: '40px auto', padding: 20 }}>
-      <Card title="Not for a wallet or a key signed in here">
+      <Card title={because === 'token-refused' ? 'Not on this bridge for the demo roster' : 'Not for a wallet or a key signed in here'}>
         <div style={{ color: 'var(--text-dim)' }}>
-          {what} are read with a session token this tenant's directory issues, and no directory knows the wallet or key
-          you signed in with. What you do here is signed as you: <a href="/learn" onClick={go('/learn')}>Learn</a>,{' '}
+          {because === 'token-refused'
+            ? <>{what} are read with a session token, and this bridge does not take the demo roster's: a roster identity's wallet is derived from a public seed, so anyone could sign as it, and its token proves nothing here.</>
+            : <>{what} are read with a session token this tenant's directory issues, and no directory knows the wallet or key you signed in with.</>}
+          {' '}What you do here is signed as you: <a href="/learn" onClick={go('/learn')}>Learn</a>,{' '}
           <a href="/author" onClick={go('/author')}>Author</a>, <a href="/work" onClick={go('/work')}>Work</a> and{' '}
           <a href="/my-forwarding" onClick={go('/my-forwarding')}>My forwarding</a>.
         </div>
@@ -366,8 +415,9 @@ function WorkPage({ session }: { session: FoxxiSession }) {
 function EfficacyPage({ session }: { session: FoxxiSession }) {
   return <div style={{ maxWidth: 980, margin: '24px auto', padding: 20 }}><EfficacyPanel session={session} /></div>;
 }
-function MyActivityPage({ session }: { session: FoxxiSession }) {
-  if (signsOnly(session)) return <SignsOnlyNotice what="Your activity and its statements" />;
+function MyActivityPage({ session, alone, settled }: { session: FoxxiSession; alone: SignsAloneBecause | null; settled: boolean }) {
+  if (alone) return <SignsOnlyNotice what="Your activity and its statements" because={alone} />;
+  if (!settled) return <AskingBridge />;
   return <div style={{ maxWidth: 1180, margin: '24px auto', padding: 20 }}><MyActivityPanel session={session} /></div>;
 }
 function MyForwardingPage({ session }: { session: FoxxiSession }) {

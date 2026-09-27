@@ -17,6 +17,7 @@ import { extensionAccount, extensionSigner, signerAsks, signerFor } from '../das
 import { signAgentRequestAs } from '../dashboard-app/src/auth/signed-request.js';
 import { mintSessionTokenWithSigner } from '../dashboard-app/src/auth/session-token.js';
 import { connectFromExtension, loadSession, saveSession, signsOnly, type FoxxiSession } from '../dashboard-app/src/auth/session.js';
+import { signsAloneBecause, standingSettled, tokenStandingOf } from '../dashboard-app/src/auth/token-standing.js';
 import { draftFor, matchTo, move, pick, problemWith, repliesFor, replyOf, type Draft, type LearnerQuestion } from '../dashboard-app/src/learn/answers.js';
 import { compositionIriOn, compositionRefFrom, hashOfComposition } from '../dashboard-app/src/learn/composition-ref.js';
 import { RECENTS_MAX, readRecents, recentsKey, remember } from '../dashboard-app/src/learn/recents.js';
@@ -110,13 +111,53 @@ describe('a session that acts through signed requests alone', () => {
 
   it('lands on Learn, is not offered the pages read with the session token, and is told why on them', () => {
     const app = readFileSync(new URL('../dashboard-app/src/App.tsx', import.meta.url), 'utf8');
-    expect(app).toMatch(/navigate\(signsOnly\(s\) \? '\/learn' : `\/profiles\/\$\{userIdToUuid\(s\.userId\)\}`/);
-    expect(app).toMatch(/const home = signsOnly\(session\) \? '\/learn' : ownProfileUrl;/);
-    expect(app).toMatch(/<Route path="\/" element=\{<Navigate to=\{home\} replace \/>\} \/>/);
-    expect(app).toMatch(/\{!signsOnly\(session\) && <NavLink to=\{ownProfileUrl\} label="My profile" \/>\}/);
-    expect(app).toMatch(/\{!signsOnly\(session\) && <NavLink to="\/my-activity" label="My activity" \/>\}/);
-    expect(app).toMatch(/if \(signsOnly\(session\)\) return <SignsOnlyNotice what="Your profile and learner record" \/>;/);
-    expect(app).toMatch(/if \(signsOnly\(session\)\) return <SignsOnlyNotice what="Your activity and its statements" \/>;/);
+    expect(app).toMatch(/navigate\(signsOnly\(s\) \? '\/learn' : '\/', \{ replace: true \}\);/);
+    expect(app).toMatch(/const alone = signsAloneBecause\(session, standing\);/);
+    expect(app).toMatch(/const home = alone \? '\/learn' : ownProfileUrl;/);
+    expect(app).toMatch(/<Route path="\/" element=\{settled \? <Navigate to=\{home\} replace \/> : <AskingBridge \/>\} \/>/);
+    // A redirect to home before the bridge has said goes by the root, which waits for it.
+    expect(app).toMatch(/const landing = settled \? home : '\/';/);
+    for (const path of ['/login', '/me', '/profile', '/learner']) expect(app).toContain(`<Route path="${path}" element={<Navigate to={landing} replace />} />`);
+    expect(app).toMatch(/\{!alone && <NavLink to=\{ownProfileUrl\} label="My profile" \/>\}/);
+    expect(app).toMatch(/\{!alone && <NavLink to="\/my-activity" label="My activity" \/>\}/);
+    expect(app).toMatch(/if \(alone\) return <SignsOnlyNotice what="Your profile and learner record" because=\{alone\} \/>;\s+if \(!settled\) return <AskingBridge \/>;/);
+    expect(app).toMatch(/if \(alone\) return <SignsOnlyNotice what="Your activity and its statements" because=\{alone\} \/>;\s+if \(!settled\) return <AskingBridge \/>;/);
+  });
+
+  it('is also a roster identity whose token this bridge refuses, as the deployed one refuses the demo roster', () => {
+    const roster = { webId: 'https://id.acme-training.example/jliu/profile#me', audienceTags: ['engineering'] };
+    const account = ethers.Wallet.createRandom().address;
+    const wallet = { webId: `did:ethr:${account}`, audienceTags: ['connected-wallet'] };
+    // What the bridge's answer to the session's own profile says of its token: refused only on a 401.
+    expect(tokenStandingOf(401)).toBe('refused');
+    expect(tokenStandingOf(200)).toBe('taken');
+    for (const status of [403, 404, 500, 503]) expect(tokenStandingOf(status)).toBe('unknown');
+    // A roster session reads with its token until the bridge refuses it; an unanswered question refuses nothing.
+    expect(signsAloneBecause(roster, 'refused')).toBe('token-refused');
+    for (const standing of ['asking', 'taken', 'unknown'] as const) expect(signsAloneBecause(roster, standing)).toBeNull();
+    // A wallet or a pasted key signs alone whatever the bridge says, and is never kept waiting on it.
+    for (const standing of ['asking', 'taken', 'refused', 'unknown'] as const) {
+      expect(signsAloneBecause(wallet, standing)).toBe('no-directory');
+      expect(standingSettled(wallet, standing)).toBe(true);
+    }
+    expect(standingSettled(roster, 'asking')).toBe(false);
+    for (const standing of ['taken', 'refused', 'unknown'] as const) expect(standingSettled(roster, standing)).toBe(true);
+  });
+
+  it("asks the bridge once, of the session's own profile, with its token, and says why to each kind of session", () => {
+    const app = readFileSync(new URL('../dashboard-app/src/App.tsx', import.meta.url), 'utf8');
+    const ask = app.slice(app.indexOf('function useTokenStanding'), app.indexOf('\n}\n', app.indexOf('function useTokenStanding')));
+    expect(ask).toMatch(/if \(asksNothing\) return;/);
+    expect(ask).toMatch(/const asksNothing = signsOnly\(session\);/);
+    expect(ask).toMatch(/if \(session\.bearerToken\) headers\.Authorization = `Bearer \$\{session\.bearerToken\}`;/);
+    expect(ask).toMatch(/fetch\(`\$\{profiles\}\/\$\{userIdToUuid\(session\.userId\)\}`, \{ headers \}\)/);
+    expect(ask).toMatch(/\.then\(r => \{ if \(!cancel\) setStanding\(tokenStandingOf\(r\.status\)\); \}\)/);
+    expect(ask).toMatch(/\.catch\(\(\) => \{ if \(!cancel\) setStanding\('unknown'\); \}\);/);
+    // The bridge the profile is asked of is the one the entry point links, as the profile page reads it.
+    expect(ask).toMatch(/const profiles = entry\?\._links\.profiles\?\.href;/);
+    const notice = app.slice(app.indexOf('function SignsOnlyNotice'), app.indexOf('\n}\n', app.indexOf('function SignsOnlyNotice')));
+    expect(notice).toMatch(/because === 'token-refused'\s+\? <>\{what\} are read with a session token, and this bridge does not take the demo roster's: a roster identity's wallet is derived from a public seed/);
+    expect(notice).toMatch(/: <>\{what\} are read with a session token this tenant's directory issues, and no directory knows the wallet or key you signed in with\.<\/>\}/);
   });
 
   it('is moved to the pages it has without a reload, which would sign a pasted key out', () => {

@@ -131,6 +131,15 @@ affordance call. The substrate uses it to (a) resolve audience-tag
 membership for enrollment discovery, (b) record on the audit-log
 descriptor for the Q&A turn.
 
+A roster identity's session token is signed by its demo wallet, derived from
+a public seed. A bridge may keep those wallets out of its directory, as the
+deployed one does, since anyone could sign as them; it then refuses the token
+("not in tenant directory"). The dashboard asks once, of the session's own
+profile, whether the bridge takes the token
+([`src/auth/token-standing.ts`](src/auth/token-standing.ts)). A roster session
+it refuses is treated like a wallet or a pasted key: it lands on Learn, and
+the pages read with the token say why.
+
 Two sign-ins act as a real self-sovereign identity rather than a roster
 stand-in:
 - **A wallet extension** (any EIP-1193 browser wallet). Its key never leaves
