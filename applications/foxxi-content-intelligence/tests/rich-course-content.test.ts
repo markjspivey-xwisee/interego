@@ -84,6 +84,13 @@ describe('each question type is authored into a stored form and graded exactly',
     expect(unnamed.answerHash).toBe(hashScormAnswer('8', { type: 'integer' }));
     expect(questionIsRight('08', unnamed)).toBe(true);
     expect(() => authorQuestion({ question: 'Code?', type: 'fill-in', answer: '5', min: 0 }, seed(42))).toThrow(/only to a numeric question/);
+    // A named type and an explicit input must agree; neither silently wins.
+    expect(() => authorQuestion({ question: 'Code?', type: 'fill-in', answer: '0012', input: { type: 'integer' } }, seed(43))).toThrow(/type fill-in and input type integer disagree/);
+    expect(() => authorQuestion({ question: 'Cap?', type: 'numeric', answer: '8', input: { type: 'text' } }, seed(44))).toThrow(/disagree/);
+    expect(() => authorQuestion({ question: 'Pick', type: 'choice', answer: 'A', input: { type: 'text' } }, seed(45))).toThrow(/disagree/);
+    const agreed = authorQuestion({ question: 'Code?', type: 'fill-in', answer: '0012', input: { type: 'text' } }, seed(46));
+    expect([questionIsRight('0012', agreed), questionIsRight('12', agreed)]).toEqual([true, false]);
+    expect(authorQuestion({ question: 'Cap?', type: 'numeric', answer: '8', input: { type: 'integer', min: 0 } }, seed(47)).input).toEqual({ type: 'integer', min: 0 });
   });
 
   it('choice takes a letter or the option text, one right or several, and keeps no answer in plaintext', () => {
