@@ -356,6 +356,28 @@ speaks cmi5 can take a composition as it takes any other course.
   attempt resolves with no record, counts nothing toward what has worked,
   and is kept nowhere on the bridge beyond the play itself.
 
+**Projected as a SCORM package** ([`src/composition-scorm.ts`](src/composition-scorm.ts)),
+for an LMS that speaks SCORM 2004 rather than cmi5.
+
+- `GET <composition IRI>/scorm.zip` holds one SCO, a wrapper. The wrapper
+  frames the same player, launched with `transport=scorm`, and records
+  what the player posts it through the LMS's SCORM API.
+- The package holds no content and no answers. Grading stays on the bridge,
+  unlike the packages the older course model makes, which grade in the SCO
+  from hashes shipped in the zip.
+- The wrapper records a message only from the bridge's origin, fixed when
+  the package is built. It tells the player its own origin, so the player
+  posts only to it.
+- What SCORM records:
+  - each answered question as an interaction (its id, type, response and
+    result, never its correct responses);
+  - once the play ends, the score over every graded question;
+  - success against the LMS's passing score, or every graded question right
+    when none is set;
+  - completion.
+- The learner is named by an LMS id the bridge cannot verify, so, as under
+  cmi5, the attempt resolves with no record and counts nothing.
+
 **Alternatives that learn** ([`src/fragment-efficacy.ts`](src/fragment-efficacy.ts)).
 Nobody declares which explanation of a competency works; the plays show it.
 
@@ -398,9 +420,7 @@ Not yet wired:
   into a plan, and so an admission to keep, without their asking;
 - importing SCORM packages and authoring-tool exports (packages are
   unzipped in the browser today, and the server sees only their manifest
-  and extracted text);
-- projecting a composition as a SCORM package, as it is projected as a
-  cmi5 course.
+  and extracted text).
 
 ## 6. Authoring is composition — the same tools for humans and agents
 

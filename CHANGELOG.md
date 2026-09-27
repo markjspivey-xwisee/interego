@@ -1,5 +1,42 @@
 # Changelog
 
+## 2026-09-27 — Foxxi: a composition projects as a SCORM 2004 package too
+
+A composition could be offered to an LMS that speaks cmi5 (#512). Many LMSs speak only SCORM. Now a composition projects as a SCORM 2004 package as well, played by the same player and graded on the same bridge.
+
+- **One SCO, a wrapper** (`src/composition-scorm.ts`, `GET <composition IRI>/scorm.zip`). The package's one SCO finds the LMS's SCORM 2004 API, opens the bridge's player in a frame, and records what the player posts it.
+- **It holds no content and no answers.** Resolution and grading stay on the bridge, so a package anyone may download and unzip holds no answer, verifier or salt. The packages the older course model makes grade inside the SCO, from hashes shipped in the zip.
+- **Nothing an author writes can run in the LMS.** A composition's title is its author's, and the wrapper runs inside someone else's LMS, beside its SCORM API. Every value written into the wrapper's script, and into the player's, goes in as JSON with no "<" or ">", so a title of "</script><script>…" stays text.
+- **The wrapper believes only the bridge.** It records a message only from the bridge's origin, fixed when the package is built. It tells the player its own origin, so the player posts only to it, and it records nothing after it has terminated.
+- **What SCORM records:**
+  - each answered question as an interaction: its id, type, the learner's response in SCORM's format and whether it was right, never its correct responses;
+  - once the play ends, the score over every graded question;
+  - success against the LMS's passing score (`cmi.scaled_passing_score`), or every graded question right when none is set;
+  - completion.
+
+  The package is the same bytes each time it is built.
+- **The player's SCORM mode** (`src/composition-au-page.ts`). Launched with `transport=scorm`, the page needs no token, LaunchData or LRS, and makes the attempt's registration itself. It posts each step's statements, and the summary once the play ends, to the wrapper at the origin the wrapper named. Under SCORM too, the LMS names its learner by an id the bridge cannot verify, so the attempt resolves with no record and counts nothing.
+- **Docs.** The compose and fold affordances name the package. `PERFORMANCE-ARCHITECTURE.md` §5 describes it, and a SCORM projection leaves its not-yet-wired list. `LMS-CONFORMANCE.md` has a row for it.
+
+`applications/foxxi-content-intelligence/tests/composition-scorm.test.ts` covers:
+- the package read back by the bridge's own SCORM manifest reader, with no content and no answers, the same bytes each build;
+- the wrapper inside an LMS, in a DOM with a SCORM API: opening the player for the LMS's learner and telling it where to post;
+- interactions, score, success and completion, including by the LMS's passing score;
+- nothing recorded that is not from the bridge, or after Terminate;
+- a title that looks like markup kept as text in the wrapper and the player, with each page's one script whole;
+- the player under SCORM needing no token or LRS and posting only to its wrapper;
+- the route, checked in the bridge's source.
+
+Twelve mutants were checked, and each fails a named test:
+- the wrapper believing any origin, recording after Terminate, or not telling the player its origin;
+- every statement becoming an interaction;
+- a pass with nothing right when no passing score is set;
+- the manifest naming another file;
+- the player posting to anyone, or fetching a token under SCORM;
+- the title, or the player's session address, written as plain JSON, or either page's script-value escape letting "<" through.
+
+This package's test module is the one that used the last of the test-module floor's allowance, so `MIN_TEST_MODULES` (`tools/vitest-run-integrity.mjs`) moves from 437 to the measured 459. That covers the twenty-two modules added since the last pin, and none was removed.
+
 ## 2026-09-27 — Foxxi: a folded course maps each older id to everything it named
 
 An emergent course folded by `POST /agent/content/fold-course` (#513) answers `mapped`: which IRI each of the older model's ids became. But the older model's ids are not one per thing. A lesson's id is its course's competency and its own title, and `POST /content/compose-course` gives every lesson the course's competency and titles an untitled one "Lesson". So two lessons titled alike share an id, and so can two fragments that differ only in level. `mapped` kept the last and lost the rest, though the folded course still holds them all.
