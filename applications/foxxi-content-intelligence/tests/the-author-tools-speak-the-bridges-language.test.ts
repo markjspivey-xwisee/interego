@@ -18,7 +18,7 @@ import {
   COGNITIVE_LEVELS, FRAGMENT_KIND_LIST, fragmentPayload, missingFrom, missingFromFragment, moved, newFragment, newQuestion,
   policyOf, questionPayload, withoutOption, type FragmentDraft, type QuestionDraft,
 } from '../dashboard-app/src/author/draft.js';
-import { compositionPayload, contentKindOf, missingFromComposition, newComposition, offer } from '../dashboard-app/src/author/compose.js';
+import { compositionPayload, contentKeyOf, contentKindOf, missingFromComposition, newComposition, offer } from '../dashboard-app/src/author/compose.js';
 import { readFileSync } from 'node:fs';
 import { SHELF_MAX, readShelf, shelfKey, shelve, unshelve, type ShelfItem } from '../dashboard-app/src/author/shelf.js';
 import { cellLine, hasOutcomes, leaningLine, type CompositionEfficacy } from '../dashboard-app/src/author/efficacy.js';
@@ -145,7 +145,24 @@ describe('what is missing, said before anything is sent', () => {
     expect(compositionPayload({ title: ' T ', competency: ' c ', positions: [{ competency: '', alternatives: [iri] }, { competency: 'd', alternatives: [iri] }] }))
       .toEqual({ title: 'T', competency: 'c', positions: [{ competency: 'c', paradigm: [iri] }, { competency: 'd', paradigm: [iri] }] });
     expect(contentKindOf(`https://b.example/ns/foxxi/composition/${'b'.repeat(64)}`)).toBe('composition');
+    // The same content under another bridge's IRI is the same alternative, as the engine holds it.
+    const elsewhere = `https://elsewhere.example/ns/foxxi/fragment/${'a'.repeat(64)}`;
+    expect(contentKeyOf(elsewhere)).toBe(contentKeyOf(iri));
+    expect(missingFromComposition({ title: 'T', competency: 'c', positions: [{ competency: '', alternatives: [iri, elsewhere] }] }))
+      .toEqual(['Position 1: an alternative is listed twice.']);
+    expect(() => compositionFrom(compositionPayload({ title: 'T', competency: 'c', positions: [{ competency: '', alternatives: [iri, elsewhere] }] }))).toThrow(/same fragment twice/);
+    expect(offer({ title: 'T', competency: 'c', positions: [{ competency: '', alternatives: [iri] }] }, 0, elsewhere).positions[0]!.alternatives).toEqual([iri]);
     expect(contentKindOf(`https://b.example/ns/foxxi/competency/x`)).toBeUndefined();
+  });
+});
+
+describe('picking content up by its IRI', () => {
+  it('shelves nothing the bridge refused to give, whatever the refusal', () => {
+    const panel = readFileSync(new URL('../dashboard-app/src/components/AuthorPanel.tsx', import.meta.url), 'utf8');
+    const pickUp = panel.slice(panel.indexOf('async function pickUp'), panel.indexOf('onPut({', panel.indexOf('async function pickUp')));
+    expect(pickUp).toMatch(/if \(r\.status === 404\)/);
+    expect(pickUp).toMatch(/if \(!r\.ok\) \{/);
+    expect(pickUp.indexOf('if (!r.ok)')).toBeLessThan(pickUp.indexOf('await r.json() as { title?: string'));
   });
 });
 

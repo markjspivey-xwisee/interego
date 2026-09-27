@@ -1,5 +1,104 @@
 # Changelog
 
+## 2026-09-27 — Foxxi dashboard: recording your own work, and keeping what it implies
+
+The dashboard gains **Work** (`/work`), the last part of the learner portal. A performer records units of their own production work, and keeps, or not, what a failed unit implies about the content that would help. An agent does the same with the same affordances, signed as itself.
+
+- **Record a unit** (`foxxi.record_performance_signed`, signed as the performer, into their own record). It takes:
+  - what the work was, and whether it succeeded;
+  - optionally, its kind (an IRI, so units of one kind count toward one competency), the artifact it produced, its quality and its duration;
+  - how it went, step by step: what was done and on what, how much of the work it was, how sure the performer is it happened as told (done, tried without knowing, or considered and not done), how it turned out, and which earlier step it revises.
+
+  The page says what is missing before sending. It also says why a failure recorded without how it went cannot be answered: its regime is read from the steps.
+- **A failure is answered.** A failed unit sent with its steps comes back with the offer the performance practice makes from the work at its competency (`offerFromWork`): the regime it reads as, the plan for that regime, and the forms of content that plan admits, with why. Where nothing is offered, the page says why.
+- **Keeping, and withdrawing.** Keeping the offer sends `foxxi.content_admit`, and *What you keep* lists the standing records (`foxxi.content_admissions`). Each can be withdrawn. Each change updates the list from the bridge's own answer, so a wallet extension is asked once, not twice. Reads that would prompt a wallet wait for a click, as elsewhere.
+
+`tests/a-portal-keeps-what-its-work-implies.test.ts` (6 tests) runs the whole path through the real code:
+- work written in the page, kept as the bridge keeps a trajectory (`workStepsFrom`);
+- a failure answered from it by the practice's own `offerFromWork`: Emergent work, and work no content helps;
+- what the page sends to keep it, taken by `admissionRecordFrom`;
+- what it sends to withdraw.
+
+Seventeen mutants each fail a named test.
+
+The whole flow was run in a browser against the deployed bridge, as the demo learner Joshua Liu:
+- a failed refund recorded with four steps;
+- the bridge answering that it reads as Emergent work, whose plan is coaching and a probe, admitting Reflection and Probe;
+- the offer kept, listed, withdrawn, and the withdrawal read back from his pod.
+
+The dashboard README describes Author and Work.
+
+## 2026-09-27 — Foxxi dashboard: author tools, and what a composition has learned
+
+The dashboard gains **Author**: write fragments, compose them, and see what each composition has learned. Each is an affordance an agent uses the same way, signed as the author: `foxxi.content_fragment`, `foxxi.content_compose`, `foxxi.content_mine`, and a composition's efficacy.
+
+- **Write a fragment** (`/author`).
+  - Its form and level come from the engine's own list. An author writes the body in Markdown and previews it with the engine's own renderer.
+  - Questions of every kind are written the way it is natural to write them: the options and which are right, the items in their right order, the pairs that match, the answer and what else to accept, and an explanation shown once a question is answered.
+  - The editor says what is still missing before anything is sent, including what a kind asks of its questions: an assessment item needs a graded one, and a probe or reflection takes none. The bridge checks the rest and says so.
+  - An unsent draft is kept in the browser, per identity. What is made goes on the author's shelf.
+- **Compose.** A title, the competency, and positions, each with its ways in in the author's order of preference, drawn from the shelf or pasted by IRI from anywhere. A refusal names the alternatives the bridge cannot reach. The result links to playing it and to what it has learned.
+- **What it has learned** (`/author/<hash>`). Position by position, how learners at each level did after meeting each alternative, and what the composition leans to now.
+  - It says only what the engine says: a cell too small to show says so, and a leaning withheld says why.
+- **What you made.** The author's compositions from their own record.
+- **Picking up by IRI** reads the item's public form to name it on the shelf. A refusal other than a missing item (a 503, say) now says so and shelves nothing.
+- **Duplicate alternatives** are told apart as the engine tells content apart, by kind and hash: the same fragment under two bridges' IRIs is one alternative, not two.
+- **The signed-only notice** now also points a wallet or a pasted key to Author, which is signed as it too.
+- **One list of forms** (`src/fragment-kinds.ts`). The kinds and levels now live in a module that imports nothing, so the engine builds fragments from the very list the author tools offer in the browser, where the engine's own modules cannot load. The engine types that list against its own kinds.
+
+`applications/foxxi-content-intelligence/tests/the-author-tools-speak-the-bridges-language.test.ts` (13 tests) checks the tools against the engine's own code:
+- a fragment written in the editor with every kind of question goes through `fragmentFrom` and `compositionFrom`, is played as the bridge serves it, and is answered through the learner portal's drafts: every answer its author marked right is graded right by `advancePlay`, 7 of 7, with the explanations;
+- each kind of question in the form the engine takes, with what was left blank left out;
+- what is missing, said before sending;
+- the shelf;
+- the efficacy view, as the engine's `compositionEfficacy` gives it.
+
+Twenty-nine mutants each fail a named test, among them the engine keeping its own copy of the kinds, a refusal shelved as content, and the same content under another IRI offered twice.
+
+The whole flow was run in a browser against the deployed bridge, as the demo learner Joshua Liu:
+- a concept written and previewed;
+- an assessment item written, the editor saying what was missing until an option was marked right;
+- both composed with a worked example pasted by IRI;
+- what the composition has learned read back from the live tally: a cell too small to show, and a leaning withheld;
+- "What you made" listing it from his record.
+
+The un-linted `applications/` frontier is repinned 612 -> 650 files, with errors not raised: every new file lints clean (`tools/lint-gate.mjs`).
+
+## 2026-09-27 — Foxxi: a void the LRS applied is kept with the voided statement's owner
+
+A defect the automated review found in #528 after it merged. A merge of a learner's record now keeps only the voids the store applied, as its mark on the voided statement. But a lens tenant's store is a view:
+- the process-wide budget evicts its oldest records;
+- a dropped partition takes all of them;
+- a restart takes everything.
+
+So a voided statement evicted before the later statement that voided it lost its mark. Its copy in the owner's lattice or on their pod was then read as current again, in the learner record, the listing and earned credentials.
+
+- **The LRS tells of a void once it took effect** (`onVoidApplied`, `src/xapi-lrs.ts`), with the statement it voided, marked. It never tells of a void that took no effect: a voider stored before its target, one naming another voiding statement, or one outside the writer's registration.
+- **A voiding statement voids only once it is taken.** The LRS used to apply a void before the statement's own immutable-id check, so one refused as a conflict (409) had already voided its target, and would now have kept that void with the owner. It applies the void after the statement is stored, by POST and by PUT.
+- **The bridge keeps it with the voided statement's owner** (`src/applied-voids.ts`). The owner is the DID the statement's actor carries, as a play or a performance names them. The bridge composes a small record of its own (`foxxi:AppliedVoid`: the voided statement's id and the voiding statement's) into the owner's shared lattice, beside their statements. A statement whose owner has no pod on this tenant's store is voided in the lens alone, as before.
+- **Every merge of a record reads those records** (`mergeStatementsById`'s third argument, at all seven of the bridge's merges). So does a review read from the lattice alone (`source: 'pgsl'`). A statement they name stays voided after the store has let it go.
+
+`foxxi:AppliedVoid` is declared in the Foxxi vocabulary.
+
+`tests/an-applied-void-is-kept-with-its-owner.test.ts` (10 tests) covers:
+- the LRS telling of a void applied, and of none that took no effect, through its own routes;
+- a voiding statement refused as a conflict voiding nothing, posted or put;
+- a merge keeping a statement voided from its lattice copy and its pod copy once the store has let it go;
+- the record, read back;
+- the owner, named;
+- the bridge's hook, and every merge reading the kept voids.
+
+Twelve mutants each fail a named test.
+
+## 2026-09-27 — Foxxi dashboard: a pasted key keeps its session through the notice, and forwarding can be read again
+
+Two defects the automated review found in #529 after it merged.
+- **The notice's links signed a pasted key out.** The notice on the profile and *My activity* sent a wallet or a pasted key to Learn and *My forwarding* by plain links, which reload the page. A pasted key lives in memory only, and its session is not kept across a reload, so following either link signed it out. The links now move within the app, as the top navigation does.
+- **The way to read *My forwarding* could vanish.** Through a wallet extension it is read only when asked. If the first of its two reads succeeded and the second did not, or a target was added before the first read, the control to read it went away, leaving the inbound list blank. The control now stays until both lists are read.
+
+`tests/the-learner-portal-speaks-the-bridges-language.test.ts` covers both. Two mutants each fail a named test.
+
+
 ## 2026-09-27 — Foxxi dashboard: a wallet or a pasted key lands on Learn, and forwarding reads one signature at a time
 
 Two defects the automated review found in #527 after it merged.
@@ -14,6 +113,7 @@ Two defects the automated review found in #527 after it merged.
 - how *My forwarding* reads.
 
 Eight mutants each fail a named test.
+
 
 ## 2026-09-27 — Foxxi dashboard: a learner portal, and signing in with a wallet extension
 

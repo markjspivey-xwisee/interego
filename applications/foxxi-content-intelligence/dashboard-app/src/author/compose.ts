@@ -29,6 +29,15 @@ export function contentKindOf(iri: string): 'fragment' | 'composition' | undefin
   return /^https?:\/\/[^/?#]+\/ns\/foxxi\/(fragment|composition)\/[0-9a-f]{64}$/.exec(iri.trim())?.[1] as 'fragment' | 'composition' | undefined;
 }
 
+/**
+ * What an IRI names, whichever bridge minted it: its kind and hash, as the engine tells content
+ * apart (sameContent). The same fragment under two bridges' IRIs is one alternative, not two.
+ */
+export function contentKeyOf(iri: string): string {
+  const m = /^https?:\/\/[^/?#]+\/ns\/foxxi\/(fragment|composition)\/([0-9a-f]{64})$/.exec(iri.trim());
+  return m ? `${m[1]}:${m[2]}` : iri.trim();
+}
+
 /** A composition as the bridge takes it (compositions.ts, compositionFrom). */
 export function compositionPayload(d: CompositionDraft): Record<string, unknown> {
   const competency = d.competency.trim();
@@ -48,7 +57,7 @@ export function missingFromComposition(d: CompositionDraft): string[] {
     if (!p.alternatives.length) out.push(`Position ${i + 1}: add at least one fragment or composition that can fill it.`);
     const bad = p.alternatives.find(a => !contentKindOf(a));
     if (bad !== undefined) out.push(`Position ${i + 1}: "${bad}" is not a fragment's or a composition's IRI.`);
-    if (new Set(p.alternatives.map(a => a.trim())).size < p.alternatives.length) out.push(`Position ${i + 1}: an alternative is listed twice.`);
+    if (new Set(p.alternatives.map(contentKeyOf)).size < p.alternatives.length) out.push(`Position ${i + 1}: an alternative is listed twice.`);
   });
   return out;
 }
@@ -57,6 +66,6 @@ export function missingFromComposition(d: CompositionDraft): string[] {
 export function offer(d: CompositionDraft, at: number, iri: string): CompositionDraft {
   return {
     ...d,
-    positions: d.positions.map((p, i) => (i === at && !p.alternatives.includes(iri.trim()) ? { ...p, alternatives: [...p.alternatives, iri.trim()] } : p)),
+    positions: d.positions.map((p, i) => (i === at && !p.alternatives.some(a => contentKeyOf(a) === contentKeyOf(iri)) ? { ...p, alternatives: [...p.alternatives, iri.trim()] } : p)),
   };
 }
