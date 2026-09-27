@@ -253,7 +253,7 @@ describe('the bridge launches and steps a play for its own learner', () => {
     const launch = route("app.post('/agent/content/launch'");
     expect(launch).toMatch(/resolveForCaller\(auth\.callerDid, auth\.signer, auth\.payload\)/);
     expect(launch).toMatch(/startPlay\(r\.resolution/);
-    expect(launch).toMatch(/keepPlay\(play\)/);
+    expect(launch).toMatch(/keepPlay\(play, wayInBy\(r\.kind, r\.admit\)\)/);
     const next = route("app.post('/agent/content/next'");
     expect(next.indexOf('entry.play.learner.id !== auth.callerDid')).toBeGreaterThan(0);
     expect(next.indexOf('entry.play.learner.id !== auth.callerDid')).toBeLessThan(next.indexOf('takeStep('));

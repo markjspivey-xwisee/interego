@@ -119,7 +119,10 @@ describe('the bridge keeps an admission only when the learner asks, and reads it
     // Unreadable is not empty: a learner who limited their content is not resolved as one who did not.
     expect(resolve).toMatch(/if \(kept && !kept\.ok\) return \{ ok: false, status: 503,/);
     expect(resolve.indexOf('kept && !kept.ok')).toBeLessThan(resolve.indexOf('resolveComposition('));
-    expect(resolve).toMatch(/\.\.\.\(admission \? \{ admission: \(\) => admission \} : kept\?\.ok && kept\.standing\.size \? \{ admission: fromKept \} : \{\}\)/);
+    // One rule, the request's own admission or else what the learner kept, is what resolution reads
+    // and what the play keeps, so a way in after a missed check reads the same one.
+    expect(resolve).toMatch(/const admit = admission \? \(\) => admission : kept\?\.ok && kept\.standing\.size \? fromKept : undefined;/);
+    expect(resolve).toMatch(/\.\.\.\(admit \? \{ admission: admit \} : \{\}\), lookup: iri => contentStore\.get\(iri\)/);
     expect(resolve).toMatch(/if \(standing\?\.admission\) admittedBy\.set\(standing\.competency, standing\);/);
     // A withdrawal answers null, so the composition's own admission does not step in.
     expect(resolve).toMatch(/return standing \? standing\.admission : undefined;/);

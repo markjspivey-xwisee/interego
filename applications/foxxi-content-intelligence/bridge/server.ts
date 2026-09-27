@@ -199,7 +199,7 @@ import { validateScormResponses, type ScormAssessmentQuestion } from '../src/sco
 import { authorQuestion, questionForLearner, questionIsRight, QuestionError } from '../src/course-questions.js';
 import { courseMarkdownHtml } from '../src/course-markdown.js';
 import { ContentError, competencyRef, compositionIri, contentRefOf, fragmentForLearner, fragmentFrom, fragmentIri, publicFragment, sameContent, type Fragment } from '../src/content-fragments.js';
-import { admissionFrom, compositionFrom, resolveComposition, type Admission, type Composition, type RecordedCompetency } from '../src/compositions.js';
+import { admissionFrom, anotherAlternative, compositionFrom, resolveComposition, type Admission, type Composition, type RecordedCompetency } from '../src/compositions.js';
 import { bundledItem, ContentStore, isCompositionItem, LOCATIONS_PER_ITEM, mergeLocations, type ContentItem, type ContentLocation } from '../src/content-store.js';
 import { foldCourse, type FoldedCourse, type FoldOptions } from '../src/course-fold.js';
 import { foldEmergentCourse, type FoldedEmergent } from '../src/emergent-fold.js';
@@ -208,7 +208,7 @@ import { keepAdmission, readAdmissions } from '../src/admission-store.js';
 import { attemptStatements, closingStatements, cmi5AttemptFrom, compositionCourseStructure, definedStatement, type Cmi5Attempt } from '../src/composition-cmi5.js';
 import { compositionAuPage, compositionAuPageCsp } from '../src/composition-au-page.js';
 import { compositionScormZip } from '../src/composition-scorm.js';
-import { currentView, startPlay, takeStep, type CompositionPlay, type PlayInProgress } from '../src/composition-play.js';
+import { currentView, startPlay, takeStep, type AnotherWayIn, type CompositionPlay, type PlayInProgress } from '../src/composition-play.js';
 import { EFFICACY_POLICY, EfficacyTally, efficacyTokenKey, openTally, outcomeToken, sealTally } from '../src/fragment-efficacy.js';
 import { stateWriter } from '../src/state-writer.js';
 import { competencyIri, competencyIriForTerm, competencyIdOf } from '../src/competency-identity.js';
@@ -10809,7 +10809,7 @@ function persistEfficacy(): void {
 
 /** Resolve a composition for a verified caller from their own record: the one path resolve and launch share. */
 async function resolveForCaller(callerDid: string, signer: string, p: Record<string, unknown>): Promise<
-  | { ok: true; root: Composition; kind: 'human' | 'agent'; resolution: ReturnType<typeof resolveComposition>; missing: string[]; admittedBy: AdmissionRecord[] }
+  | { ok: true; root: Composition; kind: 'human' | 'agent'; resolution: ReturnType<typeof resolveComposition>; missing: string[]; admittedBy: AdmissionRecord[]; admit?: (competency: string) => Admission | null | undefined }
   | { ok: false; status: number; error: string }> {
   const root = typeof p.composition === 'string' ? await contentStore.fetch(p.composition) : undefined;
   if (!root || !isCompositionItem(root)) return { ok: false, status: 404, error: 'no such composition here: name one by its IRI' };
@@ -10833,12 +10833,13 @@ async function resolveForCaller(callerDid: string, signer: string, p: Record<str
     const { missing } = await contentStore.gather(root);
     const record = await learnerCompetencies(callerDid, kind);
     await ensureEfficacy();
+    const admit = admission ? () => admission : kept?.ok && kept.standing.size ? fromKept : undefined;
     const resolution = resolveComposition({
       composition: root, learner: { id: callerDid, kind }, record,
-      ...(admission ? { admission: () => admission } : kept?.ok && kept.standing.size ? { admission: fromKept } : {}), lookup: iri => contentStore.get(iri),
+      ...(admit ? { admission: admit } : {}), lookup: iri => contentStore.get(iri),
       efficacy: (competency, fragment, level) => fragmentEfficacy.counts(competency, fragment, level),
     });
-    return { ok: true, root, kind, resolution, missing, admittedBy: [...admittedBy.values()] };
+    return { ok: true, root, kind, resolution, missing, admittedBy: [...admittedBy.values()], ...(admit ? { admit } : {}) };
   } catch (e) {
     if (e instanceof ContentError) return { ok: false, status: 400, error: e.message };
     throw e;
@@ -10867,11 +10868,16 @@ app.post('/agent/content/resolve', async (req, res) => {
 const CONTENT_PLAYS_MAX = 5000;
 const CONTENT_PLAY_TTL_MS = 3 * 60 * 60 * 1000;
 const contentPlays = new Map<string, PlayInProgress & { expiresAt: number }>();
-function keepPlay(play: CompositionPlay): void {
+function keepPlay(play: CompositionPlay, choose: AnotherWayIn): void {
   const now = Date.now();
   for (const [k, v] of contentPlays) if (v.expiresAt < now) contentPlays.delete(k);
   if (contentPlays.size >= CONTENT_PLAYS_MAX) { const oldest = contentPlays.keys().next().value; if (oldest !== undefined) contentPlays.delete(oldest); }
-  contentPlays.set(play.id, { play, expiresAt: now + CONTENT_PLAY_TTL_MS });
+  contentPlays.set(play.id, { play, choose, expiresAt: now + CONTENT_PLAY_TTL_MS });
+}
+
+/** Where a missed check finds another way in: the alternatives a play was resolved from, by the rules it was resolved by. */
+function wayInBy(kind: 'human' | 'agent', admit?: (competency: string) => Admission | null | undefined): AnotherWayIn {
+  return (step, exclude) => anotherAlternative(step, { lookup: iri => contentStore.get(iri), ...(admit ? { admission: admit } : {}), learnerKind: kind, exclude });
 }
 
 /** A play's statement with the bridge's mark on it when the bridge graded it, fixed once so a retry keeps the same statement. */
@@ -10935,7 +10941,7 @@ app.post('/agent/content/launch', async (req, res) => {
         bridgeBaseUrl, 'Nothing to play for you here', []);
       return;
     }
-    keepPlay(play);
+    keepPlay(play, wayInBy(r.kind, r.admit));
     sendActionResult(req, res, {
       ok: true, sessionId: play.id, registration: play.registration, composition: r.root['@id'], title: r.root.title,
       learnerKind: r.kind, step: currentView(play), ...about,
@@ -11097,7 +11103,7 @@ app.post('/ns/foxxi/composition/:hash/au/session', async (req, res) => {
     const t = Date.now();
     for (const [k, v] of projectedPlays) if (v.expiresAt < t) projectedPlays.delete(k);
     if (projectedPlays.size >= PROJECTED_PLAYS_MAX) { const oldest = projectedPlays.keys().next().value; if (oldest !== undefined) projectedPlays.delete(oldest); }
-    projectedPlays.set(play.id, { play, attempt, startedAt: t, expiresAt: t + CONTENT_PLAY_TTL_MS });
+    projectedPlays.set(play.id, { play, attempt, choose: wayInBy(learner.kind), startedAt: t, expiresAt: t + CONTENT_PLAY_TTL_MS });
     res.json({ ok: true, session: play.id, title: root.title, done: false, step: currentView(play), statements: opening });
   } catch (err) { sendServerError(res, err, 'route-handler'); }
 });

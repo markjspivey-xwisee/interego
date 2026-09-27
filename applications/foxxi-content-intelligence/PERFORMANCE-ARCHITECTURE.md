@@ -322,6 +322,21 @@ play. `foxxi.content_next` answers the step they are on and moves on.
     the position, the alternatives it was chosen from and why.
   So the record can say which explanation, example or probe a learner met
   at which point, and how they did after it.
+- **A missed check brings another way in.** Each position that taught the
+  check's competency since the last check there, and offers more than the
+  learner met, gives them another of its alternatives. It is chosen as
+  resolution chose (`anotherAlternative`: admitted, meant for them, what its
+  IRI says, nearest the level they met it at) and is never one already
+  shown. Another check from the missed check's position follows, when it
+  offers one. The steps go in right after the missed check, before the play
+  decides it is done.
+  - Each position does this once per play, and at most 12 in all.
+  - A position with nothing else to offer adds nothing: the same
+    explanation twice is not another way in.
+  - The new way in is judged by the check that follows it, as any teaching
+    is, and its statements say why it came.
+  - A play an LMS launches works the same way, without admissions, as it
+    resolves.
 - **The last step completes the composition.**
 - **Every statement follows the Foxxi xAPI profile's
   `composition-attempt` pattern.** Its templates are `question-answered`,
