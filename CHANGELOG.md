@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-09-26 — jev-harness: a file named for its author is not an auth path
+
+For every changed file that matches `SENSITIVE_PATTERNS` (`applications/jev-harness/src/repo.ts`), the review gate adds a `sensitive-path:<file>` check and select-tests runs the whole suite. The first pattern was `/auth/i`, which also matches "author". On #496 it flagged `applications/foxxi-content-intelligence/src/course-authoring.ts`, a course question module with no authentication or authorization in it. So for the file's name alone, the gate asked for a human and the selection ran the whole suite.
+
+- **The pattern is now `/auth(?!or(?:s|ed|ing)?(?![a-z]))/i`.** "auth" still matches anywhere in a path: auth, authn, authz, oauth, auth-methods, authenticate, authentication, authorize, authorization, authorise, authorisation, unauthorized. The exception is when it spells author, authors, authored or authoring and the word ends there. A file for a content author inside an auth directory (`src/auth/course-authoring.ts`) still matches through the directory.
+- **"authority" and "authorship" still match, on purpose.** In this repository an authority decides who may act (`the-authority-shape-enforces`, `mesh-enrolment-authority-live`), and an authorship is a signed proof (`sign_authorship`, `authorship-content-binding`). Both are security code, and the comment above the patterns says so.
+- **On the current tree**, 537 of the 3,157 tracked files were sensitive and 536 are. The only one that changed is `demos/live/lib/author.ts`, the live demo's course-writing prompt. No file became sensitive that was not before.
+
+`applications/jev-harness/tests/judgments.test.ts` lists both sides for `isSensitivePath`: 17 paths that must match, including an authority and an authorship, and 7 that must not. It also checks both places that use the pattern. For `src/course-authoring.ts`, select-tests narrows the suite and consults the model. The review gate records no check and answers auto-ok for the same diff that it sends to a human when the path is sensitive. Five mutants were checked, and each fails the tests: the old `/auth/i` (all three new tests fail), a whole-word `\bauth\b`, an exemption for everything after "author" (which drops authorize and authorization), the same exemption without the word end, and a case-sensitive pattern. The mutation gate (`tools/mutation-gate.data.mjs`) has no anchor on this pattern or on `repo.ts`, so it is unchanged.
+
 ## 2026-09-26 — Foxxi: an agent-authored course can be as rich as its readers can take
 
 A course authored through `/agent/scorm/author` was plain text with one kind of question: a typed answer checked against one hashed word or number. So an agent writing a course wrote paragraphs and asked for a word, and the live engine, the LTI pages and the SCORM package all showed it that way. Sections now take Markdown, and questions take the xAPI interaction types, which SCORM 2004's `cmi.interactions` names the same way.

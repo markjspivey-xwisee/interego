@@ -26,6 +26,21 @@ describe('repository inventory (no git)', () => {
     expect(isSensitivePath('src/auth/gate.ts')).toBe(true);
     expect(isSensitivePath('src/rollup.ts')).toBe(false);
   });
+
+  it('flags authentication and authorization paths, but not a content author', () => {
+    for (const path of [
+      'src/auth.ts', 'src/auth/session.ts', 'src/authn.ts', 'src/authz.ts', 'src/xapi-oauth.ts', 'src/auth-methods.ts',
+      'src/authenticate.ts', 'src/authentication.ts', 'src/authorize.ts', 'src/pod-authorization.ts', 'src/authorise.ts',
+      'src/authorisation.ts', 'src/unauthorized.ts', 'docs/AUTH-ARCHITECTURE.md', 'src/auth/course-authoring.ts',
+      // Kept on purpose: an authority decides who may act, and an authorship is a signed proof.
+      'tests/the-authority-shape-enforces.test.ts', 'tests/authorship-covers-content.test.ts',
+    ]) expect(isSensitivePath(path), path).toBe(true);
+    // Who wrote a course or a document. #496's course-authoring.ts went to a human and the whole suite for its name alone.
+    for (const path of [
+      'applications/foxxi-content-intelligence/src/course-authoring.ts', 'demos/live/lib/author.ts', 'src/author/index.ts',
+      'src/authored-course.ts', 'docs/authors.md', 'AUTHORS', 'src/co-authoring.ts',
+    ]) expect(isSensitivePath(path), path).toBe(false);
+  });
 });
 
 describe('navigate', () => {
@@ -90,6 +105,15 @@ describe('select-tests', () => {
     expect(j.reasons.join(' ')).toContain('sensitive');
     expect(jev.calls).toHaveLength(0);
     expect(j.tests.length).toBe(4);
+  });
+
+  it('narrows the suite for a file named for its author, as for any other source', async () => {
+    const inv = inventory(fixtureRepo(), { includeHeads: true });
+    const jev = preferringJev((q, state) => (q === 'test_0' ? idOf(state, 'tests/rollup.test.ts') : undefined), { covered_0: 0.9 });
+    const j = await selectTests(jev, inv, { changedFiles: ['src/course-authoring.ts'] });
+    expect(j.mode).toBe('subset');
+    expect(j.reasons.join(' ')).not.toContain('sensitive');
+    expect(jev.calls).toHaveLength(1);
   });
 });
 
@@ -174,6 +198,13 @@ describe('review-gate', () => {
     const j = await reviewGate(lowHazards(), null, { diff, title: 'tidy gate', description: 'formatting' });
     expect(j.verdict).toBe('needs-human-review');
     expect(j.checks[0]).toContain('sensitive-path');
+  });
+
+  it('does not send a content author to a human for its name', async () => {
+    const diff = clean.replace(/src\/rollup\.ts/g, 'applications/foxxi-content-intelligence/src/course-authoring.ts');
+    const j = await reviewGate(lowHazards(), null, { diff, title: 'Emit satisfied once per block', description: 'rollupCourse returned 4; it now returns 2.' });
+    expect(j.checks).toEqual([]);
+    expect(j.verdict).toBe('auto-ok');
   });
 
   it('needs a human when a hazard fires or the description does not match', async () => {
