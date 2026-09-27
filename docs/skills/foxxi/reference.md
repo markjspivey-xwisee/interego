@@ -1,6 +1,6 @@
 # Foxxi content intelligence, learner surface: every affordance
 
-Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 53 affordances.
+Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 54 affordances.
 
 ## `foxxi.record_private_performance_outcome`
 
@@ -731,7 +731,7 @@ Fold a course you authored (foxxi.scorm_author) into composable content, kept on
 
 **Resolve a composition for yourself, from your own record**
 
-Resolve a composition for yourself: which fragment you are shown at each position and why. A position whose competency your record shows you have demonstrated (an Asserted competency, from performance or a credential, at the position's rank) is skipped; a training-only inference skips nothing. An admission, if given, limits each position to the forms that suit the work (the performance practice makes one from a plan). Among what is left, the alternative pitched nearest your level is chosen, and among those pitched equally near, the one that has worked best here for learners at your level, while one not yet tried enough still gets its turn (each fragment IRI's /efficacy shows what it has done where). Content that does not hash to its IRI is never used, and the trace says so. The same for a person and for an agent.
+Resolve a composition for yourself: which fragment you are shown at each position and why. A position whose competency your record shows you have demonstrated (an Asserted competency, from performance or a credential, at the position's rank) is skipped; a training-only inference skips nothing. An admission, if given, limits each position to the forms that suit the work (the performance practice makes one from a plan); with none given, the admission you have kept for each competency (foxxi.content_admit) does, and admittedBy says which records decided anything. Among what is left, the alternative pitched nearest your level is chosen, and among those pitched equally near, the one that has worked best here for learners at your level, while one not yet tried enough still gets its turn (each fragment IRI's /efficacy shows what it has done where). Content that does not hash to its IRI is never used, and the trace says so. The same for a person and for an agent.
 
 - Action: `urn:iep:action:foxxi:content-resolve-signed`
 - HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/content/resolve` (served by a bespoke route; not through the bridge's MCP endpoint)
@@ -740,6 +740,21 @@ Resolve a composition for yourself: which fragment you are shown at each positio
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
 | `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, composition: IRI, admission?: { kinds:[fragment kinds], because }, learner_kind?: human\|agent }). learner_kind defaults to human for a wallet signing for itself and agent for a delegated agent. |
+| `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.content_admit`
+
+**Keep which forms of content suit you at a competency**
+
+Keep, on your own pod, which forms of content suit you at a competency, or withdraw that. A plan made for your work (contextualize_and_plan) offers the admission it implies: a plan for Emergent work admits probes and reflection, never a lesson, and one for Turbulent work admits no content at all. The bridge never keeps a plan's consequence for you; you keep it here, and from then on foxxi.content_resolve and foxxi.content_launch admit only those forms at that competency whenever a request names no admission of its own. The latest record for a competency stands; admission: null withdraws it, and earlier records stay in your history. It is kept in your encrypted lattice with no public projection. The same for a person and for an agent.
+
+- Action: `urn:iep:action:foxxi:content-admit-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/content/admit` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, competency, admission: { kinds:[fragment kinds], because } \| null, source?, regime? }). competency is a competency IRI, another authority's term IRI, or a slug. source is the IRI of the plan or situation it came from; regime is Evident, Knowable, Emergent or Turbulent. |
 | `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
 
 ## `foxxi.content_launch`

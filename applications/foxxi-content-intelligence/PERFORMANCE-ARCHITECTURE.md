@@ -217,6 +217,18 @@ agent, as learner and as author.
   | Knowable, not yet measured | assessment | a check before any teaching |
 
   The dependency runs from the practice to Foxxi, never back.
+- **The learner keeps an admission; the bridge only reads it**
+  ([`src/admission-records.ts`](src/admission-records.ts)).
+  - A plan made with `contextualize_and_plan` offers the admission it
+    implies at the situation's competency (`admissionOffer`). Nothing is
+    written onto anyone's record from it.
+  - The learner, person or agent, keeps it with `foxxi.content_admit` on
+    their own pod, in their encrypted lattice, with no public projection.
+  - For each competency the latest record stands, and a withdrawal is a
+    record too.
+  - Whenever a request names no admission of its own, resolution reads
+    what the learner kept, and says which records limited a position
+    (`admittedBy`).
 
 **On the bridge**, for a person or an agent alike, as signed affordances:
 - `foxxi.content_fragment` authors a fragment.
@@ -335,7 +347,8 @@ Nobody declares which explanation of a competency works; the plays show it.
   process's view.
 
 Not yet wired:
-- regime sources beyond a supplied plan;
+- turning what a learner's work shows (their trajectories and outcomes)
+  into a plan, and so an admission to keep, without their asking;
 - folding the older in-memory `Course` model into this one;
 - importing SCORM packages and authoring-tool exports (packages are
   unzipped in the browser today, and the server sees only their manifest

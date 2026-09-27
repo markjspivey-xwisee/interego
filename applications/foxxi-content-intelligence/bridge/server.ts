@@ -202,6 +202,7 @@ import { ContentError, compositionIri, contentRefOf, fragmentForLearner, fragmen
 import { admissionFrom, compositionFrom, resolveComposition, type Admission, type Composition, type RecordedCompetency } from '../src/compositions.js';
 import { bundledItem, ContentStore, isCompositionItem, LOCATIONS_PER_ITEM, mergeLocations, type ContentItem, type ContentLocation } from '../src/content-store.js';
 import { foldCourse, type FoldedCourse, type FoldOptions } from '../src/course-fold.js';
+import { admissionRecordFrom, CONTENT_ADMISSION_TYPE, recordFor, standingAdmissions, type AdmissionRecord } from '../src/admission-records.js';
 import { currentView, startPlay, takeStep, type CompositionPlay, type PlayInProgress } from '../src/composition-play.js';
 import { EFFICACY_POLICY, EfficacyTally, efficacyTokenKey, openTally, outcomeToken, sealTally } from '../src/fragment-efficacy.js';
 import { stateWriter } from '../src/state-writer.js';
@@ -10558,6 +10559,52 @@ async function learnerCompetencies(learnerDid: string, kind: 'human' | 'agent'):
   return elr.competencies;
 }
 
+/**
+ * The admissions a learner has kept on their own pod (src/admission-records.ts), the latest per
+ * competency. Only a pod on this tenant's store is read, as with the learner's record.
+ */
+async function learnerAdmissions(learnerDid: string): Promise<Map<string, AdmissionRecord>> {
+  const pod = resolveSubjectPodUrl(learnerDid);
+  if (!tenantPodUrl || !sameStore(pod, tenantPodUrl)) return new Map();
+  const label = actorForPod(pod, MESH_ACTOR_LABELS);
+  await ensureResident(pod, learnerDid, label);
+  return standingAdmissions(latticeArtifacts(label, CONTENT_ADMISSION_TYPE).map(a => a.content));
+}
+
+// A learner keeps, on their own pod, which forms of content suit them at a competency, or withdraws
+// that (admission: null). The bridge writes it only when the learner asks: it reads plans, it does
+// not act on them for anyone. Kept in the learner's encrypted lattice, with no public projection.
+app.post('/agent/content/admit', async (req, res) => {
+  try {
+    if (contentRateLimited(req, res)) return;
+    const auth = await verifyDelegatedCaller(req.body);
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
+    const p = auth.payload;
+    let record: AdmissionRecord;
+    try {
+      record = admissionRecordFrom({ competency: p.competency, admission: p.admission, source: p.source, regime: p.regime, at: new Date().toISOString() });
+    } catch (e) {
+      if (e instanceof ContentError) { res.status(400).json({ error: `admission not kept: ${e.message}` }); return; }
+      throw e;
+    }
+    const pod = resolveSubjectPodUrl(auth.callerDid);
+    if (!tenantPodUrl || !sameStore(pod, tenantPodUrl)) {
+      res.status(409).json({ error: 'admission not kept: your pod is not on this bridge\'s store, so resolution here could not read it back' }); return;
+    }
+    let kept: Awaited<ReturnType<typeof composeIntoSharedLattice>>;
+    try {
+      kept = await composeIntoSharedLattice({
+        podUrl: pod, agentDid: auth.callerDid, label: actorForPod(pod, MESH_ACTOR_LABELS),
+        terms: [auth.callerDid, CONTENT_ADMISSION_TYPE, record.competency], content: record as unknown as Record<string, unknown>,
+        contentType: CONTENT_ADMISSION_TYPE, ts: record.at, projections: ['rdf'], publishDescriptor: false,
+      });
+    } catch (e) { res.status(503).json({ error: `admission not kept on your pod: ${(e as Error).message}` }); return; }
+    if (!kept?.persisted) { res.status(503).json({ error: `admission not kept on your pod${kept?.persistError ? `: ${kept.persistError}` : ''}` }); return; }
+    sendActionResult(req, res, { ok: true, kept: record, durable: pod },
+      bridgeBaseUrl, record.admission ? 'Admission kept' : 'Admission withdrawn', activeAffordances.filter(a => a.toolName === 'foxxi.content_resolve'));
+  } catch (err) { sendServerError(res, err, 'route-handler'); }
+});
+
 app.post('/agent/content/fragment', async (req, res) => {
   try {
     if (contentRateLimited(req, res)) return;
@@ -10696,7 +10743,7 @@ function persistEfficacy(): void {
 
 /** Resolve a composition for a verified caller from their own record: the one path resolve and launch share. */
 async function resolveForCaller(callerDid: string, signer: string, p: Record<string, unknown>): Promise<
-  | { ok: true; root: Composition; kind: 'human' | 'agent'; resolution: ReturnType<typeof resolveComposition>; missing: string[] }
+  | { ok: true; root: Composition; kind: 'human' | 'agent'; resolution: ReturnType<typeof resolveComposition>; missing: string[]; admittedBy: AdmissionRecord[] }
   | { ok: false; status: number; error: string }> {
   const root = typeof p.composition === 'string' ? await contentStore.fetch(p.composition) : undefined;
   if (!root || !isCompositionItem(root)) return { ok: false, status: 404, error: 'no such composition here: name one by its IRI' };
@@ -10705,15 +10752,24 @@ async function resolveForCaller(callerDid: string, signer: string, p: Record<str
     ? p.learner_kind : (callerDid === `did:ethr:${signer}` ? 'human' : 'agent');
   try {
     const admission: Admission | undefined = p.admission === undefined ? undefined : admissionFrom(p.admission);
+    // With none in the request, what the learner has kept for each competency stands
+    // (foxxi.content_admit), and the records that decided anything are said.
+    const kept = admission ? undefined : await learnerAdmissions(callerDid);
+    const admittedBy = new Map<string, AdmissionRecord>();
+    const fromKept = (competency: string): Admission | undefined => {
+      const standing = kept ? recordFor(kept, competency) : undefined;
+      if (standing?.admission) admittedBy.set(standing.competency, standing);
+      return standing?.admission ?? undefined;
+    };
     const { missing } = await contentStore.gather(root);
     const record = await learnerCompetencies(callerDid, kind);
     await ensureEfficacy();
     const resolution = resolveComposition({
       composition: root, learner: { id: callerDid, kind }, record,
-      ...(admission ? { admission: () => admission } : {}), lookup: iri => contentStore.get(iri),
+      ...(admission ? { admission: () => admission } : kept?.size ? { admission: fromKept } : {}), lookup: iri => contentStore.get(iri),
       efficacy: (competency, fragment, level) => fragmentEfficacy.counts(competency, fragment, level),
     });
-    return { ok: true, root, kind, resolution, missing };
+    return { ok: true, root, kind, resolution, missing, admittedBy: [...admittedBy.values()] };
   } catch (e) {
     if (e instanceof ContentError) return { ok: false, status: 400, error: e.message };
     throw e;
@@ -10728,7 +10784,7 @@ app.post('/agent/content/resolve', async (req, res) => {
     const r = await resolveForCaller(auth.callerDid, auth.signer, auth.payload);
     if (!r.ok) { res.status(r.status).json({ error: r.error }); return; }
     sendActionResult(req, res, {
-      ok: true, ...r.resolution, learnerKind: r.kind, missing: r.missing,
+      ok: true, ...r.resolution, learnerKind: r.kind, missing: r.missing, ...(r.admittedBy.length ? { admittedBy: r.admittedBy } : {}),
       steps: r.resolution.steps.map(s => ({ ...s, fragment: fragmentForLearner(s.fragment) })),
     }, bridgeBaseUrl, 'Composition resolved for you', activeAffordances.filter(a => a.toolName === 'foxxi.content_launch'));
   } catch (err) { sendServerError(res, err, 'route-handler'); }
@@ -10804,7 +10860,7 @@ app.post('/agent/content/launch', async (req, res) => {
     const r = await resolveForCaller(auth.callerDid, auth.signer, auth.payload);
     if (!r.ok) { res.status(r.status).json({ error: r.error }); return; }
     const play = startPlay(r.resolution, r.root.title, { id: auth.callerDid, kind: r.kind }, { session: randomUUID(), registration: randomUUID() }, new Date().toISOString());
-    const about = { skipped: r.resolution.skipped, unmet: r.resolution.unmet, refused: r.resolution.refused, trace: r.resolution.trace, missing: r.missing };
+    const about = { skipped: r.resolution.skipped, unmet: r.resolution.unmet, refused: r.resolution.refused, trace: r.resolution.trace, missing: r.missing, ...(r.admittedBy.length ? { admittedBy: r.admittedBy } : {}) };
     if (!play) {
       sendActionResult(req, res, { ok: true, done: true, nothingToPlay: true, composition: r.root['@id'], learnerKind: r.kind, ...about },
         bridgeBaseUrl, 'Nothing to play for you here', []);

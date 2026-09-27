@@ -1,5 +1,45 @@
 # Changelog
 
+## 2026-09-27 — Foxxi: a learner keeps the admission their plan implies, and resolution reads it
+
+A resolution admitted only the forms of content a caller's `admission` named, and a caller had to supply one on every request. A plan could imply one (`admissionFromPlan`, #499), but nothing turned a plan into one, and the learner had nowhere to keep it. So a plan for Emergent work still ended in lessons unless every request repeated what the plan said. Now the plan offers its admission, the learner keeps it, and resolution reads it.
+
+- **A plan offers the admission it implies** (`compatibility/foxxi-performance-routes.ts`, `admissionOffer`). The signed `contextualize_and_plan` route now answers an `admission` for the situation's competency. It gives the forms that deliver what the plan selected, the regime, whom it is for, and the affordance that keeps it. Nothing is offered when:
+  - the plan selected nothing (an unclassified situation);
+  - the competency names nothing content can be resolved against.
+- **The learner keeps it; the bridge only reads it** (`src/admission-records.ts`).
+  - `POST /agent/content/admit` (`foxxi.content_admit`) keeps `{ competency, admission, source?, regime? }`.
+    - It is kept on the caller's own pod, in their encrypted lattice, with no public projection.
+    - The bridge dates it.
+    - It is refused with 409 when that pod is not on this bridge's store, since resolution here could not read it back.
+  - `admission: null` withdraws it.
+  - Records are added, never overwritten. For each competency the latest stands, whatever the spelling of its IRI.
+  - The bridge writes a plan's consequence onto nobody's record: the route that classifies does not author for anyone, so keeping it is the learner's act, person or agent.
+- **Resolution reads what was kept** (`bridge/server.ts`). When a resolve or launch request names no admission, the learner's kept records admit the forms at each competency. An admission in the request still wins. The answer lists the records that limited a position (`admittedBy`). Only a pod on this tenant's store is read, as with the learner's record.
+- **Docs.** The two affordances and resolve/launch are described, `docs/skills` is regenerated, and the vocabulary declares `ContentAdmission`. `PERFORMANCE-ARCHITECTURE.md` §5 describes kept admissions. Its not-yet-wired list now names turning what a learner's work shows into a plan without their asking.
+
+`applications/foxxi-content-intelligence/tests/admission-records.test.ts` covers:
+- a record checked, with its competency normalized and a withdrawal kept as null;
+- the latest standing per competency, across IRI spellings, with a withdrawal admitting every form again;
+- resolution admitting only what was kept, and nothing for a plan that says content is not the answer;
+- the bridge keeping it on the caller's own pod, dated by the bridge, with no public projection, and reading it back only from its store and only when a request names no admission, checked in its source.
+
+`tests/a-plan-offers-the-admission-it-implies.test.ts` covers:
+- the offer for Emergent and Turbulent plans;
+- no offer for an unclassified plan or an unusable competency;
+- the signed route's answer, over HTTP;
+- an offer, once kept, deciding what resolution admits.
+
+Fourteen mutants were checked, and each fails a named test:
+- the first record kept standing, or records keyed by their IRI as spelled;
+- a withdrawal that cannot be kept, or one that admits nothing;
+- any source or regime accepted;
+- the caller naming the pod a record is kept on, or dating it;
+- the record projected in public;
+- kept records overriding a request's admission, or read from any pod;
+- a plan that selected nothing offering an admission, or any competency text offered;
+- the offer left out of the plan's answer.
+
 ## 2026-09-27 — Foxxi: a fold blinds its checks under the bridge's own key
 
 The automated review of #507 found one problem, fixed here.
