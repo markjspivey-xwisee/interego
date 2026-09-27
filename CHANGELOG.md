@@ -24,6 +24,30 @@ So a voided statement evicted before the later statement that voided it lost its
 
 Nine mutants each fail a named test.
 
+## 2026-09-27 — Foxxi dashboard: a pasted key keeps its session through the notice, and forwarding can be read again
+
+Two defects the automated review found in #529 after it merged.
+- **The notice's links signed a pasted key out.** The notice on the profile and *My activity* sent a wallet or a pasted key to Learn and *My forwarding* by plain links, which reload the page. A pasted key lives in memory only, and its session is not kept across a reload, so following either link signed it out. The links now move within the app, as the top navigation does.
+- **The way to read *My forwarding* could vanish.** Through a wallet extension it is read only when asked. If the first of its two reads succeeded and the second did not, or a target was added before the first read, the control to read it went away, leaving the inbound list blank. The control now stays until both lists are read.
+
+`tests/the-learner-portal-speaks-the-bridges-language.test.ts` covers both. Two mutants each fail a named test.
+
+## 2026-09-27 — Foxxi dashboard: a wallet or a pasted key lands on Learn, and forwarding reads one signature at a time
+
+Two defects the automated review found in #527 after it merged.
+- **A wallet or a pasted key landed on a page that answers 401.** Such a session signs its session token with a wallet no tenant directory knows. So the profile, its learner record and *My activity*, which read with that token, answered 401, and sign-in landed on the profile. Such a session (`signsOnly`, `dashboard-app/src/auth/session.ts`) now lands on Learn. It is not offered those pages, and they say why if opened. What it does is signed as it: Learn and *My forwarding*.
+- ***My forwarding* signed two reads at once as it loaded.** Through a wallet extension that meant two prompts nobody asked for, which a wallet may refuse as overlapping, and every change asked twice more to read both lists again. It now:
+  - reads only when asked, one signature after the other;
+  - lets each change answer with the list it changed, so nothing is read again.
+
+`tests/the-learner-portal-speaks-the-bridges-language.test.ts` covers:
+- which sessions act through signed requests alone;
+- where they land, what they are offered, and what those pages say;
+- how *My forwarding* reads.
+
+Eight mutants each fail a named test.
+
+
 ## 2026-09-27 — Foxxi dashboard: a learner portal, and signing in with a wallet extension
 
 The dashboard gains **Learn**, where a person finds a composition and plays it, and a third way to sign in. An agent does each of these with the same affordances and no page: the portal is one more client of them, signed as the person using it.
