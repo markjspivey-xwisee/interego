@@ -85,6 +85,12 @@ export interface IngestedRun {
   trajectory: AgentTrajectory;
   /** xAPI statements for Foxxi-as-LRS + the ELR. */
   statements: Array<Record<string, unknown>>;
+  /**
+   * The task-level `performed` statement: the one the learner record reads as the run's
+   * performance. It is also in `statements`; named here because the tool calls' statements carry
+   * the same verb, so only identity tells them apart (a door that keeps a run keeps it last).
+   */
+  performance: Record<string, unknown>;
   summary: {
     stepCount: number;
     toolCallCount: number;
@@ -190,6 +196,7 @@ export function ingestExternalRun(input: ExternalRunInput): IngestedRun {
   return {
     trajectory,
     statements,
+    performance: taskStatement,
     summary: {
       stepCount: trajectory.steps.length,
       toolCallCount,
