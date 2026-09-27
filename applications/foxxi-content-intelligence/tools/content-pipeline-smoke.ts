@@ -83,11 +83,12 @@ async function testRoutes(): Promise<void> {
   attachContentDeliveryRoutes(app, {
     selfBaseUrl: 'http://localhost',
     authoritativeSource: 'did:web:test',
-    emitStatement: (stmt) => {
+    emitStatement: async (stmt) => {
       const verb = (stmt.verb as { id?: string })?.id ?? '';
       const ext = (stmt.context as { extensions?: Record<string, unknown> })?.extensions ?? {};
       const channel = ext['http://localhost/ns/foxxi#deliveryChannel'] as string | undefined;
       emitted.push({ verb, ...(channel ? { channel } : {}) });
+      return 'smoke-statement';
     },
   });
   const server = app.listen(0);
