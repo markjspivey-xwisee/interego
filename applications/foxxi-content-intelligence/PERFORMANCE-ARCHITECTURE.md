@@ -326,8 +326,11 @@ play. `foxxi.content_next` answers the step they are on and moves on.
   check's competency since the last check there, and offers more than the
   learner met, gives them another of its alternatives. It is chosen as
   resolution chose (`anotherAlternative`: admitted, meant for them, what its
-  IRI says, nearest the level they met it at) and is never one already
-  shown. Another check from the missed check's position follows, when it
+  IRI says, nearest the level they met it at) and is never one they have
+  already met, though it may be one the play would show them later. Each
+  step the miss was credited to stands for its own position, so a fragment
+  taught at two positions gives each its way in. Another check from the
+  missed check's position follows, when it
   offers one. The steps go in right after the missed check, before the play
   decides it is done.
   - Each position does this once per play, and at most 12 in all.

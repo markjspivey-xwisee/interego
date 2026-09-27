@@ -71,6 +71,31 @@ describe('a missed check brings another way in', () => {
     expect(resolution.steps.map(s => s.fragment.title)).toEqual(['Who approves', 'Check', 'Looking back']);
   });
 
+  it('can bring in what the play would show later, since the learner has not met it yet', () => {
+    const comp = compositionFrom({ title: 'Refunds, and an example later', competency: c, positions: [
+      { competency: c, paradigm: [explain['@id'], example['@id']] }, { competency: c, paradigm: [check1['@id'], check2['@id']] },
+      { competency: c, paradigm: [example['@id']] },
+    ] });
+    const play = playOf(comp);
+    expect(titles(play)).toEqual(['Who approves', 'Check', 'A $600 request']);
+    advancePlay(play, undefined, ctx, chooser());
+    advancePlay(play, ['A'], ctx, chooser());
+    expect(titles(play)).toEqual(['Who approves', 'Check', 'A $600 request', 'Check again', 'A $600 request']);
+  });
+
+  it('gives each position the miss was credited to its way in, even where one fragment taught at two', () => {
+    const comp = compositionFrom({ title: 'Refunds, told twice', competency: c, positions: [
+      { competency: c, paradigm: [explain['@id'], example['@id']] }, { competency: c, paradigm: [explain['@id'], deeper['@id']] },
+      { competency: c, paradigm: [check1['@id'], check2['@id']] },
+    ] });
+    const play = playOf(comp);
+    expect(titles(play)).toEqual(['Who approves', 'Who approves', 'Check']);
+    advancePlay(play, undefined, ctx, chooser());
+    advancePlay(play, undefined, ctx, chooser());
+    advancePlay(play, ['A'], ctx, chooser());
+    expect(titles(play)).toEqual(['Who approves', 'Who approves', 'Check', 'A $600 request', 'Why the threshold', 'Check again']);
+  });
+
   it('brings nothing for a check that was passed', () => {
     const play = playOf(course([explain['@id'], example['@id']]));
     advancePlay(play, undefined, ctx, chooser());

@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-09-27 — Foxxi: another way in counts what the learner has met, and every position that taught
+
+A review of #517 found two ways a missed check could bring less than it should ([Codex](https://github.com/markjspivey-xwisee/interego/pull/517#discussion_r4114872445), [twice](https://github.com/markjspivey-xwisee/interego/pull/517#discussion_r4114872449)).
+
+- **What the learner has met is what they have reached** (`src/composition-play.ts`). The steps a play would show later were counted as already shown. So an alternative scheduled at a later position could not be a way in now, even though the learner had not met it. Now only the steps reached so far, the missed check included, are excluded, and a later showing stays where it is.
+- **Each credited step stands for its own position.** A teaching fragment waiting to be credited now keeps the step it was met at. Before, the miss was traced back from the fragment's IRI, so a fragment taught at two positions before the check found only the later one, and the earlier position never gave its way in.
+- **Docs.** `PERFORMANCE-ARCHITECTURE.md` §5 says both.
+
+`applications/foxxi-content-intelligence/tests/a-missed-check-brings-another-way-in.test.ts` gains two cases:
+- a way in the play would otherwise show later;
+- one fragment taught at two positions, each giving its own way in.
+
+Four mutants were checked, and each fails a named test:
+- steps not yet reached counted as met;
+- the missed check itself not counted as met;
+- every credit taken as the step before the check;
+- a teaching step not kept where it was met.
+
 ## 2026-09-27 — Foxxi: a missed check brings another way in
 
 A composition offers alternatives at each position: an explanation, an example, a deeper take. Resolution picks one per position for each learner, and until now a play went through those picks and ended, whatever the checks showed. A learner who missed a check was shown the answers and moved on, while the composition held other ways into the same material that they never met.
