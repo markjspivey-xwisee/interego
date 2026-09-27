@@ -1,5 +1,50 @@
 # Changelog
 
+## 2026-09-26 — Foxxi: fragments and compositions are authored, served and resolved on the bridge
+
+#499 made composable content data, but nothing on the bridge could author it, fetch it or resolve it. Now a person or an agent can do all three, as signed affordances, and a fragment's IRI answers a GET without giving away how its questions are graded.
+
+- **A fragment's public form can be checked without its verifiers** (`src/content-fragments.ts`).
+  - The IRI no longer hashes the stored questions. It hashes each question's public view (what a learner sees) plus a commitment: the hash of the stored question, salt, verifiers and explanation included.
+  - `publicFragment` is the form anyone may be served. `publicFragmentIsIntact` checks it against the IRI.
+  - The stored form still checks through the commitments. A changed verifier, salt or explanation breaks `fragmentIsIntact`.
+  - Before this, serving a fragment meant either exposing the salt that lets a learner try each option against a verifier, or serving a view nobody could check.
+- **A store that keeps nothing unless it hashes to its IRI** (`src/content-store.ts`).
+  - `ContentStore` is a bounded cache: 20,000 items, least recently kept goes first.
+  - It reads through to durable storage and checks everything it loads, both that it names the content asked for and that it hashes to it.
+  - `gather` brings in everything a composition reaches before it is resolved, in parallel batches, to the nesting depth resolution allows and at most 5,000 items. It lists what it could not find.
+  - Content addressing makes the course-id ownership machinery (first-writer locks, owner-first reads) unnecessary here. A wrong or hostile source can make an item unavailable, never different.
+- **On the bridge** (`bridge/server.ts`), each signed with a delegation or a wallet:
+  - `POST /agent/content/fragment` (`foxxi.content_fragment`) authors a fragment. `POST /agent/content/composition` (`foxxi.content_compose`) authors a composition, refusing with 422 any alternative the bridge cannot reach.
+    - Either is kept in the cache, composed into the author's pod's shared lattice like an authored course (`foxxi:GroundingFragment`, `foxxi:Composition`), and recorded as their `authored` statement.
+    - The pods that hold it (up to five authors' pods for identical content) are remembered in `foxxi-lattice/content-locations.json` on the tenant pod, merged with what is already there (`mergeLocations`). A cold read tries each in turn (`loadArtifactFromLattice`), so one author withdrawing an item does not lose it while others hold it.
+  - `POST /agent/content/resolve` (`foxxi.content_resolve`) resolves a composition for the caller.
+    - It reads their competencies from their own record, as the learner record route does.
+    - It gathers the tree and applies an admission if they send one (`admissionFrom` checks it).
+    - It returns each step's fragment as the learner receives it, with the skipped, unmet and missing positions and the trace.
+    - A wallet signing for itself is taken as a person, and a delegated agent as an agent; either may say otherwise.
+  - `GET /ns/foxxi/fragment/<hash>` serves the public form, or the body as Markdown on request. `GET /ns/foxxi/composition/<hash>` serves the composition, which holds no secret.
+- **Vocabulary.** `activities/fragment` and `activities/composition` are the object types of the `authored` statements, and `Composition` is the lattice content type. All three are declared, so they dereference.
+- **Docs.** The three affordances are described in `affordances.ts`, and `docs/skills` is regenerated. `PERFORMANCE-ARCHITECTURE.md` §5 describes the public form and what is on the bridge, and its not-yet-wired list shrinks by one.
+
+`applications/foxxi-content-intelligence/tests/content-service.test.ts` covers:
+- the public form: no salt, verifier or explanation, a commitment per question, and checked against the same IRI as the stored form on any authority;
+- that a changed body, question view or commitment breaks the public form, and a changed verifier, salt or explanation breaks the stored one;
+- grading against the stored form;
+- the store: refusing changed content, eviction, read-through that keeps only what hashes to the IRI asked for, and gathering with missing items and its limit;
+- the location index: several pods per item, earliest first, capped, and nothing that is not a content key (a JSON `__proto__` included);
+- admission validation;
+- the bridge's routes, checked in its source.
+
+Seven mutants were checked, and each fails a named test:
+- the public form carrying the stored question;
+- a hash that ignores the commitments;
+- a store keeping changed content;
+- a store keeping whatever storage returns;
+- no gather limit;
+- an admission taking any kind;
+- the fragment IRI serving the stored form.
+
 ## 2026-09-26 — Foxxi: a refusal inside a branch survives the fallback, and one resolution has a size
 
 The automated review of #500 found that when a nested composition fell short because content inside it did not hash to its IRI, the fallback reduced it to `"<title>" left N … unmet`. The refusal then vanished from both the trace and the reason given for the alternative that was taken.

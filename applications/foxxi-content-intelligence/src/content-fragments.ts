@@ -18,6 +18,14 @@
  * (course-questions.ts) and are stored with verifiers, never with answers. Their salts come from
  * the fragment's own content, so authoring the same fragment twice gives the same IRI.
  *
+ * ★ ITS PUBLIC FORM CAN BE CHECKED WITHOUT ITS VERIFIERS. The hash does not take a question as it
+ * is stored: it takes the question's public view (what a learner sees) and a commitment, the hash
+ * of the stored question with its salt, verifiers and explanation. So a fragment can be served to
+ * anyone in its public form (publicFragment), and anyone can check that form against its IRI
+ * (publicFragmentIsIntact), while the salt that would let a learner try each option against a
+ * verifier stays with whoever grades. The grader checks the stored question against its
+ * commitment in turn.
+ *
  * ★ ITS KIND SAYS WHAT FORM IT TAKES, NOT WHEN TO USE IT. FRAGMENT_KINDS lists the forms (a
  * concept, a worked example, a job aid, a probe, …) and what each may ask. Which forms suit a
  * situation is a theory of performance, and that theory lives above this standards vertical: the
@@ -151,8 +159,37 @@ function text(value: unknown, what: string, max: number): string {
   return value;
 }
 
-/** What a fragment's hash is taken over: its content, with competencies by id. */
-function fragmentContent(f: Omit<Fragment, '@id'>): Record<string, unknown> {
+/** A question's commitment: the hash of its stored form, salt, verifiers and explanation included. */
+export function questionCommitment(q: ScormAssessmentQuestion): string {
+  return sha256(canonicalJson(q));
+}
+
+/** What anyone may see of a question: its words, its type, what to choose from, whether it is graded, and its commitment. */
+export interface PublicQuestion {
+  question: string;
+  type: string;
+  input?: ScormAssessmentQuestion['input'];
+  graded: boolean;
+  commitment: string;
+}
+
+/** A fragment in the form anyone may be served: each question as its public view and commitment. */
+export interface PublicFragment extends Omit<Fragment, 'questions'> {
+  questions?: PublicQuestion[];
+}
+
+function publicQuestion(q: ScormAssessmentQuestion): PublicQuestion {
+  const { index: _index, ...view } = questionForLearner(q, 0);
+  return { ...view, commitment: questionCommitment(q) };
+}
+
+function toPublic(content: Omit<Fragment, '@id'>): Omit<PublicFragment, '@id'> {
+  const { questions, ...rest } = content;
+  return { ...rest, ...(questions?.length ? { questions: questions.map(publicQuestion) } : {}) };
+}
+
+/** What a fragment's hash is taken over: its public form, with competencies by id. */
+function hashedForm(f: Omit<PublicFragment, '@id'>): Record<string, unknown> {
   return { ...f, competencies: f.competencies.map(competencyKey) };
 }
 
@@ -216,28 +253,41 @@ export function fragmentFrom(raw: unknown): Fragment {
     ...(suits ? { suits } : {}),
     ...(language ? { language } : {}),
   };
-  return { '@id': fragmentIri(sha256(canonicalJson(fragmentContent(content)))), ...content };
+  return { '@id': fragmentIri(sha256(canonicalJson(hashedForm(toPublic(content))))), ...content };
 }
 
 /**
- * Whether a fragment is what its IRI says it is: the hash of its content. Anything read back from
- * a pod, a cache or another bridge is checked with this before it is used.
+ * Whether a fragment in its stored form is what its IRI says it is. Anything read back from a pod,
+ * a cache or another bridge is checked with this before it is used.
  */
 export function fragmentIsIntact(f: Fragment): boolean {
   const ref = contentRefOf(f['@id']);
   if (!ref || ref.type !== 'fragment') return false;
   const { '@id': _id, ...content } = f;
-  return sha256(canonicalJson(fragmentContent(content))) === ref.hash;
+  return sha256(canonicalJson(hashedForm(toPublic(content)))) === ref.hash;
 }
 
-/** A fragment as a learner (a person or an agent) receives it: the Markdown and its rendering, and each question without its verifier. */
+/** A fragment in the form anyone may be served: no salt, verifier or explanation, and still checkable against its IRI. */
+export function publicFragment(f: Fragment): PublicFragment {
+  const { '@id': id, ...content } = f;
+  return { '@id': id, ...toPublic(content) };
+}
+
+/** Whether a fragment in its public form is what its IRI says it is. */
+export function publicFragmentIsIntact(p: PublicFragment): boolean {
+  const ref = contentRefOf(p?.['@id']);
+  if (!ref || ref.type !== 'fragment' || !Array.isArray(p.competencies)) return false;
+  if (p.questions !== undefined && (!Array.isArray(p.questions) || p.questions.some(q => typeof q?.commitment !== 'string'))) return false;
+  const { '@id': _id, ...content } = p;
+  return sha256(canonicalJson(hashedForm(content))) === ref.hash;
+}
+
+/** A fragment as a learner (a person or an agent) receives it: its public form, the Markdown rendered, and each question numbered. */
 export function fragmentForLearner(f: Fragment): Record<string, unknown> {
+  const p = publicFragment(f);
   return {
-    '@id': f['@id'], kind: f.kind, level: f.level, competencies: f.competencies,
-    ...(f.title ? { title: f.title } : {}),
-    body: f.body, bodyHtml: courseMarkdownHtml(f.body),
-    ...(f.questions?.length ? { questions: f.questions.map((q, i) => questionForLearner(q, i)) } : {}),
-    ...(f.audience ? { audience: f.audience } : {}),
-    ...(f.language ? { language: f.language } : {}),
+    ...p,
+    bodyHtml: courseMarkdownHtml(f.body),
+    ...(p.questions?.length ? { questions: p.questions.map((q, i) => ({ index: i, ...q })) } : {}),
   };
 }

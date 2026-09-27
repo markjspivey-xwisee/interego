@@ -100,6 +100,8 @@ export const FOXXI_TERMS: readonly FoxxiTerm[] = [
   { name: 'activities/credential', kind: 'ActivityType', label: 'credential', definition: 'A Verifiable Credential / Open Badge 3.0.' },
   { name: 'activities/framework', kind: 'ActivityType', label: 'framework', definition: 'A CASE 1.0 / CaSS competency framework.' },
   { name: 'activities/affordance', kind: 'ActivityType', label: 'affordance', definition: 'A bridge affordance / MCP tool, identified by toolName.' },
+  { name: 'activities/fragment', kind: 'ActivityType', label: 'fragment', definition: 'A piece of teaching or support whose IRI is the hash of its content: a concept, worked example, practice task, assessment item, job aid, reference, context, probe or reflection.' },
+  { name: 'activities/composition', kind: 'ActivityType', label: 'composition', definition: 'A path of positions holding fragments or compositions by reference, resolved per learner from their own record.' },
   // Generic fallback activity type — names the ENVELOPE act (a context-descriptor
   // assertion) when the descriptor declares no conformsTo/facet type. The object
   // type of a projected statement is normally the descriptor's OWN conformsTo IRI
@@ -136,6 +138,7 @@ export const FOXXI_TERMS: readonly FoxxiTerm[] = [
   { name: 'Lesson', kind: 'Type', label: 'Lesson', definition: 'A syntagm of grounding fragments toward one competency-point; each position holds a paradigm of interchangeable alternatives.' },
   { name: 'Module', kind: 'Type', label: 'Module', definition: 'A syntagm of lessons.' },
   { name: 'Course', kind: 'Type', label: 'Course', definition: 'A syntagm of modules. Not a stored artifact — a composition recipe that personalises (restriction + override) into a different resolved course per performer.' },
+  { name: 'Composition', kind: 'Type', label: 'Composition', definition: 'One type for lesson, module, course and curriculum: a path of positions, each naming a competency and the fragments or compositions that can fill it, by reference. Its IRI is the hash of its content, and each learner gets it resolved from their own record.' },
   { name: 'Curriculum', kind: 'Type', label: 'Curriculum', definition: 'A syntagm of courses toward a set of target competencies.' },
   { name: 'InFlowPerformanceSupport', kind: 'Type', label: 'In-Flow Performance Support', definition: 'A job-aid fragment delivered by an affordance attached to the work context — surfaced when a performer enters the triggering task, not on a training schedule.' },
   { name: 'DeliveredContent', kind: 'Type', label: 'Delivered Content', definition: 'A descriptor wrapping a unit of generated content delivered through a channel and published to the pod — so the delivery is itself a discoverable, federatable Context Descriptor, not a fire-and-forget send.' },

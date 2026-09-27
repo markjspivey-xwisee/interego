@@ -159,7 +159,11 @@ agent, as learner and as author.
   - Its body is Markdown, which an agent reads as it is and a person reads
     rendered.
   - Its questions are the xAPI interaction types, stored with verifiers
-    and never with answers.
+    and never with answers. The hash takes each question as its public
+    view plus a commitment (the hash of the stored question), so the
+    public form (`publicFragment`) can be served to anyone, without a salt
+    or verifier, and still be checked against the IRI
+    (`publicFragmentIsIntact`).
   - Its kind says what form it takes: concept, worked example, job aid,
     reference, assessment item, practice task, context, and the forms of
     emergent work, `probe` and `reflection`. Those two take no graded
@@ -207,8 +211,21 @@ agent, as learner and as author.
 
   The dependency runs from the practice to Foxxi, never back.
 
+**On the bridge**, for a person or an agent alike, as signed affordances:
+- `foxxi.content_fragment` authors a fragment.
+- `foxxi.content_compose` authors a composition. Every alternative must be
+  content the bridge can reach.
+- `foxxi.content_resolve` resolves a composition for the caller from
+  their own record, with an admission if they send one.
+
+Each item is kept on its author's pod's shared lattice and recorded as an
+`authored` statement. The bridge caches it and remembers whose pod it came
+from. Anything read back is checked against its hash
+([`src/content-store.ts`](src/content-store.ts)), so a wrong or hostile
+source can make an item unavailable but never different. A fragment's IRI
+dereferences to its public form, and a composition's to itself.
+
 Not yet wired:
-- authoring and resolving as signed affordances;
 - delivering a resolution live, with xAPI at the level of the fragment;
 - choosing among alternatives by what has worked for learners like this
   one (the Hypothetical-to-Asserted flip on each fragment's record at each

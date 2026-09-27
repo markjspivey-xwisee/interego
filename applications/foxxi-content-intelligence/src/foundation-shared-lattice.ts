@@ -770,6 +770,14 @@ export function latticeStatements(label: string): Array<{ id: string; statement:
 /** Load a full SCORM course from an agent's shared lattice by courseId — the
  *  course is stored losslessly as a foxxi:Course content atom (so it is launchable
  *  from PGSL, cross-restart + cross-agent). Loads from the pod on a cold miss. */
+/** One artifact of a content type from an agent's lattice (loaded from its pod on a cold miss), the first `match` accepts. */
+export async function loadArtifactFromLattice(podUrl: string, agentDid: string, label: string, contentType: string,
+  match: (content: unknown) => boolean, fetchFn?: FetchFn): Promise<unknown | null> {
+  await ensureResident(podUrl, agentDid, label, fetchFn);
+  for (const a of latticeArtifacts(label, contentType)) if (match(a.content)) return a.content;
+  return null;
+}
+
 export async function loadCourseFromLattice(podUrl: string, agentDid: string, label: string, courseId: string, fetchFn?: FetchFn): Promise<Record<string, unknown> | null> {
   await ensureResident(podUrl, agentDid, label, fetchFn);
   for (const a of latticeArtifacts(label, 'foxxi:Course')) {

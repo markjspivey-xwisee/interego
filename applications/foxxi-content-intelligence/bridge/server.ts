@@ -181,7 +181,7 @@ import {
 } from '../src/durable-records.js';
 import { envelopeToClr1 } from '../src/clr-1.js';
 import { assembleEnterpriseLearnerRecord, PERFORMED_VERB, AUTHORED_VERB, CREDENTIALED_VERB, PERF_EXT } from '../src/learner-record.js';
-import { composeIntoSharedLattice, dereferenceTerm, latticeNamespaceView, isResident, readArtifact, projectAs, latticeStatements, latticeArtifacts, ensureResident, loadCourseFromLattice, resolvePublicNode, markLatticePublic, isLabelPublic, type ProjectionKind } from '../src/foundation-shared-lattice.js';
+import { composeIntoSharedLattice, dereferenceTerm, latticeNamespaceView, isResident, readArtifact, projectAs, latticeStatements, latticeArtifacts, ensureResident, loadArtifactFromLattice, loadCourseFromLattice, resolvePublicNode, markLatticePublic, isLabelPublic, type ProjectionKind } from '../src/foundation-shared-lattice.js';
 import { fingerprintAuthoringTool } from '../src/scorm-fingerprint.js';
 import { manifestToAgenticCourse, agentScormToAgenticCourse, buildConceptNavGraph, type AgentScormCourseLike } from '../src/course-graph.js';
 import { courseToSkillMd, skillMdToAgenticCourse } from '../src/course-skill-bridge.js';
@@ -198,6 +198,9 @@ import { attachAgentScormArtifacts, scormArtifactLinks, scormArtifactManifest } 
 import { validateScormResponses, type ScormAssessmentQuestion } from '../src/scorm-assessment.js';
 import { authorQuestion, questionForLearner, questionIsRight, QuestionError } from '../src/course-questions.js';
 import { courseMarkdownHtml } from '../src/course-markdown.js';
+import { ContentError, compositionIri, contentRefOf, fragmentForLearner, fragmentFrom, fragmentIri, publicFragment, sameContent, type Fragment } from '../src/content-fragments.js';
+import { admissionFrom, compositionFrom, resolveComposition, type Admission, type Composition, type RecordedCompetency } from '../src/compositions.js';
+import { ContentStore, isCompositionItem, LOCATIONS_PER_ITEM, mergeLocations, type ContentItem } from '../src/content-store.js';
 import { competencyIri, competencyIriForTerm, competencyIdOf } from '../src/competency-identity.js';
 import { activityIri, ACTIVITY_DEFINITIONS } from '../src/activity-identity.js';
 import { FOXXI_NS } from '../src/foxxi-vocab.js';
@@ -10376,6 +10379,197 @@ app.post('/agent/cmi5/launch', async (req, res) => {
       note: 'Open launchUrl. The AU fetches its auth-token once, and its statements land in your own record. When they meet moveOn, the LMS records `satisfied` there too. They count as experience, not as graded evidence: a cmi5 AU reports its own result.',
     });
   } catch (err) { sendServerError(res, err, 'cmi5-launch-signed'); }
+});
+
+// ── Composable content: fragments and compositions ───────────────────
+// Content-addressed (src/content-fragments.ts, src/compositions.ts), so none of the course-id
+// ownership machinery above applies: an IRI names one content, nothing is kept under it unless it
+// hashes to it, and whatever is loaded back is checked the same way (src/content-store.ts). Each
+// item lives on its author's pod, composed into their shared lattice like an authored course; the
+// bridge keeps a bounded cache and remembers whose pod each item came from.
+const CONTENT_TYPES = { fragment: 'foxxi:GroundingFragment', composition: 'foxxi:Composition' } as const;
+let contentLocations = new Map<string, string[]>();   // content key (type:hash) → the pods (author DIDs) that hold it
+const CONTENT_LOCATIONS_MAX = 200_000;
+const CONTENT_LOCATIONS_RESOURCE = tenantPodUrl ? `${tenantPodUrl.replace(/\/$/, '')}/foxxi-lattice/content-locations.json` : '';
+let contentLocationsDirty = false;
+let contentLocationsLoaded = false;
+async function persistContentLocations(): Promise<void> {
+  if (!CONTENT_LOCATIONS_RESOURCE || !contentLocationsDirty) return;
+  contentLocationsDirty = false;
+  const f = globalThis.fetch as typeof fetch;
+  try {
+    // Merged with what is already there, earlier entries first: a location only says where to
+    // look, and a loaded item is checked against its hash, so a stale entry costs a miss, never
+    // a substitution.
+    let durable: unknown = {};
+    try { const r = await f(CONTENT_LOCATIONS_RESOURCE, { headers: { Accept: 'application/json' } }); if (r.ok) durable = await r.json(); } catch { /* none yet */ }
+    const merged = Object.fromEntries(mergeLocations(durable, contentLocations));
+    await f(CONTENT_LOCATIONS_RESOURCE.replace(/[^/]+$/, ''), { method: 'PUT', headers: { 'Content-Type': 'text/turtle', Link: '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"' }, body: '' }).catch(() => undefined);
+    await f(CONTENT_LOCATIONS_RESOURCE, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(merged) });
+  } catch { contentLocationsDirty = true; /* retried on the next record */ }
+}
+async function loadContentLocations(): Promise<void> {
+  contentLocationsLoaded = true;
+  if (!CONTENT_LOCATIONS_RESOURCE) return;
+  try {
+    const r = await (globalThis.fetch as typeof fetch)(CONTENT_LOCATIONS_RESOURCE, { headers: { Accept: 'application/json' } });
+    if (r.ok) contentLocations = mergeLocations(contentLocations, await r.json());
+  } catch { /* best-effort */ }
+}
+function recordContentLocation(key: string, authorDid: string): void {
+  const held = contentLocations.get(key) ?? [];
+  if (held.includes(authorDid) || held.length >= LOCATIONS_PER_ITEM) return;
+  if (!held.length && contentLocations.size >= CONTENT_LOCATIONS_MAX) { const oldest = contentLocations.keys().next().value; if (oldest !== undefined) contentLocations.delete(oldest); }
+  contentLocations.set(key, [...held, authorDid]);
+  contentLocationsDirty = true;
+  void persistContentLocations();
+}
+const contentStore = new ContentStore(20_000, {
+  // Each pod that holds the item is tried in turn; whatever comes back is checked by the store.
+  load: async ({ type, hash, iri }) => {
+    const key = `${type}:${hash}`;
+    if (!contentLocations.has(key) && !contentLocationsLoaded) await loadContentLocations();
+    for (const did of contentLocations.get(key) ?? []) {
+      const pod = resolveSubjectPodUrl(did);
+      const found = await loadArtifactFromLattice(pod, did, actorForPod(pod, MESH_ACTOR_LABELS), CONTENT_TYPES[type],
+        c => !!c && typeof c === 'object' && sameContent(String((c as { '@id'?: unknown })['@id'] ?? ''), iri)).catch(() => null);
+      if (found) return found as ContentItem;
+    }
+    return undefined;
+  },
+});
+
+/** Keep what an author published: in the cache, on their pod's shared lattice, and as their `authored` statement. */
+async function keepAuthoredContent(item: ContentItem, authorDid: string, subjectPodUrl: unknown): Promise<Record<string, unknown>> {
+  contentStore.put(item);
+  const ref = contentRefOf(item['@id'])!;
+  recordContentLocation(`${ref.type}:${ref.hash}`, authorDid);
+  const isComposition = isCompositionItem(item);
+  const authorPod = selfBoundPod(authorDid, typeof subjectPodUrl === 'string' ? subjectPodUrl : undefined);
+  const authoredStatementId = emitAgentActivity({
+    actorDid: authorDid, verbIri: AUTHORED_VERB, verbDisplay: 'authored', objectId: item['@id'],
+    objectName: isComposition ? item.title : (item.title ?? `${item.kind} fragment`),
+    objectType: `${FOXXI_NS}activities/${isComposition ? 'composition' : 'fragment'}`, result: { completion: true },
+  });
+  const sharedLattice = await composeIntoSharedLattice({
+    podUrl: authorPod, agentDid: authorDid, label: actorForPod(authorPod, MESH_ACTOR_LABELS),
+    terms: [authorDid, AUTHORED_VERB, item['@id']], content: item as unknown as Record<string, unknown>,
+    contentType: isComposition ? CONTENT_TYPES.composition : CONTENT_TYPES.fragment, projections: ['rdf', 'vc', 'activity'],
+  });
+  return { durable: authorPod, ...(authoredStatementId ? { authoredStatementId } : {}), ...(sharedLattice ? { sharedLattice } : {}) };
+}
+
+/** A learner's competencies from their own record (read from their pod, as the learner record route reads it). */
+async function learnerCompetencies(learnerDid: string, kind: 'human' | 'agent'): Promise<RecordedCompetency[]> {
+  const pod = resolveSubjectPodUrl(learnerDid);
+  const tenantOrigin = (() => { try { return new URL(tenantPodUrl).origin; } catch { return ''; } })();
+  const podOrigin = (() => { try { return new URL(pod).origin; } catch { return ''; } })();
+  if (!tenantOrigin || podOrigin !== tenantOrigin) return [];   // no pod here to read a record from
+  const label = actorForPod(pod, MESH_ACTOR_LABELS);
+  await ensureResident(pod, learnerDid, label);
+  const statements = mergeStatementsById(
+    [...latticeStatements(label), ...await listStoredStatements(lensTenantFor(label))],
+    await readDurableRecordedStatements({ podUrl: pod }),
+  );
+  const elr = await assembleEnterpriseLearnerRecord({
+    learnerDid, learnerPodUrl: pod, publicPodUrl: canonicalPublicPodUrl(pod), subjectKind: kind,
+    tenantDid: tenantProfileDid, lrsEndpoint: bridgeBaseUrl, statements,
+  });
+  return elr.competencies;
+}
+
+app.post('/agent/content/fragment', async (req, res) => {
+  try {
+    const auth = await verifyDelegatedCaller(req.body);
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
+    let fragment: Fragment;
+    try { fragment = fragmentFrom(auth.payload.fragment); }
+    catch (e) { if (e instanceof ContentError) { res.status(400).json({ error: `fragment not authored: ${e.message}` }); return; } throw e; }
+    const kept = await keepAuthoredContent(fragment, auth.callerDid, auth.payload.subject_pod_url);
+    sendActionResult(req, res, { ok: true, '@id': fragment['@id'], authoredBy: auth.callerDid, fragment: publicFragment(fragment), ...kept },
+      bridgeBaseUrl, 'Fragment authored', activeAffordances.filter(a => a.toolName === 'foxxi.content_compose'));
+  } catch (err) { sendServerError(res, err, 'route-handler'); }
+});
+
+app.post('/agent/content/composition', async (req, res) => {
+  try {
+    const auth = await verifyDelegatedCaller(req.body);
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
+    let composition: Composition;
+    try { composition = compositionFrom(auth.payload.composition); }
+    catch (e) { if (e instanceof ContentError) { res.status(400).json({ error: `composition not authored: ${e.message}` }); return; } throw e; }
+    // Every alternative must be content this bridge can reach, or the composition could not resolve.
+    const alternatives = [...new Set(composition.positions.flatMap(p => p.paradigm))];
+    const reached = await Promise.all(alternatives.map(iri => contentStore.fetch(iri)));
+    const unknown = alternatives.filter((_, i) => !reached[i]);
+    if (unknown.length) {
+      res.status(422).json({ error: 'composition not authored: these alternatives are not content this bridge can reach; author them first', unknown });
+      return;
+    }
+    const kept = await keepAuthoredContent(composition, auth.callerDid, auth.payload.subject_pod_url);
+    sendActionResult(req, res, { ok: true, '@id': composition['@id'], authoredBy: auth.callerDid, composition, ...kept },
+      bridgeBaseUrl, 'Composition authored', activeAffordances.filter(a => a.toolName === 'foxxi.content_resolve'));
+  } catch (err) { sendServerError(res, err, 'route-handler'); }
+});
+
+app.post('/agent/content/resolve', async (req, res) => {
+  try {
+    const auth = await verifyDelegatedCaller(req.body);
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
+    const p = auth.payload;
+    const root = typeof p.composition === 'string' ? await contentStore.fetch(p.composition) : undefined;
+    if (!root || !isCompositionItem(root)) { res.status(404).json({ error: 'no such composition here: name one by its IRI' }); return; }
+    let admission: Admission | undefined;
+    try { admission = p.admission === undefined ? undefined : admissionFrom(p.admission); }
+    catch (e) { if (e instanceof ContentError) { res.status(400).json({ error: e.message }); return; } throw e; }
+    // A wallet signing for itself is a person; a delegated agent is an agent. Either may say otherwise.
+    const kind: 'human' | 'agent' = p.learner_kind === 'human' || p.learner_kind === 'agent'
+      ? p.learner_kind : (auth.callerDid === `did:ethr:${auth.signer}` ? 'human' : 'agent');
+    let gathered: { missing: string[] };
+    try { gathered = await contentStore.gather(root); }
+    catch (e) { if (e instanceof ContentError) { res.status(400).json({ error: e.message }); return; } throw e; }
+    const record = await learnerCompetencies(auth.callerDid, kind);
+    let resolution;
+    try {
+      resolution = resolveComposition({
+        composition: root, learner: { id: auth.callerDid, kind }, record,
+        ...(admission ? { admission: () => admission } : {}), lookup: iri => contentStore.get(iri),
+      });
+    } catch (e) { if (e instanceof ContentError) { res.status(400).json({ error: e.message }); return; } throw e; }
+    sendActionResult(req, res, {
+      ok: true, ...resolution, learnerKind: kind, missing: gathered.missing,
+      steps: resolution.steps.map(s => ({ ...s, fragment: fragmentForLearner(s.fragment) })),
+    }, bridgeBaseUrl, 'Composition resolved for you', []);
+  } catch (err) { sendServerError(res, err, 'route-handler'); }
+});
+
+// A fragment's IRI dereferences to its public form: no salt, verifier or explanation, and still
+// checkable against the IRI (publicFragmentIsIntact). Markdown on request, for an agent reading
+// the body as it is.
+app.get('/ns/foxxi/fragment/:hash', async (req, res) => {
+  try {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    const hash = String(req.params.hash);
+    if (!/^[0-9a-f]{64}$/.test(hash)) { res.status(404).json({ error: 'a fragment id is a sha256 hash' }); return; }
+    const item = await contentStore.fetch(fragmentIri(hash));
+    if (!item || isCompositionItem(item)) { res.status(404).json({ error: 'no such fragment here' }); return; }
+    if (req.query.format === 'markdown' || req.accepts(['application/json', 'text/markdown']) === 'text/markdown') {
+      res.type('text/markdown').send(item.body); return;
+    }
+    res.type('application/json').send(JSON.stringify(publicFragment(item), null, 2));
+  } catch (err) { sendServerError(res, err, 'route-handler'); }
+});
+
+// A composition holds no secret, so its IRI dereferences to it as it is.
+app.get('/ns/foxxi/composition/:hash', async (req, res) => {
+  try {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    const hash = String(req.params.hash);
+    if (!/^[0-9a-f]{64}$/.test(hash)) { res.status(404).json({ error: 'a composition id is a sha256 hash' }); return; }
+    const item = await contentStore.fetch(compositionIri(hash));
+    if (!item || !isCompositionItem(item)) { res.status(404).json({ error: 'no such composition here' }); return; }
+    res.type('application/json').send(JSON.stringify(item, null, 2));
+  } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 
 app.post('/agent/scorm/author', async (req, res) => {
