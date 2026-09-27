@@ -810,7 +810,7 @@ describe('the registry names every shared live external, by rule rather than by 
     // `process.env["RELAY_PGSL_PG_CONNSTR"] = "postgres://…"` reds this, naming the file and
     // the variable. The file was untracked, which is the case `--others --exclude-standard` in
     // `scannableFiles` exists for — armed on a branch before anything is committed.
-    const LIVE_ADDRESSING = ['FOXXI_TENANT_POD_URL', 'FOXXI_AUTHORITATIVE_SOURCE', 'RELAY_PGSL_PG_CONNSTR', 'FOXXI_LRS_BACKEND', 'FOXXI_XAPI_PROFILE_URL'];
+    const LIVE_ADDRESSING = ['FOXXI_TENANT_POD_URL', 'FOXXI_AUTHORITATIVE_SOURCE', 'RELAY_PGSL_PG_CONNSTR', 'FOXXI_LRS_BACKEND', 'FOXXI_XAPI_PROFILE_URL', 'FOXXI_FEDERATION_PODS'];
     for (const n of LIVE_ADDRESSING) {
       expect(
         SHARED_ONLY_THROUGH_IMPORTED_CODE.map(e => e.name),

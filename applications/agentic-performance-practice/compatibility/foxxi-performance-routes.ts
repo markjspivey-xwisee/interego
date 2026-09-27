@@ -29,10 +29,12 @@ import type { VerifyPrivateCaller } from '../../foxxi-content-intelligence/src/p
 import { attachInterventionMethodRoutes } from '../bridge/method-routes.js';
 import { foxxiInterventionMethodAffordances } from '../method-affordances.js';
 import { AGP_NS } from '../src/ontology.js';
+import { admissionFromPlan } from '../src/content-admission.js';
+import { competencyRef } from '../../foxxi-content-intelligence/src/content-fragments.js';
 import type { WorkRegime } from '../src/agent-disposition.js';
 import {
   diagnose, recommendInterventions, rollUpPortfolio,
-  type PerformanceSituation, type Performer, type DiagnoseInput, type PortfolioEntry,
+  type Diagnosis, type InterventionPlan, type PerformanceSituation, type Performer, type DiagnoseInput, type PortfolioEntry,
 } from '../src/performance-architecture.js';
 import {
   buildCalibrationProfile, expandOutcomeCorpus, composeCalibrationProfiles,
@@ -306,7 +308,7 @@ const CONTEXTUALIZE_AND_PLAN_AFFORDANCE: Affordance = {
   action: 'urn:iep:action:foxxi:contextualize-and-plan-signed' as Affordance['action'],
   toolName: 'contextualize_and_plan',
   title: 'Contextualize a performance situation (classify regime → plan) as yourself',
-  description: "Read a performance situation's work regime (Evident/Knowable/Emergent/Turbulent) and get the regime-appropriate intervention plan — the gap frame (idealize → close) is used ONLY for Knowable; Emergent gets probes+coaching; Evident an established practice; Turbulent stabilise-first — authenticated by your delegation so the classification is attributed to YOU. Opt in to private server plan binding and own empirical calibration by adding private_evidence (see /agent/performance/outcome/affordance); this requires own-pod read/write delegation. Supply your `trajectories` to DERIVE the regime from signal (the honest, calibratable path); an asserted situation.domain or gap-intent evidence (exemplary/factorEvidence) is honoured but carries NO calibration authority and never overrides a derived/asserted non-Knowable regime (see diagnosis.regimeSource in the response). No regime signal at all → diagnosis.method='classify-first' and it refuses to gap-plan. Reach it: sign_request the args, then act this affordance.",
+  description: "Read a performance situation's work regime (Evident/Knowable/Emergent/Turbulent) and get the regime-appropriate intervention plan — the gap frame (idealize → close) is used ONLY for Knowable; Emergent gets probes+coaching; Evident an established practice; Turbulent stabilise-first — authenticated by your delegation so the classification is attributed to YOU. Opt in to private server plan binding and own empirical calibration by adding private_evidence (see /agent/performance/outcome/affordance); this requires own-pod read/write delegation. Supply your `trajectories` to DERIVE the regime from signal (the honest, calibratable path); an asserted situation.domain or gap-intent evidence (exemplary/factorEvidence) is honoured but carries NO calibration authority and never overrides a derived/asserted non-Knowable regime (see diagnosis.regimeSource in the response). No regime signal at all → diagnosis.method='classify-first' and it refuses to gap-plan. When the plan selects something and situation.competency names a competency, the response offers the admission it implies (admission: { competency, kinds, because, regime, forPerformer, keep }): the forms of content that deliver what the plan selected. The bridge keeps nothing on anyone's record from it; the performer keeps it, if the plan is about them, with foxxi.content_admit. Reach it: sign_request the args, then act this affordance.",
   method: 'POST',
   targetTemplate: '{base}/agent/contextualize-and-plan',
   mediaType: 'application/json',
@@ -315,6 +317,26 @@ const CONTEXTUALIZE_AND_PLAN_AFFORDANCE: Affordance = {
     { name: '_signature', type: 'string', required: true, description: 'secp256k1 over sha256:<hex(sha256(_signed_payload))> by the wallet matching agent_id (use the relay sign_request tool).' },
   ],
 };
+
+/**
+ * What a plan admits at its situation's competency, offered to the performer to keep as theirs
+ * (foxxi.content_admit). The bridge reads the plan; it does not write it onto anyone's record, so
+ * this is an offer the performer takes up or not. Nothing is offered for a plan that selected
+ * nothing (an unclassified situation), or for a competency no content can be resolved against.
+ */
+export function admissionOffer(plan: Pick<InterventionPlan, 'selected'>, diagnosis: Pick<Diagnosis, 'domain'>,
+  situation: Pick<PerformanceSituation, 'competency' | 'performer'>, base: string): Record<string, unknown> | undefined {
+  if (!plan.selected.length) return undefined;
+  let competency: string;
+  try { competency = competencyRef(situation.competency, 'competency'); } catch { return undefined; }
+  return {
+    competency, ...admissionFromPlan(plan, diagnosis),
+    ...(diagnosis.domain ? { regime: diagnosis.domain } : {}),
+    forPerformer: situation.performer.id,
+    keep: { affordance: 'urn:iep:action:foxxi:content-admit-signed', target: `${base}/agent/content/admit`, method: 'POST' },
+    note: 'Yours to keep, if this plan is about you: sign { competency, admission: { kinds, because }, regime } for foxxi.content_admit, and resolution will admit only these forms at this competency until you replace or withdraw it.',
+  };
+}
 
 export function attachPerformanceRoutes(app: Express, config: {
   selfBaseUrl: string;
@@ -660,9 +682,10 @@ export function attachPerformanceRoutes(app: Express, config: {
           }
         } else calibration = calibrate(diagnosis, plan, calibrationProfiles().federated);
         const scaffold = scaffoldFromPlan(plan, situation.competency);
+        const admission = admissionOffer(plan, diagnosis, situation, base);
         res.json({
           classifiedBy: auth.callerDid,
-          diagnosis, plan, scaffold, calibration,
+          diagnosis, plan, scaffold, calibration, ...(admission ? { admission } : {}),
           ...(empirical ? { ...(privatePlan ? { privatePlan } : {}), empirical, replan } : {}),
           note: "Classification attributed to your verified delegation. diagnosis.regimeSource is the provenance — supply trajectories to DERIVE the regime from signal (the honest, calibratable path); asserted/gap-intent carry no calibration authority. Compose your situation descriptor + the regime-appropriate intervention on your OWN pod from this.",
         });
