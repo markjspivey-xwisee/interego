@@ -761,7 +761,7 @@ export function attachContextChatRoutes(app: Express, config: ContextChatConfig)
       if ((intent === 'progress' || intent === 'assignments') && config.verifyCaller) {
         const authHeader = req.headers['authorization'] ?? req.headers['Authorization'];
         const m = typeof authHeader === 'string' && /^Bearer\s+(.+)$/i.exec(authHeader);
-        const v = await config.verifyCaller(m ? m[1].trim() : undefined);
+        const v = await config.verifyCaller(m ? m[1]!.trim() : undefined);
         if (!v.ok) {
           res.status(401).json({
             error: `a "${intent}" question is about a specific learner's record — it needs a `
