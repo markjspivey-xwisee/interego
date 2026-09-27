@@ -28,6 +28,53 @@ In a browser against the deployed bridge, as the demo learner Joshua Liu:
 
 The dashboard README's identity section says what happens.
 
+## 2026-09-27 — Foxxi: every door that takes a duration refuses a bad one, and a course completion is kept whole or not at all
+
+A caller's `duration_iso` becomes a statement's `result.duration`, which xAPI requires to be an ISO 8601 duration. #535 made the two record-performance doors refuse a bad one as a 400, naming it, before anything is fetched or kept (`durationRefusalOf`). Three more doors took one unchecked, and each went wrong its own way:
+- **`foxxi.record_external_agent_run`**: the run's task-level `performed` statement, the one the learner record reads as the run, was refused by the LRS and silently lost, while the run's tool-call steps were kept without it. It now refuses a bad duration before the run is ingested or anything is kept.
+- **`foxxi.emit_cmi5_session`**: it handed back completed, passed and terminated statements that every LRS refuses. It now refuses a bad duration before building the session. An empty one, which `??` let through (and the session then went without a duration), now gets the default, as an absent one does.
+- **`POST /agent/record-course-completion`**: it refuses a bad duration as a 400 up front. It also kept the statements the LRS took, composed and forwarded the ones it refused as well, and answered `passed: true` over a passed statement it never kept. Now the session is kept whole, or not at all:
+  - the whole session is checked first, by the LRS's own rule (`internalRefusalOf`, new in `src/xapi-lrs.ts`: the check `storeStatementInternal` makes, without storing);
+  - a session the LRS would refuse any part of is refused as the caller's, a 400 naming what it would refuse. That covers a registration that is not a UUID or a score out of range, not only a duration. Nothing is kept, composed or forwarded;
+  - a statement the LRS still refuses after that check is neither composed into the lattice nor forwarded. The route then answers 500, `ok: false`, with what was kept and what was refused;
+  - `passed` is said only of a passed statement that was kept.
+
+`tests/a-duration-is-refused-at-every-door.test.ts` (8 tests):
+- a census of the bridge's handlers and routes. It finds the five doors that read `duration_iso`, and requires each to refuse a bad one as a 400 before it reads the duration for anything else, and before it builds, keeps or fetches anything. A door added later without the refusal fails here;
+- `internalRefusalOf` against the real store, over a real cmi5 session: what it refuses is what `storeStatementInternal` refuses;
+- a session with a bad registration is refused whole;
+- an external run's `performed` statement with a bad duration;
+- the course completion's order: the check first, then storing; no compose or forward for a refused statement; `passed` only from what was kept.
+
+Eleven mutants each fail a named test.
+
+Not in this change: `foxxi.record_external_agent_run` stores a run's statements and trajectory before its evaluation-candidate refusals, and does not range-check `quality`, so a score outside [-1, 1] still costs the run its `performed` statement.
+
+
+## 2026-09-27 — Foxxi: an agent's write is answered with what the record now is, read from the record
+
+Codex found this in #535, which merged before it could be fixed there.
+
+`/agent/record-performance` said "An agent capability record is PUBLIC: from now on…" (`recordVisibility`) whenever work was recorded with `actor_kind: agent`. But a record is an agent's only when all of its own work says so. A record that also holds work recorded as a person's stays a person's, and private. Since #535, the Work page shows that note with what was recorded, so those performers would have been told their record had become public when it had not.
+
+Now, after an agent-kind write, the route:
+- reads the record as it stands with the unit in it (`learnerStatementsFor`, the same union the review routes read);
+- classifies it with `classifySubjectKind`, the one classifier every privacy gate uses, asked as a reader other than the performer, since visibility is what somebody else can read;
+- answers with `recordVisibilityAfterAgentWork` (in `src/learner-record.ts`):
+  - public, when all of the record's own work says an agent did it;
+  - private, and told so, when it also holds a person's;
+  - when the record cannot be read just then, the rule, the assumption that protects the performer, and `readFromRecord: false`.
+
+A read failure does not fail the recording. The page shows the note as a warning only when the record is public.
+
+`tests/a-portal-keeps-what-its-work-implies.test.ts` gains a test:
+- `recordVisibilityAfterAgentWork` for a record that classifies as an agent's, as a person's, and unread;
+- where the route reads the record: after the write, for agent-kind work only, through the shared classifier as another reader, with a read failure caught (a source pin);
+- the page's warning color.
+
+The census in `subject-kind-not-caller-controlled.test.ts` still holds: the raw evidence reader has one caller, the shared classifier. Ten mutants each fail a named test.
+
+
 ## 2026-09-27 — Foxxi Work page: recording as an agent is an informed choice, and the page refuses what the bridge would
 
 Codex found three things in the Work page (#533) after it merged, and one also needed a fix on the bridge behind it. The last item below was missed alongside them.
