@@ -249,14 +249,6 @@ export interface StoredStatementLike {
   voided: boolean;
 }
 
-const VOIDED_VERB = 'http://adlnet.gov/expapi/verbs/voided';
-/** The id of the statement a voiding statement voids (xAPI's `voided` verb on a StatementRef), or undefined. */
-function voidTargetOf(statement: unknown): string | undefined {
-  const s = statement as { verb?: { id?: unknown }; object?: { objectType?: unknown; id?: unknown } } | null | undefined;
-  return s?.verb?.id === VOIDED_VERB && s.object?.objectType === 'StatementRef' && typeof s.object.id === 'string' ? s.object.id : undefined;
-}
-const registrationOf = (statement: unknown): unknown => (statement as { context?: { registration?: unknown } } | null | undefined)?.context?.registration;
-
 /**
  * Merge the in-memory lens view (already-wrapped StoredStatements) with durable
  * pod records (raw xAPI Statements), deduped by Statement id. The lens copy and
@@ -265,13 +257,18 @@ const registrationOf = (statement: unknown): unknown => (statement as { context?
  * Durable raw Statements are wrapped into the StoredStatement shape so the ELR
  * consumes them uniformly. Records without an id are always kept.
  *
- * ★ A STATEMENT VOIDED ANYWHERE IN THE RECORD STAYS VOIDED. Only the store marks a void, on its own
+ * ★ A VOID THE STORE APPLIED STAYS APPLIED, AND NO OTHER. Only the store marks a void, on its own
  * copy; the lattice's copy and the pod's carry none. So the store's mark is kept whichever copy of
- * the statement comes first here, and a voiding statement kept by any source voids its target by
- * the rules the store voids by (xapi-lrs.ts, applyVoiding): never another voiding statement, and,
- * when the voider names a registration, only a statement of that registration. A statement voided
- * before a restart that emptied the store is then not read as current from a copy that outlived it.
- * Nothing passed in is changed: a record read as voided here is a new wrapper.
+ * the statement comes first here. Nothing passed in is changed: a record read as voided here is a
+ * new wrapper.
+ *
+ * A voiding statement is not read as a void by itself. Whether it took effect was decided by the
+ * store as it arrived, from things its body does not say: whether its target was there yet (a
+ * voider stored before its target voids nothing, and the target is current when it comes), and
+ * which registration the writer was bound to (a Basic-auth writer is bound to none, whatever its
+ * context says). Replaying it here would decide again, and differently. So a void lives where it
+ * was applied, in the store: a store that keeps its records (file or pod) keeps its voids across a
+ * restart, and one held in memory loses them with everything else it held.
  */
 export function mergeStatementsById(
   lensStatements: StoredStatementLike[],
@@ -300,19 +297,8 @@ export function mergeStatementsById(
       voided: false,
     });
   }
-  // Each voided id, with the registration each of its voiders names (undefined when it names none).
-  const voiders = new Map<string, unknown[]>();
-  for (const r of out) {
-    const target = voidTargetOf(r.statement);
-    if (target) voiders.set(target, [...(voiders.get(target) ?? []), registrationOf(r.statement)]);
-  }
-  if (!marked.size && !voiders.size) return out;
-  return out.map(r => {
-    if (r.voided) return r;
-    const voided = marked.has(r.id) || (!voidTargetOf(r.statement)
-      && !!voiders.get(r.id)?.some(reg => reg === undefined || reg === registrationOf(r.statement)));
-    return voided ? { ...r, voided: true } : r;
-  });
+  if (!marked.size) return out;
+  return out.map(r => (!r.voided && marked.has(r.id) ? { ...r, voided: true } : r));
 }
 
 // ── Authored agentic-SCORM courses ──────────────────────────────────────────
