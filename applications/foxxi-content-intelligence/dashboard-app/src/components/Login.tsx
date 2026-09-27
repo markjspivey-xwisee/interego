@@ -1,15 +1,19 @@
 import React, { useState } from 'react';
 import { Card, Button, Pill } from './common.js';
 import {
-  adminSessionOption, learnerSessionOptions, connectFromPrivateKey, sessionFromOption,
+  adminSessionOption, learnerSessionOptions, connectFromExtension, connectFromPrivateKey, sessionFromOption,
   type SessionRole, type FoxxiSession,
 } from '../auth/session.js';
+import { walletExtension } from '../auth/signer.js';
 import { SAMPLE_TENANT_POD_URL } from '../sample/data.js';
 
 export function Login({ onSignIn }: { onSignIn: (s: FoxxiSession) => void }) {
   const [role, setRole] = useState<SessionRole>('learner');
   const [keyInput, setKeyInput] = useState('');
   const [connectErr, setConnectErr] = useState<string | null>(null);
+  const [walletErr, setWalletErr] = useState<string | null>(null);
+  const [walletBusy, setWalletBusy] = useState(false);
+  const hasExtension = !!walletExtension();
   const learners = learnerSessionOptions();
   const admin = adminSessionOption();
 
@@ -65,6 +69,22 @@ export function Login({ onSignIn }: { onSignIn: (s: FoxxiSession) => void }) {
                 </div>
               ))}
             </div>
+
+            <div style={{ color: 'var(--text-dim)', fontSize: 12, margin: '18px 0 10px' }}>
+              Or sign in with <strong>a wallet extension</strong> in this browser. Your key stays in the wallet:
+              it signs your session now, and asks you to approve each signed request after (every step you play,
+              everything you author), because the bridge takes no signature but your own.
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <Button primary disabled={!hasExtension || walletBusy} onClick={() => { void (async () => {
+                setWalletBusy(true); setWalletErr(null);
+                try { onSignIn(await connectFromExtension(SAMPLE_TENANT_POD_URL)); }
+                catch (e) { setWalletErr((e as Error).message); }
+                finally { setWalletBusy(false); }
+              })(); }}>{walletBusy ? 'Waiting for your wallet…' : 'Use my wallet extension'}</Button>
+              {!hasExtension && <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>No wallet extension was found in this browser.</span>}
+            </div>
+            {walletErr && <div style={{ color: 'var(--bad)', fontSize: 12, marginTop: 6 }}>✗ {walletErr}</div>}
 
             <div style={{ color: 'var(--text-dim)', fontSize: 12, margin: '18px 0 10px' }}>
               Or <strong>connect a self-sovereign identity</strong> by its key — e.g. the maintainer

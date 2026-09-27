@@ -1,5 +1,47 @@
 # Changelog
 
+## 2026-09-27 — Foxxi dashboard: a learner portal, and signing in with a wallet extension
+
+The dashboard gains **Learn**, where a person finds a composition and plays it, and a third way to sign in. An agent does each of these with the same affordances and no page: the portal is one more client of them, signed as the person using it.
+
+- **Signing in with a wallet extension** (`dashboard-app/src/auth/signer.ts`). This sits beside the roster identities and the pasted key.
+  - The key never leaves the extension. It signs the session's token at sign-in, and each signed request after that, every time on its owner's approval. The bridge takes only the actor's own signature, or its delegation anchor's, so there is no session key in between.
+  - The pages say so before a prompt, and nothing that prompts runs without a click.
+  - An extension session keeps no key, so it survives a reload; a pasted key still does not.
+  - Every session now signs through one signer. *My forwarding* used to derive a demo wallet from the user id unless a key was pasted, which would have signed an extension session as someone else.
+- **Learn** (`/learn`) finds a composition three ways:
+  - a link, IRI or hash from any bridge, since content is named by its hash;
+  - the compositions opened lately in this browser, kept per identity;
+  - the ones the learner's own record says they played or made (`foxxi.content_mine`).
+- **The player** (`/learn/<hash>`) plays a composition resolved from the learner's own record (`foxxi.content_launch`, `foxxi.content_next`):
+  - every kind of question the engine grades, and the ones it only records;
+  - feedback with the author's explanations, and a badge on a step a missed check brought in;
+  - why each step was chosen, and why there was nothing to play when there was not;
+  - a summary at the end.
+  
+  A fragment's body is rendered from its Markdown by the engine's own renderer (`src/course-markdown.ts`), never from HTML the page was sent. Answers are checked before sending by the engine's own validator (`src/scorm-assessment.ts`), in its own words.
+
+- **The dashboard draws again.** Since #80, `src/course-identity.ts` read `process.env` as it loaded. The dashboard reaches it through the report model, and a browser has no `process`, so the whole app threw before it drew anything. The page was blank, and no test saw it, because vitest runs in Node and CI does not build the dashboard. It now reads its environment only where there is one, in the form the live-externals census recognizes.
+  - `tests/the-dashboard-runs-in-a-browser.test.ts` bundles the dashboard as a browser bundler takes it, with its npm packages left out, and loads every module in a sandbox that has a browser's globals and none of Node's. So a module that names `process` or `Buffer` as it loads, or imports a Node module, fails there, as it failed in the browser.
+
+`applications/foxxi-content-intelligence/tests/the-learner-portal-speaks-the-bridges-language.test.ts` (18 tests) checks the portal against the bridge's own code:
+- a wallet extension's signature goes through `recoverSignedRequest`, and its token through `verifySessionToken`;
+- a step authored with every kind of question, served as the bridge serves it, is answered through the portal's drafts and graded by `advancePlay`: right answers all right, wrong ones all wrong, the ungraded ones recorded;
+- how a composition is named, the list opened lately, what the player says, and two properties of the pages.
+
+Forty-two mutants were checked, and each fails a named test. Among them:
+- a sequence sent in the order shown, a half-matched question sent, and a single choice keeping every pick;
+- an extension session signing as a demo wallet, or dropped on reload;
+- agent_id in lower case, and a signature over the payload rather than its hash;
+- the player rendering HTML it was sent, and forwarding signed as a demo wallet;
+- the course base reading `process` as it loads, and a dashboard module importing a Node module or reading `Buffer`.
+
+The whole flow was also run in a browser against the deployed bridge, as the demo learner Joshua Liu:
+- the composition he made listed from his record;
+- a pasted fragment refused, and the composition opened;
+- a check missed, so another way in and another check came;
+- the summary shown, and the play then listed as finished, 2 of 3 right.
+
 ## 2026-09-27 — Foxxi: a void is read from the store that applied it, not replayed from a voiding statement
 
 Two defects the automated review found in #526 after it merged. #526 kept a void through the merge of a learner's record in two ways: the store's own mark, and any voiding statement a copy held, replayed by the store's rules. The replay decided again what the store had already decided, from a body that does not say what the store knew:
@@ -14,6 +56,7 @@ Now only the store's mark is kept (`mergeStatementsById`, `src/durable-records.t
 - a voided play in the listing.
 
 Four mutants each fail a named test, among them #526's replay itself.
+
 
 ## 2026-09-27 — Foxxi: a failed read of the content index is tried again, and a voided statement stays voided
 
@@ -40,6 +83,7 @@ Nineteen mutants were checked, and each fails a named test:
 - the index read: an absent index as a failed read; a pod that cannot answer read as empty; a body that is not JSON failing the read; no index to read taken as a failure;
 - the merge: the store's mark lost behind another copy; a voiding statement voiding nothing, or voided itself; the registration rule ignored, or voiding nothing; only the first or only the last voider counting; a record passed in changed;
 - the bridge: the listing answering without the index; the content store not reading the index again.
+
 
 ## 2026-09-27 — Foxxi: what a learner has at hand, for a portal and for an agent
 

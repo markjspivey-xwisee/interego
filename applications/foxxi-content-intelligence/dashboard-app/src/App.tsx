@@ -51,6 +51,8 @@ import { MyForwardingPanel } from './components/MyForwardingPanel.js';
 import { AgentPerformancePanel } from './components/AgentPerformancePanel.js';
 import { PerformanceDemoSuitePanel } from './components/PerformanceDemoSuitePanel.js';
 import { AgentCoursesCard } from './components/AgentCoursesCard.js';
+import { LearnPanel } from './components/LearnPanel.js';
+import { CompositionPlayer } from './components/CompositionPlayer.js';
 import { Header, Card } from './components/common.js';
 import { loadSession, saveSession, clearSession, type FoxxiSession } from './auth/session.js';
 import { getTransport, resetTransportProbe } from './interego/client.js';
@@ -137,6 +139,8 @@ function AppRoutes() {
           {isPriv && <Route path="/reports" element={<ReportsPage session={session} />} />}
           {isPriv && <Route path="/agent-performance" element={<AgentPerformancePage session={session} />} />}
           {isPriv && <Route path="/content" element={<ContentPage session={session} />} />}
+          <Route path="/learn" element={<LearnPage session={session} />} />
+          <Route path="/learn/:hash" element={<PlayPage session={session} />} />
           <Route path="/my-activity" element={<MyActivityPage session={session} />} />
           <Route path="/my-forwarding" element={<MyForwardingPage session={session} />} />
           <Route path="/demo-suite" element={<DemoSuitePage />} />
@@ -211,6 +215,7 @@ function TopNav({ session }: { session: FoxxiSession }) {
     }}>
       <NavLink to={ownProfileUrl} label="My profile" />
       <NavLink to="/courses" label="Courses" />
+      <NavLink to="/learn" label="Learn" />
       <NavLink to="/my-activity" label="My activity" />
       <NavLink to="/my-forwarding" label="My forwarding" />
       <NavLink to="/demo-suite" label="Demo suite" />
@@ -311,6 +316,12 @@ function ContentPage({ session }: { session: FoxxiSession }) {
 }
 function ReportsPage({ session }: { session: FoxxiSession }) {
   return <div style={{ maxWidth: 1180, margin: '24px auto', padding: 20 }}><ReportsPanel bearer={session.bearerToken} /></div>;
+}
+function LearnPage({ session }: { session: FoxxiSession }) {
+  return <div style={{ maxWidth: 900, margin: '24px auto', padding: 20 }}><LearnPanel session={session} /></div>;
+}
+function PlayPage({ session }: { session: FoxxiSession }) {
+  return <div style={{ maxWidth: 900, margin: '24px auto', padding: 20 }}><CompositionPlayer session={session} /></div>;
 }
 function MyActivityPage({ session }: { session: FoxxiSession }) {
   return <div style={{ maxWidth: 1180, margin: '24px auto', padding: 20 }}><MyActivityPanel session={session} /></div>;

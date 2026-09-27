@@ -55,6 +55,18 @@
         letter-spacing: -0.01em;
       }
 
+      /* A fragment's body, as the engine's Markdown renderer builds it (course-markdown.ts). */
+      .fx-prose { font-size: 17px; line-height: 1.6; }
+      .fx-prose h1, .fx-prose h2, .fx-prose h3, .fx-prose h4 { line-height: 1.25; margin: 1.1em 0 0.4em; }
+      .fx-prose p, .fx-prose ul, .fx-prose ol, .fx-prose blockquote, .fx-prose pre, .fx-prose table { margin: 0 0 0.8em; }
+      .fx-prose blockquote { border-left: 3px solid var(--border); padding-left: 12px; color: var(--text-dim); }
+      .fx-prose pre { background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; padding: 10px 12px; overflow-x: auto; font-size: 13px; }
+      .fx-prose code { font-size: 0.9em; }
+      .fx-prose table { border-collapse: collapse; }
+      .fx-prose th, .fx-prose td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; }
+      .fx-prose img { max-width: 100%; height: auto; }
+      .fx-prose hr { border: none; border-top: 1px solid var(--border); }
+
       /* Focus + scrollbars */
       :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
       ::-webkit-scrollbar { width: 10px; height: 10px; }

@@ -16,7 +16,8 @@
 
 import { SAMPLE_ADMIN_PAYLOAD } from '../sample/data.js';
 import { ethers } from 'ethers';
-import { mintSessionToken, mintSessionTokenWithWallet } from './session-token.js';
+import { mintSessionToken, mintSessionTokenWithSigner, mintSessionTokenWithWallet } from './session-token.js';
+import { extensionAccount, extensionSigner, walletExtension } from './signer.js';
 
 export type SessionRole = 'learner' | 'admin';
 
@@ -39,6 +40,13 @@ export interface FoxxiSession {
    * browser only.
    */
   connectedPrivateKey?: string;
+  /**
+   * For a "wallet extension" session: requests are signed in the browser's wallet extension, as
+   * `extensionAddress`, each on its owner's approval (auth/signer.ts). No key is held here, so the
+   * session is kept across a reload; the extension is asked again when a request is signed.
+   */
+  signingMode?: 'extension';
+  extensionAddress?: string;
 }
 
 export interface SessionOption {
@@ -72,8 +80,10 @@ export function loadSession(): FoxxiSession | null {
     // A connect-wallet session is NEVER persisted with its private key
     // (saveSession strips it — keys must not live at rest). So a reloaded
     // connected session can't sign; drop it and require a fresh connect
-    // rather than render a session that fails every signed call.
-    if (isConnectedSession(s) && !s.connectedPrivateKey) {
+    // rather than render a session that fails every signed call. A wallet
+    // extension session holds no key here: it signs in the extension, so it
+    // is kept.
+    if (isConnectedSession(s) && !s.connectedPrivateKey && !(s.signingMode === 'extension' && s.extensionAddress)) {
       localStorage.removeItem(STORAGE_KEY);
       return null;
     }
@@ -194,6 +204,32 @@ export async function connectFromPrivateKey(input: string, tenantPodUrl: string)
     bearerToken,
     bearerExpiresAt: new Date(Date.now() + ttlMs).toISOString(),
     connectedPrivateKey: wallet.privateKey,
+  };
+}
+
+/**
+ * "Wallet extension" login: sign in as the account a browser wallet (an EIP-1193 extension) holds.
+ * Its key never leaves the extension. The extension signs this session's token now, and each
+ * signed request later, every time on its owner's approval: the bridge takes no signature but the
+ * account's own (auth/signer.ts).
+ */
+export async function connectFromExtension(tenantPodUrl: string, provider: ethers.Eip1193Provider | undefined = walletExtension()): Promise<FoxxiSession> {
+  if (!provider) throw new Error('No wallet extension was found in this browser. Install one, or connect by key below.');
+  const address = await extensionAccount(provider);
+  const did = `did:ethr:${address}`;
+  const ttlMs = 8 * 60 * 60 * 1000;
+  const bearerToken = await mintSessionTokenWithSigner(extensionSigner(address, provider), did, ttlMs);
+  return {
+    role: 'learner',
+    webId: did,
+    userId: address,
+    name: `Wallet ${address.slice(0, 6)}…${address.slice(-4)}`,
+    audienceTags: ['connected-wallet'],
+    tenantPodUrl,
+    bearerToken,
+    bearerExpiresAt: new Date(Date.now() + ttlMs).toISOString(),
+    signingMode: 'extension',
+    extensionAddress: address,
   };
 }
 

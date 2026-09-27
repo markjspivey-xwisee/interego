@@ -84,22 +84,41 @@ export async function mintSessionToken(args: {
 }
 
 /**
- * Mint a token signed by a SPECIFIC wallet (a connected real key), rather than
- * the demo-seed derivation — for the self-sovereign "connect wallet" login. The
- * token won't verify against the tenant directory (the wallet isn't a member),
- * but the /agent/* signed-affordance path signs with this same wallet directly.
+ * Anything that signs an EIP-191 personal message as one address: a wallet held in this tab
+ * (ethers.Wallet), or one a browser extension holds and signs with on its owner's approval.
  */
-export async function mintSessionTokenWithWallet(
-  wallet: ethers.Wallet | ethers.HDNodeWallet,
+export interface MessageSigner {
+  readonly address: string;
+  signMessage(message: string): Promise<string>;
+}
+
+/**
+ * Mint a token signed by a SPECIFIC signer (a connected real key, or a wallet
+ * extension), rather than the demo-seed derivation — for the self-sovereign
+ * logins. The token won't verify against the tenant directory (the wallet isn't
+ * a member), but the /agent/* signed-affordance path signs with this same signer
+ * directly.
+ */
+export async function mintSessionTokenWithSigner(
+  signer: MessageSigner,
   webId: string,
   ttlMs: number = TOKEN_TTL_MS,
 ): Promise<string> {
   const now = new Date();
   const exp = new Date(now.getTime() + ttlMs);
-  const nonce = sha256Hex(`${wallet.address}:${now.getTime()}:${Math.random()}`).slice(0, 16);
+  const nonce = sha256Hex(`${signer.address}:${now.getTime()}:${Math.random()}`).slice(0, 16);
   const body: Omit<SessionToken, 'sig'> = {
-    sub: webId, iat: now.toISOString(), exp: exp.toISOString(), nonce, address: wallet.address,
+    sub: webId, iat: now.toISOString(), exp: exp.toISOString(), nonce, address: signer.address,
   };
-  const sig = await wallet.signMessage(canonicalMessage(body));
+  const sig = await signer.signMessage(canonicalMessage(body));
   return encodeToken({ ...body, sig });
+}
+
+/** Mint a token signed by a wallet held in this tab (a connected real key). */
+export async function mintSessionTokenWithWallet(
+  wallet: ethers.Wallet | ethers.HDNodeWallet,
+  webId: string,
+  ttlMs: number = TOKEN_TTL_MS,
+): Promise<string> {
+  return mintSessionTokenWithSigner(wallet, webId, ttlMs);
 }
