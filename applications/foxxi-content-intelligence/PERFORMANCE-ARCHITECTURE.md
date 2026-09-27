@@ -445,10 +445,18 @@ Nobody declares which explanation of a competency works; the plays show it.
   each position it sets the alternatives side by side: each one's cells at
   the position's competency, by the same rule as a fragment's. At each
   level it says which alternative the composition leans to, and why.
-  - The leaning is `chooseByEfficacy` among the alternatives resolution
-    would weigh for learners at that level: those pitched nearest it.
-  - It is withheld where any of them has outcomes too few to show, since
-    which of two leads can say what one learner did.
+  - The alternatives are ranked as resolution ranks them: those meant for
+    the learner, pitched nearest their level, then in the author's order,
+    with a composition counting as pitched at every level.
+  - Where a composition comes first, learners go into it when it resolves,
+    and outcomes decide nothing: the leaning says so (`into`).
+  - Otherwise the leaning is `chooseByEfficacy` among the fragments
+    pitched alike. Where an alternative is meant for one kind of learner,
+    people and agents get a leaning each.
+  - No leaning assumes an admission; one a learner keeps, or a plan
+    implies, can narrow what they are shown.
+  - It is withheld where any fragment weighed has outcomes too few to
+    show, since which of two leads can say what one learner did.
   - A nested composition is named as one, to be read at its own IRI.
   - A tally not read yet answers 503 rather than show no outcomes.
   So an author, a person or an agent, can see which explanation is

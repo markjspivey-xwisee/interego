@@ -7,11 +7,18 @@
  * below that it says only that there are fewer. So a composition's view is no way around a
  * fragment's.
  *
- * ★ A LEANING IS SHOWN ONLY WHERE NO CELL BEHIND IT IS TOO SMALL TO SHOW. At a level, `leansTo`
- * is chooseByEfficacy over the position's fragments, the rule resolution applies among
- * alternatives pitched alike, with its reason. But which of two alternatives leads can say what
- * a cell of one learner holds, so the leaning is withheld at a level where any alternative has
- * outcomes but fewer than may be shown.
+ * ★ A LEANING IS RESOLUTION'S OWN CHOICE, AS FAR AS IT CAN BE MADE WITHOUT A LEARNER. At a level,
+ * the alternatives are ranked as resolution ranks them: those meant for the learner, pitched
+ * nearest their level, then in the author's order, a composition counting as pitched anywhere. A
+ * composition that comes first is gone into, when it resolves, and outcomes decide nothing there:
+ * the leaning says so (`into`). Otherwise outcomes decide among the fragments pitched alike
+ * (chooseByEfficacy), and the leaning is that choice, with its reason. Where alternatives are
+ * meant for one kind of learner, a leaning is given for people and for agents apart. What a
+ * learner keeps, or a plan implies, can narrow the forms further; no leaning assumes one.
+ *
+ * ★ A LEANING IS SHOWN ONLY WHERE NO CELL BEHIND IT IS TOO SMALL TO SHOW. Which of two
+ * alternatives leads can say what a cell of one learner holds, so the leaning is withheld where any
+ * alternative weighed has outcomes but fewer than may be shown.
  */
 import type { CognitiveLevel } from './emergent-content.js';
 import type { Composition } from './compositions.js';
@@ -32,58 +39,81 @@ export interface AlternativeEfficacy {
   cells: ShownCell[];
 }
 
+/** Which learners a leaning is for: anyone, where no alternative here is meant for one kind only. */
+export type LeaningFor = 'anyone' | 'human' | 'agent';
+
+export type Leaning = { level: CognitiveLevel; for: LeaningFor } & (
+  | { chosen: string; why: string }
+  | { into: string; why: string }
+  | { withheld: string });
+
 export interface PositionEfficacy {
   position: number;
   competency: string;
   alternatives: AlternativeEfficacy[];
-  /** At each level with outcomes: what learners there would be shown among these, and why; or why that is withheld. */
-  leansTo: Array<{ level: CognitiveLevel; chosen: string; why: string } | { level: CognitiveLevel; withheld: string }>;
+  /** At each level with outcomes: what learners there would be shown, and why; or why that is not said. */
+  leansTo: Leaning[];
 }
 
 export interface CompositionEfficacy {
   composition: string;
   title: string;
   policy: typeof EFFICACY_POLICY;
+  /** What every leaning assumes. */
+  leaningAssumes: string;
   positions: PositionEfficacy[];
 }
+
+const isComposition = (x: Fragment | Composition): x is Composition => Array.isArray((x as Composition).positions);
 
 export function compositionEfficacy(comp: Composition, tally: {
   counts: (competency: string, fragment: string, level: CognitiveLevel) => EfficacyCounts | undefined;
   view: (competency: string, fragment: string, level: CognitiveLevel) => EfficacyView | undefined;
 }, lookup: (iri: string) => Fragment | Composition | undefined): CompositionEfficacy {
   const positions = comp.positions.map((pos, position): PositionEfficacy => {
-    const fragments: string[] = [];
     const alternatives = pos.paradigm.map((iri): AlternativeEfficacy => {
       const item = lookup(iri);
-      if (item && Array.isArray((item as Composition).positions)) return { iri, composition: true, title: (item as Composition).title, cells: [] };
-      fragments.push(iri);
-      const f = item as Fragment | undefined;
+      if (item && isComposition(item)) return { iri, composition: true, title: item.title, cells: [] };
       const cells: ShownCell[] = [];
       for (const level of LEVELS) {
         const counts = tally.counts(pos.competency, iri, level);
         if (!counts) continue;
         cells.push(counts.n >= EFFICACY_POLICY.publishAt ? tally.view(pos.competency, iri, level)! : { level, n: `fewer than ${EFFICACY_POLICY.publishAt}` });
       }
-      return { iri, ...(f?.kind ? { kind: f.kind } : {}), ...(f?.title ? { title: f.title } : {}), cells };
+      return { iri, ...(item?.kind ? { kind: item.kind } : {}), ...(item?.title ? { title: item.title } : {}), cells };
     });
-    // Resolution weighs outcomes only among the alternatives pitched nearest a learner's level, so a
-    // leaning at a level is among those alone.
-    const levelOf = new Map(fragments.flatMap(iri => { const f = lookup(iri) as Fragment | undefined; return f?.level ? [[iri, f.level] as const] : []; }));
-    const leansTo: PositionEfficacy['leansTo'] = [];
+
+    const items = pos.paradigm.flatMap((iri, k) => { const item = lookup(iri); return item ? [{ iri, k, item }] : []; });
+    const audiences: LeaningFor[] = items.some(x => !isComposition(x.item) && x.item.audience) ? ['human', 'agent'] : ['anyone'];
+    const leansTo: Leaning[] = [];
     for (const level of LEVELS) {
-      const distance = (iri: string): number => Math.abs(LEVELS.indexOf(levelOf.get(iri)!) - LEVELS.indexOf(level));
-      const pitched = [...levelOf.keys()];
-      const nearest = Math.min(...pitched.map(distance));
-      const group = pitched.filter(iri => distance(iri) === nearest);
-      const counts = group.map(iri => tally.counts(pos.competency, iri, level));
-      if (group.length < 2 || counts.every(c => !c)) continue;
-      if (counts.some(c => c && c.n < EFFICACY_POLICY.publishAt)) {
-        leansTo.push({ level, withheld: `an alternative has fewer than ${EFFICACY_POLICY.publishAt} outcomes here, so which one leads is not shown yet` });
-        continue;
+      for (const who of audiences) {
+        // Ranked as resolution ranks them for a learner of this kind at this level.
+        const eligible = items.filter(x => isComposition(x.item) || who === 'anyone' || !x.item.audience || x.item.audience === who);
+        const distance = (x: (typeof items)[number]): number => (isComposition(x.item) ? 0 : Math.abs(LEVELS.indexOf(x.item.level) - LEVELS.indexOf(level)));
+        const ranked = [...eligible].sort((a, b) => distance(a) - distance(b) || a.k - b.k);
+        const heard = (x: (typeof items)[number]): boolean => !isComposition(x.item) && !!tally.counts(pos.competency, x.iri, level);
+        const lead = ranked[0];
+        if (!lead || !ranked.some(heard)) continue;
+        if (isComposition(lead.item)) {
+          leansTo.push({ level, for: who, into: lead.iri, why: `"${lead.item.title}" comes first here: learners at this level go into it when it resolves for them, and outcomes among the fragments decide only when it does not` });
+          continue;
+        }
+        const group = ranked.filter(x => !isComposition(x.item) && distance(x) === distance(lead)).map(x => x.iri);
+        const counts = group.map(iri => tally.counts(pos.competency, iri, level));
+        if (group.length < 2 || counts.every(c => !c)) continue;
+        if (counts.some(c => c && c.n < EFFICACY_POLICY.publishAt)) {
+          leansTo.push({ level, for: who, withheld: `an alternative has fewer than ${EFFICACY_POLICY.publishAt} outcomes here, so which one leads is not shown yet` });
+          continue;
+        }
+        leansTo.push({ level, for: who, ...chooseByEfficacy(group, iri => tally.counts(pos.competency, iri, level)) });
       }
-      leansTo.push({ level, ...chooseByEfficacy(group, iri => tally.counts(pos.competency, iri, level)) });
     }
     return { position, competency: pos.competency, alternatives, leansTo };
   });
-  return { composition: comp['@id'], title: comp.title, policy: EFFICACY_POLICY, positions };
+  return {
+    composition: comp['@id'], title: comp.title, policy: EFFICACY_POLICY,
+    leaningAssumes: 'no admission narrowing the forms at a position: one a learner keeps, or a plan implies, can narrow what they are shown',
+    positions,
+  };
 }

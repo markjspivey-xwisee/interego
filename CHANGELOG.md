@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-09-27 — Foxxi: a composition's leaning is resolution's own choice, for each kind of learner
+
+A review of #519 found that the leaning a composition's efficacy view reported could be a choice no learner would meet ([Codex](https://github.com/markjspivey-xwisee/interego/pull/519#discussion_r4114936130), [twice](https://github.com/markjspivey-xwisee/interego/pull/519#discussion_r4114936133)). Now it ranks as resolution ranks (`src/composition-efficacy.ts`).
+
+- **A nested composition that comes first is gone into.** Resolution counts a composition as pitched at every level, and goes into it, when it resolves, before weighing any fragment's outcomes. The view weighed only the fragments. Now, where a composition comes first at a level, the leaning says learners go into it (`into`), and that outcomes decide nothing there. In the view's own example, working learners go into the nested composition. The earlier view had reported a withheld choice between fragments.
+- **People and agents apart.** Resolution passes over an alternative meant for the other kind of learner before it weighs anything. Where any alternative at a position is meant for one kind only, the view now gives a leaning for people and one for agents (`for`), each among what that learner may be shown.
+- **No admission assumed.** An admission a learner keeps, or a plan implies, can narrow the forms further. The view says so (`leaningAssumes`) rather than claim a single choice for everyone.
+- **Docs.** `PERFORMANCE-ARCHITECTURE.md` §5 describes the ranking.
+
+`applications/foxxi-content-intelligence/tests/a-composition-shows-what-it-has-learned.test.ts` covers:
+- a nested composition that comes first, at the level it is first and at one where it is nearer than the fragments;
+- leanings for people and agents apart;
+- the withheld case, now on a composition with no nesting.
+
+Five mutants were checked, and each fails a named test:
+- a composition that comes first passed over;
+- every alternative weighed for every learner;
+- people and agents never apart;
+- a composition pitched at one level;
+- a level with no outcomes given a leaning.
+
 ## 2026-09-27 — Foxxi: a composition shows its author what it has learned
 
 Plays already learn which alternatives work: each outcome is tallied by competency, fragment and learner level (#506), and resolution prefers what has worked. But an author could read that only one fragment at a time (`GET <fragment IRI>/efficacy`), apart from the composition that offers it. Now a composition answers for itself.
