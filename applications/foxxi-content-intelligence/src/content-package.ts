@@ -192,8 +192,10 @@ async function sendStatement(verb, result){
   pendingStatements.set(verb, stmt); }
   const r = await fetch(endpoint + 'statements', {
     method: 'POST',
+    // cmi5 §8.2.2: the auth-token goes in the Authorization header under the Basic scheme, as it
+    // came from the fetch URL. An LMS that follows the spec refuses it under any other.
     headers: { 'Content-Type': 'application/json', 'X-Experience-API-Version': '2.0.0',
-               'Authorization': 'Bearer ' + authToken },
+               'Authorization': 'Basic ' + authToken },
     body: JSON.stringify(stmt),
   });
   if (!r.ok) throw new Error('LRS ' + r.status + ' on ' + verb);
