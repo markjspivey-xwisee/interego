@@ -243,11 +243,44 @@ describe('each learner gets the composition resolved from their own record', () 
     const r = resolveComposition({ composition: triage, learner: human, lookup, admission: () => ({ kinds: ['probe', 'reflection'], because: 'probing suits this work' }) });
     expect(r.steps.map(s => s.fragment.kind)).toEqual(['probe']);
     expect(r.unmet).toEqual([]);
-    expect(r.steps[0]!.chosenBecause).toMatch(/the first alternative that could be used \("Module: triage concepts" left 1 of its position\(s\) unmet\)/);
+    expect(r.steps[0]!.chosenBecause).toMatch(/the first alternative that could be used \("Module: triage concepts" left 1 of its position\(s\) unmet: no alternative could be used: a concept is not admitted: probing suits this work\)/);
+    expect(r.trace.join('\n')).toMatch(/"Queue triage" position 1: tried "Module: triage concepts" left 1 of its position\(s\) unmet: no alternative could be used/);
     // With nothing to fall back to, the nested alternative's own unmet position is reported.
     const only = compositionFrom({ title: 'Queue triage', competency: 'queue-triage', positions: [{ competency: 'queue-triage', paradigm: [conceptModule['@id']] }] });
     const stuck = resolveComposition({ composition: only, learner: human, lookup, admission: () => ({ kinds: ['probe'], because: 'probing suits this work' }) });
     expect(stuck.unmet[0]!.because).toMatch(/"Module: triage concepts" left 1 of its position\(s\) unmet/);
+  });
+
+  it('keeps a refusal found inside a branch it fell back from', () => {
+    // The module's lesson is served changed; the module falls short, the probe is taken, and the
+    // tampering still shows in the reason and the trace.
+    const conceptModule = compositionFrom({ title: 'Module: triage concepts', competency: 'queue-triage', positions: [{ competency: 'queue-triage', paradigm: [f.triageLesson['@id']] }] });
+    const triage = compositionFrom({ title: 'Queue triage', competency: 'queue-triage', positions: [{ competency: 'queue-triage', paradigm: [conceptModule['@id'], f.probe['@id']] }] });
+    const tampered = new Map(store);
+    tampered.set(conceptModule['@id'], conceptModule);
+    tampered.set(f.triageLesson['@id'], { ...f.triageLesson, body: 'Triage means doing whatever is loudest.' });
+    const r = resolveComposition({ composition: triage, learner: human, lookup: i => tampered.get(i) });
+    expect(r.steps.map(s => s.fragment.kind)).toEqual(['probe']);
+    expect(r.steps[0]!.chosenBecause).toMatch(/"Module: triage concepts" left 1 of its position\(s\) unmet: .*was served with content that does not hash to.*; inside it, 1 alternative\(s\) did not hash to their IRIs/);
+    expect(r.trace.join('\n')).toMatch(/inside "Module: triage concepts", https:\S+ was served with content that does not hash to it/);
+    expect(r.refused).toEqual([`${f.triageLesson['@id']} was served with content that does not hash to it, so it was not used`]);
+
+    // And inside a branch that was taken: the module falls to its second lesson, and says why.
+    const twoLessons = compositionFrom({ title: 'Module: refunds', competency: 'refund-authority', positions: [{ competency: 'refund-authority', paradigm: [f.intro['@id'], f.introWorking['@id']] }] });
+    const course = compositionFrom({ title: 'Course', competency: 'refund-authority', positions: [{ competency: 'refund-authority', paradigm: [twoLessons['@id']] }] });
+    tampered.set(twoLessons['@id'], twoLessons);
+    tampered.set(f.intro['@id'], { ...f.intro, body: 'Refund anything.' });
+    const taken = resolveComposition({ composition: course, learner: human, lookup: i => tampered.get(i) });
+    expect(taken.steps.map(s => s.fragment['@id'])).toEqual([f.introWorking['@id']]);
+    expect(taken.refused).toEqual([`${f.intro['@id']} was served with content that does not hash to it, so it was not used`]);
+  });
+
+  it('refuses a composition that resolves to more positions than one resolution may hold', () => {
+    const big = add(compositionFrom({ title: 'Big module', competency: 'refund-authority', positions: Array.from({ length: 100 }, () => ({ competency: 'refund-authority', paradigm: [f.intro['@id']] })) }));
+    const huge = compositionFrom({ title: 'Huge', competency: 'refund-authority', positions: Array.from({ length: 25 }, () => ({ competency: 'refund-authority', paradigm: [big['@id']] })) });
+    expect(() => resolveComposition({ composition: huge, learner: human, lookup })).toThrow(/"Huge" resolves to more than 2000 positions/);
+    const fits = compositionFrom({ title: 'Fits', competency: 'refund-authority', positions: Array.from({ length: 20 }, () => ({ competency: 'refund-authority', paradigm: [big['@id']] })) });
+    expect(resolveComposition({ composition: fits, learner: human, lookup }).steps).toHaveLength(2000);
   });
 
   it('tries each nested composition once, however many paths reach it', () => {
