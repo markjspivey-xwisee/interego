@@ -73,6 +73,19 @@ describe('each question type is authored into a stored form and graded exactly',
     expect(legacy.answerHash).toBe(hashScormAnswer('8', { type: 'integer' }));
   });
 
+  it('keeps a named fill-in as text, even when its answer reads as a number', () => {
+    const code = authorQuestion({ question: 'Account code?', type: 'fill-in', answer: '0012', accept: ['twelve'] }, seed(40));
+    expect(code.input).toBeUndefined();
+    expect(code.answerHash).toBe(hashScormAnswer('0012'));
+    expect([questionIsRight('0012', code), questionIsRight('twelve', code), questionIsRight('12', code)]).toEqual([true, true, false]);
+    // Unnamed, a number-like answer is still graded as a number, as authors have always written it.
+    const unnamed = authorQuestion({ question: 'How many?', answer: '8' }, seed(41));
+    expect(unnamed.input).toEqual({ type: 'integer' });
+    expect(unnamed.answerHash).toBe(hashScormAnswer('8', { type: 'integer' }));
+    expect(questionIsRight('08', unnamed)).toBe(true);
+    expect(() => authorQuestion({ question: 'Code?', type: 'fill-in', answer: '5', min: 0 }, seed(42))).toThrow(/only to a numeric question/);
+  });
+
   it('choice takes a letter or the option text, one right or several, and keeps no answer in plaintext', () => {
     const one = authorQuestion({ question: 'Who approves?', options: ['Agent', 'Team lead', 'Manager'], answer: 'B', explanation: 'Leads approve over $250.' }, seed(3));
     expect(one.input).toMatchObject({ type: 'choice', options: ['Agent', 'Team lead', 'Manager'] });

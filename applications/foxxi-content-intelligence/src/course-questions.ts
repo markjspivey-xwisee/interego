@@ -179,8 +179,12 @@ export function authorQuestion(raw: unknown, seed: string): ScormAssessmentQuest
     case 'fill-in':
     case 'numeric': {
       const answer = typeof q.answer === 'number' ? String(q.answer) : text(q.answer, 'answer', QUESTION_LIMITS.acceptLength);
-      const inferred = inferScormAnswerInput(answer);
+      // A named fill-in stays text, so "0012" keeps its zeros and "twelve" can be accepted beside
+      // it. A number-like answer is read as a number only in a numeric question, or when the type
+      // is not named (the form authors have always written).
+      const inferred = named === 'fill-in' ? undefined : inferScormAnswerInput(answer);
       if (type === 'numeric' && !inferred) throw new QuestionError('a numeric question needs a number as its answer');
+      if (!inferred && (q.min !== undefined || q.max !== undefined)) throw new QuestionError('min and max apply only to a numeric question');
       const input: ScormAnswerInput | undefined = inferred
         ? { ...inferred, ...(q.min !== undefined ? { min: Number(q.min) } : {}), ...(q.max !== undefined ? { max: Number(q.max) } : {}) }
         : undefined;
