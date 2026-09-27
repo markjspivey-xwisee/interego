@@ -1,5 +1,29 @@
 # Changelog
 
+## 2026-09-27 — Foxxi Work page: recording as an agent is an informed choice, and the page refuses what the bridge would
+
+Codex found three things in the Work page (#533) after it merged; one also needed a fix on the bridge behind it.
+
+- **Recording as an agent says what it does, and waits until the performer says they understand.** Work recorded as an agent's is what classifies its performer as an agent, unless their record already holds work recorded as a person's. An agent's record is public: any signed caller can read their competencies, their performance history and their credentials. The page offered that choice as one option of a folded-away select, sent it unconfirmed, and dropped the bridge's own warning from the answer. Now:
+  - *Done by* sits beside whether the work succeeded;
+  - choosing an agent shows what it does, and Record waits until the performer checks that they understand;
+  - a change of mind asks again;
+  - the bridge's own word on the record's visibility is shown with what was recorded, as is where the record landed when the same wallet holds another pod.
+- **A step's texts are held to what the record keeps.** The page allowed 500 characters where the learner record keeps 200, so a unit that looked ready was refused. The limits now live in `src/work-step-limits.ts`, which the record and the page both load. The page measures each text as it sends it, trimmed.
+- **A duration is taken only as xAPI takes one.** `25m` passed the page and went into the statement; the LRS refused it, and the caller was answered 500 for their own input. Now:
+  - the page checks a duration by the statement validator's own rule (`isXapiDuration`, exported from `src/xapi-validate.ts`);
+  - both record-performance doors, `/agent/record-performance` and `foxxi.record_performance`, refuse a duration xAPI would refuse, as a 400 that names it, before anything is fetched or kept (`durationRefusalOf`, in `src/learner-record.ts`);
+  - an empty `duration_iso` is taken as none sent.
+
+`tests/a-portal-keeps-what-its-work-implies.test.ts` gains six tests:
+- the longest text the record keeps passes the page and is kept by `workStepsFrom`; one character more is refused by both, for a step's action, its object and its note;
+- a duration the statement validator refuses is refused by the page, and one it takes is sent;
+- what the bridge refuses, what it takes as none, and where both doors check it;
+- the confirmation, a change of mind, and the unit after;
+- the page's warning, and the bridge's own word shown with the record.
+
+Twenty-four mutants each fail a named test. The other doors that take a caller's duration (an external agent run, a cmi5 session, a course completion) are left for a follow-up.
+
 ## 2026-09-27 — Foxxi dashboard: recording your own work, and keeping what it implies
 
 The dashboard gains **Work** (`/work`), the last part of the learner portal. A performer records units of their own production work, and keeps, or not, what a failed unit implies about the content that would help. An agent does the same with the same affordances, signed as itself.

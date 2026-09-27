@@ -35,6 +35,10 @@ export interface Recorded {
   success: boolean;
   offer?: WorkOffer;
   offerWithheld?: string;
+  /** Said whenever the work was recorded as an agent's: what that makes of the performer's record, and who can read it. */
+  recordVisibility?: { subjectKind: 'agent'; publiclyReadable: boolean; note: string };
+  /** Said when the same wallet holds another pod this deployment reads: where this record landed, and how to write to the other. */
+  samePrincipalAlsoHolds?: { pod: string; note: string };
 }
 
 /** A kept admission, as foxxi.content_admissions lists it: the standing record at a competency. */
