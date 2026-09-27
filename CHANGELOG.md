@@ -13,16 +13,19 @@ The dashboard gains **Author**: write fragments, compose them, and see what each
 - **What it has learned** (`/author/<hash>`). Position by position, how learners at each level did after meeting each alternative, and what the composition leans to now.
   - It says only what the engine says: a cell too small to show says so, and a leaning withheld says why.
 - **What you made.** The author's compositions from their own record.
+- **Picking up by IRI** reads the item's public form to name it on the shelf. A refusal other than a missing item (a 503, say) now says so and shelves nothing.
+- **Duplicate alternatives** are told apart as the engine tells content apart, by kind and hash: the same fragment under two bridges' IRIs is one alternative, not two.
+- **The signed-only notice** now also points a wallet or a pasted key to Author, which is signed as it too.
 - **One list of forms** (`src/fragment-kinds.ts`). The kinds and levels now live in a module that imports nothing, so the engine builds fragments from the very list the author tools offer in the browser, where the engine's own modules cannot load. The engine types that list against its own kinds.
 
-`applications/foxxi-content-intelligence/tests/the-author-tools-speak-the-bridges-language.test.ts` (12 tests) checks the tools against the engine's own code:
+`applications/foxxi-content-intelligence/tests/the-author-tools-speak-the-bridges-language.test.ts` (13 tests) checks the tools against the engine's own code:
 - a fragment written in the editor with every kind of question goes through `fragmentFrom` and `compositionFrom`, is played as the bridge serves it, and is answered through the learner portal's drafts: every answer its author marked right is graded right by `advancePlay`, 7 of 7, with the explanations;
 - each kind of question in the form the engine takes, with what was left blank left out;
 - what is missing, said before sending;
 - the shelf;
 - the efficacy view, as the engine's `compositionEfficacy` gives it.
 
-Twenty-six mutants each fail a named test, among them the engine keeping its own copy of the kinds.
+Twenty-nine mutants each fail a named test, among them the engine keeping its own copy of the kinds, a refusal shelved as content, and the same content under another IRI offered twice.
 
 The whole flow was run in a browser against the deployed bridge, as the demo learner Joshua Liu:
 - a concept written and previewed;

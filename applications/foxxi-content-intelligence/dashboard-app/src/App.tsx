@@ -268,8 +268,8 @@ function SignsOnlyNotice({ what }: { what: string }) {
       <Card title="Not for a wallet or a key signed in here">
         <div style={{ color: 'var(--text-dim)' }}>
           {what} are read with a session token this tenant's directory issues, and no directory knows the wallet or key
-          you signed in with. What you do here is signed as you: <a href="/learn" onClick={go('/learn')}>Learn</a> and{' '}
-          <a href="/my-forwarding" onClick={go('/my-forwarding')}>My forwarding</a>.
+          you signed in with. What you do here is signed as you: <a href="/learn" onClick={go('/learn')}>Learn</a>,{' '}
+          <a href="/author" onClick={go('/author')}>Author</a> and <a href="/my-forwarding" onClick={go('/my-forwarding')}>My forwarding</a>.
         </div>
       </Card>
     </div>

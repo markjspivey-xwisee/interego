@@ -72,6 +72,12 @@ function ShelfCard({ shelf, onPut, onRemove }: { shelf: ShelfItem[]; onPut: (ite
     try {
       const r = await fetch(`${base}/ns/foxxi/${type}/${hash}`, { headers: { Accept: 'application/json' } });
       if (r.status === 404) { setWhy('This bridge holds nothing with that hash, so it could not be composed from here.'); return; }
+      // Any other refusal is not the content: say so, and shelve nothing.
+      if (!r.ok) {
+        const said = (await r.json().catch(() => ({})) as { error?: unknown }).error;
+        setWhy(`It could not be read just now${typeof said === 'string' ? `: ${said}` : ` (HTTP ${r.status})`}. Nothing was put on your shelf.`);
+        return;
+      }
       const body = await r.json() as { title?: string; kind?: string; level?: string };
       onPut({ iri, type, at: new Date().toISOString(), ...(body.title ? { title: body.title } : {}), ...(body.kind ? { kind: body.kind } : {}), ...(body.level ? { level: body.level } : {}) });
       setPaste(''); setWhy(null);
