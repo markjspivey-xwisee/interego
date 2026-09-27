@@ -23,8 +23,8 @@
  * alternative weighed has outcomes but fewer than may be shown.
  */
 import type { CognitiveLevel } from './emergent-content.js';
-import type { Composition } from './compositions.js';
-import type { Fragment } from './content-fragments.js';
+import { compositionIsIntact, type Composition } from './compositions.js';
+import { fragmentIsIntact, sameContent, type Fragment } from './content-fragments.js';
 import { EFFICACY_POLICY, chooseByEfficacy, type EfficacyCounts, type EfficacyView } from './fragment-efficacy.js';
 
 const LEVELS: readonly CognitiveLevel[] = ['foundational', 'working', 'applied', 'advanced'];
@@ -85,7 +85,13 @@ export function compositionEfficacy(comp: Composition, tally: {
       return { iri, ...(item?.kind ? { kind: item.kind } : {}), ...(item?.title ? { title: item.title } : {}), cells };
     });
 
-    const items = pos.paradigm.flatMap((iri, k) => { const item = lookup(iri); return item ? [{ iri, k, item }] : []; });
+    // Only what resolution could use: content that is what its IRI says. Anything else it refuses
+    // before ranking, and so does this.
+    const items = pos.paradigm.flatMap((iri, k) => {
+      const item = lookup(iri);
+      const intact = !!item && sameContent(item['@id'], iri) && (isComposition(item) ? compositionIsIntact(item) : fragmentIsIntact(item));
+      return intact ? [{ iri, k, item: item! }] : [];
+    });
     const audiences: LeaningFor[] = items.some(x => !isComposition(x.item) && x.item.audience) ? ['human', 'agent'] : ['anyone'];
     const leansTo: Leaning[] = [];
     for (const level of LEVELS) {

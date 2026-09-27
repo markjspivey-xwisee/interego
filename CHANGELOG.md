@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-09-27 — Foxxi: a composition's leaning ranks only what resolution could use
+
+A review of #522 found that a tampered fragment could end the fallback list a composition's efficacy view gives after a leading composition ([Codex](https://github.com/markjspivey-xwisee/interego/pull/522#discussion_r4115057708)). Resolution refuses content that is not what its IRI says before it ranks anything (`src/compositions.ts`), then tries the rest.
+
+Now the view refuses it too, before ranking (`src/composition-efficacy.ts`): only content that hashes to its IRI is ranked, weighed, or listed. `PERFORMANCE-ARCHITECTURE.md` §5 says so.
+
+Where no fragment is left among what a leading composition gives way to, resolution takes the first composition that resolves in part. The view gives a leaning only where some fragment has outcomes, so that case never reaches it.
+
+`applications/foxxi-content-intelligence/tests/a-composition-shows-what-it-has-learned.test.ts` pins the list with a tampered fragment among the alternatives. One mutant was checked: ranking content that is not what its IRI says fails it.
+
 ## 2026-09-27 — Foxxi: after a leading composition, the leaning lists every alternative tried, in order
 
 A review of #521 found its fallback still too short ([Codex](https://github.com/markjspivey-xwisee/interego/pull/521#discussion_r4115014161)). At a level where a nested composition comes first, a composition's efficacy view named the next alternative as the one taken when that composition does not resolve. But the next may be another composition that does not resolve either.
