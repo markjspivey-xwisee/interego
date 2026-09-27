@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-09-27 — Foxxi: after a leading composition, the leaning lists every alternative tried, in order
+
+A review of #521 found its fallback still too short ([Codex](https://github.com/markjspivey-xwisee/interego/pull/521#discussion_r4115014161)). At a level where a nested composition comes first, a composition's efficacy view named the next alternative as the one taken when that composition does not resolve. But the next may be another composition that does not resolve either.
+
+Resolution tries the alternatives after the lead in rank order: a composition is taken when it resolves, and the first fragment always (`src/compositions.ts`). Now the leaning lists those alternatives, in that order, up to and including the first fragment (`otherwise`, `src/composition-efficacy.ts`), and says so. `PERFORMANCE-ARCHITECTURE.md` §5 describes it. #521's entry is left as it merged.
+
+`applications/foxxi-content-intelligence/tests/a-composition-shows-what-it-has-learned.test.ts` pins the list, including two compositions ahead of a fragment. Three mutants were checked, and each fails it:
+- the alternatives not listed;
+- the first fragment left off the list;
+- only the next alternative listed.
+
 ## 2026-09-27 — Foxxi: where a leading composition does not resolve, the leaning names what is taken
 
 A review of #520 found its account of a leading composition half wrong ([Codex](https://github.com/markjspivey-xwisee/interego/pull/520#discussion_r4114979366)). A composition's efficacy view says, at a level where a nested composition comes first, that learners go into it when it resolves. It added that outcomes among the fragments decide when it does not.

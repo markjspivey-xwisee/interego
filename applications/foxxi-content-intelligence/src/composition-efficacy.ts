@@ -10,9 +10,10 @@
  * ★ A LEANING IS RESOLUTION'S OWN CHOICE, AS FAR AS IT CAN BE MADE WITHOUT A LEARNER. At a level,
  * the alternatives are ranked as resolution ranks them: those meant for the learner, pitched
  * nearest their level, then in the author's order, a composition counting as pitched anywhere. A
- * composition that comes first is gone into, when it resolves; where it does not, the next
- * alternative as ranked is taken (`otherwise`). Outcomes decide nothing at such a level, and the
- * leaning says so (`into`). Otherwise outcomes decide among the fragments pitched alike
+ * composition that comes first is gone into, when it resolves; where it does not, the alternatives
+ * after it are tried in rank order up to the first fragment, a composition taken when it resolves
+ * and that fragment always (`otherwise`). Outcomes decide nothing at such a level, and the leaning
+ * says so (`into`). Otherwise outcomes decide among the fragments pitched alike
  * (chooseByEfficacy), and the leaning is that choice, with its reason. Where alternatives are
  * meant for one kind of learner, a leaning is given for people and for agents apart. What a
  * learner keeps, or a plan implies, can narrow the forms further; no leaning assumes one.
@@ -45,7 +46,7 @@ export type LeaningFor = 'anyone' | 'human' | 'agent';
 
 export type Leaning = { level: CognitiveLevel; for: LeaningFor } & (
   | { chosen: string; why: string }
-  | { into: string; otherwise?: string; why: string }
+  | { into: string; otherwise?: string[]; why: string }
   | { withheld: string });
 
 export interface PositionEfficacy {
@@ -97,12 +98,14 @@ export function compositionEfficacy(comp: Composition, tally: {
         const lead = ranked[0];
         if (!lead || !ranked.some(heard)) continue;
         if (isComposition(lead.item)) {
-          // Resolution weighs no outcomes when a composition leads: where it does not resolve, the next
-          // alternative as ranked is taken, in the author's order among those pitched alike.
-          const next = ranked[1];
+          // Resolution weighs no outcomes when a composition leads. It tries the alternatives in rank
+          // order: a composition is taken when it resolves, and the first fragment always, so the ones
+          // after the lead are tried up to that fragment, in that order.
+          const firstFragment = ranked.findIndex(x => !isComposition(x.item));
+          const otherwise = ranked.slice(1, firstFragment < 0 ? undefined : firstFragment + 1).map(x => x.iri);
           leansTo.push({
-            level, for: who, into: lead.iri, ...(next ? { otherwise: next.iri } : {}),
-            why: `"${lead.item.title}" comes first here: learners at this level go into it when it resolves for them, and otherwise take the next alternative as ranked (nearest their level, then the author's order), so outcomes decide nothing at this level`,
+            level, for: who, into: lead.iri, ...(otherwise.length ? { otherwise } : {}),
+            why: `"${lead.item.title}" comes first here: learners at this level go into it when it resolves for them, and otherwise the alternatives after it are tried in this order, a composition taken when it resolves and the first fragment always, so outcomes decide nothing at this level`,
           });
           continue;
         }
