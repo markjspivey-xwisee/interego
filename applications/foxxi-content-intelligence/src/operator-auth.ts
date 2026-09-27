@@ -54,6 +54,21 @@ export function callerIsOperator(req: Request, cfg: OperatorAuthConfig): boolean
 }
 
 /**
+ * The directory user a request's session token verifies as, or null: by the same check an operator's
+ * token passes (a signature from a wallet the directory binds to that user, never a public demo
+ * seed's). For a resource a user may read of their own, their profile, beside an operator's read of
+ * anyone's.
+ */
+export function callerUserIdOf(req: Request, cfg: OperatorAuthConfig): string | null {
+  const token = bearerOf(req);
+  if (!token || !cfg.loadUsers) return null;
+  let users: ReadonlyArray<{ user_id: string; web_id: string; wallet_address?: string }>;
+  try { users = cfg.loadUsers(); } catch { return null; }
+  const verified = verifySessionToken(token, trustedAddressMap(users));
+  return verified.ok ? verified.callerUserId : null;
+}
+
+/**
  * The tenant a request may act on. Honors `?tenant_pod_url` only for a
  * verified operator; everyone else (including anonymous) is pinned to
  * DEFAULT_TENANT so they cannot reach a victim tenant's data.

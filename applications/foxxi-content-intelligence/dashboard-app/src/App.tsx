@@ -123,7 +123,7 @@ function AppRoutes() {
 /**
  * Asks once whether this bridge takes the session's token (auth/token-standing.ts), at the gate
  * every session-token read passes: the LRS's, which My activity reads through. Not at the profile
- * resource, which also asks for an operator, so it refused every learner who was not one.
+ * resource, whose answer also depends on whose profile it is.
  */
 function useTokenStanding(session: FoxxiSession): TokenStanding {
   const { entry, error } = useHypermedia();
