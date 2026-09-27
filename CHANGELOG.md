@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-09-27 — Foxxi: a cmi5 auth-token read either way still gets through
+
+The automated review of #510 read cmi5 §8.2.1 as making the fetched `auth-token` the whole Authorization header value, so that prefixing `Basic ` would send `Basic Basic …` and a bare token would be refused. The spec's own example token is RFC 1945's credential part, and the ADL reference client sends `"Basic " + auth-token`, so #510 stands as written. Some LMSs and AUs may read it the other way, and tolerating that costs nothing a token does not already grant.
+
+- **The AU page** (`src/content-package.ts`) sends a fetched token that already carries its scheme (`Basic …` or `Bearer …`) as it came, and prefixes `Basic ` to any other.
+- **The LRS** (`src/xapi-lrs.ts`) also takes a header with no scheme when it is exactly a token this LMS minted, held to its launch like the other forms. A bare value that is not such a token is refused, since a bare header is no credential of any other kind.
+
+`tests/au-explained-answers.test.ts` runs the generated page with a bare token, with header-ready `Basic` and `Bearer` values, and with a token that only begins with those letters. `tests/cmi5-token-is-its-launch.test.ts` adds a bare token held to its launch, and a bare unknown value refused. Four mutants were checked, and each fails a named test:
+- the page always prefixing `Basic`;
+- the page's pattern losing its backslash inside the generated script;
+- the LRS refusing a bare token;
+- the LRS taking any bare value.
+
 ## 2026-09-27 — Foxxi: a cmi5 auth-token travels under the Basic scheme, as the spec has an AU send it
 
 cmi5 §8.2.2 has an AU put the auth-token its fetch URL returned into the Authorization header under the Basic scheme (RFC 1945), as the token itself. Foxxi had it the other way round on both sides, so neither half of a launch across vendors worked.
