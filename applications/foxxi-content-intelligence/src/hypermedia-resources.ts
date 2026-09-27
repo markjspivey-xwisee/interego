@@ -44,6 +44,9 @@ interface HypermediaConfig {
    *  gated on this — an unauthenticated caller gets 401, not the roster. Defaults to
    *  deny-all when omitted (fail closed). */
   isOperator?: (req: Request) => boolean;
+  /** The directory user the request's session token verifies as, or null: a user reads their own
+   *  profile with it (their assignments), and no one else's. Defaults to none (fail closed). */
+  callerUserId?: (req: Request) => string | null;
 }
 
 /** Courses whose payloads ship with a playable SCORM package. */
@@ -359,6 +362,23 @@ export function attachHypermediaRoutes(app: Express, config: HypermediaConfig): 
     res.status(401).json({ error: 'this resource requires an authenticated operator session (OAuth2 Bearer / operator token)' });
     return false;
   };
+  /**
+   * A profile is read by an operator (anyone's), or by its own user (theirs: their assignments and
+   * audience). It was operator-only, so every learner's own profile page answered 401 and showed
+   * no assignments. A verified user asking for someone else's is refused as 403; an unknown profile
+   * is a 404 only to an operator, so a non-operator cannot learn which ids exist.
+   */
+  const requireOperatorOrSelf = (req: Request, res: Response, slug: string | null): boolean => {
+    if (config.isOperator?.(req)) return true;
+    const self = config.callerUserId?.(req) ?? null;
+    if (self !== null && slug !== null && self === slug) return true;
+    if (self !== null) {
+      res.status(403).json({ error: 'a user may read only their own profile; an operator may read any' });
+      return false;
+    }
+    res.status(401).json({ error: "this resource requires an authenticated session: an operator's, or the profile's own user's" });
+    return false;
+  };
 
   // ── Root entry point ─────────────────────────────────────────────
   // Bootstrap URI — single request returns the navigable map of all
@@ -474,9 +494,9 @@ export function attachHypermediaRoutes(app: Express, config: HypermediaConfig): 
     }));
   });
   app.get('/api/foxxi/v1/profiles/:opaqueId', (req, res) => {
-    if (!requireOperator(req, res)) return;
-    const admin = loadAdminPayload();
     const slug = lookup.user.toSlug(req.params.opaqueId);
+    if (!requireOperatorOrSelf(req, res, slug)) return;
+    const admin = loadAdminPayload();
     if (!slug) { res.status(404).json({ error: 'profile not found' }); return; }
     const user = admin.users.find(u => u.user_id === slug);
     if (!user) { res.status(404).json({ error: 'profile not found' }); return; }

@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-09-27 — Foxxi: a learner reads their own profile, with their assignments
+
+A learner's home page reads their assigned courses from their own profile, `GET /api/foxxi/v1/profiles/:id`. That route was operator-only, because a profile carries directory PII (email, employee id, hire date, manager). So every learner who was not an operator got a 401 where their assigned courses belong.
+
+Now:
+- the profile item route also serves the profile's own user. The user is verified the way an operator is: a session token signed by a wallet the directory binds to them, never a public demo seed's (`callerUserIdOf` in `src/operator-auth.ts`, next to `callerIsOperator`);
+- a verified user asking for someone else's profile is refused as 403, and shown none of it;
+- an unknown profile is a 404 only for an operator, so a non-operator cannot tell which ids exist;
+- the collection (the whole directory) stays operator-only;
+- the bridge passes the check to the hypermedia routes as `callerUserId`, next to `isOperator`. The dashboard's probe for whether the bridge takes a session's token stays at the LRS gate, since the profile's answer also depends on whose profile it is.
+
+`tests/a-learner-reads-their-own-profile.test.ts` runs the real routes over the tenant's real directory, with wallets from a test seed. It covers a learner, another user, anonymous, a public-seed token (with a control showing the directory does bind the wallet that signed it), both kinds of operator, an unknown id, and the collection. Seven mutants each turn it red.
+
 ## 2026-09-27 — Foxxi: a door that records statements reports only what the store kept, and refuses before it keeps
 
 `storeStatementInternal` answers with an id before the store's write settles, and only logs a write that fails later (a file, pod or forwarding backend). Codex found the course completion counting on it after #540 merged. The doors that record statements all did, each in its own way:
@@ -27,6 +40,7 @@ The mechanism is `keepStatementsWhole` (new, `src/xapi-lrs.ts`). It checks the s
 Twenty mutants each fail a named test.
 
 Not in this change: the agent-activity and SCORM play emitters (`emitAgentActivity` and the play helpers) still store with `storeStatementInternal`. They check its null, but not a write that fails later.
+
 
 ## 2026-09-27 — Foxxi: part of a record is not read as the whole of it
 
