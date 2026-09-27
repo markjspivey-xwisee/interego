@@ -16,6 +16,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { FOXXI_NS } from '../src/foxxi-vocab.js';
 
 const pod = vi.hoisted(() => ({
   reachable: new Set<string>(),
@@ -48,7 +49,7 @@ vi.mock('../src/foundation-holon-altitude.js', async (original) => ({
 const { readDurableRecordedStatements, readDurableRecordedStatementsDetailed } = await import('../src/durable-records.js');
 const { ensureResident, latticeReadWhole } = await import('../src/foundation-shared-lattice.js');
 
-const RECORDED = 'https://markjspivey-xwisee.github.io/interego/applications/foxxi-content-intelligence/ns/foxxi#RecordedPerformance';
+const RECORDED = `${FOXXI_NS}RecordedPerformance`;
 const statement = (id: string, kind: 'human' | 'agent') => ({ id, actor: { account: { name: 'did:ethr:0x1111111111111111111111111111111111111111' } }, context: { extensions: { kind } } });
 /** A durable record as the bridge persists it: a descriptor that targets a graph holding the statement, base64-encoded. */
 function keep(podUrl: string, n: number, s: Record<string, unknown>, opts: { descriptor?: boolean; graph?: boolean } = {}): void {
