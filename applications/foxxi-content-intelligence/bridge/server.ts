@@ -428,7 +428,7 @@ import {
   type AccessDecisionTrace,
 } from '../src/policy.js';
 import { deriveAdminKeyPair, publishTenantMembership, publishCourseCatalog, publishTenantAssignments, publishCoursePackage, publishMeshEnrolmentRegister, TENANT_TYPES, type TenantPublishConfig } from '../src/tenant-publisher.js';
-import { attachXapiLrsRoutes, listStoredStatements, storeStatementDurably, storeStatementInternal, getStatementStore } from '../src/xapi-lrs.js';
+import { attachXapiLrsRoutes, internalRefusalOf, listStoredStatements, storeStatementDurably, storeStatementInternal, getStatementStore } from '../src/xapi-lrs.js';
 import type { StoredStatement } from '../src/statement-store.js';
 import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerRegistration, cmi5BearerTenant, getCmi5Course, learnerSatisfiedAus, observeCmi5Statement, signedLaunchLearner, stageLaunchData } from '../src/cmi5-lms.js';
 import { AGS_SCOPE, attachLti13Routes, type Lti13Tool, type VerifiedResourceLaunch } from '../src/lti13.js';
@@ -3958,6 +3958,11 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const taskName = args.task_name as string;
     if (!taskName || !taskName.trim()) return invalidArguments('task_name is required');
     if (typeof args.success !== 'boolean') return invalidArguments('success (boolean) is required');
+    // The run's duration becomes the result.duration of its task-level `performed` statement, the
+    // one the learner record reads as the run's performance. A bad one made the LRS refuse that
+    // statement, silently, while the run's tool-call steps were kept without it.
+    const durationRefused = durationRefusalOf(args.duration_iso);
+    if (durationRefused) return invalidArguments(durationRefused);
     const rawToolCalls = args.tool_calls as Array<Record<string, unknown>> | undefined;
     const rawSteps = args.steps as Array<Record<string, unknown>> | undefined;
     if ((!Array.isArray(rawToolCalls) || rawToolCalls.length === 0)
@@ -4220,6 +4225,11 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     if (ctx.role !== 'admin' && learnerDid !== ctx.webId) {
       return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: `forbidden — caller cannot emit cmi5 statements on behalf of ${learnerDid}` };
     }
+    // The duration goes on the completed, passed and terminated statements handed back. A bad one
+    // handed back statements every LRS refuses. An empty one is taken as none sent, and gets the
+    // default as an absent one does: `??` passed it through, and the session went without one.
+    const durationRefused = durationRefusalOf(args.duration_iso);
+    if (durationRefused) return invalidArguments(durationRefused);
     const trace = buildPassedSessionTrace({
       // Exactly ONE Inverse Functional Identifier (account, the WebID) per xAPI §4.1.2.1 —
       // not mbox+account together (which would violate the single-IFI rule the ontology enforces).
@@ -4233,7 +4243,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       },
       scoreScaled: (args.score_scaled as number) ?? 1.0,
       masteryScore: (args.mastery_score as number) ?? 0.7,
-      durationIso: (args.duration_iso as string) ?? 'PT5M',
+      durationIso: (typeof args.duration_iso === 'string' && args.duration_iso) ? args.duration_iso : 'PT5M',
       moveOnRule: (args.move_on_rule as 'Passed' | 'Completed' | 'CompletedAndPassed' | 'CompletedOrPassed' | 'NotApplicable') ?? 'CompletedAndPassed',
     });
     return { statements: trace, count: trace.length };
@@ -9230,6 +9240,8 @@ app.post('/agent/record-course-completion', async (req, res) => {
     const scoreScaled = typeof p.score_scaled === 'number' ? p.score_scaled : 1.0;
     const masteryScore = typeof p.mastery_score === 'number' ? p.mastery_score : 0.7;
     if (scoreScaled < masteryScore) { res.status(400).json({ error: `score_scaled ${scoreScaled} is below mastery_score ${masteryScore} — not a passed completion` }); return; }
+    const durationRefused = durationRefusalOf(p.duration_iso);
+    if (durationRefused) { res.status(400).json({ error: durationRefused }); return; }
     // selfBoundPod: the lens binds to the caller's OWN pod; a subject_pod_url naming a
     // DIFFERENT actor cannot route this self-authored completion into that actor's lens.
     const subjectPod = selfBoundPod(callerDid, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
@@ -9243,16 +9255,41 @@ app.post('/agent/record-course-completion', async (req, res) => {
       durationIso: (typeof p.duration_iso === 'string' && p.duration_iso) ? p.duration_iso : 'PT10M',
       moveOnRule: 'CompletedAndPassed',
     });
-    const statementIds: string[] = [];
-    for (const stmt of trace) {
+    const session = trace.map((stmt): Record<string, unknown> & { id: string } => {
       const s = stmt as unknown as Record<string, unknown>;
       // Object-spread drops the index signature (TS collapses this to `{ id: string }`),
       // hiding the xAPI keys that are present at runtime — restore it explicitly.
-      const withId: Record<string, unknown> & { id: string } = { ...s, id: (typeof s.id === 'string' && s.id) ? s.id : randomUUID() };
+      return { ...s, id: (typeof s.id === 'string' && s.id) ? s.id : randomUUID() };
+    });
+    const verbOf = (s: Record<string, unknown>): string => String((s.verb as { id?: string } | undefined)?.id ?? '').split('/').pop() ?? '';
+    /**
+     * ★ THE SESSION IS KEPT WHOLE, OR NOT AT ALL.
+     *
+     * Each statement used to be stored, composed into the learner's lattice and forwarded one at a
+     * time, whether the LRS kept it or not. A session whose completed, passed and terminated
+     * statements it refused (a duration that is not ISO 8601, a registration that is not a UUID, a
+     * score out of range) was composed and forwarded all the same, and answered `passed: true`.
+     *
+     * So the whole session is checked first, by the LRS's own rule (internalRefusalOf), and a
+     * session it would refuse any part of is refused as the caller's: nothing is kept, composed or
+     * forwarded, and the answer names what the LRS would refuse. A statement a later refusal could
+     * still reach is neither composed nor forwarded, and passed is said only of a passed statement
+     * that was kept.
+     */
+    const refusals = session.flatMap(s => internalRefusalOf(s).map(e => `${verbOf(s)}: ${e}`));
+    if (refusals.length) {
+      res.status(400).json({ error: 'the completion was not recorded: the LRS would refuse part of its cmi5 session, so none of it was kept', violations: refusals.slice(0, 20) });
+      return;
+    }
+    const statementIds: string[] = [];
+    const kept = new Set<string>();
+    for (const withId of session) {
       // null = the LRS refused it for non-conformance. Reporting the id anyway is
       // what produced learner records citing evidence URLs that 404.
       const cmi5Id = storeStatementInternal(withId, lensTenantFor(label));
-      if (cmi5Id) statementIds.push(cmi5Id);
+      if (!cmi5Id) continue;   // refused: neither composed into the lattice nor forwarded
+      statementIds.push(cmi5Id);
+      kept.add(verbOf(withId));
       // Foundation-first: PGSL canonical — compose each cmi5 statement into the
       // learner's shared lattice (lossless), no hand-authored RDF.
       void composeIntoSharedLattice({
@@ -9266,7 +9303,15 @@ app.post('/agent/record-course-completion', async (req, res) => {
       forwardToTargets(lensTenantFor(label), withId)
         .catch(e => console.warn('[foxxi-forward][record-course-completion]', (e as Error).message));
     }
-    res.json({ ok: true, completedBy: callerDid, courseId, courseActivityId, scoreScaled, masteryScore, passed: true, statementCount: statementIds.length, durable: subjectPod, lensTenant: lensTenantFor(label) });
+    if (statementIds.length < session.length) {
+      res.status(500).json({
+        ok: false, error: 'the LRS refused part of the cmi5 session after it was checked; only what it kept was composed and forwarded',
+        completedBy: callerDid, courseId, courseActivityId, passed: kept.has('passed'),
+        kept: [...kept], refused: session.map(verbOf).filter(v => !kept.has(v)), statementIds, durable: subjectPod, lensTenant: lensTenantFor(label),
+      });
+      return;
+    }
+    res.json({ ok: true, completedBy: callerDid, courseId, courseActivityId, scoreScaled, masteryScore, passed: kept.has('passed'), statementCount: statementIds.length, durable: subjectPod, lensTenant: lensTenantFor(label) });
   } catch (err) {
     sendServerError(res, err, 'route-handler');
   }
