@@ -129,6 +129,12 @@ export interface XapiLrsConfig {
   /** Optional: invoked after each Statement is stored, with its tenant.
    *  The cmi5 LMS uses this to watch for moveOn satisfaction. */
   onStatementStored?: (statement: Record<string, unknown>, tenant: TenantId) => void;
+  /** Optional: invoked once a voiding statement has taken effect, with the statement it voided
+   *  (as the store holds it, marked) and the tenant it was voided in. Never for a void that took
+   *  no effect: a target not held yet, another voiding statement, or one outside the writer's
+   *  registration. The bridge keeps it where the voided statement's owner keeps their record,
+   *  since a lens tenant's store is a view that eviction and restarts empty. */
+  onVoidApplied?: (target: StoredStatement, voidingStatementId: string, tenant: TenantId) => void;
   /** Optional: resolve the OWNER tenant for outbound forwarding from the
    *  statement's actor (self-sovereign per-user forwarding). Returns null
    *  when the actor has no resolvable owner — forwarding then falls back to
@@ -755,13 +761,14 @@ async function handlePostStatements(req: Request, res: Response, config: XapiLrs
   for (const stmt of batch) {
     const enriched = ensureStatementFields(stmt, authority);
     const id = enriched.id as string;
-    await applyVoiding(enriched, id, store, boundRegistration(req));
     try {
       await store.put({ id, statement: enriched, stored: enriched.stored as string, voided: false });
     } catch (err) {
       if (err instanceof ConflictError) { res.status(409).json({ error: err.message }); return; }
       throw err;
     }
+    // Voided only once the voiding statement itself is taken: one refused as a conflict voids nothing.
+    await applyVoiding(enriched, id, store, boundRegistration(req), r => notifyVoidApplied(r, id, tenantOf(req), config));
     ids.push(id);
     persistAttachmentData(enriched, multipartParts, attachStore);
     notifyStatementStored(enriched, tenantOf(req), config);
@@ -788,11 +795,16 @@ async function handlePostStatements(req: Request, res: Response, config: XapiLrs
  * store that statement between its read and this void, and the void would then mark it (the
  * automated review of #487). The store evaluates the guard against the very record it marks.
  */
-async function applyVoiding(stmt: Record<string, unknown>, voidingId: string, store: StatementStore, registration: string | undefined): Promise<void> {
+async function applyVoiding(stmt: Record<string, unknown>, voidingId: string, store: StatementStore, registration: string | undefined,
+  onApplied?: (target: StoredStatement) => void): Promise<void> {
   const target = isVoidingStatement(stmt);
   if (!target) return;
-  await store.markVoided(target, voidingId, (existing) => !isVoidingStatement(existing.statement)
+  const marked = await store.markVoided(target, voidingId, (existing) => !isVoidingStatement(existing.statement)
     && (registration === undefined || registrationOfStatement(existing.statement) === registration));
+  // Told only once it took effect, with the statement as the store now holds it.
+  if (!marked || !onApplied) return;
+  const voided = await store.get(target);
+  if (voided) onApplied(voided);
 }
 
 /** Validate the structural headers of every non-first multipart part. */
@@ -952,13 +964,14 @@ async function handlePutStatement(req: Request, res: Response, config: XapiLrsCo
   (stmt as Record<string, unknown>).id = statementId;
   const store = statementStores.for(tenantOf(req));
   const enriched = ensureStatementFields(stmt, { homePage: config.selfBaseUrl, name: 'foxxi-lrs' });
-  await applyVoiding(enriched, statementId, store, boundRegistration(req));
   try {
     await store.put({ id: statementId, statement: enriched, stored: enriched.stored as string, voided: false });
   } catch (err) {
     if (err instanceof ConflictError) { res.status(409).json({ error: err.message }); return; }
     throw err;
   }
+  // Voided only once the voiding statement itself is taken: one refused as a conflict voids nothing.
+  await applyVoiding(enriched, statementId, store, boundRegistration(req), r => notifyVoidApplied(r, statementId, tenantOf(req), config));
   persistAttachmentData(enriched, multipartParts, attachmentStores.for(tenantOf(req)));
   notifyStatementStored(enriched, tenantOf(req), config);
   recordInboundIfForwarded(req, enriched);
@@ -976,6 +989,17 @@ function recordInboundIfForwarded(req: Request, stmt: Record<string, unknown>): 
   const auth = (req as Request & { xapiAuth?: { kind?: string; principal?: string } }).xapiAuth;
   if (auth?.kind !== 'basic') return;
   recordInbound(tenantOf(req), auth.principal ?? 'lrs-key', stmt);
+}
+
+/** Fire the applied-void hook (the bridge keeps an applied void with the voided statement's owner). */
+function notifyVoidApplied(target: StoredStatement, voidingStatementId: string, tenant: TenantId, config: XapiLrsConfig): void {
+  if (!config.onVoidApplied) return;
+  try {
+    config.onVoidApplied(target, voidingStatementId, tenant);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[foxxi-lrs] onVoidApplied hook threw:', (err as Error).message);
+  }
 }
 
 /** Fire the post-store hook (the cmi5 LMS watches moveOn through it). */

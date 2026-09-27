@@ -262,13 +262,17 @@ function ProfilePage({ session }: { session: FoxxiSession }) {
  * session token, which a tenant directory issues, and no directory knows this wallet or key.
  */
 function SignsOnlyNotice({ what }: { what: string }) {
+  // Moved within the app, never by reloading the page: a pasted key lives in memory only, and a
+  // reload would sign its session out.
+  const navigate = useNavigate();
+  const go = (to: string) => (e: React.MouseEvent) => { e.preventDefault(); navigate(to); };
   return (
     <div style={{ maxWidth: 720, margin: '40px auto', padding: 20 }}>
       <Card title="Not for a wallet or a key signed in here">
         <div style={{ color: 'var(--text-dim)' }}>
           {what} are read with a session token this tenant's directory issues, and no directory knows the wallet or key
-          you signed in with. What you do here is signed as you: <a href="/learn">Learn</a> and{' '}
-          <a href="/my-forwarding">My forwarding</a>.
+          you signed in with. What you do here is signed as you: <a href="/learn" onClick={go('/learn')}>Learn</a>,{' '}
+          <a href="/author" onClick={go('/author')}>Author</a> and <a href="/my-forwarding" onClick={go('/my-forwarding')}>My forwarding</a>.
         </div>
       </Card>
     </div>
