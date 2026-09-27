@@ -101,9 +101,11 @@ check('both record-performance surfaces check the store result',
 // accepting a non-IRI silently, not documenting it wrongly.
 const iriGuards = server.split('activity_type must be an IRI').length - 1;
 check('both surfaces reject a non-IRI activity_type', iriGuards >= 2, `found ${iriGuards}`);
+// Both surfaces name this deployment's own competency IRI, minted as the record identifies it.
+const replacements = server.split('Use an absolute IRI you own, e.g. ${competencyIri(').length - 1;
 check('the rejection names a usable replacement',
-  /ns\/foxxi\/competency\/\$\{/.test(server),
-  'an error that does not say what to send instead just moves the guessing');
+  replacements >= 2,
+  `found ${replacements}: an error that does not say what to send instead just moves the guessing`);
 
 // ── 4. Other internal emitters must not push a null id ─────────────────────
 // cmi5 traces and SCORM completion both collect ids into arrays that are handed

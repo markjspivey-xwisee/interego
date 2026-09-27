@@ -1,5 +1,35 @@
 # Changelog
 
+## 2026-09-27 — Foxxi: work recorded against this deployment's own competency counts toward it
+
+The learner record wrapped this deployment's own competency IRIs as if they were another authority's terms. A performance typed with `https://foxxi-bridge.interego.xwisee.com/ns/foxxi/competency/refund-authority` became a competency whose id was that whole URL (`competencyIriForTerm`). Content names the competency `refund-authority` (`competencyRef`), and resolution compares a learner's record with content by id (`sameCompetency`), so the two never met. Work recorded the way `/agent/record-performance`'s own 400 hint tells a performer to record it never reached the pitch for its competency.
+
+- **This deployment's own competency is itself** (`src/competency-identity.ts`: `ownCompetencyIri`, `competencyOfTerm`). A term that is one of this deployment's own competency IRIs (one path segment under `COMPETENCY_ID_BASE`) names the competency `competencyIri(<its id>)`, the one content and resolution use. So does the legacy `urn:foxxi:competency:` form, and an own IRI once wrapped as a term.
+- **Another host's is another authority's.** `isCompetencyIri` and `competencyIdOf` read `/ns/foxxi/competency/<slug>` on any host, which suits content, whose ids must not depend on the deployment serving it. A record's competency keeps the authority that named it. Anyone's server can publish a `/ns/foxxi/competency/refund-authority` of its own, and taking it for this deployment's would pool its evidence into this deployment's competency: the collision `competencyIriForTerm` exists to prevent. So another host's stays a competency of its own. The urn names no host, and it is the form this deployment's ids took before they became URLs (the module's dual-read), so it is ours.
+- **One competency, one assertion** (`src/learner-record.ts`). Drafts that resolve to the same competency are now pooled before the record is assembled: the URL and urn forms of one competency, or a task named in words whose slug is that competency's id. Otherwise they would have been two assertions, with two assertion nodes, under one id. Work at a competency (`workAt`) reads every form that names it too, as the key `performanceCompetency` returns is now the competency the term names.
+- **The bridge's hint names the competency itself.** Both `activity_type` hints (the MCP path and `/agent/record-performance`) now mint their example with `competencyIri`, not a URL under the host the bridge runs on, which need not be the base its competencies are named under.
+
+`tests/a-deployments-own-competency-is-itself.test.ts` covers:
+- own competency IRIs, the urn and a wrapped own IRI recognised; another host's, a path below one, and a fragment of one not;
+- a performance typed with this deployment's competency counted toward the competency content names, so resolution skips a position the learner has shown;
+- the urn counted the same way;
+- another host's kept apart, and not skipped;
+- every form pooled into one assertion with its evidence, a named task included;
+- work read at the competency in every form;
+- the bridge's hints.
+
+`tests/competency-authority-collision.test.ts` passes unchanged. `tests/the-descriptor-publishes-the-judgement-rule.test.ts` and `work-keeps-its-trajectory.test.ts` follow the key `performanceCompetency` now returns.
+
+Eight mutants were checked, and each fails a named test:
+- any host's competency path taken as ours;
+- the urn not ours;
+- a wrapped own IRI left wrapped;
+- a path below an own competency taken as ours;
+- every term treated as another authority's;
+- a pooled draft's evidence dropped;
+- work read at the term as written;
+- the hint naming a URL under the bridge's host.
+
 ## 2026-09-27 — Foxxi: a composition's leaning ranks only what resolution could use
 
 A review of #522 found that a tampered fragment could end the fallback list a composition's efficacy view gives after a leading composition ([Codex](https://github.com/markjspivey-xwisee/interego/pull/522#discussion_r4115057708)). Resolution refuses content that is not what its IRI says before it ranks anything (`src/compositions.ts`), then tries the rest.

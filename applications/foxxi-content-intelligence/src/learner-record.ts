@@ -39,7 +39,7 @@
  */
 
 import { exportClr, type ClrEnvelope } from './clr.js';
-import { competencyIri, competencyIriForTerm, competencyIdOf } from './competency-identity.js';
+import { competencyIri, competencyIdOf, competencyOfTerm } from './competency-identity.js';
 import type { StoredStatement } from './statement-store.js';
 import { FOXXI_NS } from './foxxi-vocab.js';
 import { evaluateProficiency, LER_NS } from './ler-tla-vocab.js';
@@ -668,8 +668,10 @@ const labelKey = (label: string): string => `label:${label.toLowerCase().trim()}
  */
 export function performanceCompetency(p: Pick<ElrPerformanceRecord, 'taskType' | 'taskName' | 'success'>): { key: string; label: string; termIri?: string } | null {
   // ★ The TERM is the identity; the local name is only what a human reads. Keying on the
-  // local name merged unrelated naming authorities into one competency — see `draft`.
-  if (isDomainActivityType(p.taskType)) return { key: p.taskType!, label: typeLocalName(p.taskType!), termIri: p.taskType! };
+  // local name merged unrelated naming authorities into one competency — see `draft`. The key is
+  // the competency the term names (competencyOfTerm), so this deployment's own competency is one
+  // key in each form that names it.
+  if (isDomainActivityType(p.taskType)) return { key: competencyOfTerm(p.taskType!), label: typeLocalName(p.taskType!), termIri: p.taskType! };
   if (p.success === undefined) return null;
   return { key: labelKey(p.taskName), label: p.taskName };
 }
@@ -797,8 +799,32 @@ function buildCompetencies(
   }
 
   // Resolve each draft to a single competency at its strongest basis.
-  const out: ElrCompetency[] = [];
+  // ★ The identity carries the NAMING AUTHORITY when there was one — see `competencyOfTerm`. A
+  // slug of the local name put two authorities' terms in one bucket, which is a bucket no CASE
+  // association can honestly be written about; this deployment's own competency is itself.
+  const identityOf = (d: CompetencyDraft): string => (d.termIri !== undefined ? competencyOfTerm(d.termIri) : labelCompetencyIri(d.label));
+  // ★ ONE COMPETENCY, ONE ASSERTION. Drafts are keyed by what named them, and two names can denote
+  // one competency: a task named in words whose slug is the id of this deployment's own competency,
+  // say. Published apart they would be two assertions under one id (one assertion node too), so
+  // drafts that resolve to the same competency are pooled first, a task reported in both keeping
+  // its latest report, as in a draft.
+  const pooled = new Map<string, CompetencyDraft>();
   for (const d of drafts.values()) {
+    const id = identityOf(d);
+    const into = pooled.get(id);
+    if (!into) { pooled.set(id, d); continue; }
+    if (into.termIri === undefined && d.termIri !== undefined) { into.termIri = d.termIri; into.label = d.label; }
+    into.framework ??= d.framework;
+    into.credentialEvidence.push(...d.credentialEvidence);
+    into.trainingEvidence.push(...d.trainingEvidence);
+    for (const [task, t] of d.performanceByTask) {
+      const prior = into.performanceByTask.get(task);
+      if (prior === undefined || prior.timestamp <= t.timestamp) into.performanceByTask.set(task, t);
+    }
+  }
+
+  const out: ElrCompetency[] = [];
+  for (const [competencyDefIri, d] of pooled) {
     // Every count below is over DISTINCT TASKS. Reading `.size` rather than a running
     // counter is what makes the de-duplication impossible to bypass by accident: there is
     // no `+= 1` left that a replay could reach.
@@ -837,12 +863,6 @@ function buildCompetencies(
       avgQuality,
       credentialCount: d.credentialEvidence.length,
     });
-    // ★ The identity carries the NAMING AUTHORITY when there was one — see
-    // `competencyIriForTerm`. A slug of the local name put two authorities' terms in one
-    // bucket, which is a bucket no CASE association can honestly be written about.
-    const competencyDefIri = d.termIri !== undefined
-      ? competencyIriForTerm(d.termIri)
-      : labelCompetencyIri(d.label);
     // ★ THE EVIDENCE LIST CARRIES THE ARTIFACT, NOT ONLY THE LOG ENTRY.
     //
     // `rawDataLocation` for a performance is an LRS statement URL, and xAPI REQUIRES that to

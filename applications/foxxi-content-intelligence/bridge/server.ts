@@ -3695,7 +3695,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
         'iep:refusalStatus': 400,
         'iep:refusalReason': 'the request omitted a required argument or supplied one this affordance cannot use',
         error: `activity_type must be an IRI (it becomes object.definition.type, which xAPI requires to be an IRI). Received "${declaredType}".`,
-        hint: `Use an absolute IRI you own, e.g. ${bridgeBaseUrl}/ns/foxxi/competency/${declaredType.toLowerCase().replace(/[^a-z0-9]+/g, '-')}. Omitting activity_type is also valid — the competency then keys off task_name.`,
+        hint: `Use an absolute IRI you own, e.g. ${competencyIri(declaredType.toLowerCase().replace(/[^a-z0-9]+/g, '-'))}. Omitting activity_type is also valid — the competency then keys off task_name.`,
       };
     }
     const statementId = storeStatementInternal(statement, lensTenantFor(perfLabel));
@@ -8972,7 +8972,7 @@ app.post('/agent/record-performance', async (req, res) => {
         && !/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(p.activity_type.trim())) {
       res.status(400).json({
         error: `activity_type must be an IRI (it becomes object.definition.type, which xAPI requires to be an IRI). Received "${p.activity_type.trim()}".`,
-        hint: `Use an absolute IRI you own, e.g. ${bridgeBaseUrl}/ns/foxxi/competency/${p.activity_type.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-')}. Omitting activity_type is also valid.`,
+        hint: `Use an absolute IRI you own, e.g. ${competencyIri(p.activity_type.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-'))}. Omitting activity_type is also valid.`,
       });
       return;
     }

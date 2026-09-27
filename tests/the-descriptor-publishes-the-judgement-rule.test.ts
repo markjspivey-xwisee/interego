@@ -54,7 +54,7 @@ describe('the code still decides what this test says it decides', () => {
     // The lines the delegate had to be told about, now one rule (performanceCompetency) that the
     // record and the reading of work at a competency both apply. If this moves, the assertions
     // below are stale and the descriptor they check is describing a rule that no longer exists.
-    expect(learnerRecord).toMatch(/if \(isDomainActivityType\(p\.taskType\)\) return \{ key: p\.taskType!,[^\n]*\n\s+if \(p\.success === undefined\) return null;/);
+    expect(learnerRecord).toMatch(/if \(isDomainActivityType\(p\.taskType\)\) return \{ key: competencyOfTerm\(p\.taskType!\),[^\n]*\n\s+if \(p\.success === undefined\) return null;/);
     // …and it is the rule the record counts by, not a copy of it.
     expect(learnerRecord).toMatch(/const named = performanceCompetency\(p\);\s+if \(!named\) continue;/);
   });
