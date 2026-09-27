@@ -47,14 +47,24 @@ const check = (name: string, cond: boolean, detail = ''): void => {
 console.log('\nevidence pointers: a record may not cite what a verifier cannot fetch');
 
 // ── 1. The enabler ─────────────────────────────────────────────────────────
-const storeFn = lrs.slice(
-  lrs.indexOf('export function storeStatementInternal'),
-  lrs.indexOf('export function storeStatementInternal') + 2200,
-);
+// The refusal is made once, in internalRecord, for both ways an internal statement is stored:
+// storeStatementInternal, and storeStatementDurably, which waits for the write. Each must hand a
+// refusal on as null, so the check follows the refusal to where it is made and to both callers.
+const slice = (anchor: string, length: number): string => {
+  const at = lrs.indexOf(anchor);
+  return at < 0 ? '' : lrs.slice(at, at + length);
+};
+const recordFn = slice('function internalRecord(', 1600);
+const storeFn = slice('export function storeStatementInternal', 600);
+const durableFn = slice('export async function storeStatementDurably', 600);
+const handsOnRefusal = /const rec = internalRecord\([^)]*\);\s*if \(!rec\) return null;/;
 check('storeStatementInternal can signal refusal', /:\s*string \| null/.test(storeFn));
-check('a refused statement returns null, not its id',
-  /REJECTED non-conformant statement[\s\S]{0,260}return null;/.test(storeFn),
+check('a non-conformant statement is refused, as null',
+  /REJECTED non-conformant statement[\s\S]{0,260}return null;/.test(recordFn),
   'returning the id is what made the refusal invisible');
+check('a refused statement returns null, not its id', handsOnRefusal.test(storeFn),
+  'returning the id is what made the refusal invisible');
+check('storeStatementDurably returns null for a refused statement too', handsOnRefusal.test(durableFn));
 
 // ── 2. Callers must not report a refused statement as recorded ─────────────
 // ★ PER SURFACE, NOT PER REPO. This loop counted the marker across the WHOLE of

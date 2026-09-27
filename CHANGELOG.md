@@ -1,5 +1,73 @@
 # Changelog
 
+## 2026-09-27 — Foxxi: a composition's alternatives learn from what has worked, and a play step counts only once its record is kept
+
+Resolution chose among a position's alternatives by level and then by the author's order, so nothing learned from plays. Now every play adds outcomes: for each fragment, at each competency, for learners at each level, how the learners who met it went on to do. Resolution prefers what has worked for learners at the same level, and still gives an alternative with no outcome yet its turn. The automated review of #505 found three problems, each fixed here.
+
+- **What has worked where** (`src/fragment-efficacy.ts`).
+  - A cell is one fragment at one competency, for learners at one level. It counts the learners who met the fragment there and how many then succeeded (`EfficacyTally`).
+  - Each learner counts once per cell, under `outcomeToken`: an HMAC of the learner and the cell, with a key only the bridge holds. The token names nobody and differs from cell to cell. A cell stops growing at 1,000 learners.
+  - The token key is derived from the key that seals the stored tally (`efficacyTokenKey`), so tokens last exactly as long as the tally that holds them. The automated review of this change found the first draft falling back to a key made at each boot when the grading seed was unset: after every restart, each learner would have been counted again in every cell.
+  - A cell's success rate is read at its Wilson lower bound. At 12 outcomes the cell is Asserted; before that it is Hypothetical.
+  - A stored cell whose counts and tokens disagree is not trusted (`EfficacyTally.from`).
+  - `chooseByEfficacy` gives an alternative with no outcome yet its turn first. After that the upper confidence bound decides, with the author's order breaking ties. It says which rule chose. It quotes the counts only for a cell of 5 or more outcomes, because the learner sees the reason and the step's record keeps it.
+  - `sealTally` and `openTally` keep a tally as the substrate's envelope, sealed by the bridge's own key to itself. Pod resources are world-readable, and a cell too small to publish must not be readable there. A tally is taken back only if that key sealed it: anyone can wrap a key to a public key, but only its holder can wrap one from it.
+- **Resolution uses it** (`src/compositions.ts`). Among the fragments pitched equally near the learner's level, the choice goes by what has worked for learners at that level. Each step records the level it was pitched at (`pitchedAt`).
+- **A play credits each outcome** (`src/composition-play.ts`). A graded step's outcome (every graded question right, or not) goes to its own fragment. It also goes to each teaching fragment the learner met since the last check at the same competency, since an explanation is judged by the check that follows it.
+- **On the bridge** (`bridge/server.ts`):
+  - A kept step's outcomes are counted, and the tally is kept sealed on the tenant pod (`foxxi-lattice/fragment-efficacy.envelope.json`). A bridge with no key keeps the tally in the process only.
+  - The tally, and the index of where authored content lives, are each written by a state writer (`src/state-writer.ts`): one write at a time, and a change during a write is written after it. A failed write is tried again on its own, after a pause that doubles from 5 seconds to 5 minutes while the pod keeps failing. Both used to wait for the next change to retry, so the last change before a quiet spell could be lost on a restart (the automated review of this change, for the tally). The index is no longer written over when it cannot be read, since what it holds and this process does not would be lost.
+  - Outcomes are counted only once the stored tally has been read. A pod that cannot be read now is tried again on the next step. Otherwise a tally that never saw the stored one would replace it with what one process had seen. A stored tally this bridge did not seal, or cannot open, is replaced.
+  - `GET /ns/foxxi/fragment/<hash>/efficacy` shows a fragment's cells. A cell's counts appear only once it holds 5 outcomes.
+- **A step counts only once its record is kept** (#505 review, P1). `/agent/content/next` reported statement ids, advanced the play and let a finished play go before any write had settled. A failed write left a gap nobody could retry.
+  - `takeStep` hands the step's statements to the bridge and returns the step's outcome only once they are kept.
+  - Until then the step stays answered but pending: nothing is credited, a finished play is not let go, and the call answers 503. The next call keeps the same statements, with the answers already given.
+  - So a retry never grades new answers or writes a second copy. The lens holds an identical statement once, and the lattice is content-addressed.
+  - One call at a time per play (409).
+  - `storeStatementDurably` (`src/xapi-lrs.ts`) waits for the store's write and answers null when it fails.
+  - The bridge waits for each statement's lattice write on the learner's pod, and a write that did not persist means the step is not kept.
+- **Forwarding keeps the pattern's order** (#505 review, P2). Each statement of a step was forwarded on its own, so a `completed` could arrive before the `answered` statements it follows. Only kept statements are forwarded now, one after another, queued per learner across steps.
+- **Language maps follow the fragment** (#505 review, P2). A question, its choices and the fragment's name were declared English whatever the fragment's language. They are keyed by it now.
+- **Docs.** `foxxi.content_resolve`, `content_next` and `content_fragment` describe the choice, the pending step and the efficacy view, and `docs/skills` is regenerated. `PERFORMANCE-ARCHITECTURE.md` §5 describes alternatives that learn and kept steps. Its not-yet-wired list shrinks by one.
+
+`applications/foxxi-content-intelligence/tests/fragment-efficacy.test.ts` covers:
+- the Wilson lower bound;
+- counting each learner once per cell, under a token that names nobody;
+- the Asserted flip, and a full cell;
+- a stored tally kept, and one whose counts and tokens disagree refused;
+- a token key that lasts as long as the sealed tally;
+- a tally sealed to the bridge's key, with a forged or unsealed one refused;
+- choosing by efficacy, with an alternative that has no outcome yet first;
+- a reason that does not quote a cell too small to publish;
+- resolution choosing among the fragments pitched nearest, for each level;
+- an explanation credited with the check that follows it;
+- the bridge's counting, loading, sealing and publishing, checked in its source.
+
+`composition-play.test.ts` adds:
+- language maps keyed by the fragment's language;
+- a step kept pending when its record fails, and the same statements kept next time;
+- statements marked once;
+- one step at a time, and a refused answer leaving nothing pending;
+- a step left pending when keeping it throws;
+- `storeStatementDurably` answering only once the store holds the statement;
+- the bridge keeping each statement in the lens and on the pod before it answers, checked in its source.
+
+`state-writer.test.ts` covers a change during a write, a failed write retried with no change asking, a change during a failed write, and pauses that grow, cap and start afresh.
+
+Forty-six mutants were checked, and each fails a named test. Among them:
+- a learner counted every time, or under one token in every cell;
+- an alternative with no outcome never getting its turn, or resolution ignoring what has worked;
+- an explanation never credited;
+- every cell published, a small cell quoted in a reason, or a stored cell trusted whatever its tokens say;
+- the tally kept in the clear, or a tally sealed by anyone taken back;
+- a retry grading new answers, a kept step left pending, or a step counted though its record was not kept;
+- two steps of one play at once;
+- the pod write not confirmed, or the lens write not waited for;
+- forwarding all at once;
+- an unreadable tally counted as read, or tokens made under a key for this process only;
+- a failed write left for the next change, a change during a pause written at once, or a pause that never grows, never shrinks or has no cap;
+- questions, choices or a fragment's name declared English.
+
 ## 2026-09-26 — Foxxi: a learner plays a composition, and each step is recorded against the fragment it showed
 
 A composition could be resolved for a learner (#502), but not played: nothing graded their answers or recorded what they met. Now a person or an agent can launch one and step through it, and the record names the fragment at each step, not just the course. That is the evidence that choosing among alternatives by what has worked needs.
