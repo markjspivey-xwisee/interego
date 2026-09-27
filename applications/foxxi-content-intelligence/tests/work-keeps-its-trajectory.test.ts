@@ -119,7 +119,7 @@ describe('the bridge answers a failed unit with what the work there implies', ()
 
   it('keeps the trajectory with the work, refusing a malformed one before anything is written', () => {
     expect(route).toMatch(/try \{ workSteps = workStepsFrom\(p\.trajectory\); \}\s+catch \(e\) \{ if \(e instanceof WorkStepError\) \{ res\.status\(400\)\.json\(\{ error: e\.message \}\); return; \} throw e; \}/);
-    expect(route.indexOf('workStepsFrom(p.trajectory)')).toBeLessThan(route.indexOf('storeStatementInternal('));
+    expect(route.indexOf('workStepsFrom(p.trajectory)')).toBeLessThan(route.indexOf('await storeStatementDurably('));
     expect(route).toMatch(/\.\.\.\(workSteps \? \{ \[PERF_EXT\.workTrajectory\]: workSteps \} : \{\}\),/);
   });
 
