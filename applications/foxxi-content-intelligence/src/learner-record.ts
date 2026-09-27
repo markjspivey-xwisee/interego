@@ -144,6 +144,45 @@ export function durationRefusalOf(v: unknown): string | undefined {
   return `duration_iso must be an ISO 8601 duration, such as PT25M or PT1H30M: it becomes result.duration, which xAPI requires to be one. Received ${received}.`;
 }
 
+/** What recording work as an agent's has made of the performer's record, and who can read it. */
+export interface RecordVisibility {
+  subjectKind: 'human' | 'agent';
+  publiclyReadable: boolean;
+  /** False when the record could not be read: the kind is then the one that protects the performer, assumed. */
+  readFromRecord: boolean;
+  note: string;
+}
+
+/**
+ * What recording work as an agent's has made of the performer's record, said from the record as it
+ * now classifies them (the bridge's subjectKindFromOwnEvidence, over their own statements with this
+ * unit among them), or, when it could not be read (`undefined`), the rule and the safer assumption.
+ *
+ * A record is an agent's only when all of its own work says so, and an agent's record is public. So
+ * work recorded as an agent's makes a record public only when nothing in it was recorded as a
+ * person's. Telling every performer who recorded one agent's unit that their record had become
+ * public gave those whose record holds a person's work a false privacy status.
+ */
+export function recordVisibilityAfterAgentWork(kindNow: 'human' | 'agent' | undefined): RecordVisibility {
+  const readers = 'any signed caller can read your competencies, your performance history and your credentials by naming your DID';
+  if (kindNow === 'agent') {
+    return {
+      subjectKind: 'agent', publiclyReadable: true, readFromRecord: true,
+      note: `All of your recorded work says it was done by an agent, so your record classifies you as one. An agent capability record is PUBLIC: ${readers}. A subject with no signed evidence classifies human and stays private; that default was protecting a party who had not chosen, and this is the choice.`,
+    };
+  }
+  if (kindNow === 'human') {
+    return {
+      subjectKind: 'human', publiclyReadable: false, readFromRecord: true,
+      note: "This work was recorded as an agent's, but your record also holds work recorded as a person's, so it still classifies you as a person and stays private.",
+    };
+  }
+  return {
+    subjectKind: 'agent', publiclyReadable: true, readFromRecord: false,
+    note: `Your record could not be read just now to say how it classifies you. Work recorded as an agent's classifies you as one unless your record also holds work recorded as a person's, and an agent capability record is PUBLIC: ${readers}.`,
+  };
+}
+
 const WORK_MODAL = new Set(['Asserted', 'Hypothetical', 'Counterfactual']);
 const WORK_GRAIN = new Set(['task', 'subtask', 'tool-call']);
 

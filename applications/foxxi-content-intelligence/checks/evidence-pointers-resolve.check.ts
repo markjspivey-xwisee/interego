@@ -110,7 +110,9 @@ check('the rejection names a usable replacement',
 // ── 4. Other internal emitters must not push a null id ─────────────────────
 // cmi5 traces and SCORM completion both collect ids into arrays that are handed
 // back to callers; a null in those arrays is the same lie in a different shape.
-check('the cmi5 trace only collects stored ids', /if \(cmi5Id\) statementIds\.push\(cmi5Id\)/.test(server));
+// The course completion skips a refused statement outright, so it neither collects its id nor
+// composes or forwards it (a-duration-is-refused-at-every-door.test.ts pins the rest).
+check('the cmi5 trace only collects stored ids', /if \(!cmi5Id\) continue;[^\n]*\n\s+statementIds\.push\(cmi5Id\);/.test(server));
 check('SCORM completion only collects stored ids', /if \(sid\) ids\.push\(sid\)/.test(server));
 
 if (failures > 0) { console.error(`\n${failures} assertion(s) failed\n`); process.exit(1); }
