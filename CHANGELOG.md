@@ -1,5 +1,45 @@
 # Changelog
 
+## 2026-09-27 — Foxxi: a course you authored folds into fragments and compositions
+
+A course authored with `foxxi.scorm_author` lived only as a course: it could be launched as a SCORM package but not resolved per learner, played step by step at the fragment grain, or improved by offering another explanation at a point in it. Now its author can fold it into composable content with one call, and what it makes behaves like any composition.
+
+- **Folding** (`src/course-fold.ts`, `foldCourse`).
+  - A section's teaching becomes a concept fragment. Its questions become a check: an assessment item, or a reflection when none is graded. Kept apart, another explanation can be offered at the teaching's position, and the same check judges which one works.
+  - A section with both parts becomes a composition of its own, teaching then check. A section with one part puts that fragment at its position directly, and a section with neither is left out and listed. The course becomes a composition of its sections in order.
+  - The questions keep the stored form they were authored in, so they grade exactly as they did in the course. Each check takes a blinding value from the caller; the bridge derives it from its grading secret, so the same course folds to the same IRIs on that bridge.
+  - Titles, bodies and questions are the author's own. A check's body, which a fragment must have, is the section's title as a heading. A title too long for a fragment is shortened to fit.
+  - The competency is the one named for the course or a section, normalized as fragments normalize theirs. A section id that names something every object inherits is still only a section id.
+  - A course's mastery score is not carried: a play grades each step.
+- **Kept as one bundle** (`bridge/server.ts`, `keepContentBundle`). Everything a fold makes is kept on the author's pod as one `foxxi:ContentBundle`, since each write to a pod's lattice puts all of it: a course of a hundred sections is one write, not three hundred. Only once the pod holds it is each item cached and indexed, and one `authored` statement recorded, for the course's composition.
+- **Read back from inside a bundle** (`src/content-store.ts`, `bundledItem`). When an item is not on a pod on its own, the store looks in that pod's bundles, by the item's IRI on any authority, and checks whatever it finds against the hash like anything else read back.
+- **On the bridge.** `POST /agent/content/fold-course` (`foxxi.content_fold_course`) takes a course id, and optionally the course's competency, the sections' own competencies, a level and a language. Only the course's author may fold it (403 otherwise), within the content routes' per-IP budget and before anything is read. It answers the course's composition and where each section went.
+- **Docs.** The affordance is described, `docs/skills` is regenerated, and the vocabulary declares `ContentBundle`. `PERFORMANCE-ARCHITECTURE.md` §5 describes folding. Its not-yet-wired list now names importing packages and authoring-tool exports; packages are unzipped in the browser today, and the server sees only their manifest and extracted text.
+
+`applications/foxxi-content-intelligence/tests/course-fold.test.ts` covers:
+- a section with both parts as a lesson of its own, and a single part placed directly;
+- a section of ungraded questions as a reflection;
+- every item made once and intact, with the course last;
+- the questions kept as authored, grading the same, and none of their verifiers served;
+- the same IRIs with the same blinding, and new checks without it;
+- competencies named for the course or a section, and inherited names ignored;
+- a long title shortened, and what cannot be folded refused, saying where;
+- a folded course resolving in order, playing, and grading its check with the course's answers, crediting the teaching;
+- an item found inside a bundle by its IRI on any authority, and nothing else;
+- the bridge's route, bundle keeping and read-back, checked in its source.
+
+Thirteen mutants were checked, and each fails a named test:
+- a section with both parts not made a lesson of its own;
+- every check graded;
+- the blinding value ignored, or a check blinded with nothing secret;
+- a section's own competency ignored, or an inherited name taken for one;
+- a long title not shortened;
+- the course not last among the items;
+- a bundle handing back any item;
+- anyone folding a course;
+- items not indexed where they were kept, or kept before the pod holds them;
+- nothing read back from a bundle.
+
 ## 2026-09-27 — Foxxi: a composition's alternatives learn from what has worked, and a play step counts only once its record is kept
 
 Resolution chose among a position's alternatives by level and then by the author's order, so nothing learned from plays. Now every play adds outcomes: for each fragment, at each competency, for learners at each level, how the learners who met it went on to do. Resolution prefers what has worked for learners at the same level, and still gives an alternative with no outcome yet its turn. The automated review of #505 found three problems, each fixed here.

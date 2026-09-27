@@ -1312,6 +1312,39 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
   },
 
   {
+    action: 'urn:iep:action:foxxi:content-fold-course-signed' as IRI,
+    toolName: 'foxxi.content_fold_course',
+    title: 'Fold a course you authored into fragments and compositions',
+    description: 'Fold a course you authored (foxxi.scorm_author) into composable content, kept on your pod. Each section\'s teaching becomes a concept fragment and its questions a check (an assessment item, or a reflection when none is graded); a section with both becomes a composition of its own, teaching then check, and the course becomes a composition of its sections in order. The questions keep their stored form, so they grade as they did in the course, and the same course folds to the same IRIs on this bridge. What it makes resolves per learner (foxxi.content_resolve), plays step by step (foxxi.content_launch), and learns which explanation works once others are offered at a position. The same for a person and for an agent.',
+    method: 'POST',
+    targetTemplate: '{base}/agent/content/fold-course',
+    mediaType: 'application/json',
+    externallyRouted: true,
+    annotations: { title: 'Fold a course', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    inputs: [
+      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, course_id, competency?, section_competencies?: { <section id>: competency }, level?, language?, subject_pod_url? }). competency is what the course develops: a competency IRI, another authority\'s term IRI, or a slug; without one, the course\'s own IRI names it. section_competencies names a section\'s own where it differs. level is foundational, working (default), applied or advanced; language is a BCP 47 tag.' },
+      { name: '_signature', type: 'string', required: true, description: 'sign_request signature (secp256k1 over sha256 of _signed_payload).' },
+    ],
+    appliesTo: { collections: ['courses', 'profiles'] },
+    outputs: {
+      description: 'The course\'s composition and where each section went. 404 when the course is not here; 403 when you did not author it; 400 naming what to fix; 503 when your pod could not keep it; 401 on auth failure.',
+      properties: {
+        ok: { type: 'boolean' },
+        '@id': { type: 'string', description: 'The course\'s composition IRI: <bridge>/ns/foxxi/composition/<sha256>. Pass it to foxxi.content_resolve or foxxi.content_launch.' },
+        course: { type: 'string', description: 'The course IRI it was folded from.' },
+        authoredBy: { type: 'string', description: 'Caller DID.' },
+        competency: { type: 'string', description: 'The competency the course develops, as named or as the course itself.' },
+        composition: { type: 'object', additionalProperties: true },
+        sections: { type: 'array', description: 'In order: { id, title, competency, at? (the IRI at its position), concept?, check?, lesson? }. A section with neither teaching nor questions has no at.', items: { type: 'object', additionalProperties: true } },
+        items: { type: 'number', description: 'How many fragments and compositions the fold made, kept together as one bundle on your pod.' },
+        durable: { type: 'string', description: 'Pod the bundle was composed into.' },
+        authoredStatementId: { type: 'string' },
+      },
+      required: ['ok'],
+    },
+  },
+
+  {
     action: 'urn:iep:action:foxxi:content-resolve-signed' as IRI,
     toolName: 'foxxi.content_resolve',
     title: 'Resolve a composition for yourself, from your own record',
