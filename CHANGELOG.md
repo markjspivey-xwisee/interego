@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-09-27 — Foxxi: what a learner has at hand, for a portal and for an agent
+
+A portal needs to show a learner their compositions and what they keep, and to mark the steps a missed check brought in. The same holds for an agent working as a learner, which asks for the same things. Three additions, the same for a person and for an agent:
+
+- **`foxxi.content_mine`** (`POST /agent/content/mine`, `src/content-listing.ts`) lists the compositions the caller authored and the ones they played. Nothing new is kept to answer it.
+  - **Played** compositions are read from the caller's own record, the last played first. A step's `experienced` statement names its root composition first among its groupings; a finished play's `completed` statement carries its score. The list says whether they finished, and the latest finished score. Only training plays count, and voided statements do not.
+  - **Authored** compositions are read from the index of where content lives, which names each item's author, compositions only. One made as a whole (a composition authored, or a folded course's root) is marked `root` while its authoring record is at hand, with its time and title. Those come first, newest first. The index is read first if this process has not read it yet.
+  - Each composition is named by this bridge's IRI for its hash, since the IRI in a record may carry another authority.
+- **`foxxi.content_admissions`** (`POST /agent/content/admissions`) reads back what the caller keeps with `foxxi.content_admit`: the standing record at each competency, a withdrawal included, newest first. A list that cannot be read now answers 503, never an empty one.
+- **A step a missed check brought in says so** (`src/composition-play.ts`). Its view carries `wayIn: 'teaching'` for another way in, or `wayIn: 'check'` for the check after it. So a portal need not read that from `chosenBecause`.
+- **Docs.** The affordances describe both routes, and `docs/skills` is regenerated. `PERFORMANCE-ARCHITECTURE.md` §5 lists them and the marker.
+
+`applications/foxxi-content-intelligence/tests/what-a-learner-has-at-hand.test.ts` covers:
+- authored compositions from the index, the author's own and compositions only, with roots, times and titles from the authoring record first, including one named by another authority;
+- played compositions from steps and finished plays, with the latest score, the root of a nested step, training only and voided statements left out;
+- the step marker;
+- both routes, checked in the bridge's source.
+
+Eleven mutants were checked, and each fails a named test:
+- another author's composition listed, or a fragment listed as a composition;
+- a composition named by another authority not matched;
+- roots not first;
+- a play outside training counted, or a voided one;
+- a nested step naming its holder rather than its root;
+- an earlier score replacing a later one;
+- a step brought in not saying so;
+- an unreadable admissions list answered as empty;
+- the index not read before listing.
+
 ## 2026-09-27 — Foxxi: work recorded against this deployment's own competency counts toward it
 
 The learner record wrapped this deployment's own competency IRIs as if they were another authority's terms. A performance typed with `https://foxxi-bridge.interego.xwisee.com/ns/foxxi/competency/refund-authority` became a competency whose id was that whole URL (`competencyIriForTerm`). Content names the competency `refund-authority` (`competencyRef`), and resolution compares a learner's record with content by id (`sameCompetency`), so the two never met. Work recorded the way `/agent/record-performance`'s own 400 hint tells a performer to record it never reached the pitch for its competency.

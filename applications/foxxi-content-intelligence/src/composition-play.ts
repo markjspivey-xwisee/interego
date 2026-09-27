@@ -118,11 +118,11 @@ function anotherWayIn(play: CompositionPlay, missed: ResolvedStep, credited: rea
     if (!other) continue;
     play.wayIn.push(key);
     shown.add(other['@id']);
-    brought.push({ ...t, fragment: other, chosenBecause: `another way in: the check ${name} was missed, so this ${other.kind} comes before trying again` });
+    brought.push({ ...t, fragment: other, wayIn: 'teaching', chosenBecause: `another way in: the check ${name} was missed, so this ${other.kind} comes before trying again` });
   }
   if (!brought.length) return [];
   const check = choose(missed, shown);
-  if (check) brought.push({ ...missed, fragment: check, chosenBecause: `another check at this competency, after another way in` });
+  if (check) brought.push({ ...missed, fragment: check, wayIn: 'check', chosenBecause: `another check at this competency, after another way in` });
   return brought;
 }
 
@@ -132,6 +132,7 @@ export function currentView(play: CompositionPlay): Record<string, unknown> | un
   if (!step) return undefined;
   return {
     step: play.at + 1, of: play.steps.length, competency: step.competency, chosenBecause: step.chosenBecause,
+    ...(step.wayIn ? { wayIn: step.wayIn } : {}),
     fragment: fragmentForLearner(step.fragment),
   };
 }

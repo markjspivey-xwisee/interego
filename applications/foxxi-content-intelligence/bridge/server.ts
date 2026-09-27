@@ -211,6 +211,7 @@ import { compositionScormZip } from '../src/composition-scorm.js';
 import { currentView, startPlay, takeStep, type AnotherWayIn, type CompositionPlay, type PlayInProgress } from '../src/composition-play.js';
 import { EFFICACY_POLICY, EfficacyTally, efficacyTokenKey, openTally, outcomeToken, sealTally } from '../src/fragment-efficacy.js';
 import { compositionEfficacy } from '../src/composition-efficacy.js';
+import { authoredCompositions, playedCompositions } from '../src/content-listing.js';
 import { stateWriter } from '../src/state-writer.js';
 import { competencyIri, competencyIriForTerm, competencyIdOf } from '../src/competency-identity.js';
 import { activityIri, ACTIVITY_DEFINITIONS } from '../src/activity-identity.js';
@@ -10649,6 +10650,43 @@ app.post('/agent/content/admit', async (req, res) => {
     if (!kept.ok) { res.status(503).json({ error: `admission not kept on your pod: ${kept.error}` }); return; }
     sendActionResult(req, res, { ok: true, kept: record, durable: pod },
       bridgeBaseUrl, record.admission ? 'Admission kept' : 'Admission withdrawn', activeAffordances.filter(a => a.toolName === 'foxxi.content_resolve'));
+  } catch (err) { sendServerError(res, err, 'route-handler'); }
+});
+
+// What a learner keeps, read back for them: the standing record at each competency, a withdrawal
+// included. A list that cannot be read now says so, rather than that nothing is kept.
+app.post('/agent/content/admissions', async (req, res) => {
+  try {
+    if (contentRateLimited(req, res)) return;
+    const auth = await verifyDelegatedCaller(req.body);
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
+    const kept = await learnerAdmissions(auth.callerDid);
+    if (!kept.ok) { res.status(503).json({ error: `what you keep could not be read just now (${kept.error}); try again` }); return; }
+    const standing = [...kept.standing.values()].sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
+    sendActionResult(req, res, { ok: true, standing }, bridgeBaseUrl, 'What you keep', activeAffordances.filter(a => a.toolName === 'foxxi.content_admit'));
+  } catch (err) { sendServerError(res, err, 'route-handler'); }
+});
+
+// The compositions a person or an agent made, and the ones they played (src/content-listing.ts):
+// read from their own record and from the index of where content lives, nothing new kept. The
+// index is read first if this process has not read it yet, as best it can be.
+app.post('/agent/content/mine', async (req, res) => {
+  try {
+    if (contentRateLimited(req, res)) return;
+    const auth = await verifyDelegatedCaller(req.body);
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
+    const asked = auth.payload.limit;
+    const limit = typeof asked === 'number' && Number.isInteger(asked) ? Math.min(Math.max(asked, 1), 200) : 50;
+    if (!contentLocationsLoaded) await loadContentLocations();
+    const statements = await learnerStatementsFor(resolveSubjectPodUrl(auth.callerDid), auth.callerDid);
+    const authored = authoredCompositions(statements, contentLocations, auth.callerDid, limit);
+    const played = playedCompositions(statements, limit);
+    for (const c of [...authored, ...played]) {
+      if (c.title) continue;
+      const item = contentStore.get(c.iri);
+      if (item && isCompositionItem(item)) c.title = item.title;
+    }
+    sendActionResult(req, res, { ok: true, authored, played }, bridgeBaseUrl, 'Your compositions', activeAffordances.filter(a => a.toolName === 'foxxi.content_launch'));
   } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 

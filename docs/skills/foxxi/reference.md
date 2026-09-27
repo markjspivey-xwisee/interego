@@ -1,6 +1,6 @@
 # Foxxi content intelligence, learner surface: every affordance
 
-Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 54 affordances.
+Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 56 affordances.
 
 ## `foxxi.record_private_performance_outcome`
 
@@ -755,6 +755,36 @@ Keep, on your own pod, which forms of content suit you at a competency, or withd
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
 | `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, competency, admission: { kinds:[fragment kinds], because } \| null, source?, regime? }). competency is a competency IRI, another authority's term IRI, or a slug. source is the IRI of the plan or situation it came from; regime is Evident, Knowable, Emergent or Turbulent. |
+| `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.content_admissions`
+
+**Read which forms of content you keep at each competency**
+
+Read back what you keep with foxxi.content_admit: the standing admission at each competency, a withdrawal included, newest first. It is read from the list on your own pod, sealed to the bridge and to you. A list that cannot be read now answers 503, never an empty one. The same for a person and for an agent.
+
+- Action: `urn:iep:action:foxxi:content-admissions-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/content/admissions` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp }). |
+| `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.content_mine`
+
+**List the compositions you made and the ones you played**
+
+List the compositions you authored and the ones you have played, to launch one (foxxi.content_launch) or read what it has learned (GET <composition IRI>/efficacy). Nothing new is kept to answer this. Played compositions are read from your own record: the last played first, whether you finished, and the latest finished score. Authored ones are read from the index of where content lives, which names each item's author; one authored as a whole (a composition, or a folded course's root) is marked root when its authoring record is still at hand. Each composition is named by this bridge's IRI for its hash. The same for a person and for an agent.
+
+- Action: `urn:iep:action:foxxi:content-mine-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/content/mine` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, limit? }). limit: at most how many of each, 1 to 200 (50 when left out). |
 | `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
 
 ## `foxxi.content_launch`
