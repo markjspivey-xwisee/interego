@@ -31,14 +31,21 @@ const server = readFileSync(new URL('../bridge/server.ts', import.meta.url), 'ut
 function doors(): Array<{ name: string; body: string }> {
   return [...server.matchAll(/^ {2}'(foxxi\.[a-z_0-9]+)': async \(|^app\.(?:get|post|put|patch|delete)\('([^']+)'/gm)].map(m => {
     const at = m.index!;
-    const close = m[1] ? '\n  },\n' : '\n});\n';   // a handler closes at its entry's indent, a route at the top level
-    const end = server.indexOf(close, at);
-    return { name: (m[1] ?? m[2])!, body: server.slice(at, end < 0 ? server.length : end + close.length) };
+    const name = (m[1] ?? m[2])!;
+    if (m[1]) {
+      // A handler closes at its entry's indent.
+      const end = server.indexOf('\n  },\n', at);
+      return { name, body: server.slice(at, end < 0 ? server.length : end + 5) };
+    }
+    // A route runs to the next top-level line that is not its own closing (`});`, `}));`): the next
+    // route, a function, a comment. Its closing is not always `});`, so that alone overruns.
+    const next = server.slice(at + 1).search(/\n(?=[^\s}])/);
+    return { name, body: server.slice(at, next < 0 ? server.length : at + 1 + next + 1) };
   });
 }
 
 /** What a door does that must wait for its input to be checked. */
-const EFFECTS = ['storeStatementInternal(', 'storeStatementDurably(', 'buildPassedSessionTrace(', 'ingestExternalRun(', 'bindPerformanceToEvidence(', 'composeIntoSharedLattice(', 'persistRecordedStatement('];
+const EFFECTS = ['storeStatementInternal(', 'storeStatementDurably(', 'keepStatementsWhole(', 'buildPassedSessionTrace(', 'ingestExternalRun(', 'bindPerformanceToEvidence(', 'composeIntoSharedLattice(', 'persistRecordedStatement('];
 
 describe('every door that takes a duration', () => {
   it('is found: the five doors that read duration_iso', () => {
@@ -120,20 +127,22 @@ describe('a course completion keeps its cmi5 session whole, or not at all', () =
   const route = doors().find(d => d.name === '/agent/record-course-completion')!.body;
 
   it('checks the whole session by the LRS\'s own rule before keeping any of it, and refuses it as the caller\'s', () => {
-    const check = route.indexOf('const refusals = session.flatMap(s => internalRefusalOf(s).map(e => `${verbOf(s)}: ${e}`));');
-    expect(check).toBeGreaterThan(-1);
-    expect(route.slice(check)).toMatch(/^const refusals = [^\n]+\n\s+if \(refusals\.length\) \{\s+res\.status\(400\)\.json\(\{ error: 'the completion was not recorded: the LRS would refuse part of its cmi5 session, so none of it was kept', violations: refusals\.slice\(0, 20\) \}\);\s+return;/);
-    expect(check).toBeLessThan(route.indexOf('storeStatementInternal('));
+    const keep = route.indexOf('const kept = await keepStatementsWhole(session, lensTenantFor(label));');
+    expect(keep).toBeGreaterThan(-1);
+    expect(route.slice(keep)).toMatch(/^const kept = [^\n]+\n\s+if \(kept\.status === 'refused'\) \{\s+res\.status\(400\)\.json\(\{ error: 'the completion was not recorded: the LRS would refuse part of its cmi5 session, so none of it was kept', violations: kept\.refusals\.slice\(0, 20\) \}\);\s+return;/);
+    // Nothing is written by the route itself: keepStatementsWhole checks, then writes and awaits each.
+    expect(route).not.toContain('storeStatementInternal(');
+    expect(route).not.toContain('storeStatementDurably(');
   });
 
-  it('composes and forwards only what the LRS kept, and says passed only of a passed statement it kept', () => {
-    const loop = route.slice(route.indexOf('for (const withId of session) {'));
-    const skip = loop.indexOf('if (!cmi5Id) continue;');
-    expect(skip).toBeGreaterThan(-1);
-    expect(skip).toBeLessThan(loop.indexOf('composeIntoSharedLattice('));
-    expect(skip).toBeLessThan(loop.indexOf('forwardToTargets('));
+  it('composes and forwards only a session the store kept whole, and says passed only of a passed statement it kept', () => {
+    const partial = route.indexOf("if (kept.status === 'partial') {");
+    expect(partial).toBeGreaterThan(route.indexOf('const kept = await keepStatementsWhole('));
+    expect(partial).toBeLessThan(route.indexOf('composeIntoSharedLattice('));
+    expect(partial).toBeLessThan(route.indexOf('forwardToTargets('));
+    expect(route.slice(partial)).toMatch(/^if \(kept\.status === 'partial'\) \{[\s\S]*?res\.status\(503\)\.json\(\{\s+ok: false,[\s\S]*?\}\);\s+return;\s+\}/);
     expect(route).not.toMatch(/\bpassed: true\s*[,}]/);   // as code; the comment quotes the old answer
-    expect(route.match(/passed: kept\.has\('passed'\)/g)).toHaveLength(2);
-    expect(route).toMatch(/if \(statementIds\.length < session\.length\) \{\s+res\.status\(500\)\.json\(\{\s+ok: false,/);
+    expect(route).toContain("passedKept: keptPart.some(s => verbOf(s) === 'passed')");
+    expect(route).toContain("passed: session.some(s => verbOf(s) === 'passed'), statementCount: kept.keptIds.length");
   });
 });

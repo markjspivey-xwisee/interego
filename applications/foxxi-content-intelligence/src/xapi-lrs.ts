@@ -179,6 +179,35 @@ export function internalRefusalOf(stmt: Record<string, unknown>): string[] {
   return validateStatement(ensureStatementFields(stmt, INTERNAL_LRS_AUTHORITY));
 }
 
+/** How a door's statements fared: refused before any was kept, kept only in part, or kept whole. */
+export type KeptWhole =
+  | { status: 'refused'; refusals: string[] }
+  | { status: 'partial'; keptIds: string[] }
+  | { status: 'whole'; keptIds: string[] };
+
+/**
+ * A door's statements kept whole, or not at all, as far as a store without a batch write allows.
+ *
+ * First all of them are checked by the LRS's own rule (internalRefusalOf): if it would refuse any,
+ * none is kept, and `refusals` names each, by the statement's verb. Then each is written and the
+ * write awaited (storeStatementDurably), in the order given; the first the store does not keep ends
+ * it, and nothing after it is written. `keptIds` are only ids the store holds. What a door sets,
+ * binds, composes or forwards on account of the statements waits for `whole`, and a door orders
+ * them so that a partial keep leaves nothing counted that should not be.
+ */
+export async function keepStatementsWhole(statements: ReadonlyArray<Record<string, unknown> & { id: string }>, tenant: TenantId = DEFAULT_TENANT): Promise<KeptWhole> {
+  const verbOf = (s: Record<string, unknown>): string => String((s.verb as { id?: string } | undefined)?.id ?? '').split(/[/#]/).pop() ?? '';
+  const refusals = statements.flatMap(s => internalRefusalOf(s).map(e => `${verbOf(s)}: ${e}`));
+  if (refusals.length) return { status: 'refused', refusals };
+  const keptIds: string[] = [];
+  for (const s of statements) {
+    const id = await storeStatementDurably(s, tenant);
+    if (!id) return { status: 'partial', keptIds };
+    keptIds.push(id);
+  }
+  return { status: 'whole', keptIds };
+}
+
 /**
  * Store an internally-emitted statement. Returns the statement id, or NULL when the
  * statement was refused for non-conformance.

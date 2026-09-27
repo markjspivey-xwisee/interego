@@ -12,7 +12,9 @@
  *
  * The bridge is asked once per session, at the gate every session-token read passes: the LRS's
  * (`GET /xapi/statements`, as My activity reads it), which answers 401 only for a token it cannot
- * verify. Not the profile resource: that one also asks for an operator, so it refused every learner.
+ * verify. Not the profile resource: until it served its own user as well, it asked for an operator
+ * and refused every learner, and its answer still mixes whose profile it is into whether the token
+ * is taken.
  */
 import { signsOnly, type FoxxiSession } from './session.js';
 

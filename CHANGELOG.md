@@ -22,7 +22,49 @@ The rule is in `src/whole-record-gate.ts` (new): `servedInPart`, and the refusal
 - that the diagnostic counts the detailed read: the first draft left one use of the old name, which threw after every record was assembled (Codex, on the first draft);
 - the review gate classifying from the whole record.
 
-`subject-kind-not-caller-controlled.test.ts` still holds. Mutants each fail a named test.
+`subject-kind-not-caller-controlled.test.ts` still holds. Fifteen mutants each fail a named test.
+
+## 2026-09-27 — Foxxi: a learner reads their own profile, with their assignments
+
+A learner's home page reads their assigned courses from their own profile, `GET /api/foxxi/v1/profiles/:id`. That route was operator-only, because a profile carries directory PII (email, employee id, hire date, manager). So every learner who was not an operator got a 401 where their assigned courses belong.
+
+Now:
+- the profile item route also serves the profile's own user. The user is verified the way an operator is: a session token signed by a wallet the directory binds to them, never a public demo seed's (`callerUserIdOf` in `src/operator-auth.ts`, next to `callerIsOperator`);
+- a verified user asking for someone else's profile is refused as 403, and shown none of it;
+- an unknown profile is a 404 only for an operator, so a non-operator cannot tell which ids exist;
+- the collection (the whole directory) stays operator-only;
+- the bridge passes the check to the hypermedia routes as `callerUserId`, next to `isOperator`. The dashboard's probe for whether the bridge takes a session's token stays at the LRS gate, since the profile's answer also depends on whose profile it is.
+
+`tests/a-learner-reads-their-own-profile.test.ts` runs the real routes over the tenant's real directory, with wallets from a test seed. It covers a learner, another user, anonymous, a public-seed token (with a control showing the directory does bind the wallet that signed it), both kinds of operator, an unknown id, and the collection. Seven mutants each turn it red.
+
+## 2026-09-27 — Foxxi: a door that records statements reports only what the store kept, and refuses before it keeps
+
+`storeStatementInternal` answers with an id before the store's write settles, and only logs a write that fails later (a file, pod or forwarding backend). Codex found the course completion counting on it after #540 merged. The doors that record statements all did, each in its own way:
+- **`foxxi.record_external_agent_run`** stored the run's statements and set its trajectory before it checked the evaluation candidacy. So a run refused as not a candidate, or as writing into another agent's candidacy, was in the LRS and the trajectory map all the same. It also ignored the store's refusals: a quality outside [-1, 1] cost the run its `performed` statement without a word. Now:
+  - every refusal comes first: the quality (as the record-performance doors say it), the candidacy, its owner, and whether the candidate was accepted (the one condition the registry's `addRun` refuses on);
+  - the whole run is checked by the LRS's own rule, and a run it would refuse any part of is refused as the caller's, naming each part;
+  - each write is awaited: the tool calls first, the performance last. The ingest now names the performance, since the tool calls carry the same verb. So a store that stops keeping partway never leaves a performance without its steps; that is a 503 naming what was kept, and nothing is set or bound;
+  - only then is the trajectory set and the run bound to its evaluation. A binding lost since (the candidate gone, or no longer accepted) is said with the recorded run (`bindingRefused`), not answered as a refusal of a run already kept.
+- **`foxxi.record_agent_trajectory`** set the trajectory first, stored its xAPI projection unchecked, and counted every projected statement as projected: an `object_id` that is not an IRI, or a step's quality out of range, was dropped without a word. The projection is now kept whole before the trajectory is set, and `projectedToXapi` counts what was kept.
+- **`POST /agent/record-course-completion`** (Codex, on #540) counted a statement kept, composed and forwarded it, and answered ok, though the store never held it. The session is now kept whole before any of it is composed or forwarded. A session the store kept only in part is a 503 naming what was kept (`passedKept`), and none of it is composed or forwarded.
+- **Both record-performance doors** reported the id of a statement whose write could still fail. Each now awaits its one write (`storeStatementDurably`).
+- **The file and forwarding stores serve only what they wrote** (Codex, on this change). The file store indexed a statement before appending it, and the forwarding store cached one before the primary LRS had it. So a write that failed left the statement readable at `/xapi/statements` while the door said it was not kept, and a retry made it twice. Each now writes first and indexes after. An id stored with other content is still refused before anything is written, and an identical re-put is a no-op (the file store no longer appends it again).
+
+The mechanism is `keepStatementsWhole` (new, `src/xapi-lrs.ts`). It checks the statements by the LRS's own rule, then writes each and awaits the write, in the order given, stopping at the first the store does not keep. The store has no batch write, so a door orders its statements so that a partial keep leaves nothing counted that should not be.
+
+`tests/a-door-reports-only-what-the-store-kept.test.ts` (14 tests):
+- `keepStatementsWhole` against the LRS's own store, with its write made to fail: whole; refused before any write; stopped at the first failed write; and the id `storeStatementInternal` gives for a write that fails;
+- the file store with every append failing (its file a directory) and with a re-put, and the forwarding store with a primary that refuses, then takes;
+- a census: no door calls `storeStatementInternal`;
+- the external run's order; its acceptance check, on the registry's own condition; what the LRS would refuse of a run (its quality, a tool call's quality, a tool call's object); and its performance, named;
+- the trajectory's order and count, and the record-performance doors' awaited writes.
+
+`a-duration-is-refused-at-every-door.test.ts` follows the course completion's new shape, and its splitter no longer runs a route on past a `}));` closing. `checks/evidence-pointers-resolve.check.ts` now pins the collection in `keepStatementsWhole`.
+
+Twenty mutants each fail a named test.
+
+Not in this change: the agent-activity and SCORM play emitters (`emitAgentActivity` and the play helpers) still store with `storeStatementInternal`. They check its null, but not a write that fails later.
+
 
 
 ## 2026-09-27 — Foxxi: part of a record is not read as the whole of it
@@ -53,6 +95,7 @@ The bridge's `learnerStatementsReadWhole` joins the two. After an agent-kind wri
 Ten mutants each fail a named test, one of them keeping a recovered lattice unmerged again.
 
 The review gates read the same union to decide whether a record is private, and partial reads can mislead them the same way. That changes who may read what, so it is left for its own change.
+
 
 ## 2026-09-27 — Foxxi dashboard: a roster identity the bridge will not take lands on Learn, and is told why
 

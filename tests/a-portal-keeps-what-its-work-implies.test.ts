@@ -192,7 +192,9 @@ describe("recording work as an agent's is chosen knowing what it does to the rec
       String.raw`\} catch \(e\) \{ console\.warn\('\[foxxi\]\[record-visibility\]', \(e as Error\)\.message\); \}`,
       String.raw`recordVisibility = recordVisibilityAfterAgentWork\(kindNow\);`,
     ].join(String.raw`\s+`)));
-    expect(route.indexOf('kindNow = classifySubjectKind(')).toBeGreaterThan(route.indexOf('const statementId = storeStatementInternal(statement'));
+    const stored = route.indexOf('const statementId = await storeStatementDurably(statement');
+    expect(stored).toBeGreaterThan(-1);
+    expect(route.indexOf('kindNow = classifySubjectKind(')).toBeGreaterThan(stored);
     expect(route).toContain('...(recordVisibility ? { recordVisibility } : {}),');
   });
 });
