@@ -258,6 +258,17 @@ agent, as learner and as author.
   their own record, with an admission if they send one.
 - `foxxi.content_fold_course` folds a course the caller authored into
   fragments and compositions (below).
+- `foxxi.content_mine` lists the compositions the caller authored and the
+  ones they played ([`src/content-listing.ts`](src/content-listing.ts)).
+  Nothing new is kept to answer it:
+  - plays are read from their own record, with whether they finished and
+    the latest finished score;
+  - authoring is read from the index of where content lives, which names
+    each item's author, and one made as a whole is marked a root while its
+    authoring record is at hand.
+- `foxxi.content_admissions` reads back what the caller keeps with
+  `foxxi.content_admit`. A list that cannot be read now answers 503, never
+  an empty one.
 
 Each item is written to its author's pod's shared lattice first. Only
 once that write lands is it recorded as an `authored` statement, cached,
@@ -337,7 +348,8 @@ play. `foxxi.content_next` answers the step they are on and moves on.
   - A position with nothing else to offer adds nothing: the same
     explanation twice is not another way in.
   - The new way in is judged by the check that follows it, as any teaching
-    is, and its statements say why it came.
+    is, and its statements say why it came. The step says so too: its
+    view carries `wayIn: 'teaching'` or `wayIn: 'check'`.
   - A play an LMS launches works the same way, without admissions, as it
     resolves.
 - **The last step completes the composition.**

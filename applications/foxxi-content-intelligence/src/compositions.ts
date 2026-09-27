@@ -194,6 +194,8 @@ export interface ResolvedStep {
   chosenBecause: string;
   /** The level the learner was pitched at, which their outcome is counted under. */
   pitchedAt: CognitiveLevel;
+  /** A step a missed check brought in (composition-play.ts): another way in, or another check. */
+  wayIn?: 'teaching' | 'check';
 }
 
 export interface PositionNote {
