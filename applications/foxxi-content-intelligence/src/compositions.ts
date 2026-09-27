@@ -421,5 +421,32 @@ export function resolveComposition(input: ResolveInput): Resolution {
   return { composition: root['@id'], learner: input.learner.id, steps: whole.steps, skipped: whole.skipped, unmet: whole.unmet, refused: whole.refused, moreRefused: whole.moreRefused, trace };
 }
 
+/**
+ * Another alternative at a position a learner has already met, by the rules resolution chose by:
+ * content that is what its IRI says, meant for this learner, in a form admitted at this
+ * competency (the position's own admission first, then its composition's), pitched nearest the
+ * level they met it at, then in the author's order. Nothing in `exclude` (what they have been
+ * shown) is taken, and neither is a composition: another way in is one fragment. Undefined when
+ * the position offers no other.
+ */
+export function anotherAlternative(step: ResolvedStep, input: Pick<ResolveInput, 'lookup' | 'admission'> & {
+  learnerKind: 'human' | 'agent';
+  exclude: ReadonlySet<string>;
+}): Fragment | undefined {
+  const holder = input.lookup(step.path[step.path.length - 1] ?? '');
+  const own = input.admission?.(step.competency);
+  const admission = own === null ? undefined
+    : (own ?? (holder && isComposition(holder) ? input.admission?.(holder.competency) : undefined) ?? undefined);
+  const distance = (f: Fragment): number => Math.abs(LEVEL_INDEX[f.level] - LEVEL_INDEX[step.pitchedAt]);
+  return step.alternatives
+    .map((iri, k) => ({ iri, k, item: input.lookup(iri) }))
+    .filter((c): c is { iri: string; k: number; item: Fragment } => !!c.item && !isComposition(c.item))
+    .filter(c => !input.exclude.has(c.iri) && !input.exclude.has(c.item['@id']))
+    .filter(c => sameContent(c.item['@id'], c.iri) && fragmentIsIntact(c.item))
+    .filter(c => !c.item.audience || c.item.audience === input.learnerKind)
+    .filter(c => !admission || admission.kinds.includes(c.item.kind))
+    .sort((a, b) => distance(a.item) - distance(b.item) || a.k - b.k)[0]?.item;
+}
+
 /** How many distinct refusals a resolution lists before it stops adding them. */
 const REFUSALS_KEPT = 20;

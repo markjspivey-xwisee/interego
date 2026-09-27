@@ -1,5 +1,47 @@
 # Changelog
 
+## 2026-09-27 — Foxxi: a missed check brings another way in
+
+A composition offers alternatives at each position: an explanation, an example, a deeper take. Resolution picks one per position for each learner, and until now a play went through those picks and ended, whatever the checks showed. A learner who missed a check was shown the answers and moved on, while the composition held other ways into the same material that they never met.
+
+Now a missed check brings another way in (`src/composition-play.ts`, `src/compositions.ts`).
+- **From the positions that taught it.** Each position that taught the check's competency since the last check there gives another of its alternatives, provided it offers more than the learner met. These are exactly the fragments the miss was just credited to.
+  - The alternative is chosen as resolution chose (`anotherAlternative`): admitted at the competency (the position's own admission first, then its composition's, a withdrawal standing), meant for this learner, what its IRI says, nearest the level they met the position at, then in the author's order.
+  - It is never a fragment already shown in this play, and never a composition.
+- **Then another check.** Another check from the missed check's position follows, when it offers one.
+- **Right away, before the play decides it is done.** The steps go in right after the missed check. So a play ends only when there is nothing more to take, and the last check being missed no longer ends it.
+- **Once, and within bounds.** Each position does this once per play, and at most 12 positions in all. A position with nothing else to offer adds nothing: the same explanation twice is not another way in.
+- **Judged like any teaching.** The new way in is credited with the check that follows it, and its statements carry the same position and alternatives, and why it came.
+- **On the bridge.** A learner's own play (`foxxi.content_launch`, `foxxi.content_next`) and a play an LMS launches through a composition's cmi5 or SCORM projection both work this way.
+  - The learner's own play keeps the admission it was resolved with.
+  - The LMS play keeps none, as it resolves.
+  - A play's steps are its own copy, so the resolution it came from is left as it was.
+- **Docs.** The `foxxi.content_next` affordance says so, `docs/skills` is regenerated, and `PERFORMANCE-ARCHITECTURE.md` §5 describes it.
+
+`applications/foxxi-content-intelligence/tests/a-missed-check-brings-another-way-in.test.ts` covers:
+- the way in and another check, before the rest and before the play ends;
+- nothing for a passed check;
+- once per position, never what was shown;
+- nothing from a position with nothing else, and no check where there is none;
+- the limit;
+- the rules of choice: audience, admission at the position or its composition, a withdrawal, intactness, level before author's order;
+- the bridge keeping the rules a play was resolved by, for its own plays and an LMS's.
+
+Nineteen mutants were checked, and eighteen fail a named test:
+- choosing what was shown, a fragment for others, a form not admitted, or content not what its IRI says;
+- a withdrawal giving way to the composition, or the composition's admission unread;
+- the level not considered;
+- a passed check answered;
+- a position answering twice, or the limit not kept;
+- what was shown not excluded;
+- no check following;
+- the way in going at the end;
+- nothing credited found;
+- the resolution's steps played in place;
+- either kind of play left without a way in, or a way in ignoring what the learner admitted.
+
+The nineteenth, dropping the filter that refuses a composition, is equivalent: a composition never hashes as a fragment, so the intactness check refuses it too.
+
 ## 2026-09-27 — Foxxi: work that fails is answered with the plan it implies, unasked
 
 A plan was made only when somebody described a situation (`POST /agent/contextualize-and-plan`), and the admission it implied was offered then (#509). But a performer who records their own work has already said what the situation is: the work, at a competency, and how it came out. Now a failed unit of work is answered, without the performer asking, with the plan the work at that competency implies and the admission that plan implies. It is theirs to keep with `foxxi.content_admit`, or not, and the bridge keeps nothing from it.
