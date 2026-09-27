@@ -6,6 +6,7 @@ A composition could be offered to an LMS that speaks cmi5 (#512). Many LMSs spea
 
 - **One SCO, a wrapper** (`src/composition-scorm.ts`, `GET <composition IRI>/scorm.zip`). The package's one SCO finds the LMS's SCORM 2004 API, opens the bridge's player in a frame, and records what the player posts it.
 - **It holds no content and no answers.** Resolution and grading stay on the bridge, so a package anyone may download and unzip holds no answer, verifier or salt. The packages the older course model makes grade inside the SCO, from hashes shipped in the zip.
+- **Nothing an author writes can run in the LMS.** A composition's title is its author's, and the wrapper runs inside someone else's LMS, beside its SCORM API. Every value written into the wrapper's script, and into the player's, goes in as JSON with no "<" or ">", so a title of "</script><script>…" stays text.
 - **The wrapper believes only the bridge.** It records a message only from the bridge's origin, fixed when the package is built. It tells the player its own origin, so the player posts only to it, and it records nothing after it has terminated.
 - **What SCORM records:**
   - each answered question as an interaction: its id, type, the learner's response in SCORM's format and whether it was right, never its correct responses;
@@ -22,15 +23,19 @@ A composition could be offered to an LMS that speaks cmi5 (#512). Many LMSs spea
 - the wrapper inside an LMS, in a DOM with a SCORM API: opening the player for the LMS's learner and telling it where to post;
 - interactions, score, success and completion, including by the LMS's passing score;
 - nothing recorded that is not from the bridge, or after Terminate;
+- a title that looks like markup kept as text in the wrapper and the player, with each page's one script whole;
 - the player under SCORM needing no token or LRS and posting only to its wrapper;
 - the route, checked in the bridge's source.
 
-Eight mutants were checked, and each fails a named test:
+Twelve mutants were checked, and each fails a named test:
 - the wrapper believing any origin, recording after Terminate, or not telling the player its origin;
 - every statement becoming an interaction;
 - a pass with nothing right when no passing score is set;
 - the manifest naming another file;
-- the player posting to anyone, or fetching a token under SCORM.
+- the player posting to anyone, or fetching a token under SCORM;
+- the title, or the player's session address, written as plain JSON, or either page's script-value escape letting "<" through.
+
+This package's test module is the one that used the last of the test-module floor's allowance, so `MIN_TEST_MODULES` (`tools/vitest-run-integrity.mjs`) moves from 437 to the measured 459. That covers the twenty-two modules added since the last pin, and none was removed.
 
 ## 2026-09-27 — Foxxi: a folded course maps each older id to everything it named
 

@@ -260,7 +260,10 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // 416 -> 437, measured by CI on the tree that tripped the allowance: the credential-link reader's
 // module (`credential-by-link`) is the one that used the last of it, and the twenty before it are
 // the verticals' tests from the rounds since the last pin.
-export const MIN_TEST_MODULES = 437;
+// 437 -> 459, measured by CI on the tree that tripped the allowance: the SCORM projection's
+// module (`composition-scorm`) used the last of it. The twenty-one before it are Foxxi's
+// composable-content, cmi5-launch and LTI rounds since the last pin, and none was removed.
+export const MIN_TEST_MODULES = 459;
 
 /**
  * How far below the real module count MIN_TEST_MODULES may sit before that is itself a

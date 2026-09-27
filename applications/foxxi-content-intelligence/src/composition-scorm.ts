@@ -20,12 +20,18 @@
  * record and counts nothing toward what has worked.
  *
  * The wrapper's script uses no regular expressions and no backslashes: it is written inside a
- * template literal, where a backslash would not survive into the page.
+ * template literal, where a backslash would not survive into the page. Each value written into it
+ * goes in as JSON with no "<" or ">" (scriptData), because a composition's title is its author's.
  */
 import AdmZip from 'adm-zip';
 import type { Composition } from './compositions.js';
 
 const esc = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+/**
+ * A value written into the wrapper's script: JSON with no "<" or ">", so nothing in it (an
+ * author's title of "</script><script>…", say) can end the script and run inside the LMS.
+ */
+const scriptData = (s: unknown): string => JSON.stringify(s).replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
 
 /** The activity a SCORM attempt at a composition names: its IRI with a fragment of its own. */
 export const scoIdOf = (compositionIri: string): string => `${compositionIri}#sco`;
@@ -60,9 +66,9 @@ export function compositionScormWrapper(opts: { title: string; playerUrl: string
 <div id="status">Connecting to the learning system…</div>
 <script>
 (function () {
-  var PLAYER = ${JSON.stringify(opts.playerUrl)};
-  var BRIDGE = ${JSON.stringify(bridgeOrigin)};
-  var ACTIVITY = ${JSON.stringify(opts.activityId)};
+  var PLAYER = ${scriptData(opts.playerUrl)};
+  var BRIDGE = ${scriptData(bridgeOrigin)};
+  var ACTIVITY = ${scriptData(opts.activityId)};
   var status = document.getElementById('status');
   function findAPI(w) {
     for (var n = 0; w && n < 12; n++) {
@@ -97,7 +103,7 @@ export function compositionScormWrapper(opts: { title: string; playerUrl: string
 
   var actor = { objectType: 'Agent', account: { homePage: location.origin, name: learner } };
   var frame = document.createElement('iframe');
-  frame.title = ${JSON.stringify(opts.title)};
+  frame.title = ${scriptData(opts.title)};
   frame.src = PLAYER + '?transport=scorm&parentOrigin=' + encodeURIComponent(location.origin)
     + '&activityId=' + encodeURIComponent(ACTIVITY) + '&actor=' + encodeURIComponent(JSON.stringify(actor));
   document.body.appendChild(frame);

@@ -8,6 +8,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import AdmZip from 'adm-zip';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { Script } from 'node:vm';
 import { JSDOM } from 'jsdom';
 import { currentView, startPlay, takeStep, type CompositionPlay, type PlayInProgress, type Statement } from '../src/composition-play.js';
 import { compositionAuPage } from '../src/composition-au-page.js';
@@ -51,7 +52,7 @@ describe('the package', () => {
 });
 
 describe('the wrapper, inside an LMS', () => {
-  function lms(passingScore = '') {
+  function lms(passingScore = '', title = course.title) {
     const calls: Array<[string, ...string[]]> = [];
     const values = new Map<string, string>([['cmi.learner_id', 'learner-7'], ['cmi.interactions._count', '0'], ['cmi.scaled_passing_score', passingScore]]);
     const API = {
@@ -62,7 +63,7 @@ describe('the wrapper, inside an LMS', () => {
       Terminate: (a: string) => { calls.push(['Terminate', a]); return 'true'; },
       GetLastError: () => '0',
     };
-    const dom = new JSDOM(compositionScormWrapper({ title: course.title, playerUrl: player, activityId: scoIdOf(course['@id']) }), {
+    const dom = new JSDOM(compositionScormWrapper({ title, playerUrl: player, activityId: scoIdOf(course['@id']) }), {
       runScripts: 'dangerously', url: 'https://lms.example/content/pkg/index.html',
       beforeParse(w) { Object.defineProperty(w, 'API_1484_11', { value: API }); },
     });
@@ -113,6 +114,20 @@ describe('the wrapper, inside an LMS', () => {
     expect(values.get('cmi.success_status')).toBe('passed');
   });
 
+  it('keeps an author\'s title as text, even one that looks like markup, and runs nothing in it', () => {
+    // A composition's title is its author's, and the package runs inside someone else's LMS.
+    // "</script " ends a script at its space, before any ">", so "<" is what must not get through.
+    const title = 'Refunds </script ><script>window.pwned = 1</script><!-- <script>';
+    const { dom, calls } = lms('', title);
+    const doc = dom.window.document;
+    expect(doc.querySelectorAll('script')).toHaveLength(1);
+    expect(() => new Script(doc.querySelector('script')!.textContent!)).not.toThrow();
+    expect((dom.window as unknown as { pwned?: number }).pwned).toBeUndefined();
+    expect((doc.querySelector('iframe') as HTMLIFrameElement).title).toBe(title);
+    expect(doc.title).toBe(title);
+    expect(calls[0]).toEqual(['Initialize', '']);   // the wrapper itself still runs
+  });
+
   it('believes nothing that is not from the bridge', () => {
     const { calls, post } = lms();
     const before = calls.length;
@@ -123,6 +138,15 @@ describe('the wrapper, inside an LMS', () => {
 });
 
 describe('the player, under SCORM', () => {
+  it('keeps its title and its addresses as text too', () => {
+    const odd = '</script ><script>window.pwned = 1</script>';
+    const dom = new JSDOM(compositionAuPage({ title: `Refunds ${odd}`, sessionBase: `${player}?${odd}` }), { url: player });
+    windows.push(dom);
+    expect(dom.window.document.querySelectorAll('script')).toHaveLength(1);
+    expect(() => new Script(dom.window.document.querySelector('script')!.textContent!)).not.toThrow();   // whole, not cut short
+    expect(dom.window.document.getElementById('title')!.textContent).toBe(`Refunds ${odd}`);
+  });
+
   it('needs no token or LRS, and posts each step and then the summary to its wrapper only', async () => {
     const posted: Array<{ message: { type: string; statements: Statement[]; done: boolean; summary?: { graded: { correct: number; total: number } } }; origin: string }> = [];
     const fetched: string[] = [];

@@ -22,6 +22,8 @@
 import { createHash } from 'node:crypto';
 
 const esc = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+/** A value written into the page's script: JSON with no "<" or ">", so nothing in it can end the script. */
+const scriptData = (s: unknown): string => JSON.stringify(s).replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
 
 /**
  * The Content-Security-Policy the page is served with: its one script, by hash, and no other that
@@ -64,7 +66,7 @@ export function compositionAuPage(opts: { title: string; sessionBase: string }):
 <div class="status" id="status">Connecting to your course…</div>
 <script>
 (function () {
-  var SESSION = ${JSON.stringify(opts.sessionBase)};
+  var SESSION = ${scriptData(opts.sessionBase)};
   var q = new URLSearchParams(location.search);
   var endpoint = q.get('endpoint') || '';
   var lrs = endpoint.slice(-1) === '/' ? endpoint : endpoint + '/';
