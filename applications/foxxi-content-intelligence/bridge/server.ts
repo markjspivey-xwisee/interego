@@ -213,6 +213,7 @@ import { EFFICACY_POLICY, EfficacyTally, efficacyTokenKey, openTally, outcomeTok
 import { compositionEfficacy } from '../src/composition-efficacy.js';
 import { authoredCompositions, playedCompositions } from '../src/content-listing.js';
 import { stateReader, stateWriter } from '../src/state-writer.js';
+import { APPLIED_VOID_TYPE, appliedVoidRecord, appliedVoidsIn, ownerDidOf } from '../src/applied-voids.js';
 import { competencyIri, competencyIriForTerm, competencyIdOf } from '../src/competency-identity.js';
 import { activityIri, ACTIVITY_DEFINITIONS } from '../src/activity-identity.js';
 import { FOXXI_NS } from '../src/foxxi-vocab.js';
@@ -3474,7 +3475,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const latticeStmts = latticeStatements(subjectLabel);
     const lensStatements = await listStoredStatements(lensTenantFor(subjectLabel));
     const durableStatements = await readDurableRecordedStatements({ podUrl: subjectPodUrl });
-    const learnerStatements = mergeStatementsById([...latticeStmts, ...lensStatements], durableStatements);
+    const learnerStatements = mergeStatementsById([...latticeStmts, ...lensStatements], durableStatements, appliedVoidsOf(subjectLabel));
 
     // ★ THE SUBJECT DECIDES WHAT THE SUBJECT IS — NOT THE READER.
     //
@@ -4473,6 +4474,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const proveStmts = mergeStatementsById(
       [...latticeStatements(proveLabel), ...await listStoredStatements(lensTenantFor(proveLabel))],
       await readDurableRecordedStatements({ podUrl: provePod }),
+      appliedVoidsOf(proveLabel),
     );
     const proveElr = await assembleEnterpriseLearnerRecord({
       learnerDid, learnerPodUrl: provePod, publicPodUrl: canonicalPublicPodUrl(provePod), subjectKind: 'agent',
@@ -5837,6 +5839,8 @@ const app = createVerticalBridge({
           emit: (s) => { const id = storeStatementInternal(s, tenant); if (id && own) keepCmi5OnLearnerPod({ ...s, id }, own); },
         }).catch(() => undefined);
       },
+      // A void that took effect is kept with the voided statement's owner (keepAppliedVoid).
+      onVoidApplied: (target, voidingStatementId) => { void keepAppliedVoid(target.statement, voidingStatementId); },
     });
 
     // cmi5 LMS launch contract (IEEE 9274.2.1 §7–§8) — Foxxi-as-LMS can
@@ -7015,6 +7019,7 @@ app.get('/agent/:did/affordances', async (req, res) => {
     const statements = mergeStatementsById(
       [...latticeStatements(subjectLabel), ...await listStoredStatements(lensTenantFor(subjectLabel))],
       await readDurableRecordedStatements({ podUrl: subjectPodUrl }),
+      appliedVoidsOf(subjectLabel),
     );
     const elr = await assembleEnterpriseLearnerRecord({
       learnerDid: subjectDid, learnerPodUrl: subjectPodUrl, publicPodUrl: canonicalPublicPodUrl(subjectPodUrl), subjectKind: 'agent',
@@ -7129,9 +7134,10 @@ app.post('/agent/review-record', async (req, res) => {
     const latticeStmts = latticeStatements(subjectLabel);
     const lensStatements = await listStoredStatements(lensTenantFor(subjectLabel));
     const durableStatements = await readDurableRecordedStatements({ podUrl: subjectPodUrl });
+    // The lattice alone still reads the voids its owner keeps there (foxxi:AppliedVoid).
     const statements = p.source === 'pgsl'
-      ? latticeStmts
-      : mergeStatementsById([...latticeStmts, ...lensStatements], durableStatements);
+      ? mergeStatementsById(latticeStmts, [], appliedVoidsOf(subjectLabel))
+      : mergeStatementsById([...latticeStmts, ...lensStatements], durableStatements, appliedVoidsOf(subjectLabel));
     const statementSource = p.source === 'pgsl' ? 'pgsl-lattice-only' : 'pgsl-lattice+lens+durable-rdf-fallback';
 
     // PII gate — a HUMAN learner full ELR + exported CLR (credentials, competencies,
@@ -7622,7 +7628,7 @@ app.post('/agent/verify-extension', async (req, res) => {
     await ensureResident(subjectPodUrl, subjectDid, subjectLabel);
     const lensStatements = await listStoredStatements(lensTenantFor(subjectLabel));
     const durableStatements = await readDurableRecordedStatements({ podUrl: subjectPodUrl });
-    const statements = mergeStatementsById([...latticeStatements(subjectLabel), ...lensStatements], durableStatements);
+    const statements = mergeStatementsById([...latticeStatements(subjectLabel), ...lensStatements], durableStatements, appliedVoidsOf(subjectLabel));
 
     // Same gate, same reason as /agent/review-record — and now literally the same function, so
     // "same reason" is enforced rather than asserted in a comment.
@@ -9740,7 +9746,31 @@ async function learnerStatementsFor(podUrl: string, did: string): Promise<Return
   const label = actorForPod(podUrl, MESH_ACTOR_LABELS);
   await ensureResident(podUrl, did, label);
   const durable = await readDurableRecordedStatements({ podUrl });
-  return mergeStatementsById([...latticeStatements(label), ...await listStoredStatements(lensTenantFor(label))], durable);
+  return mergeStatementsById([...latticeStatements(label), ...await listStoredStatements(lensTenantFor(label))], durable, appliedVoidsOf(label));
+}
+
+// ── Voids, kept with the record they void (src/applied-voids.ts) ─────
+/**
+ * Keep an applied void with the voided statement's owner: composed into their shared lattice,
+ * beside their statements. Only a void the LRS applied reaches here (onVoidApplied); a statement
+ * whose owner has no pod on this tenant's store is voided in the lens alone, as before.
+ */
+async function keepAppliedVoid(voided: Record<string, unknown>, voidingStatementId: string): Promise<void> {
+  const did = ownerDidOf(voided);
+  const statementId = typeof voided.id === 'string' ? voided.id : undefined;
+  if (!did || !statementId) return;
+  const pod = resolveSubjectPodUrl(did);
+  if (!tenantPodUrl || !sameStore(pod, tenantPodUrl)) return;
+  const label = actorForPod(pod, MESH_ACTOR_LABELS);
+  await composeIntoSharedLattice({
+    podUrl: pod, agentDid: did, label, terms: [did, 'http://adlnet.gov/expapi/verbs/voided', statementId],
+    content: appliedVoidRecord(statementId, voidingStatementId), contentType: APPLIED_VOID_TYPE, projections: ['rdf'],
+  }).catch(() => undefined);
+}
+
+/** The statements a void was applied to, as the owner's lattice keeps them. */
+function appliedVoidsOf(label: string): Set<string> {
+  return appliedVoidsIn(latticeArtifacts(label, APPLIED_VOID_TYPE));
 }
 
 /**
@@ -10600,6 +10630,7 @@ async function learnerCompetencies(learnerDid: string, kind: 'human' | 'agent'):
   const statements = mergeStatementsById(
     [...latticeStatements(label), ...await listStoredStatements(lensTenantFor(label))],
     await readDurableRecordedStatements({ podUrl: pod }),
+    appliedVoidsOf(label),
   );
   const elr = await assembleEnterpriseLearnerRecord({
     learnerDid, learnerPodUrl: pod, publicPodUrl: canonicalPublicPodUrl(pod), subjectKind: kind,

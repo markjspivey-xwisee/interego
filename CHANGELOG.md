@@ -33,6 +33,40 @@ The whole flow was run in a browser against the deployed bridge, as the demo lea
 
 The un-linted `applications/` frontier is repinned 612 -> 650 files, with errors not raised: every new file lints clean (`tools/lint-gate.mjs`).
 
+## 2026-09-27 — Foxxi: a void the LRS applied is kept with the voided statement's owner
+
+A defect the automated review found in #528 after it merged. A merge of a learner's record now keeps only the voids the store applied, as its mark on the voided statement. But a lens tenant's store is a view:
+- the process-wide budget evicts its oldest records;
+- a dropped partition takes all of them;
+- a restart takes everything.
+
+So a voided statement evicted before the later statement that voided it lost its mark. Its copy in the owner's lattice or on their pod was then read as current again, in the learner record, the listing and earned credentials.
+
+- **The LRS tells of a void once it took effect** (`onVoidApplied`, `src/xapi-lrs.ts`), with the statement it voided, marked. It never tells of a void that took no effect: a voider stored before its target, one naming another voiding statement, or one outside the writer's registration.
+- **A voiding statement voids only once it is taken.** The LRS used to apply a void before the statement's own immutable-id check, so one refused as a conflict (409) had already voided its target, and would now have kept that void with the owner. It applies the void after the statement is stored, by POST and by PUT.
+- **The bridge keeps it with the voided statement's owner** (`src/applied-voids.ts`). The owner is the DID the statement's actor carries, as a play or a performance names them. The bridge composes a small record of its own (`foxxi:AppliedVoid`: the voided statement's id and the voiding statement's) into the owner's shared lattice, beside their statements. A statement whose owner has no pod on this tenant's store is voided in the lens alone, as before.
+- **Every merge of a record reads those records** (`mergeStatementsById`'s third argument, at all seven of the bridge's merges). So does a review read from the lattice alone (`source: 'pgsl'`). A statement they name stays voided after the store has let it go.
+
+`foxxi:AppliedVoid` is declared in the Foxxi vocabulary.
+
+`tests/an-applied-void-is-kept-with-its-owner.test.ts` (10 tests) covers:
+- the LRS telling of a void applied, and of none that took no effect, through its own routes;
+- a voiding statement refused as a conflict voiding nothing, posted or put;
+- a merge keeping a statement voided from its lattice copy and its pod copy once the store has let it go;
+- the record, read back;
+- the owner, named;
+- the bridge's hook, and every merge reading the kept voids.
+
+Twelve mutants each fail a named test.
+
+## 2026-09-27 — Foxxi dashboard: a pasted key keeps its session through the notice, and forwarding can be read again
+
+Two defects the automated review found in #529 after it merged.
+- **The notice's links signed a pasted key out.** The notice on the profile and *My activity* sent a wallet or a pasted key to Learn and *My forwarding* by plain links, which reload the page. A pasted key lives in memory only, and its session is not kept across a reload, so following either link signed it out. The links now move within the app, as the top navigation does.
+- **The way to read *My forwarding* could vanish.** Through a wallet extension it is read only when asked. If the first of its two reads succeeded and the second did not, or a target was added before the first read, the control to read it went away, leaving the inbound list blank. The control now stays until both lists are read.
+
+`tests/the-learner-portal-speaks-the-bridges-language.test.ts` covers both. Two mutants each fail a named test.
+
 
 ## 2026-09-27 — Foxxi dashboard: a wallet or a pasted key lands on Learn, and forwarding reads one signature at a time
 
@@ -48,6 +82,7 @@ Two defects the automated review found in #527 after it merged.
 - how *My forwarding* reads.
 
 Eight mutants each fail a named test.
+
 
 ## 2026-09-27 — Foxxi dashboard: a learner portal, and signing in with a wallet extension
 

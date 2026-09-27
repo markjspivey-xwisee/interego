@@ -119,6 +119,20 @@ describe('a session that acts through signed requests alone', () => {
     expect(app).toMatch(/if \(signsOnly\(session\)\) return <SignsOnlyNotice what="Your activity and its statements" \/>;/);
   });
 
+  it('is moved to the pages it has without a reload, which would sign a pasted key out', () => {
+    const app = readFileSync(new URL('../dashboard-app/src/App.tsx', import.meta.url), 'utf8');
+    const notice = app.slice(app.indexOf('function SignsOnlyNotice'), app.indexOf('\n}\n', app.indexOf('function SignsOnlyNotice')));
+    const links = [...notice.matchAll(/<a href="([^"]+)"([^>]*)>/g)];
+    expect(links.map(l => l[1])).toEqual(['/learn', '/my-forwarding']);
+    for (const [, to, rest] of links) expect(rest).toContain(`onClick={go('${to}')}`);
+    expect(notice).toMatch(/const go = \(to: string\) => \(e: React\.MouseEvent\) => \{ e\.preventDefault\(\); navigate\(to\); \};/);
+  });
+
+  it('keeps the way to read its forwarding until both lists are read', () => {
+    const panel = readFileSync(new URL('../dashboard-app/src/components/MyForwardingPanel.tsx', import.meta.url), 'utf8');
+    expect(panel).toMatch(/\{\(!targets \|\| !creds\) && asks && \(/);
+  });
+
   it('reads its forwarding only when asked, one signature at a time, and a change answers for itself', () => {
     const panel = readFileSync(new URL('../dashboard-app/src/components/MyForwardingPanel.tsx', import.meta.url), 'utf8');
     expect(panel).not.toMatch(/Promise\.all/);

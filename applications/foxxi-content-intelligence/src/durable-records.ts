@@ -259,24 +259,27 @@ export interface StoredStatementLike {
  *
  * ★ A VOID THE STORE APPLIED STAYS APPLIED, AND NO OTHER. Only the store marks a void, on its own
  * copy; the lattice's copy and the pod's carry none. So the store's mark is kept whichever copy of
- * the statement comes first here. Nothing passed in is changed: a record read as voided here is a
- * new wrapper.
+ * the statement comes first here. And since a lens's store is a view that eviction and restarts
+ * empty, a void it applied is also kept with the record's owner, beside their statements
+ * (`appliedVoids`: the bridge's foxxi:AppliedVoid records), and holds when the store no longer
+ * does. Nothing passed in is changed: a record read as voided here is a new wrapper.
  *
  * A voiding statement is not read as a void by itself. Whether it took effect was decided by the
  * store as it arrived, from things its body does not say: whether its target was there yet (a
  * voider stored before its target voids nothing, and the target is current when it comes), and
  * which registration the writer was bound to (a Basic-auth writer is bound to none, whatever its
- * context says). Replaying it here would decide again, and differently. So a void lives where it
- * was applied, in the store: a store that keeps its records (file or pod) keeps its voids across a
- * restart, and one held in memory loses them with everything else it held.
+ * context says). Replaying it here would decide again, and differently. So a void is read only as
+ * it was applied: from the store's mark, and from the record the store's decision left with the
+ * owner.
  */
 export function mergeStatementsById(
   lensStatements: StoredStatementLike[],
   durableRaw: Record<string, unknown>[],
+  appliedVoids: ReadonlySet<string> = new Set(),
 ): StoredStatementLike[] {
   const seen = new Set<string>();
   const out: StoredStatementLike[] = [];
-  const marked = new Set<string>();
+  const marked = new Set<string>(appliedVoids);
   for (const s of lensStatements) {
     const id = String(s.id ?? '');
     if (s.voided && id) marked.add(id);

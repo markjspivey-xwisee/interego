@@ -87,9 +87,10 @@ export function MyForwardingPanel({ session }: { session: FoxxiSession }) {
         the bridge binds ownership to your verified signature. (The admin LRS tabs are the separate operator-level view.)
       </div>
       {err && <div style={{ color: 'var(--bad)', fontSize: 12, marginBottom: 10 }}>✗ {err}</div>}
-      {!targets && asks && (
+      {/* Until both lists are read: a read that failed half way, or a change made before any read, leaves one missing. */}
+      {(!targets || !creds) && asks && (
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 12 }}>
-          <Button small primary disabled={busy || !origin} onClick={() => { void load(); }}>Read my forwarding</Button>
+          <Button small primary disabled={busy || !origin} onClick={() => { void load(); }}>{targets || creds ? 'Read it all again' : 'Read my forwarding'}</Button>
           <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>Your wallet will ask you to approve two reads, one after the other.</span>
         </div>
       )}
