@@ -60,6 +60,21 @@ export const LOCATIONS_PER_ITEM = 5;
 export interface ContentLocation { did: string; pod: string }
 
 /**
+ * A location index as the pod at `url` holds it, to merge into what a process holds: null when
+ * there is no index to read (no url, or the pod holds none), and its body otherwise. A body that is
+ * not JSON reads as empty, as the bridge's writer reads it before writing over it. Throws when the
+ * pod could not be read now, so the read is tried again (stateReader) rather than taken for an
+ * index that holds nothing.
+ */
+export async function fetchLocations(url: string, fetchFn: typeof fetch): Promise<unknown> {
+  if (!url) return null;
+  const r = await fetchFn(url, { headers: { Accept: 'application/json' } });
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error(`the pod answered ${r.status}`);
+  return r.json().catch(() => ({}));
+}
+
+/**
  * Two location indexes (content key → where it was written) as one: each key's locations in
  * first-seen order, at most LOCATIONS_PER_ITEM. A bare DID string, the form the index first had,
  * is read as a location with no pod.

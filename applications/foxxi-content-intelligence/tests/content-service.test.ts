@@ -14,7 +14,7 @@ import {
   questionCommitment,
 } from '../src/content-fragments.js';
 import { admissionFrom, compositionFrom } from '../src/compositions.js';
-import { ContentStore, LOCATIONS_PER_ITEM, mergeLocations, type ContentItem } from '../src/content-store.js';
+import { ContentStore, fetchLocations, LOCATIONS_PER_ITEM, mergeLocations, type ContentItem } from '../src/content-store.js';
 import { authorQuestion, questionIsRight } from '../src/course-questions.js';
 import { createHash } from 'node:crypto';
 import { canonicalJson } from '@interego/core';
@@ -157,6 +157,17 @@ describe('the index of where content lives', () => {
     expect(mergeLocations({ [k]: [{ did: 'did:web:a', pod: 'file:///etc/passwd' }, { did: 'did:web:b', pod: 'javascript:x' }] }, {}).size).toBe(0);
     expect(mergeLocations(null, 'nonsense').size).toBe(0);
   });
+
+  it('is read from its pod as it is there, as absent when there is none, and not at all when the pod cannot answer now', async () => {
+    const answering = (status: number, body: string) => (async () => new Response(body, { status })) as unknown as typeof fetch;
+    const url = 'https://pods.example/tenant/foxxi-lattice/content-locations.json';
+    expect(await fetchLocations(url, answering(200, '{"a":1}'))).toEqual({ a: 1 });
+    expect(await fetchLocations(url, answering(200, 'not json'))).toEqual({});   // as the writer reads it before writing over it
+    expect(await fetchLocations(url, answering(404, ''))).toBeNull();
+    expect(await fetchLocations('', answering(200, '{"a":1}'))).toBeNull();
+    await expect(fetchLocations(url, answering(503, ''))).rejects.toThrow(/answered 503/);
+    await expect(fetchLocations(url, (async () => { throw new TypeError('fetch failed'); }) as unknown as typeof fetch)).rejects.toThrow(/fetch failed/);
+  });
 });
 
 describe('an admission a caller sends is checked', () => {
@@ -205,6 +216,10 @@ describe('the bridge authors, dereferences and resolves content through these', 
     expect(index).toMatch(/if \(!r\.ok && r\.status !== 404\) throw new Error/);
     expect(index.indexOf('mergeLocations(durable, contentLocations)')).toBeGreaterThan(index.indexOf('r.status !== 404'));
     expect(index).toMatch(/if \(!w\.ok\) throw new Error/);
+    // And read in by a state reader: a read that failed is tried again on the next call, whoever
+    // needs the index next, rather than leaving this process with only what it wrote itself.
+    expect(src).toMatch(/const contentLocationsReader = stateReader\(\(\) => fetchLocations\(CONTENT_LOCATIONS_RESOURCE, /);
+    expect(src).toMatch(/if \(!contentLocations\.has\(key\) && !contentLocationsReader\.loaded\) await contentLocationsReader\.load\(\);/);
     // Kept only once the pod holds it: the lattice write comes first and must report persisted.
     const keepFirst = route('async function keepAuthoredContent');
     expect(keepFirst.indexOf('composeIntoSharedLattice(')).toBeLessThan(keepFirst.indexOf('contentStore.put(item)'));

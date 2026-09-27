@@ -200,7 +200,7 @@ import { authorQuestion, questionForLearner, questionIsRight, QuestionError } fr
 import { courseMarkdownHtml } from '../src/course-markdown.js';
 import { ContentError, competencyRef, compositionIri, contentRefOf, fragmentForLearner, fragmentFrom, fragmentIri, publicFragment, sameContent, type Fragment } from '../src/content-fragments.js';
 import { admissionFrom, anotherAlternative, compositionFrom, resolveComposition, type Admission, type Composition, type RecordedCompetency } from '../src/compositions.js';
-import { bundledItem, ContentStore, isCompositionItem, LOCATIONS_PER_ITEM, mergeLocations, type ContentItem, type ContentLocation } from '../src/content-store.js';
+import { bundledItem, ContentStore, fetchLocations, isCompositionItem, LOCATIONS_PER_ITEM, mergeLocations, type ContentItem, type ContentLocation } from '../src/content-store.js';
 import { foldCourse, type FoldedCourse, type FoldOptions } from '../src/course-fold.js';
 import { foldEmergentCourse, type FoldedEmergent } from '../src/emergent-fold.js';
 import { admissionFor, admissionRecordFrom, recordFor, standingAdmissions, type AdmissionRecord } from '../src/admission-records.js';
@@ -212,7 +212,7 @@ import { currentView, startPlay, takeStep, type AnotherWayIn, type CompositionPl
 import { EFFICACY_POLICY, EfficacyTally, efficacyTokenKey, openTally, outcomeToken, sealTally } from '../src/fragment-efficacy.js';
 import { compositionEfficacy } from '../src/composition-efficacy.js';
 import { authoredCompositions, playedCompositions } from '../src/content-listing.js';
-import { stateWriter } from '../src/state-writer.js';
+import { stateReader, stateWriter } from '../src/state-writer.js';
 import { competencyIri, competencyIriForTerm, competencyIdOf } from '../src/competency-identity.js';
 import { activityIri, ACTIVITY_DEFINITIONS } from '../src/activity-identity.js';
 import { FOXXI_NS } from '../src/foxxi-vocab.js';
@@ -10446,7 +10446,6 @@ const CONTENT_TYPES = { fragment: 'foxxi:GroundingFragment', composition: 'foxxi
 let contentLocations = new Map<string, ContentLocation[]>();   // content key (type:hash) → where each author wrote it
 const CONTENT_LOCATIONS_MAX = 200_000;
 const CONTENT_LOCATIONS_RESOURCE = tenantPodUrl ? `${tenantPodUrl.replace(/\/$/, '')}/foxxi-lattice/content-locations.json` : '';
-let contentLocationsLoaded = false;
 /**
  * The index is written by a state writer (src/state-writer.ts): one write at a time, and a failed
  * write tried again on its own. Each write is merged with what is already there, earlier entries
@@ -10464,14 +10463,14 @@ const contentLocationsWriter = stateWriter(async () => {
   const w = await f(CONTENT_LOCATIONS_RESOURCE, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(merged) });
   if (!w.ok) throw new Error(`the pod answered ${w.status}`);
 });
-async function loadContentLocations(): Promise<void> {
-  contentLocationsLoaded = true;
-  if (!CONTENT_LOCATIONS_RESOURCE) return;
-  try {
-    const r = await (globalThis.fetch as typeof fetch)(CONTENT_LOCATIONS_RESOURCE, { headers: { Accept: 'application/json' } });
-    if (r.ok) contentLocations = mergeLocations(contentLocations, await r.json());
-  } catch { /* best-effort */ }
-}
+/**
+ * The index is read in by a state reader (src/state-writer.ts), merged into what this process
+ * holds: it counts as read once the pod answered with it or that it has none (fetchLocations), and
+ * a read that failed is tried again on the next call, so one failed read does not leave this
+ * process listing only what it made itself.
+ */
+const contentLocationsReader = stateReader(() => fetchLocations(CONTENT_LOCATIONS_RESOURCE, globalThis.fetch as typeof fetch),
+  durable => { contentLocations = mergeLocations(contentLocations, durable); });
 function recordContentLocation(key: string, authorDid: string, pod: string): void {
   const held = contentLocations.get(key) ?? [];
   if (held.some(l => l.did === authorDid && l.pod === pod) || held.length >= LOCATIONS_PER_ITEM) return;
@@ -10487,7 +10486,7 @@ const contentStore = new ContentStore(20_000, {
   // checked by the store.
   load: async ({ type, hash, iri }) => {
     const key = `${type}:${hash}`;
-    if (!contentLocations.has(key) && !contentLocationsLoaded) await loadContentLocations();
+    if (!contentLocations.has(key) && !contentLocationsReader.loaded) await contentLocationsReader.load();
     for (const { did, pod: written } of contentLocations.get(key) ?? []) {
       const pod = written || resolveSubjectPodUrl(did);
       if (!tenantPodUrl || !sameStore(pod, tenantPodUrl)) continue;
@@ -10669,7 +10668,8 @@ app.post('/agent/content/admissions', async (req, res) => {
 
 // The compositions a person or an agent made, and the ones they played (src/content-listing.ts):
 // read from their own record and from the index of where content lives, nothing new kept. The
-// index is read first if this process has not read it yet, as best it can be.
+// index is read first if this process has not read it yet; one that cannot be read now answers
+// 503, since listing without it would leave out what was made before this process started.
 app.post('/agent/content/mine', async (req, res) => {
   try {
     if (contentRateLimited(req, res)) return;
@@ -10677,7 +10677,9 @@ app.post('/agent/content/mine', async (req, res) => {
     if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
     const asked = auth.payload.limit;
     const limit = typeof asked === 'number' && Number.isInteger(asked) ? Math.min(Math.max(asked, 1), 200) : 50;
-    if (!contentLocationsLoaded) await loadContentLocations();
+    if (!(await contentLocationsReader.load())) {
+      res.status(503).json({ error: 'the compositions you made could not be listed just now: the index of where content lives could not be read; try again' }); return;
+    }
     const statements = await learnerStatementsFor(resolveSubjectPodUrl(auth.callerDid), auth.callerDid);
     const authored = authoredCompositions(statements, contentLocations, auth.callerDid, limit);
     const played = playedCompositions(statements, limit);
