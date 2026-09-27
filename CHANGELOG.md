@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-09-27 — Foxxi: a fold blinds its checks under the bridge's own key
+
+The automated review of #507 found one problem, fixed here.
+
+- **Folding the same course twice could give its checks new IRIs** (`bridge/server.ts`). The secret a fold blinds a course's checks under was the grading key, derived from `FOXXI_ISSUER_KEY_SEED`. That key may be unset while pods are still written under `FOXXI_WALLET_SEED`. Each fold then drew a random blinding value, so the same course folded to new check and composition IRIs every time. That split references and efficacy across copies, though `foxxi.content_fold_course` is declared idempotent.
+  - The secret is now derived from the bridge's encryption key, the key every pod write needs (`courseFoldSecret`). So the same course folds to the same IRIs whenever anything can be kept.
+  - A bridge without that key answers 503 before reading anything, since it could keep nothing on a pod anyway.
+- **Docs.** The affordance names the new 503, and `PERFORMANCE-ARCHITECTURE.md` §5 says where the blinding value comes from.
+
+`applications/foxxi-content-intelligence/tests/course-fold.test.ts` checks, in the bridge's source, the secret's derivation, the 503, and that the route no longer uses the grading key. Four mutants were checked, and each fails that test:
+- a check blinded with nothing secret;
+- a check blinded with the grading key;
+- a keyless bridge folding anyway;
+- a secret not derived from the bridge key.
+
 ## 2026-09-27 — Foxxi: a course you authored folds into fragments and compositions
 
 A course authored with `foxxi.scorm_author` lived only as a course: it could be launched as a SCORM package but not resolved per learner, played step by step at the fragment grain, or improved by offering another explanation at a point in it. Now its author can fold it into composable content with one call, and what it makes behaves like any composition.

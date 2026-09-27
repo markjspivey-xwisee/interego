@@ -145,8 +145,13 @@ describe('the bridge folds a course for its author, and keeps it as one bundle',
     expect(r).toMatch(/const course = await resolveCourseForRead\(courseId\);/);
     expect(r).toMatch(/if \(course\.authoredBy !== auth\.callerDid\) \{ res\.status\(403\)/);
     expect(r.indexOf('course.authoredBy !== auth.callerDid')).toBeLessThan(r.indexOf('foldCourse('));
-    // Blinded from the grading secret: the same course folds to the same IRIs, and no learner can rebuild a check.
-    expect(r).toMatch(/blindFor: sectionId => \(gradedKey \? createHmac\('sha256', gradedKey\)\.update\(`course-fold\\n\$\{courseIri\(courseId\)\}\\n\$\{sectionId\}`\)/);
+    // Blinded under a secret from the bridge's own key, which every pod write needs: the same course folds
+    // to the same IRIs whenever anything can be kept, and no learner can rebuild a check.
+    expect(r).toMatch(/blindFor: sectionId => createHmac\('sha256', courseFoldSecret\)\.update\(`course-fold\\n\$\{courseIri\(courseId\)\}\\n\$\{sectionId\}`\)/);
+    expect(src).toMatch(/const kp = bridgeEncryptionKeypair\(\);\n\s+return kp \? createHash\('sha256'\)\.update\(`foxxi-course-fold\\n\$\{kp\.secretKey\}`\)\.digest\('hex'\) : '';/);
+    expect(r).toMatch(/if \(!courseFoldSecret\) \{ res\.status\(503\)/);
+    expect(r.indexOf('!courseFoldSecret')).toBeLessThan(r.indexOf('foldCourse('));
+    expect(r).not.toMatch(/gradedKey/);
     expect(r).toMatch(/const kept = await keepContentBundle\(folded\.root, folded\.items, auth\.callerDid, p\.subject_pod_url\);/);
     expect(r).toMatch(/if \(!kept\.ok\) \{ res\.status\(503\)/);
   });

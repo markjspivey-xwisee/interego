@@ -10598,11 +10598,22 @@ app.post('/agent/content/composition', async (req, res) => {
 
 // An authored course folded into fragments and compositions (src/course-fold.ts), kept on its
 // author's pod as one bundle. Only the course's author folds it: what is folded is kept as theirs.
+/**
+ * The secret a fold blinds its checks under, derived from the bridge's own key: the key every pod
+ * write already needs, so the same course folds to the same IRIs for as long as the bridge can keep
+ * anything at all. The grading key is not used: it may be unset while this key is set.
+ */
+const courseFoldSecret = ((): string => {
+  const kp = bridgeEncryptionKeypair();
+  return kp ? createHash('sha256').update(`foxxi-course-fold\n${kp.secretKey}`).digest('hex') : '';
+})();
 app.post('/agent/content/fold-course', async (req, res) => {
   try {
     if (contentRateLimited(req, res)) return;
     const auth = await verifyDelegatedCaller(req.body);
     if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
+    // Without the bridge's key nothing is kept on a pod, and no check is blinded the same way twice.
+    if (!courseFoldSecret) { res.status(503).json({ error: 'course not folded: this bridge holds no key, so it can keep nothing on a pod' }); return; }
     const p = auth.payload;
     const courseId = typeof p.course_id === 'string' ? p.course_id.trim() : '';
     if (!courseId) { res.status(400).json({ error: 'course_id is required: a course authored with foxxi.scorm_author' }); return; }
@@ -10622,8 +10633,8 @@ app.post('/agent/content/fold-course', async (req, res) => {
         ...(sections ? { sectionCompetencies: sections as Record<string, string> } : {}),
         ...(typeof p.level === 'string' ? { level: p.level as FoldOptions['level'] } : {}),
         ...(typeof p.language === 'string' ? { language: p.language } : {}),
-        // From the bridge's grading secret: the same course folds to the same IRIs here, and no learner can rebuild a check.
-        blindFor: sectionId => (gradedKey ? createHmac('sha256', gradedKey).update(`course-fold\n${courseIri(courseId)}\n${sectionId}`).digest('hex') : undefined),
+        // Under the bridge's secret: the same course folds to the same IRIs here, and no learner can rebuild a check.
+        blindFor: sectionId => createHmac('sha256', courseFoldSecret).update(`course-fold\n${courseIri(courseId)}\n${sectionId}`).digest('hex'),
       });
     } catch (e) {
       if (e instanceof ContentError) { res.status(400).json({ error: `course not folded: ${e.message}` }); return; }
