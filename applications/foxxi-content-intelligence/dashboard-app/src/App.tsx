@@ -272,7 +272,8 @@ function SignsOnlyNotice({ what }: { what: string }) {
         <div style={{ color: 'var(--text-dim)' }}>
           {what} are read with a session token this tenant's directory issues, and no directory knows the wallet or key
           you signed in with. What you do here is signed as you: <a href="/learn" onClick={go('/learn')}>Learn</a>,{' '}
-          <a href="/author" onClick={go('/author')}>Author</a> and <a href="/my-forwarding" onClick={go('/my-forwarding')}>My forwarding</a>.
+          <a href="/author" onClick={go('/author')}>Author</a>, <a href="/work" onClick={go('/work')}>Work</a> and{' '}
+          <a href="/my-forwarding" onClick={go('/my-forwarding')}>My forwarding</a>.
         </div>
       </Card>
     </div>

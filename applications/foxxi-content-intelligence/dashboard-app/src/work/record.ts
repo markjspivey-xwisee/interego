@@ -6,8 +6,12 @@
  * of the work is read from how it went. An agent records its own work the same way.
  *
  * Only the shape is made here; the bridge checks each step as the learner record keeps it
- * (workStepsFrom) and says what it refuses.
+ * (workStepsFrom) and says what it refuses. What the page checks first, it checks by the bridge's
+ * own rules, loaded from the same modules: how long a step's texts may be (work-step-limits.ts),
+ * and what xAPI takes as a duration (xapi-validate.ts).
  */
+import { WORK_STEP_LIMITS } from '../../../src/work-step-limits.js';
+import { isXapiDuration } from '../../../src/xapi-validate.js';
 
 /** How sure the performer is a step happened as told. */
 export type Certainty = 'Asserted' | 'Hypothetical' | 'Counterfactual';
@@ -47,16 +51,35 @@ export interface WorkDraft {
   quality: string;
   duration: string;
   forKind: 'human' | 'agent';
+  /** The performer has said they understand that work recorded as an agent's can make their whole record public. */
+  publicAsAgent: boolean;
   steps: StepDraft[];
 }
 
-/** How many steps a trajectory keeps, and how long a step's texts may be (learner-record.ts). */
-export const WORK_LIMITS = { steps: 100, text: 500 } as const;
+/**
+ * What recording work as an agent's does to the performer's own record, as the bridge decides it:
+ * a subject whose own recorded work all says it was done by an agent classifies as one
+ * (subjectKindFromOwnEvidence), and an agent's capability record is public. Said before the choice
+ * is sent, and confirmed.
+ */
+export const AGENT_RECORD_IS_PUBLIC =
+  'Recording work as done by an agent is what classifies you as one, unless your record already holds work recorded as done by a person. '
+  + "An agent's record is public: anyone who signs a request can then read your competencies, your performance history and your credentials by naming your DID.";
 
 export const newStep = (): StepDraft => ({ did: '', onWhat: '', grain: 'subtask', certainty: 'Asserted', outcome: '', note: '', revises: null });
 export const newWork = (forKind: 'human' | 'agent' = 'human'): WorkDraft => ({
-  taskName: '', outcome: '', activityType: '', taskId: '', quality: '', duration: '', forKind, steps: [],
+  taskName: '', outcome: '', activityType: '', taskId: '', quality: '', duration: '', forKind, publicAsAgent: false, steps: [],
 });
+
+/** Who did the work. A change of mind is asked about again: the confirmation belongs to the choice it was given for. */
+export function doneBy(d: WorkDraft, forKind: 'human' | 'agent'): WorkDraft {
+  return { ...d, forKind, publicAsAgent: false };
+}
+
+/** The draft once a unit is recorded: empty again, done by the same kind, of the same kind of work, with what was confirmed for it. */
+export function afterRecording(d: WorkDraft): WorkDraft {
+  return { ...newWork(d.forKind), activityType: d.activityType, publicAsAgent: d.publicAsAgent };
+}
 
 const slug = (s: string): string => s.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'thing';
 
@@ -102,10 +125,13 @@ export function missingFromWork(d: WorkDraft): string[] {
     const q = Number(d.quality);
     if (!Number.isFinite(q) || q < -1 || q > 1) out.push('Quality is a number from -1 to 1.');
   }
-  if (d.steps.length > WORK_LIMITS.steps) out.push(`How it went keeps at most ${WORK_LIMITS.steps} steps.`);
+  if (d.duration.trim() && !isXapiDuration(d.duration.trim())) out.push('A duration is written as ISO 8601, such as PT25M for 25 minutes or PT1H30M; or leave it out.');
+  if (d.forKind === 'agent' && !d.publicAsAgent) out.push("Say that you understand recording it as an agent's work can make your record public, or say a person did it.");
+  if (d.steps.length > WORK_STEP_LIMITS.steps) out.push(`How it went keeps at most ${WORK_STEP_LIMITS.steps} steps.`);
   d.steps.forEach((s, i) => {
     if (!s.did.trim() || !s.onWhat.trim()) out.push(`Step ${i + 1}: say what was done, and on what.`);
-    if ([s.did, s.onWhat, s.note].some(t => t.length > WORK_LIMITS.text)) out.push(`Step ${i + 1}: keep each text under ${WORK_LIMITS.text} characters.`);
+    // As sent: each text trimmed, which is what the bridge measures.
+    if ([s.did, s.onWhat, s.note].some(t => t.trim().length > WORK_STEP_LIMITS.text)) out.push(`Step ${i + 1}: keep each text to ${WORK_STEP_LIMITS.text} characters or fewer.`);
   });
   return out;
 }
