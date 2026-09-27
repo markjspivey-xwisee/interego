@@ -37,9 +37,19 @@ export const TEST_PATTERNS: readonly RegExp[] = [
 ];
 export const DOC_PATTERNS: readonly RegExp[] = [/\.(md|mdx)$/i];
 
-/** Paths whose change always warrants a human and the whole suite. */
+/**
+ * Paths whose change always warrants a human and the whole suite.
+ *
+ * `auth` matches anywhere in a path (auth, authn, authz, oauth, auth-methods, authenticate,
+ * authentication, authorize, authorization, authorise, unauthorized) except in a content author:
+ * author, authors, authored or authoring, ending there. Those say who wrote a course or a
+ * document. `course-authoring.ts` (#496) went to a human and the whole suite for its name alone.
+ * "authority" and "authorship" still match, on purpose. Here an authority decides who may act
+ * (`the-authority-shape-enforces`, `mesh-enrolment-authority-live`), and an authorship is a signed
+ * proof (`sign_authorship`, `authorship-content-binding`). Both are security code.
+ */
 export const SENSITIVE_PATTERNS: readonly RegExp[] = [
-  /auth/i, /sign(ing|ature|ed)?[-_./]/i, /\bacl\b/i, /abac/i, /crypto/i, /jwt/i, /jws/i, /\bkeys?[-_./]/i, /secret/i,
+  /auth(?!or(?:s|ed|ing)?(?![a-z]))/i, /sign(ing|ature|ed)?[-_./]/i, /\bacl\b/i, /abac/i, /crypto/i, /jwt/i, /jws/i, /\bkeys?[-_./]/i, /secret/i,
   /password/i, /token/i, /passkey/i, /oauth/i, /delegation/i, /credential/i,
   /(^|\/)\.github\/workflows\//, /^deploy\//, /Dockerfile/, /(^|\/)package\.json$/, /(^|\/)tsconfig[^/]*\.json$/,
   /(^|\/)vitest\.config\./, /\.env/,
