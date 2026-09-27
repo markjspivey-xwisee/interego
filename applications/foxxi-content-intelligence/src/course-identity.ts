@@ -16,10 +16,15 @@
  * `sameCourse` compares two ids across schemes, so nothing that matched on the urn breaks.
  */
 
+/** Whether there is a process environment to read. The dashboard bundles this module for the
+ *  browser (reports-ui reads course ids with it), where naming a `process` that is not there
+ *  throws as the module loads, and nothing of the app is drawn. */
+const hasEnv = typeof process !== 'undefined';
+
 /** The naming authority that serves course descriptions. Env-overridable so a non-default
  *  deployment mints ids under its own reachable host; defaults to the live bridge. */
 export const COURSE_ID_BASE: string =
-  (process.env.FOXXI_COURSE_ID_BASE ?? process.env.BRIDGE_DEPLOYMENT_URL ?? 'https://foxxi-bridge.interego.xwisee.com')
+  ((hasEnv ? process.env.FOXXI_COURSE_ID_BASE ?? process.env.BRIDGE_DEPLOYMENT_URL : undefined) ?? 'https://foxxi-bridge.interego.xwisee.com')
     .replace(/\/+$/, '');
 
 /** The route prefix under the authority (the bridge read route that dereferences). */

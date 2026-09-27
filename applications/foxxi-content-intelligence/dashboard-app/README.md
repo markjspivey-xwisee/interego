@@ -20,6 +20,7 @@ audit) but every data fetch goes through Interego:
 | Admin runs coverage query | Local counting | `foxxi.coverage_query` against the bridge — composes the aggregate-privacy ladder (abac / merkle-attested-opt-in / zk-distribution) |
 | Admin views audit log | Read from inlined RAW_DATA | Sample-bundled today; production composes [`integrations/compliance-overlay/`](../../../integrations/compliance-overlay/) |
 | Login | Any-string mock | Pick a real identity from the Acme Training Co sample roster; `webId` becomes the `learner_did` on every affordance call |
+| Learner finds and plays a composition | — | **Learn** (`/learn`, `/learn/<hash>`): a pasted link, IRI or hash, the ones opened lately, and the learner's own record (`foxxi.content_mine`); played step by step with `foxxi.content_launch` and `foxxi.content_next`, resolved from their own record and signed as them — the same affordances an agent plays through with no page |
 
 ## Two transports — automatic
 
@@ -128,7 +129,22 @@ affordance call. The substrate uses it to (a) resolve audience-tag
 membership for enrollment discovery, (b) record on the audit-log
 descriptor for the Q&A turn.
 
-In production this is replaced with the substrate's real auth flow
+Two sign-ins act as a real self-sovereign identity rather than a roster
+stand-in:
+- **A wallet extension** (any EIP-1193 browser wallet). Its key never leaves
+  the wallet. The wallet signs the session's token at sign-in, and each signed
+  request after that, every time on its owner's approval: the bridge takes only
+  the actor's own signature (or its delegation anchor's), so there is no session
+  key in between. The pages say so before a prompt, and nothing that prompts runs
+  without a click. The session holds no key, so it survives a reload.
+- **A pasted key** (or recovery phrase), held in the tab's memory only and never
+  written to storage, so it does not survive a reload.
+
+Every session signs its `/agent/*` requests through one signer
+([`src/auth/signer.ts`](src/auth/signer.ts)): its wallet extension, its pasted
+key, or its roster identity's demo wallet.
+
+In production the roster is replaced with the substrate's real auth flow
 (DID-resolution, SIWE / WebAuthn). The dashboard's
 [`src/auth/session.ts`](src/auth/session.ts) is the single seam to
 swap.
