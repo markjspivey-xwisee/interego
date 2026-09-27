@@ -26,8 +26,8 @@
  *
  * ★ A MISSED CHECK BRINGS ANOTHER WAY IN. When a check is missed, each position that taught its
  * competency since the last check there, and offers more than the learner met, gives them another
- * of its alternatives: chosen as resolution chose (anotherAlternative), and never one already
- * shown. Another check from the missed check's position follows, when it offers one. Each position
+ * of its alternatives: chosen as resolution chose (anotherAlternative), and never one they have
+ * already met (one the play would show them later still may be). Another check from the missed check's position follows, when it offers one. Each position
  * does this once per play, and one with nothing else to offer adds nothing: the same explanation
  * twice is not another way in. The steps go in before the play decides it is done, so a play
  * ends only when there is nothing more to take.
@@ -70,8 +70,8 @@ export interface CompositionPlay {
   /** The step the learner is on; equals steps.length once the play is done. */
   at: number;
   graded: { correct: number; total: number };
-  /** Teaching fragments met since the last check at their competency, waiting to be credited with it. */
-  waiting: Record<string, Array<{ fragment: string; level: ResolvedStep['pitchedAt'] }>>;
+  /** Teaching fragments met since the last check at their competency, waiting to be credited with it, and the step each was met at. */
+  waiting: Record<string, Array<{ fragment: string; level: ResolvedStep['pitchedAt']; at: number }>>;
   /** The positions a missed check has brought another way in at, each once. */
   wayIn: string[];
   startedAt: string;
@@ -99,18 +99,16 @@ export function startPlay(resolution: Resolution, title: string, learner: Compos
 
 /**
  * The steps a missed check brings in: for each position that taught its competency since the last
- * check there (the fragments the miss was just credited to), another of its alternatives, then
- * another check from the missed one's position. None when no teaching position has anything else.
+ * check there (the steps the miss was just credited to), another of its alternatives, then another
+ * check from the missed one's position. None when no teaching position has anything else.
+ *
+ * What the learner has met is what they have reached: a fragment the play has yet to show them,
+ * even one scheduled later, can still be their way in now. And each step credited stands for its own
+ * position, so a fragment taught at two positions gives each of them its way in.
  */
-function anotherWayIn(play: CompositionPlay, missed: ResolvedStep, credited: readonly string[], choose: AnotherWayIn): ResolvedStep[] {
-  const shown = new Set(play.steps.map(s => s.fragment['@id']));
-  const taught: ResolvedStep[] = [];
-  for (const iri of credited) {
-    for (let i = play.at - 1; i >= 0; i--) {
-      const s = play.steps[i]!;
-      if (s.fragment['@id'] === iri && s.competency === missed.competency) { taught.push(s); break; }
-    }
-  }
+function anotherWayIn(play: CompositionPlay, missed: ResolvedStep, credited: readonly number[], choose: AnotherWayIn): ResolvedStep[] {
+  const shown = new Set(play.steps.slice(0, play.at + 1).map(s => s.fragment['@id']));
+  const taught = credited.map(i => play.steps[i]).filter((s): s is ResolvedStep => !!s);
   const name = missed.fragment.title ? `"${missed.fragment.title}"` : `the ${missed.fragment.kind}`;
   const brought: ResolvedStep[] = [];
   for (const t of taught) {
@@ -218,17 +216,17 @@ export function advancePlay(play: CompositionPlay, answers: unknown, ctx: Advanc
   // Credit the outcome: a graded step to itself and to what taught it since the last check; a
   // step with nothing graded waits for the next check at its competency.
   const outcomes: Outcome[] = [];
-  const credited: string[] = [];
+  const credited: number[] = [];
   if (total) {
     const success = correct === total;
     outcomes.push({ competency: step.competency, fragment: fragmentIri, level: step.pitchedAt, success });
     for (const w of play.waiting[step.competency] ?? []) {
       outcomes.push({ competency: step.competency, fragment: w.fragment, level: w.level, success });
-      credited.push(w.fragment);
+      credited.push(w.at);
     }
     delete play.waiting[step.competency];
   } else {
-    (play.waiting[step.competency] ??= []).push({ fragment: fragmentIri, level: step.pitchedAt });
+    (play.waiting[step.competency] ??= []).push({ fragment: fragmentIri, level: step.pitchedAt, at: play.at });
   }
   // A missed check brings another way in, before the play decides whether it is done.
   if (total && correct < total && choose) play.steps.splice(play.at + 1, 0, ...anotherWayIn(play, step, credited, choose));
