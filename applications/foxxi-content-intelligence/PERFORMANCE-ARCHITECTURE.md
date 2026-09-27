@@ -222,6 +222,21 @@ agent, as learner and as author.
   - A plan made with `contextualize_and_plan` offers the admission it
     implies at the situation's competency (`admissionOffer`). Nothing is
     written onto anyone's record from it.
+  - **Work that fails is answered unasked**
+    (`offerFromWork`, agentic-performance-practice `src/work-offers.ts`).
+    A performer who records their own work
+    (`foxxi.record_performance_signed`) can send how it went with it, as a
+    trajectory. The trajectory is kept in the work's own statement, on
+    their pod (`PERF_EXT.workTrajectory`). When a unit fails:
+    - The work recorded at its competency is read back, the latest units
+      first, by the rule the learner record counts it (`workAt`).
+    - Its regime is read from the trajectories kept with that work, and
+      the failure is answered with the plan for that regime and the
+      admission the plan implies, to keep or not.
+    - A failure only its performer reported is a claim to measure first.
+    - Work kept without a trajectory leaves the regime unread, so nothing
+      is offered, and the answer says so.
+    - Nothing is offered twice, or for a plan with nothing to keep.
   - The learner, person or agent, keeps it with `foxxi.content_admit` on
     their own pod, in a list of its own sealed by the bridge to itself and
     to them ([`src/admission-store.ts`](src/admission-store.ts)). Nothing
@@ -416,11 +431,12 @@ Nobody declares which explanation of a competency works; the plays show it.
   process's view.
 
 Not yet wired:
-- turning what a learner's work shows (their trajectories and outcomes)
-  into a plan, and so an admission to keep, without their asking;
 - importing SCORM packages and authoring-tool exports (packages are
   unzipped in the browser today, and the server sees only their manifest
-  and extracted text).
+  and extracted text);
+- reading the regime from work recorded elsewhere (the tenant-scoped
+  `foxxi.record_agent_trajectory` store, or trajectory steps an agent
+  publishes to its own pod) when a failure is answered.
 
 ## 6. Authoring is composition — the same tools for humans and agents
 

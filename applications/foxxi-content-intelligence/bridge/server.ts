@@ -180,7 +180,7 @@ import {
   NON_PROJECTABLE_LOCALNAMES,
 } from '../src/durable-records.js';
 import { envelopeToClr1 } from '../src/clr-1.js';
-import { assembleEnterpriseLearnerRecord, PERFORMED_VERB, AUTHORED_VERB, CREDENTIALED_VERB, PERF_EXT } from '../src/learner-record.js';
+import { assembleEnterpriseLearnerRecord, PERFORMED_VERB, AUTHORED_VERB, CREDENTIALED_VERB, PERF_EXT, WorkStepError, performanceCompetency, workAt, workStepsFrom, type WorkStep } from '../src/learner-record.js';
 import { composeIntoSharedLattice, dereferenceTerm, latticeNamespaceView, isResident, readArtifact, projectAs, latticeStatements, latticeArtifacts, ensureResident, loadArtifactFromLattice, loadCourseFromLattice, resolvePublicNode, markLatticePublic, isLabelPublic, type ProjectionKind } from '../src/foundation-shared-lattice.js';
 import { fingerprintAuthoringTool } from '../src/scorm-fingerprint.js';
 import { manifestToAgenticCourse, agentScormToAgenticCourse, buildConceptNavGraph, type AgentScormCourseLike } from '../src/course-graph.js';
@@ -198,12 +198,12 @@ import { attachAgentScormArtifacts, scormArtifactLinks, scormArtifactManifest } 
 import { validateScormResponses, type ScormAssessmentQuestion } from '../src/scorm-assessment.js';
 import { authorQuestion, questionForLearner, questionIsRight, QuestionError } from '../src/course-questions.js';
 import { courseMarkdownHtml } from '../src/course-markdown.js';
-import { ContentError, compositionIri, contentRefOf, fragmentForLearner, fragmentFrom, fragmentIri, publicFragment, sameContent, type Fragment } from '../src/content-fragments.js';
+import { ContentError, competencyRef, compositionIri, contentRefOf, fragmentForLearner, fragmentFrom, fragmentIri, publicFragment, sameContent, type Fragment } from '../src/content-fragments.js';
 import { admissionFrom, compositionFrom, resolveComposition, type Admission, type Composition, type RecordedCompetency } from '../src/compositions.js';
 import { bundledItem, ContentStore, isCompositionItem, LOCATIONS_PER_ITEM, mergeLocations, type ContentItem, type ContentLocation } from '../src/content-store.js';
 import { foldCourse, type FoldedCourse, type FoldOptions } from '../src/course-fold.js';
 import { foldEmergentCourse, type FoldedEmergent } from '../src/emergent-fold.js';
-import { admissionRecordFrom, recordFor, standingAdmissions, type AdmissionRecord } from '../src/admission-records.js';
+import { admissionFor, admissionRecordFrom, recordFor, standingAdmissions, type AdmissionRecord } from '../src/admission-records.js';
 import { keepAdmission, readAdmissions } from '../src/admission-store.js';
 import { attemptStatements, closingStatements, cmi5AttemptFrom, compositionCourseStructure, definedStatement, type Cmi5Attempt } from '../src/composition-cmi5.js';
 import { compositionAuPage, compositionAuPageCsp } from '../src/composition-au-page.js';
@@ -439,7 +439,7 @@ import {
 import { resolveAgentEncryptionKey } from '@interego/solid';
 import { makePrivatePerformanceVerifier } from '../src/private-performance-auth.js';
 import type { PrivateAuthResult } from '../src/private-performance-auth.js';
-import { attachPerformanceRoutes } from '../src/performance-routes.js';
+import { attachPerformanceRoutes, offerFromWork, WORK_OFFER_WINDOW, type WorkOffer } from '../src/performance-routes.js';
 import { attachContentDeliveryRoutes, restorePublishedCourse } from '../src/content-delivery.js';
 // Re-integration with the agentic-performance (agp:) layer: Foxxi surfaces the
 // emergent, learnable standards-extension capability the agp layer affords by
@@ -8977,6 +8977,10 @@ app.post('/agent/record-performance', async (req, res) => {
     }
     const quality = typeof p.quality === 'number' ? p.quality : undefined;
     if (quality !== undefined && (quality < -1 || quality > 1)) { res.status(400).json({ error: 'quality (result.score.scaled) must be in [-1,1]' }); return; }
+    // How the work went, kept with it (PERF_EXT.workTrajectory): what a failure's regime is read from.
+    let workSteps: WorkStep[] | undefined;
+    try { workSteps = workStepsFrom(p.trajectory); }
+    catch (e) { if (e instanceof WorkStepError) { res.status(400).json({ error: e.message }); return; } throw e; }
     // ★ Same precondition as the MCP foxxi.record_performance path, same helper. This is
     // the door the reviewer's six fabricated task_ids came through.
     const evidence = await bindPerformanceToEvidence({
@@ -9012,6 +9016,7 @@ app.post('/agent/record-performance', async (req, res) => {
           [EVIDENCE_BINDING_EXT]: evidence.binding,
           ...(evidence.shapeIri ? { [EVIDENCE_SHAPE_EXT]: evidence.shapeIri } : {}),
           ...(typeof p.cost_usd === 'number' ? { [PERF_EXT.costUsd]: p.cost_usd } : {}),
+          ...(workSteps ? { [PERF_EXT.workTrajectory]: workSteps } : {}),
         },
       },
       timestamp: new Date().toISOString(),
@@ -9089,9 +9094,22 @@ app.post('/agent/record-performance', async (req, res) => {
      * not find. Reported, never chosen for you: pass subject_pod_url to write to the other one.
      */
     const alsoHolds = otherPodForPrincipal(subjectPod);
+    // ★ A FAILED UNIT IS ANSWERED, UNASKED, with what the work recorded at its competency implies
+    // (workOfferFor): an admission to keep, or why there is none. Read from the performer's own
+    // record, kept nowhere; the record above stands whatever this finds.
+    let workOffer: WorkOffer | undefined;
+    if (p.success === false) {
+      try {
+        workOffer = await workOfferFor({ id: callerDid, kind: p.actor_kind === 'human' ? 'human' : 'agent' }, subjectPod, { taskType: activityType, taskName });
+      } catch (e) {
+        console.warn('[foxxi][work-offer]', (e as Error).message);
+        workOffer = { offered: false, because: 'your recorded work could not be read, so no offer is made' };
+      }
+    }
     sendActionResult(req, res, {
       ok: true, recorded: true, statementId, performer: callerDid, taskId, taskName, activityType,
       success: p.success, durable: subjectPod, lensTenant: lensTenantFor(label),
+      ...(workOffer ? (workOffer.offered ? { offer: workOffer.offer } : { offerWithheld: workOffer.because }) : {}),
       ...(alsoHolds
         ? {
           samePrincipalAlsoHolds: {
@@ -9721,6 +9739,29 @@ async function learnerStatementsFor(podUrl: string, did: string): Promise<Return
   await ensureResident(podUrl, did, label);
   const durable = await readDurableRecordedStatements({ podUrl });
   return mergeStatementsById([...latticeStatements(label), ...await listStoredStatements(lensTenantFor(label))], durable);
+}
+
+/**
+ * What a failed unit of a performer's own work offers them (offerFromWork, the performance
+ * practice's rule): the work recorded at its competency, read back from their own record, and what
+ * they already keep there. Nothing here is kept. What they keep could not be read: no offer, rather
+ * than one that may repeat it.
+ */
+async function workOfferFor(performer: { id: string; kind: 'human' | 'agent' }, subjectPod: string, unit: { taskType: string; taskName: string }): Promise<WorkOffer> {
+  const named = performanceCompetency({ taskType: unit.taskType, taskName: unit.taskName, success: false });
+  if (!named) return { offered: false, because: 'this work names no competency' };
+  let competency: string;
+  try { competency = named.termIri ? competencyRef(named.termIri, 'activity_type') : competencyIri(named.label); }
+  catch { return { offered: false, because: `${named.label} names no competency content can be resolved against` }; }
+  const kept = await learnerAdmissions(performer.id);
+  if (!kept.ok) return { offered: false, because: 'what you keep could not be read, so no offer is made that might repeat it' };
+  const work = workAt(await learnerStatementsFor(subjectPod, performer.id), named.key, bridgeBaseUrl, WORK_OFFER_WINDOW).map(w => ({
+    id: w.record.id, timestamp: w.record.timestamp,
+    ...(w.record.success !== undefined ? { success: w.record.success } : {}),
+    ...(w.record.observedBy ? { observedBy: w.record.observedBy } : {}),
+    ...(w.steps ? { steps: w.steps } : {}),
+  }));
+  return offerFromWork({ performer, competency, label: named.label, work, standing: admissionFor(kept.standing, competency), base: bridgeBaseUrl });
 }
 
 /** Every credential the learner's wallet holds, read and verified the way the CLR export reads them. */

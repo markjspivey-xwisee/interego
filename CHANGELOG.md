@@ -1,5 +1,45 @@
 # Changelog
 
+## 2026-09-27 — Foxxi: work that fails is answered with the plan it implies, unasked
+
+A plan was made only when somebody described a situation (`POST /agent/contextualize-and-plan`), and the admission it implied was offered then (#509). But a performer who records their own work has already said what the situation is: the work, at a competency, and how it came out. Now a failed unit of work is answered, without the performer asking, with the plan the work at that competency implies and the admission that plan implies. It is theirs to keep with `foxxi.content_admit`, or not, and the bridge keeps nothing from it.
+
+- **Work keeps how it went** (`src/learner-record.ts`).
+  - `POST /agent/record-performance` (`foxxi.record_performance_signed`) takes an optional `trajectory`: `{ steps }`, each step with a modal status (done, intended, or considered and dropped), a granularity (task, subtask or tool call), what it acted on and its result.
+  - It is kept in the work's own statement (`PERF_EXT.workTrajectory`), so it lives with the record on the performer's pod.
+  - A malformed one is refused with a 400 that names the step, before anything is written. A trajectory holds at most 100 steps.
+- **Work at a competency reads back by the learner record's own rule.**
+  - `performanceCompetency` is the rule the learner record has always counted by: a domain type's term, or else the task its performer named when they asserted an outcome. The record and the new reader now share it.
+  - `workAt` reads the work at one competency: newest first, one unit per task, the latest report standing.
+- **A failure is answered** (`offerFromWork`, agentic-performance-practice `src/work-offers.ts`).
+  - The regime is read from the trajectories kept with the latest 20 units of work at that competency.
+  - The practice then plans for that regime, and the answer carries the admission the plan implies: its competency, kinds, reasons, regime, and the evidence it read.
+  - A failure only its performer reported is Hypothetical, a claim to measure first, and in Knowable work that is what the plan does.
+  - No offer is made for work that did not fail, or for work kept without a trajectory (no regime is assumed, and the answer says what would let one be read). The same holds for a plan that selects only no-intervention, and for an admission the performer already keeps there. The response says why in `offerWithheld`.
+  - The record stands whatever the offer finds. A record or kept list that cannot be read withholds the offer rather than making one from part of it.
+- **Layering.** `admissionOffer` moves beside `admissionFromPlan` in agentic-performance-practice's `src/content-admission.ts`, and the compatibility module re-exports it and `offerFromWork`, so the bridge reaches both through the seam it already imports. Foxxi's mentions of the layer above do not grow.
+- **Docs.** The affordance describes the trajectory and the offer, and `docs/skills` is regenerated. `PERFORMANCE-ARCHITECTURE.md` §5 describes the answer, and it leaves the not-yet-wired list, replaced by reading the regime from work recorded elsewhere. There is a new `foxxi:workTrajectory` term.
+
+`applications/agentic-performance-practice/tests/work-that-fails-is-answered-with-its-plan.test.ts` covers:
+- Emergent, Knowable and Turbulent work, each answered with the admission its plan implies, from the trajectories kept with it;
+- an observed failure in Knowable work, which leaves nothing to keep;
+- no answer to work that did not fail;
+- no regime read from work without a trajectory;
+- only the latest units read;
+- nothing offered that is already kept.
+
+`applications/foxxi-content-intelligence/tests/work-keeps-its-trajectory.test.ts` covers:
+- the trajectory taken, kept to what a step is, refused when malformed, and read back as kept;
+- the competency rule, shared with the learner record;
+- `workAt`: newest first, one unit per task, corrections standing, voided records and making verbs left out;
+- the route, checked in the bridge's source.
+
+Twenty-six mutants were checked, and each fails a named test:
+- in the offer: a success answered; the window not kept; a self-report read as Asserted, or an observed failure as Hypothetical; a plan of no-intervention alone offered; what is kept offered again; kinds compared as a subset; work with no outcome counted as assessed;
+- in the record format: the step cap, the modal status, the granularity, the text length, recordedAt or quality not checked; a step keeping whatever it was sent; a kept trajectory that cannot be read throwing;
+- in reading work: an older report of a task replacing a newer one; work not read newest first; the limit not kept; making something, or voided work, counted; a named task keeping its case; a domain type not naming the competency;
+- on the bridge: every unit answered; the trajectory not kept with the work; an unreadable kept list read as empty.
+
 ## 2026-09-27 — Foxxi: a composition projects as a SCORM 2004 package too
 
 A composition could be offered to an LMS that speaks cmi5 (#512). Many LMSs speak only SCORM. Now a composition projects as a SCORM 2004 package as well, played by the same player and graded on the same bridge.
