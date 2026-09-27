@@ -17,6 +17,7 @@ A plan was made only when somebody described a situation (`POST /agent/contextua
   - A failure only its performer reported is Hypothetical, a claim to measure first, and in Knowable work that is what the plan does.
   - No offer is made for work that did not fail, or for work kept without a trajectory (no regime is assumed, and the answer says what would let one be read). The same holds for a plan that selects only no-intervention, and for an admission the performer already keeps there. The response says why in `offerWithheld`.
   - The record stands whatever the offer finds. A record or kept list that cannot be read withholds the offer rather than making one from part of it.
+  - **An offer names the competency the record and content name.** A task named in words counts toward the competency the learner record mints for it: its words lowercased and slugged, as content authored at that slug names it (`labelCompetencyIri`, now shared). A term goes through `competencyRef`, as content names it. An offer minted from the words as written would have constrained no content ([Codex review](https://github.com/markjspivey-xwisee/interego/pull/516#discussion_r4114712050)).
 - **Layering.** `admissionOffer` moves beside `admissionFromPlan` in agentic-performance-practice's `src/content-admission.ts`, and the compatibility module re-exports it and `offerFromWork`, so the bridge reaches both through the seam it already imports. Foxxi's mentions of the layer above do not grow.
 - **Docs.** The affordance describes the trajectory and the offer, and `docs/skills` is regenerated. `PERFORMANCE-ARCHITECTURE.md` §5 describes the answer, and it leaves the not-yet-wired list, replaced by reading the regime from work recorded elsewhere. There is a new `foxxi:workTrajectory` term.
 
@@ -30,15 +31,18 @@ A plan was made only when somebody described a situation (`POST /agent/contextua
 
 `applications/foxxi-content-intelligence/tests/work-keeps-its-trajectory.test.ts` covers:
 - the trajectory taken, kept to what a step is, refused when malformed, and read back as kept;
-- the competency rule, shared with the learner record;
+- the competency rule, shared with the learner record, and a named task's competency as the record mints it;
 - `workAt`: newest first, one unit per task, corrections standing, voided records and making verbs left out;
 - the route, checked in the bridge's source.
 
-Twenty-six mutants were checked, and each fails a named test:
+Twenty-nine mutants were checked, and each fails a named test:
 - in the offer: a success answered; the window not kept; a self-report read as Asserted, or an observed failure as Hypothetical; a plan of no-intervention alone offered; what is kept offered again; kinds compared as a subset; work with no outcome counted as assessed;
 - in the record format: the step cap, the modal status, the granularity, the text length, recordedAt or quality not checked; a step keeping whatever it was sent; a kept trajectory that cannot be read throwing;
 - in reading work: an older report of a task replacing a newer one; work not read newest first; the limit not kept; making something, or voided work, counted; a named task keeping its case; a domain type not naming the competency;
-- on the bridge: every unit answered; the trajectory not kept with the work; an unreadable kept list read as empty.
+- on the bridge: every unit answered; the trajectory not kept with the work; an unreadable kept list read as empty; the offer naming the words as written;
+- in naming a task's competency: its case kept, or its words not slugged.
+
+`tests/the-descriptor-publishes-the-judgement-rule.test.ts` pinned the line that decided which performances count toward a competency. It now pins `performanceCompetency`, where that rule lives unchanged, and the line where the record counts by it.
 
 ## 2026-09-27 — Foxxi: a composition projects as a SCORM 2004 package too
 

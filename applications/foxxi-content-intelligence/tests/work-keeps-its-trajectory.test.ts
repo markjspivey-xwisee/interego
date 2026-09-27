@@ -8,9 +8,11 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import type { StoredStatement } from '../src/statement-store.js';
 import {
-  AUTHORED_VERB, PERF_EXT, PERFORMED_VERB, WORK_STEP_LIMITS, WorkStepError, assembleEnterpriseLearnerRecord, performanceCompetency, workAt, workStepsFrom, workStepsOf,
+  AUTHORED_VERB, PERF_EXT, PERFORMED_VERB, WORK_STEP_LIMITS, WorkStepError, assembleEnterpriseLearnerRecord, labelCompetencyIri, performanceCompetency, workAt, workStepsFrom, workStepsOf,
 } from '../src/learner-record.js';
 import { FOXXI_NS } from '../src/foxxi-vocab.js';
+import { competencyIri } from '../src/competency-identity.js';
+import { competencyRef } from '../src/content-fragments.js';
 
 const good = { modalStatus: 'Asserted', granularity: 'tool-call', verb: 'ran', objectId: 'urn:x:tests', objectName: ' the tests ', result: { success: false, quality: -0.5, note: 'two failed' }, extra: 'dropped' };
 
@@ -83,6 +85,17 @@ describe('work at a competency reads back by the rule the learner record counts 
     expect(workAt(statements, term, 'https://bridge.example', 10).map(w => w.record.id)).toEqual(['h']);
   });
 
+  it('names a task\'s competency as the record mints it, which content authored at that slug names too', async () => {
+    expect(labelCompetencyIri('Refund a DISPUTED order')).toBe(competencyIri('refund-a-disputed-order'));
+    expect(competencyRef('refund-a-disputed-order', 'competency')).toBe(labelCompetencyIri('Refund a disputed order'));
+    const record = await assembleEnterpriseLearnerRecord({
+      learnerDid: 'did:web:p.example', learnerPodUrl: 'https://pod.example/p/', tenantDid: 'did:web:tenant.example', lrsEndpoint: 'https://bridge.example',
+      statements: [production('d', { at: '2026-09-27T10:00:00Z', success: false, name: 'Refund a DISPUTED order' })], subjectKind: 'agent',
+      fetch: (async () => { throw new Error('no pod here'); }) as never,
+    });
+    expect(record.competencies.map(c => c.id)).toEqual([labelCompetencyIri('Refund a DISPUTED order')]);
+  });
+
   it('agrees with the learner record on which competency each unit counts toward', async () => {
     const statements = [
       production('a', { at: '2026-09-20T10:00:00Z', success: true }),
@@ -119,5 +132,7 @@ describe('the bridge answers a failed unit with what the work there implies', ()
     expect(helper).toMatch(/const kept = await learnerAdmissions\(performer\.id\);\s+if \(!kept\.ok\) return \{ offered: false,/);
     expect(helper).toMatch(/workAt\(await learnerStatementsFor\(subjectPod, performer\.id\), named\.key, bridgeBaseUrl, WORK_OFFER_WINDOW\)/);
     expect(helper).toMatch(/standing: admissionFor\(kept\.standing, competency\)/);
+    // A kept offer must constrain the competency content and the record name, not the words as written.
+    expect(helper).toMatch(/competency = named\.termIri \? competencyRef\(named\.termIri, 'activity_type'\) : labelCompetencyIri\(named\.label\);/);
   });
 });

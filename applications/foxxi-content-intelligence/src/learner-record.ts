@@ -674,6 +674,15 @@ export function performanceCompetency(p: Pick<ElrPerformanceRecord, 'taskType' |
   return { key: labelKey(p.taskName), label: p.taskName };
 }
 
+/**
+ * The competency a task named in words counts toward, as the record mints it: its words
+ * lowercased and slugged. Content authored at that slug names the same competency, so anything
+ * offered at a named task's competency must use this, not the words as written.
+ */
+export function labelCompetencyIri(label: string): string {
+  return competencyIri(label.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 48));
+}
+
 /** A unit of production work at one competency, with the trajectory its performer kept with it, if any. */
 export interface RecordedWork {
   record: ElrPerformanceRecord;
@@ -833,7 +842,7 @@ function buildCompetencies(
     // bucket, which is a bucket no CASE association can honestly be written about.
     const competencyDefIri = d.termIri !== undefined
       ? competencyIriForTerm(d.termIri)
-      : competencyIri(d.label.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 48));
+      : labelCompetencyIri(d.label);
     // ★ THE EVIDENCE LIST CARRIES THE ARTIFACT, NOT ONLY THE LOG ENTRY.
     //
     // `rawDataLocation` for a performance is an LRS statement URL, and xAPI REQUIRES that to

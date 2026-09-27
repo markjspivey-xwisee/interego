@@ -180,7 +180,7 @@ import {
   NON_PROJECTABLE_LOCALNAMES,
 } from '../src/durable-records.js';
 import { envelopeToClr1 } from '../src/clr-1.js';
-import { assembleEnterpriseLearnerRecord, PERFORMED_VERB, AUTHORED_VERB, CREDENTIALED_VERB, PERF_EXT, WorkStepError, performanceCompetency, workAt, workStepsFrom, type WorkStep } from '../src/learner-record.js';
+import { assembleEnterpriseLearnerRecord, PERFORMED_VERB, AUTHORED_VERB, CREDENTIALED_VERB, PERF_EXT, WorkStepError, labelCompetencyIri, performanceCompetency, workAt, workStepsFrom, type WorkStep } from '../src/learner-record.js';
 import { composeIntoSharedLattice, dereferenceTerm, latticeNamespaceView, isResident, readArtifact, projectAs, latticeStatements, latticeArtifacts, ensureResident, loadArtifactFromLattice, loadCourseFromLattice, resolvePublicNode, markLatticePublic, isLabelPublic, type ProjectionKind } from '../src/foundation-shared-lattice.js';
 import { fingerprintAuthoringTool } from '../src/scorm-fingerprint.js';
 import { manifestToAgenticCourse, agentScormToAgenticCourse, buildConceptNavGraph, type AgentScormCourseLike } from '../src/course-graph.js';
@@ -9750,8 +9750,10 @@ async function learnerStatementsFor(podUrl: string, did: string): Promise<Return
 async function workOfferFor(performer: { id: string; kind: 'human' | 'agent' }, subjectPod: string, unit: { taskType: string; taskName: string }): Promise<WorkOffer> {
   const named = performanceCompetency({ taskType: unit.taskType, taskName: unit.taskName, success: false });
   if (!named) return { offered: false, because: 'this work names no competency' };
+  // The competency content names, so a kept offer constrains it: a named task's is the one the
+  // learner record mints for it (labelCompetencyIri); a term's is the term, as content names it.
   let competency: string;
-  try { competency = named.termIri ? competencyRef(named.termIri, 'activity_type') : competencyIri(named.label); }
+  try { competency = named.termIri ? competencyRef(named.termIri, 'activity_type') : labelCompetencyIri(named.label); }
   catch { return { offered: false, because: `${named.label} names no competency content can be resolved against` }; }
   const kept = await learnerAdmissions(performer.id);
   if (!kept.ok) return { offered: false, because: 'what you keep could not be read, so no offer is made that might repeat it' };
