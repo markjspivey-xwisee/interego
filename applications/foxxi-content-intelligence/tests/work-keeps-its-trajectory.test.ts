@@ -11,7 +11,7 @@ import {
   AUTHORED_VERB, PERF_EXT, PERFORMED_VERB, WORK_STEP_LIMITS, WorkStepError, assembleEnterpriseLearnerRecord, labelCompetencyIri, performanceCompetency, workAt, workStepsFrom, workStepsOf,
 } from '../src/learner-record.js';
 import { FOXXI_NS } from '../src/foxxi-vocab.js';
-import { competencyIri } from '../src/competency-identity.js';
+import { competencyIri, competencyOfTerm } from '../src/competency-identity.js';
 import { competencyRef } from '../src/content-fragments.js';
 
 const good = { modalStatus: 'Asserted', granularity: 'tool-call', verb: 'ran', objectId: 'urn:x:tests', objectName: ' the tests ', result: { success: false, quality: -0.5, note: 'two failed' }, extra: 'dropped' };
@@ -62,7 +62,8 @@ describe('work at a competency reads back by the rule the learner record counts 
   const term = 'https://skills.example/ns#RefundAuthority';
 
   it('names a competency by a domain type\'s term, or else by the task its performer named when an outcome was asserted', () => {
-    expect(performanceCompetency({ taskType: term, taskName: 'anything', success: undefined })).toEqual({ key: term, label: 'RefundAuthority', termIri: term });
+    // Keyed by the competency the term names: another authority's term kept whole.
+    expect(performanceCompetency({ taskType: term, taskName: 'anything', success: undefined })).toEqual({ key: competencyOfTerm(term), label: 'RefundAuthority', termIri: term });
     expect(performanceCompetency({ taskType: `${FOXXI_NS}ProductionTask`, taskName: 'Refund a disputed order', success: false })).toEqual({ key: 'label:refund a disputed order', label: 'Refund a disputed order' });
     expect(performanceCompetency({ taskType: `${FOXXI_NS}ProductionTask`, taskName: 'Refund a disputed order', success: undefined })).toBeNull();
   });
@@ -82,7 +83,7 @@ describe('work at a competency reads back by the rule the learner record counts 
     expect(work.map(w => w.record.id)).toEqual(['d', 'c', 'b']);
     expect(work.map(w => w.steps)).toEqual([undefined, undefined, workStepsFrom({ steps: [good] })]);
     expect(workAt(statements, 'label:refund a disputed order', 'https://bridge.example', 2).map(w => w.record.id)).toEqual(['d', 'c']);
-    expect(workAt(statements, term, 'https://bridge.example', 10).map(w => w.record.id)).toEqual(['h']);
+    expect(workAt(statements, competencyOfTerm(term), 'https://bridge.example', 10).map(w => w.record.id)).toEqual(['h']);
   });
 
   it('names a task\'s competency as the record mints it, which content authored at that slug names too', async () => {

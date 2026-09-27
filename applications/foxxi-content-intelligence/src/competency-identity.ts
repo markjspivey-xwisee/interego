@@ -57,6 +57,53 @@ export function competencyIriForTerm(termIri: string): string {
   return competencyIri(termIri);
 }
 
+/** The id of one of this deployment's own competency IRIs, or of the legacy urn form; null for anything else. */
+function ownIdOf(iri: string): string | null {
+  if (iri.startsWith(LEGACY_COMPETENCY_PREFIX)) return iri.slice(LEGACY_COMPETENCY_PREFIX.length) || null;
+  if (!iri.startsWith(URL_PREFIX)) return null;
+  const segment = iri.slice(URL_PREFIX.length);
+  if (!segment || /[/?#]/.test(segment)) return null;
+  try { return decodeURIComponent(segment); } catch { return null; }
+}
+
+/**
+ * ★ THIS DEPLOYMENT'S OWN COMPETENCY IS ITSELF, IN WHATEVER FORM A TERM NAMES IT.
+ *
+ * A term that is one of this deployment's own competency IRIs (one path segment under
+ * COMPETENCY_ID_BASE), or the legacy `urn:foxxi:competency:` form of one, names a competency this
+ * deployment already identifies. Its identity is `competencyIri(<its id>)`, the one content names
+ * it by (`competencyRef`) and resolution compares a learner's record against. Wrapped as another
+ * authority's term (`competencyIriForTerm`), it became an id nothing else used, so work recorded
+ * against a deployment's own competency never reached the pitch for it. An own IRI once wrapped
+ * that way is unwrapped too.
+ *
+ * ★ ANOTHER HOST'S `/ns/foxxi/competency/<slug>` IS ANOTHER AUTHORITY. `isCompetencyIri` and
+ * `competencyIdOf` read that path on any host, which suits content: its ids must not depend on the
+ * deployment serving it. But a record's competency keeps the authority that named it (see
+ * `competencyIriForTerm`). Anyone's server can publish a `/ns/foxxi/competency/refund-authority`
+ * of its own, and taking it for this deployment's would pool its evidence into this deployment's
+ * competency, the collision `competencyIriForTerm` exists to prevent. So only this deployment's own
+ * base is ours, and the urn: it names no host at all, and it is the form this deployment's ids
+ * took before the swap to URLs (the dual-read above).
+ *
+ * Null for any other term.
+ */
+export function ownCompetencyIri(term: string): string | null {
+  let id = ownIdOf(term);
+  if (id === null) return null;
+  for (let depth = 0; depth < 3; depth++) {
+    const inner = ownIdOf(id);
+    if (inner === null) break;
+    id = inner;
+  }
+  return competencyIri(id);
+}
+
+/** The competency a term names, as a record identifies it: this deployment's own as itself, any other authority's term kept whole. */
+export function competencyOfTerm(termIri: string): string {
+  return ownCompetencyIri(termIri) ?? competencyIriForTerm(termIri);
+}
+
 /** True when a competency id's payload is itself an absolute term IRI (the form
  *  `competencyIriForTerm` mints), and that term. Null for a plain slug. */
 export function competencyTermOf(iri: string): string | null {
