@@ -163,7 +163,12 @@ agent, as learner and as author.
     view plus a commitment (the hash of the stored question), so the
     public form (`publicFragment`) can be served to anyone, without a salt
     or verifier, and still be checked against the IRI
-    (`publicFragmentIsIntact`).
+    (`publicFragmentIsIntact`). A fragment with a graded question also
+    carries a random blinding value, stored and never served, that goes
+    into every salt and commitment. Without it, a learner could rebuild
+    the stored question for each answer they might try and see whose
+    commitment matches. So the same quiz authored twice is two fragments,
+    and a stored form sent back keeps its IRI.
   - Its kind says what form it takes: concept, worked example, job aid,
     reference, assessment item, practice task, context, and the forms of
     emergent work, `probe` and `reflection`. Those two take no graded
@@ -218,9 +223,13 @@ agent, as learner and as author.
 - `foxxi.content_resolve` resolves a composition for the caller from
   their own record, with an admission if they send one.
 
-Each item is kept on its author's pod's shared lattice and recorded as an
-`authored` statement. The bridge caches it and remembers whose pod it came
-from. Anything read back is checked against its hash
+Each item is written to its author's pod's shared lattice first. Only
+once that write lands is it recorded as an `authored` statement, cached,
+and its pod remembered. The pod is remembered as written, not derived
+again from the DID, and each item keeps up to five authors' pods. All
+three routes take the per-IP authoring rate limit.
+
+Anything read back is checked against its hash
 ([`src/content-store.ts`](src/content-store.ts)), so a wrong or hostile
 source can make an item unavailable but never different. A fragment's IRI
 dereferences to its public form, and a composition's to itself.

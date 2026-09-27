@@ -1,5 +1,48 @@
 # Changelog
 
+## 2026-09-26 — Foxxi: a fragment's public form is no oracle for its answers, and content is kept only once a pod holds it
+
+The automated review of #502 found four problems, each fixed here.
+
+- **The public commitment was an answer oracle** (`src/content-fragments.ts`). A question's salt came from the fragment's public fields, so for a graded choice or true/false question without an explanation, a learner could rebuild the stored question for each answer they might try and compare its commitment with the public one.
+  - A fragment with a graded question now carries `blind`: a random 256-bit value, kept with the stored form and never served. It goes into every question's salt and into every commitment.
+  - The commitment's own share covers a question sent already in stored form, whose salt may come from a seed anyone can work out, a SCORM course's for instance. Without it, that stored question could be rebuilt exactly.
+  - Consequently the same quiz authored twice is two fragments, each with its own grading secret. A stored form sent back carries its value and keeps its IRI. A fragment with nothing graded carries no value and is still the same fragment wherever it is authored. The module's header, which said authoring twice gives the same IRI, now says this.
+- **Authoring reported success when the pod write failed** (`bridge/server.ts`). `composeIntoSharedLattice` reports a failed write as `persisted: false` or `null` rather than throwing, and the routes answered `ok: true` with a `durable` pod that held nothing. The item then lasted only as long as the cache.
+  - The lattice write now comes first. Only if it reports `persisted` is the item cached, its pod remembered, and the `authored` statement recorded.
+  - Otherwise the route answers 503 with the reason.
+- **The location index lost content written to a twin pod.** It stored only the author's DID, and a cold read derived the pod again from the DID. `selfBoundPod` may choose a same-principal twin pod, `u-eth-…` rather than `eth-…`, and content written there became unreachable after eviction or a restart.
+  - The index now keeps `{ did, pod }` as written (`ContentLocation`, `mergeLocations`), and a cold read tries that pod.
+  - Only pods on this tenant's own server are read. A pod that is not an http(s) URL is not a location.
+  - An entry in the index's first form, a bare DID, still reads, as a location with no pod.
+- **The new routes took no rate limit.** The fragment, composition and resolve routes now take the same per-IP limit as the other authoring routes (`checkAgenticRateLimit`), before anything is read or written.
+
+`PERFORMANCE-ARCHITECTURE.md` §5 describes the blinding value and the order of keeping.
+
+Tests:
+- The oracle:
+  - rebuilding a true/false question's stored form for each answer from the public fields matches neither commitment;
+  - the same rebuilding with the blinding value matches the right answer, so the first result is the value's doing and not a wrong rebuild;
+  - a question sent in stored form with a salt anyone can work out is rebuilt exactly, and still does not match its commitment.
+- Blinding: a fragment with nothing graded carries no value and keeps its IRI. A graded one keeps its IRI when sent back, and gets a new one when authored afresh.
+- The location index: pods as written, a bare DID from the first form, non-http(s) pods dropped.
+- The bridge's routes, checked in its source:
+  - the write comes before caching;
+  - a failed write answers 503;
+  - the pod is recorded as written and read back only on this server;
+  - all three routes are rate-limited before verification.
+
+Seven mutants were checked, and each fails a named test:
+- the commitment without the blinding value;
+- a graded fragment with no value;
+- caching before the write;
+- a failed write reported as kept;
+- resolve without the rate limit;
+- a location naming any URL;
+- the pod derived again from the DID.
+
+The first of these survived the first draft of the tests, because the salt already carries the value. The stored-form case above is what the commitment's own share is for, and it now catches that mutant.
+
 ## 2026-09-26 — Foxxi: a resolution says when more content was refused than it lists
 
 The automated review of #501 found an undercount. A branch keeps at most 20 distinct refusals, so that the list and the trace lines drawn from it cannot grow with the size of the tree. But when a fallen-back branch had more than 20, the reason said "inside it, 20 alternative(s) did not hash", and the trace stopped at 20 lines without saying so.

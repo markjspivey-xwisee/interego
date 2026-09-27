@@ -15,7 +15,9 @@ import {
 } from '../src/content-fragments.js';
 import { admissionFrom, compositionFrom } from '../src/compositions.js';
 import { ContentStore, LOCATIONS_PER_ITEM, mergeLocations, type ContentItem } from '../src/content-store.js';
-import { questionIsRight } from '../src/course-questions.js';
+import { authorQuestion, questionIsRight } from '../src/course-questions.js';
+import { createHash } from 'node:crypto';
+import { canonicalJson } from '@interego/core';
 import { lookupTerm } from '../src/foxxi-vocab.js';
 
 const quiz = fragmentFrom({
@@ -32,9 +34,40 @@ describe('a fragment can be served in public without its verifiers, and still be
     const p = publicFragment(quiz);
     const text = JSON.stringify(p);
     for (const secret of ['answerHash', 'acceptHashes', 'salt', 'explanation', 'Leads approve']) expect(text).not.toContain(secret);
-    expect(p.questions!.map(q => q.commitment)).toEqual(quiz.questions!.map(questionCommitment));
+    expect(p.questions!.map(q => q.commitment)).toEqual(quiz.questions!.map(q => questionCommitment(q, quiz.blind)));
+    expect(text).not.toContain(quiz.blind!);
+    expect('blind' in p).toBe(false);
     expect(p.questions!.map(q => q.graded)).toEqual([true, true]);
     expect(p['@id']).toBe(quiz['@id']);
+  });
+
+  it('is no oracle for its answers: the stored form for a guessed answer cannot be rebuilt from it', () => {
+    // Everything public about a true/false question, and what an attacker can derive from it.
+    const tf = fragmentFrom({ kind: 'assessment-item', competencies: ['refunds'], body: 'Check.', questions: [{ question: 'Refunds need a reason.', answer: true }] });
+    const p = publicFragment(tf);
+    const publicSeed = (blind?: string): string => createHash('sha256')
+      .update(canonicalJson({ kind: 'assessment-item', level: 'working', competencies: ['refunds'], body: 'Check.', ...(blind ? { blind } : {}) })).digest('hex');
+    for (const answer of [true, false]) {
+      const guess = authorQuestion({ question: 'Refunds need a reason.', answer }, `${publicSeed()}\n0`);
+      expect(questionCommitment(guess)).not.toBe(p.questions![0]!.commitment);
+    }
+    // The same rebuilding with the blinding value, which only the stored form holds, does match the right
+    // answer: so the negative result above is the value doing its work, not a wrong reconstruction.
+    const right = authorQuestion({ question: 'Refunds need a reason.', answer: true }, `${publicSeed(tf.blind)}\n0`);
+    expect(questionCommitment(right, tf.blind)).toBe(p.questions![0]!.commitment);
+    // A question sent already in stored form keeps its own salt, which may come from a seed anyone can
+    // work out (a course's, say): then the whole stored question can be rebuilt exactly. The commitment
+    // still takes the blinding value, so even then it is no oracle.
+    const exposed = authorQuestion({ question: 'Refunds need a reason.', answer: true }, 'a seed anyone can work out');
+    const reused = fragmentFrom({ kind: 'assessment-item', competencies: ['refunds'], body: 'Again.', questions: [exposed] });
+    const rebuilt = authorQuestion({ question: 'Refunds need a reason.', answer: true }, 'a seed anyone can work out');
+    expect(rebuilt).toEqual(exposed);
+    expect(questionCommitment(rebuilt)).not.toBe(publicFragment(reused).questions![0]!.commitment);
+    // A fragment with nothing graded needs no value, and stays the same fragment wherever it is authored.
+    const survey = { kind: 'reflection', competencies: ['refunds'], body: 'Think back.', questions: [{ question: 'How sure were you?', type: 'likert' }] };
+    expect(fragmentFrom(survey).blind).toBeUndefined();
+    expect(fragmentFrom(survey)['@id']).toBe(fragmentFrom(survey)['@id']);
+    expect(() => fragmentFrom({ ...tf, blind: 'not-hex' })).toThrow(/blind is the 64 hex characters/);
   });
 
   it('checks the public form and the stored form against the same IRI, and neither survives a change', () => {
@@ -112,13 +145,16 @@ describe('the index of where content lives', () => {
     const key = contentRefOf(lesson['@id'])!;
     const k = `${key.type}:${key.hash}`;
     // As the durable index arrives from a pod: JSON, where "__proto__" is an ordinary key.
-    const durable: unknown = JSON.parse(`{"__proto__":["did:web:x"],"fragment:nothex":["did:web:y"],"${k}":"did:web:first.example"}`);
+    // The index keeps the pod each author wrote to; the earlier form, a bare DID, is read as one with no pod.
+    const durable: unknown = JSON.parse(`{"__proto__":["did:web:x"],"fragment:nothex":["did:web:y"],"${k}":["did:web:first.example"]}`);
     expect(Object.keys(durable as object)).toContain('__proto__');
-    const merged = mergeLocations(durable,
-      new Map([[k, ['did:web:second.example', 'did:web:first.example', 'did:web:c', 'did:web:d', 'did:web:e', 'did:web:f']]]));
+    const at = (n: string): { did: string; pod: string } => ({ did: `did:web:${n}.example`, pod: `https://pods.example/${n}/` });
+    const merged = mergeLocations(durable, new Map([[k, [at('second'), at('second'), { did: 'did:web:first.example', pod: '' }, at('c'), at('d'), at('e'), at('f')]]]));
     expect([...merged.keys()]).toEqual([k]);
-    expect(merged.get(k)).toEqual(['did:web:first.example', 'did:web:second.example', 'did:web:c', 'did:web:d', 'did:web:e']);
+    expect(merged.get(k)).toEqual([{ did: 'did:web:first.example', pod: '' }, at('second'), at('c'), at('d'), at('e')]);
     expect(merged.get(k)).toHaveLength(LOCATIONS_PER_ITEM);
+    // A pod that is not an http(s) URL is not a location.
+    expect(mergeLocations({ [k]: [{ did: 'did:web:a', pod: 'file:///etc/passwd' }, { did: 'did:web:b', pod: 'javascript:x' }] }, {}).size).toBe(0);
     expect(mergeLocations(null, 'nonsense').size).toBe(0);
   });
 });
@@ -154,9 +190,25 @@ describe('the bridge authors, dereferences and resolves content through these', 
     expect(keep).toMatch(/composeIntoSharedLattice\(/);
     expect(keep).toMatch(/verbIri: AUTHORED_VERB/);
     expect(src).toMatch(/sameContent\(String\(\(c as \{ '@id'\?: unknown \}\)\['@id'\] \?\? ''\), iri\)/);
-    // Every pod that holds an item is tried, so one author withdrawing it does not lose it.
-    expect(src).toMatch(/for \(const did of contentLocations\.get\(key\) \?\? \[\]\) \{/);
+    // Every pod that holds an item is tried, the one it was written to and only on this tenant's server,
+    // so one author withdrawing it, or writing to a twin pod, does not lose it.
+    expect(src).toMatch(/for \(const \{ did, pod: written \} of contentLocations\.get\(key\) \?\? \[\]\) \{\n\s+const pod = written \|\| resolveSubjectPodUrl\(did\);/);
+    expect(src).toMatch(/if \(!tenantOrigin \|\| podOrigin !== tenantOrigin\) continue;/);
     expect(route('function recordContentLocation')).toMatch(/held\.length >= LOCATIONS_PER_ITEM/);
+    // Kept only once the pod holds it: the lattice write comes first and must report persisted.
+    const keepFirst = route('async function keepAuthoredContent');
+    expect(keepFirst.indexOf('composeIntoSharedLattice(')).toBeLessThan(keepFirst.indexOf('contentStore.put(item)'));
+    expect(keepFirst).toMatch(/if \(!sharedLattice\?\.persisted\) \{/);
+    expect(keepFirst).toMatch(/recordContentLocation\(`\$\{ref\.type\}:\$\{ref\.hash\}`, authorDid, authorPod\)/);
+    for (const path of ['/agent/content/fragment', '/agent/content/composition']) {
+      expect(route(`app.post('${path}'`)).toMatch(/if \(!kept\.ok\) \{ res\.status\(503\)/);
+    }
+    // Every content route takes the per-IP limit before anything else.
+    for (const path of ['/agent/content/fragment', '/agent/content/composition', '/agent/content/resolve']) {
+      const r = route(`app.post('${path}'`);
+      expect(r.indexOf('contentRateLimited(req, res)'), path).toBeGreaterThan(0);
+      expect(r.indexOf('contentRateLimited(req, res)'), path).toBeLessThan(r.indexOf('verifyDelegatedCaller'));
+    }
   });
 
   it('serves a fragment only in its public form, and resolves for the caller from their own record', () => {

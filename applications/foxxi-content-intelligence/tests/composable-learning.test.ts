@@ -55,7 +55,11 @@ describe('a fragment is identified by its content', () => {
       { question: 'Order the steps', items: ['Verify', 'Refund', 'Log'] },
     ] };
     const f = fragmentFrom(raw);
-    expect(fragmentFrom(raw)).toEqual(f);
+    // A graded fragment carries a random blinding value: sent back in its stored form it keeps its
+    // IRI, and the same quiz authored afresh is a different fragment with its own.
+    expect(f.blind).toMatch(/^[0-9a-f]{64}$/);
+    expect(fragmentFrom(JSON.parse(JSON.stringify(f)))).toEqual(f);
+    expect(fragmentFrom(raw)['@id']).not.toBe(f['@id']);
     expect(JSON.stringify(f)).not.toMatch(/"answer"/);
     expect(questionIsRight('B', f.questions![0]!)).toBe(true);
     expect(questionIsRight('A', f.questions![0]!)).toBe(false);
