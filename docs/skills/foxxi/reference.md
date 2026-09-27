@@ -1,6 +1,6 @@
 # Foxxi content intelligence, learner surface: every affordance
 
-Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 47 affordances.
+Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 50 affordances.
 
 ## `foxxi.record_private_performance_outcome`
 
@@ -680,6 +680,51 @@ Author a job aid or quick reference as yourself. It composes into a PUBLIC share
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
 | `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, title, body, kind?:"job-aid"\|"quick-reference" }). body is Markdown. |
+| `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.content_fragment`
+
+**Author a fragment of teaching or support**
+
+Author a fragment as yourself: one piece of teaching or support that compositions use by reference. Its IRI is the hash of its content, so the same content is the same fragment anywhere and nobody can change what a learner is shown under it. The body is Markdown (read as is by an agent, rendered for a person); questions take the xAPI interaction types and are stored with verifiers, never answers. It is kept on your pod's shared lattice and recorded as your authored statement; its IRI dereferences to its public form (no salt, verifier or explanation, and still checkable against the IRI).
+
+- Action: `urn:iep:action:foxxi:content-fragment-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/content/fragment` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, fragment: { kind, level?, competencies:[competency IRI, term IRI or slug], title?, body, questions?:[question, …], audience?: human\|agent, suits?:[tag], language? }, subject_pod_url? }). kind is one of concept, worked-example, video, simulation, practice-task, assessment-item (needs a graded question), job-aid, reference, context-descriptor, probe and reflection (these two take only likert or long-fill-in questions). level is foundational, working (default), applied or advanced. body is Markdown, up to 20000 characters. Questions are written as foxxi.scorm_author takes them, at most 40. |
+| `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.content_compose`
+
+**Compose fragments into a lesson, module, course or curriculum**
+
+Author a composition as yourself: a path of positions, each naming a competency and the alternatives that can fill it (fragments or other compositions, by their IRIs). Lesson, module, course and curriculum are one composition at different sizes, and a fragment used in three compositions is one fragment. Its IRI is the hash of its content; a revision names what it supersedes. Every alternative must be content this bridge can reach.
+
+- Action: `urn:iep:action:foxxi:content-compose-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/content/composition` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, composition: { title, competency, positions:[{ competency, demonstratedAt?: 1-5, paradigm:[fragment or composition IRIs, 1-12] }, …], supersedes? }, subject_pod_url? }). At most 100 positions. demonstratedAt is the proficiency rank (1 Novice … 5 Expert) at which a learner skips the position; the default is 3, Competent. |
+| `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.content_resolve`
+
+**Resolve a composition for yourself, from your own record**
+
+Resolve a composition for yourself: which fragment you are shown at each position and why. A position whose competency your record shows you have demonstrated (an Asserted competency, from performance or a credential, at the position's rank) is skipped; a training-only inference skips nothing. An admission, if given, limits each position to the forms that suit the work (the performance practice makes one from a plan). Among what is left, the alternative pitched nearest your level is chosen. Content that does not hash to its IRI is never used, and the trace says so. The same for a person and for an agent.
+
+- Action: `urn:iep:action:foxxi:content-resolve-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/content/resolve` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, composition: IRI, admission?: { kinds:[fragment kinds], because }, learner_kind?: human\|agent }). learner_kind defaults to human for a wallet signing for itself and agent for a delegated agent. |
 | `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
 
 ## `foxxi.scorm_author`

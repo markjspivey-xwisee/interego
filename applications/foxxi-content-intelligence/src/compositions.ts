@@ -39,7 +39,7 @@ import { createHash } from 'node:crypto';
 import { canonicalJson } from '@interego/core';
 import { competencyIdOf, sameCompetency } from './competency-identity.js';
 import {
-  compositionIri, competencyRef, ContentError, contentRefOf, fragmentIsIntact, sameContent,
+  compositionIri, competencyRef, ContentError, contentRefOf, FRAGMENT_KINDS, fragmentIsIntact, fragmentKind, sameContent,
   type Fragment, type FragmentKind,
 } from './content-fragments.js';
 import type { CognitiveLevel } from './emergent-content.js';
@@ -149,6 +149,19 @@ export interface Admission {
   kinds: readonly FragmentKind[];
   /** Why, in words the trace shows: "the plan for this Emergent work selected probe and coaching". */
   because: string;
+}
+
+/** An admission as a caller sends it, `{ kinds: [fragment kinds], because }`, checked, since it decides what a learner is shown. */
+export function admissionFrom(raw: unknown): Admission {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new ContentError('an admission is { kinds: [fragment kinds], because }');
+  const r = raw as Record<string, unknown>;
+  if (!Array.isArray(r.kinds) || r.kinds.length > FRAGMENT_KINDS.length) throw new ContentError(`admission.kinds lists at most ${FRAGMENT_KINDS.length} fragment kinds`);
+  const kinds = [...new Set(r.kinds.map((k, i) => {
+    if (typeof k !== 'string' || !fragmentKind(k)) throw new ContentError(`admission.kinds[${i}] is not a fragment kind (${FRAGMENT_KINDS.map(d => d.kind).join(', ')})`);
+    return k as FragmentKind;
+  }))];
+  if (typeof r.because !== 'string' || !r.because.trim() || r.because.length > 500) throw new ContentError('admission.because says why, in at most 500 characters');
+  return { kinds, because: r.because.trim() };
 }
 
 export interface ResolveInput {
