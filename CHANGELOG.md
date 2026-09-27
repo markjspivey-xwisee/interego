@@ -33,6 +33,33 @@ The page was run in a browser against the deployed bridge, as the demo learner J
 
 The other doors that take a caller's duration (an external agent run, a cmi5 session, a course completion) are left for a follow-up.
 
+## 2026-09-27 — Foxxi dashboard: a composition's page resolves it for its author, and takes it elsewhere
+
+A composition's page (`/author/<hash>`) showed only what the composition has learned. It now shows its author two more things.
+
+- **How it resolves for them** (`foxxi.content_resolve`, signed as the author). This is what a launch does first, but no play is started and nothing is recorded. The page shows:
+  - which alternative each position gives them from their own record, and why;
+  - which positions are skipped because they have already demonstrated the competency, and which nothing could fill;
+  - any pieces the bridge could not reach, and what they keep that limits it;
+  - every decision, in words.
+
+  They resolve it as a person or as an agent, since some fragments are meant for one kind of learner only. The choice is fixed while a resolution is under way, so an answer is never shown under the other kind. A wallet is asked only on a click.
+- **Where it can be taken.** The page links the bridge's own cmi5 course structure (`cmi5.xml`) and SCORM 2004 package (`scorm.zip`) for the composition. Any LMS that imports either takes it as one unit, played by this bridge's player. The page says what that means: a learner the LMS names is one the bridge cannot verify, so their play resolves as for anyone new to it, and adds nothing to what has worked here.
+
+Four tests in `tests/the-author-tools-speak-the-bridges-language.test.ts`:
+- a real composition, resolved by the engine's own `resolveComposition` and served in the form a learner receives (`fragmentForLearner`): as a person it is one step and a position nothing could fill, since that fragment is meant for agents; as an agent it is both steps;
+- the choice of kind is fixed while resolving;
+- the export links are the routes the bridge serves.
+
+Seven mutants each fail a named test.
+
+In a browser against the deployed bridge, as the demo learner Joshua Liu:
+- a composition resolved as a person and as an agent, each step with its reason;
+- both exports answered 200.
+
+The dashboard README's Author row describes the page.
+
+
 ## 2026-09-27 — Foxxi dashboard: recording your own work, and keeping what it implies
 
 The dashboard gains **Work** (`/work`), the last part of the learner portal. A performer records units of their own production work, and keeps, or not, what a failed unit implies about the content that would help. An agent does the same with the same affordances, signed as itself.

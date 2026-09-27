@@ -147,7 +147,7 @@ function AppRoutes() {
           <Route path="/learn" element={<LearnPage session={session} />} />
           <Route path="/learn/:hash" element={<PlayPage session={session} />} />
           <Route path="/author" element={<AuthorPage session={session} />} />
-          <Route path="/author/:hash" element={<EfficacyPage />} />
+          <Route path="/author/:hash" element={<EfficacyPage session={session} />} />
           <Route path="/work" element={<WorkPage session={session} />} />
           <Route path="/my-activity" element={<MyActivityPage session={session} />} />
           <Route path="/my-forwarding" element={<MyForwardingPage session={session} />} />
@@ -363,8 +363,8 @@ function AuthorPage({ session }: { session: FoxxiSession }) {
 function WorkPage({ session }: { session: FoxxiSession }) {
   return <div style={{ maxWidth: 900, margin: '24px auto', padding: 20 }}><WorkPanel session={session} /></div>;
 }
-function EfficacyPage() {
-  return <div style={{ maxWidth: 980, margin: '24px auto', padding: 20 }}><EfficacyPanel /></div>;
+function EfficacyPage({ session }: { session: FoxxiSession }) {
+  return <div style={{ maxWidth: 980, margin: '24px auto', padding: 20 }}><EfficacyPanel session={session} /></div>;
 }
 function MyActivityPage({ session }: { session: FoxxiSession }) {
   if (signsOnly(session)) return <SignsOnlyNotice what="Your activity and its statements" />;
