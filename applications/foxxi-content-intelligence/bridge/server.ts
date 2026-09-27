@@ -7134,8 +7134,9 @@ app.post('/agent/review-record', async (req, res) => {
     const latticeStmts = latticeStatements(subjectLabel);
     const lensStatements = await listStoredStatements(lensTenantFor(subjectLabel));
     const durableStatements = await readDurableRecordedStatements({ podUrl: subjectPodUrl });
+    // The lattice alone still reads the voids its owner keeps there (foxxi:AppliedVoid).
     const statements = p.source === 'pgsl'
-      ? latticeStmts
+      ? mergeStatementsById(latticeStmts, [], appliedVoidsOf(subjectLabel))
       : mergeStatementsById([...latticeStmts, ...lensStatements], durableStatements, appliedVoidsOf(subjectLabel));
     const statementSource = p.source === 'pgsl' ? 'pgsl-lattice-only' : 'pgsl-lattice+lens+durable-rdf-fallback';
 

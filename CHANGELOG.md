@@ -10,19 +10,21 @@ A defect the automated review found in #528 after it merged. A merge of a learne
 So a voided statement evicted before the later statement that voided it lost its mark. Its copy in the owner's lattice or on their pod was then read as current again, in the learner record, the listing and earned credentials.
 
 - **The LRS tells of a void once it took effect** (`onVoidApplied`, `src/xapi-lrs.ts`), with the statement it voided, marked. It never tells of a void that took no effect: a voider stored before its target, one naming another voiding statement, or one outside the writer's registration.
+- **A voiding statement voids only once it is taken.** The LRS used to apply a void before the statement's own immutable-id check, so one refused as a conflict (409) had already voided its target, and would now have kept that void with the owner. It applies the void after the statement is stored, by POST and by PUT.
 - **The bridge keeps it with the voided statement's owner** (`src/applied-voids.ts`). The owner is the DID the statement's actor carries, as a play or a performance names them. The bridge composes a small record of its own (`foxxi:AppliedVoid`: the voided statement's id and the voiding statement's) into the owner's shared lattice, beside their statements. A statement whose owner has no pod on this tenant's store is voided in the lens alone, as before.
-- **Every merge of a record reads those records** (`mergeStatementsById`'s third argument, at all seven of the bridge's merges). A statement they name stays voided after the store has let it go.
+- **Every merge of a record reads those records** (`mergeStatementsById`'s third argument, at all seven of the bridge's merges). So does a review read from the lattice alone (`source: 'pgsl'`). A statement they name stays voided after the store has let it go.
 
 `foxxi:AppliedVoid` is declared in the Foxxi vocabulary.
 
-`tests/an-applied-void-is-kept-with-its-owner.test.ts` (9 tests) covers:
+`tests/an-applied-void-is-kept-with-its-owner.test.ts` (10 tests) covers:
 - the LRS telling of a void applied, and of none that took no effect, through its own routes;
+- a voiding statement refused as a conflict voiding nothing, posted or put;
 - a merge keeping a statement voided from its lattice copy and its pod copy once the store has let it go;
 - the record, read back;
 - the owner, named;
 - the bridge's hook, and every merge reading the kept voids.
 
-Nine mutants each fail a named test.
+Twelve mutants each fail a named test.
 
 ## 2026-09-27 — Foxxi dashboard: a pasted key keeps its session through the notice, and forwarding can be read again
 

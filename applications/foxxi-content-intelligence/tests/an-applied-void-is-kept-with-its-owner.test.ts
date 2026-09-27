@@ -44,9 +44,10 @@ beforeAll(async () => {
 });
 afterAll(() => new Promise<void>(r => { server.close(() => r()); }));
 
-const post = (body: unknown) => fetch(`${base}/xapi/statements`, {
-  method: 'POST', headers: { Authorization: 'Bearer unbound-writer', 'X-Experience-API-Version': '2.0.0', 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-});
+const headers = { Authorization: 'Bearer unbound-writer', 'X-Experience-API-Version': '2.0.0', 'Content-Type': 'application/json' };
+const post = (body: unknown) => fetch(`${base}/xapi/statements`, { method: 'POST', headers, body: JSON.stringify(body) });
+const put = (id: string, body: unknown) => fetch(`${base}/xapi/statements?statementId=${id}`, { method: 'PUT', headers, body: JSON.stringify(body) });
+const get = (id: string) => fetch(`${base}/xapi/statements?statementId=${id}`, { headers });
 const statement = (extra: Record<string, unknown> = {}) => ({
   id: randomUUID(), actor: { objectType: 'Agent', account: { homePage: 'https://bridge.example', name: owner } },
   verb: { id: 'http://adlnet.gov/expapi/verbs/experienced' }, object: { objectType: 'Activity', id: 'https://bridge.example/ns/foxxi/fragment/x' }, ...extra,
@@ -54,6 +55,21 @@ const statement = (extra: Record<string, unknown> = {}) => ({
 const voiding = (target: string, extra: Record<string, unknown> = {}) => ({
   id: randomUUID(), actor: { objectType: 'Agent', account: { homePage: 'https://bridge.example', name: owner } },
   verb: { id: 'http://adlnet.gov/expapi/verbs/voided' }, object: { objectType: 'StatementRef', id: target }, ...extra,
+});
+
+describe('a voiding statement refused as a conflict voids nothing', () => {
+  it('neither in the store nor with the owner, posted or put', async () => {
+    applied.length = 0;
+    const target = statement();
+    const taken = statement();
+    expect((await post(target)).status).toBe(200);
+    expect((await post(taken)).status).toBe(200);
+    // Another body under an id already taken: refused, so it voids nothing.
+    expect((await post({ ...voiding(target.id), id: taken.id })).status).toBe(409);
+    expect((await put(taken.id, { ...voiding(target.id), id: taken.id })).status).toBe(409);
+    expect(applied).toEqual([]);
+    expect((await get(target.id)).status).toBe(200);
+  });
 });
 
 describe('the LRS tells of a void only once it took effect', () => {
@@ -138,8 +154,18 @@ describe('the bridge keeps each applied void with its owner, and reads it in eve
   });
 
   it('passes what the owner\'s lattice keeps to every merge of a record', () => {
-    const calls = src.split('mergeStatementsById(').slice(1).map(after => after.slice(0, after.indexOf(');')));
-    expect(calls.length).toBeGreaterThanOrEqual(7);
+    // Each call's arguments, read to its own closing parenthesis.
+    const calls: string[] = [];
+    for (let at = src.indexOf('mergeStatementsById('); at >= 0; at = src.indexOf('mergeStatementsById(', at + 1)) {
+      let depth = 0;
+      let end = at + 'mergeStatementsById'.length;
+      for (; end < src.length; end++) {
+        if (src[end] === '(') depth++;
+        else if (src[end] === ')' && --depth === 0) break;
+      }
+      calls.push(src.slice(at + 'mergeStatementsById('.length, end));
+    }
+    expect(calls.length).toBeGreaterThanOrEqual(8);   // seven merges, and the lattice read alone
     for (const call of calls) expect(call).toMatch(/appliedVoidsOf\(\w+\)\s*,?\s*$/);
   });
 });

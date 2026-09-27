@@ -761,13 +761,14 @@ async function handlePostStatements(req: Request, res: Response, config: XapiLrs
   for (const stmt of batch) {
     const enriched = ensureStatementFields(stmt, authority);
     const id = enriched.id as string;
-    await applyVoiding(enriched, id, store, boundRegistration(req), r => notifyVoidApplied(r, id, tenantOf(req), config));
     try {
       await store.put({ id, statement: enriched, stored: enriched.stored as string, voided: false });
     } catch (err) {
       if (err instanceof ConflictError) { res.status(409).json({ error: err.message }); return; }
       throw err;
     }
+    // Voided only once the voiding statement itself is taken: one refused as a conflict voids nothing.
+    await applyVoiding(enriched, id, store, boundRegistration(req), r => notifyVoidApplied(r, id, tenantOf(req), config));
     ids.push(id);
     persistAttachmentData(enriched, multipartParts, attachStore);
     notifyStatementStored(enriched, tenantOf(req), config);
@@ -963,13 +964,14 @@ async function handlePutStatement(req: Request, res: Response, config: XapiLrsCo
   (stmt as Record<string, unknown>).id = statementId;
   const store = statementStores.for(tenantOf(req));
   const enriched = ensureStatementFields(stmt, { homePage: config.selfBaseUrl, name: 'foxxi-lrs' });
-  await applyVoiding(enriched, statementId, store, boundRegistration(req), r => notifyVoidApplied(r, statementId, tenantOf(req), config));
   try {
     await store.put({ id: statementId, statement: enriched, stored: enriched.stored as string, voided: false });
   } catch (err) {
     if (err instanceof ConflictError) { res.status(409).json({ error: err.message }); return; }
     throw err;
   }
+  // Voided only once the voiding statement itself is taken: one refused as a conflict voids nothing.
+  await applyVoiding(enriched, statementId, store, boundRegistration(req), r => notifyVoidApplied(r, statementId, tenantOf(req), config));
   persistAttachmentData(enriched, multipartParts, attachmentStores.for(tenantOf(req)));
   notifyStatementStored(enriched, tenantOf(req), config);
   recordInboundIfForwarded(req, enriched);
