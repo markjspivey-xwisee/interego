@@ -55,6 +55,7 @@ import { LearnPanel } from './components/LearnPanel.js';
 import { CompositionPlayer } from './components/CompositionPlayer.js';
 import { AuthorPanel } from './components/AuthorPanel.js';
 import { EfficacyPanel } from './components/EfficacyPanel.js';
+import { WorkPanel } from './components/WorkPanel.js';
 import { Header, Card } from './components/common.js';
 import { loadSession, saveSession, clearSession, signsOnly, type FoxxiSession } from './auth/session.js';
 import { getTransport, resetTransportProbe } from './interego/client.js';
@@ -147,6 +148,7 @@ function AppRoutes() {
           <Route path="/learn/:hash" element={<PlayPage session={session} />} />
           <Route path="/author" element={<AuthorPage session={session} />} />
           <Route path="/author/:hash" element={<EfficacyPage />} />
+          <Route path="/work" element={<WorkPage session={session} />} />
           <Route path="/my-activity" element={<MyActivityPage session={session} />} />
           <Route path="/my-forwarding" element={<MyForwardingPage session={session} />} />
           <Route path="/demo-suite" element={<DemoSuitePage />} />
@@ -223,6 +225,7 @@ function TopNav({ session }: { session: FoxxiSession }) {
       <NavLink to="/courses" label="Courses" />
       <NavLink to="/learn" label="Learn" />
       <NavLink to="/author" label="Author" />
+      <NavLink to="/work" label="Work" />
       {!signsOnly(session) && <NavLink to="/my-activity" label="My activity" />}
       <NavLink to="/my-forwarding" label="My forwarding" />
       <NavLink to="/demo-suite" label="Demo suite" />
@@ -351,6 +354,9 @@ function PlayPage({ session }: { session: FoxxiSession }) {
 }
 function AuthorPage({ session }: { session: FoxxiSession }) {
   return <div style={{ maxWidth: 980, margin: '24px auto', padding: 20 }}><AuthorPanel session={session} /></div>;
+}
+function WorkPage({ session }: { session: FoxxiSession }) {
+  return <div style={{ maxWidth: 900, margin: '24px auto', padding: 20 }}><WorkPanel session={session} /></div>;
 }
 function EfficacyPage() {
   return <div style={{ maxWidth: 980, margin: '24px auto', padding: 20 }}><EfficacyPanel /></div>;
