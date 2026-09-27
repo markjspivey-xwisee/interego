@@ -1,5 +1,33 @@
 # Changelog
 
+## 2026-09-27 — Foxxi dashboard: recording your own work, and keeping what it implies
+
+The dashboard gains **Work** (`/work`), the last part of the learner portal. A performer records units of their own production work, and keeps, or not, what a failed unit implies about the content that would help. An agent does the same with the same affordances, signed as itself.
+
+- **Record a unit** (`foxxi.record_performance_signed`, signed as the performer, into their own record). It takes:
+  - what the work was, and whether it succeeded;
+  - optionally, its kind (an IRI, so units of one kind count toward one competency), the artifact it produced, its quality and its duration;
+  - how it went, step by step: what was done and on what, how much of the work it was, how sure the performer is it happened as told (done, tried without knowing, or considered and not done), how it turned out, and which earlier step it revises.
+
+  The page says what is missing before sending. It also says why a failure recorded without how it went cannot be answered: its regime is read from the steps.
+- **A failure is answered.** A failed unit sent with its steps comes back with the offer the performance practice makes from the work at its competency (`offerFromWork`): the regime it reads as, the plan for that regime, and the forms of content that plan admits, with why. Where nothing is offered, the page says why.
+- **Keeping, and withdrawing.** Keeping the offer sends `foxxi.content_admit`, and *What you keep* lists the standing records (`foxxi.content_admissions`). Each can be withdrawn. Each change updates the list from the bridge's own answer, so a wallet extension is asked once, not twice. Reads that would prompt a wallet wait for a click, as elsewhere.
+
+`tests/a-portal-keeps-what-its-work-implies.test.ts` (6 tests) runs the whole path through the real code:
+- work written in the page, kept as the bridge keeps a trajectory (`workStepsFrom`);
+- a failure answered from it by the practice's own `offerFromWork`: Emergent work, and work no content helps;
+- what the page sends to keep it, taken by `admissionRecordFrom`;
+- what it sends to withdraw.
+
+Seventeen mutants each fail a named test.
+
+The whole flow was run in a browser against the deployed bridge, as the demo learner Joshua Liu:
+- a failed refund recorded with four steps;
+- the bridge answering that it reads as Emergent work, whose plan is coaching and a probe, admitting Reflection and Probe;
+- the offer kept, listed, withdrawn, and the withdrawal read back from his pod.
+
+The dashboard README describes Author and Work.
+
 ## 2026-09-27 — Foxxi dashboard: author tools, and what a composition has learned
 
 The dashboard gains **Author**: write fragments, compose them, and see what each composition has learned. Each is an affordance an agent uses the same way, signed as the author: `foxxi.content_fragment`, `foxxi.content_compose`, `foxxi.content_mine`, and a composition's efficacy.

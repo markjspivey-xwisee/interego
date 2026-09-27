@@ -21,6 +21,8 @@ audit) but every data fetch goes through Interego:
 | Admin views audit log | Read from inlined RAW_DATA | Sample-bundled today; production composes [`integrations/compliance-overlay/`](../../../integrations/compliance-overlay/) |
 | Login | Any-string mock | Pick a real identity from the Acme Training Co sample roster; `webId` becomes the `learner_did` on every affordance call |
 | Learner finds and plays a composition | — | **Learn** (`/learn`, `/learn/<hash>`): a pasted link, IRI or hash, the ones opened lately, and the learner's own record (`foxxi.content_mine`); played step by step with `foxxi.content_launch` and `foxxi.content_next`, resolved from their own record and signed as them — the same affordances an agent plays through with no page |
+| Author writes and composes content | — | **Author** (`/author`, `/author/<hash>`): fragments written with the engine's own kinds and a Markdown preview by its own renderer, questions of every kind, composed into positions of alternatives from a shelf or by IRI, and what each composition has learned (its efficacy, as the engine says it) — `foxxi.content_fragment`, `foxxi.content_compose`, `foxxi.content_mine`, the same affordances an agent authors through |
+| Performer records work and keeps what it implies | — | **Work** (`/work`): a unit of production work recorded with how it went, step by step (`foxxi.record_performance_signed`); a failure answered with the offer the work implies (its regime, the plan, the forms of content that would help), kept or withdrawn with `foxxi.content_admit` and listed with `foxxi.content_admissions` |
 
 ## Two transports — automatic
 
