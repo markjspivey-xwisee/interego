@@ -198,6 +198,13 @@ describe('the bridge authors, dereferences and resolves content through these', 
     expect(src).toMatch(/if \(!tenantPodUrl \|\| !sameStore\(pod, tenantPodUrl\)\) continue;/);
     expect(src).not.toMatch(/podOrigin !== tenantOrigin\) continue;/);
     expect(route('function recordContentLocation')).toMatch(/held\.length >= LOCATIONS_PER_ITEM/);
+    // The index is written one write at a time, a failed write tried again on its own, and an index
+    // that cannot be read now is not written over (src/state-writer.ts).
+    expect(route('function recordContentLocation')).toMatch(/if \(CONTENT_LOCATIONS_RESOURCE\) contentLocationsWriter\.request\(\);/);
+    const index = route('const contentLocationsWriter = stateWriter(');
+    expect(index).toMatch(/if \(!r\.ok && r\.status !== 404\) throw new Error/);
+    expect(index.indexOf('mergeLocations(durable, contentLocations)')).toBeGreaterThan(index.indexOf('r.status !== 404'));
+    expect(index).toMatch(/if \(!w\.ok\) throw new Error/);
     // Kept only once the pod holds it: the lattice write comes first and must report persisted.
     const keepFirst = route('async function keepAuthoredContent');
     expect(keepFirst.indexOf('composeIntoSharedLattice(')).toBeLessThan(keepFirst.indexOf('contentStore.put(item)'));

@@ -32,7 +32,7 @@
  * taken back only if that key sealed it (openTally): anyone can wrap a key to a public key, but
  * only its holder can wrap one from it.
  */
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { createEncryptedEnvelope, envelopeFromJson, envelopeToJson, openEncryptedEnvelope, type EncryptionKeyPair } from '@interego/core';
 import type { CognitiveLevel } from './emergent-content.js';
 import { competencyIdOf } from './competency-identity.js';
@@ -168,6 +168,16 @@ export function chooseByEfficacy(candidates: readonly string[], countsOf: (fragm
     ? `${successes} of ${n} went on to succeed (lower bound ${wilsonLowerBound(successes, n).toFixed(2)}, ${status})`
     : `fewer than ${EFFICACY_POLICY.publishAt} outcomes so far, too few to show (${status})`;
   return { chosen: best.iri, why: `the most promising here for learners at this level: ${record}` };
+}
+
+/**
+ * The key learners' tokens are made under. With a key that seals the stored tally, it is derived
+ * from that key, so the tokens last exactly as long as the tally that holds them: a token key that
+ * changed on a restart while the tally survived would count every learner again in every cell.
+ * With no sealing key the tally lives in the process only, and so may its token key.
+ */
+export function efficacyTokenKey(seal: EncryptionKeyPair | null): string {
+  return seal ? createHash('sha256').update(`foxxi-efficacy-tokens\n${seal.secretKey}`).digest('hex') : randomBytes(32).toString('hex');
 }
 
 /** A tally sealed for keeping on a pod: readable only with `key`, which seals it to itself. */

@@ -7,6 +7,7 @@ Resolution chose among a position's alternatives by level and then by the author
 - **What has worked where** (`src/fragment-efficacy.ts`).
   - A cell is one fragment at one competency, for learners at one level. It counts the learners who met the fragment there and how many then succeeded (`EfficacyTally`).
   - Each learner counts once per cell, under `outcomeToken`: an HMAC of the learner and the cell, with a key only the bridge holds. The token names nobody and differs from cell to cell. A cell stops growing at 1,000 learners.
+  - The token key is derived from the key that seals the stored tally (`efficacyTokenKey`), so tokens last exactly as long as the tally that holds them. The automated review of this change found the first draft falling back to a key made at each boot when the grading seed was unset: after every restart, each learner would have been counted again in every cell.
   - A cell's success rate is read at its Wilson lower bound. At 12 outcomes the cell is Asserted; before that it is Hypothetical.
   - A stored cell whose counts and tokens disagree is not trusted (`EfficacyTally.from`).
   - `chooseByEfficacy` gives an alternative with no outcome yet its turn first. After that the upper confidence bound decides, with the author's order breaking ties. It says which rule chose. It quotes the counts only for a cell of 5 or more outcomes, because the learner sees the reason and the step's record keeps it.
@@ -14,7 +15,8 @@ Resolution chose among a position's alternatives by level and then by the author
 - **Resolution uses it** (`src/compositions.ts`). Among the fragments pitched equally near the learner's level, the choice goes by what has worked for learners at that level. Each step records the level it was pitched at (`pitchedAt`).
 - **A play credits each outcome** (`src/composition-play.ts`). A graded step's outcome (every graded question right, or not) goes to its own fragment. It also goes to each teaching fragment the learner met since the last check at the same competency, since an explanation is judged by the check that follows it.
 - **On the bridge** (`bridge/server.ts`):
-  - A kept step's outcomes are counted, and the tally is kept sealed on the tenant pod (`foxxi-lattice/fragment-efficacy.envelope.json`). A write the pod refuses is tried again after the next outcome. A bridge with no key keeps the tally in the process only.
+  - A kept step's outcomes are counted, and the tally is kept sealed on the tenant pod (`foxxi-lattice/fragment-efficacy.envelope.json`). A bridge with no key keeps the tally in the process only.
+  - The tally, and the index of where authored content lives, are each written by a state writer (`src/state-writer.ts`): one write at a time, and a change during a write is written after it. A failed write is tried again on its own, after a pause that doubles from 5 seconds to 5 minutes while the pod keeps failing. Both used to wait for the next change to retry, so the last change before a quiet spell could be lost on a restart (the automated review of this change, for the tally). The index is no longer written over when it cannot be read, since what it holds and this process does not would be lost.
   - Outcomes are counted only once the stored tally has been read. A pod that cannot be read now is tried again on the next step. Otherwise a tally that never saw the stored one would replace it with what one process had seen. A stored tally this bridge did not seal, or cannot open, is replaced.
   - `GET /ns/foxxi/fragment/<hash>/efficacy` shows a fragment's cells. A cell's counts appear only once it holds 5 outcomes.
 - **A step counts only once its record is kept** (#505 review, P1). `/agent/content/next` reported statement ids, advanced the play and let a finished play go before any write had settled. A failed write left a gap nobody could retry.
@@ -33,6 +35,7 @@ Resolution chose among a position's alternatives by level and then by the author
 - counting each learner once per cell, under a token that names nobody;
 - the Asserted flip, and a full cell;
 - a stored tally kept, and one whose counts and tokens disagree refused;
+- a token key that lasts as long as the sealed tally;
 - a tally sealed to the bridge's key, with a forged or unsealed one refused;
 - choosing by efficacy, with an alternative that has no outcome yet first;
 - a reason that does not quote a cell too small to publish;
@@ -49,7 +52,9 @@ Resolution chose among a position's alternatives by level and then by the author
 - `storeStatementDurably` answering only once the store holds the statement;
 - the bridge keeping each statement in the lens and on the pod before it answers, checked in its source.
 
-Thirty-four mutants were checked, and each fails a named test. Among them:
+`state-writer.test.ts` covers a change during a write, a failed write retried with no change asking, a change during a failed write, and pauses that grow, cap and start afresh.
+
+Forty-six mutants were checked, and each fails a named test. Among them:
 - a learner counted every time, or under one token in every cell;
 - an alternative with no outcome never getting its turn, or resolution ignoring what has worked;
 - an explanation never credited;
@@ -59,7 +64,8 @@ Thirty-four mutants were checked, and each fails a named test. Among them:
 - two steps of one play at once;
 - the pod write not confirmed, or the lens write not waited for;
 - forwarding all at once;
-- an unreadable tally counted as read;
+- an unreadable tally counted as read, or tokens made under a key for this process only;
+- a failed write left for the next change, a change during a pause written at once, or a pause that never grows, never shrinks or has no cap;
 - questions, choices or a fragment's name declared English.
 
 ## 2026-09-26 — Foxxi: a learner plays a composition, and each step is recorded against the fragment it showed

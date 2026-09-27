@@ -202,7 +202,8 @@ import { ContentError, compositionIri, contentRefOf, fragmentForLearner, fragmen
 import { admissionFrom, compositionFrom, resolveComposition, type Admission, type Composition, type RecordedCompetency } from '../src/compositions.js';
 import { ContentStore, isCompositionItem, LOCATIONS_PER_ITEM, mergeLocations, type ContentItem, type ContentLocation } from '../src/content-store.js';
 import { currentView, startPlay, takeStep, type CompositionPlay, type PlayInProgress } from '../src/composition-play.js';
-import { EFFICACY_POLICY, EfficacyTally, openTally, outcomeToken, sealTally } from '../src/fragment-efficacy.js';
+import { EFFICACY_POLICY, EfficacyTally, efficacyTokenKey, openTally, outcomeToken, sealTally } from '../src/fragment-efficacy.js';
+import { stateWriter } from '../src/state-writer.js';
 import { competencyIri, competencyIriForTerm, competencyIdOf } from '../src/competency-identity.js';
 import { activityIri, ACTIVITY_DEFINITIONS } from '../src/activity-identity.js';
 import { FOXXI_NS } from '../src/foxxi-vocab.js';
@@ -10393,23 +10394,24 @@ const CONTENT_TYPES = { fragment: 'foxxi:GroundingFragment', composition: 'foxxi
 let contentLocations = new Map<string, ContentLocation[]>();   // content key (type:hash) → where each author wrote it
 const CONTENT_LOCATIONS_MAX = 200_000;
 const CONTENT_LOCATIONS_RESOURCE = tenantPodUrl ? `${tenantPodUrl.replace(/\/$/, '')}/foxxi-lattice/content-locations.json` : '';
-let contentLocationsDirty = false;
 let contentLocationsLoaded = false;
-async function persistContentLocations(): Promise<void> {
-  if (!CONTENT_LOCATIONS_RESOURCE || !contentLocationsDirty) return;
-  contentLocationsDirty = false;
+/**
+ * The index is written by a state writer (src/state-writer.ts): one write at a time, and a failed
+ * write tried again on its own. Each write is merged with what is already there, earlier entries
+ * first: a location only says where to look, and a loaded item is checked against its hash, so a
+ * stale entry costs a miss, never a substitution. An index that cannot be read now is not written
+ * over, since what it holds and this process does not would be lost.
+ */
+const contentLocationsWriter = stateWriter(async () => {
   const f = globalThis.fetch as typeof fetch;
-  try {
-    // Merged with what is already there, earlier entries first: a location only says where to
-    // look, and a loaded item is checked against its hash, so a stale entry costs a miss, never
-    // a substitution.
-    let durable: unknown = {};
-    try { const r = await f(CONTENT_LOCATIONS_RESOURCE, { headers: { Accept: 'application/json' } }); if (r.ok) durable = await r.json(); } catch { /* none yet */ }
-    const merged = Object.fromEntries(mergeLocations(durable, contentLocations));
-    await f(CONTENT_LOCATIONS_RESOURCE.replace(/[^/]+$/, ''), { method: 'PUT', headers: { 'Content-Type': 'text/turtle', Link: '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"' }, body: '' }).catch(() => undefined);
-    await f(CONTENT_LOCATIONS_RESOURCE, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(merged) });
-  } catch { contentLocationsDirty = true; /* retried on the next record */ }
-}
+  const r = await f(CONTENT_LOCATIONS_RESOURCE, { headers: { Accept: 'application/json' } });
+  if (!r.ok && r.status !== 404) throw new Error(`the pod answered ${r.status}`);
+  const durable: unknown = r.ok ? await r.json().catch(() => ({})) : {};
+  const merged = Object.fromEntries(mergeLocations(durable, contentLocations));
+  await f(CONTENT_LOCATIONS_RESOURCE.replace(/[^/]+$/, ''), { method: 'PUT', headers: { 'Content-Type': 'text/turtle', Link: '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"' }, body: '' }).catch(() => undefined);
+  const w = await f(CONTENT_LOCATIONS_RESOURCE, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(merged) });
+  if (!w.ok) throw new Error(`the pod answered ${w.status}`);
+});
 async function loadContentLocations(): Promise<void> {
   contentLocationsLoaded = true;
   if (!CONTENT_LOCATIONS_RESOURCE) return;
@@ -10423,8 +10425,7 @@ function recordContentLocation(key: string, authorDid: string, pod: string): voi
   if (held.some(l => l.did === authorDid && l.pod === pod) || held.length >= LOCATIONS_PER_ITEM) return;
   if (!held.length && contentLocations.size >= CONTENT_LOCATIONS_MAX) { const oldest = contentLocations.keys().next().value; if (oldest !== undefined) contentLocations.delete(oldest); }
   contentLocations.set(key, [...held, { did: authorDid, pod }]);
-  contentLocationsDirty = true;
-  void persistContentLocations();
+  if (CONTENT_LOCATIONS_RESOURCE) contentLocationsWriter.request();
 }
 const contentStore = new ContentStore(20_000, {
   // Each pod that holds the item is tried in turn, the pod it was written to rather than one
@@ -10564,14 +10565,12 @@ app.post('/agent/content/composition', async (req, res) => {
 // One bridge writes it, and the stored tally is read before anything is counted.
 const efficacySeal = bridgeEncryptionKeypair();
 const EFFICACY_RESOURCE = tenantPodUrl && efficacySeal ? `${tenantPodUrl.replace(/\/$/, '')}/foxxi-lattice/fragment-efficacy.envelope.json` : '';
-/** The key a learner's per-cell token is made under: the bridge's grading key, or one for this process only. */
-const efficacyKey = gradedKey || randomBytes(32).toString('hex');
+/** The key a learner's per-cell token is made under, lasting as long as the stored tally does (efficacyTokenKey). */
+const efficacyKey = efficacyTokenKey(efficacySeal);
 let fragmentEfficacy = new EfficacyTally();
 /** Whether the stored tally has been read, or found absent: only then is an outcome counted, or the tally written back. */
 let efficacyRead = !EFFICACY_RESOURCE;
 let efficacyLoad: Promise<boolean> | undefined;
-let efficacyPersisting: Promise<void> | undefined;
-let efficacyDirty = false;
 /**
  * Read the stored tally once. A pod that cannot be read now is tried again on the next call, and
  * until it has been read nothing is counted: writing back a tally that never saw the stored one
@@ -10593,20 +10592,15 @@ function ensureEfficacy(): Promise<boolean> {
   })();
   return efficacyLoad;
 }
-function persistEfficacy(): void {
-  if (!EFFICACY_RESOURCE) return;
-  if (efficacyPersisting) { efficacyDirty = true; return; }
+/** The tally is written by a state writer: one write at a time, and a failed write tried again on its own. */
+const efficacyWriter = stateWriter(async () => {
   const f = globalThis.fetch as typeof fetch;
-  efficacyPersisting = (async () => {
-    do {
-      efficacyDirty = false;
-      try {
-        await f(EFFICACY_RESOURCE.replace(/[^/]+$/, ''), { method: 'PUT', headers: { 'Content-Type': 'text/turtle', Link: '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"' }, body: '' }).catch(() => undefined);
-        const r = await f(EFFICACY_RESOURCE, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: sealTally(fragmentEfficacy, efficacySeal!) });
-        if (!r.ok) throw new Error(`the pod answered ${r.status}`);
-      } catch { efficacyDirty = true; break; }   // retried after the next outcome
-    } while (efficacyDirty);
-  })().finally(() => { efficacyPersisting = undefined; });
+  await f(EFFICACY_RESOURCE.replace(/[^/]+$/, ''), { method: 'PUT', headers: { 'Content-Type': 'text/turtle', Link: '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"' }, body: '' }).catch(() => undefined);
+  const r = await f(EFFICACY_RESOURCE, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: sealTally(fragmentEfficacy, efficacySeal!) });
+  if (!r.ok) throw new Error(`the pod answered ${r.status}`);
+});
+function persistEfficacy(): void {
+  if (EFFICACY_RESOURCE) efficacyWriter.request();
 }
 
 /** Resolve a composition for a verified caller from their own record: the one path resolve and launch share. */

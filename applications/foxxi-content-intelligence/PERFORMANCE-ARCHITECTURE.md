@@ -277,7 +277,8 @@ Nobody declares which explanation of a competency works; the plays show it.
   explanation has no answer of its own, so it takes the outcome of the next
   graded step at the same competency in the same play.
 - **Each learner counts once per cell.** The count is kept under an HMAC
-  of the learner and the cell, with a key only the bridge holds. The token
+  of the learner and the cell, with a key only the bridge holds, derived
+  from the key that seals the tally so that both last as long. The token
   names nobody and differs from cell to cell, so replaying a composition
   cannot push a fragment up or down, and one learner's outcomes cannot be
   linked across fragments. A cell stops growing at 1,000 learners.
@@ -286,16 +287,19 @@ Nobody declares which explanation of a competency works; the plays show it.
   practice's calibration makes for an intervention.
 - **Choice prefers what has worked, and still tries what has no record
   yet.** An alternative with no outcome yet for learners at that level gets
-  its turn first.
-  After that, the upper confidence bound decides, so a new explanation can
-  earn its place. `chosenBecause` says which rule chose, and the counts
-  once they may be shown.
+  its turn first. After that, the upper confidence bound decides, so a new
+  explanation can earn its place. `chosenBecause` says which rule chose,
+  and the counts once they may be shown.
 - **Nothing about a person is published.** A cell's counts are shown only
   once it holds 5 outcomes: by `GET <fragment IRI>/efficacy`, and in the
   reason a resolution gives, which the learner sees and the step's record
   keeps. Pod resources are world-readable, so the tally is kept on the
   tenant pod sealed to the bridge's own key, and taken back only if that
   key sealed it. A bridge with no key keeps it in the process only.
+- **The tally is written by a state writer** (`src/state-writer.ts`), like
+  the index of where content lives: one write at a time, and a failed write
+  tried again on its own after a pause that grows while the pod keeps
+  failing.
 - **A pod that cannot be read now keeps its tally.** Outcomes are counted
   only once the stored tally has been read, so it is never replaced by one
   process's view.

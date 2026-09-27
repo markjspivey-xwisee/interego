@@ -11,7 +11,7 @@ import { advancePlay, startPlay } from '../src/composition-play.js';
 import { fragmentFrom, type Fragment } from '../src/content-fragments.js';
 import { compositionFrom, resolveComposition, type Composition } from '../src/compositions.js';
 import { competencyIri } from '../src/competency-identity.js';
-import { chooseByEfficacy, EFFICACY_POLICY, EfficacyTally, openTally, outcomeToken, sealTally, wilsonLowerBound, type Outcome } from '../src/fragment-efficacy.js';
+import { chooseByEfficacy, EFFICACY_POLICY, EfficacyTally, efficacyTokenKey, openTally, outcomeToken, sealTally, wilsonLowerBound, type Outcome } from '../src/fragment-efficacy.js';
 import { createEncryptedEnvelope, envelopeToJson, generateKeyPair } from '@interego/core';
 
 const concept = (body: string, level = 'foundational'): Fragment => fragmentFrom({ kind: 'concept', level, competencies: ['refund-authority'], body });
@@ -67,6 +67,22 @@ describe('what the record says about a cell', () => {
     expect(EfficacyTally.from({ [cellKey]: { ...cell, n: 50, successes: 50 } }).size).toBe(0);   // 50 counts, 1 learner heard
     expect(EfficacyTally.from({ [cellKey]: { ...cell, successes: 2 } }).size).toBe(0);
     expect(EfficacyTally.from({ 'not a key': cell, [cellKey.replace('foundational', 'expert')]: cell }).size).toBe(0);
+  });
+
+  it('makes tokens under a key that lasts as long as the sealed tally does', () => {
+    const bridge = generateKeyPair();
+    // The same sealing key after a restart gives the same token key, so a learner already heard stays heard.
+    expect(efficacyTokenKey(bridge)).toBe(efficacyTokenKey({ ...bridge }));
+    expect(efficacyTokenKey(bridge)).toMatch(/^[0-9a-f]{64}$/);
+    expect(efficacyTokenKey(bridge)).not.toContain(bridge.secretKey);
+    expect(efficacyTokenKey(generateKeyPair())).not.toBe(efficacyTokenKey(bridge));
+    // With no sealing key the tally lives in the process only, and a key for this process will do.
+    expect(efficacyTokenKey(null)).not.toBe(efficacyTokenKey(null));
+    const t = new EfficacyTally();
+    const heard = outcomeToken(efficacyTokenKey(bridge), 'did:web:x.example', outcome(a!, true))!;
+    t.record(outcome(a!, true), heard);
+    const after = openTally(sealTally(t, bridge), bridge)!;
+    expect(after.record(outcome(a!, false), outcomeToken(efficacyTokenKey({ ...bridge }), 'did:web:x.example', outcome(a!, false))!)).toBe('already-counted');
   });
 
   it('seals what it keeps on a pod to the bridge\'s own key, and takes back only what that key sealed', () => {
@@ -172,11 +188,14 @@ describe('the bridge learns from plays and publishes only what is safe to', () =
   it('keeps the tally on the pod only sealed, and only with a key to seal it', () => {
     const fn = (from: string): string => src.slice(src.indexOf(from), src.indexOf('\n}\n', src.indexOf(from)));
     expect(src).toMatch(/const EFFICACY_RESOURCE = tenantPodUrl && efficacySeal \?/);
+    expect(src).toMatch(/const efficacyKey = efficacyTokenKey\(efficacySeal\);/);
     expect(fn('function ensureEfficacy')).toMatch(/fragmentEfficacy = openTally\(await r\.text\(\), efficacySeal!\) \?\? new EfficacyTally\(\);/);
-    const persist = fn('function persistEfficacy');
-    expect(persist).toMatch(/body: sealTally\(fragmentEfficacy, efficacySeal!\)/);
-    expect(persist).not.toMatch(/JSON\.stringify\(fragmentEfficacy\)/);
-    expect(persist).toMatch(/if \(!r\.ok\) throw new Error/);
+    // Written by a state writer, which tries a failed write again on its own (src/state-writer.ts).
+    const writer = route('const efficacyWriter = stateWriter(');
+    expect(writer).toMatch(/body: sealTally\(fragmentEfficacy, efficacySeal!\)/);
+    expect(writer).not.toMatch(/JSON\.stringify\(fragmentEfficacy\)/);
+    expect(writer).toMatch(/if \(!r\.ok\) throw new Error/);
+    expect(fn('function persistEfficacy')).toMatch(/if \(EFFICACY_RESOURCE\) efficacyWriter\.request\(\);/);
   });
   it('shows a cell only once it holds enough outcomes', () => {
     const view = route("app.get('/ns/foxxi/fragment/:hash/efficacy'");
