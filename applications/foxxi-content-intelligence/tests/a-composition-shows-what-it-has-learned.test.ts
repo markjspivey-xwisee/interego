@@ -18,11 +18,12 @@ const shown = fragmentFrom({ kind: 'worked-example', level: 'foundational', comp
 const deeper = fragmentFrom({ kind: 'concept', level: 'advanced', competencies: [c], title: 'Deeper', body: 'The threshold caps what one person can approve alone.' });
 const only = fragmentFrom({ kind: 'assessment-item', competencies: [c], title: 'Check', body: 'Check.', questions: [{ question: 'Who approves $600?', options: ['Agent', 'Team lead'], answer: 'B' }] });
 const nested = compositionFrom({ title: 'A longer way', competency: c, positions: [{ competency: c, paradigm: [told['@id']] }] });
+const other = compositionFrom({ title: 'Another longer way', competency: c, positions: [{ competency: c, paradigm: [shown['@id']] }] });
 const course = compositionFrom({ title: 'Refunds', competency: c, positions: [
   { competency: c, paradigm: [told['@id'], shown['@id'], deeper['@id'], nested['@id']] },
   { competency: c, paradigm: [only['@id']] },
 ] });
-const store = new Map<string, Fragment | Composition>([told, shown, deeper, only, nested, course].map(x => [x['@id'], x]));
+const store = new Map<string, Fragment | Composition>([told, shown, deeper, only, nested, other, course].map(x => [x['@id'], x]));
 const competency = course.positions[0]!.competency;
 let learner = 0;
 const tally = new EfficacyTally();
@@ -71,8 +72,12 @@ describe('a composition shows what it has learned', () => {
   it('says learners go into a nested composition that comes first, where outcomes decide nothing', () => {
     const first = compositionFrom({ title: 'Nested first', competency: c, positions: [{ competency: c, paradigm: [nested['@id'], told['@id'], shown['@id']] }] });
     const leaning = compositionEfficacy(first, tally, iri => store.get(iri)).positions[0]!.leansTo.find(l => l.level === 'foundational');
-    // Where it does not resolve, the next alternative as ranked is taken, by the author's order: outcomes decide nothing.
-    expect(leaning).toEqual({ level: 'foundational', for: 'anyone', into: nested['@id'], otherwise: told['@id'], why: expect.stringMatching(/^"A longer way" comes first here: .* otherwise take the next alternative as ranked .* so outcomes decide nothing at this level$/) });
+    // Where it does not resolve, the alternatives after it are tried in rank order, up to the first fragment: outcomes decide nothing.
+    expect(leaning).toEqual({ level: 'foundational', for: 'anyone', into: nested['@id'], otherwise: [told['@id']], why: expect.stringMatching(/^"A longer way" comes first here: .* otherwise the alternatives after it are tried in this order, .* so outcomes decide nothing at this level$/) });
+    // Two compositions ahead of a fragment: each is tried in turn, and the fragment ends the list.
+    const twice = compositionFrom({ title: 'Two ways first', competency: c, positions: [{ competency: c, paradigm: [nested['@id'], other['@id'], told['@id'], shown['@id']] }] });
+    expect(compositionEfficacy(twice, tally, iri => store.get(iri)).positions[0]!.leansTo.find(l => l.level === 'foundational'))
+      .toMatchObject({ into: nested['@id'], otherwise: [other['@id'], told['@id']] });
     // A composition is pitched at every level, so for working learners it is nearer than the foundational fragments.
     expect(view.positions[0]!.leansTo.find(l => l.level === 'working')).toMatchObject({ into: nested['@id'] });
   });
