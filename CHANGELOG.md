@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-09-27 — Foxxi: a learner reads their own profile, with their assignments
+
+A learner's home page reads their assigned courses from their own profile, `GET /api/foxxi/v1/profiles/:id`. That route was operator-only, because a profile carries directory PII (email, employee id, hire date, manager). So every learner who was not an operator got a 401 where their assigned courses belong.
+
+Now:
+- the profile item route also serves the profile's own user. The user is verified the way an operator is: a session token signed by a wallet the directory binds to them, never a public demo seed's (`callerUserIdOf` in `src/operator-auth.ts`, next to `callerIsOperator`);
+- a verified user asking for someone else's profile is refused as 403, and shown none of it;
+- an unknown profile is a 404 only for an operator, so a non-operator cannot tell which ids exist;
+- the collection (the whole directory) stays operator-only;
+- the bridge passes the check to the hypermedia routes as `callerUserId`, next to `isOperator`. The dashboard's probe for whether the bridge takes a session's token stays at the LRS gate, since the profile's answer also depends on whose profile it is.
+
+`tests/a-learner-reads-their-own-profile.test.ts` runs the real routes over the tenant's real directory, with wallets from a test seed. It covers a learner, another user, anonymous, a public-seed token (with a control showing the directory does bind the wallet that signed it), both kinds of operator, an unknown id, and the collection. Seven mutants each turn it red.
+
 ## 2026-09-27 — Foxxi dashboard: a roster identity the bridge will not take lands on Learn, and is told why
 
 A roster identity signed in to the deployed bridge landed on a page of refusals:

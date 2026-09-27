@@ -151,7 +151,7 @@ describe('a session that acts through signed requests alone', () => {
     expect(ask).toMatch(/const asksNothing = signsOnly\(session\);/);
     expect(ask).toMatch(/if \(session\.bearerToken\) headers\.Authorization = `Bearer \$\{session\.bearerToken\}`;/);
     // The LRS's gate, read as My activity reads it: it asks only that the token verify. The profile
-    // resource also asks for an operator, and refused every learner who was not one.
+    // resource's answer also depends on whose profile it is.
     expect(ask).toMatch(/fetch\(`\$\{base\}\/xapi\/statements\?limit=1`, \{ headers \}\)/);
     expect(ask).toContain("'X-Experience-API-Version': '2.0.0'");
     expect(ask).not.toMatch(/profiles/);

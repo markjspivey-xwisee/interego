@@ -476,7 +476,7 @@ import { emitAffordanceStatement } from '../src/xapi-instrumentation.js';
 import { attachXapiAdminRoutes } from '../src/xapi-admin.js';
 import { attachOauthTokenRoute, oauthPublicKeyFrom } from '../src/xapi-oauth.js';
 import { attachHypermediaRoutes } from '../src/hypermedia-resources.js';
-import { callerIsOperator } from '../src/operator-auth.js';
+import { callerIsOperator, callerUserIdOf } from '../src/operator-auth.js';
 import { assertSafeFetchTarget, safePublicUrlOrUndefined, safeFetch, guardedFetchFn } from '../src/ssrf-guard.js';
 import { resolveSubjectPodUrlPure, explicitPodRoot, hasControlChars } from '../src/subject-pod-url.js';
 import { configureStoreSpelling } from '../src/store-origins.js';
@@ -6515,6 +6515,8 @@ const app = createVerticalBridge({
       affordances: activeAffordances,
       // Gate the employee-directory + audit surfaces on operator auth (same check OneRoster uses).
       isOperator: (req) => callerIsOperator(req, operatorAuth),
+      // A learner reads their own profile (their assignments) with their own session token.
+      callerUserId: (req) => callerUserIdOf(req, operatorAuth),
       // The player moved to Railway; the old Azure host is paused, so the
       // previous default handed every catalog course a launch link that 404s.
       scormPlayerBaseUrl: process.env.FOXXI_SCORM_PLAYER_BASE
