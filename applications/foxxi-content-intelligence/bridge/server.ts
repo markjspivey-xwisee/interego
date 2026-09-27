@@ -202,7 +202,8 @@ import { ContentError, compositionIri, contentRefOf, fragmentForLearner, fragmen
 import { admissionFrom, compositionFrom, resolveComposition, type Admission, type Composition, type RecordedCompetency } from '../src/compositions.js';
 import { bundledItem, ContentStore, isCompositionItem, LOCATIONS_PER_ITEM, mergeLocations, type ContentItem, type ContentLocation } from '../src/content-store.js';
 import { foldCourse, type FoldedCourse, type FoldOptions } from '../src/course-fold.js';
-import { admissionRecordFrom, CONTENT_ADMISSION_TYPE, recordFor, standingAdmissions, type AdmissionRecord } from '../src/admission-records.js';
+import { admissionRecordFrom, recordFor, standingAdmissions, type AdmissionRecord } from '../src/admission-records.js';
+import { keepAdmission, readAdmissions } from '../src/admission-store.js';
 import { currentView, startPlay, takeStep, type CompositionPlay, type PlayInProgress } from '../src/composition-play.js';
 import { EFFICACY_POLICY, EfficacyTally, efficacyTokenKey, openTally, outcomeToken, sealTally } from '../src/fragment-efficacy.js';
 import { stateWriter } from '../src/state-writer.js';
@@ -10560,20 +10561,20 @@ async function learnerCompetencies(learnerDid: string, kind: 'human' | 'agent'):
 }
 
 /**
- * The admissions a learner has kept on their own pod (src/admission-records.ts), the latest per
- * competency. Only a pod on this tenant's store is read, as with the learner's record.
+ * The admissions a learner has kept on their own pod (src/admission-store.ts), the latest standing
+ * per competency. Only a pod on this tenant's store is read, as with the learner's record, and a
+ * pod whose list cannot be read now says so rather than reading as one where nothing was kept.
  */
-async function learnerAdmissions(learnerDid: string): Promise<Map<string, AdmissionRecord>> {
+async function learnerAdmissions(learnerDid: string): Promise<{ ok: true; standing: Map<string, AdmissionRecord> } | { ok: false; error: string }> {
   const pod = resolveSubjectPodUrl(learnerDid);
-  if (!tenantPodUrl || !sameStore(pod, tenantPodUrl)) return new Map();
-  const label = actorForPod(pod, MESH_ACTOR_LABELS);
-  await ensureResident(pod, learnerDid, label);
-  return standingAdmissions(latticeArtifacts(label, CONTENT_ADMISSION_TYPE).map(a => a.content));
+  if (!tenantPodUrl || !sameStore(pod, tenantPodUrl)) return { ok: true, standing: new Map() };
+  const read = await readAdmissions(pod, bridgeEncryptionKeypair(), globalThis.fetch as never);
+  return read.ok ? { ok: true, standing: standingAdmissions(read.records) } : read;
 }
 
 // A learner keeps, on their own pod, which forms of content suit them at a competency, or withdraws
 // that (admission: null). The bridge writes it only when the learner asks: it reads plans, it does
-// not act on them for anyone. Kept in the learner's encrypted lattice, with no public projection.
+// not act on them for anyone. Kept sealed on the learner's own pod, with no public projection.
 app.post('/agent/content/admit', async (req, res) => {
   try {
     if (contentRateLimited(req, res)) return;
@@ -10591,15 +10592,13 @@ app.post('/agent/content/admit', async (req, res) => {
     if (!tenantPodUrl || !sameStore(pod, tenantPodUrl)) {
       res.status(409).json({ error: 'admission not kept: your pod is not on this bridge\'s store, so resolution here could not read it back' }); return;
     }
-    let kept: Awaited<ReturnType<typeof composeIntoSharedLattice>>;
-    try {
-      kept = await composeIntoSharedLattice({
-        podUrl: pod, agentDid: auth.callerDid, label: actorForPod(pod, MESH_ACTOR_LABELS),
-        terms: [auth.callerDid, CONTENT_ADMISSION_TYPE, record.competency], content: record as unknown as Record<string, unknown>,
-        contentType: CONTENT_ADMISSION_TYPE, ts: record.at, projections: ['rdf'], publishDescriptor: false,
-      });
-    } catch (e) { res.status(503).json({ error: `admission not kept on your pod: ${(e as Error).message}` }); return; }
-    if (!kept?.persisted) { res.status(503).json({ error: `admission not kept on your pod${kept?.persistError ? `: ${kept.persistError}` : ''}` }); return; }
+    const key = bridgeEncryptionKeypair();
+    if (!key) { res.status(503).json({ error: 'admission not kept: this bridge holds no key to seal it with' }); return; }
+    // Sealed to the bridge and to the pod's owner, so the learner can read their own list; nothing
+    // about it is held anywhere until the pod answers that it holds it (src/admission-store.ts).
+    const ownerKey = await resolveAgentEncryptionKey(pod, { fetch: guardedFetchFn(globalThis.fetch) as never }).catch(() => null);
+    const kept = await keepAdmission(pod, record, key, globalThis.fetch as never, ownerKey);
+    if (!kept.ok) { res.status(503).json({ error: `admission not kept on your pod: ${kept.error}` }); return; }
     sendActionResult(req, res, { ok: true, kept: record, durable: pod },
       bridgeBaseUrl, record.admission ? 'Admission kept' : 'Admission withdrawn', activeAffordances.filter(a => a.toolName === 'foxxi.content_resolve'));
   } catch (err) { sendServerError(res, err, 'route-handler'); }
@@ -10755,18 +10754,21 @@ async function resolveForCaller(callerDid: string, signer: string, p: Record<str
     // With none in the request, what the learner has kept for each competency stands
     // (foxxi.content_admit), and the records that decided anything are said.
     const kept = admission ? undefined : await learnerAdmissions(callerDid);
+    // A learner who limited their content is not resolved as one who did not, because their list could not be read now.
+    if (kept && !kept.ok) return { ok: false, status: 503, error: `the admissions you kept could not be read just now (${kept.error}), so nothing was resolved; try again` };
     const admittedBy = new Map<string, AdmissionRecord>();
-    const fromKept = (competency: string): Admission | undefined => {
-      const standing = kept ? recordFor(kept, competency) : undefined;
+    // A withdrawal answers null: nothing limits that competency, and the composition's own does not step in.
+    const fromKept = (competency: string): Admission | null | undefined => {
+      const standing = kept?.ok ? recordFor(kept.standing, competency) : undefined;
       if (standing?.admission) admittedBy.set(standing.competency, standing);
-      return standing?.admission ?? undefined;
+      return standing ? standing.admission : undefined;
     };
     const { missing } = await contentStore.gather(root);
     const record = await learnerCompetencies(callerDid, kind);
     await ensureEfficacy();
     const resolution = resolveComposition({
       composition: root, learner: { id: callerDid, kind }, record,
-      ...(admission ? { admission: () => admission } : kept?.size ? { admission: fromKept } : {}), lookup: iri => contentStore.get(iri),
+      ...(admission ? { admission: () => admission } : kept?.ok && kept.standing.size ? { admission: fromKept } : {}), lookup: iri => contentStore.get(iri),
       efficacy: (competency, fragment, level) => fragmentEfficacy.counts(competency, fragment, level),
     });
     return { ok: true, root, kind, resolution, missing, admittedBy: [...admittedBy.values()] };

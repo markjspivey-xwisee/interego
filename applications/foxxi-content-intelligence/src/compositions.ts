@@ -171,7 +171,12 @@ export interface ResolveInput {
   /** The learner's competencies, from their own record. */
   record?: readonly RecordedCompetency[];
   /** Which forms suit a competency, when something has decided that. */
-  admission?: (competency: string) => Admission | undefined;
+  /**
+   * Which forms suit a competency. Undefined says nothing, and a position then takes what its
+   * composition's competency admits; null says nothing is to limit this competency (an admission
+   * withdrawn here), which the composition's does not override.
+   */
+  admission?: (competency: string) => Admission | null | undefined;
   /** Dereference an alternative. Returns undefined when it cannot be found. */
   lookup: (iri: string) => Fragment | Composition | undefined;
   /** How learners at a level did after meeting a fragment at a competency (fragment-efficacy.ts). */
@@ -298,8 +303,11 @@ export function resolveComposition(input: ResolveInput): Resolution {
       }
 
       // Admission: only content that is what its IRI says, in a form that suits this competency,
-      // meant for this learner.
-      const admission = input.admission?.(pos.competency) ?? input.admission?.(comp.competency);
+      // meant for this learner. What is said about the position's own competency comes first,
+      // including that nothing limits it; only when nothing is said there does the composition's apply.
+      const own = input.admission?.(pos.competency);
+      const withdrawn = own === null;
+      const admission = withdrawn ? undefined : (own ?? input.admission?.(comp.competency) ?? undefined);
       const admitted: Array<Fragment | Composition> = [];
       const refused: string[] = [];
       for (const iri of pos.paradigm) {
@@ -325,7 +333,11 @@ export function resolveComposition(input: ResolveInput): Resolution {
         out.trace.push(`${at}: unmet, ${because}`);
         return;
       }
-      if (!admission) out.trace.push(`${at}: nothing said which forms suit this competency, so every form was admitted`);
+      if (!admission) {
+        out.trace.push(withdrawn
+          ? `${at}: the admission for this competency was withdrawn, so every form was admitted`
+          : `${at}: nothing said which forms suit this competency, so every form was admitted`);
+      }
 
       // Choice: pitched at the learner's level, then the author's order. A composition has no level
       // of its own (its positions are resolved at this learner's level in turn), but it is chosen

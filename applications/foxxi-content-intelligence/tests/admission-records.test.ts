@@ -69,6 +69,23 @@ describe('resolution reads what the learner kept', () => {
     expect(nothing.steps).toHaveLength(0);
     expect(JSON.stringify(nothing.unmet)).toMatch(/no content is admitted here: the plan for this Turbulent work/);
   });
+
+  it('lets a withdrawal at a position stand over what its composition\'s competency admits', () => {
+    // The course develops "refunds"; its position is about "refund-authority".
+    const wide = compositionFrom({ title: 'Refunds', competency: 'refunds', positions: [{ competency: 'refund-authority', paradigm: [concept['@id'], probe['@id']] }] });
+    const resolveWide = (records: unknown[]) => {
+      const standing = standingAdmissions(records);
+      return resolveComposition({ composition: wide, learner, lookup: i => store.get(i),
+        admission: c => { const r = recordFor(standing, c); return r ? r.admission : undefined; } });
+    };
+    const courseWide = { competency: competencyIri('refunds'), admission: probeOnly, at: at(1) };
+    // Nothing kept for the position: what the course's competency admits applies there.
+    expect(resolveWide([courseWide]).steps[0]!.fragment['@id']).toBe(probe['@id']);
+    // Withdrawn for the position: nothing limits it, and the course's does not step in.
+    const withdrawn = resolveWide([courseWide, { competency, admission: probeOnly, at: at(1) }, { competency, admission: null, at: at(2) }]);
+    expect(withdrawn.steps[0]!.fragment['@id']).toBe(concept['@id']);
+    expect(withdrawn.trace.join('\n')).toMatch(/the admission for this competency was withdrawn, so every form was admitted/);
+  });
 });
 
 describe('the bridge keeps an admission only when the learner asks, and reads it back', () => {
@@ -76,7 +93,7 @@ describe('the bridge keeps an admission only when the learner asks, and reads it
   const route = (from: string): string => src.slice(src.indexOf(from), src.indexOf('\n});', src.indexOf(from)));
   const fn = (from: string): string => src.slice(src.indexOf(from), src.indexOf('\n}\n', src.indexOf(from)));
 
-  it('keeps it on the caller\'s own pod, dated by the bridge, in their lattice with no public projection', () => {
+  it('keeps it on the caller\'s own pod, dated by the bridge, sealed, and only once the pod holds it', () => {
     const r = route("app.post('/agent/content/admit'");
     expect(r.indexOf('contentRateLimited(req, res)')).toBeGreaterThan(0);
     expect(r.indexOf('contentRateLimited(req, res)')).toBeLessThan(r.indexOf('verifyDelegatedCaller(req.body)'));
@@ -84,18 +101,28 @@ describe('the bridge keeps an admission only when the learner asks, and reads it
     expect(r).toMatch(/const pod = resolveSubjectPodUrl\(auth\.callerDid\);/);
     expect(r).not.toMatch(/subject_pod_url/);
     expect(r).toMatch(/if \(!tenantPodUrl \|\| !sameStore\(pod, tenantPodUrl\)\) \{\n\s+res\.status\(409\)/);
-    expect(r).toMatch(/contentType: CONTENT_ADMISSION_TYPE, ts: record\.at, projections: \['rdf'\], publishDescriptor: false,/);
-    expect(r).toMatch(/if \(!kept\?\.persisted\) \{ res\.status\(503\)/);
+    // Its own sealed list on the pod (src/admission-store.ts), not the shared lattice: a write that fails
+    // leaves nothing in memory that a later read or a later write could pick up.
+    expect(r).not.toMatch(/composeIntoSharedLattice/);
+    expect(r).toMatch(/if \(!key\) \{ res\.status\(503\)/);
+    expect(r).toMatch(/const kept = await keepAdmission\(pod, record, key, globalThis\.fetch as never, ownerKey\);/);
+    expect(r).toMatch(/if \(!kept\.ok\) \{ res\.status\(503\)/);
   });
 
-  it('reads the learner\'s own records only from a pod on its store, and only when a request names no admission', () => {
+  it('reads the learner\'s own records only from a pod on its store, refuses when they cannot be read, and only when a request names no admission', () => {
     const read = fn('async function learnerAdmissions');
-    expect(read).toMatch(/if \(!tenantPodUrl \|\| !sameStore\(pod, tenantPodUrl\)\) return new Map\(\);/);
-    expect(read).toMatch(/standingAdmissions\(latticeArtifacts\(label, CONTENT_ADMISSION_TYPE\)\.map\(a => a\.content\)\)/);
+    expect(read).toMatch(/if \(!tenantPodUrl \|\| !sameStore\(pod, tenantPodUrl\)\) return \{ ok: true, standing: new Map\(\) \};/);
+    expect(read).toMatch(/const read = await readAdmissions\(pod, bridgeEncryptionKeypair\(\), globalThis\.fetch as never\);/);
+    expect(read).toMatch(/return read\.ok \? \{ ok: true, standing: standingAdmissions\(read\.records\) \} : read;/);
     const resolve = route('async function resolveForCaller');
     expect(resolve).toMatch(/const kept = admission \? undefined : await learnerAdmissions\(callerDid\);/);
-    expect(resolve).toMatch(/\.\.\.\(admission \? \{ admission: \(\) => admission \} : kept\?\.size \? \{ admission: fromKept \} : \{\}\)/);
+    // Unreadable is not empty: a learner who limited their content is not resolved as one who did not.
+    expect(resolve).toMatch(/if \(kept && !kept\.ok\) return \{ ok: false, status: 503,/);
+    expect(resolve.indexOf('kept && !kept.ok')).toBeLessThan(resolve.indexOf('resolveComposition('));
+    expect(resolve).toMatch(/\.\.\.\(admission \? \{ admission: \(\) => admission \} : kept\?\.ok && kept\.standing\.size \? \{ admission: fromKept \} : \{\}\)/);
     expect(resolve).toMatch(/if \(standing\?\.admission\) admittedBy\.set\(standing\.competency, standing\);/);
+    // A withdrawal answers null, so the composition's own admission does not step in.
+    expect(resolve).toMatch(/return standing \? standing\.admission : undefined;/);
     expect(route("app.post('/agent/content/resolve'")).toMatch(/admittedBy: r\.admittedBy/);
     expect(lookupTerm('ContentAdmission')).toBeTruthy();
   });

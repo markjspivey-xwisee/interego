@@ -1360,7 +1360,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     ],
     appliesTo: { collections: ['courses', 'profiles'] },
     outputs: {
-      description: 'Your resolution. 404 when the composition is not here; 400 for an invalid admission or a composition too large to resolve; 401 on auth failure.',
+      description: 'Your resolution. 404 when the composition is not here; 400 for an invalid admission or a composition too large to resolve; 503 when the admissions you kept could not be read just now (nothing is resolved without them); 401 on auth failure.',
       properties: {
         ok: { type: 'boolean' },
         composition: { type: 'string' },
@@ -1382,7 +1382,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     action: 'urn:iep:action:foxxi:content-admit-signed' as IRI,
     toolName: 'foxxi.content_admit',
     title: 'Keep which forms of content suit you at a competency',
-    description: 'Keep, on your own pod, which forms of content suit you at a competency, or withdraw that. A plan made for your work (contextualize_and_plan) offers the admission it implies: a plan for Emergent work admits probes and reflection, never a lesson, and one for Turbulent work admits no content at all. The bridge never keeps a plan\'s consequence for you; you keep it here, and from then on foxxi.content_resolve and foxxi.content_launch admit only those forms at that competency whenever a request names no admission of its own. The latest record for a competency stands; admission: null withdraws it, and earlier records stay in your history. It is kept in your encrypted lattice with no public projection. The same for a person and for an agent.',
+    description: 'Keep, on your own pod, which forms of content suit you at a competency, or withdraw that. A plan made for your work (contextualize_and_plan) offers the admission it implies: a plan for Emergent work admits probes and reflection, never a lesson, and one for Turbulent work admits no content at all. The bridge never keeps a plan\'s consequence for you; you keep it here, and from then on foxxi.content_resolve and foxxi.content_launch admit only those forms at that competency whenever a request names no admission of its own. The latest record for a competency stands; admission: null withdraws it (and a withdrawal at a competency stands over what a composition\'s wider competency admits), and earlier records stay in your history. It is kept in a list of its own on your pod, sealed to the bridge and to you, and nothing counts until your pod holds it. The same for a person and for an agent.',
     method: 'POST',
     targetTemplate: '{base}/agent/content/admit',
     mediaType: 'application/json',
@@ -1420,7 +1420,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     ],
     appliesTo: { collections: ['courses', 'profiles'] },
     outputs: {
-      description: 'The play session and its first step, or nothingToPlay with the reasons. 404 when the composition is not here; 400 for an invalid admission or a composition too large to resolve; 401 on auth failure.',
+      description: 'The play session and its first step, or nothingToPlay with the reasons. 404 when the composition is not here; 400 for an invalid admission or a composition too large to resolve; 503 when the admissions you kept could not be read just now (nothing is launched without them); 401 on auth failure.',
       properties: {
         ok: { type: 'boolean' },
         sessionId: { type: 'string', description: 'Pass to foxxi.content_next.' },

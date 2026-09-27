@@ -223,12 +223,17 @@ agent, as learner and as author.
     implies at the situation's competency (`admissionOffer`). Nothing is
     written onto anyone's record from it.
   - The learner, person or agent, keeps it with `foxxi.content_admit` on
-    their own pod, in their encrypted lattice, with no public projection.
+    their own pod, in a list of its own sealed by the bridge to itself and
+    to them ([`src/admission-store.ts`](src/admission-store.ts)). Nothing
+    counts until the pod holds it: the list is written on the condition of
+    what was read, and a write that fails leaves no trace.
   - For each competency the latest record stands, and a withdrawal is a
-    record too.
+    record too. A withdrawal at a position's competency stands over what
+    the composition's competency admits.
   - Whenever a request names no admission of its own, resolution reads
     what the learner kept, and says which records limited a position
-    (`admittedBy`).
+    (`admittedBy`). A list that cannot be read is not read as empty:
+    resolution answers 503 rather than admit every form.
 
 **On the bridge**, for a person or an agent alike, as signed affordances:
 - `foxxi.content_fragment` authors a fragment.
