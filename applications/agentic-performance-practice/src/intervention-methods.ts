@@ -10,6 +10,7 @@ const DCT = 'http://purl.org/dc/terms/';
 export const METHOD_CONTEXT = {
   agp: AGP_NS, rdfs: RDFS, dct: DCT,
   token: 'agp:profileToken', intervention: 'agp:interventionToken',
+  contentForms: { '@id': 'agp:contentFormToken', '@container': '@set' },
   title: 'rdfs:label', description: 'rdfs:comment', version: 'dct:hasVersion',
   appliesWhen: 'agp:appliesWhen', sequence: 'agp:sequence', workProduct: 'agp:workProduct',
   entryStep: { '@id': 'agp:entryStep', '@type': '@id' },

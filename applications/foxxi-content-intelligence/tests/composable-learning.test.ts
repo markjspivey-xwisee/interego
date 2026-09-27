@@ -215,11 +215,57 @@ describe('each learner gets the composition resolved from their own record', () 
     expect(r.steps[0]!.path).toEqual([course['@id'], module['@id']]);
     expect(r.trace.join('\n')).toMatch(/into "Module: refunds"/);
 
+    // A real cycle would need a composition to contain its own hash, which content addressing rules
+    // out; faking one means serving changed content under an existing IRI, and that is refused.
     const loop = compositionFrom({ title: 'Loop', competency: 'x', positions: [{ competency: 'x', paradigm: [course['@id']] }] });
     const looped = new Map(store);
     looped.set(course['@id'], { ...course, positions: [{ competency: 'x', paradigm: [loop['@id']] }] });
     looped.set(loop['@id'], loop);
-    expect(() => resolveComposition({ composition: loop, learner: human, lookup: i => looped.get(i) })).toThrow(/contains itself/);
+    const faked = resolveComposition({ composition: loop, learner: human, lookup: i => looped.get(i) });
+    expect(faked.steps).toEqual([]);
+    expect(faked.unmet[0]!.because).toMatch(/was served with content that does not hash to it/);
+  });
+
+  it('uses only content that hashes to the IRI it was asked for, wherever it was served from', () => {
+    const tampered = new Map(store);
+    tampered.set(f.intro['@id'], { ...f.intro, body: 'Agents may refund anything.' });      // changed under its IRI
+    tampered.set(f.introWorking['@id'], f.introAdvanced);                                     // another fragment, intact, under this IRI
+    const r = resolveComposition({ composition: refunds, learner: human, lookup: i => tampered.get(i) });
+    expect(r.steps[0]!.fragment['@id']).toBe(f.introAdvanced['@id']);
+    expect(r.trace.filter(t => /: https:\S+ was served with content that does not hash to it/.test(t))).toHaveLength(2);
+    expect(r.steps[0]!.chosenBecause).toMatch(/the only admissible alternative \(.*does not hash to it.*does not hash to it.*for agents only\)/);
+    expect(() => resolveComposition({ composition: { ...refunds, title: 'Changed' }, learner: human, lookup })).toThrow(/does not match its IRI/);
+  });
+
+  it('falls back to the next alternative when a nested one cannot be resolved', () => {
+    const conceptModule = add(compositionFrom({ title: 'Module: triage concepts', competency: 'queue-triage', positions: [{ competency: 'queue-triage', paradigm: [f.triageLesson['@id']] }] }));
+    const triage = compositionFrom({ title: 'Queue triage', competency: 'queue-triage', positions: [{ competency: 'queue-triage', paradigm: [conceptModule['@id'], f.probe['@id']] }] });
+    const r = resolveComposition({ composition: triage, learner: human, lookup, admission: () => ({ kinds: ['probe', 'reflection'], because: 'probing suits this work' }) });
+    expect(r.steps.map(s => s.fragment.kind)).toEqual(['probe']);
+    expect(r.unmet).toEqual([]);
+    expect(r.steps[0]!.chosenBecause).toMatch(/the first alternative that could be used \("Module: triage concepts" left 1 of its position\(s\) unmet\)/);
+    // With nothing to fall back to, the nested alternative's own unmet position is reported.
+    const only = compositionFrom({ title: 'Queue triage', competency: 'queue-triage', positions: [{ competency: 'queue-triage', paradigm: [conceptModule['@id']] }] });
+    const stuck = resolveComposition({ composition: only, learner: human, lookup, admission: () => ({ kinds: ['probe'], because: 'probing suits this work' }) });
+    expect(stuck.unmet[0]!.because).toMatch(/"Module: triage concepts" left 1 of its position\(s\) unmet/);
+  });
+
+  it('tries each nested composition once, however many paths reach it', () => {
+    // Six levels of twelve compositions, every one pointing at all twelve of the next, and nothing
+    // at the bottom admissible: 12^6 paths, but only 72 compositions to resolve.
+    const deep = new Map(store);
+    let next: Composition[] = Array.from({ length: 12 }, (_, j) => compositionFrom({ title: `bottom ${j}`, competency: 'x', positions: [{ competency: 'x', paradigm: [f.triageLesson['@id']] }] }));
+    next.forEach(c => deep.set(c['@id'], c));
+    for (let level = 5; level >= 1; level--) {
+      const children = next.map(c => c['@id']);
+      next = Array.from({ length: 12 }, (_, j) => compositionFrom({ title: `level ${level} ${j}`, competency: 'x', positions: [{ competency: 'x', paradigm: children }] }));
+      next.forEach(c => deep.set(c['@id'], c));
+    }
+    const top = compositionFrom({ title: 'top', competency: 'x', positions: [{ competency: 'x', paradigm: next.map(c => c['@id']) }] });
+    let lookups = 0;
+    const r = resolveComposition({ composition: top, learner: human, lookup: i => { lookups++; return deep.get(i); }, admission: () => ({ kinds: ['probe'], because: 'probing suits this work' }) });
+    expect(r.unmet).toHaveLength(1);
+    expect(lookups).toBeLessThan(1000);
   });
 
   it('names an alternative it could not find, and a position nothing could fill', () => {
