@@ -248,6 +248,12 @@ describe("a composition's page: how it resolves, and where it can be taken", () 
     expect(resolutionLine({ steps: [], skipped: [{ competency: c, path: [], position: 0, because: 'shown' }], unmet: [] })).toBe('nothing to play, 1 position skipped');
   });
 
+  it('does not change whom it resolves for while a resolution is under way, so an answer is never shown under the other kind', () => {
+    const panel = readFileSync(new URL('../dashboard-app/src/components/EfficacyPanel.tsx', import.meta.url), 'utf8');
+    const card = panel.slice(panel.indexOf('function ResolveCard'), panel.indexOf('function ExportCard'));
+    expect(card).toMatch(/<select value=\{kind\} disabled=\{state === 'resolving'\}/);
+  });
+
   it('takes a composition elsewhere by the bridge\'s own routes for it', () => {
     const hash = 'a'.repeat(64);
     expect(exportLinks('https://bridge.example/', hash)).toEqual({

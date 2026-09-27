@@ -129,7 +129,7 @@ function ResolveCard({ session, iri }: { session: FoxxiSession; iri: string }) {
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
         <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
           as
-          <select value={kind} onChange={e => { setKind(e.target.value as 'human' | 'agent'); setResult(null); }} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--panel)', color: 'var(--text)' }}>
+          <select value={kind} disabled={state === 'resolving'} onChange={e => { setKind(e.target.value as 'human' | 'agent'); setResult(null); }} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--panel)', color: 'var(--text)' }}>
             <option value="human">a person</option><option value="agent">an agent</option>
           </select>
         </label>
