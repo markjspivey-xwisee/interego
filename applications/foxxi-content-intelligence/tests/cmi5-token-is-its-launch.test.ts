@@ -164,6 +164,15 @@ describe('a cmi5 auth-token is bound to its launch', () => {
     expect((await send(Buffer.from('user:guess').toString('base64'), statement(A.registration, 'initialized'))).status).toBe(401);
   });
 
+  it('takes a token an AU sends with no scheme, as it came from the fetch URL, held to its launch, and nothing else bare', async () => {
+    const bare = (value: string) => ({ Authorization: value, 'X-Experience-API-Version': '2.0.0', 'Content-Type': 'application/json' });
+    const send = (value: string, body: unknown) => fetch(`${base}/xapi/statements`, { method: 'POST', headers: bare(value), body: JSON.stringify(body) });
+    expect((await send(tokenA, statement(A.registration, 'initialized'))).status).toBe(200);
+    expect((await send(tokenA, statement(B.registration, 'passed'))).status).toBe(403);
+    expect((await send('cmi5-0-not-a-launch', statement(A.registration, 'initialized'))).status).toBe(401);
+    expect((await send(Buffer.from('user:guess').toString('base64'), statement(A.registration, 'initialized'))).status).toBe(401);
+  });
+
   it('keeps the launch\'s whole actor for the pod: its type and both account fields', () => {
     expect(signedLaunchLearner(A.registration, tenant)).toEqual({ did: learner.id, podUrl: 'https://pod.example/eth-222222222222/', homePage: 'did:web:bridge.example' });
   });
