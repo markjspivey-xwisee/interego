@@ -1,15 +1,37 @@
 # Changelog
 
+## 2026-09-27 — Foxxi: an agent's write is answered with what the record now is, read from the record
+
+Codex found this in #535, which merged before it could be fixed there.
+
+`/agent/record-performance` said "An agent capability record is PUBLIC: from now on…" (`recordVisibility`) whenever work was recorded with `actor_kind: agent`. But a record is an agent's only when all of its own work says so. A record that also holds work recorded as a person's stays a person's, and private. Since #535, the Work page shows that note with what was recorded, so those performers would have been told their record had become public when it had not.
+
+Now, after an agent-kind write, the route:
+- reads the record as it stands with the unit in it (`learnerStatementsFor`, the same union the review routes read);
+- classifies it with `classifySubjectKind`, the one classifier every privacy gate uses, asked as a reader other than the performer, since visibility is what somebody else can read;
+- answers with `recordVisibilityAfterAgentWork` (in `src/learner-record.ts`):
+  - public, when all of the record's own work says an agent did it;
+  - private, and told so, when it also holds a person's;
+  - when the record cannot be read just then, the rule, the assumption that protects the performer, and `readFromRecord: false`.
+
+A read failure does not fail the recording. The page shows the note as a warning only when the record is public.
+
+`tests/a-portal-keeps-what-its-work-implies.test.ts` gains a test:
+- `recordVisibilityAfterAgentWork` for a record that classifies as an agent's, as a person's, and unread;
+- where the route reads the record: after the write, for agent-kind work only, through the shared classifier as another reader, with a read failure caught (a source pin);
+- the page's warning color.
+
+The census in `subject-kind-not-caller-controlled.test.ts` still holds: the raw evidence reader has one caller, the shared classifier. Ten mutants each fail a named test.
+
 ## 2026-09-27 — Foxxi Work page: recording as an agent is an informed choice, and the page refuses what the bridge would
 
-Codex found three things in the Work page (#533) after it merged, and a fourth in this change. Two also needed fixes on the bridge behind the page. The last item below was missed alongside them.
+Codex found three things in the Work page (#533) after it merged, and one also needed a fix on the bridge behind it. The last item below was missed alongside them.
 
 - **Recording as an agent says what it does, and waits until the performer says they understand.** Work recorded as an agent's is what classifies its performer as an agent, unless their record already holds work recorded as a person's. An agent's record is public: any signed caller can read their competencies, their performance history and their credentials. The page offered that choice as one option of a folded-away select, sent it unconfirmed, and dropped the bridge's own warning from the answer. Now:
   - *Done by* sits beside whether the work succeeded;
   - choosing an agent shows what it does, and Record waits until the performer checks that they understand;
   - a change of mind asks again;
   - the bridge's own word on the record's visibility is shown with what was recorded, as is where the record landed when the same wallet holds another pod.
-- **The bridge says what the record now is, read from the record.** It said "PUBLIC: from now on" whenever work was recorded as an agent's. A record that also holds a person's work stays a person's, and private, so shown on the page, that note would have given those performers a false privacy status. Now the bridge classifies the record as it stands with the unit in it, by the one classifier every privacy gate uses (`classifySubjectKind`), asked as a reader other than the performer, and says which (`recordVisibilityAfterAgentWork`, in `src/learner-record.ts`). A record that cannot be read just then gets the rule, and the assumption that protects the performer, and the recording stands either way. The page shows the note as a warning only when the record is public.
 - **A step's texts are held to what the record keeps.** The page allowed 500 characters where the learner record keeps 200, so a unit that looked ready was refused. The limits now live in `src/work-step-limits.ts`, which the record and the page both load. The page measures each text as it sends it, trimmed.
 - **A duration is taken only as xAPI takes one.** `25m` passed the page and went into the statement; the LRS refused it, and the caller was answered 500 for their own input. Now:
   - the page checks a duration by the statement validator's own rule (`isXapiDuration`, exported from `src/xapi-validate.ts`);
@@ -17,17 +39,16 @@ Codex found three things in the Work page (#533) after it merged, and a fourth i
   - an empty `duration_iso` is taken as none sent.
 - **Work is named where a wallet or a pasted key is sent.** The notice such a session sees on a page it cannot read names the pages signed as it, and now Work among them.
 
-`tests/a-portal-keeps-what-its-work-implies.test.ts` gains seven tests:
+`tests/a-portal-keeps-what-its-work-implies.test.ts` gains six tests:
 - the longest text the record keeps passes the page and is kept by `workStepsFrom`; one character more is refused by both, for a step's action, its object and its note;
 - a duration the statement validator refuses is refused by the page, and one it takes is sent;
 - what the bridge refuses, what it takes as none, and where both doors check it;
 - the confirmation, a change of mind, and the unit after;
-- the page's warning, and the bridge's own word shown with the record;
-- what the record is said to be after work recorded as an agent's: public only when it classifies as an agent's, and where the route reads it.
+- the page's warning, and the bridge's own word shown with the record.
 
 `the-learner-portal-speaks-the-bridges-language.test.ts` pins Work among the notice's links.
 
-Thirty-five mutants each fail a named test.
+Twenty-five mutants each fail a named test.
 
 The page was run in a browser against the deployed bridge, as the demo learner Joshua Liu, with nothing sent:
 - a 201-character step and `25m` were each stopped with their reason, and 200 characters and ` PT25M ` were let through;
