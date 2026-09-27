@@ -1,5 +1,57 @@
 # Changelog
 
+## 2026-09-26 — Foxxi: a learner plays a composition, and each step is recorded against the fragment it showed
+
+A composition could be resolved for a learner (#502), but not played: nothing graded their answers or recorded what they met. Now a person or an agent can launch one and step through it, and the record names the fragment at each step, not just the course. That is the evidence that choosing among alternatives by what has worked needs.
+
+- **Playing** (`src/composition-play.ts`).
+  - `startPlay` begins a session over a resolution's steps, under one xAPI registration.
+  - `currentView` shows the step as the learner receives it, with no verifier, salt or blinding value.
+  - `advancePlay` takes the answers to the step the learner is on:
+    - It checks the answers can be taken (422, and the step does not move, if not).
+    - It grades each against its stored question.
+    - It builds the statements for the step and moves on. On the last step the composition is completed, scored over every graded question.
+  - Nothing is stored here.
+- **The statements** are about the fragment itself:
+  - `answered`, per question. The object is the question as a `cmi.interaction` activity with its interactionType, description and choices, source, target or scale, taken from the public view only. It never carries a `correctResponsesPattern`. The result holds the response in the SCORM/xAPI format, and `success` when the question is graded.
+  - `experienced`, for the fragment (`activities/fragment`). It is scored when the step was graded. Its parent is the composition holding the position, and it carries the competency, the position, the alternatives offered and why this one was chosen.
+  - `completed`, for the composition (`activities/composition`).
+- **The Foxxi xAPI profile** (`src/xapi-profile.ts`) now declares:
+  - the `answered` verb;
+  - the `cmi.interaction`, fragment and composition activity types;
+  - the four extensions;
+  - three templates, `fragment-experienced`, `question-answered` (which requires the correct-response pattern's absence) and `composition-completed`;
+  - a primary `composition-attempt` pattern.
+
+  The extensions are declared in the vocabulary too, so they dereference.
+- **On the bridge** (`bridge/server.ts`):
+  - `POST /agent/content/launch` (`foxxi.content_launch`) resolves through the same path as resolve (`resolveForCaller`), then starts a play. With nothing to play, it says why.
+  - `POST /agent/content/next` (`foxxi.content_next`) steps it. Only the play's learner can do so (403 otherwise).
+  - Each step's statements are stored in the learner's own lens with the bridge's grading mark on what it graded (`withGradedTag`), composed into their lattice, and forwarded.
+  - Play sessions live in the process, up to 5,000 for three hours, like SCORM plays.
+- **The content routes have a budget of their own.** #504 gave them the ten-per-five-minutes limit the LLM routes share. Content is authored a fragment at a time and played a step at a time, so one course is dozens of requests. They now take 120 per five minutes per IP (`FOXXI_CONTENT_RATE_LIMIT_PER_IP`), still before anything is verified, read or written.
+- **A recorded pod on the store's internal address is read again** (the automated review of #504). A relay-signed author's pod may be recorded by the store's internal address, which `selfBoundPod` accepts as the same store. The cold read compared raw origins with the public tenant URL, so it skipped that location, and the content went unreachable after a restart. It now uses `sameStore`, which knows both spellings of this deployment's store and no other origin.
+- **Docs.** The two affordances are described, `docs/skills` is regenerated, and `PERFORMANCE-ARCHITECTURE.md` §5 describes playing. Its not-yet-wired list shrinks by one.
+
+`applications/foxxi-content-intelligence/tests/composition-play.test.ts` covers:
+- starting on the first step, and nothing to play;
+- a step without questions, recorded with its position, alternatives and reason;
+- unacceptable answers leaving the step where it was;
+- grading against the stored questions, with one answer wrong;
+- each interaction's shape and response;
+- scoring the fragment and completing the composition;
+- an agent learner;
+- the bridge's routes, checked in its source.
+
+Every statement is validated against the profile's templates. Seven mutants were checked, and each fails a named test:
+- an interaction carrying its correct responses;
+- every answer taken as right;
+- a step not saying what it was chosen from;
+- no registration;
+- unacceptable answers advancing;
+- anyone stepping another learner's play;
+- graded results left unmarked.
+
 ## 2026-09-26 — Foxxi: a fragment's public form is no oracle for its answers, and content is kept only once a pod holds it
 
 The automated review of #502 found four problems, each fixed here.

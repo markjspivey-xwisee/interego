@@ -226,16 +226,37 @@ agent, as learner and as author.
 Each item is written to its author's pod's shared lattice first. Only
 once that write lands is it recorded as an `authored` statement, cached,
 and its pod remembered. The pod is remembered as written, not derived
-again from the DID, and each item keeps up to five authors' pods. All
-three routes take the per-IP authoring rate limit.
+again from the DID, and each item keeps up to five authors' pods.
 
 Anything read back is checked against its hash
 ([`src/content-store.ts`](src/content-store.ts)), so a wrong or hostile
 source can make an item unavailable but never different. A fragment's IRI
 dereferences to its public form, and a composition's to itself.
 
+**Playing** ([`src/composition-play.ts`](src/composition-play.ts)):
+`foxxi.content_launch` resolves a composition for the caller and starts a
+play. `foxxi.content_next` answers the step they are on and moves on.
+
+- **The bridge grades each answer** against the stored verifiers, never
+  the learner's word, and marks what it graded.
+- **Each step is recorded in the learner's own lens**, as xAPI about the
+  fragment itself:
+  - an `answered` statement per question, the question as an interaction
+    activity that never carries its correct responses;
+  - an `experienced` statement for the fragment, carrying the competency,
+    the position, the alternatives it was chosen from and why.
+  So the record can say which explanation, example or probe a learner met
+  at which point, and how they did after it.
+- **The last step completes the composition.**
+- **Every statement follows the Foxxi xAPI profile's
+  `composition-attempt` pattern.** Its templates are `question-answered`,
+  `fragment-experienced` and `composition-completed`, with the `answered`
+  verb and the interaction, fragment and composition activity types.
+- **The content routes share a per-IP budget of their own.** Content is
+  authored a fragment at a time and played a step at a time, so one course
+  is dozens of requests.
+
 Not yet wired:
-- delivering a resolution live, with xAPI at the level of the fragment;
 - choosing among alternatives by what has worked for learners like this
   one (the Hypothetical-to-Asserted flip on each fragment's record at each
   position);

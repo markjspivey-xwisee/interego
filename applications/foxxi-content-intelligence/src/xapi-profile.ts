@@ -57,6 +57,7 @@ const verbs = [
   { id: `${ADL}/verbs/initialized`, prefLabel: { en: 'initialized' }, definition: { en: 'cmi5 initialized verb — AU declared initialization' } },
   { id: `${ADL}/verbs/experienced`, prefLabel: { en: 'experienced' }, definition: { en: 'xAPI core verb — learner experienced (viewed / interacted with) an Activity. Used for slide views.' } },
   { id: `${ADL}/verbs/interacted`,  prefLabel: { en: 'interacted' },  definition: { en: 'xAPI core verb — learner interacted with an interaction Activity (e.g. asked the Context Companion a question via POST /content/ask).' } },
+  { id: `${ADL}/verbs/answered`,    prefLabel: { en: 'answered' },    definition: { en: 'xAPI core verb — the learner answered a question, recorded as an interaction activity. The response is recorded; the correct response never is.' } },
   { id: `${ADL}/verbs/completed`,   prefLabel: { en: 'completed' },   definition: { en: 'cmi5 completed verb — learner reached the end of the AU' } },
   { id: `${ADL}/verbs/passed`,      prefLabel: { en: 'passed' },      definition: { en: 'cmi5 passed verb — score met or exceeded mastery threshold' } },
   { id: `${ADL}/verbs/failed`,      prefLabel: { en: 'failed' },      definition: { en: 'cmi5 failed verb — score fell below mastery threshold' } },
@@ -91,6 +92,9 @@ const activityTypes = [
   { id: `${ADL}/activities/course`,     prefLabel: { en: 'course' },     definition: { en: 'A course as a top-level instructional unit' } },
   { id: `${ADL}/activities/lesson`,     prefLabel: { en: 'lesson' },     definition: { en: 'A lesson — child of a course; equates to a Foxxi slide' } },
   { id: `${ADL}/activities/assessment`, prefLabel: { en: 'assessment' }, definition: { en: 'An assessment activity (quiz / question)' } },
+  { id: `${ADL}/activities/cmi.interaction`, prefLabel: { en: 'interaction' }, definition: { en: 'A question as an interaction activity: its interactionType, description and choices, source, target or scale. Foxxi never sends its correctResponsesPattern.' } },
+  { id: `${FOXXI_NS}activities/fragment`,         prefLabel: { en: 'fragment' },         definition: { en: 'Foxxi extension — a piece of teaching or support whose IRI is the hash of its content, one of the alternatives a composition position offers' } },
+  { id: `${FOXXI_NS}activities/composition`,      prefLabel: { en: 'composition' },      definition: { en: 'Foxxi extension — a lesson, module, course or curriculum: a path of positions resolved per learner from their own record' } },
   { id: `${FOXXI_NS}activities/scene`,            prefLabel: { en: 'scene' },            definition: { en: 'Foxxi extension — a course scene grouping multiple slides under a sub-theme' } },
   { id: `${FOXXI_NS}activities/concept-graph-node`, prefLabel: { en: 'concept-graph-node' }, definition: { en: 'Foxxi extension — a single concept in the course\'s knowledge graph; carries prereq edges + slide-membership' } },
   { id: `${FOXXI_NS}activities/credential`,       prefLabel: { en: 'credential' },       definition: { en: 'Foxxi extension — a Verifiable Credential / Open Badge 3.0' } },
@@ -117,6 +121,10 @@ const extensions = [
   { id: `${FOXXI_NS}callerRole`,        prefLabel: { en: 'callerRole' },        definition: { en: 'Resolved caller role at the time of the affordance call (learner / admin / learning-engineer / manager)' } },
   { id: `${FOXXI_NS}substrateDescriptorIri`, prefLabel: { en: 'substrateDescriptorIri' }, definition: { en: 'IRI of the context descriptor on the substrate pod produced by this affordance call (cross-link xAPI ↔ substrate)' } },
   { id: `${FOXXI_NS}supersededDescriptor`, prefLabel: { en: 'supersededDescriptor' }, definition: { en: 'IRI of a prior descriptor this one revises/closes — the iep:supersedes structural revision link carried into xAPI (not a domain closure verb).' } },
+  { id: `${FOXXI_NS}competency`,           prefLabel: { en: 'competency' },           definition: { en: 'The competency IRI the position a fragment filled develops' } },
+  { id: `${FOXXI_NS}compositionPosition`,  prefLabel: { en: 'compositionPosition' },  definition: { en: 'The index of the position, in the composition holding it, that a fragment filled' } },
+  { id: `${FOXXI_NS}alternativesOffered`,  prefLabel: { en: 'alternativesOffered' },  definition: { en: 'The fragment and composition IRIs the position offered, of which this fragment was chosen' } },
+  { id: `${FOXXI_NS}chosenBecause`,        prefLabel: { en: 'chosenBecause' },        definition: { en: 'Why resolution chose this fragment for this learner, in words' } },
   { id: `${FOXXI_NS}actorKind`,   prefLabel: { en: 'actorKind' },   definition: { en: 'Whether the actor is a human or an agent.' } },
   { id: `${FOXXI_NS}contextKind`, prefLabel: { en: 'contextKind' }, definition: { en: 'Whether a statement records production work, training, or performance-support.' } },
   { id: `${FOXXI_NS}trustLevel`, prefLabel: { en: 'trustLevel' }, definition: { en: 'The descriptor TrustFacet level (SelfAsserted / ThirdPartyAttested / CryptographicallyVerified), passed through verbatim.' } },
@@ -128,6 +136,47 @@ const extensions = [
 // ── Statement templates ─────────────────────────────────────────────
 
 const templates = [
+  // ── Composition plays (composition-play.ts) ──────────────────────────
+  // A learner, person or agent, stepping through the fragments a composition resolved to for them.
+  {
+    id: `${FOXXI_PROFILE_ID}/templates/fragment-experienced`,
+    prefLabel: { en: 'fragment-experienced' },
+    definition: { en: 'A learner met a fragment at a position of a composition resolved for them. Carries the competency the position develops, the position, the alternatives offered and why this one was chosen, so the record can later say which alternative works where.' },
+    verb: `${ADL}/verbs/experienced`,
+    objectActivityType: `${FOXXI_NS}activities/fragment`,
+    rules: [
+      { location: 'context.registration', presence: 'included' },
+      { location: 'context.contextActivities.parent[*].definition.type', presence: 'included', any: [`${FOXXI_NS}activities/composition`] },
+      { location: 'context.extensions["' + FOXXI_NS + 'competency"]', presence: 'included' },
+      { location: 'context.extensions["' + FOXXI_NS + 'compositionPosition"]', presence: 'included' },
+      { location: 'context.extensions["' + FOXXI_NS + 'alternativesOffered"]', presence: 'included' },
+    ],
+  },
+  {
+    id: `${FOXXI_PROFILE_ID}/templates/question-answered`,
+    prefLabel: { en: 'question-answered' },
+    definition: { en: 'A learner answered a question of a fragment. The object is the question as an interaction activity, which must not carry its correct responses; the response is recorded, and success when the bridge graded it.' },
+    verb: `${ADL}/verbs/answered`,
+    objectActivityType: `${ADL}/activities/cmi.interaction`,
+    rules: [
+      { location: 'context.registration', presence: 'included' },
+      { location: 'object.definition.interactionType', presence: 'included', any: ['true-false', 'choice', 'fill-in', 'long-fill-in', 'matching', 'performance', 'sequencing', 'likert', 'numeric', 'other'] },
+      { location: 'object.definition.correctResponsesPattern', presence: 'excluded' },
+      { location: 'result.response', presence: 'included' },
+      { location: 'context.contextActivities.parent[*].definition.type', presence: 'included', any: [`${FOXXI_NS}activities/fragment`] },
+    ],
+  },
+  {
+    id: `${FOXXI_PROFILE_ID}/templates/composition-completed`,
+    prefLabel: { en: 'composition-completed' },
+    definition: { en: 'A learner reached the end of the steps a composition resolved to for them; the score, when present, is over the graded questions.' },
+    verb: `${ADL}/verbs/completed`,
+    objectActivityType: `${FOXXI_NS}activities/composition`,
+    rules: [
+      { location: 'context.registration', presence: 'included' },
+      { location: 'result.completion', presence: 'included', any: [true] },
+    ],
+  },
   {
     id: `${FOXXI_PROFILE_ID}/templates/launched`,
     prefLabel: { en: 'launched' },
@@ -450,6 +499,37 @@ export function verbIsDeclared(verbIri: string): boolean {
 //   zeroOrMore — any number, including zero
 
 const patterns = [
+  {
+    id: `${FOXXI_PROFILE_ID}/patterns/composition-attempt`,
+    prefLabel: { en: 'composition-attempt' },
+    definition: { en: 'One learner playing a composition resolved for them: each step answers its questions, if any, then records the fragment experienced; the attempt ends with the composition completed.' },
+    primary: true,
+    sequence: [
+      `${FOXXI_PROFILE_ID}/patterns/composition-steps`,
+      `${FOXXI_PROFILE_ID}/templates/composition-completed`,
+    ],
+  },
+  {
+    id: `${FOXXI_PROFILE_ID}/patterns/composition-steps`,
+    prefLabel: { en: 'composition-steps' },
+    primary: false,
+    oneOrMore: `${FOXXI_PROFILE_ID}/patterns/composition-step`,
+  },
+  {
+    id: `${FOXXI_PROFILE_ID}/patterns/composition-step`,
+    prefLabel: { en: 'composition-step' },
+    primary: false,
+    sequence: [
+      `${FOXXI_PROFILE_ID}/patterns/composition-answers`,
+      `${FOXXI_PROFILE_ID}/templates/fragment-experienced`,
+    ],
+  },
+  {
+    id: `${FOXXI_PROFILE_ID}/patterns/composition-answers`,
+    prefLabel: { en: 'composition-answers' },
+    primary: false,
+    zeroOrMore: `${FOXXI_PROFILE_ID}/templates/question-answered`,
+  },
   {
     id: `${FOXXI_PROFILE_ID}/patterns/course-session`,
     prefLabel: { en: 'course-session' },

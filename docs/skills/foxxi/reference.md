@@ -1,6 +1,6 @@
 # Foxxi content intelligence, learner surface: every affordance
 
-Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 50 affordances.
+Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 52 affordances.
 
 ## `foxxi.record_private_performance_outcome`
 
@@ -725,6 +725,36 @@ Resolve a composition for yourself: which fragment you are shown at each positio
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
 | `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, composition: IRI, admission?: { kinds:[fragment kinds], because }, learner_kind?: human\|agent }). learner_kind defaults to human for a wallet signing for itself and agent for a delegated agent. |
+| `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.content_launch`
+
+**Launch a composition for yourself and get the first step**
+
+Resolve a composition for yourself (as foxxi.content_resolve does, from your own record) and start playing it: the first step comes back as you receive it, the fragment's Markdown and rendering and its questions without their verifiers. Continue with foxxi.content_next. The same for a person and for an agent. When everything is already demonstrated or nothing admissible fills it, there is nothing to play and the reasons come back instead.
+
+- Action: `urn:iep:action:foxxi:content-launch-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/content/launch` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, composition: IRI, admission?: { kinds:[fragment kinds], because }, learner_kind?: human\|agent }). |
+| `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.content_next`
+
+**Answer the step you are on and go on**
+
+Answer the questions of the step you are on, if it has any, and move to the next. The bridge grades graded questions against their verifiers (never your word) and records the step in your own record as xAPI: an answered statement per question, the question as an interaction activity without its correct responses, and an experienced statement for the fragment carrying the competency, position, alternatives offered and why it was chosen. On the last step the composition is completed. Every statement follows the Foxxi xAPI profile's composition-attempt pattern.
+
+- Action: `urn:iep:action:foxxi:content-next-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/content/next` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, session_id, answers? }). answers is one string per question of the step, in the formats foxxi.scorm_submit takes: text, a number, option letters ("B" or "A, C"), true or false, the letters of shown items in their right order, a letter per prompt for matching, a scale letter for likert, free text for long-fill-in. |
 | `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
 
 ## `foxxi.scorm_author`

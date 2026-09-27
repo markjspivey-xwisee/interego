@@ -193,7 +193,10 @@ describe('the bridge authors, dereferences and resolves content through these', 
     // Every pod that holds an item is tried, the one it was written to and only on this tenant's server,
     // so one author withdrawing it, or writing to a twin pod, does not lose it.
     expect(src).toMatch(/for \(const \{ did, pod: written \} of contentLocations\.get\(key\) \?\? \[\]\) \{\n\s+const pod = written \|\| resolveSubjectPodUrl\(did\);/);
-    expect(src).toMatch(/if \(!tenantOrigin \|\| podOrigin !== tenantOrigin\) continue;/);
+    // This tenant's store under either spelling: a relay-signed author's pod may be recorded by the
+    // store's internal address, and a raw-origin comparison would lose it after a restart.
+    expect(src).toMatch(/if \(!tenantPodUrl \|\| !sameStore\(pod, tenantPodUrl\)\) continue;/);
+    expect(src).not.toMatch(/podOrigin !== tenantOrigin\) continue;/);
     expect(route('function recordContentLocation')).toMatch(/held\.length >= LOCATIONS_PER_ITEM/);
     // Kept only once the pod holds it: the lattice write comes first and must report persisted.
     const keepFirst = route('async function keepAuthoredContent');
@@ -215,12 +218,15 @@ describe('the bridge authors, dereferences and resolves content through these', 
     const deref = route("app.get('/ns/foxxi/fragment/:hash'");
     expect(deref).toMatch(/publicFragment\(item\)/);
     expect(deref).not.toMatch(/JSON\.stringify\(item/);
+    // Resolve goes through the one path launch shares, which reads the caller's own record.
     const resolve = route("app.post('/agent/content/resolve'");
-    expect(resolve).toMatch(/contentStore\.gather\(root\)/);
-    expect(resolve).toMatch(/learnerCompetencies\(auth\.callerDid, kind\)/);
-    expect(resolve).toMatch(/resolveComposition\(\{/);
+    expect(resolve).toMatch(/resolveForCaller\(auth\.callerDid, auth\.signer, auth\.payload\)/);
     expect(resolve).toMatch(/fragment: fragmentForLearner\(s\.fragment\)/);
-    expect(resolve).toMatch(/admissionFrom\(p\.admission\)/);
+    const shared = route('async function resolveForCaller');
+    expect(shared).toMatch(/contentStore\.gather\(root\)/);
+    expect(shared).toMatch(/learnerCompetencies\(callerDid, kind\)/);
+    expect(shared).toMatch(/resolveComposition\(\{/);
+    expect(shared).toMatch(/admissionFrom\(p\.admission\)/);
   });
 
   it('declares the activity types and the type its statements and lattice use', () => {
