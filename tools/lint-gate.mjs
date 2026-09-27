@@ -239,7 +239,12 @@ const UNLINTED_FRONTIER = {
   //    552 -> 581 files, errors not raised: the tests and modules the verticals added since that
   //    pin used the slack, and the credential-link reader's test
   //    (foxxi-content-intelligence/tests/credential-by-link.test.ts) took the root one past it.
-  applications: { errors: 1452, files: 581 },
+  //
+  //    581 -> 612 files, errors not raised: Foxxi's composable-content modules and their tests
+  //    (fragments, compositions, plays, efficacy, folding, kept admissions; #499 to #509) used
+  //    the slack, and the admission store (src/admission-store.ts and its test) took the root
+  //    one past it. All of them lint clean.
+  applications: { errors: 1452, files: 612 },
   // The controller comparison adds two lint-clean audit modules; the census is 46.
   // Re-pin the file floor to that measured count without raising the error ceiling.
   benchmarks: { errors: 193, files: 46 },

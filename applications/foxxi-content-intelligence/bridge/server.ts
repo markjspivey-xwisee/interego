@@ -202,6 +202,8 @@ import { ContentError, compositionIri, contentRefOf, fragmentForLearner, fragmen
 import { admissionFrom, compositionFrom, resolveComposition, type Admission, type Composition, type RecordedCompetency } from '../src/compositions.js';
 import { bundledItem, ContentStore, isCompositionItem, LOCATIONS_PER_ITEM, mergeLocations, type ContentItem, type ContentLocation } from '../src/content-store.js';
 import { foldCourse, type FoldedCourse, type FoldOptions } from '../src/course-fold.js';
+import { admissionRecordFrom, recordFor, standingAdmissions, type AdmissionRecord } from '../src/admission-records.js';
+import { keepAdmission, readAdmissions } from '../src/admission-store.js';
 import { attemptStatements, closingStatements, cmi5AttemptFrom, compositionCourseStructure, definedStatement, type Cmi5Attempt } from '../src/composition-cmi5.js';
 import { compositionAuPage, compositionAuPageCsp } from '../src/composition-au-page.js';
 import { currentView, startPlay, takeStep, type CompositionPlay, type PlayInProgress } from '../src/composition-play.js';
@@ -10560,6 +10562,50 @@ async function learnerCompetencies(learnerDid: string, kind: 'human' | 'agent'):
   return elr.competencies;
 }
 
+/**
+ * The admissions a learner has kept on their own pod (src/admission-store.ts), the latest standing
+ * per competency. Only a pod on this tenant's store is read, as with the learner's record, and a
+ * pod whose list cannot be read now says so rather than reading as one where nothing was kept.
+ */
+async function learnerAdmissions(learnerDid: string): Promise<{ ok: true; standing: Map<string, AdmissionRecord> } | { ok: false; error: string }> {
+  const pod = resolveSubjectPodUrl(learnerDid);
+  if (!tenantPodUrl || !sameStore(pod, tenantPodUrl)) return { ok: true, standing: new Map() };
+  const read = await readAdmissions(pod, bridgeEncryptionKeypair(), globalThis.fetch as never);
+  return read.ok ? { ok: true, standing: standingAdmissions(read.records) } : read;
+}
+
+// A learner keeps, on their own pod, which forms of content suit them at a competency, or withdraws
+// that (admission: null). The bridge writes it only when the learner asks: it reads plans, it does
+// not act on them for anyone. Kept sealed on the learner's own pod, with no public projection.
+app.post('/agent/content/admit', async (req, res) => {
+  try {
+    if (contentRateLimited(req, res)) return;
+    const auth = await verifyDelegatedCaller(req.body);
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
+    const p = auth.payload;
+    let record: AdmissionRecord;
+    try {
+      record = admissionRecordFrom({ competency: p.competency, admission: p.admission, source: p.source, regime: p.regime, at: new Date().toISOString() });
+    } catch (e) {
+      if (e instanceof ContentError) { res.status(400).json({ error: `admission not kept: ${e.message}` }); return; }
+      throw e;
+    }
+    const pod = resolveSubjectPodUrl(auth.callerDid);
+    if (!tenantPodUrl || !sameStore(pod, tenantPodUrl)) {
+      res.status(409).json({ error: 'admission not kept: your pod is not on this bridge\'s store, so resolution here could not read it back' }); return;
+    }
+    const key = bridgeEncryptionKeypair();
+    if (!key) { res.status(503).json({ error: 'admission not kept: this bridge holds no key to seal it with' }); return; }
+    // Sealed to the bridge and to the pod's owner, so the learner can read their own list; nothing
+    // about it is held anywhere until the pod answers that it holds it (src/admission-store.ts).
+    const ownerKey = await resolveAgentEncryptionKey(pod, { fetch: guardedFetchFn(globalThis.fetch) as never }).catch(() => null);
+    const kept = await keepAdmission(pod, record, key, globalThis.fetch as never, ownerKey);
+    if (!kept.ok) { res.status(503).json({ error: `admission not kept on your pod: ${kept.error}` }); return; }
+    sendActionResult(req, res, { ok: true, kept: record, durable: pod },
+      bridgeBaseUrl, record.admission ? 'Admission kept' : 'Admission withdrawn', activeAffordances.filter(a => a.toolName === 'foxxi.content_resolve'));
+  } catch (err) { sendServerError(res, err, 'route-handler'); }
+});
+
 app.post('/agent/content/fragment', async (req, res) => {
   try {
     if (contentRateLimited(req, res)) return;
@@ -10698,7 +10744,7 @@ function persistEfficacy(): void {
 
 /** Resolve a composition for a verified caller from their own record: the one path resolve and launch share. */
 async function resolveForCaller(callerDid: string, signer: string, p: Record<string, unknown>): Promise<
-  | { ok: true; root: Composition; kind: 'human' | 'agent'; resolution: ReturnType<typeof resolveComposition>; missing: string[] }
+  | { ok: true; root: Composition; kind: 'human' | 'agent'; resolution: ReturnType<typeof resolveComposition>; missing: string[]; admittedBy: AdmissionRecord[] }
   | { ok: false; status: number; error: string }> {
   const root = typeof p.composition === 'string' ? await contentStore.fetch(p.composition) : undefined;
   if (!root || !isCompositionItem(root)) return { ok: false, status: 404, error: 'no such composition here: name one by its IRI' };
@@ -10707,15 +10753,27 @@ async function resolveForCaller(callerDid: string, signer: string, p: Record<str
     ? p.learner_kind : (callerDid === `did:ethr:${signer}` ? 'human' : 'agent');
   try {
     const admission: Admission | undefined = p.admission === undefined ? undefined : admissionFrom(p.admission);
+    // With none in the request, what the learner has kept for each competency stands
+    // (foxxi.content_admit), and the records that decided anything are said.
+    const kept = admission ? undefined : await learnerAdmissions(callerDid);
+    // A learner who limited their content is not resolved as one who did not, because their list could not be read now.
+    if (kept && !kept.ok) return { ok: false, status: 503, error: `the admissions you kept could not be read just now (${kept.error}), so nothing was resolved; try again` };
+    const admittedBy = new Map<string, AdmissionRecord>();
+    // A withdrawal answers null: nothing limits that competency, and the composition's own does not step in.
+    const fromKept = (competency: string): Admission | null | undefined => {
+      const standing = kept?.ok ? recordFor(kept.standing, competency) : undefined;
+      if (standing?.admission) admittedBy.set(standing.competency, standing);
+      return standing ? standing.admission : undefined;
+    };
     const { missing } = await contentStore.gather(root);
     const record = await learnerCompetencies(callerDid, kind);
     await ensureEfficacy();
     const resolution = resolveComposition({
       composition: root, learner: { id: callerDid, kind }, record,
-      ...(admission ? { admission: () => admission } : {}), lookup: iri => contentStore.get(iri),
+      ...(admission ? { admission: () => admission } : kept?.ok && kept.standing.size ? { admission: fromKept } : {}), lookup: iri => contentStore.get(iri),
       efficacy: (competency, fragment, level) => fragmentEfficacy.counts(competency, fragment, level),
     });
-    return { ok: true, root, kind, resolution, missing };
+    return { ok: true, root, kind, resolution, missing, admittedBy: [...admittedBy.values()] };
   } catch (e) {
     if (e instanceof ContentError) return { ok: false, status: 400, error: e.message };
     throw e;
@@ -10730,7 +10788,7 @@ app.post('/agent/content/resolve', async (req, res) => {
     const r = await resolveForCaller(auth.callerDid, auth.signer, auth.payload);
     if (!r.ok) { res.status(r.status).json({ error: r.error }); return; }
     sendActionResult(req, res, {
-      ok: true, ...r.resolution, learnerKind: r.kind, missing: r.missing,
+      ok: true, ...r.resolution, learnerKind: r.kind, missing: r.missing, ...(r.admittedBy.length ? { admittedBy: r.admittedBy } : {}),
       steps: r.resolution.steps.map(s => ({ ...s, fragment: fragmentForLearner(s.fragment) })),
     }, bridgeBaseUrl, 'Composition resolved for you', activeAffordances.filter(a => a.toolName === 'foxxi.content_launch'));
   } catch (err) { sendServerError(res, err, 'route-handler'); }
@@ -10806,7 +10864,7 @@ app.post('/agent/content/launch', async (req, res) => {
     const r = await resolveForCaller(auth.callerDid, auth.signer, auth.payload);
     if (!r.ok) { res.status(r.status).json({ error: r.error }); return; }
     const play = startPlay(r.resolution, r.root.title, { id: auth.callerDid, kind: r.kind }, { session: randomUUID(), registration: randomUUID() }, new Date().toISOString());
-    const about = { skipped: r.resolution.skipped, unmet: r.resolution.unmet, refused: r.resolution.refused, trace: r.resolution.trace, missing: r.missing };
+    const about = { skipped: r.resolution.skipped, unmet: r.resolution.unmet, refused: r.resolution.refused, trace: r.resolution.trace, missing: r.missing, ...(r.admittedBy.length ? { admittedBy: r.admittedBy } : {}) };
     if (!play) {
       sendActionResult(req, res, { ok: true, done: true, nothingToPlay: true, composition: r.root['@id'], learnerKind: r.kind, ...about },
         bridgeBaseUrl, 'Nothing to play for you here', []);

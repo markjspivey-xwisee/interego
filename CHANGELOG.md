@@ -1,5 +1,65 @@
 # Changelog
 
+## 2026-09-27 — Foxxi: a learner keeps the admission their plan implies, and resolution reads it
+
+A resolution admitted only the forms of content a caller's `admission` named, and a caller had to supply one on every request. A plan could imply one (`admissionFromPlan`, #499), but nothing turned a plan into one, and the learner had nowhere to keep it. So a plan for Emergent work still ended in lessons unless every request repeated what the plan said. Now the plan offers its admission, the learner keeps it, and resolution reads it.
+
+- **A plan offers the admission it implies** (`compatibility/foxxi-performance-routes.ts`, `admissionOffer`). The signed `contextualize_and_plan` route now answers an `admission` for the situation's competency. It gives the forms that deliver what the plan selected, the regime, whom it is for, and the affordance that keeps it. Nothing is offered when:
+  - the plan selected nothing (an unclassified situation);
+  - the competency names nothing content can be resolved against.
+- **The learner keeps it; the bridge only reads it** (`src/admission-records.ts`, `src/admission-store.ts`).
+  - `POST /agent/content/admit` (`foxxi.content_admit`) keeps `{ competency, admission, source?, regime? }`.
+    - It is kept in a list of its own on the caller's pod, sealed by the bridge to itself and to the pod's owner, with no public projection.
+    - The bridge dates it.
+    - It is refused with 409 when that pod is not on this bridge's store, since resolution here could not read it back.
+  - The list is written read, add, write, on the condition of what was read, and read again when another write came between. Nothing about a record is held anywhere until the pod answers that it holds it. A write that fails leaves no trace, now or at a later write.
+  - A list is taken back only if the bridge sealed it: anyone can wrap a key to the bridge's public key, but only the bridge can wrap one from it.
+  - A list keeps every record standing for its competency and the 200 most recent of the rest.
+  - `admission: null` withdraws it. A withdrawal at a position's competency stands over what the composition's competency admits: resolution now tells an admission withdrawn there (`null`) from nothing said there (`undefined`).
+  - Records are added, never overwritten. For each competency the latest stands, whatever the spelling of its IRI.
+  - The bridge writes a plan's consequence onto nobody's record: the route that classifies does not author for anyone, so keeping it is the learner's act, person or agent.
+- **Resolution reads what was kept** (`bridge/server.ts`). When a resolve or launch request names no admission, the learner's kept records admit the forms at each competency. An admission in the request still wins. The answer lists the records that limited a position (`admittedBy`). Only a pod on this tenant's store is read, as with the learner's record.
+  - A list that cannot be read now (the pod unreachable, or the list unopenable) is not read as empty. Resolution answers 503, so a learner who limited their content is never resolved as one who did not.
+- **The automated review of this change found three problems, fixed here.** A first draft kept each record in the learner's shared lattice.
+  - A write that failed left its record in the process's copy of the lattice, where it still limited resolution, and the next successful write would have made it durable.
+  - A lattice that could not be read looked empty, so a transient storage problem admitted every form.
+  - A withdrawal at a position gave way to the composition's admission.
+- **Docs.** The two affordances and resolve/launch are described, `docs/skills` is regenerated, and the vocabulary declares `ContentAdmission`. `PERFORMANCE-ARCHITECTURE.md` §5 describes kept admissions. Its not-yet-wired list now names turning what a learner's work shows into a plan without their asking.
+
+`applications/foxxi-content-intelligence/tests/admission-records.test.ts` covers:
+- a record checked, with its competency normalized and a withdrawal kept as null;
+- the latest standing per competency, across IRI spellings, with a withdrawal admitting every form again;
+- resolution admitting only what was kept, and nothing for a plan that says content is not the answer;
+- a withdrawal at a position standing over the composition's admission;
+- the bridge keeping it on the caller's own pod, dated by the bridge, only once the pod holds it, and reading it back only from its store, refusing when it cannot, and only when a request names no admission, checked in its source.
+
+`applications/foxxi-content-intelligence/tests/admission-store.test.ts` covers:
+- an absent list read as nothing kept, and a kept record read back;
+- a refused write leaving nothing, now or at a later write;
+- an unreadable, unopenable or foreign-sealed list reported as unreadable;
+- the owner able to read their own list;
+- conditional writes, tried again when another came between;
+- every standing record kept with the history.
+
+`tests/a-plan-offers-the-admission-it-implies.test.ts` covers:
+- the offer for Emergent and Turbulent plans;
+- no offer for an unclassified plan or an unusable competency;
+- the signed route's answer, over HTTP;
+- an offer, once kept, deciding what resolution admits.
+
+Twenty-four mutants were checked, and each fails a named test:
+- the first record kept standing, or records keyed by their IRI as spelled;
+- a withdrawal that cannot be kept, one that admits nothing, one that gives way to the composition, or the bridge turning it into nothing said;
+- any source or regime accepted;
+- the caller naming the pod a record is kept on, or dating it;
+- an unreadable or unopenable list read as nothing kept, or resolved unrestricted;
+- a list sealed by anyone taken back, or one the owner cannot read;
+- an unconditional write, a refused write counted as kept, or one that another came between not tried again;
+- standing records dropped with the history;
+- kept records overriding a request's admission, or read from any pod;
+- a plan that selected nothing offering an admission, or any competency text offered;
+- the offer left out of the plan's answer.
+
 ## 2026-09-27 — Foxxi: a composition projects as a cmi5 course any LMS can import
 
 A composition could be resolved and played through the bridge's own routes, by a learner the bridge could verify. An LMS that knows nothing of Foxxi had no way to offer it. Now any cmi5 LMS can import a composition as a course and launch it, and each learner it launches still gets what resolution chooses for them.
