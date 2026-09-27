@@ -13,16 +13,23 @@ A composition's page (`/author/<hash>`) showed only what the composition has lea
   They resolve it as a person or as an agent, since some fragments are meant for one kind of learner only. The choice is fixed while a resolution is under way, so an answer is never shown under the other kind. A wallet is asked only on a click.
 - **Where it can be taken.** The page links the bridge's own cmi5 course structure (`cmi5.xml`) and SCORM 2004 package (`scorm.zip`) for the composition. Any LMS that imports either takes it as one unit, played by this bridge's player. The page says what that means: a learner the LMS names is one the bridge cannot verify, so their play resolves as for anyone new to it, and adds nothing to what has worked here.
 
-Four tests in `tests/the-author-tools-speak-the-bridges-language.test.ts`:
+  Each is saved from the page, under the name the bridge gives its SCORM package (`composition-<first 12 of the hash>-…`). The bridge is another origin, where a browser ignores a link's `download`, and it serves the course structure to be read. Followed as a link, it would take the tab away from the dashboard, and a pasted key, held only in that tab's memory, with it. The links stay links, to copy for an LMS that imports by URL, and a click meant for another tab is left to the browser.
+
+Resolving and exporting do not wait on what the composition has learned. While its tally cannot be read (the bridge answers 503 then), the page says so and still offers both.
+
+Six tests in `tests/the-author-tools-speak-the-bridges-language.test.ts`:
 - a real composition, resolved by the engine's own `resolveComposition` and served in the form a learner receives (`fragmentForLearner`): as a person it is one step and a position nothing could fill, since that fragment is meant for agents; as an agent it is both steps;
 - the choice of kind is fixed while resolving;
-- the export links are the routes the bridge serves.
+- the export links are the routes the bridge serves, and are saved under its name for the package;
+- a plain click saves from the page, before anything is fetched, refusing what the bridge refused; a click for another tab is not taken;
+- resolving and exporting are offered whether or not the tally was read, and only a composition the bridge does not hold goes without them.
 
-Seven mutants each fail a named test.
+Fifteen mutants each fail a named test.
 
 In a browser against the deployed bridge, as the demo learner Joshua Liu:
 - a composition resolved as a person and as an agent, each step with its reason;
-- both exports answered 200.
+- both exports saved from the page with the tab kept, as `composition-da9ddee6ae0e-cmi5.xml` (its course structure) and `composition-da9ddee6ae0e-scorm.zip` (2927 bytes), caught before the browser saved them;
+- with the efficacy read answering 503, the page said so and still offered resolving and both exports.
 
 The dashboard README's Author row describes the page.
 

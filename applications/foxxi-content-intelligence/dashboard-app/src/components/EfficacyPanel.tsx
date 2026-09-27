@@ -14,7 +14,7 @@ import { useAffordance, useHypermedia } from '../hypermedia.js';
 import type { FoxxiSession } from '../auth/session.js';
 import { signerAsks, signerFor } from '../auth/signer.js';
 import { postSigned } from '../auth/signed-request.js';
-import { exportLinks, resolutionLine, stepLine, type ResolutionView } from '../author/resolution.js';
+import { exportFileNames, exportLinks, resolutionLine, stepLine, type ResolutionView } from '../author/resolution.js';
 import { bridgeBaseOf } from '../learn/bridge.js';
 import { compositionIriOn } from '../learn/composition-ref.js';
 import { competencyLabel } from '../learn/play.js';
@@ -56,7 +56,18 @@ export function EfficacyPanel({ session }: { session: FoxxiSession }) {
   if (entryError) return <Card title="The bridge could not be reached"><div style={{ color: 'var(--text-dim)' }}>{entryError}</div></Card>;
   if (read.at === 'loading') return <Card title="What it has learned" right={links}><div style={{ color: 'var(--text-dim)' }}>Reading…</div></Card>;
   if (read.at === 'absent') return <Card title="What it has learned" right={links}><div style={{ color: 'var(--bad)' }}>This bridge holds no composition with this hash.</div></Card>;
-  if (read.at === 'failed') return <Card title="What it has learned" right={links}><div role="alert" style={{ color: 'var(--bad)' }}>{read.why}</div></Card>;
+
+  // Resolving it and taking it elsewhere do not wait on what it has learned: while its tally cannot be
+  // read (the bridge answers 503 then), the composition resolves and exports as ever.
+  const actions = <><ResolveCard session={session} iri={compositionIriOn(base, hash)} /><ExportCard base={base} hash={hash} /></>;
+  if (read.at === 'failed') {
+    return (
+      <div style={{ display: 'grid', gap: 14 }}>
+        <Card title="What it has learned" right={links}><div role="alert" style={{ color: 'var(--bad)' }}>{read.why}</div></Card>
+        {actions}
+      </div>
+    );
+  }
 
   const view = read.view;
   const titles = new Map(view.positions.flatMap(p => p.alternatives.map(a => [a.iri, a.title ?? `${a.kind ?? (a.composition ? 'composition' : 'fragment')} ${a.iri.slice(-8)}`] as const)));
@@ -70,8 +81,7 @@ export function EfficacyPanel({ session }: { session: FoxxiSession }) {
         </div>
         {!hasOutcomes(view) && <div style={{ marginTop: 10 }}>Nothing has been learned here yet: no learner has reached a check after meeting its alternatives.</div>}
       </Card>
-      <ResolveCard session={session} iri={compositionIriOn(base, hash)} />
-      <ExportCard base={base} hash={hash} />
+      {actions}
       {view.positions.map(p => (
         <Card key={p.position} title={`Position ${p.position + 1}`} right={<Pill title={p.competency}>{competencyLabel(p.competency)}</Pill>}>
           <div style={{ display: 'grid', gap: 8 }}>
@@ -160,9 +170,36 @@ function ResolveCard({ session, iri }: { session: FoxxiSession; iri: string }) {
   );
 }
 
-/** Where it can be taken: the bridge's own cmi5 course structure and SCORM 2004 package for it. */
+/**
+ * Where it can be taken: the bridge's own cmi5 course structure and SCORM 2004 package for it.
+ *
+ * Each is fetched and saved from here. The bridge is another origin, where a browser ignores a
+ * link's `download`, and it serves the course structure to be read, not saved: followed as a link,
+ * it took this tab away from the dashboard, and a pasted key, held only in this tab's memory, with
+ * it. The links stay links, to copy for an LMS that imports by URL or to open in another tab.
+ */
 function ExportCard({ base, hash }: { base: string; hash: string }) {
   const links = exportLinks(base, hash);
+  const names = exportFileNames(hash);
+  const [saving, setSaving] = useState<'cmi5' | 'scorm' | null>(null);
+  const [error, setError] = useState('');
+
+  const save = (which: 'cmi5' | 'scorm') => async (e: React.MouseEvent) => {
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;   // another tab or window: this one stays
+    e.preventDefault();
+    setSaving(which); setError('');
+    try {
+      const r = await fetch(links[which]);
+      if (!r.ok) throw new Error(`The bridge answered ${r.status} for the ${which === 'cmi5' ? 'course structure' : 'package'}.`);
+      const url = URL.createObjectURL(await r.blob());
+      const a = document.createElement('a');
+      a.href = url; a.download = names[which];
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    } catch (err) { setError((err as Error).message); }
+    finally { setSaving(null); }
+  };
+
   return (
     <Card title="Take it elsewhere">
       <div style={{ fontSize: 14, color: 'var(--text-dim)', marginBottom: 10 }}>
@@ -170,9 +207,10 @@ function ExportCard({ base, hash }: { base: string; hash: string }) {
         bridge cannot verify, so their play resolves as for anyone new to it, and adds nothing to what has worked here; the LMS keeps their record.
       </div>
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-        <a href={links.cmi5} download>cmi5 course structure (cmi5.xml)</a>
-        <a href={links.scorm} download>SCORM 2004 package (scorm.zip)</a>
+        <a href={links.cmi5} onClick={save('cmi5')}>{saving === 'cmi5' ? 'Saving…' : 'cmi5 course structure (cmi5.xml)'}</a>
+        <a href={links.scorm} onClick={save('scorm')}>{saving === 'scorm' ? 'Saving…' : 'SCORM 2004 package (scorm.zip)'}</a>
       </div>
+      {error && <div role="alert" style={{ color: 'var(--bad)', fontSize: 13, marginTop: 8 }}>{error}</div>}
     </Card>
   );
 }

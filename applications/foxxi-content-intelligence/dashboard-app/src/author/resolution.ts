@@ -55,3 +55,9 @@ export function exportLinks(base: string, hash: string): { cmi5: string; scorm: 
   const iri = `${base.replace(/\/+$/, '')}/ns/foxxi/composition/${hash}`;
   return { cmi5: `${iri}/cmi5.xml`, scorm: `${iri}/scorm.zip` };
 }
+
+/** What each is saved as: named as the bridge names the SCORM package it serves, after the first twelve of the hash. */
+export function exportFileNames(hash: string): { cmi5: string; scorm: string } {
+  const stem = `composition-${hash.slice(0, 12)}`;
+  return { cmi5: `${stem}-cmi5.xml`, scorm: `${stem}-scorm.zip` };
+}
