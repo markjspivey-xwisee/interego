@@ -202,6 +202,7 @@ import { ContentError, compositionIri, contentRefOf, fragmentForLearner, fragmen
 import { admissionFrom, compositionFrom, resolveComposition, type Admission, type Composition, type RecordedCompetency } from '../src/compositions.js';
 import { bundledItem, ContentStore, isCompositionItem, LOCATIONS_PER_ITEM, mergeLocations, type ContentItem, type ContentLocation } from '../src/content-store.js';
 import { foldCourse, type FoldedCourse, type FoldOptions } from '../src/course-fold.js';
+import { foldEmergentCourse, type FoldedEmergent } from '../src/emergent-fold.js';
 import { admissionRecordFrom, recordFor, standingAdmissions, type AdmissionRecord } from '../src/admission-records.js';
 import { keepAdmission, readAdmissions } from '../src/admission-store.js';
 import { attemptStatements, closingStatements, cmi5AttemptFrom, compositionCourseStructure, definedStatement, type Cmi5Attempt } from '../src/composition-cmi5.js';
@@ -10663,8 +10664,28 @@ app.post('/agent/content/fold-course', async (req, res) => {
     // Without the bridge's key nothing is kept on a pod, and no check is blinded the same way twice.
     if (!courseFoldSecret) { res.status(503).json({ error: 'course not folded: this bridge holds no key, so it can keep nothing on a pod' }); return; }
     const p = auth.payload;
+    // An emergent course, as POST /content/compose-course returns it (src/emergent-fold.ts): the
+    // caller sends it, so it is theirs to keep, whatever author it names inside.
+    if (p.course !== undefined) {
+      let emergent: FoldedEmergent;
+      try {
+        emergent = foldEmergentCourse(p.course, {
+          blindFor: fragmentId => createHmac('sha256', courseFoldSecret).update(`emergent-fold\n${fragmentId}`).digest('hex'),
+        });
+      } catch (e) {
+        if (e instanceof ContentError) { res.status(400).json({ error: `course not folded: ${e.message}` }); return; }
+        throw e;
+      }
+      const keptEmergent = await keepContentBundle(emergent.root, emergent.items, auth.callerDid, p.subject_pod_url);
+      if (!keptEmergent.ok) { res.status(503).json({ error: `course not folded: ${keptEmergent.error}` }); return; }
+      sendActionResult(req, res, {
+        ok: true, '@id': emergent.root['@id'], authoredBy: auth.callerDid, competency: emergent.root.competency,
+        composition: emergent.root, mapped: emergent.mapped, items: emergent.items.length, ...keptEmergent.kept,
+      }, bridgeBaseUrl, 'Course folded into compositions', activeAffordances.filter(a => a.toolName === 'foxxi.content_resolve' || a.toolName === 'foxxi.content_launch'));
+      return;
+    }
     const courseId = typeof p.course_id === 'string' ? p.course_id.trim() : '';
-    if (!courseId) { res.status(400).json({ error: 'course_id is required: a course authored with foxxi.scorm_author' }); return; }
+    if (!courseId) { res.status(400).json({ error: 'course_id is required: a course authored with foxxi.scorm_author; or send course, an emergent course as POST /content/compose-course returns it' }); return; }
     const course = await resolveCourseForRead(courseId);
     if (!course) { res.status(404).json({ error: `no authored course ${courseId} here` }); return; }
     if (course.authoredBy !== auth.callerDid) { res.status(403).json({ error: 'only the course\'s author can fold it' }); return; }

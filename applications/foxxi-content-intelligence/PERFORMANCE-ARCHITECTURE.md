@@ -276,6 +276,16 @@ works.
   course of a hundred sections is one write, not three hundred: each write
   puts the whole lattice. Each item keeps its own IRI, and the store finds
   it inside the bundle and checks it like anything else read back.
+- **An emergent course folds too** ([`src/emergent-fold.ts`](src/emergent-fold.ts)).
+  The older model's course was already syntagms and paradigms, but it lived
+  in memory, under ids nothing could check. Sent to the same route, each of
+  its levels becomes a composition and each grounding fragment a fragment,
+  in the author's order.
+  - A competency's id is the free text its author wrote, exactly.
+  - A "question ::: answer — why" check is graded on the bridge: the answer
+    as written, and without a leading article.
+  - Its audience and moveOn are not carried, and the fold answers which
+    IRI each older id became.
 
 Anything read back is checked against its hash
 ([`src/content-store.ts`](src/content-store.ts)), so a wrong or hostile
@@ -385,7 +395,6 @@ Nobody declares which explanation of a competency works; the plays show it.
 Not yet wired:
 - turning what a learner's work shows (their trajectories and outcomes)
   into a plan, and so an admission to keep, without their asking;
-- folding the older in-memory `Course` model into this one;
 - importing SCORM packages and authoring-tool exports (packages are
   unzipped in the browser today, and the server sees only their manifest
   and extracted text);
