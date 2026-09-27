@@ -192,8 +192,11 @@ async function sendStatement(verb, result){
   pendingStatements.set(verb, stmt); }
   const r = await fetch(endpoint + 'statements', {
     method: 'POST',
+    // cmi5 §8.2.2: the auth-token goes in the Authorization header under the Basic scheme, as it
+    // came from the fetch URL (the ADL reference client sends "Basic " + auth-token). An LMS that
+    // hands out a token already carrying its scheme gets it back as it gave it.
     headers: { 'Content-Type': 'application/json', 'X-Experience-API-Version': '2.0.0',
-               'Authorization': 'Bearer ' + authToken },
+               'Authorization': /^(Basic|Bearer)\\s/i.test(authToken) ? authToken : 'Basic ' + authToken },
     body: JSON.stringify(stmt),
   });
   if (!r.ok) throw new Error('LRS ' + r.status + ' on ' + verb);

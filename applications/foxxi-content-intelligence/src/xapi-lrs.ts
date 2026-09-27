@@ -414,6 +414,23 @@ function makeAuthGate(config: XapiLrsConfig) {
       r.xapiTenant = basicTenant;
       return next();
     }
+    // cmi5 §8.2.2: an AU puts the auth-token its fetch URL returned into the Authorization header
+    // under the Basic scheme, as the token itself rather than base64 of a user and password (the
+    // ADL reference client sends "Basic " + auth-token). So a Basic value that is no LRS
+    // credential is tried as a launch's auth-token, bound to that launch exactly as the Bearer
+    // form is, and one that sends Bearer is still taken. An AU that reads the token as the whole
+    // header value and sends it with no scheme is taken too, but only for a token this LMS
+    // minted: a bare header is not a credential of any other kind.
+    const basicAsToken = /^Basic\s+(\S+)\s*$/i.exec(authHeader ?? '')?.[1]
+      ?? (/^\S+$/.test((authHeader ?? '').trim()) ? (authHeader ?? '').trim() : undefined);
+    const cmi5BasicTenant = basicAsToken ? config.bearerTenantResolver?.(basicAsToken) : undefined;
+    if (basicAsToken && cmi5BasicTenant) {
+      r.xapiAuth = { kind: 'bearer', token: basicAsToken };
+      r.xapiTenant = cmi5BasicTenant;
+      const registration = config.bearerRegistrationResolver?.(basicAsToken);
+      if (registration) r.xapiRegistration = registration;
+      return next();
+    }
     const bearer = bearerToken(authHeader);
     if (bearer) {
       // A Bearer must resolve to a VERIFIED identity (round-47). Previously ANY non-empty
