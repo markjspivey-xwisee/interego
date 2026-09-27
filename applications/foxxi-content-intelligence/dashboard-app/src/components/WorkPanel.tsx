@@ -191,7 +191,7 @@ export function WorkPanel({ session }: { session: FoxxiSession }) {
           <div style={{ ...small, marginBottom: 8 }}>
             <strong style={{ color: 'var(--text)' }}>{recorded.taskName}</strong> is in your record{recorded.success ? ', as succeeded' : ', as failed'}.
           </div>
-          {recorded.recordVisibility && <div role="note" style={{ fontSize: 13, color: 'var(--warn)', marginBottom: 8 }}>{recorded.recordVisibility.note}</div>}
+          {recorded.recordVisibility && <div role="note" style={{ fontSize: 13, color: recorded.recordVisibility.publiclyReadable ? 'var(--warn)' : 'var(--text-dim)', marginBottom: 8 }}>{recorded.recordVisibility.note}</div>}
           {recorded.samePrincipalAlsoHolds && <div style={{ ...small, marginBottom: 8 }}>{recorded.samePrincipalAlsoHolds.note}</div>}
           {recorded.offer && <OfferCard offer={recorded.offer} canKeep={!!admit && !keptOffer} keeping={keeping} asks={asks}
             onKeep={() => { void change(keepArgs(recorded.offer!)).then(ok => setKeptOffer(ok)); }} />}

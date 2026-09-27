@@ -13,7 +13,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { WORK_STEP_LIMITS, durationRefusalOf, workStepsFrom } from '../applications/foxxi-content-intelligence/src/learner-record.js';
+import { WORK_STEP_LIMITS, durationRefusalOf, recordVisibilityAfterAgentWork, workStepsFrom } from '../applications/foxxi-content-intelligence/src/learner-record.js';
 import { validateStatement } from '../applications/foxxi-content-intelligence/src/xapi-validate.js';
 import { admissionRecordFrom } from '../applications/foxxi-content-intelligence/src/admission-records.js';
 import { competencyIri } from '../applications/foxxi-content-intelligence/src/competency-identity.js';
@@ -160,7 +160,38 @@ describe("recording work as an agent's is chosen knowing what it does to the rec
     expect(panel).toContain('onChange={() => { setDraft(d => doneBy(d, k)); setError(null); }}');
     expect(panel).toContain('setDraft(afterRecording);');
     expect(panel).toMatch(/\{recorded\.recordVisibility && <div role="note"[^>]*>\{recorded\.recordVisibility\.note\}<\/div>\}/);
+    expect(panel).toContain("color: recorded.recordVisibility.publiclyReadable ? 'var(--warn)' : 'var(--text-dim)'");
     expect(panel).toMatch(/\{recorded\.samePrincipalAlsoHolds && <div[^>]*>\{recorded\.samePrincipalAlsoHolds\.note\}<\/div>\}/);
+  });
+
+  it('is answered with what the record now is, read from the record, not from the request', () => {
+    const agent = recordVisibilityAfterAgentWork('agent');
+    expect(agent).toMatchObject({ subjectKind: 'agent', publiclyReadable: true, readFromRecord: true });
+    expect(agent.note).toContain('An agent capability record is PUBLIC');
+    // A record that also holds a person's work stays a person's, and private: it is not told otherwise.
+    const person = recordVisibilityAfterAgentWork('human');
+    expect(person).toMatchObject({ subjectKind: 'human', publiclyReadable: false, readFromRecord: true });
+    expect(person.note).toContain('stays private');
+    expect(person.note).not.toMatch(/PUBLIC/);
+    // Unread, the rule is said and the side that protects the performer is assumed.
+    const unread = recordVisibilityAfterAgentWork(undefined);
+    expect(unread).toMatchObject({ subjectKind: 'agent', publiclyReadable: true, readFromRecord: false });
+    expect(unread.note).toContain('could not be read');
+    expect(unread.note).toContain("unless your record also holds work recorded as a person's");
+    // The route reads the record as it stands with this unit in it, only for work recorded as an agent's, by the one
+    // classifier every gate uses, as a reader other than the subject: visibility is what somebody else can read.
+    const server = readFileSync(new URL('../applications/foxxi-content-intelligence/bridge/server.ts', import.meta.url), 'utf8');
+    const route = server.slice(server.indexOf("app.post('/agent/record-performance'"), server.indexOf("app.get('/agent/ingest-course/affordance'"));
+    expect(route).not.toContain('flipsToPublic');
+    expect(route).toMatch(new RegExp([
+      String.raw`if \(\(p\.actor_kind === 'human' \? 'human' : 'agent'\) === 'agent'\) \{`,
+      String.raw`let kindNow: 'human' \| 'agent' \| undefined;`,
+      String.raw`try \{ kindNow = classifySubjectKind\(\{ isSelf: false, statements: await learnerStatementsFor\(subjectPod, callerDid\), subjectPodUrl: subjectPod \}\); \}`,
+      String.raw`catch \(e\) \{ console\.warn\('\[foxxi\]\[record-visibility\]', \(e as Error\)\.message\); \}`,
+      String.raw`recordVisibility = recordVisibilityAfterAgentWork\(kindNow\);`,
+    ].join(String.raw`\s+`)));
+    expect(route.indexOf('kindNow = classifySubjectKind(')).toBeGreaterThan(route.indexOf('const statementId = storeStatementInternal(statement'));
+    expect(route).toContain('...(recordVisibility ? { recordVisibility } : {}),');
   });
 });
 
