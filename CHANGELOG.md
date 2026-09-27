@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-09-27 — Foxxi: a void is read from the store that applied it, not replayed from a voiding statement
+
+Two defects the automated review found in #526 after it merged. #526 kept a void through the merge of a learner's record in two ways: the store's own mark, and any voiding statement a copy held, replayed by the store's rules. The replay decided again what the store had already decided, from a body that does not say what the store knew:
+- **A voider stored before its target voids nothing in the store**, and the target is current when it comes. Replayed, it voided that target, so the learner record and earned credentials dropped valid evidence.
+- **A Basic-auth writer is bound to no registration**, so the store voids whatever the voider names. Replayed, the voider's own `context.registration` was taken as a constraint, and such a void was not kept.
+
+Now only the store's mark is kept (`mergeStatementsById`, `src/durable-records.ts`), whichever copy of the statement comes first, and a voiding statement is not read as a void by itself. A void lives where it was applied, in the store. A store that keeps its records (file or pod) keeps its voids across a restart; one held in memory loses them with everything else it held.
+
+`tests/a-voided-statement-stays-voided.test.ts` (6 tests) covers:
+- both cases above;
+- the store's mark kept behind another copy;
+- a voided play in the listing.
+
+Four mutants each fail a named test, among them #526's replay itself.
+
 ## 2026-09-27 — Foxxi: a failed read of the content index is tried again, and a voided statement stays voided
 
 Two defects the automated review found in #525 after it merged.
