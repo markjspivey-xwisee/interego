@@ -19,8 +19,11 @@
  * needs it to.
  */
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { FileStatementStore, PrimaryForwardStatementStore } from '../src/statement-store.js';
 import { getStatementStore, internalRefusalOf, keepStatementsWhole, storeStatementInternal } from '../src/xapi-lrs.js';
 import { buildPassedSessionTrace } from '../src/cmi5.js';
 import { ingestExternalRun } from '../src/agent-run-ingest.js';
@@ -103,6 +106,52 @@ describe('keepStatementsWhole', () => {
     const [first] = session();
     expect(storeStatementInternal(first!, tenant)).toBe(first!.id);   // the answer the doors counted on
     expect(await keepStatementsWhole([first!], tenant)).toEqual({ status: 'partial', keptIds: [] });
+  });
+});
+
+describe('a store that did not write a statement does not serve it', () => {
+  // Codex, on #541: the file store indexed a statement before appending it, and the forwarding store
+  // cached one before the primary had it, so a write that failed left it readable while the door
+  // said it was not kept, and a retry made it twice.
+  const record = () => { const [s] = session(); return { id: s!.id, statement: s!, stored: new Date().toISOString(), voided: false }; };
+
+  it('the file store: a failed append leaves nothing to read', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'foxxi-file-store-'));
+    mkdirSync(join(dir, 'statements.jsonl'));   // a directory where the file goes: every append fails
+    const store = new FileStatementStore(dir);
+    const r = record();
+    await expect(store.put(r)).rejects.toThrow();
+    expect(await store.get(r.id)).toBeNull();
+    expect((await store.query({})).statements).toEqual([]);
+  });
+
+  it('the file store: a written statement is read, put again is a no-op, and another under its id is refused before anything is written', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'foxxi-file-store-'));
+    const store = new FileStatementStore(dir);
+    const r = record();
+    await store.put(r);
+    await store.put(r);
+    expect((await store.get(r.id))?.id).toBe(r.id);
+    const lines = () => readFileSync(join(dir, 'statements.jsonl'), 'utf8').trim().split('\n');
+    expect(lines()).toHaveLength(1);
+    await expect(store.put({ ...r, statement: { ...r.statement, verb: { id: 'http://adlnet.gov/expapi/verbs/failed' } } })).rejects.toThrow(/already stored with different content/);
+    expect(lines()).toHaveLength(1);
+  });
+
+  it('the forwarding store: a statement the primary refused is not served from its cache, and one it took is', async () => {
+    const realFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = (async () => new Response('', { status: 400 })) as typeof fetch;
+      const store = new PrimaryForwardStatementStore('https://primary.example/xapi', { user: 'test-user', pass: 'test-pass' });
+      const r = record();
+      await expect(store.put(r)).rejects.toThrow(/primary LRS rejected statement \(HTTP 400\)/);
+      expect(await store.get(r.id)).toBeNull();
+      globalThis.fetch = (async () => new Response(null, { status: 204 })) as typeof fetch;
+      await store.put(r);
+      expect((await store.get(r.id))?.id).toBe(r.id);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
   });
 });
 
