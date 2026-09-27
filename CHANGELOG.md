@@ -1,5 +1,40 @@
 # Changelog
 
+## 2026-09-27 — Foxxi: an emergent course folds into compositions too
+
+The older course model (`src/emergent-content.ts`) already had the right shape: a course is a syntagm of modules, a module of lessons, a lesson of grounding fragments, and every position a paradigm of alternatives. But it lived in memory, under ids nothing could check, and the packages published from it graded in the browser. Now an emergent course folds into composable content like an authored one (#507), and resolves, plays, learns and projects like any composition.
+
+- **Folding** (`src/emergent-fold.ts`, `foldEmergentCourse`).
+  - Every syntagm becomes a composition's positions and every paradigm its alternatives, in the author's order. A lesson, a module and a course are one composition each, nested by reference.
+  - Each grounding fragment becomes a fragment of the same form and level. Its suitability for a disposition is carried as a suit.
+  - **A competency is the text its author wrote.** The older model names competencies in free text ("refund authority thresholds"), and the competency's id is that text exactly: its IRI carries it, percent-encoded, and gives it back. Nothing is slugged or guessed.
+  - **A check is graded on the bridge.** An assessment written "question ::: answer — why" becomes a check whose verifiers take the answer as written and without a leading article ("team lead" for "a team lead"). The part after the dash is the explanation shown once it is answered. The older pages matched answers more loosely, in the browser.
+  - Checks are blinded under the bridge's secret, so the same course folds to the same IRIs.
+  - Not carried: the audience a course was composed for (a composition serves a person and an agent alike), its moveOn (a play grades each step), and its ids. The fold answers which IRI each older id became.
+  - One fold makes at most 2,000 fragments and 500 compositions. What cannot be folded is refused, naming where.
+- **On the bridge.** `POST /agent/content/fold-course` (`foxxi.content_fold_course`) now also takes `course`, an emergent course as `POST /content/compose-course` returns it. The caller sends it, so it is kept on their pod as theirs, in one bundle, whatever author it names inside.
+- **Docs.** The affordance is described and `docs/skills` is regenerated. `PERFORMANCE-ARCHITECTURE.md` §5 describes the fold, and folding the older model leaves its not-yet-wired list.
+
+`applications/foxxi-content-intelligence/tests/emergent-fold.test.ts` covers:
+- the shape, order and mapping kept;
+- competencies named by their exact text;
+- forms, levels, suits and checks graded on the bridge, with no verifier served;
+- the same IRIs under the same blinding;
+- a folded course resolving and playing;
+- refusals that say where;
+- the fragment limit;
+- the route, checked in the bridge's source.
+
+Nine mutants were checked, and each fails a named test:
+- a competency slugged;
+- alternatives losing their order;
+- the answer without its article not accepted, or the explanation lost;
+- suitability not carried;
+- the blinding value ignored;
+- the fragment limit not kept;
+- older ids not mapped;
+- the course kept under the author it names.
+
 ## 2026-09-27 — Foxxi: a composition projects as a cmi5 course any LMS can import
 
 A composition could be resolved and played through the bridge's own routes, by a learner the bridge could verify. An LMS that knows nothing of Foxxi had no way to offer it. Now any cmi5 LMS can import a composition as a course and launch it, and each learner it launches still gets what resolution chooses for them.
