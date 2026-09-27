@@ -1,5 +1,29 @@
 # Changelog
 
+## 2026-09-27 — Foxxi: a void the LRS applied is kept with the voided statement's owner
+
+A defect the automated review found in #528 after it merged. A merge of a learner's record now keeps only the voids the store applied, as its mark on the voided statement. But a lens tenant's store is a view:
+- the process-wide budget evicts its oldest records;
+- a dropped partition takes all of them;
+- a restart takes everything.
+
+So a voided statement evicted before the later statement that voided it lost its mark. Its copy in the owner's lattice or on their pod was then read as current again, in the learner record, the listing and earned credentials.
+
+- **The LRS tells of a void once it took effect** (`onVoidApplied`, `src/xapi-lrs.ts`), with the statement it voided, marked. It never tells of a void that took no effect: a voider stored before its target, one naming another voiding statement, or one outside the writer's registration.
+- **The bridge keeps it with the voided statement's owner** (`src/applied-voids.ts`). The owner is the DID the statement's actor carries, as a play or a performance names them. The bridge composes a small record of its own (`foxxi:AppliedVoid`: the voided statement's id and the voiding statement's) into the owner's shared lattice, beside their statements. A statement whose owner has no pod on this tenant's store is voided in the lens alone, as before.
+- **Every merge of a record reads those records** (`mergeStatementsById`'s third argument, at all seven of the bridge's merges). A statement they name stays voided after the store has let it go.
+
+`foxxi:AppliedVoid` is declared in the Foxxi vocabulary.
+
+`tests/an-applied-void-is-kept-with-its-owner.test.ts` (9 tests) covers:
+- the LRS telling of a void applied, and of none that took no effect, through its own routes;
+- a merge keeping a statement voided from its lattice copy and its pod copy once the store has let it go;
+- the record, read back;
+- the owner, named;
+- the bridge's hook, and every merge reading the kept voids.
+
+Nine mutants each fail a named test.
+
 ## 2026-09-27 — Foxxi dashboard: a learner portal, and signing in with a wallet extension
 
 The dashboard gains **Learn**, where a person finds a composition and plays it, and a third way to sign in. An agent does each of these with the same affordances and no page: the portal is one more client of them, signed as the person using it.
