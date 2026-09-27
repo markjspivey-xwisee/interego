@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-09-26 — Foxxi: a refusal inside a branch survives the fallback, and one resolution has a size
+
+The automated review of #500 found that when a nested composition fell short because content inside it did not hash to its IRI, the fallback reduced it to `"<title>" left N … unmet`. The refusal then vanished from both the trace and the reason given for the alternative that was taken.
+
+- **A branch that falls short says why** (`src/compositions.ts`). The reason gives:
+  - the first of the branch's unmet reasons, up to 300 characters, with a count of the rest;
+  - how many alternatives inside it did not hash to their IRIs.
+
+  The trace gets one line per refusal found inside it.
+- **Refusals travel with a branch, whether it is taken or fallen back from.** A resolution now lists them in `refused`, distinct and at most 20. Changed content met anywhere in the tree stays visible at the top.
+- **The text is summarized, not copied.** Copying a failed branch's whole trace up each level would grow with the number of paths through the tree, not the number of compositions. The first attempt did that, and the 12×6 test tree overflowed the stack.
+- **One resolution holds at most 2,000 positions** (`COMPOSITION_LIMITS.resolved`). A composition can reach the same module from many positions, so what it resolves to can grow far faster than what it lists: 25 positions each holding a 100-position module is 2,500. Past the limit, resolution is refused with a `ContentError` naming the composition.
+
+`PERFORMANCE-ARCHITECTURE.md` §5 says both. The tests:
+- a refusal inside a branch that was fallen back from appears in the reason, the trace and `refused`;
+- so does a refusal inside a branch that was taken;
+- a fallen-back branch's reason names its unmet reason;
+- 25 × 100 positions is refused, and 20 × 100 resolves to exactly 2,000.
+
+Four mutants were checked, and each fails a named test: refusals kept inside a fallen-back branch, refusals kept inside a taken branch, a reason without the unmet cause, and no size limit.
+
 ## 2026-09-26 — Foxxi: a resolution uses only content that hashes to its IRI, and falls back past a branch that cannot resolve
 
 The automated review of #499 found three gaps.

@@ -47,8 +47,12 @@ import type { ElrCompetency } from './learner-record.js';
 
 const sha256 = (s: string): string => createHash('sha256').update(s).digest('hex');
 
-/** Size limits on a composition, and how deeply compositions may nest. */
-export const COMPOSITION_LIMITS = { title: 200, positions: 100, paradigm: 12, depth: 8 } as const;
+/**
+ * Size limits on a composition: how deeply compositions may nest, and how many positions one
+ * resolution may come to. A composition can reach the same module from many positions, so what it
+ * resolves to can grow faster than what it lists; the last limit keeps that finite.
+ */
+export const COMPOSITION_LIMITS = { title: 200, positions: 100, paradigm: 12, depth: 8, resolved: 2000 } as const;
 
 /** The proficiency rank that counts a position as demonstrated unless it says otherwise: Competent. */
 export const DEFAULT_DEMONSTRATED_RANK = 3;
@@ -184,6 +188,8 @@ export interface Resolution {
   skipped: PositionNote[];
   /** Positions nothing admissible could fill. */
   unmet: PositionNote[];
+  /** Content refused anywhere in the resolution for not hashing to its IRI (at most 20, distinct). */
+  refused: string[];
   trace: string[];
 }
 
@@ -218,14 +224,27 @@ export function resolveComposition(input: ResolveInput): Resolution {
 
   // What one composition resolves to, with paths relative to it. Kept per composition and depth,
   // because trying a nested alternative before falling back must not repeat work exponentially.
-  interface Branch { steps: ResolvedStep[]; skipped: PositionNote[]; unmet: PositionNote[]; trace: string[] }
+  // `refused` lists content refused anywhere inside it for not hashing to its IRI; it travels up
+  // with the branch whether the branch is taken or fallen back from.
+  interface Branch { steps: ResolvedStep[]; skipped: PositionNote[]; unmet: PositionNote[]; trace: string[]; refused: string[] }
   const memo = new Map<string, Branch>();
+  const push = <T>(into: T[], from: readonly T[]): void => { for (const x of from) into.push(x); };
+  const noteRefusal = (b: Branch, why: string): void => {
+    if (!b.refused.includes(why) && b.refused.length < REFUSALS_KEPT) b.refused.push(why);
+  };
+  const brief = (s: string): string => (s.length > 300 ? `${s.slice(0, 299)}…` : s);
   const under = (prefix: string[], b: Branch): Branch => ({
     steps: b.steps.map(s => ({ ...s, path: [...prefix, ...s.path] })),
     skipped: b.skipped.map(n => ({ ...n, path: [...prefix, ...n.path] })),
     unmet: b.unmet.map(n => ({ ...n, path: [...prefix, ...n.path] })),
     trace: b.trace,
+    refused: b.refused,
   });
+  const checkSize = (b: Branch): void => {
+    if (b.steps.length + b.skipped.length + b.unmet.length > COMPOSITION_LIMITS.resolved) {
+      throw new ContentError(`"${root.title}" resolves to more than ${COMPOSITION_LIMITS.resolved} positions`);
+    }
+  };
 
   const walk = (comp: Composition, ancestors: string[]): Branch => {
     const hash = contentRefOf(comp['@id'])?.hash;
@@ -234,7 +253,7 @@ export function resolveComposition(input: ResolveInput): Resolution {
     const key = `${hash}@${ancestors.length}`;
     const known = memo.get(key);
     if (known) return known;
-    const out: Branch = { steps: [], skipped: [], unmet: [], trace: [] };
+    const out: Branch = { steps: [], skipped: [], unmet: [], trace: [], refused: [] };
     const self = [comp['@id']];
     comp.positions.forEach((pos, i) => {
       const at = `"${comp.title}" position ${i + 1}`;
@@ -264,6 +283,7 @@ export function resolveComposition(input: ResolveInput): Resolution {
         if (!sameContent(item['@id'], iri) || !(isComposition(item) ? compositionIsIntact(item) : fragmentIsIntact(item))) {
           const because = `${iri} was served with content that does not hash to it, so it was not used`;
           refused.push(because);
+          noteRefusal(out, because);
           out.trace.push(`${at}: ${because}`);
           continue;
         }
@@ -288,17 +308,30 @@ export function resolveComposition(input: ResolveInput): Resolution {
       const want = levelFor(Math.max(demonstrated?.proficiencyRank ?? 0, inferred?.proficiencyRank ?? 0) || undefined);
       const distance = (x: Fragment | Composition): number => (isComposition(x) ? 0 : Math.abs(LEVEL_INDEX[x.level] - LEVEL_INDEX[want]));
       const ranked = admitted.map((x, k) => ({ x, k })).sort((a, b) => distance(a.x) - distance(b.x) || a.k - b.k).map(r => r.x);
+      // A branch that falls short says why: the first of its unmet reasons, briefly, and any content
+      // refused inside it for not hashing to its IRI. A branch's text is summarized rather than
+      // copied, because copying it up through every level would grow with the number of paths.
       const fellShort: string[] = [];
+      const tried: Array<{ item: Composition; branch: Branch; summary: string }> = [];
       let chosen: { item: Fragment | Composition; branch?: Branch } | undefined;
       let partial: { item: Composition; branch: Branch } | undefined;
       for (const item of ranked) {
         if (!isComposition(item)) { chosen = { item }; break; }
         const branch = walk(item, [...ancestors, comp['@id']]);
         if (!branch.unmet.length) { chosen = { item, branch }; break; }
-        fellShort.push(`"${item.title}" left ${branch.unmet.length} of its position(s) unmet`);
+        const n = branch.unmet.length;
+        const summary = `"${item.title}" left ${n} of its position(s) unmet: ${brief(branch.unmet[0]!.because)}${n > 1 ? ` (and ${n - 1} more)` : ''}`
+          + (branch.refused.length ? `; inside it, ${branch.refused.length} alternative(s) did not hash to their IRIs` : '');
+        fellShort.push(summary);
+        tried.push({ item, branch, summary });
         if (!partial && branch.steps.length) partial = { item, branch };
       }
       chosen ??= partial;
+      for (const t of tried) {
+        if (t.item === chosen?.item) continue;
+        out.trace.push(`${at}: tried ${t.summary}`);
+        for (const r of t.branch.refused) { noteRefusal(out, r); out.trace.push(`${at}: inside "${t.item.title}", ${r}`); }
+      }
       if (!chosen) {
         const because = `no alternative could be used: ${[...refused, ...fellShort].join('; ')}`;
         out.unmet.push(note(because));
@@ -315,17 +348,24 @@ export function resolveComposition(input: ResolveInput): Resolution {
       if (isComposition(pick)) {
         out.trace.push(`${at}: into "${pick.title}", ${why}`);
         const inner = under(self, chosen.branch!);
-        out.steps.push(...inner.steps); out.skipped.push(...inner.skipped); out.unmet.push(...inner.unmet); out.trace.push(...inner.trace);
+        push(out.steps, inner.steps); push(out.skipped, inner.skipped); push(out.unmet, inner.unmet); push(out.trace, inner.trace);
+        for (const r of inner.refused) noteRefusal(out, r);
+        checkSize(out);
         return;
       }
       out.steps.push({ fragment: pick, competency: pos.competency, path: self, position: i, alternatives: pos.paradigm, chosenBecause: why });
       out.trace.push(`${at}: ${pick.kind}${pick.title ? ` "${pick.title}"` : ''}, ${why}`);
     });
+    checkSize(out);
     memo.set(key, out);
     return out;
   };
   const whole = walk(root, []);
-  const trace = [`resolving "${root.title}" for ${input.learner.kind} ${input.learner.id}`, ...whole.trace,
-    `resolved: ${whole.steps.length} step(s), ${whole.skipped.length} skipped as demonstrated, ${whole.unmet.length} unmet`];
-  return { composition: root['@id'], learner: input.learner.id, steps: whole.steps, skipped: whole.skipped, unmet: whole.unmet, trace };
+  const trace = [`resolving "${root.title}" for ${input.learner.kind} ${input.learner.id}`];
+  push(trace, whole.trace);
+  trace.push(`resolved: ${whole.steps.length} step(s), ${whole.skipped.length} skipped as demonstrated, ${whole.unmet.length} unmet`);
+  return { composition: root['@id'], learner: input.learner.id, steps: whole.steps, skipped: whole.skipped, unmet: whole.unmet, refused: whole.refused, trace };
 }
+
+/** How many distinct refusals a resolution lists before it stops adding them. */
+const REFUSALS_KEPT = 20;
