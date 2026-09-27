@@ -297,6 +297,37 @@ play. `foxxi.content_next` answers the step they are on and moves on.
   authored a fragment at a time and played a step at a time, so one course
   is dozens of requests.
 
+**Projected as a cmi5 course** ([`src/composition-cmi5.ts`](src/composition-cmi5.ts),
+[`src/composition-au-page.ts`](src/composition-au-page.ts)). Any LMS that
+speaks cmi5 can take a composition as it takes any other course.
+
+- **One AU, resolved per learner.** `GET <composition IRI>/cmi5.xml` is a
+  course with one AU, the composition itself, whose page is the bridge's
+  player. A cmi5 course lists its AUs when it is published, and a
+  composition decides its steps for each learner when it is played. So the
+  LMS sees one course and an attempt, and the learner gets what resolution
+  chose for them.
+- **The page does what cmi5 asks of an AU and no more.** It takes the
+  LMS's auth-token from the fetch URL and sends it under Basic, reads
+  `LMS.LaunchData`, shows each step, and sends every statement the bridge
+  hands it to the LMS's LRS, sending again what the LMS refused before
+  anything more is taken. Grading stays on the bridge: the page never holds
+  an answer. It is served with a policy that lets its one script run and no
+  other, and offers the LMS's return address only when it is a web address.
+  A Browse or Review launch is not judged: only `terminated` closes it.
+- **Every statement is the LMS's.**
+  - Each carries the LMS's actor, registration and context template.
+  - Order: `initialized` first, then the play's statements at the fragment
+    grain as cmi5 allowed statements, then `completed`, then `passed` or
+    `failed` when there is a mastery score to judge by, and `terminated`
+    last.
+  - Only the defined statements carry the cmi5 category.
+  - None claims an xAPI version, since an LMS's LRS may speak 1.0.3.
+- **A learner the bridge cannot verify is not counted.** The LMS names its
+  learner as an xAPI actor, which the bridge cannot check. So a projected
+  attempt resolves with no record, counts nothing toward what has worked,
+  and is kept nowhere on the bridge beyond the play itself.
+
 **Alternatives that learn** ([`src/fragment-efficacy.ts`](src/fragment-efficacy.ts)).
 Nobody declares which explanation of a competency works; the plays show it.
 
@@ -339,7 +370,9 @@ Not yet wired:
 - folding the older in-memory `Course` model into this one;
 - importing SCORM packages and authoring-tool exports (packages are
   unzipped in the browser today, and the server sees only their manifest
-  and extracted text).
+  and extracted text);
+- projecting a composition as a SCORM package, as it is projected as a
+  cmi5 course.
 
 ## 6. Authoring is composition — the same tools for humans and agents
 
