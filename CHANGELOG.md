@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-09-27 — Foxxi dashboard: a wallet or a pasted key lands on Learn, and forwarding reads one signature at a time
+
+Two defects the automated review found in #527 after it merged.
+- **A wallet or a pasted key landed on a page that answers 401.** Such a session signs its session token with a wallet no tenant directory knows. So the profile, its learner record and *My activity*, which read with that token, answered 401, and sign-in landed on the profile. Such a session (`signsOnly`, `dashboard-app/src/auth/session.ts`) now lands on Learn. It is not offered those pages, and they say why if opened. What it does is signed as it: Learn and *My forwarding*.
+- ***My forwarding* signed two reads at once as it loaded.** Through a wallet extension that meant two prompts nobody asked for, which a wallet may refuse as overlapping, and every change asked twice more to read both lists again. It now:
+  - reads only when asked, one signature after the other;
+  - lets each change answer with the list it changed, so nothing is read again.
+
+`tests/the-learner-portal-speaks-the-bridges-language.test.ts` covers:
+- which sessions act through signed requests alone;
+- where they land, what they are offered, and what those pages say;
+- how *My forwarding* reads.
+
+Eight mutants each fail a named test.
+
 ## 2026-09-27 — Foxxi dashboard: a learner portal, and signing in with a wallet extension
 
 The dashboard gains **Learn**, where a person finds a composition and plays it, and a third way to sign in. An agent does each of these with the same affordances and no page: the portal is one more client of them, signed as the person using it.
@@ -41,6 +56,22 @@ The whole flow was also run in a browser against the deployed bridge, as the dem
 - a pasted fragment refused, and the composition opened;
 - a check missed, so another way in and another check came;
 - the summary shown, and the play then listed as finished, 2 of 3 right.
+
+## 2026-09-27 — Foxxi: a void is read from the store that applied it, not replayed from a voiding statement
+
+Two defects the automated review found in #526 after it merged. #526 kept a void through the merge of a learner's record in two ways: the store's own mark, and any voiding statement a copy held, replayed by the store's rules. The replay decided again what the store had already decided, from a body that does not say what the store knew:
+- **A voider stored before its target voids nothing in the store**, and the target is current when it comes. Replayed, it voided that target, so the learner record and earned credentials dropped valid evidence.
+- **A Basic-auth writer is bound to no registration**, so the store voids whatever the voider names. Replayed, the voider's own `context.registration` was taken as a constraint, and such a void was not kept.
+
+Now only the store's mark is kept (`mergeStatementsById`, `src/durable-records.ts`), whichever copy of the statement comes first, and a voiding statement is not read as a void by itself. A void lives where it was applied, in the store. A store that keeps its records (file or pod) keeps its voids across a restart; one held in memory loses them with everything else it held.
+
+`tests/a-voided-statement-stays-voided.test.ts` (6 tests) covers:
+- both cases above;
+- the store's mark kept behind another copy;
+- a voided play in the listing.
+
+Four mutants each fail a named test, among them #526's replay itself.
+
 
 ## 2026-09-27 — Foxxi: a failed read of the content index is tried again, and a voided statement stays voided
 
