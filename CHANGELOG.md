@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-09-27 — Foxxi dashboard: a pasted key keeps its session through the notice, and forwarding can be read again
+
+Two defects the automated review found in #529 after it merged.
+- **The notice's links signed a pasted key out.** The notice on the profile and *My activity* sent a wallet or a pasted key to Learn and *My forwarding* by plain links, which reload the page. A pasted key lives in memory only, and its session is not kept across a reload, so following either link signed it out. The links now move within the app, as the top navigation does.
+- **The way to read *My forwarding* could vanish.** Through a wallet extension it is read only when asked. If the first of its two reads succeeded and the second did not, or a target was added before the first read, the control to read it went away, leaving the inbound list blank. The control now stays until both lists are read.
+
+`tests/the-learner-portal-speaks-the-bridges-language.test.ts` covers both. Two mutants each fail a named test.
+
 ## 2026-09-27 — Foxxi dashboard: a wallet or a pasted key lands on Learn, and forwarding reads one signature at a time
 
 Two defects the automated review found in #527 after it merged.
