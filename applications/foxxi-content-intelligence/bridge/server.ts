@@ -30,6 +30,7 @@ import { telemetryView, captureView } from '../../llm-telemetry/view.js';
 import { mountTelemetryClientSetup } from '../../llm-telemetry/client-setup-routes.js';
 import { captureResource, readCapturePreferences, updateCapturePreferences, withCaptureConsent, createTelemetryRateLimit, CaptureError, type CaptureStore } from '../../llm-telemetry/capture.js';
 import { latticeReadWhole, persistedLatticeArtifacts } from '../src/foundation-shared-lattice.js';
+import { recordNotReadWhole, servedInPart } from '../src/whole-record-gate.js';
 import express, { type RequestHandler } from 'express';
 
 // ── Pod-write auth: attach Authorization: Bearer on writes that target
@@ -3475,8 +3476,15 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     await ensureResident(subjectPodUrl, requestedLearnerDid, subjectLabel);
     const latticeStmts = latticeStatements(subjectLabel);
     const lensStatements = await listStoredStatements(lensTenantFor(subjectLabel));
-    const durableStatements = await readDurableRecordedStatements({ podUrl: subjectPodUrl });
-    const learnerStatements = mergeStatementsById([...latticeStmts, ...lensStatements], durableStatements, appliedVoidsOf(subjectLabel));
+    const durable = await readDurableRecordedStatementsDetailed({ podUrl: subjectPodUrl });
+    const learnerStatements = mergeStatementsById([...latticeStmts, ...lensStatements], durable.statements, appliedVoidsOf(subjectLabel));
+    // A record read only in part is not classified for anyone but its subject (src/whole-record-gate.ts):
+    // part of it can hold none of the person's work that keeps it private. An admin reads it here
+    // whatever it is, so the classification decides nothing for them.
+    if (!(durable.complete && latticeReadWhole(subjectLabel)) && !servedInPart({ isSelf, unconditional: ctx.role === 'admin' })) {
+      const trace = emitAccessDecision({ ctx, tool: 'foxxi.assemble_learner_record', decision: 'deny', appliedPolicies: ['record-read-whole'] });
+      return { ...recordNotReadWhole(), accessDecision: trace };
+    }
 
     // ★ THE SUBJECT DECIDES WHAT THE SUBJECT IS — NOT THE READER.
     //
@@ -7146,19 +7154,29 @@ app.post('/agent/review-record', async (req, res) => {
     await ensureResident(subjectPodUrl, subjectDid, subjectLabel);
     const latticeStmts = latticeStatements(subjectLabel);
     const lensStatements = await listStoredStatements(lensTenantFor(subjectLabel));
-    const durableStatements = await readDurableRecordedStatements({ podUrl: subjectPodUrl });
+    const durable = await readDurableRecordedStatementsDetailed({ podUrl: subjectPodUrl });
+    // ★ THE WHOLE RECORD DECIDES WHO MAY READ IT; THE SOURCE ASKED FOR DECIDES ONLY WHAT IS SERVED.
+    // `source:'pgsl'` was classified from the lattice alone, a part of the record the caller chose:
+    // a person's work kept only in the durable records (legacy, or not yet composed) was left out of
+    // the decision, and the record could read as an agent's, and public, for anyone who asked so.
+    const wholeRecord = mergeStatementsById([...latticeStmts, ...lensStatements], durable.statements, appliedVoidsOf(subjectLabel));
     // The lattice alone still reads the voids its owner keeps there (foxxi:AppliedVoid).
     const statements = p.source === 'pgsl'
       ? mergeStatementsById(latticeStmts, [], appliedVoidsOf(subjectLabel))
-      : mergeStatementsById([...latticeStmts, ...lensStatements], durableStatements, appliedVoidsOf(subjectLabel));
+      : wholeRecord;
     const statementSource = p.source === 'pgsl' ? 'pgsl-lattice-only' : 'pgsl-lattice+lens+durable-rdf-fallback';
+    // A record read only in part is not classified for anyone but its subject (src/whole-record-gate.ts).
+    if (!(durable.complete && latticeReadWhole(subjectLabel)) && !servedInPart({ isSelf, unconditional: false })) {
+      res.status(503).json(recordNotReadWhole());
+      return;
+    }
 
     // PII gate — a HUMAN learner full ELR + exported CLR (credentials, competencies,
     // performance) is private, so a signed caller may review a human record ONLY when it
     // is their OWN. Agent capability records stay discoverable. The classification comes
     // from the subject own signed statements: reading it off p.actor_kind let any signed
     // wallet declare a human to be an agent and take the public path.
-    const subjectKind = classifySubjectKind({ isSelf, statements, subjectPodUrl, actorKindHint: p.actor_kind });
+    const subjectKind = classifySubjectKind({ isSelf, statements: wholeRecord, subjectPodUrl, actorKindHint: p.actor_kind });
     if (subjectKind === 'human' && !isSelf) {
       res.status(403).json({
         kind: 'refusal' as const,
@@ -7640,8 +7658,13 @@ app.post('/agent/verify-extension', async (req, res) => {
     // subjectKindFromOwnEvidence for why the request field cannot be trusted here.
     await ensureResident(subjectPodUrl, subjectDid, subjectLabel);
     const lensStatements = await listStoredStatements(lensTenantFor(subjectLabel));
-    const durableStatements = await readDurableRecordedStatements({ podUrl: subjectPodUrl });
-    const statements = mergeStatementsById([...latticeStatements(subjectLabel), ...lensStatements], durableStatements, appliedVoidsOf(subjectLabel));
+    const durable = await readDurableRecordedStatementsDetailed({ podUrl: subjectPodUrl });
+    const statements = mergeStatementsById([...latticeStatements(subjectLabel), ...lensStatements], durable.statements, appliedVoidsOf(subjectLabel));
+    // A record read only in part is not classified for anyone but its subject (src/whole-record-gate.ts).
+    if (!(durable.complete && latticeReadWhole(subjectLabel)) && !servedInPart({ isSelf, unconditional: false })) {
+      res.status(503).json(recordNotReadWhole());
+      return;
+    }
 
     // Same gate, same reason as /agent/review-record — and now literally the same function, so
     // "same reason" is enforced rather than asserted in a comment.
