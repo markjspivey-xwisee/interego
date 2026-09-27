@@ -54,7 +54,7 @@ import { AgentCoursesCard } from './components/AgentCoursesCard.js';
 import { LearnPanel } from './components/LearnPanel.js';
 import { CompositionPlayer } from './components/CompositionPlayer.js';
 import { Header, Card } from './components/common.js';
-import { loadSession, saveSession, clearSession, type FoxxiSession } from './auth/session.js';
+import { loadSession, saveSession, clearSession, signsOnly, type FoxxiSession } from './auth/session.js';
 import { getTransport, resetTransportProbe } from './interego/client.js';
 import { SAMPLE_ADMIN_PAYLOAD } from './sample/data.js';
 import {
@@ -87,7 +87,8 @@ function AppRoutes() {
     // Land on the user's canonical profile item URL — no shortcut, no
     // session-implicit magic resource. Just the same /profiles/<id>
     // anyone else would use to view this profile.
-    navigate(`/profiles/${userIdToUuid(s.userId)}`, { replace: true });
+    // A wallet or a pasted key acts through signed requests alone, so it lands where it signs.
+    navigate(signsOnly(s) ? '/learn' : `/profiles/${userIdToUuid(s.userId)}`, { replace: true });
   }
   function onLogout() {
     clearSession();
@@ -109,6 +110,7 @@ function AppRoutes() {
   const isLe = session.audienceTags?.includes('learning-engineering');
   const isPriv = isAdmin || isLe;
   const ownProfileUrl = `/profiles/${userIdToUuid(session.userId)}`;
+  const home = signsOnly(session) ? '/learn' : ownProfileUrl;
 
   return (
     <HypermediaProvider bearer={session.bearerToken}>
@@ -148,12 +150,12 @@ function AppRoutes() {
           {/* Convenience redirects — `/me` and `/profile` resolve to the
               caller's canonical profile item URL. They're not resources
               in their own right per Amundsen §5; just rel="self" shortcuts. */}
-          <Route path="/login" element={<Navigate to={ownProfileUrl} replace />} />
-          <Route path="/me" element={<Navigate to={ownProfileUrl} replace />} />
-          <Route path="/profile" element={<Navigate to={ownProfileUrl} replace />} />
+          <Route path="/login" element={<Navigate to={home} replace />} />
+          <Route path="/me" element={<Navigate to={home} replace />} />
+          <Route path="/profile" element={<Navigate to={home} replace />} />
 
           {/* Legacy redirects */}
-          <Route path="/learner" element={<Navigate to={ownProfileUrl} replace />} />
+          <Route path="/learner" element={<Navigate to={home} replace />} />
           <Route path="/learner/courses/:courseId" element={<RedirectCourse />} />
           <Route path="/users" element={<Navigate to="/profiles" replace />} />
           <Route path="/users/u-:rest" element={<LegacyUserRedirect />} />
@@ -174,7 +176,7 @@ function AppRoutes() {
           <Route path="/admin/:any" element={<Navigate to="/courses" replace />} />
           <Route path="/admin/lrs/:any" element={<Navigate to="/statements" replace />} />
 
-          <Route path="/" element={<Navigate to={ownProfileUrl} replace />} />
+          <Route path="/" element={<Navigate to={home} replace />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </div>
@@ -213,10 +215,10 @@ function TopNav({ session }: { session: FoxxiSession }) {
       display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap',
       position: 'sticky', top: 65, zIndex: 40,
     }}>
-      <NavLink to={ownProfileUrl} label="My profile" />
+      {!signsOnly(session) && <NavLink to={ownProfileUrl} label="My profile" />}
       <NavLink to="/courses" label="Courses" />
       <NavLink to="/learn" label="Learn" />
-      <NavLink to="/my-activity" label="My activity" />
+      {!signsOnly(session) && <NavLink to="/my-activity" label="My activity" />}
       <NavLink to="/my-forwarding" label="My forwarding" />
       <NavLink to="/demo-suite" label="Demo suite" />
       {isPriv && <span style={{ width: 12 }} />}
@@ -243,7 +245,26 @@ function ProfilePage({ session }: { session: FoxxiSession }) {
   // show a 403. For now render LearnerShell with the signed-in identity
   // (it only shows the caller's own enrollments anyway).
   void targetUserId;
+  if (signsOnly(session)) return <SignsOnlyNotice what="Your profile and learner record" />;
   return <LearnerShell session={session} />;
+}
+
+/**
+ * For a session that acts through signed requests alone: the page it asked for reads with the
+ * session token, which a tenant directory issues, and no directory knows this wallet or key.
+ */
+function SignsOnlyNotice({ what }: { what: string }) {
+  return (
+    <div style={{ maxWidth: 720, margin: '40px auto', padding: 20 }}>
+      <Card title="Not for a wallet or a key signed in here">
+        <div style={{ color: 'var(--text-dim)' }}>
+          {what} are read with a session token this tenant's directory issues, and no directory knows the wallet or key
+          you signed in with. What you do here is signed as you: <a href="/learn">Learn</a> and{' '}
+          <a href="/my-forwarding">My forwarding</a>.
+        </div>
+      </Card>
+    </div>
+  );
 }
 
 function ProfilesCollectionPage() {
@@ -324,6 +345,7 @@ function PlayPage({ session }: { session: FoxxiSession }) {
   return <div style={{ maxWidth: 900, margin: '24px auto', padding: 20 }}><CompositionPlayer session={session} /></div>;
 }
 function MyActivityPage({ session }: { session: FoxxiSession }) {
+  if (signsOnly(session)) return <SignsOnlyNotice what="Your activity and its statements" />;
   return <div style={{ maxWidth: 1180, margin: '24px auto', padding: 20 }}><MyActivityPanel session={session} /></div>;
 }
 function MyForwardingPage({ session }: { session: FoxxiSession }) {

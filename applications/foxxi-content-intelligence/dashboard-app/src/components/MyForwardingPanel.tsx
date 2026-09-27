@@ -16,7 +16,7 @@ import { useHypermedia } from '../hypermedia.js';
 import { Card, Button, Pill } from './common.js';
 import type { FoxxiSession } from '../auth/session.js';
 import { callSignedAffordanceAs } from '../auth/signed-request.js';
-import { signerFor } from '../auth/signer.js';
+import { signerAsks, signerFor } from '../auth/signer.js';
 
 interface TargetView {
   id: string; label: string; endpoint: string; version: string; enabled: boolean;
@@ -42,6 +42,8 @@ export function MyForwardingPanel({ session }: { session: FoxxiSession }) {
   // Signed as the session itself: its wallet extension, its connected key (so forwarding keys to
   // the real identity's lens), or else its demo wallet.
   const signer = signerFor(session);
+  // A wallet extension asks for each signature: its reads wait for a click, one signature at a time.
+  const asks = signerAsks(session);
   const [targets, setTargets] = useState<TargetView[] | null>(null);
   const [creds, setCreds] = useState<CredView[] | null>(null);
   const [ownerTenant, setOwnerTenant] = useState<string>('');
@@ -50,22 +52,27 @@ export function MyForwardingPanel({ session }: { session: FoxxiSession }) {
   const [tForm, setTForm] = useState({ endpoint: '', credentials: '', label: '', version: '2.0.0' });
   const [cForm, setCForm] = useState({ principal: '', secret: '', label: '' });
 
+  const showTargets = (t: { targets?: TargetView[]; ownerTenant?: string }) => { setTargets(t.targets ?? []); if (t.ownerTenant) setOwnerTenant(t.ownerTenant); };
+  const showCreds = (c: { credentials?: CredView[] }) => setCreds(c.credentials ?? []);
+
+  // Two reads, one after the other: a wallet asked to sign two messages at once may refuse one.
   const load = useCallback(async () => {
     if (!origin) return;
+    setBusy(true);
     try {
-      const [t, c] = await Promise.all([
-        callSignedAffordanceAs<{ targets: TargetView[]; ownerTenant: string }>(origin, 'forwarding/targets', signer, {}),
-        callSignedAffordanceAs<{ credentials: CredView[] }>(origin, 'credentials', signer, {}),
-      ]);
-      setTargets(t.targets ?? []); setOwnerTenant(t.ownerTenant ?? ''); setCreds(c.credentials ?? []); setErr(null);
+      showTargets(await callSignedAffordanceAs<{ targets: TargetView[]; ownerTenant: string }>(origin, 'forwarding/targets', signer, {}));
+      showCreds(await callSignedAffordanceAs<{ credentials: CredView[] }>(origin, 'credentials', signer, {}));
+      setErr(null);
     } catch (e) { setErr((e as Error).message); }
+    finally { setBusy(false); }
   }, [origin, session.userId, session.connectedPrivateKey, session.extensionAddress]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { if (!asks) void load(); }, [load, asks]);
 
-  async function act(fn: () => Promise<unknown>) {
+  // Each change answers with the list it changed, so nothing is read again, and a wallet asks once.
+  async function act(fn: () => Promise<void>) {
     setBusy(true);
-    try { await fn(); await load(); setErr(null); }
+    try { await fn(); setErr(null); }
     catch (e) { setErr((e as Error).message); }
     finally { setBusy(false); }
   }
@@ -80,10 +87,16 @@ export function MyForwardingPanel({ session }: { session: FoxxiSession }) {
         the bridge binds ownership to your verified signature. (The admin LRS tabs are the separate operator-level view.)
       </div>
       {err && <div style={{ color: 'var(--bad)', fontSize: 12, marginBottom: 10 }}>✗ {err}</div>}
+      {!targets && asks && (
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 12 }}>
+          <Button small primary disabled={busy || !origin} onClick={() => { void load(); }}>Read my forwarding</Button>
+          <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>Your wallet will ask you to approve two reads, one after the other.</span>
+        </div>
+      )}
 
       {/* ── Outbound ── */}
       <div style={{ fontSize: 12, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>Forwarding out — my downstream LRS targets</div>
-      {!targets && !err && <div style={{ color: 'var(--text-dim)' }}>Loading…</div>}
+      {!targets && !err && !asks && <div style={{ color: 'var(--text-dim)' }}>Loading…</div>}
       {targets && targets.length === 0 && <div style={{ color: 'var(--text-dim)', fontSize: 12, marginBottom: 8 }}>No targets — your statements stay in Foxxi-as-LRS.</div>}
       {targets && targets.map(t => (
         <div key={t.id} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '6px 10px', background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 4, marginBottom: 4, fontSize: 12, flexWrap: 'wrap' }}>
@@ -93,7 +106,7 @@ export function MyForwardingPanel({ session }: { session: FoxxiSession }) {
           <span style={{ color: 'var(--text-dim)' }}>· {t.principal} {t.secretHint} · xAPI {t.version}</span>
           <span style={{ color: 'var(--text-dim)' }}>· ✓{t.metrics.delivered} ✗{t.metrics.failed}{t.metrics.deadLetterDepth ? ` · dead-letter ${t.metrics.deadLetterDepth}` : ''}</span>
           <span style={{ flex: 1 }} />
-          <Button small danger disabled={busy} onClick={() => act(() => callSignedAffordanceAs(origin, 'forwarding/targets', signer, { delete: [t.id] }))}>Remove</Button>
+          <Button small danger disabled={busy} onClick={() => act(async () => showTargets(await callSignedAffordanceAs(origin, 'forwarding/targets', signer, { delete: [t.id] })))}>Remove</Button>
         </div>
       ))}
       <div style={{ display: 'flex', gap: 8, marginTop: 8, marginBottom: 18, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -102,7 +115,7 @@ export function MyForwardingPanel({ session }: { session: FoxxiSession }) {
         <input style={inputStyle} placeholder="label (optional)" value={tForm.label} onChange={e => setTForm({ ...tForm, label: e.target.value })} />
         <input style={{ ...inputStyle, minWidth: 80 }} placeholder="xAPI ver" value={tForm.version} onChange={e => setTForm({ ...tForm, version: e.target.value })} />
         <Button small primary disabled={busy || !tForm.endpoint || !tForm.credentials.includes(':')}
-          onClick={() => act(async () => { await callSignedAffordanceAs(origin, 'forwarding/targets', signer, { targets: [tForm] }); setTForm({ endpoint: '', credentials: '', label: '', version: '2.0.0' }); })}>
+          onClick={() => act(async () => { showTargets(await callSignedAffordanceAs(origin, 'forwarding/targets', signer, { targets: [tForm] })); setTForm({ endpoint: '', credentials: '', label: '', version: '2.0.0' }); })}>
           Add target
         </Button>
       </div>
@@ -115,7 +128,7 @@ export function MyForwardingPanel({ session }: { session: FoxxiSession }) {
           <code>{c.principal}</code><span style={{ color: 'var(--text-dim)' }}>{c.secretHint}</span>
           <span style={{ color: 'var(--text-dim)' }}>{c.label}</span>
           <span style={{ flex: 1 }} />
-          <Button small danger disabled={busy} onClick={() => act(() => callSignedAffordanceAs(origin, 'credentials', signer, { revoke: [c.id] }))}>Revoke</Button>
+          <Button small danger disabled={busy} onClick={() => act(async () => showCreds(await callSignedAffordanceAs(origin, 'credentials', signer, { revoke: [c.id] })))}>Revoke</Button>
         </div>
       ))}
       <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -123,7 +136,7 @@ export function MyForwardingPanel({ session }: { session: FoxxiSession }) {
         <input style={inputStyle} placeholder="secret (pass)" value={cForm.secret} onChange={e => setCForm({ ...cForm, secret: e.target.value })} />
         <input style={inputStyle} placeholder="label (optional)" value={cForm.label} onChange={e => setCForm({ ...cForm, label: e.target.value })} />
         <Button small primary disabled={busy || !cForm.principal || !cForm.secret}
-          onClick={() => act(async () => { await callSignedAffordanceAs(origin, 'credentials', signer, { credentials: [cForm] }); setCForm({ principal: '', secret: '', label: '' }); })}>
+          onClick={() => act(async () => { showCreds(await callSignedAffordanceAs(origin, 'credentials', signer, { credentials: [cForm] })); setCForm({ principal: '', secret: '', label: '' }); })}>
           Add credential
         </Button>
       </div>

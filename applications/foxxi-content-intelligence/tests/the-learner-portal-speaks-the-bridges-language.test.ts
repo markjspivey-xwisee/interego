@@ -16,7 +16,7 @@ import { advancePlay, currentView, startPlay } from '../src/composition-play.js'
 import { extensionAccount, extensionSigner, signerAsks, signerFor } from '../dashboard-app/src/auth/signer.js';
 import { signAgentRequestAs } from '../dashboard-app/src/auth/signed-request.js';
 import { mintSessionTokenWithSigner } from '../dashboard-app/src/auth/session-token.js';
-import { connectFromExtension, loadSession, saveSession, type FoxxiSession } from '../dashboard-app/src/auth/session.js';
+import { connectFromExtension, loadSession, saveSession, signsOnly, type FoxxiSession } from '../dashboard-app/src/auth/session.js';
 import { draftFor, matchTo, move, pick, problemWith, repliesFor, replyOf, type Draft, type LearnerQuestion } from '../dashboard-app/src/learn/answers.js';
 import { compositionIriOn, compositionRefFrom, hashOfComposition } from '../dashboard-app/src/learn/composition-ref.js';
 import { RECENTS_MAX, readRecents, recentsKey, remember } from '../dashboard-app/src/learn/recents.js';
@@ -97,6 +97,35 @@ describe('a wallet extension signs as its account, and the bridge verifies it', 
     } finally {
       delete (globalThis as { localStorage?: unknown }).localStorage;
     }
+  });
+});
+
+describe('a session that acts through signed requests alone', () => {
+  it('is a wallet extension or a pasted key, never a roster identity', () => {
+    const account = ethers.Wallet.createRandom().address;
+    expect(signsOnly({ webId: `did:ethr:${account}`, audienceTags: ['connected-wallet'], signingMode: 'extension', extensionAddress: account })).toBe(true);
+    expect(signsOnly({ webId: `did:ethr:${account}`, audienceTags: ['connected-wallet'] })).toBe(true);
+    expect(signsOnly({ webId: 'https://id.acme-training.example/jliu/profile#me', audienceTags: ['engineering'] })).toBe(false);
+  });
+
+  it('lands on Learn, is not offered the pages read with the session token, and is told why on them', () => {
+    const app = readFileSync(new URL('../dashboard-app/src/App.tsx', import.meta.url), 'utf8');
+    expect(app).toMatch(/navigate\(signsOnly\(s\) \? '\/learn' : `\/profiles\/\$\{userIdToUuid\(s\.userId\)\}`/);
+    expect(app).toMatch(/const home = signsOnly\(session\) \? '\/learn' : ownProfileUrl;/);
+    expect(app).toMatch(/<Route path="\/" element=\{<Navigate to=\{home\} replace \/>\} \/>/);
+    expect(app).toMatch(/\{!signsOnly\(session\) && <NavLink to=\{ownProfileUrl\} label="My profile" \/>\}/);
+    expect(app).toMatch(/\{!signsOnly\(session\) && <NavLink to="\/my-activity" label="My activity" \/>\}/);
+    expect(app).toMatch(/if \(signsOnly\(session\)\) return <SignsOnlyNotice what="Your profile and learner record" \/>;/);
+    expect(app).toMatch(/if \(signsOnly\(session\)\) return <SignsOnlyNotice what="Your activity and its statements" \/>;/);
+  });
+
+  it('reads its forwarding only when asked, one signature at a time, and a change answers for itself', () => {
+    const panel = readFileSync(new URL('../dashboard-app/src/components/MyForwardingPanel.tsx', import.meta.url), 'utf8');
+    expect(panel).not.toMatch(/Promise\.all/);
+    expect(panel).toMatch(/useEffect\(\(\) => \{ if \(!asks\) void load\(\); \}, \[load, asks\]\);/);
+    expect(panel).not.toMatch(/await load\(\)/);
+    expect(panel).toMatch(/showTargets\(await callSignedAffordanceAs\(origin, 'forwarding\/targets', signer, \{ delete: \[t\.id\] \}\)\)/);
+    expect(panel).toMatch(/showCreds\(await callSignedAffordanceAs\(origin, 'credentials', signer, \{ revoke: \[c\.id\] \}\)\)/);
   });
 });
 

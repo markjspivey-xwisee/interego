@@ -93,6 +93,16 @@ export function loadSession(): FoxxiSession | null {
   }
 }
 
+/**
+ * Whether a session acts through signed requests alone: a wallet extension, or a pasted key. Its
+ * session token is signed by a wallet no tenant directory knows, so the pages that read with that
+ * token (the profile and its learner record, my activity) are answered 401 for it. The pages that
+ * sign as it are its own: Learn, My forwarding.
+ */
+export function signsOnly(s: Partial<FoxxiSession>): boolean {
+  return isConnectedSession(s);
+}
+
 /** A "connect wallet" session is keyed by a did:ethr identity / connected-wallet tag. */
 function isConnectedSession(s: Partial<FoxxiSession>): boolean {
   return !!s.webId?.startsWith('did:ethr:') || !!s.audienceTags?.includes('connected-wallet');
