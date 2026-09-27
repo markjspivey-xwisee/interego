@@ -71,7 +71,8 @@ describe('a composition shows what it has learned', () => {
   it('says learners go into a nested composition that comes first, where outcomes decide nothing', () => {
     const first = compositionFrom({ title: 'Nested first', competency: c, positions: [{ competency: c, paradigm: [nested['@id'], told['@id'], shown['@id']] }] });
     const leaning = compositionEfficacy(first, tally, iri => store.get(iri)).positions[0]!.leansTo.find(l => l.level === 'foundational');
-    expect(leaning).toEqual({ level: 'foundational', for: 'anyone', into: nested['@id'], why: expect.stringMatching(/^"A longer way" comes first here/) });
+    // Where it does not resolve, the next alternative as ranked is taken, by the author's order: outcomes decide nothing.
+    expect(leaning).toEqual({ level: 'foundational', for: 'anyone', into: nested['@id'], otherwise: told['@id'], why: expect.stringMatching(/^"A longer way" comes first here: .* otherwise take the next alternative as ranked .* so outcomes decide nothing at this level$/) });
     // A composition is pitched at every level, so for working learners it is nearer than the foundational fragments.
     expect(view.positions[0]!.leansTo.find(l => l.level === 'working')).toMatchObject({ into: nested['@id'] });
   });
