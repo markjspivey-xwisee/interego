@@ -1,6 +1,6 @@
 # Foxxi content intelligence, learner surface: every affordance
 
-Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 52 affordances.
+Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 53 affordances.
 
 ## `foxxi.record_private_performance_outcome`
 
@@ -710,6 +710,21 @@ Author a composition as yourself: a path of positions, each naming a competency 
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
 | `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, composition: { title, competency, positions:[{ competency, demonstratedAt?: 1-5, paradigm:[fragment or composition IRIs, 1-12] }, …], supersedes? }, subject_pod_url? }). At most 100 positions. demonstratedAt is the proficiency rank (1 Novice … 5 Expert) at which a learner skips the position; the default is 3, Competent. |
+| `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.content_fold_course`
+
+**Fold a course you authored into fragments and compositions**
+
+Fold a course you authored (foxxi.scorm_author) into composable content, kept on your pod. Each section's teaching becomes a concept fragment and its questions a check (an assessment item, or a reflection when none is graded); a section with both becomes a composition of its own, teaching then check, and the course becomes a composition of its sections in order. The questions keep their stored form, so they grade as they did in the course, and the same course folds to the same IRIs on this bridge. What it makes resolves per learner (foxxi.content_resolve), plays step by step (foxxi.content_launch), and learns which explanation works once others are offered at a position. The same for a person and for an agent.
+
+- Action: `urn:iep:action:foxxi:content-fold-course-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/content/fold-course` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, course_id, competency?, section_competencies?: { <section id>: competency }, level?, language?, subject_pod_url? }). competency is what the course develops: a competency IRI, another authority's term IRI, or a slug; without one, the course's own IRI names it. section_competencies names a section's own where it differs. level is foundational, working (default), applied or advanced; language is a BCP 47 tag. |
 | `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
 
 ## `foxxi.content_resolve`

@@ -224,11 +224,39 @@ agent, as learner and as author.
   content the bridge can reach.
 - `foxxi.content_resolve` resolves a composition for the caller from
   their own record, with an admission if they send one.
+- `foxxi.content_fold_course` folds a course the caller authored into
+  fragments and compositions (below).
 
 Each item is written to its author's pod's shared lattice first. Only
 once that write lands is it recorded as an `authored` statement, cached,
 and its pod remembered. The pod is remembered as written, not derived
 again from the DID, and each item keeps up to five authors' pods.
+
+**Folding an authored course** ([`src/course-fold.ts`](src/course-fold.ts)).
+A course authored with `foxxi.scorm_author` becomes composable content, so
+it resolves per learner, plays step by step and learns which explanation
+works.
+
+- **A section's teaching and its check become two fragments.** The
+  teaching is a concept fragment. The questions are a check: an assessment
+  item, or a reflection when none is graded. Kept apart, another
+  explanation can be offered at the teaching's position, and the same check
+  judges which one works.
+- **The course's shape is kept.** A section with both parts becomes a
+  composition of its own, teaching then check. The course becomes a
+  composition of its sections in order.
+- **The questions grade the same.** They keep the stored form they were
+  authored in. Each check's blinding value is derived from the bridge's
+  grading secret, so the same course folds to the same IRIs on that bridge.
+- **Nothing is invented.** Titles, bodies and questions are the author's.
+  The competency is the one named for the course or a section; with none
+  named, the course's own IRI names what it teaches. The course's mastery
+  score is not carried, because a play grades each step.
+- **One write for the lot.** Only the course's author folds it. What it
+  makes is kept on their pod as one bundle (`foxxi:ContentBundle`), so a
+  course of a hundred sections is one write, not three hundred: each write
+  puts the whole lattice. Each item keeps its own IRI, and the store finds
+  it inside the bundle and checks it like anything else read back.
 
 Anything read back is checked against its hash
 ([`src/content-store.ts`](src/content-store.ts)), so a wrong or hostile
@@ -306,8 +334,10 @@ Nobody declares which explanation of a competency works; the plays show it.
 
 Not yet wired:
 - regime sources beyond a supplied plan;
-- folding the older in-memory `Course` model and authored SCORM courses
-  into this one.
+- folding the older in-memory `Course` model into this one;
+- importing SCORM packages and authoring-tool exports (packages are
+  unzipped in the browser today, and the server sees only their manifest
+  and extracted text).
 
 ## 6. Authoring is composition — the same tools for humans and agents
 

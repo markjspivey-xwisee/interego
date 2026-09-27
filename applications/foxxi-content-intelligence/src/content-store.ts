@@ -25,6 +25,18 @@ const keyOf = (iri: string): string | undefined => {
   return ref ? `${ref.type}:${ref.hash}` : undefined;
 };
 
+/**
+ * The item a bundle holds under an IRI, if it holds one. Items an author makes in one act (a
+ * folded course's fragments and compositions, say) are kept on their pod as one bundle,
+ * `{ '@id': <its root>, items: [...] }`, since each write to a pod's lattice puts all of it. Each
+ * item keeps its own IRI, and what this finds is checked like anything else read back.
+ */
+export function bundledItem(bundle: unknown, iri: string): ContentItem | undefined {
+  const items = (bundle as { items?: unknown } | null | undefined)?.items;
+  if (!Array.isArray(items)) return undefined;
+  return items.find(x => !!x && typeof x === 'object' && sameContent(String((x as { '@id'?: unknown })['@id'] ?? ''), iri)) as ContentItem | undefined;
+}
+
 /** Where content lives durably. Whatever it returns is checked before it is used. */
 export interface DurableContent {
   load(ref: { type: 'fragment' | 'composition'; hash: string; iri: string }): Promise<ContentItem | undefined>;

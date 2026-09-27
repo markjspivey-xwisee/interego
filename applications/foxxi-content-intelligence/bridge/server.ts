@@ -19,7 +19,7 @@
  *   FOXXI_AUDIENCE=both      → expose both (default)
  */
 
-import { randomUUID, createHash, randomBytes } from 'node:crypto';
+import { randomUUID, createHash, createHmac, randomBytes } from 'node:crypto';
 import { readSelfXapi, writeSelfXapi } from '../src/self-xapi.js';
 import { ingestTelemetry, normalizeQuery, telemetryReport, mergeTelemetrySnapshot, type TelemetryDependencies } from '../../llm-telemetry/service.js';
 import { telemetryProfile } from '../../llm-telemetry/profile.js';
@@ -200,7 +200,8 @@ import { authorQuestion, questionForLearner, questionIsRight, QuestionError } fr
 import { courseMarkdownHtml } from '../src/course-markdown.js';
 import { ContentError, compositionIri, contentRefOf, fragmentForLearner, fragmentFrom, fragmentIri, publicFragment, sameContent, type Fragment } from '../src/content-fragments.js';
 import { admissionFrom, compositionFrom, resolveComposition, type Admission, type Composition, type RecordedCompetency } from '../src/compositions.js';
-import { ContentStore, isCompositionItem, LOCATIONS_PER_ITEM, mergeLocations, type ContentItem, type ContentLocation } from '../src/content-store.js';
+import { bundledItem, ContentStore, isCompositionItem, LOCATIONS_PER_ITEM, mergeLocations, type ContentItem, type ContentLocation } from '../src/content-store.js';
+import { foldCourse, type FoldedCourse, type FoldOptions } from '../src/course-fold.js';
 import { currentView, startPlay, takeStep, type CompositionPlay, type PlayInProgress } from '../src/composition-play.js';
 import { EFFICACY_POLICY, EfficacyTally, efficacyTokenKey, openTally, outcomeToken, sealTally } from '../src/fragment-efficacy.js';
 import { stateWriter } from '../src/state-writer.js';
@@ -10390,7 +10391,7 @@ app.post('/agent/cmi5/launch', async (req, res) => {
 // hashes to it, and whatever is loaded back is checked the same way (src/content-store.ts). Each
 // item lives on its author's pod, composed into their shared lattice like an authored course; the
 // bridge keeps a bounded cache and remembers whose pod each item came from.
-const CONTENT_TYPES = { fragment: 'foxxi:GroundingFragment', composition: 'foxxi:Composition' } as const;
+const CONTENT_TYPES = { fragment: 'foxxi:GroundingFragment', composition: 'foxxi:Composition', bundle: 'foxxi:ContentBundle' } as const;
 let contentLocations = new Map<string, ContentLocation[]>();   // content key (type:hash) → where each author wrote it
 const CONTENT_LOCATIONS_MAX = 200_000;
 const CONTENT_LOCATIONS_RESOURCE = tenantPodUrl ? `${tenantPodUrl.replace(/\/$/, '')}/foxxi-lattice/content-locations.json` : '';
@@ -10442,6 +10443,11 @@ const contentStore = new ContentStore(20_000, {
       const found = await loadArtifactFromLattice(pod, did, actorForPod(pod, MESH_ACTOR_LABELS), CONTENT_TYPES[type],
         c => !!c && typeof c === 'object' && sameContent(String((c as { '@id'?: unknown })['@id'] ?? ''), iri)).catch(() => null);
       if (found) return found as ContentItem;
+      // Or kept with the rest of what its author made in one act, as a folded course is (bundledItem).
+      const bundle = await loadArtifactFromLattice(pod, did, actorForPod(pod, MESH_ACTOR_LABELS), CONTENT_TYPES.bundle,
+        c => bundledItem(c, iri) !== undefined).catch(() => null);
+      const inside = bundledItem(bundle, iri);
+      if (inside) return inside;
     }
     return undefined;
   },
@@ -10474,6 +10480,38 @@ async function keepAuthoredContent(item: ContentItem, authorDid: string, subject
     actorDid: authorDid, verbIri: AUTHORED_VERB, verbDisplay: 'authored', objectId: item['@id'],
     objectName: isComposition ? item.title : (item.title ?? `${item.kind} fragment`),
     objectType: `${FOXXI_NS}activities/${isComposition ? 'composition' : 'fragment'}`, result: { completion: true },
+  });
+  return { ok: true, kept: { durable: authorPod, ...(authoredStatementId ? { authoredStatementId } : {}), sharedLattice } };
+}
+
+/**
+ * Keep what an author made in one act, a folded course say, as one bundle on their pod: one write
+ * to their shared lattice rather than one per item, since each write puts the whole lattice. Only
+ * once it lands is each item cached and its pod remembered, and one `authored` statement recorded,
+ * for the root. Each item keeps its own IRI, and is checked against it when read back.
+ */
+async function keepContentBundle(root: Composition, items: readonly ContentItem[], authorDid: string, subjectPodUrl: unknown):
+  Promise<{ ok: true; kept: Record<string, unknown> } | { ok: false; error: string }> {
+  const authorPod = selfBoundPod(authorDid, typeof subjectPodUrl === 'string' ? subjectPodUrl : undefined);
+  let sharedLattice: Awaited<ReturnType<typeof composeIntoSharedLattice>>;
+  try {
+    sharedLattice = await composeIntoSharedLattice({
+      podUrl: authorPod, agentDid: authorDid, label: actorForPod(authorPod, MESH_ACTOR_LABELS),
+      terms: [authorDid, AUTHORED_VERB, root['@id']], content: { '@id': root['@id'], items } as unknown as Record<string, unknown>,
+      contentType: CONTENT_TYPES.bundle, projections: ['rdf', 'vc', 'activity'],
+    });
+  } catch (e) { return { ok: false, error: `could not store it on your pod: ${(e as Error).message}` }; }
+  if (!sharedLattice?.persisted) {
+    return { ok: false, error: `could not store it on your pod${sharedLattice?.persistError ? `: ${sharedLattice.persistError}` : ''}` };
+  }
+  for (const item of items) {
+    contentStore.put(item);
+    const ref = contentRefOf(item['@id'])!;
+    recordContentLocation(`${ref.type}:${ref.hash}`, authorDid, authorPod);
+  }
+  const authoredStatementId = emitAgentActivity({
+    actorDid: authorDid, verbIri: AUTHORED_VERB, verbDisplay: 'authored', objectId: root['@id'], objectName: root.title,
+    objectType: `${FOXXI_NS}activities/composition`, result: { completion: true },
   });
   return { ok: true, kept: { durable: authorPod, ...(authoredStatementId ? { authoredStatementId } : {}), sharedLattice } };
 }
@@ -10555,6 +10593,48 @@ app.post('/agent/content/composition', async (req, res) => {
     if (!kept.ok) { res.status(503).json({ error: `composition not kept: ${kept.error}` }); return; }
     sendActionResult(req, res, { ok: true, '@id': composition['@id'], authoredBy: auth.callerDid, composition, ...kept.kept },
       bridgeBaseUrl, 'Composition authored', activeAffordances.filter(a => a.toolName === 'foxxi.content_resolve'));
+  } catch (err) { sendServerError(res, err, 'route-handler'); }
+});
+
+// An authored course folded into fragments and compositions (src/course-fold.ts), kept on its
+// author's pod as one bundle. Only the course's author folds it: what is folded is kept as theirs.
+app.post('/agent/content/fold-course', async (req, res) => {
+  try {
+    if (contentRateLimited(req, res)) return;
+    const auth = await verifyDelegatedCaller(req.body);
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
+    const p = auth.payload;
+    const courseId = typeof p.course_id === 'string' ? p.course_id.trim() : '';
+    if (!courseId) { res.status(400).json({ error: 'course_id is required: a course authored with foxxi.scorm_author' }); return; }
+    const course = await resolveCourseForRead(courseId);
+    if (!course) { res.status(404).json({ error: `no authored course ${courseId} here` }); return; }
+    if (course.authoredBy !== auth.callerDid) { res.status(403).json({ error: 'only the course\'s author can fold it' }); return; }
+    const sections = p.section_competencies;
+    if (sections !== undefined && (!sections || typeof sections !== 'object' || Array.isArray(sections) || Object.values(sections).some(v => typeof v !== 'string'))) {
+      res.status(400).json({ error: 'section_competencies maps section ids to the competencies they develop' }); return;
+    }
+    // The competency named for the course, or else the course itself: its IRI names what it teaches.
+    const competency = typeof p.competency === 'string' && p.competency.trim() ? p.competency.trim() : competencyIriForTerm(courseIri(courseId));
+    let folded: FoldedCourse;
+    try {
+      folded = foldCourse(course, {
+        competency,
+        ...(sections ? { sectionCompetencies: sections as Record<string, string> } : {}),
+        ...(typeof p.level === 'string' ? { level: p.level as FoldOptions['level'] } : {}),
+        ...(typeof p.language === 'string' ? { language: p.language } : {}),
+        // From the bridge's grading secret: the same course folds to the same IRIs here, and no learner can rebuild a check.
+        blindFor: sectionId => (gradedKey ? createHmac('sha256', gradedKey).update(`course-fold\n${courseIri(courseId)}\n${sectionId}`).digest('hex') : undefined),
+      });
+    } catch (e) {
+      if (e instanceof ContentError) { res.status(400).json({ error: `course not folded: ${e.message}` }); return; }
+      throw e;
+    }
+    const kept = await keepContentBundle(folded.root, folded.items, auth.callerDid, p.subject_pod_url);
+    if (!kept.ok) { res.status(503).json({ error: `course not folded: ${kept.error}` }); return; }
+    sendActionResult(req, res, {
+      ok: true, '@id': folded.root['@id'], course: courseIri(courseId), authoredBy: auth.callerDid, competency,
+      composition: folded.root, sections: folded.sections, items: folded.items.length, ...kept.kept,
+    }, bridgeBaseUrl, 'Course folded into compositions', activeAffordances.filter(a => a.toolName === 'foxxi.content_resolve' || a.toolName === 'foxxi.content_launch'));
   } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 
