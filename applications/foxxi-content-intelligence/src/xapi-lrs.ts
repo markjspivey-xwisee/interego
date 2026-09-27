@@ -170,6 +170,16 @@ function internalRecord(stmt: Record<string, unknown>, emitter: string): StoredS
 }
 
 /**
+ * What the LRS would refuse an internally emitted statement for: the check storeStatementInternal
+ * makes (the statement authored as the LRS authors it, then validated), made without storing it.
+ * Empty when it would be kept. For a caller that must know, before it keeps any of several
+ * statements, that it can keep all of them: a cmi5 session is kept whole or not at all.
+ */
+export function internalRefusalOf(stmt: Record<string, unknown>): string[] {
+  return validateStatement(ensureStatementFields(stmt, INTERNAL_LRS_AUTHORITY));
+}
+
+/**
  * Store an internally-emitted statement. Returns the statement id, or NULL when the
  * statement was refused for non-conformance.
  *
