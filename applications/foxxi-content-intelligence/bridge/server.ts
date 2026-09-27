@@ -201,6 +201,7 @@ import { courseMarkdownHtml } from '../src/course-markdown.js';
 import { ContentError, compositionIri, contentRefOf, fragmentForLearner, fragmentFrom, fragmentIri, publicFragment, sameContent, type Fragment } from '../src/content-fragments.js';
 import { admissionFrom, compositionFrom, resolveComposition, type Admission, type Composition, type RecordedCompetency } from '../src/compositions.js';
 import { ContentStore, isCompositionItem, LOCATIONS_PER_ITEM, mergeLocations, type ContentItem, type ContentLocation } from '../src/content-store.js';
+import { advancePlay, currentView, startPlay, type CompositionPlay } from '../src/composition-play.js';
 import { competencyIri, competencyIriForTerm, competencyIdOf } from '../src/competency-identity.js';
 import { activityIri, ACTIVITY_DEFINITIONS } from '../src/activity-identity.js';
 import { FOXXI_NS } from '../src/foxxi-vocab.js';
@@ -10426,16 +10427,16 @@ function recordContentLocation(key: string, authorDid: string, pod: string): voi
 }
 const contentStore = new ContentStore(20_000, {
   // Each pod that holds the item is tried in turn, the pod it was written to rather than one
-  // derived again from the DID. Only pods on this tenant's own server are read (that is where
-  // pods live), and whatever comes back is checked by the store.
+  // derived again from the DID. Only pods on this tenant's own store are read (that is where
+  // pods live), under either of its spellings: a relay-signed author's pod may be recorded by
+  // the store's internal address, which is the same store (sameStore). Whatever comes back is
+  // checked by the store.
   load: async ({ type, hash, iri }) => {
     const key = `${type}:${hash}`;
     if (!contentLocations.has(key) && !contentLocationsLoaded) await loadContentLocations();
-    const tenantOrigin = (() => { try { return new URL(tenantPodUrl).origin; } catch { return ''; } })();
     for (const { did, pod: written } of contentLocations.get(key) ?? []) {
       const pod = written || resolveSubjectPodUrl(did);
-      const podOrigin = (() => { try { return new URL(pod).origin; } catch { return ''; } })();
-      if (!tenantOrigin || podOrigin !== tenantOrigin) continue;
+      if (!tenantPodUrl || !sameStore(pod, tenantPodUrl)) continue;
       const found = await loadArtifactFromLattice(pod, did, actorForPod(pod, MESH_ACTOR_LABELS), CONTENT_TYPES[type],
         c => !!c && typeof c === 'object' && sameContent(String((c as { '@id'?: unknown })['@id'] ?? ''), iri)).catch(() => null);
       if (found) return found as ContentItem;
@@ -10475,14 +10476,26 @@ async function keepAuthoredContent(item: ContentItem, authorDid: string, subject
   return { ok: true, kept: { durable: authorPod, ...(authoredStatementId ? { authoredStatementId } : {}), sharedLattice } };
 }
 
-/** The per-IP limit every authoring route takes, applied before anything is read or written. Answers 429 and returns true when it is spent. */
+/**
+ * The per-IP limit the content routes take, before anything is verified, read or written. It is a
+ * budget of its own rather than the ten per five minutes the LLM-calling routes share: content is
+ * authored a fragment at a time and played a step at a time, so one course is dozens of requests.
+ * Answers 429 and returns true when it is spent. Env-overridable.
+ */
+const RL_CONTENT_WINDOW_MS = 5 * 60 * 1000;
+const RL_CONTENT_MAX = parseInt(process.env.FOXXI_CONTENT_RATE_LIMIT_PER_IP ?? '120', 10);
+const contentRateLimit = new Map<string, { count: number; resetAt: number }>();
 function contentRateLimited(req: import('express').Request, res: import('express').Response): boolean {
   const xff = req.headers['x-forwarded-for'];
   const ip = typeof xff === 'string' ? xff.split(',').at(-1)?.trim() ?? 'unknown'
     : Array.isArray(xff) ? xff.at(-1)?.trim() ?? 'unknown' : req.ip ?? 'unknown';
-  const rl = checkAgenticRateLimit(ip);
-  if (rl.ok) return false;
-  res.status(429).json({ ok: false, error: `rate limit — retry in ${rl.retryAfterSeconds}s` });
+  const now = Date.now();
+  let entry = contentRateLimit.get(ip);
+  if (!entry || now > entry.resetAt) { entry = { count: 0, resetAt: now + RL_CONTENT_WINDOW_MS }; contentRateLimit.set(ip, entry); }
+  entry.count++;
+  if (contentRateLimit.size > 5000) for (const [k, v] of contentRateLimit) if (v.resetAt < now) contentRateLimit.delete(k);
+  if (entry.count <= RL_CONTENT_MAX) return false;
+  res.status(429).json({ ok: false, error: `rate limit — retry in ${Math.ceil((entry.resetAt - now) / 1000)}s` });
   return true;
 }
 
@@ -10543,35 +10556,126 @@ app.post('/agent/content/composition', async (req, res) => {
   } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 
+/** Resolve a composition for a verified caller from their own record: the one path resolve and launch share. */
+async function resolveForCaller(callerDid: string, signer: string, p: Record<string, unknown>): Promise<
+  | { ok: true; root: Composition; kind: 'human' | 'agent'; resolution: ReturnType<typeof resolveComposition>; missing: string[] }
+  | { ok: false; status: number; error: string }> {
+  const root = typeof p.composition === 'string' ? await contentStore.fetch(p.composition) : undefined;
+  if (!root || !isCompositionItem(root)) return { ok: false, status: 404, error: 'no such composition here: name one by its IRI' };
+  // A wallet signing for itself is a person; a delegated agent is an agent. Either may say otherwise.
+  const kind: 'human' | 'agent' = p.learner_kind === 'human' || p.learner_kind === 'agent'
+    ? p.learner_kind : (callerDid === `did:ethr:${signer}` ? 'human' : 'agent');
+  try {
+    const admission: Admission | undefined = p.admission === undefined ? undefined : admissionFrom(p.admission);
+    const { missing } = await contentStore.gather(root);
+    const record = await learnerCompetencies(callerDid, kind);
+    const resolution = resolveComposition({
+      composition: root, learner: { id: callerDid, kind }, record,
+      ...(admission ? { admission: () => admission } : {}), lookup: iri => contentStore.get(iri),
+    });
+    return { ok: true, root, kind, resolution, missing };
+  } catch (e) {
+    if (e instanceof ContentError) return { ok: false, status: 400, error: e.message };
+    throw e;
+  }
+}
+
 app.post('/agent/content/resolve', async (req, res) => {
   try {
     if (contentRateLimited(req, res)) return;
     const auth = await verifyDelegatedCaller(req.body);
     if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
-    const p = auth.payload;
-    const root = typeof p.composition === 'string' ? await contentStore.fetch(p.composition) : undefined;
-    if (!root || !isCompositionItem(root)) { res.status(404).json({ error: 'no such composition here: name one by its IRI' }); return; }
-    let admission: Admission | undefined;
-    try { admission = p.admission === undefined ? undefined : admissionFrom(p.admission); }
-    catch (e) { if (e instanceof ContentError) { res.status(400).json({ error: e.message }); return; } throw e; }
-    // A wallet signing for itself is a person; a delegated agent is an agent. Either may say otherwise.
-    const kind: 'human' | 'agent' = p.learner_kind === 'human' || p.learner_kind === 'agent'
-      ? p.learner_kind : (auth.callerDid === `did:ethr:${auth.signer}` ? 'human' : 'agent');
-    let gathered: { missing: string[] };
-    try { gathered = await contentStore.gather(root); }
-    catch (e) { if (e instanceof ContentError) { res.status(400).json({ error: e.message }); return; } throw e; }
-    const record = await learnerCompetencies(auth.callerDid, kind);
-    let resolution;
-    try {
-      resolution = resolveComposition({
-        composition: root, learner: { id: auth.callerDid, kind }, record,
-        ...(admission ? { admission: () => admission } : {}), lookup: iri => contentStore.get(iri),
-      });
-    } catch (e) { if (e instanceof ContentError) { res.status(400).json({ error: e.message }); return; } throw e; }
+    const r = await resolveForCaller(auth.callerDid, auth.signer, auth.payload);
+    if (!r.ok) { res.status(r.status).json({ error: r.error }); return; }
     sendActionResult(req, res, {
-      ok: true, ...resolution, learnerKind: kind, missing: gathered.missing,
-      steps: resolution.steps.map(s => ({ ...s, fragment: fragmentForLearner(s.fragment) })),
-    }, bridgeBaseUrl, 'Composition resolved for you', []);
+      ok: true, ...r.resolution, learnerKind: r.kind, missing: r.missing,
+      steps: r.resolution.steps.map(s => ({ ...s, fragment: fragmentForLearner(s.fragment) })),
+    }, bridgeBaseUrl, 'Composition resolved for you', activeAffordances.filter(a => a.toolName === 'foxxi.content_launch'));
+  } catch (err) { sendServerError(res, err, 'route-handler'); }
+});
+
+// ── Playing a composition ────────────────────────────────────────────
+// A learner, person or agent, steps through what resolution chose for them
+// (src/composition-play.ts). The bridge grades each step against the stored questions and
+// records it in the learner's own lens at the grain of the fragment, the evidence choosing
+// among alternatives by what has worked will read. Sessions live in the process, like SCORM plays.
+const CONTENT_PLAYS_MAX = 5000;
+const CONTENT_PLAY_TTL_MS = 3 * 60 * 60 * 1000;
+const contentPlays = new Map<string, { play: CompositionPlay; expiresAt: number }>();
+function keepPlay(play: CompositionPlay): void {
+  const now = Date.now();
+  for (const [k, v] of contentPlays) if (v.expiresAt < now) contentPlays.delete(k);
+  if (contentPlays.size >= CONTENT_PLAYS_MAX) { const oldest = contentPlays.keys().next().value; if (oldest !== undefined) contentPlays.delete(oldest); }
+  contentPlays.set(play.id, { play, expiresAt: now + CONTENT_PLAY_TTL_MS });
+}
+
+/** Store a play's statements in the learner's own lens, with the bridge's mark on what it graded, and compose them into their lattice. */
+function recordPlayStatements(learnerDid: string, statements: ReadonlyArray<Record<string, unknown>>): string[] {
+  const pod = resolveSubjectPodUrl(learnerDid);
+  const label = actorForPod(pod, MESH_ACTOR_LABELS);
+  const lens = lensTenantFor(label);
+  const ids: string[] = [];
+  for (const raw of statements) {
+    const result = raw.result as Record<string, unknown> | undefined;
+    const graded = !!result && ('success' in result || 'score' in result);
+    const s = graded && gradedKey ? withGradedTag(raw, gradedKey) : raw;
+    const id = storeStatementInternal(s, lens);
+    if (!id) continue;   // refused as non-conformant: no id to report
+    ids.push(id);
+    void composeIntoSharedLattice({
+      podUrl: pod, agentDid: learnerDid, label,
+      terms: [learnerDid, String((s.verb as { id?: string } | undefined)?.id ?? ''), String((s.object as { id?: string } | undefined)?.id ?? '')],
+      content: s, contentType: 'xapi:Statement', projections: ['rdf', 'vc', 'activity'],
+    });
+    forwardToTargets(lens, { ...s, id }).catch(() => {});
+  }
+  return ids;
+}
+
+app.post('/agent/content/launch', async (req, res) => {
+  try {
+    if (contentRateLimited(req, res)) return;
+    const auth = await verifyDelegatedCaller(req.body);
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
+    const r = await resolveForCaller(auth.callerDid, auth.signer, auth.payload);
+    if (!r.ok) { res.status(r.status).json({ error: r.error }); return; }
+    const play = startPlay(r.resolution, r.root.title, { id: auth.callerDid, kind: r.kind }, { session: randomUUID(), registration: randomUUID() }, new Date().toISOString());
+    const about = { skipped: r.resolution.skipped, unmet: r.resolution.unmet, refused: r.resolution.refused, trace: r.resolution.trace, missing: r.missing };
+    if (!play) {
+      sendActionResult(req, res, { ok: true, done: true, nothingToPlay: true, composition: r.root['@id'], learnerKind: r.kind, ...about },
+        bridgeBaseUrl, 'Nothing to play for you here', []);
+      return;
+    }
+    keepPlay(play);
+    sendActionResult(req, res, {
+      ok: true, sessionId: play.id, registration: play.registration, composition: r.root['@id'], title: r.root.title,
+      learnerKind: r.kind, step: currentView(play), ...about,
+    }, bridgeBaseUrl, 'Composition launched', activeAffordances.filter(a => a.toolName === 'foxxi.content_next'));
+  } catch (err) { sendServerError(res, err, 'route-handler'); }
+});
+
+app.post('/agent/content/next', async (req, res) => {
+  try {
+    if (contentRateLimited(req, res)) return;
+    const auth = await verifyDelegatedCaller(req.body);
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
+    const p = auth.payload;
+    const entry = typeof p.session_id === 'string' ? contentPlays.get(p.session_id) : undefined;
+    if (!entry || entry.expiresAt < Date.now()) { res.status(404).json({ error: 'no such play session: launch the composition' }); return; }
+    // A play is its learner's: nobody else can answer for them or read their next step.
+    if (entry.play.learner.id !== auth.callerDid) { res.status(403).json({ error: 'this play session belongs to another learner' }); return; }
+    const outcome = advancePlay(entry.play, p.answers, {
+      actor: { objectType: 'Agent', account: { homePage: String(authoritativeSource), name: auth.callerDid } },
+      now: new Date().toISOString(), newId: randomUUID, platform: 'Foxxi',
+    });
+    if (!outcome.ok) { res.status(outcome.status).json({ error: outcome.error, ...(outcome.validationErrors ? { validationErrors: outcome.validationErrors } : {}) }); return; }
+    const recorded = recordPlayStatements(auth.callerDid, outcome.statements);
+    if (outcome.done) contentPlays.delete(entry.play.id);
+    sendActionResult(req, res, {
+      ok: true, sessionId: entry.play.id, recorded, done: outcome.done,
+      ...(outcome.graded ? { graded: outcome.graded } : {}),
+      ...(outcome.done ? { summary: { steps: entry.play.steps.length, graded: entry.play.graded } } : { step: currentView(entry.play) }),
+    }, bridgeBaseUrl, outcome.done ? 'Composition completed' : 'Next step', outcome.done ? [] : activeAffordances.filter(a => a.toolName === 'foxxi.content_next'));
   } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 

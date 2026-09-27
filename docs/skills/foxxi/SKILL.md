@@ -1,11 +1,11 @@
 ---
 name: interego-foxxi
-description: "Foxxi content intelligence, learner surface as Interego affordances: 50 tools (record-private-performance-outcome-signed, read-private-performance-outcomes-signed, read-private-performance-calibration-signed, discover-lrs, discover-assigned-courses, discover-course-catalogs, and more). Use when a learner or an agent acting for one needs their assigned courses, a course's concept map or context, an answer grounded in course content, a credential, a learner record, a SCORM or cmi5 session, or private performance feedback on an Interego pod."
+description: "Foxxi content intelligence, learner surface as Interego affordances: 52 tools (record-private-performance-outcome-signed, read-private-performance-outcomes-signed, read-private-performance-calibration-signed, discover-lrs, discover-assigned-courses, discover-course-catalogs, and more). Use when a learner or an agent acting for one needs their assigned courses, a course's concept map or context, an answer grounded in course content, a credential, a learner record, a SCORM or cmi5 session, or private performance feedback on an Interego pod."
 license: MIT
 metadata:
   vertical: foxxi-content-intelligence
   source: applications/foxxi-content-intelligence/affordances.ts
-  affordances: 50
+  affordances: 52
   manifest: "https://foxxi-bridge.interego.xwisee.com/affordances"
   generator: tools/build-skills.ts
 ---
@@ -75,6 +75,8 @@ Every answer is a JSON object; a refusal is typed `iep:Refusal` with `iep:refusa
 | `foxxi.content_fragment` | Author a fragment as yourself: one piece of teaching or support that compositions use by reference. | `POST https://foxxi-bridge.interego.xwisee.com/agent/content/fragment` *(HTTP only)* |
 | `foxxi.content_compose` | Author a composition as yourself: a path of positions, each naming a competency and the alternatives that can fill it (fragments or other compositions, by thei… | `POST https://foxxi-bridge.interego.xwisee.com/agent/content/composition` *(HTTP only)* |
 | `foxxi.content_resolve` | Resolve a composition for yourself: which fragment you are shown at each position and why. | `POST https://foxxi-bridge.interego.xwisee.com/agent/content/resolve` *(HTTP only)* |
+| `foxxi.content_launch` | Resolve a composition for yourself (as foxxi.content_resolve does, from your own record) and start playing it: the first step comes back as you receive it, the… | `POST https://foxxi-bridge.interego.xwisee.com/agent/content/launch` *(HTTP only)* |
+| `foxxi.content_next` | Answer the questions of the step you are on, if it has any, and move to the next. | `POST https://foxxi-bridge.interego.xwisee.com/agent/content/next` *(HTTP only)* |
 | `foxxi.scorm_author` | Author a SCORM 2004 course as yourself. | `POST https://foxxi-bridge.interego.xwisee.com/agent/scorm/author` *(HTTP only)* |
 | `foxxi.scorm_launch` | Launch an authored SCORM course as yourself. | `POST https://foxxi-bridge.interego.xwisee.com/agent/scorm/launch` *(HTTP only)* |
 | `foxxi.scorm_submit` | Submit the current SCO. | `POST https://foxxi-bridge.interego.xwisee.com/agent/scorm/submit` *(HTTP only)* |
