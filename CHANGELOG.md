@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-09-27 — Foxxi: a failed read of the content index is tried again, and a voided statement stays voided
+
+Two defects the automated review found in #525 after it merged.
+
+- **The index of where content lives is read again after a failed read.** The bridge marked the index read before reading it. So one failed first read (a pod that did not answer, say) left the process listing only the compositions it had made itself, for as long as it ran, and `foxxi.content_mine` still answered `ok`.
+  - The index is now read in by a state reader (`stateReader`, `src/state-writer.ts`), the counterpart of the writer that keeps it. It counts as read once the pod answered with it, or answered that it has none (`fetchLocations`, `src/content-store.ts`). A read that failed is tried again on the next call, and calls made while a read is under way share it.
+  - `POST /agent/content/mine` answers 503 while the index cannot be read, rather than a list without it.
+  - The content store, which reads the index on a miss, tries again too.
+- **A statement voided anywhere in a learner's record stays voided** (`mergeStatementsById`, `src/durable-records.ts`). A record is read from three copies: the lattice's, the store's and the pod's. Only the store marks a void, and the lattice's copy came first in the merge, so a voided play still listed its composition as played or finished. Now:
+  - the store's mark is kept, whichever copy comes first;
+  - a voiding statement held by any copy voids its target, by the rules the store voids by. It never voids another voiding statement. A voider that names a registration voids only a statement of that registration.
+  So a statement voided before a restart that emptied the store is not read as current from a copy that outlived it. Every reader of the merged record honours this: the listing, the learner record, and earned credentials.
+
+Tests:
+- `tests/a-voided-statement-stays-voided.test.ts` (7 tests) covers the merge and a voided play in the listing;
+- `tests/state-writer.test.ts` covers the reader, and `tests/content-service.test.ts` the index read;
+- the route's 503 is pinned in `tests/what-a-learner-has-at-hand.test.ts`.
+
+Two old index reads in `src/durable-records.ts`, which the test program now reaches, are typed as their regex guarantees.
+
+Nineteen mutants were checked, and each fails a named test:
+- the reader: a failed read taken as read, including one that fails at once; a store holding nothing merged anyway; a read under way not shared; a settled read never cleared;
+- the index read: an absent index as a failed read; a pod that cannot answer read as empty; a body that is not JSON failing the read; no index to read taken as a failure;
+- the merge: the store's mark lost behind another copy; a voiding statement voiding nothing, or voided itself; the registration rule ignored, or voiding nothing; only the first or only the last voider counting; a record passed in changed;
+- the bridge: the listing answering without the index; the content store not reading the index again.
+
 ## 2026-09-27 — Foxxi: what a learner has at hand, for a portal and for an agent
 
 A portal needs to show a learner their compositions and what they keep, and to mark the steps a missed check brought in. The same holds for an agent working as a learner, which asks for the same things. Three additions, the same for a person and for an agent:

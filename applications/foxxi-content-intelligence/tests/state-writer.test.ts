@@ -1,9 +1,10 @@
 /**
  * Keeping one piece of state written: the latest of it, one write at a time, with a failed write
- * tried again on its own after a pause that grows while the store keeps failing.
+ * tried again on its own after a pause that grows while the store keeps failing. And reading it in:
+ * once it has been read, with a read that failed tried again rather than taken for an empty one.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { stateWriter } from '../src/state-writer.js';
+import { stateReader, stateWriter } from '../src/state-writer.js';
 
 const policy = { minRetryMs: 1_000, maxRetryMs: 4_000 };
 
@@ -77,5 +78,59 @@ describe('a state writer', () => {
     await vi.advanceTimersByTimeAsync(policy.minRetryMs);
     expect(at).toHaveLength(10);   // the shortest pause again, not the longest reached before
     expect(at[9]! - at[8]!).toBe(policy.minRetryMs);
+  });
+});
+
+describe('a state reader', () => {
+  it('reads once, merges what it read, and does not read again', async () => {
+    const taken: unknown[] = [];
+    let reads = 0;
+    const r = stateReader(async () => { reads++; return { held: reads }; }, state => { taken.push(state); });
+    expect(r.loaded).toBe(false);
+    expect(await r.load()).toBe(true);
+    expect(await r.load()).toBe(true);
+    expect(r.loaded).toBe(true);
+    expect(reads).toBe(1);
+    expect(taken).toEqual([{ held: 1 }]);
+  });
+
+  it('counts a store that holds nothing as read, with nothing to merge', async () => {
+    const take = vi.fn();
+    const r = stateReader(async () => null, take);
+    expect(await r.load()).toBe(true);
+    expect(r.loaded).toBe(true);
+    expect(take).not.toHaveBeenCalled();
+  });
+
+  it('tries a failed read again on the next call, and merges nothing from it', async () => {
+    const taken: unknown[] = [];
+    let reads = 0;
+    const r = stateReader(async () => { if (++reads === 1) throw new Error('pod unavailable'); return { held: reads }; }, state => { taken.push(state); });
+    expect(await r.load()).toBe(false);
+    expect(r.loaded).toBe(false);
+    expect(taken).toEqual([]);
+    expect(await r.load()).toBe(true);
+    expect(reads).toBe(2);
+    expect(taken).toEqual([{ held: 2 }]);
+  });
+
+  it('tries again after a read that fails at once, before anything is awaited', async () => {
+    let reads = 0;
+    const r = stateReader(() => { if (++reads === 1) throw new Error('no store configured yet'); return Promise.resolve(null); }, () => undefined);
+    expect(await r.load()).toBe(false);
+    expect(await r.load()).toBe(true);
+    expect(reads).toBe(2);
+  });
+
+  it('shares one read among the calls made while it is under way', async () => {
+    let release: (state: unknown) => void = () => undefined;
+    let reads = 0;
+    const r = stateReader(() => { reads++; return new Promise(resolve => { release = resolve; }); }, () => undefined);
+    const first = r.load();
+    const second = r.load();
+    expect(reads).toBe(1);
+    release({ held: true });
+    expect(await Promise.all([first, second])).toEqual([true, true]);
+    expect(reads).toBe(1);
   });
 });

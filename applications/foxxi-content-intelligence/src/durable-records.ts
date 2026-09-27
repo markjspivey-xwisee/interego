@@ -230,7 +230,7 @@ export async function readDurableRecordedStatements(args: ReadRecordsArgs): Prom
       if (!content) continue;
       const m = content.match(/<[^>]*#statementJson>\s+"([A-Za-z0-9+/=\s]+)"/);
       if (!m) continue;
-      const stmtJson = Buffer.from(m[1].replace(/\s+/g, ''), 'base64').toString('utf8');
+      const stmtJson = Buffer.from(m[1]!.replace(/\s+/g, ''), 'base64').toString('utf8');
       out.push(JSON.parse(stmtJson) as Record<string, unknown>);
     } catch {
       continue;
@@ -249,6 +249,14 @@ export interface StoredStatementLike {
   voided: boolean;
 }
 
+const VOIDED_VERB = 'http://adlnet.gov/expapi/verbs/voided';
+/** The id of the statement a voiding statement voids (xAPI's `voided` verb on a StatementRef), or undefined. */
+function voidTargetOf(statement: unknown): string | undefined {
+  const s = statement as { verb?: { id?: unknown }; object?: { objectType?: unknown; id?: unknown } } | null | undefined;
+  return s?.verb?.id === VOIDED_VERB && s.object?.objectType === 'StatementRef' && typeof s.object.id === 'string' ? s.object.id : undefined;
+}
+const registrationOf = (statement: unknown): unknown => (statement as { context?: { registration?: unknown } } | null | undefined)?.context?.registration;
+
 /**
  * Merge the in-memory lens view (already-wrapped StoredStatements) with durable
  * pod records (raw xAPI Statements), deduped by Statement id. The lens copy and
@@ -256,6 +264,14 @@ export interface StoredStatementLike {
  * any pod records the lens has lost — e.g. after a restart that emptied it.
  * Durable raw Statements are wrapped into the StoredStatement shape so the ELR
  * consumes them uniformly. Records without an id are always kept.
+ *
+ * ★ A STATEMENT VOIDED ANYWHERE IN THE RECORD STAYS VOIDED. Only the store marks a void, on its own
+ * copy; the lattice's copy and the pod's carry none. So the store's mark is kept whichever copy of
+ * the statement comes first here, and a voiding statement kept by any source voids its target by
+ * the rules the store voids by (xapi-lrs.ts, applyVoiding): never another voiding statement, and,
+ * when the voider names a registration, only a statement of that registration. A statement voided
+ * before a restart that emptied the store is then not read as current from a copy that outlived it.
+ * Nothing passed in is changed: a record read as voided here is a new wrapper.
  */
 export function mergeStatementsById(
   lensStatements: StoredStatementLike[],
@@ -263,8 +279,10 @@ export function mergeStatementsById(
 ): StoredStatementLike[] {
   const seen = new Set<string>();
   const out: StoredStatementLike[] = [];
+  const marked = new Set<string>();
   for (const s of lensStatements) {
     const id = String(s.id ?? '');
+    if (s.voided && id) marked.add(id);
     const key = id || `anon:${out.length}`;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -282,7 +300,19 @@ export function mergeStatementsById(
       voided: false,
     });
   }
-  return out;
+  // Each voided id, with the registration each of its voiders names (undefined when it names none).
+  const voiders = new Map<string, unknown[]>();
+  for (const r of out) {
+    const target = voidTargetOf(r.statement);
+    if (target) voiders.set(target, [...(voiders.get(target) ?? []), registrationOf(r.statement)]);
+  }
+  if (!marked.size && !voiders.size) return out;
+  return out.map(r => {
+    if (r.voided) return r;
+    const voided = marked.has(r.id) || (!voidTargetOf(r.statement)
+      && !!voiders.get(r.id)?.some(reg => reg === undefined || reg === registrationOf(r.statement)));
+    return voided ? { ...r, voided: true } : r;
+  });
 }
 
 // ── Authored agentic-SCORM courses ──────────────────────────────────────────
@@ -425,7 +455,7 @@ async function decodeCourseEntry(
     if (!content) return null;
     const m = content.match(/<[^>]*#courseJson>\s+"([A-Za-z0-9+/=\s]+)"/);
     if (!m) return null;
-    return JSON.parse(Buffer.from(m[1].replace(/\s+/g, ''), 'base64').toString('utf8')) as Record<string, unknown>;
+    return JSON.parse(Buffer.from(m[1]!.replace(/\s+/g, ''), 'base64').toString('utf8')) as Record<string, unknown>;
   } catch {
     return null;
   }

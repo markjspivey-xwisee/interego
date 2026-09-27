@@ -116,11 +116,11 @@ describe('the bridge answers each for the caller themselves', () => {
   const src = readFileSync(new URL('../bridge/server.ts', import.meta.url), 'utf8');
   const route = (path: string) => { const at = src.indexOf(`app.post('${path}'`); return src.slice(at, src.indexOf('\n});', at)); };
 
-  it('lists their compositions from their own record, and the index read first', () => {
+  it('lists their compositions from their own record, and the index read first, or answers that it cannot be', () => {
     const mine = route('/agent/content/mine');
     expect(mine).toMatch(/const auth = await verifyDelegatedCaller\(req\.body\);/);
-    expect(mine).toMatch(/if \(!contentLocationsLoaded\) await loadContentLocations\(\);/);
-    expect(mine.indexOf('loadContentLocations()')).toBeLessThan(mine.indexOf('authoredCompositions('));
+    expect(mine).toMatch(/if \(!\(await contentLocationsReader\.load\(\)\)\) \{\s+res\.status\(503\)/);
+    expect(mine.indexOf('contentLocationsReader.load()')).toBeLessThan(mine.indexOf('authoredCompositions('));
     expect(mine).toMatch(/learnerStatementsFor\(resolveSubjectPodUrl\(auth\.callerDid\), auth\.callerDid\)/);
     expect(mine).toMatch(/authoredCompositions\(statements, contentLocations, auth\.callerDid, limit\)/);
     expect(mine).toMatch(/Math\.min\(Math\.max\(asked, 1\), 200\) : 50/);
