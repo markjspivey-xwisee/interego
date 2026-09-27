@@ -1301,7 +1301,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
       description: 'The composition and its IRI. 400 naming what to fix; 422 listing alternatives this bridge cannot reach; 401 on auth failure.',
       properties: {
         ok: { type: 'boolean' },
-        '@id': { type: 'string', description: 'The composition IRI: <bridge>/ns/foxxi/composition/<sha256>. GET <IRI>/cmi5.xml projects it as a cmi5 course any LMS can import: one AU, whose page is this bridge\'s player, resolving it for each learner the LMS launches and sending the record to that LMS.' },
+        '@id': { type: 'string', description: 'The composition IRI: <bridge>/ns/foxxi/composition/<sha256>. GET <IRI>/cmi5.xml projects it as a cmi5 course any LMS can import: one AU, whose page is this bridge\'s player, resolving it for each learner the LMS launches and sending the record to that LMS. GET <IRI>/scorm.zip projects it as a SCORM 2004 package whose one SCO frames the same player.' },
         authoredBy: { type: 'string', description: 'Caller DID.' },
         composition: { type: 'object', additionalProperties: true },
         durable: { type: 'string', description: 'Pod the composition was composed into.' },
@@ -1330,7 +1330,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
       description: 'The course\'s composition and where each section went. 404 when the course is not here; 403 when you did not author it; 400 naming what to fix; 503 when your pod could not keep it, or when this bridge holds no key to keep anything with; 401 on auth failure.',
       properties: {
         ok: { type: 'boolean' },
-        '@id': { type: 'string', description: 'The course\'s composition IRI: <bridge>/ns/foxxi/composition/<sha256>. Pass it to foxxi.content_resolve or foxxi.content_launch; GET <IRI>/cmi5.xml projects it as a cmi5 course any LMS can import.' },
+        '@id': { type: 'string', description: 'The course\'s composition IRI: <bridge>/ns/foxxi/composition/<sha256>. Pass it to foxxi.content_resolve or foxxi.content_launch; GET <IRI>/cmi5.xml projects it as a cmi5 course any LMS can import, and <IRI>/scorm.zip as a SCORM 2004 package.' },
         course: { type: 'string', description: 'The course IRI it was folded from.' },
         authoredBy: { type: 'string', description: 'Caller DID.' },
         competency: { type: 'string', description: 'The competency the course develops, as named or as the course itself.' },

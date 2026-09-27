@@ -207,6 +207,7 @@ import { admissionRecordFrom, recordFor, standingAdmissions, type AdmissionRecor
 import { keepAdmission, readAdmissions } from '../src/admission-store.js';
 import { attemptStatements, closingStatements, cmi5AttemptFrom, compositionCourseStructure, definedStatement, type Cmi5Attempt } from '../src/composition-cmi5.js';
 import { compositionAuPage, compositionAuPageCsp } from '../src/composition-au-page.js';
+import { compositionScormZip } from '../src/composition-scorm.js';
 import { currentView, startPlay, takeStep, type CompositionPlay, type PlayInProgress } from '../src/composition-play.js';
 import { EFFICACY_POLICY, EfficacyTally, efficacyTokenKey, openTally, outcomeToken, sealTally } from '../src/fragment-efficacy.js';
 import { stateWriter } from '../src/state-writer.js';
@@ -10998,6 +10999,20 @@ app.get('/ns/foxxi/composition/:hash/cmi5.xml', async (req, res) => {
     const item = await contentStore.fetch(compositionIri(hash));
     if (!item || !isCompositionItem(item)) { res.status(404).json({ error: 'no such composition here' }); return; }
     res.type('application/xml').send(compositionCourseStructure(item, `${bridgeBaseUrl}/ns/foxxi/composition/${hash}/au`));
+  } catch (err) { sendServerError(res, err, 'route-handler'); }
+});
+
+// The same composition as a SCORM 2004 package (src/composition-scorm.ts): one SCO, a wrapper
+// that frames the player below and records what it posts through the LMS's SCORM API.
+app.get('/ns/foxxi/composition/:hash/scorm.zip', async (req, res) => {
+  try {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    const hash = String(req.params.hash);
+    if (!/^[0-9a-f]{64}$/.test(hash)) { res.status(404).json({ error: 'a composition id is a sha256 hash' }); return; }
+    const item = await contentStore.fetch(compositionIri(hash));
+    if (!item || !isCompositionItem(item)) { res.status(404).json({ error: 'no such composition here' }); return; }
+    res.setHeader('Content-Disposition', `attachment; filename="composition-${hash.slice(0, 12)}-scorm.zip"`);
+    res.type('application/zip').send(compositionScormZip(item, `${bridgeBaseUrl}/ns/foxxi/composition/${hash}/au`));
   } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 

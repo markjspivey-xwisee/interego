@@ -10,6 +10,11 @@
  * ★ A STATEMENT THE LMS REFUSED IS SENT AGAIN, NOT DROPPED. The page keeps what it could not send
  * and offers to try again before anything else happens.
  *
+ * ★ UNDER SCORM IT ANSWERS TO ITS WRAPPER (composition-scorm.ts). Launched with transport=scorm,
+ * inside the frame a SCORM package's wrapper opens, it needs no token, LaunchData or LRS. It posts
+ * each step's statements, and the summary once the play ends, to the wrapper, and only to the
+ * origin the wrapper names; the wrapper records them through the LMS's SCORM API.
+ *
  * The script uses no regular expressions and no backslashes: it is written inside a template
  * literal, where a backslash would not survive into the page.
  */
@@ -64,21 +69,44 @@ export function compositionAuPage(opts: { title: string; sessionBase: string }):
   var endpoint = q.get('endpoint') || '';
   var lrs = endpoint.slice(-1) === '/' ? endpoint : endpoint + '/';
   var actorText = q.get('actor') || '';
-  var registration = q.get('registration') || '';
+  // SCORM: the page runs in a frame of the package's wrapper, which records through the LMS's
+  // SCORM API what this page posts it. There is no token, LaunchData or LRS, and the attempt's
+  // registration is made here.
+  var scorm = q.get('transport') === 'scorm';
+  var parentOrigin = q.get('parentOrigin') || '';
+  var registration = q.get('registration') || (scorm ? uuid() : '');
   var activityId = q.get('activityId') || '';
   var auth = '';
   var session = '';
   var launchData = {};
   var pending = [];
   var current = null;
+  var finished = null;
   var $ = function (id) { return document.getElementById(id); };
   function status(text, cls) { var s = $('status'); s.textContent = text; s.className = 'status' + (cls ? ' ' + cls : ''); }
   function lrsHeaders() { return { 'Authorization': auth, 'X-Experience-API-Version': '1.0.3', 'Content-Type': 'application/json' }; }
+  function uuid() {
+    if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
+    var h = '0123456789abcdef', s = '';
+    for (var i = 0; i < 36; i++) {
+      if (i === 8 || i === 13 || i === 18 || i === 23) s += '-';
+      else if (i === 14) s += '4';
+      else if (i === 19) s += h[8 + Math.floor(Math.random() * 4)];
+      else s += h[Math.floor(Math.random() * 16)];
+    }
+    return s;
+  }
 
-  // Statements the LMS has not taken yet are kept and sent first, in order.
+  // Statements the LMS has not taken yet are kept and sent first, in order. Under SCORM they go to
+  // the wrapper, with the summary once the play is done, and only to the origin it named.
   async function send(statements) {
     pending = pending.concat(statements || []);
-    if (!pending.length) return;
+    if (!pending.length && !(scorm && finished)) return;
+    if (scorm) {
+      window.parent.postMessage({ type: 'foxxi.scorm', statements: pending, done: !!finished, summary: finished }, parentOrigin || '*');
+      pending = [];
+      return;
+    }
     var r = await fetch(lrs + 'statements', { method: 'POST', headers: lrsHeaders(), body: JSON.stringify(pending) });
     if (!r.ok) throw new Error('your course did not take the record (' + r.status + ')');
     pending = [];
@@ -173,7 +201,6 @@ export function compositionAuPage(opts: { title: string; sessionBase: string }):
     if (list.childNodes.length) box.appendChild(list);
   }
 
-  var finished = null;
   function finish(summary) {
     finished = summary || {};
     $('step').hidden = true;
@@ -229,12 +256,14 @@ export function compositionAuPage(opts: { title: string; sessionBase: string }):
   (async function start() {
     var j;
     try {
-      var tr = await fetch(q.get('fetch') || '', { method: 'POST' });
-      var token = String(((await tr.json()) || {})['auth-token'] || '');
-      auth = token.indexOf('Basic ') === 0 || token.indexOf('Bearer ') === 0 ? token : 'Basic ' + token;
-      var state = lrs + 'activities/state?' + new URLSearchParams({ stateId: 'LMS.LaunchData', activityId: activityId, agent: actorText, registration: registration }).toString();
-      var ld = await fetch(state, { headers: lrsHeaders() });
-      launchData = ld.ok ? await ld.json() : {};
+      if (!scorm) {
+        var tr = await fetch(q.get('fetch') || '', { method: 'POST' });
+        var token = String(((await tr.json()) || {})['auth-token'] || '');
+        auth = token.indexOf('Basic ') === 0 || token.indexOf('Bearer ') === 0 ? token : 'Basic ' + token;
+        var state = lrs + 'activities/state?' + new URLSearchParams({ stateId: 'LMS.LaunchData', activityId: activityId, agent: actorText, registration: registration }).toString();
+        var ld = await fetch(state, { headers: lrsHeaders() });
+        launchData = ld.ok ? await ld.json() : {};
+      }
       j = await bridge('/session', {
         actor: JSON.parse(actorText), registration: registration, activityId: activityId,
         contextTemplate: launchData.contextTemplate, masteryScore: launchData.masteryScore, moveOn: launchData.moveOn, launchMode: launchData.launchMode,
