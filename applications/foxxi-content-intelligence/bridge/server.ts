@@ -210,6 +210,7 @@ import { compositionAuPage, compositionAuPageCsp } from '../src/composition-au-p
 import { compositionScormZip } from '../src/composition-scorm.js';
 import { currentView, startPlay, takeStep, type AnotherWayIn, type CompositionPlay, type PlayInProgress } from '../src/composition-play.js';
 import { EFFICACY_POLICY, EfficacyTally, efficacyTokenKey, openTally, outcomeToken, sealTally } from '../src/fragment-efficacy.js';
+import { compositionEfficacy } from '../src/composition-efficacy.js';
 import { stateWriter } from '../src/state-writer.js';
 import { competencyIri, competencyIriForTerm, competencyIdOf } from '../src/competency-identity.js';
 import { activityIri, ACTIVITY_DEFINITIONS } from '../src/activity-identity.js';
@@ -11018,6 +11019,22 @@ app.get('/ns/foxxi/fragment/:hash/efficacy', async (req, res) => {
       ? fragmentEfficacy.view(competencyIri(competencyId), iri, level)
       : { competency: competencyIri(competencyId), level, n: `fewer than ${EFFICACY_POLICY.publishAt}` }));
     res.type('application/json').send(JSON.stringify({ fragment: iri, policy: EFFICACY_POLICY, cells }, null, 2));
+  } catch (err) { sendServerError(res, err, 'route-handler'); }
+});
+
+// What a composition has learned, position by position, by the same rule as a fragment's cells
+// (src/composition-efficacy.ts): for its author, a person or an agent, deciding what to revise. A
+// tally not read yet is not shown as one with nothing in it.
+app.get('/ns/foxxi/composition/:hash/efficacy', async (req, res) => {
+  try {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    const hash = String(req.params.hash);
+    if (!/^[0-9a-f]{64}$/.test(hash)) { res.status(404).json({ error: 'a composition id is a sha256 hash' }); return; }
+    const item = await contentStore.fetch(compositionIri(hash));
+    if (!item || !isCompositionItem(item)) { res.status(404).json({ error: 'no such composition here' }); return; }
+    if (!(await ensureEfficacy())) { res.status(503).json({ error: 'what has worked could not be read just now; try again' }); return; }
+    await contentStore.gather(item);
+    res.type('application/json').send(JSON.stringify(compositionEfficacy(item, fragmentEfficacy, iri => contentStore.get(iri)), null, 2));
   } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 

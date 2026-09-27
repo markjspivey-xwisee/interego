@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-09-27 — Foxxi: a composition shows its author what it has learned
+
+Plays already learn which alternatives work: each outcome is tallied by competency, fragment and learner level (#506), and resolution prefers what has worked. But an author could read that only one fragment at a time (`GET <fragment IRI>/efficacy`), apart from the composition that offers it. Now a composition answers for itself.
+
+- **`GET <composition IRI>/efficacy`** (`src/composition-efficacy.ts`, `compositionEfficacy`) returns, for each position:
+  - its alternatives side by side, each with its cells at the position's competency, one per learner level;
+  - at each level, which alternative the composition leans to, and why.
+- **A cell is shown by the same rule as a fragment's.** Its counts, rate at the Wilson lower bound and modal status are shown once it holds 5 outcomes. Below that, it says only that there are fewer.
+- **The leaning is what learners at that level would be shown.** It is `chooseByEfficacy` among the alternatives resolution would weigh for them, those pitched nearest their level, with its reason. It is withheld where any of those has outcomes too few to show, since which of two leads can say what one learner did.
+- **A nested composition** is named as one, to be read at its own IRI.
+- **A tally not read yet** answers 503 rather than show a composition with no outcomes.
+- So an author, a person or an agent, can see which explanation is working, and which to revise or add. `PERFORMANCE-ARCHITECTURE.md` §5 describes it.
+
+`applications/foxxi-content-intelligence/tests/a-composition-shows-what-it-has-learned.test.ts` covers:
+- cells shown only once they may be, with no small cell's result anywhere in the view;
+- the leaning and its reason;
+- a leaning withheld over a small cell;
+- a leaning weighed only among what resolution would weigh;
+- nested compositions, and no leaning with one alternative;
+- the route, checked in the bridge's source.
+
+Six mutants were checked, and each fails a named test:
+- a small cell shown;
+- a leaning over a small cell shown;
+- a leaning weighing every alternative;
+- one alternative leaned to;
+- a nested composition read as a fragment;
+- an unread tally shown as empty.
+
 ## 2026-09-27 — Foxxi: another way in counts what the learner has met, and every position that taught
 
 A review of #517 found two ways a missed check could bring less than it should ([Codex](https://github.com/markjspivey-xwisee/interego/pull/517#discussion_r4114872445), [twice](https://github.com/markjspivey-xwisee/interego/pull/517#discussion_r4114872449)).

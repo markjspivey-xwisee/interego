@@ -440,6 +440,19 @@ Nobody declares which explanation of a competency works; the plays show it.
   keeps. Pod resources are world-readable, so the tally is kept on the
   tenant pod sealed to the bridge's own key, and taken back only if that
   key sealed it. A bridge with no key keeps it in the process only.
+- **A composition shows its author what it has learned**
+  (`GET <composition IRI>/efficacy`, `src/composition-efficacy.ts`). At
+  each position it sets the alternatives side by side: each one's cells at
+  the position's competency, by the same rule as a fragment's. At each
+  level it says which alternative the composition leans to, and why.
+  - The leaning is `chooseByEfficacy` among the alternatives resolution
+    would weigh for learners at that level: those pitched nearest it.
+  - It is withheld where any of them has outcomes too few to show, since
+    which of two leads can say what one learner did.
+  - A nested composition is named as one, to be read at its own IRI.
+  - A tally not read yet answers 503 rather than show no outcomes.
+  So an author, a person or an agent, can see which explanation is
+  working, and which to revise or add.
 - **The tally is written by a state writer** (`src/state-writer.ts`), like
   the index of where content lives: one write at a time, and a failed write
   tried again on its own after a pause that grows while the pod keeps
