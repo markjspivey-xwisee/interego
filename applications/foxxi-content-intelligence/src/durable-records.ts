@@ -197,6 +197,17 @@ export interface ReadRecordsArgs {
  * pod is unreachable, so a degraded read never breaks an ELR assembly.
  */
 export async function readDurableRecordedStatements(args: ReadRecordsArgs): Promise<Record<string, unknown>[]> {
+  return (await readDurableRecordedStatementsDetailed(args)).statements;
+}
+
+/**
+ * The same read, saying whether it was whole: `complete` is false when the pod could not be
+ * discovered, or a record it lists could not be fetched or decoded. Entries that are simply not a
+ * Statement record (no descriptor, no graph, no Statement in the graph) do not count against it.
+ * For a reader that must not mistake part of a record for all of it, as a record's visibility is
+ * decided from all of its own work.
+ */
+export async function readDurableRecordedStatementsDetailed(args: ReadRecordsArgs): Promise<{ statements: Record<string, unknown>[]; complete: boolean }> {
   let entries: ManifestEntry[];
   try {
     await assertSafeFetchTarget(args.podUrl); // 1st-hop SSRF: caller-supplied pod fetched via discover()
@@ -206,19 +217,20 @@ export async function readDurableRecordedStatements(args: ReadRecordsArgs): Prom
       { fetch: guardedFetchFn(args.fetch) as never }, // re-guard manifest hop + redirects
     )) as ManifestEntry[];
   } catch {
-    return [];
+    return { statements: [], complete: false };
   }
 
   const recs = entries.filter(e =>
     (e.conformsTo ?? []).some(c => localName(c) === RECORDED_PERFORMANCE_LOCALNAME));
   const fetchFn = (args.fetch ?? globalThis.fetch) as typeof globalThis.fetch;
   const out: Record<string, unknown>[] = [];
+  let complete = true;
 
   for (const e of recs) {
     try {
       if (!e.descriptorUrl) continue;
       const descRes = await safeFetch(e.descriptorUrl, { headers: { Accept: 'text/turtle' } }, fetchFn as never); // 2nd-hop SSRF + redirect-safe (re-guards every hop)
-      if (!descRes.ok) continue;
+      if (!descRes.ok) { complete = false; continue; }
       const descTurtle = await descRes.text();
       const gm = descTurtle.match(/hydra:target\s+<([^>]+)>/) ?? descTurtle.match(/dcat:accessURL\s+<([^>]+)>/);
       const graphUrl = gm?.[1];
@@ -227,16 +239,17 @@ export async function readDurableRecordedStatements(args: ReadRecordsArgs): Prom
         graphUrl,
         { fetch: guardedFetchFn(args.fetch) as never }, // graph hop: re-guard + redirect-safe
       );
-      if (!content) continue;
+      if (!content) { complete = false; continue; }
       const m = content.match(/<[^>]*#statementJson>\s+"([A-Za-z0-9+/=\s]+)"/);
       if (!m) continue;
       const stmtJson = Buffer.from(m[1]!.replace(/\s+/g, ''), 'base64').toString('utf8');
       out.push(JSON.parse(stmtJson) as Record<string, unknown>);
     } catch {
+      complete = false;
       continue;
     }
   }
-  return out;
+  return { statements: out, complete };
 }
 
 /** Minimal structural mirror of xapi-lrs `StoredStatement` — the wrapper the

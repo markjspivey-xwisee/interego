@@ -29,7 +29,7 @@ import { eventSchema } from '../../llm-telemetry/events.js';
 import { telemetryView, captureView } from '../../llm-telemetry/view.js';
 import { mountTelemetryClientSetup } from '../../llm-telemetry/client-setup-routes.js';
 import { captureResource, readCapturePreferences, updateCapturePreferences, withCaptureConsent, createTelemetryRateLimit, CaptureError, type CaptureStore } from '../../llm-telemetry/capture.js';
-import { persistedLatticeArtifacts } from '../src/foundation-shared-lattice.js';
+import { latticeReadWhole, persistedLatticeArtifacts } from '../src/foundation-shared-lattice.js';
 import express, { type RequestHandler } from 'express';
 
 // ── Pod-write auth: attach Authorization: Bearer on writes that target
@@ -173,6 +173,7 @@ import { claimDecision, courseIdsInRecord, courseStandings, masteryEvidence, ver
 import { isGradedBy, withGradedTag } from '../src/graded-evidence.js';
 import {
   readDurableRecordedStatements,
+  readDurableRecordedStatementsDetailed,
   persistRecordedStatement,
   mergeStatementsById,
   loadScormCourse,
@@ -9115,11 +9116,15 @@ app.post('/agent/record-performance', async (req, res) => {
      * reader other than the subject (visibility is what somebody else can read); or, if it cannot
      * be read, the rule and the assumption that protects the performer.
      */
+    // Classified only from the whole record: part of it (a pod that did not answer) can hold none of
+    // the person's work that keeps it private, and is then said to be unread, not read as public.
     let recordVisibility: RecordVisibility | undefined;
     if ((p.actor_kind === 'human' ? 'human' : 'agent') === 'agent') {
       let kindNow: 'human' | 'agent' | undefined;
-      try { kindNow = classifySubjectKind({ isSelf: false, statements: await learnerStatementsFor(subjectPod, callerDid), subjectPodUrl: subjectPod }); }
-      catch (e) { console.warn('[foxxi][record-visibility]', (e as Error).message); }
+      try {
+        const read = await learnerStatementsReadWhole(subjectPod, callerDid);
+        if (read.complete) kindNow = classifySubjectKind({ isSelf: false, statements: read.statements, subjectPodUrl: subjectPod });
+      } catch (e) { console.warn('[foxxi][record-visibility]', (e as Error).message); }
       recordVisibility = recordVisibilityAfterAgentWork(kindNow);
     }
     /**
@@ -9800,10 +9805,23 @@ function credentialSubjectFor(ctx: CallerContext, args: Record<string, unknown>)
 
 /** The learner's statements as one list: the shared lattice, the in-memory lens, and the durable records on their pod. */
 async function learnerStatementsFor(podUrl: string, did: string): Promise<ReturnType<typeof mergeStatementsById>> {
+  return (await learnerStatementsReadWhole(podUrl, did)).statements;
+}
+
+/**
+ * The same union, saying whether it is whole: `complete` is false when the lattice's pod copy could
+ * not be read (latticeReadWhole) or a durable record could not be (readDurableRecordedStatementsDetailed).
+ * Both readers are best-effort and say nothing when they fall short, so a cold lens over an
+ * unreachable pod held only what this process had written, and read as all of the record.
+ */
+async function learnerStatementsReadWhole(podUrl: string, did: string): Promise<{ statements: ReturnType<typeof mergeStatementsById>; complete: boolean }> {
   const label = actorForPod(podUrl, MESH_ACTOR_LABELS);
   await ensureResident(podUrl, did, label);
-  const durable = await readDurableRecordedStatements({ podUrl });
-  return mergeStatementsById([...latticeStatements(label), ...await listStoredStatements(lensTenantFor(label))], durable, appliedVoidsOf(label));
+  const durable = await readDurableRecordedStatementsDetailed({ podUrl });
+  return {
+    statements: mergeStatementsById([...latticeStatements(label), ...await listStoredStatements(lensTenantFor(label))], durable.statements, appliedVoidsOf(label)),
+    complete: durable.complete && latticeReadWhole(label),
+  };
 }
 
 // ── Voids, kept with the record they void (src/applied-voids.ts) ─────
