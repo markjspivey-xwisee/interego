@@ -1327,7 +1327,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     ],
     appliesTo: { collections: ['courses', 'profiles'] },
     outputs: {
-      description: 'The course\'s composition and where each section went. 404 when the course is not here; 403 when you did not author it; 400 naming what to fix; 503 when your pod could not keep it; 401 on auth failure.',
+      description: 'The course\'s composition and where each section went. 404 when the course is not here; 403 when you did not author it; 400 naming what to fix; 503 when your pod could not keep it, or when this bridge holds no key to keep anything with; 401 on auth failure.',
       properties: {
         ok: { type: 'boolean' },
         '@id': { type: 'string', description: 'The course\'s composition IRI: <bridge>/ns/foxxi/composition/<sha256>. Pass it to foxxi.content_resolve or foxxi.content_launch.' },

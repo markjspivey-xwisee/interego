@@ -246,8 +246,10 @@ works.
   composition of its own, teaching then check. The course becomes a
   composition of its sections in order.
 - **The questions grade the same.** They keep the stored form they were
-  authored in. Each check's blinding value is derived from the bridge's
-  grading secret, so the same course folds to the same IRIs on that bridge.
+  authored in. Each check's blinding value is derived from the bridge's own
+  key, which every pod write needs. So the same course folds to the same
+  IRIs on that bridge whenever it can keep anything, and a bridge with no
+  key folds nothing.
 - **Nothing is invented.** Titles, bodies and questions are the author's.
   The competency is the one named for the course or a section; with none
   named, the course's own IRI names what it teaches. The course's mastery
