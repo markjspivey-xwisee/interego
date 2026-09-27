@@ -203,6 +203,8 @@ export interface Resolution {
   unmet: PositionNote[];
   /** Content refused anywhere in the resolution for not hashing to its IRI (at most 20, distinct). */
   refused: string[];
+  /** True when more content was refused than `refused` lists. */
+  moreRefused: boolean;
   trace: string[];
 }
 
@@ -239,11 +241,15 @@ export function resolveComposition(input: ResolveInput): Resolution {
   // because trying a nested alternative before falling back must not repeat work exponentially.
   // `refused` lists content refused anywhere inside it for not hashing to its IRI; it travels up
   // with the branch whether the branch is taken or fallen back from.
-  interface Branch { steps: ResolvedStep[]; skipped: PositionNote[]; unmet: PositionNote[]; trace: string[]; refused: string[] }
+  // `moreRefused` says the list stopped short: it is kept to REFUSALS_KEPT so that neither it nor
+  // the trace lines drawn from it can grow with the size of the tree.
+  interface Branch { steps: ResolvedStep[]; skipped: PositionNote[]; unmet: PositionNote[]; trace: string[]; refused: string[]; moreRefused: boolean }
   const memo = new Map<string, Branch>();
   const push = <T>(into: T[], from: readonly T[]): void => { for (const x of from) into.push(x); };
   const noteRefusal = (b: Branch, why: string): void => {
-    if (!b.refused.includes(why) && b.refused.length < REFUSALS_KEPT) b.refused.push(why);
+    if (b.refused.includes(why)) return;
+    if (b.refused.length < REFUSALS_KEPT) b.refused.push(why);
+    else b.moreRefused = true;
   };
   const brief = (s: string): string => (s.length > 300 ? `${s.slice(0, 299)}…` : s);
   const under = (prefix: string[], b: Branch): Branch => ({
@@ -252,6 +258,7 @@ export function resolveComposition(input: ResolveInput): Resolution {
     unmet: b.unmet.map(n => ({ ...n, path: [...prefix, ...n.path] })),
     trace: b.trace,
     refused: b.refused,
+    moreRefused: b.moreRefused,
   });
   const checkSize = (b: Branch): void => {
     if (b.steps.length + b.skipped.length + b.unmet.length > COMPOSITION_LIMITS.resolved) {
@@ -266,7 +273,7 @@ export function resolveComposition(input: ResolveInput): Resolution {
     const key = `${hash}@${ancestors.length}`;
     const known = memo.get(key);
     if (known) return known;
-    const out: Branch = { steps: [], skipped: [], unmet: [], trace: [], refused: [] };
+    const out: Branch = { steps: [], skipped: [], unmet: [], trace: [], refused: [], moreRefused: false };
     const self = [comp['@id']];
     comp.positions.forEach((pos, i) => {
       const at = `"${comp.title}" position ${i + 1}`;
@@ -334,7 +341,7 @@ export function resolveComposition(input: ResolveInput): Resolution {
         if (!branch.unmet.length) { chosen = { item, branch }; break; }
         const n = branch.unmet.length;
         const summary = `"${item.title}" left ${n} of its position(s) unmet: ${brief(branch.unmet[0]!.because)}${n > 1 ? ` (and ${n - 1} more)` : ''}`
-          + (branch.refused.length ? `; inside it, ${branch.refused.length} alternative(s) did not hash to their IRIs` : '');
+          + (branch.refused.length ? `; inside it, ${branch.refused.length}${branch.moreRefused ? ' or more' : ''} alternative(s) did not hash to their IRIs` : '');
         fellShort.push(summary);
         tried.push({ item, branch, summary });
         if (!partial && branch.steps.length) partial = { item, branch };
@@ -344,6 +351,7 @@ export function resolveComposition(input: ResolveInput): Resolution {
         if (t.item === chosen?.item) continue;
         out.trace.push(`${at}: tried ${t.summary}`);
         for (const r of t.branch.refused) { noteRefusal(out, r); out.trace.push(`${at}: inside "${t.item.title}", ${r}`); }
+        if (t.branch.moreRefused) { out.moreRefused = true; out.trace.push(`${at}: inside "${t.item.title}", more content did not hash to its IRI than is listed here`); }
       }
       if (!chosen) {
         const because = `no alternative could be used: ${[...refused, ...fellShort].join('; ')}`;
@@ -363,6 +371,7 @@ export function resolveComposition(input: ResolveInput): Resolution {
         const inner = under(self, chosen.branch!);
         push(out.steps, inner.steps); push(out.skipped, inner.skipped); push(out.unmet, inner.unmet); push(out.trace, inner.trace);
         for (const r of inner.refused) noteRefusal(out, r);
+        if (inner.moreRefused) out.moreRefused = true;
         checkSize(out);
         return;
       }
@@ -376,8 +385,9 @@ export function resolveComposition(input: ResolveInput): Resolution {
   const whole = walk(root, []);
   const trace = [`resolving "${root.title}" for ${input.learner.kind} ${input.learner.id}`];
   push(trace, whole.trace);
+  if (whole.moreRefused) trace.push(`more content did not hash to its IRI than the ${whole.refused.length} refusals listed`);
   trace.push(`resolved: ${whole.steps.length} step(s), ${whole.skipped.length} skipped as demonstrated, ${whole.unmet.length} unmet`);
-  return { composition: root['@id'], learner: input.learner.id, steps: whole.steps, skipped: whole.skipped, unmet: whole.unmet, refused: whole.refused, trace };
+  return { composition: root['@id'], learner: input.learner.id, steps: whole.steps, skipped: whole.skipped, unmet: whole.unmet, refused: whole.refused, moreRefused: whole.moreRefused, trace };
 }
 
 /** How many distinct refusals a resolution lists before it stops adding them. */

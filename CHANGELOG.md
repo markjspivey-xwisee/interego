@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-09-26 — Foxxi: a resolution says when more content was refused than it lists
+
+The automated review of #501 found an undercount. A branch keeps at most 20 distinct refusals, so that the list and the trace lines drawn from it cannot grow with the size of the tree. But when a fallen-back branch had more than 20, the reason said "inside it, 20 alternative(s) did not hash", and the trace stopped at 20 lines without saying so.
+
+- **The list stays capped, and now says when it stopped short** (`src/compositions.ts`). A branch that hits the cap sets `moreRefused`, and the flag travels up with the branch whether it is taken or fallen back from.
+- **The reason and the trace say so.** The reason for a fallen-back branch reads "20 or more alternative(s)". The trace adds `inside "<branch>", more content did not hash to its IRI than is listed here`.
+- **The resolution says so.** It returns `moreRefused`, and before its closing line the trace adds `more content did not hash to its IRI than the 20 refusals listed`.
+
+A new test covers both sides. Twenty-five changed lessons in a fallen-back module give a list of 20, the flag, "20 or more", and both trace lines. Exactly 20 are listed in full, with the flag false. Three mutants were checked: a silent cap, a fallen-back branch hiding the flag, and a summary without "or more". Each fails the test.
+
 ## 2026-09-26 — Foxxi: fragments and compositions are authored, served and resolved on the bridge
 
 #499 made composable content data, but nothing on the bridge could author it, fetch it or resolve it. Now a person or an agent can do all three, as signed affordances, and a fragment's IRI answers a GET without giving away how its questions are graded.

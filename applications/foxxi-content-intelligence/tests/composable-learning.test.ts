@@ -275,6 +275,33 @@ describe('each learner gets the composition resolved from their own record', () 
     expect(taken.refused).toEqual([`${f.intro['@id']} was served with content that does not hash to it, so it was not used`]);
   });
 
+  it('says when more content was refused than it lists, rather than undercounting', () => {
+    // Twenty-five lessons, each served changed, in a module that falls short; the probe is taken.
+    const lessons = Array.from({ length: 25 }, (_, j) => fragmentFrom({ kind: 'concept', competencies: ['queue-triage'], body: `Triage lesson ${j}.` }));
+    const bigModule = compositionFrom({ title: 'Module: 25 lessons', competency: 'queue-triage', positions: lessons.map(l => ({ competency: 'queue-triage', paradigm: [l['@id']] })) });
+    const triage = compositionFrom({ title: 'Queue triage', competency: 'queue-triage', positions: [{ competency: 'queue-triage', paradigm: [bigModule['@id'], f.probe['@id']] }] });
+    const served = new Map<string, Fragment | Composition>(store);
+    served.set(bigModule['@id'], bigModule);
+    for (const l of lessons) served.set(l['@id'], { ...l, body: 'Changed.' });
+    const r = resolveComposition({ composition: triage, learner: human, lookup: i => served.get(i) });
+    expect(r.steps.map(s => s.fragment.kind)).toEqual(['probe']);
+    expect(r.refused).toHaveLength(20);
+    expect(r.moreRefused).toBe(true);
+    expect(r.steps[0]!.chosenBecause).toMatch(/inside it, 20 or more alternative\(s\) did not hash to their IRIs/);
+    expect(r.trace.join('\n')).toMatch(/inside "Module: 25 lessons", more content did not hash to its IRI than is listed here/);
+    expect(r.trace.at(-2)).toBe('more content did not hash to its IRI than the 20 refusals listed');
+    expect(r.trace.at(-1)).toMatch(/^resolved: 1 step/);
+    // Twenty or fewer are listed in full, with nothing said about more.
+    const intactFrom = 20;   // lessons 20-24 served as they are, so exactly 20 are changed
+    const fewer = resolveComposition({ composition: triage, learner: human, lookup: i => {
+      const k = lessons.findIndex(l => l['@id'] === i);
+      return k >= intactFrom ? lessons[k] : served.get(i);
+    } });
+    expect(fewer.refused).toHaveLength(20);
+    expect(fewer.moreRefused).toBe(false);
+    expect(fewer.steps[0]!.chosenBecause).toMatch(/inside it, 20 alternative\(s\) did not hash/);
+  });
+
   it('refuses a composition that resolves to more positions than one resolution may hold', () => {
     const big = add(compositionFrom({ title: 'Big module', competency: 'refund-authority', positions: Array.from({ length: 100 }, () => ({ competency: 'refund-authority', paradigm: [f.intro['@id']] })) }));
     const huge = compositionFrom({ title: 'Huge', competency: 'refund-authority', positions: Array.from({ length: 25 }, () => ({ competency: 'refund-authority', paradigm: [big['@id']] })) });
