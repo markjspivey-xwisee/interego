@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-09-26 — Foxxi: a question named fill-in stays text
+
+The automated review of #496 found that `authorQuestion` read a number-like answer as a number even when the author named the question `fill-in`. An account code `"0012"` was stored as the integer 12. So a learner's `"12"` passed, and a text alternative such as `accept: ["twelve"]` was refused as not a number. Naming the type is meant to settle exactly that, and `foxxi.scorm_author` tells authors to give it when the fields leave the type unclear.
+
+- **A named fill-in is text** (`src/course-questions.ts`). A number-like answer is read as a number only in a numeric question, or when no type is named. That is the form authors have always written, so existing courses keep their verifiers.
+- **`min` and `max` belong to a numeric question.** Given with a fill-in, they used to be dropped without a word. Now the question is refused, and the refusal says why.
+- **A named type and an explicit input must agree.** The review of this change found that a plain answer with an explicit `input` took an older path that ran before the type was read. So `{ type: "fill-in", answer: "0012", input: { type: "integer" } }` was still numeric. Now a named fill-in takes only a text input, and a named numeric question only a numeric one. Any other named type with an input is refused as disagreeing, so neither field silently wins.
+- **Docs.** `foxxi.scorm_author` states the rule, and `docs/skills/foxxi/reference.md` is regenerated.
+
+In `tests/rich-course-content.test.ts`, a fill-in named with the answer `"0012"` accepts `"0012"` and `"twelve"` and rejects `"12"`. An unnamed `"8"` is still an integer with the verifier it had before, and accepts `"08"`. A `min` on a fill-in is refused. A named type is refused when the input disagrees with it, a fill-in with a text input still refuses `"12"`, and a numeric question keeps its input. Against #496's code the new test fails, and it fails again with the agreement check removed.
+
 ## 2026-09-26 — Foxxi: content is a composition each learner gets resolved from their own record
 
 `emergent-content.ts` has long described a course as "a recipe, not a record": a chain of positions, each holding interchangeable alternatives, collapsed for each performer. But that model lived only in memory. Its fragment ids resolved nothing, and its restriction took a mastered list from the caller. This change makes the recipe data, for a person and an agent alike, as learner and as author.
