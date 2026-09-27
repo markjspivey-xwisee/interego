@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026-09-27 — Foxxi: part of a record is not read as the whole of it
+
+Codex found this in #537, which merged before it could be fixed there.
+
+After work is recorded as an agent's, the bridge says whether the performer's record is now public. It reads the record from three places:
+- the lattice, loaded from the pod;
+- the in-memory lens;
+- the durable records on the pod.
+
+The first and the last are best-effort, and said nothing when they fell short. So over an unreachable pod, a cold lens held only the unit just written, and the record read as all agent's work. The performer was then told their record was PUBLIC, with `readFromRecord: true`, while a person's work the pod could not give back kept it private.
+
+Each reader now says whether it read the whole:
+- `latticeReadWhole(label)` (in `src/foundation-shared-lattice.ts`): the lattice is resident and not fenced as unreadable. It is false before a load, and while the pod copy could not be read (no key, a body that would not decrypt, a load that threw);
+- `readDurableRecordedStatementsDetailed` (in `src/durable-records.ts`): `complete` is false when the pod did not answer, or a record it lists could not be fetched or decoded. Entries that are not Statement records do not count against it. `readDurableRecordedStatements` is unchanged for its other callers.
+
+The bridge's `learnerStatementsReadWhole` joins the two. After an agent-kind write the record is classified only from a whole read. A partial one gets the "could not be read just now" answer (the rule, the assumption that protects the performer, `readFromRecord: false`).
+
+`tests/a-record-read-in-part-is-not-read-whole.test.ts` (7 tests) runs the real readers against a stand-in pod:
+- a whole read, a pod that does not answer, a record whose descriptor or graph could not be fetched, and one that would not decode;
+- a lattice before it is loaded, and one without a key;
+- where the route decides.
+
+Nine mutants each fail a named test.
+
+The review gates read the same union to decide whether a record is private, and partial reads can mislead them the same way. That changes who may read what, so it is left for its own change.
+
+
 ## 2026-09-27 — Foxxi: an agent's write is answered with what the record now is, read from the record
 
 Codex found this in #535, which merged before it could be fixed there.
