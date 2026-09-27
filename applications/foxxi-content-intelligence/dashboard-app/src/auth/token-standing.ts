@@ -10,15 +10,16 @@
  * treated as one that signs only: it lands on Learn, is not offered the pages it cannot read, and
  * those pages say why.
  *
- * The bridge is asked once per session, of the session's own profile: the one read with the token
- * that every session is entitled to.
+ * The bridge is asked once per session, at the gate every session-token read passes: the LRS's
+ * (`GET /xapi/statements`, as My activity reads it), which answers 401 only for a token it cannot
+ * verify. Not the profile resource: that one also asks for an operator, so it refused every learner.
  */
 import { signsOnly, type FoxxiSession } from './session.js';
 
 /** Asked, then known. `unknown` when the answer says neither: the bridge unreachable, or erring. */
 export type TokenStanding = 'asking' | 'taken' | 'refused' | 'unknown';
 
-/** What the bridge's answer to the session's own profile says of its token: refused only on a 401. */
+/** What the LRS gate's answer says of the session's token: refused only on a 401. */
 export function tokenStandingOf(status: number): Exclude<TokenStanding, 'asking'> {
   if (status === 401) return 'refused';
   return status >= 200 && status < 300 ? 'taken' : 'unknown';

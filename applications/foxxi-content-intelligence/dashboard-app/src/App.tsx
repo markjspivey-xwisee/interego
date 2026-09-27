@@ -67,6 +67,7 @@ import {
   policyOpaqueToSlug, groupOpaqueToSlug, auditOpaqueToSlug, integrationOpaqueToSlug,
 } from './identifiers.js';
 import { HypermediaProvider, useHypermedia } from './hypermedia.js';
+import { bridgeBaseOf } from './learn/bridge.js';
 
 export function App() {
   return (
@@ -119,25 +120,29 @@ function AppRoutes() {
   );
 }
 
-/** Asks once, of the session's own profile, whether this bridge takes its token (auth/token-standing.ts). */
+/**
+ * Asks once whether this bridge takes the session's token (auth/token-standing.ts), at the gate
+ * every session-token read passes: the LRS's, which My activity reads through. Not at the profile
+ * resource, which also asks for an operator, so it refused every learner who was not one.
+ */
 function useTokenStanding(session: FoxxiSession): TokenStanding {
   const { entry, error } = useHypermedia();
   const [standing, setStanding] = useState<TokenStanding>('asking');
-  const profiles = entry?._links.profiles?.href;
+  const base = bridgeBaseOf(entry);
   const asksNothing = signsOnly(session);
   useEffect(() => {
     if (asksNothing) return;   // its kind already says: no directory knows its key
     if (error) { setStanding('unknown'); return; }
-    if (!profiles) return;
+    if (!base) return;
     let cancel = false;
     setStanding('asking');
-    const headers: Record<string, string> = { Accept: 'application/ld+json, application/json' };
+    const headers: Record<string, string> = { Accept: 'application/json', 'X-Experience-API-Version': '2.0.0' };
     if (session.bearerToken) headers.Authorization = `Bearer ${session.bearerToken}`;
-    fetch(`${profiles}/${userIdToUuid(session.userId)}`, { headers })
+    fetch(`${base}/xapi/statements?limit=1`, { headers })
       .then(r => { if (!cancel) setStanding(tokenStandingOf(r.status)); })
       .catch(() => { if (!cancel) setStanding('unknown'); });
     return () => { cancel = true; };
-  }, [asksNothing, profiles, error, session.userId, session.bearerToken]);
+  }, [asksNothing, base, error, session.bearerToken]);
   return standing;
 }
 

@@ -144,17 +144,26 @@ describe('a session that acts through signed requests alone', () => {
     for (const standing of ['taken', 'refused', 'unknown'] as const) expect(standingSettled(roster, standing)).toBe(true);
   });
 
-  it("asks the bridge once, of the session's own profile, with its token, and says why to each kind of session", () => {
+  it('asks the bridge once, at the gate every session-token read passes, with its token, and says why to each kind of session', () => {
     const app = readFileSync(new URL('../dashboard-app/src/App.tsx', import.meta.url), 'utf8');
     const ask = app.slice(app.indexOf('function useTokenStanding'), app.indexOf('\n}\n', app.indexOf('function useTokenStanding')));
     expect(ask).toMatch(/if \(asksNothing\) return;/);
     expect(ask).toMatch(/const asksNothing = signsOnly\(session\);/);
     expect(ask).toMatch(/if \(session\.bearerToken\) headers\.Authorization = `Bearer \$\{session\.bearerToken\}`;/);
-    expect(ask).toMatch(/fetch\(`\$\{profiles\}\/\$\{userIdToUuid\(session\.userId\)\}`, \{ headers \}\)/);
+    // The LRS's gate, read as My activity reads it: it asks only that the token verify. The profile
+    // resource also asks for an operator, and refused every learner who was not one.
+    expect(ask).toMatch(/fetch\(`\$\{base\}\/xapi\/statements\?limit=1`, \{ headers \}\)/);
+    expect(ask).toContain("'X-Experience-API-Version': '2.0.0'");
+    expect(ask).not.toMatch(/profiles/);
+    const activity = readFileSync(new URL('../dashboard-app/src/components/MyActivityPanel.tsx', import.meta.url), 'utf8');
+    expect(activity).toMatch(/fetch\(`\$\{origin\}\/xapi\/statements\?limit=200`, \{\s+headers: \{ Authorization: `Bearer \$\{session\.bearerToken\}`, 'X-Experience-API-Version': '2\.0\.0' \}/);
+    const gate = readFileSync(new URL('../src/xapi-lrs.ts', import.meta.url), 'utf8');
+    expect(gate).toContain('const verified = verifySessionToken(bearer, addressMap);');
+    expect(gate).toMatch(/res\.status\(401\)\.setHeader\('WWW-Authenticate', 'Bearer realm="foxxi-lrs"'\)/);
     expect(ask).toMatch(/\.then\(r => \{ if \(!cancel\) setStanding\(tokenStandingOf\(r\.status\)\); \}\)/);
     expect(ask).toMatch(/\.catch\(\(\) => \{ if \(!cancel\) setStanding\('unknown'\); \}\);/);
-    // The bridge the profile is asked of is the one the entry point links, as the profile page reads it.
-    expect(ask).toMatch(/const profiles = entry\?\._links\.profiles\?\.href;/);
+    // The bridge asked is the one the entry point names, as every page reads it.
+    expect(ask).toMatch(/const base = bridgeBaseOf\(entry\);/);
     const notice = app.slice(app.indexOf('function SignsOnlyNotice'), app.indexOf('\n}\n', app.indexOf('function SignsOnlyNotice')));
     expect(notice).toMatch(/because === 'token-refused'\s+\? <>\{what\} are read with a session token, and this bridge does not take the demo roster's: a roster identity's wallet is derived from a public seed/);
     expect(notice).toMatch(/: <>\{what\} are read with a session token this tenant's directory issues, and no directory knows the wallet or key you signed in with\.<\/>\}/);

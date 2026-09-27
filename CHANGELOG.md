@@ -9,17 +9,17 @@ A roster identity signed in to the deployed bridge landed on a page of refusals:
 A roster identity's session token is signed by its demo wallet, and that wallet is derived from a public seed. The bridge keeps those wallets out of its directory (`isPublicDemoWallet`), since anyone could sign as them. That is right, and nothing on the page said so. Everything such a session signs still works there: Learn, Author, Work and My forwarding sign each request.
 
 Now:
-- the dashboard asks the bridge once, of the session's own profile, whether it takes the session's token (`src/auth/token-standing.ts`). Only a 401 is a refusal; an unreachable or erring bridge refuses nothing, and a wallet or pasted key asks nothing, since its kind already says;
+- the dashboard asks the bridge once whether it takes the session's token (`src/auth/token-standing.ts`), at the gate every session-token read passes: the LRS's (`GET /xapi/statements?limit=1`, as My activity reads it), which answers 401 only for a token it cannot verify. It does not ask the profile resource, which also asks for an operator and so refused every learner who was not one (Codex, on the first draft). Only a 401 is a refusal; an unreachable or erring bridge refuses nothing, and a wallet or pasted key asks nothing, since its kind already says;
 - a roster session the bridge refuses is treated as one that signs only: it lands on Learn, is not offered My profile or My activity, and those pages say why, in its own terms;
 - sign-in and the redirects to home (`/login`, `/me`, `/profile`, `/learner`) go through the root, which waits for the answer and then goes on to the profile, or to Learn.
 
 A local bridge that takes the roster's tokens behaves as before.
 
 In `the-learner-portal-speaks-the-bridges-language.test.ts`:
-- two new tests: the standing, and why a session signs alone, for every answer and both kinds of session; and the question itself (asked of the session's own profile with its token, skipped for a wallet) and the notice's two reasons;
+- two new tests: the standing, and why a session signs alone, for every answer and both kinds of session; and the question itself (asked at the LRS's gate with the token, as My activity reads it, skipped for a wallet) and the notice's two reasons;
 - the landing test is rewritten for the root that waits and the redirects through it.
 
-Sixteen mutants each fail a named test.
+Seventeen mutants each fail a named test, one of them asking the operator-gated profile resource again.
 
 In a browser against the deployed bridge, as the demo learner Joshua Liu:
 - signing in went from the root, while asking, to Learn;
