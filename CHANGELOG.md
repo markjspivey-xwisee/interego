@@ -2,7 +2,7 @@
 
 ## 2026-09-27 — Foxxi Work page: recording as an agent is an informed choice, and the page refuses what the bridge would
 
-Codex found three things in the Work page (#533) after it merged; one also needed a fix on the bridge behind it.
+Codex found three things in the Work page (#533) after it merged, and one also needed a fix on the bridge behind it. The last item below was missed alongside them.
 
 - **Recording as an agent says what it does, and waits until the performer says they understand.** Work recorded as an agent's is what classifies its performer as an agent, unless their record already holds work recorded as a person's. An agent's record is public: any signed caller can read their competencies, their performance history and their credentials. The page offered that choice as one option of a folded-away select, sent it unconfirmed, and dropped the bridge's own warning from the answer. Now:
   - *Done by* sits beside whether the work succeeded;
@@ -14,6 +14,7 @@ Codex found three things in the Work page (#533) after it merged; one also neede
   - the page checks a duration by the statement validator's own rule (`isXapiDuration`, exported from `src/xapi-validate.ts`);
   - both record-performance doors, `/agent/record-performance` and `foxxi.record_performance`, refuse a duration xAPI would refuse, as a 400 that names it, before anything is fetched or kept (`durationRefusalOf`, in `src/learner-record.ts`);
   - an empty `duration_iso` is taken as none sent.
+- **Work is named where a wallet or a pasted key is sent.** The notice such a session sees on a page it cannot read names the pages signed as it, and now Work among them.
 
 `tests/a-portal-keeps-what-its-work-implies.test.ts` gains six tests:
 - the longest text the record keeps passes the page and is kept by `workStepsFrom`; one character more is refused by both, for a step's action, its object and its note;
@@ -22,7 +23,9 @@ Codex found three things in the Work page (#533) after it merged; one also neede
 - the confirmation, a change of mind, and the unit after;
 - the page's warning, and the bridge's own word shown with the record.
 
-Twenty-four mutants each fail a named test.
+`the-learner-portal-speaks-the-bridges-language.test.ts` pins Work among the notice's links.
+
+Twenty-five mutants each fail a named test.
 
 The page was run in a browser against the deployed bridge, as the demo learner Joshua Liu, with nothing sent:
 - a 201-character step and `25m` were each stopped with their reason, and 200 characters and ` PT25M ` were let through;
