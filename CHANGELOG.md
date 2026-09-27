@@ -1,5 +1,29 @@
 # Changelog
 
+## 2026-09-27 — Foxxi: a learner record read only in part is not classified, or served, for anyone but its subject
+
+Whether a learner record is private (a person's) or public (an agent's capability record) is decided from all of its own work: `classifySubjectKind` makes it an agent's only when none of it says a person did it. Three privacy gates decide it:
+- `foxxi.assemble_learner_record`;
+- `POST /agent/review-record`;
+- `POST /agent/verify-extension`.
+
+Each reads the record from three places: the shared lattice, the in-memory lens, and the durable records on the pod. Two of those are best-effort and said nothing when they fell short. So during a pod outage, a person's record whose person-kind work lived only on the pod read as all agent's work, was classified public, and was served to any signed caller. That was fail-open, against the rule these gates keep: no evidence means private.
+
+Now each gate asks whether it read the record whole (`latticeReadWhole` and `readDurableRecordedStatementsDetailed`, from #538). A reader the gate would have to classify the record for is refused while it did not, before anything is classified or served.
+
+The rule is in `src/whole-record-gate.ts` (new): `servedInPart`, and the refusal `recordNotReadWhole`. The refusal is a 503 saying the record could not be read whole. It is not a private classification: calling an agent's public record "a human learner record, private" because the pod did not answer would say something false about the subject, and the reader could not tell an outage from a policy. The refusal serves nothing partial, and a retry once the pod answers is decided by the whole record. The subject's own reads are served as before, and each answer says whether the record was read whole (`readWhole`). No one else is served a part, an admin included: the record an admin is served names what its subject is, and part of a record cannot say that (Codex, on the first draft).
+
+`/agent/review-record` also classified `source: 'pgsl'` requests from the lattice alone: a part of the record the caller chose. A person's work kept only in the durable records was left out of the decision. That gate now classifies from the whole record, whatever source it serves from.
+
+`tests/a-record-not-read-whole-is-not-served-to-others.test.ts` (7 tests):
+- the policy: who may be served a record read in part, and the refusal's words and status;
+- a census of the bridge's doors. It finds the three that classify a subject, and requires each to read completeness and refuse a partial read before it classifies or assembles anything. A gate added later without it fails here;
+- that only the subject is served a partial read, and is told so, at every gate;
+- that the diagnostic counts the detailed read: the first draft left one use of the old name, which threw after every record was assembled (Codex, on the first draft);
+- the review gate classifying from the whole record.
+
+`subject-kind-not-caller-controlled.test.ts` still holds. Fifteen mutants each fail a named test.
+
 ## 2026-09-27 — Foxxi: a learner reads their own profile, with their assignments
 
 A learner's home page reads their assigned courses from their own profile, `GET /api/foxxi/v1/profiles/:id`. That route was operator-only, because a profile carries directory PII (email, employee id, hire date, manager). So every learner who was not an operator got a 401 where their assigned courses belong.
@@ -40,6 +64,7 @@ The mechanism is `keepStatementsWhole` (new, `src/xapi-lrs.ts`). It checks the s
 Twenty mutants each fail a named test.
 
 Not in this change: the agent-activity and SCORM play emitters (`emitAgentActivity` and the play helpers) still store with `storeStatementInternal`. They check its null, but not a write that fails later.
+
 
 
 ## 2026-09-27 — Foxxi: part of a record is not read as the whole of it
