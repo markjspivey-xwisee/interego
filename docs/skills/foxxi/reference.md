@@ -566,7 +566,7 @@ Federated calibration: pool SIGNED (regime × cause × intervention → verdict)
 
 **Record a production-work performance event as yourself**
 
-Record one unit of on-the-job production work as an xAPI performed statement, into your OWN Foxxi lens, authenticated by your delegation (the agent-drivable counterpart of the session-token foxxi.record_performance). Declare an activity_type (a domain type you define, e.g. urn:ttt:Move) to aggregate same-type executions into one competency; else it keys off task_name. success=true on demonstrated work promotes the competency to performance-verified. Composed into your shared PGSL lattice (optionally wrapped to named recipients for cross-seat owner-decrypt). Externally routed: sign_request the args, then POST the envelope.
+Record one unit of on-the-job production work as an xAPI performed statement, into your OWN Foxxi lens, authenticated by your delegation (the agent-drivable counterpart of the session-token foxxi.record_performance). Declare an activity_type (a domain type you define, e.g. urn:ttt:Move) to aggregate same-type executions into one competency; else it keys off task_name. success=true on demonstrated work promotes the competency to performance-verified. Composed into your shared PGSL lattice (optionally wrapped to named recipients for cross-seat owner-decrypt). Send trajectory: how the work went, step by step, and it is kept with the record. When a unit fails, the answer offers, unasked, what the work you recorded at that competency implies: its regime read from the trajectories kept with it, the plan for that regime, and the admission that plan implies, yours to keep with foxxi.content_admit or not. Nothing is kept from the offer, and without a trajectory the regime is not read, so nothing is offered. Externally routed: sign_request the args, then POST the envelope.
 
 - Action: `urn:iep:action:foxxi:record-performance-signed`
 - HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/record-performance` (served by a bespoke route; not through the bridge's MCP endpoint)
@@ -574,7 +574,7 @@ Record one unit of on-the-job production work as an xAPI performed statement, in
 
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
-| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, task_name, success, activity_type?, task_id?, quality?, duration_iso?, actor_kind?, cost_usd?, recipients? }). recipients?: pod URLs/DIDs to ALSO wrap the encrypted holon to (cross-seat owner-decrypt). |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, task_name, success, activity_type?, task_id?, quality?, duration_iso?, actor_kind?, cost_usd?, recipients?, trajectory? }). recipients?: pod URLs/DIDs to ALSO wrap the encrypted holon to (cross-seat owner-decrypt). trajectory?: { steps: [{ modalStatus: Asserted\|Hypothetical\|Counterfactual, granularity: task\|subtask\|tool-call, verb, objectId, objectName, id?, parentId?, supersedesId?, result?: { success?, quality?, note? }, recordedAt? }] }, at most 100 steps. |
 | `_signature` | string | yes | secp256k1 over sha256:<hex(sha256(_signed_payload))> by the wallet matching agent_id (relay sign_request). |
 
 ## `foxxi.ingest_course`

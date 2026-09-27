@@ -29,12 +29,11 @@ import type { VerifyPrivateCaller } from '../../foxxi-content-intelligence/src/p
 import { attachInterventionMethodRoutes } from '../bridge/method-routes.js';
 import { foxxiInterventionMethodAffordances } from '../method-affordances.js';
 import { AGP_NS } from '../src/ontology.js';
-import { admissionFromPlan } from '../src/content-admission.js';
-import { competencyRef } from '../../foxxi-content-intelligence/src/content-fragments.js';
+import { admissionOffer } from '../src/content-admission.js';
 import type { WorkRegime } from '../src/agent-disposition.js';
 import {
   diagnose, recommendInterventions, rollUpPortfolio,
-  type Diagnosis, type InterventionPlan, type PerformanceSituation, type Performer, type DiagnoseInput, type PortfolioEntry,
+  type PerformanceSituation, type Performer, type DiagnoseInput, type PortfolioEntry,
 } from '../src/performance-architecture.js';
 import {
   buildCalibrationProfile, expandOutcomeCorpus, composeCalibrationProfiles,
@@ -318,25 +317,10 @@ const CONTEXTUALIZE_AND_PLAN_AFFORDANCE: Affordance = {
   ],
 };
 
-/**
- * What a plan admits at its situation's competency, offered to the performer to keep as theirs
- * (foxxi.content_admit). The bridge reads the plan; it does not write it onto anyone's record, so
- * this is an offer the performer takes up or not. Nothing is offered for a plan that selected
- * nothing (an unclassified situation), or for a competency no content can be resolved against.
- */
-export function admissionOffer(plan: Pick<InterventionPlan, 'selected'>, diagnosis: Pick<Diagnosis, 'domain'>,
-  situation: Pick<PerformanceSituation, 'competency' | 'performer'>, base: string): Record<string, unknown> | undefined {
-  if (!plan.selected.length) return undefined;
-  let competency: string;
-  try { competency = competencyRef(situation.competency, 'competency'); } catch { return undefined; }
-  return {
-    competency, ...admissionFromPlan(plan, diagnosis),
-    ...(diagnosis.domain ? { regime: diagnosis.domain } : {}),
-    forPerformer: situation.performer.id,
-    keep: { affordance: 'urn:iep:action:foxxi:content-admit-signed', target: `${base}/agent/content/admit`, method: 'POST' },
-    note: 'Yours to keep, if this plan is about you: sign { competency, admission: { kinds, because }, regime } for foxxi.content_admit, and resolution will admit only these forms at this competency until you replace or withdraw it.',
-  };
-}
+/** What a plan admits, offered to its performer to keep (content-admission.ts, where it now lives beside the rule it applies). */
+export { admissionOffer };
+/** What a failed unit of recorded work offers its performer, unasked (work-offers.ts). */
+export { offerFromWork, WORK_OFFER_WINDOW, type WorkOffer, type WorkUnit } from '../src/work-offers.js';
 
 export function attachPerformanceRoutes(app: Express, config: {
   selfBaseUrl: string;

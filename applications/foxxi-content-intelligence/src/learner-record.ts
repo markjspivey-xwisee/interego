@@ -99,7 +99,97 @@ export const PERF_EXT = {
   costUsd: `${FOXXI_VOCAB}costUsd`,
   contextKind: `${FOXXI_VOCAB}contextKind`,
   actorKind: `${FOXXI_VOCAB}actorKind`,
+  workTrajectory: `${FOXXI_VOCAB}workTrajectory`,
 } as const;
+
+/**
+ * One step of how a unit of production work went, as its performer recorded it with the work
+ * (`PERF_EXT.workTrajectory`, in the performance statement itself, so it lives with the record on
+ * the performer's pod). It is the step a work regime is read from: what was done, intended, or
+ * considered and dropped (its modal status); whether it was a task, a subtask or a tool call; what
+ * it acted on; and how it came out.
+ */
+export interface WorkStep {
+  id?: string;
+  modalStatus: 'Asserted' | 'Hypothetical' | 'Counterfactual';
+  granularity: 'task' | 'subtask' | 'tool-call';
+  verb: string;
+  objectId: string;
+  objectName: string;
+  parentId?: string;
+  supersedesId?: string;
+  result?: { success?: boolean; quality?: number; note?: string };
+  recordedAt?: string;
+}
+
+/** How much of a unit's trajectory is kept with it: at most this many steps, each text this long. */
+export const WORK_STEP_LIMITS = { steps: 100, text: 200 } as const;
+
+export class WorkStepError extends Error {}
+
+const WORK_MODAL = new Set(['Asserted', 'Hypothetical', 'Counterfactual']);
+const WORK_GRAIN = new Set(['task', 'subtask', 'tool-call']);
+
+/**
+ * The trajectory a performer sends with a unit of work, `{ steps: [...] }`, checked and kept to
+ * what a step is. Undefined when none is sent; a malformed one is refused, naming the step.
+ */
+export function workStepsFrom(raw: unknown): WorkStep[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  const steps = typeof raw === 'object' && !Array.isArray(raw) ? (raw as { steps?: unknown }).steps : undefined;
+  if (!Array.isArray(steps) || !steps.length) throw new WorkStepError('trajectory must be { steps: [...] }, with at least one step');
+  if (steps.length > WORK_STEP_LIMITS.steps) throw new WorkStepError(`a trajectory keeps at most ${WORK_STEP_LIMITS.steps} steps`);
+  return steps.map((s, i) => {
+    const at = `trajectory step ${i + 1}`;
+    if (!s || typeof s !== 'object' || Array.isArray(s)) throw new WorkStepError(`${at} is not an object`);
+    const o = s as Record<string, unknown>;
+    const text = (k: string, required: boolean): string | undefined => {
+      const v = o[k];
+      if (v === undefined && !required) return undefined;
+      if (typeof v !== 'string' || !v.trim()) throw new WorkStepError(`${at}: ${k} must be a non-empty string`);
+      if (v.length > WORK_STEP_LIMITS.text) throw new WorkStepError(`${at}: ${k} is longer than ${WORK_STEP_LIMITS.text} characters`);
+      return v.trim();
+    };
+    if (!WORK_MODAL.has(o.modalStatus as string)) throw new WorkStepError(`${at}: modalStatus must be Asserted, Hypothetical or Counterfactual`);
+    if (!WORK_GRAIN.has(o.granularity as string)) throw new WorkStepError(`${at}: granularity must be task, subtask or tool-call`);
+    const recordedAt = text('recordedAt', false);
+    if (recordedAt !== undefined && Number.isNaN(Date.parse(recordedAt))) throw new WorkStepError(`${at}: recordedAt must be a date and time`);
+    let result: WorkStep['result'];
+    if (o.result !== undefined) {
+      const r = o.result as Record<string, unknown>;
+      if (!r || typeof r !== 'object' || Array.isArray(r)) throw new WorkStepError(`${at}: result must be an object`);
+      if (r.success !== undefined && typeof r.success !== 'boolean') throw new WorkStepError(`${at}: result.success must be true or false`);
+      if (r.quality !== undefined && (typeof r.quality !== 'number' || !(r.quality >= -1 && r.quality <= 1))) throw new WorkStepError(`${at}: result.quality must be a number from -1 to 1`);
+      if (r.note !== undefined && (typeof r.note !== 'string' || r.note.length > WORK_STEP_LIMITS.text)) throw new WorkStepError(`${at}: result.note must be a string of at most ${WORK_STEP_LIMITS.text} characters`);
+      result = {
+        ...(r.success !== undefined ? { success: r.success as boolean } : {}),
+        ...(r.quality !== undefined ? { quality: r.quality as number } : {}),
+        ...(r.note !== undefined ? { note: r.note as string } : {}),
+      };
+    }
+    const id = text('id', false);
+    const parentId = text('parentId', false);
+    const supersedesId = text('supersedesId', false);
+    return {
+      ...(id !== undefined ? { id } : {}),
+      modalStatus: o.modalStatus as WorkStep['modalStatus'],
+      granularity: o.granularity as WorkStep['granularity'],
+      verb: text('verb', true)!,
+      objectId: text('objectId', true)!,
+      objectName: text('objectName', true)!,
+      ...(parentId !== undefined ? { parentId } : {}),
+      ...(supersedesId !== undefined ? { supersedesId } : {}),
+      ...(result ? { result } : {}),
+      ...(recordedAt !== undefined ? { recordedAt } : {}),
+    };
+  });
+}
+
+/** The steps a recorded statement carries, read back as they were kept; undefined when it carries none it could have kept. */
+export function workStepsOf(stored: unknown): WorkStep[] | undefined {
+  if (!Array.isArray(stored)) return undefined;
+  try { return workStepsFrom({ steps: stored }); } catch { return undefined; }
+}
 
 // ── ELR data model ──────────────────────────────────────────────────
 
@@ -564,6 +654,67 @@ function isCredentialEnvelope(typeIri?: string): boolean {
   return CREDENTIAL_ENVELOPE_LOCALNAMES.has(local) || /Credential$/.test(local);
 }
 
+/** A competency nobody named with a term: keyed by its label, under a prefix no absolute
+ *  IRI can produce, so "the label happens to look like a term" cannot merge two buckets. */
+const labelKey = (label: string): string => `label:${label.toLowerCase().trim()}`;
+
+/**
+ * The competency a production performance counts toward, the one rule the learner record and
+ * anything that reads work at a competency both apply. A genuine DOMAIN activity type names it as
+ * a term (aggregating same-type executions across instances). Otherwise a DELIBERATELY asserted
+ * performance (an explicit outcome) counts toward the task its performer named. A result-less
+ * record whose only type is a protocol-envelope facet or the generic fallback names no skill, so
+ * none (don't manufacture facet-as-skill).
+ */
+export function performanceCompetency(p: Pick<ElrPerformanceRecord, 'taskType' | 'taskName' | 'success'>): { key: string; label: string; termIri?: string } | null {
+  // ★ The TERM is the identity; the local name is only what a human reads. Keying on the
+  // local name merged unrelated naming authorities into one competency — see `draft`.
+  if (isDomainActivityType(p.taskType)) return { key: p.taskType!, label: typeLocalName(p.taskType!), termIri: p.taskType! };
+  if (p.success === undefined) return null;
+  return { key: labelKey(p.taskName), label: p.taskName };
+}
+
+/**
+ * The competency a task named in words counts toward, as the record mints it: its words
+ * lowercased and slugged. Content authored at that slug names the same competency, so anything
+ * offered at a named task's competency must use this, not the words as written.
+ */
+export function labelCompetencyIri(label: string): string {
+  return competencyIri(label.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 48));
+}
+
+/** A unit of production work at one competency, with the trajectory its performer kept with it, if any. */
+export interface RecordedWork {
+  record: ElrPerformanceRecord;
+  steps?: WorkStep[];
+}
+
+/**
+ * The production work recorded at one competency (a `performanceCompetency` key), newest first,
+ * one unit per task: a task reported twice is one unit, and its latest report stands, as the
+ * learner record counts it. Making something is not work at a competency, as there.
+ */
+export function workAt(statements: readonly StoredStatement[], competencyKey: string, lrsEndpoint: string, limit: number): RecordedWork[] {
+  const when = (t: string): number => Date.parse(t) || 0;
+  const byTask = new Map<string, RecordedWork>();
+  for (const rec of statements) {
+    if (rec.voided) continue;
+    const s = rec.statement;
+    if (!isProductionPerformance(s)) continue;
+    if (isCredentialEnvelope((s.object as { definition?: { type?: string } } | undefined)?.definition?.type)) continue;
+    if (MAKING_VERBS.has(String((s.verb as { id?: unknown } | undefined)?.id ?? ''))) continue;
+    const record = projectPerformance(rec, lrsEndpoint);
+    if (performanceCompetency(record)?.key !== competencyKey) continue;
+    const task = record.taskId || record.rawDataLocation;
+    const prior = byTask.get(task);
+    if (prior && when(prior.record.timestamp) > when(record.timestamp)) continue;
+    const ext = (s.context as { extensions?: Record<string, unknown> } | undefined)?.extensions ?? {};
+    const steps = workStepsOf(ext[PERF_EXT.workTrajectory]);
+    byTask.set(task, { record, ...(steps ? { steps } : {}) });
+  }
+  return [...byTask.values()].sort((a, b) => when(b.record.timestamp) - when(a.record.timestamp)).slice(0, limit);
+}
+
 function buildCompetencies(
   clr: ClrEnvelope | null,
   experiences: readonly ElrExperience[],
@@ -591,10 +742,6 @@ function buildCompetencies(
     }
     return d;
   };
-  /** A competency nobody named with a term: keyed by its label, under a prefix no absolute
-   *  IRI can produce, so "the label happens to look like a term" cannot merge two buckets. */
-  const labelKey = (label: string): string => `label:${label.toLowerCase().trim()}`;
-
   // Credentialed competencies — alignments on verified credentials.
   for (const entry of clr?.credentialEntries ?? []) {
     if (!entry.verified) continue;
@@ -627,22 +774,13 @@ function buildCompetencies(
     draft(labelKey(label), label).trainingEvidence.push(exp.rawDataLocation);
   }
 
-  // Performance-verified competencies — production `performed` records. The skill
-  // identity is, in priority order: a genuine DOMAIN activity type (aggregates
-  // same-type executions across instances) → else, for a DELIBERATELY-asserted
-  // performance (record_performance: an explicit task_name + asserted success),
-  // the task_name (the skill the caller named). A result-less record whose only
-  // type is a protocol-envelope facet/generic fallback (an auto-projected context
-  // descriptor) declares no skill → NO competency (johnny's category-error
-  // finding: don't manufacture facet-as-skill). The instance leaf is evidence-only.
+  // Performance-verified competencies — production `performed` records, each counted toward
+  // the competency `performanceCompetency` names (none for a record that names no skill: johnny's
+  // category-error finding). The instance leaf is evidence-only.
   for (const p of performance) {
-    const domainTyped = isDomainActivityType(p.taskType);
-    if (!domainTyped && p.success === undefined) continue;
-    // ★ The TERM is the identity; the local name is only what a human reads. Keying on the
-    // local name merged unrelated naming authorities into one competency — see `draft`.
-    const d = domainTyped
-      ? draft(p.taskType!, typeLocalName(p.taskType!), p.taskType!)
-      : draft(labelKey(p.taskName), p.taskName);
+    const named = performanceCompetency(p);
+    if (!named) continue;
+    const d = draft(named.key, named.label, named.termIri);
     // `task_id` identifies the WORK; `rec.id` identifies the report of it. Keying on the
     // report is how a replay became a second execution.
     const taskKey = p.taskId || p.rawDataLocation;
@@ -704,7 +842,7 @@ function buildCompetencies(
     // bucket, which is a bucket no CASE association can honestly be written about.
     const competencyDefIri = d.termIri !== undefined
       ? competencyIriForTerm(d.termIri)
-      : competencyIri(d.label.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 48));
+      : labelCompetencyIri(d.label);
     // ★ THE EVIDENCE LIST CARRIES THE ARTIFACT, NOT ONLY THE LOG ENTRY.
     //
     // `rawDataLocation` for a performance is an LRS statement URL, and xAPI REQUIRES that to
