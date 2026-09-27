@@ -257,7 +257,7 @@ import {
 } from '../src/lrs-forwarding.js';
 import { persistForwardingConfig, loadForwardingConfig } from '../src/forwarding-persist.js';
 import { bridgeEncryptionKeypair } from '../src/foundation-holon-altitude.js';
-import { EvaluationRegistry, type CandidateRun } from '../src/agent-evaluation.js';
+import { EvaluationRegistry, type CandidateRun, type EvaluationCandidate } from '../src/agent-evaluation.js';
 import { comparePortfolio, type CandidateEvidence } from '../src/agent-portfolio.js';
 import { DEFAULT_TENANT, TenantPartition, tenantIdOf, type TenantId } from '../src/tenant-context.js';
 
@@ -429,7 +429,7 @@ import {
   type AccessDecisionTrace,
 } from '../src/policy.js';
 import { deriveAdminKeyPair, publishTenantMembership, publishCourseCatalog, publishTenantAssignments, publishCoursePackage, publishMeshEnrolmentRegister, TENANT_TYPES, type TenantPublishConfig } from '../src/tenant-publisher.js';
-import { attachXapiLrsRoutes, internalRefusalOf, listStoredStatements, storeStatementDurably, storeStatementInternal, getStatementStore } from '../src/xapi-lrs.js';
+import { attachXapiLrsRoutes, internalRefusalOf, keepStatementsWhole, listStoredStatements, storeStatementDurably, storeStatementInternal, getStatementStore } from '../src/xapi-lrs.js';
 import type { StoredStatement } from '../src/statement-store.js';
 import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerRegistration, cmi5BearerTenant, getCmi5Course, learnerSatisfiedAus, observeCmi5Statement, signedLaunchLearner, stageLaunchData } from '../src/cmi5-lms.js';
 import { AGS_SCOPE, attachLti13Routes, type Lti13Tool, type VerifiedResourceLaunch } from '../src/lti13.js';
@@ -3703,7 +3703,9 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
         hint: `Use an absolute IRI you own, e.g. ${competencyIri(declaredType.toLowerCase().replace(/[^a-z0-9]+/g, '-'))}. Omitting activity_type is also valid — the competency then keys off task_name.`,
       };
     }
-    const statementId = storeStatementInternal(statement, lensTenantFor(perfLabel));
+    // Awaited (storeStatementDurably): the store's write can fail after it has taken the statement,
+    // and storeStatementInternal answered with the id regardless.
+    const statementId = await storeStatementDurably(statement, lensTenantFor(perfLabel));
     if (!statementId) {
       return {
         // ★ THE SAME FAILURE ANSWERS 500 ON THE /agent ROUTE. Its own hint says "a bug in
@@ -3711,9 +3713,9 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
         // reported a performance that was never stored as recorded.
         kind: 'refusal' as const,
         'iep:refusalStatus': 500,
-        'iep:refusalReason': 'the statement this bridge emitted failed conformance validation; the caller supplied nothing wrong',
-        error: 'the performance was not recorded — the emitted xAPI statement failed conformance validation and the LRS refused it',
-        hint: 'This is a bug in the emitter, not in your arguments; the bridge log names the violated constraint. Nothing was stored, so no evidence pointer was minted.',
+        'iep:refusalReason': 'the statement this bridge emitted was not kept: it failed conformance validation, or the store did not write it; the caller supplied nothing wrong',
+        error: 'the performance was not recorded — the LRS refused the emitted xAPI statement, or its store did not write it',
+        hint: 'Nothing was stored, so no evidence pointer was minted; the bridge log says which. A refused statement is a bug in the emitter, not in your arguments; a store that did not write may take it on a retry.',
       };
     }
     const withId = { ...statement, id: statementId };
@@ -3788,19 +3790,39 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     }));
     const trajectory = buildTrajectory(agentDid, args.agent_name as string | undefined, stepInputs);
 
+    // Project the Asserted tool-call steps down to xAPI `performed`
+    // statements — the deliberately lossy interop view.
+    const projection = projectTrajectoryToXapi(trajectory, { authoritativeSource });
+    /**
+     * ★ THE PROJECTION IS KEPT WHOLE BEFORE THE TRAJECTORY IS SET.
+     *
+     * The trajectory was set first and its projection stored after, each statement unchecked: one
+     * the LRS refused (an object_id that is not an IRI, a step's quality outside [-1, 1]) was
+     * dropped without a word, and `projectedToXapi` counted it anyway. Now the projection is kept
+     * whole or not at all (keepStatementsWhole): a step the LRS would refuse refuses the trajectory,
+     * as the caller's, and a store that stops keeping partway is said, before the trajectory it
+     * would contradict is set.
+     */
+    const kept = await keepStatementsWhole(projection.statements.map(stmt => ({ id: randomUUID(), ...stmt })), callTenant(args));
+    if (kept.status === 'refused') {
+      return invalidArguments(`the trajectory was not recorded: the LRS would refuse part of its xAPI projection, so none of it was kept. ${kept.refusals.slice(0, 10).join('; ')}`);
+    }
+    if (kept.status === 'partial') {
+      return {
+        kind: 'refusal' as const,
+        'iep:refusalStatus': 503,
+        'iep:refusalReason': 'the statement store did not keep all of the trajectory\'s projection',
+        error: `the trajectory was not recorded: the store kept ${kept.keptIds.length} of its ${projection.statements.length} projected statements and then did not keep the next, so the trajectory was not set; try again.`,
+        keptStatementIds: kept.keptIds,
+      };
+    }
+
     // The native trajectory is the source of truth.
     if (agentTrajectories.size >= AGENT_TRAJECTORY_MAX && !agentTrajectories.has(agentDid)) {
       const oldest = agentTrajectories.keys().next().value;
       if (oldest) agentTrajectories.delete(oldest);
     }
     agentTrajectories.set(agentDid, trajectory);
-
-    // Project the Asserted tool-call steps down to xAPI `performed`
-    // statements — the deliberately lossy interop view.
-    const projection = projectTrajectoryToXapi(trajectory, { authoritativeSource });
-    for (const stmt of projection.statements) {
-      storeStatementInternal({ id: randomUUID(), ...stmt }, callTenant(args));
-    }
     const shape = trajectoryShape(trajectory);
     const trace = emitAccessDecision({ ctx, tool: 'foxxi.record_agent_trajectory', decision: 'allow', appliedPolicies: ['agent-trajectory-public'] });
     return {
@@ -3809,7 +3831,8 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       stepCount: trajectory.steps.length,
       byModalStatus: shape.byModalStatus,
       byGranularity: shape.byGranularity,
-      projectedToXapi: projection.statements.length,
+      projectedToXapi: kept.keptIds.length,
+      statementIds: kept.keptIds,
       retainedNativeOnly: projection.retainedNativeOnly,
       note: 'Native trajectory stored as source of truth; only Asserted tool-call steps projected to xAPI. Intentions, counterfactuals + task hierarchy are retained natively only.',
       accessDecision: trace,
@@ -3964,6 +3987,10 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // statement, silently, while the run's tool-call steps were kept without it.
     const durationRefused = durationRefusalOf(args.duration_iso);
     if (durationRefused) return invalidArguments(durationRefused);
+    // The run's quality becomes its `performed` statement's result.score.scaled, which xAPI holds to
+    // [-1, 1] (§4.1.5.1). Said here as the record-performance doors say it; the whole-run check
+    // below would refuse it too, in the LRS's words.
+    if (typeof args.quality === 'number' && !(args.quality >= -1 && args.quality <= 1)) return invalidArguments('quality (result.score.scaled) must be in [-1,1]');
     const rawToolCalls = args.tool_calls as Array<Record<string, unknown>> | undefined;
     const rawSteps = args.steps as Array<Record<string, unknown>> | undefined;
     if ((!Array.isArray(rawToolCalls) || rawToolCalls.length === 0)
@@ -4013,15 +4040,24 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       }));
     }
     const ingested = ingestExternalRun(runInput);
-    for (const stmt of ingested.statements) storeStatementInternal({ id: randomUUID(), ...stmt }, tenant);
-    if (agentTrajectories.size >= AGENT_TRAJECTORY_MAX && !agentTrajectories.has(agentDid)) {
-      const oldest = agentTrajectories.keys().next().value;
-      if (oldest) agentTrajectories.delete(oldest);
-    }
-    agentTrajectories.set(agentDid, ingested.trajectory);
-    let boundTo: string | null = null;
+    /**
+     * ★ EVERY REFUSAL BEFORE ANYTHING IS KEPT.
+     *
+     * The run's statements were stored and its trajectory set first, and only then was its
+     * evaluation candidacy checked: a run refused as "not a candidate of this evaluation", or as
+     * writing into another agent's candidacy, was in the LRS and the trajectory map all the same.
+     * So everything that can refuse the run is asked before any of it is kept:
+     *   - the candidacy, and the candidate's ownership, which need nothing stored;
+     *   - whether the candidate was accepted, the one condition addRun refuses on;
+     *   - whether the LRS would take every statement of the run, by its own rule (internalRefusalOf,
+     *     the first thing keepStatementsWhole asks). A run it would refuse any part of is refused
+     *     whole, as the caller's:
+     *     a quality outside [-1, 1] on a tool call cost the run that step, and on the run itself
+     *     cost it the `performed` statement the learner record reads as the run.
+     */
+    let candidate: EvaluationCandidate | undefined;
     if (runInput.evaluationId) {
-      const candidate = runInput.candidateId
+      candidate = runInput.candidateId
         ? evaluationRegistry.get(runInput.evaluationId)?.candidates.find(c => c.candidateId === runInput.candidateId)
         : evaluationRegistry.findCandidateByAgent(runInput.evaluationId, agentDid);
       if (!candidate) {
@@ -4054,6 +4090,50 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
           error: `candidate ${candidate.candidateId} belongs to another agent — you may only record runs into your own candidacy (omit candidate_id to auto-resolve yours)`,
         };
       }
+      if (candidate.status !== 'accepted') {
+        return {
+          kind: 'refusal' as const,
+          'iep:refusalStatus': 409,
+          'iep:refusalReason': 'the candidate has not been accepted into this evaluation',
+          error: `candidate ${candidate.candidateId} is ${candidate.status} — accept it before recording runs`,
+        };
+      }
+    }
+    /**
+     * ★ KEPT, EACH WRITE AWAITED, THE RUN'S PERFORMANCE LAST.
+     *
+     * storeStatementInternal answers with an id before the store's write settles, and only logs a
+     * write that fails later (a file, pod or forwarding backend): its null was ignored here besides.
+     * Each write is now awaited (keepStatementsWhole, by storeStatementDurably), and the first one
+     * not kept stops the run: nothing is then set or bound, and the refusal names what was kept. The
+     * steps go first and the
+     * `performed` statement last, so a run the store stops keeping partway never leaves a
+     * performance without its steps, and a retry never counts one twice.
+     */
+    const inOrder = [...ingested.statements.filter(s => s !== ingested.performance), ingested.performance]
+      .map((stmt): Record<string, unknown> & { id: string } => ({ id: randomUUID(), ...stmt }));
+    const kept = await keepStatementsWhole(inOrder, tenant);
+    if (kept.status === 'refused') {
+      return invalidArguments(`the run was not recorded: the LRS would refuse part of it, so none of it was kept. ${kept.refusals.slice(0, 10).join('; ')}`);
+    }
+    if (kept.status === 'partial') {
+      return {
+        kind: 'refusal' as const,
+        'iep:refusalStatus': 503,
+        'iep:refusalReason': 'the statement store did not keep all of the run',
+        error: `the run was not recorded whole: the store kept ${kept.keptIds.length} of its ${inOrder.length} statements, not its performance, and then did not keep the next. Nothing was set or bound; try again.`,
+        keptStatementIds: kept.keptIds,
+      };
+    }
+    const keptIds = kept.keptIds;
+    if (agentTrajectories.size >= AGENT_TRAJECTORY_MAX && !agentTrajectories.has(agentDid)) {
+      const oldest = agentTrajectories.keys().next().value;
+      if (oldest) agentTrajectories.delete(oldest);
+    }
+    agentTrajectories.set(agentDid, ingested.trajectory);
+    let boundTo: string | null = null;
+    let bindingRefused: string | undefined;
+    if (candidate) {
       const run: CandidateRun = {
         trajectory: ingested.trajectory,
         success: runInput.outcome.success,
@@ -4062,16 +4142,20 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
         durationIso: runInput.outcome.durationIso,
         recordedAt: new Date().toISOString(),
       };
-      const added = evaluationRegistry.addRun(runInput.evaluationId, candidate.candidateId, run);
-      if ('error' in added) return propagateRefusal(added, 'the evaluation registry declined to record this run');
-      boundTo = `${runInput.evaluationId} / ${candidate.candidateId}`;
+      // Asked above; only a change since (the evaluation or the candidate gone, or no longer
+      // accepted) refuses it here. The run is recorded by then, so that is said, not a refusal.
+      const added = evaluationRegistry.addRun(runInput.evaluationId!, candidate.candidateId, run);
+      if ('error' in added) bindingRefused = added.error;
+      else boundTo = `${runInput.evaluationId} / ${candidate.candidateId}`;
     }
     const trace = emitAccessDecision({ ctx, tool: 'foxxi.record_external_agent_run', decision: 'allow', appliedPolicies: ['external-agent-run-ingest'] });
     return {
       recorded: true,
       agentDid,
       ...ingested.summary,
+      statementIds: keptIds,
       boundToEvaluation: boundTo,
+      ...(bindingRefused ? { bindingRefused } : {}),
       note: 'External run normalised into an agentic-native trajectory + xAPI performed statements — now visible to disposition assessment, the ELR, and (if bound) the evaluation portfolio read.',
       accessDecision: trace,
     };
@@ -9046,11 +9130,13 @@ app.post('/agent/record-performance', async (req, res) => {
       },
       timestamp: new Date().toISOString(),
     };
-    const statementId = storeStatementInternal(statement, lensTenantFor(label));
+    // Awaited (storeStatementDurably): the store's write can fail after it has taken the statement,
+    // and storeStatementInternal answered with the id regardless.
+    const statementId = await storeStatementDurably(statement, lensTenantFor(label));
     if (!statementId) {
       res.status(500).json({
-        error: 'the performance was not recorded — the emitted xAPI statement failed conformance validation and the LRS refused it',
-        hint: 'Nothing was stored, so no evidence pointer was minted. The bridge log names the violated constraint.',
+        error: 'the performance was not recorded — the LRS refused the emitted xAPI statement, or its store did not write it',
+        hint: 'Nothing was stored, so no evidence pointer was minted. The bridge log says which: a refused statement names the violated constraint.',
       });
       return;
     }
@@ -9277,26 +9363,39 @@ app.post('/agent/record-course-completion', async (req, res) => {
      * statements it refused (a duration that is not ISO 8601, a registration that is not a UUID, a
      * score out of range) was composed and forwarded all the same, and answered `passed: true`.
      *
-     * So the whole session is checked first, by the LRS's own rule (internalRefusalOf), and a
-     * session it would refuse any part of is refused as the caller's: nothing is kept, composed or
-     * forwarded, and the answer names what the LRS would refuse. A statement a later refusal could
-     * still reach is neither composed nor forwarded, and passed is said only of a passed statement
-     * that was kept.
+     * So the whole session is checked first, by the LRS's own rule (internalRefusalOf, the first
+     * thing keepStatementsWhole asks), and a session it would refuse any part of is refused as the
+     * caller's: nothing is kept, composed or forwarded, and the answer names what the LRS would
+     * refuse. Passed is said only of a session whose passed statement was kept.
      */
-    const refusals = session.flatMap(s => internalRefusalOf(s).map(e => `${verbOf(s)}: ${e}`));
-    if (refusals.length) {
-      res.status(400).json({ error: 'the completion was not recorded: the LRS would refuse part of its cmi5 session, so none of it was kept', violations: refusals.slice(0, 20) });
+    const kept = await keepStatementsWhole(session, lensTenantFor(label));
+    if (kept.status === 'refused') {
+      res.status(400).json({ error: 'the completion was not recorded: the LRS would refuse part of its cmi5 session, so none of it was kept', violations: kept.refusals.slice(0, 20) });
       return;
     }
-    const statementIds: string[] = [];
-    const kept = new Set<string>();
+    /**
+     * ★ KEPT WHOLE BEFORE ANY OF IT IS COMPOSED OR FORWARDED.
+     *
+     * storeStatementInternal answers with an id before the store's write settles, and only logs a
+     * write that fails later (a file, pod or forwarding backend). So a statement was counted kept,
+     * composed and forwarded, and the session answered ok, though the store never held it (Codex,
+     * on #540). keepStatementsWhole awaits each write, in the session's order, and the first one the
+     * store does not keep ends it. A session kept only in part is neither composed nor forwarded, and
+     * the answer says what was kept. The store has no batch write to commit or roll back as one; a
+     * session kept in part is what a cmi5 LMS reads as abandoned, not as a completion, and a retry
+     * records a session of its own.
+     */
+    if (kept.status === 'partial') {
+      const keptPart = session.slice(0, kept.keptIds.length);
+      res.status(503).json({
+        ok: false, error: 'the completion was not recorded whole: the statement store kept only part of its cmi5 session, so none of it was composed or forwarded; try again',
+        completedBy: callerDid, courseId, courseActivityId,
+        kept: keptPart.map(verbOf), notKept: session.slice(keptPart.length).map(verbOf), passedKept: keptPart.some(s => verbOf(s) === 'passed'),
+        statementIds: kept.keptIds, durable: subjectPod, lensTenant: lensTenantFor(label),
+      });
+      return;
+    }
     for (const withId of session) {
-      // null = the LRS refused it for non-conformance. Reporting the id anyway is
-      // what produced learner records citing evidence URLs that 404.
-      const cmi5Id = storeStatementInternal(withId, lensTenantFor(label));
-      if (!cmi5Id) continue;   // refused: neither composed into the lattice nor forwarded
-      statementIds.push(cmi5Id);
-      kept.add(verbOf(withId));
       // Foundation-first: PGSL canonical — compose each cmi5 statement into the
       // learner's shared lattice (lossless), no hand-authored RDF.
       void composeIntoSharedLattice({
@@ -9310,15 +9409,7 @@ app.post('/agent/record-course-completion', async (req, res) => {
       forwardToTargets(lensTenantFor(label), withId)
         .catch(e => console.warn('[foxxi-forward][record-course-completion]', (e as Error).message));
     }
-    if (statementIds.length < session.length) {
-      res.status(500).json({
-        ok: false, error: 'the LRS refused part of the cmi5 session after it was checked; only what it kept was composed and forwarded',
-        completedBy: callerDid, courseId, courseActivityId, passed: kept.has('passed'),
-        kept: [...kept], refused: session.map(verbOf).filter(v => !kept.has(v)), statementIds, durable: subjectPod, lensTenant: lensTenantFor(label),
-      });
-      return;
-    }
-    res.json({ ok: true, completedBy: callerDid, courseId, courseActivityId, scoreScaled, masteryScore, passed: kept.has('passed'), statementCount: statementIds.length, durable: subjectPod, lensTenant: lensTenantFor(label) });
+    res.json({ ok: true, completedBy: callerDid, courseId, courseActivityId, scoreScaled, masteryScore, passed: session.some(s => verbOf(s) === 'passed'), statementCount: kept.keptIds.length, durable: subjectPod, lensTenant: lensTenantFor(label) });
   } catch (err) {
     sendServerError(res, err, 'route-handler');
   }
