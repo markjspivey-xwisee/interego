@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-09-27 — Foxxi dashboard: a wallet or a pasted key lands on Learn, and forwarding reads one signature at a time
+
+Two defects the automated review found in #527 after it merged.
+- **A wallet or a pasted key landed on a page that answers 401.** Such a session signs its session token with a wallet no tenant directory knows. So the profile, its learner record and *My activity*, which read with that token, answered 401, and sign-in landed on the profile. Such a session (`signsOnly`, `dashboard-app/src/auth/session.ts`) now lands on Learn. It is not offered those pages, and they say why if opened. What it does is signed as it: Learn and *My forwarding*.
+- ***My forwarding* signed two reads at once as it loaded.** Through a wallet extension that meant two prompts nobody asked for, which a wallet may refuse as overlapping, and every change asked twice more to read both lists again. It now:
+  - reads only when asked, one signature after the other;
+  - lets each change answer with the list it changed, so nothing is read again.
+
+`tests/the-learner-portal-speaks-the-bridges-language.test.ts` covers:
+- which sessions act through signed requests alone;
+- where they land, what they are offered, and what those pages say;
+- how *My forwarding* reads.
+
+Eight mutants each fail a named test.
+
 ## 2026-09-27 — Foxxi dashboard: a learner portal, and signing in with a wallet extension
 
 The dashboard gains **Learn**, where a person finds a composition and plays it, and a third way to sign in. An agent does each of these with the same affordances and no page: the portal is one more client of them, signed as the person using it.
