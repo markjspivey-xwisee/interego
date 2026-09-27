@@ -17,6 +17,7 @@ agpsh:MethodologyShape a sh:NodeShape ; sh:targetClass agp:Methodology ;
 agpsh:InterventionMethodologyShape a sh:NodeShape ; sh:targetClass agp:InterventionMethodology ;
     sh:property [ sh:path agp:interventionToken ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ;
         sh:in ( "instruction" "performance-support" "reference" "practice" "assessment" "coaching" "probe" "environmental-fix" "no-intervention" ) ] ;
+    sh:property [ sh:path agp:contentFormToken ; sh:datatype xsd:string ] ;
     sh:property [ sh:path agp:consultingProcess ; sh:minCount 1 ; sh:class agp:Methodology ] .
 agpsh:MethodStepShape a sh:NodeShape ; sh:targetClass agp:MethodStep ;
     sh:property [ sh:path rdfs:label ; sh:minCount 1 ; sh:datatype xsd:string ] ;

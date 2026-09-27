@@ -47,6 +47,8 @@ agp:hasCriterionReview a owl:ObjectProperty ; rdfs:label "has criterion review" 
 agp:evidenceArtifact a owl:ObjectProperty ; rdfs:label "evidence artifact" ; rdfs:domain agp:EvidenceItem .
 agp:profileToken a owl:DatatypeProperty ; rdfs:label "profile token" ; rdfs:domain agp:Methodology ; rdfs:range xsd:string .
 agp:interventionToken a owl:DatatypeProperty ; rdfs:label "intervention token" ; rdfs:domain agp:InterventionMethodology ; rdfs:range xsd:string .
+agp:contentFormToken a owl:DatatypeProperty ; rdfs:label "content form token" ; rdfs:domain agp:InterventionMethodology ; rdfs:range xsd:string ;
+    rdfs:comment "A form of content this intervention is delivered as, spelled as the Foxxi fragment kind it names (concept, worked-example, job-aid, probe, reflection, …). Resolving a composition for a learner admits only these forms where a plan selected this intervention. An intervention with none, such as an environmental fix, is not delivered as content." .
 agp:appliesWhen a owl:DatatypeProperty ; rdfs:label "applies when" ; rdfs:domain agp:Methodology ; rdfs:range xsd:string .
 agp:sequence a owl:DatatypeProperty ; rdfs:label "sequence" ; rdfs:domain agp:MethodStep ; rdfs:range xsd:integer .
 agp:workProduct a owl:DatatypeProperty ; rdfs:label "work product" ; rdfs:domain agp:QualityCriterion ; rdfs:range xsd:string .
@@ -634,7 +636,7 @@ agp:TransferSupport a agp:QualityCriterion ; rdfs:label "Support transfer and fo
     rdfs:comment "Provide in-flow aids, practice opportunities, coaching or environmental support as needed; schedule observation of performance on fresh work and identify what remains unmeasured." ; agp:workProduct "Transfer support and follow-up evidence" ; dct:source <https://www.cdc.gov/training-development/php/qts/index.html> .
 
 agp:InstructionalDesign a agp:Methodology, agp:InterventionMethodology ; rdfs:label "Instructional design" ;
-    agp:interventionToken "instruction" ; agp:profileToken "instruction" ; dct:hasVersion "1.0.0" ;
+    agp:interventionToken "instruction" ; agp:contentFormToken "concept", "worked-example", "video", "simulation", "context-descriptor" ; agp:profileToken "instruction" ; dct:hasVersion "1.0.0" ;
     agp:appliesWhen "Use after a Knowable diagnosis warrants learning a knowledge or skill capability; design for the actual performer and delivery context." ; agp:consultingProcess agp:PerformanceConsultingCycle ;
     agp:entryStep agp:LearnerTaskAnalysisStep ;
     agp:hasStep agp:LearnerTaskAnalysisStep, agp:ObjectiveAlignmentStep, agp:InstructionSequenceStep, agp:AssessmentContractStep, agp:UsabilityAccessStep, agp:RuntimeRecordingStep, agp:PilotRevisionStep, agp:TransferSupportStep ;
@@ -677,7 +679,7 @@ agp:SupportRetention a agp:QualityCriterion ; rdfs:label "Keep support available
     rdfs:comment "Verify discovery, access and retained use in the real work environment, including agent-readable links where relevant." ; agp:workProduct "Access and retention checks" ; dct:source <https://www.cdc.gov/training-development/php/qts/index.html> .
 
 agp:InFlowSupport a agp:Methodology, agp:InterventionMethodology ; rdfs:label "Performance support design" ;
-    agp:interventionToken "performance-support" ; agp:profileToken "performance-support" ; dct:hasVersion "1.0.0" ;
+    agp:interventionToken "performance-support" ; agp:contentFormToken "job-aid" ; agp:profileToken "performance-support" ; dct:hasVersion "1.0.0" ;
     agp:appliesWhen "Use when guidance can be consulted at the point of work, independently or alongside instruction, coaching or an environmental change." ; agp:consultingProcess agp:PerformanceConsultingCycle ;
     agp:entryStep agp:SupportTriggerStep ;
     agp:hasStep agp:SupportTriggerStep, agp:SupportContentStep, agp:SupportTrialStep, agp:SupportRetentionStep ;
@@ -705,7 +707,7 @@ agp:ReferenceTrial a agp:QualityCriterion ; rdfs:label "Test retrieval and corre
     rdfs:comment "Test realistic queries, findability, broken links, stale answers and access restrictions with representative users or agents." ; agp:workProduct "Retrieval and content review evidence" ; dct:source <https://www.cdc.gov/training-development/php/qts/index.html> .
 
 agp:ReferenceDesign a agp:Methodology, agp:InterventionMethodology ; rdfs:label "Reference design and stewardship" ;
-    agp:interventionToken "reference" ; agp:profileToken "reference" ; dct:hasVersion "1.0.0" ;
+    agp:interventionToken "reference" ; agp:contentFormToken "reference" ; agp:profileToken "reference" ; dct:hasVersion "1.0.0" ;
     agp:appliesWhen "Use for information that can be retrieved when needed; do not assume it must be memorized." ; agp:consultingProcess agp:PerformanceConsultingCycle ;
     agp:entryStep agp:ReferenceScopeStep ;
     agp:hasStep agp:ReferenceScopeStep, agp:ReferenceAuthorityStep, agp:ReferenceTrialStep ;
@@ -730,7 +732,7 @@ agp:PracticeTransfer a agp:QualityCriterion ; rdfs:label "Check retention and fr
     rdfs:comment "Assess on fresh tasks after support is reduced and at a later time; distinguish rehearsal of known answers from independent capability." ; agp:workProduct "Retention and transfer results" ; dct:source <https://www.cdc.gov/training-development/php/qts/index.html> .
 
 agp:PracticeDesign a agp:Methodology, agp:InterventionMethodology ; rdfs:label "Practice and simulation design" ;
-    agp:interventionToken "practice" ; agp:profileToken "practice" ; dct:hasVersion "1.0.0" ;
+    agp:interventionToken "practice" ; agp:contentFormToken "practice-task", "simulation" ; agp:profileToken "practice" ; dct:hasVersion "1.0.0" ;
     agp:appliesWhen "Use when a capability needs fluency, retention or application across conditions; establish prerequisites and safe boundaries." ; agp:consultingProcess agp:PerformanceConsultingCycle ;
     agp:entryStep agp:PracticeTargetStep ;
     agp:hasStep agp:PracticeTargetStep, agp:PracticeFeedbackStep, agp:PracticeTransferStep ;
@@ -758,7 +760,7 @@ agp:AssessmentPilot a agp:QualityCriterion ; rdfs:label "Pilot and review eviden
     rdfs:comment "Pilot the assessment and review consistency, item behavior, fairness and relevant work outcomes before using scores for consequential decisions." ; agp:workProduct "Pilot and evidence-quality review" ; dct:source <https://www.cdc.gov/training-development/php/qts/index.html> .
 
 agp:AssessmentDesign a agp:Methodology, agp:InterventionMethodology ; rdfs:label "Assessment design and validation" ;
-    agp:interventionToken "assessment" ; agp:profileToken "assessment" ; dct:hasVersion "1.0.0" ;
+    agp:interventionToken "assessment" ; agp:contentFormToken "assessment-item" ; agp:profileToken "assessment" ; dct:hasVersion "1.0.0" ;
     agp:appliesWhen "Use to gather evidence for a specified decision; passing a quiz alone does not establish work performance or causal improvement." ; agp:consultingProcess agp:PerformanceConsultingCycle ;
     agp:entryStep agp:AssessmentPurposeStep ;
     agp:hasStep agp:AssessmentPurposeStep, agp:AssessmentAlignmentStep, agp:AssessmentScoringStep, agp:AssessmentPilotStep ;
@@ -786,7 +788,7 @@ agp:CoachingAction a agp:QualityCriterion ; rdfs:label "Try an action and review
     rdfs:comment "Agree a feasible action or bounded experiment, provide feedback, observe what happens and adapt the next conversation to evidence." ; agp:workProduct "Action and follow-up record" ; dct:source <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/PERFORMANCE-ARCHITECTURE.md> .
 
 agp:CoachingProcess a agp:Methodology, agp:InterventionMethodology ; rdfs:label "Coaching and feedback process" ;
-    agp:interventionToken "coaching" ; agp:profileToken "coaching" ; dct:hasVersion "1.0.0" ;
+    agp:interventionToken "coaching" ; agp:contentFormToken "reflection" ; agp:profileToken "coaching" ; dct:hasVersion "1.0.0" ;
     agp:appliesWhen "Use for situated reflection, feedback and supported action, including work where responses must adapt as patterns emerge." ; agp:consultingProcess agp:PerformanceConsultingCycle ;
     agp:entryStep agp:CoachingAgreementStep ;
     agp:hasStep agp:CoachingAgreementStep, agp:CoachingObservationStep, agp:CoachingActionStep ;
@@ -814,7 +816,7 @@ agp:ProbeAdaptation a agp:QualityCriterion ; rdfs:label "Adapt and re-contextual
     rdfs:comment "Review patterns and decide whether to amplify, modify, stop or try another probe; reassess the work regime when conditions change." ; agp:workProduct "Adaptation decision and rationale" ; dct:source <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/PERFORMANCE-ARCHITECTURE.md> .
 
 agp:BoundedProbe a agp:Methodology, agp:InterventionMethodology ; rdfs:label "Bounded probe and adaptation" ;
-    agp:interventionToken "probe" ; agp:profileToken "probe" ; dct:hasVersion "1.0.0" ;
+    agp:interventionToken "probe" ; agp:contentFormToken "probe" ; agp:profileToken "probe" ; dct:hasVersion "1.0.0" ;
     agp:appliesWhen "Use in Emergent work to learn about dispositions and interactions; do not claim a predictable solution or impose a gap target." ; agp:consultingProcess agp:PerformanceConsultingCycle ;
     agp:entryStep agp:ProbeQuestionStep ;
     agp:hasStep agp:ProbeQuestionStep, agp:ProbeBoundsStep, agp:ProbeObservationStep, agp:ProbeAdaptationStep ;

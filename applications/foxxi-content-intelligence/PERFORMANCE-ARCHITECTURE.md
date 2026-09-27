@@ -142,6 +142,68 @@ different resolved courses from the *identical* fragments. The course is
 a recipe, not a record. That is the emergentism: there is no "course
 table"; a course is a composition over content-addressed fragments.
 
+### Fragments and compositions as data
+
+[`src/content-fragments.ts`](src/content-fragments.ts) and
+[`src/compositions.ts`](src/compositions.ts) make the recipe data that can
+be stored, fetched and checked. They work the same for a person and for an
+agent, as learner and as author.
+
+- **A fragment's IRI is the hash of its content**
+  (`/ns/foxxi/fragment/<sha256>`), taken with competencies by id rather
+  than by this deployment's URLs.
+  - It names the same content on every bridge.
+  - A copy fetched from any pod is checked by hashing it again
+    (`fragmentIsIntact`).
+  - What a learner is shown under an IRI they already hold cannot change.
+  - Its body is Markdown, which an agent reads as it is and a person reads
+    rendered.
+  - Its questions are the xAPI interaction types, stored with verifiers
+    and never with answers.
+  - Its kind says what form it takes: concept, worked example, job aid,
+    reference, assessment item, practice task, context, and the forms of
+    emergent work, `probe` and `reflection`. Those two take no graded
+    question, because such work has no right answer yet.
+- **A composition is one type at every size.** Each position names a
+  competency and the alternatives that can fill it: fragments or other
+  compositions, by reference. Its IRI hashes its content too, and a
+  revision names what it `supersedes`. The fragments it shares with the old
+  version are the same fragments, so the evidence gathered on them still
+  counts.
+- **`resolveComposition` is personalisation applied to evidence:**
+  - *Restriction* skips a position only when the learner has
+    *demonstrated* it: an Asserted competency on their record at the
+    position's rank. A training-only inference is Hypothetical and skips
+    nothing.
+  - *Admission* keeps only the forms said to suit the competency.
+  - *Choice* takes the alternative pitched nearest the learner's level,
+    then the author's order.
+  - Every position's outcome is traced in words.
+- **Which forms suit a competency is this practice's call, made from
+  published data.** Each intervention method in `agp-methods.ttl` names the
+  forms that deliver it (`agp:contentFormToken`).
+  `admissionFromPlan` (agentic-performance-practice) reads a plan through
+  that data, so:
+
+  | Regime | The plan selects | The resolution gives |
+  |---|---|---|
+  | Emergent | probe and coaching | probes and reflection, never a lesson |
+  | Turbulent | an environmental fix | no content, and it says content is not the answer |
+  | Evident | reference | the procedure to look up |
+  | Knowable, not yet measured | assessment | a check before any teaching |
+
+  The dependency runs from the practice to Foxxi, never back.
+
+Not yet wired:
+- authoring and resolving as signed affordances;
+- delivering a resolution live, with xAPI at the level of the fragment;
+- choosing among alternatives by what has worked for learners like this
+  one (the Hypothetical-to-Asserted flip on each fragment's record at each
+  position);
+- regime sources beyond a supplied plan;
+- folding the older in-memory `Course` model and authored SCORM courses
+  into this one.
+
 ## 6. Authoring is composition — the same tools for humans and agents
 
 Authoring is not a separate WYSIWYG application. Authoring **is** the act

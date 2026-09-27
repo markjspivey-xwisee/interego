@@ -47,6 +47,8 @@ agp:hasCriterionReview a owl:ObjectProperty ; rdfs:label "has criterion review" 
 agp:evidenceArtifact a owl:ObjectProperty ; rdfs:label "evidence artifact" ; rdfs:domain agp:EvidenceItem .
 agp:profileToken a owl:DatatypeProperty ; rdfs:label "profile token" ; rdfs:domain agp:Methodology ; rdfs:range xsd:string .
 agp:interventionToken a owl:DatatypeProperty ; rdfs:label "intervention token" ; rdfs:domain agp:InterventionMethodology ; rdfs:range xsd:string .
+agp:contentFormToken a owl:DatatypeProperty ; rdfs:label "content form token" ; rdfs:domain agp:InterventionMethodology ; rdfs:range xsd:string ;
+    rdfs:comment "A form of content this intervention is delivered as, spelled as the Foxxi fragment kind it names (concept, worked-example, job-aid, probe, reflection, …). Resolving a composition for a learner admits only these forms where a plan selected this intervention. An intervention with none, such as an environmental fix, is not delivered as content." .
 agp:appliesWhen a owl:DatatypeProperty ; rdfs:label "applies when" ; rdfs:domain agp:Methodology ; rdfs:range xsd:string .
 agp:sequence a owl:DatatypeProperty ; rdfs:label "sequence" ; rdfs:domain agp:MethodStep ; rdfs:range xsd:integer .
 agp:workProduct a owl:DatatypeProperty ; rdfs:label "work product" ; rdfs:domain agp:QualityCriterion ; rdfs:range xsd:string .
