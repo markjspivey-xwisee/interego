@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-09-26 — Foxxi: a resolution uses only content that hashes to its IRI, and falls back past a branch that cannot resolve
+
+The automated review of #499 found three gaps.
+
+- **Dereferenced content was trusted** (`src/compositions.ts`). `resolveComposition` used whatever `lookup` returned. A pod or cache could serve a changed body, verifier or composition under an existing content-addressed IRI, and the learner would be shown it, which defeats the point of content addressing.
+  - Now an alternative is used only if it names the same content as the IRI that was asked for, and its content hashes to that IRI (`fragmentIsIntact` / `compositionIsIntact`). Anything else is refused, and the trace says so.
+  - The composition being resolved is checked the same way before anything else.
+  - The cycle check stays, but a real cycle would need a composition to contain its own hash, so faking one is refused as changed content.
+- **A nested alternative that could not resolve blocked the others.** A composition alternative was chosen as soon as it was admitted. So with the alternatives `[a module of concepts, a probe]` under a probe-only admission, the module's own position went unmet and the probe was never tried.
+  - Now a nested composition is chosen only if it resolves with nothing unmet. Otherwise the next alternative is tried, and the reason names the branch that fell short.
+  - If every alternative falls short, the first branch that produced any steps is taken, with its unmet positions reported. Failing that, the position is unmet, naming each branch.
+  - Nested resolutions are remembered per composition and depth. A tree of 12 alternatives at each of 6 levels resolves 72 compositions rather than 12⁶ paths.
+- **The methods route's JSON-LD dropped the forms** (`applications/agentic-performance-practice/src/intervention-methods.ts`). `METHOD_CONTEXT` had no mapping for `contentForms`, so JSON-LD expansion lost what Turtle readers saw. It now maps to `agp:contentFormToken` as a set.
+
+`PERFORMANCE-ARCHITECTURE.md` §5 describes both resolver rules. New tests:
+- changed and substituted content under an existing IRI is refused, and a changed root is too;
+- a faked cycle is refused as changed content;
+- resolution falls back past a module that cannot resolve, and reports it when nothing else is left;
+- a 12-wide, 6-deep tree needs fewer than 1,000 lookups;
+- the instruction method's forms survive JSON-LD expansion.
+
+Five mutants were checked, and each fails a named test: no check on dereferenced content, no check on the root, no fallback, no memory, and no context entry.
+
 ## 2026-09-26 — Foxxi: a question named fill-in stays text
 
 The automated review of #496 found that `authorQuestion` read a number-like answer as a number even when the author named the question `fill-in`. An account code `"0012"` was stored as the integer 12. So a learner's `"12"` passed, and a text alternative such as `accept: ["twelve"]` was refused as not a number. Naming the type is meant to settle exactly that, and `foxxi.scorm_author` tells authors to give it when the fields leave the type unclear.

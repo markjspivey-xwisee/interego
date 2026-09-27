@@ -39,7 +39,7 @@ import { createHash } from 'node:crypto';
 import { canonicalJson } from '@interego/core';
 import { competencyIdOf, sameCompetency } from './competency-identity.js';
 import {
-  compositionIri, competencyRef, ContentError, contentRefOf,
+  compositionIri, competencyRef, ContentError, contentRefOf, fragmentIsIntact, sameContent,
   type Fragment, type FragmentKind,
 } from './content-fragments.js';
 import type { CognitiveLevel } from './emergent-content.js';
@@ -213,41 +213,60 @@ function standing(record: readonly RecordedCompetency[], competency: string): { 
  */
 export function resolveComposition(input: ResolveInput): Resolution {
   const record = input.record ?? [];
-  const steps: ResolvedStep[] = [];
-  const skipped: PositionNote[] = [];
-  const unmet: PositionNote[] = [];
-  const trace: string[] = [];
   const root = input.composition;
-  trace.push(`resolving "${root.title}" for ${input.learner.kind} ${input.learner.id}`);
+  if (!compositionIsIntact(root)) throw new ContentError(`"${root.title}" does not match its IRI: its content was changed`);
 
-  const walk = (comp: Composition, path: string[]): void => {
-    if (path.length >= COMPOSITION_LIMITS.depth) throw new ContentError(`compositions nest more than ${COMPOSITION_LIMITS.depth} deep under "${root.title}"`);
-    if (path.some(p => contentRefOf(p)?.hash === contentRefOf(comp['@id'])?.hash)) throw new ContentError(`"${comp.title}" contains itself`);
-    const here = [...path, comp['@id']];
+  // What one composition resolves to, with paths relative to it. Kept per composition and depth,
+  // because trying a nested alternative before falling back must not repeat work exponentially.
+  interface Branch { steps: ResolvedStep[]; skipped: PositionNote[]; unmet: PositionNote[]; trace: string[] }
+  const memo = new Map<string, Branch>();
+  const under = (prefix: string[], b: Branch): Branch => ({
+    steps: b.steps.map(s => ({ ...s, path: [...prefix, ...s.path] })),
+    skipped: b.skipped.map(n => ({ ...n, path: [...prefix, ...n.path] })),
+    unmet: b.unmet.map(n => ({ ...n, path: [...prefix, ...n.path] })),
+    trace: b.trace,
+  });
+
+  const walk = (comp: Composition, ancestors: string[]): Branch => {
+    const hash = contentRefOf(comp['@id'])?.hash;
+    if (ancestors.length >= COMPOSITION_LIMITS.depth) throw new ContentError(`compositions nest more than ${COMPOSITION_LIMITS.depth} deep under "${root.title}"`);
+    if (ancestors.some(p => contentRefOf(p)?.hash === hash)) throw new ContentError(`"${comp.title}" contains itself`);
+    const key = `${hash}@${ancestors.length}`;
+    const known = memo.get(key);
+    if (known) return known;
+    const out: Branch = { steps: [], skipped: [], unmet: [], trace: [] };
+    const self = [comp['@id']];
     comp.positions.forEach((pos, i) => {
       const at = `"${comp.title}" position ${i + 1}`;
-      const note = (because: string): PositionNote => ({ competency: pos.competency, path: here, position: i, because });
+      const note = (because: string): PositionNote => ({ competency: pos.competency, path: self, position: i, because });
 
       // Restriction: skip what the learner has demonstrated.
       const { demonstrated, inferred } = standing(record, pos.competency);
       const needed = pos.demonstratedAt ?? DEFAULT_DEMONSTRATED_RANK;
       if (demonstrated && demonstrated.proficiencyRank >= needed) {
         const because = `already demonstrated at ${demonstrated.proficiencyLabel} (${demonstrated.basis}), which meets rank ${needed}`;
-        skipped.push(note(because));
-        trace.push(`${at}: skipped, ${because}`);
+        out.skipped.push(note(because));
+        out.trace.push(`${at}: skipped, ${because}`);
         return;
       }
       if (inferred && (!demonstrated || inferred.proficiencyRank > demonstrated.proficiencyRank)) {
-        trace.push(`${at}: the record infers ${inferred.proficiencyLabel} from training alone; an inference is not a demonstration, so the position stays`);
+        out.trace.push(`${at}: the record infers ${inferred.proficiencyLabel} from training alone; an inference is not a demonstration, so the position stays`);
       }
 
-      // Admission: only the forms that suit this competency, and only what is meant for this learner.
+      // Admission: only content that is what its IRI says, in a form that suits this competency,
+      // meant for this learner.
       const admission = input.admission?.(pos.competency) ?? input.admission?.(comp.competency);
       const admitted: Array<Fragment | Composition> = [];
       const refused: string[] = [];
       for (const iri of pos.paradigm) {
         const item = input.lookup(iri);
         if (!item) { refused.push(`${iri} could not be found`); continue; }
+        if (!sameContent(item['@id'], iri) || !(isComposition(item) ? compositionIsIntact(item) : fragmentIsIntact(item))) {
+          const because = `${iri} was served with content that does not hash to it, so it was not used`;
+          refused.push(because);
+          out.trace.push(`${at}: ${because}`);
+          continue;
+        }
         if (isComposition(item)) { admitted.push(item); continue; }
         if (item.audience && item.audience !== input.learner.kind) { refused.push(`a ${item.kind} for ${item.audience}s only`); continue; }
         if (admission && !admission.kinds.includes(item.kind)) { refused.push(`a ${item.kind} is not admitted: ${admission.because}`); continue; }
@@ -257,30 +276,56 @@ export function resolveComposition(input: ResolveInput): Resolution {
         const because = admission && !admission.kinds.length
           ? `no content is admitted here: ${admission.because}`
           : `no alternative could be used: ${refused.join('; ')}`;
-        unmet.push(note(because));
-        trace.push(`${at}: unmet, ${because}`);
+        out.unmet.push(note(because));
+        out.trace.push(`${at}: unmet, ${because}`);
         return;
       }
-      if (!admission) trace.push(`${at}: nothing said which forms suit this competency, so every form was admitted`);
+      if (!admission) out.trace.push(`${at}: nothing said which forms suit this competency, so every form was admitted`);
 
-      // Choice: pitched at the learner's level, then the author's order.
+      // Choice: pitched at the learner's level, then the author's order. A composition has no level
+      // of its own (its positions are resolved at this learner's level in turn), but it is chosen
+      // only if it resolves; one that leaves positions unmet falls back to the next alternative.
       const want = levelFor(Math.max(demonstrated?.proficiencyRank ?? 0, inferred?.proficiencyRank ?? 0) || undefined);
-      // A composition has no level of its own: its positions are resolved at this learner's level in turn.
       const distance = (x: Fragment | Composition): number => (isComposition(x) ? 0 : Math.abs(LEVEL_INDEX[x.level] - LEVEL_INDEX[want]));
-      const chosen = admitted.reduce((a, x) => (distance(x) < distance(a) ? x : a));
-      const why = admitted.length === 1
-        ? (pos.paradigm.length === 1 ? 'the only alternative' : `the only admissible alternative (${refused.join('; ')})`)
-        : isComposition(chosen) ? 'a composition, which resolves its own positions at this learner\'s level' : `pitched at ${chosen.level}, nearest the ${want} level this learner is at`;
-      if (isComposition(chosen)) {
-        trace.push(`${at}: into "${chosen.title}", ${why}`);
-        walk(chosen, here);
+      const ranked = admitted.map((x, k) => ({ x, k })).sort((a, b) => distance(a.x) - distance(b.x) || a.k - b.k).map(r => r.x);
+      const fellShort: string[] = [];
+      let chosen: { item: Fragment | Composition; branch?: Branch } | undefined;
+      let partial: { item: Composition; branch: Branch } | undefined;
+      for (const item of ranked) {
+        if (!isComposition(item)) { chosen = { item }; break; }
+        const branch = walk(item, [...ancestors, comp['@id']]);
+        if (!branch.unmet.length) { chosen = { item, branch }; break; }
+        fellShort.push(`"${item.title}" left ${branch.unmet.length} of its position(s) unmet`);
+        if (!partial && branch.steps.length) partial = { item, branch };
+      }
+      chosen ??= partial;
+      if (!chosen) {
+        const because = `no alternative could be used: ${[...refused, ...fellShort].join('; ')}`;
+        out.unmet.push(note(because));
+        out.trace.push(`${at}: unmet, ${because}`);
         return;
       }
-      steps.push({ fragment: chosen, competency: pos.competency, path: here, position: i, alternatives: pos.paradigm, chosenBecause: why });
-      trace.push(`${at}: ${chosen.kind}${chosen.title ? ` "${chosen.title}"` : ''}, ${why}`);
+      const passedOver = [...refused, ...fellShort];
+      const pick = chosen.item;
+      const why = fellShort.length
+        ? `the first alternative that could be used (${passedOver.join('; ')})`
+        : admitted.length === 1
+          ? (pos.paradigm.length === 1 ? 'the only alternative' : `the only admissible alternative (${refused.join('; ')})`)
+          : isComposition(pick) ? 'a composition, which resolves its own positions at this learner\'s level' : `pitched at ${pick.level}, nearest the ${want} level this learner is at`;
+      if (isComposition(pick)) {
+        out.trace.push(`${at}: into "${pick.title}", ${why}`);
+        const inner = under(self, chosen.branch!);
+        out.steps.push(...inner.steps); out.skipped.push(...inner.skipped); out.unmet.push(...inner.unmet); out.trace.push(...inner.trace);
+        return;
+      }
+      out.steps.push({ fragment: pick, competency: pos.competency, path: self, position: i, alternatives: pos.paradigm, chosenBecause: why });
+      out.trace.push(`${at}: ${pick.kind}${pick.title ? ` "${pick.title}"` : ''}, ${why}`);
     });
+    memo.set(key, out);
+    return out;
   };
-  walk(root, []);
-  trace.push(`resolved: ${steps.length} step(s), ${skipped.length} skipped as demonstrated, ${unmet.length} unmet`);
-  return { composition: root['@id'], learner: input.learner.id, steps, skipped, unmet, trace };
+  const whole = walk(root, []);
+  const trace = [`resolving "${root.title}" for ${input.learner.kind} ${input.learner.id}`, ...whole.trace,
+    `resolved: ${whole.steps.length} step(s), ${whole.skipped.length} skipped as demonstrated, ${whole.unmet.length} unmet`];
+  return { composition: root['@id'], learner: input.learner.id, steps: whole.steps, skipped: whole.skipped, unmet: whole.unmet, trace };
 }

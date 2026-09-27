@@ -177,7 +177,14 @@ agent, as learner and as author.
     nothing.
   - *Admission* keeps only the forms said to suit the competency.
   - *Choice* takes the alternative pitched nearest the learner's level,
-    then the author's order.
+    then the author's order. A nested composition is chosen only if it
+    resolves; one that leaves positions unmet falls back to the next
+    alternative. Nested resolutions are remembered per composition, so
+    the work stays proportional to the number of compositions, not paths.
+  - Whatever a pod or cache serves for an alternative is used only if it
+    hashes to the IRI that was asked for. Changed content is refused and
+    traced. A cycle would need a composition to contain its own hash,
+    which content addressing rules out.
   - Every position's outcome is traced in words.
 - **Which forms suit a competency is this practice's call, made from
   published data.** Each intervention method in `agp-methods.ttl` names the

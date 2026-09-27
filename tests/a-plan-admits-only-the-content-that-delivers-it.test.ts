@@ -8,9 +8,10 @@
  * in code. The same holds for a person and for an agent, because a plan is about the work.
  */
 import { describe, expect, it } from 'vitest';
+import jsonld from 'jsonld';
 import { admissionFromPlan, contentFormsFor } from '../applications/agentic-performance-practice/src/content-admission.js';
-import { interventionMethods, loadInterventionMethods } from '../applications/agentic-performance-practice/src/intervention-methods.js';
-import { readMethodsTurtle } from '../applications/agentic-performance-practice/src/ontology.js';
+import { findInterventionMethod, interventionMethods, loadInterventionMethods, METHOD_CONTEXT } from '../applications/agentic-performance-practice/src/intervention-methods.js';
+import { AGP_NS, readMethodsTurtle } from '../applications/agentic-performance-practice/src/ontology.js';
 import type { WorkRegime } from '../applications/agentic-performance-practice/src/agent-disposition.js';
 import {
   diagnose, recommendInterventions, type PerformanceSituation,
@@ -40,6 +41,12 @@ describe('each intervention publishes the forms of content that deliver it', () 
     expect(contentFormsFor('coaching')).toEqual(['reflection']);
     expect(contentFormsFor('environmental-fix')).toEqual([]);
     expect(contentFormsFor('no-intervention')).toEqual([]);
+  });
+
+  it('keeps the forms when a method is read as JSON-LD, as the methods route serves it', async () => {
+    const instruction = findInterventionMethod('instruction')!;
+    const [node] = await jsonld.expand({ '@context': METHOD_CONTEXT, ...instruction } as never) as Array<Record<string, Array<{ '@value': string }>>>;
+    expect(node![`${AGP_NS}contentFormToken`]!.map(v => v['@value']).sort()).toEqual([...instruction.contentForms!].sort());
   });
 
   it('refuses method data naming a form that is not a fragment kind', () => {
